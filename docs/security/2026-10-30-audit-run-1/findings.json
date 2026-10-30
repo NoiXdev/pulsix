@@ -1,0 +1,1985 @@
+[
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "github-workflows/release.yml:setup-qemu-buildx-default-unpinned-images",
+    "title": "Release job's QEMU/BuildKit images are pulled by mutable default tags and run privileged around the registry credentials",
+    "description": "release.yml pins docker/setup-qemu-action (line 99) and docker/setup-buildx-action (line 102) by commit SHA but passes no 'image' input to setup-qemu and no driver/driver-opts to setup-buildx, so both fall back to whatever container images the actions default to at those SHAs. Upstream, these defaults have historically been docker.io/tonistiigi/binfmt:latest (run --privileged to register QEMU binfmt_misc handlers on the runner kernel) and a docker-container BuildKit builder from moby/buildkit:buildx-stable-1 (a privileged daemon that executes every RUN step of the multi-arch build, assembles and pushes the images, and obtains the Docker Hub/Harbor credentials stored by login-action through the buildx session when it pushes). If the defaults at the pinned SHAs are still tag references, whoever controls those Docker Hub tags (their third-party maintainers, or anyone who compromises those accounts) at release time can change the bytes of the published noixdev/pulsix-manager and pulsix-worker images on both registries, including the arm64 variants whose RUN steps (npm ci, go build of the manager and embedded agent binaries, pip/apt in the worker) execute under the registered QEMU interpreter, or capture the push credentials, with no change to this repository. Repository-side triggers and the guard job are sound (tag push is writer-only, ancestry and CI checks on github.sha, tag regex-validated via env); this is the one executable input of the privileged release build not covered by the SHA/digest pinning policy of backlog 1.32. The lower-trust actor is an upstream image publisher outside this repository's review, so impact is high but likelihood is low.",
+    "claimed_root_cause": "The action SHA pins do not cover the container images those actions pull at runtime; release.yml sets no setup-qemu 'image' input and no setup-buildx driver-opts image, so binfmt and BuildKit are resolved from the actions' default (expected mutable tag) references instead of digests.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": ".github/workflows/release.yml",
+        "line": 10,
+        "scope": "on.push (tags: v*)",
+        "description": "A v* tag push (writer-only) starts guard and then the release job, which holds DOCKERHUB_TOKEN and HARBOR_PASSWORD."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 99,
+        "scope": "jobs.release.steps[docker/setup-qemu-action]",
+        "description": "Only 'platforms: arm64' is set; no 'image' input, so the action's default binfmt image (expected docker.io/tonistiigi/binfmt:latest) is pulled and run privileged to install QEMU handlers on the runner."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 102,
+        "scope": "jobs.release.steps[docker/setup-buildx-action]",
+        "description": "No inputs; the default docker-container driver starts a privileged BuildKit container from the action's default image (expected moby/buildkit:buildx-stable-1)."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 108,
+        "scope": "jobs.release.steps[Log in to Docker Hub] (and Harbor, line 115)",
+        "description": "Registry credentials are written to the runner's docker config; buildx serves them to the BuildKit daemon over the build session when it pushes."
+      },
+      {
+        "kind": "sink",
+        "file": ".github/workflows/release.yml",
+        "line": 118,
+        "scope": "jobs.release.steps[Build and push the manager image] (worker at line 133)",
+        "description": "The BuildKit builder builds linux/amd64 and linux/arm64 and pushes noixdev/pulsix-manager and pulsix-worker as :vX.Y.Z and :latest to Docker Hub and harbor.cloud.noidee.dev."
+      }
+    ],
+    "evidence": [
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 99,
+        "description": "docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0 with only 'platforms: arm64' (line 101); no image input."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 102,
+        "description": "docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1 with no 'with:' block at all (no driver, driver-opts or version input)."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 122,
+        "description": "platforms: linux/amd64,linux/arm64 for the manager (line 137 for the worker): arm64 stages execute under the QEMU handler registered by setup-qemu."
+      },
+      {
+        "file": "deploy/docker/Dockerfile.manager",
+        "line": 48,
+        "description": "Build stage FROM golang:1.27.1-alpine@sha256:... without --platform=$BUILDPLATFORM, so for arm64 'go mod download', scripts/agent-binaries.sh and the manager go build (lines 53, 72, 79) run emulated; line 38 (node stage, npm ci/build) likewise."
+      },
+      {
+        "file": "deploy/worker/Dockerfile",
+        "line": 57,
+        "description": "Worker runtime stage FROM python:3.13-slim@sha256:... (and build stage at line 33) also without --platform, so arm64 RUN steps of the worker image run emulated."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 93,
+        "description": "Backlog 1.32 records SHA pinning of actions as the release-integrity policy; nothing in the repository pins the images these actions pull (grep for binfmt/buildkit/driver-opts/BUILDPLATFORM finds no other occurrence)."
+      }
+    ],
+    "blockers": [
+      "The default image references of docker/setup-qemu-action at 99012661954931238ded8c8b007157a8430204e1 and docker/setup-buildx-action at f87e5991a6d7451dcb8d9637bfbc97413f497069 (and any image caching behaviour such as setup-qemu's cache-image) are defined in those actions' sources, which are not in this repository and could not be fetched: the verifier's sandbox has no network access.",
+      "Hosted-runner behaviour is not observable locally: which image references (tag or digest) were actually pulled in past release runs, that the binfmt and BuildKit containers run privileged, and that the BuildKit daemon receives the registry credentials through the buildx session."
+    ],
+    "validation_plan": {
+      "local": "Read-only, no execution of target code: obtain the two action repositories at the pinned SHAs (owner side, since this needs network) and check `git show 99012661954931238ded8c8b007157a8430204e1:action.yml` for the default of the 'image' input (and 'cache-image') and `git show f87e5991a6d7451dcb8d9637bfbc97413f497069:action.yml` plus its src for the default driver and BuildKit image. The finding stands if either default is a tag without @sha256; it is refuted if both defaults are digest-pinned.",
+      "deployment": "Owner check, non-destructive: in the logs of the most recent release run, expand the setup-qemu and setup-buildx steps and record the pulled image references and digests (e.g. 'docker.io/tonistiigi/binfmt:latest', 'moby/buildkit:buildx-stable-1') and whether the builder runs with --privileged. If they are tag references, pin them in release.yml: setup-qemu 'image: docker.io/tonistiigi/binfmt:<ver>@sha256:<digest>' (and cache-image: false if present), setup-buildx 'driver-opts: image=moby/buildkit:<ver>@sha256:<digest>' (or 'driver: docker' with the containerd image store), and consider FROM --platform=$BUILDPLATFORM with GOOS/GOARCH cross-compilation in Dockerfile.manager's build stage so QEMU is out of the Go build path. Do not push a test tag to verify; review the workflow change instead."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "github-workflows/tag.yml:reusable-workflow-at-mutable-main-with-secrets-inherit",
+    "title": "Release tag workflow runs a cross-repo reusable workflow from a mutable @main with contents: write and all repository secrets",
+    "description": "tag.yml grants GITHUB_TOKEN contents: write and calls NoiXdev/github-workflows/.github/workflows/create_go_changelog_version_release.yaml@main with secrets: inherit. It is the only workflow reference in .github/workflows that is not pinned to a full commit SHA. Both repositories are in the NoiXdev organization, so secrets: inherit applies. When a pulsix writer dispatches the workflow, whatever commit is on the shared repository's main at that moment runs with a contents: write token on pulsix and with every repository and organization secret pulsix can read. After the planned re-arm (backlog 1.38), the same happens automatically on every green ci run on main. Those secrets include DOCKERHUB_USERNAME/DOCKERHUB_TOKEN and HARBOR_USERNAME/HARBOR_PASSWORD. release.yml reads them in a job without an environment: key, so they are repository- or organization-level, not environment-scoped. Code holding those credentials can push noixdev/pulsix-manager and pulsix-worker images directly, including :latest, the compose default, and so bypass release.yml's main-ancestry and green-CI guard. Anyone who can change the shared repository's main is therefore a release authority for pulsix without any pulsix review. Today the called file is missing from that main, so a dispatch fails. Whoever first adds it there decides what runs. Creating a tag needs neither registry secret. Whether this crosses a trust boundary depends on whether the shared repository's main writers and protections are narrower than pulsix's release maintainers. That cannot be seen in source.",
+    "claimed_root_cause": "tag.yml references the reusable workflow by a mutable branch ref (@main) instead of a reviewed commit SHA. That breaks the repository's own SHA-pinning policy (backlog 1.32), which every other uses: line in .github/workflows follows. The call also passes secrets: inherit instead of an explicit minimal secret list, inside a workflow whose top-level permissions are contents: write. Because the registry credentials are not scoped to a protected environment, the inherited set includes them.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": ".github/workflows/tag.yml",
+        "line": 34,
+        "scope": "on.workflow_dispatch",
+        "description": "A pulsix writer can dispatch the workflow. The automatic workflow_run trigger on ci completing on main (lines 35-38) is commented out, and backlog 1.38 plans to re-arm it. The code that runs is chosen by the shared repository's main, not by pulsix."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/tag.yml",
+        "line": 43,
+        "scope": "permissions",
+        "description": "Top-level permissions give the called workflow's GITHUB_TOKEN contents: write."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/tag.yml",
+        "line": 49,
+        "scope": "jobs.tag.secrets",
+        "description": "secrets: inherit passes every repository and organization secret available to pulsix, including the registry credentials release.yml uses, to a workflow in the same organization."
+      },
+      {
+        "kind": "sink",
+        "file": ".github/workflows/tag.yml",
+        "line": 48,
+        "scope": "jobs.tag.uses",
+        "description": "Runs NoiXdev/github-workflows' create_go_changelog_version_release.yaml at the mutable ref @main, the only unpinned workflow reference in the repository."
+      }
+    ],
+    "evidence": [
+      {
+        "file": ".github/workflows/tag.yml",
+        "line": 48,
+        "description": "uses: NoiXdev/github-workflows/.github/workflows/create_go_changelog_version_release.yaml@main is a branch ref, not a commit SHA. A grep of every uses: line in .github/workflows finds no other reference without a 40-hex SHA."
+      },
+      {
+        "file": ".github/workflows/tag.yml",
+        "line": 49,
+        "description": "secrets: inherit, with no explicit secret list."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 108,
+        "description": "DOCKERHUB_TOKEN is read in the release job, which declares no environment: key (lines 60-71). The secret is therefore repository- or organization-level, so secrets: inherit in tag.yml passes it on."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 115,
+        "description": "HARBOR_PASSWORD is read in the same environment-less job, so it is also passed on."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 93,
+        "description": "Backlog 1.32 records the SHA-pinning policy ('the SHA pinning was already in place and stays') in the same item that introduced tag.yml's @main call."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 96,
+        "description": "Backlog 1.38: the called file exists only on the shared repository's chore/pin-actions branch, with no pull request. The plan is to re-arm the automatic trigger once it reaches main."
+      }
+    ],
+    "blockers": [
+      "Who can push, merge or force-push to NoiXdev/github-workflows' main is a hosted setting not visible in source: its collaborators and teams, branch protection and rulesets, required reviews, and bypass actors. The candidate is a real boundary crossing only if that set is broader or less protected than pulsix's own release maintainers.",
+      "Whether NoiXdev/github-workflows allows other organization repositories to call its workflows (Settings > Actions > Access) is a hosted setting. If access is not granted, the call fails closed and nothing runs."
+    ],
+    "validation_plan": {
+      "local": "Source-only, already settled. (1) grep -n 'uses:' .github/workflows/*.yml shows tag.yml:48 as the only reference not pinned to a 40-hex SHA. (2) release.yml's release job (lines 60-71) declares no environment:, so DOCKERHUB_* and HARBOR_* cannot be environment-scoped secrets. (3) tag.yml:43 and :49 grant contents: write and secrets: inherit. Nothing in the repository can show the shared repository's write access, so no local execution can decide the blocker. Do not dispatch the workflow or push a tag to test it, because that publishes.",
+      "deployment": "Owner check, without dispatching anything. (1) In NoiXdev/github-workflows, list the users, teams and apps with write, maintain or admin access, and check main's branch protection and rulesets: required pull-request reviews, restricted pushers, force-push and deletion blocks, bypass list. Compare that set with the people allowed to release pulsix. (2) In NoiXdev/github-workflows, check Settings > Actions > General > Access to see whether pulsix may call its workflows. (3) In pulsix, and in the org's Settings > Secrets, confirm which secrets pulsix can read: DOCKERHUB_*, HARBOR_*, and any PAT used for tagging. The finding holds if the shared repository's main can be changed by anyone outside pulsix's release maintainers, or without a required review. Fix: pin the call to a full commit SHA of a reviewed shared-workflow revision, with a version comment. Replace secrets: inherit with an explicit list of only what tagging needs, which excludes the registry credentials. Move DOCKERHUB_* and HARBOR_* into a protected 'release' environment that only release.yml's release job uses."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/agentapi/service.go:Renew:register-without-live-serial-recheck",
+    "title": "Agent certificate renewal racing an admin revocation re-creates the agent registration with a fresh unrevoked certificate",
+    "description": "Renew (internal/agentapi/service.go:237) trusts the interceptor's earlier serial lookup (internal/grpcsrv/auth.go:225-235) and then, after signing the CSR, calls agents.Register unconditionally. SQLStore.Register upserts host_agents, revokes the host's serials that are still unrevoked, and inserts the new serial with revoked_at NULL. If POST /api/v1/orgs/{org}/agents/{host_id}/revoke (agents.Service.Revoke -> SQLStore.Revoke: revoke all certificates, delete host_agents) commits after the interceptor's lookup and before Register's upsert, Register inserts a new host_agents row for the new serial. LookupAgentSerial then resolves that serial as live. Revoke's CloseHost cuts the old streams, but the agent reconnects with the new certificate and keeps authenticating, streaming facts and check results, and renewing. The handler also set the host's monitored flag to false, so the UI shows the agent as revoked while it is still connected. Only the timing is uncertain. If Register commits first, Revoke revokes the new serial too and the outcome is safe. AgentStream closes the same window with a post-track GetBySerial re-check (stream.go:56-65). Renew has no such check, and grpcsrv has no renewal rate limit, so a holder of the agent key can call Renew repeatedly to widen its chance of hitting the window.",
+    "claimed_root_cause": "agentapi.Service.Renew (service.go lines 237-260) never re-checks, after signing, that the presenting serial is still the host's active, unrevoked certificate before calling Register. SQLStore.Register (store_sql.go lines 151-174) and UpsertHostAgent (agents.sql lines 61-70, INSERT ... ON CONFLICT (host_id) DO UPDATE) have no guard such as 'existing row present AND cert_serial = presented serial AND that certificate revoked_at IS NULL'. Register therefore re-creates a row that a concurrent Revoke deleted. The transaction uses the default READ COMMITTED isolation (pool.Begin in internal/db/scope.go), which does not serialize the two transactions.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/grpcsrv/auth.go",
+        "line": 225,
+        "scope": "Server.lookupAgent",
+        "description": "The mTLS interceptor resolves the agent's presented serial and refuses unknown or revoked serials (line 233). This is the only liveness check before the Renew handler runs."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/agent_handlers.go",
+        "line": 190,
+        "scope": "POST /api/v1/orgs/{org}/agents/{host_id}/revoke",
+        "description": "A concurrent admin revocation calls agents.Service.Revoke. SQLStore.Revoke (store_sql.go line 239) marks every certificate of the host revoked and deletes the host_agents row in one transaction."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agentapi/service.go",
+        "line": 242,
+        "scope": "Service.Renew",
+        "description": "The new certificate is signed for the identity resolved earlier by the interceptor. Liveness is not re-checked before Register (line 250)."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/agents/store_sql.go",
+        "line": 153,
+        "scope": "SQLStore.Register",
+        "description": "UpsertHostAgent re-inserts the host_agents row that Revoke deleted. InsertAgentCertificate (line 165) adds a new serial with revoked_at NULL, which LookupAgentSerial (agents.sql line 97 join) resolves as live."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/agentapi/service.go",
+        "line": 250,
+        "description": "Register is called without re-checking that agent.Serial is still live and still the host's active serial."
+      },
+      {
+        "file": "internal/agentapi/stream.go",
+        "line": 60,
+        "description": "The sibling AgentStream re-reads the serial after tracking specifically to close the revocation race. Renew has no equivalent."
+      },
+      {
+        "file": "internal/db/queries/agents.sql",
+        "line": 67,
+        "description": "ON CONFLICT (host_id) DO UPDATE re-creates, without any precondition, a host_agents row that Revoke deleted."
+      },
+      {
+        "file": "internal/agents/store_sql.go",
+        "line": 165,
+        "description": "The new serial is inserted with revoked_at NULL regardless of the presenting serial's state."
+      },
+      {
+        "file": "internal/agents/store_sql.go",
+        "line": 239,
+        "description": "Revoke deletes host_agents and revokes certificates, but nothing stops a Register that runs afterwards from undoing the deletion."
+      },
+      {
+        "file": "internal/db/scope.go",
+        "line": 105,
+        "description": "WithWriteTx begins with pool.Begin (default READ COMMITTED), so the Revoke and Register transactions are not serialized against each other."
+      }
+    ],
+    "blockers": [
+      "The decisive Postgres interleaving (SQLStore.Revoke commits between the interceptor's GetBySerial and SQLStore.Register's UpsertHostAgent) needs internal/db/testdb (testcontainers plus the host Docker socket), which the approved sandbox forbids. Only the in-repo fake store was exercised. Hunter artifact agents/h01-agent-facts/artifacts/evidence.txt shows Renew succeeding after Revoke, a live new serial, a restored registry row, and a second Renew accepting the post-revoke certificate. The SQL shape is the same in source.",
+      "The real width of the window (interceptor lookup, then CSR signing, then the Register upsert, against the revoke commit) under a real deployment was not measured. Exploitation also requires the attacker to hold the agent's private key (a compromised or malicious host agent)."
+    ],
+    "validation_plan": {
+      "local": "Add an integration test (internal/agentapi or internal/agents) against internal/db/testdb with the real agents.SQLStore and agents.Service. Enroll an agent. Wrap the AgentSigner so that SignAgentCSR first runs agents.Service.Revoke(org, host) on the real store before returning, then call Renew with the enrolled certificate's identity in context (or over bufconn through the real interceptor). Confirmed if all of the following hold: Revoke returns nil; Renew returns OK; GetBySerial(newSerial) returns Revoked=false; GetByHost finds the host again with cert_serial = newSerial; a second Renew authenticated with the new certificate succeeds. Refuted if Renew fails or the new serial resolves as revoked or not found. Then verify the fix the same way. Either re-check GetBySerial(agent.Serial) inside Register's transaction and refuse with Unauthenticated when it is revoked or not found, or make UpsertHostAgent an UPDATE ... WHERE host_id = $1 AND cert_serial = <presented serial> that requires one affected row with that certificate's revoked_at IS NULL, so a deleted row is never re-inserted.",
+      "deployment": "Owner-observed and non-destructive, on a staging manager with a dummy host. Enroll a test agent. Have it call Renew in a loop while an admin calls POST /api/v1/orgs/{org}/agents/{host_id}/revoke. Then query agent_certificates for that host (SELECT serial, revoked_at FROM agent_certificates WHERE host_id = <dummy>) and host_agents. Any unrevoked serial, or a host_agents row present after the revoke returned 200, confirms the race."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/api/auth_rate_limit.go:authRateLimitMiddleware:check-then-charge-concurrency-bypass",
+    "title": "Auth rate limit checks before the handler and charges after it, so concurrent TOTP guesses from one address get past the failed-attempt budget",
+    "description": "authRateLimitMiddleware first asks the limiter whether the address has already used up its budget. It then runs the handler and charges a failure only after the handler returns. Nothing reserves a slot before the handler runs. So every request that arrives before enough failures have been charged gets past the gate. A caller who has the victim's password, and so a pending session, can send large concurrent bursts of POST /api/v1/auth/totp/verify in each one-minute window. The configured limit is 20 failed guesses per minute (PULSIX_AUTH_RATE_LIMIT default), but a burst is limited only by how many requests the server accepts at once. The source has no per-account TOTP failure counter or lockout, so this per-address budget is the only limit on guessing the 6-digit second factor. Each guess matches one of 3 accepted time steps (skew 1). The same middleware also guards login, passkey login finish and invite accept.",
+    "root_cause": "internal/api/auth_rate_limit.go:75-82 calls lim.Refused(ip) before next(ctx) and lim.Charge(ip) after it. Refused only reads the count (internal/clientip/limiter.go:77). Charge (internal/clientip/limiter.go:94) runs in a separate locked section. The budget is therefore never reserved for attempts that are still in flight. /auth/totp/verify (internal/api/mfa_handlers.go:148-160) has no other per-account attempt limit.",
+    "intended_behavior": "At most PULSIX_AUTH_RATE_LIMIT failed attempts per address per minute should reach the TOTP verify, login, passkey-login and invite-accept handlers, however many requests are in flight at once. That is the limit documented at internal/config/config.go:68-77 and in the middleware's doc comment (internal/api/auth_rate_limit.go:46-62).",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/mfa_handlers.go",
+        "line": 148,
+        "scope": "POST /api/v1/auth/totp/verify",
+        "description": "A pending session (password already proven) submits a TOTP or recovery code. The route is registered with withAuthRateLimit(deps) at line 160."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/auth_rate_limit.go",
+        "line": 75,
+        "scope": "authRateLimitMiddleware",
+        "description": "lim.Refused(ip) only reads the counter. It refuses only when the charged count is already at the limit."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/clientip/limiter.go",
+        "line": 77,
+        "scope": "Limiter.Refused",
+        "description": "Checks the count under the mutex and changes nothing, so no slot is reserved for this attempt."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/auth_rate_limit.go",
+        "line": 79,
+        "scope": "authRateLimitMiddleware",
+        "description": "The handler (verifyFactorCode, then TOTP.Verify) runs for every request that passed the check."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/auth_rate_limit.go",
+        "line": 82,
+        "scope": "authRateLimitMiddleware",
+        "description": "A failure is charged only after the handler returns. By then every concurrent attempt has already been checked against the secret."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/api/auth_rate_limit.go",
+        "line": 79,
+        "description": "next(ctx) sits between the Refused check (line 75) and the Charge (line 82)."
+      },
+      {
+        "file": "internal/clientip/limiter.go",
+        "line": 94,
+        "description": "Charge caps the count at the limit and runs in its own locked section, separate from Refused."
+      },
+      {
+        "file": "internal/auth/totp.go",
+        "line": 285,
+        "description": "verifyAndConsume compares the code against 3 steps (skew 1). A miss returns false at lines 289-291 and consumes nothing. No per-account failure counter exists in internal/auth or internal/api."
+      },
+      {
+        "file": "internal/config/config.go",
+        "line": 121,
+        "description": "DefaultAuthRateLimit = 20 failed attempts per minute per address, per endpoint, is the only bound the code intends."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "The attacker has the victim's password, or some other pending session that has not completed MFA, which is needed to reach /auth/totp/verify. Login brute force is also affected, but each attempt there costs an argon2id hash."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "PULSIX_AUTH_RATE_LIMIT > 0 (default 20). The limiter is in-process, one per manager."
+      },
+      {
+        "kind": "timing_dependency",
+        "description": "The requests must be in flight at the same time, before enough failures have been charged. Burst size depends only on the attacker's connections and on how many requests the server accepts and queues at once."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A client with a pending session for an account protected by TOTP sends a burst of concurrent wrong-code verify requests from one address.",
+      "payloads": [
+        "internal/api/v04_ratelimit_test.go (scratch copy only): a huma POST /verify route on chi/humachi behind the production withAuthRateLimit(Deps{AuthRateLimit: 20, ClientIP: clientip.New(nil)}). The handler sleeps 5 ms and returns 401, standing in for a wrong TOTP code. The route is served over loopback with httptest.NewServer. The test sends 50 sequential requests to one server, then 200 concurrent requests (released together, no barrier in the handler) to a fresh server, then one follow-up request."
+      ],
+      "instructions": [
+        "Copy the repository into scratch and delete internal/api/*_test.go in the copy, because those tests import the database harness. Add the harness test there.",
+        "Run go test -count=1 -v -run TestV04AuthRateLimitConcurrent ./internal/api/ in the approved Docker sandbox: golang:1.27.1-alpine, --network none, read-only source and module cache, env -i allowlist, cap-drop ALL, uid 65532, 300 s timeout. Write stdout to evidence.txt."
+      ],
+      "observed_result": "Sequential: limit=20, 50 attempts, 20 reached the handler (20x 401, 30x 429). Concurrent: limit=20, 200 attempts from one address, 198 reached the handler (198x 401, 2x 429). After the burst the next request got 429. Source: agents/v04-session-auth/artifacts/evidence.txt. This independently reproduces the hunter's result (40 of 40 against a limit of 3, with a barrier), here with the default limit, real HTTP and no barrier."
+    },
+    "remediation": {
+      "strategy": "Reserve the attempt atomically before the handler runs: claim the slot under the limiter mutex and refund it on 2xx, 5xx or 429. Also add a per-account counter or lockout for failed second-factor attempts on /auth/totp/verify that does not depend on the client address.",
+      "code_changes": [
+        {
+          "file_name": "internal/clientip/limiter.go",
+          "fixed_code": "// Reserve atomically claims one attempt for a; ok=false means the budget is spent.\nfunc (l *Limiter) Reserve(a netip.Addr) (remaining time.Duration, ok bool) {\n\tl.mu.Lock()\n\tdefer l.mu.Unlock()\n\tnow := l.now()\n\tk := key(a)\n\tw, found := l.seen[k]\n\tif found && now.Sub(w.start) < l.window {\n\t\tif w.count >= l.limit {\n\t\t\treturn l.window - now.Sub(w.start), false\n\t\t}\n\t\tw.count++\n\t\treturn 0, true\n\t}\n\tif !found && len(l.seen) >= l.max {\n\t\tl.makeRoom(now)\n\t}\n\tl.seen[k] = &window{start: now, count: 1}\n\treturn 0, true\n}\n\n// Refund returns a reserved attempt that did not fail.\nfunc (l *Limiter) Refund(a netip.Addr) {\n\tl.mu.Lock()\n\tdefer l.mu.Unlock()\n\tif w, ok := l.seen[key(a)]; ok && w.count > 0 {\n\t\tw.count--\n\t}\n}"
+        },
+        {
+          "file_name": "internal/api/auth_rate_limit.go",
+          "fixed_code": "ip := clientAddr(deps, ctx)\nif remaining, ok := lim.Reserve(ip); !ok {\n\twriteRateLimited(ctx, remaining)\n\treturn\n}\nnext(ctx)\nif s := ctx.Status(); s < http.StatusBadRequest || s >= http.StatusInternalServerError || s == http.StatusTooManyRequests {\n\tlim.Refund(ip)\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "The attacker first needs the victim's password, then must keep sending large concurrent bursts. Each guess succeeds with probability of about 3e-6, so a meaningful chance of takeover takes hundreds of thousands of guesses, spread over many one-minute windows."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "It defeats the second factor on an account whose password is compromised. The result is an MFA-complete session with that user's org roles, and instance-admin rights if the user has them."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The production middleware and limiter ran unchanged in a sandboxed harness. With the default limit of 20, 198 of 200 concurrent failed attempts reached the handler, while sequential attempts were held to exactly 20. A source review found no per-account TOTP attempt limit that would add a second brake."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/auth/session.go:MarkMFAComplete:no-session-rotation-on-assurance-change",
+    "title": "Session id is not rotated on MFA completion, so a planted pending session is upgraded by the victim's own second factor",
+    "description": "Password login creates a session that is not MFA-complete. POST /api/v1/auth/totp/verify upgrades that same session row in place (mfa_complete=true, mfa_at=now()) and sends no new cookie. TOTP enrolment confirmation and passkey-registration completion do the same through completeEnrolment. Sessions are not bound to client IP or user agent, and the cookie name has no __Host- prefix. Suppose an attacker who knows a victim's password creates a pending session for the victim's account and can also place that cookie in the victim's browser for the Pulsix host, for example with a Domain-scoped, Path=/api cookie set from a sibling subdomain, or over plain HTTP when the deployment has no HTTPS or HSTS. The SPA's /auth/me call then sees the pending session and sends the victim to /login?step=totp. The victim's valid code makes the attacker's copy of the session MFA-complete, and it also counts as a fresh factor for step-up. The in-place upgrade is clear from source. Whether the attack works depends on whether the deployment gives an attacker a way to inject the cookie.",
+    "claimed_root_cause": "Sessions.MarkMFAComplete (internal/auth/session.go:115, query MarkSessionMFAComplete at internal/db/queries/auth.sql:28) raises assurance on the existing session id. It does not revoke the session and issue a new id and secret. The verify handler returns okOutput with no Set-Cookie. The cookie is named pulsix_session with no __Host- prefix (internal/auth/middleware.go:13, internal/api/auth_handlers.go:160), and the application sends no HSTS header. Nothing stops a cookie of the same name planted from a sibling host or over plain HTTP from being chosen by r.Cookie, which takes the first match.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/mfa_handlers.go",
+        "line": 148,
+        "scope": "POST /api/v1/auth/totp/verify",
+        "description": "The victim's browser submits its TOTP code together with whichever pulsix_session cookie it sends first. This route accepts pending sessions through requireSession."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/auth/middleware.go",
+        "line": 30,
+        "scope": "CookieMiddleware",
+        "description": "r.Cookie(CookieName) takes the first pulsix_session cookie. A planted cookie with a longer path (Path=/api) is sent ahead of the victim's host-only Path=/ cookie."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/mfa_handlers.go",
+        "line": 153,
+        "scope": "verifyFactorCode",
+        "description": "The code is checked against p.UserID, the owner of the planted session, which is the victim's account. The victim's genuine code therefore passes."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/auth/session.go",
+        "line": 115,
+        "scope": "Sessions.MarkMFAComplete",
+        "description": "The same session id is marked mfa_complete and mfa_at is set to now. No new credential is issued, so the attacker's copy of the cookie is now fully authenticated and fresh for step-up."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/db/queries/auth.sql",
+        "line": 28,
+        "description": "UPDATE sessions SET mfa_complete = true, mfa_at = now() WHERE id = $1 upgrades the row in place without changing id or secret_hash."
+      },
+      {
+        "file": "internal/api/mfa_handlers.go",
+        "line": 159,
+        "description": "The verify handler returns &okOutput{} without setting a cookie, so the session credential is the same before and after the assurance change."
+      },
+      {
+        "file": "internal/api/auth_handlers.go",
+        "line": 160,
+        "description": "sessionCookie sets Name pulsix_session, Path=/, HttpOnly, SameSite=Lax, and Secure only when PublicURL is https. There is no __Host- prefix."
+      },
+      {
+        "file": "internal/api/auth_handlers.go",
+        "line": 333,
+        "description": "completeEnrolment also upgrades the existing session id in place after a passkey registration finishes."
+      },
+      {
+        "file": "internal/auth/enrolment.go",
+        "line": 57,
+        "description": "ConfirmTOTP upgrades the existing session id in place inside the enrolment transaction."
+      },
+      {
+        "file": "internal/db/migrations/00003_sessions.sql",
+        "line": 2,
+        "description": "The sessions table has only id, user_id, secret_hash, mfa_complete and timestamps. No client binding such as IP or user agent limits where a copied cookie can be used."
+      },
+      {
+        "file": "web/src/routes/RootRedirect.tsx",
+        "line": 53,
+        "description": "When a pending session already has a factor, the SPA routes it to /login?step=totp, which prompts the victim to enter the code."
+      }
+    ],
+    "blockers": [
+      "The attack requires an attacker who can set a pulsix_session cookie in the victim's browser for the Pulsix host. That needs a same-site sibling subdomain the attacker controls, plain-HTTP access without HSTS (the application sends no HSTS itself), or another injection position. These are facts about the deployment and DNS, not about the repository.",
+      "The attacker must already know the victim's password to create the pending session for the victim's account. The cookie ordering (longer path sent first) and the SPA prompt flow are browser behaviour that cannot be observed in the approved sandbox. The DB-backed apitest harness cannot run there either, so even the server-side lack of rotation is established from source only."
+    ],
+    "validation_plan": {
+      "local": "In an environment that can run the apitest harness against a real Postgres: create user A with a confirmed TOTP factor. Log in with the password and record the pending cookie C. Call POST /api/v1/auth/totp/verify with cookie C and a valid code, and assert that the response has no Set-Cookie. Then call GET /api/v1/auth/me with the original C and assert mfa_complete=true. A fix should make C return 401 after verify, and the verify response should set a new session cookie.",
+      "deployment": "The owner checks whether any less-trusted host shares the Pulsix registrable domain and could set Domain cookies, and whether the reverse proxy enforces HTTPS and HSTS with includeSubDomains. If injection is possible, the owner can test in their own test browser with dummy accounts: set a Domain-scoped pulsix_session cookie with Path=/api holding a pending session for a test account, confirm the SPA shows the TOTP prompt, enter the test account's code, and check that the planted cookie now reports mfa_complete=true on /api/v1/auth/me."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/db/queries/shared.sql:InsertProjectedTemplates:duplicate-playbook-path-fanout",
+    "title": "One tenant's duplicate playbook path blocks creation of a shared job template for every organization",
+    "description": "InsertProjectedTemplates (internal/db/queries/shared.sql:316-321) writes one projected job_templates row per organization by LEFT JOINing that organization's playbooks rows at the definition's playbook_path, and assumes there is at most one per (org_id, repo_id, path). Nothing enforces that. The playbooks table (00018_jobs.sql:32-40) declares only PRIMARY KEY(id) and UNIQUE(org_id, id), and no later migration adds a constraint or index on playbooks. POST /api/v1/orgs/{org}/playbooks (operator, PermPlaybooksWrite) calls playbooks.Service.CreateRepo. CreateRepo only checks the path's shape and that the repository exists in the org (repos.Get also returns the org's projection of a shared repository). It then inserts a new row unconditionally, so calling it twice with the same repo_id and path stores two rows. When the instance admin later creates a shared template that names this shared repository and path, the LEFT JOIN yields two rows for that organization that carry the same generated id i.id and the same name. The INSERT fails with a unique violation (job_templates PRIMARY KEY id / UNIQUE(org_id, name), 00018_jobs.sql:43,48). CreateTemplateWithProjections (store_sql.go:461-467) passes the error to collisionFromTemplateRace. Because Service.CreateTemplate's pre-flight check has already ruled out a real name collision, that function falls through to a bare ErrNameTaken (store_sql.go:497), and the shared handler maps it to HTTP 409 'name already in use' (shared_handlers.go:609-610). withTx rolls back the definition and every organization's projection. Result: an operator in one tenant, on purpose (by pre-registering likely paths such as site.yml, since the file need not exist) or by accident, stops the instance admin from distributing that shared template to every other tenant. The error names neither the organization nor the cause. The single-organization InsertProjectedTemplate (shared.sql:327-335) and UpdateProjectedTemplate (shared.sql:383) use a scalar subquery with LIMIT 1 and are not affected, so the problem is limited to the initial create. Impact is limited to availability of one instance-admin operation. It does not disclose or change data across tenants.",
+    "claimed_root_cause": "The bulk projection query relies on a uniqueness assumption (one playbook per org/repo/path). Neither the schema (playbooks lacks UNIQUE(org_id, repo_id, path)) nor playbooks.Service.CreateRepo enforces it. Unlike the single-org InsertProjectedTemplate and UpdateProjectedTemplate, which use a scalar subquery with LIMIT 1, the bulk LEFT JOIN in InsertProjectedTemplates has no LIMIT, DISTINCT ON or per-organization aggregation. Duplicate rows a tenant controls therefore fan out the per-organization insert into a PK/unique violation that rolls back the installation-wide create.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/playbook_handlers.go",
+        "line": 118,
+        "scope": "POST /api/v1/orgs/{org}/playbooks",
+        "description": "Gated by requireOrg(PermPlaybooksWrite), so operator or above. The caller sends the repo_id of the org's projection of a shared repository and a path. Calling it twice with the same values calls deps.Playbooks.CreateRepo each time."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/playbooks/service.go",
+        "line": 143,
+        "scope": "playbooks.Service.CreateRepo",
+        "description": "Checks only the path pattern and that the repository exists in the org (repos.Get, which includes shared projections). It does not check for an existing playbook at the same repo and path."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/playbooks/service.go",
+        "line": 153,
+        "scope": "playbooks.Service.CreateRepo -> store.Create",
+        "description": "Inserts a new playbooks row with a fresh UUIDv7 on every call (CreatePlaybook is a plain INSERT with no ON CONFLICT)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/db/migrations/00018_jobs.sql",
+        "line": 32,
+        "scope": "CREATE TABLE playbooks",
+        "description": "Only PRIMARY KEY(id) and UNIQUE(org_id, id). There is no uniqueness on (org_id, repo_id, path), so both duplicate rows are accepted. No later migration adds an index or constraint on playbooks."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/shared/store_sql.go",
+        "line": 461,
+        "scope": "SQLStore.CreateTemplateWithProjections",
+        "description": "The instance admin creates a shared template that names that shared repo and path. One InsertProjectedTemplates statement runs for every organization inside the same transaction as CreateSharedTemplate."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/db/queries/shared.sql",
+        "line": 321,
+        "scope": "InsertProjectedTemplates",
+        "description": "LEFT JOIN playbooks pb ON pb.org_id = o.org_id AND pb.repo_id = g.id AND pb.path = @playbook_path AND pb.source = 'repo' matches both duplicate rows. That emits two job_templates rows for the same org with the same i.id and name, which violates job_templates PRIMARY KEY(id) and UNIQUE(org_id, name)."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/shared/store_sql.go",
+        "line": 466,
+        "scope": "SQLStore.CreateTemplateWithProjections -> collisionFromTemplateRace",
+        "description": "The unique violation goes to collisionFromTemplateRace. No organization holds the name, so it returns bare ErrNameTaken (HTTP 409 'name already in use'), and withTx rolls back the definition and every organization's projection."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/db/queries/shared.sql",
+        "line": 316,
+        "description": "Bulk INSERT ... SELECT over unnest(ids) and unnest(org_ids) zipped by ordinality, with LEFT JOIN git_repos and LEFT JOIN playbooks. It has no LIMIT, DISTINCT ON or GROUP BY per organization, so every matching playbooks row repeats i.id."
+      },
+      {
+        "file": "internal/db/queries/shared.sql",
+        "line": 333,
+        "description": "The single-organization sibling InsertProjectedTemplate resolves the same playbook with a scalar subquery and LIMIT 1, so it tolerates duplicates. UpdateProjectedTemplate (line 383) does the same. Only the bulk create path fans out."
+      },
+      {
+        "file": "internal/db/migrations/00018_jobs.sql",
+        "line": 36,
+        "description": "playbooks declares only UNIQUE (org_id, id). grep over internal/db/migrations finds no later unique index or ALTER that constrains (org_id, repo_id, path)."
+      },
+      {
+        "file": "internal/db/queries/playbooks.sql",
+        "line": 6,
+        "description": "CreatePlaybook is a plain INSERT INTO playbooks with no ON CONFLICT clause."
+      },
+      {
+        "file": "internal/playbooks/service.go",
+        "line": 153,
+        "description": "CreateRepo calls s.store.Create unconditionally after the repository lookup and never refuses a duplicate path."
+      },
+      {
+        "file": "internal/db/migrations/00018_jobs.sql",
+        "line": 43,
+        "description": "job_templates.id is PRIMARY KEY and line 48 adds UNIQUE (org_id, name). Two rows in one INSERT with the same id and name must raise SQLSTATE 23505."
+      },
+      {
+        "file": "internal/shared/store_sql.go",
+        "line": 497,
+        "description": "collisionFromTemplateRace falls through to bare ErrNameTaken when no organization holds the name, which hides the real cause and the organization responsible."
+      },
+      {
+        "file": "internal/api/shared_handlers.go",
+        "line": 609,
+        "description": "shared.ErrNameTaken is mapped to huma.Error409Conflict('name already in use')."
+      }
+    ],
+    "blockers": [
+      "The decisive observation (the duplicate-row fan-out raising 23505 inside InsertProjectedTemplates, and the transaction rolling back for every organization) needs a running Postgres. The only local harness is internal/db/testdb, which starts Postgres through testcontainers over the host Docker socket. The approved offline sandbox forbids that, and no DB-backed package (internal/shared, internal/playbooks, internal/api) may run under it. The claim therefore rests on source and standard Postgres INSERT ... SELECT semantics, not on an observed run."
+    ],
+    "validation_plan": {
+      "local": "In a DB-enabled test environment (internal/db/testdb), add an internal/shared store integration test. 1) Create two dummy organizations A and B. 2) Create a shared repo definition through SQLStore so that both orgs get a git_repos projection. 3) In org A, call playbooks.SQLStore.Create twice with source='repo', the org-A projection's repo_id and path 'site.yml' (or call playbooks.Service.CreateRepo twice). 4) Call shared.Service.CreateTemplate with SharedRepoID set to that definition and PlaybookPath 'site.yml'. Expect today: errors.Is(err, shared.ErrNameTaken) is true and not a *NameCollisionError, zero rows in shared_job_templates, and zero job_templates rows with shared_template_id set for either org. Regression after the fix (DISTINCT ON (o.org_id) or a LATERAL ... LIMIT 1 in InsertProjectedTemplates, plus an additive UNIQUE(org_id, repo_id, path) WHERE source='repo' with a duplicate refusal in CreateRepo): the create succeeds and each org gets exactly one projection. No destructive steps; dummy data only.",
+      "deployment": "Owner-observed on a staging instance only. As an operator of a test org, register the same playbook path twice via POST /api/v1/orgs/{org}/playbooks against that org's projection of a shared repository. Then, as instance admin, create a shared job template on that shared repository and path. Confirm the 409 'name already in use' and that a second test org received no projection. Afterwards, delete the duplicate test playbook rows."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/inventory/render/render.go:hostVars:pulsix_facts-trusted-template",
+    "title": "Agent-reported host facts are rendered as trusted Ansible hostvars, so a monitored host can run commands on the org's worker controller",
+    "description": "A host agent's Facts push stores arbitrary strings (up to 512 bytes, up to 64 keys) in hosts.facts. Every job's inventory snapshot then renders them verbatim as _meta.hostvars.<host>.pulsix_facts with no unsafe marking. The worker writes that document unchanged and passes an executable exec-cat wrapper as --inventory, so ansible-core 2.21.4 (the worker image pin) loads it through the script inventory plugin, which treats hostvars strings as trusted templates. When a play evaluates pulsix_facts (the documented purpose of the variable), a Jinja expression or lookup planted in a fact is evaluated in the Ansible controller process on the zone worker. Whoever controls one monitored host's agent identity (root on that host, or its agent certificate and key) can therefore execute commands as the run's play identity on the worker, with access to the material that run is given for every host in its scope. The webhook extra-vars path already neutralises exactly this with ansiblevars.Inert; the agent-facts path does not.",
+    "root_cause": "renderer.hostVars assigns h.Facts unchanged to vars[\"pulsix_facts\"] (internal/inventory/render/render.go line 390). agents.Service.RecordFacts validates only key count, empty keys and value length, and neither the manager nor the worker's mergeInventory wraps agent-originated strings as {\"__ansible_unsafe\": ...}, so ansible-core's script inventory treats them as templates.",
+    "intended_behavior": "Data reported by a host agent is lower-trust than the controller and must reach Ansible as inert data: every string under pulsix_facts should be wrapped as {\"__ansible_unsafe\": ...} (ansiblevars.Inert), as webhook variables already are, so it renders literally and is never evaluated.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/agentapi/stream.go",
+        "line": 145,
+        "scope": "Service.process (AgentStream Facts)",
+        "description": "The mTLS-authenticated agent's Facts message values are forwarded to the FactsSink, bound to the agent's own org and host from the interceptor-resolved identity."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agents/facts.go",
+        "line": 82,
+        "scope": "Service.RecordFacts",
+        "description": "After checking only key count, non-empty keys and value byte length (line 75), values containing Jinja delimiters are passed to the store."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agents/store_sql.go",
+        "line": 265,
+        "scope": "SQLStore.RecordFacts",
+        "description": "Values are JSON-encoded (line 261) and merged verbatim into hosts.facts via UpsertHostFacts (jsonb ||, internal/db/queries/agents.sql line 111)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/inventory/renderer.go",
+        "line": 182,
+        "scope": "Renderer (inventory snapshot)",
+        "description": "The stored host facts are passed into render.Host.Facts for the job's inventory snapshot."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/inventory/render/render.go",
+        "line": 390,
+        "scope": "renderer.hostVars",
+        "description": "Facts are emitted as _meta.hostvars.<host>.pulsix_facts with no __ansible_unsafe wrapping."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/inventory.go",
+        "line": 208,
+        "scope": "Runner.materializeInventory",
+        "description": "mergeInventory only adds connection variables; the document is written unchanged as the inventory document, and the exec-cat wrapper (layout.go line 136) is passed as --inventory (runner.go line 193)."
+      },
+      {
+        "kind": "sink",
+        "file": "deploy/worker/Dockerfile",
+        "line": 69,
+        "scope": "ansible-core 2.21.4 script inventory plugin + templating",
+        "description": "The pinned ansible-core treats script-inventory hostvars strings as trusted templates; evaluating pulsix_facts renders the planted expression, including lookup('pipe', ...), in the controller process."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/inventory/render/render.go",
+        "line": 390,
+        "description": "vars[\"pulsix_facts\"] = h.Facts with no ansiblevars.Inert wrapping."
+      },
+      {
+        "file": "internal/agents/facts.go",
+        "line": 75,
+        "description": "The only value check is a byte-length bound; content is unrestricted."
+      },
+      {
+        "file": "internal/worker/runner/layout.go",
+        "line": 136,
+        "description": "The inventory reaches Ansible through an exec-cat script, i.e. the script inventory plugin."
+      },
+      {
+        "file": "internal/ansiblevars/untrusted.go",
+        "line": 27,
+        "description": "Inert exists and is applied to webhook extra vars (internal/jobs/run_overrides.go line 75), but not to facts."
+      },
+      {
+        "file": "deploy/worker/Dockerfile",
+        "line": 69,
+        "description": "The worker pins ansible-core 2.21.4; in that image a full ansible-playbook run against the rendered document evaluated the fact's Jinja and pipe lookup, while the __ansible_unsafe-wrapped control stayed literal."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "The attacker holds a valid agent identity for one monitored host: root on that host, or its agent certificate and key."
+      },
+      {
+        "kind": "data_state",
+        "description": "The host is managed (rendered into job inventories) and a play run against it evaluates pulsix_facts, directly or through hostvars."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "An operator, schedule or trigger runs such a play after the malicious facts push."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Root on one host monitored by the Pulsix agent, sending a Facts message over that agent's own mTLS stream.",
+      "payloads": [
+        "Facts{values: {\"os\": \"debian-{{ 6 * 7 }}-uid{{ lookup('pipe', 'id -u') }}\"}}",
+        "Rendered inventory: {\"_meta\":{\"hostvars\":{\"web-1\":{\"ansible_host\":\"127.0.0.1\",\"pulsix_facts\":{\"os\":\"debian-{{ 6 * 7 }}-uid{{ lookup('pipe', 'id -u') }}\"}}}},\"all\":{\"children\":[\"ungrouped\"]},\"ungrouped\":{\"hosts\":[\"web-1\"]}}",
+        "Playbook task: ansible.builtin.debug: msg=\"host os is {{ pulsix_facts.os }}\" (hosts: web-1, gather_facts: false)"
+      ],
+      "instructions": [
+        "In a scratch copy of the repo, a test in internal/inventory/render calls the real agents.Service.RecordFacts (fake store) with the payload fact, then render.Render for a managed host carrying the stored fact, and prints the document (golang:1.27.1-alpine, --network none, read-only, cap-drop ALL, user 65532, prescribed limits).",
+        "The printed document is served by a two-line executable inventory script (#!/bin/sh; exec cat <doc>), mirroring inventoryWrapperText; a control document wraps the same value as {\"__ansible_unsafe\": ...}.",
+        "In noixdev/pulsix-worker:dev (ansible-core 2.21.4), with --network none --read-only, the prescribed limits and --ipc private --shm-size 64m, run ansible-playbook -i <script> play.yml for both inventories."
+      ],
+      "observed_result": "RecordFacts accepted the value (err=nil) and Render emitted it raw under pulsix_facts.os. The full ansible-playbook run printed \"host os is debian-42-uid65532\": the arithmetic evaluated and the pipe lookup ran `id -u` in the controller process. With the __ansible_unsafe-wrapped control the same task printed the value literally."
+    },
+    "remediation": {
+      "strategy": "Mark every agent-reported fact unsafe before it enters the inventory document by reusing ansiblevars.Inert (h.Facts is map[string]any, which Inert handles recursively). Add a regression test asserting that pulsix_facts strings render as {\"__ansible_unsafe\": ...}. Optionally also refuse '{{', '{%' and '{#' in RecordFacts as defence in depth.",
+      "code_changes": [
+        {
+          "file_name": "internal/inventory/render/render.go",
+          "fixed_code": "\tif len(h.Facts) > 0 {\n\t\t// Facts are reported by the host's agent: host-controlled data\n\t\t// must never be templated on the worker's controller.\n\t\tvars[\"pulsix_facts\"] = ansiblevars.Inert(h.Facts)\n\t}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Requires control of one monitored, managed host (or its agent key) and a later play that evaluates pulsix_facts, which is the variable's documented purpose. No operator credential is needed."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "Command execution in the zone worker's Ansible controller as the run's play identity, a host-to-controller trust crossing. The play identity can read the connection material that run is given for the other hosts in its scope, enabling lateral movement within the organization."
+      },
+      "overall_severity": "high"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Every trace line verified in source at b13f3c6. Independently reproduced: the Pulsix half (RecordFacts + Render) in the Go sandbox, and a full ansible-playbook run in the actual worker image with ansible-core 2.21.4, with a positive __ansible_unsafe control. Only the Postgres jsonb merge (verbatim by source) and the setuid play-uid drop were not executed; the uid observed was the image's 65532 rather than the production play uid 65533."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/inventory/renderer.go:secrets:plaintext-under-secret-field-not-redacted",
+    "title": "Plain inventory value under a field reclassified as secret is masked on reads but left off the claim's redact list",
+    "description": "SetSchema never rewrites stored values. So after a group or membership field changes from string to secret, the old plain value stays in storage until the next SetVars/Assign. Since backlog 2.21 the read path (groupView/memberView via schema.MaskDeclared) treats that value as secret and returns {$secret:set} to viewers. The claim snapshot still renders the plain value into InventoryDoc for the worker. Renderer.secrets adds a value to the revealed list only when it was a sealed envelope it opened, so Snapshot.Secrets, and therefore workerpb.Job.redact, leaves the plain value out. The worker's redactor uses only Job.redact plus credential parts, so a task that prints the var or returns it in a module result forwards it in clear. Any org viewer (jobs.read) can then read it through the job events API, while the inventory API masks the same value for that viewer.",
+    "root_cause": "Renderer.secrets (internal/inventory/renderer.go:271-282) decides what to redact by whether the value is sealed: a non-sealed value under a secret-typed field returns early without being appended to revealed. The read path (schema.MaskDeclared) masks every non-empty value under a secret-typed field. The two classifications of the same stored value disagree, and SetSchema (service.go:346-376) deliberately leaves the plain value in storage.",
+    "intended_behavior": "Every value the system hides from viewers as secret (a non-empty value under a secret-typed field, backlog 2.21 MaskDeclared) is also on the claim's redact list, so run output withholds it the way the inventory read API does. newRedactor's own doc names 'secret inventory vars' as part of that list.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/job_handlers.go",
+        "line": 490,
+        "scope": "GET /api/v1/orgs/{org}/jobs/{id}/events (requireOrg PermJobsRead, viewer)",
+        "description": "An org viewer, the lowest role, reads a job's stored run events."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/inventory/service.go",
+        "line": 349,
+        "scope": "Service.SetSchema",
+        "description": "An admin's string to secret schema change rewrites no stored value, so the plain value stays under the now-secret field."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/inventory/renderer.go",
+        "line": 273,
+        "scope": "Renderer.secrets (reveal=true)",
+        "description": "For a non-sealed value under a secret field, SealedBytes reports !ok and the value is returned as-is without being appended to revealed."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/inventory/renderer.go",
+        "line": 199,
+        "scope": "Renderer.renderIn",
+        "description": "out.Secrets = secretsInDoc(revealed, out.Doc): the plain value is in the doc but missing from Secrets."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 647,
+        "scope": "SQLQueue.buildPayload",
+        "description": "redact.add(inv.Secrets...) builds Job.Redact. InventoryDoc (from inv.Doc at line 564) carries the plain value, but the redact list has no entry for it."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 70,
+        "scope": "newRedactor",
+        "description": "The worker redacts only Job.redact entries and credential PrivateKey/Password/Token. runner.go:277 applies this redactor to streamed events."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/job_handlers.go",
+        "line": 499,
+        "scope": "GET /api/v1/orgs/{org}/jobs/{id}/events response",
+        "description": "deps.Jobs.Events returns the stored event payloads, and with them the printed plain value, to the viewer unredacted."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/inventory/renderer.go",
+        "line": 274,
+        "description": "return v, nil inside if !ok: a non-sealed value under a secret field is never appended to revealed."
+      },
+      {
+        "file": "internal/inventory/schema/secrets.go",
+        "line": 72,
+        "description": "MaskDeclared masks every non-empty value of a secret-typed field, sealed or not (backlog 2.21)."
+      },
+      {
+        "file": "internal/inventory/schema/secrets.go",
+        "line": 65,
+        "description": "Comment: a string to secret schema change reseals nothing; only the next SetVars/Assign does."
+      },
+      {
+        "file": "internal/inventory/service.go",
+        "line": 346,
+        "description": "SetSchema doc: stored values are never rewritten."
+      },
+      {
+        "file": "internal/inventory/service.go",
+        "line": 439,
+        "description": "groupView applies MaskDeclared, so GetGroup shows {$secret:set} to an inventory.read viewer. members.go:119 does the same for memberships."
+      },
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 41,
+        "description": "The newRedactor doc says the manager's redact list covers 'secret inventory vars'."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 113,
+        "description": "PermJobsRead is granted at RoleViewer."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "The reader is an org member with jobs.read (viewer or above)."
+      },
+      {
+        "kind": "data_state",
+        "description": "A group or membership field held a non-empty plain string and an admin then changed its type to secret. No SetVars/Assign has resealed that row since."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "A run over that scope executes a task (written by an operator or above) that prints the var or returns it in a module result."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An org viewer, to whom the inventory API shows the value as {$secret:set}, reads it in clear in a job's run log.",
+      "payloads": [
+        "SetSchema api_token:string; SetVars api_token=plain-token-v15; SetSchema api_token:secret; GetGroup; Snapshot(scope = group webserver)"
+      ],
+      "instructions": [
+        "Copy the repository to scratch and drop the three DB-backed test files in internal/inventory (concurrency_test.go, renderer_integration_test.go, store_sql_test.go).",
+        "Add a test in package inventory_test that reuses the package's own rendererFixture (in-memory fakeStore, testBox): extend webSchema with api_token:string, SetVars it to plain-token-v15, retype it to secret with SetSchema, then call Service.GetGroup and Renderer.Snapshot(scope GroupID = webserver).",
+        "Log GetGroup vars, the snapshot doc value and Snapshot.Secrets.",
+        "Run go test -count=1 -v -run TestV15PlainUnderSecretFieldRedactList ./internal/inventory/ in the approved Docker sandbox (no network, read-only source, no database).",
+        "The claim (queue_sql.go:539-647), worker redaction (redact.go:47-80, runner.go:277) and events route steps are source reads."
+      ],
+      "observed_result": "GetGroup and the SetSchema response returned api_token = {\"$secret\":\"set\"}. The stored value stayed \"plain-token-v15\". The snapshot doc webserver.vars.api_token was \"plain-token-v15\". Snapshot.Secrets was [\"group-secret\" \"member-secret\"], so the plain-under-secret value was not listed (listed = false) while the sealed group and membership secrets were."
+    },
+    "remediation": {
+      "strategy": "Make Renderer.secrets use the same rule as MaskDeclared. In the reveal branch, append a non-empty plain string found under a secret-typed field to revealed before returning it. secretsInDoc then scopes it like a sealed value. Add a renderer test asserting the value is in Snapshot.Secrets after a string to secret change. Optionally, have SetSchema reseal plain values under newly secret fields so the transitional state does not exist.",
+      "code_changes": [
+        {
+          "file_name": "internal/inventory/renderer.go",
+          "fixed_code": "ct, ok := schema.SealedBytes(v)\nif !ok {\n\tif s, isStr := v.(string); isStr && s != \"\" {\n\t\t*revealed = append(*revealed, s)\n\t}\n\treturn v, nil\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Three things must coincide: an admin reclassifies an already-populated string field to secret, nobody re-saves that group or membership's vars before a run, and a playbook task (authored by operator+) prints the var or returns it in a module result."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "It exposes one inventory value to org viewers through the run log. Viewers could read that value in clear before the reclassification, so the exposure reaches viewers after the admin designated it secret, including viewers added later. No cross-tenant or role escalation."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The renderer step was independently reproduced with the package's real Service and Renderer over its own in-memory fakes in the sandbox. The remaining claim, worker-redaction and events-API steps are direct, short source reads at b13f3c6."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/notify/render.go:alertItemsText:agent-item-unsanitized",
+    "title": "Host agent can inject forged lines and chat markup into alert notifications via check-result item names",
+    "description": "A host agent (a compromised managed host, or anyone holding that host's agent mTLS key) chooses the 'item' string of every check result it sends. The manager stores it verbatim, opens alerts on it, and copies it unchanged into notify.AlertItem. Neither the agent ingest contract nor the notification renderer refuses control characters or line breaks. The one-line-per-alert text that the plain-text alert e-mail and the {{ alerts.items }} webhook placeholder both use can therefore carry extra lines the host chooses: forged alert rows naming other hosts, or phishing text and URLs inside a message sent by the instance's trusted Pulsix sender. Chat receivers fed by a body template also get mention or markdown payloads such as '@everyone' or masked links. JSON escaping keeps the webhook body valid JSON, but the receiver still shows \\n as a line break. Headers and SMTP framing are not affected: the subject carries only the count and org name, and the body is dot-stuffed.",
+    "root_cause": "checks.withinContract (internal/checks/samples.go) bounds item only by length (<=512 bytes). The rules, alerts and alertroutes pipeline copies the item unchanged, and notify.alertItemsText (internal/notify/render.go) concatenates it raw into a line-oriented message. Sibling human-visible names (org, channel and group names, rule names) reject unicode.IsControl, but agent-supplied items do not.",
+    "intended_behavior": "An agent-reported item (a mount point or unit name) should never be able to add lines or formatting to a notification. Refuse items with control characters at ingest, or have alertItemsText escape or replace control characters in every field so each alert stays exactly one line.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/agentapi/stream.go",
+        "line": 250,
+        "scope": "Service.recordCheckResults",
+        "description": "The agent's CheckResult.item (a proto3 string: any valid UTF-8, including \\n) is copied verbatim into checks.Observation.Item from the mTLS-authenticated AgentStream."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/samples.go",
+        "line": 182,
+        "scope": "withinContract",
+        "description": "The only check on item is len(o.Item) > MaxItemLen (512). Control characters and line breaks are accepted, and RecordObservations stores the item."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/load_sql.go",
+        "line": 95,
+        "scope": "rules load (per-host evaluation)",
+        "description": "The stored tuple, item included, is read back for evaluation. Items without a decision resolve to Watch (internal/items/decide.go:163), so a threshold breach under a seeded rule opens an alert whose subject carries the raw item."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/alertroutes/follow.go",
+        "line": 320,
+        "scope": "Follower.decide",
+        "description": "The alert event's Item is copied verbatim into notify.AlertItem for every routed channel. follow_escalate.go:331 does the same for escalations."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/notify/render.go",
+        "line": 223,
+        "scope": "alertItemsText",
+        "description": "what += \"/\" + it.Item, then fmt.Sprintf at line 228 without escaping, so embedded newlines become extra lines."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/notify/render.go",
+        "line": 178,
+        "scope": "renderEmail (EventAlertBatch)",
+        "description": "The alert text is written into the plain-text e-mail body. The same text feeds the {{ alerts.items }} placeholder (placeholders.go:157-158, 314), where escapedText only JSON-escapes it."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/checks/samples.go",
+        "line": 174,
+        "description": "withinContract checks only empty values and length bounds for check_key, item and metric, with no character-class restriction. A sandbox harness (re-run by the Phase 5 verifier, agents/f09-agent-item-unsanitized/artifacts/evidence2.txt) confirmed it returns nil for an item containing \\n, \\r and ESC."
+      },
+      {
+        "file": "internal/notify/render.go",
+        "line": 228,
+        "description": "Each alert line is fmt.Sprintf(\"%-8s %-20s %-8s %s\", ...) built from raw agent-controlled text."
+      },
+      {
+        "file": "internal/notify/placeholders.go",
+        "line": 137,
+        "description": "The default placeholder form only JSON-escapes (json.Marshal of fieldText), so newlines and markup survive into the text the receiver displays."
+      },
+      {
+        "file": "internal/items/decide.go",
+        "line": 163,
+        "description": "With no matching decision the verdict is Watch, so a newly reported item is evaluated by default."
+      },
+      {
+        "file": "internal/checks/groups.go",
+        "line": 233,
+        "description": "A sibling control: monitoring group names reject unicode.IsControl, as do notify/validate.go:46 and rules/service.go:198. Agent items do not."
+      },
+      {
+        "file": "internal/alertroutes/follow_escalate.go",
+        "line": 331,
+        "description": "The escalation path also copies Subject.Item verbatim into an AlertItem."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "The attacker controls one enrolled host agent (root on a managed host, or holding that host's agent mTLS key)."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "A rule matches the reported check_key and metric (the seeded 'Disk usage warning/critical' rules match check_key 'disk', metric 'disk.used_pct' for every item), and an alert route sends that host's alerts to an e-mail channel or to a webhook channel whose template uses {{ alerts.items }}."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "Impact needs a recipient to read and trust the forged lines or links, or a chat platform to honour the injected mention."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "The agent on a compromised managed host reports a disk observation (metric disk.used_pct) whose item contains line breaks, a forged alert row for another host and a phishing line, with a value high enough to open an alert.",
+      "payloads": [
+        "AlertItem{HostName:\"web-7\", CheckKey:\"disk\", Item:\"/var\\ncrit     db-prod-1            opened   disk/ disk.used_pct\\n\\nACTION REQUIRED: re-authenticate at https://attacker.invalid/login @everyone\", Metric:\"disk.used_pct\", Severity:\"warn\", Event:\"opened\"}",
+        "body template: {\"content\": \"{{ alerts.items }}\"}",
+        "Observation{CheckKey:\"disk\", Metric:\"disk.used_pct\", Item:\"/var\\ncrit db-prod-1 opened\\r\\n@everyone \\x1b[31m\"}"
+      ],
+      "instructions": [
+        "In a scratch copy of the source, add a package-internal test in internal/notify that builds an EventAlertBatch with the AlertItem payload above, which is the shape Follower.decide produces from an alert whose subject item the agent supplied.",
+        "Call renderEmail(ev), alertItemsText, checkBodyTemplate(template, true) and renderWebhookBody(template, ev), then print the results and decode the webhook JSON.",
+        "Add a package-internal test in internal/checks that calls withinContract on the Observation payload above.",
+        "Run both with go test -run in the network-less, read-only Docker sandbox. Other *_test.go files in those two packages are moved aside in the scratch copy so the packages compile without testdb."
+      ],
+      "observed_result": "renderEmail produced a four-line body from one alert item: 'warn web-7 opened disk//var', a forged 'crit db-prod-1 opened disk/ disk.used_pct' row for another host, a blank line, and 'ACTION REQUIRED: re-authenticate at https://attacker.invalid/login @everyone disk.used_pct'. alertItemsText returned 4 lines for 1 item. checkBodyTemplate accepted the template (nil). renderWebhookBody returned valid JSON whose decoded content held the same forged lines and the @everyone mention. withinContract returned nil for an item with \\n, \\r and ESC. The DB-backed steps (store, rules evaluation, alert opening, follower) were traced from source only."
+    },
+    "remediation": {
+      "strategy": "Enforce at both ends. At ingest, refuse any check_key, item or metric that contains a unicode control character, mirroring the sibling name validators. In notify.alertItemsText, also neutralise control characters in every field so a stored legacy row cannot break the one-line-per-alert format. Regression tests: an item containing \\n or \\r is refused by RecordObservations, and alertItemsText output has exactly len(items)-1 newlines.",
+      "code_changes": [
+        {
+          "file_name": "internal/checks/samples.go",
+          "fixed_code": "func hasControl(s string) bool { return strings.IndexFunc(s, unicode.IsControl) >= 0 }\n\n// in withinContract:\n\tcase hasControl(o.CheckKey) || hasControl(o.Item) || hasControl(o.Metric):\n\t\treturn fmt.Errorf(\"%w: check_key, item and metric must not contain control characters\", ErrInvalidInput)"
+        },
+        {
+          "file_name": "internal/notify/render.go",
+          "fixed_code": "func oneLine(s string) string {\n\treturn strings.Map(func(r rune) rune {\n\t\tif unicode.IsControl(r) {\n\t\t\treturn '\\uFFFD'\n\t\t}\n\t\treturn r\n\t}, s)\n}\n// in alertItemsText: apply oneLine to it.Severity, it.HostName, it.Event, it.CheckKey, it.Item, it.Metric"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "It needs control of an enrolled host agent (root on a managed host) and an alert route to an e-mail channel or a templated chat channel."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "Content spoofing and phishing text inside trusted alert notifications, plus mention or markup injection in chat. There is no header or SMTP injection, code execution, data disclosure or cross-tenant effect, and a host can already lie about its own metrics."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "medium",
+      "reason": "Both ends were observed locally in the sandbox (twice, independently): the ingest contract accepts control characters, and the renderer emits the injected lines. The DB-backed middle (storage, rules evaluation, alert creation, follower) is traced from source only, and no filter was found on it."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/worker/runner/inventory.go:mergeInventory:unaliased-jump-chain-drops-bastion-pin",
+    "title": "Pinned jump host's key is not enforced when its route also contains an unpinned password-only or credential-less jump host",
+    "description": "The worker enforces a pinned bastion's host key only through a per-bastion ssh_config alias block (Host pulsix-jump-<id>, HostKeyAlias pulsix-jump-<id>, StrictHostKeyChecking yes). mergeInventory gives up the alias rewrite for the whole chain as soon as any hop has no private key and is itself unpinned. The raw 'ProxyJump=user@addr:port,...' value then stays as it was. The pinned hop is dialed by its real address, which matches only the catch-all 'Host *' block (StrictHostKeyChecking accept-new) against the run's fresh known_hosts, where the pin is stored only under the unused alias. The run reports no error. A network attacker in front of the pinned bastion is accepted with any host key, can finish authentication (observed with 'none'), and receives the tunnel (direct-tcpip) requests for the rest of the route. The defect affects template and ad-hoc runs, and also the bootstrap, rotate_key and revoke_key system jobs, because they reach the same mergeInventory through oneHostInventory/synthRunJob. A pinned target host is still verified end to end through the tunnel. For unpinned later hops and an unpinned target, however, the connection passes through the attacker. Capture of later password prompts or of the target's credential was not demonstrated.",
+    "root_cause": "The fail-closed guard in mergeInventory (internal/worker/runner/inventory.go:103) checks only whether the hop that cannot be scripted is pinned (bastionPins[bastionID]). When that hop is unpinned, lines 106-107 set blocks=nil and break. This throws away the strict block already built for an earlier pinned hop and never looks at pinned hops later in the chain. Line 113 then skips the host, leaving the raw chain. The misaligned-chain path (line 86) and the failed-rewrite path (line 116) also 'continue' without checking pins. pinBastions (line 406) still writes the pinned key under 'pulsix-jump-<id>', but nothing dials that alias. sshConfigText's catch-all (sshconfig.go:179, knownHostsDefaults at sshconfig.go:160) applies accept-new to the raw hop address.",
+    "intended_behavior": "When a route dials a pinned bastion, that hop must be checked strictly against its pinned key. If the worker cannot alias the chain (a hop that cannot be scripted anywhere in the chain, a misaligned chain, or a failed rewrite) and the route contains ANY pinned bastion, the run must fail closed. The existing comment at inventory.go:36-39 already states this intent: 'an unaliasable hop could never enforce its pin'.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 597,
+        "scope": "SQLQueue.buildPayload",
+        "description": "The claim ships each route's bastion ids with aligned bastion credential ids: an empty string for a credential-less bastion, and Secret JSON without private_key for a password credential. Org operators/admins configure the route; the lower-trust actor is the network peer the worker later dials."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 831,
+        "scope": "SQLQueue.claimHostKeys",
+        "description": "The route's pinned bastions ship as bastion_host_keys (fingerprint) and bastion_known_hosts (full key), keyed by bastion id."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/inventory.go",
+        "line": 188,
+        "scope": "Runner.materializeInventory",
+        "description": "mergeInventory is called with the claim's connections, credentials and bastion pins. Bootstrap, rotate_key and revoke_key reach it too, through oneHostInventory and synthRunJob."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/inventory.go",
+        "line": 103,
+        "scope": "mergeInventory",
+        "description": "For a hop without a private key, only that hop's own pin is checked. An unpinned password-only or credential-less hop sets blocks=nil and breaks (lines 106-107), which drops the pinned hop's strict block or never reaches a later pinned hop."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/inventory.go",
+        "line": 113,
+        "scope": "mergeInventory",
+        "description": "With blocks nil the host is skipped. ansible_ssh_common_args keeps the raw 'ProxyJump=user@addr:port,...' chain, and no error is returned."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/inventory.go",
+        "line": 406,
+        "scope": "pinBastions",
+        "description": "The pinned key is written to the run's known_hosts only under 'pulsix-jump-<id>', an alias the raw chain never uses."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/worker/runner/sshconfig.go",
+        "line": 179,
+        "scope": "sshConfigText",
+        "description": "The only remaining block is 'Host *' with knownHostsDefaults (sshconfig.go:160: StrictHostKeyChecking accept-new). The ProxyJump child ssh reads this file (via -F from sshArgs, layout.go:93), matches the raw hop address against that block, and accepts and records whatever key an impostor presents."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/runner/inventory.go",
+        "line": 103,
+        "description": "The guard checks bastionPins[bastionID] only for the hop that cannot be scripted. The else path (blocks = nil; break at lines 106-107) discards every other hop's pin."
+      },
+      {
+        "file": "internal/worker/runner/inventory.go",
+        "line": 86,
+        "description": "A misaligned chain does 'continue' without checking bastion pins. This shares the root cause; it was not demonstrated."
+      },
+      {
+        "file": "internal/worker/runner/inventory.go",
+        "line": 116,
+        "description": "A chain that cannot be rewritten does 'continue' without checking bastion pins. This shares the root cause; it was not demonstrated."
+      },
+      {
+        "file": "internal/worker/runner/sshconfig.go",
+        "line": 179,
+        "description": "The raw hop address resolves to the catch-all 'Host *' block with accept-new."
+      },
+      {
+        "file": "internal/worker/runner/sshconfig_test.go",
+        "line": 164,
+        "description": "The existing regression test covers only a pinned hop that is itself password-only. No test covers a pinned key hop next to an unpinned password-only or credential-less hop."
+      },
+      {
+        "file": "internal/worker/sysjob.go",
+        "line": 101,
+        "description": "System jobs build the same aligned bastion credential ids and reuse mergeInventory, so bootstrap, rotate_key and revoke_key have the same defect."
+      },
+      {
+        "file": "internal/sshconf/service.go",
+        "line": 381,
+        "description": "A bastion credential may be either an SSH key or an SSH password, or the bastion may have none, and pins are set per bastion. A route that mixes a pinned key hop with an unpinned password-only hop is therefore a valid configuration; nothing on the manager side refuses it."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "data_state",
+        "description": "An organization route contains at least one bastion pinned with a full key AND at least one unpinned bastion whose credential is password-only or absent, in either order. The route can come from a host, group or zone bastion setting, or from a bastion's via-chain."
+      },
+      {
+        "kind": "network_routing",
+        "description": "The attacker can intercept or redirect the worker's TCP connection to the pinned bastion's address. This is exactly the threat the bastion pin exists to stop."
+      },
+      {
+        "kind": "authorization_role",
+        "description": "The attacker needs no Pulsix privilege. Org operators/admins configure the route in the normal way, and any run, ad-hoc command, bootstrap, rotation or revocation over it triggers the dial."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A network-positioned attacker impersonates a jump host the organization has pinned, against a worker dialing a route that also includes an unpinned jump host with a password credential or no credential.",
+      "payloads": [
+        "Claim (workerpb.Job): connections {\"web1\": {host_id:u1, credential_id:cHOST, bastions:[bPIN,bPW|bNONE], bastion_credential_ids:[cKEY,cPW|\"\"]}}, inventory hostvar ansible_ssh_common_args '-o ProxyJump=jump@127.0.0.1:2201,ops@10.0.0.8:22', credentials cKEY={private_key}, cPW={password}, bastion_host_keys {bPIN: SHA256 of a generated ed25519 key}, bastion_known_hosts {bPIN: that key}",
+        "Loopback impostor on 127.0.0.1:2201: x/crypto/ssh server with a freshly generated ed25519 host key (not the pin), NoClientAuth, rejecting every channel",
+        "ssh -v -F <run ssh_config> -o IdentitiesOnly=yes -o UserKnownHostsFile=<run known_hosts> -o GlobalKnownHostsFile=/dev/null -o BatchMode=yes -o ConnectTimeout=5 -o ProxyJump=jump@127.0.0.1:2201,ops@10.0.0.8:22 -l root 10.0.0.10 true"
+      ],
+      "instructions": [
+        "Copy the repository into scratch. Add the harness internal/worker/runner/zz_v18_pins_test.go, which calls the real (&Runner{}).materializeInventory with the claim above for these cases: pinned hop first + password hop, pinned hop first + credential-less hop, pinned hop second + password hop, a pinned-only control, and a pinned password-only control. Add the loopback impostor internal/zzv18/fakesshd (sources in agents/v18-ssh-pins/artifacts/evidence3.txt).",
+        "In the approved golang:1.27.1-alpine sandbox (network none, read-only source), run: go test -count=1 -v -run TestV18MixedChainPin ./internal/worker/runner/ (agents/v18-ssh-pins/artifacts/evidence.txt). Then build the impostor.",
+        "In noixdev/pulsix-worker:dev (--network none --read-only, OpenSSH_10.0p2), start the impostor on 127.0.0.1:2201. Dial the target with the ansible-shaped ssh command, using each case's rendered ssh_config, known_hosts and pulsix_ssh_common_args (agents/v18-ssh-pins/artifacts/evidence2.txt)."
+      ],
+      "observed_result": "Mixed chains (pinned first or second, with a password or credential-less hop): materializeInventory err=<nil>. The written ssh_config contains only 'Host * / StrictHostKeyChecking accept-new'. pulsix_ssh_common_args keeps the raw '-o ProxyJump=jump@127.0.0.1:2201,ops@10.0.0.8:22'. known_hosts has the pin only as 'pulsix-jump-bPIN ...'. OpenSSH in the worker image printed: \"Warning: Permanently added '[127.0.0.1]:2201' (ED25519)\" and 'Authenticated to 127.0.0.1 ([127.0.0.1]:2201) using \"none\"'. The impostor logged: 'client authenticated as \"jump\"' and 'client opened channel direct-tcpip'. Controls: the pinned-only route rendered the strict alias block and ssh failed with 'Host key for pulsix-jump-bpin has changed ... Host key verification failed.' before authenticating. The pinned password-only hop failed the merge closed."
+    },
+    "remediation": {
+      "strategy": "In mergeInventory, fail the merge closed whenever a route that dials ANY pinned bastion cannot be fully aliased: a hop that cannot be scripted anywhere in the chain, a chain that does not match the claim, or a failed rewrite. Do not check only the pin of the hop that cannot be scripted. Effective args without any ProxyJump can still pass through, since they dial no bastion. Add regression tests, all expecting an error: a pinned key hop plus an unpinned password-only hop in both orders, a pinned key hop plus a credential-less hop, and a misaligned chain containing a pinned bastion.",
+      "code_changes": [
+        {
+          "file_name": "internal/worker/runner/inventory.go",
+          "fixed_code": "// routeDialsPinned returns the first pinned bastion the route dials, \"\" when none is.\nfunc routeDialsPinned(conn connection, bastionPins map[string]string) string {\n\tfor _, id := range conn.Bastions {\n\t\tif bastionPins[id] != \"\" {\n\t\t\treturn id\n\t\t}\n\t}\n\treturn \"\"\n}\n\n// in mergeInventory, after parsing the chain:\n\t\targs := varString(vars, \"ansible_ssh_common_args\")\n\t\tparts, chain, ok := parseProxyJump(args)\n\t\tif !ok {\n\t\t\tcontinue // no ProxyJump in the effective args: no bastion is dialed\n\t\t}\n\t\tif !aligned(conn, len(parts)) {\n\t\t\tif id := routeDialsPinned(conn, bastionPins); id != \"\" {\n\t\t\t\treturn nil, nil, nil, fmt.Errorf(\"host %s: the route dials pinned bastion %s but its jump chain does not match the claim, so the pin could never be enforced\", name, id)\n\t\t\t}\n\t\t\tcontinue\n\t\t}\n\t\t...\n\t\t\tif secret.PrivateKey == \"\" {\n\t\t\t\tif id := routeDialsPinned(conn, bastionPins); id != \"\" {\n\t\t\t\t\treturn nil, nil, nil, fmt.Errorf(\"host %s: the route dials pinned bastion %s but hop %s cannot be scripted (password-only or none), so the chain cannot be aliased and the pin could never be enforced: give every hop of the route an ssh_key credential\", name, id, bastionID)\n\t\t\t\t}\n\t\t\t\tblocks = nil\n\t\t\t\tbreak\n\t\t\t}\n\t\t...\n\t\trewritten, ok := rewriteProxyJump(args, chain, strings.Join(aliases, \",\"))\n\t\tif !ok {\n\t\t\tif id := routeDialsPinned(conn, bastionPins); id != \"\" {\n\t\t\t\treturn nil, nil, nil, fmt.Errorf(\"host %s: the route dials pinned bastion %s but its jump chain could not be rewritten to the pinned aliases\", name, id)\n\t\t\t}\n\t\t\tcontinue\n\t\t}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Needs a specific but supported configuration (a pinned key bastion and an unpinned bastion with a password credential or none, on the same route) plus an attacker with network position in front of the pinned bastion. On the raw chain the pinned hop's own key file is not referenced either (no IdentityFile for the raw address), so such routes generally fail legitimate authentication. Operators are therefore likely to notice and fix the route, although every retry or scheduled run dials again in the meantime."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Silently defeats the host-key pin, the bastion's only protection against impersonation. The impostor is accepted and recorded, authenticates the worker, and controls the tunnel to later hops and to an unpinned target (observed up to the direct-tcpip request). A pinned target is still verified end to end. Capture of credentials through later hops or the target was not demonstrated."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Independent reproduction with my own harness through the real Runner.materializeInventory (written files, not only the helpers), for both hop orders and for both password and credential-less hops. The real worker-image OpenSSH client against a loopback impostor accepted the wrong key, while the pinned-only control failed closed. The source trace from claim build to ssh_config was re-checked line by line at b13f3c6."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/worker/runner/redact.go:base64Spellings:unaligned-offset",
+    "title": "Base64 redaction only matches a secret at a 3-byte-aligned offset, so slurped files leak it",
+    "description": "Backlog 2.48 added base64 spellings to the worker's redactor because slurp returns file contents base64-encoded. base64Spellings encodes only the secret by itself. When the secret sits inside a larger encoded buffer at a byte offset that is 1 or 2 mod 3, as with a typical config line like 'pwd=<secret>', the encoded content contains none of the listed spellings. eventPayload forwards the module result unredacted, the manager stores it as received, and an org viewer (jobs.read) reads it from the job events API and base64-decodes the secret.",
+    "root_cause": "Base64 output depends on where the secret falls within the encoded buffer's 3-byte groups. base64Spellings lists only the encodings of the whole value starting on a group boundary. It lists no stable inner core for offsets 1 and 2 mod 3. Even at offset 0, the last character of the unpadded spelling of a value whose length is not a multiple of 3 depends on the byte that follows the secret.",
+    "intended_behavior": "A secret that a slurp or b64encode result carries is replaced before the event leaves the worker (internal/worker/runner/redact.go base64Spellings doc comment; backlog 2.48 says a secret read out of a file and printed is now covered).",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 647,
+        "scope": "SQLQueue.buildPayload",
+        "description": "The claim names secret inventory vars (and, just above, every opened credential) on Job.redact. This is the only source of values the worker redacts."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 116,
+        "scope": "base64Spellings",
+        "description": "Only the four whole-value encodings of v are added to the redact set."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 174,
+        "scope": "redactor.eventPayload",
+        "description": "event_data.res (for example slurp's content field) is redacted by literal substring match only."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/events.go",
+        "line": 445,
+        "scope": "SQLQueue.appendEvent",
+        "description": "The payload is stored as received. normalizePayload only reshapes invalid JSON."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/job_handlers.go",
+        "line": 490,
+        "scope": "GET /api/v1/orgs/{org}/jobs/{id}/events",
+        "description": "Gated by PermJobsRead (viewer). toJobEventDTO returns the stored payload, so a viewer reads res.content and base64-decodes the secret."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 119,
+        "description": "The encoders run over []byte(v) alone. There is no offset-shifted or trimmed-core variant."
+      },
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 172,
+        "description": "The res key of event_data is always forwarded, so slurp's content reaches the event whatever the verbosity."
+      },
+      {
+        "file": "internal/worker/runner/runner.go",
+        "line": 446,
+        "description": "Every mapped ansible event goes to the sink through red.eventPayload. No other redaction pass runs on the worker or the manager."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 113,
+        "description": "jobs.read is granted to the viewer role, which is below the operator+ principals that the spec accepts can obtain job credentials."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "Org viewer (jobs.read) reading a run's events."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "A legitimate task, written by an operator or above, base64-encodes data that embeds a claim secret without no_log. Examples are slurp of a config file that holds a secret inventory var or credential, or b64encode of a templated string."
+      },
+      {
+        "kind": "data_state",
+        "description": "The secret's byte offset in the encoded buffer is 1 or 2 mod 3, which covers about two thirds of placements."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An org viewer reads the events of a run whose task slurped a config file embedding a secret var.",
+      "payloads": [
+        "secret on Job.redact: s3cr3tPassw0rd",
+        "slurped file bytes: pwd=s3cr3tPassw0rd\\n -> res.content cHdkPXMzY3IzdFBhc3N3MHJkCg=="
+      ],
+      "instructions": [
+        "In a scratch copy of the repo, add a package-internal test in internal/worker/runner that builds newRedactor(&workerpb.Job{Redact: []string{secret}}).",
+        "For each prefix (\"\", \"a\", \"ab\", \"abc\", \"pwd=\", \"db_pass=\", \"password: \"), build a runner_on_ok event whose event_data.res is a slurp result {content: base64(prefix+secret+\"\\n\"), encoding: base64}. Pass it through r.eventPayload, then decode the forwarded res.content.",
+        "Run go test -run TestV16Base64Alignment ./internal/worker/runner/ in the approved network-less, read-only Docker sandbox."
+      ],
+      "observed_result": "Through the real eventPayload, offsets 0 and 3 were redacted. Offsets 1, 2, 4, 8 and 10 were forwarded unchanged. For example, offset 4 forwarded cHdkPXMzY3IzdFBhc3N3MHJkCg==, and the decoded content contained s3cr3tPassw0rd (agents/v16-job-output/artifacts/evidence.txt)."
+    },
+    "remediation": {
+      "strategy": "In base64Spellings, also list the alignment-independent core of the secret for each offset class: the unpadded std and URL encoding of v[skip:] trimmed to whole 3-byte groups, for skip 0, 1 and 2, with a minimum core length so short cores cannot shred output. This also covers the tail-character dependence at offset 0. Add a regression test over offsets 0..5 with differing following bytes.",
+      "code_changes": [
+        {
+          "file_name": "internal/worker/runner/redact.go",
+          "fixed_code": "for skip := 0; skip < 3 && skip < len(b); skip++ {\n\tcore := b[skip:]\n\tcore = core[:len(core)-len(core)%3]\n\tif len(core) < 6 {\n\t\tcontinue\n\t}\n\tfor _, enc := range []*base64.Encoding{base64.RawStdEncoding, base64.RawURLEncoding} {\n\t\tout = append(out, enc.EncodeToString(core))\n\t}\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "It requires a legitimate task that base64-encodes a buffer embedding a claim secret without no_log, such as slurp of a config file, and a misaligned offset, which happens about two thirds of the time. The viewer cannot cause the task."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "A viewer recovers a secret var or credential value that redaction promised to hide from them. The leak is limited to the values the task happened to encode."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "This is deterministic encoding behavior. It was reproduced independently in the sandbox through the real eventPayload at offsets 0 through 4, 8 and 10, and the source trace to the viewer-readable events endpoint was verified line by line."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/worker/runner/redact.go:newRedactor:go-html-json-escape-vs-python-json",
+    "title": "Run-output redaction misses secrets that contain a quote or backslash together with &, < or > in ansible's display text",
+    "description": "The worker's redactor replaces each claim secret's raw value and its Go json.Marshal spelling. ansible-core's result display (default callback, result_format json) serializes module results with Python json.dumps(ensure_ascii=False), which escapes \" and \\ but leaves &, < and > literal. Go's encoder HTML-escapes those three (\\u0026, \\u003c, \\u003e). So for a secret that has a JSON-escaped character and one of &, < or >, neither listed spelling appears in the display stdout. The secret is forwarded unredacted in the event's stdout field, stored as-is in job_events, and shown to any org member with jobs.read (viewer) through the events API, the SSE stream and the run view's EventLog. The structured event_data.res copy of the same value is redacted, so the gap is only the display text. Evidence from the audit run: a real runner_on_ok event captured from the worker image (ansible-runner 2.4.3 / ansible-core 2.21.4, network none) carries stdout `\"db_password\": \"Tr&ub4dor\\\"3x\"`, so & is literal and \" is escaped; feeding that exact line through the real Runner.streamEvents with Redact=[Tr&ub4dor\"3x, Troub4dor\"3x] forwarded stdout that still contained the secret, while the control secret without & was redacted and res.db_password was [redacted] in both.",
+    "root_cause": "newRedactor (internal/worker/runner/redact.go:54-57) derives the only escaped spelling with json.Marshal, whose default HTML escaping does not match the escaping of the Python producer of ansible's display text. text() does literal substring replacement, so a spelling mismatch means the secret is not redacted.",
+    "intended_behavior": "internal/jobs/redact.go (package comment) says viewers with jobs.read must never see a credential, secret extra var or secret inventory var that a task printed. internal/worker/runner/redact.go:43-44 says each value is also redacted in its JSON-escaped spelling because display text shows module results as JSON. That spelling has to match what ansible actually emits.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 645,
+        "scope": "SQLQueue.buildPayload (job claim)",
+        "description": "On claim, every opened credential (and, on the next line, inventory secrets) goes onto workerpb.Job.redact. This is where the protected secret enters the run. The lower-trust reader is the viewer at the sink."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 54,
+        "scope": "newRedactor.add",
+        "description": "The only escaped spelling is built with json.Marshal, which HTML-escapes & < >. The set holds the raw value, the Go-escaped value and base64 forms, but not the Python json.dumps form."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/runner.go",
+        "line": 446,
+        "scope": "Runner.streamEvents",
+        "description": "Each ansible-runner --json event line with a state is forwarded as red.eventPayload(ev)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 179,
+        "scope": "redactor.eventPayload",
+        "description": "The display stdout (ansible's json.dumps spelling of the result) only goes through text(), which replaces the listed literals. None of them match."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/events.go",
+        "line": 445,
+        "scope": "SQLQueue.appendEvent",
+        "description": "The manager stores the payload as received, because normalizePayload passes valid JSON through unchanged, and publishes it to SSE subscribers."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/job_handlers.go",
+        "line": 490,
+        "scope": "GET /api/v1/orgs/{org}/jobs/{id}/events",
+        "description": "requireOrg(PermJobsRead) lets a viewer read the stored payload, including the unredacted stdout. The SSE route (job_sse.go:40) has the same gate."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 55,
+        "description": "esc := string(b[1 : len(b)-1]) from json.Marshal is the only escaped spelling added."
+      },
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 133,
+        "description": "text() does literal strings.ReplaceAll on the listed values only."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 113,
+        "description": "PermJobsRead is granted to RoleViewer."
+      },
+      {
+        "file": "web/src/features/runs/EventLog.tsx",
+        "line": 62,
+        "description": "The run view renders payload.stdout verbatim."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "The reader needs only the viewer role (jobs.read) in the organization that ran the job."
+      },
+      {
+        "kind": "data_state",
+        "description": "The secret has at least one JSON-escaped character (\", \\ or a control character, e.g. a newline in a multi-line value) AND at least one of &, < or >."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "A task's display output includes the value, e.g. debug of the var, a module result echoing it, or a failed command's output in the JSON result. This is the accidental print that redaction exists to catch."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "The default ansible result_format json applies. The worker-generated ansible.cfg (layout.go ansibleCfgText) does not change it."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An org viewer with jobs.read opens the run log, or calls the events/SSE API, for a job whose task printed a secret containing such characters.",
+      "payloads": [
+        "secret on the claim redact list: Tr&ub4dor\"3x (control: Troub4dor\"3x)",
+        "playbook task: ansible.builtin.debug: var=db_password with extravars {\"db_password\": \"Tr&ub4dor\\\"3x\"}"
+      ],
+      "instructions": [
+        "In the worker image noixdev/pulsix-worker:dev (network none, read-only, tmpfs-only writes), run ansible-runner run on a local-connection playbook with two debug tasks printing db_password=Tr&ub4dor\"3x and ctrl_password=Troub4dor\"3x. Capture the runner_on_ok job_event lines.",
+        "Copy the repository into scratch and add a package-internal test in internal/worker/runner. It feeds those exact lines to (&Runner{}).streamEvents with newRedactor(&workerpb.Job{Redact: []string{`Tr&ub4dor\"3x`, `Troub4dor\"3x`}}), then decodes each forwarded payload's stdout.",
+        "Run go test -run TestV17RealAnsibleDisplayRedaction ./internal/worker/runner/ in the network-less, read-only golang sandbox."
+      ],
+      "observed_result": "ansible's display stdout was ok: [localhost] => {\\r\\n    \"db_password\": \"Tr&ub4dor\\\"3x\"\\r\\n}. After streamEvents, the forwarded payload's stdout still read \"db_password\": \"Tr&ub4dor\\\"3x\" (contains secret=true), while event_data.res.db_password was [redacted]. The control secret Troub4dor\"3x was [redacted] in both stdout and res. Storage and API exposure are source-verified only, because the DB-backed packages cannot run in the sandbox. Recorded in the v17-job-output run artifacts: evidence2.txt line 4 is the real ansible-runner 2.4.3 / ansible-core 2.21.4 runner_on_ok event, and evidence.txt lines 6 and 11 are the redaction outcome for the control secret and the & secret."
+    },
+    "remediation": {
+      "strategy": "Add the Python json.dumps(ensure_ascii=False) spelling next to the Go one. Escape only \", \\ and control characters, and leave &, <, >, U+2028/U+2029 and non-ASCII literal. A plain SetEscapeHTML(false) encoder still differs on U+2028/U+2029 and invalid UTF-8, so a hand-written escaper is the exact match. Keep the existing json.Marshal spelling. Add a regression test that feeds a recorded ansible-runner event with a secret mixing \"/\\ with &/</>.",
+      "code_changes": [
+        {
+          "file_name": "internal/worker/runner/redact.go",
+          "fixed_code": "// Add \"fmt\" to the imports of internal/worker/runner/redact.go.\n\n// jsonSpellings returns every JSON string-body spelling of v a run can print:\n// Go's HTML-escaping json.Marshal form and the Python json.dumps(ensure_ascii=False)\n// form ansible's result display uses (escapes only '\"', '\\\\' and control characters).\nfunc jsonSpellings(v string) []string {\n\tvar out []string\n\tif b, err := json.Marshal(v); err == nil {\n\t\tout = append(out, string(b[1:len(b)-1]))\n\t}\n\tvar sb strings.Builder\n\tfor _, r := range v {\n\t\tswitch r {\n\t\tcase '\"':\n\t\t\tsb.WriteString(`\\\"`)\n\t\tcase '\\\\':\n\t\t\tsb.WriteString(`\\\\`)\n\t\tcase '\\n':\n\t\t\tsb.WriteString(`\\n`)\n\t\tcase '\\r':\n\t\t\tsb.WriteString(`\\r`)\n\t\tcase '\\t':\n\t\t\tsb.WriteString(`\\t`)\n\t\tcase '\\b':\n\t\t\tsb.WriteString(`\\b`)\n\t\tcase '\\f':\n\t\t\tsb.WriteString(`\\f`)\n\t\tdefault:\n\t\t\tif r < 0x20 {\n\t\t\t\tfmt.Fprintf(&sb, `\\u%04x`, r)\n\t\t\t} else {\n\t\t\t\tsb.WriteRune(r)\n\t\t\t}\n\t\t}\n\t}\n\tout = append(out, sb.String())\n\treturn out\n}\n\n// in newRedactor.add, replacing the single json.Marshal spelling:\nfor _, esc := range jsonSpellings(v) {\n\tif esc != v {\n\t\tset[esc] = true\n\t}\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "It needs a secret with both character classes (common in generated passwords, but not universal) and a task that prints it."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "The lowest org role reads a cleartext managed-host credential or secret var that the product explicitly withholds from viewers."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The display spelling comes from real ansible-core 2.21.4 / ansible-runner 2.4.3 output in the worker image, and that output went through the real Go streamEvents/redactor path. The json.dumps(ensure_ascii=False) call was read in the image's callback source. Manager storage and API exposure are source-only but straightforward: valid JSON is stored verbatim behind a jobs.read gate."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/worker/runner/share.go:ShareWorkDir+layout.go:writeTextFile/path-following-ops-in-play-writable-workdir",
+    "title": "Worker-uid writes and chmods follow paths in a work dir the play group can already modify",
+    "description": "With PULSIX_WORKER_PLAY_UID set, newWorkDir makes the run's work dir mode 02770, group 65532, before any run file is written (workdir.go:44). The play uid has 65532 as its primary gid and the dir has no sticky bit, so any play-uid process can create, rename or replace entries in it. The worker then operates by path as its own uid: writeTextFile/writeSecretFile call os.MkdirAll and os.WriteFile (follow a pre-planted symlink, layout.go:67,70); ShareWorkDir checks the readdir d_type for symlinks then calls lstat and os.Chmod by path and descends with WalkDir (share.go:40-56). Local checks: (1) Go sandbox - a planted symlink at work/ssh_config sent writeTextFile's content into a dummy outside file, and a goroutine flipping a work-dir subdir to a symlink pointing at a dummy 0700 dir won the ShareWorkDir race at iteration 399, taking the outside dir to 2770 and its dummy key to 0660 (evidence.txt). (2) Shipped worker image - a play started via the setuid helper SIGKILLed its own supervisor (same uid 65533); a setsid'd uid-65533 child then survived the run, reparented to PID 1, and another uid's /proc/<pid>/cmdline was readable (evidence2.txt). The worker backstop signals only the original pgid (runner.go:543,639), not a setsid'd process. (3) Source - an SSH-remote repo-backed job embeds <workDir>/home/.ssh/known_hosts (and -i <workDir>/gitkeys/<id>) in git's ssh argv during materializePlaybook, before materializeInventory and ShareWorkDir (gitrepo.go:135,158,182; runner.go:164-180), leaking the random work-dir name via /proc cmdline; for inline/adhoc jobs no source-visible discovery channel exists (data dir 0710, random MkdirTemp suffix). Attacker: an operator+ org member whose arbitrary play-uid code is accepted by design. Boundary crossed: the play-uid separation protecting the worker's identity dir and data dir. Result: worker-uid overwrite/truncation and a wide chmod of worker-owned paths. The integrated cross-uid chain against a live worker loop was not executed.",
+    "claimed_root_cause": "The worker materializes and shares run files with path-based, symlink-following operations (os.MkdirAll, os.WriteFile, lstat-then-os.Chmod by name, WalkDir descent) inside a directory that is group-writable by the play from the moment it is created, with no sticky bit. Play-uid processes are contained only by a per-run supervisor running as the play's own uid, which the play can kill, so a play-uid process can survive into later jobs and substitute entries while the worker materializes them.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/worker/runner/runner.go",
+        "line": 388,
+        "scope": "newRunnerCmd",
+        "description": "With PlayUID set the setuid helper execs the play supervisor as the play uid. The play (operator-supplied code) can SIGKILL its supervisor and leave a setsid'd play-uid process running after the job, observed in the shipped image (evidence2.txt)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/workdir.go",
+        "line": 44,
+        "scope": "Loop.newWorkDir",
+        "description": "The next job's work dir is chmodded to 02770 (group 65532 = play's primary gid, no sticky bit) before any run file is written, so play-uid processes can create, rename or replace any entry in it."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 182,
+        "scope": "Runner.FetchRepoDir",
+        "description": "For an SSH-remote repo-backed job, GIT_SSH_COMMAND carries UserKnownHostsFile=<workDir>/home/.ssh/known_hosts (and -i <workDir>/gitkeys/<id> at line 158); git's ssh child exposes the work dir path via /proc cmdline before materializeInventory and ShareWorkDir run."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/layout.go",
+        "line": 70,
+        "scope": "writeTextFile",
+        "description": "Run files are written by path with os.WriteFile (O_CREAT|O_TRUNC, follows a pre-planted symlink) after os.MkdirAll (line 67) accepts a symlinked parent. Demonstrated: a dummy outside file was overwritten (evidence.txt)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/runner.go",
+        "line": 180,
+        "scope": "Runner.Run",
+        "description": "ShareWorkDir runs on the work dir as the worker uid after all run files are materialized and before the play spawns."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/worker/runner/share.go",
+        "line": 56,
+        "scope": "ShareWorkDir",
+        "description": "os.Chmod(path) follows a symlink swapped in after the readdir d_type check (line 40), and WalkDir descends through it. Demonstrated: a dummy outside dir went 0700 to 2770 and its dummy key 0600 to 0660 (evidence.txt)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/runner/share.go",
+        "line": 40,
+        "description": "The symlink skip relies on the readdir d_type, taken before d.Info() (lstat, line 43) and os.Chmod by path (line 56); nothing is fd-relative or O_NOFOLLOW."
+      },
+      {
+        "file": "internal/worker/runner/layout.go",
+        "line": 67,
+        "description": "os.MkdirAll and os.WriteFile by path, without O_NOFOLLOW or O_EXCL, inside the group-writable work dir."
+      },
+      {
+        "file": "internal/worker/workdir.go",
+        "line": 44,
+        "description": "Group write (02770, no sticky bit) is granted at creation, before materialization; fs.protected_symlinks applies only to sticky world-writable dirs, so it does not constrain these follows."
+      },
+      {
+        "file": "internal/worker/runner/runner.go",
+        "line": 639,
+        "description": "The worker backstop SIGKILL goes only to the run's original pgid (signalGroup, line 543), so a setsid'd play-uid descendant of a killed supervisor is not reached."
+      },
+      {
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 135,
+        "description": "The run's known_hosts path under the work dir is created and embedded in the ssh argv for SSH-remote repo fetches before inventory/config materialization and ShareWorkDir, leaking the random work-dir name via /proc/<pid>/cmdline."
+      },
+      {
+        "file": "internal/worker/loop.go",
+        "line": 434,
+        "description": "The data dir is 0710 (traverse, no list) and MkdirTemp uses a random suffix (workdir.go:39), so for jobs without a git ssh step no discovery channel is source-visible."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-10-29-cancel-stops-the-play-design.md",
+        "line": 171,
+        "description": "The design states the supervisor runs as the play uid, the same uid as everything below it; a hostile play killing its supervisor is not addressed."
+      }
+    ],
+    "blockers": [
+      "The integrated cross-uid chain was not executed: a real worker loop needs a Postgres-backed manager, an enrolled worker and an SSH git remote for the repo-backed job that leaks the work-dir name, all of which the approved sandbox forbids (no network, no database). Only the components were observed independently: the sink race and symlink-following write in the single-uid Go sandbox, and play-uid survival past its run in the worker image.",
+      "Whether a surviving play-uid process can read worker children's /proc/<pid>/cmdline in a deployment depends on the /proc mount options (hidepid) of the deployed container; it was readable cross-uid in the local docker sandbox, but that is a deployment fact.",
+      "Whether the identity key becomes readable after the chmod depends on the identity files' group and ownership (data-dir identity is 65532:65532; a bind-mounted /etc/pulsix-worker bundle may differ); the file-level-symlink variant that would chmod a target to 0777 regardless was not observed."
+    ],
+    "validation_plan": {
+      "local": "On a disposable worker container (noixdev/pulsix-worker:dev, PULSIX_WORKER_PLAY_UID=65533) enrolled to a local dev manager with a dummy org and a local SSH git remote on an isolated docker network, dummy data only: (1) run an inline job whose play double-forks a setsid'd watcher and then SIGKILLs its supervisor; (2) the watcher polls /proc/*/cmdline for 'UserKnownHostsFile=.../job-', then on a hit polls stat of the discovered work dir until the worker starts materializing, and rename-swaps a later-sorted worker-owned subdir (e.g. project or vault) with a symlink to the identity dir; (3) run a repo-backed SSH job to drive the next materialization; (4) stop the moment the identity dir or key mode changes, observed by stat from outside the container. Never read or use the key; restore modes and destroy the container afterward.",
+      "deployment": "Owner-run read-only check on a dummy worker: read the container's /proc mount options (grep ' /proc ' /proc/mounts) for hidepid; record whether PULSIX_WORKER_PLAY_UID is set and which job kinds use SSH-remote repos; after a completed job, list any uid-65533 processes still running to confirm whether a play process can outlive its job in that image."
+    }
+  },
+  {
+    "verdict": "rejected",
+    "fingerprint": "internal/worker/sync.go:installRequirements:galaxy-role-path-escape",
+    "title": "Repo requirements.yml can make the worker-uid galaxy install write outside the per-repo .galaxy directory",
+    "description": "The sync_repo job runs ansible-galaxy as the worker uid against a requirements.yml taken from the repository, without restricting role names. A role name containing '../' makes ansible-core 2.21.4 extract a repo-supplied tarball outside the -p .galaxy directory into a sibling path (e.g. another repo's cache dir), and a later fetchGit reuses any existing .git there. The traversal is a real ansible-galaxy behaviour, but the write stays inside a single organization's own worker cache, the operation is a worker-uid sync step by design, and the only actor who controls requirements.yml is operator+, so no protected boundary is crossed.",
+    "claimed_root_cause": "installRequirements (internal/worker/sync.go) gives the repository's requirements.yml to ansible-galaxy as the worker uid with no check of role name or src, and relies on galaxy to keep installs under -p. fetchGit (internal/worker/runner/gitrepo.go) treats any existing <cache>/<org>/<repo>/.git as a clone it made itself.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/worker/sync.go",
+        "line": 104,
+        "scope": "SyncExecutor.Run",
+        "description": "sync_repo job claimed. The repository is fetched and its requirements.yml is located."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/sync.go",
+        "line": 138,
+        "scope": "findRequirements",
+        "description": "Repo-controlled requirements.yml is selected from the clone."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/sync.go",
+        "line": 206,
+        "scope": "installRequirements",
+        "description": "ansible-galaxy install -r <requirements> -p <cache>/<org>/<repo>.galaxy runs as the worker uid with the clone as cwd. Role name and src are not restricted."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 220,
+        "scope": "fetchGit",
+        "description": "An existing .git at another repo's cache path is reused for git fetch/reset without checking who created it."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/sync.go",
+        "line": 206,
+        "description": "The galaxy invocation uses only -r and -p, with no role allowlist and no isolation; confirmed in source and reproduced on noixdev/pulsix-worker:dev (ansible-core 2.21.4): a role name '../<id>' with a local tarball src extracts into <cache>/<org>/<id>, outside the .galaxy path, as uid 65532 (agents/v09-repo-sync/artifacts/evidence.txt)."
+      },
+      {
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 220,
+        "description": "Clone-vs-fetch is decided only by whether .git exists; a pre-placed .git is reused."
+      },
+      {
+        "file": "deploy/worker/Dockerfile",
+        "line": 161,
+        "description": "USER 65532:65532 — the worker process (and so the sync job) runs as uid 65532."
+      },
+      {
+        "file": "internal/db/migrations/00017_workers.sql",
+        "line": 23,
+        "description": "workers.org_id NOT NULL with a composite FK to zones(org_id,id): a worker is enrolled for one zone of one organization, so its cache serves only that org."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-09-10-pulsix-architecture-design.md",
+        "line": 665,
+        "description": "Spec §14: operators+ can run arbitrary code on the org's workers by design, reaching the org's repository cache and the worker's own client certificate and key — explicitly NOT a finding."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-10-26-playbook-uid-separation-design.md",
+        "line": 14,
+        "description": "Play-uid separation exists to stop a PLAY task (localhost) from reading the worker cert/key; it is not a boundary over the worker-uid repo sync / galaxy install."
+      }
+    ],
+    "reason": "The source-visible behaviour in the trace is accurate and the galaxy role-name traversal is genuinely exploitable in the shipped image — I reproduced it in the approved sandbox on noixdev/pulsix-worker:dev (ansible-core 2.21.4, uid 65532): a requirements.yml role with name '../<repoB-id>' and a local tarball src is extracted by ansible-galaxy into <cache>/<org>/<repoB-id> (a sibling of the -p .galaxy path), creating a worker-owned .git tree that fetchGit (gitrepo.go:220) would later reuse. ansible-core's only guard (is_subpath in galaxy/role.py:386) checks tar MEMBER paths against the archive dir, never the role name / self.path, so -p is not an actual containment boundary. However, this is not a vulnerability because no protected trust boundary is crossed: (1) The galaxy install of requirements.yml runs as the WORKER uid by design — architecture §4 lists it as a worker sink and sync.go documents it, and spec §14 explicitly lists 'the repository cache of its organization' and 'the worker's own client certificate and key' among what operator-controlled code on the org's worker legitimately reaches. The candidate's central claim — 'worker-uid influence by content that otherwise only reaches the play uid' — is therefore misattributed: requirements.yml is repo content processed as the worker uid during sync, not play-uid content. Play-uid separation (spec 2026-10-26) protects the worker cert/key from a PLAY task running as localhost, a different operation, and is a within-org hardening that 'narrows only what one trust domain's own playbook can do to its own worker.' (2) The only actor who controls requirements.yml is operator+ (repos.write = RoleOperator, roles.go:101), for whom spec §14 concedes arbitrary code execution on the org's worker and access to the org's repo cache and worker identity — stated to be NOT a finding. The traversal grants this actor nothing beyond powers already conceded; anyone able to queue a sync_repo job can equally queue jobs.run/playbook code on the same worker. (3) There is no cross-tenant reach: a worker is enrolled for one zone of one organization (00017_workers.sql: org_id NOT NULL + composite zone FK; cert org+zone SAN), the manager hands it only that org's jobs, and each org runs its own worker with its own DataDir. A '../../<otherOrg>/<repo>' name would create a directory on THIS org's worker filesystem, but another org's sync runs on its own separate worker and never reads it. The downstream 'git fetch/reset on a pre-placed .git' (candidate blocker 2) is moot: even full worker-uid code execution via a poisoned .git/config is already conceded to operators and confined to one org's worker. The sandbox reproduction resolves the hunter's primary blocker (galaxy behaviour) in favour of the behaviour being real, while source settles the security question against the finding, so the correct state is rejected rather than needs_validation. (Defence-in-depth note, not a finding: pulsix could still reject role names containing '/' or '..' before invoking ansible-galaxy to keep installs provably inside .galaxy.)"
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "pulsix:internal/api/api.go:huma-default-schemas-route-ungated",
+    "title": "Anonymous access to huma's default /schemas/{name} route bypasses the MFA gate on the API description",
+    "description": "The manager deliberately gates /api/explorer and /api/openapi* behind an MFA-complete session because, unauthenticated, they \"hand any caller the full shape of the API\" (internal/api/api.go:451-459). api.New builds the huma API from huma.DefaultConfig, which in huma v2.39.1 also sets SchemasPath=\"/schemas\" and registers GET /schemas/{schema} on the root chi router. That path is outside /api, so staticSessionSkip never resolves the session and requireMFAForExplorer never checks it. Any anonymous caller can fetch the JSON Schema of every registered DTO by name (e.g. CredentialDTO, HostDTO). The route is self-advertising: every huma error response, including an anonymous 401, carries Link: </schemas/ErrorModel.json>; rel=\"describedBy\" and a $schema field, and $ref links inside schemas chain to further /schemas/*.json documents. The project's own backlog row 1.29 dropped hardening of /schemas/* on the belief that \"no such route exists\", which the reproduction disproves. Only the API's shape (field names, types, enums) is disclosed: no tenant data, credentials or secrets, and no state change.",
+    "root_cause": "internal/api/api.go:433 starts from huma.DefaultConfig, overrides only OpenAPIPath (/api/openapi) and DocsPath (\"\"), and keeps SchemasPath=\"/schemas\". humachi.New (api.go:437) therefore mounts GET /schemas/{schema} outside the /api subtree. requireMFAForExplorer (api.go:460-462) gates only the exact path /api/explorer and the /api/openapi prefix, and skipsSessionLookup (session_skip.go:46-47) skips the session for every non-/api path, so this sibling route describing the same API is served to anyone.",
+    "intended_behavior": "Every route that discloses the API's machine-readable description is reachable only with an MFA-complete session, the same as /api/openapi*, or does not exist.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/api.go",
+        "line": 437,
+        "scope": "New",
+        "description": "humachi.New(r, cfg) registers huma's built-in GET /schemas/{schema} handler on the root chi router (cfg.SchemasPath is huma's default \"/schemas\"), reachable by any unauthenticated HTTP client of the manager listener."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/session_skip.go",
+        "line": 47,
+        "scope": "skipsSessionLookup",
+        "description": "Returns true for any path not starting with /api, so staticSessionSkip (mounted at api.go:380) bypasses the session middleware for /schemas/*; no principal is ever attached."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/api.go",
+        "line": 462,
+        "scope": "requireMFAForExplorer",
+        "description": "The MFA gate (mounted at api.go:403) matches only /api/explorer and the /api/openapi prefix, so /schemas/{name}.json passes straight through to huma's schema handler and a 200 JSON Schema is returned to the anonymous caller."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/api/api.go",
+        "line": 433,
+        "description": "cfg := huma.DefaultConfig(\"Pulsix API\", \"0.1.0\"); huma v2.39.1 defaults.go sets SchemasPath \"/schemas\" and api.go:613-616 registers GET SchemasPath+\"/{schema}\" when it is non-empty."
+      },
+      {
+        "file": "internal/api/api.go",
+        "line": 435,
+        "description": "Only DocsPath is cleared (and OpenAPIPath moved under /api at line 434); SchemasPath is never overridden."
+      },
+      {
+        "file": "internal/api/api.go",
+        "line": 453,
+        "description": "Design comment: the explorer and OpenAPI spec must not, unauthenticated, hand any caller the full shape of the API; the schemas route violates that intent."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 90,
+        "description": "Backlog 1.29 drops the /schemas/* hardening half with \"no such route exists\", showing the route is unintended and unaccounted for."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "None. Any network client that can reach the manager's HTTP listener (published on 8080 / behind the reverse proxy in the compose stack)."
+      },
+      {
+        "kind": "data_state",
+        "description": "The caller needs a schema name; ErrorModel is advertised in the Link header of any anonymous huma error, DTO names follow a guessable *DTO/*Body pattern, and $ref links chain from a known name to related schemas."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Unauthenticated client of the manager's HTTP listener, no cookie or token.",
+      "payloads": [
+        "GET /api/openapi.json (control)",
+        "GET /api/v1/auth/me (discovery)",
+        "GET /schemas/CredentialDTO.json"
+      ],
+      "instructions": [
+        "Build the real api.New handler with zero-value services (no request in this test reaches a service or database) and serve requests with httptest, no cookie.",
+        "Control: GET /api/openapi.json, /api/openapi.yaml and /api/explorer return 401 login required.",
+        "Discovery: GET /api/v1/auth/me returns 401 with Link: </schemas/ErrorModel.json>; rel=\"describedBy\".",
+        "GET /schemas/CredentialDTO.json returns 200 with the full JSON Schema; following $ref links from CredentialDTO/HostDTO/ErrorModel reaches further schema documents, all 200."
+      ],
+      "observed_result": "Independently reproduced in the approved sandbox (agents/v10-client-obvious/artifacts/evidence.txt): ANON GET /api/openapi.json, /api/openapi.yaml, /api/explorer -> 401 login required; ANON GET /api/v1/auth/me -> 401 with Link </schemas/ErrorModel.json>; rel=\"describedBy\"; ANON GET /schemas/CredentialDTO.json -> 200 {\"additionalProperties\":false,\"properties\":{\"created_at\":...,\"kind\":... including the enum value vault_password}; $ref crawl reached 5 schema documents (CredentialDTO, HostDTO, ErrorModel, CredentialUsageDTO, ErrorDetail), all 200."
+    },
+    "remediation": {
+      "strategy": "Move huma's schema route under the gated /api prefix (so the session is resolved) and include that prefix in requireMFAForExplorer; alternatively disable it (SchemasPath = \"\") and drop DefaultConfig's schema-link CreateHook so responses no longer advertise a dead /schemas link. Update the staticSessionSkip/requireMFAForExplorer comments and add an api test that anonymous GET /schemas/HostDTO.json and /api/schemas/HostDTO.json are both non-200 while an MFA-complete session still gets the OpenAPI document.",
+      "code_changes": [
+        {
+          "file_name": "internal/api/api.go",
+          "fixed_code": "cfg.OpenAPIPath = \"/api/openapi\"\ncfg.SchemasPath = \"/api/schemas\" // gated by requireMFAForExplorer, like the OpenAPI document\n...\nif r.URL.Path == \"/api/explorer\" || strings.HasPrefix(r.URL.Path, \"/api/openapi\") || strings.HasPrefix(r.URL.Path, \"/api/schemas/\") {"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "high",
+        "reason": "One unauthenticated GET with no precondition beyond reaching the listener; the route name is advertised in anonymous error responses."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "Discloses only DTO field names, types and enums that the project chose to gate; no tenant data, credentials, secrets or state change, and the product is self-hostable so the shape is not a strong secret."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "All cited lines verified at b13f3c6 and huma v2.39.1 source; independently reproduced against the real api.New router under the approved sandbox with the gated OpenAPI/explorer routes as controls on the same handler."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "pulsix:internal/api/job_sse.go:writeJobStream:no-reauthorization-after-revocation",
+    "title": "Job log SSE stream keeps delivering after membership removal, token revocation or user deactivation",
+    "description": "GET /api/v1/orgs/{org}/jobs/{id}/stream authorizes the caller once, with requireOrg(jobs.read), and then returns a huma StreamResponse whose writeJobStream loop forwards every broker log event and status change for that one job until the job reaches a terminal status, the subscription closes, a write fails, or the client disconnects. The loop never re-checks the principal. A member who opened the stream and is then removed from the org, has the pxt_ token they used revoked, or is deactivated by an instance admin (DeactivateUser revokes sessions and tokens and documents that this ends access 'immediately') keeps receiving that run's live play output. No in-process revocation hook cancels open requests, no chi Timeout middleware wraps the route, and the manager's http.Server sets only ReadHeaderTimeout, so the stale stream lasts as long as the run. The exposure is limited to the one job the principal was authorized to read when the stream opened; the principal cannot open new streams or reach other jobs after revocation (requireOrg re-reads membership and the token per request).",
+    "claimed_root_cause": "writeJobStream (internal/api/job_sse.go) treats the one-time requireOrg decision made when the request starts as valid for the whole stream. Its 500 ms ticker re-reads only the job row through the org-scoped request context (the RLS scope binds the org, not the principal), never the session, the token or the membership, and nothing outside the loop cancels the request when access is revoked.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/job_sse.go",
+        "line": 40,
+        "scope": "registerJobStreamRoute",
+        "description": "requireOrg(ctx, deps, in.Org, tenancy.PermJobsRead) authorizes the session or bearer principal (membership via MembershipOf, token capped with tenancy.Lower) once, when the request starts."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/job_sse.go",
+        "line": 94,
+        "scope": "writeJobStream",
+        "description": "Subscribes to the in-process broker for the job with the original request context; jobs.Service.Subscribe checks only that the job belongs to the org."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/job_sse.go",
+        "line": 136,
+        "scope": "writeJobStream ticker branch",
+        "description": "Every 500 ms re-reads only the job row (deps.Jobs.Get with the org-scoped rctx) to detect status changes; it does not re-check the principal, the token's revocation or the membership."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/job_sse.go",
+        "line": 132,
+        "scope": "writeJobStream event branch",
+        "description": "writeFrame(\"log\", toJobEventDTO(ev)) sends each new job event to a client whose access has since been revoked."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/tenancy/service.go",
+        "line": 509,
+        "description": "DeactivateUser documents the intended guarantee: it 'ends its access immediately: sessions and API tokens are revoked, not merely flagged for later'; the revocations (lines 522-530) are DB updates only, with no in-process notification to open requests."
+      },
+      {
+        "file": "internal/tenancy/service.go",
+        "line": 489,
+        "description": "RemoveMember deletes the membership row; requireOrg re-reads membership on each new request, but the open stream never calls it again."
+      },
+      {
+        "file": "internal/api/job_sse.go",
+        "line": 124,
+        "description": "The loop ends only on request-context cancellation (client disconnect), a closed subscription, a write error or a terminal job status."
+      },
+      {
+        "file": "cmd/manager/main.go",
+        "line": 207,
+        "description": "The http.Server sets only ReadHeaderTimeout; there is no WriteTimeout, and internal/api/api.go:371 mounts only RequestID, Logger and Recoverer (no Timeout middleware), so nothing caps the stream's lifetime."
+      },
+      {
+        "file": "internal/jobs/events.go",
+        "line": 377,
+        "description": "Service.Subscribe checks the org once, at subscription time; the broker then fans out by job id for as long as the subscription lives."
+      },
+      {
+        "file": "internal/api/authz.go",
+        "line": 77,
+        "description": "requireOrg's membership read (deps.Tenancy.MembershipOf) is the only membership check on the path, and it runs once per request."
+      }
+    ],
+    "blockers": [
+      "internal/api tests import internal/api/apitest (testcontainers and the host Docker socket), and requireOrg, membership removal, token revocation and DeactivateUser are all DB-backed, so the stale-stream behaviour cannot be exercised inside the approved network-less sandbox; the claim is source-only.",
+      "Whether a fronting reverse proxy in a given deployment enforces its own stream lifetime or idle timeout (which would bound but not remove the window) is outside the repository."
+    ],
+    "validation_plan": {
+      "local": "In a DB-enabled environment, add an apitest case in internal/api: org owner A and viewer B; create a run job and move it to running (claim it) so it is not terminal; B opens GET /api/v1/orgs/{org}/jobs/{id}/stream with a session cookie (variant: a pxt_ token); read the initial 'status' frame; then A calls DELETE on B's membership (variant: revoke B's token; variant: instance admin POST /api/v1/admin/users/{B}/deactivate); append one job event through the queue's AppendEvent; assert whether B's open stream still receives the 'log' frame within a few poll intervals, and that a fresh GET by B now returns 403/401. The fix re-runs requireOrg (or a cheaper session/token/membership liveness check) on the ticker, e.g. every few ticks, and ends the stream with an error frame on failure; the regression test asserts the stream closes within one check interval after revocation.",
+      "deployment": "Owner-observed, non-destructive: on a staging instance, start a long-running test play, open its run view as a test viewer, remove that viewer from the org (or deactivate the test user) from another browser, and watch whether log lines keep arriving in the viewer's already-open tab until the run finishes; also note any reverse-proxy stream timeout that closes it earlier."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "pulsix:jobs/recordTest:worker-event-at-orders-bastion-observations",
+    "title": "A worker-supplied event timestamp lets one zone's worker keep an org-wide jump host's key-observation state indefinitely",
+    "description": "When a connection_test job finishes, the manager turns its final run event into a host_connection_tests row. The row's `at` is the RunEvent timestamp the worker sent. grpcsrv eventAt stores it as-is, with no clamp or skew bound against manager time. The row's hop_keys list is checked for shape only: the bastion ids are not checked against the route that the job's claim payload rendered. Bastions belong to the organization, not to a zone, so one jump host can serve routes in several zones. Two consumers pick the newest observation per bastion by `at` across all of the org's tests: the claim-time key-change guard (ListBastionKeyChanged, used by excludeChangedBastions for runs and refuseChangedBastions for bootstrap, rotate_key and revoke_key) and the admin's 'pin what you saw' input and fingerprint display (ListLatestBastionObservations). Connection tests are not refused through a changed bastion, but a genuine test cannot win the newest-by-`at` comparison either. Take a zone worker identity (a compromised worker host, or a play acting as the worker where play-uid separation is off) that is handed a connection_test for one of its own hosts whose route crosses a shared bastion B. The daily re-test hands out such jobs with no user action. Its final event can be dated years ahead with hop_keys=[{bastion_id:B, state:'changed'}]. B then reads as changed for every zone of the org. Runs exclude hosts behind B, and bootstrap, rotate_key and revoke_key claims through B are refused. No later genuine connection test from any zone can supersede the row. Re-pinning does not unblock the bastion by design. No retention, prune or direct DELETE exists for host_connection_tests. The only ways out are to delete the host whose test row carried the injected hop (ON DELETE CASCADE) or to repoint every route and recreate the bastion under a new id. The same future-dated row also stops the daily re-test of the attacker's own host (ListHostsDueForTest) and can plant an attacker fingerprint as the observation an admin is asked to pin. The spec names a zone with its own worker as a trust domain and says a worker is accepted results only for jobs it claimed. This path lets one zone's worker control trust state for a jump host that other zones depend on. The scope stays within one organization: every query filters on the job row's org_id. Naming a bastion that is on none of the worker's own routes would also need that bastion's random UUID, which the worker is not given.",
+    "claimed_root_cause": "The manager treats a worker-controlled field as a control-plane fact. grpcsrv eventAt keeps RunEvent.at verbatim, appendEvent stores it as job_events.at, and recordTest passes it to hosts.Service.RecordConnectionTest as the observation time of host_connection_tests.at. The newest-by-at selection in ListBastionKeyChanged and ListLatestBastionObservations then lets a single future-dated row stay authoritative for an org-wide bastion indefinitely. A secondary gap widens what can be named: validHops checks only the shape of hop entries, not that each bastion id is on the route the claim rendered for the job.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/grpcsrv/events.go",
+        "line": 108,
+        "scope": "Server.receiveEvents",
+        "description": "Each RunEvent on the worker's bound RunEvents stream is appended with At: eventAt(ev, s.deps.Clock). The worker is authenticated by mTLS and bound to the job by a one-time token. The timestamp comes from the worker."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/grpcsrv/events.go",
+        "line": 120,
+        "scope": "eventAt",
+        "description": "A worker-supplied timestamp is returned as ts.AsTime() with no clamp. The manager clock is used only when the field is absent."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/events.go",
+        "line": 445,
+        "scope": "SQLQueue.appendEvent",
+        "description": "ev.At is inserted as job_events.at without bounds."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 1461,
+        "scope": "SQLQueue.recordTest",
+        "description": "On the finish path, the newest ok/failed event by seq is read back, with its stored at and payload. The job row supplies only org_id and host_ids."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 1481,
+        "scope": "SQLQueue.recordTest",
+        "description": "The worker's at and the payload's hop_keys (any parseable bastion uuid) are passed to the test sink RecordConnectionTest."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/hosts/hostkey.go",
+        "line": 323,
+        "scope": "Service.RecordConnectionTest",
+        "description": "validHops filters only on shape (non-nil id, fingerprint present, state unpinned/pinned/changed). The row is created with At: at and the full hop list under the job's org."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/db/queries/hostkeys.sql",
+        "line": 114,
+        "scope": "ListBastionKeyChanged",
+        "description": "The latest observation per bastion is max(at) over the org's test rows that list it as a hop. A 'changed' state on that row marks the bastion changed. hosts.Service.ChangedBastions feeds this to the claim guards refuseChangedBastions and excludeChangedBastions."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/grpcsrv/events.go",
+        "line": 118,
+        "description": "eventAt prefers ev.GetAt() over the server clock, with no clamp or skew bound."
+      },
+      {
+        "file": "internal/hosts/hostkey.go",
+        "line": 353,
+        "description": "validHops validates entry shape only. It does not check that the bastion belongs to the route rendered for the job."
+      },
+      {
+        "file": "internal/db/queries/hostkeys.sql",
+        "line": 97,
+        "description": "ListLatestBastionObservations orders by t.at, t.id and the service keeps the last row, so a future-dated row is the observation shown for pinning."
+      },
+      {
+        "file": "internal/db/queries/hostkeys.sql",
+        "line": 119,
+        "description": "A hop state of 'changed' on the latest-by-at row marks the bastion changed."
+      },
+      {
+        "file": "internal/jobs/system_claim.go",
+        "line": 304,
+        "description": "refuseChangedBastions fails bootstrap, rotate_key and revoke_key claims routed through a changed bastion."
+      },
+      {
+        "file": "internal/jobs/queue_sql.go",
+        "line": 716,
+        "description": "excludeChangedBastions drops every host behind a changed bastion from run claims."
+      },
+      {
+        "file": "internal/jobs/queue_sql.go",
+        "line": 843,
+        "description": "The connection_test kind payload ships the route's bastion ids (and hop credentials) to the claiming worker. A worker learns the ids only of bastions on its own claimed routes."
+      },
+      {
+        "file": "internal/db/migrations/00014_ssh_access.sql",
+        "line": 14,
+        "description": "The bastions table is org-scoped with no zone column, so one bastion can serve routes of every zone."
+      },
+      {
+        "file": "internal/db/migrations/00019_host_key.sql",
+        "line": 34,
+        "description": "host_connection_tests rows are removed only by ON DELETE CASCADE from their host. No query deletes or prunes them, so the only remedy is deleting the host that carried the injected test or replacing the bastion."
+      },
+      {
+        "file": "internal/db/queries/hostkeys.sql",
+        "line": 147,
+        "description": "ListHostsDueForTest skips a host with any test newer than the cut-off, so a future-dated row also ends the daily re-test of the injecting host."
+      }
+    ],
+    "blockers": [
+      "The decisive behaviour is DB-backed. It needs the newest-by-at selection in ListBastionKeyChanged and ListLatestBastionObservations, the refusal and exclusion of claims through the bastion, and the finding that a later genuine test does not supersede the future-dated row, all on Postgres/TimescaleDB. internal/jobs and internal/hosts store tests need internal/db/testdb (testcontainers on the host Docker socket), which the approved sandbox forbids, so the decisive behaviour was not observed. Source settles the Go path. The eventAt pass-through is source-evident and was not executed."
+    ],
+    "validation_plan": {
+      "local": "Use a Postgres-enabled test environment (internal/db/testdb) outside this sandbox. Create a dummy org with zones Z1 and Z2, one bastion B (pinned with fingerprint SHA256:genuine) as the zone default of both, and managed hosts H1 in Z1 and H2 in Z2. (1) Enqueue a connection_test for H1, claim it as the Z1 worker through SQLQueue, and append a final 'ok' event with At = now+10y and payload {reachable,auth,sudo,python:true, hop_keys:[{bastion_id:B, fingerprint:'SHA256:x', state:'changed'}]}. Finish it as succeeded. (2) Run a connection_test for H2, claimed by the Z2 worker, and append an event with At = now and hop_keys [{bastion_id:B, fingerprint:'SHA256:genuine', state:'pinned'}]. Finish it. (3) Assert that hosts.Service.ChangedBastions(org,[B]) still returns B and that ListLatestBastionObservations' newest row for B carries 'SHA256:x'. Assert that EnqueueRun plus claim for H2 by the Z2 worker excludes H2, and that a rotate_key claim for H2 fails with ErrHostKeyChanged. Control: repeat step 1 with At = now-1m. Step 2 should then clear B. Delete H1 and confirm B unblocks, which shows the only remedy.",
+      "deployment": "Owner-observed, non-destructive check on a staging instance with two zones that share one jump host and with dummy hosts only. After the injected test, confirm three things: the jump hosts page keeps showing the injected fingerprint, run and rotate jobs for the other zone's hosts behind that jump host are refused even after a fresh connection test from that zone, and the block lifts only when the injecting zone's host is deleted or the jump host is replaced."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "tenancy/AcceptInvite:unmailed-invite-link-binds-email-identity-without-mailbox-proof",
+    "title": "An org owner on an instance without mail can pre-create the account for someone else's email and capture that person's later invitations from other organizations",
+    "description": "When the instance has no outbound mail settings, POST /api/v1/orgs/{org}/invites returns the single-use accept_url to the inviting administrator instead of mailing it. POST /api/v1/invites/accept treats the token as proof that the redeemer controls the invited address. On first redemption it creates a user bound to that email with the redeemer's chosen password and opens a session in which the redeemer enrols their own second factor. Any MFA-complete user can create an organization (POST /api/v1/orgs), become its owner, and invite any address. That user can redeem their own link and end up owning a working account for a victim's email that the victim never touched. AcceptInvite later binds every invitation for that address to the existing account on the token alone. If an unrelated organization then invites the real person and she accepts, the membership (up to admin) goes to the attacker-controlled user ID. She gets signed_in=false and cannot sign in, because the password and factor belong to the attacker, who can sign in and holds the invited role in the foreign tenant. The same root cause has a weaker side effect: an inviter holding an accept_url can attach an already-existing account to the inviter's org without its owner's consent.",
+    "root_cause": "AcceptInvite (internal/tenancy/service.go:398-440) assumes that the invite token proves control of inv.Email; its own doc comment says so at line 378. Service.Invite breaks that assumption. When the mailer returns mail.ErrNotConfigured (lines 363-364), it returns the plaintext link to the inviter, and member_handlers.go:153 sends it back in the API response. The account created when that link is redeemed is then treated as the verified owner of the address for every later invitation: GetUserByEmail (line 418) finds it and AddMembership (line 437) adds the new tenant's membership to it, with no proof from the account holder and no marker that the address was never verified.",
+    "intended_behavior": "An account should be bound to an email address only by someone who proved control of that mailbox, or it should be marked unverified. Adding a membership to an existing account should require that account's holder to be authenticated, for example with an MFA-complete session whose user ID equals the invited account. An invite token that may have passed through a third party's hands should never be enough.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/org_handlers.go",
+        "line": 71,
+        "scope": "POST /api/v1/orgs",
+        "description": "Any MFA-complete session user (requireMFAComplete, line 72) creates an organization. CreateOrg (tenancy/service.go:244) makes the caller its owner, which grants members.manage."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/member_handlers.go",
+        "line": 146,
+        "scope": "POST /api/v1/orgs/{org}/invites",
+        "description": "After passing requireOrg(PermMembersManage), the attacker invites victim@corp.example to their own org."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/tenancy/service.go",
+        "line": 364,
+        "scope": "Service.Invite",
+        "description": "mail.SMTP.Send (wired at app.go:233) returns an error wrapping mail.ErrNotConfigured when setup.LoadSMTP finds no settings (setup/service.go:328). The invitation is kept and inv.AcceptURL is set to the link."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/member_handlers.go",
+        "line": 153,
+        "scope": "invite create response",
+        "description": "accept_url, which carries the single-use token, is returned to the inviter."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/member_handlers.go",
+        "line": 223,
+        "scope": "POST /api/v1/invites/accept",
+        "description": "The attacker redeems the token with a password of their choice. AcceptInvite creates the user (service.go:421-427, newAccount=true), and line 241 opens a non-MFA session in which the attacker enrols their own TOTP or passkey through requireEnrolmentSession (mfa_handlers.go:92)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/tenancy/service.go",
+        "line": 418,
+        "scope": "Service.AcceptInvite (later invite from org B)",
+        "description": "The real person redeems org B's invite. GetUserByEmail returns the attacker-created row, which has a password, so the default branch (lines 429-435) leaves its password and display name unchanged (newAccount=false)."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/tenancy/service.go",
+        "line": 437,
+        "scope": "Service.AcceptInvite",
+        "description": "AddMembership(inv.OrgID, u.ID, inv.Role) gives org B's invited role (up to admin) to the attacker-controlled user. The attacker then signs in with their own password and second factor."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/tenancy/service.go",
+        "line": 378,
+        "description": "The doc comment states the security assumption: 'The invite token only proves control of that mailbox'. The ErrNotConfigured branch breaks it, because the token goes to the inviter."
+      },
+      {
+        "file": "internal/tenancy/service.go",
+        "line": 363,
+        "description": "case errors.Is(sendErr, mail.ErrNotConfigured): inv.AcceptURL = link. The token goes to the inviter, not to the mailbox."
+      },
+      {
+        "file": "internal/mail/smtp.go",
+        "line": 81,
+        "description": "The production mailer's Send (built at app.go:233 from setup.LoadSMTP) wraps ErrNotConfigured whenever no SMTP settings are stored. The setup wizard explicitly treats SMTP as optional (setup/service.go:75-77)."
+      },
+      {
+        "file": "internal/tenancy/service.go",
+        "line": 429,
+        "description": "An existing account that has a password is reused silently. AddMembership at line 437 runs without any proof from the account holder."
+      },
+      {
+        "file": "internal/api/org_handlers.go",
+        "line": 72,
+        "description": "Org creation is gated only by requireMFAComplete, so any interactive user of the instance can obtain members.manage in an org they own."
+      },
+      {
+        "file": "internal/db/queries/tenancy.sql",
+        "line": 23,
+        "description": "AddMembership inserts with ON CONFLICT DO NOTHING. The membership goes to whichever user row owns the citext-unique email."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "The attacker is any MFA-complete session user of the instance (able to create an org through POST /api/v1/orgs), or an admin or owner of any org."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "The instance has no stored SMTP settings when the attacker creates the invite. This is the supported 'invite without mail' mode and the state after a setup that skipped mail. Mail may be configured later; the pre-created account persists."
+      },
+      {
+        "kind": "data_state",
+        "description": "The victim's email address has no account on the instance yet."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "Another organization later invites that email address and the real person accepts the invitation."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An MFA-complete user who owns an org on an instance without SMTP and targets a person likely to be invited later by a different tenant.",
+      "payloads": [
+        "Independent harness internal/v13harness/v13_test.go (in a scratch copy of the source at b13f3c6): the real tenancy.NewService with an in-memory Store that follows the SQL contract (citext-unique email, atomic single-use TakeInvite, AddMembership ON CONFLICT DO NOTHING), and a Mailer whose Send returns fmt.Errorf(\"load smtp settings: %w\", fmt.Errorf(\"not found: %w\", mail.ErrNotConfigured)), the same shape as SMTP.Send plus setup.LoadSMTP",
+        "svc.CreateOrg(attacker,...) -> orgA; svc.Invite(ctx, orgA, attacker, \"Victim@Corp.example\", viewer) -> token taken from AcceptURL; svc.AcceptInvite(ctx, tokA, \"Victim\", \"attacker-pw-123456\")",
+        "svc.Invite(ctx, orgB, ownerB, \"victim@corp.example\", admin); svc.AcceptInvite(ctx, tokB, \"Real Victim\", \"victim-pw-654321\"); svc.MembershipOf(ctx, orgB, attackerCreatedUserID); auth.VerifyPassword on the stored hash"
+      ],
+      "instructions": [
+        "Copied the repository into the verifier scratch directory and added a separate package test that imports only internal/tenancy, internal/auth and internal/mail, with no database and no testdb.",
+        "Ran go test -count=1 -v -run TestV13UnmailedInvitePreHijack ./internal/v13harness/ in golang:1.27.1-alpine with --network none, --read-only, --cap-drop ALL, no-new-privileges, user 65532, 2 CPU / 2 GiB / 512 pids, env -i, GOPROXY=off, a read-only source tree and module cache, and a 300 s timeout.",
+        "Checked that org B's admin membership belongs to the user ID created by the attacker's redemption, and checked which password the stored hash accepts."
+      ],
+      "observed_result": "step1 orgA invite: mailed=false accept_url_present=true; step2 attacker redeems own link: newAccount=true (the handler opens a session); step3 victim redeems orgB invite: same user ID, newAccount=false; RESULT same_user=true orgB_role_of_attacker_created_user=\"admin\" hash_accepts_attacker_pw=true hash_accepts_victim_pw=false display_name=\"Victim\"; --- PASS (agents/v13-invite-setup/artifacts/evidence.txt)"
+    },
+    "remediation": {
+      "strategy": "Never treat an account created from a link that was not mailed as an email-verified identity, and never attach a membership to an existing account on the token alone. In AcceptInvite, when the address already belongs to an account with a password, require the request to carry an MFA-complete interactive session whose user ID equals that account; otherwise refuse, without consuming the invite. Optionally, record email verification on users (set only when the link was actually mailed and redeemed) and refuse to reuse an unverified account for another org's invite. Add a regression test: an un-mailed invite redeemed by the inviter, followed by a second org's invite redeemed anonymously, must not add a membership to the first account.",
+      "code_changes": [
+        {
+          "file_name": "internal/tenancy/service.go",
+          "fixed_code": "// AcceptInvite gains the authenticated acceptor (uuid.Nil when none).\nfunc (s *Service) AcceptInvite(ctx context.Context, acceptor uuid.UUID, token, displayName, password string) (uuid.UUID, uuid.UUID, bool, error) {\n\tsum := sha256.Sum256([]byte(token))\n\tinv, err := s.store.PeekInvite(ctx, sum[:], s.now()) // read without consuming\n\tif err != nil { /* map as today */ }\n\tu, err := s.store.GetUserByEmail(ctx, inv.Email)\n\tif err == nil && u.PasswordHash != nil && acceptor != u.ID {\n\t\t// An existing account joins only when its own holder is signed in.\n\t\treturn uuid.Nil, uuid.Nil, false, ErrSignInRequired\n\t}\n\tinv, err = s.store.TakeInvite(ctx, sum[:], s.now()) // atomic consume, as today\n\t// ... create-or-reuse and AddMembership unchanged ...\n}"
+        },
+        {
+          "file_name": "internal/api/member_handlers.go",
+          "fixed_code": "var acceptor uuid.UUID\nif p, ok := auth.FromContext(ctx); ok && p.MFAComplete && p.TokenID == nil {\n\tacceptor = p.UserID\n}\nuid, orgID, newAccount, err := deps.Tenancy.AcceptInvite(ctx, acceptor, in.Body.Token, in.Body.DisplayName, in.Body.Password)"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Every condition must hold: the instance runs without SMTP when the attacker invites, the target email has no account yet, the attacker is already a user of the shared instance, and another tenant later invites that person, who then accepts."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "The attacker gains the invited role, up to admin, in a foreign organization: cross-tenant access to its hosts, runs, members and credential management. The real invitee is shut out of the account that carries their address."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The full chain is source-traced through the handlers, the service and the SQL contract, and was reproduced independently against the real tenancy.Service with a store fake that follows the documented SQL semantics. Only the HTTP layer and real Postgres were not executed, because those packages are DB-backed and cannot run in the sandbox. Their source (citext UNIQUE email, ON CONFLICT DO NOTHING, newAccount-gated session) matches the fake."
+    }
+  }
+]
