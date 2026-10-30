@@ -2,6 +2,8 @@ package clientip_test
 
 import (
 	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,11 +46,11 @@ func TestLimiterDropsExpiredWindowsWhenFull(t *testing.T) {
 	}
 }
 
-// TestLimiterChargesFailedCallsOnly covers the failed-attempt counting the
-// auth endpoints use: a budget is spent by Charge alone, a refused address
-// is told how long its window still runs, refused calls neither deepen the
-// lockout nor extend the window, and a success never starts one.
-func TestLimiterChargesFailedCallsOnly(t *testing.T) {
+// TestLimiterReservesAttemptsAndRefundsSuccesses covers the failed-attempt
+// counting the auth endpoints use: every attempt reserves a slot before it
+// runs, a refused address is told how long its window still runs and
+// reserves nothing, and an attempt that did not fail hands its slot back.
+func TestLimiterReservesAttemptsAndRefundsSuccesses(t *testing.T) {
 	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	l := clientip.NewLimiter(2, time.Minute, func() time.Time { return now })
 	a := netip.MustParseAddr("198.51.100.1")
@@ -57,66 +59,100 @@ func TestLimiterChargesFailedCallsOnly(t *testing.T) {
 		t.Fatalf("an address with no window is not refused: %s, %v", retry, refused)
 	}
 
-	// Failures charge: two failures spend the budget of 2.
-	l.Charge(a)
-	l.Charge(a)
-	retry, refused := l.Refused(a)
-	if !refused {
+	// Two reservations spend the budget of 2; the third is refused with
+	// the whole window left, and the refusal reserves nothing.
+	r1, _, ok1 := l.Reserve(a)
+	_, _, ok2 := l.Reserve(a)
+	if !ok1 || !ok2 {
+		t.Fatal("the first two attempts fit the budget")
+	}
+	_, retry, ok := l.Reserve(a)
+	if ok {
 		t.Fatal("a spent budget is refused")
 	}
 	if got := retry.Round(time.Second); got != time.Minute {
 		t.Fatalf("right after the budget is spent, retry = %s, want the full window", got)
 	}
-	// The refusal answers nothing new: refused calls neither deepen the
-	// lockout nor push the window out.
-	l.Charge(a)
-	if retry, refused := l.Refused(a); !refused || retry.Round(time.Second) != time.Minute {
-		t.Fatalf("a refused call's charge is a no-op: %s, %v", retry, refused)
+	if _, refused := l.Refused(a); !refused {
+		t.Fatal("Refused reports a budget spent by reservations")
+	}
+
+	// A refunded attempt (one that did not fail) gives its slot back.
+	l.Refund(r1)
+	if _, _, ok := l.Reserve(a); !ok {
+		t.Fatal("a refunded slot can be reserved again")
 	}
 
 	// Halfway through the window the remaining time shrinks accordingly.
 	now = now.Add(30 * time.Second)
-	retry, refused = l.Refused(a)
-	if !refused {
-		t.Fatal("the budget is still spent halfway through the window")
-	}
-	if got := retry.Round(time.Second); got != 30*time.Second {
-		t.Fatalf("halfway through the window, retry = %s, want 30s", got)
+	if _, retry, ok := l.Reserve(a); ok || retry.Round(time.Second) != 30*time.Second {
+		t.Fatalf("halfway through the window: ok=%v retry=%s, want refused with 30s", ok, retry)
 	}
 
 	// Once the window ends the address starts over.
 	now = now.Add(30 * time.Second)
-	if _, refused := l.Refused(a); refused {
-		t.Fatal("an expired window is not refused")
-	}
-	l.Charge(a)
-	if _, refused := l.Refused(a); refused {
+	if _, _, ok := l.Reserve(a); !ok {
 		t.Fatal("a fresh window has its own budget")
-	}
-
-	// And a success (no charge at all) never spends anything.
-	b := netip.MustParseAddr("198.51.100.2")
-	if _, refused := l.Refused(b); refused {
-		t.Fatal("an address that only made successful calls is never refused")
 	}
 }
 
-// TestLimiterChargeBoundsTheTable: charging a brand-new address when the
-// tracking table is full drops an expired window (or the oldest) instead of
-// growing without bound, like Allow.
-func TestLimiterChargeBoundsTheTable(t *testing.T) {
+// TestLimiterRefundIgnoresAnEndedWindow: a reservation is bound to the
+// window it was taken in. Refunding it after that window ended must not
+// hand a slot back to the next window, which other attempts have charged.
+func TestLimiterRefundIgnoresAnEndedWindow(t *testing.T) {
+	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	l := clientip.NewLimiter(2, time.Minute, func() time.Time { return now })
+	a := netip.MustParseAddr("198.51.100.3")
+
+	old, _, _ := l.Reserve(a)
+	now = now.Add(time.Minute)
+	l.Reserve(a)
+	l.Reserve(a)
+	l.Refund(old)
+	if _, _, ok := l.Reserve(a); ok {
+		t.Fatal("a refund from an ended window freed a slot in the current one")
+	}
+}
+
+// TestLimiterReserveHoldsUnderConcurrency is security audit run 1's 7.8:
+// the budget is claimed atomically, so however many attempts arrive at
+// once, only the limit gets through.
+func TestLimiterReserveHoldsUnderConcurrency(t *testing.T) {
+	l := clientip.NewLimiter(5, time.Minute, nil)
+	a := netip.MustParseAddr("198.51.100.4")
+	var wg sync.WaitGroup
+	var got atomic.Int32
+	for i := 0; i < 200; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, _, ok := l.Reserve(a); ok {
+				got.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got.Load() != 5 {
+		t.Fatalf("%d of 200 concurrent attempts were reserved, want exactly the limit of 5", got.Load())
+	}
+}
+
+// TestLimiterReserveBoundsTheTable: reserving for a brand-new address when
+// the tracking table is full drops an expired window (or the oldest)
+// instead of growing without bound, like Allow.
+func TestLimiterReserveBoundsTheTable(t *testing.T) {
 	now := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	l := clientip.NewLimiter(1, time.Minute, func() time.Time { return now })
 	for i := 0; i < 10000; i++ {
-		l.Charge(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}))
+		l.Reserve(netip.AddrFrom4([4]byte{10, byte(i >> 16), byte(i >> 8), byte(i)}))
 	}
 	now = now.Add(time.Minute)
 	if _, refused := l.Refused(netip.AddrFrom4([4]byte{10, 0, 0, 0})); refused {
 		t.Fatal("an expired window must not keep the address refused")
 	}
-	l.Charge(netip.MustParseAddr("192.0.2.1"))
+	l.Reserve(netip.MustParseAddr("192.0.2.1"))
 	if _, refused := l.Refused(netip.MustParseAddr("192.0.2.1")); !refused {
-		t.Fatal("a new address is charged once the table was pruned")
+		t.Fatal("a new address is reserved once the table was pruned")
 	}
 }
 

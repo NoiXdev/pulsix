@@ -18,7 +18,7 @@ const ipv6KeyBits = 64
 
 // Limiter is a fixed-window call counter per client address, in process.
 // The unauthenticated write paths use it (webhook deliveries, worker
-// enrollment and, with Refused/Charge, the authentication endpoints) so one
+// enrollment and, with Reserve/Refund, the authentication endpoints) so one
 // source cannot flood them. It is per manager: with several managers, each
 // counts on its own. IPv4 addresses are counted one by one, IPv6 addresses
 // per /64.
@@ -85,28 +85,53 @@ func (l *Limiter) Refused(a netip.Addr) (time.Duration, bool) {
 	return l.window - now.Sub(w.start), true
 }
 
-// Charge counts one failed call from a, starting a fresh window when the
-// old one has ended (or a has not been seen at all). It is what callers
-// that count only failed attempts charge instead of Allow, and it caps at
-// the limit the same way Allow does: once a window's budget is spent,
-// further charges are ignored, so a flood of refused calls cannot keep its
-// window alive.
-func (l *Limiter) Charge(a netip.Addr) {
+// Reservation is one attempt Reserve claimed from an address's budget, bound
+// to the window it was claimed in, so Refund can hand it back to exactly
+// that window.
+type Reservation struct {
+	key   netip.Addr
+	start time.Time
+}
+
+// Reserve claims one attempt from a's budget before the attempt runs,
+// starting a fresh window when the old one has ended (or a has not been
+// seen). It reports false, with how much of the window still runs, when the
+// budget is spent; a refused call reserves nothing, so it neither deepens
+// the lockout nor extends the window. Claiming before the attempt, under the
+// same lock as the check, is what keeps a burst of concurrent attempts from
+// all getting through before the first failure is counted (security audit
+// run 1, backlog 7.8). Callers that count only failed attempts Refund the
+// reservation of an attempt that did not fail.
+func (l *Limiter) Reserve(a netip.Addr) (Reservation, time.Duration, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	k := key(a)
 	w, ok := l.seen[k]
 	if ok && now.Sub(w.start) < l.window {
-		if w.count < l.limit {
-			w.count++
+		if w.count >= l.limit {
+			return Reservation{}, l.window - now.Sub(w.start), false
 		}
-		return
+		w.count++
+		return Reservation{key: k, start: w.start}, 0, true
 	}
 	if !ok && len(l.seen) >= l.max {
 		l.makeRoom(now)
 	}
 	l.seen[k] = &window{start: now, count: 1}
+	return Reservation{key: k, start: now}, 0, true
+}
+
+// Refund hands back a reservation whose attempt did not fail. It only acts
+// on the window the reservation was taken in: once that window has ended
+// (or the entry was evicted), the slot already returned with it, and the
+// next window's count belongs to other attempts.
+func (l *Limiter) Refund(r Reservation) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if w, ok := l.seen[r.key]; ok && w.start.Equal(r.start) && w.count > 0 {
+		w.count--
+	}
 }
 
 // makeRoom frees one slot for a new address. Expired windows go first, at

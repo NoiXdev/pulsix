@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -244,6 +245,46 @@ func TestAuthRateLimitCountsFailuresOnly(t *testing.T) {
 			t.Fatalf("successful login %d = %d, the limit must never charge a success", i+1, resp.StatusCode)
 		}
 		_ = resp.Body.Close()
+	}
+}
+
+// TestAuthRateLimitHoldsUnderConcurrency is security audit run 1's 7.8:
+// the budget used to be checked before the handler and charged after it,
+// so a burst of concurrent wrong attempts all got through before the first
+// failure was counted. However many arrive at once, no more than the limit
+// may reach the handler.
+func TestAuthRateLimitHoldsUnderConcurrency(t *testing.T) {
+	s := limitedServer(t)
+	s.SeedUser("burst@example.test", "correct horse battery")
+	const burst = 20
+	statuses := make(chan int, burst)
+	var wg sync.WaitGroup
+	for i := 0; i < burst; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := postFrom(s.HTTP.URL+"/api/v1/auth/login", addressA, map[string]string{"email": "burst@example.test", "password": "wrong"})
+			if err != nil {
+				statuses <- 0
+				return
+			}
+			_ = resp.Body.Close()
+			statuses <- resp.StatusCode
+		}()
+	}
+	wg.Wait()
+	close(statuses)
+	reached := 0
+	for st := range statuses {
+		if st == 0 {
+			t.Fatal("a request failed to complete")
+		}
+		if st != http.StatusTooManyRequests {
+			reached++
+		}
+	}
+	if reached > xffLimit {
+		t.Fatalf("%d of %d concurrent wrong logins reached the handler, want at most the limit of %d", reached, burst, xffLimit)
 	}
 }
 

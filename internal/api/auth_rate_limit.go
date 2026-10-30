@@ -44,22 +44,28 @@ func withAuthRateLimit(deps Deps) func(o *huma.Operation) {
 }
 
 // authRateLimitMiddleware refuses an address that has spent its failed-
-// attempt budget and charges the budget once the attempt has failed:
+// attempt budget:
 //
-//   - Before the handler: when the address is refused, answer 429 with a
-//     Retry-After of the seconds until the window rolls over (ceil) and
-//     never run the handler — the limiter's entire point is not spending
-//     argon2id and database work on a flooded endpoint.
-//   - After the handler: any 4xx response counts as one failed attempt and
-//     is charged. A 2xx (the attempt succeeded) and a 5xx (the manager
-//     failed, not the caller) are never charged, matching the hook
+//   - Before the handler: the attempt reserves one slot of the address's
+//     budget atomically (clientip.Limiter.Reserve). When none is left, it
+//     answers 429 with a Retry-After of the seconds until the window rolls
+//     over (ceil) and never runs the handler — the limiter's entire point
+//     is not spending argon2id and database work on a flooded endpoint.
+//     Reserving before the handler, rather than charging after it, is what
+//     stops a burst of concurrent attempts from all getting through before
+//     the first failure is counted (security audit run 1, backlog 7.8).
+//   - After the handler: only a 4xx response is a failed attempt and keeps
+//     its slot. A 2xx (the attempt succeeded) and a 5xx (the manager
+//     failed, not the caller) hand the slot back, matching the hook
 //     limiter's semantics (internal/triggers.Receive: verified deliveries
 //     do not count) — counting all attempts instead would let one caller
-//     lock legitimate users who share its address out of signing in.
+//     lock legitimate users who share its address out of signing in. While
+//     a successful attempt is in flight it does hold a slot, so a burst of
+//     concurrent sign-ins from one address can see a 429.
 //
-// The 429 itself is not charged: it is the limiter's own answer, not a
-// credential failure, and charging it would let a flood keep its window
-// (and so the lockout) alive forever.
+// A 429 the handler itself answered is refunded too: it is not a credential
+// failure, and charging it would let a flood keep its window (and so the
+// lockout) alive forever.
 //
 // The address is resolved through the same trusted-proxy rules every other
 // rate limit here keys on (PULSIX_TRUSTED_PROXIES; see clientAddr), so a
@@ -72,14 +78,15 @@ func authRateLimitMiddleware(deps Deps, lim *clientip.Limiter) func(huma.Context
 			return
 		}
 		ip := clientAddr(deps, ctx)
-		if remaining, refused := lim.Refused(ip); refused {
+		r, remaining, ok := lim.Reserve(ip)
+		if !ok {
 			writeRateLimited(ctx, remaining)
 			return
 		}
 		next(ctx)
-		if s := ctx.Status(); s >= http.StatusBadRequest && s < http.StatusInternalServerError &&
-			s != http.StatusTooManyRequests {
-			lim.Charge(ip)
+		if s := ctx.Status(); s < http.StatusBadRequest || s >= http.StatusInternalServerError ||
+			s == http.StatusTooManyRequests {
+			lim.Refund(r)
 		}
 	}
 }
