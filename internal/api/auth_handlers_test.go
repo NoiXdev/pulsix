@@ -206,6 +206,36 @@ func TestExplorerServed(t *testing.T) {
 	}
 }
 
+// TestSchemasRouteIsGatedLikeTheSpec is backlog 7.15: huma's per-type JSON
+// Schema route describes the same API as the OpenAPI document, so it sits
+// behind the same MFA gate. It used to stay at huma's default /schemas,
+// outside /api, where neither the session nor the gate ever looked.
+func TestSchemasRouteIsGatedLikeTheSpec(t *testing.T) {
+	s := apitest.New(t)
+
+	isSchema := func(resp *http.Response) bool {
+		defer func() { _ = resp.Body.Close() }()
+		var body map[string]any
+		return resp.StatusCode == http.StatusOK && json.NewDecoder(resp.Body).Decode(&body) == nil && body["properties"] != nil
+	}
+	for _, path := range []string{"/schemas/HostDTO.json", "/api/schemas/HostDTO.json"} {
+		resp, err := http.Get(s.HTTP.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if isSchema(resp) {
+			t.Fatalf("anonymous GET %s returned the type's JSON Schema", path)
+		}
+	}
+
+	userID := s.SeedUser("schemas@example.test", "correct horse battery")
+	c := s.LoginAs(userID)
+	resp, err := c.Get(s.HTTP.URL + "/api/schemas/HostDTO.json")
+	if err != nil || !isSchema(resp) {
+		t.Fatalf("schema with an MFA-complete session: %v, want the JSON Schema", err)
+	}
+}
+
 // TestRequireMFACompleteGatesExplorerNotMe covers Finding 8: a session that
 // hasn't completed a required second factor must still reach /auth/me (so
 // the SPA can discover the pending factor) but must be refused by the

@@ -432,6 +432,11 @@ func New(deps Deps) (http.Handler, error) {
 
 	cfg := huma.DefaultConfig("Pulsix API", "0.1.0")
 	cfg.OpenAPIPath = "/api/openapi"
+	// huma serves every type's JSON Schema here. It describes the same API
+	// as the OpenAPI document, so it lives under /api where the session is
+	// resolved and requireMFAForExplorer gates it; huma's default
+	// "/schemas" sat outside both (backlog 7.15).
+	cfg.SchemasPath = "/api/schemas"
 	cfg.DocsPath = "" // explorer is mounted above, served by Scalar instead of huma's default docs
 	cfg.Transformers = append(cfg.Transformers, redactErrorValues)
 	hapi := humachi.New(r, cfg)
@@ -448,8 +453,8 @@ func New(deps Deps) (http.Handler, error) {
 	return r, nil
 }
 
-// requireMFAForExplorer gates the API explorer page and the OpenAPI spec it
-// loads behind an MFA-complete session. Both sit on the same origin as the
+// requireMFAForExplorer gates the API explorer page, the OpenAPI spec it
+// loads and the per-type JSON Schemas behind an MFA-complete session. Both sit on the same origin as the
 // session cookie and, unauthenticated, hand any caller the full shape of
 // the API (and, via the explorer, a working request console) — so they use
 // the same requireMFAComplete check as everything except the small set of
@@ -459,7 +464,8 @@ func New(deps Deps) (http.Handler, error) {
 // internally by huma/humachi with no handler of ours to wrap.
 func requireMFAForExplorer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/explorer" || strings.HasPrefix(r.URL.Path, "/api/openapi") {
+		if r.URL.Path == "/api/explorer" || strings.HasPrefix(r.URL.Path, "/api/openapi") ||
+			strings.HasPrefix(r.URL.Path, "/api/schemas/") {
 			if _, err := requireMFAComplete(r.Context()); err != nil {
 				status := http.StatusUnauthorized
 				var se huma.StatusError
