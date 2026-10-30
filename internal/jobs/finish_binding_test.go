@@ -21,7 +21,17 @@ import (
 // worker (ClaimFor), returning the job.
 func (w *atomicWorld) claimRotateJobFor(t *testing.T, worker WorkerRef) Job {
 	t.Helper()
-	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: w.org, ZoneID: worker.ZoneID, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
+	j := w.queueRotateJob(t, worker.ZoneID)
+	if c, err := w.q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{worker.ZoneID}, "v1", false); err != nil || c == nil || c.Job.GetId() != j.ID.String() {
+		t.Fatalf("ClaimFor = %+v, %v", c, err)
+	}
+	return j
+}
+
+// queueRotateJob inserts one queued rotate_key job in zone.
+func (w *atomicWorld) queueRotateJob(t *testing.T, zone uuid.UUID) Job {
+	t.Helper()
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: w.org, ZoneID: zone, Kind: KindRotateKey, HostIDs: []uuid.UUID{w.host},
 		Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
 	payload, err := json.Marshal(rotationJobPayload{
 		CredentialID: uuid.Must(uuid.NewV7()), Target: rotationTarget{Kind: rotationTargetHost, ID: w.host},
@@ -32,9 +42,6 @@ func (w *atomicWorld) claimRotateJobFor(t *testing.T, worker WorkerRef) Job {
 	}
 	if err := NewSQLStore(w.d).CreateJob(db.WithOrgScope(context.Background(), w.org), j, mustSeal(w.q.box, w.org, j.ID, payload)); err != nil {
 		t.Fatal(err)
-	}
-	if c, err := w.q.ClaimFor(context.Background(), worker.ID, worker.OrgID, []uuid.UUID{worker.ZoneID}, "v1"); err != nil || c == nil || c.Job.GetId() != j.ID.String() {
-		t.Fatalf("ClaimFor = %+v, %v", c, err)
 	}
 	return j
 }

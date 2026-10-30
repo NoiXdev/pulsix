@@ -197,18 +197,20 @@ func NewSQLQueue(d *db.DB, box Sealer, renderer SnapshotSource, creds Credential
 // claim reports an empty queue — the worker polls again and gets the next
 // job.
 func (q *SQLQueue) Claim(ctx context.Context, orgID uuid.UUID, zones []uuid.UUID, version string) (*Claim, error) {
-	return q.claim(ctx, pgtype.UUID{}, orgID, zones, version)
+	return q.claim(ctx, pgtype.UUID{}, orgID, zones, version, nil)
 }
 
 // ClaimFor is Claim on behalf of an enrolled worker: the claimed row
 // records workerID (jobs.worker_id), and only that worker's FinishFor is
-// accepted for the job afterwards. The gRPC claim path uses this; Claim
-// (no binding) remains for the manager's own in-process callers.
-func (q *SQLQueue) ClaimFor(ctx context.Context, workerID, orgID uuid.UUID, zones []uuid.UUID, version string) (*Claim, error) {
-	return q.claim(ctx, pgtype.UUID{Bytes: workerID, Valid: true}, orgID, zones, version)
+// accepted for the job afterwards, and the worker's cancelStopsPlay
+// (jobs.cancel_stops_play, backlog 2.113). The gRPC claim path uses this;
+// Claim (no binding, and nobody to say whether a cancel stops the play)
+// remains for the manager's own in-process callers.
+func (q *SQLQueue) ClaimFor(ctx context.Context, workerID, orgID uuid.UUID, zones []uuid.UUID, version string, cancelStopsPlay bool) (*Claim, error) {
+	return q.claim(ctx, pgtype.UUID{Bytes: workerID, Valid: true}, orgID, zones, version, &cancelStopsPlay)
 }
 
-func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.UUID, zones []uuid.UUID, _ string) (*Claim, error) {
+func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.UUID, zones []uuid.UUID, _ string, cancelStopsPlay *bool) (*Claim, error) {
 	if len(zones) == 0 {
 		return nil, nil
 	}
@@ -217,7 +219,7 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 		return nil, fmt.Errorf("begin claim transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{WorkerID: workerID, OrgID: orgID, ZoneIds: zones})
+	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{WorkerID: workerID, CancelStopsPlay: cancelStopsPlay, OrgID: orgID, ZoneIds: zones})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

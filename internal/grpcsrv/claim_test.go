@@ -111,6 +111,26 @@ func TestClaimJobEmptyZoneIDsFallsBackToWorkerZone(t *testing.T) {
 	}
 }
 
+// TestClaimJobPassesOnWhetherCancelStopsThePlay (backlog 2.113): the
+// worker's own answer reaches the claim port unchanged, so the job records
+// it; an older worker that never sends the field reads as false.
+func TestClaimJobPassesOnWhetherCancelStopsThePlay(t *testing.T) {
+	for _, want := range []bool{true, false} {
+		h := newHarness(t)
+		certPEM, keyPEM, _ := h.issue("fra-1-a", orgID, zoneID, true)
+		client := h.client(certPEM, keyPEM)
+		h.enqueueClaim(uuid.Must(uuid.NewV7()), orgID, zoneID)
+
+		if _, err := client.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: "0.2.0", CancelStopsPlay: want}); err != nil {
+			t.Fatal(err)
+		}
+		calls := h.claims.Calls()
+		if len(calls) != 1 || calls[0].CancelStopsPlay != want {
+			t.Fatalf("Claim calls = %+v, want one with CancelStopsPlay %v", calls, want)
+		}
+	}
+}
+
 // TestClaimJobZoneAuthorization (fix round 1, Critical): a worker claims
 // only for the zone its certificate was enrolled for. A request naming any
 // other zone — another organization's zone (zone ids are visible through

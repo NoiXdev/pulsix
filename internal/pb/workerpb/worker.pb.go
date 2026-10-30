@@ -23,11 +23,19 @@ const (
 )
 
 type ClaimJobRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`                // worker build version, recorded on the job
-	ZoneIds       []string               `protobuf:"bytes,2,rep,name=zone_ids,json=zoneIds,proto3" json:"zone_ids,omitempty"` // the zones this worker serves (uuids)
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Version string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`                // worker build version, recorded on the worker
+	ZoneIds []string               `protobuf:"bytes,2,rep,name=zone_ids,json=zoneIds,proto3" json:"zone_ids,omitempty"` // the zones this worker serves (uuids)
+	// cancel_stops_play says that cancelling a job this worker runs stops
+	// the play on the worker, not only the worker's following of it: true
+	// when the worker runs plays under the per-run play supervisor (backlog
+	// 2.107). The manager records it on the claimed job, so the run view can
+	// tell a cancelled run whose play may still be running from one whose
+	// play was stopped. Workers older than the field never send it, which
+	// reads as false, the cautious answer.
+	CancelStopsPlay bool `protobuf:"varint,3,opt,name=cancel_stops_play,json=cancelStopsPlay,proto3" json:"cancel_stops_play,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ClaimJobRequest) Reset() {
@@ -72,6 +80,13 @@ func (x *ClaimJobRequest) GetZoneIds() []string {
 		return x.ZoneIds
 	}
 	return nil
+}
+
+func (x *ClaimJobRequest) GetCancelStopsPlay() bool {
+	if x != nil {
+		return x.CancelStopsPlay
+	}
+	return false
 }
 
 type ClaimJobResponse struct {
@@ -868,10 +883,11 @@ var File_pulsix_worker_v1_worker_proto protoreflect.FileDescriptor
 
 const file_pulsix_worker_v1_worker_proto_rawDesc = "" +
 	"\n" +
-	"\x1dpulsix/worker/v1/worker.proto\x12\x10pulsix.worker.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"F\n" +
+	"\x1dpulsix/worker/v1/worker.proto\x12\x10pulsix.worker.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"r\n" +
 	"\x0fClaimJobRequest\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x19\n" +
-	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\";\n" +
+	"\bzone_ids\x18\x02 \x03(\tR\azoneIds\x12*\n" +
+	"\x11cancel_stops_play\x18\x03 \x01(\bR\x0fcancelStopsPlay\";\n" +
 	"\x10ClaimJobResponse\x12'\n" +
 	"\x03job\x18\x01 \x01(\v2\x15.pulsix.worker.v1.JobR\x03job\"\x96\v\n" +
 	"\x03Job\x12\x0e\n" +

@@ -127,6 +127,11 @@ type jobDetailDTO struct {
 	// of the same thing: an old run displaying today's values while still
 	// looking like its own record.
 	VaultIdentitiesSource string `json:"vault_identities_source" enum:"recorded,computed"`
+	// CancelStopsPlay is the claiming worker's word that cancelling the
+	// job stops the play on the worker (backlog 2.113). The run view keeps
+	// its stronger warning on a cancelled run without it: an older worker,
+	// or one without the play supervisor, only stops following the play.
+	CancelStopsPlay bool `json:"cancel_stops_play" doc:"Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker"`
 }
 
 // jobVaultIdentityDTO is one vault id the run detail shows, and whether it
@@ -145,6 +150,7 @@ func toJobDetailDTO(j jobs.Job, group []jobs.Job) jobDetailDTO {
 		Status: string(j.Status), RunGroupID: j.RunGroupID.String(), Trigger: j.Trigger,
 		ActorName: j.ActorName, WorkerName: j.WorkerName,
 		Stats: j.Stats, Error: j.Error, Attempts: j.Attempts, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt,
+		CancelStopsPlay: j.CancelStopsPlay,
 	}
 	if j.TriggerRef != nil {
 		out.TriggerRef = j.TriggerRef.String()

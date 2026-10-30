@@ -188,11 +188,17 @@ type Job struct {
 	// RotationCredentialID marks a job of a credential's rotation group.
 	RotationCredentialID *uuid.UUID
 	WorkerID             *uuid.UUID
-	ClaimedAt            *time.Time
-	StartedAt            *time.Time
-	FinishedAt           *time.Time
-	Stats                map[string]any
-	Error                string
+	// CancelStopsPlay is the claiming worker's word that a cancel stops
+	// the play on it, not only its following of the play (backlog 2.113,
+	// migration 00072). False when it said otherwise and when nobody said:
+	// never claimed, claimed in process or before the migration, or
+	// requeued since.
+	CancelStopsPlay bool
+	ClaimedAt       *time.Time
+	StartedAt       *time.Time
+	FinishedAt      *time.Time
+	Stats           map[string]any
+	Error           string
 	// RunGroupID groups the per-zone jobs of one trigger, so the run view
 	// can show them together and RetryFailed can find its template.
 	RunGroupID uuid.UUID

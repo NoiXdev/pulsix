@@ -22,15 +22,16 @@ type FakeClaimer struct {
 
 // FakeClaimCall is one recorded Claim invocation.
 type FakeClaimCall struct {
-	Scope   ClaimScope
-	Version string
+	Scope           ClaimScope
+	Version         string
+	CancelStopsPlay bool
 }
 
 // Claim implements Claimer.
-func (f *FakeClaimer) Claim(_ context.Context, scope ClaimScope, version string) (*JobClaim, error) {
+func (f *FakeClaimer) Claim(_ context.Context, scope ClaimScope, version string, cancelStopsPlay bool) (*JobClaim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, FakeClaimCall{Scope: scope, Version: version})
+	f.calls = append(f.calls, FakeClaimCall{Scope: scope, Version: version, CancelStopsPlay: cancelStopsPlay})
 	if len(f.claims) == 0 {
 		return nil, nil
 	}

@@ -82,10 +82,10 @@ func (q *Queries) CancelQueuedDependents(ctx context.Context, arg CancelQueuedDe
 
 const claimJob = `-- name: ClaimJob :one
 UPDATE jobs SET status = 'running', worker_id = $1::uuid, claimed_at = now(), started_at = now(),
-    attempts = attempts + 1
+    attempts = attempts + 1, cancel_stops_play = $2::boolean
 WHERE id = (
   SELECT j.id FROM jobs AS j
-  WHERE j.status = 'queued' AND j.org_id = $2::uuid AND j.zone_id = ANY($3::uuid[])
+  WHERE j.status = 'queued' AND j.org_id = $3::uuid AND j.zone_id = ANY($4::uuid[])
     -- A dependent job waits until its dependency SUCCEEDED (any other end
     -- cancels it in the dependency's terminal transition).
     AND (j.depends_on IS NULL OR EXISTS (
@@ -95,13 +95,14 @@ WHERE id = (
   FOR UPDATE SKIP LOCKED
   LIMIT 1
 )
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play
 `
 
 type ClaimJobParams struct {
-	WorkerID pgtype.UUID `json:"worker_id"`
-	OrgID    uuid.UUID   `json:"org_id"`
-	ZoneIds  []uuid.UUID `json:"zone_ids"`
+	WorkerID        pgtype.UUID `json:"worker_id"`
+	CancelStopsPlay *bool       `json:"cancel_stops_play"`
+	OrgID           uuid.UUID   `json:"org_id"`
+	ZoneIds         []uuid.UUID `json:"zone_ids"`
 }
 
 // THE org-unscoped claim (plan Global Constraints): runs on the raw pool,
@@ -117,8 +118,15 @@ type ClaimJobParams struct {
 // organization (from its registry row, never from the request): zone ids
 // are visible through each organization's API, so the zone filter alone
 // must never be what keeps another organization's jobs out of reach.
+// cancel_stops_play is the claiming worker's own answer (migration 00072),
+// NULL for an in-process claim.
 func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error) {
-	row := q.db.QueryRow(ctx, claimJob, arg.WorkerID, arg.OrgID, arg.ZoneIds)
+	row := q.db.QueryRow(ctx, claimJob,
+		arg.WorkerID,
+		arg.CancelStopsPlay,
+		arg.OrgID,
+		arg.ZoneIds,
+	)
 	var i Job
 	err := row.Scan(
 		&i.ID,
@@ -146,6 +154,7 @@ func (q *Queries) ClaimJob(ctx context.Context, arg ClaimJobParams) (Job, error)
 		&i.RunGroupReported,
 		&i.ResolvedVaultIdentities,
 		&i.HostsExcluded,
+		&i.CancelStopsPlay,
 	)
 	return i, err
 }
@@ -174,7 +183,7 @@ const createJob = `-- name: CreateJob :one
 INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
                   depends_on, rotation_credential_id, trigger_ref, hosts_excluded)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded
+RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play
 `
 
 type CreateJobParams struct {
@@ -240,6 +249,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.RunGroupReported,
 		&i.ResolvedVaultIdentities,
 		&i.HostsExcluded,
+		&i.CancelStopsPlay,
 	)
 	return i, err
 }
@@ -318,7 +328,7 @@ func (q *Queries) FailExhaustedStaleJob(ctx context.Context, arg FailExhaustedSt
 }
 
 const getJob = `-- name: GetJob :one
-SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, u.display_name AS actor_name, w.name AS worker_name,
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play, u.display_name AS actor_name, w.name AS worker_name,
        jt.name AS template_name
 FROM jobs AS j
 LEFT JOIN users AS u ON u.id = j.actor_id
@@ -358,6 +368,7 @@ type GetJobRow struct {
 	RunGroupReported        bool               `json:"run_group_reported"`
 	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
 	HostsExcluded           int32              `json:"hosts_excluded"`
+	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
 	ActorName               *string            `json:"actor_name"`
 	WorkerName              *string            `json:"worker_name"`
 	TemplateName            *string            `json:"template_name"`
@@ -402,6 +413,7 @@ func (q *Queries) GetJob(ctx context.Context, arg GetJobParams) (GetJobRow, erro
 		&i.RunGroupReported,
 		&i.ResolvedVaultIdentities,
 		&i.HostsExcluded,
+		&i.CancelStopsPlay,
 		&i.ActorName,
 		&i.WorkerName,
 		&i.TemplateName,
@@ -599,7 +611,7 @@ func (q *Queries) ListJobEvents(ctx context.Context, arg ListJobEventsParams) ([
 }
 
 const listJobs = `-- name: ListJobs :many
-SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded FROM jobs
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play FROM jobs
 WHERE org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::text IS NULL OR status = $3::text)
@@ -683,6 +695,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.RunGroupReported,
 			&i.ResolvedVaultIdentities,
 			&i.HostsExcluded,
+			&i.CancelStopsPlay,
 		); err != nil {
 			return nil, err
 		}
@@ -848,7 +861,7 @@ func (q *Queries) RecordVaultIdentities(ctx context.Context, arg RecordVaultIden
 }
 
 const requeueStaleJobs = `-- name: RequeueStaleJobs :many
-UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL
+UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL
 WHERE status IN ('claimed', 'running') AND claimed_at < $1::timestamptz
   AND NOT (id = ANY($2::uuid[]))
   AND attempts < $3::integer
@@ -888,7 +901,8 @@ func (q *Queries) RequeueStaleJobs(ctx context.Context, arg RequeueStaleJobsPara
 }
 
 const requeueWorkerJobs = `-- name: RequeueWorkerJobs :many
-UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, error = $1::text
+UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL,
+    error = $1::text
 WHERE org_id = $2 AND worker_id = $3
   AND status IN ('claimed', 'running') AND attempts < $4::integer
 RETURNING id

@@ -538,6 +538,7 @@ type Job struct {
 	RunGroupReported        bool               `json:"run_group_reported"`
 	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
 	HostsExcluded           int32              `json:"hosts_excluded"`
+	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
 }
 
 type JobEvent struct {

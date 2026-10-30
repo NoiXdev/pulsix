@@ -937,6 +937,38 @@ func TestLoopClaimsPresentConfiguredZones(t *testing.T) {
 	}
 }
 
+// TestLoopClaimsSayWhetherCancelStopsThePlay: the claim tells the manager
+// whether a cancel of this worker's jobs stops the play (backlog 2.113),
+// which is exactly whether the worker runs plays under the play supervisor.
+func TestLoopClaimsSayWhetherCancelStopsThePlay(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		supervisor string
+		want       bool
+	}{
+		{name: "under the play supervisor", supervisor: "/usr/local/bin/pulsix-worker", want: true},
+		{name: "without it", supervisor: "", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := cfgFor(t.TempDir())
+			cfg.PlaySupervisor = tc.supervisor
+			client := &fakeWorkerClient{}
+			l := NewLoop(cfg, client, &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, _ func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+				return StatusSucceeded, nil, nil
+			}})
+			cancel, done := runLoop(t, l)
+			waitFor(t, 2*time.Second, func() bool { return len(client.claimsNow()) >= 1 })
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if got := client.claimsNow()[0].GetCancelStopsPlay(); got != tc.want {
+				t.Fatalf("cancel_stops_play = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestLoopSequentialClaims: with MaxConcurrent = 1 a second queued job is
 // claimed only after the first run finished.
 func TestLoopSequentialClaims(t *testing.T) {

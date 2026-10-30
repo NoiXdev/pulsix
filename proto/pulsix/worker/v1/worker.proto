@@ -30,8 +30,16 @@ service WorkerService {
 }
 
 message ClaimJobRequest {
-  string version = 1;                // worker build version, recorded on the job
+  string version = 1;                // worker build version, recorded on the worker
   repeated string zone_ids = 2;      // the zones this worker serves (uuids)
+  // cancel_stops_play says that cancelling a job this worker runs stops
+  // the play on the worker, not only the worker's following of it: true
+  // when the worker runs plays under the per-run play supervisor (backlog
+  // 2.107). The manager records it on the claimed job, so the run view can
+  // tell a cancelled run whose play may still be running from one whose
+  // play was stopped. Workers older than the field never send it, which
+  // reads as false, the cautious answer.
+  bool cancel_stops_play = 3;
 }
 
 message ClaimJobResponse {

@@ -154,6 +154,8 @@ type jobDTO struct {
 		FromTemplate bool   `json:"from_template"`
 	} `json:"vault_identities"`
 	VaultIdentitiesSource string `json:"vault_identities_source"`
+	// CancelStopsPlay is a pointer so a test can tell false from absent.
+	CancelStopsPlay *bool `json:"cancel_stops_play"`
 }
 
 func runJob(t *testing.T, c *http.Client, url string) []jobDTO {
@@ -724,6 +726,39 @@ func TestJobDetailShowsTemplateActorAndGroup(t *testing.T) {
 	}
 	if len(j.Group) != 0 {
 		t.Fatalf("group = %+v, want no siblings in a single-zone run", j.Group)
+	}
+}
+
+// TestJobDetailSaysWhetherCancelStopsThePlay (backlog 2.113): the run view
+// reads cancel_stops_play to choose its cancelled-run warning, so the field
+// is always present, false until a worker that stops the play claimed the
+// job.
+func TestJobDetailSaysWhetherCancelStopsThePlay(t *testing.T) {
+	f := newRunFixture(t, "run-detail-cancel-stops-play")
+	jobID := runJob(t, f.operatorC, f.runURL())[0].ID
+
+	detail := func() *bool {
+		t.Helper()
+		resp := requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+jobID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("detail: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var out struct {
+			Job jobDTO `json:"job"`
+		}
+		decodeInto(t, resp, &out)
+		return out.Job.CancelStopsPlay
+	}
+	if got := detail(); got == nil || *got {
+		t.Fatalf("queued job: cancel_stops_play = %v, want present and false", got)
+	}
+	// What a claim by a worker under the play supervisor records
+	// (internal/jobs' own tests cover the claim writing it).
+	if _, err := f.s.DB.Pool().Exec(context.Background(), `UPDATE jobs SET cancel_stops_play = true WHERE id = $1`, jobID); err != nil {
+		t.Fatal(err)
+	}
+	if got := detail(); got == nil || !*got {
+		t.Fatalf("claimed by such a worker: cancel_stops_play = %v, want true", got)
 	}
 }
 

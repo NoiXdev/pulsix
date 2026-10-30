@@ -40,13 +40,18 @@ func TestReaperRequeuesStaleClaims(t *testing.T) {
 	claim := claimOne(t, d, org, zone, queue)
 	jobID := uuid.MustParse(claim.Job.GetId())
 	setClaimAge(t, d, jobID, 61*time.Second)
+	// As a worker under the play supervisor would have claimed it (backlog
+	// 2.113): the requeue forgets that with the worker that said it.
+	if _, err := d.Pool().Exec(ctx, `UPDATE jobs SET cancel_stops_play = true WHERE id = $1`, jobID); err != nil {
+		t.Fatal(err)
+	}
 
 	requeued, failed, err := reaper.Sweep(ctx)
 	if err != nil || requeued != 1 || failed != 0 {
 		t.Fatalf("Sweep = %d/%d, %v", requeued, failed, err)
 	}
 	got, err := svc.Get(db.WithOrgScope(ctx, org), org, jobID)
-	if err != nil || got.Status != jobs.StatusQueued || got.ClaimedAt != nil || got.StartedAt != nil {
+	if err != nil || got.Status != jobs.StatusQueued || got.ClaimedAt != nil || got.StartedAt != nil || got.CancelStopsPlay {
 		t.Fatalf("requeued job = %+v, %v", got, err)
 	}
 

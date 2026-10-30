@@ -98,8 +98,10 @@ ORDER BY seq;
 -- organization (from its registry row, never from the request): zone ids
 -- are visible through each organization's API, so the zone filter alone
 -- must never be what keeps another organization's jobs out of reach.
+-- cancel_stops_play is the claiming worker's own answer (migration 00072),
+-- NULL for an in-process claim.
 UPDATE jobs SET status = 'running', worker_id = sqlc.narg(worker_id)::uuid, claimed_at = now(), started_at = now(),
-    attempts = attempts + 1
+    attempts = attempts + 1, cancel_stops_play = sqlc.narg(cancel_stops_play)::boolean
 WHERE id = (
   SELECT j.id FROM jobs AS j
   WHERE j.status = 'queued' AND j.org_id = sqlc.arg(org_id)::uuid AND j.zone_id = ANY(sqlc.arg(zone_ids)::uuid[])
@@ -133,7 +135,7 @@ UPDATE jobs SET resolved_vault_identities = sqlc.arg(identities)::jsonb WHERE id
 -- rest). The live ids — the jobs whose bound stream still shows signs of
 -- life — are excluded; an empty array excludes nothing (id = ANY('{}') is
 -- false for every row).
-UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL
+UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL
 WHERE status IN ('claimed', 'running') AND claimed_at < @stale_before::timestamptz
   AND NOT (id = ANY(@live::uuid[]))
   AND attempts < @max_attempts::integer
@@ -248,7 +250,8 @@ SELECT EXISTS (
 -- A revoked worker's claimed and running jobs go back to the queue while
 -- attempts remain (the claim already counted the attempt); the reason
 -- stays in error until the next finish overwrites it.
-UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, error = sqlc.arg(reason)::text
+UPDATE jobs SET status = 'queued', worker_id = NULL, claimed_at = NULL, started_at = NULL, cancel_stops_play = NULL,
+    error = sqlc.arg(reason)::text
 WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id)
   AND status IN ('claimed', 'running') AND attempts < sqlc.arg(max_attempts)::integer
 RETURNING id;

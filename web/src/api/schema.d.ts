@@ -4240,6 +4240,8 @@ export interface components {
              * @description How often the job was claimed; a requeued job's events carry their attempt
              */
             attempts: number;
+            /** @description Whether the worker that claimed the job stops the play when the job is cancelled. False when it does not, and when no worker said so: never claimed, requeued, or claimed by an older worker */
+            cancel_stops_play: boolean;
             /** Format: date-time */
             created_at: string;
             error?: string;

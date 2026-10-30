@@ -49,8 +49,10 @@ type ClaimScope struct {
 type Claimer interface {
 	// Claim picks one queued job for any of the scope's zones inside the
 	// scope's organization, marks it claimed and returns its payload plus a
-	// fresh binding token. nil claim = queue empty.
-	Claim(ctx context.Context, scope ClaimScope, version string) (*JobClaim, error)
+	// fresh binding token. nil claim = queue empty. cancelStopsPlay is the
+	// worker's own word that a cancel stops the play on it (backlog
+	// 2.113); the claimed job records it.
+	Claim(ctx context.Context, scope ClaimScope, version string, cancelStopsPlay bool) (*JobClaim, error)
 }
 
 // Event is one run event a worker streams in mid-run.

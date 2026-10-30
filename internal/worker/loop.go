@@ -184,8 +184,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		// A cancel stops the play only under the play supervisor
+		// (backlog 2.107); the claim says so, and the manager records it
+		// on the job for the run view (2.113).
 		resp, err := l.client.ClaimJob(ctx, &workerpb.ClaimJobRequest{
-			Version: l.cfg.Version, ZoneIds: zoneIDs,
+			Version: l.cfg.Version, ZoneIds: zoneIDs, CancelStopsPlay: l.cfg.PlaySupervisor != "",
 		})
 		if err != nil {
 			if ctx.Err() != nil {

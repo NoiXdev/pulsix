@@ -302,7 +302,7 @@ func toJob(r gen.Job) Job {
 		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, Kind: Kind(r.Kind),
 		TemplateID: db.UUIDPtr(r.TemplateID), HostIDs: r.HostIds, Status: Status(r.Status),
 		Attempts: int(r.Attempts), DependsOn: db.UUIDPtr(r.DependsOn), RotationCredentialID: db.UUIDPtr(r.RotationCredentialID),
-		WorkerID:  db.UUIDPtr(r.WorkerID),
+		WorkerID: db.UUIDPtr(r.WorkerID), CancelStopsPlay: r.CancelStopsPlay != nil && *r.CancelStopsPlay,
 		ClaimedAt: db.TimePtr(r.ClaimedAt), StartedAt: db.TimePtr(r.StartedAt), FinishedAt: db.TimePtr(r.FinishedAt),
 		Stats: stats, Error: r.Error, RunGroupID: r.RunGroupID, Trigger: r.Trigger,
 		TriggerRef: db.UUIDPtr(r.TriggerRef),
@@ -342,7 +342,7 @@ func toJobDetail(r gen.GetJobRow) Job {
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt, Stats: r.Stats, Error: r.Error,
 		RunGroupID: r.RunGroupID, Trigger: r.Trigger, TriggerRef: r.TriggerRef, ActorID: r.ActorID, Payload: r.Payload,
 		CreatedAt: r.CreatedAt, Attempts: r.Attempts, DependsOn: r.DependsOn, RotationCredentialID: r.RotationCredentialID,
-		ResolvedVaultIdentities: r.ResolvedVaultIdentities,
+		ResolvedVaultIdentities: r.ResolvedVaultIdentities, CancelStopsPlay: r.CancelStopsPlay,
 	})
 	j.ActorName, j.WorkerName, j.TemplateName = deref(r.ActorName), deref(r.WorkerName), deref(r.TemplateName)
 	return j

@@ -152,7 +152,7 @@ type fakeClaims struct {
 	calls []grpcsrv.FakeClaimCall
 }
 
-func (f *fakeClaims) Claim(_ context.Context, scope grpcsrv.ClaimScope, version string) (*grpcsrv.JobClaim, error) {
+func (f *fakeClaims) Claim(_ context.Context, scope grpcsrv.ClaimScope, version string, _ bool) (*grpcsrv.JobClaim, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, grpcsrv.FakeClaimCall{Scope: scope, Version: version})
