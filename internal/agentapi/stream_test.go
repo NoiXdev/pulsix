@@ -68,6 +68,27 @@ func TestRenewRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRenewRacingARevocationIsRefused is backlog 7.18: the interceptor
+// accepts the live serial, then the agent is revoked before the renewal's
+// swap. The renewal is refused and the certificate it signed is never
+// recorded, so it does not authenticate.
+func TestRenewRacingARevocationIsRefused(t *testing.T) {
+	h := newHarness(t)
+	resp, client := enrollAnAgent(t, h, "web-1")
+	serial := mustCert(t, resp.GetCertPem()).SerialNumber.String()
+	h.store.armRevokeAfterLookup(serial)
+
+	_, csr := newKeyAndCSR(t)
+	if _, err := (*client).Renew(t.Context(), &agentpb.RenewRequest{CsrPem: csr}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("Renew after a revocation = %v, want PermissionDenied", err)
+	}
+	for _, ev := range h.audit.recorded() {
+		if ev.Operation == "agent.renew" {
+			t.Fatalf("a refused renewal was audited as done: %+v", ev)
+		}
+	}
+}
+
 // TestRenewRefusedWithoutCertificate: Renew is certificate-authenticated.
 func TestRenewRefusedWithoutCertificate(t *testing.T) {
 	h := newHarness(t)

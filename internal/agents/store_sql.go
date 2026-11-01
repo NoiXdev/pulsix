@@ -150,27 +150,52 @@ func (s *SQLStore) Claim(ctx context.Context, orgID, id uuid.UUID, fn func(ctx c
 // inserted.
 func (s *SQLStore) Register(ctx context.Context, a Agent) error {
 	return s.d.WithWriteTx(ctx, a.OrgID, func(ctx context.Context) error {
-		if _, err := s.q.UpsertHostAgent(ctx, gen.UpsertHostAgentParams{
-			HostID: a.HostID, OrgID: a.OrgID, AgentName: a.AgentName, CertSerial: a.CertSerial, Version: a.Version,
-		}); err != nil {
-			return fmt.Errorf("upsert agent: %w", err)
-		}
-		if err := s.q.RevokeAgentCertificates(ctx, gen.RevokeAgentCertificatesParams{OrgID: a.OrgID, HostID: a.HostID}); err != nil {
-			return fmt.Errorf("revoke previous agent certificate: %w", err)
-		}
-		notAfter := time.Time{}
-		if a.CertNotAfter != nil {
-			notAfter = *a.CertNotAfter
-		}
-		if err := s.q.InsertAgentCertificate(ctx, gen.InsertAgentCertificateParams{
-			Serial: a.CertSerial, OrgID: a.OrgID, HostID: a.HostID,
-			NotBefore: pgtype.Timestamptz{Time: a.CertNotBefore, Valid: !a.CertNotBefore.IsZero()},
-			NotAfter:  pgtype.Timestamptz{Time: notAfter, Valid: !notAfter.IsZero()},
-		}); err != nil {
-			return fmt.Errorf("insert agent certificate: %w", err)
-		}
-		return nil
+		return s.register(ctx, a)
 	})
+}
+
+// Renew is Register for a certificate renewal: in the same transaction it
+// first locks the serial the agent renews from and requires it to be the
+// host's live certificate, ErrNotFound otherwise — revoked meanwhile, or
+// already replaced (backlog 7.18).
+func (s *SQLStore) Renew(ctx context.Context, a Agent, fromSerial string) error {
+	return s.d.WithWriteTx(ctx, a.OrgID, func(ctx context.Context) error {
+		n, err := s.q.LockLiveAgentCertificate(ctx, gen.LockLiveAgentCertificateParams{
+			Serial: fromSerial, OrgID: a.OrgID, HostID: a.HostID,
+		})
+		if err != nil {
+			return fmt.Errorf("lock renewed agent certificate: %w", err)
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return s.register(ctx, a)
+	})
+}
+
+// register is Register's and Renew's shared body, inside their
+// transaction.
+func (s *SQLStore) register(ctx context.Context, a Agent) error {
+	if _, err := s.q.UpsertHostAgent(ctx, gen.UpsertHostAgentParams{
+		HostID: a.HostID, OrgID: a.OrgID, AgentName: a.AgentName, CertSerial: a.CertSerial, Version: a.Version,
+	}); err != nil {
+		return fmt.Errorf("upsert agent: %w", err)
+	}
+	if err := s.q.RevokeAgentCertificates(ctx, gen.RevokeAgentCertificatesParams{OrgID: a.OrgID, HostID: a.HostID}); err != nil {
+		return fmt.Errorf("revoke previous agent certificate: %w", err)
+	}
+	notAfter := time.Time{}
+	if a.CertNotAfter != nil {
+		notAfter = *a.CertNotAfter
+	}
+	if err := s.q.InsertAgentCertificate(ctx, gen.InsertAgentCertificateParams{
+		Serial: a.CertSerial, OrgID: a.OrgID, HostID: a.HostID,
+		NotBefore: pgtype.Timestamptz{Time: a.CertNotBefore, Valid: !a.CertNotBefore.IsZero()},
+		NotAfter:  pgtype.Timestamptz{Time: notAfter, Valid: !notAfter.IsZero()},
+	}); err != nil {
+		return fmt.Errorf("insert agent certificate: %w", err)
+	}
+	return nil
 }
 
 // GetBySerial resolves a presented serial without any organization filter:

@@ -199,6 +199,10 @@ type Store interface {
 	// Register replaces the host's active agent in one transaction: the
 	// previous serial is revoked, the row upserted.
 	Register(ctx context.Context, a Agent) error
+	// Renew is Register for a certificate renewal: it fails with
+	// ErrNotFound, changing nothing, unless fromSerial is still the host's
+	// live certificate when the transaction runs.
+	Renew(ctx context.Context, a Agent, fromSerial string) error
 	// GetBySerial resolves a presented serial without an organization
 	// filter; ErrNotFound when unknown.
 	GetBySerial(ctx context.Context, serial string) (AgentIdentity, error)
@@ -419,20 +423,47 @@ func (s *Service) EnrollmentOrg(ctx context.Context, tokenID uuid.UUID) (uuid.UU
 // issues the identity: the certificate row is written and any previous
 // serial of the host is revoked, all in the store's single transaction.
 func (s *Service) Register(ctx context.Context, r Registration) error {
+	a, err := r.agent()
+	if err != nil {
+		return err
+	}
+	return s.store.Register(ctx, a)
+}
+
+// Renew records a renewed certificate the way Register does, but only
+// while fromSerial — the serial the renewing agent authenticated with — is
+// still the host's live certificate. The gRPC interceptor checked that
+// before the call; a revocation committing in between used to let the
+// renewal put the revoked agent back (backlog 7.18), so the store checks
+// it again inside the swap's transaction. ErrNotFound means the agent was
+// revoked or replaced meanwhile.
+func (s *Service) Renew(ctx context.Context, r Registration, fromSerial string) error {
+	if fromSerial == "" {
+		return fmt.Errorf("%w: the renewed serial is required", ErrInvalidInput)
+	}
+	a, err := r.agent()
+	if err != nil {
+		return err
+	}
+	return s.store.Renew(ctx, a, fromSerial)
+}
+
+// agent validates a registration and maps it onto the stored agent.
+func (r Registration) agent() (Agent, error) {
 	if r.AgentName == "" {
-		return fmt.Errorf("%w: agent name is required", ErrInvalidInput)
+		return Agent{}, fmt.Errorf("%w: agent name is required", ErrInvalidInput)
 	}
 	if r.Serial == "" {
-		return fmt.Errorf("%w: certificate serial is required", ErrInvalidInput)
+		return Agent{}, fmt.Errorf("%w: certificate serial is required", ErrInvalidInput)
 	}
 	if r.NotAfter.IsZero() || !r.NotAfter.After(r.NotBefore) {
-		return fmt.Errorf("%w: the certificate validity window is required (not_before < not_after)", ErrInvalidInput)
+		return Agent{}, fmt.Errorf("%w: the certificate validity window is required (not_before < not_after)", ErrInvalidInput)
 	}
 	notAfter := r.NotAfter
-	return s.store.Register(ctx, Agent{
+	return Agent{
 		HostID: r.HostID, OrgID: r.OrgID, AgentName: r.AgentName, CertSerial: r.Serial, Version: r.Version,
 		CertNotBefore: r.NotBefore, CertNotAfter: &notAfter,
-	})
+	}, nil
 }
 
 // GetBySerial is the gRPC authentication path: the presented serial's

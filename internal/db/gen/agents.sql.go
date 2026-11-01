@@ -325,6 +325,30 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 	return i, err
 }
 
+const lockLiveAgentCertificate = `-- name: LockLiveAgentCertificate :execrows
+SELECT 1 FROM agent_certificates
+WHERE serial = $1 AND org_id = $2 AND host_id = $3 AND revoked_at IS NULL
+FOR UPDATE
+`
+
+type LockLiveAgentCertificateParams struct {
+	Serial string    `json:"serial"`
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// A renewal's proof, inside its own transaction, that the serial it renews
+// from is still the host's live certificate (backlog 7.18). FOR UPDATE
+// orders it against a concurrent revoke: whichever commits first, the other
+// sees it, so a revoked agent cannot renew itself back into the registry.
+func (q *Queries) LockLiveAgentCertificate(ctx context.Context, arg LockLiveAgentCertificateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, lockLiveAgentCertificate, arg.Serial, arg.OrgID, arg.HostID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const lookupAgentSerial = `-- name: LookupAgentSerial :one
 SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
 FROM agent_certificates c

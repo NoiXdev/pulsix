@@ -205,6 +205,19 @@ func (f *fakeAgentStore) Claim(_ context.Context, orgID, id uuid.UUID, fn func(c
 	return nil
 }
 
+// Renew is Register guarded like the real store: the serial renewed from
+// must still be live.
+func (f *fakeAgentStore) Renew(ctx context.Context, a agents.Agent, fromSerial string) error {
+	f.mu.Lock()
+	_, known := f.certs[fromSerial]
+	live := known && !f.revokedC[fromSerial]
+	f.mu.Unlock()
+	if !live {
+		return agents.ErrNotFound
+	}
+	return f.Register(ctx, a)
+}
+
 func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

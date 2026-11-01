@@ -282,6 +282,22 @@ func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
 	return nil
 }
 
+// Renew is Register guarded like the real store: the serial renewed from
+// must still be live.
+func (f *fakeAgentStore) Renew(ctx context.Context, a agents.Agent, fromSerial string) error {
+	f.mu.Lock()
+	_, known := f.bySerial[fromSerial]
+	live := known && !f.revoked[fromSerial]
+	if live {
+		f.revoked[fromSerial] = true
+	}
+	f.mu.Unlock()
+	if !live {
+		return agents.ErrNotFound
+	}
+	return f.Register(ctx, a)
+}
+
 func (f *fakeAgentStore) Touch(context.Context, string, string) error { return nil }
 
 func (f *fakeAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }

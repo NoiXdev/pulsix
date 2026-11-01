@@ -247,10 +247,19 @@ func (s *Service) Renew(ctx context.Context, req *agentpb.RenewRequest) (*agentp
 		slog.ErrorContext(ctx, "sign renewed agent certificate", "host_id", agent.HostID, "err", err)
 		return nil, status.Error(codes.Internal, "certificate renewal failed")
 	}
-	if err := s.deps.Agents.Register(ctx, agents.Registration{
+	// Renew, not Register: the store re-checks inside the swap that the
+	// serial this call authenticated with is still live, so a revocation
+	// committing after the interceptor's check cannot be undone by the
+	// renewal (backlog 7.18). The certificate just signed is then never
+	// recorded and so never accepted.
+	err = s.deps.Agents.Renew(ctx, agents.Registration{
 		OrgID: agent.OrgID, HostID: agent.HostID, AgentName: agent.Name, Version: agent.Version,
 		Serial: crt.SerialNumber.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter,
-	}); err != nil {
+	}, agent.Serial)
+	switch {
+	case errors.Is(err, agents.ErrNotFound):
+		return nil, status.Error(codes.PermissionDenied, "the agent's certificate was revoked")
+	case err != nil:
 		slog.ErrorContext(ctx, "swap agent certificate serial", "host_id", agent.HostID, "err", err)
 		return nil, status.Error(codes.Internal, "certificate renewal failed")
 	}

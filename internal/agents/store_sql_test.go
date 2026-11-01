@@ -726,3 +726,48 @@ func TestRecordFactsTwoOrgIsolation(t *testing.T) {
 		t.Fatalf("unknown host push: %v", err)
 	}
 }
+
+// TestAgentRenewAfterRevokeDoesNotReRegister is backlog 7.18: Renew is
+// authenticated by a live serial, but a revocation can commit between that
+// check and the renewal's own transaction. Renewing then re-inserted the
+// host_agents row Revoke had just deleted and issued a working serial. A
+// renewal now proves inside its transaction that the serial it renews
+// from is still live, and fails otherwise.
+func TestAgentRenewAfterRevokeDoesNotReRegister(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-renew-revoked")
+	h := createHost(t, d, org, zone, "web-7")
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-a", "v1", "7001")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A live serial renews: the old one is revoked, the new one resolves.
+	if err := svc.Renew(ctx, registrationOf(org, h.ID, "agent-a", "v1", "7002"), "7001"); err != nil {
+		t.Fatalf("Renew from a live serial: %v", err)
+	}
+	if id, err := svc.GetBySerial(ctx, "7002"); err != nil || id.Revoked {
+		t.Fatalf("renewed identity = %+v, %v", id, err)
+	}
+	// The serial it renewed from is no longer live; renewing from it again
+	// fails.
+	if err := svc.Renew(ctx, registrationOf(org, h.ID, "agent-a", "v1", "7003"), "7001"); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("Renew from a replaced serial: err = %v, want ErrNotFound", err)
+	}
+
+	// The race: the administrator's revoke commits first.
+	if err := svc.Revoke(db.WithOrgScope(ctx, org), org, h.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Renew(ctx, registrationOf(org, h.ID, "agent-a", "v1", "7004"), "7002"); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("Renew after revoke: err = %v, want ErrNotFound", err)
+	}
+	var rows int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM host_agents WHERE host_id = $1`, h.ID).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("host_agents rows after revoke and renew = %d, want 0", rows)
+	}
+	if _, err := svc.GetBySerial(ctx, "7004"); !errors.Is(err, agents.ErrNotFound) {
+		t.Fatalf("serial issued after revoke resolves: err = %v, want ErrNotFound", err)
+	}
+}

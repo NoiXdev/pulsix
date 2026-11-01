@@ -84,6 +84,15 @@ DELETE FROM host_agents WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(h
 INSERT INTO agent_certificates (serial, org_id, host_id, not_before, not_after)
 VALUES (sqlc.arg(serial), sqlc.arg(org_id), sqlc.arg(host_id), sqlc.arg(not_before), sqlc.arg(not_after));
 
+-- name: LockLiveAgentCertificate :execrows
+-- A renewal's proof, inside its own transaction, that the serial it renews
+-- from is still the host's live certificate (backlog 7.18). FOR UPDATE
+-- orders it against a concurrent revoke: whichever commits first, the other
+-- sees it, so a revoked agent cannot renew itself back into the registry.
+SELECT 1 FROM agent_certificates
+WHERE serial = sqlc.arg(serial) AND org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND revoked_at IS NULL
+FOR UPDATE;
+
 -- name: RevokeAgentCertificates :exec
 -- Idempotent: a second revoke keeps the first timestamp.
 UPDATE agent_certificates SET revoked_at = now()
