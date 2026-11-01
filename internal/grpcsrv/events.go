@@ -114,12 +114,18 @@ func (s *Server) receiveEvents(ctx context.Context, jobID uuid.UUID, stream work
 }
 
 // eventAt resolves the event's timestamp; a worker that omits one gets the
-// server's clock.
+// server's clock, and one that names a time after it gets the clock too:
+// a worker must not be able to date an event into the future, where the
+// newest-by-time queries would let it outrank every later one (backlog
+// 7.23).
 func eventAt(ev *workerpb.RunEvent, clock func() time.Time) time.Time {
+	now := clock()
 	if ts := ev.GetAt(); ts != nil {
-		return ts.AsTime()
+		if at := ts.AsTime(); !at.After(now) {
+			return at
+		}
 	}
-	return clock()
+	return now
 }
 
 // bindStream validates the metadata against the claim registry: both keys

@@ -1478,6 +1478,17 @@ func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Statu
 		slog.ErrorContext(ctx, "record test result: hop keys are not a hop key list", "err", err, "job", jobID)
 		return nil
 	}
+	// The worker chose both the time and the hop list, and the newest-by-at
+	// observation decides a bastion's state for every zone that dials it
+	// (backlog 7.23): a time is never later than the manager's clock, and a
+	// hop counts only when it is on the tested host's own route.
+	if now := q.now(); at.After(now) {
+		at = now
+	}
+	if hops, err = q.hopsOnRoute(ctx, orgID, hostIDs[0], hops); err != nil {
+		slog.ErrorContext(ctx, "record test result: cannot resolve the host's route, hop keys dropped", "err", err, "job", jobID)
+		hops = nil
+	}
 	if err := q.test.RecordConnectionTest(ctx, orgID, hostIDs[0], at, res.ok(), res.HostKey, res.HostPublicKey, res.HostKeyState, res.Checks, hops); err != nil {
 		if sinkGone(err) {
 			slog.WarnContext(ctx, "record test result: host no longer exists", "job", jobID)
@@ -1486,6 +1497,34 @@ func (q *SQLQueue) recordTest(ctx context.Context, jobID uuid.UUID, status Statu
 		return fmt.Errorf("record test result: %w", err)
 	}
 	return nil
+}
+
+// hopsOnRoute keeps the hop entries whose bastion is on hostID's rendered
+// jump chain — the route connectionTestPayload handed the probe. A host
+// that no longer renders a connection keeps none.
+func (q *SQLQueue) hopsOnRoute(ctx context.Context, orgID, hostID uuid.UUID, hops []hosts.HopKey) ([]hosts.HopKey, error) {
+	if len(hops) == 0 {
+		return nil, nil
+	}
+	inv, err := q.renderer.Snapshot(ctx, orgID, render.Scope{HostIDs: []uuid.UUID{hostID}})
+	if err != nil {
+		return nil, fmt.Errorf("render route: %w", err)
+	}
+	onRoute := map[uuid.UUID]bool{}
+	for _, c := range inv.Connections {
+		if c.HostID == hostID {
+			for _, id := range c.Bastions {
+				onRoute[id] = true
+			}
+		}
+	}
+	out := make([]hosts.HopKey, 0, len(hops))
+	for _, hop := range hops {
+		if onRoute[hop.BastionID] {
+			out = append(out, hop)
+		}
+	}
+	return out, nil
 }
 
 // testResultPayload is the manager-side mirror of the worker's probe

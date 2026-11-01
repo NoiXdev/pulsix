@@ -733,3 +733,62 @@ type goneTestSink struct{}
 func (goneTestSink) RecordConnectionTest(context.Context, uuid.UUID, uuid.UUID, time.Time, bool, string, string, string, []hosts.HostTestCheck, []hosts.HopKey) error {
 	return hosts.ErrNotFound
 }
+
+// TestRecordTestKeepsTheWorkersClaimsToItsOwnRoute is backlog 7.23: the
+// worker chose the observation time and the hop list, and the newest-by-at
+// queries then let one future-dated entry — for any bastion of the
+// organization — decide that bastion's state for every zone. The time is
+// clamped to the manager's clock, and only hops on the tested host's
+// rendered route are recorded.
+func TestRecordTestKeepsTheWorkersClaimsToItsOwnRoute(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedTestSinkOrg(t, gen.New(d.Pool()), "jobs-test-sink-route-only")
+	zone := testZone(t, d, org)
+	hostID := uuid.Must(uuid.NewV7())
+	bastionID := uuid.Must(uuid.NewV7())
+	foreignBastion := uuid.Must(uuid.NewV7())
+	now := time.Now()
+	q := NewSQLQueue(d, fakeBox{}, fakeProbeRenderer{inv: probeSnapshot(hostID, uuid.Must(uuid.NewV7()), bastionID)}, fullProbeCreds{}, fakeTemplates{}, fakeBastions{byID: map[uuid.UUID]sshconf.Bastion{
+		bastionID: {ID: bastionID, Address: "10.0.0.1", Port: 2223, Username: "jumper"},
+	}}, func() time.Time { return now }, rand.Reader)
+	q.SetKeyPins(fakePins{})
+	sink := &fakeTestSink{}
+	q.SetTestSink(sink)
+	store := NewSQLStore(d)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	j := Job{ID: uuid.Must(uuid.NewV7()), Trigger: TriggerManual, OrgID: org, ZoneID: zone, Kind: KindConnectionTest,
+		HostIDs: []uuid.UUID{hostID}, Status: StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: now}
+	if err := store.CreateJob(scoped, j, nil); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := q.Claim(context.Background(), org, []uuid.UUID{zone}, "v1")
+	if err != nil || claim == nil {
+		t.Fatalf("Claim = %v, %v", claim, err)
+	}
+	stream, err := q.BindStream(context.Background(), j.ID, claim.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const fp = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	payload := `{"reachable":true,"auth":true,"sudo":true,"python":true,"hop_keys":[` +
+		`{"bastion_id":"` + bastionID.String() + `","fingerprint":"` + fp + `","state":"pinned"},` +
+		`{"bastion_id":"` + foreignBastion.String() + `","fingerprint":"` + fp + `","state":"pinned"}]}`
+	future := now.Add(100 * 365 * 24 * time.Hour)
+	if err := stream.Append(context.Background(), Event{Seq: 1, State: "ok", Payload: json.RawMessage(payload), At: future}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Finish(context.Background(), j.ID, StatusSucceeded, nil, ""); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+	calls := sink.all()
+	if len(calls) != 1 {
+		t.Fatalf("sink calls = %d, want 1", len(calls))
+	}
+	if calls[0].at.After(now) {
+		t.Fatalf("recorded at %v, after the manager's clock %v", calls[0].at, now)
+	}
+	if len(calls[0].hops) != 1 || calls[0].hops[0].BastionID != bastionID {
+		t.Fatalf("recorded hops = %+v, want only the route's bastion %s", calls[0].hops, bastionID)
+	}
+}

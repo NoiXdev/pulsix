@@ -304,3 +304,24 @@ func TestRunEventsEventJobMismatch(t *testing.T) {
 		t.Fatalf("code = %s, want InvalidArgument", code)
 	}
 }
+
+// TestEventAtNeverLaterThanTheServerClock is backlog 7.23: a worker may
+// report when an event happened, but not a time after the manager's clock.
+func TestEventAtNeverLaterThanTheServerClock(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	for name, tc := range map[string]struct {
+		at   *timestamppb.Timestamp
+		want time.Time
+	}{
+		"omitted":  {nil, now},
+		"earlier":  {timestamppb.New(now.Add(-time.Minute)), now.Add(-time.Minute)},
+		"same":     {timestamppb.New(now), now},
+		"future":   {timestamppb.New(now.Add(time.Hour)), now},
+		"far away": {timestamppb.New(now.AddDate(100, 0, 0)), now},
+	} {
+		if got := eventAt(&workerpb.RunEvent{At: tc.at}, clock); !got.Equal(tc.want) {
+			t.Errorf("%s: eventAt = %v, want %v", name, got, tc.want)
+		}
+	}
+}
