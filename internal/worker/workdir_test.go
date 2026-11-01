@@ -2,12 +2,19 @@ package worker
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
 // unremovableWorkDir builds a work dir the worker's own RemoveAll cannot
@@ -190,5 +197,83 @@ func TestRemoveWorkDirDoesNotHandThePlayUIDTheWorkersSecrets(t *testing.T) {
 	// different program than the one the run spawn builds.
 	if !strings.Contains(string(raw), "PATH=") {
 		t.Errorf("the cleanup child lost its whole environment, not just the private part:\n%s", raw)
+	}
+}
+
+// fakeSetuidHelper writes a stand-in for the setuid helper that appends
+// each invocation's argv, one line per call, to the returned record file.
+func fakeSetuidHelper(t *testing.T) (helper, record string) {
+	t.Helper()
+	record = filepath.Join(t.TempDir(), "argv")
+	helper = filepath.Join(t.TempDir(), "fake-setuid-exec")
+	script := "#!/bin/sh\necho \"$*\" >> " + record + "\nexit 0\n"
+	if err := os.WriteFile(helper, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake helper: %v", err)
+	}
+	return helper, record
+}
+
+// TestSweepPlayUIDRunsTheSweepAsThePlayUID is backlog 7.21: between jobs
+// the worker kills every process of the play uid, through the setuid
+// helper and the worker binary's sweep mode, so nothing a play started —
+// not even after killing its own supervisor — outlives its job.
+func TestSweepPlayUIDRunsTheSweepAsThePlayUID(t *testing.T) {
+	helper, record := fakeSetuidHelper(t)
+	cfg := cfgFor(t.TempDir(), zoneID)
+	cfg.PlayUID = 65533
+	cfg.SetuidHelper = helper
+	cfg.PlaySupervisor = "/usr/local/bin/pulsix-worker"
+	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{})
+
+	l.sweepPlayUID(context.Background())
+
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the setuid helper was never invoked: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(raw)), "65533 /usr/local/bin/pulsix-worker "+supervisor.SweepArg; got != want {
+		t.Fatalf("helper argv = %q, want %q", got, want)
+	}
+}
+
+// TestSweepPlayUIDIsOffWithoutAPlayUID: no play uid, no second uid to
+// sweep, and no helper call at all.
+func TestSweepPlayUIDIsOffWithoutAPlayUID(t *testing.T) {
+	helper, record := fakeSetuidHelper(t)
+	cfg := cfgFor(t.TempDir(), zoneID)
+	cfg.SetuidHelper = helper
+	cfg.PlaySupervisor = "/usr/local/bin/pulsix-worker"
+	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{})
+
+	l.sweepPlayUID(context.Background())
+
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Fatalf("the helper ran without a play uid: %v", err)
+	}
+}
+
+// TestLoopSweepsThePlayUIDAtStartAndAfterEachJob: once when the loop
+// starts (a previous worker process may have left plays behind) and once
+// after every job, before its work dir is removed.
+func TestLoopSweepsThePlayUIDAtStartAndAfterEachJob(t *testing.T) {
+	helper, record := fakeSetuidHelper(t)
+	dir := t.TempDir()
+	cfg := cfgFor(dir, zoneID)
+	cfg.PlayUID = 65533
+	cfg.SetuidHelper = helper
+	cfg.PlaySupervisor = "/usr/local/bin/pulsix-worker"
+	client := &fakeWorkerClient{claimQueue: []*workerpb.ClaimJobResponse{jobFor(uuid.Must(uuid.NewV7()), "tok")}}
+	exec := &scriptExecutor{run: func(_ int, _ context.Context, _ *workerpb.Job, _ RunEnv, _ func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
+		return StatusSucceeded, nil, nil
+	}}
+
+	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
+	waitFor(t, 5*time.Second, func() bool {
+		raw, _ := os.ReadFile(record)
+		return strings.Count(string(raw), supervisor.SweepArg) >= 2
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v", err)
 	}
 }

@@ -57,14 +57,17 @@ func main() {
 }
 
 // entry decides what this process is. The runner re-executes the worker
-// binary as the per-run play supervisor, marked by a reserved first
-// argument; that process must do nothing a worker does — no configuration
+// binary as the per-run play supervisor, and the loop re-executes it as the
+// play uid's sweep between jobs, each marked by a reserved first argument; that process must do nothing a worker does — no configuration
 // (it has no PULSIX_* variables: the runner strips them), no logging setup,
 // no connection — so the check comes first, before run reads the
 // environment. Everything else is the worker.
 func entry(args, env []string) int {
 	if len(args) > 1 && args[1] == supervisor.Arg {
 		return supervisor.Main(args[2:])
+	}
+	if len(args) > 1 && args[1] == supervisor.SweepArg {
+		return supervisor.Sweep(os.Stderr)
 	}
 	return run(env, supervisor.Probe)
 }

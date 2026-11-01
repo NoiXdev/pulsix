@@ -550,10 +550,13 @@ func TestLoopWorkDirLifecycle(t *testing.T) {
 	}
 }
 
-// TestNewWorkDirIsGroupSetgidWhenPlayUIDIsSet pins the mode the play's own
-// uid needs to even reach the dir — group rwx plus setgid — which is
-// separate from ShareWorkDir's job of opening up the files inside it.
-func TestNewWorkDirIsGroupSetgidWhenPlayUIDIsSet(t *testing.T) {
+// TestNewWorkDirStaysPrivateWhenPlayUIDIsSet is backlog 7.21: the work dir
+// used to be opened to the play's group (0770, setgid) the moment it was
+// created, before the worker wrote a single file into it, so a process of
+// the play uid could plant symlinks there for the worker's own writes to
+// follow. It now stays owner-only; runner.ShareWorkDir opens it, last,
+// once every run file is in place.
+func TestNewWorkDirStaysPrivateWhenPlayUIDIsSet(t *testing.T) {
 	dir := t.TempDir()
 	cfg := cfgFor(dir, zoneID)
 	cfg.PlayUID = 1000
@@ -569,8 +572,8 @@ func TestNewWorkDirIsGroupSetgidWhenPlayUIDIsSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat %s: %v", work, err)
 	}
-	if got := info.Mode() & (os.ModePerm | os.ModeSetgid); got != 0o770|os.ModeSetgid {
-		t.Errorf("newWorkDir mode = %v, want 0770 with setgid", got)
+	if got := info.Mode() & (os.ModePerm | os.ModeSetgid); got != 0o700 {
+		t.Errorf("newWorkDir mode = %v, want 0700 until the run's files are written", got)
 	}
 }
 
@@ -662,8 +665,10 @@ func TestSharingLeavesTheWorkerSecretsOwnerOnly(t *testing.T) {
 	if got := perm(dir); got != 0o710 {
 		t.Errorf("data dir mode = %v, want 0710", got)
 	}
-	if got := perm(work); got != 0o770|os.ModeSetgid {
-		t.Errorf("work dir mode = %v, want 0770 with setgid", got)
+	// Owner-only until runner.ShareWorkDir opens it, once the run's files
+	// are written (backlog 7.21).
+	if got := perm(work); got != 0o700 {
+		t.Errorf("work dir mode = %v, want 0700 until it is shared", got)
 	}
 	if got := perm(identityDir); got != 0o700 {
 		t.Errorf("identity dir mode = %v, want 0700", got)

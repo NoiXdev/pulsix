@@ -172,6 +172,8 @@ func (l *Loop) Run(ctx context.Context) error {
 		if err := l.secureDirsForPlayUID(ctx); err != nil {
 			return fmt.Errorf("prepare data dir for play uid: %w", err)
 		}
+		// A previous worker process may have left plays running.
+		l.sweepPlayUID(ctx)
 	}
 
 	zoneIDs := make([]string, len(l.cfg.Zones))
@@ -312,7 +314,12 @@ func (l *Loop) runOne(ctx context.Context, job *workerpb.Job) (Status, error) {
 	if err != nil {
 		return l.report(ctx, job, StatusError, nil, fmt.Sprintf("create work dir: %v", err))
 	}
-	defer l.removeWorkDir(workDir)
+	// The sweep first: no play process may still be writing into the work
+	// dir, or running at all, once the job is over (backlog 7.21).
+	defer func() {
+		l.sweepPlayUID(ctx)
+		l.removeWorkDir(workDir)
+	}()
 
 	runCtx, cancelRun := context.WithCancel(streamCtx)
 	defer cancelRun()

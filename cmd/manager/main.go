@@ -59,7 +59,8 @@ func main() {
 // to stdout and exits, no server or database involved — see
 // api.Document's doc comment), the "worker add" enrollment subcommand (see
 // app.RunWorkerAdd), the play supervisor's reserved argument, or — with no
-// arguments at all — starts the manager server. The supervisor case exists
+// arguments at all — starts the manager server. The supervisor case (and
+// the sweep beside it, backlog 7.21) exists
 // because the embedded worker runs plays by re-executing this very binary
 // (worker.Config.PlaySupervisor is the manager's own path there); it must
 // stay a case of its own, ahead of the usage error, and does not touch the
@@ -75,6 +76,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return run()
 	case args[0] == supervisor.Arg:
 		return supervisor.Main(args[1:])
+	case args[0] == supervisor.SweepArg:
+		return supervisor.Sweep(stderr)
 	case args[0] == "openapi":
 		return runOpenAPI(stdout)
 	case len(args) >= 2 && args[0] == "worker" && args[1] == "add":

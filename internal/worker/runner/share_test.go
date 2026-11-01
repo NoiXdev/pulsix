@@ -290,3 +290,33 @@ func TestShareRepoReadRefusesASymlinkedAncestor(t *testing.T) {
 		t.Errorf("the symlink's target outside the cache is now %v, want 0700 — chmod followed the link", got)
 	}
 }
+
+// TestShareWorkDirOpensTheRootLast is backlog 7.21: the root is what lets
+// the play's group in at all, so it is opened only after everything below
+// it is done. A walk that fails part-way leaves the root owner-only — the
+// old order had opened it before visiting anything.
+func TestShareWorkDirOpensTheRootLast(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads a 0000 directory, so the walk would not fail")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod dir: %v", err)
+	}
+	unreadable := filepath.Join(dir, "unreadable")
+	if err := os.Mkdir(unreadable, 0o000); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o700) })
+
+	if err := ShareWorkDir(dir); err == nil {
+		t.Fatal("ShareWorkDir over an unreadable directory succeeded")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode() & (os.ModePerm | os.ModeSetgid); got != 0o700 {
+		t.Fatalf("root mode after a failed walk = %v, want 0700", got)
+	}
+}

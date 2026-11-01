@@ -21,10 +21,20 @@ import (
 // Call this only after the caller has finished writing the run's files: it
 // mirrors whatever owner bits exist at the time it runs, so writes that
 // land afterward keep their own (owner-only) mode until the next call.
+//
+// dir itself is opened LAST (backlog 7.21). The worker creates it
+// owner-only and writes every run file while it still is, so no process of
+// the play's group can enter it, plant a symlink for a write to follow, or
+// swap an entry between this walk's lstat and its chmod. Opening the root
+// first, as the walk's natural order would, ended that guarantee before the
+// walk had run.
 func ShareWorkDir(dir string) error {
-	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if path == dir {
+			return nil // opened last, below
 		}
 		// os.Chmod always follows a symlink to its target — there is no
 		// way to chmod the link itself — so a symlink entry must never
@@ -57,7 +67,21 @@ func ShareWorkDir(dir string) error {
 			return fmt.Errorf("chmod %s: %w", path, err)
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", dir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	perm := info.Mode().Perm()
+	if err := os.Chmod(dir, perm|(perm&0o700)>>3|os.ModeSetgid); err != nil {
+		return fmt.Errorf("chmod %s: %w", dir, err)
+	}
+	return nil
 }
 
 // ShareRepoRead opens a repo-cache checkout for READING by the worker's

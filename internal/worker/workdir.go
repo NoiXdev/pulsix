@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
 // removeGrace bounds the play-uid removal below. It is a plain `rm -rf` of
@@ -29,23 +31,47 @@ import (
 const removeGrace = 10 * time.Second
 
 // newWorkDir creates a fresh temp dir under the data dir; runOne removes
-// it when the run ends. MkdirTemp's own default (0700) is exactly right
-// when PlayUID is unset: owner-only. When it is set, the play that is
-// about to run inside this dir needs group access to it (not just to the
-// files ShareWorkDir later opens up inside it, but to the directory
-// itself, or it could never list or enter it) — setgid so anything the
-// play creates in turn inherits the worker's group too.
+// it when the run ends. It is owner-only (MkdirTemp's 0700) whether or not
+// PlayUID is set. The play that runs inside it needs group access, but
+// only once the worker has written the run's files: runner.ShareWorkDir
+// opens the dir, last and setgid, right before the spawn. Opening it here,
+// as this used to, let any process of the play uid plant symlinks in it
+// for the worker's own writes — private keys among them — to follow
+// (backlog 7.21).
 func (l *Loop) newWorkDir() (string, error) {
-	dir, err := os.MkdirTemp(l.cfg.DataDir, "job-")
-	if err != nil {
-		return "", err
+	return os.MkdirTemp(l.cfg.DataDir, "job-")
+}
+
+// sweepPlayUID kills every process of the play uid: the worker binary's
+// sweep mode (supervisor.SweepArg), run through the setuid helper as that
+// uid. The loop runs it when it starts and after every job, so nothing a
+// play started outlives its job — not even a process it detached after
+// killing its own supervisor, which runs as the same uid and so cannot
+// stop it (backlog 7.21). A worker runs one job at a time, so between jobs
+// every process of the play uid is a leftover.
+//
+// It needs the worker binary (Config.PlaySupervisor, filled on Linux) and
+// a play uid; without either there is nothing to run or nothing to sweep.
+// A failure is logged as an error and does not fail the job, which has
+// already reported.
+func (l *Loop) sweepPlayUID(ctx context.Context) {
+	if l.cfg.PlayUID == 0 || l.cfg.PlaySupervisor == "" {
+		return
 	}
-	if l.cfg.PlayUID != 0 {
-		if err := os.Chmod(dir, 0o770|os.ModeSetgid); err != nil {
-			return "", fmt.Errorf("share work dir: %w", err)
-		}
+	helper := l.cfg.SetuidHelper
+	if helper == "" {
+		helper = defaultSetuidHelper
 	}
-	return dir, nil
+	// Detached from ctx, like removeAsPlayUID: the loop's own shutdown is
+	// a common reason a job ends, and the sweep must still run.
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeGrace)
+	defer cancel()
+	cmd := exec.CommandContext(sctx, helper, strconv.FormatUint(uint64(l.cfg.PlayUID), 10), l.cfg.PlaySupervisor, supervisor.SweepArg)
+	cmd.Env = stripPrivateEnv(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		l.log.ErrorContext(ctx, "could not stop the play uid's leftover processes; a play may still be running",
+			"helper", helper, "err", err, "output", string(out))
+	}
 }
 
 // removeWorkDir deletes one run's work dir, and says so when it cannot.
