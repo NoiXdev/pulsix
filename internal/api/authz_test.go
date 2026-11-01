@@ -66,6 +66,10 @@ func (f *fixedRoleTokenStore) GetByHash(context.Context, []byte, time.Time) (aut
 	return *f.tok, false, nil
 }
 
+func (f *fixedRoleTokenStore) Usable(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return f.tok != nil, nil
+}
+
 func (f *fixedRoleTokenStore) ListForOrg(context.Context, uuid.UUID) ([]auth.Token, error) {
 	return nil, nil
 }

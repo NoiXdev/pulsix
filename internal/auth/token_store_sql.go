@@ -59,6 +59,12 @@ func (s *SQLTokenStore) GetByHash(ctx context.Context, secretHash []byte, now ti
 	}, row.InstanceAdmin, nil
 }
 
+// Usable reports whether id is still usable as of now, with GetByHash's
+// own filter.
+func (s *SQLTokenStore) Usable(ctx context.Context, id uuid.UUID, now time.Time) (bool, error) {
+	return s.q.APITokenUsable(ctx, gen.APITokenUsableParams{ID: id, Now: now})
+}
+
 func (s *SQLTokenStore) ListForOrg(ctx context.Context, orgID uuid.UUID) ([]Token, error) {
 	rows, err := s.q.ListAPITokensForOrg(ctx, orgID)
 	if err != nil {

@@ -430,3 +430,43 @@ func TestAPITokensAreIsolatedPerOrgByRLS(t *testing.T) {
 		t.Fatalf("RLS leak: saw %v, want only [%s]", seen, orgA)
 	}
 }
+
+// TestSQLTokenStoreUsableAppliesTheResolveFilter is the by-id check a
+// long-running request repeats (backlog 7.22): usable while the token
+// resolves, not once it is revoked, expired as of now, or unknown.
+func TestSQLTokenStoreUsableAppliesTheResolveFilter(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	uid := seedUser(t, q, "usable-token@example.test")
+	org := seedOrg(t, q, "usable-token-org")
+	store := auth.NewSQLTokenStore(d)
+	expires := time.Now().Add(time.Hour)
+	tok := auth.Token{ID: uuid.Must(uuid.NewV7()), UserID: uid, OrgID: org, Name: "ci", Role: "viewer", ExpiresAt: &expires}
+	if err := store.Insert(ctx, tok, hashOf("usable")); err != nil {
+		t.Fatal(err)
+	}
+	usable := func(id uuid.UUID, now time.Time) bool {
+		t.Helper()
+		ok, err := store.Usable(ctx, id, now)
+		if err != nil {
+			t.Fatalf("Usable: %v", err)
+		}
+		return ok
+	}
+	if !usable(tok.ID, time.Now()) {
+		t.Fatal("a live token is not usable")
+	}
+	if usable(tok.ID, expires.Add(time.Minute)) {
+		t.Fatal("a token past its expiry is usable")
+	}
+	if usable(uuid.Must(uuid.NewV7()), time.Now()) {
+		t.Fatal("an unknown token id is usable")
+	}
+	if err := store.Revoke(ctx, org, tok.ID); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+	if usable(tok.ID, time.Now()) {
+		t.Fatal("a revoked token is usable")
+	}
+}

@@ -7,10 +7,12 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
@@ -109,6 +111,23 @@ func (s *Sessions) Lookup(ctx context.Context, cookie string) (Principal, error)
 		p.MFAAt = &at
 	}
 	return p, nil
+}
+
+// StillValid reports whether the session id a request was authorised with
+// is still valid — not revoked, not expired, its user not disabled — and
+// whether it is MFA-complete. A request that runs for a long time (the job
+// log stream) asks it periodically, so a sign-out or a deactivation ends it
+// (backlog 7.22). A session that no longer resolves is ErrUnauthenticated;
+// any other error is the store's.
+func (s *Sessions) StillValid(ctx context.Context, id uuid.UUID) (mfaComplete bool, err error) {
+	row, err := s.q.GetSession(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrUnauthenticated
+	}
+	if err != nil {
+		return false, fmt.Errorf("look up session: %w", err)
+	}
+	return row.MfaComplete, nil
 }
 
 // MarkMFAComplete upgrades a session after a successful second factor.

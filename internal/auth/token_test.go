@@ -61,6 +61,19 @@ func (m *memTokenStore) GetByHash(_ context.Context, secretHash []byte, now time
 	return tok, m.admin[tok.UserID], nil
 }
 
+// Usable mirrors GetByHash's filter, by id.
+func (m *memTokenStore) Usable(_ context.Context, id uuid.UUID, now time.Time) (bool, error) {
+	if m.getErr != nil {
+		return false, m.getErr
+	}
+	for _, tok := range m.byHash {
+		if tok.ID == id {
+			return !m.revoke[tok.ID] && (tok.ExpiresAt == nil || tok.ExpiresAt.After(now)), nil
+		}
+	}
+	return false, nil
+}
+
 func (m *memTokenStore) ListForOrg(_ context.Context, orgID uuid.UUID) ([]auth.Token, error) {
 	if m.listErr != nil {
 		return nil, m.listErr

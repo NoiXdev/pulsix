@@ -38,3 +38,14 @@ UPDATE api_tokens SET revoked_at = now() WHERE id = $1 AND org_id = $2 AND revok
 -- throttled), not an error — see SQLTokenStore.TouchLastUsed.
 UPDATE api_tokens SET last_used_at = $2
 WHERE id = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute');
+
+-- name: APITokenUsable :one
+-- Whether the token id is still usable as of now — GetAPITokenByHash's own
+-- filter, by id. A long-running request (the job log stream) re-checks the
+-- token it was authorised with this way, so a revocation, an expiry or the
+-- owner's deactivation ends it (backlog 7.22).
+SELECT EXISTS (
+  SELECT 1 FROM api_tokens t JOIN users u ON u.id = t.user_id
+  WHERE t.id = sqlc.arg(id)::uuid AND t.revoked_at IS NULL
+    AND (t.expires_at IS NULL OR t.expires_at > sqlc.arg(now)::timestamptz) AND u.disabled_at IS NULL
+);

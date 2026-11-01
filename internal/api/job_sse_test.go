@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 // sseFrame is one parsed frame of the stream.
@@ -312,5 +313,62 @@ func TestJobStreamAuthMatrix(t *testing.T) {
 	resp = requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"/"+uuid.Must(uuid.NewV7()).String()+"/stream", nil)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown job's stream: status %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestJobStreamEndsWhenAccessEnds is backlog 7.22: the stream authorised
+// once and then ran until the job finished, so a member removed from the
+// organization, or a session signed out elsewhere, kept reading the run's
+// output. It now re-checks the caller's access while it runs and ends with
+// one error frame once that access is gone.
+func TestJobStreamEndsWhenAccessEnds(t *testing.T) {
+	cases := map[string]func(f runFixture, userID uuid.UUID, c *http.Client){
+		"removed from the organization": func(f runFixture, userID uuid.UUID, _ *http.Client) {
+			resp := requestJSON(t, f.adminC, http.MethodDelete, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/members/"+userID.String(), nil)
+			if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+				t.Fatalf("remove member: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+			}
+		},
+		"signed out": func(f runFixture, _ uuid.UUID, c *http.Client) {
+			resp := postJSON(t, c, f.s.HTTP.URL+"/api/v1/auth/logout", nil)
+			if resp.StatusCode/100 != 2 {
+				t.Fatalf("logout: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+			}
+		},
+	}
+	for name, revoke := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newRunFixture(t, "run-sse-revoke-"+strings.ReplaceAll(name, " ", "-"))
+			jobID := mustUUID(t, runJob(t, f.operatorC, f.runURL())[0].ID)
+			userID := f.s.SeedUser("sse-watcher-"+strings.ReplaceAll(name, " ", "-")+"@example.test", "correct horse battery")
+			f.s.AddMember(f.orgID, userID, tenancy.RoleViewer)
+			c := f.s.LoginAs(userID)
+
+			sctx, scancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer scancel()
+			br, resp := openStream(t, c, f.baseURL()+"/"+jobID.String()+"/stream", sctx)
+			defer func() { _ = resp.Body.Close() }()
+			if first := readSSEFrame(t, br); first.event != "status" {
+				t.Fatalf("first frame = %q, want status", first.event)
+			}
+
+			revoke(f, userID, c)
+
+			// The job is still running, so only the access check can end
+			// the stream: one error frame, then EOF. A log frame may still
+			// arrive within one re-check interval; nothing else may.
+			for {
+				fr := readSSEFrame(t, br)
+				if fr.event == "error" {
+					break
+				}
+				if fr.event != "log" {
+					t.Fatalf("frame %q before the stream ended, want error", fr.event)
+				}
+			}
+			if _, err := br.ReadByte(); !errors.Is(err, io.EOF) {
+				t.Fatalf("stream must end after access ended: %v", err)
+			}
+		})
 	}
 }

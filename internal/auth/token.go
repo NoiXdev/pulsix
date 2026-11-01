@@ -52,6 +52,10 @@ type TokenStore interface {
 	// such token, therefore anonymous". instanceAdmin mirrors GetSession's
 	// join against users.instance_admin.
 	GetByHash(ctx context.Context, secretHash []byte, now time.Time) (tok Token, instanceAdmin bool, err error)
+	// Usable reports whether the token id is still usable as of now: not
+	// revoked, not expired, its owner not disabled — GetByHash's filter,
+	// by id.
+	Usable(ctx context.Context, id uuid.UUID, now time.Time) (bool, error)
 	// ListForOrg returns every non-revoked token belonging to orgID.
 	ListForOrg(ctx context.Context, orgID uuid.UUID) ([]Token, error)
 	// Revoke marks id revoked, scoped to orgID so a token can never be
@@ -173,6 +177,13 @@ func (t *Tokens) Resolve(ctx context.Context, plain string) (Principal, TokenSco
 	// MFA-complete from the start.
 	principal := Principal{UserID: tok.UserID, TokenID: &id, InstanceAdmin: admin, MFAComplete: true}
 	return principal, TokenScope{OrgID: tok.OrgID, Role: tok.Role}, nil
+}
+
+// StillUsable reports whether the token id a request was authorised with
+// is still usable. A request that runs for a long time (the job log
+// stream) asks it periodically, so a revocation ends it (backlog 7.22).
+func (t *Tokens) StillUsable(ctx context.Context, id uuid.UUID) (bool, error) {
+	return t.store.Usable(ctx, id, t.now())
 }
 
 // List returns every non-revoked token for orgID.

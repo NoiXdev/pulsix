@@ -22,6 +22,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -31,6 +32,14 @@ import (
 // the terminal finish) are seen through this poll, which covers every
 // path a status can change — including the ones no event rides on.
 const jobStatusPollInterval = 500 * time.Millisecond
+
+// jobStreamAccessInterval is how often a live stream re-checks that its
+// caller may still read the run: the credential it was opened with still
+// valid, the membership still there, the role still allowing jobs.read.
+// The stream authorised once and then ran until the job finished, so a
+// removed member or a signed-out session kept reading the output (backlog
+// 7.22). Access ends within this interval, not at the next log line.
+const jobStreamAccessInterval = 2 * time.Second
 
 // registerJobStreamRoute wires GET /orgs/{org}/jobs/{id}/stream. It is a
 // read (jobs.read) and, being a read, not audited — the same rule the
@@ -119,8 +128,24 @@ func writeJobStream(hctx huma.Context, rctx context.Context, deps Deps, orgID, j
 
 	ticker := time.NewTicker(jobStatusPollInterval)
 	defer ticker.Stop()
+	access := time.NewTicker(jobStreamAccessInterval)
+	defer access.Stop()
 	for {
 		select {
+		case <-access.C:
+			if err := streamAccessHeld(rctx, deps, orgID); err != nil {
+				switch {
+				case errors.Is(err, context.Canceled):
+				case errors.Is(err, errStreamAccessEnded):
+					slog.InfoContext(rctx, "job event stream ended", "job_id", jobID, "reason", err)
+					_ = writeFrame("error", map[string]any{"error": "access to this run ended"})
+				default:
+					// Fail closed: a check that cannot be made ends the
+					// stream; the SPA falls back to polling.
+					streamError(rctx, writeFrame, "re-check access", err)
+				}
+				return
+			}
 		case <-rctx.Done():
 			// Client disconnect: the deferred cancel above unsubscribes —
 			// no subscriber is left behind.
@@ -153,6 +178,54 @@ func writeJobStream(hctx huma.Context, rctx context.Context, deps Deps, orgID, j
 			}
 		}
 	}
+}
+
+// errStreamAccessEnded is why streamAccessHeld refuses: the credential,
+// the membership or the role no longer allows reading the run.
+var errStreamAccessEnded = errors.New("access ended")
+
+// streamAccessHeld re-checks, for a running stream, what requireOrg
+// checked when it opened: the credential it was opened with is still
+// valid (a session not signed out, expired or of a disabled user; a token
+// not revoked or expired), still MFA-complete, and the caller is still a
+// member whose role — narrowed by the token's own, as requireOrg does —
+// allows jobs.read.
+func streamAccessHeld(ctx context.Context, deps Deps, orgID uuid.UUID) error {
+	p, ok := auth.FromContext(ctx)
+	if !ok {
+		return errStreamAccessEnded
+	}
+	if p.TokenID != nil {
+		usable, err := deps.Tokens.StillUsable(ctx, *p.TokenID)
+		if err != nil {
+			return fmt.Errorf("check token: %w", err)
+		}
+		if !usable {
+			return fmt.Errorf("%w: token no longer usable", errStreamAccessEnded)
+		}
+	} else {
+		mfaComplete, err := deps.Sessions.StillValid(ctx, p.SessionID)
+		if errors.Is(err, auth.ErrUnauthenticated) || (err == nil && !mfaComplete) {
+			return fmt.Errorf("%w: session no longer valid", errStreamAccessEnded)
+		}
+		if err != nil {
+			return fmt.Errorf("check session: %w", err)
+		}
+	}
+	role, err := deps.Tenancy.MembershipOf(ctx, orgID, p.UserID)
+	if errors.Is(err, tenancy.ErrNotMember) || errors.Is(err, tenancy.ErrNotFound) {
+		return fmt.Errorf("%w: no longer a member", errStreamAccessEnded)
+	}
+	if err != nil {
+		return fmt.Errorf("check membership: %w", err)
+	}
+	if ts, ok := auth.TokenScopeFromContext(ctx); ok {
+		role = tenancy.Lower(role, tenancy.Role(ts.Role))
+	}
+	if !tenancy.Allows(role, tenancy.PermJobsRead) {
+		return fmt.Errorf("%w: role no longer allows reading runs", errStreamAccessEnded)
+	}
+	return nil
 }
 
 // writeSSEFrame writes one frame in the text/event-stream wire format:

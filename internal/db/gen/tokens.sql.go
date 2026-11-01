@@ -13,6 +13,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const aPITokenUsable = `-- name: APITokenUsable :one
+SELECT EXISTS (
+  SELECT 1 FROM api_tokens t JOIN users u ON u.id = t.user_id
+  WHERE t.id = $1::uuid AND t.revoked_at IS NULL
+    AND (t.expires_at IS NULL OR t.expires_at > $2::timestamptz) AND u.disabled_at IS NULL
+)
+`
+
+type APITokenUsableParams struct {
+	ID  uuid.UUID `json:"id"`
+	Now time.Time `json:"now"`
+}
+
+// Whether the token id is still usable as of now — GetAPITokenByHash's own
+// filter, by id. A long-running request (the job log stream) re-checks the
+// token it was authorised with this way, so a revocation, an expiry or the
+// owner's deactivation ends it (backlog 7.22).
+func (q *Queries) APITokenUsable(ctx context.Context, arg APITokenUsableParams) (bool, error) {
+	row := q.db.QueryRow(ctx, aPITokenUsable, arg.ID, arg.Now)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const getAPITokenByHash = `-- name: GetAPITokenByHash :one
 SELECT t.id, t.user_id, t.org_id, t.name, t.role, t.expires_at, t.last_used_at, t.revoked_at, t.created_at, u.instance_admin
 FROM api_tokens t JOIN users u ON u.id = t.user_id

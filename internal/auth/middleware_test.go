@@ -114,6 +114,10 @@ func (f *fakeBearerStore) GetByHash(_ context.Context, hash []byte, _ time.Time)
 	return f.tok, f.admin, nil
 }
 
+func (f *fakeBearerStore) Usable(context.Context, uuid.UUID, time.Time) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeBearerStore) ListForOrg(context.Context, uuid.UUID) ([]auth.Token, error) {
 	return nil, nil
 }
