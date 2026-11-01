@@ -1929,3 +1929,39 @@ func TestSQLStoreProjectCheckDefinitionIntoRefusesACollidingKey(t *testing.T) {
 		t.Fatalf("ProjectCheckDefinitionInto() error = %v, want ErrNameTaken", err)
 	}
 }
+
+// TestSQLStoreCreateTemplateWithProjectionsToleratesADuplicatePlaybookPath
+// is backlog 7.20: nothing makes (org_id, repo_id, path) unique in
+// playbooks, so one organization can register the same repository path
+// twice. The projection's playbook join then matched two rows for that
+// organization, inserted its projection id twice, and the primary-key
+// violation rolled the definition back for every organization. Each
+// organization gets exactly one projection, resolved to its oldest match.
+func TestSQLStoreCreateTemplateWithProjectionsToleratesADuplicatePlaybookPath(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	orgDup := seedOrg(t, q, "shared-tpl-dup-path")
+	orgOther := seedOrg(t, q, "shared-tpl-dup-path-other")
+	repoDef := seedSharedRepoDef(t, d, "infra-for-tpl-dup-path")
+
+	projectedRepoID, _, _, _, _ := projectionRow(t, d, orgDup, repoDef.ID)
+	first := seedPlaybook(t, d, orgDup, projectedRepoID)
+	seedPlaybook(t, d, orgDup, projectedRepoID)
+
+	def, err := store.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-site-dup", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatalf("CreateTemplateWithProjections() error = %v, want nil", err)
+	}
+	if n := countTemplateProjections(t, d, def.ID); n < 2 {
+		t.Fatalf("countTemplateProjections() = %d, want one per organization", n)
+	}
+	if !templateProjectionExists(t, d, orgOther, def.ID) {
+		t.Fatal("the other organization got no projection")
+	}
+	if _, _, _, got := templateProjectionRow(t, d, orgDup, def.ID); got != first {
+		t.Fatalf("duplicate-path organization's playbook_id = %v, want the oldest match %v", got, first)
+	}
+}

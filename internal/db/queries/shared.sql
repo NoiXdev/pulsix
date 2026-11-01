@@ -308,6 +308,12 @@ SELECT org_id, name FROM job_templates WHERE shared_template_id IS DISTINCT FROM
 -- organization" — exactly like a repository projection starts with no
 -- credential: the organization's to fill in, not something this statement
 -- could ever know.
+-- The playbook side is a LATERAL ... LIMIT 1, not a plain join: nothing
+-- makes (org_id, repo_id, path) unique, so an organization that registered
+-- the same path twice matched two rows, inserted its projection id twice,
+-- and the primary-key violation rolled the definition back for every
+-- organization (backlog 7.20). The oldest match wins, here and in
+-- InsertProjectedTemplate below.
 -- sqlc's own analyzer (not real Postgres, which does support it) does not
 -- know the two-argument form of unnest, so the (ids, org_ids) pair is
 -- zipped with WITH ORDINALITY instead of InsertProjectedRepos' own
@@ -318,7 +324,11 @@ SELECT i.id, o.org_id, @name, pb.id, '{}'::jsonb, @lim, @extra_vars, @extra_vars
 FROM unnest(@ids::uuid[]) WITH ORDINALITY AS i(id, n)
 JOIN unnest(@org_ids::uuid[]) WITH ORDINALITY AS o(org_id, n) ON i.n = o.n
 LEFT JOIN git_repos g ON g.org_id = o.org_id AND g.shared_repo_id = @shared_repo_id::uuid
-LEFT JOIN playbooks pb ON pb.org_id = o.org_id AND pb.repo_id = g.id AND pb.path = @playbook_path AND pb.source = 'repo';
+LEFT JOIN LATERAL (
+  SELECT p.id FROM playbooks p
+  WHERE p.org_id = o.org_id AND p.repo_id = g.id AND p.path = @playbook_path AND p.source = 'repo'
+  ORDER BY p.created_at, p.id LIMIT 1
+) pb ON true;
 
 -- name: InsertProjectedTemplate :exec
 -- InsertProjectedTemplates' single-organization counterpart —
@@ -330,7 +340,8 @@ VALUES (
   @id, @org_id, @name,
   (SELECT pb.id FROM git_repos g JOIN playbooks pb ON pb.org_id = g.org_id AND pb.repo_id = g.id
      WHERE g.org_id = @org_id::uuid AND g.shared_repo_id = @shared_repo_id::uuid
-       AND pb.path = @playbook_path AND pb.source = 'repo' LIMIT 1),
+       AND pb.path = @playbook_path AND pb.source = 'repo'
+     ORDER BY pb.created_at, pb.id LIMIT 1),
   '{}'::jsonb, @lim, @extra_vars, @extra_vars_schema, @shared_template_id
 );
 
@@ -380,7 +391,8 @@ UPDATE job_templates SET
   name = @name,
   playbook_id = (SELECT pb.id FROM git_repos g JOIN playbooks pb ON pb.org_id = g.org_id AND pb.repo_id = g.id
                    WHERE g.org_id = @org_id::uuid AND g.shared_repo_id = @shared_repo_id::uuid
-                     AND pb.path = @playbook_path AND pb.source = 'repo' LIMIT 1),
+                     AND pb.path = @playbook_path AND pb.source = 'repo'
+                   ORDER BY pb.created_at, pb.id LIMIT 1),
   "limit" = @lim, extra_vars = @extra_vars, extra_vars_schema = @extra_vars_schema, updated_at = now()
 WHERE org_id = @org_id::uuid AND shared_template_id = @shared_template_id::uuid;
 

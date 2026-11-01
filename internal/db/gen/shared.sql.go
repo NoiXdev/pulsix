@@ -594,7 +594,8 @@ VALUES (
   $1, $2, $3,
   (SELECT pb.id FROM git_repos g JOIN playbooks pb ON pb.org_id = g.org_id AND pb.repo_id = g.id
      WHERE g.org_id = $2::uuid AND g.shared_repo_id = $4::uuid
-       AND pb.path = $5 AND pb.source = 'repo' LIMIT 1),
+       AND pb.path = $5 AND pb.source = 'repo'
+     ORDER BY pb.created_at, pb.id LIMIT 1),
   '{}'::jsonb, $6, $7, $8, $9
 )
 `
@@ -636,7 +637,11 @@ SELECT i.id, o.org_id, $1, pb.id, '{}'::jsonb, $2, $3, $4, $5
 FROM unnest($6::uuid[]) WITH ORDINALITY AS i(id, n)
 JOIN unnest($7::uuid[]) WITH ORDINALITY AS o(org_id, n) ON i.n = o.n
 LEFT JOIN git_repos g ON g.org_id = o.org_id AND g.shared_repo_id = $8::uuid
-LEFT JOIN playbooks pb ON pb.org_id = o.org_id AND pb.repo_id = g.id AND pb.path = $9 AND pb.source = 'repo'
+LEFT JOIN LATERAL (
+  SELECT p.id FROM playbooks p
+  WHERE p.org_id = o.org_id AND p.repo_id = g.id AND p.path = $9 AND p.source = 'repo'
+  ORDER BY p.created_at, p.id LIMIT 1
+) pb ON true
 `
 
 type InsertProjectedTemplatesParams struct {
@@ -664,6 +669,12 @@ type InsertProjectedTemplatesParams struct {
 // organization" — exactly like a repository projection starts with no
 // credential: the organization's to fill in, not something this statement
 // could ever know.
+// The playbook side is a LATERAL ... LIMIT 1, not a plain join: nothing
+// makes (org_id, repo_id, path) unique, so an organization that registered
+// the same path twice matched two rows, inserted its projection id twice,
+// and the primary-key violation rolled the definition back for every
+// organization (backlog 7.20). The oldest match wins, here and in
+// InsertProjectedTemplate below.
 // sqlc's own analyzer (not real Postgres, which does support it) does not
 // know the two-argument form of unnest, so the (ids, org_ids) pair is
 // zipped with WITH ORDINALITY instead of InsertProjectedRepos' own
@@ -1400,7 +1411,8 @@ UPDATE job_templates SET
   name = $1,
   playbook_id = (SELECT pb.id FROM git_repos g JOIN playbooks pb ON pb.org_id = g.org_id AND pb.repo_id = g.id
                    WHERE g.org_id = $2::uuid AND g.shared_repo_id = $3::uuid
-                     AND pb.path = $4 AND pb.source = 'repo' LIMIT 1),
+                     AND pb.path = $4 AND pb.source = 'repo'
+                   ORDER BY pb.created_at, pb.id LIMIT 1),
   "limit" = $5, extra_vars = $6, extra_vars_schema = $7, updated_at = now()
 WHERE org_id = $2::uuid AND shared_template_id = $8::uuid
 `
