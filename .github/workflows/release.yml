@@ -96,10 +96,21 @@ jobs:
       # --from=web"/"go build" stages' non-native instructions); Buildx is
       # the builder that actually understands --platform and produces one
       # multi-arch manifest list per tag below.
+      #
+      # Both actions run an image of their own, privileged, in the job that
+      # holds the registry credentials: QEMU's binfmt installer and the
+      # BuildKit daemon. Pinning the actions does not pin those — left to
+      # their defaults they are the mutable tags tonistiigi/binfmt:latest
+      # and moby/buildkit:buildx-stable-1 — so both are pinned here by
+      # digest (backlog 7.17; the digests those tags pointed to on
+      # 2026-11-01). Bump them deliberately, like the action SHAs.
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
 
       - name: Log in to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

@@ -29,7 +29,10 @@ run-name: Create Release for ${{ github.event.repository.name }}
 #
 # Re-arm by restoring the workflow_run block below, once the shared
 # workflow is on that repository's main. Nothing else needs to change: the
-# job's guard already accepts either event.
+# job's guard already accepts either event. (As of 2026-11-01 it is on
+# main, and the job below is pinned to that commit; re-arming is still a
+# decision of its own, since it makes every green commit on main a
+# release.)
 on:
   workflow_dispatch:
   # workflow_run:
@@ -45,5 +48,14 @@ permissions:
 jobs:
   tag:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    uses: NoiXdev/github-workflows/.github/workflows/create_go_changelog_version_release.yaml@main
+    # Pinned by commit, never @main (backlog 7.16): `secrets: inherit`
+    # hands the called workflow every secret of this repository, the
+    # registry credentials included, and NoiXdev/github-workflows' main is
+    # not protected — whoever could push there would receive them on the
+    # next release. At this commit the workflow uses only GITHUB_TOKEN and
+    # DISCORD_WEBHOOK_RELEASE_NOTIFICATION. Passing just that one secret
+    # instead of `inherit` needs the shared workflow to declare it under
+    # workflow_call.secrets first; until then the pin is what keeps the
+    # rest out of reach. Bump it deliberately, after reading the diff.
+    uses: NoiXdev/github-workflows/.github/workflows/create_go_changelog_version_release.yaml@fb91e97de416a41469abe26810439dfefc605b7e # main, 2026-11-01
     secrets: inherit
