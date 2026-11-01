@@ -5565,6 +5565,14 @@ export interface components {
         Schema: {
             fields: components["schemas"]["Field"][] | null;
         };
+        SessionUpgradeOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/SessionUpgradeOutputBody.json
+             */
+            readonly $schema?: string;
+        };
         SetupCompleteInputBody: {
             /**
              * Format: uri
@@ -6922,10 +6930,11 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    "Set-Cookie"?: components["schemas"]["Cookie"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OkOutputBody"];
+                    "application/json": components["schemas"]["SessionUpgradeOutputBody"];
                 };
             };
             /** @description Error */
@@ -6982,6 +6991,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    "Set-Cookie"?: components["schemas"]["Cookie"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7048,6 +7058,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    "Set-Cookie"?: components["schemas"]["Cookie"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7114,10 +7125,11 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    "Set-Cookie"?: components["schemas"]["Cookie"];
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OkOutputBody"];
+                    "application/json": components["schemas"]["SessionUpgradeOutputBody"];
                 };
             };
             /** @description Error */

@@ -77,7 +77,7 @@ func TestEnrolmentConfirmTOTPCompletesTheSession(t *testing.T) {
 	uid := seedReaperUser(t, raw, "enrol-ok@example.test")
 	sessionID := createSessionAt(t, raw, uid, time.Now().Add(time.Hour), false)
 
-	codes, err := e.ConfirmTOTP(ctx, uid, sessionID, enrol(t, tp, clock, uid))
+	codes, _, err := e.ConfirmTOTP(ctx, uid, sessionID, enrol(t, tp, clock, uid))
 	if err != nil {
 		t.Fatalf("ConfirmTOTP: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestEnrolmentConfirmTOTPRollsBackWhenTheSessionUpgradeFails(t *testing.T) {
 	e, tp, raw, d, clock := enrolmentWorld(t)
 	uid := seedReaperUser(t, raw, "enrol-rollback@example.test")
 
-	_, err := e.ConfirmTOTP(ctx, uid, uuid.Must(uuid.NewV7()), enrol(t, tp, clock, uid))
+	_, _, err := e.ConfirmTOTP(ctx, uid, uuid.Must(uuid.NewV7()), enrol(t, tp, clock, uid))
 	if err == nil {
 		t.Fatal("ConfirmTOTP with an unknown session returned no error")
 	}
@@ -118,7 +118,7 @@ func TestEnrolmentConfirmTOTPRollsBackWhenTheSessionUpgradeFails(t *testing.T) {
 	}
 	// The user can simply try again once the session is real.
 	sessionID := createSessionAt(t, raw, uid, time.Now().Add(time.Hour), false)
-	if _, err := e.ConfirmTOTP(ctx, uid, sessionID, enrol(t, tp, clock, uid)); err != nil {
+	if _, _, err := e.ConfirmTOTP(ctx, uid, sessionID, enrol(t, tp, clock, uid)); err != nil {
 		t.Fatalf("retry after the failure: %v", err)
 	}
 }
@@ -130,7 +130,7 @@ func TestEnrolmentConfirmTOTPRejectsAWrongCode(t *testing.T) {
 	sessionID := createSessionAt(t, raw, uid, time.Now().Add(time.Hour), false)
 	enrol(t, tp, clock, uid)
 
-	_, err := e.ConfirmTOTP(ctx, uid, sessionID, "000000")
+	_, _, err := e.ConfirmTOTP(ctx, uid, sessionID, "000000")
 	if err == nil || !strings.Contains(err.Error(), "code") {
 		t.Fatalf("ConfirmTOTP with a wrong code = %v, want an invalid-code error", err)
 	}
@@ -152,7 +152,7 @@ func TestBeginEnrolKeepsTheConfirmedFactorUntilTheNewOneIsConfirmed(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := e.ConfirmTOTP(ctx, uid, sessionID, codeAt(t, first, clock)); err != nil {
+	if _, _, err := e.ConfirmTOTP(ctx, uid, sessionID, codeAt(t, first, clock)); err != nil {
 		t.Fatalf("first confirmation: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestBeginEnrolKeepsTheConfirmedFactorUntilTheNewOneIsConfirmed(t *testing.T
 	// Finishing the re-enrolment swaps them over.
 	clock.Advance(30 * time.Second)
 	session2 := createSessionAt(t, raw, uid, time.Now().Add(time.Hour), false)
-	if _, err := e.ConfirmTOTP(ctx, uid, session2, codeAt(t, second, clock)); err != nil {
+	if _, _, err := e.ConfirmTOTP(ctx, uid, session2, codeAt(t, second, clock)); err != nil {
 		t.Fatalf("confirming the new secret: %v", err)
 	}
 	clock.Advance(30 * time.Second)
@@ -224,7 +224,8 @@ func TestSessionCarriesFactorFreshness(t *testing.T) {
 	}
 
 	// Confirming the factor proves it: the session is complete and fresh.
-	if _, err := e.ConfirmTOTP(ctx, uid, sessionID, enrol(t, tp, clock, uid)); err != nil {
+	_, cookie, err = e.ConfirmTOTP(ctx, uid, sessionID, enrol(t, tp, clock, uid))
+	if err != nil {
 		t.Fatal(err)
 	}
 	p, err = sessions.Lookup(ctx, cookie)
@@ -245,7 +246,8 @@ func TestSessionCarriesFactorFreshness(t *testing.T) {
 	// refreshes the stamp rather than needing a route of its own.
 	before := *p.MFAAt
 	time.Sleep(10 * time.Millisecond)
-	if err := sessions.MarkMFAComplete(ctx, sessionID); err != nil {
+	cookie, err = sessions.MarkMFAComplete(ctx, sessionID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	p, err = sessions.Lookup(ctx, cookie)

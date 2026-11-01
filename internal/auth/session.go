@@ -68,19 +68,33 @@ func NewSessions(q *gen.Queries, now func() time.Time) *Sessions {
 // Create inserts a session and returns the cookie value "<id>.<secret>".
 func (s *Sessions) Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
 	id := uuid.Must(uuid.NewV7())
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
+	secret, sum, err := newSessionSecret()
+	if err != nil {
 		return uuid.Nil, "", err
 	}
-	sum := sha256.Sum256(secret)
-	err := s.q.CreateSession(ctx, gen.CreateSessionParams{
-		ID: id, UserID: userID, SecretHash: sum[:], MfaComplete: mfaComplete,
+	err = s.q.CreateSession(ctx, gen.CreateSessionParams{
+		ID: id, UserID: userID, SecretHash: sum, MfaComplete: mfaComplete,
 		ExpiresAt: s.now().Add(SessionTTL),
 	})
 	if err != nil {
 		return uuid.Nil, "", err
 	}
-	return id, id.String() + "." + base64.RawURLEncoding.EncodeToString(secret), nil
+	return id, cookieValue(id, secret), nil
+}
+
+// newSessionSecret draws a session secret and its stored SHA-256 hash.
+func newSessionSecret() (secret, sum []byte, err error) {
+	secret = make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, nil, err
+	}
+	h := sha256.Sum256(secret)
+	return secret, h[:], nil
+}
+
+// cookieValue is the session cookie's value, "<id>.<secret>".
+func cookieValue(id uuid.UUID, secret []byte) string {
+	return id.String() + "." + base64.RawURLEncoding.EncodeToString(secret)
 }
 
 // Lookup validates a cookie value.
@@ -130,20 +144,30 @@ func (s *Sessions) StillValid(ctx context.Context, id uuid.UUID) (mfaComplete bo
 	return row.MfaComplete, nil
 }
 
-// MarkMFAComplete upgrades a session after a successful second factor.
-func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) error {
-	n, err := s.q.MarkSessionMFAComplete(ctx, id)
+// MarkMFAComplete upgrades a session after a successful second factor and
+// returns its new cookie value: the upgrade replaces the session's secret,
+// so the cookie it had before no longer authenticates (backlog 7.19).
+// Without that, a pending session planted in a victim's browser (by
+// someone who knows the password and can set the victim's cookie) was
+// upgraded by the victim's own second factor and stayed usable by the
+// planter. The caller must send the new value as the session cookie.
+func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) (string, error) {
+	secret, sum, err := newSessionSecret()
 	if err != nil {
-		return err
+		return "", err
+	}
+	n, err := s.q.MarkSessionMFAComplete(ctx, gen.MarkSessionMFACompleteParams{ID: id, SecretHash: sum})
+	if err != nil {
+		return "", err
 	}
 	if n == 0 {
 		// Nothing was updated: the session is gone (revoked, reaped, or
 		// never existed). Reporting success here would let the caller
 		// believe a second factor had been completed for a session that
 		// cannot carry it.
-		return ErrNotFound
+		return "", ErrNotFound
 	}
-	return nil
+	return cookieValue(id, secret), nil
 }
 
 // Revoke ends a session.

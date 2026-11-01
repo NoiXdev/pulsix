@@ -325,15 +325,19 @@ func requireEnrolmentSession(ctx context.Context, deps Deps) (auth.Principal, er
 
 // completeEnrolment upgrades a session that was pending only for lack of a
 // second factor once it has just enrolled one, so it continues without a
-// fresh login. A session that was already MFA-complete is left alone.
-func completeEnrolment(ctx context.Context, deps Deps, p auth.Principal) error {
+// fresh login, and returns the session's new cookie (the upgrade replaces
+// its secret, backlog 7.19). A session that was already MFA-complete is
+// left alone, and the cookie is nil.
+func completeEnrolment(ctx context.Context, deps Deps, p auth.Principal) (*http.Cookie, error) {
 	if p.MFAComplete {
-		return nil
+		return nil, nil
 	}
-	if err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
-		return mapAuthErr(ctx, err)
+	cookie, err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID)
+	if err != nil {
+		return nil, mapAuthErr(ctx, err)
 	}
-	return nil
+	c := sessionCookie(cookie, deps.Secure)
+	return &c, nil
 }
 
 // secondFactors is the account-level view over both kinds of second factor

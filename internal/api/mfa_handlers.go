@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
@@ -20,7 +21,11 @@ type codeInput struct {
 	}
 }
 type recoveryOutput struct {
-	Body struct {
+	// SetCookie is the session's new cookie when the call completed the
+	// session (confirming the first factor replaces its secret, backlog
+	// 7.19); nil, and so no header, when it did not.
+	SetCookie *http.Cookie `header:"Set-Cookie"`
+	Body      struct {
 		RecoveryCodes []string `json:"recovery_codes"`
 	}
 }
@@ -67,6 +72,15 @@ func verifyFactorCode(ctx context.Context, deps Deps, userID uuid.UUID, in *code
 // matching the rest of the auth API's mutation endpoints.
 type okOutput struct {
 	Body struct{}
+}
+
+// sessionUpgradeOutput answers a call that completed or re-proved the
+// session's second factor: the session's secret was replaced (backlog
+// 7.19), so the response carries its new cookie. SetCookie is nil when the
+// call did not touch the session.
+type sessionUpgradeOutput struct {
+	SetCookie *http.Cookie `header:"Set-Cookie"`
+	Body      struct{}
 }
 
 // registerMFARoutes wires the TOTP enrolment, confirmation, session step-up
@@ -124,7 +138,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		// (backlog 1.26): the recovery codes below exist in readable form
 		// exactly once, in this response, so they must not be committed
 		// unless the session upgrade commits with them.
-		codes, err := deps.Enrolment.ConfirmTOTP(ctx, p.UserID, p.SessionID, in.Body.Code)
+		codes, cookie, err := deps.Enrolment.ConfirmTOTP(ctx, p.UserID, p.SessionID, in.Body.Code)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
@@ -137,6 +151,8 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		setAuditScope(ctx, nil, p.UserID)
 		setAuditObject(ctx, p.UserID.String(), "enabled two-factor authentication (TOTP)")
 		out := &recoveryOutput{}
+		c := sessionCookie(cookie, deps.Secure)
+		out.SetCookie = &c
 		out.Body.RecoveryCodes = codes
 		return out, nil
 	}, withAudit("confirmTOTP", "totp"))
@@ -145,7 +161,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 	// codes is the attack, so it is rate limited per client address; the
 	// enrolment routes above already require a session a password had to
 	// buy (and login itself is limited).
-	huma.Post(hapi, "/api/v1/auth/totp/verify", func(ctx context.Context, in *codeInput) (*okOutput, error) {
+	huma.Post(hapi, "/api/v1/auth/totp/verify", func(ctx context.Context, in *codeInput) (*sessionUpgradeOutput, error) {
 		p, err := requireSession(ctx)
 		if err != nil {
 			return nil, err
@@ -153,10 +169,12 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err := verifyFactorCode(ctx, deps, p.UserID, in); err != nil {
 			return nil, err
 		}
-		if err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
+		cookie, err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID)
+		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
-		return &okOutput{}, nil
+		c := sessionCookie(cookie, deps.Secure)
+		return &sessionUpgradeOutput{SetCookie: &c}, nil
 	}, withAuthRateLimit(deps))
 
 	// Backlog 1.34: the set is shown exactly once, at enrolment. A lost

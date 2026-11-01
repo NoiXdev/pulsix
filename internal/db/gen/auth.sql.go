@@ -203,8 +203,14 @@ func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCode
 }
 
 const markSessionMFAComplete = `-- name: MarkSessionMFAComplete :execrows
-UPDATE sessions SET mfa_complete = true, mfa_at = now() WHERE id = $1
+UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = $1
+WHERE id = $2
 `
+
+type MarkSessionMFACompleteParams struct {
+	SecretHash []byte    `json:"secret_hash"`
+	ID         uuid.UUID `json:"id"`
+}
 
 // :execrows, not :exec — completing the second factor is a security state
 // change, and an id that matches nothing must reach the caller as a
@@ -213,8 +219,10 @@ UPDATE sessions SET mfa_complete = true, mfa_at = now() WHERE id = $1
 // that complete a pending session are what an already-complete one
 // re-proves its factor through, and that re-proof is the whole point of
 // the freshness window (backlog 1.28).
-func (q *Queries) MarkSessionMFAComplete(ctx context.Context, id uuid.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, markSessionMFAComplete, id)
+// secret_hash is replaced too (backlog 7.19): the cookie a session had
+// before its second factor must not be the one that carries it afterwards.
+func (q *Queries) MarkSessionMFAComplete(ctx context.Context, arg MarkSessionMFACompleteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markSessionMFAComplete, arg.SecretHash, arg.ID)
 	if err != nil {
 		return 0, err
 	}

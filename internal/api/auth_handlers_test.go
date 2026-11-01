@@ -6,8 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/pquerna/otp/totp"
 
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/api/apitest"
@@ -260,5 +264,78 @@ func TestRequireMFACompleteGatesExplorerNotMe(t *testing.T) {
 	resp, err := c.Get(s.HTTP.URL + "/api/explorer")
 	if err != nil || resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("explorer (requireMFAComplete) with pending MFA: %v %d, want 403", err, resp.StatusCode)
+	}
+}
+
+// TestSecondFactorReplacesTheSessionCookie is backlog 7.19: completing the
+// second factor used to upgrade the session in place, so a pending session
+// planted in the victim's browser by someone who knows the password became
+// a full session in the planter's hands once the victim entered their own
+// code. Every upgrade now issues a new cookie; the one the session had
+// before stops authenticating.
+func TestSecondFactorReplacesTheSessionCookie(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("fixation@example.test", "correct horse battery")
+	me := func(cookie string) int {
+		t.Helper()
+		c := s.Client()
+		u, _ := url.Parse(s.HTTP.URL)
+		c.Jar.SetCookies(u, []*http.Cookie{{Name: auth.CookieName, Value: cookie}})
+		return requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil).StatusCode
+	}
+	sessionOf := func(c *http.Client) string {
+		t.Helper()
+		u, _ := url.Parse(s.HTTP.URL)
+		for _, ck := range c.Jar.Cookies(u) {
+			if ck.Name == auth.CookieName {
+				return ck.Value
+			}
+		}
+		t.Fatal("no session cookie in the jar")
+		return ""
+	}
+
+	// Enrolment: confirming the first factor completes the session with a
+	// new cookie.
+	enrolling := s.LoginAsPending(uid)
+	before := sessionOf(enrolling)
+	secret := enrolAndConfirmTOTP(t, s, enrolling)
+	if after := sessionOf(enrolling); after == before {
+		t.Fatal("confirming TOTP kept the session's cookie")
+	}
+	if code := me(before); code != http.StatusUnauthorized {
+		t.Fatalf("pre-enrolment cookie after confirm: /auth/me status %d, want 401", code)
+	}
+	if code := requestJSON(t, enrolling, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil).StatusCode; code != http.StatusOK {
+		t.Fatalf("the enrolling browser lost its session: /auth/me status %d", code)
+	}
+
+	// Fixation: the planter signs in with the password and plants the
+	// pending cookie; the victim verifies their own code with it.
+	resp := postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]any{
+		"email": "fixation@example.test", "password": "correct horse battery",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var planted string
+	for _, ck := range resp.Cookies() {
+		if ck.Name == auth.CookieName {
+			planted = ck.Value
+		}
+	}
+	victim := s.Client()
+	u, _ := url.Parse(s.HTTP.URL)
+	victim.Jar.SetCookies(u, []*http.Cookie{{Name: auth.CookieName, Value: planted}})
+	code, _ := totp.GenerateCode(secret, time.Now().Add(30*time.Second))
+	resp = postJSON(t, victim, s.HTTP.URL+"/api/v1/auth/totp/verify", map[string]string{"code": code})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("verify: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if code := me(planted); code != http.StatusUnauthorized {
+		t.Fatalf("planted cookie after the victim's verify: /auth/me status %d, want 401", code)
+	}
+	if code := requestJSON(t, victim, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil).StatusCode; code != http.StatusOK {
+		t.Fatalf("the victim's browser lost its session: /auth/me status %d", code)
 	}
 }

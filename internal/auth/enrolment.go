@@ -41,26 +41,26 @@ func NewEnrolment(totp *TOTP, sessions *Sessions, tx TxRunner) *Enrolment {
 // they exist nowhere else in readable form — so a caller that fails to
 // deliver them to the user leaves the account in a state only a
 // re-enrolment fixes; that is why nothing is committed until the session
-// is upgraded too.
+// is upgraded too. cookie is the session's new cookie value (see
+// Sessions.MarkMFAComplete), which the caller must send.
 //
 // An invalid code returns ErrInvalidTOTPCode and changes nothing. An
 // unknown or already-ended session returns ErrNotFound and changes
 // nothing.
-func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID, code string) ([]string, error) {
-	var codes []string
-	err := e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID, code string) (codes []string, cookie string, err error) {
+	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
 		var err error
 		codes, err = e.totp.ConfirmEnrol(ctx, userID, code)
 		if err != nil {
 			return err
 		}
-		if err := e.sessions.MarkMFAComplete(ctx, sessionID); err != nil {
+		if cookie, err = e.sessions.MarkMFAComplete(ctx, sessionID); err != nil {
 			return fmt.Errorf("complete the session after confirming TOTP: %w", err)
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return codes, nil
+	return codes, cookie, nil
 }

@@ -106,7 +106,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Post(hapi, "/api/v1/auth/passkeys/register/finish", func(ctx context.Context, in *passkeyRegisterFinishInput) (*okOutput, error) {
+	huma.Post(hapi, "/api/v1/auth/passkeys/register/finish", func(ctx context.Context, in *passkeyRegisterFinishInput) (*sessionUpgradeOutput, error) {
 		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
@@ -125,7 +125,8 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		}
 		// The account now has a second factor: a session that was pending
 		// only for want of one is complete from here on.
-		if err := completeEnrolment(ctx, deps, p); err != nil {
+		cookie, err := completeEnrolment(ctx, deps, p)
+		if err != nil {
 			return nil, err
 		}
 		// Instance-level event, same mechanism as POST
@@ -140,7 +141,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		// credential detail instead.
 		setAuditScope(ctx, nil, p.UserID)
 		setAuditObject(ctx, p.UserID.String(), fmt.Sprintf("registered passkey %q", in.Body.Name))
-		return &okOutput{}, nil
+		return &sessionUpgradeOutput{SetCookie: cookie}, nil
 	}, withAudit("finishPasskeyRegistration", "passkey"))
 
 	huma.Get(hapi, "/api/v1/auth/passkeys", func(ctx context.Context, _ *struct{}) (*passkeyListOutput, error) {

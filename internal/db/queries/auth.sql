@@ -25,7 +25,10 @@ WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled
 -- that complete a pending session are what an already-complete one
 -- re-proves its factor through, and that re-proof is the whole point of
 -- the freshness window (backlog 1.28).
-UPDATE sessions SET mfa_complete = true, mfa_at = now() WHERE id = $1;
+-- secret_hash is replaced too (backlog 7.19): the cookie a session had
+-- before its second factor must not be the one that carries it afterwards.
+UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = sqlc.arg(secret_hash)
+WHERE id = sqlc.arg(id);
 
 -- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1;

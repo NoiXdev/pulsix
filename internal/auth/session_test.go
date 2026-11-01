@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -58,12 +59,19 @@ func TestSessionMarkMFAComplete(t *testing.T) {
 	if err != nil || p.MFAComplete {
 		t.Fatalf("before MarkMFAComplete: %+v, %v", p, err)
 	}
-	if err := s.MarkMFAComplete(ctx, id); err != nil {
+	upgraded, err := s.MarkMFAComplete(ctx, id)
+	if err != nil {
 		t.Fatal(err)
 	}
-	p, err = s.Lookup(ctx, cookie)
-	if err != nil || !p.MFAComplete {
+	p, err = s.Lookup(ctx, upgraded)
+	if err != nil || !p.MFAComplete || p.SessionID != id {
 		t.Fatalf("after MarkMFAComplete: %+v, %v", p, err)
+	}
+	// Backlog 7.19: the cookie the session had before its second factor
+	// no longer authenticates, so a cookie planted on the victim before
+	// they verified their factor is not upgraded with them.
+	if _, err := s.Lookup(ctx, cookie); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatalf("the pre-factor cookie still resolves after MarkMFAComplete: %v", err)
 	}
 }
 
