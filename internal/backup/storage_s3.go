@@ -36,6 +36,10 @@ const (
 	envS3PathStyle = "PULSIX_BACKUP_S3_PATH_STYLE"
 
 	defaultS3Endpoint = "s3.amazonaws.com"
+	// s3PartSize is the multipart part size of an upload and so the most
+	// memory Put holds at once. S3 allows 10 000 parts per object, which
+	// caps a backup at about 160 GiB.
+	s3PartSize = 16 << 20
 	// headerProbeLen is how much of an object List reads to find its header.
 	headerProbeLen = int64(maxHeaderLen + len(magic))
 )
@@ -145,9 +149,11 @@ func (s *s3Storage) Put(ctx context.Context, name string, r io.Reader) (int64, e
 		return 0, err
 	}
 	// Size -1: the length is unknown, so minio-go streams the body as a
-	// multipart upload one part at a time instead of buffering it whole.
+	// multipart upload, buffering one part at a time. Without an explicit
+	// PartSize it would pick ~537 MiB parts and hold a whole backup in memory.
 	info, err := s.client.PutObject(ctx, s.bucket, s.key(name), r, -1, minio.PutObjectOptions{
 		ContentType: "application/octet-stream",
+		PartSize:    s3PartSize,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("upload %s: %w", name, err)

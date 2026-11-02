@@ -108,24 +108,28 @@ func TestPruneZeroRetentionStillKeepsNewest(t *testing.T) {
 	}
 }
 
-func TestPruneUsesNameWhenHeaderIsBroken(t *testing.T) {
+func TestPruneLeavesDamagedObjectsAlone(t *testing.T) {
 	loc := berlin(t)
 	end := time.Date(2026, 11, 2, 3, 0, 0, 0, loc)
 	var objs []backup.Object
-	for i := range 3 {
-		o := backup.Object{
-			Name:      backup.ObjectName(end.AddDate(0, 0, -i), "scheduled"),
-			HeaderErr: backup.ErrNotABackup,
-		}
-		objs = append(objs, o)
+	for i := 1; i <= 3; i++ {
+		objs = append(objs, objAt(end.AddDate(0, 0, -i), "scheduled"))
 	}
-	// No parseable name and no header: never pruned.
-	objs = append(objs, backup.Object{Name: "mystery.pxbak", HeaderErr: backup.ErrNotABackup})
+	// The newest object by name has a broken header: it must neither be
+	// removed nor count as the newest kept backup.
+	broken := backup.Object{Name: backup.ObjectName(end, "scheduled"), HeaderErr: backup.ErrNotABackup}
+	objs = append(objs, broken, backup.Object{Name: "mystery.pxbak", HeaderErr: backup.ErrNotABackup})
 
 	remove := backup.Prune(objs, backup.Retention{Daily: 1}, loc)
 
-	if len(remove) != 2 || slices.Contains(remove, "mystery.pxbak") {
-		t.Fatalf("remove = %v, want the two oldest named objects", remove)
+	if slices.Contains(remove, broken.Name) || slices.Contains(remove, "mystery.pxbak") {
+		t.Fatalf("remove = %v, must not name a damaged object", remove)
+	}
+	if slices.Contains(remove, objs[0].Name) {
+		t.Fatalf("remove = %v, the newest valid backup %s must stay", remove, objs[0].Name)
+	}
+	if len(remove) != 2 {
+		t.Fatalf("remove = %v, want the two older valid objects", remove)
 	}
 }
 

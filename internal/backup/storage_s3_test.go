@@ -108,7 +108,7 @@ func TestS3StorageStreamsLargeUnknownSizeInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Larger than one multipart part (16 MiB), read through a reader that
+	// Larger than one 16 MiB part, read through a reader that
 	// hides its length so the upload has to stream.
 	const size = 20 << 20
 	at := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
@@ -122,6 +122,24 @@ func TestS3StorageStreamsLargeUnknownSizeInput(t *testing.T) {
 	objs, err := s.List(context.Background())
 	if err != nil || len(objs) != 1 || objs[0].Size != n || objs[0].HeaderErr != nil {
 		t.Fatalf("List = %+v, %v", objs, err)
+	}
+
+	// minio-go's default part size for an unknown length is ~537 MiB, which
+	// would hold this whole object in one part (a plain PUT, ETag without a
+	// suffix). 16 MiB parts make it a multipart upload of two parts, whose
+	// ETag ends in "-2". This fails when PartSize is not set.
+	admin, err := minio.New(strings.TrimPrefix(cfg.Endpoint, "http://"), &minio.Options{
+		Creds: credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := admin.StatObject(context.Background(), cfg.Bucket, cfg.Prefix+name, minio.StatObjectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(strings.Trim(st.ETag, `"`), "-2") {
+		t.Fatalf("ETag = %s, want a two-part multipart ETag (-2): the upload was not streamed in 16 MiB parts", st.ETag)
 	}
 }
 

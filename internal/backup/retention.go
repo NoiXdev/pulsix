@@ -16,8 +16,8 @@ type Retention struct {
 // Prune returns the names of the scheduled objects to delete under a
 // grandfather-father-son policy: the newest object of each of the Daily
 // newest local days, Weekly newest ISO weeks and Monthly newest months (all
-// in loc, UTC when nil) is kept. Manual objects, objects whose kind and time
-// are unknown, and the newest scheduled object are never returned. The names
+// in loc, UTC when nil) is kept. Manual objects, objects whose header could
+// not be read, and the newest scheduled object are never returned. The names
 // come back newest first.
 func Prune(objs []Object, r Retention, loc *time.Location) (remove []string) {
 	if loc == nil {
@@ -30,6 +30,11 @@ func Prune(objs []Object, r Retention, loc *time.Location) (remove []string) {
 	}
 	var scheduled []entry
 	for _, o := range objs {
+		// A damaged object is left alone entirely: it must not be removed,
+		// and must not count as the newest backup either.
+		if o.HeaderErr != nil {
+			continue
+		}
 		if at, kind, ok := o.created(); ok && kind == "scheduled" {
 			scheduled = append(scheduled, entry{o.Name, at})
 		}
