@@ -213,6 +213,19 @@ type AuditEvent struct {
 	At         time.Time   `json:"at"`
 }
 
+type BackupRun struct {
+	ID         uuid.UUID          `json:"id"`
+	Kind       string             `json:"kind"`
+	Slot       pgtype.Timestamptz `json:"slot"`
+	StartedAt  time.Time          `json:"started_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+	State      string             `json:"state"`
+	ObjectName *string            `json:"object_name"`
+	SizeBytes  *int64             `json:"size_bytes"`
+	Error      *string            `json:"error"`
+	ActorID    pgtype.UUID        `json:"actor_id"`
+}
+
 type Bastion struct {
 	ID               uuid.UUID   `json:"id"`
 	OrgID            uuid.UUID   `json:"org_id"`

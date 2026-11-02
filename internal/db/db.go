@@ -6,9 +6,12 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	neturl "net/url"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -62,6 +65,29 @@ func OpenAsRole(ctx context.Context, url, postgresRole string) (*DB, error) {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
 	return &DB{pool: pool}, nil
+}
+
+// WithApplicationName returns connString with its application_name set to
+// name, replacing one already there, so the sessions it opens show up under
+// that name in pg_stat_activity. connString may be a postgres:// URL or a
+// keyword/value string.
+func WithApplicationName(connString, name string) (string, error) {
+	if strings.HasPrefix(connString, "postgres://") || strings.HasPrefix(connString, "postgresql://") {
+		u, err := neturl.Parse(connString)
+		if err != nil {
+			return "", fmt.Errorf("parse database url: %w", err)
+		}
+		q := u.Query()
+		q.Set("application_name", name)
+		u.RawQuery = q.Encode()
+		return u.String(), nil
+	}
+	if _, err := pgconn.ParseConfig(connString); err != nil {
+		return "", fmt.Errorf("parse database connection string: %w", err)
+	}
+	// In the keyword/value form the last occurrence of a keyword wins.
+	quoted := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(name)
+	return connString + " application_name='" + quoted + "'", nil
 }
 
 // Pool exposes the underlying pool. It deliberately ignores the org scope

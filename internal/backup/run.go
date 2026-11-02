@@ -1,0 +1,128 @@
+package backup
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"runtime/debug"
+	"sync/atomic"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// run is an attempt in progress.
+type run struct {
+	id        uuid.UUID
+	kind      string
+	startedAt time.Time
+	name      string
+	actor     *uuid.UUID
+}
+
+// record marks stale attempts abandoned and records a new running one. The
+// caller holds the lock. For a scheduled slot another manager took first,
+// inserted is false.
+func (s *Service) record(ctx context.Context, kind string, slot *time.Time, actor *uuid.UUID) (r run, inserted bool, err error) {
+	if err := s.abandon(ctx); err != nil {
+		return run{}, false, err
+	}
+	// Object names carry whole seconds; the header gets the same instant.
+	started := s.now().UTC().Truncate(time.Second)
+	r = run{kind: kind, startedAt: started, name: ObjectName(started, kind), actor: actor}
+	r.id, inserted, err = s.store.InsertAttempt(ctx, NewAttempt{Kind: kind, Slot: slot, StartedAt: started, ObjectName: r.name, Actor: actor})
+	if err != nil {
+		return run{}, false, fmt.Errorf("record backup attempt: %w", err)
+	}
+	return r, inserted, nil
+}
+
+// execute dumps r into st and records how it ended.
+func (s *Service) execute(ctx context.Context, r run, st Storage, includeMetrics bool) (Entry, error) {
+	size, err := s.transfer(ctx, r, st, includeMetrics)
+	return s.finish(ctx, r, size, err)
+}
+
+// transfer streams the dump into st through a pipe, so the backup is never
+// held in memory or on a local disk first.
+func (s *Service) transfer(ctx context.Context, r run, st Storage, includeMetrics bool) (int64, error) {
+	pr, pw := io.Pipe()
+	w := &pipeWriter{pw: pw}
+	dumped := make(chan error, 1)
+	go func() {
+		var err error
+		defer func() {
+			// This goroutine is outside the ticker's recover: a panic here
+			// would end the manager, so it fails the attempt instead.
+			if p := recover(); p != nil {
+				err = fmt.Errorf("dump panicked: %v", p)
+				s.log.ErrorContext(ctx, "backup dump panicked", "panic", p, "stack", string(debug.Stack()))
+			}
+			pw.CloseWithError(err) // nil ends the upload's input cleanly
+			dumped <- err
+		}()
+		_, err = s.dump(ctx, w, DumpOptions{
+			Kind: r.kind, PulsixVersion: s.version, IncludeMetrics: includeMetrics,
+			Now: func() time.Time { return r.startedAt },
+		})
+	}()
+	size, putErr := st.Put(ctx, r.name, pr)
+	pr.CloseWithError(errUploadEnded)
+	dumpErr := <-dumped
+
+	switch {
+	case dumpErr != nil && !w.failed.Load():
+		// The dump failed on its own; the upload only saw it end.
+		return 0, dumpErr
+	case putErr != nil:
+		return 0, putErr
+	case dumpErr != nil:
+		return 0, dumpErr
+	}
+	return size, nil
+}
+
+// pipeWriter remembers whether a write failed, which only happens when the
+// upload stopped reading: the dump's error is then a consequence.
+type pipeWriter struct {
+	pw     *io.PipeWriter
+	failed atomic.Bool
+}
+
+func (w *pipeWriter) Write(p []byte) (int, error) {
+	n, err := w.pw.Write(p)
+	if err != nil {
+		w.failed.Store(true)
+	}
+	return n, err
+}
+
+// finish records how r ended: succeeded, failed with err, or abandoned
+// when ctx ended under it (the manager is shutting down).
+func (s *Service) finish(ctx context.Context, r run, size int64, err error) (Entry, error) {
+	f := Finish{At: s.now().UTC(), State: StateSucceeded, Size: size}
+	switch {
+	case err != nil && ctx.Err() != nil:
+		f = Finish{At: f.At, State: StateAbandoned, Error: reasonStopped}
+	case err != nil:
+		f = Finish{At: f.At, State: StateFailed, Error: err.Error()}
+		s.log.ErrorContext(ctx, "backup failed", "kind", r.kind, "name", r.name, "err", err)
+	default:
+		s.log.InfoContext(ctx, "backup finished", "kind", r.kind, "name", r.name, "size", size)
+	}
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	if ferr := s.store.FinishAttempt(fctx, r.id, f); ferr != nil {
+		// The backup itself stands or falls on its own; the row is marked
+		// abandoned by the next backup.
+		s.log.ErrorContext(ctx, "record the end of a backup attempt", "name", r.name, "err", ferr)
+	}
+	e := Entry{
+		Name: r.name, CreatedAt: r.startedAt, Kind: r.kind, Actor: r.actor, PulsixVersion: s.version,
+		Size: f.Size, State: f.State, Error: f.Error,
+	}
+	if err != nil {
+		return e, fmt.Errorf("backup %s: %w", r.name, err)
+	}
+	return e, nil
+}

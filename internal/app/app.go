@@ -28,6 +28,7 @@ import (
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/calendar"
 	"github.com/noixdev/pulsix/internal/checks"
@@ -114,6 +115,11 @@ type App struct {
 	// stopEmbedded cancels the embedded worker's goroutine (nil unless
 	// cfg.EmbeddedWorker was set); Close calls it.
 	stopEmbedded func()
+	// backups runs scheduled and manual backups (backlog 7.2);
+	// stopBackupTicker stops its schedule. Close stops the ticker, then the
+	// service, which waits for a manual backup still running.
+	backups          *backup.Service
+	stopBackupTicker func()
 	// items is the discovery and decisions service (v0.3b-3). Wired here
 	// because its constructor's check-key set is derived from
 	// rules.Catalogue() (ItemCheckKeys, rules_ports.go), and this package
@@ -156,6 +162,12 @@ func (a *App) Close() {
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
 	}
+	if a.stopBackupTicker != nil {
+		a.stopBackupTicker()
+	}
+	if a.backups != nil {
+		a.backups.Stop()
+	}
 	a.db.Close()
 }
 
@@ -176,7 +188,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// done — nothing else in this function, or in the App it returns, ever
 	// uses it — precisely so that a bug anywhere downstream can never
 	// accidentally query through a connection RLS does not apply to.
-	migrationDB, err := db.Open(ctx, cfg.DatabaseURL)
+	//
+	// Every session a manager opens, this one included, carries the
+	// application_name pulsix-manager: restore recognizes a running manager
+	// by it and refuses to replace the database under one.
+	dbURL, err := db.WithApplicationName(cfg.DatabaseURL, managerApplicationName)
+	if err != nil {
+		return nil, fmt.Errorf("database url: %w", err)
+	}
+	migrationDB, err := db.Open(ctx, dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("open migration database connection: %w", err)
 	}
@@ -193,7 +213,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// role in cfg.DatabaseURL may be a superuser or the schema owner, both
 	// of which bypass RLS unconditionally, FORCE ROW LEVEL SECURITY or
 	// not).
-	appDB, err := db.OpenAsRole(ctx, cfg.DatabaseURL, appRole)
+	appDB, err := db.OpenAsRole(ctx, dbURL, appRole)
 	if err != nil {
 		return nil, fmt.Errorf("open application database connection: %w", err)
 	}
@@ -519,6 +539,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// doc comment above explains the same sharing for alertRoutesStore.
 	oncallSvc := oncall.NewService(oncallStore, time.Now, newUUIDv7)
 
+	// Backups (backlog 7.2): the service dumps through appDB itself; its
+	// schedule starts below, once nothing can fail any more.
+	backupsSvc := newBackupService(appDB, box, cfg.MasterKey, mailer, cfg.Version)
+
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
@@ -703,10 +727,18 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		}
 	}
 
+	// The backup schedule: one ticker per manager; the attempt row's claim
+	// on its slot makes several safe. An attempt still recorded as running
+	// while no backup holds the lock was left by a crash or a restore.
+	if err := backupsSvc.AbandonStale(ctx); err != nil {
+		slog.ErrorContext(ctx, "abandon stale backup attempts", "err", err)
+	}
+	backupTickerStop := startLoop(backup.NewTicker(backupsSvc, backup.DefaultTick).Run)
+
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
 		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopEmbedded: stopEmbedded,
-		items: itemsSvc,
+		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop,
 	}, nil
 }
 

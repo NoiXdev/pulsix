@@ -242,6 +242,9 @@ func copyTables(ctx context.Context, tx pgx.Tx, fr *FrameReader, tables []tableI
 	return nil
 }
 
+// reasonRestored is the error of an attempt a restore marks abandoned.
+const reasonRestored = "this backup was still running when the restored backup was taken"
+
 // abandonRunningAttempts marks backup attempts that were running when the
 // backup was taken as abandoned: the backup that took the snapshot is one of
 // them, and it is not running in the restored instance. Schema versions
@@ -254,7 +257,10 @@ func abandonRunningAttempts(ctx context.Context, tx pgx.Tx) error {
 	if !exists {
 		return nil
 	}
-	if _, err := tx.Exec(ctx, `UPDATE public.backup_runs SET state = 'abandoned' WHERE state = 'running'`); err != nil {
+	// finished_at is set because backup_runs requires it of every attempt
+	// that is no longer running.
+	if _, err := tx.Exec(ctx, `UPDATE public.backup_runs SET state = 'abandoned', finished_at = now(), error = $1 WHERE state = 'running'`,
+		reasonRestored); err != nil {
 		return fmt.Errorf("load: abandon running backup attempts: %w", err)
 	}
 	return nil

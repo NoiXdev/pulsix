@@ -96,6 +96,7 @@ INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type,
 INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, at) VALUES ('00000000-0000-4000-8000-00000000012c', NULL, NULL, 'system', 'fixture', 'instance', '', 'no org', now());
 INSERT INTO invites (id, org_id, email, role, token_hash, invited_by, expires_at) VALUES ('00000000-0000-4000-8000-00000000002d', '00000000-0000-4000-8000-000000000001', 'new@example.com', 'viewer', '\x06', '00000000-0000-4000-8000-000000000002', now() + interval '1 day');
 INSERT INTO instance_ca (sealed) VALUES ('\x07');
+INSERT INTO backup_runs (id, kind, slot, started_at, finished_at, state, object_name, size_bytes, actor_id) VALUES ('00000000-0000-4000-8000-000000000031', 'scheduled', '2026-11-01T03:00:00Z', '2026-11-01T03:00:00Z', '2026-11-01T03:01:00Z', 'succeeded', 'pulsix-20261101T030000Z-scheduled.pxbak', 42, '00000000-0000-4000-8000-000000000002');
 INSERT INTO instance_settings (key, value) VALUES ('fixture', '{"a": 1}');
 INSERT INTO passkeys (id, user_id, name, credential_id, public_key, attestation) VALUES ('00000000-0000-4000-8000-00000000002e', '00000000-0000-4000-8000-000000000002', 'key', '\x08', '\x09', 'none');
 INSERT INTO recovery_codes (user_id, code_hash) VALUES ('00000000-0000-4000-8000-000000000002', '\x0a');

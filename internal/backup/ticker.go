@@ -1,0 +1,192 @@
+package backup
+
+import (
+	"context"
+	"fmt"
+	"runtime/debug"
+	"time"
+)
+
+// DefaultTick is how often a manager looks for a due scheduled backup.
+const DefaultTick = time.Minute
+
+// dueSlot returns the current scheduled slot and whether it is due: on or
+// after the time the schedule was set, and not yet claimed by any manager.
+func (s *Service) dueSlot(ctx context.Context, b settingsBlob) (time.Time, bool, error) {
+	loc, err := location(b.TimeZone)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	slot := SlotFor(s.now(), b.TimeOfDay, loc)
+	if b.ScheduledSince != nil && slot.Before(*b.ScheduledSince) {
+		return slot, false, nil
+	}
+	claimed, err := s.store.SlotClaimed(ctx, slot)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("look up backup slot: %w", err)
+	}
+	return slot, !claimed, nil
+}
+
+// RunDue is one tick of the schedule. It runs the current slot's backup
+// when that is due, then prunes the scheduled backups (after a success
+// only) and mails the instance administrators about a failure.
+//
+// Several managers may tick at once: the slot goes to the one whose attempt
+// row claims it first. A tick that finds another backup running leaves the
+// slot alone and tries again on the next tick. A tick with nothing due
+// still marks stale running attempts abandoned.
+func (s *Service) RunDue(ctx context.Context) error {
+	b, err := s.loadBlob(ctx)
+	if err != nil {
+		return err
+	}
+	var slot *time.Time
+	if b.Enabled {
+		at, due, err := s.dueSlot(ctx, b)
+		if err != nil {
+			return err
+		}
+		if due {
+			slot = &at
+		}
+	}
+	if slot == nil {
+		// Nothing to run; the lock is only worth taking for a stale row.
+		running, err := s.store.AnyRunning(ctx)
+		if err != nil || !running {
+			return err
+		}
+	}
+
+	release, ok, err := s.store.TryLock(ctx)
+	if err != nil {
+		return fmt.Errorf("scheduled backup: %w", err)
+	}
+	if !ok {
+		return nil // a backup is running; the slot waits for the next tick
+	}
+	held := true
+	defer func() {
+		if held {
+			release()
+		}
+	}()
+	if slot == nil {
+		return s.abandon(ctx)
+	}
+
+	r, inserted, err := s.record(ctx, KindScheduled, slot, nil)
+	if err != nil || !inserted {
+		return err // !inserted: another manager took the slot
+	}
+	set := b.settings()
+	secret, err := s.openSecret(b)
+	var st Storage
+	if err == nil {
+		st, err = s.storageFor(set, secret)
+		if err != nil {
+			err = fmt.Errorf("backup destination: %w", err)
+		}
+	}
+	var e Entry
+	if err != nil {
+		e, _ = s.finish(ctx, r, 0, err)
+	} else {
+		e, _ = s.execute(ctx, r, st, set.IncludeMetrics)
+	}
+	if e.State == StateSucceeded {
+		s.prune(ctx, st, set)
+	}
+	release()
+	held = false
+
+	if e.State == StateFailed {
+		s.notifyFailure(ctx, *slot, set, st, e.Error)
+	}
+	return nil
+}
+
+// prune deletes the scheduled backups the retention no longer keeps.
+// Failures are logged: the backup itself succeeded.
+func (s *Service) prune(ctx context.Context, st Storage, set Settings) {
+	loc, err := location(set.TimeZone)
+	if err != nil {
+		loc = time.UTC
+	}
+	objs, err := st.List(ctx)
+	if err != nil {
+		s.log.ErrorContext(ctx, "prune backups: list", "err", err)
+		return
+	}
+	for _, name := range Prune(objs, set.Retention, loc) {
+		if err := st.Delete(ctx, name); err != nil {
+			s.log.ErrorContext(ctx, "prune backups: delete", "name", name, "err", err)
+			continue
+		}
+		s.log.InfoContext(ctx, "pruned scheduled backup", "name", name)
+	}
+}
+
+// notifyFailure mails every instance administrator about a failed
+// scheduled backup.
+func (s *Service) notifyFailure(ctx context.Context, slot time.Time, set Settings, st Storage, reason string) {
+	loc, err := location(set.TimeZone)
+	if err != nil {
+		loc = time.UTC
+	}
+	dest := "the backup folder"
+	switch {
+	case st != nil:
+		dest = st.Describe()
+	case set.Destination == DestinationS3:
+		dest = "s3://" + set.S3.Bucket + "/" + set.S3.Prefix
+	}
+	body := fmt.Sprintf("The scheduled Pulsix backup of %s did not complete.\n\nDestination: %s\nError: %s\n\n"+
+		"The next scheduled backup runs at the usual time. Until one succeeds, the newest backup is older than planned.\n",
+		slot.In(loc).Format("2006-01-02 15:04 MST"), dest, reason)
+	if err := s.mailer.SendToInstanceAdmins(ctx, "Pulsix backup failed", body); err != nil {
+		s.log.ErrorContext(ctx, "mail instance administrators about a failed backup", "err", err)
+	}
+}
+
+// Ticker drives the schedule: one RunDue per tick.
+type Ticker struct {
+	s     *Service
+	every time.Duration
+}
+
+// NewTicker builds the ticker; every <= 0 is DefaultTick.
+func NewTicker(s *Service, every time.Duration) *Ticker {
+	if every <= 0 {
+		every = DefaultTick
+	}
+	return &Ticker{s: s, every: every}
+}
+
+// Run ticks until ctx ends, starting with one tick right away. A failed
+// tick is logged and the next one tries again.
+func (t *Ticker) Run(ctx context.Context) {
+	tick := time.NewTicker(t.every)
+	defer tick.Stop()
+	for {
+		t.once(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// once runs one tick and keeps a panic in it from taking the manager down.
+func (t *Ticker) once(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.s.log.ErrorContext(ctx, "backup tick panicked", "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	if err := t.s.RunDue(ctx); err != nil && ctx.Err() == nil {
+		t.s.log.ErrorContext(ctx, "backup tick failed", "err", err)
+	}
+}

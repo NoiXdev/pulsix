@@ -6,3 +6,7 @@ import "github.com/jackc/pgx/v5/pgxpool"
 // MigrateTo and before the load, so a test can add a table the migrations do
 // not create.
 func SetAfterMigrate(o *RestoreOptions, fn func(*pgxpool.Pool) error) { o.afterMigrate = fn }
+
+// WaitIdle waits until every backup StartManual began in the background has
+// finished.
+func WaitIdle(s *Service) { s.wg.Wait() }
