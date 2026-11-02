@@ -364,6 +364,9 @@ func (f *fakeStore) TakeInvite(_ context.Context, tokenHash []byte, now time.Tim
 }
 
 func (f *fakeStore) ListPendingInvites(_ context.Context, orgID uuid.UUID, now time.Time) ([]tenancy.PendingInvite, error) {
+	if err := f.take("ListPendingInvites"); err != nil {
+		return nil, err
+	}
 	var out []tenancy.PendingInvite
 	for _, inv := range f.invites {
 		if inv.OrgID == orgID && now.Before(inv.ExpiresAt) {
@@ -1549,4 +1552,28 @@ func (m *ctxSpyMailer) Send(ctx context.Context, _, _, _ string) error {
 	m.errAtCall = ctx.Err()
 	_, m.hadDeadline = ctx.Deadline()
 	return nil
+}
+
+func TestPendingInvitesAndRevokeGoThroughTheStore(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	svc := tenancy.NewService(store, &fakeMailer{}, "https://pulsix.example", func() time.Time { return time.Unix(1_700_000_000, 0) })
+	org := uuid.Must(uuid.NewV7())
+	inv := tenancy.Invite{ID: uuid.Must(uuid.NewV7()), OrgID: org, Email: "x@example.test", Role: tenancy.RoleViewer, ExpiresAt: time.Unix(1_700_003_600, 0)}
+	store.invites["h"] = inv
+
+	list, err := svc.PendingInvites(ctx, org)
+	if err != nil || len(list) != 1 || list[0].ID != inv.ID {
+		t.Fatalf("PendingInvites = %+v, %v", list, err)
+	}
+	if err := svc.RevokeInvite(ctx, org, inv.ID); err != nil {
+		t.Fatalf("RevokeInvite: %v", err)
+	}
+	if err := svc.RevokeInvite(ctx, org, inv.ID); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("second RevokeInvite = %v, want ErrNotFound", err)
+	}
+	store.failNext["ListPendingInvites"] = errors.New("store down")
+	if _, err := svc.PendingInvites(ctx, org); err == nil {
+		t.Fatal("a store failure was swallowed")
+	}
 }

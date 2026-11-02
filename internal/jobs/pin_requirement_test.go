@@ -268,3 +268,37 @@ type pinRunResolver struct{ targets []ZoneTargets }
 func (r pinRunResolver) Resolve(context.Context, uuid.UUID, render.Scope, string) ([]ZoneTargets, error) {
 	return r.targets, nil
 }
+
+// TestOrgJobSettingsWithoutOrFailingAStore: a service wired without a
+// settings store refuses a write with ErrInvalidInput instead of dropping
+// it, and a store failure on either side comes back as an error.
+func TestOrgJobSettingsWithoutOrFailingAStore(t *testing.T) {
+	f := seedPinOrg(t)
+	ctx := db.WithOrgScope(context.Background(), f.org)
+
+	f.svc.settings = nil
+	if err := f.svc.SetOrgJobSettings(ctx, f.org, OrgJobSettings{JobsRequirePinnedHosts: true}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("SetOrgJobSettings without a store = %v, want ErrInvalidInput", err)
+	}
+	if _, err := f.svc.OrgJobSettings(ctx, f.org); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("OrgJobSettings without a store = %v, want ErrInvalidInput", err)
+	}
+
+	errBoom := errors.New("settings exploded")
+	f.svc.settings = failingSettings{err: errBoom}
+	if _, err := f.svc.OrgJobSettings(ctx, f.org); !errors.Is(err, errBoom) {
+		t.Fatalf("OrgJobSettings on a failing store = %v, want its error", err)
+	}
+	if err := f.svc.SetOrgJobSettings(ctx, f.org, OrgJobSettings{}); err == nil {
+		t.Fatal("SetOrgJobSettings on a failing store succeeded")
+	}
+}
+
+func TestSQLPutOrgJobSettingsReportsAFailedWrite(t *testing.T) {
+	w := newAtomicWorld(t, "jobs-settings-put-fails")
+	gone, cancel := context.WithCancel(db.WithOrgScope(context.Background(), w.org))
+	cancel()
+	if err := NewSQLStore(w.d).PutOrgJobSettings(gone, w.org, OrgJobSettings{}); err == nil {
+		t.Fatal("PutOrgJobSettings on a cancelled context succeeded")
+	}
+}

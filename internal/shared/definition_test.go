@@ -145,6 +145,17 @@ func TestNameCollisionErrorMessage(t *testing.T) {
 	}
 }
 
+// TestNameCollisionErrorMessageNamesTheScope: a check definition's
+// collision can sit at a group's or a host's binding, and the message says
+// where (see NameCollisionError's own comment).
+func TestNameCollisionErrorMessageNamesTheScope(t *testing.T) {
+	err := &shared.NameCollisionError{Name: "disk", Orgs: []uuid.UUID{uuid.Must(uuid.NewV7())}, Scope: "a host's own checks"}
+	want := `name "disk" is already used by 1 organization(s), at a host's own checks`
+	if got := err.Error(); got != want {
+		t.Fatalf("NameCollisionError.Error() = %q, want %q", got, want)
+	}
+}
+
 // TestInUseErrorMessageAndUnwrap is NameCollisionError's own pair of tests
 // for the other richer sentinel (spec decision 5): both of Error()'s
 // branches (a named reason, and the backstop with none at all — a

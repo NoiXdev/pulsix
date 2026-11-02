@@ -111,6 +111,18 @@ func TestClaimsListEverySecretTheyReveal(t *testing.T) {
 			},
 			want: []string{"become-pw", "hop-pw"},
 		},
+		{
+			// A repository sync touches no host: only the repository's own
+			// git credential ships, and it must be listed too.
+			name: "sync_repo",
+			job: func(q *SQLQueue) Job {
+				j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindSyncRepo}
+				j.Payload = sealedPayload(t, q, j, `{"repo_id":"`+repoID.String()+`"}`)
+				return j
+			},
+			want:    []string{"git-token"},
+			notWant: []string{"become-pw", "hop-pw", "ssh://git@example.org/x.git"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -130,5 +142,35 @@ func TestClaimsListEverySecretTheyReveal(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSyncRepoPayloadRefusesWhatItCannotResolve: a sync claim with no repo
+// source wired, a payload naming no repository, or a repository that is
+// gone fails the build — it never ships a fetch target it made up.
+func TestSyncRepoPayloadRefusesWhatItCannotResolve(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	newJob := func(q *SQLQueue, payload string) Job {
+		j := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindSyncRepo}
+		j.Payload = sealedPayload(t, q, j, payload)
+		return j
+	}
+	gone := `{"repo_id":"` + uuid.Must(uuid.NewV7()).String() + `"}`
+
+	unwired := newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{})
+	withRepos := newTestQueue(fakeRenderer{}, fakeCreds{}, fakeTemplates{}, fakeBastions{})
+	withRepos.SetRepoSource(fakeRepos{byID: map[uuid.UUID]RepoRef{}})
+	for name, c := range map[string]struct {
+		q       *SQLQueue
+		payload string
+	}{
+		"no repo source": {unwired, gone},
+		"no repo id":     {withRepos, `{}`},
+		"repo gone":      {withRepos, gone},
+	} {
+		out := &workerpb.Job{}
+		if err := c.q.buildPayload(db.WithOrgScope(context.Background(), org), newJob(c.q, c.payload), out); err == nil {
+			t.Errorf("%s: buildPayload succeeded with %+v", name, out)
+		}
 	}
 }

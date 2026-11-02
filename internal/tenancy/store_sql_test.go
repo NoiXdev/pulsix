@@ -727,3 +727,74 @@ func TestSQLStoreDisableUserKeepsOneInstanceAdmin(t *testing.T) {
 		t.Fatalf("active instance admins = %d, want 1", active)
 	}
 }
+
+// TestSQLStorePendingInvitesListAndRevoke (backlog 7.29): the list holds
+// exactly the invitations TakeInvite would still take — not an accepted
+// one, an expired one, another organization's, or one whose sender lost
+// the right to send it — and a revoke removes an open invitation once.
+func TestSQLStorePendingInvitesListAndRevoke(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(d)
+	now := time.Now()
+
+	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
+	other := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "other", Name: "Other"}
+	for _, o := range []tenancy.Org{org, other} {
+		if err := store.CreateOrg(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admin := seedUser(t, q, "pending-admin@example.test")
+	demoted := seedUser(t, q, "pending-demoted@example.test")
+	for _, m := range []struct {
+		org  uuid.UUID
+		user uuid.UUID
+		role tenancy.Role
+	}{{org.ID, admin, tenancy.RoleAdmin}, {other.ID, admin, tenancy.RoleAdmin}, {org.ID, demoted, tenancy.RoleOperator}} {
+		if err := store.AddMembership(ctx, m.org, m.user, m.role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	invite := func(orgID, by uuid.UUID, email string, expires time.Time) tenancy.Invite {
+		t.Helper()
+		inv := tenancy.Invite{ID: uuid.Must(uuid.NewV7()), OrgID: orgID, Email: email, Role: tenancy.RoleViewer, InvitedBy: by, ExpiresAt: expires}
+		if err := store.InsertInvite(ctx, inv, hashOf(email)); err != nil {
+			t.Fatal(err)
+		}
+		return inv
+	}
+	open := invite(org.ID, admin, "open@example.test", now.Add(time.Hour))
+	invite(org.ID, admin, "expired@example.test", now.Add(-time.Minute))
+	invite(org.ID, demoted, "lapsed@example.test", now.Add(time.Hour))
+	invite(other.ID, admin, "elsewhere@example.test", now.Add(time.Hour))
+	accepted := invite(org.ID, admin, "accepted@example.test", now.Add(time.Hour))
+	if _, err := store.TakeInvite(ctx, hashOf(accepted.Email), now); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := store.ListPendingInvites(ctx, org.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != open.ID || list[0].InvitedByName != "pending-admin@example.test" || list[0].Role != tenancy.RoleViewer {
+		t.Fatalf("pending invites = %+v, want only the open one", list)
+	}
+
+	if err := store.RevokeInvite(ctx, other.ID, open.ID); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("revoking through another organization = %v, want ErrNotFound", err)
+	}
+	if err := store.RevokeInvite(ctx, org.ID, accepted.ID); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("revoking an accepted invitation = %v, want ErrNotFound", err)
+	}
+	if err := store.RevokeInvite(ctx, org.ID, open.ID); err != nil {
+		t.Fatalf("RevokeInvite: %v", err)
+	}
+	if err := store.RevokeInvite(ctx, org.ID, open.ID); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("revoking twice = %v, want ErrNotFound", err)
+	}
+	if _, err := store.TakeInvite(ctx, hashOf(open.Email), now); !errors.Is(err, tenancy.ErrNotFound) {
+		t.Fatalf("a revoked invitation was taken: %v", err)
+	}
+}

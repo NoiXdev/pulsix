@@ -75,3 +75,46 @@ func TestWriteLeavesNoTempFileBehindOnFailure(t *testing.T) {
 		t.Fatalf("the failed write left %v behind", entries)
 	}
 }
+
+// TestWriteFailsCleanlyWhenTheRenameFails: the temp file is written and
+// flushed, then the rename onto the target fails — here because a
+// non-empty directory sits where the file should go. The error comes back
+// and the temp file is gone.
+func TestWriteFailsCleanlyWhenTheRenameFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "target", "occupied"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicfile.Write(dir, "target", []byte("x"), 0o600); err == nil {
+		t.Fatal("renaming over a non-empty directory must fail")
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "target" {
+		t.Fatalf("the failed write left %v behind", entries)
+	}
+}
+
+// TestWriteSucceedsWhenTheDirectoryCannotBeReadBack: a directory the
+// writer may enter and write but not list cannot be opened to flush it;
+// the content is in place by then, so that is not a failure.
+func TestWriteSucceedsWhenTheDirectoryCannotBeReadBack(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o300); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if f, err := os.Open(dir); err == nil {
+		_ = f.Close()
+		t.Skip("this process can read a 0300 directory (running as root?)")
+	}
+	if err := atomicfile.Write(dir, "f", []byte("content"), 0o600); err != nil {
+		t.Fatalf("Write = %v, want success: the content is renamed into place", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "f"))
+	if err != nil || string(got) != "content" {
+		t.Fatalf("read back %q, %v", got, err)
+	}
+}

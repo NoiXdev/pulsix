@@ -569,3 +569,27 @@ func TestScopedQueryRowReportsTheStatementsOwnError(t *testing.T) {
 		t.Fatalf("Scan error = %v, want the statement's own undefined_table", err)
 	}
 }
+
+// TestScopedTransactionsReportTheirOwnFailures pins the failure paths of
+// the three bound transactions: a context that is already gone fails the
+// begin and names it, and fn's own error comes back unchanged.
+func TestScopedTransactionsReportTheirOwnFailures(t *testing.T) {
+	d := testdb.Open(t)
+	org := uuid.Must(uuid.NewV7())
+	gone, cancel := context.WithCancel(context.Background())
+	cancel()
+	sentinel := errors.New("fn failed")
+	for name, run := range map[string]func(ctx context.Context, fn func(context.Context) error) error{
+		"read":     func(ctx context.Context, fn func(context.Context) error) error { return d.WithReadTx(ctx, org, fn) },
+		"write":    func(ctx context.Context, fn func(context.Context) error) error { return d.WithWriteTx(ctx, org, fn) },
+		"instance": func(ctx context.Context, fn func(context.Context) error) error { return d.WithInstanceTx(ctx, fn) },
+	} {
+		ran := false
+		if err := run(gone, func(context.Context) error { ran = true; return nil }); err == nil || ran {
+			t.Errorf("%s: a cancelled context = %v (fn ran: %v), want a begin failure before fn", name, err, ran)
+		}
+		if err := run(context.Background(), func(context.Context) error { return sentinel }); !errors.Is(err, sentinel) {
+			t.Errorf("%s: fn's error came back as %v", name, err)
+		}
+	}
+}

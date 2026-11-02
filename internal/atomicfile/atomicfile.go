@@ -31,7 +31,28 @@ import (
 // target never exists with the umask's own permissions, not even
 // briefly — these files hold private keys.
 func Write(dir, name string, content []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(dir, "."+name+".*")
+	return write(dir, name, content, mode, func(dir, pattern string) (tempFile, error) {
+		f, err := os.CreateTemp(dir, pattern)
+		if err != nil {
+			return nil, err
+		}
+		return f, nil
+	})
+}
+
+// tempFile is what write needs of the temporary file: *os.File, or a test
+// double that fails at a chosen step.
+type tempFile interface {
+	Chmod(mode os.FileMode) error
+	Write(p []byte) (int, error)
+	Sync() error
+	Close() error
+	Name() string
+}
+
+// write is Write with the temporary file's creation injected.
+func write(dir, name string, content []byte, mode os.FileMode, createTemp func(dir, pattern string) (tempFile, error)) error {
+	tmp, err := createTemp(dir, "."+name+".*")
 	if err != nil {
 		return err
 	}
