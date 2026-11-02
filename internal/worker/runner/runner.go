@@ -39,6 +39,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
@@ -433,9 +434,12 @@ func (r *Runner) streamEvents(ctx context.Context, stdout io.Reader, sink func(*
 	for scanner.Scan() {
 		ev, ok, err := ParseEvent(scanner.Bytes())
 		if err != nil {
-			// Malformed line: skip with a warning. The line's content is
-			// never logged — a broken line can hold anything.
-			r.log().WarnContext(ctx, "skipping malformed runner event", "err", err)
+			// Malformed line: skip with a warning naming the start of it,
+			// redacted before it is cut, so a secret cannot survive by
+			// straddling the cut (backlog 2.115: the error alone left
+			// nobody able to tell what printed the line).
+			r.log().WarnContext(ctx, "skipping malformed runner event", "err", err,
+				"line_prefix", malformedPrefix(red.text(scanner.Text())))
 			continue
 		}
 		if ev.Stats != nil {
@@ -488,6 +492,22 @@ func (r *Runner) subprocessEnv(env worker.RunEnv, ansibleBin string) []string {
 }
 
 // log returns the runner's logger, defaulting to slog's.
+// malformedPrefixLen bounds how much of a malformed runner line the
+// warning shows: enough to recognise what printed it.
+const malformedPrefixLen = 120
+
+// malformedPrefix is s cut to malformedPrefixLen bytes on a rune boundary.
+func malformedPrefix(s string) string {
+	if len(s) <= malformedPrefixLen {
+		return s
+	}
+	cut := malformedPrefixLen
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
 func (r *Runner) log() *slog.Logger {
 	if r.Log != nil {
 		return r.Log

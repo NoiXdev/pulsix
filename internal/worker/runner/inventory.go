@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -268,6 +269,15 @@ func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) e
 	}
 	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFiles), 0o600); err != nil {
 		return err
+	}
+	// The run's HOME has to exist, owner-only like the rest of the work dir
+	// until ShareWorkDir opens it to the play's group: without it
+	// ansible-core prints "Failed to create the directory …/home/.ansible"
+	// to stdout on every run, which the event stream can only skip as a
+	// broken line (backlog 2.115). Repository-backed runs created it
+	// already, for the fetch's ssh_config.
+	if err := os.MkdirAll(filepath.Join(env.WorkDir, homeDirName), 0o700); err != nil {
+		return fmt.Errorf("create the run's home: %w", err)
 	}
 	extraVars := job.GetExtraVars()
 	vars := make(map[string]any, len(extraVars)+len(forcedConnectionVars(env.WorkDir)))

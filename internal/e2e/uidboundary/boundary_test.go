@@ -174,10 +174,15 @@ func TestLocalhostPlayRunsUnderThePlayUID(t *testing.T) {
         src: ` + key + `
       ignore_errors: true
 `
-	result, events, _ := runOneJob(t, localhostJob(t, playbook))
+	result, events, logs := runOneJob(t, localhostJob(t, playbook))
 
 	if got := result.GetStatus(); got != "succeeded" {
 		t.Errorf("status = %q, want succeeded (error: %q)", got, result.GetError())
+	}
+	// Everything ansible-runner prints is an event; a stray line here was
+	// ansible-core failing to create the run's missing home (backlog 2.115).
+	if strings.Contains(logs, "skipping malformed runner event") {
+		t.Errorf("the run printed a line that is not an event:\n%s", logs)
 	}
 	if !eventsContain(events, strconv.Itoa(playUID)) {
 		t.Errorf("no event reports uid %d; the play did not run under the play uid:\n%s", playUID, eventDump(events))
