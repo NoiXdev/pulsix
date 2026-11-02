@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { useMe } from '../../api/hooks/useMe.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const ACTIVE = 'border-b-2 border-primary py-2.5 text-[13px] font-semibold text-foreground';
 const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium text-muted-foreground';
@@ -25,9 +26,10 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  * sidebar entries under Infrastructure now, and their routes left
  * /settings with them (router.tsx).
  *
- * "Outgoing mail" and "Shared resources" are instance-wide and shown only
- * to instance administrators — the only callers GET /admin/settings/smtp
- * and GET /admin/repos/definitions admit, respectively (v0.2f).
+ * "Outgoing mail", "Language" and "Shared resources" are instance-wide and
+ * shown only to instance administrators — the only callers GET
+ * /admin/settings/smtp, GET /admin/settings/locale and GET
+ * /admin/repos/definitions admit, respectively (v0.2f, backlog 1.41).
  * "Notifications", "Alert routes" and "On-call rotations" are shown to
  * the roles that may read channels (channels.read, operator and above) —
  * alert_route_handlers.go and oncall_handlers.go both gate their own
@@ -38,6 +40,7 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
 export function SettingsTabs({ org }: { org: string }) {
   const me = useMe({ enabled: true });
   const orgInfo = useOrg(org);
+  const t = useT();
   return (
     <div role="tablist" className="flex gap-6 border-b border-border">
       <Link
@@ -109,6 +112,17 @@ export function SettingsTabs({ org }: { org: string }) {
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
           Outgoing mail
+        </Link>
+      )}
+      {me.data?.instance_admin && (
+        <Link
+          to="/o/$org/settings/language"
+          params={{ org }}
+          role="tab"
+          activeProps={{ className: ACTIVE, 'aria-selected': true }}
+          inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
+        >
+          {t.language.instance.tab}
         </Link>
       )}
       {me.data?.instance_admin && (

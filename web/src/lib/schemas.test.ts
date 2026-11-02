@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import {
+import { en } from '../i18n/en/index.ts';
+import { de } from '../i18n/de/index.ts';
+import { schemas } from './schemas.ts';
+
+const {
   emailSchema,
   hostFormSchema,
   hostNameSchema,
@@ -9,7 +13,20 @@ import {
   slugSchema,
   smtpSchema,
   zoneFormSchema,
-} from './schemas.ts';
+} = schemas(en);
+
+describe('schemas(t) speaks the language it is given (Review Focus 5)', () => {
+  it('reports the German "required" text with the German catalogue', () => {
+    const result = schemas(de).slugSchema.safeParse('');
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe('Pflichtfeld');
+  });
+
+  it('reports the English text with the English catalogue', () => {
+    const result = schemas(en).hostFormSchema.safeParse({ name: 'web-04', zone_id: '', address: '', managed: false, monitored: false });
+    expect(result.error?.issues[0]?.message).toBe('select a zone');
+  });
+});
 
 describe('slugSchema', () => {
   it('accepts lowercase letters, digits and single hyphens', () => {

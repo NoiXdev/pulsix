@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { Messages } from '../i18n/types.ts';
 
 /**
  * Zod schemas mirroring the API's own struct-tag validation, so a form can
@@ -8,61 +9,84 @@ import { z } from 'zod';
  *   - host name:       internal/api/host_handlers.go (hostInputBody.Name)
  *   - tag key:         internal/api/tag_handlers.go (tagInput.Key) /
  *                       internal/hosts (tagKeyPattern)
+ *
+ * schemas(t) builds them with the messages of a catalogue, so validation
+ * speaks the page's language: a component calls it with useT()'s result,
+ * inside useMemo keyed on `t`, and hands the schema to zodResolver.
  */
+export function schemas(t: Messages) {
+  const v = t.validation;
 
-export const slugSchema = z
-  .string()
-  .min(1, 'required')
-  .max(63, 'must be 63 characters or fewer')
-  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'lowercase letters, digits and single hyphens only');
+  const slugSchema = z
+    .string()
+    .min(1, v.required)
+    .max(63, v.maxChars(63))
+    .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, v.slugShape);
 
-/** The first-run wizard's org slug is a stricter subset (no leading/
- * trailing hyphen collapsing needed beyond the same shape, but capped so
- * it always fits legibly in the "pulsix.acme.io/o/…" preview). */
-export const setupOrgSlugSchema = z
-  .string()
-  .min(1, 'required')
-  .max(40, 'must be 40 characters or fewer')
-  .regex(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/, 'lowercase letters, digits and single hyphens only');
+  /** The first-run wizard's org slug is a stricter subset (no leading/
+   * trailing hyphen collapsing needed beyond the same shape, but capped so
+   * it always fits legibly in the "pulsix.acme.io/o/…" preview). */
+  const setupOrgSlugSchema = z
+    .string()
+    .min(1, v.required)
+    .max(40, v.maxChars(40))
+    .regex(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/, v.slugShape);
 
-export const hostNameSchema = z.string().min(1, 'required').max(254, 'must be 254 characters or fewer');
+  const hostNameSchema = z.string().min(1, v.required).max(254, v.maxChars(254));
 
-export const passwordSchema = z.string().min(12, 'at least 12 characters');
+  const passwordSchema = z.string().min(12, v.minChars(12));
 
-export const emailSchema = z.string().min(3).email('enter a valid email address');
+  const emailSchema = z.string().min(3, v.email).email(v.email);
 
-export const smtpSchema = z.object({
-  host: z.string().min(1, 'required'),
-  port: z.number().int().min(1).max(65535),
-  username: z.string(),
-  password: z.string(),
-  from: emailSchema,
-  start_tls: z.boolean(),
-});
-export type SmtpFormValues = z.infer<typeof smtpSchema>;
+  const smtpSchema = z.object({
+    host: z.string().min(1, v.required),
+    port: z.number({ error: v.port }).int(v.port).min(1, v.port).max(65535, v.port),
+    username: z.string(),
+    password: z.string(),
+    from: emailSchema,
+    start_tls: z.boolean(),
+  });
+
+  const hostFormSchema = z.object({
+    name: hostNameSchema,
+    zone_id: z.string().min(1, v.selectZone),
+    address: z.string(),
+    managed: z.boolean(),
+    monitored: z.boolean(),
+  });
+
+  const zoneFormSchema = z.object({
+    slug: slugSchema,
+    name: z.string().min(1, v.required),
+  });
+
+  const inviteFormSchema = z.object({
+    email: emailSchema,
+    role: z.enum(['admin', 'operator', 'viewer']),
+  });
+
+  return {
+    slugSchema,
+    setupOrgSlugSchema,
+    hostNameSchema,
+    passwordSchema,
+    emailSchema,
+    smtpSchema,
+    hostFormSchema,
+    zoneFormSchema,
+    inviteFormSchema,
+  };
+}
+
+type Schemas = ReturnType<typeof schemas>;
+
+export type SmtpFormValues = z.infer<Schemas['smtpSchema']>;
 
 /** What the settings form actually sends: the password is optional on the
  * wire so an untouched field keeps the stored one (the form can never show
  * it back). An empty string is the explicit "remove it". */
 export type SmtpSaveValues = Omit<SmtpFormValues, 'password'> & { password?: string };
 
-export const hostFormSchema = z.object({
-  name: hostNameSchema,
-  zone_id: z.string().min(1, 'select a zone'),
-  address: z.string(),
-  managed: z.boolean(),
-  monitored: z.boolean(),
-});
-export type HostFormValues = z.infer<typeof hostFormSchema>;
-
-export const zoneFormSchema = z.object({
-  slug: slugSchema,
-  name: z.string().min(1, 'required'),
-});
-export type ZoneFormValues = z.infer<typeof zoneFormSchema>;
-
-export const inviteFormSchema = z.object({
-  email: emailSchema,
-  role: z.enum(['admin', 'operator', 'viewer']),
-});
-export type InviteFormValues = z.infer<typeof inviteFormSchema>;
+export type HostFormValues = z.infer<Schemas['hostFormSchema']>;
+export type ZoneFormValues = z.infer<Schemas['zoneFormSchema']>;
+export type InviteFormValues = z.infer<Schemas['inviteFormSchema']>;

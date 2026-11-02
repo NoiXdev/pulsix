@@ -20,6 +20,8 @@ export type User = components['schemas']['UserStruct'];
 
 export type HostInput = components['schemas']['HostInputBody'];
 export type SetupCompleteInput = components['schemas']['SetupCompleteInputBody'];
+/** A GUI language the API accepts (users.locale, the instance default). */
+export type GuiLocale = components['schemas']['LocaleSettingsBody']['default_locale'];
 
 export type InventoryGroupSummary = components['schemas']['GroupSummaryDTO'];
 export type InventoryGroup = components['schemas']['GroupDTO'];

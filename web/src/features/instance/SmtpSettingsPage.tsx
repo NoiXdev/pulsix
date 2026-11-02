@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -13,7 +13,8 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useSaveSmtpSettings, useSmtpSettings, useTestSmtpSettings } from '../../api/hooks/useSmtpSettings.ts';
-import { smtpSchema, type SmtpFormValues, type SmtpSaveValues } from '../../lib/schemas.ts';
+import { schemas, type SmtpFormValues, type SmtpSaveValues } from '../../lib/schemas.ts';
+import { useT } from '../../i18n/useT.ts';
 
 /**
  * SmtpSettingsPage is the instance's outgoing mail configuration, for
@@ -124,6 +125,8 @@ function SmtpForm({
   saving: boolean;
   onSave: (values: SmtpSaveValues) => Promise<void>;
 }) {
+  const t = useT();
+  const { smtpSchema } = useMemo(() => schemas(t), [t]);
   const form = useForm<SmtpFormValues>({ resolver: zodResolver(smtpSchema), defaultValues: initial });
   const errors = form.formState.errors;
   const [removeStored, setRemoveStored] = useState(false);

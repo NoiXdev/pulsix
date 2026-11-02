@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
@@ -14,7 +14,8 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
-import { inviteFormSchema, type InviteFormValues } from '../../lib/schemas.ts';
+import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
+import { useT } from '../../i18n/useT.ts';
 import { PendingInvites } from './PendingInvites.tsx';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
@@ -43,6 +44,8 @@ export function MembersPage() {
   const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
   const [roleTarget, setRoleTarget] = useState<{ userId: string; name: string; role: string } | null>(null);
 
+  const t = useT();
+  const { inviteFormSchema } = useMemo(() => schemas(t), [t]);
   const inviteForm = useForm<InviteFormValues>({
     resolver: zodResolver(inviteFormSchema),
     defaultValues: { email: '', role: 'operator' },

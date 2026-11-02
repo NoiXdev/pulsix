@@ -11,6 +11,7 @@ import { useDeletePasskey, usePasskeys } from '../../api/hooks/usePasskeys.ts';
 import { useConfirmTotp, useEnrolTotp, useRegenerateRecoveryCodes } from '../../api/hooks/useTotp.ts';
 import { registerPasskey } from '../auth/passkeys.ts';
 import { useStepUp } from './stepUp.tsx';
+import { LanguageCard } from './LanguageCard.tsx';
 
 /**
  * AccountSecurityPage follows design/mockups/build.mjs's ACCOUNT SECURITY
@@ -43,6 +44,9 @@ import { useStepUp } from './stepUp.tsx';
  * The page serves two layouts: the account security page inside the app
  * shell (AccountSecurityLayout) and second-factor enrolment for an account
  * that has none yet (EnrolmentLayout, which passes onEnrolled).
+ *
+ * The Language card (backlog 1.41) sits below the factor cards on the
+ * account page only.
  *
  * onEnrolled, when given, is called once the
  * account has just gained a second factor and the user is done with this
@@ -264,6 +268,10 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
             )}
           </div>
         </Card>
+
+        {/* Not during second-factor enrolment (EnrolmentLayout passes
+            onEnrolled): that page has one job. */}
+        {!onEnrolled && <LanguageCard />}
       </div>
       {stepUp.dialog}
     </>

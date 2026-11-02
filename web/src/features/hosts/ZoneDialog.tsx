@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Dialog } from '../../ui/dialog.tsx';
@@ -7,7 +8,8 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCreateZone } from '../../api/hooks/useHosts.ts';
-import { zoneFormSchema, type ZoneFormValues } from '../../lib/schemas.ts';
+import { schemas, type ZoneFormValues } from '../../lib/schemas.ts';
+import { useT } from '../../i18n/useT.ts';
 
 /**
  * ZoneDialog creates a zone: name and a derived slug. Lifted out of
@@ -29,6 +31,8 @@ export function ZoneDialog({
 }) {
   const toast = useToast();
   const createZone = useCreateZone(org);
+  const t = useT();
+  const { zoneFormSchema } = useMemo(() => schemas(t), [t]);
   const zoneForm = useForm<ZoneFormValues>({
     resolver: zodResolver(zoneFormSchema),
     defaultValues: { slug: '', name: initialName ?? '' },

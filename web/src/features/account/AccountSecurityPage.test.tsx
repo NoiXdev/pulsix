@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { fetchMock } from '../../test/fetchMock.ts';
+import { pickOption } from '../../test/pickOption.ts';
+import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { AccountSecurityPage } from './AccountSecurityPage.tsx';
 
 function renderPage(qc: QueryClient) {
@@ -303,5 +305,85 @@ describe('recovery codes', () => {
       expect(screen.getByText('aaaaa-bbbbb-ccccc')).toBeInTheDocument();
     });
     expect(screen.getByText('ddddd-eeeee-fffff')).toBeInTheDocument();
+  });
+});
+
+describe('the Language card', () => {
+  const ME = {
+    user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+    mfa_complete: true,
+    totp_confirmed: true,
+    instance_admin: false,
+  };
+
+  function renderWithI18n(onEnrolled?: () => void) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <ToastProvider>
+            <AccountSecurityPage onEnrolled={onEnrolled} />
+          </ToastProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('offers the instance default, English and Deutsch, and switches the page on a choice (Review Focus 3)', async () => {
+    const saved: unknown[] = [];
+    let mine: 'en' | 'de' | null = null;
+    mockApi({
+      'GET /api/v1/auth/me': () => ({ ...ME, locale: mine, effective_locale: mine ?? 'en' }),
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en' },
+      'PUT /api/v1/auth/me/locale': (req: { body: unknown }) => {
+        saved.push(req.body);
+        mine = (req.body as { locale: 'en' | 'de' | null }).locale;
+        return { locale: mine, effective_locale: mine ?? 'en' };
+      },
+    });
+    renderWithI18n();
+
+    const field = await screen.findByLabelText('Language');
+    await waitFor(() => expect(field).toHaveValue('Instance default (English)'));
+
+    await pickOption(screen, 'Language', 'Deutsch');
+    // The whole page follows, not just the card.
+    expect(await screen.findByRole('heading', { name: 'Sprache' })).toBeInTheDocument();
+    expect(saved).toEqual([{ locale: 'de' }]);
+    expect(document.documentElement.lang).toBe('de');
+
+    await pickOption(screen, 'Sprache', 'Standard der Instanz (English)');
+    expect(await screen.findByRole('heading', { name: 'Language' })).toBeInTheDocument();
+    expect(saved).toEqual([{ locale: 'de' }, { locale: null }]);
+  });
+
+  it('shows the API error when saving fails', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, locale: null, effective_locale: 'en' },
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en' },
+      'PUT /api/v1/auth/me/locale': () =>
+        new Response(JSON.stringify({ detail: 'this needs a signed-in session' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    renderWithI18n();
+    await screen.findByLabelText('Language');
+    await pickOption(screen, 'Language', 'Deutsch');
+    const toast = await screen.findByRole('status');
+    expect(within(toast).getByText('this needs a signed-in session')).toBeInTheDocument();
+  });
+
+  it('is left out of second-factor enrolment, which has one job', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME, totp_confirmed: false, locale: null, effective_locale: 'en' },
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'GET /api/v1/setup/status': { completed: true, version: 'dev', default_locale: 'en' },
+    });
+    renderWithI18n(() => {});
+    await screen.findByRole('button', { name: 'Enrol authenticator app' });
+    expect(screen.queryByLabelText('Language')).not.toBeInTheDocument();
   });
 });

@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { router } from './router.tsx';
 import { ToastProvider } from './ui/toast.tsx';
+import { I18nProvider } from './i18n/I18nProvider.tsx';
 import './styles/globals.css';
 
 const queryClient = new QueryClient({
@@ -21,9 +22,13 @@ if (!rootEl) throw new Error('#root element not found');
 createRoot(rootEl).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      {/* Above the router and the toasts, so every page and every toast
+          follows the language — and switches without a reload. */}
+      <I18nProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </I18nProvider>
     </QueryClientProvider>
   </StrictMode>,
 );

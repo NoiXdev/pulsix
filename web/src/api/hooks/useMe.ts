@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 
-const meQueryKey = ['me'] as const;
+export const meQueryKey = ['me'] as const;
 const meQueryFn = () => unwrap(api.GET('/api/v1/auth/me'));
 
 /** The signed-in principal (src/routes root logic reads `mfa_complete` to

@@ -2,7 +2,7 @@ import { useQuery, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { SetupCompleteInput } from '../types.ts';
 
-const setupStatusQueryKey = ['setup-status'] as const;
+export const setupStatusQueryKey = ['setup-status'] as const;
 const setupStatusQueryFn = () => unwrap(api.GET('/api/v1/setup/status'));
 
 /** Polled once on app load (src/routes root logic) to decide whether the

@@ -16,6 +16,7 @@ import { MembersPage } from './features/members/MembersPage.tsx';
 import { ActivityPage } from './features/activity/ActivityPage.tsx';
 import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
+import { LanguageSettingsPage } from './features/instance/LanguageSettingsPage.tsx';
 import { SharedResourcesPage } from './features/instance/SharedResourcesPage.tsx';
 import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
@@ -250,6 +251,13 @@ const legacyJumpHostsRoute = createRoute({
 // Instance-wide outgoing mail settings, for instance administrators; filed
 // under Settings for navigation only (see SmtpSettingsPage).
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
+// The instance's default GUI language (backlog 1.41), for instance
+// administrators; filed under Settings for navigation only, same as mail.
+const languageRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/language',
+  component: LanguageSettingsPage,
+});
 // Instance-wide shared repository definitions (v0.2f), for instance
 // administrators; filed under Settings for navigation only, same as mail
 // above (see SharedResourcesPage).
@@ -297,6 +305,7 @@ const routeTree = rootRoute.addChildren([
       legacyCredentialsRoute,
       legacyJumpHostsRoute,
       mailRoute,
+      languageRoute,
       sharedResourcesRoute,
       notificationsRoute,
       alertRoutesRoute,

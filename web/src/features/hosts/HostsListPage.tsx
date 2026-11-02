@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useParams, useSearch } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
@@ -14,7 +14,8 @@ import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useCreateHost, useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
 import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useToast } from '../../ui/toastContext.ts';
-import { hostFormSchema, type HostFormValues } from '../../lib/schemas.ts';
+import { schemas, type HostFormValues } from '../../lib/schemas.ts';
+import { useT } from '../../i18n/useT.ts';
 import { useAgents } from '../../api/hooks/useAgents.ts';
 import { HostRow } from './HostRow.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
@@ -56,6 +57,8 @@ export function HostsListPage() {
   const createHost = useCreateHost(org);
   const hostQuery = useHostQuery(org);
 
+  const t = useT();
+  const { hostFormSchema } = useMemo(() => schemas(t), [t]);
   const hostForm = useForm<HostFormValues>({
     resolver: zodResolver(hostFormSchema),
     defaultValues: { name: '', zone_id: '', address: '', managed: false, monitored: false },

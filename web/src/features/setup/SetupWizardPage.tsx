@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -7,7 +7,10 @@ import { PulsixMark } from '../../ui/PulsixMark.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
-import { emailSchema, passwordSchema, setupOrgSlugSchema, smtpSchema, type SmtpFormValues } from '../../lib/schemas.ts';
+import { schemas, type SmtpFormValues } from '../../lib/schemas.ts';
+import { Select } from '../../ui/Select.tsx';
+import { useLocale, useT } from '../../i18n/useT.ts';
+import { LOCALES, LOCALE_NAMES, isLocale, type Messages } from '../../i18n/types.ts';
 import { completeSetup, refetchSetupStatus, useSetupStatus } from '../../api/hooks/useSetupStatus.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
 import { useResetSession } from '../../lib/session.ts';
@@ -30,24 +33,27 @@ const STEPS: Array<{ key: StepKey; label: string; sub: string }> = [
 // it locks the instance out of its own first administrator, and there is
 // no second administrator to undo it with — which is why the wizard asks
 // twice and the login form does not.
-const adminSchema = z
-  .object({
-    admin_email: emailSchema,
-    admin_password: passwordSchema,
-    admin_password_repeat: z.string().min(1, 'required'),
-    admin_name: z.string().min(1, 'required'),
-  })
-  .refine((v) => v.admin_password === v.admin_password_repeat, {
-    message: 'passwords do not match',
-    path: ['admin_password_repeat'],
+function wizardSchemas(t: Messages) {
+  const { emailSchema, passwordSchema, setupOrgSlugSchema, smtpSchema } = schemas(t);
+  const adminSchema = z
+    .object({
+      admin_email: emailSchema,
+      admin_password: passwordSchema,
+      admin_password_repeat: z.string().min(1, t.validation.required),
+      admin_name: z.string().min(1, t.validation.required),
+    })
+    .refine((v) => v.admin_password === v.admin_password_repeat, {
+      message: t.validation.passwordsMismatch,
+      path: ['admin_password_repeat'],
+    });
+  const orgSchema = z.object({
+    org_name: z.string().min(1, t.validation.required),
+    org_slug: setupOrgSlugSchema,
   });
-type AdminValues = z.infer<typeof adminSchema>;
-
-const orgSchema = z.object({
-  org_name: z.string().min(1, 'required'),
-  org_slug: setupOrgSlugSchema,
-});
-type OrgValues = z.infer<typeof orgSchema>;
+  return { adminSchema, orgSchema, smtpSchema };
+}
+type AdminValues = z.infer<ReturnType<typeof wizardSchemas>['adminSchema']>;
+type OrgValues = z.infer<ReturnType<typeof wizardSchemas>['orgSchema']>;
 
 /** SetupWizardPage — design/mockups/build.mjs's SETUP WIZARD artboard: a
  * fixed 420px brand/progress panel on the left, the current step's form
@@ -59,6 +65,13 @@ export function SetupWizardPage() {
   const refetchMe = useRefetchMe();
   const resetSession = useResetSession();
   const setupStatus = useSetupStatus();
+  const t = useT();
+  // The wizard's language is the one it is shown in: before setup the
+  // provider starts from the browser's, and choosing another here only
+  // previews it — it is saved as the instance default by POST
+  // /setup/complete below, there being nowhere to save it before that.
+  const { locale, previewLocale } = useLocale();
+  const { adminSchema, orgSchema, smtpSchema } = useMemo(() => wizardSchemas(t), [t]);
   const [step, setStep] = useState<StepKey>('admin');
   const [admin, setAdmin] = useState<AdminValues | null>(null);
   const [org, setOrg] = useState<OrgValues | null>(null);
@@ -98,6 +111,7 @@ export function SetupWizardPage() {
         org_slug: org.org_slug,
         org_name: org.org_name,
         smtp: smtpEnabled && smtp ? smtp : undefined,
+        default_locale: locale,
       });
       // The response set a session cookie for a new principal: start from
       // an empty cache (lib/session.ts), then refetch and await both
@@ -170,6 +184,18 @@ export function SetupWizardPage() {
               })}
             >
               <h2 className="text-xl font-semibold">Create the instance administrator</h2>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="setup_locale">{t.language.label}</Label>
+                <Select
+                  id="setup_locale"
+                  options={LOCALES.map((l) => ({ value: l, label: LOCALE_NAMES[l] }))}
+                  value={locale}
+                  onChange={(v) => {
+                    if (isLocale(v)) previewLocale(v);
+                  }}
+                />
+                <span className="text-[11px] text-muted-foreground">{t.language.wizard.hint}</span>
+              </div>
               <Field id="admin_name" label="Name" error={adminForm.formState.errors.admin_name?.message}>
                 <Input id="admin_name" {...adminForm.register('admin_name')} />
               </Field>

@@ -4,9 +4,11 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickOption } from '../../test/pickOption.ts';
+import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { SetupWizardPage } from './SetupWizardPage.tsx';
 
-function renderWizard() {
+function renderWizard({ i18n = false }: { i18n?: boolean } = {}) {
   const rootRoute = createRootRoute();
   const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <div>ROOT</div> });
   const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: SetupWizardPage });
@@ -19,10 +21,9 @@ function renderWizard() {
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/setup'] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
+  const tree = <RouterProvider router={router} />;
   render(
-    <QueryClientProvider client={qc}>
-      <RouterProvider router={router} />
-    </QueryClientProvider>,
+    <QueryClientProvider client={qc}>{i18n ? <I18nProvider>{tree}</I18nProvider> : tree}</QueryClientProvider>,
   );
 }
 
@@ -141,5 +142,79 @@ describe('the administrator password is typed twice', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByText('Create the first organization')).toBeInTheDocument();
+  });
+});
+
+describe('the language comes first', () => {
+  it('switches the wizard as soon as it is chosen and sends it as the instance default', async () => {
+    const user = userEvent.setup();
+    let completeBody: unknown;
+    mockApi({
+      'GET /api/v1/setup/status': { completed: false, version: 'dev', default_locale: 'en' },
+      'GET /api/v1/auth/me': () =>
+        completeBody
+          ? { user: { id: 'u1', email: 'root@acme.io', display_name: 'Root' }, mfa_complete: false, totp_confirmed: false, instance_admin: true }
+          : new Response(JSON.stringify({ detail: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } }),
+      'POST /api/v1/setup/complete': (req: MockRequest) => {
+        completeBody = req.body;
+        return {};
+      },
+    });
+    renderWizard({ i18n: true });
+
+    // The first field of the first step.
+    const language = await screen.findByLabelText('Language');
+    expect(language.compareDocumentPosition(screen.getByLabelText('Name')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await pickOption(screen, 'Language', 'Deutsch');
+    expect(await screen.findByLabelText('Sprache')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('Name'), 'Root Admin');
+    await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.type(screen.getByLabelText('Repeat password'), 'correct horse battery stable');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    // Validation follows the chosen language too.
+    expect(await screen.findByText('Passwörter stimmen nicht überein')).toBeInTheDocument();
+    await user.clear(screen.getByLabelText('Repeat password'));
+    await user.type(screen.getByLabelText('Repeat password'), 'correct horse battery staple');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await user.type(await screen.findByLabelText('Organization name'), 'Acme Hosting');
+    await user.type(screen.getByLabelText('URL slug'), 'acme');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Outgoing mail' });
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.click(await screen.findByRole('button', { name: 'Create administrator & continue' }));
+
+    expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
+    expect(completeBody).toMatchObject({ default_locale: 'de' });
+  });
+
+  it('sends the language the wizard is shown in when nobody changes it', async () => {
+    const user = userEvent.setup();
+    let completeBody: unknown;
+    mockApi({
+      'GET /api/v1/setup/status': { completed: false },
+      'POST /api/v1/setup/complete': (req: MockRequest) => {
+        completeBody = req.body;
+        return {};
+      },
+      'GET /api/v1/auth/me': { user: { id: 'u1', email: 'root@acme.io', display_name: 'Root' }, mfa_complete: false },
+    });
+    renderWizard();
+    await user.type(await screen.findByLabelText('Name'), 'Root Admin');
+    await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
+    await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
+    await user.type(screen.getByLabelText('Repeat password'), 'correct horse battery staple');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.type(await screen.findByLabelText('Organization name'), 'Acme Hosting');
+    await user.type(screen.getByLabelText('URL slug'), 'acme');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await screen.findByRole('heading', { name: 'Outgoing mail' });
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+    await user.click(await screen.findByRole('button', { name: 'Create administrator & continue' }));
+    expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
+    expect(completeBody).toMatchObject({ default_locale: 'en' });
   });
 });
