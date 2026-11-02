@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
+	"unicode"
 
 	"github.com/shirou/gopsutil/v4/disk"
 )
@@ -19,6 +21,23 @@ var pseudoFilesystems = map[string]bool{
 	"devtmpfs": true,
 	"overlay":  true,
 	"squashfs": true,
+}
+
+// maxItemLen is the manager's bound on an observation's item
+// (internal/checks.MaxItemLen; a test keeps the two equal).
+const maxItemLen = 512
+
+// reportableItem reports whether the manager's check-results contract
+// accepts item: at most maxItemLen bytes, and no control character or
+// line separator (internal/checks.withinContract). The manager refuses a
+// whole batch, and ends the stream, for one item that breaks it (backlog
+// 7.40), and a mount point is a path whoever can mount something chooses,
+// FUSE through a setuid helper included; one the agent cannot name inside
+// the contract is left out rather than cost every other mount its report.
+func reportableItem(item string) bool {
+	return len(item) <= maxItemLen && strings.IndexFunc(item, func(r rune) bool {
+		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
+	}) < 0
 }
 
 // partitionLister is the disk.Partitions probe (the mounted filesystem
@@ -80,8 +99,15 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 	}
 
 	var candidates []string
+	var errs []error
 	if explicit {
-		candidates = mounts
+		for _, mp := range mounts {
+			if !reportableItem(mp) {
+				errs = append(errs, fmt.Errorf("disk: mount %q cannot be reported: longer than %d bytes or carrying a control character", mp, maxItemLen))
+				continue
+			}
+			candidates = append(candidates, mp)
+		}
 	} else {
 		if p.Partitions == nil {
 			return nil, nil
@@ -92,7 +118,7 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 		}
 		seen := make(map[string]bool, len(parts))
 		for _, part := range parts {
-			if part.Mountpoint == "" || pseudoFilesystems[part.Fstype] || seen[part.Mountpoint] {
+			if part.Mountpoint == "" || pseudoFilesystems[part.Fstype] || seen[part.Mountpoint] || !reportableItem(part.Mountpoint) {
 				continue
 			}
 			seen[part.Mountpoint] = true
@@ -102,7 +128,6 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 	}
 
 	var obs []Observation
-	var errs []error
 	for _, mp := range candidates {
 		usage, err := p.Usage.Usage(ctx, mp)
 		if err != nil {
