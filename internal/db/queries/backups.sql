@@ -1,9 +1,11 @@
 -- name: InsertBackupRun :one
 -- A scheduled attempt claims its slot here: when another manager already
--- holds the slot nothing is inserted and no row comes back.
+-- holds the slot nothing is inserted and no row comes back. An abandoned
+-- attempt does not hold its slot; the conflict target names the same
+-- predicate as the partial unique index.
 INSERT INTO backup_runs (kind, slot, started_at, state, object_name, actor_id)
 VALUES (sqlc.arg(kind), sqlc.narg(slot), sqlc.arg(started_at), 'running', sqlc.arg(object_name), sqlc.narg(actor_id))
-ON CONFLICT (slot) WHERE kind = 'scheduled' DO NOTHING
+ON CONFLICT (slot) WHERE kind = 'scheduled' AND state <> 'abandoned' DO NOTHING
 RETURNING id;
 
 -- name: FinishBackupRun :exec
@@ -20,7 +22,7 @@ WHERE state = 'running';
 SELECT EXISTS (SELECT 1 FROM backup_runs WHERE state = 'running');
 
 -- name: BackupSlotClaimed :one
-SELECT EXISTS (SELECT 1 FROM backup_runs WHERE kind = 'scheduled' AND slot = sqlc.arg(slot));
+SELECT EXISTS (SELECT 1 FROM backup_runs WHERE kind = 'scheduled' AND state <> 'abandoned' AND slot = sqlc.arg(slot));
 
 -- name: ListRecentBackupRuns :many
 SELECT r.id, r.kind, r.slot, r.started_at, r.finished_at, r.state, r.object_name, r.size_bytes, r.error, r.actor_id,

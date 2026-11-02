@@ -10,8 +10,10 @@
 --
 -- A scheduled attempt claims its daily slot: the partial unique index on
 -- slot is what lets several managers agree on who runs it (an INSERT ... ON
--- CONFLICT DO NOTHING that inserted nothing lost the slot). A manual attempt
--- has no slot.
+-- CONFLICT DO NOTHING that inserted nothing lost the slot). An abandoned
+-- attempt (its manager stopped or crashed mid-backup) gives the slot back,
+-- so the next tick can still take that day's backup; a running, succeeded
+-- or failed one keeps it. A manual attempt has no slot.
 --
 -- "A backup is running" is not decided here: a running backup holds a
 -- session advisory lock (internal/backup.AdvisoryKeyBackup) for its whole
@@ -32,7 +34,7 @@ CREATE TABLE backup_runs (
   CONSTRAINT backup_runs_finished_when_done CHECK ((state = 'running') = (finished_at IS NULL))
 );
 
-CREATE UNIQUE INDEX backup_runs_scheduled_slot ON backup_runs (slot) WHERE kind = 'scheduled';
+CREATE UNIQUE INDEX backup_runs_scheduled_slot ON backup_runs (slot) WHERE kind = 'scheduled' AND state <> 'abandoned';
 CREATE INDEX backup_runs_started_at ON backup_runs (started_at DESC);
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON backup_runs TO pulsix_app;

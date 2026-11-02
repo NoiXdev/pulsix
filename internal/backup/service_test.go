@@ -622,3 +622,89 @@ func TestStatus(t *testing.T) {
 		t.Errorf("next run after the slot ran = %v, want %s", next, want)
 	}
 }
+
+// TestInterruptedScheduledBackupIsRetried: a scheduled backup cut short by
+// a shutdown leaves its slot abandoned; a later tick for the same slot
+// takes that day's backup after all.
+func TestInterruptedScheduledBackupIsRetried(t *testing.T) {
+	h := newHarness(t)
+	h.enableSchedule(t, "03:00", backup.Retention{Daily: 7})
+	slot := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	h.clock.Set(slot)
+	h.dump.block = true
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- h.svc.RunDue(ctx) }()
+	for h.dump.count() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	cancel() // the ticker stops: the manager shuts down mid-backup
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if a := h.store.allAttempts(); len(a) != 1 || a[0].State != backup.StateAbandoned {
+		t.Fatalf("attempts after the interruption = %+v, want one abandoned", a)
+	}
+
+	h.dump.mu.Lock()
+	h.dump.block = false
+	h.dump.mu.Unlock()
+	h.clock.Set(slot.Add(5 * time.Minute))
+	if err := h.svc.RunDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var succeeded []backup.Attempt
+	for _, a := range h.store.allAttempts() {
+		if a.State == backup.StateSucceeded {
+			succeeded = append(succeeded, a)
+		}
+	}
+	if len(succeeded) != 1 || !succeeded[0].Slot.Equal(slot) {
+		t.Fatalf("attempts = %+v, want the slot's backup taken on the retry", h.store.allAttempts())
+	}
+	// Claimed once more: no third run.
+	if err := h.svc.RunDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.dump.count() != 2 {
+		t.Errorf("%d dumps, want the interrupted one and the retry", h.dump.count())
+	}
+}
+
+// TestCrashedScheduledBackupIsRetriedInOneTick: a manager crashed during
+// the slot's backup, leaving its row running. The next tick finds no lock
+// holder, abandons the row and takes the slot's backup.
+func TestCrashedScheduledBackupIsRetriedInOneTick(t *testing.T) {
+	h := newHarness(t)
+	h.enableSchedule(t, "03:00", backup.Retention{Daily: 7})
+	slot := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	crashed := h.store.addAttempt(backup.Attempt{Kind: backup.KindScheduled, Slot: &slot, StartedAt: slot, State: backup.StateRunning})
+	h.clock.Set(slot.Add(10 * time.Minute))
+	if err := h.svc.RunDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if a := h.store.attempt(t, crashed); a.State != backup.StateAbandoned {
+		t.Errorf("crashed attempt = %s, want abandoned", a.State)
+	}
+	if h.dump.count() != 1 || len(h.store.allAttempts()) != 2 {
+		t.Errorf("%d dumps, attempts %+v; want the slot retried", h.dump.count(), h.store.allAttempts())
+	}
+}
+
+// TestOldAbandonedSlotIsNotRerun: only the current slot is retried.
+func TestOldAbandonedSlotIsNotRerun(t *testing.T) {
+	h := newHarness(t)
+	h.enableSchedule(t, "03:00", backup.Retention{Daily: 7})
+	yesterday := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	h.store.addAttempt(backup.Attempt{Kind: backup.KindScheduled, Slot: &yesterday, StartedAt: yesterday, State: backup.StateAbandoned, FinishedAt: &yesterday})
+	today := yesterday.Add(24 * time.Hour)
+	h.store.addAttempt(backup.Attempt{Kind: backup.KindScheduled, Slot: &today, StartedAt: today, State: backup.StateSucceeded, FinishedAt: &today})
+	h.clock.Set(today.Add(time.Hour))
+	if err := h.svc.RunDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if h.dump.count() != 0 {
+		t.Error("an abandoned slot of an earlier day was run again")
+	}
+}

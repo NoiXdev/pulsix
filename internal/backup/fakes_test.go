@@ -121,7 +121,7 @@ func (f *fakeStore) SlotClaimed(_ context.Context, slot time.Time) (bool, error)
 		return false, err
 	}
 	for _, a := range f.attempts {
-		if a.Kind == backup.KindScheduled && a.Slot != nil && a.Slot.Equal(slot) {
+		if a.Kind == backup.KindScheduled && a.State != backup.StateAbandoned && a.Slot != nil && a.Slot.Equal(slot) {
 			return true, nil
 		}
 	}
@@ -136,7 +136,7 @@ func (f *fakeStore) InsertAttempt(_ context.Context, n backup.NewAttempt) (uuid.
 	}
 	if n.Kind == backup.KindScheduled && n.Slot != nil {
 		for _, a := range f.attempts {
-			if a.Kind == backup.KindScheduled && a.Slot != nil && a.Slot.Equal(*n.Slot) {
+			if a.Kind == backup.KindScheduled && a.State != backup.StateAbandoned && a.Slot != nil && a.Slot.Equal(*n.Slot) {
 				return uuid.Nil, false, nil
 			}
 		}

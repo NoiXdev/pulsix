@@ -44,7 +44,7 @@ func (q *Queries) AnyBackupRunning(ctx context.Context) (bool, error) {
 }
 
 const backupSlotClaimed = `-- name: BackupSlotClaimed :one
-SELECT EXISTS (SELECT 1 FROM backup_runs WHERE kind = 'scheduled' AND slot = $1)
+SELECT EXISTS (SELECT 1 FROM backup_runs WHERE kind = 'scheduled' AND state <> 'abandoned' AND slot = $1)
 `
 
 func (q *Queries) BackupSlotClaimed(ctx context.Context, slot pgtype.Timestamptz) (bool, error) {
@@ -82,7 +82,7 @@ func (q *Queries) FinishBackupRun(ctx context.Context, arg FinishBackupRunParams
 const insertBackupRun = `-- name: InsertBackupRun :one
 INSERT INTO backup_runs (kind, slot, started_at, state, object_name, actor_id)
 VALUES ($1, $2, $3, 'running', $4, $5)
-ON CONFLICT (slot) WHERE kind = 'scheduled' DO NOTHING
+ON CONFLICT (slot) WHERE kind = 'scheduled' AND state <> 'abandoned' DO NOTHING
 RETURNING id
 `
 
@@ -95,7 +95,9 @@ type InsertBackupRunParams struct {
 }
 
 // A scheduled attempt claims its slot here: when another manager already
-// holds the slot nothing is inserted and no row comes back.
+// holds the slot nothing is inserted and no row comes back. An abandoned
+// attempt does not hold its slot; the conflict target names the same
+// predicate as the partial unique index.
 func (q *Queries) InsertBackupRun(ctx context.Context, arg InsertBackupRunParams) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, insertBackupRun,
 		arg.Kind,

@@ -82,10 +82,12 @@ type Store interface {
 	AnyRunning(ctx context.Context) (bool, error)
 	// AbandonRunning marks every running attempt abandoned, with reason.
 	AbandonRunning(ctx context.Context, at time.Time, reason string) (int64, error)
-	// SlotClaimed reports whether a scheduled attempt holds slot.
+	// SlotClaimed reports whether a scheduled attempt holds slot. An
+	// abandoned attempt does not: its slot can be claimed again.
 	SlotClaimed(ctx context.Context, slot time.Time) (bool, error)
 	// InsertAttempt records a running attempt. For a scheduled attempt
-	// whose slot is already held, inserted is false.
+	// whose slot is already held by an attempt that is not abandoned,
+	// inserted is false.
 	InsertAttempt(ctx context.Context, a NewAttempt) (id uuid.UUID, inserted bool, err error)
 	// FinishAttempt records the end of a running attempt; an attempt that
 	// is no longer running is left as it is.

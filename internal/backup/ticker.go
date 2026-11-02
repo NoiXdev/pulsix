@@ -11,7 +11,8 @@ import (
 const DefaultTick = time.Minute
 
 // dueSlot returns the current scheduled slot and whether it is due: on or
-// after the time the schedule was set, and not yet claimed by any manager.
+// after the time the schedule was set, and not claimed by any attempt that
+// was not abandoned.
 func (s *Service) dueSlot(ctx context.Context, b settingsBlob) (time.Time, bool, error) {
 	loc, err := location(b.TimeZone)
 	if err != nil {
@@ -28,6 +29,19 @@ func (s *Service) dueSlot(ctx context.Context, b settingsBlob) (time.Time, bool,
 	return slot, !claimed, nil
 }
 
+// dueSlotIfEnabled is the current slot when the schedule is on and the slot
+// is due, otherwise nil.
+func (s *Service) dueSlotIfEnabled(ctx context.Context, b settingsBlob) (*time.Time, error) {
+	if !b.Enabled {
+		return nil, nil
+	}
+	at, due, err := s.dueSlot(ctx, b)
+	if err != nil || !due {
+		return nil, err
+	}
+	return &at, nil
+}
+
 // RunDue is one tick of the schedule. It runs the current slot's backup
 // when that is due, then prunes the scheduled backups (after a success
 // only) and mails the instance administrators about a failure.
@@ -36,20 +50,18 @@ func (s *Service) dueSlot(ctx context.Context, b settingsBlob) (time.Time, bool,
 // row claims it first. A tick that finds another backup running leaves the
 // slot alone and tries again on the next tick. A tick with nothing due
 // still marks stale running attempts abandoned.
+//
+// An abandoned attempt gives its slot back, so a backup cut short by a
+// shutdown or a crash is taken again on a later tick, as long as its slot
+// is still the current one; an earlier day's slot is never run again.
 func (s *Service) RunDue(ctx context.Context) error {
 	b, err := s.loadBlob(ctx)
 	if err != nil {
 		return err
 	}
-	var slot *time.Time
-	if b.Enabled {
-		at, due, err := s.dueSlot(ctx, b)
-		if err != nil {
-			return err
-		}
-		if due {
-			slot = &at
-		}
+	slot, err := s.dueSlotIfEnabled(ctx, b)
+	if err != nil {
+		return err
 	}
 	if slot == nil {
 		// Nothing to run; the lock is only worth taking for a stale row.
@@ -73,7 +85,15 @@ func (s *Service) RunDue(ctx context.Context) error {
 		}
 	}()
 	if slot == nil {
-		return s.abandon(ctx)
+		// Holding the lock, every running attempt is stale. Abandoning a
+		// crashed scheduled attempt frees its slot, which may be the
+		// current one.
+		if err := s.abandon(ctx); err != nil {
+			return err
+		}
+		if slot, err = s.dueSlotIfEnabled(ctx, b); err != nil || slot == nil {
+			return err
+		}
 	}
 
 	r, inserted, err := s.record(ctx, KindScheduled, slot, nil)

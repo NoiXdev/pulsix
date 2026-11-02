@@ -273,3 +273,120 @@ func TestBackupRefusedWhileAnotherSessionHoldsTheLock(t *testing.T) {
 		t.Errorf("attempt states = %v, want the stale one abandoned and the new one succeeded", states)
 	}
 }
+
+// TestAbandonedSlotCanBeClaimedOnceMore: an abandoned scheduled attempt
+// releases its slot, and the slot is still claimed by one manager only.
+func TestAbandonedSlotCanBeClaimedOnceMore(t *testing.T) {
+	store, app, _ := sqlStore(t)
+	ctx := context.Background()
+	slot := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	if _, ok, err := store.InsertAttempt(ctx, backup.NewAttempt{Kind: backup.KindScheduled, Slot: &slot, StartedAt: slot, ObjectName: "a.pxbak"}); err != nil || !ok {
+		t.Fatalf("first claim: %v %v", ok, err)
+	}
+	if _, err := store.AbandonRunning(ctx, slot.Add(time.Minute), "interrupted"); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := store.SlotClaimed(ctx, slot); err != nil || claimed {
+		t.Fatalf("SlotClaimed after the attempt was abandoned = %v %v, want free", claimed, err)
+	}
+
+	// Two managers race for the re-opened slot.
+	stores := []*backup.SQLStore{backup.NewSQLStore(app), backup.NewSQLStore(app)}
+	inserted := make([]bool, 2)
+	errs := make([]error, 2)
+	var wg sync.WaitGroup
+	for i, st := range stores {
+		wg.Go(func() {
+			_, inserted[i], errs[i] = st.InsertAttempt(ctx, backup.NewAttempt{Kind: backup.KindScheduled, Slot: &slot, StartedAt: slot.Add(2 * time.Minute), ObjectName: "b.pxbak"})
+		})
+	}
+	wg.Wait()
+	if errs[0] != nil || errs[1] != nil || inserted[0] == inserted[1] {
+		t.Fatalf("re-claims: inserted %v, errors %v; want exactly one", inserted, errs)
+	}
+	if claimed, _ := store.SlotClaimed(ctx, slot); !claimed {
+		t.Error("the re-claimed slot reads as free")
+	}
+	// Succeeded and failed attempts keep their slot too.
+	for _, state := range []string{backup.StateSucceeded, backup.StateFailed} {
+		attempts, _ := store.RecentAttempts(ctx, 50)
+		for _, a := range attempts {
+			if a.State == backup.StateRunning {
+				if err := store.FinishAttempt(ctx, a.ID, backup.Finish{At: slot.Add(3 * time.Minute), State: state}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if _, ok, err := store.InsertAttempt(ctx, backup.NewAttempt{Kind: backup.KindScheduled, Slot: &slot, StartedAt: slot.Add(4 * time.Minute), ObjectName: "c.pxbak"}); err != nil || ok {
+			t.Errorf("claim of a %s slot: inserted=%v err=%v, want refused", state, ok, err)
+		}
+		if state == backup.StateSucceeded {
+			// Make the slot's attempt failed instead, for the next round.
+			if _, err := app.Pool().Exec(ctx, `UPDATE backup_runs SET state = 'running', finished_at = NULL WHERE state = 'succeeded'`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+// TestInterruptedScheduledBackupIsRetriedAgainstTheDatabase runs the
+// interruption and the retry through the real store and dump.
+func TestInterruptedScheduledBackupIsRetriedAgainstTheDatabase(t *testing.T) {
+	app := testdb.Open(t)
+	dir := t.TempDir()
+	c := &clock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}
+	var dumps int
+	var mu sync.Mutex
+	block := make(chan struct{})
+	interrupt := true
+	dump := func(ctx context.Context, w io.Writer, opts backup.DumpOptions) (backup.Header, error) {
+		mu.Lock()
+		dumps++
+		stop := interrupt
+		mu.Unlock()
+		if stop {
+			close(block)
+			<-ctx.Done()
+			return backup.Header{}, ctx.Err()
+		}
+		return backup.Dump(ctx, app.Pool(), testKey, w, opts)
+	}
+	storageFor := func(backup.Settings, string) (backup.Storage, error) { return backup.NewDirStorage(dir), nil }
+	svc := backup.NewService(backup.NewSQLStore(app), crypto.NewBox(testKey), dump, storageFor, &fakeMailer{}, "1.2.3", c.Now, nil)
+	t.Cleanup(svc.Stop)
+	in := backup.DefaultSettings()
+	in.Enabled = true
+	if err := svc.SaveSettings(context.Background(), in, nil); err != nil {
+		t.Fatal(err)
+	}
+	c.Set(time.Date(2026, 11, 2, 3, 0, 5, 0, time.UTC))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- svc.RunDue(ctx) }()
+	<-block
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	interrupt = false
+	mu.Unlock()
+	c.Set(time.Date(2026, 11, 2, 3, 1, 5, 0, time.UTC))
+	if err := svc.RunDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	attempts, err := backup.NewSQLStore(app).RecentAttempts(context.Background(), 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 2 || attempts[0].State != backup.StateSucceeded || attempts[1].State != backup.StateAbandoned ||
+		!attempts[0].Slot.Equal(*attempts[1].Slot) {
+		t.Fatalf("attempts = %+v, want the abandoned one and the retry for the same slot", attempts)
+	}
+	objs, _ := backup.NewDirStorage(dir).List(context.Background())
+	if len(objs) != 1 || objs[0].Name != attempts[0].ObjectName {
+		t.Errorf("objects = %+v, want the retry's backup", objs)
+	}
+}
