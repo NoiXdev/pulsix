@@ -140,3 +140,52 @@ func TestOpenTruncatesTablesBetweenTests(t *testing.T) {
 		}
 	})
 }
+
+// TestFreshDatabaseIsEmptyAndOwnedByNonSuperuser pins what a restore test
+// relies on: a database with nothing in public but the TimescaleDB
+// extension, reached as a login role that owns it and is not a superuser,
+// so the restore runs with no more rights than a managed Postgres gives.
+func TestFreshDatabaseIsEmptyAndOwnedByNonSuperuser(t *testing.T) {
+	ctx := context.Background()
+	ownerURL := testdb.FreshDatabase(t)
+
+	d, err := db.Open(ctx, ownerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var super, owns, member bool
+	var tables int
+	var ext string
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT r.rolsuper,
+		       (SELECT datdba FROM pg_database WHERE datname = current_database()) = r.oid,
+		       pg_has_role(r.oid, 'pulsix_app', 'MEMBER'),
+		       (SELECT count(*) FROM pg_tables WHERE schemaname = 'public'),
+		       COALESCE((SELECT extname FROM pg_extension WHERE extname = 'timescaledb'), '')
+		FROM pg_roles r WHERE r.rolname = current_user`,
+	).Scan(&super, &owns, &member, &tables, &ext); err != nil {
+		t.Fatal(err)
+	}
+	if super {
+		t.Error("the fresh database's owner is a superuser")
+	}
+	if !owns {
+		t.Error("the login role does not own the fresh database")
+	}
+	if !member {
+		t.Error("the login role cannot SET ROLE pulsix_app")
+	}
+	if tables != 0 {
+		t.Errorf("public has %d tables, want 0", tables)
+	}
+	if ext != "timescaledb" {
+		t.Error("the timescaledb extension is missing")
+	}
+
+	// A second call must not collide with the first (the role is shared).
+	if testdb.FreshDatabase(t) == ownerURL {
+		t.Error("two fresh databases share one URL")
+	}
+}

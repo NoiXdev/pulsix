@@ -3,6 +3,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"fmt"
 
@@ -76,6 +77,85 @@ func (d *DB) Close() { d.pool.Close() }
 
 // Migrate applies all embedded goose migrations under an advisory lock.
 func (d *DB) Migrate(ctx context.Context) error {
+	return d.withMigrationLock(ctx, func(sqlDB *sql.DB, _ *sql.Conn) error {
+		if err := goose.UpContext(ctx, sqlDB, "migrations"); err != nil {
+			return fmt.Errorf("apply migrations: %w", err)
+		}
+		return nil
+	})
+}
+
+// MigrateTo applies the embedded migrations up to and including version,
+// under the same advisory lock as Migrate. It never migrates down: a
+// database already past version is left as it is.
+func (d *DB) MigrateTo(ctx context.Context, version int64) error {
+	return d.withMigrationLock(ctx, func(sqlDB *sql.DB, _ *sql.Conn) error {
+		if err := goose.UpToContext(ctx, sqlDB, "migrations", version); err != nil {
+			return fmt.Errorf("apply migrations up to %d: %w", version, err)
+		}
+		return nil
+	})
+}
+
+// SchemaVersion returns the goose version the database is at, 0 when no
+// migration has ever run. It reads under the migration lock, so it never
+// sees a migration half applied by another manager.
+func (d *DB) SchemaVersion(ctx context.Context) (int64, error) {
+	var version int64
+	err := d.withMigrationLock(ctx, func(_ *sql.DB, conn *sql.Conn) error {
+		var err error
+		version, err = ReadSchemaVersion(ctx, sqlRowQuerier{conn})
+		return err
+	})
+	return version, err
+}
+
+// RowQuerier is the one method ReadSchemaVersion needs; pgx.Tx, *pgx.Conn
+// and *pgxpool.Pool all have it.
+type RowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// ReadSchemaVersion returns the goose version recorded in q's database, 0
+// when goose's table does not exist. A version counts when its latest row
+// says applied, so a migration rolled back with goose down does not count.
+// It takes no lock: callers inside a snapshot (the backup dump) read the
+// version that belongs to the rows they read.
+func ReadSchemaVersion(ctx context.Context, q RowQuerier) (int64, error) {
+	var exists bool
+	if err := q.QueryRow(ctx, `SELECT to_regclass('public.goose_db_version') IS NOT NULL`).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	if !exists {
+		return 0, nil
+	}
+	var version int64
+	if err := q.QueryRow(ctx, `
+		SELECT COALESCE(max(version_id), 0) FROM (
+			SELECT DISTINCT ON (version_id) version_id, is_applied
+			FROM public.goose_db_version
+			ORDER BY version_id, id DESC
+		) latest WHERE is_applied`).Scan(&version); err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
+	}
+	return version, nil
+}
+
+// sqlRowQuerier adapts a pinned database/sql connection to RowQuerier.
+type sqlRowQuerier struct{ conn *sql.Conn }
+
+func (s sqlRowQuerier) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
+	return s.conn.QueryRowContext(ctx, query, args...)
+}
+
+// withMigrationLock runs fn while holding the migration advisory lock.
+//
+// The advisory lock is session-scoped, so it must be taken and released on
+// one pinned connection: a database/sql pool may hand the unlock to a
+// different session, which would leave the lock held. goose migrates on
+// other connections of the same pool, which is fine — the lock coordinates
+// manager instances, not individual statements.
+func (d *DB) withMigrationLock(ctx context.Context, fn func(sqlDB *sql.DB, conn *sql.Conn) error) error {
 	goose.SetBaseFS(migrations)
 	if err := goose.SetDialect("postgres"); err != nil {
 		return err
@@ -83,11 +163,6 @@ func (d *DB) Migrate(ctx context.Context) error {
 	sqlDB := stdlib.OpenDBFromPool(d.pool)
 	defer sqlDB.Close() //nolint:errcheck
 
-	// The advisory lock is session-scoped, so it must be taken and released on
-	// one pinned connection: a database/sql pool may hand the unlock to a
-	// different session, which would leave the lock held. goose migrates on
-	// other connections of the same pool, which is fine — the lock coordinates
-	// manager instances, not individual statements.
 	conn, err := sqlDB.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("pin migration connection: %w", err)
@@ -101,10 +176,7 @@ func (d *DB) Migrate(ctx context.Context) error {
 		// the lock anyway, this makes the release explicit.
 		_, _ = conn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, migrationLockKey)
 	}()
-	if err := goose.UpContext(ctx, sqlDB, "migrations"); err != nil {
-		return fmt.Errorf("apply migrations: %w", err)
-	}
-	return nil
+	return fn(sqlDB, conn)
 }
 
 // WithOrg runs fn in a transaction scoped to orgID via the RLS setting.

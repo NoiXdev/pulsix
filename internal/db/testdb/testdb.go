@@ -3,10 +3,15 @@ package testdb
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	neturl "net/url"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -116,6 +121,92 @@ func URL(t *testing.T) string {
 		truncateAll(ctx, t, admin)
 	})
 	return url
+}
+
+// restoreOwner is the login role every FreshDatabase belongs to. Roles are
+// cluster-wide, so it is created once per container and shared.
+const restoreOwner = "pulsix_restore_owner"
+
+// freshMu serializes the role bootstrap of FreshDatabase: CREATE ROLE and
+// GRANT are cluster-wide and race with themselves.
+var freshMu sync.Mutex
+
+// FreshDatabase creates an empty database next to the shared one and returns
+// the URL of its owner, for tests that need a database of their own: a
+// restore target, or a schema below the newest version. The database has
+// the timescaledb extension, created by the superuser the way an operator
+// or a managed Postgres provides it, and nothing else in public. Its owner
+// pulsix_restore_owner is a NOSUPERUSER login role holding pulsix_app WITH
+// ADMIN OPTION — exactly the rights the migrations need, so whatever runs
+// through the URL proves it needs no superuser. The database is dropped
+// when the test ends.
+func FreshDatabase(t *testing.T) (ownerURL string) {
+	t.Helper()
+	once.Do(start)
+	fatalOnErr(t, errC)
+	ctx := context.Background()
+
+	var suffix [8]byte
+	_, err := rand.Read(suffix[:])
+	fatalOnErr(t, err)
+	name := "pulsix_fresh_" + hex.EncodeToString(suffix[:])
+
+	freshMu.Lock()
+	err = ensureRestoreOwner(ctx, admin)
+	freshMu.Unlock()
+	fatalOnErr(t, err)
+
+	quoted := pgx.Identifier{name}.Sanitize()
+	_, err = admin.Pool().Exec(ctx, "CREATE DATABASE "+quoted+" OWNER "+restoreOwner+" TEMPLATE template0")
+	fatalOnErr(t, err)
+	t.Cleanup(func() {
+		// FORCE ends whatever a test left connected, TimescaleDB's own
+		// background workers included.
+		if _, err := admin.Pool().Exec(ctx, "DROP DATABASE IF EXISTS "+quoted+" WITH (FORCE)"); err != nil {
+			t.Errorf("drop fresh database %s: %v", name, err)
+		}
+	})
+
+	superURL, err := withDatabase(url, name, nil)
+	fatalOnErr(t, err)
+	super, err := db.Open(ctx, superURL)
+	fatalOnErr(t, err)
+	_, err = super.Pool().Exec(ctx, "CREATE EXTENSION IF NOT EXISTS timescaledb")
+	super.Close()
+	fatalOnErr(t, err)
+
+	ownerURL, err = withDatabase(url, name, neturl.UserPassword(restoreOwner, restoreOwner))
+	fatalOnErr(t, err)
+	return ownerURL
+}
+
+// ensureRestoreOwner creates the FreshDatabase owner role once per cluster.
+func ensureRestoreOwner(ctx context.Context, admin *db.DB) error {
+	if _, err := admin.Pool().Exec(ctx, `DO $$ BEGIN
+		IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '`+restoreOwner+`') THEN
+			CREATE ROLE `+restoreOwner+` NOSUPERUSER NOCREATEDB NOCREATEROLE LOGIN PASSWORD '`+restoreOwner+`';
+		END IF;
+	END $$`); err != nil {
+		return fmt.Errorf("create %s: %w", restoreOwner, err)
+	}
+	if _, err := admin.Pool().Exec(ctx, "GRANT "+appRole+" TO "+restoreOwner+" WITH ADMIN OPTION"); err != nil {
+		return fmt.Errorf("grant %s to %s: %w", appRole, restoreOwner, err)
+	}
+	return nil
+}
+
+// withDatabase returns raw with its database replaced by name and, when user
+// is not nil, its credentials replaced by user.
+func withDatabase(raw, name string, user *neturl.Userinfo) (string, error) {
+	u, err := neturl.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("parse database url: %w", err)
+	}
+	u.Path = "/" + name
+	if user != nil {
+		u.User = user
+	}
+	return u.String(), nil
 }
 
 // truncateAll empties every table (except goose's own bookkeeping table)
