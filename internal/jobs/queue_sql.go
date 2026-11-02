@@ -902,10 +902,11 @@ func (q *SQLQueue) connectionTestPayload(ctx context.Context, job Job) (string, 
 		var rp rotationJobPayload
 		if json.Unmarshal([]byte(plain), &rp) == nil && rp.CredentialID != uuid.Nil && rp.NewPrivateKey.PrivateKey != "" {
 			override = rp.NewPrivateKey
-			// The new key is installed for the credential's own account —
-			// the same resolution the rotate_key payload uses.
-			if cred, err := q.creds.Get(ctx, job.OrgID, rp.CredentialID); err == nil && cred.Username != "" {
-				host.Username = cred.Username
+			// The new key was installed for the account runs log in as —
+			// the same resolution the rotate_key payload uses
+			// (rotationAccount, backlog 7.33).
+			if cred, err := q.creds.Get(ctx, job.OrgID, rp.CredentialID); err == nil {
+				host.Username = rotationAccount(host.Username, cred.Username)
 			}
 		}
 	}

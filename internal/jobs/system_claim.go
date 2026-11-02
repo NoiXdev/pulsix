@@ -183,10 +183,7 @@ func (q *SQLQueue) revokeKindPayload(ctx context.Context, job Job, rp revocation
 	if err != nil {
 		return "", err
 	}
-	username := cred.Username
-	if username == "" {
-		username = host.Username
-	}
+	username := rotationAccount(host.Username, cred.Username)
 	payload := map[string]any{
 		"host": host, "username": username, "login_credential": loginJSON,
 		"old_public_key": rp.OldPublicKey, "pulsix_user": username, "bastions": hops,
@@ -461,13 +458,7 @@ func (q *SQLQueue) rotateKindPayload(ctx context.Context, job Job, rp rotationJo
 	if err != nil {
 		return "", fmt.Errorf("resolve rotating credential %s: %w", rp.CredentialID, err)
 	}
-	// The account that owns the installed key: the credential's own
-	// username (the login the old credential authenticates as), falling
-	// back to the rendered connection's or the bastion's.
-	username := cred.Username
-	if username == "" {
-		username = host.Username
-	}
+	username := rotationAccount(host.Username, cred.Username)
 	payload := map[string]any{
 		"host": host, "username": username,
 		"old_credential": oldJSON, "new_public_key": rp.NewPublicKey,
@@ -480,6 +471,22 @@ func (q *SQLQueue) rotateKindPayload(ctx context.Context, job Job, rp rotationJo
 		return "", fmt.Errorf("encode rotate-key kind payload: %w", err)
 	}
 	return string(b), nil
+}
+
+// rotationAccount is the account a rotation installs the new key for,
+// verifies it as and removes the old one from: the one runs log in as
+// (backlog 7.33). That is runUser, the target's own user — the rendered connection's user
+// for a host target (its own SSH username, else the credential's), the
+// bastion's username for a jump-host target — and the credential's own
+// username only when that is empty. The rotation group used the
+// credential's first, so on a host with its own SSH username the old key
+// stayed on the account Pulsix actually logs in with, and the new one
+// never reached it.
+func rotationAccount(runUser, credUsername string) string {
+	if runUser != "" {
+		return runUser
+	}
+	return credUsername
 }
 
 // systemHost / systemHop are the kind payload's host and hop objects —
