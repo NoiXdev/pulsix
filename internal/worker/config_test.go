@@ -199,6 +199,11 @@ func TestLoadPlayUID(t *testing.T) {
 		"own uid":      {strconv.Itoa(os.Getuid()), 0, "the worker's own uid"},
 	} {
 		t.Run(name, func(t *testing.T) {
+			if name == "own uid" && os.Getuid() == 0 {
+				// Root's own uid is 0, which "zero is root" refuses
+				// first, with its own message (backlog 2.109).
+				t.Skip("running as root: the worker's own uid is 0, covered by \"zero is root\"")
+			}
 			env := []string{
 				"PULSIX_MANAGER_ADDR=manager.example.test:8444",
 				"PULSIX_WORKER_CERT=/c.pem",

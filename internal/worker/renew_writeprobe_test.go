@@ -97,6 +97,7 @@ func TestRenewerRenewsEvenWithReadOnlyDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	skipIfStillWritable(t, dir)
 
 	now := id.Leaf().NotAfter.Add(-time.Hour) // due for renewal
 	var logs bytes.Buffer
@@ -167,6 +168,7 @@ func TestRenewerRetriesPendingWriteEveryCheckUntilDirectoryIsFixed(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	skipIfStillWritable(t, dir)
 
 	now := id.Leaf().NotAfter.Add(-time.Hour) // due once, for this first Check only
 
@@ -275,6 +277,7 @@ func TestIdentityReplaceSwapsInMemoryEvenWhenDiskWriteFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	skipIfStillWritable(t, dir)
 
 	err = id.Replace(renewed)
 	if err == nil {
@@ -406,5 +409,16 @@ func TestRenewRefusesACertificateTheCADidNotIssue(t *testing.T) {
 	}
 	if err := verifyRenewedChain([]byte("not a certificate"), pool); err == nil {
 		t.Fatal("garbage was accepted")
+	}
+}
+
+// skipIfStillWritable skips a test that needs dir read-only when the mode
+// it was just given does not stop this process's writes — as root, which
+// ignores directory permissions, in a container for example (backlog
+// 2.109).
+func skipIfStillWritable(t *testing.T, dir string) {
+	t.Helper()
+	if probeWritable(dir) == nil {
+		t.Skip("a read-only directory does not stop this process's writes (running as root?); the case cannot be simulated")
 	}
 }

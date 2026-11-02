@@ -13,6 +13,7 @@ package runner_test
 import (
 	"bytes"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -131,6 +132,11 @@ func TestSetuidHelperSignalModeContract(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.want == "not setuid-root" && os.Geteuid() == 0 {
+				// Root needs no drop to signal, so the helper rightly
+				// does not refuse (backlog 2.109).
+				t.Skip("running as root: the helper has nothing to refuse")
+			}
 			cmd := exec.Command(helper, tt.argv...)
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr
