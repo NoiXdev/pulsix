@@ -372,6 +372,9 @@ func New(deps Deps) (http.Handler, error) {
 	// Before anything can answer: the headers belong on every response,
 	// including the ones the middleware below produces (backlog 1.29).
 	r.Use(securityHeaders)
+	// Before any session is looked at: a cross-origin browser mutation is
+	// refused whoever it would authenticate as (backlog 7.38).
+	r.Use(crossOriginProtection)
 	// staticSessionSkip wraps CookieMiddleware with backlog 1.22's
 	// short-circuit: requests outside the API subtree (the SPA routes and
 	// embedded assets web.Handler serves as the NotFound fallback, plus
