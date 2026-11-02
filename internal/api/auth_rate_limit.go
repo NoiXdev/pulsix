@@ -32,7 +32,8 @@ func newAuthRateLimiter(deps Deps) *clientip.Limiter {
 
 // withAuthRateLimit is an operation modifier that attaches the per-address
 // authentication rate limiter to exactly one mutating auth endpoint (login,
-// TOTP verify, passkey login finish, invite accept — backlog 1.20). It
+// TOTP verify, passkey login finish, invite accept — backlog 1.20 — and
+// setup completion, backlog 7.27). It
 // mirrors withAudit's shape: an operation modifier setting operation
 // middleware, so the limiting sits at the route registration, runs before
 // the handler, and shows up on exactly the operations named here.

@@ -209,6 +209,29 @@ func TestCompleteCreatesAdminOrgAndSession(t *testing.T) {
 	}
 }
 
+// TestCompleteOnACompletedInstanceDoesNotHash is backlog 7.27: the route
+// is public, and the hash costs 64 MiB of memory and real CPU. An instance
+// that already has its administrator must refuse before hashing, not
+// after, or every anonymous call keeps paying for one.
+func TestCompleteOnACompletedInstanceDoesNotHash(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	in := setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}
+	if _, err := svc.Complete(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+
+	hashed := 0
+	svc.SetPasswordHasher(func(string) (string, error) { hashed++; return "$argon2id$fake", nil })
+	in.AdminEmail, in.OrgSlug = "again@x.test", "other"
+	if _, err := svc.Complete(ctx, in); !errors.Is(err, setup.ErrAlreadyCompleted) {
+		t.Fatalf("second complete: %v, want ErrAlreadyCompleted", err)
+	}
+	if hashed != 0 {
+		t.Fatalf("the password was hashed %d times on a completed instance", hashed)
+	}
+}
+
 // TestCompleteRunsOrgCreatedHook proves the wizard's first organization
 // gets the same provisioning hook tenancy.Service.CreateOrg runs (Task 13):
 // the hook must see the org actually committed, and it must run after

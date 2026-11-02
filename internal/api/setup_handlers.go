@@ -104,7 +104,10 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 		out.SetCookie = sessionCookie(res.Cookie, deps.Secure)
 		out.Body.UserID, out.Body.OrgID = res.UserID.String(), res.OrgID.String()
 		return out, nil
-	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("completeSetup", "setup"))
+		// Backlog 7.27: public and argon2id-hashing, so it shares the
+		// sign-in routes' per-address budget; a refusal on a completed
+		// instance (409) is a 4xx and is charged like one.
+	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAuthRateLimit(deps), withAudit("completeSetup", "setup"))
 }
 
 // keepStoredPassword resolves a body whose password is absent against the

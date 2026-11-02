@@ -180,13 +180,16 @@ type Service struct {
 	box        *crypto.Box
 	now        func() time.Time
 	orgCreated tenancy.OrgCreatedHook
+	// hashPassword is auth.HashPassword; tests replace it to see whether
+	// Complete hashed at all (export_test.go).
+	hashPassword func(string) (string, error)
 }
 
 // NewService wires the store, session opener, the box used to seal secrets
 // inside instance settings (the SMTP password), and the clock. No
 // OrgCreatedHook is installed by default — see SetOrgCreatedHook.
 func NewService(store Store, sessions SessionStore, box *crypto.Box, now func() time.Time) *Service {
-	return &Service{store: store, sessions: sessions, box: box, now: now}
+	return &Service{store: store, sessions: sessions, box: box, now: now, hashPassword: auth.HashPassword}
 }
 
 // SetOrgCreatedHook installs hook to run once Complete's transaction has
@@ -230,11 +233,24 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 // hashing needs no database access, and doing it outside InTx keeps the
 // transaction — and so the lock SQLStore.InTx holds for its duration —
 // as short as possible.
+//
+// A completed instance is refused before that hash, not after it (backlog
+// 7.27). The route is public and the hash costs 64 MiB and real CPU, so
+// checking only inside the transaction let any anonymous caller buy one
+// per request for as long as the instance runs. The check inside InTx
+// stays: it is what settles two first runs racing each other.
 func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 	if err := in.validate(); err != nil {
 		return Result{}, err
 	}
-	hash, err := auth.HashPassword(in.AdminPassword)
+	exists, err := s.store.AdminExists(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("check admin exists: %w", err)
+	}
+	if exists {
+		return Result{}, ErrAlreadyCompleted
+	}
+	hash, err := s.hashPassword(in.AdminPassword)
 	if err != nil {
 		return Result{}, fmt.Errorf("hash admin password: %w", err)
 	}

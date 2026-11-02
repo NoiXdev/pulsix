@@ -381,3 +381,26 @@ func TestAuthRateLimitLeavesOtherRoutesAlone(t *testing.T) {
 		t.Fatalf("POST /orgs from the limited address = %d, want 201", resp.StatusCode)
 	}
 }
+
+// TestAuthRateLimitTripsOnSetupComplete is backlog 7.27: completing setup
+// is public and hashes a password with argon2id, so it sits behind the
+// same per-address budget as the sign-in routes. A password too short to
+// accept is its own 400, charged like the rest.
+func TestAuthRateLimitTripsOnSetupComplete(t *testing.T) {
+	s := limitedServer(t)
+	hit := func(xff string) int {
+		resp, err := postFrom(s.HTTP.URL+"/api/v1/setup/complete", xff, map[string]string{
+			"admin_email": "root@example.test", "admin_name": "Root", "admin_password": "short",
+			"org_slug": "acme", "org_name": "Acme",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			retryAfterOf(t, resp)
+		}
+		return resp.StatusCode
+	}
+	expectTrips(t, s, hit)
+}
