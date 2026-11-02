@@ -181,3 +181,23 @@ func TestSQLStoreSMTPRoundTrip(t *testing.T) {
 		t.Fatalf("LoadSMTP = %+v, %v; want %+v, nil", out, err, in)
 	}
 }
+
+func TestSQLStoreDefaultLocaleRoundTrip(t *testing.T) {
+	svc, _ := newSQLService(t)
+	ctx := context.Background()
+	if got, err := svc.DefaultLocale(ctx); err != nil || got != "en" {
+		t.Fatalf("DefaultLocale before any save = %q, %v; want en, nil", got, err)
+	}
+	if err := svc.SetDefaultLocale(ctx, "de"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.DefaultLocale(ctx); err != nil || got != "de" {
+		t.Fatalf("DefaultLocale = %q, %v; want de, nil", got, err)
+	}
+	if err := svc.SetDefaultLocale(ctx, "en"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.DefaultLocale(ctx); err != nil || got != "en" {
+		t.Fatalf("DefaultLocale after overwrite = %q, %v; want en, nil", got, err)
+	}
+}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/crypto"
+	"github.com/noixdev/pulsix/internal/locale"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -75,6 +76,9 @@ type Input struct {
 	// SMTP is optional: an operator can skip mail configuration at setup
 	// time and add it later through PUT /admin/settings/smtp.
 	SMTP *mail.SMTPSettings
+	// DefaultLocale is the instance's default GUI language: empty means
+	// English, anything else must satisfy locale.Valid.
+	DefaultLocale string
 }
 
 // validate reports every problem with in at once (not just the first), so
@@ -96,6 +100,9 @@ func (in Input) validate() error {
 	}
 	if err := tenancy.ValidateOrgName(in.OrgName); err != nil {
 		problems = append(problems, strings.TrimPrefix(err.Error(), tenancy.ErrInvalidInput.Error()+": "))
+	}
+	if in.DefaultLocale != "" && !locale.Valid(in.DefaultLocale) {
+		problems = append(problems, "default language must be en or de")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("%w: %s", ErrInvalidInput, strings.Join(problems, "; "))
@@ -127,6 +134,10 @@ type Status struct {
 	// the same way a pending session does mid-wizard.
 	AdminMFAEnrolled bool
 	Version          string
+	// DefaultLocale is the instance's default GUI language, public so the
+	// sign-in page and the wizard can pick their language before any
+	// session exists.
+	DefaultLocale string
 }
 
 // AdminUser is what Store.CreateAdmin persists: the wizard's one and only
@@ -173,6 +184,11 @@ type SessionStore interface {
 // under.
 const smtpSettingsKey = "smtp"
 
+// defaultLocaleKey is the instance_settings row holding the instance's
+// default GUI language, a JSON string such as "de". An absent row means
+// English.
+const defaultLocaleKey = "default_locale"
+
 // Service implements the first-run wizard and instance settings.
 type Service struct {
 	store      Store
@@ -218,7 +234,11 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			return Status{}, fmt.Errorf("check admin mfa enrolment: %w", err)
 		}
 	}
-	return Status{Completed: completed, AdminMFAEnrolled: enrolled, Version: Version}, nil
+	def, err := s.DefaultLocale(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	return Status{Completed: completed, AdminMFAEnrolled: enrolled, Version: Version, DefaultLocale: def}, nil
 }
 
 // Complete runs the wizard: it validates in, then atomically (inside one
@@ -285,6 +305,12 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 			}
 		}
 
+		if in.DefaultLocale != "" {
+			if err := saveDefaultLocale(ctx, tx, in.DefaultLocale); err != nil {
+				return err
+			}
+		}
+
 		res.UserID, res.OrgID = userID, org.ID
 		return nil
 	})
@@ -322,6 +348,45 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 	}
 	res.Cookie = cookie
 	return res, nil
+}
+
+// DefaultLocale returns the instance's default GUI language, English when
+// none has ever been set.
+func (s *Service) DefaultLocale(ctx context.Context) (string, error) {
+	data, err := s.store.LoadSetting(ctx, defaultLocaleKey)
+	if errors.Is(err, ErrNotFound) {
+		return locale.EN, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("load default locale: %w", err)
+	}
+	var l string
+	if err := json.Unmarshal(data, &l); err != nil {
+		return "", fmt.Errorf("unmarshal default locale: %w", err)
+	}
+	return l, nil
+}
+
+// SetDefaultLocale replaces the instance's default GUI language. Anything
+// locale.Valid refuses is ErrInvalidInput.
+func (s *Service) SetDefaultLocale(ctx context.Context, l string) error {
+	if !locale.Valid(l) {
+		return fmt.Errorf("%w: default language must be en or de", ErrInvalidInput)
+	}
+	return saveDefaultLocale(ctx, s.store, l)
+}
+
+// saveDefaultLocale is shared by SetDefaultLocale and Complete's own
+// transaction; l has already been validated.
+func saveDefaultLocale(ctx context.Context, store Store, l string) error {
+	data, err := json.Marshal(l)
+	if err != nil {
+		return fmt.Errorf("marshal default locale: %w", err)
+	}
+	if err := store.SaveSetting(ctx, defaultLocaleKey, data); err != nil {
+		return fmt.Errorf("save default locale: %w", err)
+	}
+	return nil
 }
 
 // SaveSMTP seals in.Password with the instance master key and persists the

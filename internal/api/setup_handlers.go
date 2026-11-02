@@ -19,6 +19,9 @@ type setupStatusOutput struct {
 		Completed        bool   `json:"completed"`
 		AdminMFAEnrolled bool   `json:"admin_mfa_enrolled"`
 		Version          string `json:"version"`
+		// DefaultLocale is public like Completed: the sign-in page and the
+		// wizard need it before any session exists.
+		DefaultLocale string `json:"default_locale" enum:"en,de"`
 	}
 }
 
@@ -36,6 +39,9 @@ type setupCompleteInput struct {
 		// SMTP is optional: the wizard can be completed with mail
 		// configured later, through PUT /admin/settings/smtp.
 		SMTP *smtpSettingsBody `json:"smtp,omitempty"`
+		// DefaultLocale is the instance's default GUI language; absent
+		// means English.
+		DefaultLocale string `json:"default_locale,omitempty" enum:"en,de"`
 	}
 }
 
@@ -62,6 +68,7 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 		}
 		out := &setupStatusOutput{}
 		out.Body.Completed, out.Body.Version = st.Completed, st.Version
+		out.Body.DefaultLocale = st.DefaultLocale
 		// Completed and Version stay public unconditionally — the SPA calls
 		// this route on load, before it has any session, to decide whether
 		// to redirect into the wizard. AdminMFAEnrolled is different: it
@@ -81,7 +88,7 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/setup/complete", func(ctx context.Context, in *setupCompleteInput) (*setupCompleteOutput, error) {
 		input := setup.Input{
 			AdminEmail: in.Body.AdminEmail, AdminPassword: in.Body.AdminPassword, AdminName: in.Body.AdminName,
-			OrgSlug: in.Body.OrgSlug, OrgName: in.Body.OrgName,
+			OrgSlug: in.Body.OrgSlug, OrgName: in.Body.OrgName, DefaultLocale: in.Body.DefaultLocale,
 		}
 		if in.Body.SMTP != nil {
 			s := in.Body.SMTP.toSettings()
@@ -267,6 +274,48 @@ func registerSMTPSettingsRoutes(hapi huma.API, deps Deps) {
 		out.Body.Sent = true
 		return out, nil
 	})
+}
+
+// localeSettingsBody is the wire shape of the instance default language,
+// the request body of PUT and the response body of GET
+// /admin/settings/locale.
+type localeSettingsBody struct {
+	DefaultLocale string `json:"default_locale" enum:"en,de"`
+}
+
+type localeSettingsOutput struct {
+	Body localeSettingsBody
+}
+
+// registerLocaleSettingsRoutes wires the instance default GUI language:
+// the fallback for every user who has not chosen a language of their own.
+// Both routes are instance-admin only, gated like the SMTP settings.
+func registerLocaleSettingsRoutes(hapi huma.API, deps Deps) {
+	huma.Get(hapi, "/api/v1/admin/settings/locale", func(ctx context.Context, _ *struct{}) (*localeSettingsOutput, error) {
+		if _, err := requireInstanceAdmin(ctx); err != nil {
+			return nil, err
+		}
+		l, err := deps.Setup.DefaultLocale(ctx)
+		if err != nil {
+			return nil, mapSetupErr(ctx, err)
+		}
+		return &localeSettingsOutput{Body: localeSettingsBody{DefaultLocale: l}}, nil
+	})
+
+	huma.Put(hapi, "/api/v1/admin/settings/locale", func(ctx context.Context, in *struct {
+		Body localeSettingsBody
+	}) (*noContentOutput, error) {
+		p, err := requireInstanceAdmin(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.Setup.SetDefaultLocale(ctx, in.Body.DefaultLocale); err != nil {
+			return nil, mapSetupErr(ctx, err)
+		}
+		setAuditScope(ctx, nil, p.UserID)
+		setAuditObject(ctx, "default_locale", "set the instance default language to "+in.Body.DefaultLocale)
+		return &noContentOutput{}, nil
+	}, withAudit("updateDefaultLocale", "default_locale"))
 }
 
 // mapSetupErr translates setup.Service sentinels to HTTP errors, the same

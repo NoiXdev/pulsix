@@ -78,6 +78,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/settings/locale": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin settings locale */
+        get: operations["get-api-v1-admin-settings-locale"];
+        /** Put API v1 admin settings locale */
+        put: operations["updateDefaultLocale"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/settings/smtp": {
         parameters: {
             query?: never;
@@ -4392,6 +4410,16 @@ export interface components {
             key: string;
             values: components["schemas"]["ValueCountDTO"][] | null;
         };
+        LocaleSettingsBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/LocaleSettingsBody.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            default_locale: "en" | "de";
+        };
         LoginInputBody: {
             /**
              * Format: uri
@@ -5622,6 +5650,8 @@ export interface components {
             admin_email: string;
             admin_name: string;
             admin_password: string;
+            /** @enum {string} */
+            default_locale?: "en" | "de";
             org_name: string;
             org_slug: string;
             smtp?: components["schemas"]["SmtpSettingsBody"];
@@ -5645,6 +5675,8 @@ export interface components {
             readonly $schema?: string;
             admin_mfa_enrolled: boolean;
             completed: boolean;
+            /** @enum {string} */
+            default_locale: "en" | "de";
             version: string;
         };
         SimpleDTO: {
@@ -6445,6 +6477,66 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-admin-settings-locale": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LocaleSettingsBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateDefaultLocale: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LocaleSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

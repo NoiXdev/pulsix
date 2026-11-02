@@ -510,7 +510,8 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	// under the org-scoped group: there is no org in either path, and no
 	// session or bearer credential is accepted.
 	registerHookRoutes(hapi, deps)
-	registerSMTPSettingsRoutes(hapi, deps) // /admin/settings/smtp... — instance admin, session only
+	registerSMTPSettingsRoutes(hapi, deps)   // /admin/settings/smtp... — instance admin, session only
+	registerLocaleSettingsRoutes(hapi, deps) // /admin/settings/locale — instance admin, session only
 	// /admin/repos/definitions... — instance admin, session only (spec
 	// v0.2f decision 8: no org_id, no per-org access at all).
 	registerSharedRepoRoutes(hapi, deps)

@@ -417,3 +417,106 @@ func TestStatusReportsCompletionAndMFAEnrolment(t *testing.T) {
 		t.Fatal("Status must report a non-empty Version")
 	}
 }
+
+func TestDefaultLocaleIsEnglishBeforeAnyWrite(t *testing.T) {
+	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	got, err := svc.DefaultLocale(ctx)
+	if err != nil || got != "en" {
+		t.Fatalf("DefaultLocale = %q, %v; want en, nil", got, err)
+	}
+}
+
+func TestSetDefaultLocaleRoundTrips(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	if err := svc.SetDefaultLocale(ctx, "de"); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(st.settings["default_locale"]); got != `"de"` {
+		t.Fatalf("stored value = %s, want a JSON string", got)
+	}
+	got, err := svc.DefaultLocale(ctx)
+	if err != nil || got != "de" {
+		t.Fatalf("DefaultLocale = %q, %v; want de, nil", got, err)
+	}
+}
+
+func TestSetDefaultLocaleRejectsAnUnsupportedLanguage(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	for _, l := range []string{"fr", "", "DE", "de-DE"} {
+		if err := svc.SetDefaultLocale(ctx, l); !errors.Is(err, setup.ErrInvalidInput) {
+			t.Errorf("SetDefaultLocale(%q) = %v, want ErrInvalidInput", l, err)
+		}
+	}
+	if _, ok := st.settings["default_locale"]; ok {
+		t.Fatal("a refused language was stored")
+	}
+}
+
+func TestCompleteStoresTheDefaultLocaleInItsTransaction(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	if _, err := svc.Complete(ctx, setup.Input{
+		AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme", DefaultLocale: "de",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.DefaultLocale(ctx); err != nil || got != "de" {
+		t.Fatalf("DefaultLocale after Complete = %q, %v; want de, nil", got, err)
+	}
+
+	// The write is part of the transaction: when SaveSetting fails, the
+	// admin and organization written before it roll back too.
+	st2 := newFakeSetupStore()
+	st2.failNext["SaveSetting"] = errors.New("simulated failure")
+	svc2 := setup.NewService(st2, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	if _, err := svc2.Complete(ctx, setup.Input{
+		AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme", DefaultLocale: "de",
+	}); err == nil {
+		t.Fatal("expected the simulated failure to propagate")
+	}
+	if len(st2.users) != 0 || len(st2.orgs) != 0 {
+		t.Fatalf("a failed locale write left state behind: users=%v orgs=%v", st2.users, st2.orgs)
+	}
+}
+
+func TestCompleteWithoutALocaleKeepsEnglish(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := svc.DefaultLocale(ctx); err != nil || got != "en" {
+		t.Fatalf("DefaultLocale = %q, %v; want en, nil", got, err)
+	}
+}
+
+func TestCompleteRefusesAnUnsupportedLocaleBeforeWritingAnything(t *testing.T) {
+	st := newFakeSetupStore()
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	_, err := svc.Complete(ctx, setup.Input{
+		AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme", DefaultLocale: "fr",
+	})
+	if !errors.Is(err, setup.ErrInvalidInput) {
+		t.Fatalf("Complete with fr = %v, want ErrInvalidInput", err)
+	}
+	if len(st.users) != 0 || len(st.orgs) != 0 || len(st.settings) != 0 {
+		t.Fatalf("a refused Complete wrote state: users=%v orgs=%v settings=%v", st.users, st.orgs, st.settings)
+	}
+}
+
+func TestStatusCarriesTheDefaultLocale(t *testing.T) {
+	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	before, err := svc.Status(ctx)
+	if err != nil || before.DefaultLocale != "en" {
+		t.Fatalf("Status before = %+v, %v; want DefaultLocale en", before, err)
+	}
+	if err := svc.SetDefaultLocale(ctx, "de"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := svc.Status(ctx)
+	if err != nil || after.DefaultLocale != "de" {
+		t.Fatalf("Status after = %+v, %v; want DefaultLocale de", after, err)
+	}
+}
