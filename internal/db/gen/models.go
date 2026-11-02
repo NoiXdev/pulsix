@@ -856,13 +856,15 @@ type SharedRepo struct {
 }
 
 type TotpSecret struct {
-	UserID              uuid.UUID          `json:"user_id"`
-	SecretSealed        []byte             `json:"secret_sealed"`
-	ConfirmedAt         pgtype.Timestamptz `json:"confirmed_at"`
-	LastUsedStep        int64              `json:"last_used_step"`
-	CreatedAt           time.Time          `json:"created_at"`
-	PendingSecretSealed []byte             `json:"pending_secret_sealed"`
-	PendingCreatedAt    pgtype.Timestamptz `json:"pending_created_at"`
+	UserID               uuid.UUID          `json:"user_id"`
+	SecretSealed         []byte             `json:"secret_sealed"`
+	ConfirmedAt          pgtype.Timestamptz `json:"confirmed_at"`
+	LastUsedStep         int64              `json:"last_used_step"`
+	CreatedAt            time.Time          `json:"created_at"`
+	PendingSecretSealed  []byte             `json:"pending_secret_sealed"`
+	PendingCreatedAt     pgtype.Timestamptz `json:"pending_created_at"`
+	FailedFactorAttempts int32              `json:"failed_factor_attempts"`
+	FactorLockedUntil    pgtype.Timestamptz `json:"factor_locked_until"`
 }
 
 type TriggerBucket struct {

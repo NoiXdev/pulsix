@@ -82,6 +82,25 @@ WHERE user_id = $1 AND pending_secret_sealed IS NOT NULL;
 -- name: SetTOTPLastStep :execrows
 UPDATE totp_secrets SET last_used_step = $2 WHERE user_id = $1 AND last_used_step < $2;
 
+-- name: ClaimFactorAttempt :execrows
+-- Backlog 7.26: spends one second-factor attempt before the code is
+-- checked, unless the account is locked. SQLTOTPStore.ClaimFactorAttempt
+-- carries the whole argument.
+UPDATE totp_secrets
+SET failed_factor_attempts = failed_factor_attempts + 1,
+    factor_locked_until = CASE
+        WHEN failed_factor_attempts + 1 >= sqlc.arg(free_attempts)::int
+        THEN sqlc.arg(now)::timestamptz + interval '1 second' * LEAST(
+            sqlc.arg(base_secs)::float8 * power(2, LEAST(failed_factor_attempts + 1 - sqlc.arg(free_attempts)::int, 30)),
+            sqlc.arg(max_secs)::float8)
+        ELSE factor_locked_until
+    END
+WHERE user_id = sqlc.arg(user_id)
+  AND (factor_locked_until IS NULL OR factor_locked_until <= sqlc.arg(now)::timestamptz);
+
+-- name: ClearFactorAttempts :exec
+UPDATE totp_secrets SET failed_factor_attempts = 0, factor_locked_until = NULL WHERE user_id = $1;
+
 -- name: DeleteTOTP :exec
 DELETE FROM totp_secrets WHERE user_id = $1;
 

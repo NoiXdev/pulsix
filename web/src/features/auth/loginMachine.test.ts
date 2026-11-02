@@ -69,6 +69,19 @@ describe('loginMachine totp step', () => {
     expect(result).toEqual({ step: 'totp', error: 'invalid code' });
   });
 
+  // Backlog 7.26: after repeated wrong codes the account's second factor is
+  // locked for a while, and the page has to say so rather than "invalid
+  // code" — retyping the right code would only be refused again.
+  it('a locked second factor stays on totp and says to wait', async () => {
+    const verify = async (): Promise<unknown> => {
+      throw new ApiError(429, { detail: 'too many attempts; try again later' });
+    };
+
+    const result = await submitTotp(verify, { code: '482913' });
+
+    expect(result).toEqual({ step: 'totp', error: 'too many attempts; wait a few minutes and try again' });
+  });
+
   // Important 5 (task-15a-report.md fix round 1): the recovery-code path
   // — the backend's POST /auth/totp/verify has always accepted a
   // recovery_code as an alternative to a 6-digit code, but the login page

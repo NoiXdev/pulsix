@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,29 @@ func (s *SQLTOTPStore) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TOT
 func (s *SQLTOTPStore) SetTOTPLastStep(ctx context.Context, userID uuid.UUID, step int64) (bool, error) {
 	n, err := s.q.SetTOTPLastStep(ctx, gen.SetTOTPLastStepParams{UserID: userID, LastUsedStep: step})
 	return n == 1, err
+}
+
+// ClaimFactorAttempt implements TOTPStore with one conditional UPDATE: the
+// count and the lock move together, under the row's lock, so a burst of
+// parallel guesses cannot all pass a check made before any of them was
+// counted. From the factorAttemptsFree-th attempt on, each one that gets
+// through locks the account for factorLockBase, doubled per further
+// attempt and capped at factorLockMax (the exponent is capped as well, so
+// the arithmetic stays in range however long an attack runs).
+func (s *SQLTOTPStore) ClaimFactorAttempt(ctx context.Context, userID uuid.UUID, now time.Time) (bool, error) {
+	n, err := s.q.ClaimFactorAttempt(ctx, gen.ClaimFactorAttemptParams{
+		FreeAttempts: factorAttemptsFree,
+		Now:          now,
+		BaseSecs:     factorLockBase.Seconds(),
+		MaxSecs:      factorLockMax.Seconds(),
+		UserID:       userID,
+	})
+	return n == 1, err
+}
+
+// ClearFactorAttempts implements TOTPStore.
+func (s *SQLTOTPStore) ClearFactorAttempts(ctx context.Context, userID uuid.UUID) error {
+	return s.q.ClearFactorAttempts(ctx, userID)
 }
 
 func (s *SQLTOTPStore) ReplaceRecoveryCodes(ctx context.Context, userID uuid.UUID) error {

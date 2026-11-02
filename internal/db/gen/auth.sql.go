@@ -13,6 +13,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimFactorAttempt = `-- name: ClaimFactorAttempt :execrows
+UPDATE totp_secrets
+SET failed_factor_attempts = failed_factor_attempts + 1,
+    factor_locked_until = CASE
+        WHEN failed_factor_attempts + 1 >= $1::int
+        THEN $2::timestamptz + interval '1 second' * LEAST(
+            $3::float8 * power(2, LEAST(failed_factor_attempts + 1 - $1::int, 30)),
+            $4::float8)
+        ELSE factor_locked_until
+    END
+WHERE user_id = $5
+  AND (factor_locked_until IS NULL OR factor_locked_until <= $2::timestamptz)
+`
+
+type ClaimFactorAttemptParams struct {
+	FreeAttempts int32     `json:"free_attempts"`
+	Now          time.Time `json:"now"`
+	BaseSecs     float64   `json:"base_secs"`
+	MaxSecs      float64   `json:"max_secs"`
+	UserID       uuid.UUID `json:"user_id"`
+}
+
+// Backlog 7.26: spends one second-factor attempt before the code is
+// checked, unless the account is locked. SQLTOTPStore.ClaimFactorAttempt
+// carries the whole argument.
+func (q *Queries) ClaimFactorAttempt(ctx context.Context, arg ClaimFactorAttemptParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimFactorAttempt,
+		arg.FreeAttempts,
+		arg.Now,
+		arg.BaseSecs,
+		arg.MaxSecs,
+		arg.UserID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearAbandonedTOTPEnrolments = `-- name: ClearAbandonedTOTPEnrolments :execrows
 UPDATE totp_secrets
 SET pending_secret_sealed = NULL, pending_created_at = NULL
@@ -30,6 +69,15 @@ func (q *Queries) ClearAbandonedTOTPEnrolments(ctx context.Context, startedBefor
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const clearFactorAttempts = `-- name: ClearFactorAttempts :exec
+UPDATE totp_secrets SET failed_factor_attempts = 0, factor_locked_until = NULL WHERE user_id = $1
+`
+
+func (q *Queries) ClearFactorAttempts(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearFactorAttempts, userID)
+	return err
 }
 
 const confirmTOTP = `-- name: ConfirmTOTP :execrows
@@ -170,7 +218,7 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (GetSessionRow, 
 }
 
 const getTOTPSecret = `-- name: GetTOTPSecret :one
-SELECT user_id, secret_sealed, confirmed_at, last_used_step, created_at, pending_secret_sealed, pending_created_at FROM totp_secrets WHERE user_id = $1
+SELECT user_id, secret_sealed, confirmed_at, last_used_step, created_at, pending_secret_sealed, pending_created_at, failed_factor_attempts, factor_locked_until FROM totp_secrets WHERE user_id = $1
 `
 
 func (q *Queries) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TotpSecret, error) {
@@ -184,6 +232,8 @@ func (q *Queries) GetTOTPSecret(ctx context.Context, userID uuid.UUID) (TotpSecr
 		&i.CreatedAt,
 		&i.PendingSecretSealed,
 		&i.PendingCreatedAt,
+		&i.FailedFactorAttempts,
+		&i.FactorLockedUntil,
 	)
 	return i, err
 }

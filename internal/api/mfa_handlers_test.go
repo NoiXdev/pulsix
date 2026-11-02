@@ -243,3 +243,38 @@ func TestTOTPEnrolRequiresFreshCodeOnReEnrolment(t *testing.T) {
 		t.Fatalf("re-enrol did not issue a new secret: got %q, original %q", reEnrol.Secret, enrol.Secret)
 	}
 }
+
+// TestTOTPVerifyLocksTheAccountAfterRepeatedFailures is backlog 7.26 over
+// HTTP: the per-address limit is not the only one any more. After five
+// wrong codes the account's second factor is locked, so even the right
+// code is refused with 429 — whichever address it comes from.
+func TestTOTPVerifyLocksTheAccountAfterRepeatedFailures(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("guess@example.test", "correct horse battery")
+	c := s.LoginAs(uid)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/enrol", struct{}{})
+	var enrol struct {
+		Secret string `json:"secret"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&enrol)
+	code, _ := totp.GenerateCode(enrol.Secret, time.Now())
+	if resp = postJSON(t, c, s.HTTP.URL+"/api/v1/auth/totp/confirm", map[string]string{"code": code}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm: %d", resp.StatusCode)
+	}
+
+	fresh := s.Client()
+	if resp = postJSON(t, fresh, s.HTTP.URL+"/api/v1/auth/login", map[string]string{"email": "guess@example.test", "password": "correct horse battery"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", resp.StatusCode)
+	}
+	for i := range 5 {
+		resp = postJSON(t, fresh, s.HTTP.URL+"/api/v1/auth/totp/verify", map[string]string{"code": "000000"})
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("wrong code %d: %d, want 401", i+1, resp.StatusCode)
+		}
+	}
+	code, _ = totp.GenerateCode(enrol.Secret, time.Now().Add(30*time.Second))
+	if resp = postJSON(t, fresh, s.HTTP.URL+"/api/v1/auth/totp/verify", map[string]string{"code": code}); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("the right code on a locked account: %d, want 429", resp.StatusCode)
+	}
+}

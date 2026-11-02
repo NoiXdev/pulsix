@@ -358,6 +358,8 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error401Unauthorized("login required")
 	case errors.Is(err, auth.ErrInvalidTOTPCode):
 		return huma.Error400BadRequest("invalid code")
+	case errors.Is(err, auth.ErrTooManyFactorAttempts):
+		return huma.Error429TooManyRequests("too many attempts; try again later")
 	case errors.Is(err, auth.ErrLastSecondFactor):
 		return huma.Error409Conflict("cannot remove the last second factor; add another one first")
 	default:

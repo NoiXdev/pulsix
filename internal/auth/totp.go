@@ -42,6 +42,26 @@ var ErrInvalidTOTPCode = errors.New("invalid totp code")
 // checking one where it meant the other.
 var ErrNoTOTPSecret = errors.New("no totp secret")
 
+// ErrTooManyFactorAttempts is returned instead of checking a code while
+// the account's second factor is locked after repeated failures (backlog
+// 7.26). The code was not looked at, so it says nothing about the code.
+var ErrTooManyFactorAttempts = errors.New("too many second-factor attempts")
+
+// The account's own budget for checking its confirmed second factor
+// (backlog 7.26). The per-address limit in front of /auth/totp/verify
+// does not stop a password holder who spreads guesses over many
+// addresses, and six digits with one step of skew either side leave three
+// codes in a million valid at any moment. Four attempts are free; the
+// fifth and each later one lock the account for a minute, doubling per
+// attempt, at most an hour — about two dozen guesses a day once an attack
+// is under way, while the owner, who succeeds within a few tries, is never
+// locked out for more than an hour. A success gives the budget back.
+const (
+	factorAttemptsFree = 5
+	factorLockBase     = time.Minute
+	factorLockMax      = time.Hour
+)
+
 // TOTPSecretRow is the store-level view of one totp_secrets row: just
 // enough for the service to validate a code and decide whether the factor
 // is active. It deliberately does not expose last_used_step — claiming a
@@ -95,6 +115,13 @@ type TOTPStore interface {
 	// ConfirmEnrol does the same swap as part of confirming a secret; this
 	// is the swap on its own, for an account whose factor is unchanged.
 	ReplaceRecoveryCodesWith(ctx context.Context, userID uuid.UUID, recoveryCodeHashes [][]byte) error
+	// ClaimFactorAttempt spends one attempt of the account's second-factor
+	// budget and reports whether it could: false (with a nil error) means
+	// the account is locked, or has no factor at all. It must count and
+	// lock in one atomic step.
+	ClaimFactorAttempt(ctx context.Context, userID uuid.UUID, now time.Time) (bool, error)
+	// ClearFactorAttempts gives the account its whole budget back.
+	ClearFactorAttempts(ctx context.Context, userID uuid.UUID) error
 }
 
 // TOTP manages time-based one-time passwords and recovery codes.
@@ -132,7 +159,7 @@ func (t *TOTP) BeginEnrol(ctx context.Context, userID uuid.UUID, email, code str
 	case err != nil:
 		return "", "", err
 	case row.Confirmed:
-		ok, verr := t.verifyAndConsume(ctx, userID, code, true)
+		ok, verr := t.Verify(ctx, userID, code)
 		if verr != nil {
 			return "", "", verr
 		}
@@ -227,7 +254,38 @@ func (t *TOTP) RegenerateRecoveryCodes(ctx context.Context, userID uuid.UUID) ([
 
 // Verify checks a code against a confirmed secret and rejects replays within a step.
 func (t *TOTP) Verify(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
-	return t.verifyAndConsume(ctx, userID, code, true)
+	return t.attempt(ctx, userID, func() (bool, error) {
+		return t.verifyAndConsume(ctx, userID, code, true)
+	})
+}
+
+// attempt runs one check of the account's confirmed second factor against
+// its budget (backlog 7.26): the attempt is spent before check runs, a
+// locked account is refused without running it, and only a success gives
+// the budget back. Spending first is what makes it hold against parallel
+// guesses. An account with no factor has no budget either, and its
+// refusal stays the plain "rejected" it always was.
+func (t *TOTP) attempt(ctx context.Context, userID uuid.UUID, check func() (bool, error)) (bool, error) {
+	claimed, err := t.store.ClaimFactorAttempt(ctx, userID, t.now())
+	if err != nil {
+		return false, err
+	}
+	if !claimed {
+		if _, err := t.store.GetTOTPSecret(ctx, userID); errors.Is(err, ErrNoTOTPSecret) {
+			return false, nil
+		} else if err != nil {
+			return false, err
+		}
+		return false, ErrTooManyFactorAttempts
+	}
+	ok, err := check()
+	if err != nil || !ok {
+		return false, err
+	}
+	if err := t.store.ClearFactorAttempts(ctx, userID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // verifyAndConsume validates code against the user's secret and, only on a
@@ -328,7 +386,6 @@ func dedupSteps(a, b int64) []int64 {
 	return []int64{a, b}
 }
 
-// VerifyRecovery consumes one recovery code.
 // RecoveryCodesRemaining reports how many recovery codes the account can
 // still redeem. The account page shows it so that a set emptying one code
 // at a time stops being invisible: the person spending them is the one who
@@ -338,9 +395,14 @@ func (t *TOTP) RecoveryCodesRemaining(ctx context.Context, userID uuid.UUID) (in
 	return t.store.CountUnusedRecoveryCodes(ctx, userID)
 }
 
+// VerifyRecovery consumes one recovery code. It spends the same budget as
+// Verify: a recovery code stands in for the factor, so guessing one is
+// guessing the factor.
 func (t *TOTP) VerifyRecovery(ctx context.Context, userID uuid.UUID, code string) (bool, error) {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(code))))
-	return t.store.UseRecoveryCode(ctx, userID, sum[:])
+	return t.attempt(ctx, userID, func() (bool, error) {
+		return t.store.UseRecoveryCode(ctx, userID, sum[:])
+	})
 }
 
 // Enabled reports whether the user has a confirmed TOTP secret.

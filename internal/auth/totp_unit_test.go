@@ -53,6 +53,26 @@ type fakeTOTPStore struct {
 
 	// ReplaceRecoveryCodesWith
 	replaceWithCalls [][][]byte
+
+	// ClaimFactorAttempt / ClearFactorAttempts. The zero value leaves the
+	// account unlocked.
+	locked     bool
+	claimErr   error
+	claimCalls int
+	clearCalls int
+}
+
+func (f *fakeTOTPStore) ClaimFactorAttempt(context.Context, uuid.UUID, time.Time) (bool, error) {
+	f.claimCalls++
+	if f.claimErr != nil {
+		return false, f.claimErr
+	}
+	return !f.locked, nil
+}
+
+func (f *fakeTOTPStore) ClearFactorAttempts(context.Context, uuid.UUID) error {
+	f.clearCalls++
+	return nil
 }
 
 func (f *fakeTOTPStore) GetTOTPSecret(context.Context, uuid.UUID) (auth.TOTPSecretRow, error) {

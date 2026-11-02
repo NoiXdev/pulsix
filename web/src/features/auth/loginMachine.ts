@@ -80,6 +80,11 @@ export async function submitTotp(verify: VerifyFn, input: VerifyInput): Promise<
       const message = 'recoveryCode' in input ? 'invalid recovery code' : 'invalid code';
       return { step: 'totp', error: message };
     }
+    // Backlog 7.26: the account's second factor is locked after repeated
+    // wrong codes; the right one would be refused too until it lifts.
+    if (err instanceof ApiError && err.status === 429) {
+      return { step: 'totp', error: 'too many attempts; wait a few minutes and try again' };
+    }
     throw err;
   }
 }
