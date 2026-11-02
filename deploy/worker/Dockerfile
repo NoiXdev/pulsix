@@ -25,12 +25,12 @@
 # Base image pins were the newest stable tags on their registries as of
 # 2026-09-15, pinned by tag *and* digest (the same policy the manager
 # image follows):
-#   - golang:1.27.1-alpine — matches go.mod's `go 1.27` (same digest as the
-#     manager image's build stage)
+#   - golang:1.27.3-alpine — matches go.mod's `go 1.27` (same digest as the
+#     manager image's build stage; moved off 1.27.1 with backlog 1.36)
 #   - python:3.13-slim — Debian trixie slim, multi-arch index digest
 
 # ---- Stage 1: build the Go worker binary ----------------------------------
-FROM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS build
+FROM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS build
 WORKDIR /src
 # gcc + musl-dev build the setuid helper below. They exist in the BUILD
 # stage only: a compiler in the run stage would be a tool for whatever a

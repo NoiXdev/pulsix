@@ -20,6 +20,10 @@
 # below — never silently, always printed as SKIP so the exclusion is
 # visible in CI output.
 #
+# The two test harnesses, internal/api/apitest and internal/db/testdb, are
+# excluded the same way (backlog 1.36): they are infrastructure other
+# packages' tests run on, measured through those tests.
+#
 # Machine-generated packages (sqlc, protoc, mockgen, ...) are excluded
 # too, but the exclusion is EARNED BY EVIDENCE IN THE FILES, never
 # granted by package path: a package counts as generated only when it
@@ -153,6 +157,17 @@ awk -v module="$module" -v generated="$generated_list" '
 		if ($1 ~ /^FAIL/) {
 			printf "FAIL  %-55s tests failed (output below)\n", pkg
 			fail = 1
+			next
+		}
+
+		# Test harnesses (backlog 1.36): internal/api/apitest and
+		# internal/db/testdb are infrastructure the tests of other packages
+		# run on, the way cmd/... is wiring; those tests exercise them, no
+		# suite of their own measures them. Placed after the FAIL check, so
+		# a failing harness test still fails the gate. (No apostrophes in
+		# this awk program: it sits inside single quotes.)
+		if (pkg == module "/internal/api/apitest" || pkg == module "/internal/db/testdb") {
+			printf "SKIP  %-55s (test harness, exercised by the tests of other packages, excluded from gate)\n", pkg
 			next
 		}
 
