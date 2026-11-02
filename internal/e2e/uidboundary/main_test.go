@@ -23,6 +23,12 @@ func TestMain(m *testing.M) {
 	// processes between jobs (backlog 7.21); without this the sweep would
 	// run the whole suite under the play uid.
 	if len(os.Args) > 1 && os.Args[1] == supervisor.SweepArg {
+		// A leftover play process can kill the sweep before it acts
+		// (backlog 7.35); sweepDisabledMarker makes it do nothing, the
+		// deterministic stand-in for that race.
+		if _, err := os.Stat(sweepDisabledMarker); err == nil {
+			os.Exit(0)
+		}
 		os.Exit(supervisor.Sweep(os.Stderr))
 	}
 	os.Exit(m.Run())

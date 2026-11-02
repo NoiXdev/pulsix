@@ -105,6 +105,17 @@ func writeWorkerKey(t *testing.T) string {
 // and the shipped image was broken in four ways it could not see.
 func runOneJob(t *testing.T, job *workerpb.Job) (*workerpb.ReportResultRequest, []*workerpb.RunEvent, string) {
 	t.Helper()
+	result, events, logs, err := runOneJobErr(t, job)
+	if err != nil {
+		t.Fatalf("Loop.Run = %v\n%s", err, logs)
+	}
+	return result, events, logs
+}
+
+// runOneJobErr is runOneJob for a test that expects Loop.Run to stop with
+// an error once the job is over, and returns that error.
+func runOneJobErr(t *testing.T, job *workerpb.Job) (*workerpb.ReportResultRequest, []*workerpb.RunEvent, string, error) {
+	t.Helper()
 	cfg := workerConfig(t)
 
 	var logs bytes.Buffer
@@ -123,11 +134,9 @@ func runOneJob(t *testing.T, job *workerpb.Job) (*workerpb.ReportResultRequest, 
 		t.Fatalf("the job was never reported:\n%s", logs.String())
 	}
 	cancel()
-	if err := <-done; err != nil {
-		t.Fatalf("Loop.Run = %v", err)
-	}
+	runErr := <-done
 	t.Logf("worker log:\n%s", logs.String())
-	return client.result(), client.events(), logs.String()
+	return client.result(), client.events(), logs.String(), runErr
 }
 
 // localhostJob is a run job whose play targets the worker itself — the

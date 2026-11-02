@@ -42,6 +42,10 @@ func (l *Loop) newWorkDir() (string, error) {
 	return os.MkdirTemp(l.cfg.DataDir, "job-")
 }
 
+// sweepAttempts is how often the sweep runs before the worker gives up on
+// clearing the play uid and stops.
+const sweepAttempts = 3
+
 // sweepPlayUID kills every process of the play uid: the worker binary's
 // sweep mode (supervisor.SweepArg), run through the setuid helper as that
 // uid. The loop runs it when it starts and after every job, so nothing a
@@ -50,28 +54,47 @@ func (l *Loop) newWorkDir() (string, error) {
 // stop it (backlog 7.21). A worker runs one job at a time, so between jobs
 // every process of the play uid is a leftover.
 //
+// The sweep runs as the uid it clears, so a leftover can kill it before it
+// acts, and its exit status proves nothing (backlog 7.35). What counts is
+// the worker's own look at the process table afterwards (playUIDAlive,
+// from the worker's uid, which the play cannot interfere with): the sweep
+// is repeated while a process of the play uid is alive, and after
+// sweepAttempts the error is returned. The loop then stops — the worker
+// exits, and its container's restart ends every process in it — rather
+// than open the next job's work dir to a survivor of the play group.
+//
 // It needs the worker binary (Config.PlaySupervisor, filled on Linux) and
 // a play uid; without either there is nothing to run or nothing to sweep.
-// A failure is logged as an error and does not fail the job, which has
-// already reported.
-func (l *Loop) sweepPlayUID(ctx context.Context) {
+func (l *Loop) sweepPlayUID(ctx context.Context) error {
 	if l.cfg.PlayUID == 0 || l.cfg.PlaySupervisor == "" {
-		return
+		return nil
 	}
 	helper := l.cfg.SetuidHelper
 	if helper == "" {
 		helper = defaultSetuidHelper
 	}
-	// Detached from ctx, like removeAsPlayUID: the loop's own shutdown is
-	// a common reason a job ends, and the sweep must still run.
-	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeGrace)
-	defer cancel()
-	cmd := exec.CommandContext(sctx, helper, strconv.FormatUint(uint64(l.cfg.PlayUID), 10), l.cfg.PlaySupervisor, supervisor.SweepArg)
-	cmd.Env = stripPrivateEnv(os.Environ())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		l.log.ErrorContext(ctx, "could not stop the play uid's leftover processes; a play may still be running",
-			"helper", helper, "err", err, "output", string(out))
+	var alive []int
+	for range sweepAttempts {
+		// Detached from ctx, like removeAsPlayUID: the loop's own shutdown
+		// is a common reason a job ends, and the sweep must still run.
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeGrace)
+		cmd := exec.CommandContext(sctx, helper, strconv.FormatUint(uint64(l.cfg.PlayUID), 10), l.cfg.PlaySupervisor, supervisor.SweepArg)
+		cmd.Env = stripPrivateEnv(os.Environ())
+		if out, err := cmd.CombinedOutput(); err != nil {
+			l.log.WarnContext(ctx, "the play uid's sweep failed; checking what is left",
+				"helper", helper, "err", err, "output", string(out))
+		}
+		cancel()
+		var err error
+		if alive, err = l.playUIDAlive(l.cfg.PlayUID); err != nil {
+			return fmt.Errorf("check the play uid's processes after the sweep: %w; stopping the worker", err)
+		}
+		if len(alive) == 0 {
+			return nil
+		}
 	}
+	return fmt.Errorf("%d process(es) of the play uid %d survived %d sweeps (pids %v); stopping the worker so a restart ends them",
+		len(alive), l.cfg.PlayUID, sweepAttempts, alive)
 }
 
 // removeWorkDir deletes one run's work dir, and says so when it cannot.

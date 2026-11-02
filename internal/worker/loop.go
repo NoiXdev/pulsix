@@ -105,6 +105,12 @@ type Loop struct {
 	now      func() time.Time
 	log      *slog.Logger
 	identity *Identity
+	// playUIDAlive lists the live processes of a uid (livePIDsOfUID on
+	// /proc); the sweep's check (backlog 7.35).
+	playUIDAlive func(uid uint32) ([]int, error)
+	// stopErr is set when the sweep after a job could not clear the play
+	// uid; Run stops on it instead of claiming the next job.
+	stopErr error
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -123,6 +129,12 @@ func WithNow(fn func() time.Time) LoopOption {
 // WithLogger replaces the structured stderr logger.
 func WithLogger(logger *slog.Logger) LoopOption {
 	return func(l *Loop) { l.log = logger }
+}
+
+// withPlayUIDProbe replaces the process-table read behind the sweep's
+// check, for tests on systems without /proc.
+func withPlayUIDProbe(fn func(uid uint32) ([]int, error)) LoopOption {
+	return func(l *Loop) { l.playUIDAlive = fn }
 }
 
 // WithIdentity gives the loop the worker's own Identity, so an
@@ -146,6 +158,9 @@ func NewLoop(cfg Config, client workerpb.WorkerServiceClient, exec Executor, opt
 		sleep:  interruptibleSleep,
 		now:    time.Now,
 		log:    slog.Default(),
+		playUIDAlive: func(uid uint32) ([]int, error) {
+			return livePIDsOfUID("/proc", uid)
+		},
 	}
 	for _, o := range opts {
 		o(l)
@@ -172,8 +187,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		if err := l.secureDirsForPlayUID(ctx); err != nil {
 			return fmt.Errorf("prepare data dir for play uid: %w", err)
 		}
-		// A previous worker process may have left plays running.
-		l.sweepPlayUID(ctx)
+		// A previous worker process may have left plays running. One
+		// that outlives the sweep is a reason not to start (backlog 7.35).
+		if err := l.sweepPlayUID(ctx); err != nil {
+			return err
+		}
 	}
 
 	zoneIDs := make([]string, len(l.cfg.Zones))
@@ -220,6 +238,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		start := l.now()
 		l.log.InfoContext(ctx, "job claimed", "job_id", job.GetId(), "kind", job.GetKind())
 		status, reportErr := l.runOne(ctx, job)
+		if l.stopErr != nil {
+			return l.stopErr
+		}
 		attrs := []any{"job_id", job.GetId(), "kind", job.GetKind(), "status", string(status), "duration", l.now().Sub(start)}
 		if reportErr != nil {
 			l.log.ErrorContext(ctx, "job finished; result report failed", append(attrs, "err", reportErr)...)
@@ -317,7 +338,7 @@ func (l *Loop) runOne(ctx context.Context, job *workerpb.Job) (Status, error) {
 	// The sweep first: no play process may still be writing into the work
 	// dir, or running at all, once the job is over (backlog 7.21).
 	defer func() {
-		l.sweepPlayUID(ctx)
+		l.stopErr = l.sweepPlayUID(ctx)
 		l.removeWorkDir(workDir)
 	}()
 

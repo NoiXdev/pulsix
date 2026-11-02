@@ -223,9 +223,11 @@ func TestSweepPlayUIDRunsTheSweepAsThePlayUID(t *testing.T) {
 	cfg.PlayUID = 65533
 	cfg.SetuidHelper = helper
 	cfg.PlaySupervisor = "/usr/local/bin/pulsix-worker"
-	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{})
+	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{}, withPlayUIDProbe(func(uint32) ([]int, error) { return nil, nil }))
 
-	l.sweepPlayUID(context.Background())
+	if err := l.sweepPlayUID(context.Background()); err != nil {
+		t.Fatalf("sweepPlayUID = %v", err)
+	}
 
 	raw, err := os.ReadFile(record)
 	if err != nil {
@@ -245,7 +247,9 @@ func TestSweepPlayUIDIsOffWithoutAPlayUID(t *testing.T) {
 	cfg.PlaySupervisor = "/usr/local/bin/pulsix-worker"
 	l := NewLoop(cfg, &fakeWorkerClient{}, &scriptExecutor{})
 
-	l.sweepPlayUID(context.Background())
+	if err := l.sweepPlayUID(context.Background()); err != nil {
+		t.Fatalf("sweepPlayUID without a play uid = %v", err)
+	}
 
 	if _, err := os.Stat(record); !os.IsNotExist(err) {
 		t.Fatalf("the helper ran without a play uid: %v", err)
@@ -267,7 +271,10 @@ func TestLoopSweepsThePlayUIDAtStartAndAfterEachJob(t *testing.T) {
 		return StatusSucceeded, nil, nil
 	}}
 
-	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
+	// Nothing survives the sweeps here (backlog 7.35's check, without a
+	// /proc to read on every OS the suite runs on).
+	none := withPlayUIDProbe(func(uint32) ([]int, error) { return nil, nil })
+	cancel, done := runLoop(t, NewLoop(cfg, client, exec, none))
 	waitFor(t, 5*time.Second, func() bool {
 		raw, _ := os.ReadFile(record)
 		return strings.Count(string(raw), supervisor.SweepArg) >= 2
