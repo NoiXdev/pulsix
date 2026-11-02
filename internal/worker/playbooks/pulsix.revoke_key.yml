@@ -2,12 +2,33 @@
 # credential's PREVIOUS public key from the account's authorized_keys. It
 # runs only after every target of the rotation installed the new key and a
 # connection test authenticated with it, and it logs in with the new key.
+#
+# The account is the one runs log in as (pulsix_user, backlog 7.33), which
+# must exist. pulsix_also_users names further accounts the key may sit in
+# — the credential's own account, where bootstrap installs it — and is
+# cleared where such an account exists (backlog 7.45). A line counts as the
+# previous key when it carries the key's base64 blob as a word, whatever
+# options or comment surround it. Only ansible-core's own modules (7.46).
 - hosts: all
   become: true
   gather_facts: false
+  vars:
+    pulsix_account: "{{ pulsix_user | default('ansible') }}"
+    pulsix_old_key_blob: "{{ (pulsix_old_public_key | trim).split()[1] }}"
   tasks:
+    - name: Look up the accounts the previous key may sit in
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ item }}"
+        fail_key: "{{ item == pulsix_account }}"
+      loop: "{{ ([pulsix_account] + (pulsix_also_users | default([]))) | unique }}"
+      register: pulsix_accounts
     - name: Remove the previous public key
-      ansible.builtin.authorized_key:
-        user: "{{ pulsix_user | default('ansible') }}"
-        key: "{{ pulsix_old_public_key }}"
+      ansible.builtin.lineinfile:
+        path: "{{ item.ansible_facts.getent_passwd[item.item][4] }}/.ssh/authorized_keys"
+        regexp: '(^|\s){{ pulsix_old_key_blob | regex_escape }}(\s|$)'
         state: absent
+      loop: "{{ pulsix_accounts.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.ansible_facts.getent_passwd[item.item] is not none

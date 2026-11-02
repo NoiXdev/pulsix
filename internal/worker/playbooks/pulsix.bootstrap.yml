@@ -1,23 +1,41 @@
 # pulsix.bootstrap.yml — creates the ansible user, installs the public key
 # and a passwordless sudo rule (spec §5). Runs with the operator-provided
 # one-time login; that login is used once and never stored.
+#
+# Only ansible-core's own modules (backlog 7.46): authorized_key lives in
+# the ansible.posix collection, which the worker image does not carry, so
+# the key goes in with file and lineinfile, owner-only as sshd requires.
 - hosts: all
   become: true
   gather_facts: false
+  vars:
+    pulsix_account: "{{ pulsix_user | default('ansible') }}"
   tasks:
     - name: Ensure ansible user exists
       ansible.builtin.user:
-        name: "{{ pulsix_user | default('ansible') }}"
+        name: "{{ pulsix_account }}"
         shell: /bin/bash
         state: present
+    - name: Look up the account's home
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ pulsix_account }}"
+    - name: Ensure the account's .ssh directory
+      ansible.builtin.file:
+        path: "{{ ansible_facts.getent_passwd[pulsix_account][4] }}/.ssh"
+        state: directory
+        owner: "{{ pulsix_account }}"
+        mode: "0700"
     - name: Install public key
-      ansible.builtin.authorized_key:
-        user: "{{ pulsix_user | default('ansible') }}"
-        key: "{{ pulsix_public_key }}"
-        manage_dir: true
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_facts.getent_passwd[pulsix_account][4] }}/.ssh/authorized_keys"
+        line: "{{ pulsix_public_key | trim }}"
+        create: true
+        owner: "{{ pulsix_account }}"
+        mode: "0600"
     - name: Allow passwordless sudo
       ansible.builtin.copy:
-        content: "{{ pulsix_user | default('ansible') }} ALL=(ALL) NOPASSWD:ALL\n"
-        dest: "/etc/sudoers.d/90-pulsix-{{ pulsix_user | default('ansible') }}"
+        content: "{{ pulsix_account }} ALL=(ALL) NOPASSWD:ALL\n"
+        dest: "/etc/sudoers.d/90-pulsix-{{ pulsix_account }}"
         mode: "0440"
         validate: "visudo -cf %s"
