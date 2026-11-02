@@ -3,6 +3,8 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { en } from '../../i18n/en/index.ts';
+import { formatter } from '../../i18n/format.ts';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
@@ -171,8 +173,8 @@ describe('maintenance time helpers', () => {
   it('round-trips local inputs and labels windows', () => {
     expect(fromLocalInput(toLocalInput('2026-09-22T10:00:00Z'))).toBe('2026-09-22T10:00:00.000Z');
     expect(toLocalInput(null)).toBe('');
-    expect(targetLabel({ ...dbUpgrade, target_kind: 'inventory_group', target_name: 'pg' })).toBe('Group pg');
-    expect(whenLabel({ ...nightly, description: '' })).toBe('0 2 * * 6 · for 2h · Europe/Berlin');
-    expect(whenLabel(dbUpgrade)).toContain('–');
+    expect(targetLabel({ ...dbUpgrade, target_kind: 'inventory_group', target_name: 'pg' }, en)).toBe('Group pg');
+    expect(whenLabel({ ...nightly, description: '' }, en, formatter('en'))).toBe('0 2 * * 6 · for 2h · Europe/Berlin');
+    expect(whenLabel(dbUpgrade, en, formatter('en'))).toContain('–');
   });
 });

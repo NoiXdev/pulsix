@@ -6,6 +6,7 @@
  * beyond the value it hands back.
  */
 import { useId, useState } from 'react';
+import { useT } from '../../i18n/useT.ts';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
@@ -31,6 +32,7 @@ import { SELECT } from './ruleDialogText.ts';
  * shortened id rather than a name.
  */
 export function RuleHostPicker({ org, value, onChange }: { org: string; value: string; onChange: (id: string) => void }) {
+  const t = useT();
   const [q, setQ] = useState('');
   const hosts = useHosts(org, { monitored: true, q });
   const listed = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
@@ -38,30 +40,30 @@ export function RuleHostPicker({ org, value, onChange }: { org: string; value: s
 
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor="rule-host">Host</Label>
+      <Label htmlFor="rule-host">{t.checks.host}</Label>
       <input
         type="search"
-        aria-label="Search monitored hosts"
-        placeholder="Search monitored hosts…"
+        aria-label={t.checks.hostPicker.searchLabel}
+        placeholder={t.checks.hostPicker.searchPlaceholder}
         className={SELECT}
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
       <Select
         id="rule-host"
-        placeholder="Choose a monitored host…"
+        placeholder={t.checks.hostPicker.choose}
         required
         value={value}
         onChange={onChange}
         options={[
-          ...(currentMissing ? [{ value, label: `${value.slice(0, 8)} (current binding)` }] : []),
+          ...(currentMissing ? [{ value, label: t.checks.currentBinding(value.slice(0, 8)) }] : []),
           ...listed.map((h) => ({ value: h.id, label: h.name })),
         ]}
       />
-      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">More hosts match than are listed — narrow the search.</span>}
+      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">{t.checks.hostPicker.moreMatch}</span>}
       {!hosts.data && hosts.isError && (
         <span role="alert" className="text-[11px] text-destructive">
-          Could not load monitored hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
+          {t.checks.hostPicker.loadFailed} {hosts.error instanceof Error ? hosts.error.message : ''}
         </span>
       )}
     </div>
@@ -104,18 +106,19 @@ export function RuleItemPicker({
   value: string;
   onChange: (item: string) => void;
 }) {
+  const t = useT();
   const items = useHostItems(org, hostId, hostId !== '');
   const options = [...new Set((items.data?.items ?? []).filter((it) => it.check_key === checkKey).map((it) => it.item))].sort();
   const optionsId = useId();
 
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor="rule-item">Item</Label>
+      <Label htmlFor="rule-item">{t.checks.ruleDialog.item}</Label>
       <Input
         id="rule-item"
         required
         list={optionsId}
-        placeholder="/var, sshd, …"
+        placeholder={t.checks.ruleDialog.itemPlaceholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />

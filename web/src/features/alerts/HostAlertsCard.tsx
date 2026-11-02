@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
+import { useT } from '../../i18n/useT.ts';
 import { Button } from '../../ui/button.tsx';
 import { Card } from '../../ui/table.tsx';
 import { useAlert, useAlerts } from '../../api/hooks/useAlerts.ts';
@@ -58,6 +59,7 @@ export interface HostAlertsCardProps {
  * alerts costs one list request until something is actually expanded.
  */
 export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
+  const t = useT();
   const alerts = useAlerts(org, { host: hostId, state: 'open' }, canRead);
   const [open, setOpen] = useState<string | null>(null);
 
@@ -70,7 +72,7 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">Alerts</h2>
+        <h2 className="text-[13px] font-semibold">{t.alerts.hostCard.title}</h2>
         {canRead && (
           <Link
             to="/o/$org/alerts"
@@ -78,20 +80,20 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
             search={{ host: hostId }}
             className="text-xs text-muted-foreground hover:text-primary"
           >
-            Full history, including closed alerts
+            {t.alerts.hostCard.fullHistory}
           </Link>
         )}
       </div>
 
-      {!canRead && <p className="text-xs text-muted-foreground">Alerts are visible to members of this organization.</p>}
+      {!canRead && <p className="text-xs text-muted-foreground">{t.alerts.noAccess}</p>}
       {canRead && alerts.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {alerts.error instanceof Error ? alerts.error.message : 'Could not read this host’s alerts.'}
+          {alerts.error instanceof Error ? alerts.error.message : t.alerts.hostCard.readFailed}
         </p>
       )}
-      {canRead && !alerts.data && !alerts.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {canRead && !alerts.data && !alerts.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
       {canRead && alerts.data && rows.length === 0 && (
-        <p className="text-xs text-muted-foreground">No open alerts for this host right now — it is healthy.</p>
+        <p className="text-xs text-muted-foreground">{t.alerts.hostCard.none}</p>
       )}
       {canRead && alerts.data && rows.length > 0 && (
         <ul className="flex flex-col gap-3">
@@ -102,7 +104,7 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
                 <AlertRow alert={a} />
                 <div className="flex justify-end border-t border-border px-4 py-1.5">
                   <Button type="button" variant="ghost" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : a.id)}>
-                    {isOpen ? 'Hide timeline' : 'Show timeline'}
+                    {isOpen ? t.alerts.hideTimeline : t.alerts.showTimeline}
                   </Button>
                 </div>
                 {isOpen && <AlertTimelinePanel org={org} alertId={a.id} />}
@@ -121,16 +123,17 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
  * mounted (and only ever requests) for an alert whose disclosure is
  * actually open, mirroring HostChecksCard's own GraphPanel. */
 function AlertTimelinePanel({ org, alertId }: { org: string; alertId: string }) {
+  const t = useT();
   const detail = useAlert(org, alertId);
 
   return (
     <div className="border-t border-border p-3">
       {detail.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {detail.error instanceof Error ? detail.error.message : 'Could not read this alert’s timeline.'}
+          {detail.error instanceof Error ? detail.error.message : t.alerts.timelineReadFailed}
         </p>
       )}
-      {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
       {detail.data && (
         <AlertTimeline
           entries={detail.data.alert.timeline ?? []}

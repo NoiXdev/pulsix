@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router';
+import { useT } from '../../i18n/useT.ts';
 
 const ACTIVE = 'border-b-2 border-primary py-2.5 text-[13px] font-semibold text-foreground';
 const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium text-muted-foreground';
@@ -20,6 +21,7 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  * (checks.read), so the strip itself has nothing to gate.
  */
 export function ChecksTabs({ org }: { org: string }) {
+  const t = useT();
   return (
     <div role="tablist" className="flex gap-6 border-b border-border">
       <Link
@@ -30,7 +32,7 @@ export function ChecksTabs({ org }: { org: string }) {
         activeProps={{ className: ACTIVE, 'aria-selected': true }}
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
-        Checks
+        {t.checks.tabs.checks}
       </Link>
       <Link
         to="/o/$org/checks/monitoring-groups"
@@ -39,7 +41,7 @@ export function ChecksTabs({ org }: { org: string }) {
         activeProps={{ className: ACTIVE, 'aria-selected': true }}
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
-        Monitoring groups
+        {t.checks.tabs.groups}
       </Link>
       <Link
         to="/o/$org/checks/rules"
@@ -48,7 +50,7 @@ export function ChecksTabs({ org }: { org: string }) {
         activeProps={{ className: ACTIVE, 'aria-selected': true }}
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
-        Rules
+        {t.checks.tabs.rules}
       </Link>
       <Link
         to="/o/$org/checks/items"
@@ -57,7 +59,7 @@ export function ChecksTabs({ org }: { org: string }) {
         activeProps={{ className: ACTIVE, 'aria-selected': true }}
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
-        Items
+        {t.checks.tabs.items}
       </Link>
     </div>
   );

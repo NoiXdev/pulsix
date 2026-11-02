@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { useT } from '../../i18n/useT.ts';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -28,6 +29,7 @@ export interface SnoozeDialogProps {
  * round trip that was always going to 422.
  */
 export function SnoozeDialog({ org, alertId, onClose }: SnoozeDialogProps) {
+  const t = useT();
   const snooze = useSnoozeAlert(org);
   const [until, setUntil] = useState('');
   const [untilChange, setUntilChange] = useState(false);
@@ -57,14 +59,14 @@ export function SnoozeDialog({ org, alertId, onClose }: SnoozeDialogProps) {
       });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Snoozing this alert failed');
+      setError(err instanceof Error ? err.message : t.alerts.snoozeDialog.failed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} title="Snooze alert">
+    <Dialog open onClose={onClose} title={t.alerts.snoozeDialog.title}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <Label htmlFor="snooze-until">Until</Label>
+        <Label htmlFor="snooze-until">{t.alerts.snoozeDialog.until}</Label>
         <Input
           id="snooze-until"
           type="datetime-local"
@@ -74,7 +76,7 @@ export function SnoozeDialog({ org, alertId, onClose }: SnoozeDialogProps) {
         />
         <label className="flex items-center gap-2 text-xs text-foreground">
           <input type="checkbox" checked={untilChange} onChange={(e) => onUntilChangeToggle(e.target.checked)} />
-          Until the alert&apos;s severity next changes
+          {t.alerts.snoozeDialog.untilChange}
         </label>
         {error && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
@@ -83,10 +85,10 @@ export function SnoozeDialog({ org, alertId, onClose }: SnoozeDialogProps) {
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={disabled}>
-            Snooze
+            {t.alerts.row.snooze}
           </Button>
         </div>
       </form>

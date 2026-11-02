@@ -4,10 +4,11 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
+import { useT } from '../../i18n/useT.ts';
 import { useCheckRule, useCreateRule, useUpdateRule } from '../../api/hooks/useRules.ts';
 import { RuleForm } from './RuleForm.tsx';
 import { RuleHostPicker, RuleItemPicker } from './RulePickers.tsx';
-import { CONFIRM_SWITCH, confirmDropClear, defaultOpFor, lines } from './ruleDialogText.ts';
+import { defaultOpFor, lines } from './ruleDialogText.ts';
 import { RuleExpression } from './RuleExpression.tsx';
 import type { MonitoringGroup, Rule, RuleFormValue, RuleInput, RuleMetric, RuleScope } from '../../api/types.ts';
 
@@ -55,6 +56,7 @@ export interface RuleDialogProps {
  * rather than silently discarding whatever the operator typed.
  */
 export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogProps) {
+  const t = useT();
   const editing = !!rule;
   const seeded = editing && rule.origin === 'seed';
   const create = useCreateRule(org);
@@ -147,18 +149,18 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
       else await create.mutateAsync(body());
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : t.checks.saveFailed);
     }
   }
 
   async function switchToExpression() {
     if (!warned) {
-      if (!confirm(CONFIRM_SWITCH)) return;
+      if (!confirm(t.checks.ruleDialog.confirmSwitch)) return;
       setWarned(true);
     }
     // Only a numeric metric can carry one: formBody puts clear_op/
     // clear_value on the body for the numeric shape alone.
-    if (kind !== 'discrete' && clearOp !== '' && !confirm(confirmDropClear(clearOp, clearValue))) return;
+    if (kind !== 'discrete' && clearOp !== '' && !confirm(t.checks.ruleDialog.confirmDropClear(clearOp, clearValue))) return;
     try {
       const checked = await checkRule.mutateAsync({ ...commonBody(), mode: 'form', form: formBody() });
       setExpression(checked.source ?? '');
@@ -172,19 +174,19 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
   }
 
   const currentGroupMissing = groupId !== '' && !groups.some((g) => g.id === groupId);
-  const title = editing ? `Edit ${rule.name}` : 'New rule';
+  const title = editing ? t.checks.ruleDialog.editTitle(rule.name) : t.checks.ruleDialog.newTitle;
   const saveDisabled = create.isPending || update.isPending || (mode === 'expression' && !expressionOk);
 
   return (
     <Dialog open onClose={onClose} title={title} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="rule-name">Name</Label>
+          <Label htmlFor="rule-name">{t.checks.name}</Label>
           <Input id="rule-name" value={name} required maxLength={100} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="grid grid-cols-3 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-metric">Metric</Label>
+            <Label htmlFor="rule-metric">{t.checks.ruleDialog.metric}</Label>
             <Select
               id="rule-metric"
               value={metric}
@@ -200,50 +202,47 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-severity">Severity</Label>
+            <Label htmlFor="rule-severity">{t.checks.ruleDialog.severity}</Label>
             <Select
               id="rule-severity"
               value={severity}
               disabled={seeded}
               onChange={(v) => setSeverity(v as Rule['severity'])}
               options={[
-                { value: 'warn', label: 'Warning' },
-                { value: 'crit', label: 'Critical' },
+                { value: 'warn', label: t.checks.ruleDialog.severityWarn },
+                { value: 'crit', label: t.checks.ruleDialog.severityCrit },
               ]}
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-for">For (seconds)</Label>
+            <Label htmlFor="rule-for">{t.checks.ruleDialog.forSeconds}</Label>
             <Input id="rule-for" type="number" min={0} max={86400} required value={forSeconds} onChange={(e) => setForSeconds(e.target.value)} />
           </div>
         </div>
         {seeded && (
-          <p className="text-[11px] text-muted-foreground">
-            This rule ships with every organization; its metric, scope and severity are fixed. Its threshold, clear condition, duration and
-            enabled state are editable here.
-          </p>
+          <p className="text-[11px] text-muted-foreground">{t.checks.ruleDialog.seededNote}</p>
         )}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="rule-scope">Applies to</Label>
+          <Label htmlFor="rule-scope">{t.checks.appliesTo}</Label>
           <Select
             id="rule-scope"
             value={scope}
             disabled={seeded}
             onChange={(v) => setScope(v as RuleScope)}
             options={[
-              { value: 'org', label: 'The whole organization' },
-              { value: 'group', label: `A monitoring group${groups.length === 0 ? ' (none yet)' : ''}`, disabled: groups.length === 0 },
-              { value: 'host', label: 'One host' },
-              { value: 'item', label: 'One item on a host' },
+              { value: 'org', label: t.checks.scope.org },
+              { value: 'group', label: groups.length === 0 ? t.checks.scope.groupNone : t.checks.scope.group, disabled: groups.length === 0 },
+              { value: 'host', label: t.checks.scope.host },
+              { value: 'item', label: t.checks.scope.item },
             ]}
           />
         </div>
         {scope === 'group' && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-group">Monitoring group</Label>
+            <Label htmlFor="rule-group">{t.checks.monitoringGroup}</Label>
             <Select
               id="rule-group"
-              placeholder="Choose a monitoring group…"
+              placeholder={t.checks.chooseGroup}
               required
               value={groupId}
               onChange={setGroupId}
@@ -253,7 +252,7 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
                 // empty that list, and without this option Select would
                 // fall back to "<id> (unavailable)" (the same review finding
                 // CheckDialog's own group select fixed).
-                ...(currentGroupMissing ? [{ value: groupId, label: `group ${groupId} (current binding)` }] : []),
+                ...(currentGroupMissing ? [{ value: groupId, label: t.checks.groupCurrent(groupId) }] : []),
                 ...groups.map((g) => ({ value: g.id, label: g.name })),
               ]}
             />
@@ -288,17 +287,17 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
         )}
         {!seeded && mode === 'form' && (
           <Button type="button" variant="ghost" className="self-start" onClick={() => void switchToExpression()}>
-            Switch to expression editor
+            {t.checks.ruleDialog.toExpression}
           </Button>
         )}
         {!seeded && mode === 'expression' && formReady && (
           <Button type="button" variant="ghost" className="self-start" onClick={() => setMode('form')}>
-            Switch to form editor
+            {t.checks.ruleDialog.toForm}
           </Button>
         )}
         <label className="flex items-center gap-2 text-xs">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          Enabled
+          {t.checks.enabledField}
         </label>
         {error && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
@@ -307,10 +306,10 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={saveDisabled}>
-            Save
+            {t.common.save}
           </Button>
         </div>
       </form>

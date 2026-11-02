@@ -1,3 +1,5 @@
+import type { Format } from '../../i18n/format.ts';
+import type { Messages } from '../../i18n/types.ts';
 import type { MaintenanceWindow } from '../../api/types.ts';
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -17,16 +19,16 @@ export function fromLocalInput(value: string): string {
 }
 
 /** whenLabel says when a window applies, in words. */
-export function whenLabel(w: MaintenanceWindow): string {
+export function whenLabel(w: MaintenanceWindow, t: Messages, fmt: Format): string {
   if (w.cron) {
-    return `${w.description || w.cron} · for ${w.duration ?? ''} · ${w.timezone ?? ''}`;
+    return t.maintenance.when.recurring(w.description || w.cron, w.duration ?? '', w.timezone ?? '');
   }
-  const fmt = (iso?: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
-  return `${fmt(w.starts_at)} – ${fmt(w.ends_at)}`;
+  const at = (iso?: string | null) => (iso ? fmt.dateTime(iso, { dateStyle: 'medium', timeStyle: 'short' }) : '');
+  return `${at(w.starts_at)} – ${at(w.ends_at)}`;
 }
 
 /** targetLabel names what a window covers. */
-export function targetLabel(w: MaintenanceWindow): string {
-  if (w.target_kind === 'org') return 'Whole organization';
-  return `${w.target_kind === 'host' ? 'Host' : 'Group'} ${w.target_name ?? ''}`.trim();
+export function targetLabel(w: MaintenanceWindow, t: Messages): string {
+  if (w.target_kind === 'org') return t.maintenance.target.org;
+  return `${w.target_kind === 'host' ? t.maintenance.target.host : t.maintenance.target.group} ${w.target_name ?? ''}`.trim();
 }

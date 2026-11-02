@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { useT } from '../../i18n/useT.ts';
 import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
@@ -56,6 +57,7 @@ import { alertToRowAlert, type AlertRowAlert } from './alertRow.ts';
  * the two disagreeing the moment either one changed independently.
  */
 export function AlertsPage() {
+  const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
   const routeSearch = useSearch({ strict: false }) as { host?: string };
@@ -77,7 +79,7 @@ export function AlertsPage() {
   const [snoozing, setSnoozing] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const header = <h1 className="text-xl font-semibold">Alerts</h1>;
+  const header = <h1 className="text-xl font-semibold">{t.alerts.title}</h1>;
 
   const orgGuard = useQueryGuard(orgInfo);
   const alertsGuard = useQueryGuard(alerts);
@@ -102,7 +104,7 @@ export function AlertsPage() {
     return (
       <>
         {header}
-        <p className="text-sm text-muted-foreground">Alerts are visible to members of this organization.</p>
+        <p className="text-sm text-muted-foreground">{t.alerts.noAccess}</p>
       </>
     );
   }
@@ -120,9 +122,9 @@ export function AlertsPage() {
 
   const hostNotice = filter.host && (
     <p className="flex items-center gap-2 text-xs text-muted-foreground">
-      Showing one host&apos;s alerts only.
+      {t.alerts.hostOnly}
       <button type="button" className="underline hover:text-primary" onClick={clearHostFilter}>
-        Show every alert
+        {t.alerts.showEvery}
       </button>
     </p>
   );
@@ -144,7 +146,7 @@ export function AlertsPage() {
     try {
       await unacknowledge.mutateAsync(a.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Unacknowledging this alert failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.alerts.unacknowledgeFailed, 'destructive');
     }
   }
 
@@ -152,7 +154,7 @@ export function AlertsPage() {
     try {
       await unsnooze.mutateAsync(a.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Unsnoozing this alert failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.alerts.unsnoozeFailed, 'destructive');
     }
   }
 
@@ -163,12 +165,12 @@ export function AlertsPage() {
       {filters}
       <Card>
         <GridHeader columns={ALERTS_COLUMNS}>
-          <span>Open</span>
-          <span>Host</span>
-          <span>Peak</span>
-          <span>Tracked</span>
-          <span>Ack</span>
-          <span>Mute</span>
+          <span>{t.alerts.columns.open}</span>
+          <span>{t.alerts.columns.host}</span>
+          <span>{t.alerts.columns.peak}</span>
+          <span>{t.alerts.columns.tracked}</span>
+          <span>{t.alerts.columns.ack}</span>
+          <span>{t.alerts.columns.mute}</span>
           <span />
         </GridHeader>
         {rows.map((a) => {
@@ -188,10 +190,10 @@ export function AlertsPage() {
                   type="button"
                   variant="ghost"
                   aria-expanded={open}
-                  aria-label={`Timeline for ${a.hostName}`}
+                  aria-label={t.alerts.timelineFor(a.hostName)}
                   onClick={() => setExpanded(open ? null : a.id)}
                 >
-                  {open ? 'Hide timeline' : 'Show timeline'}
+                  {open ? t.alerts.hideTimeline : t.alerts.showTimeline}
                 </Button>
               </div>
               {open && <AlertTimelinePanel org={org} alertId={a.id} />}
@@ -206,7 +208,7 @@ export function AlertsPage() {
             "Load more" side by side on screen contradict each other.
             This says nothing matched only when that is actually known. */}
         {rows.length === 0 && !alerts.hasNextPage && (
-          <p className="px-4 py-6 text-center text-xs text-muted-foreground">No alerts match this view.</p>
+          <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.alerts.empty}</p>
         )}
       </Card>
       {alerts.hasNextPage && (
@@ -223,16 +225,17 @@ export function AlertsPage() {
  * mounted — and therefore requested — only for a row somebody actually
  * expanded, exactly as HostAlertsCard's own panel of the same name is. */
 function AlertTimelinePanel({ org, alertId }: { org: string; alertId: string }) {
+  const t = useT();
   const detail = useAlert(org, alertId);
 
   return (
     <div className="border-b border-border p-3">
       {detail.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {detail.error instanceof Error ? detail.error.message : 'Could not read this alert\u2019s timeline.'}
+          {detail.error instanceof Error ? detail.error.message : t.alerts.timelineReadFailed}
         </p>
       )}
-      {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {!detail.data && !detail.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
       {detail.data && (
         <AlertTimeline
           entries={detail.data.alert.timeline ?? []}

@@ -1,0 +1,231 @@
+/**
+ * The Checks section: definitions, monitoring groups, rules and item
+ * decisions, with their dialogs. Check keys, metric names, plugin names,
+ * item names, host names, tags and rule expressions are data and never
+ * keys. Enumerations the API sends (origin, severity, verdict, match kind)
+ * are mapped to a label.
+ */
+export const enChecks = {
+  title: 'Checks',
+  tabs: {
+    checks: 'Checks',
+    groups: 'Monitoring groups',
+    rules: 'Rules',
+    items: 'Items',
+  },
+  interval: {
+    seconds: (n: number) => `${n} s`,
+    minutes: (n: number) => `${n} min`,
+    hours: (n: number) => `${n} h`,
+  },
+  enabled: 'enabled',
+  disabled: 'disabled',
+  enabledField: 'Enabled',
+  organization: 'Organization',
+  edit: 'Edit',
+  copy: 'Copy',
+  editAria: (name: string) => `Edit ${name}`,
+  copyAria: (name: string) => `Copy ${name}`,
+  deleteAria: (name: string) => `Delete ${name}`,
+  deleteFailed: 'Deleting failed',
+  saveFailed: 'Saving failed',
+  name: 'Name',
+  note: 'Note',
+  host: 'Host',
+  matching: 'Matching…',
+  origin: {
+    seed: 'seed',
+    custom: 'custom',
+    shared: 'shared',
+  },
+  severity: {
+    warn: 'warn',
+    crit: 'crit',
+  },
+  scope: {
+    org: 'The whole organization',
+    group: 'A monitoring group',
+    groupNone: 'A monitoring group (none yet)',
+    host: 'One host',
+    item: 'One item on a host',
+  },
+  appliesTo: 'Applies to',
+  monitoringGroup: 'Monitoring group',
+  chooseGroup: 'Choose a monitoring group…',
+  groupFallback: (id: string) => `group ${id}`,
+  groupCurrent: (id: string) => `group ${id} (current binding)`,
+  currentBinding: (name: string) => `${name} (current binding)`,
+  hostPicker: {
+    searchLabel: 'Search monitored hosts',
+    searchPlaceholder: 'Search monitored hosts…',
+    choose: 'Choose a monitored host…',
+    moreMatch: 'More hosts match than are listed — narrow the search.',
+    loadFailed: 'Could not load monitored hosts.',
+  },
+  list: {
+    noAccess: 'Checks are visible to members of this organization.',
+    summary: (n: number) => `${n} definitions · a narrower scope overrides a wider one under the same key`,
+    newCheck: 'New check',
+    columns: {
+      check: 'Check',
+      plugin: 'Plugin',
+      bindsTo: 'Binds to',
+      interval: 'Interval',
+      state: 'State',
+    },
+    empty: 'No check definitions yet.',
+    deleteConfirm: (key: string) => `Delete check ${key}? The hosts it reaches stop measuring it.`,
+    deleteSeeded: ' It ships with every organization and will not come back on its own.',
+  },
+  dialog: {
+    editTitle: (key: string) => `Edit ${key}`,
+    copyTitle: (key: string) => `Copy ${key}`,
+    newTitle: 'New check',
+    plugin: 'Plugin',
+    plugins: {
+      cpu: 'CPU',
+      memory: 'Memory',
+      disk: 'Disk',
+      service: 'Service units',
+    },
+    key: 'Key',
+    keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
+    seededNote:
+      'This definition ships with every organization; its key and plugin are fixed. Copy it to change either — its interval, parameters, binding and enabled state are editable here.',
+    sharedNote:
+      "This check is managed by the installation; its key, plugin, interval and parameters are fixed here. Copy it to change any of them — its binding and enabled state are this organization's own and stay editable here.",
+    copyNote:
+      'A copy needs either a key of its own or a narrower binding than the row it came from: a narrower scope with the same key is what overrides that check for those hosts.',
+    units: 'Units (one per line)',
+    mounts: 'Mounts (one per line, empty means every mount)',
+    bindsTo: 'Binds to',
+    interval: 'Interval (seconds)',
+  },
+  groups: {
+    noAccess: 'Monitoring groups are visible to members of this organization.',
+    deleteConfirm: (name: string) => `Delete monitoring group ${name}? The check definitions bound to it are deleted with it.`,
+    summary: (n: number) => `${n} groups · a higher priority wins when two groups bind the same check key to one host`,
+    newGroup: 'New group',
+    columns: {
+      group: 'Group',
+      selector: 'Selector',
+      priority: 'Priority',
+    },
+    empty: 'No monitoring groups yet.',
+    editTitle: (name: string) => `Edit ${name}`,
+    newTitle: 'New monitoring group',
+    selector: 'Selector',
+    priority: 'Priority',
+    typeSelector: 'Type a selector to see which hosts it matches.',
+    resolveFailed: 'Could not resolve this selector',
+    noMatch: 'No host matches this selector',
+    matches: (n: number) => `Matches ${n} host${n === 1 ? '' : 's'}`,
+    notMonitored: (name: string) => `${name} (not monitored)`,
+  },
+  rules: {
+    noAccess: 'Rules are visible to members of this organization.',
+    deleteConfirm: (name: string) => `Delete rule ${name}? Hosts stop being judged against it.`,
+    deleteSeeded: ' It ships with every organization and will not come back on its own.',
+    summary: (n: number) => `${n} rules · a narrower scope overrides a wider one on the same metric`,
+    newRule: 'New rule',
+    columns: {
+      rule: 'Rule',
+      severity: 'Severity',
+      appliesTo: 'Applies to',
+      for: 'For',
+      state: 'State',
+    },
+    empty: 'No rules yet.',
+    origin: {
+      seed: 'seed',
+      user: 'user',
+    },
+  },
+  ruleDialog: {
+    editTitle: (name: string) => `Edit ${name}`,
+    newTitle: 'New rule',
+    metric: 'Metric',
+    severity: 'Severity',
+    severityWarn: 'Warning',
+    severityCrit: 'Critical',
+    forSeconds: 'For (seconds)',
+    seededNote:
+      'This rule ships with every organization; its metric, scope and severity are fixed. Its threshold, clear condition, duration and enabled state are editable here.',
+    toExpression: 'Switch to expression editor',
+    toForm: 'Switch to form editor',
+    confirmSwitch:
+      'Switching to the expression editor is a one-way door from here. The way back to the form editor only stays open while the ' +
+      'expression keeps exactly the shape the form produces — one comparison against this metric, no arithmetic, no time window, no "or". ' +
+      'Once it leaves that shape, this rule can only be edited as an expression from now on. Continue?',
+    confirmDropClear: (op: string, value: string) =>
+      `This rule clears at "${op} ${value}". The expression editor has no syntax for a clear condition, so saving as an ` +
+      'expression will remove it — the rule will then change state on every crossing of its threshold instead of holding ' +
+      'until the clear condition is met. Remove the clear condition and continue?',
+    expression: 'Expression',
+    item: 'Item',
+    itemPlaceholder: '/var, sshd, …',
+    form: {
+      operator: 'Operator',
+      value: 'Value',
+      labels: 'Labels (one per line)',
+      label: 'Label',
+      clearCondition: 'Clear condition',
+      noClearCondition: 'No clear condition',
+      clearValue: 'Clear value',
+    },
+  },
+  items: {
+    noAccess: 'Item decisions are visible to members of this organization.',
+    deleteConfirm: (decision: string, pattern: string) =>
+      `Delete this ${decision} decision for pattern "${pattern}"? The item(s) it names go back to being judged normally.`,
+    summary: (n: number) => `${n} decisions · a host decision overrules an organization one on the same check`,
+    newDecision: 'New decision',
+    columns: {
+      target: 'Target',
+      check: 'Check',
+      pattern: 'Pattern',
+      verdict: 'Verdict',
+      note: 'Note',
+      created: 'Created',
+    },
+    verdict: {
+      ignore: 'ignore',
+      watch: 'watch',
+    },
+    matchKind: {
+      exact: 'exact',
+      glob: 'glob',
+    },
+    editDecision: (pattern: string) => `Edit decision for ${pattern}`,
+    deleteDecision: (pattern: string) => `Delete decision for ${pattern}`,
+    empty: 'No item decisions yet.',
+  },
+  itemDialog: {
+    newTitle: 'New item decision',
+    appliesTo: 'Applies to',
+    check: 'Check',
+    noChecks: 'No checks yet',
+    matchKind: 'Match kind',
+    exact: 'Exact — one literal item name',
+    glob: "Glob — a '*' pattern",
+    pattern: 'Pattern',
+    tooLong: (bytes: number, max: number) =>
+      `This pattern is ${bytes} bytes long; the limit is ${max}. Item names outside the ASCII range cost more than one byte each, so a pattern can pass the field's own character count and still be too long.`,
+    verdict: 'Verdict',
+    verdictIgnore: 'Ignore — stop judging this item',
+    verdictWatch: 'Watch — judge it even though a wider decision ignores it',
+    verdictWatchStored: 'Watch (stored outside this editor — has no effect at organization scope)',
+    watchNotOffered:
+      'Watch is not offered at organization scope: watching is already what happens by default, so an organization-wide watch would change nothing. It is available once this decision is scoped to a single host, which is the overrule it exists for.',
+    watchMismatch:
+      'This decision is stored as an organization-wide watch, which has no effect and the server now refuses to save. Choose ignore, or scope it to a host to keep watch as the overrule it is meant to be.',
+    notePlaceholder: 'Why does this item not need judging? The next operator reads this before switching it back on.',
+    confirmBroad: (total: number) =>
+      `This pattern currently matches ${total} items — more than the preview lists in full. Saving changes every one of them. Continue?`,
+    typePattern: 'Type a pattern to see which items it would match.',
+    resolveFailed: 'Could not resolve this pattern',
+    noMatch: 'Matches no currently known item — it still applies the moment one appears',
+    matches: (n: number) => `Matches ${n} item${n === 1 ? '' : 's'}`,
+    showingFirst: (n: number) => `Showing the first ${n} below — narrow the pattern to see the rest.`,
+  },
+};

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useT } from '../../i18n/useT.ts';
 import { ApiError } from '../../api/client.ts';
 import { useValidateRule } from '../../api/hooks/useRules.ts';
 import { Label } from '../../ui/label.tsx';
@@ -48,10 +49,11 @@ export interface RuleExpressionProps {
  * whatever the operator has since clicked into).
  */
 export function RuleExpression({ org, value, onChange, base, onValidChange }: RuleExpressionProps) {
+  const t = useT();
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), VALIDATE_DEBOUNCE_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDebounced(value), VALIDATE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
   }, [value]);
 
   // Nothing worth asking about yet: an empty expression or a name still
@@ -82,7 +84,7 @@ export function RuleExpression({ org, value, onChange, base, onValidChange }: Ru
 
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor="rule-expression">Expression</Label>
+      <Label htmlFor="rule-expression">{t.checks.ruleDialog.expression}</Label>
       <textarea
         id="rule-expression"
         ref={ref}

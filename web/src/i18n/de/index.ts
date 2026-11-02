@@ -2,12 +2,16 @@ import type { Messages } from '../types.ts';
 import { deAccount } from './account.ts';
 import { deActivity } from './activity.ts';
 import { deAgents } from './agents.ts';
+import { deAlerts } from './alerts.ts';
 import { deAuth } from './auth.ts';
+import { deCalendar } from './calendar.ts';
+import { deChecks } from './checks.ts';
 import { deCommon } from './common.ts';
 import { deFleet } from './fleet.ts';
 import { deHosts } from './hosts.ts';
 import { deInstance } from './instance.ts';
 import { deLanguage } from './language.ts';
+import { deMaintenance } from './maintenance.ts';
 import { deMembers } from './members.ts';
 import { deRoutes } from './routes.ts';
 import { deSettings } from './settings.ts';
@@ -46,12 +50,16 @@ export const de: Messages = {
   account: deAccount,
   activity: deActivity,
   agents: deAgents,
+  alerts: deAlerts,
   auth: deAuth,
+  calendar: deCalendar,
+  checks: deChecks,
   common: deCommon,
   fleet: deFleet,
   hosts: deHosts,
   instance: deInstance,
   language: deLanguage,
+  maintenance: deMaintenance,
   members: deMembers,
   routes: deRoutes,
   settings: deSettings,

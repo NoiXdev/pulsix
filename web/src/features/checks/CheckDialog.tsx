@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
+import { useT } from '../../i18n/useT.ts';
 import { useCreateCheck, useUpdateCheck } from '../../api/hooks/useChecks.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlugin, MonitoringGroup } from '../../api/types.ts';
@@ -13,12 +14,7 @@ import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlug
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
-const PLUGINS: [CheckPlugin, string][] = [
-  ['cpu', 'CPU'],
-  ['memory', 'Memory'],
-  ['disk', 'Disk'],
-  ['service', 'Service units'],
-];
+const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service'];
 
 /** lines turns a textarea's content into the string list the API takes,
  * dropping blank lines so a trailing newline is not a parameter. */
@@ -67,6 +63,7 @@ export interface CheckDialogProps {
  * the binding is what gets disabled.
  */
 export function CheckDialog({ org, check, copy = false, groups, onClose }: CheckDialogProps) {
+  const t = useT();
   const editing = !!check && !copy;
   const seeded = editing && check.origin === 'seed';
   const shared = editing && check.origin === 'shared';
@@ -132,7 +129,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : t.checks.saveFailed);
     }
   }
 
@@ -140,23 +137,23 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   // binding names a group this page has not been told about. Either way the
   // definition's own binding stays selectable and savable.
   const currentGroupMissing = groupId !== '' && !groups.some((g) => g.id === groupId);
-  const title = editing ? `Edit ${check.key}` : copy && check ? `Copy ${check.key}` : 'New check';
+  const title = editing ? t.checks.dialog.editTitle(check.key) : copy && check ? t.checks.dialog.copyTitle(check.key) : t.checks.dialog.newTitle;
   return (
     <Dialog open onClose={onClose} title={title} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-plugin">Plugin</Label>
+            <Label htmlFor="check-plugin">{t.checks.dialog.plugin}</Label>
             <Select
               id="check-plugin"
-              options={PLUGINS.map(([value, label]) => ({ value, label }))}
+              options={PLUGINS.map((value) => ({ value, label: t.checks.dialog.plugins[value] }))}
               value={plugin}
               disabled={sharedOrSeeded}
               onChange={(v) => setPlugin(v as CheckPlugin)}
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-key">Key</Label>
+            <Label htmlFor="check-key">{t.checks.dialog.key}</Label>
             <Input
               id="check-key"
               className="font-mono"
@@ -168,7 +165,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               // (which satisfies `required` on its own) is caught here
               // too. The server rule is still the guard, not this.
               pattern="[a-z0-9][a-z0-9-]{0,62}"
-              title="Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen"
+              title={t.checks.dialog.keyTitle}
               placeholder={plugin}
               maxLength={63}
               // Trimmed as it is typed, so `pattern` judges exactly the
@@ -181,26 +178,17 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
           </div>
         </div>
         {seeded && (
-          <p className="text-[11px] text-muted-foreground">
-            This definition ships with every organization; its key and plugin are fixed. Copy it to change either — its interval, parameters,
-            binding and enabled state are editable here.
-          </p>
+          <p className="text-[11px] text-muted-foreground">{t.checks.dialog.seededNote}</p>
         )}
         {shared && (
-          <p className="text-[11px] text-muted-foreground">
-            This check is managed by the installation; its key, plugin, interval and parameters are fixed here. Copy it to change any of
-            them — its binding and enabled state are this organization&apos;s own and stay editable here.
-          </p>
+          <p className="text-[11px] text-muted-foreground">{t.checks.dialog.sharedNote}</p>
         )}
         {copy && (
-          <p className="text-[11px] text-muted-foreground">
-            A copy needs either a key of its own or a narrower binding than the row it came from: a narrower scope with the same key is what
-            overrides that check for those hosts.
-          </p>
+          <p className="text-[11px] text-muted-foreground">{t.checks.dialog.copyNote}</p>
         )}
         {plugin === 'service' && (
           <>
-            <Label htmlFor="check-units">Units (one per line)</Label>
+            <Label htmlFor="check-units">{t.checks.dialog.units}</Label>
             <textarea
               id="check-units"
               className={TEXTAREA}
@@ -214,7 +202,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         )}
         {plugin === 'disk' && (
           <>
-            <Label htmlFor="check-mounts">Mounts (one per line, empty means every mount)</Label>
+            <Label htmlFor="check-mounts">{t.checks.dialog.mounts}</Label>
             <textarea
               id="check-mounts"
               className={TEXTAREA}
@@ -227,20 +215,20 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         )}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-binding">Binds to</Label>
+            <Label htmlFor="check-binding">{t.checks.dialog.bindsTo}</Label>
             <Select
               id="check-binding"
               options={[
-                { value: 'org', label: 'The whole organization' },
-                { value: 'group', label: `A monitoring group${groups.length === 0 ? ' (none yet)' : ''}`, disabled: groups.length === 0 },
-                { value: 'host', label: 'One host' },
+                { value: 'org', label: t.checks.scope.org },
+                { value: 'group', label: groups.length === 0 ? t.checks.scope.groupNone : t.checks.scope.group, disabled: groups.length === 0 },
+                { value: 'host', label: t.checks.scope.host },
               ]}
               value={bindingKind}
               onChange={(v) => setBindingKind(v as CheckBindingKind)}
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-interval">Interval (seconds)</Label>
+            <Label htmlFor="check-interval">{t.checks.dialog.interval}</Label>
             <Input
               id="check-interval"
               type="number"
@@ -255,10 +243,10 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         </div>
         {bindingKind === 'group' && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-group">Monitoring group</Label>
+            <Label htmlFor="check-group">{t.checks.monitoringGroup}</Label>
             <Select
               id="check-group"
-              placeholder="Choose a monitoring group…"
+              placeholder={t.checks.chooseGroup}
               required
               value={groupId}
               onChange={setGroupId}
@@ -270,7 +258,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
                 // against and falls back to "<id> (unavailable)" (its own
                 // selectedLabel), reading as broken for a binding that is
                 // perfectly valid (review finding 1).
-                ...(currentGroupMissing ? [{ value: groupId, label: `group ${groupId} (current binding)` }] : []),
+                ...(currentGroupMissing ? [{ value: groupId, label: t.checks.groupCurrent(groupId) }] : []),
                 ...groups.map((g) => ({ value: g.id, label: g.name })),
               ]}
             />
@@ -286,7 +274,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         )}
         <label className="flex items-center gap-2 text-xs">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          Enabled
+          {t.checks.enabledField}
         </label>
         {error && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
@@ -295,10 +283,10 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending || update.isPending}>
-            Save
+            {t.common.save}
           </Button>
         </div>
       </form>
@@ -335,6 +323,7 @@ function HostPicker({
   currentName?: string;
   onChange: (id: string) => void;
 }) {
+  const t = useT();
   const [q, setQ] = useState('');
   const hosts = useHosts(org, { monitored: true, q });
   const listed = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
@@ -342,30 +331,30 @@ function HostPicker({
 
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor="check-host">Host</Label>
+      <Label htmlFor="check-host">{t.checks.host}</Label>
       <input
         type="search"
-        aria-label="Search monitored hosts"
-        placeholder="Search monitored hosts…"
+        aria-label={t.checks.hostPicker.searchLabel}
+        placeholder={t.checks.hostPicker.searchPlaceholder}
         className={SELECT}
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
       <Select
         id="check-host"
-        placeholder="Choose a monitored host…"
+        placeholder={t.checks.hostPicker.choose}
         required
         value={value}
         onChange={onChange}
         options={[
-          ...(currentMissing ? [{ value, label: `${currentName ?? value} (current binding)` }] : []),
+          ...(currentMissing ? [{ value, label: t.checks.currentBinding(currentName ?? value) }] : []),
           ...listed.map((h) => ({ value: h.id, label: h.name })),
         ]}
       />
-      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">More hosts match than are listed — narrow the search.</span>}
+      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">{t.checks.hostPicker.moreMatch}</span>}
       {!hosts.data && hosts.isError && (
         <span role="alert" className="text-[11px] text-destructive">
-          Could not load monitored hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
+          {t.checks.hostPicker.loadFailed} {hosts.error instanceof Error ? hosts.error.message : ''}
         </span>
       )}
     </div>

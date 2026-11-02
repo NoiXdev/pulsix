@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useT } from '../../i18n/useT.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { useCalendar } from '../../api/hooks/useCalendar.ts';
@@ -14,7 +16,6 @@ import { BANDS, MAINTENANCE_COLOR, type CalendarView, addDays, dayKey, entryTone
 const TONE_VAR: Record<Tone, string> = {
   ok: 'var(--px-ok)', warn: 'var(--px-warn)', crit: 'var(--px-crit)', unknown: 'var(--px-unknown)', accent: 'var(--px-accent)', maintenance: MAINTENANCE_COLOR,
 };
-const dayLabel = (d: Date) => d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
 const gridZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 /** ScheduleCalendar is the Scheduler artboard's calendar (spec 2026-09-18
@@ -23,6 +24,8 @@ const gridZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
  * as a week grid, a month grid or a list. Clicking an occurrence opens its
  * run, or the schedule when no run exists. */
 export function ScheduleCalendar({ org }: { org: string }) {
+  const t = useT();
+  const fmt = useFormat();
   const navigate = useNavigate();
   const [view, setView] = useState<CalendarView>('week');
   const [anchor, setAnchor] = useState(() => startOfWeek(new Date()));
@@ -45,13 +48,16 @@ export function ScheduleCalendar({ org }: { org: string }) {
 
   const title =
     view === 'month'
-      ? monthOf(anchor).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
-      : `Week · ${from.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${addDays(to, -1).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`;
+      ? fmt.date(monthOf(anchor), { month: 'long', year: 'numeric' })
+      : t.calendar.weekTitle(
+          fmt.date(from, { day: 'numeric', month: 'short' }),
+          fmt.date(addDays(to, -1), { day: 'numeric', month: 'short' }),
+        );
 
   return (
-    <section aria-label="Calendar" className="flex flex-col overflow-hidden rounded-[10px] border border-border bg-card">
+    <section aria-label={t.calendar.label} className="flex flex-col overflow-hidden rounded-[10px] border border-border bg-card">
       <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-        <Button type="button" variant="ghost" aria-label="Previous" onClick={() => setAnchor(shift(view, anchor, -1))}>
+        <Button type="button" variant="ghost" aria-label={t.calendar.previous} onClick={() => setAnchor(shift(view, anchor, -1))}>
           <ChevronLeft size={14} />
         </Button>
         <h2 className="text-[13px] font-semibold">{title}</h2>
@@ -63,8 +69,8 @@ export function ScheduleCalendar({ org }: { org: string }) {
             out in, which an organization does not yet carry; saying
             which zone this is costs nothing and removes the ambiguity
             (backlog 2.88). */}
-        <span className="text-[11px] text-muted-foreground">Times in {gridZone}</span>
-        <Button type="button" variant="ghost" aria-label="Next" onClick={() => setAnchor(shift(view, anchor, 1))}>
+        <span className="text-[11px] text-muted-foreground">{t.calendar.timesIn(gridZone)}</span>
+        <Button type="button" variant="ghost" aria-label={t.calendar.next} onClick={() => setAnchor(shift(view, anchor, 1))}>
           <ChevronRight size={14} />
         </Button>
         <div role="tablist" className="ml-auto flex gap-1">
@@ -77,15 +83,15 @@ export function ScheduleCalendar({ org }: { org: string }) {
               className={`rounded-md border px-2.5 py-1 text-xs capitalize ${view === v ? 'border-primary text-primary' : 'border-border text-muted-foreground'}`}
               onClick={() => setView(v)}
             >
-              {v}
+              {t.calendar.views[v]}
             </button>
           ))}
         </div>
         <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: MAINTENANCE_COLOR }} /> maintenance
+          <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: MAINTENANCE_COLOR }} /> {t.calendar.maintenance}
         </span>
       </div>
-      {cal.data?.truncated && <p className="px-4 pt-2 text-[11px] text-muted-foreground">Some very frequent schedules or maintenance windows are shown in part.</p>}
+      {cal.data?.truncated && <p className="px-4 pt-2 text-[11px] text-muted-foreground">{t.calendar.truncated}</p>}
       {view === 'week' && <WeekGrid start={from} entries={entries} windows={windows} onOpen={open} />}
       {view === 'month' && <MonthGrid start={from} month={monthOf(anchor).getMonth()} entries={entries} windows={windows} onOpen={open} />}
       {view === 'list' && <ListView entries={entries} windows={windows} onOpen={open} />}
@@ -107,10 +113,12 @@ function Chip({ label, color, onClick }: { label: string; color: string; onClick
 }
 
 function WindowBar({ w }: { w: CalendarWindow }) {
-  return <Chip label={`Maintenance · ${w.name}`} color={MAINTENANCE_COLOR} />;
+  const t = useT();
+  return <Chip label={t.calendar.windowChip(w.name)} color={MAINTENANCE_COLOR} />;
 }
 
 function WeekGrid({ start, entries, windows, onOpen }: { start: Date; entries: CalendarEntry[]; windows: CalendarWindow[]; onOpen: (e: CalendarEntry) => void }) {
+  const fmt = useFormat();
   const cells = weekCells(entries, start);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const today = dayKey(new Date());
@@ -119,7 +127,7 @@ function WeekGrid({ start, entries, windows, onOpen }: { start: Date; entries: C
       <span />
       {days.map((d) => (
         <span key={d.toISOString()} className={`text-center font-semibold ${dayKey(d) === today ? 'text-primary' : ''}`}>
-          {dayLabel(d)}
+          {fmt.date(d, { weekday: 'short', day: 'numeric' })}
         </span>
       ))}
       {BANDS.map((h, band) => (
@@ -161,6 +169,7 @@ function WeekRow({ hour, band, days, cells, windows, onOpen }: {
 function MonthGrid({ start, month, entries, windows, onOpen }: {
   start: Date; month: number; entries: CalendarEntry[]; windows: CalendarWindow[]; onOpen: (e: CalendarEntry) => void;
 }) {
+  const t = useT();
   const days = Array.from({ length: 42 }, (_, i) => addDays(start, i));
   const byDay = new Map<string, CalendarEntry[]>();
   for (const e of entries) {
@@ -177,12 +186,12 @@ function MonthGrid({ start, month, entries, windows, onOpen }: {
           <div key={d.toISOString()} data-day={dayKey(d)} className={`flex min-h-[64px] flex-col gap-0.5 rounded border border-border p-1 ${d.getMonth() === month ? 'bg-background' : 'opacity-50'}`}>
             <span className="flex items-center justify-between text-muted-foreground">
               {d.getDate()}
-              {inWindow && <span aria-label="maintenance" className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: MAINTENANCE_COLOR }} />}
+              {inWindow && <span aria-label={t.calendar.maintenance} className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: MAINTENANCE_COLOR }} />}
             </span>
             {names.slice(0, 3).map((e) => (
               <Chip key={e.schedule_id} label={e.schedule_name} color={TONE_VAR[entryTone(e)]} onClick={() => onOpen(e)} />
             ))}
-            {names.length > 3 && <span className="text-muted-foreground">+{names.length - 3} more</span>}
+            {names.length > 3 && <span className="text-muted-foreground">{t.calendar.more(names.length - 3)}</span>}
           </div>
         );
       })}
@@ -191,26 +200,28 @@ function MonthGrid({ start, month, entries, windows, onOpen }: {
 }
 
 function ListView({ entries, windows, onOpen }: { entries: CalendarEntry[]; windows: CalendarWindow[]; onOpen: (e: CalendarEntry) => void }) {
+  const t = useT();
+  const fmt = useFormat();
   type Row = { at: Date; entry?: CalendarEntry; window?: CalendarWindow };
   const rows: Row[] = [...entries.map((e) => ({ at: new Date(e.at), entry: e })), ...windows.map((w) => ({ at: new Date(w.start), window: w }))].sort(
     (a, b) => a.at.getTime() - b.at.getTime(),
   );
-  if (rows.length === 0) return <p className="px-4 py-6 text-center text-xs text-muted-foreground">Nothing scheduled in this range.</p>;
+  if (rows.length === 0) return <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.calendar.empty}</p>;
   return (
     <ul className="flex flex-col divide-y divide-border">
       {rows.map((r, i) => (
         <li key={i} className="grid grid-cols-[150px_minmax(0,1fr)_150px] items-center gap-3 px-4 py-2 text-xs" data-list-row>
-          <span className="font-mono text-muted-foreground">{r.at.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}</span>
+          <span className="font-mono text-muted-foreground">{fmt.dateTime(r.at, { dateStyle: 'short', timeStyle: 'short' })}</span>
           {r.entry ? (
             <button type="button" className="truncate text-left hover:text-primary" onClick={() => onOpen(r.entry!)}>
               {r.entry.schedule_name}
             </button>
           ) : (
             <span className="truncate" style={{ color: MAINTENANCE_COLOR }}>
-              Maintenance · {r.window!.name} (until {new Date(r.window!.end).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })})
+              {t.calendar.windowUntil(r.window!.name, fmt.dateTime(r.window!.end, { dateStyle: 'short', timeStyle: 'short' }))}
             </span>
           )}
-          <span>{r.entry && <Pill tone={entryTone(r.entry)}>{r.entry.state === 'triggered' ? r.entry.job_status ?? 'triggered' : r.entry.state}</Pill>}</span>
+          <span>{r.entry && <Pill tone={entryTone(r.entry)}>{r.entry.state === 'triggered' ? (r.entry.job_status ? t.calendar.jobStatus[r.entry.job_status] : t.calendar.state.triggered) : t.calendar.state[r.entry.state]}</Pill>}</span>
         </li>
       ))}
     </ul>

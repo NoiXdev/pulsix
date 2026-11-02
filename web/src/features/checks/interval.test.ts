@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { en } from '../../i18n/en/index.ts';
+import { de } from '../../i18n/de/index.ts';
 import { intervalLabel } from './interval.ts';
 
 describe('intervalLabel', () => {
@@ -15,6 +17,12 @@ describe('intervalLabel', () => {
     // guard it would read "0 h".
     ['zero is not zero hours', 0, '0 s'],
   ])('%s', (_name, seconds, expected) => {
-    expect(intervalLabel(seconds)).toBe(expected);
+    expect(intervalLabel(seconds, en)).toBe(expected);
+  });
+
+  it('writes the German units', () => {
+    expect(intervalLabel(3600, de)).toBe('1 Std.');
+    expect(intervalLabel(300, de)).toBe('5 Min.');
+    expect(intervalLabel(90, de)).toBe('90 s');
   });
 });

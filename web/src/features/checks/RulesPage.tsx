@@ -7,6 +7,7 @@ import { Pill, Tag } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useT } from '../../i18n/useT.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useDeleteRule, useRuleMetrics, useRules } from '../../api/hooks/useRules.ts';
@@ -42,6 +43,7 @@ function groupByMetric(rules: Rule[]): Array<[string, Rule[]]> {
  * checks.write rather than a permission of its own).
  */
 export function RulesPage() {
+  const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
   const orgInfo = useOrg(org);
@@ -60,7 +62,7 @@ export function RulesPage() {
   // MonitoringGroupsPage already carry — review finding 5).
   const header = (
     <div className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">Checks</h1>
+      <h1 className="text-xl font-semibold">{t.checks.title}</h1>
       <ChecksTabs org={org} />
     </div>
   );
@@ -87,7 +89,7 @@ export function RulesPage() {
     return (
       <>
         {header}
-        <p className="text-sm text-muted-foreground">Rules are visible to members of this organization.</p>
+        <p className="text-sm text-muted-foreground">{t.checks.rules.noAccess}</p>
       </>
     );
   }
@@ -105,12 +107,12 @@ export function RulesPage() {
   const grouped = groupByMetric(list);
 
   async function onDelete(r: Rule) {
-    const seeded = r.origin === 'seed' ? ' It ships with every organization and will not come back on its own.' : '';
-    if (!confirm(`Delete rule ${r.name}? Hosts stop being judged against it.${seeded}`)) return;
+    const seeded = r.origin === 'seed' ? t.checks.rules.deleteSeeded : '';
+    if (!confirm(`${t.checks.rules.deleteConfirm(r.name)}${seeded}`)) return;
     try {
       await remove.mutateAsync(r.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.checks.deleteFailed, 'destructive');
     }
   }
 
@@ -119,21 +121,21 @@ export function RulesPage() {
       {header}
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-muted-foreground">
-          {list.length} rules · a narrower scope overrides a wider one on the same metric
+          {t.checks.rules.summary(list.length)}
         </span>
         {canWrite && (
           <Button variant="primary" onClick={() => setEditing({})} disabled={metricList.length === 0}>
-            <SlidersHorizontal size={15} /> New rule
+            <SlidersHorizontal size={15} /> {t.checks.rules.newRule}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Rule</span>
-          <span>Severity</span>
-          <span>Applies to</span>
-          <span>For</span>
-          <span>State</span>
+          <span>{t.checks.rules.columns.rule}</span>
+          <span>{t.checks.rules.columns.severity}</span>
+          <span>{t.checks.rules.columns.appliesTo}</span>
+          <span>{t.checks.rules.columns.for}</span>
+          <span>{t.checks.rules.columns.state}</span>
           <span />
         </GridHeader>
         {grouped.map(([metric, rulesForMetric]) => (
@@ -145,22 +147,22 @@ export function RulesPage() {
               <GridRow key={r.id} columns={COLUMNS}>
                 <span className="flex min-w-0 items-center gap-2">
                   <span className="truncate text-[13px] text-foreground">{r.name}</span>
-                  <Tag>{r.origin}</Tag>
+                  <Tag>{t.checks.rules.origin[r.origin]}</Tag>
                 </span>
                 <span>
-                  <Pill tone={r.severity === 'crit' ? 'crit' : 'warn'}>{r.severity}</Pill>
+                  <Pill tone={r.severity === 'crit' ? 'crit' : 'warn'}>{t.checks.severity[r.severity]}</Pill>
                 </span>
                 <RuleTarget org={org} rule={r} groups={groupList} />
-                <span className="text-[13px]">{intervalLabel(r.for_seconds)}</span>
-                <span>{r.enabled ? <Pill tone="ok">enabled</Pill> : <Pill tone="unknown">disabled</Pill>}</span>
+                <span className="text-[13px]">{intervalLabel(r.for_seconds, t)}</span>
+                <span>{r.enabled ? <Pill tone="ok">{t.checks.enabled}</Pill> : <Pill tone="unknown">{t.checks.disabled}</Pill>}</span>
                 <span className="flex justify-end gap-1">
                   {canWrite && (
                     <>
-                      <Button type="button" variant="ghost" aria-label={`Edit ${r.name}`} onClick={() => setEditing({ rule: r })}>
-                        Edit
+                      <Button type="button" variant="ghost" aria-label={t.checks.editAria(r.name)} onClick={() => setEditing({ rule: r })}>
+                        {t.checks.edit}
                       </Button>
-                      <Button type="button" variant="destructive" aria-label={`Delete ${r.name}`} onClick={() => void onDelete(r)}>
-                        Delete
+                      <Button type="button" variant="destructive" aria-label={t.checks.deleteAria(r.name)} onClick={() => void onDelete(r)}>
+                        {t.common.delete}
                       </Button>
                     </>
                   )}
@@ -169,7 +171,7 @@ export function RulesPage() {
             ))}
           </div>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No rules yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.checks.rules.empty}</p>}
       </Card>
       {editing && <RuleDialog org={org} rule={editing.rule} metrics={metricList} groups={groupList} onClose={() => setEditing(null)} />}
     </>
@@ -189,11 +191,12 @@ export function RulesPage() {
  * separately loaded monitoring-group list may still know it in the narrow
  * window between the two reads. */
 function RuleTarget({ org, rule, groups }: { org: string; rule: Rule; groups: MonitoringGroup[] }) {
+  const t = useT();
   if (rule.scope === 'group' && rule.group_id) {
     const group = groups.find((g) => g.id === rule.group_id);
     return (
       <Link to="/o/$org/checks/monitoring-groups" params={{ org }} className="truncate text-[13px] text-foreground hover:text-primary">
-        {rule.group_name ?? group?.name ?? `group ${rule.group_id.slice(0, 8)}`}
+        {rule.group_name ?? group?.name ?? t.checks.groupFallback(rule.group_id.slice(0, 8))}
       </Link>
     );
   }
@@ -209,5 +212,5 @@ function RuleTarget({ org, rule, groups }: { org: string; rule: Rule; groups: Mo
       </Link>
     );
   }
-  return <span className="truncate text-[13px] text-muted-foreground">Organization</span>;
+  return <span className="truncate text-[13px] text-muted-foreground">{t.checks.organization}</span>;
 }

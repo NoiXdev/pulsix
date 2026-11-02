@@ -7,6 +7,8 @@ import { Pill, Tag } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useT } from '../../i18n/useT.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useRuleMetrics } from '../../api/hooks/useRules.ts';
 import { useDeleteItemDecision, useItemDecisions } from '../../api/hooks/useItems.ts';
@@ -59,6 +61,8 @@ function groupByCheck(decisions: ItemDecision[]): Array<[string, ItemDecision[]]
  * rather than a permission of its own).
  */
 export function ItemsPage() {
+  const t = useT();
+  const fmt = useFormat();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
   const orgInfo = useOrg(org);
@@ -76,7 +80,7 @@ export function ItemsPage() {
   // already carry).
   const header = (
     <div className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">Checks</h1>
+      <h1 className="text-xl font-semibold">{t.checks.title}</h1>
       <ChecksTabs org={org} />
     </div>
   );
@@ -103,7 +107,7 @@ export function ItemsPage() {
     return (
       <>
         {header}
-        <p className="text-sm text-muted-foreground">Item decisions are visible to members of this organization.</p>
+        <p className="text-sm text-muted-foreground">{t.checks.items.noAccess}</p>
       </>
     );
   }
@@ -120,13 +124,13 @@ export function ItemsPage() {
   const grouped = groupByCheck(list);
 
   async function onDelete(d: ItemDecision) {
-    if (!confirm(`Delete this ${d.decision} decision for pattern "${d.pattern}"? The item(s) it names go back to being judged normally.`)) {
+    if (!confirm(t.checks.items.deleteConfirm(t.checks.items.verdict[d.decision], d.pattern))) {
       return;
     }
     try {
       await remove.mutateAsync(d.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.checks.deleteFailed, 'destructive');
     }
   }
 
@@ -135,22 +139,22 @@ export function ItemsPage() {
       {header}
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-muted-foreground">
-          {list.length} decisions · a host decision overrules an organization one on the same check
+          {t.checks.items.summary(list.length)}
         </span>
         {canWrite && (
           <Button variant="primary" onClick={() => setEditing({})} disabled={checkKeys.length === 0}>
-            <ShieldOff size={15} /> New decision
+            <ShieldOff size={15} /> {t.checks.items.newDecision}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Target</span>
-          <span>Check</span>
-          <span>Pattern</span>
-          <span>Verdict</span>
-          <span>Note</span>
-          <span>Created</span>
+          <span>{t.checks.items.columns.target}</span>
+          <span>{t.checks.items.columns.check}</span>
+          <span>{t.checks.items.columns.pattern}</span>
+          <span>{t.checks.items.columns.verdict}</span>
+          <span>{t.checks.items.columns.note}</span>
+          <span>{t.checks.items.columns.created}</span>
           <span />
         </GridHeader>
         {grouped.map(([checkKey, decisionsForCheck]) => (
@@ -165,37 +169,37 @@ export function ItemsPage() {
                   <Tag>{d.check_key}</Tag>
                 </span>
                 <span className="truncate font-mono text-[13px]" title={d.pattern}>
-                  {d.pattern} <span className="text-muted-foreground">({d.match_kind})</span>
+                  {d.pattern} <span className="text-muted-foreground">({t.checks.items.matchKind[d.match_kind]})</span>
                 </span>
                 <span>
                   {/* unknown/ok, not warn/ok: warn is reserved for a degraded
                       monitoring state (ui/badge.tsx's own doc comment), and a
                       verdict is not one — the same reasoning RulesPage's own
                       enabled/disabled Pill already follows for a rule's state. */}
-                  <Pill tone={d.decision === 'watch' ? 'ok' : 'unknown'}>{d.decision}</Pill>
+                  <Pill tone={d.decision === 'watch' ? 'ok' : 'unknown'}>{t.checks.items.verdict[d.decision]}</Pill>
                 </span>
                 <span className="truncate text-[13px] text-muted-foreground" title={d.note}>
                   {d.note || '—'}
                 </span>
-                <span className="text-[13px] text-muted-foreground">{new Date(d.created_at).toLocaleDateString()}</span>
+                <span className="text-[13px] text-muted-foreground">{fmt.date(d.created_at)}</span>
                 <span className="flex justify-end gap-1">
                   {canWrite && (
                     <>
                       <Button
                         type="button"
                         variant="ghost"
-                        aria-label={`Edit decision for ${d.pattern}`}
+                        aria-label={t.checks.items.editDecision(d.pattern)}
                         onClick={() => setEditing({ decision: d })}
                       >
-                        Edit
+                        {t.checks.edit}
                       </Button>
                       <Button
                         type="button"
                         variant="destructive"
-                        aria-label={`Delete decision for ${d.pattern}`}
+                        aria-label={t.checks.items.deleteDecision(d.pattern)}
                         onClick={() => void onDelete(d)}
                       >
-                        Delete
+                        {t.common.delete}
                       </Button>
                     </>
                   )}
@@ -204,7 +208,7 @@ export function ItemsPage() {
             ))}
           </div>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No item decisions yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.checks.items.empty}</p>}
       </Card>
       {editing && <ItemDecisionDialog org={org} decision={editing.decision} checkKeys={checkKeys} onClose={() => setEditing(null)} />}
     </>
@@ -217,6 +221,7 @@ export function ItemsPage() {
  * enrichment), so a host-scoped decision shows its shortened id, exactly
  * the fallback RuleTarget itself used before that enrichment existed. */
 function DecisionTarget({ org, decision }: { org: string; decision: ItemDecision }) {
+  const t = useT();
   if (decision.scope === 'host' && decision.host_id) {
     return (
       <Link
@@ -228,5 +233,5 @@ function DecisionTarget({ org, decision }: { org: string; decision: ItemDecision
       </Link>
     );
   }
-  return <span className="truncate text-[13px] text-muted-foreground">Organization</span>;
+  return <span className="truncate text-[13px] text-muted-foreground">{t.checks.organization}</span>;
 }

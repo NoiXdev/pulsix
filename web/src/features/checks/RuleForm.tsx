@@ -1,3 +1,4 @@
+import { useT } from '../../i18n/useT.ts';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
@@ -46,29 +47,30 @@ export interface RuleFormProps {
 export function RuleForm({
   kind, op, onOpChange, value, onValueChange, labels, onLabelsChange, clearOp, onClearOpChange, clearValue, onClearValueChange,
 }: RuleFormProps) {
+  const t = useT();
   const ops = kind === 'discrete' ? DISCRETE_OPS : NUMERIC_OPS;
   return (
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="rule-op">Operator</Label>
+          <Label htmlFor="rule-op">{t.checks.ruleDialog.form.operator}</Label>
           <Select id="rule-op" value={op} onChange={onOpChange} options={ops.map((o) => ({ value: o, label: o }))} />
         </div>
         {kind === 'numeric' && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-value">Value</Label>
+            <Label htmlFor="rule-value">{t.checks.ruleDialog.form.value}</Label>
             <Input id="rule-value" type="number" step="any" required value={value} onChange={(e) => onValueChange(e.target.value)} />
           </div>
         )}
         {kind === 'discrete' && op === 'in' && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-labels">Labels (one per line)</Label>
+            <Label htmlFor="rule-labels">{t.checks.ruleDialog.form.labels}</Label>
             <textarea id="rule-labels" className={TEXTAREA} required value={labels} onChange={(e) => onLabelsChange(e.target.value)} />
           </div>
         )}
         {kind === 'discrete' && op !== 'in' && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-label">Label</Label>
+            <Label htmlFor="rule-label">{t.checks.ruleDialog.form.label}</Label>
             <Input id="rule-label" required value={labels} onChange={(e) => onLabelsChange(e.target.value)} />
           </div>
         )}
@@ -76,10 +78,10 @@ export function RuleForm({
       {kind === 'numeric' && (
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rule-clear-op">Clear condition</Label>
+            <Label htmlFor="rule-clear-op">{t.checks.ruleDialog.form.clearCondition}</Label>
             <Select
               id="rule-clear-op"
-              placeholder="No clear condition"
+              placeholder={t.checks.ruleDialog.form.noClearCondition}
               value={clearOp}
               onChange={onClearOpChange}
               options={NUMERIC_OPS.map((o) => ({ value: o, label: o }))}
@@ -87,7 +89,7 @@ export function RuleForm({
           </div>
           {clearOp !== '' && (
             <div className="flex flex-col gap-1">
-              <Label htmlFor="rule-clear-value">Clear value</Label>
+              <Label htmlFor="rule-clear-value">{t.checks.ruleDialog.form.clearValue}</Label>
               <Input
                 id="rule-clear-value"
                 type="number"

@@ -5,6 +5,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Tag } from '../../ui/badge.tsx';
 import { Select } from '../../ui/Select.tsx';
+import { useT } from '../../i18n/useT.ts';
 import { useCreateItemDecision, useItemDecisionPreview, useUpdateItemDecision } from '../../api/hooks/useItems.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import type { ItemDecision, ItemDecisionInput, ItemDecisionMatchKind, ItemDecisionPreviewInput, ItemDecisionScope, ItemDecisionVerdict } from '../../api/types.ts';
@@ -49,20 +50,13 @@ function utf8Length(p: string): number {
   return new TextEncoder().encode(p).length;
 }
 
-/** confirmBroadMatch is the second, explicit confirmation a pattern
+/** t.checks.itemDialog.confirmBroad is the second, explicit confirmation a pattern
  * matching more than the preview can show in full has to pass before it
  * is saved — the same spirit as RuleDialog's one-way mode-switch warning.
  * A glob that catches more than its author intended is exactly the
  * failure mode this milestone exists to prevent (review focus 1): naming
  * the real count here, not the capped list length, is what makes the
  * second click a deliberate one rather than a reflex. */
-function confirmBroadMatch(total: number): string {
-  return (
-    `This pattern currently matches ${total} items — more than the preview lists in full. ` +
-    'Saving changes every one of them. Continue?'
-  );
-}
-
 export interface ItemDecisionDialogProps {
   org: string;
   /** The decision being edited; undefined creates one. */
@@ -95,6 +89,7 @@ export interface ItemDecisionDialogProps {
  * click that reads the same as a narrow one.
  */
 export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDecisionDialogProps) {
+  const t = useT();
   const editing = !!decision;
   const create = useCreateItemDecision(org);
   const update = useUpdateItemDecision(org, decision?.id ?? '');
@@ -118,8 +113,8 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   // confirmation at all) rather than blocking until a fresh one existed.
   const [debouncedPattern, setDebouncedPattern] = useState(pattern);
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedPattern(pattern), PREVIEW_DEBOUNCE_MS);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setDebouncedPattern(pattern), PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
   }, [pattern]);
 
   const liveBody = previewBody(scope, hostId, checkKey, matchKind, pattern);
@@ -194,17 +189,17 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
     // in one place rather than trusting every path to the form down to
     // the DOM's own submit semantics.
     if (previewStale || orgWatchMismatch || patternTooLong) return;
-    if (preview.data?.capped && !confirm(confirmBroadMatch(preview.data.total))) return;
+    if (preview.data?.capped && !confirm(t.checks.itemDialog.confirmBroad(preview.data.total))) return;
     try {
       if (editing) await update.mutateAsync(body());
       else await create.mutateAsync(body());
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : t.checks.saveFailed);
     }
   }
 
-  const title = editing ? `Edit decision for ${decision.pattern}` : 'New item decision';
+  const title = editing ? t.checks.items.editDecision(decision.pattern) : t.checks.itemDialog.newTitle;
   const saveDisabled = create.isPending || update.isPending || previewStale || orgWatchMismatch || patternTooLong;
 
   return (
@@ -212,52 +207,52 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <div className="grid grid-cols-3 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="decision-scope">Applies to</Label>
+            <Label htmlFor="decision-scope">{t.checks.itemDialog.appliesTo}</Label>
             <Select
               id="decision-scope"
               value={scope}
               onChange={(v) => onScopeChange(v as ItemDecisionScope)}
               options={[
-                { value: 'org', label: 'The whole organization' },
-                { value: 'host', label: 'One host' },
+                { value: 'org', label: t.checks.scope.org },
+                { value: 'host', label: t.checks.scope.host },
               ]}
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="decision-check">Check</Label>
+            <Label htmlFor="decision-check">{t.checks.itemDialog.check}</Label>
             <Select
               id="decision-check"
               required
               value={checkKey}
               onChange={setCheckKey}
-              placeholder={checkKeys.length === 0 ? 'No checks yet' : undefined}
+              placeholder={checkKeys.length === 0 ? t.checks.itemDialog.noChecks : undefined}
               options={[
                 // An edited decision's own check key, when the catalogue
                 // this dialog was given does not happen to contain it — the
                 // same fix RuleDialog's own group select carries: a value
                 // Select cannot match falls back to "<id> (unavailable)"
                 // rather than the honest binding.
-                ...(checkKey !== '' && !checkKeys.includes(checkKey) ? [{ value: checkKey, label: `${checkKey} (current binding)` }] : []),
+                ...(checkKey !== '' && !checkKeys.includes(checkKey) ? [{ value: checkKey, label: t.checks.currentBinding(checkKey) }] : []),
                 ...checkKeys.map((k) => ({ value: k, label: k })),
               ]}
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="decision-match-kind">Match kind</Label>
+            <Label htmlFor="decision-match-kind">{t.checks.itemDialog.matchKind}</Label>
             <Select
               id="decision-match-kind"
               value={matchKind}
               onChange={(v) => setMatchKind(v as ItemDecisionMatchKind)}
               options={[
-                { value: 'exact', label: "Exact — one literal item name" },
-                { value: 'glob', label: "Glob — a '*' pattern" },
+                { value: 'exact', label: t.checks.itemDialog.exact },
+                { value: 'glob', label: t.checks.itemDialog.glob },
               ]}
             />
           </div>
         </div>
         {scope === 'host' && <DecisionHostPicker org={org} value={hostId} onChange={setHostId} />}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="decision-pattern">Pattern</Label>
+          <Label htmlFor="decision-pattern">{t.checks.itemDialog.pattern}</Label>
           <Input
             id="decision-pattern"
             required
@@ -269,51 +264,46 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
           />
           {patternTooLong && (
             <p role="alert" className="text-xs text-[var(--px-crit)]">
-              This pattern is {utf8Length(pattern.trim())} bytes long; the limit is {PATTERN_MAX_BYTES}. Item names outside the ASCII
-              range cost more than one byte each, so a pattern can pass the field&apos;s own character count and still be too long.
+              {t.checks.itemDialog.tooLong(utf8Length(pattern.trim()), PATTERN_MAX_BYTES)}
             </p>
           )}
         </div>
         <PatternPreview body={debouncedBody} query={preview} />
         <div className="flex flex-col gap-1">
-          <Label htmlFor="decision-verdict">Verdict</Label>
+          <Label htmlFor="decision-verdict">{t.checks.itemDialog.verdict}</Label>
           <Select
             id="decision-verdict"
             value={verdict}
             onChange={(v) => setVerdict(v as ItemDecisionVerdict)}
             options={[
-              { value: 'ignore', label: 'Ignore — stop judging this item' },
-              ...(scope === 'host' ? [{ value: 'watch', label: 'Watch — judge it even though a wider decision ignores it' }] : []),
+              { value: 'ignore', label: t.checks.itemDialog.verdictIgnore },
+              ...(scope === 'host' ? [{ value: 'watch', label: t.checks.itemDialog.verdictWatch }] : []),
               // Renders the true stored value for the org+watch mismatch
               // case (see orgWatchMismatch's own comment) instead of letting
               // the field silently show "Ignore" for a "Watch" it still
               // holds — disabled, since this combination is not something
               // choosing it again from here could ever produce.
               ...(orgWatchMismatch
-                ? [{ value: 'watch', label: 'Watch (stored outside this editor — has no effect at organization scope)', disabled: true }]
+                ? [{ value: 'watch', label: t.checks.itemDialog.verdictWatchStored, disabled: true }]
                 : []),
             ]}
           />
           {scope === 'org' && !orgWatchMismatch && (
-            <p className="text-[11px] text-muted-foreground">
-              Watch is not offered at organization scope: watching is already what happens by default, so an organization-wide watch
-              would change nothing. It is available once this decision is scoped to a single host, which is the overrule it exists for.
-            </p>
+            <p className="text-[11px] text-muted-foreground">{t.checks.itemDialog.watchNotOffered}</p>
           )}
           {orgWatchMismatch && (
             <p role="alert" className="text-xs text-[var(--px-crit)]">
-              This decision is stored as an organization-wide watch, which has no effect and the server now refuses to save. Choose
-              ignore, or scope it to a host to keep watch as the overrule it is meant to be.
+              {t.checks.itemDialog.watchMismatch}
             </p>
           )}
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="decision-note">Note</Label>
+          <Label htmlFor="decision-note">{t.checks.note}</Label>
           <textarea
             id="decision-note"
             className={TEXTAREA}
             maxLength={500}
-            placeholder="Why does this item not need judging? The next operator reads this before switching it back on."
+            placeholder={t.checks.itemDialog.notePlaceholder}
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
@@ -325,10 +315,10 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={saveDisabled}>
-            Save
+            {t.common.save}
           </Button>
         </div>
       </form>
@@ -383,35 +373,36 @@ function PatternPreview({
   body: ItemDecisionPreviewInput | null;
   query: ReturnType<typeof useItemDecisionPreview>;
 }) {
+  const t = useT();
   if (body === null) {
-    return <span className="text-[11px] text-muted-foreground">Type a pattern to see which items it would match.</span>;
+    return <span className="text-[11px] text-muted-foreground">{t.checks.itemDialog.typePattern}</span>;
   }
   if (query.isError) {
     return (
       <p role="alert" className="text-xs text-[var(--px-crit)]">
-        {query.error instanceof Error ? query.error.message : 'Could not resolve this pattern'}
+        {query.error instanceof Error ? query.error.message : t.checks.itemDialog.resolveFailed}
       </p>
     );
   }
   if (!query.data) {
-    return <span className="text-[11px] text-muted-foreground">Matching…</span>;
+    return <span className="text-[11px] text-muted-foreground">{t.checks.matching}</span>;
   }
   const { total, matches, capped } = query.data;
   if (total === 0) {
     return (
       <span className="text-xs font-semibold text-[var(--px-warn)]">
-        Matches no currently known item — it still applies the moment one appears
+        {t.checks.itemDialog.noMatch}
       </span>
     );
   }
   return (
     <div className="flex flex-col gap-1.5">
       <span className="text-xs font-semibold text-[var(--px-ok)]">
-        Matches {total} item{total === 1 ? '' : 's'}
+        {t.checks.itemDialog.matches(total)}
       </span>
       {capped && (
         <span className="text-[11px] text-muted-foreground">
-          Showing the first {matches?.length ?? 0} below — narrow the pattern to see the rest.
+          {t.checks.itemDialog.showingFirst(matches?.length ?? 0)}
         </span>
       )}
       <div className="flex max-h-24 flex-wrap gap-1 overflow-auto">
@@ -431,6 +422,7 @@ function PatternPreview({
  * when a search does not happen to return it.
  */
 function DecisionHostPicker({ org, value, onChange }: { org: string; value: string; onChange: (id: string) => void }) {
+  const t = useT();
   const [q, setQ] = useState('');
   const hosts = useHosts(org, { monitored: true, q });
   const listed = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
@@ -438,27 +430,27 @@ function DecisionHostPicker({ org, value, onChange }: { org: string; value: stri
 
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor="decision-host">Host</Label>
+      <Label htmlFor="decision-host">{t.checks.host}</Label>
       <input
         type="search"
-        aria-label="Search monitored hosts"
-        placeholder="Search monitored hosts…"
+        aria-label={t.checks.hostPicker.searchLabel}
+        placeholder={t.checks.hostPicker.searchPlaceholder}
         className={SELECT}
         value={q}
         onChange={(e) => setQ(e.target.value)}
       />
       <Select
         id="decision-host"
-        placeholder="Choose a monitored host…"
+        placeholder={t.checks.hostPicker.choose}
         required
         value={value}
         onChange={onChange}
         options={[
-          ...(currentMissing ? [{ value, label: `${value.slice(0, 8)} (current binding)` }] : []),
+          ...(currentMissing ? [{ value, label: t.checks.currentBinding(value.slice(0, 8)) }] : []),
           ...listed.map((h) => ({ value: h.id, label: h.name })),
         ]}
       />
-      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">More hosts match than are listed — narrow the search.</span>}
+      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">{t.checks.hostPicker.moreMatch}</span>}
     </div>
   );
 }

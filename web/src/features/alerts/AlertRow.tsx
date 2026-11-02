@@ -1,3 +1,5 @@
+import { useT } from '../../i18n/useT.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { isAckCovering, muteLabel, subjectLabel, type AlertRowAlert } from './alertRow.ts';
@@ -68,43 +70,41 @@ export interface AlertRowProps {
  * wired to the real page.
  */
 export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowledge, onSnooze, onUnsnooze }: AlertRowProps) {
+  const t = useT();
+  const fmt = useFormat();
   const open = alert.closedAt === null;
   const covering = isAckCovering(alert);
   const overtaken = alert.ackAt !== null && !covering;
-  const mute = muteLabel(alert);
+  const mute = muteLabel(alert, t, fmt);
 
   return (
     <div className="grid items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0" style={{ gridTemplateColumns: ALERTS_COLUMNS }}>
       <span data-testid="alert-open">
-        <Pill tone={open ? 'accent' : 'unknown'}>{open ? 'Open' : `Closed${alert.closedReason ? ` · ${alert.closedReason}` : ''}`}</Pill>
+        <Pill tone={open ? 'accent' : 'unknown'}>{open ? t.alerts.row.open : t.alerts.row.closed(alert.closedReason ? t.alerts.closeReason[alert.closedReason] : '')}</Pill>
       </span>
       <span className="flex min-w-0 flex-col" title={alert.hostId} data-testid="alert-host">
         <span className="truncate text-[13px] font-medium">{alert.hostName}</span>
-        <span className="truncate text-[11px] text-muted-foreground">{subjectLabel(alert)}</span>
+        <span className="truncate text-[11px] text-muted-foreground">{subjectLabel(alert, t)}</span>
       </span>
       <span data-testid="alert-peak">
-        <Pill tone={SEVERITY_TONE[alert.peakSeverity] ?? 'unknown'}>{alert.peakSeverity}</Pill>
+        <Pill tone={SEVERITY_TONE[alert.peakSeverity] ?? 'unknown'}>{t.alerts.severity[alert.peakSeverity]}</Pill>
       </span>
       <span data-testid="alert-current" className="flex items-center gap-1.5">
-        <Pill tone={SEVERITY_TONE[alert.severity] ?? 'unknown'}>{alert.severity}</Pill>
+        <Pill tone={SEVERITY_TONE[alert.severity] ?? 'unknown'}>{t.alerts.severity[alert.severity]}</Pill>
         {alert.wasFlapping && (
           <span
             data-testid="alert-flapping"
-            title={
-              open
-                ? "This tuple is still flapping between ok and a worse state — decision 6 keeps the alert open until it settles, even on a tick where it currently reads ok"
-                : 'This episode flapped between ok and a worse state while it was open — recorded here as part of its history, not a claim about its current state'
-            }
+            title={open ? t.alerts.row.flappingTitle : t.alerts.row.flappedTitle}
             className="text-[10px] font-semibold text-[var(--px-warn)]"
           >
-            {open ? 'flapping' : 'flapped'}
+            {open ? t.alerts.row.flapping : t.alerts.row.flapped}
           </span>
         )}
       </span>
       <span data-testid="alert-ack" className="flex min-w-0 flex-col">
-        <span className="truncate text-[13px]">{covering ? 'Acknowledged' : 'Unacknowledged'}</span>
+        <span className="truncate text-[13px]">{covering ? t.alerts.row.acknowledged : t.alerts.row.unacknowledged}</span>
         {overtaken && (
-          <span className="truncate text-[11px] text-muted-foreground">acknowledgement was overtaken by a worse severity</span>
+          <span className="truncate text-[11px] text-muted-foreground">{t.alerts.row.overtaken}</span>
         )}
         {covering && alert.ackNote && <span className="truncate text-[11px] text-muted-foreground">{alert.ackNote}</span>}
       </span>
@@ -119,21 +119,21 @@ export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowled
         {canWrite && open && (
           <>
             {covering ? (
-              <Button type="button" variant="ghost" aria-label="Unacknowledge" onClick={() => onUnacknowledge?.(alert)}>
-                Unacknowledge
+              <Button type="button" variant="ghost" aria-label={t.alerts.row.unacknowledge} onClick={() => onUnacknowledge?.(alert)}>
+                {t.alerts.row.unacknowledge}
               </Button>
             ) : (
-              <Button type="button" variant="ghost" aria-label="Acknowledge" onClick={() => onAcknowledge?.(alert)}>
-                Acknowledge
+              <Button type="button" variant="ghost" aria-label={t.alerts.row.acknowledge} onClick={() => onAcknowledge?.(alert)}>
+                {t.alerts.row.acknowledge}
               </Button>
             )}
             {alert.muted && alert.muteReason === 'snooze' ? (
-              <Button type="button" variant="ghost" aria-label="Unsnooze" onClick={() => onUnsnooze?.(alert)}>
-                Unsnooze
+              <Button type="button" variant="ghost" aria-label={t.alerts.row.unsnooze} onClick={() => onUnsnooze?.(alert)}>
+                {t.alerts.row.unsnooze}
               </Button>
             ) : (
-              <Button type="button" variant="ghost" aria-label="Snooze" onClick={() => onSnooze?.(alert)}>
-                Snooze
+              <Button type="button" variant="ghost" aria-label={t.alerts.row.snooze} onClick={() => onSnooze?.(alert)}>
+                {t.alerts.row.snooze}
               </Button>
             )}
           </>

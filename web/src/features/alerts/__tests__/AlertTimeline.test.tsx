@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { en } from '../../../i18n/en/index.ts';
 import { AlertTimeline } from '../AlertTimeline.tsx';
 import { timelineEntryLabel } from '../alertTimeline.ts';
 import type { AlertTimelineEntry } from '../../../api/types.ts';
@@ -129,27 +130,27 @@ describe('AlertTimeline notification hold', () => {
 describe('timelineEntryLabel', () => {
   it('names a state change by its own transition', () => {
     const entry = change('t', 'ok', 'warn');
-    expect(timelineEntryLabel(entry, '').label).toMatch(/ok/i);
-    expect(timelineEntryLabel(entry, '').label).toMatch(/warn/i);
+    expect(timelineEntryLabel(entry, '', en).label).toMatch(/ok/i);
+    expect(timelineEntryLabel(entry, '', en).label).toMatch(/warn/i);
   });
 
   it('names "opened" plainly', () => {
-    expect(timelineEntryLabel(opened('t'), '').label).toMatch(/opened/i);
+    expect(timelineEntryLabel(opened('t'), '', en).label).toMatch(/opened/i);
   });
 
   it('names ack_voided as a voided acknowledgement', () => {
     const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'ack_voided', escalation_channel_ids: null } };
-    expect(timelineEntryLabel(entry, '').label).toMatch(/voided/i);
+    expect(timelineEntryLabel(entry, '', en).label).toMatch(/voided/i);
   });
 
   it('a closed entry reads "stale" when the alert closed stale, never mentioning "resolved"', () => {
-    const label = timelineEntryLabel(closed('t'), 'stale').label;
+    const label = timelineEntryLabel(closed('t'), 'stale', en).label;
     expect(label).toMatch(/stale/i);
     expect(label).not.toMatch(/resolved/i);
   });
 
   it('a closed entry reads "resolved" when the alert closed resolved, never mentioning "stale"', () => {
-    const label = timelineEntryLabel(closed('t'), 'resolved').label;
+    const label = timelineEntryLabel(closed('t'), 'resolved', en).label;
     expect(label).toMatch(/resolved/i);
     expect(label).not.toMatch(/stale/i);
   });
@@ -160,11 +161,11 @@ describe('timelineEntryLabel', () => {
   // several rungs deep is unreadable if every rung says the same thing.
   it('names an escalated event by the ladder step that fired', () => {
     const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated', escalation_position: 2, escalation_channel_ids: ['c1'] } };
-    expect(timelineEntryLabel(entry, '').label).toMatch(/step 2/i);
+    expect(timelineEntryLabel(entry, '', en).label).toMatch(/step 2/i);
   });
 
   it('still names an escalated event plainly if its step number could not be decoded', () => {
     const entry: AlertTimelineEntry = { at: 't', kind: 'event', event: { id: 'e', at: 't', kind: 'escalated', escalation_channel_ids: null } };
-    expect(timelineEntryLabel(entry, '').label).toMatch(/escalated/i);
+    expect(timelineEntryLabel(entry, '', en).label).toMatch(/escalated/i);
   });
 });

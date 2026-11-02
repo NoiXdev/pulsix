@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { en } from '../../../i18n/en/index.ts';
+import { formatter } from '../../../i18n/format.ts';
 import { AlertRow } from '../AlertRow.tsx';
 import { alertToRowAlert, isAckCovering, muteLabel, severityRank, subjectLabel, type AlertRowAlert } from '../alertRow.ts';
 import type { Alert } from '../../../api/types.ts';
@@ -290,22 +292,22 @@ describe('alertRow pure helpers', () => {
   });
 
   it('subjectLabel names a host-scope alert "Host", carrying no check/item/metric', () => {
-    expect(subjectLabel({ ...open, scope: 'host', checkKey: '', item: '', metric: '' })).toBe('Host');
+    expect(subjectLabel({ ...open, scope: 'host', checkKey: '', item: '', metric: '' }, en)).toBe('Host');
   });
 
   it('subjectLabel joins check, item and metric for a tuple-scope alert', () => {
-    expect(subjectLabel(open)).toBe('disk · /var · use_pct');
+    expect(subjectLabel(open, en)).toBe('disk · /var · use_pct');
   });
 
   it('subjectLabel skips an empty item (a whole-host metric)', () => {
-    expect(subjectLabel({ ...open, item: '' })).toBe('disk · use_pct');
+    expect(subjectLabel({ ...open, item: '' }, en)).toBe('disk · use_pct');
   });
 
   it('muteLabel is null when the alert is not muted', () => {
-    expect(muteLabel(open)).toBeNull();
+    expect(muteLabel(open, en, formatter('en'))).toBeNull();
   });
 
   it('muteLabel names an unbounded snooze as "until the state changes"', () => {
-    expect(muteLabel({ ...open, muted: true, muteReason: 'snooze', mutedUntil: null })).toMatch(/state changes/i);
+    expect(muteLabel({ ...open, muted: true, muteReason: 'snooze', mutedUntil: null }, en, formatter('en'))).toMatch(/state changes/i);
   });
 });

@@ -1,3 +1,5 @@
+import type { Format } from '../../i18n/format.ts';
+import type { Messages } from '../../i18n/types.ts';
 import type { Alert, AlertCloseReason, AlertMuteReason, AlertScope, AlertSeverity } from '../../api/types.ts';
 
 /**
@@ -126,8 +128,8 @@ export function isAckCovering(a: AlertRowAlert): boolean {
  * string; a tuple-scope alert names its check, then its item and metric
  * when they are not empty (a whole-host metric has no item name, v0.3b-3's
  * own "items with an empty name are not rows at all"). */
-export function subjectLabel(a: AlertRowAlert): string {
-  if (a.scope === 'host') return 'Host';
+export function subjectLabel(a: AlertRowAlert, t: Messages): string {
+  if (a.scope === 'host') return t.alerts.row.subjectHost;
   return [a.checkKey, a.item, a.metric].filter((p) => p !== '').join(' · ');
 }
 
@@ -136,9 +138,9 @@ export function subjectLabel(a: AlertRowAlert): string {
  * unbounded "until the alert's severity next changes" shape (Snooze's own
  * "never both, never neither"); maintenance and silence windows always
  * carry an end, by construction of the window they come from. */
-export function muteLabel(a: AlertRowAlert): string | null {
+export function muteLabel(a: AlertRowAlert, t: Messages, fmt: Format): string | null {
   if (!a.muted) return null;
-  const reason = a.muteReason === 'silence' ? 'silenced' : a.muteReason === 'maintenance' ? 'in maintenance' : 'snoozed';
-  if (!a.mutedUntil) return `Muted — ${reason} until the state changes`;
-  return `Muted — ${reason} until ${new Date(a.mutedUntil).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`;
+  const reason = a.muteReason === 'silence' ? 'silence' : a.muteReason === 'maintenance' ? 'maintenance' : 'snooze';
+  if (!a.mutedUntil) return t.alerts.mute[`${reason}Open` as const];
+  return t.alerts.mute[reason](fmt.dateTime(a.mutedUntil, { dateStyle: 'medium', timeStyle: 'short' }));
 }

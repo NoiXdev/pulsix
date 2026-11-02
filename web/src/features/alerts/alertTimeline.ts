@@ -1,3 +1,5 @@
+import type { Format } from '../../i18n/format.ts';
+import type { Messages } from '../../i18n/types.ts';
 import type { AlertCloseReason, AlertEvent, AlertEventKind, AlertNotificationHold, AlertTimelineEntry, AlertTupleState } from '../../api/types.ts';
 import type { Tone } from '../../ui/badge.tsx';
 
@@ -23,14 +25,15 @@ const STATE_TONE: Record<AlertTupleState, Tone> = {
   unknown: 'unknown',
 };
 
-const EVENT_LABEL: Record<Exclude<AlertEventKind, 'closed' | 'escalated'>, string> = {
-  opened: 'Alert opened',
-  severity_raised: 'Severity raised',
-  acknowledged: 'Acknowledged',
-  ack_voided: 'Acknowledgement voided by a worse severity',
-  snoozed: 'Snoozed',
-  unsnoozed: 'Snooze cancelled',
-};
+/** The catalogue key (t.alerts.timeline) of each plain event kind's label. */
+const EVENT_LABEL_KEY = {
+  opened: 'opened',
+  severity_raised: 'severityRaised',
+  acknowledged: 'acknowledged',
+  ack_voided: 'ackVoided',
+  snoozed: 'snoozed',
+  unsnoozed: 'unsnoozed',
+} as const satisfies Record<Exclude<AlertEventKind, 'closed' | 'escalated'>, string>;
 
 const EVENT_TONE: Record<Exclude<AlertEventKind, 'closed' | 'escalated'>, Tone> = {
   opened: 'accent',
@@ -53,15 +56,15 @@ const EVENT_TONE: Record<Exclude<AlertEventKind, 'closed' | 'escalated'>, Tone> 
  * itself. An operator who cannot tell them apart reads a vanished subject
  * as a fixed problem (Task 10 brief, verbatim).
  */
-function closedEventLabel(closedReason: AlertCloseReason | ''): TimelineEntryLabel {
+function closedEventLabel(closedReason: AlertCloseReason | '', t: Messages): TimelineEntryLabel {
   if (closedReason === 'stale') {
-    return { label: 'Closed — stale (its subject no longer exists)', tone: 'unknown' };
+    return { label: t.alerts.timeline.closedStale, tone: 'unknown' };
   }
   // 'resolved', or — defensively, should the store ever write a `closed`
   // event without closed_reason set in the same statement, which
   // migration 00049's own "set together or not at all" rules out — reads
   // as resolved rather than inventing a third, unlabelled state.
-  return { label: 'Closed — resolved (the tuple is healthy again)', tone: 'ok' };
+  return { label: t.alerts.timeline.closedResolved, tone: 'ok' };
 }
 
 /**
@@ -77,9 +80,9 @@ function closedEventLabel(closedReason: AlertCloseReason | ''): TimelineEntryLab
  * could not decode a payload for (defensive: alert_handlers.go's own
  * doc comment) — reads as plain "Escalated" rather than a crash.
  */
-function escalatedEventLabel(event: AlertEvent): TimelineEntryLabel {
+function escalatedEventLabel(event: AlertEvent, t: Messages): TimelineEntryLabel {
   const position = event.escalation_position;
-  return { label: position ? `Escalated to step ${position}` : 'Escalated', tone: 'warn' };
+  return { label: position ? t.alerts.timeline.escalatedTo(position) : t.alerts.timeline.escalated, tone: 'warn' };
 }
 
 /**
@@ -90,19 +93,20 @@ function escalatedEventLabel(event: AlertEvent): TimelineEntryLabel {
  * and `escalated`, whose wording depends on the event's own payload
  * (escalatedEventLabel's own doc comment).
  */
-export function timelineEntryLabel(entry: AlertTimelineEntry, closedReason: AlertCloseReason | ''): TimelineEntryLabel {
+export function timelineEntryLabel(entry: AlertTimelineEntry, closedReason: AlertCloseReason | '', t: Messages): TimelineEntryLabel {
   if (entry.kind === 'state_change' && entry.change) {
-    return { label: `${entry.change.from_state} → ${entry.change.to_state}`, tone: STATE_TONE[entry.change.to_state] };
+    const { from_state: from, to_state: to } = entry.change;
+    return { label: `${t.alerts.state[from]} → ${t.alerts.state[to]}`, tone: STATE_TONE[to] };
   }
   if (entry.kind === 'event' && entry.event) {
-    if (entry.event.kind === 'closed') return closedEventLabel(closedReason);
-    if (entry.event.kind === 'escalated') return escalatedEventLabel(entry.event);
-    return { label: EVENT_LABEL[entry.event.kind], tone: EVENT_TONE[entry.event.kind] };
+    if (entry.event.kind === 'closed') return closedEventLabel(closedReason, t);
+    if (entry.event.kind === 'escalated') return escalatedEventLabel(entry.event, t);
+    return { label: t.alerts.timeline[EVENT_LABEL_KEY[entry.event.kind]], tone: EVENT_TONE[entry.event.kind] };
   }
   // Defensive: TimelineEntry's own contract (mergeTimeline, timeline.go)
   // is exactly one of event/change set, named by kind — unreachable
   // against a server that honours it, not a case worth a silent crash.
-  return { label: 'Unknown event', tone: 'unknown' };
+  return { label: t.alerts.timeline.unknownEvent, tone: 'unknown' };
 }
 
 /**
@@ -118,9 +122,9 @@ export function timelineEntryLabel(entry: AlertTimelineEntry, closedReason: Aler
  * own doc comment: suppressed outranks deferred), so this function never
  * has to choose between them itself.
  */
-export function notificationHoldLabel(hold: AlertNotificationHold | ''): string | null {
-  if (hold === 'deferred') return 'Notification held until the delivery window opens.';
-  if (hold === 'suppressed') return 'Notification held until the maintenance window ends.';
+export function notificationHoldLabel(hold: AlertNotificationHold | '', t: Messages): string | null {
+  if (hold === 'deferred') return t.alerts.timeline.holdDeferred;
+  if (hold === 'suppressed') return t.alerts.timeline.holdSuppressed;
   return null;
 }
 
@@ -128,6 +132,6 @@ export function notificationHoldLabel(hold: AlertNotificationHold | ''): string 
  * absolute, not relative (seenLabel's "5 min ago" shape): an episode's
  * history is read well after the fact, when a relative age has stopped
  * being useful and a wall-clock time has not. */
-export function timelineEntryAt(at: string): string {
-  return new Date(at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+export function timelineEntryAt(at: string, fmt: Format): string {
+  return fmt.dateTime(at, { dateStyle: 'medium', timeStyle: 'short' });
 }

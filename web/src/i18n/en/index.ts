@@ -1,12 +1,16 @@
 import { enAccount } from './account.ts';
 import { enActivity } from './activity.ts';
 import { enAgents } from './agents.ts';
+import { enAlerts } from './alerts.ts';
 import { enAuth } from './auth.ts';
+import { enCalendar } from './calendar.ts';
+import { enChecks } from './checks.ts';
 import { enCommon } from './common.ts';
 import { enFleet } from './fleet.ts';
 import { enHosts } from './hosts.ts';
 import { enInstance } from './instance.ts';
 import { enLanguage } from './language.ts';
+import { enMaintenance } from './maintenance.ts';
 import { enMembers } from './members.ts';
 import { enRoutes } from './routes.ts';
 import { enSettings } from './settings.ts';
@@ -32,12 +36,16 @@ export const en = {
   account: enAccount,
   activity: enActivity,
   agents: enAgents,
+  alerts: enAlerts,
   auth: enAuth,
+  calendar: enCalendar,
+  checks: enChecks,
   common: enCommon,
   fleet: enFleet,
   hosts: enHosts,
   instance: enInstance,
   language: enLanguage,
+  maintenance: enMaintenance,
   members: enMembers,
   routes: enRoutes,
   settings: enSettings,

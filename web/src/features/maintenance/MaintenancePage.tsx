@@ -7,6 +7,8 @@ import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useT } from '../../i18n/useT.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useDeleteMaintenanceWindow, useMaintenanceWindows } from '../../api/hooks/useMaintenance.ts';
 import { may } from '../../lib/roles.ts';
@@ -27,6 +29,8 @@ const COLUMNS = 'minmax(0, 0.8fr) 90px minmax(0, 0.8fr) minmax(0, 1.3fr) 110px 1
  * a list that rendered them identically left an operator with no way to
  * tell one from the other short of opening each in turn. */
 export function MaintenancePage() {
+  const t = useT();
+  const fmt = useFormat();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
   const orgInfo = useOrg(org);
@@ -41,11 +45,11 @@ export function MaintenancePage() {
   const list = windows.data.windows ?? [];
 
   async function onDelete(w: MaintenanceWindow) {
-    if (!confirm(`Delete ${w.reason === 'silence' ? 'silence' : 'maintenance'} window ${w.name}?`)) return;
+    if (!confirm(t.maintenance.deleteConfirm[w.reason === 'silence' ? 'silence' : 'maintenance'](w.name))) return;
     try {
       await remove.mutateAsync(w.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.maintenance.deleteFailed, 'destructive');
     }
   }
 
@@ -53,24 +57,24 @@ export function MaintenancePage() {
     <>
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">Maintenance</h1>
+          <h1 className="text-xl font-semibold">{t.maintenance.title}</h1>
           <span className="text-[13px] text-muted-foreground">
-            {list.filter((w) => w.active_now).length} active now · maintenance lets schedules skip or leave out hosts; silence only mutes alerts
+            {t.maintenance.active(list.filter((w) => w.active_now).length)}
           </span>
         </div>
         {canWrite && (
           <Button variant="primary" onClick={() => setEditing('new')}>
-            <Wrench size={15} /> New window
+            <Wrench size={15} /> {t.maintenance.newWindow}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Window</span>
-          <span>Why</span>
-          <span>Applies to</span>
-          <span>When</span>
-          <span>Status</span>
+          <span>{t.maintenance.columns.window}</span>
+          <span>{t.maintenance.columns.why}</span>
+          <span>{t.maintenance.columns.appliesTo}</span>
+          <span>{t.maintenance.columns.when}</span>
+          <span>{t.maintenance.columns.status}</span>
           <span />
         </GridHeader>
         {list.map((w) => (
@@ -80,26 +84,26 @@ export function MaintenancePage() {
               {w.note && <span className="truncate text-[11px] text-muted-foreground">{w.note}</span>}
             </span>
             <span>
-              <Pill tone={w.reason === 'silence' ? 'unknown' : 'maintenance'}>{w.reason === 'silence' ? 'silence' : 'maintenance'}</Pill>
+              <Pill tone={w.reason === 'silence' ? 'unknown' : 'maintenance'}>{t.maintenance.reason[w.reason === 'silence' ? 'silence' : 'maintenance']}</Pill>
             </span>
-            <span className="truncate text-xs">{targetLabel(w)}</span>
-            <span className="truncate text-xs text-muted-foreground">{whenLabel(w)}</span>
-            <span>{w.active_now ? <Pill tone="maintenance">active now</Pill> : <span className="text-xs text-muted-foreground">—</span>}</span>
+            <span className="truncate text-xs">{targetLabel(w, t)}</span>
+            <span className="truncate text-xs text-muted-foreground">{whenLabel(w, t, fmt)}</span>
+            <span>{w.active_now ? <Pill tone="maintenance">{t.maintenance.activeNow}</Pill> : <span className="text-xs text-muted-foreground">—</span>}</span>
             <span className="flex justify-end gap-1">
               {canWrite && (
                 <>
-                  <Button type="button" variant="ghost" aria-label={`Edit ${w.name}`} onClick={() => setEditing(w)}>
-                    Edit
+                  <Button type="button" variant="ghost" aria-label={t.maintenance.editAria(w.name)} onClick={() => setEditing(w)}>
+                    {t.maintenance.edit}
                   </Button>
-                  <Button type="button" variant="destructive" aria-label={`Delete ${w.name}`} onClick={() => void onDelete(w)}>
-                    Delete
+                  <Button type="button" variant="destructive" aria-label={t.maintenance.deleteAria(w.name)} onClick={() => void onDelete(w)}>
+                    {t.common.delete}
                   </Button>
                 </>
               )}
             </span>
           </GridRow>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No maintenance or silence windows.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.maintenance.empty}</p>}
       </Card>
       {editing && <WindowDialog org={org} window={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}
     </>

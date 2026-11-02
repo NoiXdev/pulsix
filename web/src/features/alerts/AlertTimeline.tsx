@@ -1,3 +1,5 @@
+import { useT } from '../../i18n/useT.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { Pill } from '../../ui/badge.tsx';
 import { notificationHoldLabel, timelineEntryAt, timelineEntryLabel } from './alertTimeline.ts';
 import type { AlertCloseReason, AlertNotificationHold, AlertTimelineEntry } from '../../api/types.ts';
@@ -53,7 +55,9 @@ export interface AlertTimelineProps {
  * are true at once.
  */
 export function AlertTimeline({ entries, closedReason, notificationHold = '' }: AlertTimelineProps) {
-  const holdLabel = notificationHoldLabel(notificationHold);
+  const t = useT();
+  const fmt = useFormat();
+  const holdLabel = notificationHoldLabel(notificationHold, t);
 
   return (
     <>
@@ -63,14 +67,14 @@ export function AlertTimeline({ entries, closedReason, notificationHold = '' }: 
         </p>
       )}
       {entries.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No activity recorded for this alert yet.</p>
+        <p className="text-xs text-muted-foreground">{t.alerts.timeline.empty}</p>
       ) : (
         <ol className="flex flex-col gap-1.5">
           {entries.map((entry, i) => {
-            const { label, tone } = timelineEntryLabel(entry, closedReason);
+            const { label, tone } = timelineEntryLabel(entry, closedReason, t);
             return (
               <li key={`${entry.kind}-${entry.at}-${i}`} className="flex items-center gap-2.5 text-xs" data-testid="timeline-entry">
-                <span className="w-[150px] shrink-0 text-muted-foreground">{timelineEntryAt(entry.at)}</span>
+                <span className="w-[150px] shrink-0 text-muted-foreground">{timelineEntryAt(entry.at, fmt)}</span>
                 <Pill tone={tone}>{label}</Pill>
               </li>
             );

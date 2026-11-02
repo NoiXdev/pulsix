@@ -122,7 +122,7 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                   <h3 className="font-mono text-[13px] text-foreground">{c.key}</h3>
                   <Tag>{c.plugin}</Tag>
                   <Tag>{sourceLabel(c, t)}</Tag>
-                  <span className="text-[11px] text-muted-foreground">{t.hosts.checks.every(intervalLabel(c.interval_seconds))}</span>
+                  <span className="text-[11px] text-muted-foreground">{t.hosts.checks.every(intervalLabel(c.interval_seconds, t))}</span>
                   {!c.enabled && <Pill tone="unknown">{t.hosts.checks.disabled}</Pill>}
                 </div>
                 {monitored && (
