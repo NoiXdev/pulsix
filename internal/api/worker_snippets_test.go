@@ -30,3 +30,20 @@ func TestWorkerSnippetsRunTheWorkerUnderAnInit(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkerSnippetsSeparateThePlayUID is backlog 7.32: a worker started
+// from a pasted snippet is a new installation on the official image and a
+// fresh volume, so the reason the image leaves PULSIX_WORKER_PLAY_UID
+// unset (not to opt an existing worker in at its next pull) does not
+// apply. Without it the playbooks run as the worker and can read its key.
+func TestWorkerSnippetsSeparateThePlayUID(t *testing.T) {
+	ep := WorkerEndpoint{Addr: "pulsix.example.com:8444", ServerName: "pulsix-manager"}
+	docker, compose := workerSnippets(ep, "hel-1", "pxw1.token", "v0.5.0")
+
+	if !strings.Contains(docker, "  -e PULSIX_WORKER_PLAY_UID=65533 \\\n") {
+		t.Errorf("docker snippet does not set the play uid:\n%s", docker)
+	}
+	if !strings.Contains(compose, "      PULSIX_WORKER_PLAY_UID: \"65533\"\n") {
+		t.Errorf("compose snippet does not set the play uid:\n%s", compose)
+	}
+}

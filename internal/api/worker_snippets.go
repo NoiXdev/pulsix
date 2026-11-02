@@ -18,6 +18,12 @@ type WorkerEndpoint struct {
 // process (--init, init: true): the worker is otherwise PID 1 and never
 // reaps what a run orphans outside its per-run supervisor (backlog 2.108).
 // The bundled compose file sets the same.
+//
+// Both also set PULSIX_WORKER_PLAY_UID to the image's play uid, so plays
+// run apart from the worker and cannot read its key (backlog 7.32). The
+// image leaves it unset only so that an existing worker is not opted in at
+// its next pull; a pasted snippet starts a new worker on a fresh volume,
+// which is the case the bundled compose file already opts in for.
 func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, compose string) {
 	if version == "" || version == "dev" {
 		version = "latest"
@@ -27,6 +33,7 @@ func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, com
 		fmt.Sprintf("  -e PULSIX_MANAGER_ADDR=%s \\", ep.Addr),
 		fmt.Sprintf("  -e PULSIX_MANAGER_SERVER_NAME=%s \\", ep.ServerName),
 		fmt.Sprintf("  -e PULSIX_ENROLL_TOKEN=%s \\", token),
+		"  -e PULSIX_WORKER_PLAY_UID=65533 \\",
 		fmt.Sprintf("  -v pulsix-worker-%s:/var/lib/pulsix-worker \\", name),
 		fmt.Sprintf("  noixdev/pulsix-worker:%s", version),
 	}, "\n")
@@ -40,6 +47,7 @@ func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, com
 		fmt.Sprintf("      PULSIX_MANAGER_ADDR: %q", ep.Addr),
 		fmt.Sprintf("      PULSIX_MANAGER_SERVER_NAME: %q", ep.ServerName),
 		fmt.Sprintf("      PULSIX_ENROLL_TOKEN: %q", token),
+		`      PULSIX_WORKER_PLAY_UID: "65533"`,
 		"    volumes:",
 		fmt.Sprintf("      - pulsix-worker-%s:/var/lib/pulsix-worker", name),
 		"volumes:",
