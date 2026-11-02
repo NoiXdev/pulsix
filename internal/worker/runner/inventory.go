@@ -274,9 +274,9 @@ func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) e
 	for k, v := range extraVars {
 		// A claim must not set the connection-security variables the run
 		// forces below (the manager refuses them; this is the worker's own
-		// guard, re-review N1). System jobs' pulsix_ inputs are exempt —
-		// only the variable carrying the pinned options is refused.
-		if ansiblevars.Forbidden(k) && (!strings.HasPrefix(k, "pulsix_") || k == pinnedCommonArgsVar) {
+		// guard, re-review N1). System jobs' pulsix_ inputs are exempt;
+		// the variable carrying the pinned options is not one of them.
+		if ansiblevars.Forbidden(k) && !strings.HasPrefix(k, "pulsix_") {
 			return fmt.Errorf("extra var %s is a reserved name (connection security, set by the worker, or Ansible's own markers); refusing the run", k)
 		}
 		// The claim's extra var values are JSON-encoded; a value that is
@@ -346,16 +346,25 @@ var extraVarsGuardKey = func() string {
 // pinnedCommonArgsVar is the hostvar each host's SSH common args (the
 // pinned host-key options and the jump chain) move into; the forced
 // ansible_ssh_common_args extra var reads it back per host.
-const pinnedCommonArgsVar = "pulsix_ssh_common_args"
+//
+// The ansible_ssh_ prefix is what protects it. Ansible injects the facts a
+// module returns as top-level vars, above inventory hostvars, and the
+// managed host writes that result. ansible-core's clean_facts drops every
+// returned fact named like a connection plugin's variable (^ansible_ssh_,
+// except ansible_ssh_host_key_*), so a host cannot shadow this one. It was
+// pulsix_ssh_common_args, which clean_facts does not know: a compromised
+// host could return it as a fact, drop its own pin on the next connection
+// and add a ProxyCommand that ran on the worker (backlog 7.28).
+const pinnedCommonArgsVar = "ansible_ssh_pulsix_common_args"
 
 // forcedConnectionVars are the connection-security variables every run
 // forces as extra vars — Ansible's highest precedence, above inventory,
 // play and task vars — so nothing in the inventory or a playbook's vars
 // can switch host key checking off or put other SSH options ahead of the
 // pinned ones (OpenSSH keeps the first value it sees). The per-host common
-// args ride a template reference to pulsix_ssh_common_args, because extra
-// vars are global. What stays possible is a playbook redefining
-// pulsix_ssh_common_args itself in its own vars: playbook authors run code
+// args ride a template reference to pinnedCommonArgsVar, because extra
+// vars are global. What stays possible is a playbook redefining that
+// variable itself in its own vars: playbook authors run code
 // on the worker by design (spec §14). The paramiko connection's checking
 // is forced on as well; its known hosts file is the run's empty home, so
 // a paramiko connection fails closed.
@@ -372,7 +381,7 @@ func forcedConnectionVars(workDir string) map[string]any {
 }
 
 // moveCommonArgs moves every host's rendered ansible_ssh_common_args (jump
-// chain plus pinned options) into pulsix_ssh_common_args, the hostvar the
+// chain plus pinned options) into pinnedCommonArgsVar, the hostvar the
 // forced extra var references.
 func moveCommonArgs(doc map[string]any) {
 	meta, _ := doc["_meta"].(map[string]any)

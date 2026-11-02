@@ -419,11 +419,11 @@ def emit(event, data, stdout=""):
 
 # Variable precedence as ansible applies it: extra vars beat hostvars, and
 # the worker forces the connection-security vars as extra vars (a
-# "{{ pulsix_ssh_common_args ... }}" reference resolves to that hostvar).
+# "{{ ansible_ssh_pulsix_common_args ... }}" reference resolves to that hostvar).
 def effective(name, default=""):
     v = extravars.get(name, hv.get(name, default))
     if isinstance(v, str) and v.startswith("{{"):
-        return hv.get("pulsix_ssh_common_args", "")
+        return hv.get("ansible_ssh_pulsix_common_args", "")
     return v
 cmd = ["ssh"] + shlex.split(effective("ansible_ssh_args", os.environ.get("ANSIBLE_SSH_ARGS", "")))
 if str(effective("ansible_host_key_checking", os.environ.get("ANSIBLE_HOST_KEY_CHECKING", "True"))).lower() in ("false", "0", "no"):

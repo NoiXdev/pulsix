@@ -810,9 +810,11 @@ Layered like Checkmk rulesets and Zabbix templates.
   vars (422) and at claim time, inventory schemas reserve the `ansible_`/`pulsix_`
   prefixes, and the worker forces them as extra vars — Ansible's highest precedence,
   above inventory, play and task vars — with each host's pinned options read from
-  `pulsix_ssh_common_args`. A playbook that redefines `pulsix_ssh_common_args` in its
-  own vars can still weaken its own run: playbook authors run code on the worker by
-  design (above).
+  `ansible_ssh_pulsix_common_args`. That name carries the `ansible_ssh_` prefix on
+  purpose: ansible-core strips facts so named from what a module returns, so a managed
+  host cannot shadow its own pin with a returned fact (backlog 7.28). A playbook that
+  redefines `ansible_ssh_pulsix_common_args` in its own vars can still weaken its own
+  run: playbook authors run code on the worker by design (above).
 - Rate limits on auth endpoints, WebAuthn user verification required, TOTP with
   replay protection, API tokens hashed (argon2id) at rest.
 - OWASP audit before v1.0 (`owasp-audit` skill).

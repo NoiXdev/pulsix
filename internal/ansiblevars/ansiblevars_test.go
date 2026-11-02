@@ -25,6 +25,8 @@ func TestForbiddenInUserVars(t *testing.T) {
 		{"ansible_paramiko_look_for_keys", true},
 		{"ANSIBLE_SSH_ARGS", true}, // variable names are case-sensitive in ansible, refused anyway
 		{"pulsix_ssh_common_args", true},
+		{"ansible_ssh_pulsix_common_args", true},
+		{"ANSIBLE_SSH_PULSIX_COMMON_ARGS", true},
 		{"pulsix_anything", true},
 		{"ansible_become_password", false},
 		{"ansible_python_interpreter", false},

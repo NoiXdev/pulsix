@@ -31,11 +31,13 @@ var forbiddenNames = map[string]bool{
 	"ansible_sftp_extra_args":       true,
 	"ansible_ssh_executable":        true,
 	"ansible_connection":            true,
+	// The worker's carrier for each host's pinned options (backlog 7.28).
+	"ansible_ssh_pulsix_common_args": true,
 }
 
 // forbiddenPrefixes cover whole families: the paramiko connection's host
-// key options, the pulsix_ namespace the worker uses for its own per-host
-// values (pulsix_ssh_common_args carries the pinned options), and the
+// key options, the pulsix_ namespace the worker uses for its own values,
+// and the
 // names ansible-core reserves for its JSON markers ("__ansible_unsafe",
 // "__ansible_vault", "__ansible_type"): as a top-level extra var one turns
 // the whole extra-vars document into something Ansible cannot load as a

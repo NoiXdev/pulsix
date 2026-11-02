@@ -293,6 +293,7 @@ func TestConnectionSecurityExtraVarsAreRefused(t *testing.T) {
 		{"ansible_host_key_checking": false},
 		{"ansible_ssh_common_args": "-o UserKnownHostsFile=/tmp/x"},
 		{"pulsix_ssh_common_args": ""},
+		{"ansible_ssh_pulsix_common_args": ""},
 	} {
 		f := newFixture()
 		in := f.in()

@@ -167,7 +167,7 @@ func TestRunFailsClosedOnAnUnenforceablePin(t *testing.T) {
 // ansible's highest precedence, so the run writes the SSH arguments, host
 // key checking and each host's pinned common args as forced extra vars —
 // overriding inventory, play and task vars — and moves the rendered
-// per-host common args into pulsix_ssh_common_args, which the forced
+// per-host common args into ansible_ssh_pulsix_common_args, which the forced
 // ansible_ssh_common_args references. A claim whose own extra vars try to
 // set any of them fails closed.
 func TestRunForcesTheConnectionSecurityVars(t *testing.T) {
@@ -188,7 +188,7 @@ func TestRunForcesTheConnectionSecurityVars(t *testing.T) {
 	}
 	if extra["ansible_ssh_args"] != sshArgs(env.WorkDir) || extra["ansible_host_key_checking"] != true ||
 		extra["ansible_ssh_host_key_checking"] != true || extra["ansible_ssh_extra_args"] != "" ||
-		extra["ansible_ssh_common_args"] != "{{ pulsix_ssh_common_args | default('') }}" || extra["run"] != "smoke" {
+		extra["ansible_ssh_common_args"] != "{{ ansible_ssh_pulsix_common_args | default('') }}" || extra["run"] != "smoke" {
 		t.Fatalf("extravars = %v", extra)
 	}
 	var doc struct {
@@ -203,14 +203,14 @@ func TestRunForcesTheConnectionSecurityVars(t *testing.T) {
 	if _, has := app["ansible_ssh_common_args"]; has {
 		t.Fatalf("hostvars still carry ansible_ssh_common_args: %v", app)
 	}
-	if s, _ := app["pulsix_ssh_common_args"].(string); !strings.HasPrefix(s, "-o StrictHostKeyChecking=yes -o HostKeyAlias=pulsix-host-"+appUUID) {
-		t.Fatalf("pulsix_ssh_common_args = %v", app["pulsix_ssh_common_args"])
+	if s, _ := app["ansible_ssh_pulsix_common_args"].(string); !strings.HasPrefix(s, "-o StrictHostKeyChecking=yes -o HostKeyAlias=pulsix-host-"+appUUID) {
+		t.Fatalf("ansible_ssh_pulsix_common_args = %v", app["ansible_ssh_pulsix_common_args"])
 	}
-	if s, _ := doc.Meta.Hostvars["web1"]["pulsix_ssh_common_args"].(string); !strings.Contains(s, "ProxyJump=pulsix-jump-b1") {
+	if s, _ := doc.Meta.Hostvars["web1"]["ansible_ssh_pulsix_common_args"].(string); !strings.Contains(s, "ProxyJump=pulsix-jump-b1") {
 		t.Fatalf("web1 lost its jump chain: %v", doc.Meta.Hostvars["web1"])
 	}
 
-	for _, name := range []string{"ansible_ssh_args", "ansible_host_key_checking", "pulsix_ssh_common_args"} {
+	for _, name := range []string{"ansible_ssh_args", "ansible_host_key_checking", "ansible_ssh_pulsix_common_args"} {
 		bad := runJob(t)
 		bad.ExtraVars[name] = `"-o StrictHostKeyChecking=no"`
 		if status, _, err := (&Runner{RunnerBin: fake}).Run(context.Background(), bad, runEnv(t), func(*workerpb.RunEvent) error { return nil }); err == nil || !strings.Contains(err.Error(), name) {

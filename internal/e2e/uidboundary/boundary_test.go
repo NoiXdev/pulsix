@@ -386,6 +386,16 @@ func sshKeyPair(t *testing.T) (string, ssh.PublicKey) {
 // Ansible.
 func startSSHServer(t *testing.T, authorized ssh.PublicKey) string {
 	t.Helper()
+	addr, _ := serveSSH(t, authorized, nil)
+	return addr
+}
+
+// serveSSH is startSSHServer with a hook and the server's host key: a
+// non-nil answer sees each session's command first and, when it returns
+// ok, its output replaces the command's — a managed host that lies about
+// what its modules returned.
+func serveSSH(t *testing.T, authorized ssh.PublicKey, answer func(cmd string) (string, bool)) (string, ssh.PublicKey) {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -400,6 +410,14 @@ func startSSHServer(t *testing.T, authorized ssh.PublicKey) string {
 	}
 	srv := &glssh.Server{
 		Handler: func(sess glssh.Session) {
+			if answer != nil {
+				if out, ok := answer(sess.RawCommand()); ok {
+					_, _ = io.Copy(io.Discard, sess)
+					_, _ = io.WriteString(sess, out)
+					_ = sess.Exit(0)
+					return
+				}
+			}
 			cmd := exec.Command("/bin/sh", "-c", sess.RawCommand())
 			cmd.Stdout, cmd.Stderr = sess, sess.Stderr()
 			stdin, err := cmd.StdinPipe()
@@ -424,7 +442,7 @@ func startSSHServer(t *testing.T, authorized ssh.PublicKey) string {
 	srv.AddHostKey(signer)
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
-	return ln.Addr().String()
+	return ln.Addr().String(), signer.PublicKey()
 }
 
 // fakeManager is the manager side of the worker's gRPC port: it hands out
