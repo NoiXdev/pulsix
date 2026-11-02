@@ -893,6 +893,7 @@ type User struct {
 	InstanceAdmin bool               `json:"instance_admin"`
 	CreatedAt     time.Time          `json:"created_at"`
 	DisabledAt    pgtype.Timestamptz `json:"disabled_at"`
+	Locale        *string            `json:"locale"`
 }
 
 type WebauthnCeremony struct {

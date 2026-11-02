@@ -13,6 +13,12 @@ SELECT * FROM users WHERE email = $1;
 -- name: GetUserByID :one
 SELECT * FROM users WHERE id = $1;
 
+-- name: SetUserLocale :execrows
+-- A NULL locale clears the user's own choice (the instance default applies
+-- again). :execrows so an id that matches nothing is told apart from a
+-- successful write (backlog 1.41).
+UPDATE users SET locale = sqlc.narg(locale) WHERE id = sqlc.arg(id);
+
 -- name: AddMembership :exec
 -- ON CONFLICT DO NOTHING mirrors the (org_id, user_id) primary key: accepting
 -- an invitation for an address that is already a member must join

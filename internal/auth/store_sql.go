@@ -26,10 +26,21 @@ func (s *SQLStore) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) 
 	return toUser(row), mapErr(err)
 }
 
+func (s *SQLStore) SetLocale(ctx context.Context, id uuid.UUID, l *string) error {
+	n, err := s.q.SetUserLocale(ctx, gen.SetUserLocaleParams{ID: id, Locale: l})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func toUser(r gen.User) User {
 	return User{
 		ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, PasswordHash: r.PasswordHash, InstanceAdmin: r.InstanceAdmin,
-		DisabledAt: fromPgTimestamptz(r.DisabledAt),
+		DisabledAt: fromPgTimestamptz(r.DisabledAt), Locale: r.Locale,
 	}
 }
 

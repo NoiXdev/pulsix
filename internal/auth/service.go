@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/locale"
 )
 
 // User is the service-level view of a user row. DisabledAt is non-nil once
@@ -20,18 +22,26 @@ type User struct {
 	PasswordHash  *string
 	InstanceAdmin bool
 	DisabledAt    *time.Time
+	// Locale is the user's own GUI language, nil until they choose one
+	// (the instance default then applies — see internal/locale).
+	Locale *string
 }
 
 // Sentinel errors mapped to HTTP status by the transport layer.
 var (
 	ErrNotFound           = errors.New("not found")
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrInvalidInput is a request value the service refuses, e.g. a GUI
+	// language the product does not ship. The transport maps it to 422.
+	ErrInvalidInput = errors.New("invalid input")
 )
 
 // Store is what the auth service needs from persistence.
 type Store interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	GetUserByID(ctx context.Context, id uuid.UUID) (User, error)
+	// SetLocale stores the user's GUI language; nil clears it.
+	SetLocale(ctx context.Context, id uuid.UUID, l *string) error
 }
 
 // SessionStore is the subset of *Sessions the service uses (fakeable in tests).
@@ -186,4 +196,14 @@ func (s *Service) Logout(ctx context.Context, p Principal) error {
 // Me returns the caller's user.
 func (s *Service) Me(ctx context.Context, p Principal) (User, error) {
 	return s.store.GetUserByID(ctx, p.UserID)
+}
+
+// SetLocale stores the user's own GUI language, or clears it with nil so
+// the instance default applies again. Anything but a shipped language is
+// ErrInvalidInput.
+func (s *Service) SetLocale(ctx context.Context, userID uuid.UUID, l *string) error {
+	if l != nil && !locale.Valid(*l) {
+		return fmt.Errorf("%w: unsupported language %q", ErrInvalidInput, *l)
+	}
+	return s.store.SetLocale(ctx, userID, l)
 }

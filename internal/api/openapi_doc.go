@@ -7,6 +7,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
@@ -74,3 +75,4 @@ func (stubAuthService) Logout(context.Context, auth.Principal) error { return ni
 func (stubAuthService) Me(context.Context, auth.Principal) (auth.User, error) {
 	return auth.User{}, nil
 }
+func (stubAuthService) SetLocale(context.Context, uuid.UUID, *string) error { return nil }

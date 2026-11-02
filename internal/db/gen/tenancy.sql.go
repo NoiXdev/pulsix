@@ -57,7 +57,7 @@ func (q *Queries) CreateOrganization(ctx context.Context, arg CreateOrganization
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (id, email, display_name, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, email, display_name, password_hash, instance_admin, created_at, disabled_at
+INSERT INTO users (id, email, display_name, password_hash) VALUES ($1, $2, $3, $4) RETURNING id, email, display_name, password_hash, instance_admin, created_at, disabled_at, locale
 `
 
 type CreateUserParams struct {
@@ -83,6 +83,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.InstanceAdmin,
 		&i.CreatedAt,
 		&i.DisabledAt,
+		&i.Locale,
 	)
 	return i, err
 }
@@ -125,7 +126,7 @@ func (q *Queries) GetOrganizationBySlug(ctx context.Context, slug string) (Organ
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, display_name, password_hash, instance_admin, created_at, disabled_at FROM users WHERE email = $1
+SELECT id, email, display_name, password_hash, instance_admin, created_at, disabled_at, locale FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -139,12 +140,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.InstanceAdmin,
 		&i.CreatedAt,
 		&i.DisabledAt,
+		&i.Locale,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, display_name, password_hash, instance_admin, created_at, disabled_at FROM users WHERE id = $1
+SELECT id, email, display_name, password_hash, instance_admin, created_at, disabled_at, locale FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
@@ -158,6 +160,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.InstanceAdmin,
 		&i.CreatedAt,
 		&i.DisabledAt,
+		&i.Locale,
 	)
 	return i, err
 }
@@ -200,4 +203,24 @@ func (q *Queries) ListMembershipsForUser(ctx context.Context, userID uuid.UUID) 
 		return nil, err
 	}
 	return items, nil
+}
+
+const setUserLocale = `-- name: SetUserLocale :execrows
+UPDATE users SET locale = $1 WHERE id = $2
+`
+
+type SetUserLocaleParams struct {
+	Locale *string   `json:"locale"`
+	ID     uuid.UUID `json:"id"`
+}
+
+// A NULL locale clears the user's own choice (the instance default applies
+// again). :execrows so an id that matches nothing is told apart from a
+// successful write (backlog 1.41).
+func (q *Queries) SetUserLocale(ctx context.Context, arg SetUserLocaleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUserLocale, arg.Locale, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

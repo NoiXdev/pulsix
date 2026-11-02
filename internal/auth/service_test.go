@@ -30,6 +30,16 @@ func (f *fakeStore) GetUserByID(_ context.Context, id uuid.UUID) (auth.User, err
 	}
 	return auth.User{}, auth.ErrNotFound
 }
+func (f *fakeStore) SetLocale(_ context.Context, id uuid.UUID, l *string) error {
+	for email, u := range f.users {
+		if u.ID == id {
+			u.Locale = l
+			f.users[email] = u
+			return nil
+		}
+	}
+	return auth.ErrNotFound
+}
 
 type fakeSessions struct {
 	created []uuid.UUID
@@ -174,5 +184,52 @@ func TestServiceMe(t *testing.T) {
 	}
 	if _, err := svc.Me(context.Background(), auth.Principal{UserID: uuid.Must(uuid.NewV7())}); !errors.Is(err, auth.ErrNotFound) {
 		t.Fatalf("Me(unknown) err = %v, want ErrNotFound", err)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+// TestSetLocale: a user's own GUI language is stored, replaced and cleared,
+// and only the shipped languages are accepted (backlog 1.41).
+func TestSetLocale(t *testing.T) {
+	uid := uuid.Must(uuid.NewV7())
+	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x"}}}
+	svc := auth.NewService(store, &fakeSessions{}, auth.NoMFA{})
+	ctx := context.Background()
+	p := auth.Principal{UserID: uid}
+
+	me := func() auth.User {
+		t.Helper()
+		u, err := svc.Me(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	if me().Locale != nil {
+		t.Fatalf("a fresh user has locale %q, want none", *me().Locale)
+	}
+	if err := svc.SetLocale(ctx, uid, strPtr("de")); err != nil {
+		t.Fatal(err)
+	}
+	if l := me().Locale; l == nil || *l != "de" {
+		t.Fatalf("locale after SetLocale(de) = %v, want de", l)
+	}
+	if err := svc.SetLocale(ctx, uid, nil); err != nil {
+		t.Fatal(err)
+	}
+	if me().Locale != nil {
+		t.Fatal("SetLocale(nil) did not clear the language")
+	}
+	if err := svc.SetLocale(ctx, uid, strPtr("de")); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"fr", "", "DE", "de-DE"} {
+		if err := svc.SetLocale(ctx, uid, strPtr(bad)); !errors.Is(err, auth.ErrInvalidInput) {
+			t.Errorf("SetLocale(%q) err = %v, want ErrInvalidInput", bad, err)
+		}
+	}
+	if l := me().Locale; l == nil || *l != "de" {
+		t.Fatalf("a refused SetLocale changed the language to %v", l)
 	}
 }

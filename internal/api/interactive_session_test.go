@@ -32,6 +32,7 @@ func newInteractiveSessionTestAPI(t *testing.T) humatest.TestAPI {
 	hapi := humachi.New(r, huma.DefaultConfig("interactive-session-test", "0.0.0"))
 	registerPasskeyRoutes(hapi, Deps{})
 	registerMFARoutes(hapi, Deps{})
+	registerLocaleRoutes(hapi, Deps{})
 	return humatest.Wrap(t, hapi)
 }
 
@@ -106,6 +107,7 @@ func TestInteractiveSessionRejectsTokenPrincipal(t *testing.T) {
 		{"totp enrol", http.MethodPost, "/api/v1/auth/totp/enrol", struct{}{}},
 		{"totp confirm", http.MethodPost, "/api/v1/auth/totp/confirm", map[string]any{"code": "000000"}},
 		{"totp delete", http.MethodDelete, "/api/v1/auth/totp", map[string]any{"code": "000000"}},
+		{"set own language", http.MethodPut, "/api/v1/auth/me/locale", map[string]any{"locale": "de"}},
 	}
 
 	for _, tc := range cases {

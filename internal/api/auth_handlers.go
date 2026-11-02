@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/locale"
 )
 
 // AuthService is what the auth handlers need from the login/session
@@ -21,6 +23,7 @@ type AuthService interface {
 	Login(ctx context.Context, email, password string) (auth.LoginResult, error)
 	Logout(ctx context.Context, p auth.Principal) error
 	Me(ctx context.Context, p auth.Principal) (auth.User, error)
+	SetLocale(ctx context.Context, userID uuid.UUID, l *string) error
 }
 
 type loginInput struct {
@@ -82,6 +85,11 @@ type meOutput struct {
 		// which factors exist.
 		TOTPConfirmed bool `json:"totp_confirmed"`
 		InstanceAdmin bool `json:"instance_admin"`
+		// Locale is the user's own GUI language, null until they choose
+		// one; EffectiveLocale is the language that applies: that choice,
+		// else the instance default, else English (backlog 1.41).
+		Locale          *string `json:"locale" enum:"en,de" nullable:"true"`
+		EffectiveLocale string  `json:"effective_locale" enum:"en,de"`
 	}
 }
 
@@ -140,6 +148,11 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		out.Body.User.ID, out.Body.User.Email, out.Body.User.DisplayName = u.ID.String(), u.Email, u.DisplayName
 		out.Body.MFAComplete, out.Body.InstanceAdmin = p.MFAComplete, p.InstanceAdmin
 		out.Body.TOTPConfirmed = totpConfirmed
+		def, err := deps.Setup.DefaultLocale(ctx)
+		if err != nil {
+			return nil, mapSetupErr(ctx, err)
+		}
+		out.Body.Locale, out.Body.EffectiveLocale = u.Locale, locale.Resolve(u.Locale, def)
 		remaining, err := deps.TOTP.RecoveryCodesRemaining(ctx, p.UserID)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
@@ -356,6 +369,8 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error401Unauthorized("invalid credentials")
 	case errors.Is(err, auth.ErrNotFound):
 		return huma.Error401Unauthorized("login required")
+	case errors.Is(err, auth.ErrInvalidInput):
+		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, auth.ErrInvalidTOTPCode):
 		return huma.Error400BadRequest("invalid code")
 	case errors.Is(err, auth.ErrTooManyFactorAttempts):

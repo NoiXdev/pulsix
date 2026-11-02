@@ -511,6 +511,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	// session or bearer credential is accepted.
 	registerHookRoutes(hapi, deps)
 	registerSMTPSettingsRoutes(hapi, deps)   // /admin/settings/smtp... — instance admin, session only
+	registerLocaleRoutes(hapi, deps)         // PUT /auth/me/locale — the user's own GUI language
 	registerLocaleSettingsRoutes(hapi, deps) // /admin/settings/locale — instance admin, session only
 	// /admin/repos/definitions... — instance admin, session only (spec
 	// v0.2f decision 8: no org_id, no per-org access at all).

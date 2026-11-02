@@ -20,6 +20,8 @@ func (notFoundStore) GetUserByID(context.Context, uuid.UUID) (User, error) {
 	return User{}, ErrNotFound
 }
 
+func (notFoundStore) SetLocale(context.Context, uuid.UUID, *string) error { return ErrNotFound }
+
 // noopSessions never gets reached in this test (Login returns before it
 // would create a session for an unknown user), but Service requires a
 // SessionStore to construct.

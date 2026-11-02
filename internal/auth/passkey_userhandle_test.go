@@ -86,6 +86,8 @@ type tinyUserStore struct{ u User }
 func (s tinyUserStore) GetUserByEmail(context.Context, string) (User, error) { return s.u, nil }
 func (s tinyUserStore) GetUserByID(context.Context, uuid.UUID) (User, error) { return s.u, nil }
 
+func (s tinyUserStore) SetLocale(context.Context, uuid.UUID, *string) error { return nil }
+
 type tinySessions struct{}
 
 func (tinySessions) Create(context.Context, uuid.UUID, bool) (uuid.UUID, string, error) {
