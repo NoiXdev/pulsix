@@ -529,7 +529,9 @@ func TestRunLogsATickFailureAndKeepsGoing(t *testing.T) {
 		}
 	}
 	cancel()
-	<-errC
+	if err := <-errC; !errors.Is(err, context.Canceled) {
+		t.Errorf("Run after its context was cancelled = %v, want context.Canceled", err)
+	}
 	if !strings.Contains(buf.String(), "claim failed") {
 		t.Fatalf("the failing tick was not logged; log was %q", buf.String())
 	}
@@ -578,7 +580,9 @@ func TestRunSurvivesAPanickingTick(t *testing.T) {
 		}
 	}
 	cancel()
-	<-errC
+	if err := <-errC; !errors.Is(err, context.Canceled) {
+		t.Errorf("Run after its context was cancelled = %v, want context.Canceled", err)
+	}
 	if !strings.Contains(buf.String(), "evaluation tick panicked") {
 		t.Fatalf("the panic was not logged; log was %q", buf.String())
 	}

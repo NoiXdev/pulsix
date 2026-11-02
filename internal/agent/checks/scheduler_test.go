@@ -219,7 +219,9 @@ func TestSchedulerApplyUnchangedConfigKeepsPhase(t *testing.T) {
 	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 2 })
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 // freshDiskParams returns a new map instance with the same content every
@@ -268,7 +270,9 @@ func TestSchedulerApplyChangedIntervalRestartsTimer(t *testing.T) {
 	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 1 })
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 func TestSchedulerApplyChangedParamsRestartsTimer(t *testing.T) {
@@ -357,7 +361,9 @@ func TestSchedulerApplyRemovesCheckNotInConfig(t *testing.T) {
 	}
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 func TestSchedulerUnknownPluginNeverCollectsOrPanics(t *testing.T) {
@@ -410,7 +416,9 @@ func TestSchedulerApplyBeforeRunStartsOnRunBegin(t *testing.T) {
 	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 1 })
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 func TestSchedulerCollectErrorWithNoObservationsProducesNoResult(t *testing.T) {
@@ -435,7 +443,9 @@ func TestSchedulerCollectErrorWithNoObservationsProducesNoResult(t *testing.T) {
 	}
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 func TestSchedulerPartialObservationsWithErrorStillSent(t *testing.T) {
@@ -462,7 +472,9 @@ func TestSchedulerPartialObservationsWithErrorStillSent(t *testing.T) {
 	}
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 func TestSchedulerParamsPassedThroughToPlugin(t *testing.T) {
@@ -490,7 +502,9 @@ func TestSchedulerParamsPassedThroughToPlugin(t *testing.T) {
 	}
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 // TestSchedulerErrObservationCarriesThroughAsResultErr pins the coordinator's
@@ -533,7 +547,9 @@ func TestSchedulerErrObservationCarriesThroughAsResultErr(t *testing.T) {
 	}
 
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 }
 
 func findResult(t *testing.T, batch []Result, item, metric string) Result {

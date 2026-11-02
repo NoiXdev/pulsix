@@ -236,7 +236,10 @@ func (l *Loop) Run(ctx context.Context) error {
 	go func() { schedulerDone <- l.scheduler.Run(schedCtx, l.handleResults) }()
 	defer func() {
 		select {
-		case <-schedulerDone:
+		case err := <-schedulerDone:
+			if err != nil {
+				l.log.WarnContext(ctx, "the check scheduler ended with an error", "err", err)
+			}
 		case <-time.After(streamDrainWit):
 		}
 	}()
@@ -370,7 +373,12 @@ func nextBackoffShift(shift int) int {
 // normally instant.
 func (l *Loop) drainRecv(recvErr <-chan error) {
 	select {
-	case <-recvErr:
+	case err := <-recvErr:
+		// The session is over and whatever ended it was handled already;
+		// how the receive side noticed is only worth a debug line.
+		if err != nil {
+			l.log.Debug("agent stream receive ended", "err", err)
+		}
 	case <-time.After(streamDrainWit):
 	}
 }

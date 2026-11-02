@@ -77,8 +77,8 @@ func TestServeWithGracefulShutdownWaitsForDrain(t *testing.T) {
 	// version violated (it returned here, as soon as Serve's listener
 	// closed, without waiting for Shutdown's drain).
 	select {
-	case <-returned:
-		t.Fatal("serveWithGracefulShutdown returned before the in-flight request finished")
+	case err := <-returned:
+		t.Fatalf("serveWithGracefulShutdown returned (%v) before the in-flight request finished", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 	if handlerFinished.Load() {

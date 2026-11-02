@@ -324,7 +324,9 @@ func TestLoopExecutorFailed(t *testing.T) {
 	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusFailed) {
@@ -351,7 +353,9 @@ func TestLoopExecutorError(t *testing.T) {
 	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusError) {
@@ -374,7 +378,9 @@ func TestLoopUnknownStatusNormalized(t *testing.T) {
 	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusError) {
@@ -406,7 +412,9 @@ func TestLoopCancelDirective(t *testing.T) {
 	streams[0].push(&workerpb.ManagerDirective{Cancel: true})
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusCancelled) {
@@ -434,7 +442,9 @@ func TestLoopCancelMapsRawContextError(t *testing.T) {
 	client.streamsNow()[0].push(&workerpb.ManagerDirective{Cancel: true})
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusCancelled) {
@@ -458,7 +468,9 @@ func TestLoopStreamOpenFailure(t *testing.T) {
 	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusError) {
@@ -493,7 +505,9 @@ func TestLoopSendErrorRespected(t *testing.T) {
 	cancel, done := runLoop(t, l)
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusError) {
@@ -540,7 +554,9 @@ func TestLoopWorkDirLifecycle(t *testing.T) {
 	<-createdDuring
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	if _, err := os.Stat(created); !os.IsNotExist(err) {
 		t.Fatalf("WorkDir %q must be removed after the run (stat err = %v)", created, err)
@@ -838,7 +854,9 @@ func TestLoopUnmarshalableStatsReportedAsError(t *testing.T) {
 	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	reports := client.reported()
 	if reports[0].Status != string(StatusError) {
@@ -877,7 +895,9 @@ func TestLoopDoesNotMutateExecutorEvent(t *testing.T) {
 	cancel, done := runLoop(t, NewLoop(cfg, client, exec))
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	events := client.streamsNow()[0].events()
 	if len(events) != 1 {
@@ -933,7 +953,9 @@ func TestLoopClaimsPresentConfiguredZones(t *testing.T) {
 			cancel, done := runLoop(t, l)
 			waitFor(t, 2*time.Second, func() bool { return len(client.claimsNow()) >= 1 })
 			cancel()
-			<-done
+			if err := <-done; err != nil {
+				t.Errorf("done: %v", err)
+			}
 			claims := client.claimsNow()
 			if len(claims[0].GetZoneIds()) != tc.want {
 				t.Fatalf("zone ids = %v, want %d", claims[0].GetZoneIds(), tc.want)
@@ -1258,7 +1280,9 @@ func TestLoopTruncatesOversizedEventPayloads(t *testing.T) {
 	cancel, done := runLoop(t, l)
 	waitFor(t, 2*time.Second, func() bool { return len(client.reported()) == 1 })
 	cancel()
-	<-done
+	if err := <-done; err != nil {
+		t.Errorf("done: %v", err)
+	}
 
 	events := client.streamsNow()[0].events()
 	if len(events) != 2 {
@@ -1367,7 +1391,9 @@ func TestLoopUnauthenticatedLogDependsOnIdentityValidity(t *testing.T) {
 		cancel, done := runLoop(t, l)
 		waitFor(t, 2*time.Second, func() bool { return len(client.claimsNow()) >= 2 })
 		cancel()
-		<-done
+		if err := <-done; err != nil {
+			t.Errorf("done: %v", err)
+		}
 		return logs.String()
 	}
 
