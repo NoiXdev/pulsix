@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
+import { de } from '../../i18n/de/index.ts';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
@@ -680,5 +681,18 @@ describe('shared definitions can be given extra vars and disk mounts', () => {
     await user.clear(within(dialog).getByLabelText('Mounts (one per line, empty means every mount)'));
     await user.click(within(dialog).getByRole('button', { name: 'Save definition' }));
     expect(puts[1]).toMatchObject({ plugin: 'disk', params: {} });
+  });
+});
+
+describe('the German counts of shared definitions', () => {
+  it.each([
+    ['repos', 'Repository-Definition', 'Repository-Definitionen'],
+    ['templates', 'Job-Vorlagen-Definition', 'Job-Vorlagen-Definitionen'],
+    ['checks', 'Check-Definition', 'Check-Definitionen'],
+  ] as const)('%s: one is singular, any other number plural', (kind, singular, plural) => {
+    const count = de.instance.shared[kind].count;
+    expect(count(1)).toMatch(new RegExp(`^1 ${singular} · `));
+    expect(count(2)).toMatch(new RegExp(`^2 ${plural} · `));
+    expect(count(0)).toMatch(new RegExp(`^0 ${plural} · `));
   });
 });

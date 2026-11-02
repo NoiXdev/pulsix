@@ -37,7 +37,9 @@ export const deInstance: Messages['instance'] = {
     createDefinition: 'Definition anlegen',
     repos: {
       count: (n: number) =>
-        `${n} Repository-Definitionen · in jede Organisation projiziert, dort schreibgeschützt`,
+        n === 1
+          ? '1 Repository-Definition · in jede Organisation projiziert, dort schreibgeschützt'
+          : `${n} Repository-Definitionen · in jede Organisation projiziert, dort schreibgeschützt`,
       add: 'Repository-Definition hinzufügen',
       url: 'URL',
       branch: 'Branch',
@@ -55,7 +57,9 @@ export const deInstance: Messages['instance'] = {
     },
     templates: {
       count: (n: number) =>
-        `${n} Job-Vorlagen-Definitionen · in jede Organisation projiziert, dort schreibgeschützt`,
+        n === 1
+          ? '1 Job-Vorlagen-Definition · in jede Organisation projiziert, dort schreibgeschützt'
+          : `${n} Job-Vorlagen-Definitionen · in jede Organisation projiziert, dort schreibgeschützt`,
       add: 'Job-Vorlagen-Definition hinzufügen',
       repository: 'Repository',
       playbookPath: 'Playbook-Pfad',
@@ -77,7 +81,9 @@ export const deInstance: Messages['instance'] = {
     },
     checks: {
       count: (n: number) =>
-        `${n} Check-Definitionen · mit der Standardbindung für die ganze Organisation in jede Organisation projiziert, dort schreibgeschützt`,
+        n === 1
+          ? '1 Check-Definition · mit der Standardbindung für die ganze Organisation in jede Organisation projiziert, dort schreibgeschützt'
+          : `${n} Check-Definitionen · mit der Standardbindung für die ganze Organisation in jede Organisation projiziert, dort schreibgeschützt`,
       add: 'Check-Definition hinzufügen',
       key: 'Schlüssel',
       plugin: 'Plugin',
