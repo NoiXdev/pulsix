@@ -83,6 +83,11 @@ services:
       # — otherwise every caller looks like the proxy, webhook IP
       # allowlists never match and audit entries record the proxy.
       PULSIX_TRUSTED_PROXIES: "${PULSIX_TRUSTED_PROXIES:-${PULSIX_PROXY_ADDR:-10.213.73.254}}"
+    volumes:
+      # The backup folder (README.md, "Backup and restore"): where backups
+      # go unless the web interface names S3-compatible storage, and where
+      # `docker compose run --rm manager restore` looks by default.
+      - pulsix-backups:/var/lib/pulsix/backups
     ports:
       # Host-side port is overridable (default 8080) for a machine that
       # already has something bound to 8080 — the container always
@@ -118,7 +123,11 @@ services:
   # up, so a later second organization does not break it. A first
   # enrollment on an instance where several organizations have the zone
   # slug fails with a message asking for PULSIX_WORKER_ORG; the bounded
-  # restart policy keeps that from spinning forever.
+  # restart policy keeps that from spinning forever. --replace serves a
+  # restore on a new server: the restored database already knows the
+  # worker's name, but the new server has no bundle for it, so the old
+  # registration is revoked and replaced. A revoked worker is never
+  # replaced (see README.md, "If the bundled worker was revoked").
   worker-enroll:
     image: noixdev/pulsix-manager:${PULSIX_VERSION:-latest}
     depends_on:
@@ -134,6 +143,7 @@ services:
       - --name=${PULSIX_WORKER_NAME:-worker-1}
       - --bundle-dir=/var/lib/pulsix/worker-bundle
       - --wait
+      - --replace
     environment:
       PULSIX_DATABASE_URL: "postgres://pulsix:${DB_PASSWORD:?set DB_PASSWORD in .env (openssl rand -hex 32)}@db:5432/pulsix?sslmode=disable"
       PULSIX_MASTER_KEY: "${PULSIX_MASTER_KEY:?run: openssl rand -hex 32}"
@@ -256,6 +266,7 @@ networks:
           ip_range: "${PULSIX_NETWORK_RANGE:-10.213.73.0/25}"
 
 volumes:
+  pulsix-backups:
   pulsix-db:
   pulsix-letsencrypt:
   pulsix-worker-bundle:

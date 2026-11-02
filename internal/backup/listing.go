@@ -24,7 +24,7 @@ func (s *Service) List(ctx context.Context) ([]Entry, error) {
 		return nil, fmt.Errorf("list backups: %w", err)
 	}
 	var objs []Object
-	st, listErr := s.destination(ctx)
+	st, listErr := s.Destination(ctx)
 	if listErr == nil {
 		objs, listErr = st.List(ctx)
 	}
@@ -90,7 +90,7 @@ func objectEntry(o Object) Entry {
 
 // find returns the listed backup called name at the configured destination.
 func (s *Service) find(ctx context.Context, name string) (Storage, Object, error) {
-	st, err := s.destination(ctx)
+	st, err := s.Destination(ctx)
 	if err != nil {
 		return nil, Object{}, err
 	}
@@ -141,7 +141,7 @@ func (s *Service) Status(ctx context.Context) (nextRun *time.Time, destination s
 	if err != nil {
 		return nil, "", err
 	}
-	st, err := s.destination(ctx)
+	st, err := s.Destination(ctx)
 	if err != nil {
 		return nil, "", err
 	}

@@ -78,6 +78,10 @@ type WorkerAddOptions struct {
 	// WaitInterval is Wait's retry period; zero means
 	// defaultWorkerAddWaitInterval.
 	WaitInterval time.Duration
+	// Replace revokes and deletes an active worker that already has the
+	// name in the organization, then enrolls as usual (see
+	// replacingRegister).
+	Replace bool
 }
 
 // defaultWorkerAddWaitInterval is how often `worker add --wait` retries a
@@ -138,10 +142,14 @@ func RunWorkerAdd(ctx context.Context, cfg config.Config, opts WorkerAddOptions,
 	}
 	caPEM := caPEMOf(caInst)
 
-	if opts.BundleDir != "" {
-		return enrollBundle(ctx, z, opts.Name, caPEM, opts.BundleDir, funcRegister{svc: svc}, caInst, stderr)
+	var reg workerRegistrar = funcRegister{svc: svc}
+	if opts.Replace {
+		reg = replacingRegister{reg: reg, registry: svc, stderr: stderr}
 	}
-	return workerAdd(ctx, fixedZone{z}, funcRegister{svc: svc}, caInst, caPEM,
+	if opts.BundleDir != "" {
+		return enrollBundle(ctx, z, opts.Name, caPEM, opts.BundleDir, reg, caInst, stderr)
+	}
+	return workerAdd(ctx, fixedZone{z}, reg, caInst, caPEM,
 		opts.ZoneSlug, opts.OrgSlug, opts.Name, cfg.CAListenHost(), stdout)
 }
 

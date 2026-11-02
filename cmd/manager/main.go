@@ -1,5 +1,5 @@
 // Command manager runs the Pulsix manager (API, SPA, scheduler) and its
-// worker-facing subcommands (`worker add`).
+// operator subcommands (`worker add`, `backup`, `restore`).
 package main
 
 import (
@@ -58,7 +58,8 @@ func main() {
 // dispatch routes to the "openapi" subcommand (writes the OpenAPI document
 // to stdout and exits, no server or database involved — see
 // api.Document's doc comment), the "worker add" enrollment subcommand (see
-// app.RunWorkerAdd), the play supervisor's reserved argument, or — with no
+// app.RunWorkerAdd), the "backup" and "restore" commands (backupcmd.go),
+// the play supervisor's reserved argument, or — with no
 // arguments at all — starts the manager server. The supervisor case (and
 // the sweep beside it, backlog 7.21) exists
 // because the embedded worker runs plays by re-executing this very binary
@@ -82,6 +83,10 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return runOpenAPI(stdout)
 	case len(args) >= 2 && args[0] == "worker" && args[1] == "add":
 		return runWorkerAdd(args[2:], stdout, stderr)
+	case args[0] == "backup":
+		return runBackup(args[1:], stdout, stderr)
+	case args[0] == "restore":
+		return runRestore(args[1:], stdout, stderr)
 	}
 	_, _ = fmt.Fprintf(stderr, "pulsix-manager: unknown command %q\n%s", strings.Join(args, " "), usageText)
 	return 2
@@ -91,8 +96,15 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 const usageText = `usage:
   pulsix-manager                  start the manager (configuration from PULSIX_* variables)
   pulsix-manager openapi          print the OpenAPI document
-  pulsix-manager worker add --zone <slug> --name <name> [--org <slug>] [--bundle-dir <dir> [--wait]]
-                                  enroll a worker
+  pulsix-manager worker add --zone <slug> --name <name> [--org <slug>] [--bundle-dir <dir> [--wait]] [--replace]
+                                  enroll a worker; --replace enrolls it again when its name is taken
+  pulsix-manager backup [--to <dir>|s3://bucket/prefix] [--without-metrics]
+                                  take a backup (default: the destination set in the web interface)
+  pulsix-manager backup key       print the passphrase that decrypts backups with the age tool
+  pulsix-manager restore --list [--from <dir>|s3://bucket/prefix]
+                                  list backups (default: /var/lib/pulsix/backups)
+  pulsix-manager restore [--from <dir>|s3://bucket/prefix] [--replace] [--yes] <name>|-
+                                  restore a backup (- reads it from standard input); stop the manager first
 `
 
 // runWorkerAdd parses `worker add`'s flags and enrolls a worker. Errors go
@@ -108,6 +120,7 @@ func runWorkerAdd(args []string, stdout, stderr io.Writer) int {
 	name := fs.String("name", "", "worker name, 1-63 lowercase letters, digits or hyphens (required)")
 	bundleDir := fs.String("bundle-dir", "", "write cert.pem, key.pem and ca.pem into this directory instead of printing them; a still-valid bundle there is reused")
 	wait := fs.Bool("wait", false, "with --bundle-dir: wait until the zone exists instead of failing")
+	replace := fs.Bool("replace", false, "when the organization already has an active worker of that name (a restored database), revoke and delete it, then enroll")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -138,7 +151,7 @@ func runWorkerAdd(args []string, stdout, stderr io.Writer) int {
 	// enrollment service still waits for the setup wizard).
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
-	opts := app.WorkerAddOptions{ZoneSlug: *zoneSlug, OrgSlug: *orgSlug, Name: *name, BundleDir: *bundleDir, Wait: *wait}
+	opts := app.WorkerAddOptions{ZoneSlug: *zoneSlug, OrgSlug: *orgSlug, Name: *name, BundleDir: *bundleDir, Wait: *wait, Replace: *replace}
 	if err := app.RunWorkerAdd(ctx, cfg, opts, stdout, stderr); err != nil {
 		_, _ = fmt.Fprintf(stderr, "worker add: %v\n", err)
 		return 1

@@ -287,8 +287,9 @@ func (s *Service) current(ctx context.Context) (Settings, string, error) {
 	return b.settings(), secret, nil
 }
 
-// destination opens the configured destination.
-func (s *Service) destination(ctx context.Context) (Storage, error) {
+// Destination opens the configured destination, with the stored S3
+// secret. The backup command uses it when no --to is given.
+func (s *Service) Destination(ctx context.Context) (Storage, error) {
 	set, secret, err := s.current(ctx)
 	if err != nil {
 		return nil, err

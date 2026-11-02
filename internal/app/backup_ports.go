@@ -12,10 +12,6 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 )
 
-// managerApplicationName is the application_name of every session a running
-// manager opens. restore refuses while a session of that name is connected.
-const managerApplicationName = "pulsix-manager"
-
 // backupAdmins lists who hears about a failed scheduled backup.
 type backupAdmins interface {
 	InstanceAdminEmails(ctx context.Context) ([]string, error)
@@ -58,9 +54,14 @@ func (m backupAdminMailer) SendToInstanceAdmins(ctx context.Context, subject, bo
 // which the org_isolation_bypass policies let read every organization.
 func newBackupService(appDB *db.DB, box *crypto.Box, masterKey [32]byte, smtp backupSMTP, version string) *backup.Service {
 	store := backup.NewSQLStore(appDB)
-	dump := func(ctx context.Context, w io.Writer, opts backup.DumpOptions) (backup.Header, error) {
-		return backup.Dump(ctx, appDB.Pool(), masterKey, w, opts)
-	}
-	return backup.NewService(store, box, dump, backup.StorageFor(backup.DefaultDir),
+	return backup.NewService(store, box, backupDump(appDB, masterKey), backup.StorageFor(backup.DefaultDir),
 		backupAdminMailer{admins: store, smtp: smtp}, version, time.Now, slog.Default())
+}
+
+// backupDump binds backup.Dump to d's pool and the master key: the app pool
+// in the manager, the schema owner's pool in the backup command.
+func backupDump(d *db.DB, masterKey [32]byte) backup.DumpFunc {
+	return func(ctx context.Context, w io.Writer, opts backup.DumpOptions) (backup.Header, error) {
+		return backup.Dump(ctx, d.Pool(), masterKey, w, opts)
+	}
 }

@@ -93,7 +93,9 @@ was enrolled for.
 ### Re-enrolling
 
 To enroll the bundled worker afresh (for example for another zone),
-remove its bundle and rerun the enrollment:
+remove its bundle and rerun the enrollment. `worker-enroll` runs with
+`--replace`, so it revokes and deletes the old registration of the same
+name and enrolls the worker again:
 
 ```bash
 docker compose rm -sf worker worker-enroll
@@ -260,11 +262,99 @@ lists the proxies it trusts (CIDRs or addresses, comma separated).
   `.env.example`). Changing them recreates the network on the next
   `docker compose up -d`.
 
+## Backup and restore
+
+Everything Pulsix keeps lives in the database, so a backup is the
+database's content: every organization, user, host, setting and secret,
+the instance CA included, and optionally the metric history. Every backup
+is encrypted with a key derived from `PULSIX_MASTER_KEY`, and the master
+key itself is **not** in it: keep your `.env` (or at least the master key)
+somewhere else than the backups. Without it no backup can be restored.
+
+Backups go to the `pulsix-backups` volume (`/var/lib/pulsix/backups` in the
+manager container) unless the web interface names S3-compatible storage
+(*Instance settings → Backups*, which also sets the daily schedule and how
+many backups to keep).
+
+### Taking a backup
+
+```bash
+# To the destination set in the web interface (by default the volume):
+docker compose run --rm manager backup
+# Without the metric history:
+docker compose run --rm manager backup --without-metrics
+# To a bucket, whatever the web interface says:
+docker compose run --rm \
+  -e PULSIX_BACKUP_S3_ACCESS_KEY=… -e PULSIX_BACKUP_S3_SECRET_KEY=… \
+  -e PULSIX_BACKUP_S3_ENDPOINT=s3.example.com -e PULSIX_BACKUP_S3_PATH_STYLE=true \
+  manager backup --to s3://bucket/prefix
+```
+
+The command works while the stack runs and prints the backup's name and
+size. `PULSIX_BACKUP_S3_REGION` is optional; without
+`PULSIX_BACKUP_S3_ENDPOINT` the bucket is on AWS S3.
+
+`docker compose run --rm manager backup key` prints the passphrase the
+backups are encrypted with. With it, the stock `age` tool decrypts a
+backup without Pulsix (`tail -n +3 FILE.pxbak | age -d | gunzip`). Keep it
+as secret as the master key.
+
+### Restoring
+
+Restore needs the manager stopped; it refuses while one is connected to
+the database.
+
+```bash
+docker compose run --rm manager restore --list    # name, time, kind, version, size
+docker compose down                               # stops the stack; the volumes stay
+docker compose run --rm manager restore pulsix-20261102T030000Z-scheduled.pxbak
+docker compose up -d
+```
+
+- **A database that is in use** (it has users or organizations) is only
+  replaced with `--replace`, which asks you to type `restore`. In a script,
+  add `--yes`.
+- **A downloaded backup** goes in on standard input (note `-T`):
+  `docker compose run --rm -T manager restore - < pulsix-….pxbak`.
+  Standard input cannot answer the question, so replacing a database this
+  way needs `--replace --yes`.
+- **From a bucket:** `restore --list --from s3://bucket/prefix` and
+  `restore --from s3://bucket/prefix <name>`, with the
+  `PULSIX_BACKUP_S3_*` variables as above. Restore never reads the
+  credentials from the database it replaces.
+
+Before it changes anything, restore reads the whole backup and checks it:
+a damaged file, a file from a newer Pulsix or a different master key is
+refused and the database stays as it was. If the restore fails after that
+(the connection drops, say), it says so: the database is then empty, and
+running the same command again finishes the job.
+
+On success restore prints what it restored. Start the stack: workers and
+agents reconnect on their own, since the instance CA comes back with the
+backup. A backup from an older Pulsix is migrated to the current version
+as part of the restore.
+
+### Moving to a new server
+
+1. Install the stack on the new server with the **same**
+   `PULSIX_MASTER_KEY` in `.env` (copy the old `.env`, adjusting what
+   differs).
+2. Restore before the first `docker compose up`:
+   `docker compose run --rm -T manager restore - < pulsix-….pxbak`
+   (or by name from the bucket). If the new instance was already set up,
+   stop it with `docker compose down` and add `--replace --yes`.
+3. `docker compose up -d`. The new server has no worker bundle yet, so
+   `worker-enroll` enrolls the bundled worker again under its old name,
+   replacing the registration the backup brought along. Agents on your
+   hosts keep their certificates and reconnect once the new server is
+   reachable under the address they know.
+
 ## Upgrading
 
 ```bash
 # in .env: set PULSIX_VERSION to the release you want (e.g. v0.2.0)
 docker compose pull
+docker compose run --rm manager backup   # optional, but cheap: a backup taken before the upgrade
 docker compose up -d
 ```
 
@@ -280,8 +370,8 @@ migration step to run by hand.
 ## Tearing down
 
 ```bash
-docker compose down       # stop everything, keep the database and worker volumes
-docker compose down -v    # stop everything AND discard all volumes (database included)
+docker compose down       # stop everything, keep the database, backup and worker volumes
+docker compose down -v    # stop everything AND discard all volumes (database and backups included)
 ```
 
 ## Files
