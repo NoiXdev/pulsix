@@ -4,7 +4,8 @@ import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { type NotifyRuleInput, useChannels, useScheduleNotifications, useSetScheduleNotifications } from '../../api/hooks/useNotifications.ts';
-import { CATEGORIES, CATEGORY_LABEL as LABEL, CATEGORY_TONE as TONE, type Category } from './notifyCategory.ts';
+import { useT } from '../../i18n/useT.ts';
+import { CATEGORIES, CATEGORY_TONE as TONE, type Category } from './notifyCategory.ts';
 
 type Matrix = Record<string, Category[]>;
 
@@ -13,6 +14,9 @@ type Matrix = Record<string, Category[]>;
  * at most one message per run, whichever categories it listens to.
  * Readers see the rules as text. */
 export function ScheduleNotifications({ org, scheduleId, canWrite }: { org: string; scheduleId: string; canWrite: boolean }) {
+  const t = useT();
+  const m = t.schedules.notifications;
+  const LABEL = t.schedules.categoryLabel;
   const rules = useScheduleNotifications(org, scheduleId);
   const channels = useChannels(org, canWrite);
   // Backlog 2.85: a failed rules query used to `return null` — the whole
@@ -29,14 +33,14 @@ export function ScheduleNotifications({ org, scheduleId, canWrite }: { org: stri
     // An editor whose channel list failed to load would otherwise see the
     // reader's view with no hint why the matrix is missing.
     return (
-      <section aria-label="Notifications" className="flex flex-col gap-1.5">
-        <span className="text-[11px] font-medium text-muted-foreground">Notifications</span>
+      <section aria-label={m.title} className="flex flex-col gap-1.5">
+        <span className="text-[11px] font-medium text-muted-foreground">{m.title}</span>
         {canWrite && channels.isError && (
           <p role="alert" className="text-xs text-destructive">
-            The channels could not be loaded, so these rules cannot be edited right now.
+            {m.channelsFailed}
           </p>
         )}
-        {list.length === 0 && <p className="text-xs text-muted-foreground">No notifications — runs appear in the activity feed only.</p>}
+        {list.length === 0 && <p className="text-xs text-muted-foreground">{m.none}</p>}
         {list.map((r) => (
           <div key={r.on} className="flex items-center gap-2 text-xs">
             <Pill tone={TONE[r.on as Category]}>{LABEL[r.on as Category]}</Pill>
@@ -52,6 +56,9 @@ export function ScheduleNotifications({ org, scheduleId, canWrite }: { org: stri
 }
 
 function RuleMatrix({ org, scheduleId, initial, channels }: { org: string; scheduleId: string; initial: Matrix; channels: { id: string; name: string }[] }) {
+  const t = useT();
+  const m = t.schedules.notifications;
+  const LABEL = t.schedules.categoryLabel;
   const toast = useToast();
   const save = useSetScheduleNotifications(org, scheduleId);
   const [matrix, setMatrix] = useState<Matrix>(initial);
@@ -67,22 +74,22 @@ function RuleMatrix({ org, scheduleId, initial, channels }: { org: string; sched
     );
     try {
       await save.mutateAsync(body);
-      toast.show('Notifications saved');
+      toast.show(m.saved);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Saving notifications failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : m.saveFailed, 'destructive');
     }
   }
 
   return (
-    <section aria-label="Notifications" className="flex flex-col gap-2">
-      <span className="text-[11px] font-medium text-muted-foreground">Notifications</span>
+    <section aria-label={m.title} className="flex flex-col gap-2">
+      <span className="text-[11px] font-medium text-muted-foreground">{m.title}</span>
       {channels.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No channels yet — admins add them under Settings → Notifications.</p>
+        <p className="text-xs text-muted-foreground">{m.noChannels}</p>
       ) : (
         <table className="text-xs">
           <thead>
             <tr>
-              <th className="text-left font-medium text-muted-foreground">Channel</th>
+              <th className="text-left font-medium text-muted-foreground">{m.channel}</th>
               {CATEGORIES.map((c) => (
                 <th key={c} className="px-1 font-medium">
                   <Pill tone={TONE[c]}>{LABEL[c]}</Pill>
@@ -105,7 +112,7 @@ function RuleMatrix({ org, scheduleId, initial, channels }: { org: string; sched
         </table>
       )}
       <Button type="button" className="self-end" onClick={() => void onSave()} disabled={save.isPending || channels.length === 0}>
-        Save notifications
+        {m.save}
       </Button>
     </section>
   );

@@ -1,4 +1,5 @@
 import type { AlertRouteStep } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 
 /**
  * The pure reading/validity rules behind StepsEditor and RouteEscalation,
@@ -19,13 +20,14 @@ import type { AlertRouteStep } from '../../api/types.ts';
  * chance to wait on anything. Shared by StepsEditor (one rung at a time)
  * and HostAlertRoutesCard/AlertRoutesPage, through RouteEscalation (the
  * last rung's own total), so both read the identical wording. */
-export function formatElapsed(totalSeconds: number): string {
-  if (totalSeconds <= 0) return 'at once';
+export function formatElapsed(totalSeconds: number, t: Messages): string {
+  const e = t.notifications.elapsed;
+  if (totalSeconds <= 0) return e.atOnce;
   const minutes = Math.round(totalSeconds / 60);
-  if (minutes < 60) return `after ${minutes} min`;
+  if (minutes < 60) return e.minutes(minutes);
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  return rest === 0 ? `after ${hours} h` : `after ${hours} h ${rest} min`;
+  return rest === 0 ? e.hours(hours) : e.hoursMinutes(hours, rest);
 }
 
 /** cumulativeDelays turns each rung's own delay_seconds (relative to the

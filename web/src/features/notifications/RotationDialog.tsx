@@ -6,6 +6,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { fromLocalInput, toLocalInput } from '../maintenance/time.ts';
 import type { OncallRotation, OncallRotationInput } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 /** A rotation's channel, trimmed to what the picker needs — the same
  * shape RouteDialogChannel (RouteDialog.tsx) gives its own channel list. */
@@ -55,6 +56,9 @@ export interface RotationDialogProps {
  * oncall.Validate enforces server-side.
  */
 export function RotationDialog({ open, rotation, channels, onClose, onSave }: RotationDialogProps) {
+  const t = useT();
+  const m = t.notifications;
+  const d = m.rotationDialog;
   const editing = !!rotation;
   const [name, setName] = useState(rotation?.name ?? '');
   const [periodDays, setPeriodDays] = useState(rotation?.period_days ?? 7);
@@ -101,20 +105,20 @@ export function RotationDialog({ open, rotation, channels, onClose, onSave }: Ro
       await onSave?.(body());
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : m.savingFailed);
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title={editing ? `Edit ${rotation.name}` : 'New rotation'} size="wide">
+    <Dialog open={open} onClose={onClose} title={editing ? d.editTitle(rotation.name) : d.newTitle} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <Label htmlFor="rot-name">Name</Label>
+        <Label htmlFor="rot-name">{m.name}</Label>
         <Input id="rot-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
         <div className="grid grid-cols-3 gap-2">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rot-period">Period (days)</Label>
+            <Label htmlFor="rot-period">{d.periodDays}</Label>
             <Input
               id="rot-period"
               type="number"
@@ -125,47 +129,47 @@ export function RotationDialog({ open, rotation, channels, onClose, onSave }: Ro
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rot-anchor">Anchor (first handover)</Label>
+            <Label htmlFor="rot-anchor">{d.anchor}</Label>
             <Input id="rot-anchor" type="datetime-local" value={anchor} onChange={(e) => setAnchor(e.target.value)} required />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="rot-tz">Timezone</Label>
+            <Label htmlFor="rot-tz">{m.timezone}</Label>
             <Input id="rot-tz" className="font-mono" value={timezone} onChange={(e) => setTimezone(e.target.value)} required />
           </div>
         </div>
         <fieldset className="flex flex-col gap-1.5 rounded-md border border-border p-2.5">
-          <legend className="px-1 text-[11px] font-medium text-muted-foreground">Channel cycle — the order is the handover order</legend>
+          <legend className="px-1 text-[11px] font-medium text-muted-foreground">{d.cycle}</legend>
           <div className="flex flex-col gap-1">
             {cycle.map((id, i) => (
               <div key={id} className="flex items-center gap-2 text-xs">
                 <span className="w-5 text-muted-foreground">{i + 1}.</span>
                 <span className="flex-1">{nameOf(channels, id)}</span>
-                <Button type="button" variant="ghost" aria-label={`Move ${nameOf(channels, id)} up`} disabled={i === 0} onClick={() => moveUp(i)}>
+                <Button type="button" variant="ghost" aria-label={d.moveUp(nameOf(channels, id))} disabled={i === 0} onClick={() => moveUp(i)}>
                   <ArrowUp size={13} />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  aria-label={`Move ${nameOf(channels, id)} down`}
+                  aria-label={d.moveDown(nameOf(channels, id))}
                   disabled={i === cycle.length - 1}
                   onClick={() => moveDown(i)}
                 >
                   <ArrowDown size={13} />
                 </Button>
-                <Button type="button" variant="ghost" aria-label={`Remove ${nameOf(channels, id)}`} onClick={() => remove(id)}>
+                <Button type="button" variant="ghost" aria-label={d.removeAria(nameOf(channels, id))} onClick={() => remove(id)}>
                   <Trash2 size={13} />
                 </Button>
               </div>
             ))}
-            {cycle.length === 0 && <span className="text-xs text-muted-foreground">Add at least one channel.</span>}
+            {cycle.length === 0 && <span className="text-xs text-muted-foreground">{d.addAtLeastOne}</span>}
           </div>
           <div className="flex flex-wrap gap-2">
             {available.map((c) => (
               <Button key={c.id} type="button" variant="ghost" onClick={() => add(c.id)}>
-                <Plus size={13} /> Add {c.name}
+                <Plus size={13} /> {d.add(c.name)}
               </Button>
             ))}
-            {channels.length === 0 && <span className="text-xs text-muted-foreground">Add a notification channel first.</span>}
+            {channels.length === 0 && <span className="text-xs text-muted-foreground">{m.addChannelFirst}</span>}
           </div>
         </fieldset>
         {error && (
@@ -175,10 +179,10 @@ export function RotationDialog({ open, rotation, channels, onClose, onSave }: Ro
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={!valid || pending}>
-            Save
+            {t.common.save}
           </Button>
         </div>
       </form>

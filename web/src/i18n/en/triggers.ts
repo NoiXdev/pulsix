@@ -1,0 +1,88 @@
+/**
+ * The Triggers dialog of a job template or repository: incoming webhooks,
+ * their delivery log and the sender setup. Trigger names, URLs, header
+ * names, CIDRs, mapping paths and the reason text the server sends are
+ * data and never keys. Sender presets and delivery outcomes the API sends
+ * are mapped to a label. The copy-ready sender snippets stay as they are,
+ * since they name fields of the sender's own interface; only their
+ * placeholder is a key.
+ */
+export const enTriggers = {
+  dialogTitle: (name: string) => `Triggers · ${name}`,
+  hintRun: 'Manual runs use the Run button; schedules live on the Schedules page.',
+  hintRepo: 'Sync the repository on every push.',
+  none: 'No incoming webhooks yet.',
+  newTrigger: 'New trigger',
+  createTrigger: 'Create trigger',
+  createFailed: 'Creating the trigger failed',
+  secretOnce: 'Shown once — store it in the sender now',
+  copySecret: 'Copy secret',
+  stored: 'I stored the secret',
+  secretPlaceholder: '<the trigger secret>',
+  enabled: 'enabled',
+  disabled: 'disabled',
+  copyUrl: 'Copy URL',
+  auth: (preset: string, header: string) => `Auth: ${preset} · ${header}`,
+  replay: (header: string) => `Replay window (±5 min) via ${header}`,
+  allowedSources: 'Allowed sources:',
+  anySource: 'any source',
+  rate: (count: number, per: string, action: string) => `${count} per ${per} · ${action} if a run is active`,
+  rateAction: {
+    skip: 'skip',
+    queue: 'queue',
+  },
+  edit: 'Edit',
+  rotate: 'Rotate secret',
+  rotateConfirm: (name: string) => `Rotate the secret of ${name}? Senders using the old one stop working.`,
+  rotateFailed: 'Rotating failed',
+  testCall: 'Test call',
+  testTitle: {
+    repo_sync: 'Starts a real repository sync now; the allowed-sources check is skipped.',
+    template_run: 'Starts a real job template run now; the allowed-sources check is skipped.',
+  },
+  testConfirm: {
+    repo_sync: (name: string) => `Test call ${name}? This will sync the repository for real, right now; the allowed-sources check is skipped.`,
+    template_run: (name: string) => `Test call ${name}? This will run the job template for real, right now; the allowed-sources check is skipped.`,
+  },
+  testResult: (outcome: string) => `Test call: ${outcome}`,
+  testFailed: 'Test call failed',
+  deleteConfirm: (name: string) => `Delete trigger ${name}?`,
+  savingFailed: 'Saving failed',
+  senderSetup: 'Sender setup',
+  deliveriesNone: 'No deliveries yet.',
+  outcome: {
+    triggered: 'triggered',
+    skipped_active: 'skipped_active',
+    rate_limited: 'rate_limited',
+    invalid_payload: 'invalid_payload',
+    disabled: 'disabled',
+    failed: 'failed',
+  },
+  preset: {
+    pulsix: 'Pulsix signature',
+    github: 'GitHub',
+    gitea: 'Gitea',
+    gitlab: 'GitLab token',
+    bearer: 'Bearer token',
+  },
+  form: {
+    name: 'Name',
+    sender: 'Sender',
+    replayHeader: 'Replay protection header',
+    replayPlaceholder: 'X-Pulsix-Timestamp (optional)',
+    allowedSources: 'Allowed sources',
+    sourcesPlaceholder: 'any source; or CIDRs, comma separated',
+    ifActive: 'If a run is active',
+    onActive: {
+      queue: 'queue another run',
+      skip: 'skip',
+    },
+    calls: 'Calls',
+    per: 'Per',
+    mapping: 'Payload mapping',
+    variable: (n: number) => `Variable ${n}`,
+    path: (n: number) => `Path ${n}`,
+    mapVariable: '+ Map a variable',
+    limitPath: 'Limit path',
+  },
+};

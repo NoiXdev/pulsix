@@ -12,6 +12,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useChannels, useDeleteChannel, useTestChannel } from '../../api/hooks/useNotifications.ts';
 import { may } from '../../lib/roles.ts';
 import type { NotifyChannel } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 import { ChannelDialog } from './ChannelDialog.tsx';
 import { DeliveryLog } from './DeliveryLog.tsx';
 import { DigestCard } from './DigestCard.tsx';
@@ -28,6 +29,9 @@ function target(c: NotifyChannel): string {
  * channel's delivery log. Operators see them; admins manage them. */
 export function ChannelsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
+  const m = t.notifications;
+  const c8 = m.channels;
   const toast = useToast();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
@@ -51,7 +55,7 @@ export function ChannelsPage() {
   if (!orgInfo.data) return <QueryLoading />;
   const header = (
     <div className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">Notifications</h1>
+      <h1 className="text-xl font-semibold">{m.title}</h1>
       <SettingsTabs org={org} />
     </div>
   );
@@ -59,7 +63,7 @@ export function ChannelsPage() {
     return (
       <>
         {header}
-        <p className="text-sm text-muted-foreground">Notification channels are visible to operators and above.</p>
+        <p className="text-sm text-muted-foreground">{c8.noAccess}</p>
       </>
     );
   }
@@ -70,19 +74,19 @@ export function ChannelsPage() {
   async function onTest(c: NotifyChannel) {
     try {
       const res = await test.mutateAsync(c.id);
-      if (res.delivery.status === 'sent') toast.show(`Test message sent through ${c.name}`);
-      else toast.show(`Test through ${c.name} failed: ${res.delivery.last_error ?? 'unknown error'}`, 'destructive');
+      if (res.delivery.status === 'sent') toast.show(c8.testSent(c.name));
+      else toast.show(c8.testFailed(c.name, res.delivery.last_error ?? c8.unknownError), 'destructive');
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Sending the test failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : c8.testRequestFailed, 'destructive');
     }
   }
 
   async function onDelete(c: NotifyChannel) {
-    if (!confirm(`Delete channel ${c.name}? Schedules stop notifying it and its delivery log is removed.`)) return;
+    if (!confirm(c8.deleteConfirm(c.name))) return;
     try {
       await remove.mutateAsync(c.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
     }
   }
 
@@ -90,24 +94,24 @@ export function ChannelsPage() {
     <>
       {header}
       <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted-foreground">Where schedule results and the weekly digest are sent</span>
+        <span className="text-[13px] text-muted-foreground">{c8.subtitle}</span>
         {canWrite && (
           <Button variant="primary" onClick={() => setEditing('new')}>
-            <Bell size={15} /> Add channel
+            <Bell size={15} /> {c8.add}
           </Button>
         )}
       </div>
       {!mailAvailable && (
         <p className="text-xs text-muted-foreground" role="note">
-          E-mail channels need the instance's outgoing mail settings, which an instance administrator sets under Settings → Outgoing mail.
+          {c8.mailNote}
         </p>
       )}
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Channel</span>
-          <span>Kind</span>
-          <span>Sends to</span>
-          <span>Status</span>
+          <span>{c8.columns.channel}</span>
+          <span>{c8.columns.kind}</span>
+          <span>{c8.columns.sendsTo}</span>
+          <span>{c8.columns.status}</span>
           <span />
         </GridHeader>
         {list.map((c) => (
@@ -115,30 +119,30 @@ export function ChannelsPage() {
             <span className="truncate text-[13px] font-medium" data-row>
               {c.name}
             </span>
-            <span className="text-xs">{c.kind === 'email' ? 'E-mail' : 'Webhook'}</span>
+            <span className="text-xs">{c.kind === 'email' ? c8.email : c8.webhook}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{target(c)}</span>
-            <span>{c.enabled ? <Pill tone="ok">enabled</Pill> : <Pill tone="unknown">disabled</Pill>}</span>
+            <span>{c.enabled ? <Pill tone="ok">{m.enabled}</Pill> : <Pill tone="unknown">{m.disabled}</Pill>}</span>
             <span className="flex justify-end gap-1">
-              <Button type="button" variant="ghost" aria-label={`Deliveries of ${c.name}`} onClick={() => setLogOf(c)}>
-                Log
+              <Button type="button" variant="ghost" aria-label={c8.logAria(c.name)} onClick={() => setLogOf(c)}>
+                {c8.log}
               </Button>
               {canWrite && (
                 <>
-                  <Button type="button" variant="ghost" aria-label={`Send test through ${c.name}`} onClick={() => void onTest(c)} disabled={test.isPending}>
-                    Send test
+                  <Button type="button" variant="ghost" aria-label={c8.testAria(c.name)} onClick={() => void onTest(c)} disabled={test.isPending}>
+                    {c8.test}
                   </Button>
-                  <Button type="button" variant="ghost" aria-label={`Edit ${c.name}`} onClick={() => setEditing(c)}>
-                    Edit
+                  <Button type="button" variant="ghost" aria-label={m.editAria(c.name)} onClick={() => setEditing(c)}>
+                    {m.edit}
                   </Button>
-                  <Button type="button" variant="destructive" aria-label={`Delete ${c.name}`} onClick={() => void onDelete(c)}>
-                    Delete
+                  <Button type="button" variant="destructive" aria-label={m.deleteAria(c.name)} onClick={() => void onDelete(c)}>
+                    {t.common.delete}
                   </Button>
                 </>
               )}
             </span>
           </GridRow>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No channels yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{c8.empty}</p>}
       </Card>
       <DigestCard org={org} channels={list} canWrite={canWrite} />
       {editing && (

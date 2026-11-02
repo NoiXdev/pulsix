@@ -28,6 +28,8 @@ import type { OncallRotation, OncallRotationInput } from '../../api/types.ts';
 import { RotationDialog } from './RotationDialog.tsx';
 import { RosterStrip } from './RosterStrip.tsx';
 import { ChannelDialog } from './ChannelDialog.tsx';
+import { useT } from '../../i18n/useT.ts';
+import { useFormat } from '../../i18n/format.ts';
 
 const COLUMNS = 'minmax(0, 0.9fr) 90px minmax(0, 1.4fr) 160px';
 
@@ -57,6 +59,9 @@ function rosterRange(): { from: string; to: string } {
  */
 export function RotationsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
+  const m = t.notifications;
+  const r8 = m.rotations;
   const toast = useToast();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
@@ -76,7 +81,7 @@ export function RotationsPage() {
   if (!orgInfo.data) return <QueryLoading />;
   const header = (
     <div className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">Notifications</h1>
+      <h1 className="text-xl font-semibold">{m.title}</h1>
       <SettingsTabs org={org} />
     </div>
   );
@@ -84,7 +89,7 @@ export function RotationsPage() {
     return (
       <>
         {header}
-        <p className="text-sm text-muted-foreground">On-call rotations are visible to operators and above.</p>
+        <p className="text-sm text-muted-foreground">{r8.noAccess}</p>
       </>
     );
   }
@@ -106,11 +111,11 @@ export function RotationsPage() {
   }
 
   async function onDelete(r: OncallRotation) {
-    if (!confirm(`Delete rotation ${r.name}? Any route using it as a channel source reaches nobody afterwards.`)) return;
+    if (!confirm(r8.deleteConfirm(r.name))) return;
     try {
       await remove.mutateAsync(r.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
     }
   }
 
@@ -118,18 +123,18 @@ export function RotationsPage() {
     <>
       {header}
       <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted-foreground">Who is on call, and when the cycle hands over</span>
+        <span className="text-[13px] text-muted-foreground">{r8.subtitle}</span>
         {canWrite && (
           <Button variant="primary" onClick={() => setEditing('new')}>
-            <CalendarClock size={15} /> New rotation
+            <CalendarClock size={15} /> {r8.newRotation}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Rotation</span>
-          <span>Period</span>
-          <span>Cycle</span>
+          <span>{r8.columns.rotation}</span>
+          <span>{r8.columns.period}</span>
+          <span>{r8.columns.cycle}</span>
           <span />
         </GridHeader>
         {list.map((r) => (
@@ -137,23 +142,23 @@ export function RotationsPage() {
             <span className="truncate text-[13px] font-medium" data-row>
               {r.name}
             </span>
-            <span className="text-xs text-muted-foreground">{r.period_days}d</span>
+            <span className="text-xs text-muted-foreground">{r8.periodDays(r.period_days)}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{channelNames(r)}</span>
             <span className="flex justify-end gap-1">
               {canWrite && (
                 <>
-                  <Button type="button" variant="ghost" aria-label={`Edit ${r.name}`} onClick={() => setEditing(r)}>
-                    Edit
+                  <Button type="button" variant="ghost" aria-label={m.editAria(r.name)} onClick={() => setEditing(r)}>
+                    {m.edit}
                   </Button>
-                  <Button type="button" variant="destructive" aria-label={`Delete ${r.name}`} onClick={() => void onDelete(r)}>
-                    Delete
+                  <Button type="button" variant="destructive" aria-label={m.deleteAria(r.name)} onClick={() => void onDelete(r)}>
+                    {t.common.delete}
                   </Button>
                 </>
               )}
             </span>
           </GridRow>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No on-call rotations yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{r8.empty}</p>}
       </Card>
       {list.map((r) => (
         <StandIns key={r.id} org={org} rotation={r} channels={channelOptions} mailAvailable={!!channels.data?.mail_available} canWrite={canWrite} />
@@ -187,6 +192,10 @@ interface StandInsChannel {
 function StandIns({
   org, rotation, channels, mailAvailable, canWrite,
 }: { org: string; rotation: OncallRotation; channels: StandInsChannel[]; mailAvailable: boolean; canWrite: boolean }) {
+  const t = useT();
+  const fmt = useFormat();
+  const m = t.notifications;
+  const r8 = m.rotations;
   const toast = useToast();
   const [range] = useState(rosterRange);
   const shifts = useOncallShifts(org, rotation.id, range.from, range.to);
@@ -215,7 +224,7 @@ function StandIns({
       setAdding(false);
       setNote('');
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Adding the stand-in failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : r8.addFailed, 'destructive');
     }
   }
 
@@ -223,7 +232,7 @@ function StandIns({
     try {
       await deleteException.mutateAsync(exceptionId);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Removing the stand-in failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : r8.removeFailed, 'destructive');
     }
   }
 
@@ -240,12 +249,12 @@ function StandIns({
     // other quick-create call site means it stays correct if that ever
     // changes.
     <>
-      <section aria-label={`${rotation.name} roster`} className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
+      <section aria-label={r8.rosterAria(rotation.name)} className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-[13px] font-semibold">{rotation.name} — roster &amp; stand-ins</h2>
+          <h2 className="text-[13px] font-semibold">{r8.rosterTitle(rotation.name)}</h2>
           {canWrite && (
             <Button type="button" variant="ghost" onClick={() => setAdding(!adding)}>
-              <Plus size={13} /> Add stand-in
+              <Plus size={13} /> {r8.addStandIn}
             </Button>
           )}
         </div>
@@ -263,40 +272,40 @@ function StandIns({
         {shifts.isError ? (
           <p role="alert" className="flex items-center gap-1.5 text-xs font-semibold text-destructive">
             <BellOff size={13} aria-hidden="true" />
-            The roster could not be built — alerts routed through this rotation reach nobody.
+            {r8.rosterFailed}
             {shifts.error instanceof Error ? ` (${shifts.error.message})` : ''}
           </p>
         ) : shifts.data ? (
           <RosterStrip shifts={shifts.data.shifts ?? []} now={new Date().toISOString()} />
         ) : (
-          <p className="text-xs text-muted-foreground">Loading roster…</p>
+          <p className="text-xs text-muted-foreground">{r8.loadingRoster}</p>
         )}
         {adding && (
           <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_80px] items-end gap-2 rounded-md border border-border p-2.5">
             <div className="flex flex-col gap-1">
-              <Label htmlFor={`exc-channel-${rotation.id}`}>Channel</Label>
+              <Label htmlFor={`exc-channel-${rotation.id}`}>{r8.channel}</Label>
               <Select
                 id={`exc-channel-${rotation.id}`}
                 options={channels.map((c) => ({ value: c.id, label: c.name }))}
                 value={channelId}
                 onChange={setChannelId}
-                create={{ label: 'New channel…', onSelect: setNewChannelName }}
+                create={{ label: r8.newChannel, onSelect: setNewChannelName }}
               />
             </div>
             <div className="flex flex-col gap-1">
-              <Label htmlFor={`exc-start-${rotation.id}`}>From</Label>
+              <Label htmlFor={`exc-start-${rotation.id}`}>{m.from}</Label>
               <Input id={`exc-start-${rotation.id}`} type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1">
-              <Label htmlFor={`exc-end-${rotation.id}`}>Until</Label>
+              <Label htmlFor={`exc-end-${rotation.id}`}>{m.until}</Label>
               <Input id={`exc-end-${rotation.id}`} type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1">
-              <Label htmlFor={`exc-note-${rotation.id}`}>Note</Label>
+              <Label htmlFor={`exc-note-${rotation.id}`}>{m.note}</Label>
               <Input id={`exc-note-${rotation.id}`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} />
             </div>
             <Button type="button" variant="primary" onClick={() => void onAdd()} disabled={!channelId || createException.isPending}>
-              Add
+              {r8.add}
             </Button>
           </div>
         )}
@@ -305,12 +314,11 @@ function StandIns({
             {exceptionList.map((e) => (
               <li key={e.id} className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span className="truncate">
-                  {channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8)} stands in {new Date(e.starts_at).toLocaleString()} –{' '}
-                  {new Date(e.ends_at).toLocaleString()}
+                  {r8.standsIn(channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8), fmt.dateTime(e.starts_at), fmt.dateTime(e.ends_at))}
                   {e.note ? ` — ${e.note}` : ''}
                 </span>
                 {canWrite && (
-                  <Button type="button" variant="ghost" aria-label={`Remove stand-in for ${channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8)}`} onClick={() => void onRemove(e.id)}>
+                  <Button type="button" variant="ghost" aria-label={r8.removeStandInAria(channels.find((c) => c.id === e.channel_id)?.name ?? e.channel_id.slice(0, 8))} onClick={() => void onRemove(e.id)}>
                     <Trash2 size={13} />
                   </Button>
                 )}

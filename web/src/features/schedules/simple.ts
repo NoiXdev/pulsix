@@ -1,3 +1,5 @@
+import type { Messages } from '../../i18n/types.ts';
+
 export type SimpleKind = 'every_minutes' | 'every_hours' | 'daily' | 'weekly' | 'monthly';
 
 export interface SimpleForm {
@@ -43,11 +45,11 @@ export function fromSimpleBody(s: { kind: string; every?: number; time?: string;
 
 /** relative renders a future instant the way the mockup's "Next" column
  * does: minutes under an hour, hours under two days, then days. */
-export function relative(at: string | undefined | null, now: Date): string {
+export function relative(at: string | undefined | null, now: Date, t: Messages): string {
   if (!at) return '—';
   const mins = Math.round((new Date(at).getTime() - now.getTime()) / 60000);
-  if (mins < 60) return `in ${Math.max(mins, 0)} min`;
+  if (mins < 60) return t.schedules.relative.minutes(Math.max(mins, 0));
   const hours = Math.round(mins / 60);
-  if (hours < 48) return `in ${hours} h`;
-  return `in ${Math.round(hours / 24)} d`;
+  if (hours < 48) return t.schedules.relative.hours(hours);
+  return t.schedules.relative.days(Math.round(hours / 24));
 }

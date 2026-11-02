@@ -7,6 +7,7 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useCreateChannel, useUpdateChannel } from '../../api/hooks/useNotifications.ts';
 import type { NotifyChannel, NotifyChannelInput } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
@@ -34,6 +35,9 @@ export interface ChannelDialogProps {
  * (the webhook URL, header values, the signing secret) are never shown:
  * leaving their fields empty while editing keeps them. */
 export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated, initialName }: ChannelDialogProps) {
+  const t = useT();
+  const m = t.notifications;
+  const d = m.channelDialog;
   const editing = !!channel;
   const create = useCreateChannel(org);
   const update = useUpdateChannel(org, channel?.id ?? '');
@@ -80,45 +84,45 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : m.savingFailed);
     }
   }
 
-  const keep = editing ? 'leave empty to keep' : undefined;
+  const keep = editing ? d.keep : undefined;
   return (
-    <Dialog open onClose={onClose} title={editing ? `Edit ${channel.name}` : 'Add channel'} size="wide">
+    <Dialog open onClose={onClose} title={editing ? d.editTitle(channel.name) : d.addTitle} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <Label htmlFor="ch-kind">Kind</Label>
+        <Label htmlFor="ch-kind">{d.kind}</Label>
         <Select
           id="ch-kind"
           options={[
             {
               value: 'email',
-              label: `E-mail${!mailAvailable ? ' (needs outgoing mail settings)' : ''}`,
+              label: mailAvailable ? m.channels.email : d.emailUnavailable,
               disabled: !mailAvailable && !editing,
             },
-            { value: 'webhook', label: 'Webhook' },
+            { value: 'webhook', label: m.channels.webhook },
           ]}
           value={kind}
           onChange={(v) => setKind(v as 'email' | 'webhook')}
           disabled={editing}
         />
-        <Label htmlFor="ch-name">Name</Label>
+        <Label htmlFor="ch-name">{m.name}</Label>
         <Input id="ch-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
         <label className="flex items-center gap-2 text-xs">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          Enabled
+          {m.enabledLabel}
         </label>
         {kind === 'email' ? (
           <>
-            <Label htmlFor="ch-recipients">Recipients (one per line)</Label>
+            <Label htmlFor="ch-recipients">{d.recipients}</Label>
             <textarea id="ch-recipients" className={TEXTAREA} value={recipients} onChange={(e) => setRecipients(e.target.value)} placeholder="ops@example.com" />
           </>
         ) : (
           <>
             <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2">
               <div className="flex flex-col gap-1">
-                <Label htmlFor="ch-method">Method</Label>
+                <Label htmlFor="ch-method">{d.method}</Label>
                 <Select
                   id="ch-method"
                   options={[
@@ -130,38 +134,38 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <Label htmlFor="ch-url">URL{editing ? ` (now ${channel.webhook?.url})` : ''}</Label>
+                <Label htmlFor="ch-url">{editing ? d.urlNow(channel.webhook?.url ?? '') : d.url}</Label>
                 <Input id="ch-url" className="font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder={keep ?? 'https://hooks.example.com/…'} required={!editing} />
               </div>
             </div>
-            <span className="text-[11px] font-medium text-muted-foreground">Headers</span>
+            <span className="text-[11px] font-medium text-muted-foreground">{d.headers}</span>
             {headers.map((h, i) => (
               <div key={i} className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_32px] gap-2">
-                <Input aria-label={`Header ${i + 1} name`} className="font-mono" value={h.name} onChange={(e) => setHeaders(headers.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+                <Input aria-label={d.headerName(i + 1)} className="font-mono" value={h.name} onChange={(e) => setHeaders(headers.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
                 <Input
-                  aria-label={`Header ${i + 1} value`}
+                  aria-label={d.headerValue(i + 1)}
                   type="password"
                   value={h.value}
                   placeholder={keep}
                   onChange={(e) => setHeaders(headers.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))}
                 />
-                <Button type="button" variant="ghost" aria-label={`Remove header ${i + 1}`} onClick={() => setHeaders(headers.filter((_, j) => j !== i))}>
+                <Button type="button" variant="ghost" aria-label={d.removeHeader(i + 1)} onClick={() => setHeaders(headers.filter((_, j) => j !== i))}>
                   <Trash2 size={13} />
                 </Button>
               </div>
             ))}
             <Button type="button" variant="ghost" className="self-start" onClick={() => setHeaders([...headers, { name: '', value: '' }])}>
-              <Plus size={13} /> Add header
+              <Plus size={13} /> {d.addHeader}
             </Button>
-            <Label htmlFor="ch-template">Body template (empty sends the event as JSON)</Label>
+            <Label htmlFor="ch-template">{d.bodyTemplate}</Label>
             <textarea id="ch-template" className={TEXTAREA} value={template} onChange={(e) => setTemplate(e.target.value)} placeholder='{"text": {{ schedule.name | json }}}' />
             <label className="flex items-center gap-2 text-xs">
               <input type="checkbox" checked={signed} onChange={(e) => setSigned(e.target.checked)} />
-              Sign requests (X-Pulsix-Signature-256)
+              {d.sign}
             </label>
             {signed && (
               <>
-                <Label htmlFor="ch-secret">Signing secret (16–256 characters)</Label>
+                <Label htmlFor="ch-secret">{d.signingSecret}</Label>
                 <Input id="ch-secret" type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={channel?.webhook?.signed ? keep : undefined} />
               </>
             )}
@@ -174,10 +178,10 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending || update.isPending}>
-            {editing ? 'Save' : 'Create channel'}
+            {editing ? t.common.save : d.create}
           </Button>
         </div>
       </form>

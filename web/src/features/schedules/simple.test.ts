@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { en } from '../../i18n/en/index.ts';
 import { DEFAULT_SIMPLE, fromSimpleBody, relative, toSimpleBody } from './simple.ts';
 
 describe('simple mode form', () => {
@@ -20,9 +21,9 @@ describe('simple mode form', () => {
 
   it('renders relative next-run times', () => {
     const now = new Date('2026-09-18T10:00:00Z');
-    expect(relative('2026-09-18T10:07:00Z', now)).toBe('in 7 min');
-    expect(relative('2026-09-19T00:00:00Z', now)).toBe('in 14 h');
-    expect(relative('2026-10-08T10:00:00Z', now)).toBe('in 20 d');
-    expect(relative(null, now)).toBe('—');
+    expect(relative('2026-09-18T10:07:00Z', now, en)).toBe('in 7 min');
+    expect(relative('2026-09-19T00:00:00Z', now, en)).toBe('in 14 h');
+    expect(relative('2026-10-08T10:00:00Z', now, en)).toBe('in 20 d');
+    expect(relative(null, now, en)).toBe('—');
   });
 });

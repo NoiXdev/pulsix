@@ -19,6 +19,7 @@ import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
 import { RouteDialog } from './RouteDialog.tsx';
 import { ReachesNobody, RouteFiresOn } from './AlertRouteCells.tsx';
 import { routeReachesNobody, routeToInput } from './alertRoute.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) 90px 220px';
 
@@ -32,6 +33,9 @@ const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1f
  * does) — operators read, admins manage. */
 export function AlertRoutesPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
+  const m = t.notifications;
+  const a = m.alertRoutes;
   const toast = useToast();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
@@ -58,7 +62,7 @@ export function AlertRoutesPage() {
   if (!orgInfo.data) return <QueryLoading />;
   const header = (
     <div className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">Notifications</h1>
+      <h1 className="text-xl font-semibold">{m.title}</h1>
       <SettingsTabs org={org} />
     </div>
   );
@@ -66,7 +70,7 @@ export function AlertRoutesPage() {
     return (
       <>
         {header}
-        <p className="text-sm text-muted-foreground">Alert routes are visible to operators and above.</p>
+        <p className="text-sm text-muted-foreground">{a.noAccess}</p>
       </>
     );
   }
@@ -84,13 +88,13 @@ export function AlertRoutesPage() {
   function scopeLabel(r: AlertRoute): string {
     if (r.scope === 'host') {
       const host = hostList.find((h) => h.id === r.scope_id);
-      return host ? host.name : `host ${(r.scope_id ?? '').slice(0, 8)}`;
+      return host ? host.name : a.scopeHost((r.scope_id ?? '').slice(0, 8));
     }
     if (r.scope === 'monitoring_group') {
       const group = groupList.find((g) => g.id === r.scope_id);
-      return group ? group.name : `group ${(r.scope_id ?? '').slice(0, 8)}`;
+      return group ? group.name : a.scopeGroup((r.scope_id ?? '').slice(0, 8));
     }
-    return 'Organization';
+    return a.scopeOrg;
   }
 
   function channelNames(r: AlertRoute): string {
@@ -110,7 +114,7 @@ export function AlertRoutesPage() {
   }
 
   function rotationName(r: AlertRoute): string {
-    return rotationOf(r)?.name ?? `rotation ${(r.rotation_id ?? '').slice(0, 8)}`;
+    return rotationOf(r)?.name ?? a.rotationUnknown((r.rotation_id ?? '').slice(0, 8));
   }
 
   async function onSave(body: AlertRouteInput) {
@@ -132,16 +136,16 @@ export function AlertRoutesPage() {
     try {
       await update.mutateAsync({ ...routeToInput(r), id: r.id, revision: r.revision, enabled: !r.enabled });
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Updating the route failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : a.updateFailed, 'destructive');
     }
   }
 
   async function onDelete(r: AlertRoute) {
-    if (!confirm(`Delete route ${r.name}? Its channels stop hearing about the alerts it covered.`)) return;
+    if (!confirm(a.deleteConfirm(r.name))) return;
     try {
       await remove.mutateAsync(r.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
     }
   }
 
@@ -149,21 +153,21 @@ export function AlertRoutesPage() {
     <>
       {header}
       <div className="flex items-center justify-between">
-        <span className="text-[13px] text-muted-foreground">Which severities and alert events reach which notification channels</span>
+        <span className="text-[13px] text-muted-foreground">{a.subtitle}</span>
         {canWrite && (
           <Button variant="primary" onClick={() => setEditing('new')}>
-            <RouteIcon size={15} /> New route
+            <RouteIcon size={15} /> {a.newRoute}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Route</span>
-          <span>Applies to</span>
-          <span>Fires on</span>
+          <span>{a.columns.route}</span>
+          <span>{a.columns.appliesTo}</span>
+          <span>{a.columns.firesOn}</span>
           {/* Not "Channels": a rotation-sourced route has none of its own, and this cell names the rotation instead. */}
-          <span>Delivers to</span>
-          <span>Status</span>
+          <span>{a.columns.deliversTo}</span>
+          <span>{a.columns.status}</span>
           <span />
         </GridHeader>
         {list.map((r) => (
@@ -178,7 +182,7 @@ export function AlertRoutesPage() {
             ) : r.rotation_id ? (
               <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
                 <CalendarClock size={12} aria-hidden="true" />
-                <span className="truncate">On call: {rotationName(r)}</span>
+                <span className="truncate">{a.onCall(rotationName(r))}</span>
               </span>
             ) : (
               <span className="truncate font-mono text-xs text-muted-foreground">{channelNames(r)}</span>
@@ -189,33 +193,33 @@ export function AlertRoutesPage() {
                   type="button"
                   role="switch"
                   aria-checked={r.enabled}
-                  aria-label={`${r.enabled ? 'Disable' : 'Enable'} ${r.name}`}
+                  aria-label={r.enabled ? a.disableAria(r.name) : a.enableAria(r.name)}
                   onClick={() => void onToggle(r)}
                   className={r.enabled ? 'flex h-[18px] w-8 items-center rounded-full bg-primary px-0.5 justify-end' : 'flex h-[18px] w-8 items-center rounded-full bg-border px-0.5 justify-start'}
                 >
                   <span className="h-3.5 w-3.5 rounded-full bg-background" />
                 </button>
               ) : r.enabled ? (
-                <Pill tone="ok">enabled</Pill>
+                <Pill tone="ok">{m.enabled}</Pill>
               ) : (
-                <Pill tone="unknown">disabled</Pill>
+                <Pill tone="unknown">{m.disabled}</Pill>
               )}
             </span>
             <span className="flex justify-end gap-1">
               {canWrite && (
                 <>
-                  <Button type="button" variant="ghost" aria-label={`Edit ${r.name}`} onClick={() => setEditing(r)}>
-                    Edit
+                  <Button type="button" variant="ghost" aria-label={m.editAria(r.name)} onClick={() => setEditing(r)}>
+                    {m.edit}
                   </Button>
-                  <Button type="button" variant="destructive" aria-label={`Delete ${r.name}`} onClick={() => void onDelete(r)}>
-                    Delete
+                  <Button type="button" variant="destructive" aria-label={m.deleteAria(r.name)} onClick={() => void onDelete(r)}>
+                    {t.common.delete}
                   </Button>
                 </>
               )}
             </span>
           </GridRow>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No alert routes yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{a.empty}</p>}
       </Card>
       {editing && (
         <RouteDialog

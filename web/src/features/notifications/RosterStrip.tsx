@@ -1,5 +1,7 @@
 import { BellOff } from 'lucide-react';
 import { Pill } from '../../ui/badge.tsx';
+import { useFormat } from '../../i18n/format.ts';
+import { useT } from '../../i18n/useT.ts';
 
 /** One segment of a rotation's roster, trimmed to what the strip needs to
  * render — the full OncallShift DTO also carries channel_id, which this
@@ -9,10 +11,6 @@ export interface RosterStripShift {
   ends_at: string;
   channel_name: string;
   stand_in: boolean;
-}
-
-function fmt(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 /**
@@ -30,11 +28,14 @@ function fmt(iso: string): string {
  * that page says so itself (whole-branch review, Important #4).
  */
 export function RosterStrip({ shifts, now }: { shifts: RosterStripShift[]; now: string }) {
+  const t = useT();
+  const fmt = useFormat();
+  const when = (iso: string) => fmt.dateTime(iso, { dateStyle: 'short', timeStyle: 'short' });
   if (shifts.length === 0) {
     return (
       <p className="flex items-center gap-1.5 text-xs font-semibold text-destructive">
         <BellOff size={13} aria-hidden="true" />
-        Nobody is on call — this rotation reaches nobody right now
+        {t.notifications.roster.nobody}
       </p>
     );
   }
@@ -52,12 +53,12 @@ export function RosterStrip({ shifts, now }: { shifts: RosterStripShift[]; now: 
           >
             <span className="flex items-center gap-1.5 font-medium">
               <span>{s.channel_name}</span>
-              {s.stand_in && <Pill tone="accent">Stand-in</Pill>}
+              {s.stand_in && <Pill tone="accent">{t.notifications.roster.standIn}</Pill>}
             </span>
             <span className="text-muted-foreground">
-              {fmt(s.starts_at)} – {fmt(s.ends_at)}
+              {when(s.starts_at)} – {when(s.ends_at)}
             </span>
-            {current && <span className="font-semibold text-primary">On call now</span>}
+            {current && <span className="font-semibold text-primary">{t.notifications.roster.onCallNow}</span>}
           </div>
         );
       })}

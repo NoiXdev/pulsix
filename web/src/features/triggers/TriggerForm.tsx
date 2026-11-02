@@ -5,9 +5,9 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import type { Trigger, TriggerInput } from '../../api/types.ts';
 import type { TriggerTarget } from '../../api/hooks/useTriggers.ts';
-import { PRESET_LABEL } from './presets.ts';
+import { useT } from '../../i18n/useT.ts';
+import { PRESETS, presetLabel } from './presets.ts';
 
-const ON_ACTIVE_LABEL: Record<'queue' | 'skip', string> = { queue: 'queue another run', skip: 'skip' };
 const RATE_WINDOWS = ['1m', '5m', '1h'];
 
 interface Row {
@@ -27,6 +27,8 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
   onSubmit: (body: TriggerInput) => void;
   onCancel: () => void;
 }) {
+  const t = useT();
+  const f = t.triggers.form;
   const [name, setName] = useState(initial?.name ?? '');
   const [preset, setPreset] = useState<TriggerInput['preset']>(initial?.preset ?? 'pulsix');
   const [timestampHeader, setTimestampHeader] = useState(initial?.timestamp_header ?? '');
@@ -57,60 +59,60 @@ export function TriggerForm({ target, initial, submitLabel, pending, error, onSu
 
   return (
     <form className="flex flex-col gap-2" onSubmit={submit}>
-      <Label htmlFor="trigger-name">Name</Label>
+      <Label htmlFor="trigger-name">{f.name}</Label>
       <Input id="trigger-name" value={name} onChange={(e) => setName(e.target.value)} />
-      <Label htmlFor="trigger-preset">Sender</Label>
+      <Label htmlFor="trigger-preset">{f.sender}</Label>
       <Select
         id="trigger-preset"
-        options={Object.entries(PRESET_LABEL).map(([k, v]) => ({ value: k, label: v }))}
+        options={PRESETS.map((k) => ({ value: k, label: presetLabel(k, t.triggers.preset) }))}
         value={preset}
         onChange={(value) => setPreset(value as TriggerInput['preset'])}
       />
       {(preset === 'pulsix' || preset === 'github' || preset === 'gitea') && (
         <>
-          <Label htmlFor="trigger-ts">Replay protection header</Label>
-          <Input id="trigger-ts" className="font-mono" value={timestampHeader} onChange={(e) => setTimestampHeader(e.target.value)} placeholder="X-Pulsix-Timestamp (optional)" />
+          <Label htmlFor="trigger-ts">{f.replayHeader}</Label>
+          <Input id="trigger-ts" className="font-mono" value={timestampHeader} onChange={(e) => setTimestampHeader(e.target.value)} placeholder={f.replayPlaceholder} />
         </>
       )}
-      <Label htmlFor="trigger-sources">Allowed sources</Label>
-      <Input id="trigger-sources" className="font-mono" value={sources} onChange={(e) => setSources(e.target.value)} placeholder="any source; or CIDRs, comma separated" />
-      <Label htmlFor="trigger-active">If a run is active</Label>
+      <Label htmlFor="trigger-sources">{f.allowedSources}</Label>
+      <Input id="trigger-sources" className="font-mono" value={sources} onChange={(e) => setSources(e.target.value)} placeholder={f.sourcesPlaceholder} />
+      <Label htmlFor="trigger-active">{f.ifActive}</Label>
       <Select
         id="trigger-active"
-        options={(Object.keys(ON_ACTIVE_LABEL) as Array<'queue' | 'skip'>).map((k) => ({ value: k, label: ON_ACTIVE_LABEL[k] }))}
+        options={(['queue', 'skip'] as const).map((k) => ({ value: k, label: f.onActive[k] }))}
         value={onActive}
         onChange={(value) => setOnActive(value as 'queue' | 'skip')}
       />
       <div className="flex gap-2">
         <div className="flex flex-1 flex-col gap-1">
-          <Label htmlFor="trigger-count">Calls</Label>
+          <Label htmlFor="trigger-count">{f.calls}</Label>
           <Input id="trigger-count" type="number" min={1} max={1000} value={count} onChange={(e) => setCount(Number(e.target.value))} />
         </div>
         <div className="flex flex-1 flex-col gap-1">
-          <Label htmlFor="trigger-per">Per</Label>
+          <Label htmlFor="trigger-per">{f.per}</Label>
           <Select id="trigger-per" options={RATE_WINDOWS.map((p) => ({ value: p, label: p }))} value={per} onChange={setPer} />
         </div>
       </div>
       {target.kind === 'template_run' && (
         <fieldset className="flex flex-col gap-1">
-          <legend className="text-[11px] font-medium text-muted-foreground">Payload mapping</legend>
+          <legend className="text-[11px] font-medium text-muted-foreground">{f.mapping}</legend>
           {rows.map((r, i) => (
             <div key={i} className="flex gap-1">
-              <Input aria-label={`Variable ${i + 1}`} className="font-mono" value={r.name} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="release" />
-              <Input aria-label={`Path ${i + 1}`} className="font-mono" value={r.path} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, path: e.target.value } : x)))} placeholder="$.ref" />
+              <Input aria-label={f.variable(i + 1)} className="font-mono" value={r.name} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} placeholder="release" />
+              <Input aria-label={f.path(i + 1)} className="font-mono" value={r.path} onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, path: e.target.value } : x)))} placeholder="$.ref" />
             </div>
           ))}
           <Button type="button" variant="ghost" onClick={() => setRows([...rows, { name: '', path: '' }])}>
-            + Map a variable
+            {f.mapVariable}
           </Button>
-          <Label htmlFor="trigger-limit">Limit path</Label>
+          <Label htmlFor="trigger-limit">{f.limitPath}</Label>
           <Input id="trigger-limit" className="font-mono" value={limitPath} onChange={(e) => setLimitPath(e.target.value)} placeholder="$.hosts[*]" />
         </fieldset>
       )}
       {error && <p className="text-xs text-[var(--px-crit)]">{error}</p>}
       <div className="flex justify-end gap-2">
         <Button type="button" onClick={onCancel}>
-          Cancel
+          {t.common.cancel}
         </Button>
         <Button type="submit" variant="primary" disabled={pending}>
           {submitLabel}

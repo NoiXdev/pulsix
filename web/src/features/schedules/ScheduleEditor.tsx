@@ -21,21 +21,13 @@ import type { Schedule, ScheduleInput, Template } from '../../api/types.ts';
 import { HOUR_STEPS, MINUTE_STEPS, WEEKDAYS, fromSimpleBody, toSimpleBody, type SimpleForm, type SimpleKind } from './simple.ts';
 import { ScheduleNotifications } from './ScheduleNotifications.tsx';
 import { ScheduleRuns } from './ScheduleRuns.tsx';
+import { useFormat } from '../../i18n/format.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const WINDOWS = ['15m', '30m', '1h', '2h', '6h', '12h', '24h'];
 type MaintenanceGuard = 'ignore' | 'skip' | 'exclude_hosts';
-const MAINTENANCE_LABEL: Record<MaintenanceGuard, string> = {
-  ignore: 'Run anyway',
-  skip: 'Skip the run',
-  exclude_hosts: 'Leave those hosts out',
-};
-const KIND_LABEL: Record<SimpleKind, string> = {
-  every_minutes: 'Every N minutes',
-  every_hours: 'Every N hours',
-  daily: 'Daily',
-  weekly: 'Weekly',
-  monthly: 'Monthly',
-};
+const GUARDS: MaintenanceGuard[] = ['ignore', 'skip', 'exclude_hosts'];
+const KINDS: SimpleKind[] = ['every_minutes', 'every_hours', 'daily', 'weekly', 'monthly'];
 
 export interface ScheduleEditorProps {
   org: string;
@@ -52,17 +44,21 @@ export interface ScheduleEditorProps {
  * timezone, simple/cron switch with the next five occurrences, guards,
  * overrides, the recent runs and the run now / pause / save actions. */
 export function ScheduleEditor(props: ScheduleEditorProps) {
+  const aria = useT().schedules.editor.aria;
   const isNew = props.id === 'new';
   const detail = useSchedule(props.org, isNew ? '' : props.id);
   const initial = isNew ? undefined : detail.data?.schedule;
   return (
-    <section aria-label="Schedule editor" className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
+    <section aria-label={aria} className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
       {!isNew && !initial ? <QueryLoading /> : <EditorForm key={initial ? `${initial.id}-${initial.revision}` : 'new'} {...props} initial={initial} />}
     </section>
   );
 }
 
 function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose, initial }: ScheduleEditorProps & { initial?: Schedule }) {
+  const t = useT();
+  const fmt = useFormat();
+  const m = t.schedules.editor;
   const navigate = useNavigate();
   const toast = useToast();
   const create = useCreateSchedule(org);
@@ -111,7 +107,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       try {
         vars = JSON.parse(extraVars) as Record<string, unknown>;
       } catch {
-        setError('Extra vars must be a JSON object.');
+        setError(m.extraVarsInvalid);
         return null;
       }
     }
@@ -138,12 +134,12 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
         const res = await create.mutateAsync(b);
         void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: res.schedule.id, template: undefined } });
       }
-      toast.show('Schedule saved');
+      toast.show(m.saved);
     } catch (err) {
       if (err instanceof ApiError && err.status === 412) {
-        setError('This schedule changed since you loaded it — reload and apply your change again.');
+        setError(m.changedSinceLoad);
       } else {
-        setError(err instanceof Error ? err.message : 'Saving failed');
+        setError(err instanceof Error ? err.message : m.saveFailed);
       }
     }
   }
@@ -155,17 +151,17 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       const first = res.jobs?.[0];
       if (first) await navigate({ to: '/o/$org/runs/$id', params: { org, id: first.id } });
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Starting the run failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : m.runFailed, 'destructive');
     }
   }
 
   async function del() {
-    if (!initial || !confirm(`Delete schedule ${initial.name}?`)) return;
+    if (!initial || !confirm(m.deleteConfirm(initial.name))) return;
     try {
       await remove.mutateAsync(initial.id);
       onClose();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
     }
   }
 
@@ -174,24 +170,24 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
     try {
       await (initial.paused ? resume : pause).mutateAsync(initial.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : (initial.paused ? 'Resuming failed' : 'Pausing failed'), 'destructive');
+      toast.show(err instanceof Error ? err.message : (initial.paused ? m.resumeFailed : m.pauseFailed), 'destructive');
     }
   }
 
-  const zoneFmt = (at: string) => new Date(at).toLocaleString(undefined, { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' });
+  const zoneFmt = (at: string) => fmt.dateTime(at, { timeZone: timezone, dateStyle: 'medium', timeStyle: 'short' });
   const previewError = preview.error instanceof Error ? preview.error.message : null;
 
   return (
     <>
       <div className="flex items-center justify-between">
-        <h2 className="text-[15px] font-semibold">{initial ? `Schedule · ${initial.name}` : 'New schedule'}</h2>
+        <h2 className="text-[15px] font-semibold">{initial ? m.heading(initial.name) : m.newHeading}</h2>
         <Button type="button" variant="ghost" onClick={onClose}>
-          Close
+          {t.common.close}
         </Button>
       </div>
-      <Label htmlFor="sched-name">Name</Label>
+      <Label htmlFor="sched-name">{m.name}</Label>
       <Input id="sched-name" value={name} onChange={(e) => setName(e.target.value)} disabled={!canWrite} />
-      <Label htmlFor="sched-template">Job template</Label>
+      <Label htmlFor="sched-template">{m.jobTemplate}</Label>
       <Select
         id="sched-template"
         options={templates.map((t) => ({ value: t.id, label: t.name }))}
@@ -199,34 +195,34 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
         onChange={setTemplateId}
         disabled={!canWrite}
       />
-      <Label htmlFor="sched-tz">Timezone</Label>
+      <Label htmlFor="sched-tz">{m.timezone}</Label>
       <Input id="sched-tz" className="font-mono" value={timezone} onChange={(e) => setTimezone(e.target.value)} disabled={!canWrite} />
-      <div role="radiogroup" aria-label="When" className="flex gap-1">
-        {(['simple', 'cron'] as const).map((m) => (
+      <div role="radiogroup" aria-label={m.when} className="flex gap-1">
+        {(['simple', 'cron'] as const).map((md) => (
           <button
-            key={m}
+            key={md}
             type="button"
             role="radio"
-            aria-checked={mode === m}
-            className={`rounded-md border px-2.5 py-1 text-xs ${mode === m ? 'border-primary text-primary' : 'border-border text-muted-foreground'}`}
-            onClick={() => setMode(m)}
+            aria-checked={mode === md}
+            className={`rounded-md border px-2.5 py-1 text-xs ${mode === md ? 'border-primary text-primary' : 'border-border text-muted-foreground'}`}
+            onClick={() => setMode(md)}
           >
-            {m === 'simple' ? 'Simple' : 'Cron'}
+            {md === 'simple' ? m.simple : m.cron}
           </button>
         ))}
       </div>
       {mode === 'simple' ? (
         <div className="flex flex-col gap-2">
-          <Label htmlFor="sched-kind">Repeat</Label>
+          <Label htmlFor="sched-kind">{m.repeat}</Label>
           <Select
             id="sched-kind"
-            options={(Object.keys(KIND_LABEL) as SimpleKind[]).map((k) => ({ value: k, label: KIND_LABEL[k] }))}
+            options={KINDS.map((k) => ({ value: k, label: m.kind[k] }))}
             value={simple.kind}
             onChange={(value) => setKind(value as SimpleKind)}
           />
           {(simple.kind === 'every_minutes' || simple.kind === 'every_hours') && (
             <>
-              <Label htmlFor="sched-every">Every</Label>
+              <Label htmlFor="sched-every">{m.every}</Label>
               <Select
                 id="sched-every"
                 options={(simple.kind === 'every_minutes' ? MINUTE_STEPS : HOUR_STEPS).map((n) => ({ value: String(n), label: String(n) }))}
@@ -240,27 +236,27 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
               {WEEKDAYS.map((d) => (
                 <label key={d} className="flex items-center gap-1 text-xs">
                   <input type="checkbox" checked={simple.days.includes(d)} onChange={() => toggleDay(d)} />
-                  {d[0].toUpperCase() + d.slice(1)}
+                  {m.weekday[d]}
                 </label>
               ))}
             </div>
           )}
           {simple.kind === 'monthly' && (
             <>
-              <Label htmlFor="sched-day">Day of month</Label>
+              <Label htmlFor="sched-day">{m.dayOfMonth}</Label>
               <Input id="sched-day" type="number" min={1} max={31} value={simple.day} onChange={(e) => setSimple({ ...simple, day: Number(e.target.value) })} />
             </>
           )}
           {(simple.kind === 'daily' || simple.kind === 'weekly' || simple.kind === 'monthly') && (
             <>
-              <Label htmlFor="sched-at">At</Label>
+              <Label htmlFor="sched-at">{m.at}</Label>
               <Input id="sched-at" type="time" value={simple.time} onChange={(e) => setSimple({ ...simple, time: e.target.value })} />
             </>
           )}
         </div>
       ) : (
         <>
-          <Label htmlFor="sched-cron">Cron expression</Label>
+          <Label htmlFor="sched-cron">{m.cronExpression}</Label>
           <Input id="sched-cron" className="font-mono" value={cron} onChange={(e) => setCron(e.target.value)} disabled={!canWrite} />
         </>
       )}
@@ -272,7 +268,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
             {preview.data?.description && <p className="text-xs">{preview.data.description}</p>}
             <ol className="flex flex-col gap-0.5 font-mono text-[11px] text-muted-foreground">
               {(preview.data?.next ?? []).map((at, i) => (
-                <li key={at} aria-label={`occurrence ${i + 1}`}>
+                <li key={at} aria-label={m.occurrence(i + 1)}>
                   {zoneFmt(at)}
                 </li>
               ))}
@@ -282,31 +278,31 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       </div>
       <label className="flex items-center gap-2 text-xs">
         <input type="checkbox" checked={overlapSkip} onChange={(e) => setOverlapSkip(e.target.checked)} disabled={!canWrite} />
-        Skip when a run of this template is still active
+        {m.skipOverlap}
       </label>
       <label className="flex items-center gap-2 text-xs">
         <input type="checkbox" checked={catchUp} onChange={(e) => setCatchUp(e.target.checked)} disabled={!canWrite} />
-        Catch up a missed run after downtime
+        {m.catchUp}
       </label>
       {catchUp ? (
         <>
-          <Label htmlFor="sched-window">Catch-up window</Label>
+          <Label htmlFor="sched-window">{m.catchUpWindow}</Label>
           <Select id="sched-window" options={WINDOWS.map((w) => ({ value: w, label: w }))} value={catchUpWindow} onChange={setCatchUpWindow} />
         </>
       ) : (
-        <p className="text-[11px] text-muted-foreground">otherwise the next regular run happens</p>
+        <p className="text-[11px] text-muted-foreground">{m.otherwise}</p>
       )}
-      <Label htmlFor="sched-maintenance">When a targeted host is in a maintenance window</Label>
+      <Label htmlFor="sched-maintenance">{m.maintenanceGuard}</Label>
       <Select
         id="sched-maintenance"
-        options={(Object.keys(MAINTENANCE_LABEL) as MaintenanceGuard[]).map((m) => ({ value: m, label: MAINTENANCE_LABEL[m] }))}
+        options={GUARDS.map((g) => ({ value: g, label: m.maintenance[g] }))}
         value={maintenance}
         onChange={(value) => setMaintenance(value as MaintenanceGuard)}
         disabled={!canWrite}
       />
-      <Label htmlFor="sched-limit">Limit</Label>
-      <Input id="sched-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="the template's limit" disabled={!canWrite} />
-      <Label htmlFor="sched-vars">Extra vars</Label>
+      <Label htmlFor="sched-limit">{m.limit}</Label>
+      <Input id="sched-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder={m.limitPlaceholder} disabled={!canWrite} />
+      <Label htmlFor="sched-vars">{m.extraVars}</Label>
       <textarea
         id="sched-vars"
         className="min-h-20 rounded-md border border-border bg-background p-2 font-mono text-xs"
@@ -319,22 +315,22 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
       <div className="flex flex-wrap justify-end gap-2">
         {initial && canRun && (
           <Button type="button" onClick={() => void run()}>
-            Run now
+            {m.runNow}
           </Button>
         )}
         {initial && canWrite && (
           <Button type="button" onClick={() => void toggle()}>
-            {initial.paused ? 'Resume' : 'Pause'}
+            {initial.paused ? m.resume : m.pause}
           </Button>
         )}
         {initial && canWrite && (
           <Button type="button" variant="destructive" onClick={() => void del()}>
-            Delete
+            {t.common.delete}
           </Button>
         )}
         {canWrite && (
           <Button type="button" variant="primary" onClick={() => void save()} disabled={create.isPending || update.isPending}>
-            Save
+            {t.common.save}
           </Button>
         )}
       </div>

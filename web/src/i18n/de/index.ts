@@ -13,11 +13,14 @@ import { deInstance } from './instance.ts';
 import { deLanguage } from './language.ts';
 import { deMaintenance } from './maintenance.ts';
 import { deMembers } from './members.ts';
+import { deNotifications } from './notifications.ts';
 import { deRoutes } from './routes.ts';
+import { deSchedules } from './schedules.ts';
 import { deSettings } from './settings.ts';
 import { deSetup } from './setup.ts';
 import { deShell } from './shell.ts';
 import { deTokens } from './tokens.ts';
+import { deTriggers } from './triggers.ts';
 import { deUi } from './ui.ts';
 import { deValidation } from './validation.ts';
 import { deWorkers } from './workers.ts';
@@ -61,11 +64,14 @@ export const de: Messages = {
   language: deLanguage,
   maintenance: deMaintenance,
   members: deMembers,
+  notifications: deNotifications,
   routes: deRoutes,
+  schedules: deSchedules,
   settings: deSettings,
   setup: deSetup,
   shell: deShell,
   tokens: deTokens,
+  triggers: deTriggers,
   ui: deUi,
   validation: deValidation,
   workers: deWorkers,

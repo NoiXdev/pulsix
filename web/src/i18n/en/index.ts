@@ -12,11 +12,14 @@ import { enInstance } from './instance.ts';
 import { enLanguage } from './language.ts';
 import { enMaintenance } from './maintenance.ts';
 import { enMembers } from './members.ts';
+import { enNotifications } from './notifications.ts';
 import { enRoutes } from './routes.ts';
+import { enSchedules } from './schedules.ts';
 import { enSettings } from './settings.ts';
 import { enSetup } from './setup.ts';
 import { enShell } from './shell.ts';
 import { enTokens } from './tokens.ts';
+import { enTriggers } from './triggers.ts';
 import { enUi } from './ui.ts';
 import { enValidation } from './validation.ts';
 import { enWorkers } from './workers.ts';
@@ -47,11 +50,14 @@ export const en = {
   language: enLanguage,
   maintenance: enMaintenance,
   members: enMembers,
+  notifications: enNotifications,
   routes: enRoutes,
+  schedules: enSchedules,
   settings: enSettings,
   setup: enSetup,
   shell: enShell,
   tokens: enTokens,
+  triggers: enTriggers,
   ui: enUi,
   validation: enValidation,
   workers: enWorkers,

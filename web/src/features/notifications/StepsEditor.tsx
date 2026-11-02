@@ -3,6 +3,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import type { AlertRouteStep } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 import type { RouteDialogChannel, RouteDialogRotation } from './RouteDialog.tsx';
 import { cumulativeDelays, formatElapsed } from './steps.ts';
 
@@ -56,6 +57,8 @@ export interface StepsEditorProps {
  * folds into its own `valid` for exactly that reason.
  */
 export function StepsEditor({ steps, onChange, channels, rotations }: StepsEditorProps) {
+  const t = useT();
+  const m = t.notifications;
   function addStep() {
     onChange([...steps, { position: steps.length + 1, delay_seconds: 300, channel_ids: [] }]);
   }
@@ -89,12 +92,11 @@ export function StepsEditor({ steps, onChange, channels, rotations }: StepsEdito
 
   return (
     <fieldset className="flex flex-col gap-2 rounded-md border border-border p-2.5">
-      <legend className="px-1 text-[11px] font-medium text-muted-foreground">Escalation ladder</legend>
+      <legend className="px-1 text-[11px] font-medium text-muted-foreground">{m.steps.ladder}</legend>
       <p className="text-xs text-muted-foreground">
-        The initial delivery above goes out {formatElapsed(0)}. Each rung below fires if the alert is still open and
-        unacknowledged once its own wait — counted from the rung before it — has passed.
+        {m.steps.intro(formatElapsed(0, t))}
       </p>
-      {steps.length === 0 && <p className="text-xs text-muted-foreground">No escalation — only the initial delivery.</p>}
+      {steps.length === 0 && <p className="text-xs text-muted-foreground">{m.steps.none}</p>}
       <ol className="flex flex-col gap-2">
         {steps.map((step, i) => {
           const source = sourceOf(step);
@@ -102,14 +104,14 @@ export function StepsEditor({ steps, onChange, channels, rotations }: StepsEdito
           return (
             <li key={i} className="flex flex-col gap-1.5 rounded-md border border-border p-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium">Step {step.position}</span>
-                <span className="text-[11px] text-muted-foreground">{formatElapsed(cumulativeAt[i])}</span>
+                <span className="text-xs font-medium">{m.steps.step(step.position)}</span>
+                <span className="text-[11px] text-muted-foreground">{formatElapsed(cumulativeAt[i], t)}</span>
                 <Button type="button" variant="ghost" onClick={() => removeStep(i)}>
-                  Remove
+                  {t.common.remove}
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                <Label htmlFor={`step-${i}-delay`}>Wait</Label>
+                <Label htmlFor={`step-${i}-delay`}>{m.steps.wait}</Label>
                 <Input
                   id={`step-${i}-delay`}
                   type="number"
@@ -127,16 +129,16 @@ export function StepsEditor({ steps, onChange, channels, rotations }: StepsEdito
                   // bounded number field in this dialog already takes.
                   onChange={(e) => updateStep(i, { delay_seconds: Math.max(0, Number(e.target.value) || 0) * 60 })}
                 />
-                <span className="text-xs text-muted-foreground">min after the previous rung</span>
+                <span className="text-xs text-muted-foreground">{m.steps.minAfterPrevious}</span>
               </div>
-              <div role="radiogroup" aria-label={`Step ${step.position} channel source`} className="flex gap-3">
+              <div role="radiogroup" aria-label={m.steps.sourceAria(step.position)} className="flex gap-3">
                 <label className="flex items-center gap-1.5 text-xs">
                   <input type="radio" name={groupName} checked={source === 'fixed'} onChange={() => setSource(i, 'fixed')} />
-                  Fixed list
+                  {m.fixedList}
                 </label>
                 <label className="flex items-center gap-1.5 text-xs">
                   <input type="radio" name={groupName} checked={source === 'rotation'} onChange={() => setSource(i, 'rotation')} />
-                  On-call rotation
+                  {m.onCallRotation}
                 </label>
               </div>
               {source === 'fixed' ? (
@@ -151,19 +153,19 @@ export function StepsEditor({ steps, onChange, channels, rotations }: StepsEdito
                       {c.name}
                     </label>
                   ))}
-                  {channels.length === 0 && <span className="text-xs text-muted-foreground">Add a notification channel first.</span>}
+                  {channels.length === 0 && <span className="text-xs text-muted-foreground">{m.addChannelFirst}</span>}
                 </div>
               ) : (
                 <>
                   <Select
-                    aria-label="Rotation"
+                    aria-label={m.rotation}
                     options={rotations.map((r) => ({ value: r.id, label: r.name }))}
                     value={step.rotation_id ?? ''}
                     onChange={(v) => updateStep(i, { rotation_id: v })}
-                    placeholder="Choose a rotation…"
+                    placeholder={m.chooseRotation}
                     required
                   />
-                  {rotations.length === 0 && <span className="text-xs text-muted-foreground">Set up an on-call rotation first.</span>}
+                  {rotations.length === 0 && <span className="text-xs text-muted-foreground">{m.setUpRotationFirst}</span>}
                 </>
               )}
             </li>
@@ -171,7 +173,7 @@ export function StepsEditor({ steps, onChange, channels, rotations }: StepsEdito
         })}
       </ol>
       <Button type="button" variant="ghost" onClick={addStep}>
-        Add rung
+        {m.steps.add}
       </Button>
     </fieldset>
   );

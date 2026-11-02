@@ -1,4 +1,5 @@
 import type { AlertRoute, AlertRouteInput } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 
 // AlertRouteWindow is the route's delivery window as the wire gives it
 // (AlertRouteWindowDTO, internal/api/alert_route_dto.go): a 5-field cron
@@ -12,18 +13,17 @@ export type AlertRouteWindow = NonNullable<AlertRoute['window']>;
 /** How a route's selections are named to a reader. Shared by the two
  * views that show them — Settings → Alert routes and the host page's
  * route-union card — because a route that says "only fires on crit" in
- * one place and something else in the other is worse than either. */
-export const SEVERITY_LABEL: Record<string, string> = { warn: 'Warning', crit: 'Critical', unknown: 'Unknown' };
+ * one place and something else in the other is worse than either. A value
+ * the catalogue has no label for (a newer server) is shown as it is. */
+export function severityLabel(severity: string, t: Messages): string {
+  const labels: Record<string, string> = t.notifications.severity;
+  return Object.hasOwn(labels, severity) ? labels[severity] : severity;
+}
 
-export const EVENT_LABEL: Record<string, string> = {
-  opened: 'opened',
-  severity_raised: 'worsened',
-  acknowledged: 'acknowledged',
-  ack_voided: 'ack voided',
-  snoozed: 'snoozed',
-  unsnoozed: 'unsnoozed',
-  closed: 'closed',
-};
+export function eventLabel(event: string, t: Messages): string {
+  const labels: Record<string, string> = t.notifications.event;
+  return Object.hasOwn(labels, event) ? labels[event] : event;
+}
 
 /** A route with no channel source left reaches nobody. The API rejects
  * creating one, but deleting a channel removes the link rather than the
@@ -153,20 +153,12 @@ export function routeToInput(route: AlertRoute): AlertRouteInput {
 // to agree with each other anywhere else in this file.
 export type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
 
-export const WEEKDAY_OPTIONS: { value: Weekday; label: string }[] = [
-  { value: 'mon', label: 'Mon' },
-  { value: 'tue', label: 'Tue' },
-  { value: 'wed', label: 'Wed' },
-  { value: 'thu', label: 'Thu' },
-  { value: 'fri', label: 'Fri' },
-  { value: 'sat', label: 'Sat' },
-  { value: 'sun', label: 'Sun' },
-];
+export const WEEKDAYS: Weekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
 
 const DOW_NUMBER: Record<Weekday, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
 const NUMBER_DOW: Record<number, Weekday> = Object.fromEntries(Object.entries(DOW_NUMBER).map(([day, n]) => [n, day as Weekday]));
-const WEEKDAY_RANK: Record<Weekday, number> = Object.fromEntries(WEEKDAY_OPTIONS.map((d, i) => [d.value, i])) as Record<Weekday, number>;
-const ALL_WEEKDAYS = WEEKDAY_OPTIONS.map((d) => d.value);
+const WEEKDAY_RANK: Record<Weekday, number> = Object.fromEntries(WEEKDAYS.map((d, i) => [d, i])) as Record<Weekday, number>;
+const ALL_WEEKDAYS = WEEKDAYS;
 const MINUTES_PER_DAY = 24 * 60;
 
 function minutesSinceMidnight(hhmm: string): number {

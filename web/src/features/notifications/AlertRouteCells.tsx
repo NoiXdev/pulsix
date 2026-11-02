@@ -1,6 +1,7 @@
 import { BellOff } from 'lucide-react';
 import { Pill } from '../../ui/badge.tsx';
-import { EVENT_LABEL, SEVERITY_LABEL } from './alertRoute.ts';
+import { useT } from '../../i18n/useT.ts';
+import { eventLabel, severityLabel } from './alertRoute.ts';
 import { formatElapsed } from './steps.ts';
 import type { AlertRoute } from '../../api/types.ts';
 
@@ -17,10 +18,11 @@ import type { AlertRoute } from '../../api/types.ts';
  * last channel was deleted is a broken configuration, not a state of the
  * fleet. */
 export function ReachesNobody() {
+  const t = useT();
   return (
     <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-destructive">
       <BellOff size={12} aria-hidden="true" />
-      Reaches nobody — no channel
+      {t.notifications.reachesNobody}
     </span>
   );
 }
@@ -31,6 +33,7 @@ export function ReachesNobody() {
  * every route covering the host whatever its selections are, precisely so
  * this can be shown beside it (ForHost's own doc comment). */
 export function RouteFiresOn({ route }: { route: AlertRoute }) {
+  const t = useT();
   const severities = route.severities ?? [];
   const events = route.events ?? [];
   return (
@@ -38,11 +41,11 @@ export function RouteFiresOn({ route }: { route: AlertRoute }) {
       <span className="flex flex-wrap gap-1">
         {severities.map((s) => (
           <Pill key={s} tone={s === 'crit' ? 'crit' : s === 'warn' ? 'warn' : 'unknown'}>
-            {SEVERITY_LABEL[s] ?? s}
+            {severityLabel(s, t)}
           </Pill>
         ))}
       </span>
-      <span className="truncate text-muted-foreground">{events.map((e) => EVENT_LABEL[e] ?? e).join(', ')}</span>
+      <span className="truncate text-muted-foreground">{events.map((e) => eventLabel(e, t)).join(', ')}</span>
     </span>
   );
 }
@@ -59,12 +62,13 @@ export function RouteFiresOn({ route }: { route: AlertRoute }) {
  * nothing here worth a line saying so, the same "nothing to add" reasoning
  * ReachesNobody's absence already gives a route that reaches somebody. */
 export function RouteEscalation({ route }: { route: AlertRoute }) {
+  const t = useT();
   const steps = route.steps ?? [];
   if (steps.length === 0) return null;
   const total = steps.reduce((sum, s) => sum + s.delay_seconds, 0);
   return (
     <span className="text-[11px] text-muted-foreground">
-      Escalates over {steps.length} {steps.length === 1 ? 'rung' : 'rungs'}, the last one {formatElapsed(total)}
+      {t.notifications.escalatesOver(steps.length, formatElapsed(total, t))}
     </span>
   );
 }
