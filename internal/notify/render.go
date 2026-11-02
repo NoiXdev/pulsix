@@ -226,7 +226,7 @@ func alertItemsText(items []AlertItem) string {
 	for i, it := range items {
 		what := oneLine(it.CheckKey)
 		if it.Item != "" {
-			what += "/" + oneLine(it.Item)
+			what += "/" + agentText(it.Item)
 		}
 		if it.Metric != "" {
 			what += " " + oneLine(it.Metric)
@@ -234,6 +234,36 @@ func alertItemsText(items []AlertItem) string {
 		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", oneLine(it.Severity), oneLine(it.HostName), oneLine(it.Event), what)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// agentText is oneLine for a string a monitored host's agent chose — an
+// item: a mount point, a unit name — on its way into a chat message
+// (backlog 7.42). Chat services read markup out of plain text: '@' starts
+// a mention ("@everyone"), '<' and '>' delimit Slack's "<!channel>" and
+// "<url|text>", '[' and ']' a Markdown link whose text hides its target.
+// Each is swapped for a look-alike that no service treats as markup, so
+// the item still reads the same to a person; Unicode format characters
+// (bidi overrides, zero-width marks), which can make a line read as
+// something it is not, become U+FFFD like control characters.
+func agentText(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '@':
+			return '\uFF20' // FULLWIDTH COMMERCIAL AT
+		case '<':
+			return '\u2039' // SINGLE LEFT-POINTING ANGLE QUOTATION MARK
+		case '>':
+			return '\u203A' // SINGLE RIGHT-POINTING ANGLE QUOTATION MARK
+		case '[':
+			return '\uFF3B' // FULLWIDTH LEFT SQUARE BRACKET
+		case ']':
+			return '\uFF3D' // FULLWIDTH RIGHT SQUARE BRACKET
+		}
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
+			return '\uFFFD'
+		}
+		return r
+	}, s)
 }
 
 // oneLine replaces every control character and Unicode line or paragraph
