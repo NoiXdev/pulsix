@@ -18,12 +18,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { SlugField } from '../../ui/SlugField.tsx';
 
 type StepKey = 'admin' | 'org' | 'smtp' | 'mfa';
-const STEPS: Array<{ key: StepKey; label: string; sub: string }> = [
-  { key: 'admin', label: 'Instance administrator', sub: 'email and password' },
-  { key: 'org', label: 'First organization', sub: 'name and URL slug' },
-  { key: 'smtp', label: 'Outgoing mail', sub: 'optional, can be set later' },
-  { key: 'mfa', label: 'Second factor', sub: 'authenticator app or passkey' },
-];
+const STEP_KEYS: readonly StepKey[] = ['admin', 'org', 'smtp', 'mfa'];
 
 // The repeat is checked here rather than on the field, because a mismatch
 // is a fact about the pair: zod's refine runs once both have a value and
@@ -66,6 +61,7 @@ export function SetupWizardPage() {
   const resetSession = useResetSession();
   const setupStatus = useSetupStatus();
   const t = useT();
+  const steps = STEP_KEYS.map((key) => ({ key, ...t.setup.steps[key] }));
   // The wizard's language is the one it is shown in: before setup the
   // provider starts from the browser's, and choosing another here only
   // previews it — it is saved as the instance default by POST
@@ -90,7 +86,7 @@ export function SetupWizardPage() {
     }
   }, [setupStatus.data?.completed, navigate]);
 
-  const stepIndex = STEPS.findIndex((s) => s.key === step);
+  const stepIndex = steps.findIndex((s) => s.key === step);
 
   const adminForm = useForm<AdminValues>({ resolver: zodResolver(adminSchema), defaultValues: admin ?? undefined });
   const orgForm = useForm<OrgValues>({ resolver: zodResolver(orgSchema), defaultValues: org ?? undefined });
@@ -123,7 +119,7 @@ export function SetupWizardPage() {
       await Promise.all([refetchMe(), refetchSetupStatus(qc)]);
       await navigate({ to: '/account/enrol' });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'failed to complete setup');
+      setError(err instanceof Error ? err.message : t.setup.failed);
     } finally {
       setSubmitting(false);
     }
@@ -139,13 +135,11 @@ export function SetupWizardPage() {
           </span>
         </div>
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-xl font-semibold">Set up this installation</h1>
-          <p className="text-muted-foreground">
-            Runs once. Afterwards this page is gone and everything happens inside the organization.
-          </p>
+          <h1 className="text-xl font-semibold">{t.setup.title}</h1>
+          <p className="text-muted-foreground">{t.setup.intro}</p>
         </div>
         <div className="flex flex-col gap-4">
-          {STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <div key={s.key} className="flex items-start gap-3">
               <span
                 className={
@@ -172,7 +166,7 @@ export function SetupWizardPage() {
       <div className="flex flex-1 items-center justify-center p-12">
         <div className="flex w-[520px] flex-col gap-5">
           <span className="text-[11px] font-semibold tracking-widest text-brand uppercase">
-            Step {stepIndex + 1} of {STEPS.length}
+            {t.setup.stepOf(stepIndex + 1, steps.length)}
           </span>
 
           {step === 'admin' && (
@@ -183,7 +177,7 @@ export function SetupWizardPage() {
                 setStep('org');
               })}
             >
-              <h2 className="text-xl font-semibold">Create the instance administrator</h2>
+              <h2 className="text-xl font-semibold">{t.setup.admin.title}</h2>
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="setup_locale">{t.language.label}</Label>
                 <Select
@@ -196,18 +190,18 @@ export function SetupWizardPage() {
                 />
                 <span className="text-[11px] text-muted-foreground">{t.language.wizard.hint}</span>
               </div>
-              <Field id="admin_name" label="Name" error={adminForm.formState.errors.admin_name?.message}>
+              <Field id="admin_name" label={t.setup.admin.name} error={adminForm.formState.errors.admin_name?.message}>
                 <Input id="admin_name" {...adminForm.register('admin_name')} />
               </Field>
-              <Field id="admin_email" label="Email address" error={adminForm.formState.errors.admin_email?.message}>
+              <Field id="admin_email" label={t.auth.emailAddress} error={adminForm.formState.errors.admin_email?.message}>
                 <Input id="admin_email" type="email" {...adminForm.register('admin_email')} />
               </Field>
-              <Field id="admin_password" label="Password" error={adminForm.formState.errors.admin_password?.message}>
+              <Field id="admin_password" label={t.auth.password} error={adminForm.formState.errors.admin_password?.message}>
                 <Input id="admin_password" type="password" {...adminForm.register('admin_password')} />
               </Field>
               <Field
                 id="admin_password_repeat"
-                label="Repeat password"
+                label={t.setup.admin.repeatPassword}
                 error={adminForm.formState.errors.admin_password_repeat?.message}
               >
                 <Input
@@ -219,7 +213,7 @@ export function SetupWizardPage() {
               </Field>
               <div className="flex justify-end">
                 <Button type="submit" variant="primary">
-                  Continue
+                  {t.common.continue}
                 </Button>
               </div>
             </form>
@@ -233,11 +227,11 @@ export function SetupWizardPage() {
                 setStep('smtp');
               })}
             >
-              <h2 className="text-xl font-semibold">Create the first organization</h2>
-              <Field id="org_name" label="Organization name" error={orgForm.formState.errors.org_name?.message}>
+              <h2 className="text-xl font-semibold">{t.setup.org.title}</h2>
+              <Field id="org_name" label={t.setup.org.name} error={orgForm.formState.errors.org_name?.message}>
                 <Input id="org_name" {...orgForm.register('org_name')} />
               </Field>
-              <Field id="org_slug" label="URL slug" error={orgForm.formState.errors.org_slug?.message}>
+              <Field id="org_slug" label={t.setup.org.slug} error={orgForm.formState.errors.org_slug?.message}>
                 <SlugField
                   id="org_slug"
                   inputProps={orgForm.register('org_slug')}
@@ -247,10 +241,10 @@ export function SetupWizardPage() {
               </Field>
               <div className="flex justify-between">
                 <Button type="button" onClick={() => setStep('admin')}>
-                  Back
+                  {t.common.back}
                 </Button>
                 <Button type="submit" variant="primary">
-                  Continue
+                  {t.common.continue}
                 </Button>
               </div>
             </form>
@@ -278,10 +272,8 @@ export function SetupWizardPage() {
                 })(e);
               }}
             >
-              <h2 className="text-xl font-semibold">Outgoing mail</h2>
-              <p className="text-muted-foreground">
-                Optional, can be set later. Without SMTP configured, invitation e-mails cannot be sent.
-              </p>
+              <h2 className="text-xl font-semibold">{t.setup.steps.smtp.label}</h2>
+              <p className="text-muted-foreground">{t.setup.smtp.intro}</p>
               <label htmlFor="smtp_enabled" className="flex items-center gap-2 text-xs">
                 <input
                   id="smtp_enabled"
@@ -289,37 +281,37 @@ export function SetupWizardPage() {
                   checked={smtpEnabled}
                   onChange={(e) => setSmtpEnabled(e.target.checked)}
                 />
-                Configure SMTP now
+                {t.setup.smtp.configureNow}
               </label>
               {smtpEnabled && (
                 <>
-                  <Field id="smtp_host" label="Host" error={smtpForm.formState.errors.host?.message}>
+                  <Field id="smtp_host" label={t.instance.smtp.host} error={smtpForm.formState.errors.host?.message}>
                     <Input id="smtp_host" {...smtpForm.register('host')} />
                   </Field>
-                  <Field id="smtp_port" label="Port" error={smtpForm.formState.errors.port?.message}>
+                  <Field id="smtp_port" label={t.instance.smtp.port} error={smtpForm.formState.errors.port?.message}>
                     <Input id="smtp_port" type="number" {...smtpForm.register('port', { valueAsNumber: true })} />
                   </Field>
-                  <Field id="smtp_username" label="Username">
+                  <Field id="smtp_username" label={t.instance.smtp.username}>
                     <Input id="smtp_username" {...smtpForm.register('username')} />
                   </Field>
-                  <Field id="smtp_password" label="Password">
+                  <Field id="smtp_password" label={t.auth.password}>
                     <Input id="smtp_password" type="password" {...smtpForm.register('password')} />
                   </Field>
-                  <Field id="smtp_from" label="From address" error={smtpForm.formState.errors.from?.message}>
+                  <Field id="smtp_from" label={t.instance.smtp.fromAddress} error={smtpForm.formState.errors.from?.message}>
                     <Input id="smtp_from" type="email" {...smtpForm.register('from')} />
                   </Field>
                   <label className="flex items-center gap-2 text-xs">
                     <input type="checkbox" {...smtpForm.register('start_tls')} defaultChecked />
-                    Use STARTTLS
+                    {t.instance.smtp.startTls}
                   </label>
                 </>
               )}
               <div className="flex justify-between">
                 <Button type="button" onClick={() => setStep('org')}>
-                  Back
+                  {t.common.back}
                 </Button>
                 <Button type="submit" variant="primary">
-                  Continue
+                  {t.common.continue}
                 </Button>
               </div>
             </form>
@@ -327,18 +319,15 @@ export function SetupWizardPage() {
 
           {step === 'mfa' && (
             <div className="flex flex-col gap-4">
-              <h2 className="text-xl font-semibold">Enrol a second factor now</h2>
-              <p className="text-muted-foreground">
-                The instance administrator account is created next. You will be asked to add an authenticator app or
-                a passkey right away — every account needs a second factor before it can do anything else.
-              </p>
+              <h2 className="text-xl font-semibold">{t.setup.mfa.title}</h2>
+              <p className="text-muted-foreground">{t.setup.mfa.intro}</p>
               {error && <p className="text-xs text-destructive">{error}</p>}
               <div className="flex justify-between">
                 <Button type="button" onClick={() => setStep('smtp')} disabled={submitting}>
-                  Back
+                  {t.common.back}
                 </Button>
                 <Button type="button" variant="primary" onClick={finish} disabled={submitting}>
-                  {submitting ? 'Creating…' : 'Create administrator & continue'}
+                  {submitting ? t.setup.mfa.creating : t.setup.mfa.create}
                 </Button>
               </div>
             </div>

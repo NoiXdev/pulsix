@@ -1,8 +1,13 @@
+import { enAccount } from './account.ts';
 import { enActivity } from './activity.ts';
+import { enAuth } from './auth.ts';
 import { enCommon } from './common.ts';
+import { enInstance } from './instance.ts';
 import { enLanguage } from './language.ts';
+import { enMembers } from './members.ts';
 import { enRoutes } from './routes.ts';
 import { enSettings } from './settings.ts';
+import { enSetup } from './setup.ts';
 import { enShell } from './shell.ts';
 import { enTokens } from './tokens.ts';
 import { enUi } from './ui.ts';
@@ -20,11 +25,16 @@ import { enValidation } from './validation.ts';
  *   hostsCount: (n: number) => (n === 1 ? '1 host' : `${n} hosts`),
  */
 export const en = {
+  account: enAccount,
   activity: enActivity,
+  auth: enAuth,
   common: enCommon,
+  instance: enInstance,
   language: enLanguage,
+  members: enMembers,
   routes: enRoutes,
   settings: enSettings,
+  setup: enSetup,
   shell: enShell,
   tokens: enTokens,
   ui: enUi,

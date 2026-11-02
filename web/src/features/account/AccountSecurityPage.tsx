@@ -10,6 +10,8 @@ import { useMe } from '../../api/hooks/useMe.ts';
 import { useDeletePasskey, usePasskeys } from '../../api/hooks/usePasskeys.ts';
 import { useConfirmTotp, useEnrolTotp, useRegenerateRecoveryCodes } from '../../api/hooks/useTotp.ts';
 import { registerPasskey } from '../auth/passkeys.ts';
+import { useFormat } from '../../i18n/format.ts';
+import { useT } from '../../i18n/useT.ts';
 import { useStepUp } from './stepUp.tsx';
 import { LanguageCard } from './LanguageCard.tsx';
 
@@ -55,6 +57,8 @@ import { LanguageCard } from './LanguageCard.tsx';
  */
 export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | Promise<void> } = {}) {
   const toast = useToast();
+  const t = useT();
+  const fmt = useFormat();
   const me = useMe({ enabled: true });
   const passkeys = usePasskeys();
   const deletePasskey = useDeletePasskey();
@@ -76,38 +80,38 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
   return (
     <>
       <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">Security</h1>
+        <h1 className="text-xl font-semibold">{t.account.title}</h1>
         {hasSecondFactor ? (
-          <Pill tone="ok">second factor active</Pill>
+          <Pill tone="ok">{t.account.secondFactorActive}</Pill>
         ) : (
-          <Pill tone="warn">second factor required</Pill>
+          <Pill tone="warn">{t.account.secondFactorRequired}</Pill>
         )}
       </div>
 
       <div className="grid grid-cols-2 gap-4 items-start">
         <Card>
           <div className="flex flex-col p-4 gap-3">
-            <h2 className="text-sm font-semibold">Passkeys</h2>
+            <h2 className="text-sm font-semibold">{t.account.passkeys.title}</h2>
             {(passkeys.data?.passkeys ?? []).map((p) => (
               <div key={p.id} className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0">
                 <KeyRound size={15} className="text-muted-foreground" />
                 <div className="flex flex-1 flex-col">
                   <span className="text-xs font-semibold">{p.name}</span>
                   <span className="text-[11px] text-muted-foreground">
-                    added {new Date(p.created_at).toLocaleDateString()}
+                    {t.account.passkeys.added(fmt.date(p.created_at))}
                   </span>
                 </div>
                 <button
                   type="button"
-                  aria-label={`remove ${p.name}`}
+                  aria-label={t.account.passkeys.removeAria(p.name)}
                   className="text-destructive"
                   onClick={() =>
                     void stepUp.run(
                       async () => {
                         await deletePasskey.mutateAsync(p.id);
-                        toast.show(`Passkey ${p.name} removed`);
+                        toast.show(t.account.passkeys.removed(p.name));
                       },
-                      (err) => toast.show(err instanceof Error ? err.message : 'failed to remove passkey', 'destructive'),
+                      (err) => toast.show(err instanceof Error ? err.message : t.account.passkeys.removeFailed, 'destructive'),
                     )
                   }
                 >
@@ -116,7 +120,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
               </div>
             ))}
             {(passkeys.data?.passkeys ?? []).length === 0 && (
-              <span className="text-xs text-muted-foreground">No passkeys registered yet.</span>
+              <span className="text-xs text-muted-foreground">{t.account.passkeys.none}</span>
             )}
             <form
               className="flex items-center gap-2 pt-1"
@@ -125,23 +129,23 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                 if (!newPasskeyName.trim()) return;
                 void stepUp.run(
                   async () => {
-                    await registerPasskey(newPasskeyName.trim());
-                    toast.show('Passkey added');
+                    await registerPasskey(newPasskeyName.trim(), t);
+                    toast.show(t.account.passkeys.addedToast);
                     setNewPasskeyName('');
                     await passkeys.refetch();
                     await onEnrolled?.();
                   },
-                  (err) => toast.show(err instanceof Error ? err.message : 'failed to add passkey', 'destructive'),
+                  (err) => toast.show(err instanceof Error ? err.message : t.account.passkeys.addFailed, 'destructive'),
                 );
               }}
             >
               <Input
                 value={newPasskeyName}
                 onChange={(e) => setNewPasskeyName(e.target.value)}
-                placeholder="e.g. MacBook Pro"
+                placeholder={t.account.passkeys.namePlaceholder}
               />
               <Button type="submit" variant="primary">
-                <KeyRound size={14} /> Add passkey
+                <KeyRound size={14} /> {t.account.passkeys.add}
               </Button>
             </form>
           </div>
@@ -149,7 +153,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
 
         <Card>
           <div className="flex flex-col gap-4 p-4">
-            <h2 className="text-sm font-semibold">Authenticator app</h2>
+            <h2 className="text-sm font-semibold">{t.account.totp.title}</h2>
             {!enrolling && !recoveryCodes && (
               <Button
                 variant="primary"
@@ -159,11 +163,11 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                       const res = await enrolTotp.mutateAsync(undefined);
                       setEnrolling({ secret: res.secret, otpauth_url: res.otpauth_url });
                     },
-                    (err) => toast.show(err instanceof Error ? err.message : 'failed to start enrolment', 'destructive'),
+                    (err) => toast.show(err instanceof Error ? err.message : t.account.totp.enrolFailed, 'destructive'),
                   )
                 }
               >
-                Enrol authenticator app
+                {t.account.totp.enrol}
               </Button>
             )}
             {enrolling && (
@@ -180,13 +184,11 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                     // away rather than waiting for gcTime (Critical fix).
                     enrolTotp.reset();
                   } catch (err) {
-                    toast.show(err instanceof Error ? err.message : 'invalid code', 'destructive');
+                    toast.show(err instanceof Error ? err.message : t.auth.errors.invalidCode, 'destructive');
                   }
                 }}
               >
-                <p className="text-[11px] text-muted-foreground">
-                  Scan with any TOTP app, or enter the secret manually, then confirm with a 6-digit code.
-                </p>
+                <p className="text-[11px] text-muted-foreground">{t.account.totp.scanHint}</p>
                 <QRCodeSVG
                   value={enrolling.otpauth_url}
                   size={132}
@@ -207,7 +209,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                     onChange={(e) => setCode(e.target.value)}
                   />
                   <Button type="submit" variant="primary">
-                    Confirm
+                    {t.account.confirm}
                   </Button>
                 </div>
               </form>
@@ -215,12 +217,12 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
             {me.data?.totp_confirmed === true && !recoveryCodes && (
               <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
                 <p className="text-[11px] text-muted-foreground">
-                  Recovery codes left:{' '}
+                  {t.account.recovery.left}{' '}
                   <span data-testid="recovery-codes-remaining" className="font-mono text-foreground">
                     {me.data?.recovery_codes_remaining ?? 0}
                   </span>
-                  {' — '}each works one time, and they are the way back in if you lose your
-                  authenticator.
+                  {' — '}
+                  {t.account.recovery.leftHint}
                 </p>
                 <Button
                   variant="ghost"
@@ -230,19 +232,17 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                       const res = await regenerate.mutateAsync();
                       setRecoveryCodes(res.recovery_codes);
                     } catch {
-                      toast.show('Could not regenerate the recovery codes.', 'destructive');
+                      toast.show(t.account.recovery.regenerateFailed, 'destructive');
                     }
                   }}
                 >
-                  Regenerate recovery codes
+                  {t.account.recovery.regenerate}
                 </Button>
               </div>
             )}
             {recoveryCodes && (
               <div className="flex flex-col gap-2">
-                <p className="text-[11px] text-muted-foreground">
-                  Recovery codes — shown once. Each works one time.
-                </p>
+                <p className="text-[11px] text-muted-foreground">{t.account.recovery.shownOnce}</p>
                 <div className="grid grid-cols-2 gap-1.5 rounded-md border border-border bg-background p-3 font-mono text-xs">
                   {recoveryCodes.map((c) => (
                     <span key={c}>{c}</span>
@@ -262,7 +262,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                     await onEnrolled?.();
                   }}
                 >
-                  I have saved these
+                  {t.account.recovery.saved}
                 </Button>
               </div>
             )}

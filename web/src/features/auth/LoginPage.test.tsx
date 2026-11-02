@@ -12,6 +12,8 @@ import {
 } from '@tanstack/react-router';
 import { mockApi } from '../../test/mockApi.ts';
 import { RootRedirect } from '../../routes/RootRedirect.tsx';
+import { I18nProvider } from '../../i18n/I18nProvider.tsx';
+import type { Locale } from '../../i18n/types.ts';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { LoginPage } from './LoginPage.tsx';
 
@@ -75,6 +77,7 @@ function buildRouter(qc: QueryClient) {
 function renderLoginAt(
   search: { step?: string } = {},
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  locale?: Locale,
 ) {
   const rootRoute = createRootRoute();
   const loginRoute = createRoute({
@@ -92,13 +95,12 @@ function renderLoginAt(
   const initial = search.step ? `/login?step=${search.step}` : '/login';
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initial] }) });
 
-  render(
-    <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
-    </QueryClientProvider>,
+  const tree = (
+    <ToastProvider>
+      <RouterProvider router={router} />
+    </ToastProvider>
   );
+  render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{tree}</I18nProvider> : tree}</QueryClientProvider>);
 }
 
 describe('LoginPage TOTP step (Important 5)', () => {
@@ -175,6 +177,22 @@ describe('LoginPage password step error handling (cheap fix)', () => {
 
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('internal error');
+  });
+});
+
+describe('LoginPage in German', () => {
+  it('shows the form and the wrong-password message in German', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /api/v1/auth/login': () => new Response(JSON.stringify({ detail: 'invalid credentials' }), { status: 401 }),
+    });
+    renderLoginAt({}, undefined, 'de');
+
+    await user.type(await screen.findByLabelText('E-Mail-Adresse'), 'tim@acme.io');
+    await user.type(screen.getByLabelText('Passwort'), 'wrong');
+    await user.click(screen.getByRole('button', { name: 'Anmelden' }));
+
+    expect(await screen.findByText('ungültige Anmeldedaten')).toBeInTheDocument();
   });
 });
 

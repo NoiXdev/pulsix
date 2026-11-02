@@ -15,6 +15,7 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
+import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { PendingInvites } from './PendingInvites.tsx';
 
@@ -45,6 +46,7 @@ export function MembersPage() {
   const [roleTarget, setRoleTarget] = useState<{ userId: string; name: string; role: string } | null>(null);
 
   const t = useT();
+  const fmt = useFormat();
   const { inviteFormSchema } = useMemo(() => schemas(t), [t]);
   const inviteForm = useForm<InviteFormValues>({
     resolver: zodResolver(inviteFormSchema),
@@ -58,24 +60,24 @@ export function MembersPage() {
     <>
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">Members</h1>
+          <h1 className="text-xl font-semibold">{t.settings.tabs.members}</h1>
           <SettingsTabs org={org} />
         </div>
         <Button variant="primary" onClick={() => setInviteOpen(true)}>
-          <UserPlus size={15} /> Invite member
+          <UserPlus size={15} /> {t.members.invite}
         </Button>
       </div>
       <span className="text-[13px] text-muted-foreground">
-        {members.data ? `${(members.data.members ?? []).length} members` : 'Loading…'}
+        {members.data ? t.members.count((members.data.members ?? []).length) : t.common.loading}
       </span>
 
       <Card>
         <GridHeader columns={COLUMNS}>
           <span />
-          <span>Member</span>
-          <span>Role</span>
-          <span>Joined</span>
-          <span>Status</span>
+          <span>{t.members.columns.member}</span>
+          <span>{t.members.columns.role}</span>
+          <span>{t.members.columns.joined}</span>
+          <span>{t.members.columns.status}</span>
           <span />
         </GridHeader>
         {(members.data?.members ?? []).map((m) => (
@@ -98,24 +100,28 @@ export function MembersPage() {
             >
               <RoleBadge role={m.role} />
             </button>
-            <span className="text-[11px] text-muted-foreground">
-              {new Date(m.created_at).toLocaleDateString()}
+            <span className="text-[11px] text-muted-foreground">{fmt.date(m.created_at)}</span>
+            <span>
+              {m.disabled_at ? (
+                <Pill tone="unknown">{t.members.disabled}</Pill>
+              ) : (
+                <Pill tone="ok">{t.members.active}</Pill>
+              )}
             </span>
-            <span>{m.disabled_at ? <Pill tone="unknown">disabled</Pill> : <Pill tone="ok">active</Pill>}</span>
             <button
               type="button"
               className="text-[11px] text-destructive"
               onClick={async () => {
-                if (!confirm(`Remove ${m.display_name} from the organization?`)) return;
+                if (!confirm(t.members.confirmRemove(m.display_name))) return;
                 try {
                   await removeMember.mutateAsync(m.user_id);
-                  toast.show(`${m.display_name} removed`);
+                  toast.show(t.members.removed(m.display_name));
                 } catch (err) {
-                  toast.show(err instanceof Error ? err.message : 'failed to remove member', 'destructive');
+                  toast.show(err instanceof Error ? err.message : t.members.removeFailed, 'destructive');
                 }
               }}
             >
-              remove
+              {t.members.remove}
             </button>
           </GridRow>
         ))}
@@ -123,33 +129,33 @@ export function MembersPage() {
 
       <PendingInvites org={org} />
 
-      <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite member">
+      <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} title={t.members.invite}>
         <form
           className="flex flex-col gap-4"
           onSubmit={inviteForm.handleSubmit(async (values) => {
             try {
               const res = await invite.mutateAsync(values);
               if (res.mail_sent || !res.accept_url) {
-                toast.show(`Invitation sent to ${values.email}`);
+                toast.show(t.members.inviteDialog.sent(values.email));
               } else {
                 setInviteLink({ email: res.email, url: res.accept_url });
               }
               setInviteOpen(false);
               inviteForm.reset();
             } catch (err) {
-              toast.show(err instanceof Error ? err.message : 'failed to send invitation', 'destructive');
+              toast.show(err instanceof Error ? err.message : t.members.inviteDialog.failed, 'destructive');
             }
           })}
         >
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="invite_email">E-mail address</Label>
-            <Input id="invite_email" type="email" {...inviteForm.register('email')} placeholder="new.colleague@acme.io" />
+            <Label htmlFor="invite_email">{t.members.inviteDialog.emailLabel}</Label>
+            <Input id="invite_email" type="email" {...inviteForm.register('email')} placeholder={t.members.inviteDialog.emailPlaceholder} />
             {inviteForm.formState.errors.email && (
               <span className="text-[11px] text-destructive">{inviteForm.formState.errors.email.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="invite_role">Role</Label>
+            <Label htmlFor="invite_role">{t.members.inviteDialog.roleLabel}</Label>
             <Controller
               control={inviteForm.control}
               name="role"
@@ -167,31 +173,27 @@ export function MembersPage() {
               )}
             />
           </div>
-          <p className="text-[11px] text-muted-foreground">
-            Owner role cannot be granted by invitation; promote after joining. The invitee sets a password and must
-            enrol a second factor before entering the organization.
-          </p>
+          <p className="text-[11px] text-muted-foreground">{t.members.inviteDialog.ownerNote}</p>
           <div className="flex justify-end gap-2">
             <Button type="button" onClick={() => setInviteOpen(false)}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button type="submit" variant="primary" disabled={invite.isPending}>
-              Send invitation
+              {t.members.inviteDialog.send}
             </Button>
           </div>
         </form>
       </Dialog>
 
-      <Dialog open={!!inviteLink} onClose={() => setInviteLink(null)} title="Share the invitation link">
+      <Dialog open={!!inviteLink} onClose={() => setInviteLink(null)} title={t.members.shareLink.title}>
         {inviteLink && (
           <div className="flex flex-col gap-4">
             <p className="text-xs text-muted-foreground">
-              Outgoing mail is not configured on this instance, so no e-mail was sent. Give this link to{' '}
-              <span className="font-semibold text-foreground">{inviteLink.email}</span> yourself — it works once and
-              expires in 7 days.
+              {t.members.shareLink.before} <span className="font-semibold text-foreground">{inviteLink.email}</span>{' '}
+              {t.members.shareLink.after}
             </p>
             <code
-              aria-label="Invitation link"
+              aria-label={t.members.shareLink.linkLabel}
               className="break-all rounded-md border border-border bg-background p-2 font-mono text-[11px]"
             >
               {inviteLink.url}
@@ -202,16 +204,16 @@ export function MembersPage() {
                 onClick={async () => {
                   try {
                     await navigator.clipboard.writeText(inviteLink.url);
-                    toast.show('Invitation link copied');
+                    toast.show(t.members.shareLink.copied);
                   } catch {
-                    toast.show('Could not copy — select the link and copy it by hand', 'destructive');
+                    toast.show(t.members.shareLink.copyFailed, 'destructive');
                   }
                 }}
               >
-                <Copy size={14} /> Copy link
+                <Copy size={14} /> {t.members.shareLink.copy}
               </Button>
               <Button type="button" variant="primary" onClick={() => setInviteLink(null)}>
-                Done
+                {t.members.shareLink.done}
               </Button>
             </div>
           </div>
@@ -221,7 +223,7 @@ export function MembersPage() {
       <Dialog
         open={!!roleTarget}
         onClose={() => setRoleTarget(null)}
-        title={roleTarget ? `Change role · ${roleTarget.name}` : 'Change role'}
+        title={roleTarget ? t.members.roleDialog.title(roleTarget.name) : t.members.roleDialog.titleFallback}
       >
         {roleTarget && (
           <div className="flex flex-col gap-2">
@@ -232,10 +234,10 @@ export function MembersPage() {
                 onClick={async () => {
                   try {
                     await changeRole.mutateAsync({ userId: roleTarget.userId, role: r });
-                    toast.show(`Role updated to ${r}`);
+                    toast.show(t.members.roleDialog.updated(r));
                     setRoleTarget(null);
                   } catch (err) {
-                    toast.show(err instanceof Error ? err.message : 'failed to change role', 'destructive');
+                    toast.show(err instanceof Error ? err.message : t.members.roleDialog.failed, 'destructive');
                   }
                 }}
                 className={

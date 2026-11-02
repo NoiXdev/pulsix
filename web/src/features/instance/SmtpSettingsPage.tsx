@@ -30,6 +30,7 @@ import { useT } from '../../i18n/useT.ts';
 export function SmtpSettingsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const t = useT();
   const settings = useSmtpSettings();
   const save = useSaveSmtpSettings();
   const test = useTestSmtpSettings();
@@ -43,14 +44,16 @@ export function SmtpSettingsPage() {
   return (
     <>
       <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">Outgoing mail</h1>
+        <h1 className="text-xl font-semibold">{t.settings.tabs.mail}</h1>
         <SettingsTabs org={org} />
       </div>
       <div className="flex items-center gap-3">
-        <span className="text-[13px] text-muted-foreground">
-          Instance-wide: used for every organization&apos;s invitations.
-        </span>
-        {current.configured ? <Pill tone="ok">configured</Pill> : <Pill tone="warn">not configured</Pill>}
+        <span className="text-[13px] text-muted-foreground">{t.instance.smtp.hint}</span>
+        {current.configured ? (
+          <Pill tone="ok">{t.instance.smtp.configured}</Pill>
+        ) : (
+          <Pill tone="warn">{t.instance.smtp.notConfigured}</Pill>
+        )}
       </div>
 
       <div className="grid grid-cols-2 items-start gap-4">
@@ -71,9 +74,9 @@ export function SmtpSettingsPage() {
               try {
                 await save.mutateAsync(values);
                 save.reset();
-                toast.show('Mail settings saved');
+                toast.show(t.instance.smtp.saved);
               } catch (err) {
-                toast.show(err instanceof Error ? err.message : 'failed to save mail settings', 'destructive');
+                toast.show(err instanceof Error ? err.message : t.instance.smtp.saveFailed, 'destructive');
               }
             }}
           />
@@ -87,22 +90,20 @@ export function SmtpSettingsPage() {
               if (!testTo.trim()) return;
               try {
                 await test.mutateAsync(testTo.trim());
-                toast.show(`Test e-mail sent to ${testTo.trim()}`);
+                toast.show(t.instance.smtp.test.sent(testTo.trim()));
               } catch (err) {
-                toast.show(err instanceof Error ? err.message : 'the test e-mail could not be sent', 'destructive');
+                toast.show(err instanceof Error ? err.message : t.instance.smtp.test.failed, 'destructive');
               }
             }}
           >
-            <h2 className="text-sm font-semibold">Send a test e-mail</h2>
-            <p className="text-[11px] text-muted-foreground">
-              Uses the saved settings. A failure shows the mail server&apos;s own answer.
-            </p>
-            <Field id="smtp_test_to" label="Recipient">
+            <h2 className="text-sm font-semibold">{t.instance.smtp.test.title}</h2>
+            <p className="text-[11px] text-muted-foreground">{t.instance.smtp.test.hint}</p>
+            <Field id="smtp_test_to" label={t.instance.smtp.test.recipient}>
               <Input id="smtp_test_to" type="email" value={testTo} onChange={(e) => setTestTo(e.target.value)} />
             </Field>
             <div className="flex justify-end">
               <Button type="submit" disabled={!current.configured || test.isPending}>
-                <Send size={14} /> Send test e-mail
+                <Send size={14} /> {t.instance.smtp.test.send}
               </Button>
             </div>
           </form>
@@ -145,43 +146,41 @@ function SmtpForm({
         setRemoveStored(false);
       })}
     >
-      <h2 className="text-sm font-semibold">SMTP server</h2>
-      <Field id="smtp_host" label="Host" error={errors.host?.message}>
+      <h2 className="text-sm font-semibold">{t.instance.smtp.serverTitle}</h2>
+      <Field id="smtp_host" label={t.instance.smtp.host} error={errors.host?.message}>
         <Input id="smtp_host" {...form.register('host')} />
       </Field>
-      <Field id="smtp_port" label="Port" error={errors.port?.message}>
+      <Field id="smtp_port" label={t.instance.smtp.port} error={errors.port?.message}>
         <Input id="smtp_port" type="number" {...form.register('port', { valueAsNumber: true })} />
       </Field>
-      <Field id="smtp_username" label="Username">
+      <Field id="smtp_username" label={t.instance.smtp.username}>
         <Input id="smtp_username" autoComplete="off" {...form.register('username')} />
       </Field>
-      <Field id="smtp_password" label="Password">
+      <Field id="smtp_password" label={t.auth.password}>
         <Input id="smtp_password" type="password" autoComplete="new-password" {...form.register('password')} />
       </Field>
-      <p className="text-[11px] text-muted-foreground">
-        The stored password is never shown. Leave this empty to keep it; type a new one to replace it.
-      </p>
+      <p className="text-[11px] text-muted-foreground">{t.instance.smtp.passwordHint}</p>
       {configured && (
         <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
           <input
             type="checkbox"
             checked={removeStored}
             onChange={(e) => setRemoveStored(e.target.checked)}
-            aria-label="Remove the stored password"
+            aria-label={t.instance.smtp.removeStoredAria}
           />
-          Remove the stored password (for a server that needs none)
+          {t.instance.smtp.removeStored}
         </label>
       )}
-      <Field id="smtp_from" label="From address" error={errors.from?.message}>
+      <Field id="smtp_from" label={t.instance.smtp.fromAddress} error={errors.from?.message}>
         <Input id="smtp_from" type="email" {...form.register('from')} />
       </Field>
       <label className="flex items-center gap-2 text-xs">
         <input type="checkbox" {...form.register('start_tls')} />
-        Use STARTTLS
+        {t.instance.smtp.startTls}
       </label>
       <div className="flex justify-end">
         <Button type="submit" variant="primary" disabled={saving}>
-          <Mail size={14} /> Save mail settings
+          <Mail size={14} /> {t.instance.smtp.save}
         </Button>
       </div>
     </form>

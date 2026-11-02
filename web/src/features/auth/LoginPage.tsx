@@ -9,6 +9,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { login, verifyTotp } from '../../api/hooks/useAuth.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
 import { useResetSession } from '../../lib/session.ts';
+import { useT } from '../../i18n/useT.ts';
 import { beginLogin, submitPassword, submitTotp, type LoginState } from './loginMachine.ts';
 import { loginWithPasskey, passkeysSupported } from './passkeys.ts';
 
@@ -43,6 +44,7 @@ export function LoginPage() {
   const search = useSearch({ strict: false }) as { step?: string };
   const navigate = useNavigate();
   const toast = useToast();
+  const t = useT();
   const refetchMe = useRefetchMe();
   const resetSession = useResetSession();
 
@@ -71,11 +73,11 @@ export function LoginPage() {
     e.preventDefault();
     setBusy(true);
     try {
-      const next = await submitPassword(login, email, password);
+      const next = await submitPassword(login, email, password, t);
       setState(next);
       if (next.step === 'done') await afterAuthenticated();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'sign in failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.auth.errors.signInFailed, 'destructive');
     } finally {
       setBusy(false);
     }
@@ -85,11 +87,11 @@ export function LoginPage() {
     e.preventDefault();
     setBusy(true);
     try {
-      const next = await submitTotp(verifyTotp, useRecoveryCode ? { recoveryCode } : { code });
+      const next = await submitTotp(verifyTotp, useRecoveryCode ? { recoveryCode } : { code }, t);
       setState(next);
       if (next.step === 'done') await afterAuthenticated();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'verification failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.auth.errors.verificationFailed, 'destructive');
     } finally {
       setBusy(false);
     }
@@ -98,10 +100,10 @@ export function LoginPage() {
   async function handlePasskeyLogin() {
     setBusy(true);
     try {
-      await loginWithPasskey();
+      await loginWithPasskey(t);
       await afterAuthenticated();
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'passkey sign-in was cancelled', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.auth.errors.passkeySignInCancelled, 'destructive');
     } finally {
       setBusy(false);
     }
@@ -119,9 +121,9 @@ export function LoginPage() {
 
         {state.step !== 'totp' ? (
           <form onSubmit={handlePasswordSubmit} className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
-            <h1 className="text-lg font-semibold">Sign in</h1>
+            <h1 className="text-lg font-semibold">{t.auth.signIn}</h1>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="email">Email address</Label>
+              <Label htmlFor="email">{t.auth.emailAddress}</Label>
               <Input
                 id="email"
                 type="email"
@@ -132,7 +134,7 @@ export function LoginPage() {
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t.auth.password}</Label>
               <Input
                 id="password"
                 type="password"
@@ -144,11 +146,11 @@ export function LoginPage() {
             </div>
             {state.error && <p className="text-xs text-destructive">{state.error}</p>}
             <Button type="submit" variant="primary" disabled={busy}>
-              Sign in
+              {t.auth.signIn}
             </Button>
             {passkeysSupported() && (
               <Button type="button" variant="default" disabled={busy} onClick={handlePasskeyLogin}>
-                <KeyRound size={15} /> Use a passkey
+                <KeyRound size={15} /> {t.auth.usePasskey}
               </Button>
             )}
           </form>
@@ -157,7 +159,7 @@ export function LoginPage() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                aria-label="Back to sign in"
+                aria-label={t.auth.backToSignIn}
                 className="text-muted-foreground"
                 onClick={() => {
                   setState(beginLogin());
@@ -168,12 +170,12 @@ export function LoginPage() {
               >
                 <ArrowLeft size={16} />
               </button>
-              <h1 className="text-lg font-semibold">Enter your second-factor code</h1>
+              <h1 className="text-lg font-semibold">{t.auth.secondFactorTitle}</h1>
             </div>
 
             {!useRecoveryCode ? (
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="code">6-digit code</Label>
+                <Label htmlFor="code">{t.auth.sixDigitCode}</Label>
                 <Input
                   id="code"
                   inputMode="numeric"
@@ -186,7 +188,7 @@ export function LoginPage() {
               </div>
             ) : (
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="recovery-code">Recovery code</Label>
+                <Label htmlFor="recovery-code">{t.auth.recoveryCode}</Label>
                 <Input
                   id="recovery-code"
                   autoFocus
@@ -200,18 +202,18 @@ export function LoginPage() {
             )}
             {state.error && <p className="text-xs text-destructive">{state.error}</p>}
             <Button type="submit" variant="primary" disabled={busy}>
-              Verify
+              {t.auth.verify}
             </Button>
             <button
               type="button"
               className="text-left text-[11px] text-brand-dim"
               onClick={() => setUseRecoveryCode((v) => !v)}
             >
-              {useRecoveryCode ? 'Use a 6-digit code instead' : 'Use a recovery code'}
+              {useRecoveryCode ? t.auth.useSixDigitCode : t.auth.useRecoveryCode}
             </button>
             {passkeysSupported() && (
               <Button type="button" variant="default" disabled={busy} onClick={handlePasskeyLogin}>
-                <KeyRound size={15} /> Use a passkey instead
+                <KeyRound size={15} /> {t.auth.usePasskeyInstead}
               </Button>
             )}
           </form>

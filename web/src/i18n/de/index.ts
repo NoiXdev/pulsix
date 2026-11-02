@@ -1,9 +1,14 @@
 import type { Messages } from '../types.ts';
+import { deAccount } from './account.ts';
 import { deActivity } from './activity.ts';
+import { deAuth } from './auth.ts';
 import { deCommon } from './common.ts';
+import { deInstance } from './instance.ts';
 import { deLanguage } from './language.ts';
+import { deMembers } from './members.ts';
 import { deRoutes } from './routes.ts';
 import { deSettings } from './settings.ts';
+import { deSetup } from './setup.ts';
 import { deShell } from './shell.ts';
 import { deTokens } from './tokens.ts';
 import { deUi } from './ui.ts';
@@ -34,11 +39,16 @@ import { deValidation } from './validation.ts';
  * stay lower case, like their English originals.
  */
 export const de: Messages = {
+  account: deAccount,
   activity: deActivity,
+  auth: deAuth,
   common: deCommon,
+  instance: deInstance,
   language: deLanguage,
+  members: deMembers,
   routes: deRoutes,
   settings: deSettings,
+  setup: deSetup,
   shell: deShell,
   tokens: deTokens,
   ui: deUi,

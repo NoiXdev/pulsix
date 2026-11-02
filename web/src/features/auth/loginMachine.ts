@@ -1,4 +1,6 @@
 import { ApiError } from '../../api/client.ts';
+import { en } from '../../i18n/en/index.ts';
+import type { Messages } from '../../i18n/types.ts';
 
 /**
  * loginMachine models the /login page's state as a tiny, framework-free
@@ -42,13 +44,18 @@ export type LoginFn = (email: string, password: string) => Promise<{ mfa_require
  * failure (a network error, a 500, ...) is rethrown for the caller to
  * handle as a general failure, since the login form has nothing more
  * specific to say about it. */
-export async function submitPassword(login: LoginFn, email: string, password: string): Promise<LoginState> {
+export async function submitPassword(
+  login: LoginFn,
+  email: string,
+  password: string,
+  t: Messages = en,
+): Promise<LoginState> {
   try {
     const res = await login(email, password);
     return { step: res.mfa_required ? 'totp' : 'done' };
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
-      return { step: 'password', error: 'invalid credentials' };
+      return { step: 'password', error: t.auth.errors.invalidCredentials };
     }
     throw err;
   }
@@ -71,19 +78,19 @@ export type VerifyFn = (input: VerifyInput) => Promise<unknown>;
 /** submitTotp drives the totp -> done transition, for either a code or a
  * recovery code. Like submitPassword, an invalid one resolves back to the
  * same step with an inline error rather than throwing. */
-export async function submitTotp(verify: VerifyFn, input: VerifyInput): Promise<LoginState> {
+export async function submitTotp(verify: VerifyFn, input: VerifyInput, t: Messages = en): Promise<LoginState> {
   try {
     await verify(input);
     return { step: 'done' };
   } catch (err) {
     if (err instanceof ApiError && (err.status === 401 || err.status === 400)) {
-      const message = 'recoveryCode' in input ? 'invalid recovery code' : 'invalid code';
+      const message = 'recoveryCode' in input ? t.auth.errors.invalidRecoveryCode : t.auth.errors.invalidCode;
       return { step: 'totp', error: message };
     }
     // Backlog 7.26: the account's second factor is locked after repeated
     // wrong codes; the right one would be refused too until it lifts.
     if (err instanceof ApiError && err.status === 429) {
-      return { step: 'totp', error: 'too many attempts; wait a few minutes and try again' };
+      return { step: 'totp', error: t.auth.errors.tooManyAttempts };
     }
     throw err;
   }

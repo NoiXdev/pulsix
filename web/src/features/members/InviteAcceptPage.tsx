@@ -9,6 +9,7 @@ import { acceptInvite } from '../../api/hooks/useMembers.ts';
 import { useMe, useRefetchMe } from '../../api/hooks/useMe.ts';
 import { ApiError } from '../../api/client.ts';
 import { useResetSession } from '../../lib/session.ts';
+import { useT } from '../../i18n/useT.ts';
 
 function InviteAcceptShell({ children }: { children: ReactNode }) {
   return (
@@ -48,6 +49,7 @@ function InviteAcceptShell({ children }: { children: ReactNode }) {
 export function InviteAcceptPage() {
   const { token } = useParams({ strict: false }) as { token: string };
   const navigate = useNavigate();
+  const t = useT();
   const refetchMe = useRefetchMe();
   const resetSession = useResetSession();
   const me = useMe();
@@ -62,7 +64,7 @@ export function InviteAcceptPage() {
   if (me.isPending) {
     return (
       <InviteAcceptShell>
-        <p className="text-xs text-muted-foreground">Loading…</p>
+        <p className="text-xs text-muted-foreground">{t.common.loading}</p>
       </InviteAcceptShell>
     );
   }
@@ -71,13 +73,10 @@ export function InviteAcceptPage() {
     return (
       <InviteAcceptShell>
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
-          <h1 className="text-lg font-semibold">You already have an account</h1>
-          <p className="text-xs text-muted-foreground">
-            This address already belongs to an account. Sign in to it with its own password and second factor, then
-            open this invitation link again to join the organization.
-          </p>
+          <h1 className="text-lg font-semibold">{t.members.accept.alreadyTitle}</h1>
+          <p className="text-xs text-muted-foreground">{t.members.accept.alreadyBody}</p>
           <Button type="button" variant="primary" onClick={() => void navigate({ to: '/login', search: { step: undefined } })}>
-            Go to sign in
+            {t.members.accept.goToSignIn}
           </Button>
         </div>
       </InviteAcceptShell>
@@ -89,14 +88,14 @@ export function InviteAcceptPage() {
     return (
       <InviteAcceptShell>
         <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
-          <h1 className="text-lg font-semibold">Join the organization</h1>
+          <h1 className="text-lg font-semibold">{t.members.accept.joinTitle}</h1>
           <p className="text-xs text-muted-foreground">
-            You are signed in as <span className="font-medium text-foreground">{account.email}</span>. The invitation
-            must be for this address.
+            {t.members.accept.signedInAs} <span className="font-medium text-foreground">{account.email}</span>.{' '}
+            {t.members.accept.signedInHint}
           </p>
           {error && (
             <p className="text-xs text-destructive">
-              {error} If the invitation is for a different address, sign out and open this invitation link again.
+              {error} {t.members.accept.wrongAddress}
             </p>
           )}
           <Button
@@ -109,7 +108,7 @@ export function InviteAcceptPage() {
               try {
                 await acceptInvite({ token });
               } catch (err) {
-                setError(err instanceof Error ? err.message : 'failed to accept invitation');
+                setError(err instanceof Error ? err.message : t.members.accept.acceptFailed);
                 setBusy(false);
                 return;
               }
@@ -118,7 +117,7 @@ export function InviteAcceptPage() {
               await navigate({ to: '/' });
             }}
           >
-            Join organization
+            {t.members.accept.join}
           </Button>
         </div>
       </InviteAcceptShell>
@@ -139,7 +138,7 @@ export function InviteAcceptPage() {
             if (err instanceof ApiError && err.status === 409) {
               setSignInRequired(true);
             } else {
-              setError(err instanceof Error ? err.message : 'failed to accept invitation');
+              setError(err instanceof Error ? err.message : t.members.accept.acceptFailed);
             }
             setBusy(false);
             return;
@@ -154,20 +153,20 @@ export function InviteAcceptPage() {
           } catch (err) {
             setError(
               err instanceof Error
-                ? `You joined the organization, but signing you in failed: ${err.message}. Try signing in.`
-                : 'You joined the organization, but signing you in failed. Try signing in.',
+                ? t.members.accept.joinedButSignInFailedWith(err.message)
+                : t.members.accept.joinedButSignInFailed,
             );
             setBusy(false);
           }
         }}
       >
-        <h1 className="text-lg font-semibold">Join the organization</h1>
+        <h1 className="text-lg font-semibold">{t.members.accept.joinTitle}</h1>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="name">Your name</Label>
+          <Label htmlFor="name">{t.members.accept.yourName}</Label>
           <Input id="name" required value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="password">Choose a password</Label>
+          <Label htmlFor="password">{t.members.accept.choosePassword}</Label>
           <Input
             id="password"
             type="password"
@@ -179,7 +178,7 @@ export function InviteAcceptPage() {
         </div>
         {error && <p className="text-xs text-destructive">{error}</p>}
         <Button type="submit" variant="primary" disabled={busy}>
-          Accept invitation
+          {t.members.accept.accept}
         </Button>
       </form>
     </InviteAcceptShell>

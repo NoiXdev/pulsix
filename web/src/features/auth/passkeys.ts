@@ -4,6 +4,8 @@ import {
   finishPasskeyLogin,
   finishPasskeyRegistration,
 } from '../../api/hooks/usePasskeys.ts';
+import { en } from '../../i18n/en/index.ts';
+import type { Messages } from '../../i18n/types.ts';
 import {
   decodeCreationOptions,
   decodeRequestOptions,
@@ -45,13 +47,13 @@ interface PasskeyCeremonyBegin<T> {
  * passkey.spec.ts in the second half of this task, using a CDP virtual
  * authenticator.
  */
-export async function registerPasskey(name: string): Promise<void> {
+export async function registerPasskey(name: string, t: Messages = en): Promise<void> {
   const begin = await beginPasskeyRegistration();
   const wrapped = begin.options as unknown as PasskeyCeremonyBegin<CreationOptionsJSON>;
   const options = decodeCreationOptions(wrapped.publicKey);
 
   const credential = await navigator.credentials.create({ publicKey: options });
-  if (!credential) throw new Error('passkey registration was cancelled');
+  if (!credential) throw new Error(t.auth.passkey.registrationCancelled);
 
   await finishPasskeyRegistration({
     ceremony_id: begin.ceremony_id,
@@ -67,13 +69,13 @@ export async function registerPasskey(name: string): Promise<void> {
  * response is a signed cookie the manager sets directly, so this function
  * returns void; the caller re-reads /auth/me to pick up the fresh session.
  */
-export async function loginWithPasskey(): Promise<void> {
+export async function loginWithPasskey(t: Messages = en): Promise<void> {
   const begin = await beginPasskeyLogin();
   const wrapped = begin.options as unknown as PasskeyCeremonyBegin<RequestOptionsJSON>;
   const options = decodeRequestOptions(wrapped.publicKey);
 
   const credential = await navigator.credentials.get({ publicKey: options });
-  if (!credential) throw new Error('passkey login was cancelled');
+  if (!credential) throw new Error(t.auth.passkey.loginCancelled);
 
   await finishPasskeyLogin({
     ceremony_id: begin.ceremony_id,

@@ -33,6 +33,8 @@ import {
   useDeleteCheckDefinition,
   useUpdateCheckDefinition,
 } from '../../api/hooks/useSharedCheckDefinitions.ts';
+import { useT } from '../../i18n/useT.ts';
+import type { Messages } from '../../i18n/types.ts';
 import type {
   CheckDefinitionDef,
   CheckDefinitionDefInput,
@@ -78,10 +80,11 @@ const CHECK_COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 1fr) 90px';
  */
 export function SharedResourcesPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
   return (
     <>
       <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">Shared resources</h1>
+        <h1 className="text-xl font-semibold">{t.settings.tabs.sharedResources}</h1>
         <SettingsTabs org={org} />
       </div>
       <RepoDefinitionsSection />
@@ -95,6 +98,7 @@ export function SharedResourcesPage() {
  * unchanged, pulled into its own component so a second, independent section
  * could be added beside it without restructuring either. */
 function RepoDefinitionsSection() {
+  const t = useT();
   const definitions = useRepoDefinitions();
   const [dialog, setDialog] = useState<'new' | RepoDefinition | null>(null);
 
@@ -107,19 +111,19 @@ function RepoDefinitionsSection() {
     <>
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-muted-foreground">
-          {list.length} repository definitions · projected into every organization, read-only there
+          {t.instance.shared.repos.count(list.length)}
         </span>
         <Button variant="primary" onClick={() => setDialog('new')}>
-          <GitBranch size={15} /> Add repository definition
+          <GitBranch size={15} /> {t.instance.shared.repos.add}
         </Button>
       </div>
       <Card>
         <GridHeader columns={REPO_COLUMNS}>
-          <span>Name</span>
-          <span>URL</span>
-          <span>Branch</span>
-          <span>Subpath</span>
-          <span>Actions</span>
+          <span>{t.instance.shared.name}</span>
+          <span>{t.instance.shared.repos.url}</span>
+          <span>{t.instance.shared.repos.branch}</span>
+          <span>{t.instance.shared.repos.subpath}</span>
+          <span>{t.instance.shared.actions}</span>
         </GridHeader>
         {list.map((d) => (
           <GridRow key={d.id} columns={REPO_COLUMNS}>
@@ -133,7 +137,7 @@ function RepoDefinitionsSection() {
           </GridRow>
         ))}
         {list.length === 0 && (
-          <p className="px-4 py-6 text-center text-xs text-muted-foreground">No shared repository definitions yet.</p>
+          <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.instance.shared.repos.empty}</p>
         )}
       </Card>
       {dialog === 'new' ? (
@@ -159,6 +163,7 @@ function RepoDefinitionsSection() {
  * thing that would throw the detail away.
  */
 function DeleteDefinitionButton({ definition }: { definition: RepoDefinition }) {
+  const t = useT();
   const toast = useToast();
   const remove = useDeleteRepoDefinition();
   return (
@@ -166,15 +171,15 @@ function DeleteDefinitionButton({ definition }: { definition: RepoDefinition }) 
       <Button
         type="button"
         variant="ghost"
-        aria-label={`Delete ${definition.name}`}
+        aria-label={t.instance.shared.deleteAria(definition.name)}
         disabled={remove.isPending}
         onClick={async () => {
-          if (!confirm(`Delete repository definition ${definition.name}? This removes it from every organization.`)) return;
+          if (!confirm(t.instance.shared.repos.confirmDelete(definition.name))) return;
           try {
             await remove.mutateAsync(definition.id);
-            toast.show(`Repository definition ${definition.name} deleted`);
+            toast.show(t.instance.shared.repos.deleted(definition.name));
           } catch (err) {
-            toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+            toast.show(err instanceof Error ? err.message : t.instance.shared.deleteFailed, 'destructive');
           }
         }}
       >
@@ -191,13 +196,6 @@ interface DefinitionFormValues {
   subpath: string;
 }
 
-const FIELD_LABEL: Record<keyof DefinitionFormValues, string> = {
-  name: 'Name',
-  url: 'URL',
-  branch: 'Branch',
-  subpath: 'Subdirectory',
-};
-
 /**
  * validateDefinitionInput mirrors repoDefinitionBody's own bounds
  * (internal/api/shared_handlers.go: minLength/maxLength only, no pattern) —
@@ -209,14 +207,17 @@ const FIELD_LABEL: Record<keyof DefinitionFormValues, string> = {
  * here would reject input the server would accept — this stays only as
  * strict as the server actually is.
  */
-function validateDefinitionInput(values: DefinitionFormValues): Partial<Record<keyof DefinitionFormValues, string>> {
+function validateDefinitionInput(
+  values: DefinitionFormValues,
+  t: Messages,
+): Partial<Record<keyof DefinitionFormValues, string>> {
   const errors: Partial<Record<keyof DefinitionFormValues, string>> = {};
-  if (values.name.trim() === '') errors.name = 'required';
-  else if (values.name.length > 63) errors.name = 'must be 63 characters or fewer';
-  if (values.url.trim() === '') errors.url = 'required';
-  else if (values.url.length > 500) errors.url = 'must be 500 characters or fewer';
-  if (values.branch.length > 100) errors.branch = 'must be 100 characters or fewer';
-  if (values.subpath.length > 200) errors.subpath = 'must be 200 characters or fewer';
+  if (values.name.trim() === '') errors.name = t.validation.required;
+  else if (values.name.length > 63) errors.name = t.validation.maxChars(63);
+  if (values.url.trim() === '') errors.url = t.validation.required;
+  else if (values.url.length > 500) errors.url = t.validation.maxChars(500);
+  if (values.branch.length > 100) errors.branch = t.validation.maxChars(100);
+  if (values.subpath.length > 200) errors.subpath = t.validation.maxChars(200);
   return errors;
 }
 
@@ -227,7 +228,14 @@ function validateDefinitionInput(values: DefinitionFormValues): Partial<Record<k
  * worker in any organization's zone could reach.
  */
 function RepoDefinitionDialog({ definition, onClose }: { definition?: RepoDefinition; onClose: () => void }) {
+  const t = useT();
   const toast = useToast();
+  const labels: Record<keyof DefinitionFormValues, string> = {
+    name: t.instance.shared.name,
+    url: t.instance.shared.repos.url,
+    branch: t.instance.shared.repos.branch,
+    subpath: t.instance.shared.repos.subdirectory,
+  };
   const create = useCreateRepoDefinition();
   const update = useUpdateRepoDefinition(definition?.id ?? '');
   const [values, setValues] = useState<DefinitionFormValues>(
@@ -245,7 +253,7 @@ function RepoDefinitionDialog({ definition, onClose }: { definition?: RepoDefini
   function field(key: keyof DefinitionFormValues, placeholder: string) {
     return (
       <div className="flex flex-col gap-1">
-        <Label htmlFor={`repo-def-${key}`}>{FIELD_LABEL[key]}</Label>
+        <Label htmlFor={`repo-def-${key}`}>{labels[key]}</Label>
         <Input
           id={`repo-def-${key}`}
           className="font-mono"
@@ -267,14 +275,16 @@ function RepoDefinitionDialog({ definition, onClose }: { definition?: RepoDefini
   async function submit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
-    const fieldErrors = validateDefinitionInput(values);
+    const fieldErrors = validateDefinitionInput(values, t);
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
     const body: RepoDefinitionInput = { name: values.name, url: values.url, branch: values.branch, subpath: values.subpath };
     try {
       if (definition) await update.mutateAsync(body);
       else await create.mutateAsync(body);
-      toast.show(definition ? `Repository definition ${body.name} saved` : `Repository definition ${body.name} created`);
+      toast.show(
+        definition ? t.instance.shared.repos.saved(body.name) : t.instance.shared.repos.created(body.name),
+      );
       onClose();
     } catch (err) {
       // Shown whole, not routed to one field: decision 7's collision
@@ -282,21 +292,18 @@ function RepoDefinitionDialog({ definition, onClose }: { definition?: RepoDefini
       // in-use message names one plus what still references it — neither
       // is about a single field the way features/repos/validate.ts's own
       // server-mirror errors are.
-      setFormError(err instanceof Error ? err.message : 'Saving failed');
+      setFormError(err instanceof Error ? err.message : t.instance.shared.saveFailed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} title={definition?.name ?? 'New repository definition'}>
+    <Dialog open onClose={onClose} title={definition?.name ?? t.instance.shared.repos.newTitle}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         {field('name', 'ansible-base')}
         {field('url', 'https://git.example/provider/ansible-base.git')}
         {field('branch', 'main')}
-        {field('subpath', 'ansible/ (optional)')}
-        <p className="text-[11px] text-muted-foreground">
-          Projected into every organization as a read-only repository; each one supplies its own credential here, not
-          on this definition.
-        </p>
+        {field('subpath', t.instance.shared.repos.subpathPlaceholder)}
+        <p className="text-[11px] text-muted-foreground">{t.instance.shared.repos.hint}</p>
         {formError && (
           <p role="alert" className="text-xs text-destructive">
             {formError}
@@ -304,10 +311,10 @@ function RepoDefinitionDialog({ definition, onClose }: { definition?: RepoDefini
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending || update.isPending}>
-            {definition ? 'Save definition' : 'Create definition'}
+            {definition ? t.instance.shared.saveDefinition : t.instance.shared.createDefinition}
           </Button>
         </div>
       </form>
@@ -347,6 +354,7 @@ function RepoDefinitionDialog({ definition, onClose }: { definition?: RepoDefini
  * only; job_template_vault_credentials cascades on purpose and never
  * appears in this message. */
 function DeleteTemplateDefinitionButton({ definition }: { definition: TemplateDefinition }) {
+  const t = useT();
   const toast = useToast();
   const remove = useDeleteTemplateDefinition();
   return (
@@ -354,15 +362,15 @@ function DeleteTemplateDefinitionButton({ definition }: { definition: TemplateDe
       <Button
         type="button"
         variant="ghost"
-        aria-label={`Delete ${definition.name}`}
+        aria-label={t.instance.shared.deleteAria(definition.name)}
         disabled={remove.isPending}
         onClick={async () => {
-          if (!confirm(`Delete job template definition ${definition.name}? This removes it from every organization.`)) return;
+          if (!confirm(t.instance.shared.templates.confirmDelete(definition.name))) return;
           try {
             await remove.mutateAsync(definition.id);
-            toast.show(`Job template definition ${definition.name} deleted`);
+            toast.show(t.instance.shared.templates.deleted(definition.name));
           } catch (err) {
-            toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+            toast.show(err instanceof Error ? err.message : t.instance.shared.deleteFailed, 'destructive');
           }
         }}
       >
@@ -373,6 +381,7 @@ function DeleteTemplateDefinitionButton({ definition }: { definition: TemplateDe
 }
 
 function TemplateDefinitionsSection() {
+  const t = useT();
   const definitions = useTemplateDefinitions();
   const repoDefinitions = useRepoDefinitions();
   const [dialog, setDialog] = useState<'new' | TemplateDefinition | null>(null);
@@ -393,19 +402,19 @@ function TemplateDefinitionsSection() {
     <>
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-muted-foreground">
-          {list.length} job template definitions · projected into every organization, read-only there
+          {t.instance.shared.templates.count(list.length)}
         </span>
         <Button variant="primary" onClick={() => setDialog('new')}>
-          <ListPlus size={15} /> Add job template definition
+          <ListPlus size={15} /> {t.instance.shared.templates.add}
         </Button>
       </div>
       <Card>
         <GridHeader columns={TEMPLATE_COLUMNS}>
-          <span>Name</span>
-          <span>Repository</span>
-          <span>Playbook path</span>
-          <span>Limit</span>
-          <span>Actions</span>
+          <span>{t.instance.shared.name}</span>
+          <span>{t.instance.shared.templates.repository}</span>
+          <span>{t.instance.shared.templates.playbookPath}</span>
+          <span>{t.instance.shared.templates.limit}</span>
+          <span>{t.instance.shared.actions}</span>
         </GridHeader>
         {list.map((d) => (
           <GridRow key={d.id} columns={TEMPLATE_COLUMNS}>
@@ -421,7 +430,7 @@ function TemplateDefinitionsSection() {
           </GridRow>
         ))}
         {list.length === 0 && (
-          <p className="px-4 py-6 text-center text-xs text-muted-foreground">No shared job template definitions yet.</p>
+          <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.instance.shared.templates.empty}</p>
         )}
       </Card>
       {dialog === 'new' ? (
@@ -440,23 +449,20 @@ interface TemplateDefinitionFormValues {
   limit: string;
 }
 
-const TEMPLATE_FIELD_LABEL: Record<Exclude<keyof TemplateDefinitionFormValues, 'sharedRepoId'>, string> = {
-  name: 'Name',
-  playbookPath: 'Playbook path',
-  limit: 'Limit pattern',
-};
-
 /** validateDefinitionInput's own doc comment, same reasoning, different
  * bounds — mirroring templateDefinitionBody's own minLength/maxLength
  * exactly (internal/api/shared_handlers.go), no format pattern beyond that. */
-function validateTemplateDefinitionInput(values: TemplateDefinitionFormValues): Partial<Record<keyof TemplateDefinitionFormValues, string>> {
+function validateTemplateDefinitionInput(
+  values: TemplateDefinitionFormValues,
+  t: Messages,
+): Partial<Record<keyof TemplateDefinitionFormValues, string>> {
   const errors: Partial<Record<keyof TemplateDefinitionFormValues, string>> = {};
-  if (values.name.trim() === '') errors.name = 'required';
-  else if (values.name.length > 63) errors.name = 'must be 63 characters or fewer';
-  if (values.sharedRepoId.trim() === '') errors.sharedRepoId = 'required';
-  if (values.playbookPath.trim() === '') errors.playbookPath = 'required';
-  else if (values.playbookPath.length > 500) errors.playbookPath = 'must be 500 characters or fewer';
-  if (values.limit.length > 500) errors.limit = 'must be 500 characters or fewer';
+  if (values.name.trim() === '') errors.name = t.validation.required;
+  else if (values.name.length > 63) errors.name = t.validation.maxChars(63);
+  if (values.sharedRepoId.trim() === '') errors.sharedRepoId = t.validation.required;
+  if (values.playbookPath.trim() === '') errors.playbookPath = t.validation.required;
+  else if (values.playbookPath.length > 500) errors.playbookPath = t.validation.maxChars(500);
+  if (values.limit.length > 500) errors.limit = t.validation.maxChars(500);
   return errors;
 }
 
@@ -484,7 +490,13 @@ function TemplateDefinitionDialog({
   repoOptions: { value: string; label: string }[];
   onClose: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
+  const labels: Record<Exclude<keyof TemplateDefinitionFormValues, 'sharedRepoId'>, string> = {
+    name: t.instance.shared.name,
+    playbookPath: t.instance.shared.templates.playbookPath,
+    limit: t.instance.shared.templates.limitPattern,
+  };
   const create = useCreateTemplateDefinition();
   const update = useUpdateTemplateDefinition(definition?.id ?? '');
   const [values, setValues] = useState<TemplateDefinitionFormValues>(
@@ -506,7 +518,7 @@ function TemplateDefinitionDialog({
   function field(key: Exclude<keyof TemplateDefinitionFormValues, 'sharedRepoId'>, placeholder: string) {
     return (
       <div className="flex flex-col gap-1">
-        <Label htmlFor={`tpl-def-${key}`}>{TEMPLATE_FIELD_LABEL[key]}</Label>
+        <Label htmlFor={`tpl-def-${key}`}>{labels[key]}</Label>
         <Input
           id={`tpl-def-${key}`}
           className="font-mono"
@@ -528,7 +540,7 @@ function TemplateDefinitionDialog({
   async function submit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
-    const fieldErrors = validateTemplateDefinitionInput(values);
+    const fieldErrors = validateTemplateDefinitionInput(values, t);
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
     // Both are edited here since backlog 2.101; they used to round-trip
@@ -544,29 +556,31 @@ function TemplateDefinitionDialog({
     try {
       if (definition) await update.mutateAsync(body);
       else await create.mutateAsync(body);
-      toast.show(definition ? `Job template definition ${body.name} saved` : `Job template definition ${body.name} created`);
+      toast.show(
+        definition ? t.instance.shared.templates.saved(body.name) : t.instance.shared.templates.created(body.name),
+      );
       onClose();
     } catch (err) {
       // RepoDefinitionDialog's own doc comment, same reasoning: decision 7's
       // and decision 5's messages are both shown whole here, not routed to
       // one field.
-      setFormError(err instanceof Error ? err.message : 'Saving failed');
+      setFormError(err instanceof Error ? err.message : t.instance.shared.saveFailed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} title={definition?.name ?? 'New job template definition'}>
+    <Dialog open onClose={onClose} title={definition?.name ?? t.instance.shared.templates.newTitle}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         {field('name', 'deploy-site')}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="tpl-def-shared-repo">Shared repository</Label>
+          <Label htmlFor="tpl-def-shared-repo">{t.instance.shared.templates.sharedRepository}</Label>
           <Select
             id="tpl-def-shared-repo"
             invalid={!!errors.sharedRepoId}
             options={repoOptions}
             value={values.sharedRepoId}
             onChange={(v) => setValues((cur) => ({ ...cur, sharedRepoId: v }))}
-            placeholder="Choose a shared repository…"
+            placeholder={t.instance.shared.templates.sharedRepositoryPlaceholder}
           />
           {errors.sharedRepoId && (
             <span role="alert" className="text-[11px] text-destructive">
@@ -575,9 +589,9 @@ function TemplateDefinitionDialog({
           )}
         </div>
         {field('playbookPath', 'site.yml')}
-        {field('limit', 'e.g. web*:&!web-03 (optional)')}
+        {field('limit', t.instance.shared.templates.limitPlaceholder)}
         <details className="rounded-md border border-border p-3" open={schema.fields.length > 0}>
-          <summary className="cursor-pointer text-xs font-semibold">Extra vars schema</summary>
+          <summary className="cursor-pointer text-xs font-semibold">{t.instance.shared.templates.extraVarsSchema}</summary>
           <div className="pt-3">
             {/* No secret type: the server refuses one on a shared
                 definition by construction, because these extra vars are
@@ -588,14 +602,11 @@ function TemplateDefinitionDialog({
         </details>
         {schema.fields.length > 0 && (
           <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold">Extra vars</span>
+            <span className="text-xs font-semibold">{t.instance.shared.templates.extraVars}</span>
             <SchemaForm fields={schema.fields} value={vars} onChange={setVars} idPrefix="tpl-def-vars" />
           </div>
         )}
-        <p className="text-[11px] text-muted-foreground">
-          Projected into every organization as a read-only template, extra vars included; each one supplies its own
-          scope and SSH credential here, not on this definition.
-        </p>
+        <p className="text-[11px] text-muted-foreground">{t.instance.shared.templates.hint}</p>
         {formError && (
           <p role="alert" className="text-xs text-destructive">
             {formError}
@@ -603,10 +614,10 @@ function TemplateDefinitionDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending || update.isPending}>
-            {definition ? 'Save definition' : 'Create definition'}
+            {definition ? t.instance.shared.saveDefinition : t.instance.shared.createDefinition}
           </Button>
         </div>
       </form>
@@ -650,6 +661,7 @@ function TemplateDefinitionDialog({
  * DeleteCheckDefinitionWithProjections), so the confirmation below says so
  * rather than warning about a dependant that can never exist. */
 function DeleteCheckDefinitionButton({ definition }: { definition: CheckDefinitionDef }) {
+  const t = useT();
   const toast = useToast();
   const remove = useDeleteCheckDefinition();
   return (
@@ -657,15 +669,15 @@ function DeleteCheckDefinitionButton({ definition }: { definition: CheckDefiniti
       <Button
         type="button"
         variant="ghost"
-        aria-label={`Delete ${definition.key}`}
+        aria-label={t.instance.shared.deleteAria(definition.key)}
         disabled={remove.isPending}
         onClick={async () => {
-          if (!confirm(`Delete check definition ${definition.key}? This removes it from every organization.`)) return;
+          if (!confirm(t.instance.shared.checks.confirmDelete(definition.key))) return;
           try {
             await remove.mutateAsync(definition.id);
-            toast.show(`Check definition ${definition.key} deleted`);
+            toast.show(t.instance.shared.checks.deleted(definition.key));
           } catch (err) {
-            toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+            toast.show(err instanceof Error ? err.message : t.instance.shared.deleteFailed, 'destructive');
           }
         }}
       >
@@ -676,6 +688,7 @@ function DeleteCheckDefinitionButton({ definition }: { definition: CheckDefiniti
 }
 
 function CheckDefinitionsSection() {
+  const t = useT();
   const definitions = useCheckDefinitions();
   const [dialog, setDialog] = useState<'new' | CheckDefinitionDef | null>(null);
 
@@ -688,18 +701,18 @@ function CheckDefinitionsSection() {
     <>
       <div className="flex items-center justify-between">
         <span className="text-[13px] text-muted-foreground">
-          {list.length} check definitions · projected into every organization at the default org-wide binding, read-only there
+          {t.instance.shared.checks.count(list.length)}
         </span>
         <Button variant="primary" onClick={() => setDialog('new')}>
-          <Activity size={15} /> Add check definition
+          <Activity size={15} /> {t.instance.shared.checks.add}
         </Button>
       </div>
       <Card>
         <GridHeader columns={CHECK_COLUMNS}>
-          <span>Key</span>
-          <span>Plugin</span>
-          <span>Interval</span>
-          <span>Actions</span>
+          <span>{t.instance.shared.checks.key}</span>
+          <span>{t.instance.shared.checks.plugin}</span>
+          <span>{t.instance.shared.checks.interval}</span>
+          <span>{t.instance.shared.actions}</span>
         </GridHeader>
         {list.map((d) => (
           <GridRow key={d.id} columns={CHECK_COLUMNS}>
@@ -712,7 +725,7 @@ function CheckDefinitionsSection() {
           </GridRow>
         ))}
         {list.length === 0 && (
-          <p className="px-4 py-6 text-center text-xs text-muted-foreground">No shared check definitions yet.</p>
+          <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.instance.shared.checks.empty}</p>
         )}
       </Card>
       {dialog === 'new' ? (
@@ -732,12 +745,7 @@ interface CheckDefinitionFormValues {
   mounts: string;
 }
 
-const CHECK_PLUGINS: [string, string][] = [
-  ['cpu', 'CPU'],
-  ['memory', 'Memory'],
-  ['disk', 'Disk'],
-  ['service', 'Service units'],
-];
+const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service'] as const;
 
 /** lines turns a textarea's content into the string list the API takes —
  * CheckDialog.tsx's own helper, duplicated rather than imported: that
@@ -752,13 +760,16 @@ function lines(text: string): string[] {
  * constraints (internal/api/shared_handlers.go): checks.ValidateDefinitionShape
  * is the one validator every write funnels through, so this form only
  * refuses what would otherwise submit an empty, guaranteed-400 request. */
-function validateCheckDefinitionInput(values: CheckDefinitionFormValues): Partial<Record<keyof CheckDefinitionFormValues, string>> {
+function validateCheckDefinitionInput(
+  values: CheckDefinitionFormValues,
+  t: Messages,
+): Partial<Record<keyof CheckDefinitionFormValues, string>> {
   const errors: Partial<Record<keyof CheckDefinitionFormValues, string>> = {};
-  if (values.key.length > 63) errors.key = 'must be 63 characters or fewer';
+  if (values.key.length > 63) errors.key = t.validation.maxChars(63);
   const interval = Number(values.intervalSeconds);
-  if (!values.intervalSeconds || Number.isNaN(interval)) errors.intervalSeconds = 'required';
-  else if (interval < 10 || interval > 86400) errors.intervalSeconds = 'must be between 10 and 86400';
-  if (values.plugin === 'service' && lines(values.units).length === 0) errors.units = 'required';
+  if (!values.intervalSeconds || Number.isNaN(interval)) errors.intervalSeconds = t.validation.required;
+  else if (interval < 10 || interval > 86400) errors.intervalSeconds = t.instance.shared.checks.intervalRange(10, 86400);
+  if (values.plugin === 'service' && lines(values.units).length === 0) errors.units = t.validation.required;
   return errors;
 }
 
@@ -769,6 +780,7 @@ function validateCheckDefinitionInput(values: CheckDefinitionFormValues): Partia
  * (CheckDialog.tsx), never here.
  */
 function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefinitionDef; onClose: () => void }) {
+  const t = useT();
   const toast = useToast();
   const create = useCreateCheckDefinition();
   const update = useUpdateCheckDefinition(definition?.id ?? '');
@@ -805,7 +817,7 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
   async function submit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
-    const fieldErrors = validateCheckDefinitionInput(values);
+    const fieldErrors = validateCheckDefinitionInput(values, t);
     setErrors(fieldErrors);
     if (Object.keys(fieldErrors).length > 0) return;
     const body: CheckDefinitionDefInput = {
@@ -815,31 +827,33 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
     try {
       if (definition) await update.mutateAsync(body);
       else await create.mutateAsync(body);
-      toast.show(definition ? `Check definition ${body.plugin} saved` : `Check definition ${body.plugin} created`);
+      toast.show(
+        definition ? t.instance.shared.checks.saved(body.plugin) : t.instance.shared.checks.created(body.plugin),
+      );
       onClose();
     } catch (err) {
       // RepoDefinitionDialog's own doc comment, same reasoning: decision 7's
       // collision message names every colliding organization, shown whole
       // rather than routed to one field.
-      setFormError(err instanceof Error ? err.message : 'Saving failed');
+      setFormError(err instanceof Error ? err.message : t.instance.shared.saveFailed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} title={definition ? definition.key : 'New check definition'}>
+    <Dialog open onClose={onClose} title={definition ? definition.key : t.instance.shared.checks.newTitle}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-def-plugin">Plugin</Label>
+            <Label htmlFor="check-def-plugin">{t.instance.shared.checks.plugin}</Label>
             <Select
               id="check-def-plugin"
-              options={CHECK_PLUGINS.map(([value, label]) => ({ value, label }))}
+              options={CHECK_PLUGINS.map((value) => ({ value, label: t.instance.shared.checks.plugins[value] }))}
               value={values.plugin}
               onChange={(v) => setValues((cur) => ({ ...cur, plugin: v }))}
             />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-def-key">Key</Label>
+            <Label htmlFor="check-def-key">{t.instance.shared.checks.key}</Label>
             <Input
               id="check-def-key"
               className="font-mono"
@@ -856,7 +870,7 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
           </div>
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="check-def-interval">Interval (seconds)</Label>
+          <Label htmlFor="check-def-interval">{t.instance.shared.checks.intervalSeconds}</Label>
           <Input
             id="check-def-interval"
             type="number"
@@ -874,7 +888,7 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
         </div>
         {values.plugin === 'disk' && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-def-mounts">Mounts (one per line, empty means every mount)</Label>
+            <Label htmlFor="check-def-mounts">{t.instance.shared.checks.mounts}</Label>
             <textarea
               id="check-def-mounts"
               className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
@@ -886,7 +900,7 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
         )}
         {values.plugin === 'service' && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="check-def-units">Units (one per line)</Label>
+            <Label htmlFor="check-def-units">{t.instance.shared.checks.units}</Label>
             <textarea
               id="check-def-units"
               className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
@@ -901,10 +915,7 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
             )}
           </div>
         )}
-        <p className="text-[11px] text-muted-foreground">
-          Projected into every organization at the default org-wide binding, enabled — each one may rebind it to a
-          monitoring group or a host, or disable it, from its own Checks page; neither is set here.
-        </p>
+        <p className="text-[11px] text-muted-foreground">{t.instance.shared.checks.hint}</p>
         {formError && (
           <p role="alert" className="text-xs text-destructive">
             {formError}
@@ -912,10 +923,10 @@ function CheckDefinitionDialog({ definition, onClose }: { definition?: CheckDefi
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending || update.isPending}>
-            {definition ? 'Save definition' : 'Create definition'}
+            {definition ? t.instance.shared.saveDefinition : t.instance.shared.createDefinition}
           </Button>
         </div>
       </form>

@@ -1,0 +1,74 @@
+import type { Messages } from '../types.ts';
+
+export const deMembers: Messages['members'] = {
+  count: (n: number) => (n === 1 ? '1 Mitglied' : `${n} Mitglieder`),
+  invite: 'Mitglied einladen',
+  columns: {
+    member: 'Mitglied',
+    role: 'Rolle',
+    joined: 'Beigetreten',
+    status: 'Status',
+  },
+  disabled: 'deaktiviert',
+  active: 'aktiv',
+  remove: 'entfernen',
+  confirmRemove: (name: string) => `${name} aus der Organisation entfernen?`,
+  removed: (name: string) => `${name} entfernt`,
+  removeFailed: 'Mitglied konnte nicht entfernt werden',
+  inviteDialog: {
+    emailLabel: 'E-Mail-Adresse',
+    emailPlaceholder: 'neue.kollegin@acme.io',
+    roleLabel: 'Rolle',
+    ownerNote:
+      'Die Rolle owner kann nicht per Einladung vergeben werden; eine Ernennung ist erst nach dem Beitritt möglich. Die eingeladene Person legt ein Passwort fest und muss einen zweiten Faktor einrichten, bevor sie die Organisation betreten kann.',
+    send: 'Einladung senden',
+    sent: (email: string) => `Einladung an ${email} gesendet`,
+    failed: 'Einladung konnte nicht gesendet werden',
+  },
+  shareLink: {
+    title: 'Einladungslink weitergeben',
+    before:
+      'Der Versand ausgehender E-Mails ist auf dieser Instanz nicht eingerichtet, daher wurde keine E-Mail gesendet. Diesen Link persönlich an',
+    after: 'weitergeben — er funktioniert nur einmal und läuft in 7 Tagen ab.',
+    linkLabel: 'Einladungslink',
+    copy: 'Link kopieren',
+    copied: 'Einladungslink kopiert',
+    copyFailed: 'Kopieren nicht möglich — den Link markieren und von Hand kopieren',
+    done: 'Fertig',
+  },
+  roleDialog: {
+    title: (name: string) => `Rolle ändern · ${name}`,
+    titleFallback: 'Rolle ändern',
+    updated: (role: string) => `Rolle auf ${role} geändert`,
+    failed: 'Rolle konnte nicht geändert werden',
+  },
+  pending: {
+    title: 'Offene Einladungen',
+    invitedBy: 'Eingeladen von',
+    expires: 'Läuft ab',
+    revoke: 'widerrufen',
+    revokeAria: (email: string) => `Einladung an ${email} widerrufen`,
+    confirmRevoke: (email: string) => `Einladung an ${email} widerrufen? Der Link funktioniert dann nicht mehr.`,
+    revoked: (email: string) => `Einladung an ${email} widerrufen`,
+    revokeFailed: 'Einladung konnte nicht widerrufen werden',
+  },
+  accept: {
+    joinTitle: 'Der Organisation beitreten',
+    acceptFailed: 'Einladung konnte nicht angenommen werden',
+    alreadyTitle: 'Es gibt bereits ein Konto',
+    alreadyBody:
+      'Diese Adresse gehört bereits zu einem Konto. Dort mit dem eigenen Passwort und zweiten Faktor anmelden und anschließend diesen Einladungslink erneut öffnen, um der Organisation beizutreten.',
+    goToSignIn: 'Zur Anmeldung',
+    signedInAs: 'Angemeldet als',
+    signedInHint: 'Die Einladung muss für diese Adresse gelten.',
+    wrongAddress:
+      'Falls die Einladung für eine andere Adresse gilt, abmelden und diesen Einladungslink erneut öffnen.',
+    join: 'Organisation beitreten',
+    joinedButSignInFailed: 'Der Beitritt zur Organisation war erfolgreich, aber die Anmeldung ist fehlgeschlagen. Bitte anmelden.',
+    joinedButSignInFailedWith: (detail: string) =>
+      `Der Beitritt zur Organisation war erfolgreich, aber die Anmeldung ist fehlgeschlagen: ${detail}. Bitte anmelden.`,
+    yourName: 'Name',
+    choosePassword: 'Passwort festlegen',
+    accept: 'Einladung annehmen',
+  },
+};

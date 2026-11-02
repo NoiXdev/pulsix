@@ -5,6 +5,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { verifyTotp } from '../../api/hooks/useAuth.ts';
 import { loginWithPasskey, passkeysSupported } from '../auth/passkeys.ts';
+import { useT } from '../../i18n/useT.ts';
 
 /**
  * StepUpDialog re-proves the account's second factor so the action the
@@ -18,6 +19,7 @@ import { loginWithPasskey, passkeysSupported } from '../auth/passkeys.ts';
  * has no code to type.
  */
 export function StepUpDialog({ onClose, onProved }: { onClose: () => void; onProved: () => void }) {
+  const t = useT();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export function StepUpDialog({ onClose, onProved }: { onClose: () => void; onPro
       await run();
       onProved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'could not confirm your second factor');
+      setError(err instanceof Error ? err.message : t.account.stepUp.failed);
     } finally {
       setBusy(false);
     }
@@ -45,13 +47,10 @@ export function StepUpDialog({ onClose, onProved }: { onClose: () => void; onPro
   }
 
   return (
-    <Dialog open onClose={onClose} title="Confirm it is you">
+    <Dialog open onClose={onClose} title={t.account.stepUp.title}>
       <form className="flex flex-col gap-3" onSubmit={submit}>
-        <p className="text-xs text-muted-foreground">
-          Changing how you sign in needs your second factor again. This keeps an unattended screen from being enough
-          to take the account over.
-        </p>
-        <Label htmlFor="step-up-code">Authenticator or recovery code</Label>
+        <p className="text-xs text-muted-foreground">{t.account.stepUp.intro}</p>
+        <Label htmlFor="step-up-code">{t.account.stepUp.codeLabel}</Label>
         <Input
           id="step-up-code"
           autoFocus
@@ -64,18 +63,18 @@ export function StepUpDialog({ onClose, onProved }: { onClose: () => void; onPro
         {error && <p className="text-xs text-[var(--px-crit)]">{error}</p>}
         <div className="flex justify-between gap-2">
           {passkeysSupported() ? (
-            <Button type="button" disabled={busy} onClick={() => void prove(loginWithPasskey)}>
-              Use a passkey
+            <Button type="button" disabled={busy} onClick={() => void prove(() => loginWithPasskey(t))}>
+              {t.auth.usePasskey}
             </Button>
           ) : (
             <span />
           )}
           <div className="flex gap-2">
             <Button type="button" onClick={onClose}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button type="submit" variant="primary" disabled={busy || !code.trim()}>
-              Confirm
+              {t.account.confirm}
             </Button>
           </div>
         </div>
