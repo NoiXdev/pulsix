@@ -97,10 +97,10 @@ export const deInstance: Messages['instance'] = {
       plugins: {
         cpu: 'CPU',
         memory: 'Arbeitsspeicher',
-        disk: 'Festplatte',
-        service: 'Service-Units',
+        disk: 'Datenträger',
+        service: 'Dienst-Units',
       },
-      mounts: 'Mounts (eine pro Zeile, leer bedeutet alle Mounts)',
+      mounts: 'Einhängepunkte (einer pro Zeile, leer bedeutet jeden Einhängepunkt)',
       units: 'Units (eine pro Zeile)',
       hint: 'Wird in jede Organisation mit der Standardbindung für die ganze Organisation und aktiviert projiziert — jede Organisation kann sie auf ihrer eigenen Check-Seite an eine Überwachungsgruppe oder einen Host binden oder deaktivieren; beides wird hier nicht festgelegt.',
       saved: (plugin: string) => `Check-Definition ${plugin} gespeichert`,

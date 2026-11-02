@@ -41,10 +41,10 @@ function FixedI18n({ locale: initial, children }: { locale: Locale; children: Re
 }
 
 function ResolvingI18n({ children }: { children: ReactNode }) {
-  const { me, status } = useLocaleSources();
+  const { me, meLoading, status } = useLocaleSources();
   const { mutateAsync: saveMine } = useSaveMyLocale();
   const [preview, setPreview] = useState<Locale | null>(null);
-  const resolved = resolveLocale({ me, status, preview, browser: navigator.language });
+  const resolved = resolveLocale({ me, meLoading, status, preview, browser: navigator.language });
 
   // The first render must not wait for the network: until a source has
   // answered — and again for the moment between a session reset and the

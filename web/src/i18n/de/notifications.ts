@@ -63,7 +63,7 @@ export const deNotifications: Messages['notifications'] = {
     hoursMinutes: (h: number, m: number) => `nach ${h} h ${m} min`,
   },
   channels: {
-    noAccess: 'Benachrichtigungskanäle sind ab der Rolle Operator sichtbar.',
+    noAccess: 'Benachrichtigungskanäle sind ab der Rolle operator sichtbar.',
     subtitle: 'Wohin die Ergebnisse von Zeitplänen und die Wochenzusammenfassung gesendet werden',
     add: 'Kanal hinzufügen',
     mailNote:
@@ -138,7 +138,7 @@ export const deNotifications: Messages['notifications'] = {
     saveFailed: 'Die Zusammenfassung konnte nicht gespeichert werden',
   },
   alertRoutes: {
-    noAccess: 'Alarmrouten sind ab der Rolle Operator sichtbar.',
+    noAccess: 'Alarmrouten sind ab der Rolle operator sichtbar.',
     subtitle: 'Welche Schweregrade und Alarmereignisse welche Benachrichtigungskanäle erreichen',
     newRoute: 'Neue Route',
     columns: {
@@ -156,7 +156,7 @@ export const deNotifications: Messages['notifications'] = {
     disableAria: (name: string) => `${name} deaktivieren`,
     enableAria: (name: string) => `${name} aktivieren`,
     updateFailed: 'Die Route konnte nicht aktualisiert werden',
-    deleteConfirm: (name: string) => `Route ${name} löschen? Ihre Kanäle erfahren nichts mehr von den Alarmen, die sie abgedeckt hat.`,
+    deleteConfirm: (name: string) => `Route ${name} löschen? Die Kanäle dieser Route erfahren nichts mehr von den Alarmen, die sie abgedeckt hat.`,
     empty: 'Noch keine Alarmrouten.',
   },
   routeDialog: {
@@ -203,7 +203,7 @@ export const deNotifications: Messages['notifications'] = {
     add: 'Stufe hinzufügen',
   },
   rotations: {
-    noAccess: 'Bereitschaftsrotationen sind ab der Rolle Operator sichtbar.',
+    noAccess: 'Bereitschaftsrotationen sind ab der Rolle operator sichtbar.',
     subtitle: 'Wer Bereitschaft hat und wann der Zyklus übergeben wird',
     newRotation: 'Neue Rotation',
     columns: {

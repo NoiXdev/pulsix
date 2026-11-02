@@ -36,9 +36,9 @@ export function RootRedirect() {
   // reader of ['me']: the I18nProvider fetches the same query on every
   // load to learn the user's language, so on a fresh instance that 401
   // lands in the shared cache and `me.isError` turns true here whether or
-  // not this hook is enabled. What stops it racing the setup redirect is the order
-  // in the effect below: it waits for the setup status and acts on
-  // `completed` before it ever looks at `me.isError`.
+  // not this hook is enabled. What stops it racing the setup redirect is
+  // the order in the effect below: it waits for the setup status and acts
+  // on `completed` before it ever looks at `me.isError`.
   const me = useMe({ enabled: setupStatus.data?.completed === true });
   const orgs = useOrgs({ enabled: me.data?.mfa_complete === true });
 

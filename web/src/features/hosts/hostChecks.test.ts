@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as checks from './hostChecks.ts';
 import { formatNumber, isGraphable, metricLabel } from './hostChecks.ts';
 import { en } from '../../i18n/en/index.ts';
+import { de } from '../../i18n/de/index.ts';
 import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
 
 // The label helpers take the catalogue; these tests read English.
@@ -115,6 +116,14 @@ describe('clockSkewLabel', () => {
     ['an hour ahead is still inside the plausibility window and still wrong', -3600, '60 min ahead of'],
   ])('%s', (_name, offset, expected) => {
     expect(clockSkewLabel(offset)).toBe(expected);
+  });
+
+  it.each([
+    ['a slow clock', 243.7, '4 Min. nach', 'Die Uhr dieses Hosts geht gegenüber der des Managers etwa 4 Min. nach.'],
+    ['a fast clock', -45, '45 s vor', 'Die Uhr dieses Hosts geht gegenüber der des Managers etwa 45 s vor.'],
+  ])('reads as German for %s', (_name, offset, label, sentence) => {
+    expect(checks.clockSkewLabel(offset, de)).toBe(label);
+    expect(de.hosts.checks.clockSkew(label).slice(0, sentence.length)).toBe(sentence);
   });
 });
 

@@ -114,6 +114,48 @@ describe('I18nProvider resolves the language (Review Focus 2)', () => {
     expect(screen.getByTestId('label')).toHaveTextContent('Sprache');
   });
 
+  it("keeps the user's stored language while /auth/me is still loading, even once the instance default is known", async () => {
+    localStorage.setItem('pulsix.locale', 'de');
+    let answerMe: (r: Response) => void = () => {};
+    const json = (body: unknown) =>
+      new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const path = new URL(input instanceof Request ? input.url : String(input), 'http://localhost').pathname;
+      if (path === '/api/v1/setup/status') {
+        return Promise.resolve(json({ completed: true, version: 'dev', default_locale: 'en' }));
+      }
+      return new Promise<Response>((resolve) => {
+        answerMe = resolve;
+      });
+    });
+    // Every label the tree ever renders, so a one-frame English flash
+    // fails the test too.
+    const seen: string[] = [];
+    function Recorder() {
+      seen.push(useT().language.label);
+      return null;
+    }
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <I18nProvider>
+          <Recorder />
+          <Consumer />
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => expect(qc.getQueryState(['setup-status'])?.status).toBe('success'));
+    expect(screen.getByTestId('label')).toHaveTextContent('Sprache');
+    expect(localStorage.getItem('pulsix.locale')).toBe('de');
+
+    await act(async () => answerMe(json({ ...ME, locale: 'de', effective_locale: 'de' })));
+    await waitFor(() => expect(qc.getQueryState(['me'])?.status).toBe('success'));
+    expect(screen.getByTestId('label')).toHaveTextContent('Sprache');
+    expect(seen).not.toContain('Language');
+    expect(localStorage.getItem('pulsix.locale')).toBe('de');
+  });
+
   it('renders English first when nothing is known yet', () => {
     fetchMock.mockImplementation(() => new Promise<Response>(() => {}));
     renderWithProvider();

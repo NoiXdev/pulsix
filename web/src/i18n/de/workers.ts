@@ -12,7 +12,7 @@ export const deWorkers: Messages['workers'] = {
     inDays: (n: number) => (n === 1 ? 'in 1 Tag' : `in ${n} Tagen`),
   },
   title: 'Worker',
-  noAccess: 'Worker werden von den Owners und Admins der Organisation verwaltet.',
+  noAccess: 'Worker werden von Mitgliedern der Organisation mit der Rolle owner oder admin verwaltet.',
   summary: (online: number, total: number) => `${online} von ${total} online · Worker führen die Jobs ihrer Zone aus`,
   add: 'Worker hinzufügen',
   columns: {

@@ -30,6 +30,8 @@ function useFollowCacheResets(qc: QueryClient, key: QueryKey) {
  * the signed-in principal (GET /auth/me, which carries `effective_locale`)
  * and the public setup status (`completed`, `default_locale`). Either is
  * undefined until it answers; /auth/me stays undefined without a session.
+ * `meLoading` is true while /auth/me has no answer yet but is being
+ * fetched; a 401 settles it.
  */
 export function useLocaleSources() {
   const qc = useQueryClient();
@@ -37,7 +39,7 @@ export function useLocaleSources() {
   const status = useSetupStatus();
   useFollowCacheResets(qc, meQueryKey);
   useFollowCacheResets(qc, setupStatusQueryKey);
-  return { me: me.data, status: status.data };
+  return { me: me.data, meLoading: me.isPending && me.fetchStatus === 'fetching', status: status.data };
 }
 
 /**

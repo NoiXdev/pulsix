@@ -49,7 +49,7 @@ import { deWorkers } from './workers.ts';
  *   Maintenance window → Wartungsfenster
  *   Settings           → Einstellungen
  *
- *   Unchanged: Playbook, Host, Worker, Agent, Check, Token, Zone.
+ *   Unchanged: Playbook, Host, Worker, Agent, Check, Job, Token, Zone.
  *
  * Neutral imperatives and nouns, no "du" and, where avoidable, no "Sie":
  * "Speichern", "Host hinzufügen", "Passwort ändern". Validation messages

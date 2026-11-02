@@ -5,6 +5,9 @@ import { isLocale, type Locale } from './types.ts';
 export interface LocaleSources {
   /** GET /auth/me — absent when nobody is signed in. */
   me?: { effective_locale?: string | null };
+  /** /auth/me has not answered yet but is on its way. A 401 settles it,
+   * so this is false for a page without a session once that is known. */
+  meLoading?: boolean;
   /** GET /setup/status — public. */
   status?: { completed?: boolean; default_locale?: string | null };
   /** The setup wizard's unsaved choice (LocaleControl.previewLocale). */
@@ -20,11 +23,15 @@ export interface LocaleSources {
  * else — before setup, when there is no default yet — the wizard's own
  * choice or the browser's language when it is German. null means no
  * source has answered yet; the provider then keeps the last known one.
+ * While /auth/me is still loading the instance default is not used: it
+ * usually answers first, and a user whose own language differs would see
+ * the instance's until /auth/me lands (and lose the remembered one).
  */
 export function resolveLocale(s: LocaleSources): Locale | null {
   const own = s.me?.effective_locale;
   if (isLocale(own)) return own;
   if (s.status?.completed === false) return s.preview ?? browserLocale(s.browser);
+  if (s.meLoading) return null;
   const instance = s.status?.default_locale;
   return isLocale(instance) ? instance : null;
 }

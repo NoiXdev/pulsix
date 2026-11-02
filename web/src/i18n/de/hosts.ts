@@ -31,7 +31,7 @@ export const deHosts: Messages['hosts'] = {
   clock: {
     seconds: (n: number) => `${n} s`,
     minutes: (n: number) => `${n} Min.`,
-    behind: 'hinter',
+    behind: 'nach',
     ahead: 'vor',
   },
   list: {
@@ -99,7 +99,7 @@ export const deHosts: Messages['hosts'] = {
     introBefore:
       'Installiert den öffentlichen Schlüssel der ssh_key-Zugangsdaten dieses Hosts mit einem Login, der hier angegeben wird. Der Login wird',
     introStrong: 'einmal verwendet und nie gespeichert',
-    introAfter: '– weder im Audit-Protokoll noch in einem Log.',
+    introAfter: '– weder im Aktivitätsprotokoll noch in einem Log.',
     loginUser: 'Login-Benutzer',
     loginPlaceholder: 'root',
     oneTimeLogin: 'Einmaliger Login',
@@ -200,7 +200,7 @@ export const deHosts: Messages['hosts'] = {
     notMonitored:
       'Dieser Host wird nicht überwacht. Diese Checks werden erst gemessen, wenn die Fähigkeit „Überwacht“ aktiv ist – sie sind die Menge, die dann gelten würde.',
     clockSkew: (skew: string) =>
-      `Die Uhr dieses Hosts geht etwa ${skew} der Uhr des Managers. Messwerte tragen die eigenen Zeitstempel des Hosts, daher kann ein „veraltet“-Hinweis unten an der Uhr liegen statt an einem Host, der nicht mehr meldet – die Zeitsynchronisierung prüfen.`,
+      `Die Uhr dieses Hosts geht gegenüber der des Managers etwa ${skew}. Messwerte tragen die eigenen Zeitstempel des Hosts, daher kann ein „veraltet“-Hinweis unten an der Uhr liegen statt an einem Host, der nicht mehr meldet – die Zeitsynchronisierung prüfen.`,
     none: 'Für diesen Host sind noch keine Checks aufgelöst.',
     every: (interval: string) => `alle ${interval}`,
     disabled: 'deaktiviert',
