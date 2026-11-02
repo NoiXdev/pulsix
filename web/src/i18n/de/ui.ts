@@ -28,11 +28,11 @@ export const deUi: Messages['ui'] = {
   },
   chart: {
     ranges: {
-      '1h': 'der letzten Stunde',
-      '24h': 'der letzten 24 Stunden',
-      '7d': 'der letzten 7 Tage',
+      '1h': 'in der letzten Stunde',
+      '24h': 'in den letzten 24 Stunden',
+      '7d': 'in den letzten 7 Tagen',
     },
-    label: (what: string, range: string, samples: number) => `${what} in ${range}, ${samples} Messwerte`,
+    label: (what: string, range: string, samples: number) => `${what}, ${range}, ${samples} Messwerte`,
     empty: 'Keine Messwerte in diesem Zeitraum.',
   },
 };

@@ -31,11 +31,11 @@ export const enUi = {
   },
   chart: {
     ranges: {
-      '1h': 'the last hour',
-      '24h': 'the last 24 hours',
-      '7d': 'the last 7 days',
+      '1h': 'over the last hour',
+      '24h': 'over the last 24 hours',
+      '7d': 'over the last 7 days',
     },
-    label: (what: string, range: string, samples: number) => `${what} over ${range}, ${samples} samples`,
+    label: (what: string, range: string, samples: number) => `${what} ${range}, ${samples} samples`,
     empty: 'No samples in this range.',
   },
 };

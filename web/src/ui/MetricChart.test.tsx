@@ -5,6 +5,7 @@ import { MetricChart } from './MetricChart.tsx';
 import { toAlignedData } from './metricSeries.ts';
 import type { MetricPoint } from '../api/types.ts';
 import { resizeTo } from '../test/resizeObserver.ts';
+import { I18nProvider } from '../i18n/I18nProvider.tsx';
 
 /**
  * The real uPlot, wrapped so the test can see how many instances a render
@@ -190,5 +191,29 @@ describe('MetricChart', () => {
 
     rerender(<MetricChart points={series(5)} range="7d" label="memory used_percent" />);
     expect(screen.getByRole('img', { name: /over the last 7 days, 5 samples/ })).toBeInTheDocument();
+  });
+});
+
+describe('MetricChart in German', () => {
+  it.each([
+    ['1h', 'cpu usage_percent, in der letzten Stunde, 3 Messwerte'],
+    ['24h', 'cpu usage_percent, in den letzten 24 Stunden, 3 Messwerte'],
+    ['7d', 'cpu usage_percent, in den letzten 7 Tagen, 3 Messwerte'],
+  ] as const)('names the %s chart with a grammatical German phrase', (range, name) => {
+    render(
+      <I18nProvider locale="de">
+        <MetricChart points={series(3)} range={range} label="cpu usage_percent" />
+      </I18nProvider>,
+    );
+    expect(screen.getByRole('img', { name })).toBeInTheDocument();
+  });
+
+  it('says the empty state in German', () => {
+    render(
+      <I18nProvider locale="de">
+        <MetricChart points={[]} range="1h" label="cpu" />
+      </I18nProvider>,
+    );
+    expect(screen.getByText('Keine Messwerte in diesem Zeitraum.')).toBeInTheDocument();
   });
 });
