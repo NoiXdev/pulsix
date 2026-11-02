@@ -15,7 +15,10 @@ package agentapi
 import (
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -28,7 +31,26 @@ type StreamRegistry struct {
 	mu     sync.Mutex
 	next   uint64
 	byHost map[uuid.UUID]map[uint64]*trackedStream
+	// lastResolve is when each serial's heartbeat last resolved its
+	// configuration (allowResolve). Per serial, not per stream, so a new
+	// stream does not buy a new resolve.
+	lastResolve map[string]time.Time
+	lastSweep   time.Time
 }
+
+// maxStreamsPerSerial bounds how many streams one agent identity holds
+// open (backlog 7.25). An agent keeps one; a second is a reconnect that
+// overlaps a connection the manager has not yet noticed is gone. A third
+// ends the oldest, so a lost connection never locks a reconnecting agent
+// out, and nobody can pile up streams under one certificate.
+const maxStreamsPerSerial = 2
+
+// heartbeatResolveInterval is the least time between two resolves one
+// agent's heartbeats cause (backlog 7.25). A resolve reads the whole
+// organization's hosts, definitions and groups, uncached, and agents
+// heartbeat every 30 s by default, so a well-behaved agent never meets
+// this; one sending heartbeats in a loop gets one resolve per interval.
+const heartbeatResolveInterval = 10 * time.Second
 
 // trackedStream is one open stream. Its mu orders every message
 // processing against the cut: processing runs under it, and shut takes it,
@@ -46,6 +68,10 @@ type trackedStream struct {
 	orgID uuid.UUID
 	// revoked is closed by shut: the handler ends the stream.
 	revoked chan struct{}
+	// superseded is set before shut when a newer stream of the same serial
+	// displaced this one (maxStreamsPerSerial); the handler then ends it
+	// as that, not as a revocation the agent would log as one.
+	superseded atomic.Bool
 
 	mu  sync.Mutex
 	cut bool
@@ -265,7 +291,7 @@ func (t *trackedStream) closeMailbox() {
 
 // NewStreamRegistry builds an empty registry.
 func NewStreamRegistry() *StreamRegistry {
-	return &StreamRegistry{byHost: map[uuid.UUID]map[uint64]*trackedStream{}}
+	return &StreamRegistry{byHost: map[uuid.UUID]map[uint64]*trackedStream{}, lastResolve: map[string]time.Time{}}
 }
 
 // track registers one open stream of hostID (authenticated with serial, as
@@ -279,6 +305,13 @@ func NewStreamRegistry() *StreamRegistry {
 // CloseHost cuts the stream when the agent is revoked.
 func (r *StreamRegistry) track(serial string, orgID, hostID uuid.UUID, stream agentpb.AgentService_AgentStreamServer) (*trackedStream, func()) {
 	r.mu.Lock()
+	displaced := r.displaceOldest(serial, hostID)
+	defer func() {
+		// Outside r.mu, like CloseHost: shut waits for a step in flight.
+		for _, ts := range displaced {
+			ts.shut()
+		}
+	}()
 	defer r.mu.Unlock()
 	r.next++
 	id := r.next
@@ -302,6 +335,54 @@ func (r *StreamRegistry) track(serial string, orgID, hostID uuid.UUID, stream ag
 			}
 		}
 	}
+}
+
+// displaceOldest takes serial's oldest streams on hostID out of the
+// registry until one more fits under maxStreamsPerSerial, marks them
+// superseded and returns them for the caller to shut once r.mu is
+// released. Ids grow with every track, so the smallest is the oldest.
+func (r *StreamRegistry) displaceOldest(serial string, hostID uuid.UUID) []*trackedStream {
+	var out []*trackedStream
+	for {
+		var ids []uint64
+		for id, ts := range r.byHost[hostID] {
+			if ts.serial == serial {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) < maxStreamsPerSerial {
+			return out
+		}
+		oldest := slices.Min(ids)
+		ts := r.byHost[hostID][oldest]
+		delete(r.byHost[hostID], oldest)
+		ts.superseded.Store(true)
+		out = append(out, ts)
+	}
+}
+
+// allowResolve reports whether serial's heartbeat may resolve its
+// configuration at now, and if so records it (heartbeatResolveInterval).
+// Entries older than the interval answer nothing any more; once per
+// interval a call drops them, so the map holds at most the agents that
+// resolved within the last two intervals and the sweep is not paid on
+// every heartbeat of a large fleet.
+func (r *StreamRegistry) allowResolve(serial string, now time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if last, ok := r.lastResolve[serial]; ok && now.Sub(last) < heartbeatResolveInterval {
+		return false
+	}
+	if now.Sub(r.lastSweep) >= heartbeatResolveInterval {
+		for s, last := range r.lastResolve {
+			if now.Sub(last) >= heartbeatResolveInterval {
+				delete(r.lastResolve, s)
+			}
+		}
+		r.lastSweep = now
+	}
+	r.lastResolve[serial] = now
+	return true
 }
 
 // CloseHost ends every open stream of hostID and reports how many. It

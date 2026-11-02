@@ -121,6 +121,8 @@ func TestHeartbeatChangedDefinitionPushesOnce(t *testing.T) {
 		Checks:  []checks.Resolved{{Key: "disk", Plugin: "disk", Interval: 60 * time.Second}},
 		Version: "v2",
 	})
+	// A heartbeat resolves at most once per interval (backlog 7.25).
+	h.advance(heartbeatResolveInterval)
 	if err := stream.Send(heartbeat("agent-1", "v1")); err != nil {
 		t.Fatal(err)
 	}
@@ -132,6 +134,7 @@ func TestHeartbeatChangedDefinitionPushesOnce(t *testing.T) {
 		t.Fatalf("stale version after a definition change = %+v, want a push to v2", cfg)
 	}
 
+	h.advance(heartbeatResolveInterval)
 	if err := stream.Send(heartbeat("agent-1", "v2")); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +185,9 @@ func TestConvergenceUnrecognisedVersionPushesOnceThenConverges(t *testing.T) {
 		t.Fatalf("unrecognised version = %+v, want exactly one push of the current set", cfg)
 	}
 
-	// The agent now reports precisely the version that push established.
+	// The agent now reports precisely the version that push established,
+	// past the interval a heartbeat resolves at most once in (backlog 7.25).
+	h.advance(heartbeatResolveInterval)
 	if err := stream.Send(heartbeat("agent-1", cfg.GetVersion())); err != nil {
 		t.Fatal(err)
 	}
@@ -196,6 +201,7 @@ func TestConvergenceUnrecognisedVersionPushesOnceThenConverges(t *testing.T) {
 
 	// A third heartbeat, still reporting the converged version, must also
 	// receive nothing — convergence is not a one-shot fluke of round two.
+	h.advance(heartbeatResolveInterval)
 	if err := stream.Send(heartbeat("agent-1", cfg.GetVersion())); err != nil {
 		t.Fatal(err)
 	}
@@ -282,6 +288,8 @@ func TestHeartbeatResolveFaultKeepsTheStreamAlive(t *testing.T) {
 	h.checks.mu.Lock()
 	h.checks.resolveErr = nil
 	h.checks.mu.Unlock()
+	// A heartbeat resolves at most once per interval (backlog 7.25).
+	h.advance(heartbeatResolveInterval)
 	if err := stream.Send(heartbeat("agent-1", "")); err != nil {
 		t.Fatal(err)
 	}

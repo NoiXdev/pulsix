@@ -75,6 +75,9 @@ func (s *Service) AgentStream(stream agentpb.AgentService_AgentStreamServer) err
 	case err := <-recvErr:
 		return err
 	case <-tracked.revoked:
+		if tracked.superseded.Load() {
+			return status.Error(codes.ResourceExhausted, "superseded by a newer stream of this agent")
+		}
 		return status.Error(codes.Unauthenticated, "agent revoked")
 	}
 }
@@ -168,6 +171,15 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 		return nil, err
 	}
 	if s.deps.Checks == nil {
+		return nil, nil
+	}
+	// At most one resolve per heartbeatResolveInterval and agent (backlog
+	// 7.25): inside it the heartbeat is acknowledged and nothing more. A
+	// mismatch it would have answered is answered by the next heartbeat
+	// outside it, which is the same convergence a failed resolve below
+	// relies on; a cached answer instead could be older than a push the
+	// agent already applied, and would move it back.
+	if !s.streams.allowResolve(agent.Serial, s.deps.Clock()) {
 		return nil, nil
 	}
 	resolved, err := s.deps.Checks.ResolveHost(ctx, agent.OrgID, agent.HostID)
