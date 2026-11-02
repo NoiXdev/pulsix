@@ -20,6 +20,15 @@ var (
 	// ErrBackupTooNew means the backup's schema is newer than this binary's
 	// migrations; the wrapping message names the Pulsix version to use.
 	ErrBackupTooNew = errors.New("backup: the backup is newer than this Pulsix")
+	// ErrRestoreIncomplete wraps every failure after the wipe. Unless the
+	// error is also ErrNotMigrated, the load did not commit: the database
+	// holds no Pulsix data, its schema is at most the backup's version, and
+	// the same restore can simply run again.
+	ErrRestoreIncomplete = errors.New("backup: the restore stopped after the database was cleared")
+	// ErrNotMigrated means the backup's rows were loaded and committed, but
+	// the migrations past the backup's schema version failed. It always
+	// comes wrapped together with ErrRestoreIncomplete.
+	ErrNotMigrated = errors.New("backup: the restored data was not migrated to this version")
 )
 
 // RestoreOptions controls Restore.
@@ -31,6 +40,8 @@ type RestoreOptions struct {
 
 	// afterMigrate runs between MigrateTo and the load; tests only.
 	afterMigrate func(*pgxpool.Pool) error
+	// afterWipe runs between the wipe and MigrateTo; tests only.
+	afterWipe func(*pgxpool.Pool) error
 }
 
 // Restore replaces d's public schema with the backup open yields.
@@ -45,6 +56,10 @@ type RestoreOptions struct {
 // version, loads every table in one transaction and then runs the remaining
 // migrations, exactly as a manager start would. d must connect as the
 // schema owner; no superuser right is needed.
+//
+// A failure before the wipe leaves the database as it was. A failure after
+// it wraps ErrRestoreIncomplete (and ErrNotMigrated once the rows are in)
+// and returns the verified manifest with the error.
 func Restore(ctx context.Context, d *db.DB, masterKey [32]byte, open func() (io.ReadCloser, error), opts RestoreOptions) (Manifest, error) {
 	m, err := verifyFrom(open, masterKey)
 	if err != nil {
@@ -63,23 +78,47 @@ func Restore(ctx context.Context, d *db.DB, masterKey [32]byte, open func() (io.
 	}
 
 	if err := wipe(ctx, d.Pool()); err != nil {
+		// One transaction: the database is as it was.
 		return Manifest{}, fmt.Errorf("restore: %w", err)
 	}
-	if err := d.MigrateTo(ctx, m.Header.SchemaVersion); err != nil {
-		return Manifest{}, fmt.Errorf("restore: %w", err)
+	if err := migrateAndLoad(ctx, d, masterKey, open, m, opts); err != nil {
+		return m, fmt.Errorf("restore: %w: %w", ErrRestoreIncomplete, err)
+	}
+	if err := d.Migrate(ctx); err != nil {
+		return m, fmt.Errorf("restore: %w: %w: %w", ErrRestoreIncomplete, ErrNotMigrated, err)
+	}
+	return m, nil
+}
+
+// migrateAndLoad migrates the wiped schema to the backup's version and loads
+// the backup into it.
+//
+// The version is read back after MigrateTo: MigrateTo never migrates down,
+// so a manager that migrated the wiped schema further in the meantime would
+// otherwise have the backup's rows skip every migration in between.
+func migrateAndLoad(ctx context.Context, d *db.DB, masterKey [32]byte, open func() (io.ReadCloser, error), m Manifest, opts RestoreOptions) error {
+	want := m.Header.SchemaVersion
+	if opts.afterWipe != nil {
+		if err := opts.afterWipe(d.Pool()); err != nil {
+			return fmt.Errorf("after wipe: %w", err)
+		}
+	}
+	if err := d.MigrateTo(ctx, want); err != nil {
+		return err
+	}
+	got, err := d.SchemaVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("the schema is at version %d instead of the backup's %d: something else migrated the database during the restore (is a manager running?)", got, want)
 	}
 	if opts.afterMigrate != nil {
 		if err := opts.afterMigrate(d.Pool()); err != nil {
-			return Manifest{}, fmt.Errorf("restore: after migrate: %w", err)
+			return fmt.Errorf("after migrate: %w", err)
 		}
 	}
-	if err := load(ctx, d.Pool(), masterKey, open, m); err != nil {
-		return Manifest{}, fmt.Errorf("restore: %w", err)
-	}
-	if err := d.Migrate(ctx); err != nil {
-		return Manifest{}, fmt.Errorf("restore: %w", err)
-	}
-	return m, nil
+	return load(ctx, d.Pool(), masterKey, open, m)
 }
 
 // verifyFrom runs Verify over one pass of open.
@@ -192,6 +231,13 @@ func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func
 	}
 	if err := abandonRunningAttempts(ctx, tx); err != nil {
 		return err
+	}
+	// The same check as after MigrateTo, for a migration that committed
+	// while the load ran.
+	if v, err := db.ReadSchemaVersion(ctx, tx); err != nil {
+		return fmt.Errorf("load: %w", err)
+	} else if v != want.Header.SchemaVersion {
+		return fmt.Errorf("load: the schema moved to version %d during the load: something else migrated the database (is a manager running?)", v)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("load: commit: %w", err)
