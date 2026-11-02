@@ -35,6 +35,17 @@ var (
 // reads any configuration. It lands in a temp dir of its own rather than a
 // test's, because every supervised test shares it and the package has no
 // TestMain to clean up after the last one.
+// supervisorBuildDir holds the built supervisor; TestMain removes it once
+// every test of the package has run (backlog 2.114).
+var supervisorBuildDir string
+
+// cleanupSupervisorBuild removes the built supervisor, if one was built.
+func cleanupSupervisorBuild() {
+	if supervisorBuildDir != "" {
+		_ = os.RemoveAll(supervisorBuildDir)
+	}
+}
+
 func playSupervisor(t *testing.T) string {
 	t.Helper()
 	supervisorBuild.Do(func() {
@@ -43,6 +54,7 @@ func playSupervisor(t *testing.T) string {
 			supervisorBuildErr = err
 			return
 		}
+		supervisorBuildDir = dir
 		bin := filepath.Join(dir, "pulsix-worker")
 		out, err := exec.Command("go", "build", "-o", bin, "github.com/noixdev/pulsix/cmd/worker").CombinedOutput()
 		if err != nil {

@@ -84,6 +84,9 @@ func parseArgs(args []string) (grace time.Duration, argv []string, err error) {
 		case separator:
 			sep = i
 		case graceFlag:
+			if haveGrace {
+				return 0, nil, fmt.Errorf("%s given twice", graceFlag)
+			}
 			i++
 			if i == len(args) {
 				return 0, nil, fmt.Errorf("%s needs a value", graceFlag)

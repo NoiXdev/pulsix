@@ -53,6 +53,8 @@ func TestParseArgsRefuses(t *testing.T) {
 		{"relative program", []string{"--grace", "5s", "--", "ansible-runner", "run"}},
 		{"unknown flag", []string{"--foo", "--grace", "5s", "--", "/bin/x"}},
 		{"no arguments at all", nil},
+		// Backlog 2.114: like every other deviation, not "the last wins".
+		{"repeated grace", []string{"--grace", "5s", "--grace", "1s", "--", "/bin/x"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
