@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { fleetStateLabel } from './fleetHost.ts';
+import { fleetStateLabel as label } from './fleetHost.ts';
+import { en } from '../../i18n/en/index.ts';
+
+const fleetStateLabel = (state: Parameters<typeof label>[0], allIgnored: boolean) => label(state, allIgnored, en);
 
 describe('fleetStateLabel', () => {
   // "no data" is its own word, distinct from HostChecksCard's own

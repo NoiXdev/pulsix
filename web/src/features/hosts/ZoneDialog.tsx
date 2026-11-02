@@ -39,29 +39,29 @@ export function ZoneDialog({
   });
 
   return (
-    <Dialog open={open} onClose={onClose} title="Add zone">
+    <Dialog open={open} onClose={onClose} title={t.hosts.zone.title}>
       <form
         className="flex flex-col gap-4"
         onSubmit={zoneForm.handleSubmit(async (values) => {
           try {
             const res = await createZone.mutateAsync(values);
-            toast.show(`Zone ${values.name} created`);
+            toast.show(t.hosts.zone.created(values.name));
             onCreated(res.zone.id);
             onClose();
           } catch (err) {
-            toast.show(err instanceof Error ? err.message : 'failed to create zone', 'destructive');
+            toast.show(err instanceof Error ? err.message : t.hosts.zone.createFailed, 'destructive');
           }
         })}
       >
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="zone_name">Name</Label>
+          <Label htmlFor="zone_name">{t.hosts.zone.name}</Label>
           <Input id="zone_name" {...zoneForm.register('name')} />
           {zoneForm.formState.errors.name && (
             <span className="text-[11px] text-destructive">{zoneForm.formState.errors.name.message}</span>
           )}
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="zone_slug">Slug</Label>
+          <Label htmlFor="zone_slug">{t.hosts.zone.slug}</Label>
           <SlugField
             id="zone_slug"
             inputProps={zoneForm.register('slug')}
@@ -74,10 +74,10 @@ export function ZoneDialog({
         </div>
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={createZone.isPending}>
-            Create zone
+            {t.hosts.zone.create}
           </Button>
         </div>
       </form>

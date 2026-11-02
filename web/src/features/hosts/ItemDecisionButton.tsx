@@ -5,6 +5,7 @@ import { Button } from '../../ui/button.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCreateItemDecision, useUpdateItemDecision } from '../../api/hooks/useItems.ts';
 import type { ItemDecision, ItemDecisionInput } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface ItemDecisionButtonProps {
   org: string;
@@ -87,6 +88,7 @@ function isOwnHostExactDecision(decidedBy: ItemDecision | undefined, checkKey: s
  * happen against a state that already includes this one.
  */
 export function ItemDecisionButton({ org, hostId, checkKey, item, ignored, decidedBy }: ItemDecisionButtonProps) {
+  const t = useT();
   const qc = useQueryClient();
   const toast = useToast();
   const own = isOwnHostExactDecision(decidedBy, checkKey, item);
@@ -124,7 +126,7 @@ export function ItemDecisionButton({ org, hostId, checkKey, item, ignored, decid
         qc.invalidateQueries({ queryKey: ['host-effective-rules', org, hostId] }),
       ]);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Saving this decision failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.hosts.decision.failed, 'destructive');
     } finally {
       setBusy(false);
     }
@@ -134,17 +136,17 @@ export function ItemDecisionButton({ org, hostId, checkKey, item, ignored, decid
     <Button
       type="button"
       variant="ghost"
-      aria-label={`${ignored ? 'Watch' : 'Ignore'} ${checkKey} ${item}`}
+      aria-label={ignored ? t.hosts.decision.watchLabel(checkKey, item) : t.hosts.decision.ignoreLabel(checkKey, item)}
       disabled={pending}
       onClick={() => void onClick()}
     >
       {ignored ? (
         <>
-          <Shield size={14} /> Watch
+          <Shield size={14} /> {t.hosts.decision.watch}
         </>
       ) : (
         <>
-          <ShieldOff size={14} /> Ignore
+          <ShieldOff size={14} /> {t.hosts.decision.ignore}
         </>
       )}
     </Button>

@@ -3,6 +3,9 @@ import { Pill, Tag } from '../../ui/badge.tsx';
 import { useHostEffectiveRules, useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useHostItems } from '../../api/hooks/useItems.ts';
 import type { EffectiveRule, Item, MonitoringGroup, Rule } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
+import { useFormat } from '../../i18n/format.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface EffectiveRulesPanelProps {
   org: string;
@@ -36,6 +39,7 @@ export interface EffectiveRulesPanelProps {
  * silently missing from the whole page.
  */
 export function EffectiveRulesPanel({ org, hostId, canRead }: EffectiveRulesPanelProps) {
+  const t = useT();
   const query = useHostEffectiveRules(org, hostId, canRead);
   const groups = useMonitoringGroups(org, canRead);
   // v0.3b-3: this host's discovered items, looked up per unobserved entry
@@ -54,17 +58,17 @@ export function EffectiveRulesPanel({ org, hostId, canRead }: EffectiveRulesPane
 
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-[13px] font-semibold">Rules on removed items</h2>
+      <h2 className="mb-3 text-[13px] font-semibold">{t.hosts.rules.title}</h2>
 
-      {!canRead && <p className="text-xs text-muted-foreground">Rules are visible to members of this organization.</p>}
+      {!canRead && <p className="text-xs text-muted-foreground">{t.hosts.rules.noAccess}</p>}
       {canRead && query.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {query.error instanceof Error ? query.error.message : 'Could not read this host’s effective rules.'}
+          {query.error instanceof Error ? query.error.message : t.hosts.rules.readFailed}
         </p>
       )}
-      {canRead && !query.data && !query.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {canRead && !query.data && !query.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
       {canRead && query.data && notObserved.length === 0 && (
-        <p className="text-xs text-muted-foreground">No rule targets an item this host no longer reports.</p>
+        <p className="text-xs text-muted-foreground">{t.hosts.rules.none}</p>
       )}
       {canRead && query.data && notObserved.length > 0 && (
         <EffectiveRuleEntries entries={notObserved} groups={groupList} items={itemList} />
@@ -83,14 +87,14 @@ function tupleLabel(e: EffectiveRule): string {
 /** originChip renders a rule's scope as the provenance the spec asks for
  * (Org / Group *name* / Host / Item) — never the raw id the DTO carries,
  * mirroring RulesPage's own RuleTarget. */
-function originChip(rule: Rule, groups: MonitoringGroup[]): string {
+function originChip(rule: Rule, groups: MonitoringGroup[], t: Messages): string {
   if (rule.scope === 'group') {
     const group = groups.find((g) => g.id === rule.group_id);
-    return `Group ${group?.name ?? rule.group_id?.slice(0, 8) ?? '?'}`;
+    return t.hosts.rules.originGroup(group?.name ?? rule.group_id?.slice(0, 8) ?? '?');
   }
-  if (rule.scope === 'host') return 'Host';
-  if (rule.scope === 'item') return 'Item';
-  return 'Org';
+  if (rule.scope === 'host') return t.hosts.rules.originHost;
+  if (rule.scope === 'item') return t.hosts.rules.originItem;
+  return t.hosts.rules.originOrg;
 }
 
 export interface EffectiveRuleEntriesProps {
@@ -139,9 +143,9 @@ export function EffectiveRuleEntries({ entries, groups, showTuple = true, items 
  * date is the honest answer for the gap between a rule naming an item and
  * the next evaluation tick discovering it (review focus 2 of this
  * milestone, "a decision that predates its item" — the same gap). */
-function notObservedLabel(item: Item | undefined): string {
-  if (item?.last_seen) return `not reported since ${new Date(item.last_seen).toLocaleDateString()}`;
-  return 'no longer observed';
+function notObservedLabel(item: Item | undefined, t: Messages, date: (d: string) => string): string {
+  if (item?.last_seen) return t.hosts.rules.notReportedSince(date(item.last_seen));
+  return t.hosts.rules.noLongerObserved;
 }
 
 function EffectiveRuleRow({
@@ -155,6 +159,8 @@ function EffectiveRuleRow({
   showTuple: boolean;
   items: Item[];
 }) {
+  const t = useT();
+  const fmt = useFormat();
   const shadowed = entry.shadowed ?? [];
   // Only ever looked up for an unobserved entry — see notObservedLabel's
   // own doc comment for why a miss here (nothing discovered yet) is an
@@ -164,21 +170,21 @@ function EffectiveRuleRow({
     <li className="rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center gap-2">
         {showTuple && <h3 className="font-mono text-[13px] text-foreground">{tupleLabel(entry)}</h3>}
-        <Pill tone={entry.severity === 'crit' ? 'crit' : 'warn'}>{entry.severity}</Pill>
-        <Tag>{originChip(entry.winner, groups)}</Tag>
+        <Pill tone={entry.severity === 'crit' ? 'crit' : 'warn'}>{entry.severity === 'crit' ? t.hosts.state.crit : t.hosts.state.warn}</Pill>
+        <Tag>{originChip(entry.winner, groups, t)}</Tag>
         <span className="text-[13px] text-foreground">{entry.winner.name}</span>
-        {!entry.observed && <Pill tone="unknown">{notObservedLabel(itemInfo)}</Pill>}
+        {!entry.observed && <Pill tone="unknown">{notObservedLabel(itemInfo, t, (d) => fmt.date(d))}</Pill>}
       </div>
       <p className="mt-1 font-mono text-[11px] text-muted-foreground">{entry.winner.source}</p>
       {shadowed.length > 0 && (
         <details className="mt-2">
           <summary className="cursor-pointer text-[11px] text-muted-foreground">
-            {shadowed.length} shadowed rule{shadowed.length === 1 ? '' : 's'}
+            {t.hosts.rules.shadowed(shadowed.length)}
           </summary>
           <ul className="mt-1.5 flex flex-col gap-1.5 border-l border-border pl-3">
             {shadowed.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                <Tag>{originChip(r, groups)}</Tag>
+                <Tag>{originChip(r, groups, t)}</Tag>
                 <span>{r.name}</span>
                 <span className="font-mono">{r.source}</span>
               </li>

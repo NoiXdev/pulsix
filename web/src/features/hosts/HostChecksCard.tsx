@@ -6,6 +6,7 @@ import { useHostChecks, useHostEffectiveRules, useMonitoringGroups, type MetricS
 import { intervalLabel } from '../checks/interval.ts';
 import { clockSkewLabel, sourceLabel, type TupleKey } from './hostChecks.ts';
 import { HostCheckValueRow } from './HostCheckValueRow.tsx';
+import { useT } from '../../i18n/useT.ts';
 
 export interface HostChecksCardProps {
   org: string;
@@ -55,6 +56,7 @@ export interface HostChecksCardProps {
  *    stale for ever while the agent is healthy (see clockSkewLabel).
  */
 export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCardProps) {
+  const t = useT();
   const query = useHostChecks(org, hostId, canRead);
   // One graph open at a time: these are the only reads on this page that
   // touch the sample hypertable.
@@ -79,51 +81,49 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
   const checks = query.data?.checks ?? [];
   // Only while the host is monitored: with nothing being measured there
   // are no readings on the card for a clock to have skewed.
-  const skew = monitored ? clockSkewLabel(query.data?.clock_offset_seconds) : null;
+  const skew = monitored ? clockSkewLabel(query.data?.clock_offset_seconds, t) : null;
 
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">Monitoring</h2>
+        <h2 className="text-[13px] font-semibold">{t.hosts.checks.title}</h2>
         {canWrite && (
           <Link to="/o/$org/checks" params={{ org }} className="text-xs text-muted-foreground hover:text-primary">
-            Manage checks
+            {t.hosts.checks.manage}
           </Link>
         )}
       </div>
 
-      {!canRead && <p className="text-xs text-muted-foreground">Monitoring is visible to members of this organization.</p>}
+      {!canRead && <p className="text-xs text-muted-foreground">{t.hosts.checks.noAccess}</p>}
       {canRead && query.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {query.error instanceof Error ? query.error.message : 'Could not read this host’s checks.'}
+          {query.error instanceof Error ? query.error.message : t.hosts.checks.readFailed}
         </p>
       )}
-      {canRead && !query.data && !query.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {canRead && !query.data && !query.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
 
       {canRead && query.data && (
         <>
           {!monitored && (
             <p className="mb-3 text-xs text-[var(--px-warn)]">
-              This host is not being monitored. Nothing measures these checks until the Monitored capability is on — they are the set
-              that would apply.
+              {t.hosts.checks.notMonitored}
             </p>
           )}
           {skew && (
             <p className="mb-3 text-xs text-[var(--px-warn)]">
-              This host’s clock is about {skew} the manager’s. Readings carry the host’s own timestamps, so a stale badge below may be
-              the clock rather than a host that stopped reporting — check its time synchronisation.
+              {t.hosts.checks.clockSkew(skew)}
             </p>
           )}
-          {checks.length === 0 && <p className="text-xs text-muted-foreground">No checks resolve for this host yet.</p>}
+          {checks.length === 0 && <p className="text-xs text-muted-foreground">{t.hosts.checks.none}</p>}
           <ul className="flex flex-col gap-3">
             {checks.map((c) => (
               <li key={c.definition_id} className="rounded-md border border-border p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-mono text-[13px] text-foreground">{c.key}</h3>
                   <Tag>{c.plugin}</Tag>
-                  <Tag>{sourceLabel(c)}</Tag>
-                  <span className="text-[11px] text-muted-foreground">every {intervalLabel(c.interval_seconds)}</span>
-                  {!c.enabled && <Pill tone="unknown">disabled</Pill>}
+                  <Tag>{sourceLabel(c, t)}</Tag>
+                  <span className="text-[11px] text-muted-foreground">{t.hosts.checks.every(intervalLabel(c.interval_seconds))}</span>
+                  {!c.enabled && <Pill tone="unknown">{t.hosts.checks.disabled}</Pill>}
                 </div>
                 {monitored && (
                   <ul className="mt-2 flex flex-col gap-1.5">
@@ -144,7 +144,7 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                       />
                     ))}
                     {(c.values ?? []).length === 0 && (
-                      <li className="text-[11px] text-muted-foreground">No reading yet.</li>
+                      <li className="text-[11px] text-muted-foreground">{t.hosts.checks.noReading}</li>
                     )}
                   </ul>
                 )}

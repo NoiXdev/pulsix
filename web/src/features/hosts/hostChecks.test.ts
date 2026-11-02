@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { clockSkewLabel, decisionOriginLabel, formatNumber, isGraphable, metricLabel, sourceLabel, stateLabel, verdictLabel } from './hostChecks.ts';
+import * as checks from './hostChecks.ts';
+import { formatNumber, isGraphable, metricLabel } from './hostChecks.ts';
+import { en } from '../../i18n/en/index.ts';
 import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
+
+// The label helpers take the catalogue; these tests read English.
+const clockSkewLabel = (offset: number | undefined) => checks.clockSkewLabel(offset, en);
+const stateLabel = (state: HostCheckValue['state']) => checks.stateLabel(state, en);
+const verdictLabel = (state: HostCheckValue['state'], ignored: boolean) => checks.verdictLabel(state, ignored, en);
+const decisionOriginLabel = (d: ItemDecision) => checks.decisionOriginLabel(d, en);
+const sourceLabel = (c: HostCheck) => checks.sourceLabel(c, en);
 
 const value = (over: Partial<HostCheckValue> = {}): HostCheckValue => ({
   item: '',

@@ -1,6 +1,7 @@
 import { Select } from '../../ui/Select.tsx';
 import type { MonitoringGroup, Zone } from '../../api/types.ts';
 import type { FleetFilter } from '../../api/hooks/useFleet.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface FleetFiltersProps {
   zones: Zone[];
@@ -32,6 +33,7 @@ const FIELD =
  * at validation rules that belong to the server.
  */
 export function FleetFilters({ zones, groups, value, onChange, tagError }: FleetFiltersProps) {
+  const t = useT();
   return (
     <div className="flex flex-wrap items-center gap-2">
       {/* Each label is a sibling of its Select, not a wrapper around it, with
@@ -43,32 +45,32 @@ export function FleetFilters({ zones, groups, value, onChange, tagError }: Fleet
           isOpen unconditionally). A native <select> was interactive content,
           so this never showed up there. */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="fleet-filter-zone">Zone</label>
+        <label htmlFor="fleet-filter-zone">{t.fleet.filters.zone}</label>
         <Select
           id="fleet-filter-zone"
           options={zones.map((z) => ({ value: z.id, label: z.name }))}
           value={value.zone ?? ''}
           onChange={(v) => onChange({ ...value, zone: v || undefined })}
-          placeholder="All zones"
+          placeholder={t.fleet.filters.allZones}
         />
       </div>
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <label htmlFor="fleet-filter-group">Monitoring group</label>
+        <label htmlFor="fleet-filter-group">{t.fleet.filters.group}</label>
         <Select
           id="fleet-filter-group"
           options={groups.map((g) => ({ value: g.id, label: g.name }))}
           value={value.group ?? ''}
           onChange={(v) => onChange({ ...value, group: v || undefined })}
-          placeholder="All groups"
+          placeholder={t.fleet.filters.allGroups}
         />
       </div>
       <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Tag
+        {t.fleet.filters.tag}
         <input
-          aria-label="Tag"
+          aria-label={t.fleet.filters.tag}
           type="text"
           className={`${FIELD} w-40 font-mono`}
-          placeholder="key or key=value"
+          placeholder={t.fleet.filters.tagPlaceholder}
           value={value.tag ?? ''}
           onChange={(e) => onChange({ ...value, tag: e.target.value || undefined })}
         />

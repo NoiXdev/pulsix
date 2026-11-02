@@ -12,6 +12,7 @@ import { errorStatus } from '../../lib/apiError.ts';
 import { may } from '../../lib/roles.ts';
 import { seenLabel } from '../workers/expiry.ts';
 import type { FleetHost } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 import { fleetStateLabel } from './fleetHost.ts';
 import { FleetFilters } from './FleetFilters.tsx';
 
@@ -34,6 +35,7 @@ const COLUMNS = '90px minmax(0, 1fr) 120px 50px 50px 70px 90px';
  */
 export function FleetPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
@@ -43,7 +45,7 @@ export function FleetPage() {
   const groups = useMonitoringGroups(org, !!orgInfo.data && canRead);
   const fleet = useFleet(org, filter, !!orgInfo.data && canRead);
 
-  const header = <h1 className="text-xl font-semibold">Fleet</h1>;
+  const header = <h1 className="text-xl font-semibold">{t.fleet.title}</h1>;
 
   const orgGuard = useQueryGuard(orgInfo);
   // A 422 from an unsupported tag expression is not a page-level failure —
@@ -72,7 +74,7 @@ export function FleetPage() {
     return (
       <>
         {header}
-        <p className="text-sm text-muted-foreground">The fleet overview is visible to members of this organization.</p>
+        <p className="text-sm text-muted-foreground">{t.fleet.noAccess}</p>
       </>
     );
   }
@@ -103,7 +105,7 @@ export function FleetPage() {
   }
 
   const hosts = fleet.data?.hosts ?? [];
-  const t = fleet.data?.totals ?? { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 };
+  const totals = fleet.data?.totals ?? { crit: 0, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 };
   const zoneNameById = new Map((zones.data?.zones ?? []).map((z) => [z.id, z.name]));
 
   return (
@@ -111,33 +113,33 @@ export function FleetPage() {
       {header}
       {filters}
       <p className="text-[13px] text-muted-foreground">
-        Totals for this filtered view, not the whole organization: {t.crit} crit · {t.warn} warn · {t.unknown} unknown · {t.ok} ok ·{' '}
-        {t.no_data} no data · {t.all_ignored} all ignored
+        {t.fleet.totals(totals.crit, totals.warn, totals.unknown, totals.ok, totals.no_data, totals.all_ignored)}
       </p>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>State</span>
-          <span>Host</span>
-          <span>Zone</span>
-          <span>Crit</span>
-          <span>Warn</span>
-          <span>Unknown</span>
-          <span>Since</span>
+          <span>{t.fleet.columns.state}</span>
+          <span>{t.fleet.columns.host}</span>
+          <span>{t.fleet.columns.zone}</span>
+          <span>{t.fleet.columns.crit}</span>
+          <span>{t.fleet.columns.warn}</span>
+          <span>{t.fleet.columns.unknown}</span>
+          <span>{t.fleet.columns.since}</span>
         </GridHeader>
         {hosts.map((h) => (
           <FleetRow key={h.host_id} org={org} host={h} zoneName={zoneNameById.get(h.zone_id)} />
         ))}
-        {hosts.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No hosts match this view.</p>}
+        {hosts.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.fleet.empty}</p>}
       </Card>
     </>
   );
 }
 
 function FleetRow({ org, host, zoneName }: { org: string; host: FleetHost; zoneName: string | undefined }) {
-  const st = fleetStateLabel(host.state, host.all_ignored);
+  const t = useT();
+  const st = fleetStateLabel(host.state, host.all_ignored, t);
   return (
     <GridRow columns={COLUMNS}>
-      <span title={host.since ? `in this state since ${seenLabel(host.since, new Date())}` : undefined}>
+      <span title={host.since ? t.fleet.sinceTitle(seenLabel(host.since, new Date(), t)) : undefined}>
         <Pill tone={st.tone}>{st.label}</Pill>
       </span>
       <Link
@@ -151,7 +153,7 @@ function FleetRow({ org, host, zoneName }: { org: string; host: FleetHost; zoneN
       <span className="text-[13px]">{host.crit}</span>
       <span className="text-[13px]">{host.warn}</span>
       <span className="text-[13px]">{host.unknown}</span>
-      <span className="text-[13px] text-muted-foreground">{host.since ? seenLabel(host.since, new Date()) : '—'}</span>
+      <span className="text-[13px] text-muted-foreground">{host.since ? seenLabel(host.since, new Date(), t) : '—'}</span>
     </GridRow>
   );
 }

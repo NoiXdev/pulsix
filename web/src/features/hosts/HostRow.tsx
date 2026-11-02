@@ -6,14 +6,16 @@ import { CapabilityCell } from './capabilities.tsx';
 import { useHostTags } from '../../api/hooks/useTags.ts';
 import { useSetHostCapabilities } from '../../api/hooks/useHosts.ts';
 import type { Host } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
-function timeAgo(iso?: string | null): string {
+function timeAgo(iso: string | null | undefined, t: Messages): string {
   if (!iso) return '—';
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 60) return `${seconds} s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h`;
-  return `${Math.floor(seconds / 86400)} d`;
+  if (seconds < 60) return t.hosts.row.seconds(seconds);
+  if (seconds < 3600) return t.hosts.row.minutes(Math.floor(seconds / 60));
+  if (seconds < 86400) return t.hosts.row.hours(Math.floor(seconds / 3600));
+  return t.hosts.row.days(Math.floor(seconds / 86400));
 }
 
 export function HostRow({
@@ -36,8 +38,10 @@ export function HostRow({
    * monitoring backend at all. */
   agentStatus?: string;
 }) {
+  const t = useT();
   const tags = useHostTags(org, host.id);
   const setCapabilities = useSetHostCapabilities(org, host.id);
+  const agentStatusLabel = agentStatus && agentStatus in t.agents.status ? t.agents.status[agentStatus as keyof typeof t.agents.status] : (agentStatus ?? '');
 
   return (
     <GridRow columns={columns}>
@@ -48,7 +52,7 @@ export function HostRow({
       <span
         className="h-2 w-2 rounded-full"
         style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus ? 'var(--px-warn)' : 'var(--px-unknown)' }}
-        title={agentStatus ? `agent ${agentStatus}` : 'unknown'}
+        title={agentStatus ? t.hosts.row.agentTitle(agentStatusLabel) : t.hosts.row.unknown}
       />
       <Link
         to="/o/$org/hosts/$id"
@@ -59,9 +63,9 @@ export function HostRow({
       </Link>
       <span className="truncate font-mono text-xs text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>
       <div className="flex flex-wrap gap-1">
-        {(tags.data?.tags ?? []).map((t) => (
-          <Tag key={t.key}>
-            {t.key}={t.value}
+        {(tags.data?.tags ?? []).map((tag) => (
+          <Tag key={tag.key}>
+            {tag.key}={tag.value}
           </Tag>
         ))}
       </div>
@@ -75,7 +79,7 @@ export function HostRow({
         on={host.monitored}
         onChange={(patch) => setCapabilities.mutate(patch)}
       />
-      <span className="font-mono text-[11px] text-muted-foreground">{timeAgo(host.last_seen_at)}</span>
+      <span className="font-mono text-[11px] text-muted-foreground">{timeAgo(host.last_seen_at, t)}</span>
       <MoreHorizontal size={15} className="text-muted-foreground" />
     </GridRow>
   );

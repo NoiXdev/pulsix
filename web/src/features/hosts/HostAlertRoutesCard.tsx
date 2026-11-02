@@ -7,6 +7,8 @@ import { useOncallRotations } from '../../api/hooks/useOncall.ts';
 import { ReachesNobody, RouteEscalation, RouteFiresOn } from '../notifications/AlertRouteCells.tsx';
 import { routeReachesNobody } from '../notifications/alertRoute.ts';
 import type { AlertRoute, MonitoringGroup } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface HostAlertRoutesCardProps {
   org: string;
@@ -64,6 +66,7 @@ export interface HostAlertRoutesCardProps {
  * already gives an empty route list.
  */
 export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCardProps) {
+  const t = useT();
   const routes = useHostAlertRoutes(org, hostId, canRead);
   const groups = useMonitoringGroups(org, canRead);
   const groupList = groups.data?.groups ?? [];
@@ -82,29 +85,29 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">Alert routes</h2>
+        <h2 className="text-[13px] font-semibold">{t.hosts.alertRoutes.title}</h2>
         {canRead && (
           <Link to="/o/$org/settings/alert-routes" params={{ org }} className="text-xs text-muted-foreground hover:text-primary">
-            Alert routes
+            {t.hosts.alertRoutes.link}
           </Link>
         )}
       </div>
 
-      {!canRead && <p className="text-xs text-muted-foreground">Alert routes are visible to members of this organization.</p>}
+      {!canRead && <p className="text-xs text-muted-foreground">{t.hosts.alertRoutes.noAccess}</p>}
       {canRead && routes.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {routes.error instanceof Error ? routes.error.message : 'Could not read this host’s alert routes.'}
+          {routes.error instanceof Error ? routes.error.message : t.hosts.alertRoutes.readFailed}
         </p>
       )}
-      {canRead && !routes.data && !routes.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {canRead && !routes.data && !routes.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
       {canRead && routes.data && list.length === 0 && (
-        <p className="text-xs text-muted-foreground">No route covers this host — its alerts reach nobody.</p>
+        <p className="text-xs text-muted-foreground">{t.hosts.alertRoutes.none}</p>
       )}
       {canRead && routes.data && list.length > 0 && (
         <>
           {escalatingCount > 1 && (
             <p className="mb-2 text-xs text-[var(--px-warn)]">
-              {escalatingCount} routes below escalate independently — acknowledging one route's chain does not stop another's.
+              {t.hosts.alertRoutes.escalating(escalatingCount)}
             </p>
           )}
           <ul className="flex flex-col gap-2">
@@ -118,7 +121,7 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
                   >
                     {r.name}
                   </Link>
-                  <Pill tone="accent">{scopeLabel(r, groupList)}</Pill>
+                  <Pill tone="accent">{scopeLabel(r, groupList, t)}</Pill>
                 </div>
                 <RouteFiresOn route={r} />
                 <RouteEscalation route={r} />
@@ -137,11 +140,11 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
  * raw id — except "This host" rather than a group lookup when the route
  * targets hostId itself (scope "host" on this host-filtered view can only
  * ever mean this host; ForHost never returns another host's route). */
-function scopeLabel(r: AlertRoute, groups: MonitoringGroup[]): string {
-  if (r.scope === 'host') return 'This host';
+function scopeLabel(r: AlertRoute, groups: MonitoringGroup[], t: Messages): string {
+  if (r.scope === 'host') return t.hosts.scope.thisHost;
   if (r.scope === 'monitoring_group') {
     const group = groups.find((g) => g.id === r.scope_id);
-    return group ? group.name : `group ${(r.scope_id ?? '').slice(0, 8)}`;
+    return group ? group.name : t.hosts.scope.groupFallback((r.scope_id ?? '').slice(0, 8));
   }
-  return 'Organization';
+  return t.hosts.scope.organization;
 }

@@ -8,6 +8,7 @@ import { Select } from '../../ui/Select.tsx';
 import { useZones } from '../../api/hooks/useHosts.ts';
 import { useCreateAgentToken } from '../../api/hooks/useAgents.ts';
 import { ZoneDialog } from '../hosts/ZoneDialog.tsx';
+import { useT } from '../../i18n/useT.ts';
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
@@ -21,6 +22,7 @@ interface Created {
  * (a fleet rollout) and expires on its own; the host it creates lands in
  * the chosen zone, named by the hint or by the agent itself. */
 export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => void }) {
+  const t = useT();
   const zones = useZones(org);
   const create = useCreateAgentToken(org);
   const [zoneId, setZoneId] = useState('');
@@ -37,7 +39,7 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
     e.preventDefault();
     setError(null);
     if (nameHint && !NAME_RE.test(nameHint)) {
-      setError('Use lowercase letters, digits and hyphens, starting with a letter or digit.');
+      setError(t.agents.dialog.nameRule);
       return;
     }
     try {
@@ -49,36 +51,34 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
       });
       setCreated({ token: res.token, command: res.install_command });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Creating the token failed');
+      setError(err instanceof Error ? err.message : t.agents.dialog.createFailed);
     }
   }
 
   if (created) {
     return (
-      <Dialog open onClose={onClose} title="Enrol an agent" size="wide">
+      <Dialog open onClose={onClose} title={t.agents.dialog.title} size="wide">
         <div className="flex flex-col gap-4">
           <p className="text-xs text-muted-foreground">
-            Run this on the host as root and paste the token below when the installer asks for it — it stays off the command line, where other users
-            of the host could read it. The agent downloads itself from this manager, enrols with the token and appears here. The token is shown only now
-            — it admits {maxUses === 1 ? 'one agent' : `${maxUses} agents`} and expires in {minutes} minutes.
+            {t.agents.dialog.instructions(t.agents.dialog.agentCount(maxUses), minutes)}
           </p>
-          <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px]" aria-label="Install command">
+          <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px]" aria-label={t.agents.dialog.installCommand}>
             {created.command}
           </pre>
           <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs" aria-label="Enrollment token">
+            <code className="flex-1 truncate rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs" aria-label={t.agents.dialog.tokenLabel}>
               {created.token}
             </code>
-            <Button type="button" variant="ghost" aria-label="Copy token" onClick={() => void navigator.clipboard.writeText(created.token)}>
+            <Button type="button" variant="ghost" aria-label={t.agents.dialog.copyToken} onClick={() => void navigator.clipboard.writeText(created.token)}>
               <Copy size={13} />
             </Button>
           </div>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" aria-label="Copy command" onClick={() => void navigator.clipboard.writeText(created.command)}>
-              <Copy size={13} /> Copy
+            <Button type="button" variant="ghost" aria-label={t.agents.dialog.copyCommand} onClick={() => void navigator.clipboard.writeText(created.command)}>
+              <Copy size={13} /> {t.agents.dialog.copy}
             </Button>
             <Button type="button" variant="primary" onClick={onClose}>
-              Done
+              {t.agents.dialog.done}
             </Button>
           </div>
         </div>
@@ -87,35 +87,35 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
   }
 
   return (
-    <Dialog open onClose={onClose} title="Enrol an agent">
+    <Dialog open onClose={onClose} title={t.agents.dialog.title}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <Label htmlFor="agent-zone">Zone</Label>
+        <Label htmlFor="agent-zone">{t.agents.dialog.zone}</Label>
         <Select
           id="agent-zone"
           options={zoneList.map((z) => ({ value: z.id, label: `${z.name} (${z.slug})` }))}
           value={zone}
           onChange={setZoneId}
-          create={{ label: 'New zone…', onSelect: setZoneDialogName }}
+          create={{ label: t.agents.dialog.newZone, onSelect: setZoneDialogName }}
         />
-        <Label htmlFor="agent-name">Host name (optional)</Label>
+        <Label htmlFor="agent-name">{t.agents.dialog.hostName}</Label>
         <Input
           id="agent-name"
           className="font-mono"
           value={nameHint}
           onChange={(e) => setNameHint(e.target.value)}
-          placeholder="the agent's own host name"
+          placeholder={t.agents.dialog.hostNamePlaceholder}
         />
-        <Label htmlFor="agent-uses">Agents this token may enrol</Label>
+        <Label htmlFor="agent-uses">{t.agents.dialog.maxUses}</Label>
         <Input id="agent-uses" type="number" min={1} max={100} value={maxUses} onChange={(e) => setMaxUses(Number(e.target.value))} />
-        <Label htmlFor="agent-minutes">Valid for (minutes)</Label>
+        <Label htmlFor="agent-minutes">{t.agents.dialog.validFor}</Label>
         <Input id="agent-minutes" type="number" min={1} max={10080} value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} />
         {error && <p className="text-xs text-[var(--px-crit)]">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending || !zone}>
-            Create token
+            {t.agents.dialog.createToken}
           </Button>
         </div>
       </form>

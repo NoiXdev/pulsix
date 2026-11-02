@@ -7,6 +7,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { WorkersPage } from './WorkersPage.tsx';
 import { expiryLabel, seenLabel } from './expiry.ts';
+import { en } from '../../i18n/en/index.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -252,14 +253,14 @@ describe('WorkersPage', () => {
 describe('expiry labels', () => {
   const now = new Date('2026-09-18T10:00:00Z');
   it('renders expiry and last-seen ages', () => {
-    expect(expiryLabel('2026-10-29T10:00:00Z', now)).toBe('in 41 d');
-    expect(expiryLabel('2026-09-17T10:00:00Z', now)).toBe('expired');
-    expect(expiryLabel('2026-09-18T20:00:00Z', now)).toBe('today');
-    expect(expiryLabel(null, now)).toBe('—');
-    expect(seenLabel('2026-09-18T09:55:00Z', now)).toBe('5 min ago');
-    expect(seenLabel('2026-09-18T09:59:50Z', now)).toBe('just now');
-    expect(seenLabel('2026-09-18T07:00:00Z', now)).toBe('3 h ago');
-    expect(seenLabel('2026-09-15T10:00:00Z', now)).toBe('3 d ago');
-    expect(seenLabel(undefined, now)).toBe('never');
+    expect(expiryLabel('2026-10-29T10:00:00Z', now, en)).toBe('in 41 d');
+    expect(expiryLabel('2026-09-17T10:00:00Z', now, en)).toBe('expired');
+    expect(expiryLabel('2026-09-18T20:00:00Z', now, en)).toBe('today');
+    expect(expiryLabel(null, now, en)).toBe('—');
+    expect(seenLabel('2026-09-18T09:55:00Z', now, en)).toBe('5 min ago');
+    expect(seenLabel('2026-09-18T09:59:50Z', now, en)).toBe('just now');
+    expect(seenLabel('2026-09-18T07:00:00Z', now, en)).toBe('3 h ago');
+    expect(seenLabel('2026-09-15T10:00:00Z', now, en)).toBe('3 d ago');
+    expect(seenLabel(undefined, now, en)).toBe('never');
   });
 });

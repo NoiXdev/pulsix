@@ -9,6 +9,8 @@
  * round trip to PUT …/hosts/{id}/tags ever happens): letters, digits,
  * underscore, dot and hyphen, starting with a letter or digit.
  */
+import type { Messages } from '../../i18n/types.ts';
+
 const TAG_KEY_PATTERN = /^[a-z0-9][a-z0-9_.-]*$/;
 
 export interface ParsedTag {
@@ -21,27 +23,27 @@ export type ParseTagResult = { ok: true; tag: ParsedTag } | { ok: false; error: 
 /** parseTagChip turns raw chip input like "role=db" into {key, value},
  * rejecting anything that is not exactly one `key=value` pair with a
  * lowercase key. */
-export function parseTagChip(input: string): ParseTagResult {
+export function parseTagChip(input: string, t: Messages): ParseTagResult {
   const trimmed = input.trim();
   if (trimmed === '') {
-    return { ok: false, error: 'enter a tag as key=value' };
+    return { ok: false, error: t.hosts.tag.enter };
   }
 
   const eq = trimmed.indexOf('=');
   if (eq === -1) {
-    return { ok: false, error: 'expected key=value' };
+    return { ok: false, error: t.hosts.tag.format };
   }
 
   const key = trimmed.slice(0, eq).trim();
   const value = trimmed.slice(eq + 1).trim();
 
   if (key === '') {
-    return { ok: false, error: 'expected key=value' };
+    return { ok: false, error: t.hosts.tag.format };
   }
   if (!TAG_KEY_PATTERN.test(key)) {
     return {
       ok: false,
-      error: `"${key}" is not a valid tag key — lowercase letters, digits, "_", "." and "-" only`,
+      error: t.hosts.tag.invalidKey(key),
     };
   }
 

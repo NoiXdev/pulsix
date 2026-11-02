@@ -6,6 +6,7 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useBootstrapHost } from '../../api/hooks/useHostOps.ts';
+import { useT } from '../../i18n/useT.ts';
 
 
 /**
@@ -17,6 +18,7 @@ import { useBootstrapHost } from '../../api/hooks/useHostOps.ts';
  * the bootstrap job's run view.
  */
 export function BootstrapDialog({ org, hostId, hostName, onClose }: { org: string; hostId: string; hostName: string; onClose: () => void }) {
+  const t = useT();
   const toast = useToast();
   const bootstrap = useBootstrapHost(org, hostId);
   const navigate = useNavigate();
@@ -31,7 +33,7 @@ export function BootstrapDialog({ org, hostId, hostName, onClose }: { org: strin
     setError(null);
     const secret = mode === 'password' ? password : privateKey;
     if (secret.trim() === '') {
-      setError('exactly one of password and private key is required');
+      setError(t.hosts.bootstrap.secretRequired);
       return;
     }
     try {
@@ -40,33 +42,33 @@ export function BootstrapDialog({ org, hostId, hostName, onClose }: { org: strin
         password: mode === 'password' ? password : undefined,
         private_key: mode === 'private_key' ? privateKey : undefined,
       });
-      toast.show('Bootstrap started');
+      toast.show(t.hosts.bootstrap.started);
       await navigate({ to: '/o/$org/runs/$id', params: { org, id: job_id } });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Starting the bootstrap failed');
+      setError(err instanceof Error ? err.message : t.hosts.bootstrap.failed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} title={`Bootstrap ${hostName}`}>
+    <Dialog open onClose={onClose} title={t.hosts.bootstrap.title(hostName)}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <p className="text-xs text-muted-foreground">
-          Installs the public key of this host's ssh_key credential with a login you provide here. The login is{' '}
-          <span className="font-semibold text-foreground">used once and never stored</span> — not in the audit trail, not in any log.
+          {t.hosts.bootstrap.introBefore}{' '}
+          <span className="font-semibold text-foreground">{t.hosts.bootstrap.introStrong}</span> {t.hosts.bootstrap.introAfter}
         </p>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="bootstrap-user">Login user</Label>
-          <Input id="bootstrap-user" className="font-mono" value={user} onChange={(e) => setUser(e.target.value)} placeholder="root" autoFocus />
+          <Label htmlFor="bootstrap-user">{t.hosts.bootstrap.loginUser}</Label>
+          <Input id="bootstrap-user" className="font-mono" value={user} onChange={(e) => setUser(e.target.value)} placeholder={t.hosts.bootstrap.loginPlaceholder} autoFocus />
         </div>
         <fieldset className="flex flex-col gap-1">
-          <legend className="text-[11px] font-medium text-muted-foreground">One-time login</legend>
+          <legend className="text-[11px] font-medium text-muted-foreground">{t.hosts.bootstrap.oneTimeLogin}</legend>
           <label className="flex items-center gap-2 text-xs">
             <input type="radio" name="bootstrap-mode" checked={mode === 'password'} onChange={() => setMode('password')} />
-            Password
+            {t.hosts.bootstrap.password}
           </label>
           <label className="flex items-center gap-2 text-xs">
             <input type="radio" name="bootstrap-mode" checked={mode === 'private_key'} onChange={() => setMode('private_key')} />
-            Private key
+            {t.hosts.bootstrap.privateKey}
           </label>
           {mode === 'password' ? (
             <Input
@@ -76,12 +78,12 @@ export function BootstrapDialog({ org, hostId, hostName, onClose }: { org: strin
               className="font-mono"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              aria-label="One-time password"
+              aria-label={t.hosts.bootstrap.oneTimePassword}
             />
           ) : (
             <textarea
               id="bootstrap-private-key"
-              aria-label="One-time private key"
+              aria-label={t.hosts.bootstrap.oneTimePrivateKey}
               rows={4}
               spellCheck={false}
               className="rounded-md border border-border bg-background p-2 font-mono text-[11px]"
@@ -91,7 +93,7 @@ export function BootstrapDialog({ org, hostId, hostName, onClose }: { org: strin
             />
           )}
           <span className="text-[11px] text-muted-foreground">
-            {mode === 'private_key' ? 'The key is used for this single bootstrap run only.' : 'The password is used for this single bootstrap run only.'}
+            {mode === 'private_key' ? t.hosts.bootstrap.keyNote : t.hosts.bootstrap.passwordNote}
           </span>
         </fieldset>
         {error && (
@@ -101,10 +103,10 @@ export function BootstrapDialog({ org, hostId, hostName, onClose }: { org: strin
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={bootstrap.isPending || user.trim() === ''}>
-            Bootstrap host
+            {t.hosts.bootstrap.submit}
           </Button>
         </div>
       </form>

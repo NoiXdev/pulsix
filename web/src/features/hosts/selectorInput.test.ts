@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { parseTagChip } from './selectorInput.ts';
+import { parseTagChip as parse } from './selectorInput.ts';
+import { en } from '../../i18n/en/index.ts';
+
+const parseTagChip = (input: string) => parse(input, en);
 
 describe('parseTagChip', () => {
   it('turns "role=db" into {key: "role", value: "db"}', () => {

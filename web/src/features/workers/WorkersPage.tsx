@@ -10,6 +10,8 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useDeleteWorker, useRevokeWorker, useWithdrawWorkerEnrollment, useWorkerEnrollments, useWorkers } from '../../api/hooks/useWorkers.ts';
 import { may } from '../../lib/roles.ts';
+import { useFormat } from '../../i18n/format.ts';
+import { useT } from '../../i18n/useT.ts';
 import type { Worker, WorkerEnrollment } from '../../api/types.ts';
 import { AddWorkerDialog } from './AddWorkerDialog.tsx';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from './expiry.ts';
@@ -27,6 +29,8 @@ const STATUS_TONE: Record<string, Tone> = { online: 'ok', offline: 'warn', revok
  * the pending enrollment tokens. Owners and admins add, revoke and delete. */
 export function WorkersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
+  const fmt = useFormat();
   const toast = useToast();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
@@ -43,30 +47,31 @@ export function WorkersPage() {
   if (orgGuard) return orgGuard;
   if (!orgInfo.data) return <QueryLoading />;
   if (!canRead) {
-    return <p className="text-sm text-muted-foreground">Workers are managed by the organization's owners and admins.</p>;
+    return <p className="text-sm text-muted-foreground">{t.workers.noAccess}</p>;
   }
   if (!list.data) return <QueryLoading />;
   const workers = list.data.workers ?? [];
   const enrollments = pending.data?.enrollments ?? [];
   const now = new Date();
   const columns = canWrite ? COLUMNS_WITH_ACTIONS : COLUMNS_BASE;
+  const statusLabel = (status: string) => (status in t.workers.status ? t.workers.status[status as keyof typeof t.workers.status] : status);
 
   async function onRevoke(w: Worker) {
-    if (!confirm(`Revoke worker ${w.name}? It is cut off at once; its running jobs go back to the queue.`)) return;
+    if (!confirm(t.workers.revokeConfirm(w.name))) return;
     try {
       await revoke.mutateAsync(w.id);
-      toast.show(`Worker ${w.name} revoked`);
+      toast.show(t.workers.revoked(w.name));
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Revoking failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.workers.revokeFailed, 'destructive');
     }
   }
 
   async function onDelete(w: Worker) {
-    if (!confirm(`Delete worker ${w.name}? Its history stays in the activity log.`)) return;
+    if (!confirm(t.workers.deleteConfirm(w.name))) return;
     try {
       await remove.mutateAsync(w.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.workers.deleteFailed, 'destructive');
     }
   }
 
@@ -74,7 +79,7 @@ export function WorkersPage() {
     try {
       await withdraw.mutateAsync(e.id);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Withdrawing failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.workers.withdrawFailed, 'destructive');
     }
   }
 
@@ -82,27 +87,27 @@ export function WorkersPage() {
     <>
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">Workers</h1>
+          <h1 className="text-xl font-semibold">{t.workers.title}</h1>
           <span className="text-[13px] text-muted-foreground">
-            {workers.filter((w) => w.status === 'online').length} of {workers.length} online · workers run the jobs of their zone
+            {t.workers.summary(workers.filter((w) => w.status === 'online').length, workers.length)}
           </span>
         </div>
         {canWrite && (
           <Button variant="primary" onClick={() => setAdding(true)}>
-            <Cpu size={15} /> Add worker
+            <Cpu size={15} /> {t.workers.add}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={columns}>
-          <span>Worker</span>
-          <span>Zone</span>
-          <span>Status</span>
-          <span>Last seen</span>
-          <span>Version</span>
-          <span>Certificate</span>
-          <span>Current job</span>
-          {canWrite && <span>Actions</span>}
+          <span>{t.workers.columns.worker}</span>
+          <span>{t.workers.columns.zone}</span>
+          <span>{t.workers.columns.status}</span>
+          <span>{t.workers.columns.lastSeen}</span>
+          <span>{t.workers.columns.version}</span>
+          <span>{t.workers.columns.certificate}</span>
+          <span>{t.workers.columns.currentJob}</span>
+          {canWrite && <span>{t.workers.columns.actions}</span>}
         </GridHeader>
         {workers.map((w) => {
           const expiring = !!w.cert_expires_at && daysLeft(w.cert_expires_at, now) < EXPIRY_WARN_DAYS;
@@ -113,12 +118,12 @@ export function WorkersPage() {
               </span>
               <span className="truncate font-mono text-xs">{w.zone_slug}</span>
               <span>
-                <Pill tone={STATUS_TONE[w.status] ?? 'unknown'}>{w.status}</Pill>
+                <Pill tone={STATUS_TONE[w.status] ?? 'unknown'}>{statusLabel(w.status)}</Pill>
               </span>
-              <span className={`text-xs ${w.status === 'offline' ? 'text-[var(--px-warn)]' : 'text-muted-foreground'}`}>{seenLabel(w.last_seen, now)}</span>
+              <span className={`text-xs ${w.status === 'offline' ? 'text-[var(--px-warn)]' : 'text-muted-foreground'}`}>{seenLabel(w.last_seen, now, t)}</span>
               <span className="truncate font-mono text-xs">{w.version || '—'}</span>
               <span className={`text-xs ${expiring ? 'font-semibold text-[var(--px-warn)]' : 'text-muted-foreground'}`} data-expiring={expiring || undefined}>
-                {w.status === 'revoked' ? '—' : expiryLabel(w.cert_expires_at, now)}
+                {w.status === 'revoked' ? '—' : expiryLabel(w.cert_expires_at, now, t)}
               </span>
               <span className="truncate text-xs">
                 {w.current_job_id ? (
@@ -132,12 +137,12 @@ export function WorkersPage() {
               {canWrite && (
                 <span className="flex gap-1">
                   {w.status !== 'revoked' ? (
-                    <Button type="button" variant="destructive" aria-label={`Revoke ${w.name}`} onClick={() => void onRevoke(w)}>
-                      Revoke
+                    <Button type="button" variant="destructive" aria-label={t.workers.revokeLabel(w.name)} onClick={() => void onRevoke(w)}>
+                      {t.workers.revoke}
                     </Button>
                   ) : (
-                    <Button type="button" variant="ghost" aria-label={`Delete ${w.name}`} onClick={() => void onDelete(w)}>
-                      Delete
+                    <Button type="button" variant="ghost" aria-label={t.workers.deleteLabel(w.name)} onClick={() => void onDelete(w)}>
+                      {t.workers.delete}
                     </Button>
                   )}
                 </span>
@@ -145,22 +150,22 @@ export function WorkersPage() {
             </GridRow>
           );
         })}
-        {workers.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No workers yet.</p>}
+        {workers.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.workers.empty}</p>}
       </Card>
       {enrollments.length > 0 && (
         <Card>
           <GridHeader columns="minmax(0, 1fr) 160px 110px">
-            <span>Pending enrollment</span>
-            <span>Expires</span>
+            <span>{t.workers.columns.pendingEnrollment}</span>
+            <span>{t.workers.columns.expires}</span>
             <span />
           </GridHeader>
           {enrollments.map((e) => (
             <GridRow key={e.id} columns="minmax(0, 1fr) 160px 110px">
               <span className="font-mono text-[13px]">{e.name}</span>
-              <span className="text-xs text-muted-foreground">{new Date(e.expires_at).toLocaleTimeString()}</span>
+              <span className="text-xs text-muted-foreground">{fmt.time(e.expires_at)}</span>
               {canWrite ? (
-                <Button type="button" variant="ghost" aria-label={`Withdraw ${e.name}`} onClick={() => void onWithdraw(e)}>
-                  Withdraw
+                <Button type="button" variant="ghost" aria-label={t.workers.withdrawLabel(e.name)} onClick={() => void onWithdraw(e)}>
+                  {t.workers.withdraw}
                 </Button>
               ) : (
                 <span />

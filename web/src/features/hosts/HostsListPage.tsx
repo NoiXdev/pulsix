@@ -16,6 +16,7 @@ import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { schemas, type HostFormValues } from '../../lib/schemas.ts';
 import { useT } from '../../i18n/useT.ts';
+import type { Messages } from '../../i18n/types.ts';
 import { useAgents } from '../../api/hooks/useAgents.ts';
 import { HostRow } from './HostRow.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
@@ -30,6 +31,7 @@ export function HostsListPage() {
   // with a new search value does not remount the component.
   const routeSearch = useSearch({ strict: false }) as { q?: string };
   const toast = useToast();
+  const t = useT();
 
   const [filter, setFilter] = useState<HostListFilter>({ q: routeSearch.q ?? '' });
   // Adjust local state during render rather than in an effect (React's own
@@ -57,7 +59,6 @@ export function HostsListPage() {
   const createHost = useCreateHost(org);
   const hostQuery = useHostQuery(org);
 
-  const t = useT();
   const { hostFormSchema } = useMemo(() => schemas(t), [t]);
   const hostForm = useForm<HostFormValues>({
     resolver: zodResolver(hostFormSchema),
@@ -95,17 +96,17 @@ export function HostsListPage() {
     <>
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-0.5">
-          <h1 className="text-xl font-semibold">Hosts</h1>
+          <h1 className="text-xl font-semibold">{t.hosts.list.title}</h1>
           <span className="text-[13px] text-muted-foreground">
-            {hosts.data ? hostCountLabel(listedHosts.length, hosts.hasNextPage) : 'Loading…'}
+            {hosts.data ? hostCountLabel(listedHosts.length, hosts.hasNextPage, t) : t.common.loading}
           </span>
         </div>
         <div className="flex gap-2">
           <Button onClick={() => setZoneDialog({ from: 'button' })}>
-            <Globe size={15} /> Add zone
+            <Globe size={15} /> {t.hosts.list.addZone}
           </Button>
           <Button variant="primary" onClick={() => setAddOpen(true)}>
-            <Server size={15} /> Add host
+            <Server size={15} /> {t.hosts.list.addHost}
           </Button>
         </div>
       </div>
@@ -114,7 +115,7 @@ export function HostsListPage() {
         <div className="flex h-[30px] items-center gap-2 rounded-md border border-border bg-card px-2.5 text-xs text-muted-foreground">
           <Search size={13} />
           <input
-            placeholder="Filter hosts…"
+            placeholder={t.hosts.list.filterPlaceholder}
             value={filter.q ?? ''}
             onChange={(e) => setFilter((f) => ({ ...f, q: e.target.value }))}
             className="w-40 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
@@ -126,30 +127,30 @@ export function HostsListPage() {
             fleet page's own. A plain filter never offers to create —
             narrowing a view is not building one (v0.4g Move 3). */}
         <Select
-          aria-label="Filter by zone"
+          aria-label={t.hosts.list.filterByZone}
           options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
           value={filter.zone ?? ''}
           onChange={(value) => setFilter((f) => ({ ...f, zone: value || undefined }))}
-          placeholder="All zones"
+          placeholder={t.hosts.list.allZones}
         />
         <FilterChip
-          label="Managed"
+          label={t.hosts.capability.managed}
           on={filter.managed === true}
           onClick={() => setFilter((f) => ({ ...f, managed: f.managed === true ? undefined : true }))}
         />
         <FilterChip
-          label="Monitored"
+          label={t.hosts.capability.monitored}
           on={filter.monitored === true}
           onClick={() => setFilter((f) => ({ ...f, monitored: f.monitored === true ? undefined : true }))}
         />
         <form onSubmit={runSelector} className="flex items-center gap-2">
           <input
-            placeholder="selector, e.g. role = db"
+            placeholder={t.hosts.list.selectorPlaceholder}
             value={selectorText}
             onChange={(e) => setSelectorText(e.target.value)}
             className="h-[30px] w-56 rounded-md border border-border bg-card px-2.5 font-mono text-xs text-foreground outline-none placeholder:text-muted-foreground"
           />
-          <Button type="submit">Run</Button>
+          <Button type="submit">{t.hosts.list.run}</Button>
           {selectorActive && (
             <button
               type="button"
@@ -159,7 +160,7 @@ export function HostsListPage() {
                 setSelectorText('');
               }}
             >
-              clear
+              {t.hosts.list.clear}
             </button>
           )}
         </form>
@@ -169,18 +170,18 @@ export function HostsListPage() {
       <Card>
         <GridHeader columns={HOSTS_COLUMNS}>
           <span />
-          <span>Host</span>
-          <span>Zone</span>
-          <span>Tags</span>
-          <span>Managed · Ansible</span>
-          <span>Monitored</span>
-          <span>Seen</span>
+          <span>{t.hosts.list.columns.host}</span>
+          <span>{t.hosts.list.columns.zone}</span>
+          <span>{t.hosts.list.columns.tags}</span>
+          <span>{t.hosts.list.columns.managed}</span>
+          <span>{t.hosts.list.columns.monitored}</span>
+          <span>{t.hosts.list.columns.seen}</span>
           <span />
         </GridHeader>
         {displayedHosts.length === 0 && (
           <GridRow columns="1fr">
             <span className="text-xs text-muted-foreground">
-              {hosts.isLoading ? 'Loading hosts…' : 'No hosts yet. Add one to get started.'}
+              {hosts.isLoading ? t.hosts.list.loadingHosts : t.hosts.list.empty}
             </span>
           </GridRow>
         )}
@@ -208,29 +209,29 @@ export function HostsListPage() {
         />
       )}
 
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title="Add host">
+      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={t.hosts.list.dialog.title}>
         <form
           className="flex flex-col gap-4"
           onSubmit={hostForm.handleSubmit(async (values) => {
             try {
               await createHost.mutateAsync(values);
-              toast.show(`Host ${values.name} created`);
+              toast.show(t.hosts.list.dialog.created(values.name));
               setAddOpen(false);
               hostForm.reset();
             } catch (err) {
-              toast.show(err instanceof Error ? err.message : 'failed to create host', 'destructive');
+              toast.show(err instanceof Error ? err.message : t.hosts.list.dialog.createFailed, 'destructive');
             }
           })}
         >
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="host_name">Name</Label>
-            <Input id="host_name" {...hostForm.register('name')} placeholder="web-04.fra" />
+            <Label htmlFor="host_name">{t.hosts.list.dialog.name}</Label>
+            <Input id="host_name" {...hostForm.register('name')} placeholder={t.hosts.list.dialog.namePlaceholder} />
             {hostForm.formState.errors.name && (
               <span className="text-[11px] text-destructive">{hostForm.formState.errors.name.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="host_zone">Zone</Label>
+            <Label htmlFor="host_zone">{t.hosts.list.dialog.zone}</Label>
             <Controller
               control={hostForm.control}
               name="zone_id"
@@ -240,8 +241,8 @@ export function HostsListPage() {
                   options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
                   value={field.value}
                   onChange={field.onChange}
-                  placeholder="Select a zone…"
-                  create={{ label: 'New zone…', onSelect: (text) => setZoneDialog({ from: 'picker', name: text }) }}
+                  placeholder={t.hosts.list.dialog.selectZone}
+                  create={{ label: t.hosts.list.dialog.newZone, onSelect: (text) => setZoneDialog({ from: 'picker', name: text }) }}
                 />
               )}
             />
@@ -250,21 +251,21 @@ export function HostsListPage() {
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="host_address">Address</Label>
-            <Input id="host_address" {...hostForm.register('address')} placeholder="203.0.113.4 or hostname" />
+            <Label htmlFor="host_address">{t.hosts.list.dialog.address}</Label>
+            <Input id="host_address" {...hostForm.register('address')} placeholder={t.hosts.list.dialog.addressPlaceholder} />
           </div>
           <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" {...hostForm.register('managed')} /> Managed (Ansible via SSH)
+            <input type="checkbox" {...hostForm.register('managed')} /> {t.hosts.capability.managedLong}
           </label>
           <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" {...hostForm.register('monitored')} /> Monitored
+            <input type="checkbox" {...hostForm.register('monitored')} /> {t.hosts.capability.monitored}
           </label>
           <div className="flex justify-end gap-2">
             <Button type="button" onClick={() => setAddOpen(false)}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button type="submit" variant="primary" disabled={createHost.isPending}>
-              Create host
+              {t.hosts.list.dialog.create}
             </Button>
           </div>
         </form>
@@ -276,9 +277,9 @@ export function HostsListPage() {
 /** hostCountLabel never presents a partial list as the total: while more
  * pages exist it says how many are loaded so far, next to the Load more
  * control; only a fully loaded list states a plain count. */
-function hostCountLabel(loaded: number, more: boolean): string {
-  if (more) return `${loaded} hosts loaded, more available`;
-  return `${loaded} ${loaded === 1 ? 'host' : 'hosts'}`;
+function hostCountLabel(loaded: number, more: boolean, t: Messages): string {
+  if (more) return t.hosts.list.loadedMore(loaded);
+  return t.hosts.list.count(loaded);
 }
 
 function FilterChip({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {

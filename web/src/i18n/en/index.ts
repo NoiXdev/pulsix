@@ -1,7 +1,10 @@
 import { enAccount } from './account.ts';
 import { enActivity } from './activity.ts';
+import { enAgents } from './agents.ts';
 import { enAuth } from './auth.ts';
 import { enCommon } from './common.ts';
+import { enFleet } from './fleet.ts';
+import { enHosts } from './hosts.ts';
 import { enInstance } from './instance.ts';
 import { enLanguage } from './language.ts';
 import { enMembers } from './members.ts';
@@ -12,6 +15,7 @@ import { enShell } from './shell.ts';
 import { enTokens } from './tokens.ts';
 import { enUi } from './ui.ts';
 import { enValidation } from './validation.ts';
+import { enWorkers } from './workers.ts';
 
 /**
  * The English catalogue — the source of truth for every key. It is
@@ -27,8 +31,11 @@ import { enValidation } from './validation.ts';
 export const en = {
   account: enAccount,
   activity: enActivity,
+  agents: enAgents,
   auth: enAuth,
   common: enCommon,
+  fleet: enFleet,
+  hosts: enHosts,
   instance: enInstance,
   language: enLanguage,
   members: enMembers,
@@ -39,4 +46,5 @@ export const en = {
   tokens: enTokens,
   ui: enUi,
   validation: enValidation,
+  workers: enWorkers,
 };

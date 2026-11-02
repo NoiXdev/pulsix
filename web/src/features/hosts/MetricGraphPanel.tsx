@@ -10,14 +10,11 @@ import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
 import { useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { importMetricChart } from './metricChartImport.ts';
 import type { MetricRange } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const MetricChart = lazy(() => importMetricChart().then((m) => ({ default: m.MetricChart })));
 
-const RANGES: [MetricRange, string][] = [
-  ['1h', '1 h'],
-  ['24h', '24 h'],
-  ['7d', '7 d'],
-];
+const RANGES: MetricRange[] = ['1h', '24h', '7d'];
 
 /** The chart's own height, shared with the Suspense fallback so a cold
  * open does not shift the panel and everything under it by ~164 px while
@@ -37,12 +34,13 @@ export function MetricGraphPanel({
   selection: MetricSelection;
   onRange: (selection: MetricSelection) => void;
 }) {
+  const t = useT();
   const series = useHostMetric(org, hostId, selection);
 
   return (
     <div className="rounded-md border border-border p-2">
       <div className="mb-2 flex items-center gap-1">
-        {RANGES.map(([value, text]) => (
+        {RANGES.map((value) => (
           <Button
             key={value}
             type="button"
@@ -50,16 +48,16 @@ export function MetricGraphPanel({
             aria-pressed={value === selection.range}
             onClick={() => onRange({ ...selection, range: value })}
           >
-            {text}
+            {t.hosts.graph.ranges[value]}
           </Button>
         ))}
       </div>
       {series.isError && (
         <p role="alert" className="text-xs text-destructive">
-          {series.error instanceof Error ? series.error.message : 'Could not read this series.'}
+          {series.error instanceof Error ? series.error.message : t.hosts.graph.readFailed}
         </p>
       )}
-      {!series.data && !series.isError && <p className="text-xs text-muted-foreground">Loading…</p>}
+      {!series.data && !series.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
       {series.data && (
         // The boundary wraps the Suspense, not the other way round: a
         // rejected chunk import is re-thrown during render, and without
@@ -72,14 +70,14 @@ export function MetricGraphPanel({
           resetKey={`${selection.check}:${selection.item}:${selection.metric}:${selection.range}`}
           fallback={
             <p role="alert" className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: CHART_HEIGHT }}>
-              The chart could not be loaded. Reload the page to try again.
+              {t.hosts.graph.chartFailed}
             </p>
           }
         >
           <Suspense
             fallback={
               <p className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: CHART_HEIGHT }}>
-                Loading…
+                {t.common.loading}
               </p>
             }
           >

@@ -12,6 +12,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { parseTagChip } from './selectorInput.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { may } from '../../lib/roles.ts';
+import { useT } from '../../i18n/useT.ts';
 import { HostAgentCard } from './HostAgentCard.tsx';
 import { HostAlertsCard } from '../alerts/HostAlertsCard.tsx';
 import { HostAlertRoutesCard } from './HostAlertRoutesCard.tsx';
@@ -31,6 +32,7 @@ import { BootstrapDialog } from './BootstrapDialog.tsx';
  */
 export function HostDetailPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
+  const t = useT();
   const navigate = useNavigate();
   const toast = useToast();
   const orgInfo = useOrg(org);
@@ -64,21 +66,21 @@ export function HostDetailPage() {
 
   async function addTag(e: FormEvent) {
     e.preventDefault();
-    const result = parseTagChip(tagInput);
+    const result = parseTagChip(tagInput, t);
     if (!result.ok) {
       setTagError(result.error);
       return;
     }
     setTagError(null);
-    const current = (tags.data?.tags ?? []).map((t) => ({ key: t.key, value: t.value }));
-    const next = [...current.filter((t) => t.key !== result.tag.key), result.tag];
+    const current = (tags.data?.tags ?? []).map((tag) => ({ key: tag.key, value: tag.value }));
+    const next = [...current.filter((tag) => tag.key !== result.tag.key), result.tag];
     await setTags.mutateAsync(next);
     setTagInput('');
   }
 
   async function removeTag(key: string) {
-    const current = (tags.data?.tags ?? []).map((t) => ({ key: t.key, value: t.value }));
-    await setTags.mutateAsync(current.filter((t) => t.key !== key));
+    const current = (tags.data?.tags ?? []).map((tag) => ({ key: tag.key, value: tag.value }));
+    await setTags.mutateAsync(current.filter((tag) => tag.key !== key));
   }
 
   return (
@@ -89,30 +91,30 @@ export function HostDetailPage() {
              so last_seen_at (set once on host creation, regardless of any
              real health signal) cannot honestly claim "ok" — cheap fix,
              task-15a-report.md fix round 1. */}
-          <span className="h-2.5 w-2.5 rounded-full" style={{ background: 'var(--px-unknown)' }} title="unknown" />
+          <span className="h-2.5 w-2.5 rounded-full" style={{ background: 'var(--px-unknown)' }} title={t.hosts.detail.unknownTitle} />
           <h1 className="font-mono text-xl font-bold">{h.name}</h1>
-          <Tag>{h.address || 'no address'}</Tag>
+          <Tag>{h.address || t.hosts.detail.noAddress}</Tag>
         </div>
         <Button
           variant="destructive"
           onClick={async () => {
-            if (!confirm(`Delete host ${h.name}? This cannot be undone.`)) return;
+            if (!confirm(t.hosts.detail.deleteConfirm(h.name))) return;
             try {
               await deleteHost.mutateAsync(h.id);
-              toast.show(`Host ${h.name} deleted`);
+              toast.show(t.hosts.detail.deleted(h.name));
               await navigate({ to: '/o/$org/hosts', params: { org }, search: { q: undefined } });
             } catch (err) {
-              toast.show(err instanceof Error ? err.message : 'failed to delete host', 'destructive');
+              toast.show(err instanceof Error ? err.message : t.hosts.detail.deleteFailed, 'destructive');
             }
           }}
         >
-          <Trash2 size={14} /> Delete host
+          <Trash2 size={14} /> {t.hosts.detail.delete}
         </Button>
       </div>
       <div className="flex justify-end">
         {h.managed && canWrite && (
           <Button type="button" onClick={() => setBootstrapOpen(true)}>
-            <UserPlus size={14} /> Bootstrap host
+            <UserPlus size={14} /> {t.hosts.detail.bootstrap}
           </Button>
         )}
       </div>
@@ -120,16 +122,16 @@ export function HostDetailPage() {
       <div className="grid grid-cols-2 gap-4 items-start">
         <Card>
           <div className="flex flex-col gap-4 p-4">
-            <h2 className="text-sm font-semibold">Capabilities</h2>
+            <h2 className="text-sm font-semibold">{t.hosts.detail.capabilities}</h2>
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Terminal size={14} /> Managed (Ansible via SSH)
+                <Terminal size={14} /> {t.hosts.capability.managedLong}
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={h.managed}
-                aria-label="Managed (Ansible via SSH)"
+                aria-label={t.hosts.capability.managedLong}
                 onClick={() => setCapabilities.mutate({ managed: !h.managed })}
                 className={
                   h.managed
@@ -142,13 +144,13 @@ export function HostDetailPage() {
             </div>
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Server size={14} /> Monitored
+                <Server size={14} /> {t.hosts.capability.monitored}
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={h.monitored}
-                aria-label="Monitored"
+                aria-label={t.hosts.capability.monitored}
                 onClick={() => setCapabilities.mutate({ monitored: !h.monitored })}
                 className={
                   h.monitored
@@ -164,16 +166,16 @@ export function HostDetailPage() {
 
         <Card>
           <div className="flex flex-col gap-3 p-4">
-            <h2 className="text-sm font-semibold">Tags</h2>
+            <h2 className="text-sm font-semibold">{t.hosts.detail.tags}</h2>
             <div className="flex flex-wrap gap-2">
-              {(tags.data?.tags ?? []).map((t) => (
+              {(tags.data?.tags ?? []).map((tag) => (
                 <span
-                  key={t.key}
+                  key={tag.key}
                   className="inline-flex items-center gap-1.5 rounded border border-border bg-background px-2 py-1 font-mono text-[11px]"
                 >
-                  {t.key}={t.value}
-                  {t.source === 'manual' && (
-                    <button type="button" onClick={() => removeTag(t.key)} aria-label={`remove ${t.key}`}>
+                  {tag.key}={tag.value}
+                  {tag.source === 'manual' && (
+                    <button type="button" onClick={() => removeTag(tag.key)} aria-label={t.hosts.detail.removeTag(tag.key)}>
                       ×
                     </button>
                   )}
@@ -184,11 +186,11 @@ export function HostDetailPage() {
               <input
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
-                placeholder="role=db"
+                placeholder={t.hosts.detail.tagPlaceholder}
                 className="h-8 flex-1 rounded-md border border-border bg-background px-2.5 font-mono text-xs outline-none"
               />
               <Button type="submit" disabled={setTags.isPending}>
-                Add tag
+                {t.hosts.detail.addTag}
               </Button>
             </form>
             {tagError && <span className="text-[11px] text-destructive">{tagError}</span>}
@@ -208,9 +210,9 @@ export function HostDetailPage() {
 
       <Card>
         <div className="flex flex-col gap-2 p-4">
-          <h2 className="text-sm font-semibold">Facts</h2>
+          <h2 className="text-sm font-semibold">{t.hosts.detail.facts}</h2>
           {Object.keys(h.facts ?? {}).length === 0 ? (
-            <span className="text-xs text-muted-foreground">No facts reported yet.</span>
+            <span className="text-xs text-muted-foreground">{t.hosts.detail.noFacts}</span>
           ) : (
             <div className="flex flex-col">
               {Object.entries(h.facts ?? {}).map(([k, v]) => (

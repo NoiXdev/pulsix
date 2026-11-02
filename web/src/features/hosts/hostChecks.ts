@@ -1,5 +1,6 @@
 import type { Tone } from '../../ui/badge.tsx';
 import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 
 /**
  * The pure reading rules behind HostChecksCard, kept beside it rather than
@@ -86,12 +87,12 @@ const CLOCK_SKEW_FLOOR = 30;
  * behind the manager's); it is absent when no manager process has a
  * measurement, and absence is not zero.
  */
-export function clockSkewLabel(offsetSeconds: number | undefined): string | null {
+export function clockSkewLabel(offsetSeconds: number | undefined, t: Messages): string | null {
   if (offsetSeconds === undefined) return null;
   const seconds = Math.round(Math.abs(offsetSeconds));
   if (seconds < CLOCK_SKEW_FLOOR) return null;
-  const magnitude = seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${seconds} s`;
-  return `${magnitude} ${offsetSeconds > 0 ? 'behind' : 'ahead of'}`;
+  const magnitude = seconds >= 90 ? t.hosts.clock.minutes(Math.round(seconds / 60)) : t.hosts.clock.seconds(seconds);
+  return `${magnitude} ${offsetSeconds > 0 ? t.hosts.clock.behind : t.hosts.clock.ahead}`;
 }
 
 /**
@@ -117,17 +118,17 @@ export function clockSkewLabel(offsetSeconds: number | undefined): string | null
  * than silently missing). A caller passing an actually-missing value is a
  * fixture bug, not a shape this function should quietly paper over.
  */
-export function stateLabel(state: HostCheckValue['state']): { label: string; tone: Tone } {
-  if (state === null) return { label: 'not yet evaluated', tone: 'unknown' };
+export function stateLabel(state: HostCheckValue['state'], t: Messages): { label: string; tone: Tone } {
+  if (state === null) return { label: t.hosts.state.notEvaluated, tone: 'unknown' };
   switch (state) {
     case 'ok':
-      return { label: 'ok', tone: 'ok' };
+      return { label: t.hosts.state.ok, tone: 'ok' };
     case 'warn':
-      return { label: 'warn', tone: 'warn' };
+      return { label: t.hosts.state.warn, tone: 'warn' };
     case 'crit':
-      return { label: 'crit', tone: 'crit' };
+      return { label: t.hosts.state.crit, tone: 'crit' };
     default:
-      return { label: 'unknown', tone: 'unknown' };
+      return { label: t.hosts.state.unknown, tone: 'unknown' };
   }
 }
 
@@ -148,9 +149,9 @@ export function stateLabel(state: HostCheckValue['state']): { label: string; ton
  * colour: the same "distinguishable without colour alone" contract
  * stateLabel's own doc comment already carries.
  */
-export function verdictLabel(state: HostCheckValue['state'], ignored: boolean): { label: string; tone: Tone } {
-  if (ignored) return { label: 'ignored', tone: 'unknown' };
-  return stateLabel(state);
+export function verdictLabel(state: HostCheckValue['state'], ignored: boolean, t: Messages): { label: string; tone: Tone } {
+  if (ignored) return { label: t.hosts.state.ignored, tone: 'unknown' };
+  return stateLabel(state, t);
 }
 
 /**
@@ -161,17 +162,17 @@ export function verdictLabel(state: HostCheckValue['state'], ignored: boolean): 
  * a host-scoped one does not repeat the pattern, since the operator
  * reading it is already standing on the one host it could possibly name.
  */
-export function decisionOriginLabel(decision: ItemDecision): string {
-  return decision.scope === 'org' ? `By the organization pattern \`${decision.pattern}\`` : 'Set on this host';
+export function decisionOriginLabel(decision: ItemDecision, t: Messages): string {
+  return decision.scope === 'org' ? t.hosts.value.originOrg(decision.pattern) : t.hosts.value.originHost;
 }
 
 /** sourceLabel renders the scope a check was inherited from as the thing
  * itself — the organization, the named monitoring group, this host — never
  * as the raw id the envelope carries beside it. */
-export function sourceLabel(c: HostCheck): string {
-  if (c.source === 'host') return 'This host';
-  if (c.source === 'group') return c.source_name ?? 'Monitoring group';
-  return 'Organization';
+export function sourceLabel(c: HostCheck, t: Messages): string {
+  if (c.source === 'host') return t.hosts.scope.thisHost;
+  if (c.source === 'group') return c.source_name ?? t.hosts.scope.monitoringGroup;
+  return t.hosts.scope.organization;
 }
 
 /** The tuple a "Rules" disclosure is open for — the same three fields that

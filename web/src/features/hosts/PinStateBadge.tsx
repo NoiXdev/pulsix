@@ -1,4 +1,5 @@
 import { Pill, type Tone } from '../../ui/badge.tsx';
+import { useT } from '../../i18n/useT.ts';
 
 /**
  * PinStateBadge is the host-key pin state badge (backlog 2.43): a
@@ -9,15 +10,11 @@ import { Pill, type Tone } from '../../ui/badge.tsx';
  * Nothing renders while the host is unpinned: trust-on-first-use is not a
  * pin state.
  */
-const PIN_BADGE: Record<string, { label: string; tone: Tone }> = {
-  full: { label: 'pin complete', tone: 'ok' },
-  fingerprint_only: { label: 'pin needs confirmation', tone: 'warn' },
-};
+const PIN_TONE: Record<string, Tone> = { full: 'ok', fingerprint_only: 'warn' };
 
 export function PinStateBadge({ state }: { state?: string | null }) {
-  const badge = state ? PIN_BADGE[state] : undefined;
-  if (!badge) return null;
-  return (
-    <Pill tone={badge.tone}>{badge.label}</Pill>
-  );
+  const t = useT();
+  const tone = state ? PIN_TONE[state] : undefined;
+  if (!tone) return null;
+  return <Pill tone={tone}>{state === 'full' ? t.hosts.pin.complete : t.hosts.pin.needsConfirmation}</Pill>;
 }

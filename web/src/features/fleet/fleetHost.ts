@@ -1,5 +1,6 @@
 import type { Tone } from '../../ui/badge.tsx';
 import type { FleetHost } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 
 /**
  * The pure reading rules behind FleetPage, kept beside it rather than
@@ -34,16 +35,17 @@ import type { FleetHost } from '../../api/types.ts';
  * `unknown`'s "no data" too, so the distinction does not rely on the label
  * text alone either.
  */
-export function fleetStateLabel(state: FleetHost['state'], allIgnored: boolean): { label: string; tone: Tone } {
-  if (state === null) return allIgnored ? { label: 'all ignored', tone: 'accent' } : { label: 'no data', tone: 'unknown' };
+export function fleetStateLabel(state: FleetHost['state'], allIgnored: boolean, t: Messages): { label: string; tone: Tone } {
+  const s = t.fleet.state;
+  if (state === null) return allIgnored ? { label: s.allIgnored, tone: 'accent' } : { label: s.noData, tone: 'unknown' };
   switch (state) {
     case 'ok':
-      return { label: 'ok', tone: 'ok' };
+      return { label: s.ok, tone: 'ok' };
     case 'warn':
-      return { label: 'warn', tone: 'warn' };
+      return { label: s.warn, tone: 'warn' };
     case 'crit':
-      return { label: 'crit', tone: 'crit' };
+      return { label: s.crit, tone: 'crit' };
     default:
-      return { label: 'unknown', tone: 'unknown' };
+      return { label: s.unknown, tone: 'unknown' };
   }
 }

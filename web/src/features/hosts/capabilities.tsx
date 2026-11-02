@@ -1,4 +1,5 @@
 import { Terminal, Activity } from 'lucide-react';
+import { useT } from '../../i18n/useT.ts';
 
 export type CapabilityKind = 'managed' | 'monitored';
 export type CapabilityPatch = { managed: boolean } | { monitored: boolean };
@@ -28,6 +29,7 @@ const ICON: Record<CapabilityKind, typeof Terminal> = { managed: Terminal, monit
  * not reset to false).
  */
 export function CapabilityCell({ kind, on, detail, onChange }: CapabilityCellProps) {
+  const t = useT();
   const Icon = ICON[kind];
 
   if (on) {
@@ -53,7 +55,7 @@ export function CapabilityCell({ kind, on, detail, onChange }: CapabilityCellPro
         <Icon size={13} />
       </span>
       <span className="text-xs">
-        off <span className="text-brand-dim">· enable</span>
+        {t.hosts.capability.off} <span className="text-brand-dim">{t.hosts.capability.enable}</span>
       </span>
     </button>
   );

@@ -1,8 +1,11 @@
 import type { Messages } from '../types.ts';
 import { deAccount } from './account.ts';
 import { deActivity } from './activity.ts';
+import { deAgents } from './agents.ts';
 import { deAuth } from './auth.ts';
 import { deCommon } from './common.ts';
+import { deFleet } from './fleet.ts';
+import { deHosts } from './hosts.ts';
 import { deInstance } from './instance.ts';
 import { deLanguage } from './language.ts';
 import { deMembers } from './members.ts';
@@ -13,6 +16,7 @@ import { deShell } from './shell.ts';
 import { deTokens } from './tokens.ts';
 import { deUi } from './ui.ts';
 import { deValidation } from './validation.ts';
+import { deWorkers } from './workers.ts';
 
 /**
  * The German catalogue, typed as Messages: a key missing here, an extra
@@ -41,8 +45,11 @@ import { deValidation } from './validation.ts';
 export const de: Messages = {
   account: deAccount,
   activity: deActivity,
+  agents: deAgents,
   auth: deAuth,
   common: deCommon,
+  fleet: deFleet,
+  hosts: deHosts,
   instance: deInstance,
   language: deLanguage,
   members: deMembers,
@@ -53,4 +60,5 @@ export const de: Messages = {
   tokens: deTokens,
   ui: deUi,
   validation: deValidation,
+  workers: deWorkers,
 };

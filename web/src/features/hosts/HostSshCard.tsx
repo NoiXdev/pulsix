@@ -14,6 +14,7 @@ import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { PublicKeyPanel } from '../credentials/PublicKeyPanel.tsx';
 import { KIND_LABEL, routeLabel } from '../credentials/labels.ts';
 import { PinStateBadge } from './PinStateBadge.tsx';
+import { useT } from '../../i18n/useT.ts';
 
 /** HostSshCard is the SSH access step of the enrollment mockup for a
  * managed host: how Pulsix logs in, which jump host it goes through (and
@@ -70,6 +71,7 @@ function HostSshForm({
   canWrite: boolean;
   canCreateCredential: boolean;
 }) {
+  const t = useT();
   const toast = useToast();
   const save = useSetHostSSH(org, hostId);
   const preview = useHostInventoryPreview(org, hostId);
@@ -95,81 +97,81 @@ function HostSshForm({
         username: username || undefined, port: Number(port) || 22, credential_id: credentialId || undefined,
         bastion_mode: mode, bastion_id: mode === 'explicit' ? bastionId || undefined : undefined,
       });
-      toast.show('SSH settings saved');
+      toast.show(t.hosts.ssh.saved);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Saving failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.hosts.ssh.saveFailed, 'destructive');
     }
   }
 
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-[13px] font-semibold">SSH access</h2>
+      <h2 className="mb-3 text-[13px] font-semibold">{t.hosts.ssh.title}</h2>
       <form onSubmit={submit} className="flex flex-col gap-3">
-        <div className="flex items-center gap-2" aria-label="Host key pin state">
+        <div className="flex items-center gap-2" aria-label={t.hosts.ssh.pinState}>
           <PinStateBadge state={current.pin_state} />
         </div>
         <div className="grid grid-cols-[1fr_90px] gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="ssh-user">User</Label>
-            <Input id="ssh-user" className="font-mono" placeholder={selected?.username || 'from the credential'} value={username} onChange={(e) => setUsername(e.target.value)} disabled={!canWrite} />
+            <Label htmlFor="ssh-user">{t.hosts.ssh.user}</Label>
+            <Input id="ssh-user" className="font-mono" placeholder={selected?.username || t.hosts.ssh.userPlaceholder} value={username} onChange={(e) => setUsername(e.target.value)} disabled={!canWrite} />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="ssh-port">Port</Label>
+            <Label htmlFor="ssh-port">{t.hosts.ssh.port}</Label>
             <Input id="ssh-port" className="font-mono" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} disabled={!canWrite} />
           </div>
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="ssh-credential">Credential</Label>
+          <Label htmlFor="ssh-credential">{t.hosts.ssh.credential}</Label>
           <Select
             id="ssh-credential"
             options={credentials.map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
             value={credentialId}
             onChange={setCredentialId}
-            placeholder="— none —"
+            placeholder={t.hosts.ssh.noCredential}
             disabled={!canWrite}
-            create={canCreateCredential ? { label: 'New credential…', onSelect: setNewCredentialName } : undefined}
+            create={canCreateCredential ? { label: t.hosts.ssh.newCredential, onSelect: setNewCredentialName } : undefined}
           />
         </div>
         <fieldset className="flex flex-col gap-1">
-          <legend className="text-[11px] font-medium text-muted-foreground">Jump host</legend>
+          <legend className="text-[11px] font-medium text-muted-foreground">{t.hosts.ssh.jumpHost}</legend>
           <label className="flex items-center gap-2 text-xs">
-            <input type="radio" name="ssh-mode" checked={mode === 'inherit'} onChange={() => setMode('inherit')} disabled={!canWrite} /> Inherit (inventory group, then zone)
+            <input type="radio" name="ssh-mode" checked={mode === 'inherit'} onChange={() => setMode('inherit')} disabled={!canWrite} /> {t.hosts.ssh.inherit}
           </label>
           <label className="flex items-center gap-2 text-xs">
-            <input type="radio" name="ssh-mode" checked={mode === 'none'} onChange={() => setMode('none')} disabled={!canWrite} /> Direct connection
+            <input type="radio" name="ssh-mode" checked={mode === 'none'} onChange={() => setMode('none')} disabled={!canWrite} /> {t.hosts.ssh.direct}
           </label>
           <label className="flex items-center gap-2 text-xs">
-            <input type="radio" name="ssh-mode" checked={mode === 'explicit'} onChange={() => setMode('explicit')} disabled={!canWrite} /> This jump host
+            <input type="radio" name="ssh-mode" checked={mode === 'explicit'} onChange={() => setMode('explicit')} disabled={!canWrite} /> {t.hosts.ssh.explicit}
           </label>
           {mode === 'explicit' && (
             <Select
-              aria-label="Jump host for this host"
+              aria-label={t.hosts.ssh.jumpHostFor}
               options={bastions.map((b) => ({ value: b.id, label: b.name }))}
               value={bastionId}
               onChange={setBastionId}
-              placeholder="Choose…"
+              placeholder={t.hosts.ssh.choose}
               disabled={!canWrite}
-              create={canCreateCredential ? { label: 'New jump host…', onSelect: setNewBastionName } : undefined}
+              create={canCreateCredential ? { label: t.hosts.ssh.newJumpHost, onSelect: setNewBastionName } : undefined}
             />
           )}
         </fieldset>
         {connection && (
-          <p className="text-xs text-muted-foreground" aria-label="Effective route">
-            Route: {routeLabel(connection.bastion_source)}
-            {names.length > 0 && <span className="font-mono"> · {names.join(' → ')} → host</span>}
+          <p className="text-xs text-muted-foreground" aria-label={t.hosts.ssh.effectiveRoute}>
+            {t.hosts.ssh.route} {routeLabel(connection.bastion_source)}
+            {names.length > 0 && <span className="font-mono">{t.hosts.ssh.routeVia(names.join(' → '))}</span>}
           </p>
         )}
         {canWrite && (
           <div className="flex justify-end">
             <Button type="submit" variant="primary" disabled={save.isPending}>
-              Save SSH settings
+              {t.hosts.ssh.submit}
             </Button>
           </div>
         )}
       </form>
       {keyDetail.data?.credential.public_key && (
         <div className="mt-4 border-t border-border pt-4">
-          <h3 className="mb-2 text-xs font-semibold">Install this key on the host</h3>
+          <h3 className="mb-2 text-xs font-semibold">{t.hosts.ssh.installKey}</h3>
           <PublicKeyPanel publicKey={keyDetail.data.credential.public_key} snippets={keyDetail.data.snippets} />
         </div>
       )}

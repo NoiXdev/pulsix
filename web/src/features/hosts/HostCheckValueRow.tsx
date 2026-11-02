@@ -15,6 +15,7 @@ import { EffectiveRuleEntries } from './EffectiveRulesPanel.tsx';
 import { ItemDecisionButton } from './ItemDecisionButton.tsx';
 import { MetricGraphPanel } from './MetricGraphPanel.tsx';
 import { importMetricChart } from './metricChartImport.ts';
+import { useT } from '../../i18n/useT.ts';
 import type { EffectiveRule, HostCheck, HostCheckValue, MonitoringGroup } from '../../api/types.ts';
 
 export function HostCheckValueRow({
@@ -45,6 +46,7 @@ export function HostCheckValueRow({
   openRules: TupleKey | null;
   onOpenRules: (key: TupleKey | null) => void;
 }) {
+  const t = useT();
   const name = metricLabel(value);
   const graphable = isGraphable(check, value);
   const isOpen = open !== null && open.check === check.key && open.item === value.item && open.metric === value.metric;
@@ -66,7 +68,7 @@ export function HostCheckValueRow({
   // row has an origin to show and must show it.
   const decidedBy = value.decided_by;
 
-  const st = verdictLabel(value.state, value.ignored);
+  const st = verdictLabel(value.state, value.ignored, t);
 
   // The entries GET /hosts/{id}/effective-rules returns for exactly this
   // tuple — up to two (warn and crit are resolved independently). Every
@@ -97,8 +99,8 @@ export function HostCheckValueRow({
           title={
             value.state !== null && !value.ignored
               ? [
-                  value.since ? `in this state since ${seenLabel(value.since, new Date())}` : null,
-                  value.evaluated_at ? `judged ${seenLabel(value.evaluated_at, new Date())}` : null,
+                  value.since ? t.hosts.value.sinceTitle(seenLabel(value.since, new Date(), t)) : null,
+                  value.evaluated_at ? t.hosts.value.judged(seenLabel(value.evaluated_at, new Date(), t)) : null,
                 ]
                   .filter(Boolean)
                   .join(' · ') || undefined
@@ -128,13 +130,13 @@ export function HostCheckValueRow({
             so how old its last verdict is, and how often it used to
             change, are both answers to a question nobody is asking. */}
         {!value.ignored && value.state !== null && value.state_stale && (
-          <span title={value.evaluated_at ? `judged ${seenLabel(value.evaluated_at, new Date())}` : undefined}>
-            <Pill tone="warn">stale verdict</Pill>
+          <span title={value.evaluated_at ? t.hosts.value.judged(seenLabel(value.evaluated_at, new Date(), t)) : undefined}>
+            <Pill tone="warn">{t.hosts.value.staleVerdict}</Pill>
           </span>
         )}
         {!value.ignored && value.flapping && (
-          <span title="changed state five or more times in the last 30 minutes">
-            <Pill tone="warn">flapping</Pill>
+          <span title={t.hosts.value.flappingTitle}>
+            <Pill tone="warn">{t.hosts.value.flapping}</Pill>
           </span>
         )}
         {value.error !== undefined ? (
@@ -142,7 +144,7 @@ export function HostCheckValueRow({
             {/* Ruling: the failure, not a number dressed up as current.
                 An error row has no number to render in the first place —
                 the graph button beside it is how the history is reached. */}
-            <Pill tone="crit">collection failed</Pill>
+            <Pill tone="crit">{t.hosts.value.collectionFailed}</Pill>
             <span className="truncate text-destructive">{value.error}</span>
           </>
         ) : (
@@ -151,8 +153,8 @@ export function HostCheckValueRow({
               {value.label ?? (value.value !== undefined ? formatNumber(value.value) : '—')}
             </span>
             {value.stale && (
-              <span title={`last reading ${seenLabel(value.at, new Date())}`}>
-                <Pill tone="warn">stale</Pill>
+              <span title={t.hosts.value.lastReading(seenLabel(value.at, new Date(), t))}>
+                <Pill tone="warn">{t.hosts.value.stale}</Pill>
               </span>
             )}
           </>
@@ -179,18 +181,18 @@ export function HostCheckValueRow({
               <Button
                 type="button"
                 variant="ghost"
-                aria-label={`Rules for ${check.key} ${name}`}
+                aria-label={t.hosts.value.rulesFor(check.key, name)}
                 aria-expanded={isRulesOpen}
                 onClick={() => onOpenRules(isRulesOpen ? null : { check: check.key, item: value.item, metric: value.metric })}
               >
-                <SlidersHorizontal size={14} /> Rules
+                <SlidersHorizontal size={14} /> {t.hosts.value.rules}
               </Button>
             )}
             {graphable && (
               <Button
                 type="button"
                 variant="ghost"
-                aria-label={`Graph ${check.key} ${name}`}
+                aria-label={t.hosts.value.graphFor(check.key, name)}
                 aria-expanded={isOpen}
                 onClick={() => {
                   // The chunk and the series are two independent round trips.
@@ -218,7 +220,7 @@ export function HostCheckValueRow({
                   onOpen(isOpen ? null : { check: check.key, item: value.item, metric: value.metric, range: '1h' });
                 }}
               >
-                <LineChart size={14} /> Graph
+                <LineChart size={14} /> {t.hosts.value.graph}
               </Button>
             )}
           </span>
@@ -251,16 +253,16 @@ export function HostCheckValueRow({
       {(decidedBy || value.ignored) && (
         <details className="text-[11px] text-muted-foreground">
           <summary className="cursor-pointer">
-            {decidedBy ? (decidedBy.decision === 'ignore' ? 'Why ignored' : 'Why watched') : 'Why ignored'}
+            {decidedBy ? (decidedBy.decision === 'ignore' ? t.hosts.value.whyIgnored : t.hosts.value.whyWatched) : t.hosts.value.whyIgnored}
           </summary>
           <p className="mt-1">
             {decidedBy ? (
               <>
-                {decisionOriginLabel(decidedBy)}
+                {decisionOriginLabel(decidedBy, t)}
                 {decidedBy.note && ` — ${decidedBy.note}`}
               </>
             ) : (
-              'Origin not known — the last read of this value named no decision behind it.'
+              t.hosts.value.originUnknown
             )}
           </p>
         </details>
