@@ -40,7 +40,7 @@ function renderPage() {
 describe('GroupsPage in German', () => {
   it('writes the page, its count and the state pills in German', async () => {
     mockApi({
-      'GET /api/v1/orgs/acme/inventory/groups': { groups: [summary('w', 'webserver', { complete: false }), summary('p', 'production')] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [summary('w', 'webserver', { complete: false, group_fields: 3, host_fields: 0 }), summary('p', 'production', { group_fields: 1, host_fields: 1 })] },
       'GET /api/v1/orgs/acme/bastions': { bastions: [] },
     });
     renderPage();
@@ -49,6 +49,8 @@ describe('GroupsPage in German', () => {
     expect(screen.getByRole('button', { name: 'Gruppe hinzufügen' })).toBeInTheDocument();
     expect(screen.getByText('unvollständig')).toBeInTheDocument();
     expect(screen.getByText('Sprunghost')).toBeInTheDocument();
+    expect(screen.getByText('3 Gruppenfelder · 0 Hostfelder')).toBeInTheDocument();
+    expect(screen.getByText('1 Gruppenfeld · 1 Hostfeld')).toBeInTheDocument();
   });
 
   it('uses the German singular for one group', async () => {

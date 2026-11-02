@@ -15,7 +15,8 @@ export const deInventory: Messages['inventory'] = {
       values: 'Werte',
       jumpHost: 'Sprunghost',
     },
-    fields: (group: number, host: number) => `${group} Gruppe · ${host} Host`,
+    fields: (group: number, host: number) =>
+      `${group === 1 ? '1 Gruppenfeld' : `${group} Gruppenfelder`} · ${host === 1 ? '1 Hostfeld' : `${host} Hostfelder`}`,
     complete: 'vollständig',
     incomplete: 'unvollständig',
     empty: 'Noch keine Inventargruppen.',
@@ -137,7 +138,7 @@ export const deInventory: Messages['inventory'] = {
     saved: 'Gruppe gespeichert',
     saveFailed: 'Speichern fehlgeschlagen',
     confirmDelete: (name: string) =>
-      `Gruppe ${name} löschen? Ihre Mitglieder verlieren die Werte, die sie für diese Gruppe haben.`,
+      `Gruppe ${name} löschen? Die Mitglieder der Gruppe verlieren die Werte, die sie für diese Gruppe haben.`,
     deleted: (name: string) => `Gruppe ${name} gelöscht`,
     deleteFailed: 'Löschen fehlgeschlagen',
   },
