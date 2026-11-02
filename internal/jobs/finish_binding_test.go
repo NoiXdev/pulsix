@@ -70,7 +70,7 @@ func TestFinishForIsBoundToTheClaimingWorker(t *testing.T) {
 		t.Fatal(err)
 	}
 	zone := testZone(t, w.d, w.org)
-	owner := WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: zone}
+	owner := w.activeWorker(t, zone)
 
 	tests := []struct {
 		name   string

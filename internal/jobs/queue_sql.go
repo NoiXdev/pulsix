@@ -219,6 +219,19 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 		return nil, fmt.Errorf("begin claim transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// A worker's claim is bound to the worker's state at the claim, not
+	// only to the interceptor's look at it when the call arrived (backlog
+	// 7.36): a revoked worker claims nothing, and a revocation in flight
+	// is waited for.
+	if workerID.Valid {
+		n, err := gen.New(tx).LockActiveWorker(ctx, uuid.UUID(workerID.Bytes))
+		if err != nil {
+			return nil, fmt.Errorf("lock claiming worker: %w", err)
+		}
+		if n == 0 {
+			return nil, nil
+		}
+	}
 	row, err := gen.New(tx).ClaimJob(ctx, gen.ClaimJobParams{WorkerID: workerID, CancelStopsPlay: cancelStopsPlay, OrgID: orgID, ZoneIds: zones})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -241,6 +254,19 @@ func (q *SQLQueue) claim(ctx context.Context, workerID pgtype.UUID, orgID uuid.U
 			return nil, fmt.Errorf("fail unbuildable job %s (payload: %v): %w", job.ID, err, failErr)
 		}
 		return nil, nil
+	}
+	// A revocation that committed while the payload was being built
+	// already requeues this job (it locked the worker's row after the
+	// claim's commit); the payload, credentials and all, must not reach
+	// the revoked worker anyway (backlog 7.36).
+	if workerID.Valid {
+		active, err := gen.New(q.db.Pool()).WorkerIsActive(ctx, uuid.UUID(workerID.Bytes))
+		if err != nil {
+			return nil, fmt.Errorf("re-check claiming worker: %w", err)
+		}
+		if !active {
+			return nil, nil
+		}
 	}
 	token, err := q.newToken()
 	if err != nil {

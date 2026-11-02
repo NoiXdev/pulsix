@@ -804,6 +804,24 @@ func (q *Queries) ListWorkerJobsToEnd(ctx context.Context, arg ListWorkerJobsToE
 	return items, nil
 }
 
+const lockActiveWorker = `-- name: LockActiveWorker :execrows
+SELECT 1 FROM workers WHERE id = $1 AND status = 'active' FOR SHARE
+`
+
+// Backlog 7.36: binds a worker claim to the worker's current state. Run in
+// the claim transaction before ClaimJob, it takes a share lock on the row
+// of an active worker (0 rows: revoked or gone, claim nothing). A
+// revocation's UPDATE in flight holds that row, so the claim waits for it
+// and then sees it; a claim that locked first makes the revocation wait,
+// and the requeue after it then finds the job it claimed.
+func (q *Queries) LockActiveWorker(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, lockActiveWorker, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pinRepoHostKey = `-- name: PinRepoHostKey :execrows
 UPDATE git_repos SET ssh_host_key = $1, ssh_host_public_key = $2, updated_at = now()
 WHERE org_id = $3 AND id = $4 AND ssh_host_key IS NULL
@@ -1006,4 +1024,17 @@ func (q *Queries) UpdateRepoSyncState(ctx context.Context, arg UpdateRepoSyncSta
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const workerIsActive = `-- name: WorkerIsActive :one
+SELECT EXISTS (SELECT 1 FROM workers WHERE id = $1 AND status = 'active')
+`
+
+// The same question without a lock, asked once more after the payload was
+// built and before it is handed out (backlog 7.36).
+func (q *Queries) WorkerIsActive(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, workerIsActive, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }

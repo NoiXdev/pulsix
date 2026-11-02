@@ -113,7 +113,13 @@ func TestGRPCPortAdapters(t *testing.T) {
 
 	// Claim: the adapter maps the queue's claim onto grpcsrv's and binds
 	// the job to the claiming worker.
+	// A worker claims only while its registry row is active (backlog
+	// 7.36), so the claimer is a real worker.
 	worker := grpcsrv.WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, ZoneID: zone}
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO workers (id, org_id, zone_id, name, cert_serial) VALUES ($1, $2, $3, 'ports', 'ports-serial')`,
+		worker.ID, org.ID, zone); err != nil {
+		t.Fatal(err)
+	}
 	claim, err := jobsClaimer{queue}.Claim(ctx, grpcsrv.ClaimScope{WorkerID: worker.ID, OrgID: org.ID, ZoneIDs: []uuid.UUID{zone}}, "v1", false)
 	if err != nil || claim == nil {
 		t.Fatalf("Claim = %v, %v", claim, err)

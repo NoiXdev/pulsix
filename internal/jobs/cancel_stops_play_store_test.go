@@ -35,7 +35,7 @@ func TestClaimRecordsWhetherCancelStopsThePlay(t *testing.T) {
 	zone := testZone(t, w.d, w.org)
 
 	for _, want := range []bool{true, false} {
-		worker := WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: zone}
+		worker := w.activeWorker(t, zone)
 		j := w.claimForWith(t, worker, want)
 		if got := w.cancelStopsPlay(t, j.ID); got != want {
 			t.Errorf("claimed by a worker that said %v: CancelStopsPlay = %v", want, got)
@@ -55,7 +55,7 @@ func TestClaimRecordsWhetherCancelStopsThePlay(t *testing.T) {
 func TestRequeueForgetsWhetherCancelStopsThePlay(t *testing.T) {
 	w := newAtomicWorld(t, "jobs-cancel-stops-play-requeue")
 	zone := testZone(t, w.d, w.org)
-	worker := WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: w.org, ZoneID: zone}
+	worker := w.activeWorker(t, zone)
 	j := w.claimForWith(t, worker, true)
 
 	if requeued, _, err := w.q.RequeueWorkerJobs(context.Background(), w.org, worker.ID, "worker revoked", 3); err != nil || requeued != 1 {

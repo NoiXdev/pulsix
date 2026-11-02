@@ -84,6 +84,20 @@ FROM job_events
 WHERE org_id = $1 AND job_id = $2 AND seq > $3
 ORDER BY seq;
 
+-- name: LockActiveWorker :execrows
+-- Backlog 7.36: binds a worker claim to the worker's current state. Run in
+-- the claim transaction before ClaimJob, it takes a share lock on the row
+-- of an active worker (0 rows: revoked or gone, claim nothing). A
+-- revocation's UPDATE in flight holds that row, so the claim waits for it
+-- and then sees it; a claim that locked first makes the revocation wait,
+-- and the requeue after it then finds the job it claimed.
+SELECT 1 FROM workers WHERE id = sqlc.arg(id) AND status = 'active' FOR SHARE;
+
+-- name: WorkerIsActive :one
+-- The same question without a lock, asked once more after the payload was
+-- built and before it is handed out (backlog 7.36).
+SELECT EXISTS (SELECT 1 FROM workers WHERE id = sqlc.arg(id) AND status = 'active');
+
 -- name: ClaimJob :one
 -- THE org-unscoped claim (plan Global Constraints): runs on the raw pool,
 -- outside any pulsix.org_id scope, keyed by the worker's zones. FOR UPDATE
