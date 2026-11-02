@@ -12,7 +12,7 @@ export const deFleet: Messages['fleet'] = {
   },
   noAccess: 'Die Fleet-Übersicht ist für Mitglieder dieser Organisation sichtbar.',
   totals: (crit: number, warn: number, unknown: number, ok: number, noData: number, allIgnored: number) =>
-    `Summen für diese gefilterte Ansicht, nicht für die ganze Organisation: ${crit} kritisch · ${warn} Warnung · ${unknown} unbekannt · ${ok} ok · ${noData} keine Daten · ${allIgnored} alle ignoriert`,
+    `Summen für diese gefilterte Ansicht, nicht für die ganze Organisation: kritisch: ${crit} · Warnung: ${warn} · unbekannt: ${unknown} · ok: ${ok} · keine Daten: ${noData} · alle ignoriert: ${allIgnored}`,
   columns: {
     state: 'Zustand',
     host: 'Host',

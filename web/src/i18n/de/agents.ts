@@ -3,7 +3,7 @@ import type { Messages } from '../types.ts';
 export const deAgents: Messages['agents'] = {
   title: 'Agents',
   noAccess: 'Kein Zugriff auf die Agents dieser Organisation.',
-  summary: (reporting: number, total: number) => `${reporting} von ${total} melden sich · Agents sammeln die Überwachungsdaten eines Hosts`,
+  summary: (reporting: number, total: number) => `${reporting} von ${total} ${reporting === 1 ? 'meldet' : 'melden'} sich · Agents sammeln die Überwachungsdaten eines Hosts`,
   enrol: 'Agent registrieren',
   columns: {
     host: 'Host',

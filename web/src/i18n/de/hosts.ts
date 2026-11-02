@@ -189,8 +189,8 @@ export const deHosts: Messages['hosts'] = {
     none: 'Keine Route deckt diesen Host ab – seine Alarme erreichen niemanden.',
     escalating: (n: number) =>
       n === 1
-        ? '1 Route unten eskaliert unabhängig – die Bestätigung der Kette einer Route stoppt keine andere.'
-        : `${n} Routen unten eskalieren unabhängig – die Bestätigung der Kette einer Route stoppt keine andere.`,
+        ? '1 Route unten eskaliert unabhängig – die Quittierung der Eskalationskette einer Route stoppt keine andere.'
+        : `${n} Routen unten eskalieren unabhängig – die Quittierung der Eskalationskette einer Route stoppt keine andere.`,
   },
   checks: {
     title: 'Überwachung',
