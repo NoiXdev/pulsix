@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
@@ -43,7 +44,8 @@ type redactor struct {
 // every part of every credential the claim ships — defense in depth for a
 // claim whose list is incomplete. Each value is also redacted in its
 // JSON-escaped spellings (display text shows module results as JSON, see
-// jsonSpellings), in
+// jsonSpellings), escaped once more for JSON text shown as a JSON string
+// (nestedJSONSpellings), in
 // its base64 spellings (backlog 2.48, see base64Spellings) and, for a
 // multi-line value, line by line.
 func newRedactor(job *workerpb.Job) *redactor {
@@ -54,6 +56,11 @@ func newRedactor(job *workerpb.Job) *redactor {
 		}
 		set[v] = true
 		for _, esc := range jsonSpellings(v) {
+			if esc != v {
+				set[esc] = true
+			}
+		}
+		for _, esc := range nestedJSONSpellings(v) {
 			if esc != v {
 				set[esc] = true
 			}
@@ -103,11 +110,37 @@ func newRedactor(job *workerpb.Job) *redactor {
 // backslash with '&', '<' or '>' matched neither spelling Go produces and
 // reached viewers in the display text (backlog 7.9). It is written by hand
 // because no Go encoder setting reproduces Python's choices exactly.
+//
+// The third is json.dumps' default, ensure_ascii=True, which also writes
+// every non-ASCII character as \uXXXX: it is what ansible's to_json filter
+// produces, so a secret inside a document a play built with it carries
+// that spelling (backlog 7.34).
 func jsonSpellings(v string) []string {
 	var out []string
 	if b, err := json.Marshal(v); err == nil {
 		out = append(out, string(b[1:len(b)-1]))
 	}
+	return append(out, pythonJSON(v, false), pythonJSON(v, true))
+}
+
+// nestedJSONSpellings is every spelling of v as a JSON string inside JSON
+// text that is itself shown as a JSON string: a module result that holds a
+// document (to_json, a module returning JSON as text), printed by the
+// result display. Each of jsonSpellings' forms, escaped again by each of
+// them (backlog 7.34).
+func nestedJSONSpellings(v string) []string {
+	var out []string
+	for _, once := range jsonSpellings(v) {
+		out = append(out, jsonSpellings(once)...)
+	}
+	return out
+}
+
+// pythonJSON is v's string body as Python's json.dumps writes it, with
+// ensure_ascii as given: '"', '\\' and the control characters escaped, and
+// with ensure_ascii every character past U+007F as a \uXXXX escape too
+// (a UTF-16 surrogate pair past U+FFFF), in lower-case hex like Python.
+func pythonJSON(v string, ensureASCII bool) string {
 	var sb strings.Builder
 	for _, r := range v {
 		switch r {
@@ -126,14 +159,22 @@ func jsonSpellings(v string) []string {
 		case '\f':
 			sb.WriteString(`\f`)
 		default:
-			if r < 0x20 {
+			switch {
+			case r < 0x20:
 				fmt.Fprintf(&sb, `\u%04x`, r)
-			} else {
+			case ensureASCII && r > 0x7f:
+				if r > 0xffff {
+					hi, lo := utf16.EncodeRune(r)
+					fmt.Fprintf(&sb, `\u%04x\u%04x`, hi, lo)
+				} else {
+					fmt.Fprintf(&sb, `\u%04x`, r)
+				}
+			default:
 				sb.WriteRune(r)
 			}
 		}
 	}
-	return append(out, sb.String())
+	return sb.String()
 }
 
 // minBase64Core is the shortest run of a secret's bytes whose base64 form

@@ -213,3 +213,25 @@ func TestBase64SpellingsStayWithinWhatWeCanName(t *testing.T) {
 		}
 	}
 }
+
+// TestRedactsASecretInsideJSONText is backlog 7.34. A secret held as JSON
+// text inside a result (a to_json, a module that returns JSON as a string)
+// is escaped once there and once more by the result display, and
+// ansible's to_json escapes non-ASCII text as well. The display lines
+// below are ansible-core 2.21.4's own output in the worker image for a
+// debug of `{"p": secret} | to_json` and of `secret | to_json`.
+func TestRedactsASecretInsideJSONText(t *testing.T) {
+	for _, tc := range []struct{ name, secret, display string }{
+		{"quote, backslash and ampersand", `Tr&ub4dor"3x\y`, `    "msg": "{\"p\": \"Tr&ub4dor\\\"3x\\\\y\"}"`},
+		{"non-ASCII in a document", `Pässwörd"<9>`, `    "msg": "{\"p\": \"P\\u00e4ssw\\u00f6rd\\\"<9>\"}"`},
+		{"non-ASCII on its own", `Pässwörd"<9>`, `    "msg": "\"P\\u00e4ssw\\u00f6rd\\\"<9>\""`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRedactor(&workerpb.Job{Redact: []string{tc.secret}})
+			got := r.text(tc.display)
+			if !strings.Contains(got, redactedMarker) {
+				t.Fatalf("the nested JSON spelling of %q survived: %s", tc.secret, got)
+			}
+		})
+	}
+}
