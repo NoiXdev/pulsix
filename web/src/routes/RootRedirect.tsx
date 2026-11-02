@@ -4,6 +4,7 @@ import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { useMe } from '../api/hooks/useMe.ts';
 import { useOrgs } from '../api/hooks/useOrgs.ts';
 import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
+import { useT } from '../i18n/useT.ts';
 
 /**
  * RootRedirect resolves the four startup states the task brief names,
@@ -28,10 +29,16 @@ import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
  */
 export function RootRedirect() {
   const navigate = useNavigate();
+  const t = useT();
   const setupStatus = useSetupStatus();
-  // useMe is disabled until setup is known to be complete: on a fresh
-  // instance /auth/me would just 401 (no session can exist yet), and that
-  // failure would otherwise race the setup-status redirect below.
+  // useMe stays disabled until setup is known to be complete, so this page
+  // does not fetch /auth/me itself on a fresh instance. It is not the only
+  // reader of ['me']: the I18nProvider fetches the same query on every
+  // load to learn the user's language, so on a fresh instance that 401
+  // lands in the shared cache and `me.isError` turns true here whether or
+  // not this hook is enabled. What stops it racing the setup redirect is the order
+  // in the effect below: it waits for the setup status and acts on
+  // `completed` before it ever looks at `me.isError`.
   const me = useMe({ enabled: setupStatus.data?.completed === true });
   const orgs = useOrgs({ enabled: me.data?.mfa_complete === true });
 
@@ -66,9 +73,7 @@ export function RootRedirect() {
     if (orgs.isError) return <QueryError error={orgs.error} />;
     if (orgs.data && !orgs.data.orgs?.length) {
       return (
-        <QueryError
-          error={new Error('This account does not belong to any organization yet. Ask an administrator to invite you.')}
-        />
+        <QueryError error={new Error(t.routes.noOrganizationInvite)} />
       );
     }
   }

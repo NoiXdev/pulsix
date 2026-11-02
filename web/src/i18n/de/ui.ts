@@ -1,0 +1,38 @@
+import type { Messages } from '../types.ts';
+
+export const deUi: Messages['ui'] = {
+  loadMore: 'Mehr laden',
+  select: {
+    open: 'Öffnen',
+    noOptions: 'Keine Optionen',
+    noMatch: 'Kein Treffer',
+    unavailable: (value: string) => `${value} (nicht verfügbar)`,
+  },
+  query: {
+    signingOutTitle: 'Abmeldung',
+    signingOutDetail: 'Die Sitzung ist abgelaufen. Weiterleitung zur Anmeldung…',
+    forbiddenTitle: 'Kein Zugriff',
+    forbiddenDetail: 'Ein Owner oder Admin der Organisation kann den Zugriff auf diese Seite freigeben.',
+    notFoundTitle: 'Nicht gefunden',
+    notFoundDetail: 'Diese Seite existiert nicht, oder es besteht kein Zugriff darauf.',
+    failedTitle: 'Etwas ist schiefgelaufen',
+    failedDetail: 'Ein unerwarteter Fehler ist aufgetreten. Bitte erneut versuchen.',
+  },
+  guard: {
+    loadMoreFailed: 'Weitere Einträge konnten nicht geladen werden – angezeigt wird, was bereits geladen ist.',
+    refreshFailed: 'Die Seite konnte nicht aktualisiert werden – angezeigt werden die zuletzt geladenen Daten.',
+  },
+  slug: {
+    generateLabel: 'Slug aus dem Namen erzeugen',
+    generateTitle: 'Aus dem Namen erzeugen',
+  },
+  chart: {
+    ranges: {
+      '1h': 'der letzten Stunde',
+      '24h': 'der letzten 24 Stunden',
+      '7d': 'der letzten 7 Tage',
+    },
+    label: (what: string, range: string, samples: number) => `${what} in ${range}, ${samples} Messwerte`,
+    empty: 'Keine Messwerte in diesem Zeitraum.',
+  },
+};

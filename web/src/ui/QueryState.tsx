@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { errorStatus } from '../lib/apiError.ts';
+import { useT } from '../i18n/useT.ts';
 import { useResetSession } from '../lib/session.ts';
 
 /**
@@ -22,6 +23,7 @@ export function QueryError({ error }: { error: unknown }) {
   const navigate = useNavigate();
   const resetSession = useResetSession();
   const status = errorStatus(error);
+  const t = useT();
 
   useEffect(() => {
     if (status === 401) {
@@ -30,23 +32,20 @@ export function QueryError({ error }: { error: unknown }) {
   }, [status, navigate, resetSession]);
 
   if (status === 401) {
-    return <FullPageMessage title="Signing you out" detail="Your session has expired. Redirecting to sign in…" />;
+    return <FullPageMessage title={t.ui.query.signingOutTitle} detail={t.ui.query.signingOutDetail} />;
   }
   if (status === 403) {
     return (
-      <FullPageMessage
-        title="You do not have access"
-        detail="Ask an organization owner or admin to grant you access to this page."
-      />
+      <FullPageMessage title={t.ui.query.forbiddenTitle} detail={t.ui.query.forbiddenDetail} />
     );
   }
   if (status === 404) {
-    return <FullPageMessage title="Not found" detail="This page does not exist, or you do not have access to it." />;
+    return <FullPageMessage title={t.ui.query.notFoundTitle} detail={t.ui.query.notFoundDetail} />;
   }
   return (
     <FullPageMessage
-      title="Something went wrong"
-      detail={error instanceof Error ? error.message : 'An unexpected error occurred. Please try again.'}
+      title={t.ui.query.failedTitle}
+      detail={error instanceof Error ? error.message : t.ui.query.failedDetail}
     />
   );
 }
@@ -64,7 +63,10 @@ function FullPageMessage({ title, detail }: { title: string; detail: string }) {
  * its own component (not folded into QueryError) so a page can render it
  * for the pending case and QueryError only for the error case. */
 export function QueryLoading() {
+  const t = useT();
   return (
-    <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">Loading…</div>
+    <div className="flex h-screen items-center justify-center bg-background text-muted-foreground">
+      {t.common.loading}
+    </div>
   );
 }

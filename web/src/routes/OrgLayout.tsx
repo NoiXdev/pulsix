@@ -8,6 +8,7 @@ import { useMe } from '../api/hooks/useMe.ts';
 import { logout } from '../api/hooks/useAuth.ts';
 import { useResetSession } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
+import { useT } from '../i18n/useT.ts';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
 
 /** OrgLayout is the route-connected wrapper around the pure AppShell
@@ -29,6 +30,7 @@ export function OrgLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
   const resetSession = useResetSession();
+  const t = useT();
 
   const me = useMe({ enabled: true });
   // A session that is not MFA-complete is refused every organization
@@ -49,7 +51,7 @@ export function OrgLayout() {
   if (orgsGuard) return orgsGuard;
   if (!org.data || !me.data || !orgs.data) return <QueryLoading />;
 
-  const crumbs = crumbLabels(pathname, orgSlug);
+  const crumbs = crumbLabels(pathname, orgSlug, t);
 
   return (
     <AppShell

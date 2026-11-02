@@ -1,3 +1,4 @@
+import { useT } from '../i18n/useT.ts';
 import { Button } from './button.tsx';
 
 /**
@@ -8,10 +9,11 @@ import { Button } from './button.tsx';
  * page twice.
  */
 export function LoadMoreButton({ onClick, loading }: { onClick: () => void; loading: boolean }) {
+  const t = useT();
   return (
     <div className="flex justify-center">
       <Button type="button" onClick={onClick} disabled={loading}>
-        {loading ? 'Loading…' : 'Load more'}
+        {loading ? t.common.loading : t.ui.loadMore}
       </Button>
     </div>
   );

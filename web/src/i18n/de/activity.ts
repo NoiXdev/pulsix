@@ -1,0 +1,35 @@
+import type { Messages } from '../types.ts';
+
+export const deActivity: Messages['activity'] = {
+  title: 'Aktivität',
+  subtitle: 'Jede Änderung in dieser Organisation – durch Personen, Tokens und Pulsix selbst',
+  filterByActor: 'Nach Urheber filtern',
+  anyActor: 'Urheber: alle',
+  allTypes: 'alle',
+  empty: 'Noch keine Aktivität aufgezeichnet.',
+  user: (id: string) => `Benutzer · ${id}`,
+  actors: {
+    token: 'API-Token',
+    system: 'Pulsix',
+    schedule: 'Zeitplan',
+    webhook: 'Webhook',
+  },
+  objectTypes: {
+    host: 'Host',
+    member: 'Mitglied',
+    token: 'Token',
+    zone: 'Zone',
+    organization: 'Organisation',
+    setup: 'Einrichtung',
+    totp: 'TOTP',
+    passkey: 'Passkey',
+    invite: 'Einladung',
+    job_template: 'Vorlage',
+    job: 'Lauf',
+    schedule: 'Zeitplan',
+    trigger: 'Trigger',
+    worker: 'Worker',
+    channel: 'Kanal',
+    maintenance: 'Wartung',
+  },
+};

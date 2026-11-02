@@ -6,6 +6,8 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
+import { useFormat, type Format } from '../../i18n/format.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const OBJECT_TYPES = [
   'host', 'member', 'token', 'zone', 'organization', 'setup', 'totp', 'passkey', 'invite',
@@ -13,8 +15,6 @@ const OBJECT_TYPES = [
   // its job template.
   'job_template', 'job', 'schedule', 'trigger', 'worker', 'channel', 'maintenance',
 ];
-
-const ACTOR_KIND_LABEL: Record<string, string> = { token: 'API token', system: 'Pulsix', schedule: 'Schedule', webhook: 'Webhook' };
 
 /**
  * ActivityPage follows design/mockups/build.mjs's ACTIVITY FEED artboard's
@@ -33,6 +33,8 @@ const ACTOR_KIND_LABEL: Record<string, string> = { token: 'API token', system: '
  */
 export function ActivityPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
+  const fmt = useFormat();
   const [objectType, setObjectType] = useState<string>('');
   const [actorId, setActorId] = useState<string>('');
 
@@ -42,8 +44,8 @@ export function ActivityPage() {
   const memberNames = new Map((members.data?.members ?? []).map((m) => [m.user_id, m.display_name]));
 
   function actorLabel(actorKind: string, actorId?: string | null): string {
-    if (actorKind === 'user' && actorId) return memberNames.get(actorId) ?? `user · ${actorId.slice(0, 8)}`;
-    return ACTOR_KIND_LABEL[actorKind] ?? actorKind;
+    if (actorKind === 'user' && actorId) return memberNames.get(actorId) ?? t.activity.user(actorId.slice(0, 8));
+    return known(t.activity.actors, actorKind);
   }
 
   const activityGuard = useQueryGuard(activity);
@@ -52,39 +54,37 @@ export function ActivityPage() {
   // The feed is paginated (useOrgActivity follows next_cursor page by
   // page); grouping runs over every loaded page, so a day split across a
   // page boundary still renders as one group.
-  const grouped = groupByDay(activity.data?.pages.flatMap((page) => page.items ?? []) ?? []);
+  const grouped = groupByDay(activity.data?.pages.flatMap((page) => page.items ?? []) ?? [], fmt);
 
   return (
     <>
       <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">Activity</h1>
+        <h1 className="text-xl font-semibold">{t.activity.title}</h1>
         <SettingsTabs org={org} />
       </div>
-      <span className="text-[13px] text-muted-foreground">
-        Every change in this organization, by people, tokens and Pulsix itself
-      </span>
+      <span className="text-[13px] text-muted-foreground">{t.activity.subtitle}</span>
 
       <div className="flex flex-wrap items-center gap-2">
         {/* A plain filter never offers to create — narrowing a view is not
             building one (v0.4g Move 3, same reasoning as HostsListPage's
             Filter by zone). */}
         <Select
-          aria-label="Filter by actor"
+          aria-label={t.activity.filterByActor}
           options={(members.data?.members ?? []).map((m) => ({ value: m.user_id, label: m.display_name }))}
           value={actorId}
           onChange={setActorId}
-          placeholder="Actor: anyone"
+          placeholder={t.activity.anyActor}
         />
-        <Chip label="all" on={objectType === ''} onClick={() => setObjectType('')} />
-        {OBJECT_TYPES.map((t) => (
-          <Chip key={t} label={t} on={objectType === t} onClick={() => setObjectType(t)} />
+        <Chip label={t.activity.allTypes} on={objectType === ''} onClick={() => setObjectType('')} />
+        {OBJECT_TYPES.map((type) => (
+          <Chip key={type} label={known(t.activity.objectTypes, type)} on={objectType === type} onClick={() => setObjectType(type)} />
         ))}
       </div>
 
       <div className="flex flex-col overflow-hidden rounded-[10px] border border-border bg-card">
         {grouped.length === 0 && (
           <div className="p-4 text-xs text-muted-foreground">
-            {activity.isLoading ? 'Loading…' : 'No activity recorded yet.'}
+            {activity.isLoading ? t.common.loading : t.activity.empty}
           </div>
         )}
         {grouped.map(([day, items]) => (
@@ -95,13 +95,13 @@ export function ActivityPage() {
             {items.map((e) => (
               <div key={e.id} className="grid grid-cols-[70px_minmax(0,1fr)_110px] items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0">
                 <span className="font-mono text-[11px] text-muted-foreground">
-                  {new Date(e.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {fmt.time(e.at, { hour: '2-digit', minute: '2-digit' })}
                 </span>
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <span className="truncate text-[13px]">{e.summary}</span>
                   <span className="text-[11px] text-muted-foreground">{actorLabel(e.actor_kind, e.actor_id)}</span>
                 </div>
-                <span className="text-right text-[11px] text-muted-foreground">{e.object_type}</span>
+                <span className="text-right text-[11px] text-muted-foreground">{known(t.activity.objectTypes, e.object_type)}</span>
               </div>
             ))}
           </div>
@@ -130,10 +130,16 @@ function Chip({ label, on, onClick }: { label: string; on: boolean; onClick: () 
   );
 }
 
-function groupByDay<T extends { at: string }>(items: T[]): Array<[string, T[]]> {
+/** known is the catalogue's label for a value the API sends, or the value
+ * itself when it is one this page has no label for (a newer server). */
+function known(labels: Record<string, string>, value: string): string {
+  return Object.hasOwn(labels, value) ? labels[value] : value;
+}
+
+function groupByDay<T extends { at: string }>(items: T[], fmt: Format): Array<[string, T[]]> {
   const map = new Map<string, T[]>();
   for (const item of items) {
-    const day = new Date(item.at).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+    const day = fmt.date(item.at, { weekday: 'long', month: 'short', day: 'numeric' });
     const bucket = map.get(day) ?? [];
     bucket.push(item);
     map.set(day, bucket);

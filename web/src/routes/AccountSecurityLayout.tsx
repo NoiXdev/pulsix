@@ -7,6 +7,7 @@ import { useOrgs } from '../api/hooks/useOrgs.ts';
 import { usePasskeys } from '../api/hooks/usePasskeys.ts';
 import { logout } from '../api/hooks/useAuth.ts';
 import { useResetSession } from '../lib/session.ts';
+import { useT } from '../i18n/useT.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
 
@@ -22,6 +23,7 @@ import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
 export function AccountSecurityLayout() {
   const navigate = useNavigate();
   const resetSession = useResetSession();
+  const t = useT();
   const me = useMe({ enabled: true });
   // GET /orgs is refused to a session that is not MFA-complete; such a
   // session is sent on to enrolment or verification instead (below).
@@ -39,7 +41,7 @@ export function AccountSecurityLayout() {
   const firstOrg = orgs.data?.orgs?.[0];
   if (!me.data || !orgs.data) return <QueryLoading />;
   if (!firstOrg) {
-    return <QueryError error={new Error('This account does not belong to any organization yet.')} />;
+    return <QueryError error={new Error(t.routes.noOrganization)} />;
   }
 
   // Same derivation as AccountSecurityPage's own header pill (Important
@@ -54,14 +56,14 @@ export function AccountSecurityLayout() {
       onSelectOrg={(slug) => void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } })}
       crumbs={
         <>
-          <span>Account</span>
+          <span>{t.routes.accountSecurity.crumbAccount}</span>
           <span className="text-border">/</span>
-          <span className="font-semibold text-foreground">Security</span>
+          <span className="font-semibold text-foreground">{t.routes.accountSecurity.crumbSecurity}</span>
         </>
       }
       user={{
         displayName: me.data.user.display_name,
-        subtitle: hasSecondFactor ? 'Second factor active' : 'Second factor required',
+        subtitle: hasSecondFactor ? t.routes.accountSecurity.secondFactorActive : t.routes.accountSecurity.secondFactorRequired,
       }}
       onLogout={async () => {
         await logout();

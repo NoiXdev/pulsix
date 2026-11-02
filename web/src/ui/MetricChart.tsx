@@ -2,16 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import type { MetricPoint, MetricRange } from '../api/types.ts';
+import { useT } from '../i18n/useT.ts';
 import { toAlignedData } from './metricSeries.ts';
-
-/** The window a chart covers, spelled out for the accessible name and the
- * x-axis tick format. Keyed by the same three values the metrics route
- * accepts. */
-const RANGE_LABEL: Record<MetricRange, string> = {
-  '1h': 'the last hour',
-  '24h': 'the last 24 hours',
-  '7d': 'the last 7 days',
-};
 
 /**
  * Tick formats per window, in uPlot's own template syntax: within an hour
@@ -69,6 +61,7 @@ export interface MetricChartProps {
  * (HostChecksCard) offers no graph affordance for it.
  */
 export function MetricChart({ points, range, label, height = 180 }: MetricChartProps) {
+  const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   // The chart is sized from its container, which has no width until it is
   // in the document — so the first render measures nothing and the effect
@@ -166,12 +159,12 @@ export function MetricChart({ points, range, label, height = 180 }: MetricChartP
       <div
         ref={hostRef}
         role="img"
-        aria-label={`${label} over ${RANGE_LABEL[range]}, ${points.length} samples`}
+        aria-label={t.ui.chart.label(label, t.ui.chart.ranges[range], points.length)}
         style={{ height }}
       />
       {points.length === 0 && (
         <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-          No samples in this range.
+          {t.ui.chart.empty}
         </span>
       )}
     </div>

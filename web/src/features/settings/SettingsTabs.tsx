@@ -50,7 +50,7 @@ export function SettingsTabs({ org }: { org: string }) {
         activeProps={{ className: ACTIVE, 'aria-selected': true }}
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
-        Members
+        {t.settings.tabs.members}
       </Link>
       <Link
         to="/o/$org/settings/activity"
@@ -59,7 +59,7 @@ export function SettingsTabs({ org }: { org: string }) {
         activeProps={{ className: ACTIVE, 'aria-selected': true }}
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
-        Activity
+        {t.settings.tabs.activity}
       </Link>
       <Link
         to="/o/$org/settings/tokens"
@@ -68,7 +68,7 @@ export function SettingsTabs({ org }: { org: string }) {
         activeProps={{ className: ACTIVE, 'aria-selected': true }}
         inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
       >
-        API tokens
+        {t.settings.tabs.tokens}
       </Link>
       {may(orgInfo.data?.org.role, 'channels.read') && (
         <Link
@@ -78,7 +78,7 @@ export function SettingsTabs({ org }: { org: string }) {
           activeProps={{ className: ACTIVE, 'aria-selected': true }}
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
-          Notifications
+          {t.settings.tabs.notifications}
         </Link>
       )}
       {may(orgInfo.data?.org.role, 'channels.read') && (
@@ -89,7 +89,7 @@ export function SettingsTabs({ org }: { org: string }) {
           activeProps={{ className: ACTIVE, 'aria-selected': true }}
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
-          Alert routes
+          {t.settings.tabs.alertRoutes}
         </Link>
       )}
       {may(orgInfo.data?.org.role, 'channels.read') && (
@@ -100,7 +100,7 @@ export function SettingsTabs({ org }: { org: string }) {
           activeProps={{ className: ACTIVE, 'aria-selected': true }}
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
-          On-call rotations
+          {t.settings.tabs.rotations}
         </Link>
       )}
       {me.data?.instance_admin && (
@@ -111,7 +111,7 @@ export function SettingsTabs({ org }: { org: string }) {
           activeProps={{ className: ACTIVE, 'aria-selected': true }}
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
-          Outgoing mail
+          {t.settings.tabs.mail}
         </Link>
       )}
       {me.data?.instance_admin && (
@@ -133,7 +133,7 @@ export function SettingsTabs({ org }: { org: string }) {
           activeProps={{ className: ACTIVE, 'aria-selected': true }}
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
-          Shared resources
+          {t.settings.tabs.sharedResources}
         </Link>
       )}
     </div>

@@ -1,0 +1,60 @@
+/**
+ * The application frame: the sidebar, the top bar and the breadcrumb
+ * labels (lib/breadcrumbs.ts). The route-connected layouts around it say
+ * their own few things under `routes`.
+ */
+export const enShell = {
+  organization: 'Organization',
+  nav: {
+    infrastructure: 'Infrastructure',
+    monitoring: 'Monitoring',
+    automation: 'Automation',
+    hosts: 'Hosts',
+    groups: 'Groups',
+    jumpHosts: 'Jump hosts',
+    credentials: 'Credentials',
+    agents: 'Agents',
+    workers: 'Workers',
+    fleet: 'Fleet',
+    alerts: 'Alerts',
+    checks: 'Checks',
+    maintenance: 'Maintenance',
+    repositories: 'Repositories',
+    playbooks: 'Playbooks',
+    templates: 'Templates',
+    schedules: 'Schedules',
+    runs: 'Runs',
+    settings: 'Settings',
+  },
+  search: {
+    placeholder: 'Search hosts…',
+    label: 'Search hosts',
+  },
+  accountMenu: 'Account menu',
+  accountSecurity: 'Account security',
+  logOut: 'Log out',
+  notifications: 'Notifications',
+  /** Breadcrumb labels, keyed by the URL segment they stand for. */
+  crumbs: {
+    hosts: 'Hosts',
+    settings: 'Settings',
+    members: 'Members',
+    activity: 'Activity',
+    tokens: 'Tokens',
+    mail: 'Outgoing mail',
+    language: 'Language',
+    groups: 'Groups',
+    repos: 'Repositories',
+    playbooks: 'Playbooks',
+    templates: 'Templates',
+    schedules: 'Schedules',
+    runs: 'Runs',
+    workers: 'Workers',
+    agents: 'Agents',
+    checks: 'Checks',
+    'monitoring-groups': 'Monitoring groups',
+    rules: 'Rules',
+    credentials: 'Credentials',
+    'jump-hosts': 'Jump hosts',
+  },
+};

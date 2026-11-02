@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { crumbLabels } from './breadcrumbs.ts';
+import { crumbLabels as crumbLabelsFor } from './breadcrumbs.ts';
+import { en } from '../i18n/en/index.ts';
+import { de } from '../i18n/de/index.ts';
+
+const crumbLabels = (pathname: string, orgSlug: string) => crumbLabelsFor(pathname, orgSlug, en);
 
 describe('crumbLabels', () => {
   it('labels a single top-level segment', () => {
@@ -14,6 +18,7 @@ describe('crumbLabels', () => {
     expect(crumbLabels('/o/acme/settings/activity', 'acme')).toEqual(['Settings', 'Activity']);
     expect(crumbLabels('/o/acme/settings/tokens', 'acme')).toEqual(['Settings', 'Tokens']);
     expect(crumbLabels('/o/acme/settings/mail', 'acme')).toEqual(['Settings', 'Outgoing mail']);
+    expect(crumbLabels('/o/acme/settings/language', 'acme')).toEqual(['Settings', 'Language']);
   });
 
   it('labels the inventory groups and credentials/jump-hosts segments', () => {
@@ -48,5 +53,13 @@ describe('crumbLabels', () => {
     // matching more than intended) — crumbLabels must key off the exact
     // "/o/{org}/" prefix, not a loose substring.
     expect(crumbLabels('/o/acme-staging/hosts', 'acme')).toEqual([]);
+  });
+
+  it('labels in German with the German catalogue', () => {
+    expect(crumbLabelsFor('/o/acme/settings/language', 'acme', de)).toEqual(['Einstellungen', 'Sprache']);
+  });
+
+  it('does not take an inherited property name for a label', () => {
+    expect(crumbLabels('/o/acme/hosts/constructor', 'acme')).toEqual(['Hosts', 'constructor']);
   });
 });

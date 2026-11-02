@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useState, type KeyboardEvent } from 'react
 import { useCombobox } from 'downshift';
 import { ChevronDown, Plus } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
+import { useT } from '../i18n/useT.ts';
 
 export interface SelectOption {
   value: string;
@@ -76,6 +77,7 @@ export function Select({
   options, value, onChange, placeholder, id, disabled, invalid, required, create,
   'aria-label': ariaLabel,
 }: SelectProps) {
+  const t = useT();
   const [filter, setFilter] = useState('');
   // Always a real id, even when the caller gives none: the toggle button
   // below reads its accessible name off this element (see getToggleButtonProps
@@ -133,7 +135,7 @@ export function Select({
   // it non-empty as far as the browser's own constraint validation could
   // tell — a `required` Select could never be caught empty, because it
   // never was one.
-  const selectedLabel = selected ? selected.label : value === '' ? '' : `${value} (unavailable)`;
+  const selectedLabel = selected ? selected.label : value === '' ? '' : t.ui.select.unavailable(value);
 
   const cb = useCombobox<SelectOption>({
     items: rows,
@@ -257,7 +259,7 @@ export function Select({
           this, left every externally-labelled picker's button named the
           same "Open list" — see the span below). */}
       <span id={`${inputId}-open-label`} className="sr-only">
-        Open
+        {t.ui.select.open}
       </span>
       <button
         type="button"
@@ -280,7 +282,7 @@ export function Select({
             real options, not about the row that is always there. */}
         {open && rows.length === (create ? 1 : 0) && (
           <li className="px-2.5 py-1.5 text-xs text-muted-foreground">
-            {options.length === 0 ? 'No options' : 'No match'}
+            {options.length === 0 ? t.ui.select.noOptions : t.ui.select.noMatch}
           </li>
         )}
         {open &&

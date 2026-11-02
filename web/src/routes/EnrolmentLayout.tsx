@@ -8,6 +8,7 @@ import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useMe, useRefetchMe } from '../api/hooks/useMe.ts';
 import { logout } from '../api/hooks/useAuth.ts';
 import { useResetSession } from '../lib/session.ts';
+import { useT } from '../i18n/useT.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 
 /**
@@ -30,6 +31,7 @@ import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx
 export function EnrolmentLayout() {
   const navigate = useNavigate();
   const resetSession = useResetSession();
+  const t = useT();
   const refetchMe = useRefetchMe();
   const me = useMe({ enabled: true });
   const meGuard = useQueryGuard(me);
@@ -62,15 +64,14 @@ export function EnrolmentLayout() {
             resetSession();
           }}
         >
-          <LogOut size={14} /> Sign out
+          <LogOut size={14} /> {t.routes.enrolment.signOut}
         </Button>
       </header>
       <main className="mx-auto flex max-w-[980px] flex-col gap-5 px-8 py-8">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-xl font-semibold">Set up a second factor</h1>
+          <h1 className="text-xl font-semibold">{t.routes.enrolment.title}</h1>
           <p className="text-muted-foreground">
-            Signed in as {me.data.user.email}. Every account needs an authenticator app or a passkey before it can
-            work inside an organization — add one now to continue.
+            {t.routes.enrolment.signedInAs(me.data.user.email)} {t.routes.enrolment.intro}
           </p>
         </div>
         <AccountSecurityPage

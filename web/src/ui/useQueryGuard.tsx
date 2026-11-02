@@ -1,6 +1,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import type { UseInfiniteQueryResult, UseQueryResult } from '@tanstack/react-query';
 import { errorStatus } from '../lib/apiError.ts';
+import { useT } from '../i18n/useT.ts';
 import { useToast } from './toastContext.ts';
 import { QueryError } from './QueryState.tsx';
 
@@ -76,6 +77,7 @@ export function useQueryGuard<TData, TError>(
 ): ReactNode | null {
   const enabled = options?.enabled ?? true;
   const toast = useToast();
+  const t = useT();
   const hasData = query.data !== undefined;
   const status = query.isError ? errorStatus(query.error) : null;
   const showsError = query.isError && (!hasData || (status !== null && FINAL_STATUSES.has(status)));
@@ -91,12 +93,10 @@ export function useQueryGuard<TData, TError>(
     lastHandled.current = query.errorUpdatedAt;
 
     toast.show(
-      nextPageFailed
-        ? 'Could not load more — showing what is already loaded.'
-        : 'Could not refresh this page — showing the last loaded data.',
+      nextPageFailed ? t.ui.guard.loadMoreFailed : t.ui.guard.refreshFailed,
       'destructive',
     );
-  }, [enabled, query.isError, showsError, nextPageFailed, query.errorUpdatedAt, toast]);
+  }, [enabled, query.isError, showsError, nextPageFailed, query.errorUpdatedAt, toast, t]);
 
   if (enabled && showsError) {
     return <QueryError error={query.error} />;

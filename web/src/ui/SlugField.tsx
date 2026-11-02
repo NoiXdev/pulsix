@@ -2,6 +2,7 @@ import { type ComponentProps } from 'react';
 import { RotateCcw } from 'lucide-react';
 import { Input } from './input.tsx';
 import { slugify } from '../lib/slug.ts';
+import { useT } from '../i18n/useT.ts';
 
 export interface SlugFieldProps {
   id: string;
@@ -39,6 +40,7 @@ export interface SlugFieldProps {
  * clearing the field, which would leave somebody retyping what they had.
  */
 export function SlugField({ id, inputProps, readSource, write }: SlugFieldProps) {
+  const t = useT();
   return (
     <div className="flex items-center gap-2">
       <Input
@@ -57,8 +59,8 @@ export function SlugField({ id, inputProps, readSource, write }: SlugFieldProps)
           const generated = slugify(readSource());
           if (generated !== '') write(generated);
         }}
-        aria-label="Generate slug from the name"
-        title="Generate from the name"
+        aria-label={t.ui.slug.generateLabel}
+        title={t.ui.slug.generateTitle}
         className="shrink-0 rounded-md border border-border p-2 text-muted hover:text-foreground"
       >
         <RotateCcw className="size-4" aria-hidden />
