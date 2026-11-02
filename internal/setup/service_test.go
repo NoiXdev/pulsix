@@ -1,8 +1,10 @@
 package setup_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -518,5 +520,39 @@ func TestStatusCarriesTheDefaultLocale(t *testing.T) {
 	after, err := svc.Status(ctx)
 	if err != nil || after.DefaultLocale != "de" {
 		t.Fatalf("Status after = %+v, %v; want DefaultLocale de", after, err)
+	}
+}
+
+// A stored default the SPA cannot use must never take the public
+// /setup/status or /auth/me down: unreadable JSON and a language Pulsix
+// does not ship both degrade to English, and Status keeps answering.
+func TestDefaultLocaleDegradesAnUnusableStoredValueToEnglish(t *testing.T) {
+	tests := []struct {
+		name   string
+		stored string
+	}{
+		{"corrupt", `{not json`},
+		{"unsupported", `"fr"`},
+		{"not a string", `42`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeSetupStore()
+			st.settings["default_locale"] = []byte(tt.stored)
+			var logged bytes.Buffer
+			svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+			svc.SetLogger(slog.New(slog.NewTextHandler(&logged, nil)))
+			got, err := svc.DefaultLocale(ctx)
+			if err != nil || got != "en" {
+				t.Fatalf("DefaultLocale = %q, %v; want en, nil", got, err)
+			}
+			status, err := svc.Status(ctx)
+			if err != nil || status.DefaultLocale != "en" {
+				t.Fatalf("Status = %+v, %v; want DefaultLocale en", status, err)
+			}
+			if tt.name != "unsupported" && !strings.Contains(logged.String(), "default_locale") {
+				t.Errorf("an unreadable default was not logged; log = %q", logged.String())
+			}
+		})
 	}
 }

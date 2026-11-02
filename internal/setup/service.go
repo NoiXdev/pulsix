@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -199,14 +200,22 @@ type Service struct {
 	// hashPassword is auth.HashPassword; tests replace it to see whether
 	// Complete hashed at all (export_test.go).
 	hashPassword func(string) (string, error)
+	log          *slog.Logger
 }
 
 // NewService wires the store, session opener, the box used to seal secrets
 // inside instance settings (the SMTP password), and the clock. No
 // OrgCreatedHook is installed by default — see SetOrgCreatedHook.
 func NewService(store Store, sessions SessionStore, box *crypto.Box, now func() time.Time) *Service {
-	return &Service{store: store, sessions: sessions, box: box, now: now, hashPassword: auth.HashPassword}
+	return &Service{
+		store: store, sessions: sessions, box: box, now: now,
+		hashPassword: auth.HashPassword, log: slog.Default(),
+	}
 }
+
+// SetLogger replaces the logger (slog.Default() unless set) that records
+// an unreadable stored default language (DefaultLocale).
+func (s *Service) SetLogger(log *slog.Logger) { s.log = log }
 
 // SetOrgCreatedHook installs hook to run once Complete's transaction has
 // committed the wizard's first organization — the same
@@ -351,7 +360,11 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 }
 
 // DefaultLocale returns the instance's default GUI language, English when
-// none has ever been set.
+// none has ever been set. A stored value it cannot use — unreadable, or a
+// language Pulsix does not ship — also answers English rather than an
+// error: the public /setup/status and /auth/me carry this value, and a
+// broken setting must not take them down. Only a failing store is an
+// error.
 func (s *Service) DefaultLocale(ctx context.Context) (string, error) {
 	data, err := s.store.LoadSetting(ctx, defaultLocaleKey)
 	if errors.Is(err, ErrNotFound) {
@@ -362,9 +375,10 @@ func (s *Service) DefaultLocale(ctx context.Context) (string, error) {
 	}
 	var l string
 	if err := json.Unmarshal(data, &l); err != nil {
-		return "", fmt.Errorf("unmarshal default locale: %w", err)
+		s.log.WarnContext(ctx, "unreadable default_locale setting, using en", "error", err)
+		return locale.EN, nil
 	}
-	return l, nil
+	return locale.Resolve(nil, l), nil
 }
 
 // SetDefaultLocale replaces the instance's default GUI language. Anything
