@@ -28,11 +28,15 @@ func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, com
 	if version == "" || version == "dev" {
 		version = "latest"
 	}
+	// The token reaches docker run as its environment, named by a bare
+	// `-e PULSIX_ENROLL_TOKEN`, not as `-e NAME=value`: an argument is in
+	// the process list for every local user of the host, the environment
+	// only for the client's own user and root (backlog 7.39).
 	docker = strings.Join([]string{
-		fmt.Sprintf("docker run -d --init --name pulsix-worker-%s --restart unless-stopped \\", name),
+		fmt.Sprintf("PULSIX_ENROLL_TOKEN=%s docker run -d --init --name pulsix-worker-%s --restart unless-stopped \\", token, name),
 		fmt.Sprintf("  -e PULSIX_MANAGER_ADDR=%s \\", ep.Addr),
 		fmt.Sprintf("  -e PULSIX_MANAGER_SERVER_NAME=%s \\", ep.ServerName),
-		fmt.Sprintf("  -e PULSIX_ENROLL_TOKEN=%s \\", token),
+		"  -e PULSIX_ENROLL_TOKEN \\",
 		"  -e PULSIX_WORKER_PLAY_UID=65533 \\",
 		fmt.Sprintf("  -v pulsix-worker-%s:/var/lib/pulsix-worker \\", name),
 		fmt.Sprintf("  noixdev/pulsix-worker:%s", version),

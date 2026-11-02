@@ -13,8 +13,8 @@ func TestWorkerSnippetsRunTheWorkerUnderAnInit(t *testing.T) {
 	ep := WorkerEndpoint{Addr: "pulsix.example.com:8444", ServerName: "pulsix-manager"}
 	docker, compose := workerSnippets(ep, "hel-1", "pxw1.token", "v0.5.0")
 
-	if !strings.HasPrefix(docker, "docker run -d --init --name pulsix-worker-hel-1 ") {
-		t.Errorf("docker snippet must start with `docker run -d --init --name ...`, got:\n%s", docker)
+	if !strings.Contains(docker, "docker run -d --init --name pulsix-worker-hel-1 ") {
+		t.Errorf("docker snippet must run `docker run -d --init --name ...`, got:\n%s", docker)
 	}
 	for _, want := range []string{
 		"    image: noixdev/pulsix-worker:v0.5.0\n    init: true\n",
@@ -45,5 +45,22 @@ func TestWorkerSnippetsSeparateThePlayUID(t *testing.T) {
 	}
 	if !strings.Contains(compose, "      PULSIX_WORKER_PLAY_UID: \"65533\"\n") {
 		t.Errorf("compose snippet does not set the play uid:\n%s", compose)
+	}
+}
+
+// TestWorkerDockerSnippetKeepsTheTokenOutOfDockersArguments is backlog
+// 7.39: as a `-e NAME=value` argument the enrollment token sits in the
+// docker client's command line, which every local user of the host can
+// read from the process list. The snippet hands it over in the client's
+// environment instead, which only its own user and root can read.
+func TestWorkerDockerSnippetKeepsTheTokenOutOfDockersArguments(t *testing.T) {
+	ep := WorkerEndpoint{Addr: "pulsix.example.com:8444", ServerName: "pulsix-manager"}
+	docker, _ := workerSnippets(ep, "hel-1", "pxw1.token", "v0.5.0")
+
+	if !strings.HasPrefix(docker, "PULSIX_ENROLL_TOKEN=pxw1.token docker run ") {
+		t.Errorf("the token must be the docker client's environment, set ahead of the command:\n%s", docker)
+	}
+	if strings.Contains(docker, "-e PULSIX_ENROLL_TOKEN=") || !strings.Contains(docker, "  -e PULSIX_ENROLL_TOKEN \\\n") {
+		t.Errorf("the container must take the token from that environment, not from an argument:\n%s", docker)
 	}
 }
