@@ -58,7 +58,8 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
       <Dialog open onClose={onClose} title="Enrol an agent" size="wide">
         <div className="flex flex-col gap-4">
           <p className="text-xs text-muted-foreground">
-            Run this on the host as root. The agent downloads itself from this manager, enrols with the token and appears here. The token is shown only now
+            Run this on the host as root and paste the token below when the installer asks for it — it stays off the command line, where other users
+            of the host could read it. The agent downloads itself from this manager, enrols with the token and appears here. The token is shown only now
             — it admits {maxUses === 1 ? 'one agent' : `${maxUses} agents`} and expires in {minutes} minutes.
           </p>
           <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px]" aria-label="Install command">

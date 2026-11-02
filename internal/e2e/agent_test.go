@@ -177,8 +177,10 @@ func (w agentWorld) createToken(t *testing.T, hostID, nameHint string) string {
 	if !strings.HasPrefix(out.Token, "pxa1.") {
 		t.Fatalf("token = %q, want an agent (pxa1) token", out.Token)
 	}
-	if !strings.Contains(out.InstallCommand, out.Token) || !strings.Contains(out.InstallCommand, "/install.sh") {
-		t.Fatalf("install command = %q, want it to carry the token and the script URL", out.InstallCommand)
+	// The token stays off the command line, where other users of the host
+	// could read it; the installer asks for it (backlog 7.30).
+	if strings.Contains(out.InstallCommand, out.Token) || !strings.Contains(out.InstallCommand, "/install.sh") {
+		t.Fatalf("install command = %q, want the script URL and not the token", out.InstallCommand)
 	}
 	return out.Token
 }

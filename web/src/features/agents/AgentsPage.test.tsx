@@ -85,7 +85,7 @@ describe('AgentsPage', () => {
         return {
           token: 'pxa1.aaa.bbb.ccc',
           token_record: { id: 't1', zone_id: 'z1', name_hint: 'edge-1', max_uses: 2, uses: 0, expires_at: inDays(1), created_at: '' },
-          install_command: 'curl -fsSL https://pulsix.example/install.sh | sudo sh -s -- --token pxa1.aaa.bbb.ccc --manager pulsix.example:8444',
+          install_command: 'curl -fsSL https://pulsix.example/install.sh | sudo sh -s -- --manager pulsix.example:8444',
         };
       },
     });
@@ -97,7 +97,7 @@ describe('AgentsPage', () => {
     await user.type(screen.getByLabelText('Agents this token may enrol'), '2');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
-    expect(await screen.findByLabelText('Install command')).toHaveTextContent('--token pxa1.aaa.bbb.ccc');
+    expect(await screen.findByLabelText('Install command')).toHaveTextContent('--manager pulsix.example:8444');
     expect(screen.getByLabelText('Enrollment token')).toHaveTextContent('pxa1.aaa.bbb.ccc');
     expect(posted).toMatchObject({ zone_id: 'z1', name_hint: 'edge-1', max_uses: 2, expires_in_minutes: 60 });
   });

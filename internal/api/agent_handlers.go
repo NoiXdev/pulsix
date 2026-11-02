@@ -278,7 +278,7 @@ func registerAgentRoutes(hapi huma.API, deps Deps) {
 		// agent token, and the agent's parser refuses a worker one.
 		printed := enrolltoken.AgentString(tok)
 		out.Body.TokenRecord, out.Body.Token = record, printed
-		out.Body.InstallCommand = agentInstallCommand(deps, printed, record.NameHint)
+		out.Body.InstallCommand = agentInstallCommand(deps, record.NameHint)
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createAgentToken", "agent_enrollment"))
 
@@ -332,12 +332,13 @@ func findAgentToken(ctx context.Context, deps Deps, orgID, id uuid.UUID) (agentT
 }
 
 // agentInstallCommand is the one line the Add-agent dialog shows next to
-// the token: the manager's own install script, the token, and the gRPC
-// endpoint the agent dials (the shared listener workers use). The
+// the token: the manager's own install script and the gRPC endpoint the
+// agent dials (the shared listener workers use). The token is not in it;
+// the installer asks for it. The
 // certificate's name is passed only when it differs from the address's
 // host — that is the case the agent cannot infer, and spelling it out
 // always would make the common command noisier than it needs to be.
-func agentInstallCommand(deps Deps, token, nameHint string) string {
+func agentInstallCommand(deps Deps, nameHint string) string {
 	base := strings.TrimRight(deps.PublicURL, "/")
 	if base == "" {
 		base = "https://<manager>"
@@ -346,7 +347,11 @@ func agentInstallCommand(deps Deps, token, nameHint string) string {
 	if addr == "" {
 		addr = "<manager>:8444"
 	}
-	cmd := fmt.Sprintf("curl -fsSL %s/install.sh | sudo sh -s -- --token %s --manager %s", base, token, addr)
+	// The token stays off the command line (backlog 7.30): an argument of
+	// the root installer is in the process list, readable by every local
+	// user of the host while the install runs. install.sh asks for it on
+	// the terminal instead, and the dialog shows it to copy from.
+	cmd := fmt.Sprintf("curl -fsSL %s/install.sh | sudo sh -s -- --manager %s", base, addr)
 	if name := deps.WorkerEndpoint.ServerName; name != "" && name != hostOf(addr) {
 		cmd += " --server-name " + name
 	}

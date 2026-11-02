@@ -82,6 +82,9 @@ func TestInstallScriptTemplate(t *testing.T) {
 		"systemctl enable --now",
 		"sha256sum",
 		"--token", "--manager", "--name",
+		// Backlog 7.30: the token can come from the terminal or a
+		// root-only file instead of the command line.
+		"--token-file", "/dev/tty",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the rendered install script must contain %q", want)

@@ -116,10 +116,15 @@ func TestAgentTokenIsShownOnceAndDrivesTheInstallCommand(t *testing.T) {
 	if created.Item.MaxUses != 3 || created.Item.NameHint != "edge-1" {
 		t.Fatalf("token record = %+v", created.Item)
 	}
-	if !strings.Contains(created.InstallCommand, created.Token) ||
-		!strings.Contains(created.InstallCommand, "/install.sh") ||
+	if !strings.Contains(created.InstallCommand, "/install.sh") ||
 		!strings.Contains(created.InstallCommand, "--manager localhost:8444") {
 		t.Fatalf("install command = %q", created.InstallCommand)
+	}
+	// Backlog 7.30: the token never rides the command line, where every
+	// local user of the host can read it from the root installer's
+	// arguments; the installer asks for it on the terminal instead.
+	if strings.Contains(created.InstallCommand, created.Token) || strings.Contains(created.InstallCommand, "--token ") {
+		t.Fatalf("the install command carries the token: %q", created.InstallCommand)
 	}
 
 	// The pending list names the token, never its secret.
