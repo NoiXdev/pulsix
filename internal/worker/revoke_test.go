@@ -72,3 +72,33 @@ func TestRevokeExecutorBrokenPayloadsFailClosed(t *testing.T) {
 		t.Fatalf("a foreign kind must be refused: %v", err)
 	}
 }
+
+// TestRevokeExecutorPassesTheOtherAccounts is backlog 7.45: the accounts
+// besides the login one that the previous key may sit in ride into the
+// playbook as pulsix_also_users, a JSON list; without any, the list is
+// empty rather than missing.
+func TestRevokeExecutorPassesTheOtherAccounts(t *testing.T) {
+	host := map[string]any{"id": "host-uuid", "name": "web1", "address": "192.0.2.10", "port": 22}
+	login := secretStr(t, credentials.Secret{PrivateKey: "new-key-material"})
+	for _, c := range []struct {
+		also []string
+		want string
+	}{
+		{[]string{"ansible"}, `["ansible"]`},
+		{nil, `[]`},
+	} {
+		cap := &captureExecutor{status: StatusSucceeded}
+		payload := sysPayload(t, map[string]any{
+			"host": host, "username": "deploy", "login_credential": login,
+			"old_public_key": "ssh-ed25519 AAAA oldpub", "pulsix_user": "deploy", "also_users": c.also,
+		})
+		job := sysJob(t, "revoke_key", payload, map[string]string{"web1": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"})
+		job.KnownHosts = map[string]string{"web1": "ssh-ed25519 AAAA hostkey"}
+		if status, _, err := NewRevokeExecutor(cap).Run(context.Background(), job, RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink); err != nil || status != StatusSucceeded {
+			t.Fatalf("Run = %q, %v", status, err)
+		}
+		if got := cap.got.GetExtraVars()["pulsix_also_users"]; got != c.want {
+			t.Errorf("also_users %v: pulsix_also_users = %q, want %q", c.also, got, c.want)
+		}
+	}
+}

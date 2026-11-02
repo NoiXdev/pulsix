@@ -184,9 +184,17 @@ func (q *SQLQueue) revokeKindPayload(ctx context.Context, job Job, rp revocation
 		return "", err
 	}
 	username := rotationAccount(host.Username, cred.Username)
+	// Bootstrap installs the credential's key for the credential's own
+	// account (bootstrapKindPayload); when runs log in as another one, the
+	// previous key may sit there too, and the revocation clears it where
+	// that account exists (backlog 7.45).
+	also := []string{}
+	if own := bootstrapAccount(cred.Username); own != username {
+		also = append(also, own)
+	}
 	payload := map[string]any{
 		"host": host, "username": username, "login_credential": loginJSON,
-		"old_public_key": rp.OldPublicKey, "pulsix_user": username, "bastions": hops,
+		"old_public_key": rp.OldPublicKey, "pulsix_user": username, "also_users": also, "bastions": hops,
 	}
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -420,10 +428,7 @@ func (q *SQLQueue) bootstrapKindPayload(ctx context.Context, job Job, host syste
 	if cred.Kind != credentials.KindSSHKey {
 		return "", fmt.Errorf("bootstrap %s: credential %s is a %s, not an ssh_key credential", job.ID, req.CredentialID, cred.Kind)
 	}
-	pulsixUser := cred.Username
-	if pulsixUser == "" {
-		pulsixUser = credentials.DefaultLoginUser
-	}
+	pulsixUser := bootstrapAccount(cred.Username)
 	loginJSON, err := secretJSON(req.Login)
 	if err != nil {
 		return "", err
@@ -471,6 +476,16 @@ func (q *SQLQueue) rotateKindPayload(ctx context.Context, job Job, rp rotationJo
 		return "", fmt.Errorf("encode rotate-key kind payload: %w", err)
 	}
 	return string(b), nil
+}
+
+// bootstrapAccount is the account bootstrap creates and installs a
+// credential's key for: the credential's username, or the default login
+// user when it names none.
+func bootstrapAccount(credUsername string) string {
+	if credUsername == "" {
+		return credentials.DefaultLoginUser
+	}
+	return credUsername
 }
 
 // rotationAccount is the account a rotation installs the new key for,

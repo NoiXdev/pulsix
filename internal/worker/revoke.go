@@ -40,10 +40,14 @@ type revokePayload struct {
 	Host     sysHost `json:"host"`
 	Username string  `json:"username"`
 	// LoginCredential is the credential's current secret as Secret JSON.
-	LoginCredential string   `json:"login_credential"`
-	OldPublicKey    string   `json:"old_public_key"`
-	PulsixUser      string   `json:"pulsix_user"`
-	Bastions        []sysHop `json:"bastions"`
+	LoginCredential string `json:"login_credential"`
+	OldPublicKey    string `json:"old_public_key"`
+	PulsixUser      string `json:"pulsix_user"`
+	// AlsoUsers are further accounts the previous key may sit in — the
+	// credential's own account, where bootstrap installs it — cleared
+	// where they exist (backlog 7.45).
+	AlsoUsers []string `json:"also_users"`
+	Bastions  []sysHop `json:"bastions"`
 }
 
 // Run runs the revocation playbook for the job's single target.
@@ -70,9 +74,18 @@ func (e *RevokeExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv,
 	if err != nil {
 		return StatusError, nil, err
 	}
+	also := payload.AlsoUsers
+	if also == nil {
+		also = []string{}
+	}
+	alsoJSON, err := json.Marshal(also)
+	if err != nil {
+		return StatusError, nil, fmt.Errorf("revoke-key also_users: %w", err)
+	}
 	synth, err := synthRunJob(job, payload.Host.Name, doc, connJSON, creds, map[string]string{
 		"pulsix_old_public_key": jsonStr(payload.OldPublicKey),
 		"pulsix_user":           jsonStr(pulsixUser),
+		"pulsix_also_users":     string(alsoJSON),
 	}, loginUser)
 	if err != nil {
 		return StatusError, nil, err

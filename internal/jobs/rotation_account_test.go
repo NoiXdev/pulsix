@@ -66,3 +66,38 @@ func TestRotationActsOnTheAccountRunsLogInAs(t *testing.T) {
 	}
 	check(jobs.KindRevokeKey)
 }
+
+// TestRevocationAlsoNamesTheCredentialsOwnAccount is backlog 7.45: bootstrap
+// installs a credential's key for the credential's own account, so when
+// runs log in as another one, the revocation names that account too.
+func TestRevocationAlsoNamesTheCredentialsOwnAccount(t *testing.T) {
+	f := newRotationFixture(t, "jobs-rotation-also-users")
+	if _, err := f.w.sshSvc.SetHostSSH(f.w.scoped, f.w.org, f.hostID, sshconf.HostSSHInput{
+		Username: "deploy", CredentialID: &f.cred.ID, Port: 22, BastionMode: sshconf.ModeInherit,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.w.credsSvc.Rotate(f.w.scoped, f.w.org, f.cred.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // the rotation and its verification
+		c := f.claim(t)
+		if err := f.w.queue.Finish(ctx, uuid.MustParse(c.Job.GetId()), jobs.StatusSucceeded, nil, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := f.claim(t)
+	if c == nil || c.Job.GetKind() != string(jobs.KindRevokeKey) {
+		t.Fatalf("claim = %v, want the revocation", c)
+	}
+	var p struct {
+		PulsixUser string   `json:"pulsix_user"`
+		AlsoUsers  []string `json:"also_users"`
+	}
+	if err := json.Unmarshal([]byte(c.Job.GetKindPayload()), &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.PulsixUser != "deploy" || len(p.AlsoUsers) != 1 || p.AlsoUsers[0] != "ansible" {
+		t.Fatalf("revocation acts on %q and also %v; want deploy and also [ansible]", p.PulsixUser, p.AlsoUsers)
+	}
+}
