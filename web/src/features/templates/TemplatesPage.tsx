@@ -16,6 +16,8 @@ import { may } from '../../lib/roles.ts';
 import { TemplateDialog } from './TemplateDialog.tsx';
 import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
 import type { Template } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) 110px';
 
@@ -23,6 +25,7 @@ const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8f
  * playbook plus scope, limit, extra vars and the default SSH credential —
  * the thing an operator runs, and the run view's own entry point. */
 export function TemplatesPage() {
+  const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
   const toast = useToast();
@@ -57,19 +60,19 @@ export function TemplatesPage() {
     // from "a real id this page's own playbook list does not know about"
     // (id.slice(0, 8)) rather than falling through to the same fallback,
     // which would otherwise render as an empty string.
-    if (id === '') return 'not synced yet';
+    if (id === '') return t.templates.playbook.notSynced;
     const p = (playbooks.data?.playbooks ?? []).find((x) => x.id === id);
     if (!p) return id.slice(0, 8);
-    return p.source === 'repo' ? `repo: ${p.path ?? ''}` : p.summary || 'editor playbook';
+    return p.source === 'repo' ? t.templates.playbook.repo(p.path ?? '') : p.summary || t.templates.playbook.editor;
   };
 
-  async function run(t: Template) {
+  async function run(tpl: Template) {
     try {
-      const { jobs } = await runTemplate.mutateAsync(t.id);
-      toast.show(`Run of ${t.name} started`);
+      const { jobs } = await runTemplate.mutateAsync(tpl.id);
+      toast.show(t.templates.list.started(tpl.name));
       if (jobs && jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Starting the run failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.templates.list.startFailed, 'destructive');
     }
   }
 
@@ -77,65 +80,65 @@ export function TemplatesPage() {
     <>
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">Job templates</h1>
+          <h1 className="text-xl font-semibold">{t.templates.list.title}</h1>
           <span className="text-[13px] text-muted-foreground">
-            {list.length} templates · a playbook, its scope, its extra vars and one button to run it
+            {t.templates.list.summary(list.length)}
           </span>
         </div>
         {canWrite && (
           <Button variant="primary" onClick={() => setDialog('new')}>
-            <ListPlus size={15} /> Add template
+            <ListPlus size={15} /> {t.templates.list.add}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Name</span>
-          <span>Playbook</span>
-          <span>Scope</span>
-          <span>Default credential</span>
-          <span>Actions</span>
+          <span>{t.templates.list.columns.name}</span>
+          <span>{t.templates.list.columns.playbook}</span>
+          <span>{t.templates.list.columns.scope}</span>
+          <span>{t.templates.list.columns.credential}</span>
+          <span>{t.templates.list.columns.actions}</span>
         </GridHeader>
-        {list.map((t) => (
-          <GridRow key={t.id} columns={COLUMNS}>
+        {list.map((tpl) => (
+          <GridRow key={tpl.id} columns={COLUMNS}>
             <span className="flex min-w-0 items-center gap-1.5">
               {canWrite ? (
-                <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(t)}>
-                  {t.name}
+                <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(tpl)}>
+                  {tpl.name}
                 </button>
               ) : (
-                <span className="truncate font-mono text-[13px]">{t.name}</span>
+                <span className="truncate font-mono text-[13px]">{tpl.name}</span>
               )}
-              {/* t.shared_template_id marks a projection of an installation-
+              {/* tpl.shared_template_id marks a projection of an installation-
                   owned definition (spec v0.2f decision 1) — TemplateDialog
                   disables its name/playbook/limit/extra-vars fields, so the
                   row needs to say why before the dialog ever opens. */}
-              {t.shared_template_id && <Pill tone="accent">Installation-managed</Pill>}
+              {tpl.shared_template_id && <Pill tone="accent">{t.templates.list.managed}</Pill>}
             </span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{playbookLabel(t.playbook_id)}</span>
-            <span>{scopeChip(t, groupName)}</span>
-            <span className="truncate text-xs text-muted-foreground">{t.credential_id ? (credentialName(t.credential_id) ?? t.credential_id.slice(0, 8)) : '—'}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{playbookLabel(tpl.playbook_id)}</span>
+            <span>{scopeChip(tpl, groupName, t)}</span>
+            <span className="truncate text-xs text-muted-foreground">{tpl.credential_id ? (credentialName(tpl.credential_id) ?? tpl.credential_id.slice(0, 8)) : '—'}</span>
             <span className="flex gap-1">
-              <Button type="button" variant="ghost" aria-label={`Triggers of ${t.name}`} onClick={() => setTriggers(t)}>
+              <Button type="button" variant="ghost" aria-label={t.templates.list.triggersLabel(tpl.name)} onClick={() => setTriggers(tpl)}>
                 <Webhook size={13} />
               </Button>
               <Button
                 type="button"
                 variant="ghost"
-                aria-label={`Schedules of ${t.name}`}
-                onClick={() => void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: undefined, template: t.id } })}
+                aria-label={t.templates.list.schedulesLabel(tpl.name)}
+                onClick={() => void navigate({ to: '/o/$org/schedules', params: { org }, search: { id: undefined, template: tpl.id } })}
               >
                 <CalendarClock size={13} />
               </Button>
               {canRun && (
-                <Button type="button" aria-label={`Run ${t.name}`} disabled={runTemplate.isPending} onClick={() => void run(t)}>
-                  <Play size={13} /> Run
+                <Button type="button" aria-label={t.templates.list.runLabel(tpl.name)} disabled={runTemplate.isPending} onClick={() => void run(tpl)}>
+                  <Play size={13} /> {t.templates.list.run}
                 </Button>
               )}
             </span>
           </GridRow>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No job templates yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.templates.list.empty}</p>}
       </Card>
       {triggers && (
         <TriggersDialog
@@ -168,11 +171,11 @@ export function TemplatesPage() {
 
 /** scopeChip names the template's targets: the whole organization, a
  * group, an explicit host selection, or both halves at once. */
-function scopeChip(t: Template, groupName: (id: string) => string) {
-  const count = (t.scope.host_ids ?? []).length;
-  if (!t.scope.group_id && count === 0) return <Pill tone="unknown">whole organization</Pill>;
-  const group = t.scope.group_id ? groupName(t.scope.group_id) : null;
-  if (!group) return <Pill tone="accent">{count} {count === 1 ? 'host' : 'hosts'}</Pill>;
+function scopeChip(tpl: Template, groupName: (id: string) => string, t: Messages) {
+  const count = (tpl.scope.host_ids ?? []).length;
+  if (!tpl.scope.group_id && count === 0) return <Pill tone="unknown">{t.templates.scope.whole}</Pill>;
+  const group = tpl.scope.group_id ? groupName(tpl.scope.group_id) : null;
+  if (!group) return <Pill tone="accent">{t.templates.scope.hosts(count)}</Pill>;
   if (count === 0) return <Pill tone="accent">{group}</Pill>;
-  return <Pill tone="accent">{group} + {count} {count === 1 ? 'host' : 'hosts'}</Pill>;
+  return <Pill tone="accent">{t.templates.scope.groupAndHosts(group, count)}</Pill>;
 }

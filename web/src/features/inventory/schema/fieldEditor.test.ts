@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { changeType, fieldPath, hasProblemUnder, moveField, newField, removeField, replaceField, typeLabel } from './fieldEditor.ts';
+import { en } from '../../../i18n/en/index.ts';
 import type { SchemaField } from './types.ts';
 
 describe('field editor helpers', () => {
   it('labels types like the mockup', () => {
-    expect(typeLabel({ name: 'a', type: 'list', item: { name: '', type: 'int' } })).toBe('list<int>');
-    expect(typeLabel({ name: 'a', type: 'object', fields: [] })).toBe('sub-schema');
-    expect(typeLabel({ name: 'a', type: 'repeater' })).toBe('repeater');
+    expect(typeLabel({ name: 'a', type: 'list', item: { name: '', type: 'int' } }, en)).toBe('list<int>');
+    expect(typeLabel({ name: 'a', type: 'object', fields: [] }, en)).toBe('sub-schema');
+    expect(typeLabel({ name: 'a', type: 'repeater' }, en)).toBe('repeater');
   });
 
   it('names new fields uniquely', () => {

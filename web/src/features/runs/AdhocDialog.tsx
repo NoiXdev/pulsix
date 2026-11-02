@@ -7,6 +7,7 @@ import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import { useRunAdhocCommand } from '../../api/hooks/useJobs.ts';
+import { useT } from '../../i18n/useT.ts';
 
 // MAX_ARGV mirrors the server's bound (internal/jobs/adhoc.go's
 // maxAdhocArgv, the API's huma maxLength): a client-side cap only, the
@@ -24,6 +25,7 @@ const MAX_ARGV = 8 << 10;
  * group, the same landing every other run action uses.
  */
 export function AdhocDialog({ org, onClose }: { org: string; onClose: () => void }) {
+  const t = useT();
   const toast = useToast();
   const navigate = useNavigate();
   const runAdhoc = useRunAdhocCommand(org);
@@ -44,38 +46,38 @@ export function AdhocDialog({ org, onClose }: { org: string; onClose: () => void
     e.preventDefault();
     setError(null);
     if (selected.length === 0) {
-      setError('choose at least one host');
+      setError(t.runs.adhoc.chooseHost);
       return;
     }
     if (argv.trim() === '') {
-      setError('a command is required');
+      setError(t.runs.adhoc.commandRequired);
       return;
     }
     try {
       const { jobs } = await runAdhoc.mutateAsync({ host_ids: [...selected], module: 'shell', argv });
-      toast.show(`Command started on ${selected.length} host(s)`);
+      toast.show(t.runs.adhoc.started(selected.length));
       if (jobs && jobs.length > 0) {
         await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
       }
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Starting the command failed');
+      setError(err instanceof Error ? err.message : t.runs.adhoc.failed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} size="wide" title="Run command">
+    <Dialog open onClose={onClose} size="wide" title={t.runs.adhoc.title}>
       <form onSubmit={submit} className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto">
         <p className="text-xs text-muted-foreground">
-          Runs one shell command on the selected hosts. The output streams to the run view like any other run.
+          {t.runs.adhoc.intro}
         </p>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="adhoc-search">Hosts</Label>
+          <Label htmlFor="adhoc-search">{t.runs.adhoc.hosts}</Label>
           <input
             id="adhoc-search"
             type="search"
-            aria-label="Search managed hosts"
-            placeholder="Search managed hosts…"
+            aria-label={t.runs.adhoc.searchLabel}
+            placeholder={t.runs.adhoc.searchPlaceholder}
             className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground"
             value={q}
             onChange={(e) => setQ(e.target.value)}
@@ -89,23 +91,23 @@ export function AdhocDialog({ org, onClose }: { org: string; onClose: () => void
             ))}
             {hosts.data && page.length === 0 && (
               <span className="text-[11px] text-muted-foreground">
-                {q ? `No managed host matches “${q}”.` : 'No managed hosts yet.'}
+                {q ? t.runs.adhoc.noMatch(q) : t.runs.adhoc.noHosts}
               </span>
             )}
           </div>
           {hasNextPage && (
             <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-              <span>More managed hosts match. Search to narrow the list, or load more.</span>
+              <span>{t.runs.adhoc.more}</span>
               <LoadMoreButton onClick={() => void fetchNextPage()} loading={isFetchingNextPage} />
             </div>
           )}
-          <span className="text-[11px] text-muted-foreground">{selected.length} host(s) selected</span>
+          <span className="text-[11px] text-muted-foreground">{t.runs.adhoc.selected(selected.length)}</span>
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="adhoc-argv">Command</Label>
+          <Label htmlFor="adhoc-argv">{t.runs.adhoc.command}</Label>
           <textarea
             id="adhoc-argv"
-            aria-label="Command"
+            aria-label={t.runs.adhoc.command}
             rows={4}
             spellCheck={false}
             maxLength={MAX_ARGV}
@@ -122,10 +124,10 @@ export function AdhocDialog({ org, onClose }: { org: string; onClose: () => void
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={runAdhoc.isPending}>
-            Run command
+            {t.runs.adhoc.submit}
           </Button>
         </div>
       </form>

@@ -1,0 +1,40 @@
+/** Playbooks: the list, the editor dialog and the YAML preview messages. */
+export const enPlaybooks = {
+  list: {
+    title: 'Playbooks',
+    summary: (n: number) => `${n} playbooks · a job template runs one of these against its scope`,
+    add: 'New editor playbook',
+    columns: {
+      source: 'Source',
+      summaryPath: 'Summary / path',
+      repository: 'Repository',
+      updated: 'Updated',
+    },
+    sourceRepo: 'repo',
+    sourceEditor: 'editor',
+    empty: 'No playbooks yet — add a repository and sync it, or write one in the editor.',
+    unnamed: '(unnamed play)',
+  },
+  editor: {
+    saved: 'Playbook saved',
+    created: 'Playbook created',
+    saveFailed: 'Saving failed',
+    confirmDelete: (name: string) => `Delete playbook ${name}?`,
+    fallbackName: 'editor playbook',
+    deleted: 'Playbook deleted',
+    deleteFailed: 'Deleting failed',
+    newTitle: 'New editor playbook',
+    yaml: 'Playbook YAML',
+    ready: 'Parses as a list of plays — ready to save.',
+    save: 'Save playbook',
+  },
+  validate: {
+    tooLarge: 'playbook exceeds 512 KiB',
+    malformed: (detail: string) => `malformed YAML: ${detail}`,
+    couldNotParse: 'could not parse',
+    expectedList: 'expected a list of plays',
+    playMapping: 'play 1: must be a mapping',
+    missingHosts: 'play 1: missing hosts',
+    hostsString: 'play 1: hosts must be a string',
+  },
+};

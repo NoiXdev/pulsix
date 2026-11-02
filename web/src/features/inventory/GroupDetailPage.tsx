@@ -11,26 +11,21 @@ import { MembersTab } from './tabs/MembersTab.tsx';
 import { ChildrenTab } from './tabs/ChildrenTab.tsx';
 import { PreviewTab } from './tabs/PreviewTab.tsx';
 import { SettingsTab } from './tabs/SettingsTab.tsx';
+import { useT } from '../../i18n/useT.ts';
 
-const TABS = [
-  ['schema', 'Variable schema'],
-  ['values', 'Group values'],
-  ['members', 'Members'],
-  ['children', 'Children'],
-  ['preview', 'Preview inventory'],
-  ['settings', 'Settings'],
-] as const;
+const TAB_KEYS = ['schema', 'values', 'members', 'children', 'preview', 'settings'] as const;
 
-type TabKey = (typeof TABS)[number][0];
+type TabKey = (typeof TAB_KEYS)[number];
 
 function isTab(v: unknown): v is TabKey {
-  return TABS.some(([k]) => k === v);
+  return TAB_KEYS.some((k) => k === v);
 }
 
 /** GroupDetailPage follows the SchemaBuilder mockup's group page. Editing
  * tabs are keyed by the group's revision, so a successful save (which
  * bumps the revision) starts them over from what the server stored. */
 export function GroupDetailPage() {
+  const t = useT();
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
   const search = useSearch({ strict: false }) as { tab?: string };
   const navigate = useNavigate();
@@ -59,15 +54,15 @@ export function GroupDetailPage() {
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-3">
           <h1 className="font-mono text-xl font-bold">{g.name}</h1>
-          <Tag>inventory group</Tag>
+          <Tag>{t.inventory.detail.tag}</Tag>
         </div>
         <span className="text-xs text-muted-foreground">
-          parent: {parent?.name ?? 'none'} · {own?.members ?? 0} members · {children.length} children
+          {t.inventory.detail.header(parent?.name ?? t.inventory.detail.noParent, own?.members ?? 0, children.length)}
           {g.description ? ` · ${g.description}` : ''}
         </span>
       </div>
       <div role="tablist" className="flex gap-6 border-b border-border">
-        {TABS.map(([key, label]) => (
+        {TAB_KEYS.map((key) => (
           <button
             key={key}
             type="button"
@@ -76,7 +71,7 @@ export function GroupDetailPage() {
             className={`border-b-2 py-2.5 text-[13px] ${key === tab ? 'border-primary font-semibold text-foreground' : 'border-transparent font-medium text-muted-foreground'}`}
             onClick={() => void navigate({ to: '/o/$org/groups/$id', params: { org, id }, search: { tab: key } })}
           >
-            {label}
+            {t.inventory.detail.tabs[key]}
           </button>
         ))}
       </div>

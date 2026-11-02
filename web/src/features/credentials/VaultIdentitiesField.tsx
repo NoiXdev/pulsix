@@ -4,6 +4,7 @@ import { Input } from '../../ui/input.tsx';
 import { Select } from '../../ui/Select.tsx';
 import type { Credential } from '../../api/types.ts';
 import { newVaultIdentityRow, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface VaultIdentitiesFieldProps {
   rows: readonly VaultIdentityRow[];
@@ -44,6 +45,7 @@ export interface VaultIdentitiesFieldProps {
  * that.
  */
 export function VaultIdentitiesField({ rows, onChange, credentials, canCreateCredential, errors, onRequestCreate, help }: VaultIdentitiesFieldProps) {
+  const t = useT();
   const options = credentials.filter((c) => c.kind === 'vault_password').map((c) => ({ value: c.id, label: c.name }));
 
   function update(key: string, patch: Partial<VaultIdentityRow>) {
@@ -57,37 +59,37 @@ export function VaultIdentitiesField({ rows, onChange, credentials, canCreateCre
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <span className="text-[11px] font-medium text-muted-foreground">Vault identities</span>
+        <span className="text-[11px] font-medium text-muted-foreground">{t.credentials.vault.heading}</span>
         <Button type="button" variant="ghost" onClick={() => onChange([...rows, newVaultIdentityRow()])}>
-          <Plus size={13} /> Add vault password
+          <Plus size={13} /> {t.credentials.vault.add}
         </Button>
       </div>
       <span className="text-[11px] text-muted-foreground">{help}</span>
-      {rows.length === 0 && <p className="text-xs text-muted-foreground">No labelled vault passwords yet.</p>}
+      {rows.length === 0 && <p className="text-xs text-muted-foreground">{t.credentials.vault.empty}</p>}
       {rows.map((row, i) => (
         <div key={row.key} className="flex flex-col gap-1 rounded-md border border-border p-2">
           <div className="flex items-center gap-2">
             <Input
-              aria-label={`Vault identity ${i + 1} label`}
+              aria-label={t.credentials.vault.labelOf(i + 1)}
               className="flex-1 font-mono"
-              placeholder="e.g. production"
+              placeholder={t.credentials.vault.labelPlaceholder}
               value={row.label}
               onChange={(e) => update(row.key, { label: e.target.value })}
               aria-invalid={errors[row.key] ? true : undefined}
             />
             <div className="flex-1">
               <Select
-                aria-label={`Vault identity ${i + 1} credential`}
+                aria-label={t.credentials.vault.credentialOf(i + 1)}
                 options={options}
                 value={row.credentialId}
                 onChange={(value) => update(row.key, { credentialId: value })}
-                placeholder="— choose —"
+                placeholder={t.credentials.vault.choose}
                 invalid={!!errors[row.key]}
-                create={canCreateCredential ? { label: 'New credential…', onSelect: (text) => onRequestCreate(row, text) } : undefined}
+                create={canCreateCredential ? { label: t.credentials.vault.newCredential, onSelect: (text) => onRequestCreate(row, text) } : undefined}
               />
             </div>
-            <Button type="button" variant="ghost" aria-label={`Remove vault identity ${i + 1}`} onClick={() => removeRow(row.key)}>
-              Remove
+            <Button type="button" variant="ghost" aria-label={t.credentials.vault.removeLabel(i + 1)} onClick={() => removeRow(row.key)}>
+              {t.common.remove}
             </Button>
           </div>
           {errors[row.key] && (

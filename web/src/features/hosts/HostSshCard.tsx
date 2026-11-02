@@ -12,7 +12,7 @@ import type { Bastion, Credential, HostSSH } from '../../api/types.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { PublicKeyPanel } from '../credentials/PublicKeyPanel.tsx';
-import { KIND_LABEL, routeLabel } from '../credentials/labels.ts';
+import { kindName, routeLabel } from '../credentials/labels.ts';
 import { PinStateBadge } from './PinStateBadge.tsx';
 import { useT } from '../../i18n/useT.ts';
 
@@ -124,7 +124,7 @@ function HostSshForm({
           <Label htmlFor="ssh-credential">{t.hosts.ssh.credential}</Label>
           <Select
             id="ssh-credential"
-            options={credentials.map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
+            options={credentials.map((c) => ({ value: c.id, label: c.name, hint: kindName(c.kind, t) }))}
             value={credentialId}
             onChange={setCredentialId}
             placeholder={t.hosts.ssh.noCredential}
@@ -157,7 +157,7 @@ function HostSshForm({
         </fieldset>
         {connection && (
           <p className="text-xs text-muted-foreground" aria-label={t.hosts.ssh.effectiveRoute}>
-            {t.hosts.ssh.route} {routeLabel(connection.bastion_source)}
+            {t.hosts.ssh.route} {routeLabel(connection.bastion_source, t)}
             {names.length > 0 && <span className="font-mono">{t.hosts.ssh.routeVia(names.join(' → '))}</span>}
           </p>
         )}

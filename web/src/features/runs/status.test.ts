@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { cancelHostRows, hasFailedHosts, hostResultRows, kindLabel, shortId, statusTone } from './status.ts';
+import { en } from '../../i18n/en/index.ts';
 
 describe('statusTone', () => {
   it('maps every job status onto the state colours', () => {
@@ -16,10 +17,10 @@ describe('statusTone', () => {
 
 describe('kindLabel', () => {
   it('labels the known kinds and passes unknown ones through', () => {
-    expect(kindLabel('connection_test')).toBe('connection test');
-    expect(kindLabel('sync_repo')).toBe('repo sync');
-    expect(kindLabel('revoke_key')).toBe('old key removal');
-    expect(kindLabel('mystery')).toBe('mystery');
+    expect(kindLabel('connection_test', en)).toBe('connection test');
+    expect(kindLabel('sync_repo', en)).toBe('repo sync');
+    expect(kindLabel('revoke_key', en)).toBe('old key removal');
+    expect(kindLabel('mystery', en)).toBe('mystery');
   });
 });
 

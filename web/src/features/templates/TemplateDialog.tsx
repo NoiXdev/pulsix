@@ -17,7 +17,8 @@ import { problemsFromError } from '../inventory/schema/paths.ts';
 import type { Problem, VarSchema, Vars } from '../inventory/schema/types.ts';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
-import { KIND_LABEL } from '../credentials/labels.ts';
+import { kindName } from '../credentials/labels.ts';
+import { useT } from '../../i18n/useT.ts';
 import { VaultIdentitiesField } from '../credentials/VaultIdentitiesField.tsx';
 import type { Credential } from '../../api/types.ts';
 import { identitiesForBody, rowsFromIdentities, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
@@ -66,22 +67,22 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
         </Dialog>
       );
     }
-    const t = detail.data.template;
+    const tpl = detail.data.template;
     const allCredentials = credentials.data?.credentials ?? [];
     return (
       <TemplateForm
         org={org}
         existing={{
-          id: t.id,
-          name: t.name,
-          playbookId: t.playbook_id,
-          scope: { group_id: t.scope.group_id ?? '', host_ids: t.scope.host_ids ?? [] },
-          limit: t.limit,
-          schema: t.extra_vars_schema ? toVarSchema(t.extra_vars_schema) : null,
-          vars: t.extra_vars ?? {},
-          credentialId: t.credential_id ?? '',
-          vaultIdentities: rowsFromIdentities(t.vault_identities),
-          sharedTemplateId: t.shared_template_id,
+          id: tpl.id,
+          name: tpl.name,
+          playbookId: tpl.playbook_id,
+          scope: { group_id: tpl.scope.group_id ?? '', host_ids: tpl.scope.host_ids ?? [] },
+          limit: tpl.limit,
+          schema: tpl.extra_vars_schema ? toVarSchema(tpl.extra_vars_schema) : null,
+          vars: tpl.extra_vars ?? {},
+          credentialId: tpl.credential_id ?? '',
+          vaultIdentities: rowsFromIdentities(tpl.vault_identities),
+          sharedTemplateId: tpl.shared_template_id,
         }}
         playbooks={playbooks.data?.playbooks ?? []}
         credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
@@ -141,6 +142,7 @@ function TemplateForm({
   canCreateCredential: boolean;
   onClose: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const create = useCreateTemplate(org);
   const update = useUpdateTemplate(org, existing?.id ?? '');
@@ -189,7 +191,7 @@ function TemplateForm({
     setError(null);
     setVarProblems([]);
     setSchemaProblems([]);
-    const identityErrors = vaultIdentityErrors(vaultRows);
+    const identityErrors = vaultIdentityErrors(vaultRows, t);
     setVaultErrors(identityErrors);
     if (Object.keys(identityErrors).length > 0) return;
     const body = {
@@ -205,55 +207,55 @@ function TemplateForm({
     try {
       if (existing) await update.mutateAsync(body);
       else await create.mutateAsync(body);
-      toast.show(existing ? `Template ${body.name} saved` : `Template ${body.name} created`);
+      toast.show(existing ? t.templates.dialog.saved(body.name) : t.templates.dialog.created(body.name));
       onClose();
     } catch (err) {
       const varPs = problemsFromError(err, 'body.extra_vars');
       if (varPs.length > 0) return setVarProblems(varPs);
       const schemaPs = problemsFromError(err, 'body.extra_vars_schema');
       if (schemaPs.length > 0) return setSchemaProblems(schemaPs);
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : t.templates.dialog.saveFailed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} size="wide" title={existing?.name ?? 'New job template'}>
+    <Dialog open onClose={onClose} size="wide" title={existing?.name ?? t.templates.dialog.newTitle}>
       <form onSubmit={submit} className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto">
         {projected && (
           <div className="flex items-center gap-2 rounded-md border border-border bg-background px-2.5 py-1.5">
-            <Pill tone="accent">Installation-managed</Pill>
+            <Pill tone="accent">{t.templates.list.managed}</Pill>
             <span className="text-[11px] text-muted-foreground">
-              Name, playbook, limit and extra vars belong to the installation&apos;s definition.
+              {t.templates.dialog.managedNote}
             </span>
           </div>
         )}
         <fieldset disabled={projected} className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="template-name">Name</Label>
-            <Input id="template-name" className="font-mono" value={name} onChange={(e) => setName(e.target.value)} placeholder="deploy-site" autoFocus={!existing} />
+            <Label htmlFor="template-name">{t.templates.dialog.name}</Label>
+            <Input id="template-name" className="font-mono" value={name} onChange={(e) => setName(e.target.value)} placeholder={t.templates.dialog.namePlaceholder} autoFocus={!existing} />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="template-playbook">Playbook</Label>
+            <Label htmlFor="template-playbook">{t.templates.dialog.playbook}</Label>
             <Select
               id="template-playbook"
               required
               disabled={projected}
-              options={playbooks.map((p) => ({ value: p.id, label: p.source === 'repo' ? `repo: ${p.path ?? ''}` : p.summary || 'editor playbook' }))}
+              options={playbooks.map((p) => ({ value: p.id, label: p.source === 'repo' ? t.templates.playbook.repo(p.path ?? '') : p.summary || t.templates.playbook.editor }))}
               value={playbookId}
               onChange={setPlaybookId}
-              placeholder="Choose a playbook…"
+              placeholder={t.templates.dialog.choosePlaybook}
             />
           </div>
         </fieldset>
         <ScopePicker org={org} value={scope} onChange={setScope} />
         <fieldset disabled={projected} className="flex flex-col gap-1">
-          <Label htmlFor="template-limit">Limit pattern</Label>
-          <Input id="template-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder="e.g. web*:&!web-03" />
-          <span className="text-[11px] text-muted-foreground">Free-form ansible limit pattern, empty = no limit.</span>
+          <Label htmlFor="template-limit">{t.templates.dialog.limit}</Label>
+          <Input id="template-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder={t.templates.dialog.limitPlaceholder} />
+          <span className="text-[11px] text-muted-foreground">{t.templates.dialog.limitHint}</span>
         </fieldset>
         <fieldset disabled={projected}>
           <details className="rounded-md border border-border p-3" open={!!existing?.schema}>
-            <summary className="cursor-pointer text-xs font-semibold">Extra vars schema</summary>
+            <summary className="cursor-pointer text-xs font-semibold">{t.templates.dialog.schemaSummary}</summary>
             <div className="pt-3">
               <SchemaBuilder value={schema ?? { fields: [] }} onChange={setSchema} problems={schemaProblems} nested />
             </div>
@@ -261,24 +263,24 @@ function TemplateForm({
         </fieldset>
         {fields.length > 0 && (
           <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold">Extra vars</span>
+            <span className="text-xs font-semibold">{t.templates.dialog.extraVars}</span>
             <SchemaForm fields={fields} value={vars} onChange={setVars} problems={varProblems} idPrefix="template-vars" disabled={projected} />
           </div>
         )}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="template-credential">Default SSH credential</Label>
+          <Label htmlFor="template-credential">{t.templates.dialog.credential}</Label>
           <Select
             id="template-credential"
             // This list mixes SSH keys and SSH passwords (see the filter in
             // TemplateDialog above), and nothing stops two of either kind
             // sharing a name.
-            options={credentials.map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
+            options={credentials.map((c) => ({ value: c.id, label: c.name, hint: kindName(c.kind, t) }))}
             value={credentialId}
             onChange={setCredentialId}
-            placeholder="— none —"
-            create={canCreateCredential ? { label: 'New credential…', onSelect: (text) => setAddingCredential({ field: 'ssh', name: text }) } : undefined}
+            placeholder={t.templates.dialog.credentialNone}
+            create={canCreateCredential ? { label: t.templates.dialog.newCredential, onSelect: (text) => setAddingCredential({ field: 'ssh', name: text }) } : undefined}
           />
-          <span className="text-[11px] text-muted-foreground">SSH key or password credential for hosts without one of their own.</span>
+          <span className="text-[11px] text-muted-foreground">{t.templates.dialog.credentialHint}</span>
         </div>
         <VaultIdentitiesField
           rows={vaultRows}
@@ -287,7 +289,7 @@ function TemplateForm({
           canCreateCredential={canCreateCredential}
           errors={vaultErrors}
           onRequestCreate={(row, text) => setAddingCredential({ field: 'vault-identity', rowKey: row.key, name: text })}
-          help="Labelled vault passwords this template adds on top of its repository's own set; a label shared with the repository resolves to this one."
+          help={t.templates.dialog.vaultHelp}
         />
         {error && (
           <p role="alert" className="text-xs text-destructive">
@@ -301,22 +303,22 @@ function TemplateForm({
               variant="destructive"
               disabled={remove.isPending}
               onClick={async () => {
-                if (!confirm(`Delete template ${existing.name}?`)) return;
+                if (!confirm(t.templates.dialog.confirmDelete(existing.name))) return;
                 try {
                   await remove.mutateAsync(existing.id);
-                  toast.show(`Template ${existing.name} deleted`);
+                  toast.show(t.templates.dialog.deleted(existing.name));
                   onClose();
                 } catch (err) {
-                  toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+                  toast.show(err instanceof Error ? err.message : t.templates.dialog.deleteFailed, 'destructive');
                 }
               }}
             >
-              Delete
+              {t.common.delete}
             </Button>
           )}
           <div className="flex gap-2">
             <Button type="button" onClick={onClose}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button
               type="submit"
@@ -338,7 +340,7 @@ function TemplateForm({
               // able to fill in before any sync happens at all.
               disabled={(!playbookId && !projected) || create.isPending || update.isPending}
             >
-              {existing ? 'Save template' : 'Create template'}
+              {existing ? t.templates.dialog.save : t.templates.dialog.create}
             </Button>
           </div>
         </div>

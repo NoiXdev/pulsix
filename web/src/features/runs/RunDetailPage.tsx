@@ -10,9 +10,10 @@ import { useCancelJob, useJob, useRetryFailedJobs, useRunLog, isTerminal } from 
 import { may } from '../../lib/roles.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { EventLog } from './EventLog.tsx';
-import { cancelHostRows, hasFailedHosts, hostResultRows, kindLabel, shortId, statusTone } from './status.ts';
+import { cancelHostRows, hasFailedHosts, hostResultRows, kindLabel, shortId, statusLabel, statusTone } from './status.ts';
 import type { CancelHostState } from './status.ts';
 import { triggerLabel } from './trigger.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const RUNNING = new Set(['queued', 'claimed', 'running']);
 
@@ -21,13 +22,7 @@ const RUNNING = new Set(['queued', 'claimed', 'running']);
 // which in a linear-strategy play is just as true after task 3 of 10 as
 // after the last one. Labelling that bare "finished" invited an operator
 // to re-run only the interrupted host and leave a half-applied one alone,
-// so the label says what was actually observed.
-const CANCEL_STATE_LABEL: Record<CancelHostState, string> = {
-  finished: 'no task in flight',
-  interrupted: 'interrupted',
-  'never-started': 'never started',
-};
-
+// so the label (t.runs.cancelState) says what was actually observed.
 const CANCEL_STATE_COLOR: Record<CancelHostState, string> = {
   finished: 'var(--px-unknown)',
   interrupted: 'var(--px-warn)',
@@ -42,6 +37,7 @@ const CANCEL_STATE_COLOR: Record<CancelHostState, string> = {
  * actions (retry only when the run actually has failed hosts).
  */
 export function RunDetailPage() {
+  const t = useT();
   const { org, id } = useParams({ strict: false }) as { org: string; id: string };
   const navigate = useNavigate();
   const toast = useToast();
@@ -99,19 +95,19 @@ export function RunDetailPage() {
   async function onRetry() {
     try {
       const { jobs } = await retry.mutateAsync();
-      toast.show('Retry started');
+      toast.show(t.runs.detail.retryStarted);
       if (jobs && jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Retry failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.runs.detail.retryFailed, 'destructive');
     }
   }
 
   async function onCancel() {
     try {
       const { job: cancelled } = await cancel.mutateAsync();
-      toast.show(cancelled.status === 'cancelled' ? 'Run cancelled' : 'Cancellation requested');
+      toast.show(cancelled.status === 'cancelled' ? t.runs.detail.cancelled : t.runs.detail.cancelRequested);
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Cancelling failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.runs.detail.cancelFailed, 'destructive');
     }
   }
 
@@ -122,20 +118,20 @@ export function RunDetailPage() {
           <Link to="/o/$org/runs" params={{ org }} search={{ status: undefined, kind: undefined, trigger: undefined, schedule: undefined }} className="font-mono text-xl font-bold hover:text-primary">
             {shortId(j.id)}
           </Link>
-          <Pill tone={statusTone(status)}>{status}</Pill>
-          <span className="text-[13px] text-muted-foreground">{kindLabel(j.kind)}</span>
+          <Pill tone={statusTone(status)}>{statusLabel(status, t)}</Pill>
+          <span className="text-[13px] text-muted-foreground">{kindLabel(j.kind, t)}</span>
           {j.template && <span className="font-mono text-[13px]">{j.template.name}</span>}
         </div>
         {canRun && (
           <div className="flex items-center gap-2">
             {isTerminal(j.status) && retryDropsOverrides && (
               <span id="retry-overrides-note" className="max-w-xs text-right text-[11px] text-muted-foreground">
-                Retry runs with the template&apos;s own limit and extra vars: overrides from the {j.trigger} are not kept.
+                {t.runs.detail.retryNote(j.trigger)}
               </span>
             )}
             {cancellable && (
               <Button type="button" onClick={() => void onCancel()} disabled={cancel.isPending}>
-                Cancel run
+                {t.runs.detail.cancel}
               </Button>
             )}
             {isTerminal(j.status) && (
@@ -146,7 +142,7 @@ export function RunDetailPage() {
                 aria-describedby={retryDropsOverrides ? 'retry-overrides-note' : undefined}
                 onClick={() => void onRetry()}
               >
-                Retry failed
+                {t.runs.detail.retry}
               </Button>
             )}
           </div>
@@ -159,51 +155,49 @@ export function RunDetailPage() {
       )}
       <Card>
         <div className="grid grid-cols-3 gap-4 p-4 text-xs">
-          <Fact label="Zone" value={shortId(j.zone_id)} />
-          <Fact label="Worker" value={j.worker_name ?? '—'} />
+          <Fact label={t.runs.detail.zone} value={shortId(j.zone_id)} />
+          <Fact label={t.runs.detail.worker} value={j.worker_name ?? '—'} />
           <div className="flex flex-col gap-0.5">
-            <span className="text-[11px] text-muted-foreground">Triggered by</span>
+            <span className="text-[11px] text-muted-foreground">{t.runs.detail.triggeredBy}</span>
             {j.trigger === 'schedule' && j.trigger_ref ? (
               <Link to="/o/$org/schedules" params={{ org }} search={{ id: j.trigger_ref, template: undefined }} className="truncate font-mono text-foreground hover:text-primary">
-                {j.actor_name ? `${j.actor_name} · Schedule` : 'Schedule'}
+                {j.actor_name ? `${j.actor_name} · ${t.runs.trigger.schedule}` : t.runs.trigger.schedule}
               </Link>
             ) : (
-              <span className="truncate font-mono text-foreground">{j.actor_name ?? triggerLabel(j.trigger)}</span>
+              <span className="truncate font-mono text-foreground">{j.actor_name ?? triggerLabel(j.trigger, t)}</span>
             )}
           </div>
-          <Fact label="Started" value={j.started_at ? j.started_at.slice(0, 19).replace('T', ' ') : '—'} />
-          <Fact label="Finished" value={j.finished_at ? j.finished_at.slice(0, 19).replace('T', ' ') : '—'} />
-          <Fact label="Run group" value={`${siblings.length + 1} job${siblings.length === 0 ? '' : 's'}`} />
+          <Fact label={t.runs.detail.started} value={j.started_at ? j.started_at.slice(0, 19).replace('T', ' ') : '—'} />
+          <Fact label={t.runs.detail.finished} value={j.finished_at ? j.finished_at.slice(0, 19).replace('T', ' ') : '—'} />
+          <Fact label={t.runs.detail.runGroup} value={t.runs.detail.groupCount(siblings.length + 1)} />
         </div>
       </Card>
       {vaultIdentities.length > 0 && (
         <Card>
           <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
-            <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Vault identities</span>
+            <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t.credentials.vault.heading}</span>
             <span
               className="text-[11px] text-muted-foreground"
               title={
-                vaultIdentitiesRecorded
-                  ? 'Recorded when this run was claimed; later changes to the repository or template do not affect it.'
-                  : 'No record exists for this run yet, so this is read from the repository and template as they are configured right now.'
+                vaultIdentitiesRecorded ? t.runs.detail.recordedTitle : t.runs.detail.computedTitle
               }
             >
-              {vaultIdentitiesRecorded ? 'recorded at claim time' : 'computed from current configuration'}
+              {vaultIdentitiesRecorded ? t.runs.detail.recorded : t.runs.detail.computed}
             </span>
           </div>
-          <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Vault identities">
+          <ul className="flex flex-col gap-1 p-4 text-xs" aria-label={t.credentials.vault.heading}>
             {vaultIdentities.map((identity) => (
               <li key={identity.label} className="flex items-center justify-between gap-2">
                 <span className="font-mono">{identity.label}</span>
-                <span className="text-[11px] text-muted-foreground">{identity.from_template ? 'from template' : 'from repository'}</span>
+                <span className="text-[11px] text-muted-foreground">{identity.from_template ? t.runs.detail.fromTemplate : t.runs.detail.fromRepository}</span>
               </li>
             ))}
           </ul>
         </Card>
       )}
       {siblings.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" aria-label="Run group">
-          <span>Same trigger:</span>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" aria-label={t.runs.detail.runGroup}>
+          <span>{t.runs.detail.sameTrigger}</span>
           {siblings.map((s) => (
             <Link key={s.id} to="/o/$org/runs/$id" params={{ org, id: s.id }} className="flex items-center gap-1.5 font-mono text-[13px] hover:text-primary">
               <span className="h-1.5 w-1.5 rounded-full" style={{ background: statusColor(s.status) }} />
@@ -214,26 +208,26 @@ export function RunDetailPage() {
       )}
       {rows.length > 0 && (
         <Card>
-          <table className="w-full text-xs" aria-label="Per-host results">
+          <table className="w-full text-xs" aria-label={t.runs.detail.perHost}>
             <thead>
               <tr className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-                <th className="px-4 py-2 text-left">Host</th>
-                <th className="px-2 py-2">Ok</th>
-                <th className="px-2 py-2">Changed</th>
-                <th className="px-2 py-2">Failed</th>
-                <th className="px-2 py-2">Unreachable</th>
-                <th className="px-2 py-2">Skipped</th>
+                <th className="px-4 py-2 text-left">{t.runs.detail.hostColumn}</th>
+                <th className="px-2 py-2">{t.runs.detail.columns.ok}</th>
+                <th className="px-2 py-2">{t.runs.detail.columns.changed}</th>
+                <th className="px-2 py-2">{t.runs.detail.columns.failed}</th>
+                <th className="px-2 py-2">{t.runs.detail.columns.unreachable}</th>
+                <th className="px-2 py-2">{t.runs.detail.columns.skipped}</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.host} className="border-t border-border">
                   <td className="px-4 py-1.5 font-mono text-[13px]">{r.host}</td>
-                  <StateCell on={r.ok} color="var(--px-ok)" label={r.ok ? 'ok' : 'no'} />
-                  <StateCell on={r.changed} color="var(--px-accent)" label={r.changed ? 'changed' : 'no'} />
-                  <StateCell on={r.failed} color="var(--px-crit)" label={r.failed ? 'failed' : 'no'} />
-                  <StateCell on={r.unreachable} color="var(--px-crit)" label={r.unreachable ? 'unreachable' : 'no'} />
-                  <StateCell on={r.skipped} color="var(--px-unknown)" label={r.skipped ? 'skipped' : 'no'} />
+                  <StateCell on={r.ok} color="var(--px-ok)" label={t.runs.detail.hostState.ok} />
+                  <StateCell on={r.changed} color="var(--px-accent)" label={t.runs.detail.hostState.changed} />
+                  <StateCell on={r.failed} color="var(--px-crit)" label={t.runs.detail.hostState.failed} />
+                  <StateCell on={r.unreachable} color="var(--px-crit)" label={t.runs.detail.hostState.unreachable} />
+                  <StateCell on={r.skipped} color="var(--px-unknown)" label={t.runs.detail.hostState.skipped} />
                 </tr>
               ))}
             </tbody>
@@ -243,7 +237,7 @@ export function RunDetailPage() {
       {cancelRows.length > 0 && (
         <Card>
           <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-            Cancelled run
+            {t.runs.detail.cancelledRun}
           </div>
           {/* Warn only where a command was in flight — when the worker
               that claimed the run said a cancel stops the play on it
@@ -264,29 +258,25 @@ export function RunDetailPage() {
               that the play finished. */}
           {!j.cancel_stops_play ? (
             <CancelWarning>
-              Pulsix cannot confirm that cancelling stopped the play: the worker that ran it may only stop following
-              a cancelled run, and then the playbook may still be running against <strong>every host listed below</strong>,
-              including those with no task in flight. A command already
-              started on a host keeps running regardless. Treat this list as what Pulsix last saw, not as a final
-              account: check the hosts before you re-run, or two runs may change the same host at once.
+              {t.runs.detail.unconfirmedBefore}
+              <strong>{t.runs.detail.unconfirmedStrong}</strong>
+              {t.runs.detail.unconfirmedAfter}
             </CancelWarning>
           ) : (
             cancelRows.some((r) => r.state === 'interrupted') && (
               <CancelWarning>
-                The run was stopped. On a host marked interrupted, a command had already started there and may still
-                be running on that host — stopping the run does not stop a command already running on a host. Check
-                those hosts before you re-run.
+                {t.runs.detail.stopped}
               </CancelWarning>
             )
           )}
-          <ul className="flex flex-col gap-1 p-4 text-xs" aria-label="Cancelled run hosts">
+          <ul className="flex flex-col gap-1 p-4 text-xs" aria-label={t.runs.detail.cancelledHosts}>
             {cancelRows.map((r) => (
               <li key={r.host} className="flex items-center justify-between gap-2">
                 <span className="font-mono">{r.host}</span>
                 <span className="flex items-center gap-2">
                   {r.state === 'interrupted' && <span className="text-muted-foreground">{r.task}</span>}
                   <span className="font-semibold" style={{ color: CANCEL_STATE_COLOR[r.state] }}>
-                    {CANCEL_STATE_LABEL[r.state]}
+                    {t.runs.cancelState[r.state]}
                   </span>
                 </span>
               </li>
@@ -296,7 +286,7 @@ export function RunDetailPage() {
       )}
       <Card>
         <div className="border-b border-border px-4 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-          Event log {log.transport === 'poll' && <span title="live stream dropped frames; polling the history">(polling)</span>}
+          {t.runs.detail.eventLog} {log.transport === 'poll' && <span title={t.runs.detail.pollingTitle}>{t.runs.detail.polling}</span>}
         </div>
         <EventLog events={log.events} />
       </Card>

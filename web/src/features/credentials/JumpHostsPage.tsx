@@ -22,6 +22,7 @@ import type { Bastion } from "../../api/types.ts";
 import { BastionDialog } from "./BastionDialog.tsx";
 import { PinStateBadge } from "../hosts/PinStateBadge.tsx";
 import { Pill, type Tone } from "../../ui/badge.tsx";
+import { useT } from "../../i18n/useT.ts";
 
 const COLUMNS =
   "minmax(0, 1fr) minmax(0, 1.2fr) 130px 130px minmax(0, 1.6fr) 120px";
@@ -34,6 +35,7 @@ const KEY_STATE_TONE: Record<string, Tone> = {
 
 export function JumpHostsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
+  const t = useT();
   const toast = useToast();
   const bastions = useBastions(org);
   const credentials = useCredentials(org);
@@ -50,7 +52,7 @@ export function JumpHostsPage() {
   // A viewer may read jump hosts but not credentials; names fall back to "—".
   const creds = credentials.data?.credentials ?? [];
   const bastionName = (id?: string | null) =>
-    list.find((b) => b.id === id)?.name ?? "directly";
+    list.find((b) => b.id === id)?.name ?? t.credentials.jumpHosts.directly;
   // Pinning is inventory.write, the same gate the host card mirrors.
   const canWrite = may(orgInfo.data?.org.role, "inventory.write");
   // Gates BastionDialog's own Credential create row: credentials.write is
@@ -61,28 +63,27 @@ export function JumpHostsPage() {
   return (
     <>
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Jump hosts</h1>
+        <h1 className="text-xl font-semibold">{t.credentials.jumpHosts.title}</h1>
         {/* Gated on the same canWrite the host-key actions below already
             use (backlog 1.48). The server enforces this either way, so
             the point is not the authorization — it is that a reader was
             being offered three controls that could only ever answer 403. */}
         {canWrite && (
           <Button variant="primary" onClick={() => setDialog({})}>
-            <Server size={15} /> Add jump host
+            <Server size={15} /> {t.credentials.jumpHosts.add}
           </Button>
         )}
       </div>
       <span className="text-[13px] text-muted-foreground">
-        Resolution: host → inventory group → zone default. Chains are rendered
-        as ProxyJump.
+        {t.credentials.jumpHosts.resolution}
       </span>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Name</span>
-          <span>Login</span>
-          <span>Reached</span>
-          <span>Credential</span>
-          <span>Host key</span>
+          <span>{t.credentials.jumpHosts.columns.name}</span>
+          <span>{t.credentials.jumpHosts.columns.login}</span>
+          <span>{t.credentials.jumpHosts.columns.reached}</span>
+          <span>{t.credentials.jumpHosts.columns.credential}</span>
+          <span>{t.credentials.jumpHosts.columns.hostKey}</span>
           <span />
         </GridHeader>
         {list.map((b) => (
@@ -91,8 +92,8 @@ export function JumpHostsPage() {
             <span className="truncate font-mono text-xs">{`${b.username}@${b.address}:${b.port}`}</span>
             <span className="text-xs text-muted-foreground">
               {b.via_bastion_id
-                ? `via ${bastionName(b.via_bastion_id)}`
-                : "directly"}
+                ? t.credentials.jumpHosts.via(bastionName(b.via_bastion_id))
+                : t.credentials.jumpHosts.directly}
             </span>
             <span className="truncate font-mono text-xs text-muted-foreground">
               {creds.find((c) => c.id === b.credential_id)?.name ?? "—"}
@@ -103,30 +104,30 @@ export function JumpHostsPage() {
                 <>
                   <Button
                     variant="ghost"
-                    aria-label={`Edit ${b.name}`}
+                    aria-label={t.credentials.jumpHosts.editLabel(b.name)}
                     onClick={() => setDialog({ bastion: b })}
                   >
-                    Edit
+                    {t.credentials.jumpHosts.edit}
                   </Button>
                   <Button
                     variant="ghost"
-                    aria-label={`Delete ${b.name}`}
+                    aria-label={t.credentials.jumpHosts.deleteLabel(b.name)}
                     onClick={async () => {
-                      if (!confirm(`Delete jump host ${b.name}?`)) return;
+                      if (!confirm(t.credentials.jumpHosts.confirmDelete(b.name))) return;
                       try {
                         await remove.mutateAsync(b.id);
-                        toast.show(`Jump host ${b.name} deleted`);
+                        toast.show(t.credentials.jumpHosts.deleted(b.name));
                       } catch (err) {
                         toast.show(
                           err instanceof Error
                             ? err.message
-                            : "Deleting failed",
+                            : t.credentials.jumpHosts.deleteFailed,
                           "destructive",
                         );
                       }
                     }}
                   >
-                    Delete
+                    {t.common.delete}
                   </Button>
                 </>
               )}
@@ -135,12 +136,12 @@ export function JumpHostsPage() {
         ))}
         {list.length === 0 && (
           <p className="px-4 py-6 text-center text-xs text-muted-foreground">
-            No jump hosts yet.
+            {t.credentials.jumpHosts.empty}
           </p>
         )}
       </Card>
 
-      <h2 className="text-[15px] font-semibold">Zone defaults</h2>
+      <h2 className="text-[15px] font-semibold">{t.credentials.jumpHosts.zoneDefaults}</h2>
       <Card>
         {(zones.data?.zones ?? []).map((z) => (
           <GridRow key={z.id} columns="minmax(0, 1fr) 260px">
@@ -163,15 +164,15 @@ export function JumpHostsPage() {
                     zoneId: z.id,
                     bastionId: value || undefined,
                   });
-                  toast.show(`Default jump host of ${z.name} saved`);
+                  toast.show(t.credentials.jumpHosts.zoneSaved(z.name));
                 } catch (err) {
                   toast.show(
-                    err instanceof Error ? err.message : "Saving failed",
+                    err instanceof Error ? err.message : t.credentials.jumpHosts.saveFailed,
                     "destructive",
                   );
                 }
               }}
-              placeholder="— direct connection —"
+              placeholder={t.credentials.jumpHosts.zoneNone}
             />
           </GridRow>
         ))}
@@ -209,6 +210,7 @@ function BastionHostKey({
   bastion: Bastion;
   canWrite: boolean;
 }) {
+  const t = useT();
   const toast = useToast();
   const pin = useSetBastionKey(org, bastion.id);
   const unpin = useClearBastionKey(org, bastion.id);
@@ -221,10 +223,12 @@ function BastionHostKey({
       <div className="flex flex-wrap items-center gap-1.5">
         <Lock size={12} className="text-muted-foreground" />
         <span className="truncate font-mono text-[11px]" title={fingerprint}>
-          {fingerprint || "no key observed"}
+          {fingerprint || t.hosts.connection.noKey}
         </span>
         {state && (
-          <Pill tone={KEY_STATE_TONE[state] ?? "unknown"}>{state}</Pill>
+          <Pill tone={KEY_STATE_TONE[state] ?? "unknown"}>
+            {(t.hosts.connection.keyState as Record<string, string>)[state] ?? state}
+          </Pill>
         )}
         <PinStateBadge state={bastion.pin_state} />
       </div>
@@ -234,21 +238,21 @@ function BastionHostKey({
           variant="ghost"
           className="h-6 px-2 text-[11px]"
           disabled={pin.isPending || !bastion.observed_key}
-          aria-label={`Pin ${bastion.name} host key`}
+          aria-label={t.credentials.jumpHosts.pinLabel(bastion.name)}
           onClick={async () => {
             if (!bastion.observed_key) return;
             try {
               await pin.mutateAsync(bastion.observed_key);
-              toast.show(`Jump host key of ${bastion.name} pinned`);
+              toast.show(t.credentials.jumpHosts.pinned(bastion.name));
             } catch (err) {
               toast.show(
-                err instanceof Error ? err.message : "Pinning failed",
+                err instanceof Error ? err.message : t.hosts.connection.pinFailed,
                 "destructive",
               );
             }
           }}
         >
-          Pin
+          {t.credentials.jumpHosts.pin}
         </Button>
       )}
       {canWrite && state === "pinned" && (
@@ -257,30 +261,30 @@ function BastionHostKey({
           variant="ghost"
           className="h-6 px-2 text-[11px]"
           disabled={unpin.isPending}
-          aria-label={`Unpin ${bastion.name} host key`}
+          aria-label={t.credentials.jumpHosts.unpinLabel(bastion.name)}
           onClick={async () => {
             try {
               await unpin.mutateAsync();
-              toast.show("Jump host pin cleared");
+              toast.show(t.credentials.jumpHosts.pinCleared);
             } catch (err) {
               toast.show(
-                err instanceof Error ? err.message : "Clearing the pin failed",
+                err instanceof Error ? err.message : t.hosts.connection.unpinFailed,
                 "destructive",
               );
             }
           }}
         >
-          Unpin
+          {t.hosts.connection.unpin}
         </Button>
       )}
       {bastion.pin_state === "fingerprint_only" && (
         <span className="text-[11px] text-muted-foreground">
-          pin needs confirmation
+          {t.hosts.pin.needsConfirmation}
         </span>
       )}
       {state === "changed" && (
         <span className="text-[11px]" style={{ color: "var(--px-crit)" }}>
-          key changed — connections through it are blocked
+          {t.credentials.jumpHosts.keyChanged}
         </span>
       )}
     </div>

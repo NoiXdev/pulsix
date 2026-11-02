@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { validateRepoInput } from './validate.ts';
+import { validateRepoInput as validate, type RepoFormValues } from './validate.ts';
+import { en } from '../../i18n/en/index.ts';
+
+const validateRepoInput = (values: RepoFormValues) => validate(values, en);
 
 describe('validateRepoInput mirrors the server', () => {
   it('accepts an https URL and defaults-free form', () => {

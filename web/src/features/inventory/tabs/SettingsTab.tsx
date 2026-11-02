@@ -13,6 +13,7 @@ import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.t
 import { descendantIds, orderTree } from '../tree.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { BastionDialog } from '../../credentials/BastionDialog.tsx';
+import { useT } from '../../../i18n/useT.ts';
 
 const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
@@ -28,6 +29,7 @@ export function SettingsTab({
    * Credential create row (v0.4g Task 7 and 10 fix rounds). */
   canCreateCredential: boolean;
 }) {
+  const t = useT();
   const toast = useToast();
   const navigate = useNavigate();
   const bastions = useBastions(org);
@@ -49,21 +51,21 @@ export function SettingsTab({
     e.preventDefault();
     try {
       await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision: group.revision });
-      toast.show('Group saved');
+      toast.show(t.inventory.settings.saved);
     } catch (err) {
       if (errorStatus(err) === 412) return setStale(true);
-      toast.show(err instanceof Error ? err.message : 'Saving failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.inventory.settings.saveFailed, 'destructive');
     }
   }
 
   async function onDelete() {
-    if (!confirm(`Delete group ${group.name}? Its members lose the values they have for this group.`)) return;
+    if (!confirm(t.inventory.settings.confirmDelete(group.name))) return;
     try {
       await remove.mutateAsync(group.id);
-      toast.show(`Group ${group.name} deleted`);
+      toast.show(t.inventory.settings.deleted(group.name));
       await navigate({ to: '/o/$org/groups', params: { org } });
     } catch (err) {
-      toast.show(err instanceof Error ? err.message : 'Deleting failed', 'destructive');
+      toast.show(err instanceof Error ? err.message : t.inventory.settings.deleteFailed, 'destructive');
     }
   }
 
@@ -77,15 +79,15 @@ export function SettingsTab({
       <form onSubmit={save} className="flex max-w-[560px] flex-col gap-4">
         {stale && <StaleNotice org={org} />}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="settings-name">Name</Label>
+          <Label htmlFor="settings-name">{t.inventory.settings.name}</Label>
           <Input id="settings-name" className="font-mono" required value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="settings-description">Description</Label>
+          <Label htmlFor="settings-description">{t.inventory.settings.description}</Label>
           <Input id="settings-description" value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="settings-parent">Parent</Label>
+          <Label htmlFor="settings-parent">{t.inventory.settings.parent}</Label>
           <Select
             id="settings-parent"
             // The hint names each row's own parent, so two groups sharing a
@@ -99,19 +101,19 @@ export function SettingsTab({
               }))}
             value={parent}
             onChange={setParent}
-            placeholder="— none (top level) —"
+            placeholder={t.inventory.settings.parentNone}
           />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="settings-bastion">Jump host</Label>
+          <Label htmlFor="settings-bastion">{t.inventory.settings.jumpHost}</Label>
           {bastions.data ? (
             <Select
               id="settings-bastion"
               options={(bastions.data.bastions ?? []).map((b) => ({ value: b.id, label: b.name }))}
               value={bastion}
               onChange={setBastion}
-              placeholder="— none (inherit from parent groups or the zone) —"
-              create={canCreateCredential ? { label: 'New jump host…', onSelect: setNewBastionName } : undefined}
+              placeholder={t.inventory.settings.jumpHostNone}
+              create={canCreateCredential ? { label: t.inventory.settings.newJumpHost, onSelect: setNewBastionName } : undefined}
             />
           ) : (
             // No id here on purpose: the select above (and its options) is
@@ -119,16 +121,16 @@ export function SettingsTab({
             // finding this field by label (getByLabelText) reliably waits
             // for the bastions list to be loaded rather than matching a
             // control whose options are not there yet.
-            <div className={`${LOADING_FIELD} flex items-center text-muted-foreground`}>Loading…</div>
+            <div className={`${LOADING_FIELD} flex items-center text-muted-foreground`}>{t.common.loading}</div>
           )}
-          <span className="text-[11px] text-muted-foreground">Resolution: host → inventory group → zone default. Chains are rendered as ProxyJump.</span>
+          <span className="text-[11px] text-muted-foreground">{t.inventory.settings.resolution}</span>
         </div>
         <div className="flex justify-between">
           <Button type="button" variant="destructive" onClick={() => void onDelete()}>
-            Delete group
+            {t.inventory.settings.delete}
           </Button>
           <Button type="submit" variant="primary" disabled={update.isPending}>
-            Save
+            {t.common.save}
           </Button>
         </div>
       </form>

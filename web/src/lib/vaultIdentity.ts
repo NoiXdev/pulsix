@@ -30,40 +30,38 @@
  * WhiteSpace production includes the BOM and excludes NEL; Unicode's
  * White_Space property, which Go's TrimSpace follows, is the other way
  * around), so which of the two checks below actually caught a given label
- * used to decide the reported reason. WHITESPACE_OR_CONTROL_OR_FORMAT is
- * the fix: one message for both conditions, so the report depends only on
+ * used to decide the reported reason. the merged
+ * whitespaceOrControl message is the fix: one message for both conditions, so the report depends only on
  * whether the label is rejected, never on which trim() implementation did
  * the rejecting.
  */
 
-export const MAX_VAULT_LABEL_LENGTH = 100;
+import type { Messages } from '../i18n/types.ts';
 
-const WHITESPACE_OR_CONTROL_OR_FORMAT =
-  "label has leading or trailing whitespace, or contains a Unicode control or format character (for example a newline, carriage return, byte-order mark, or bidirectional-override character) — either of which ansible.cfg could read as more than one label or display as something other than what it is";
+export const MAX_VAULT_LABEL_LENGTH = 100;
 
 /** invalidVaultLabel reports why label cannot be written into ansible.cfg's
  * vault_identity_list, or '' when it is fine. */
-export function invalidVaultLabel(label: string): string {
-  if (label === '') return 'label is empty';
+export function invalidVaultLabel(label: string, t: Messages): string {
+  if (label === '') return t.credentials.vault.errors.empty;
   // \p{Cc} (control) and \p{Cf} (format, invisible by design — the
   // byte-order mark and bidirectional-override characters are both in it)
   // are the JavaScript equivalent of Go's unicode.IsControl(r) ||
   // unicode.In(r, unicode.Cf); the `u` flag is required for \p{} property
   // escapes and for correct matching of the astral-plane Cf characters.
-  // Checked together with trim() (see WHITESPACE_OR_CONTROL_OR_FORMAT's own
-  // comment on why neither check alone decides the reported message).
+  // Checked together with trim() (see the module comment on why neither check alone decides the reported message).
   if (label.trim() !== label || /[\p{Cc}\p{Cf}]/u.test(label)) {
-    return WHITESPACE_OR_CONTROL_OR_FORMAT;
+    return t.credentials.vault.errors.whitespaceOrControl;
   }
   if (/[,@]/.test(label)) {
-    return "label contains a comma or '@', either of which ansible.cfg would read as more than one label";
+    return t.credentials.vault.errors.commaOrAt;
   }
   // Runes, not UTF-16 code units: the server counts with Go's
   // utf8.RuneCountInString (internal/repos/vault.go's own comment, matching
   // huma's maxLength:"100" validation) — spreading a string iterates by
   // code point, which agrees with a rune count for every character already
   // past the ansible.cfg check above.
-  if ([...label].length > MAX_VAULT_LABEL_LENGTH) return `label exceeds ${MAX_VAULT_LABEL_LENGTH} characters`;
+  if ([...label].length > MAX_VAULT_LABEL_LENGTH) return t.credentials.vault.errors.tooLong(MAX_VAULT_LABEL_LENGTH);
   return '';
 }
 
@@ -110,22 +108,22 @@ export function rowsFromIdentities(
  * sharing the same invalid text each get their own message instead of one
  * swallowing the other's.
  */
-export function vaultIdentityErrors(rows: readonly VaultIdentityRow[]): Record<string, string> {
+export function vaultIdentityErrors(rows: readonly VaultIdentityRow[], t: Messages): Record<string, string> {
   const errors: Record<string, string> = {};
   const firstRowFor = new Map<string, string>();
   for (const row of rows) {
     if (!row.credentialId) {
-      errors[row.key] = 'choose a credential for this vault password';
+      errors[row.key] = t.credentials.vault.errors.chooseCredential;
       continue;
     }
-    const reason = invalidVaultLabel(row.label);
+    const reason = invalidVaultLabel(row.label, t);
     if (reason) {
       errors[row.key] = reason;
       continue;
     }
     const firstRow = firstRowFor.get(row.label);
     if (firstRow) {
-      const message = `duplicate vault identity label "${row.label}"`;
+      const message = t.credentials.vault.errors.duplicate(row.label);
       errors[row.key] = message;
       errors[firstRow] = message;
     } else {

@@ -8,6 +8,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useCreateGroup } from '../../api/hooks/useInventory.ts';
 import type { InventoryGroupSummary } from '../../api/types.ts';
 import { orderTree } from './tree.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export function CreateGroupDialog({
   org, open, onClose, groups, fixedParent, onCreated,
@@ -19,6 +20,7 @@ export function CreateGroupDialog({
   fixedParent?: string;
   onCreated: (id: string) => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const create = useCreateGroup(org);
   const [name, setName] = useState('');
@@ -31,26 +33,26 @@ export function CreateGroupDialog({
     setError(null);
     try {
       const res = await create.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined });
-      toast.show(`Group ${res.group.name} created`);
+      toast.show(t.inventory.create.created(res.group.name));
       setName('');
       setDescription('');
       onCreated(res.group.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Creating the group failed');
+      setError(err instanceof Error ? err.message : t.inventory.create.failed);
     }
   }
 
   return (
-    <Dialog open={open} onClose={onClose} title={fixedParent ? 'Add child group' : 'Add group'}>
+    <Dialog open={open} onClose={onClose} title={fixedParent ? t.inventory.create.titleChild : t.inventory.create.titleGroup}>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="group-name">Name</Label>
+          <Label htmlFor="group-name">{t.inventory.create.name}</Label>
           <Input id="group-name" className="font-mono" required value={name} onChange={(e) => setName(e.target.value)} />
-          <span className="text-[11px] text-muted-foreground">Lowercase letters, digits and underscores; this becomes the Ansible group name.</span>
+          <span className="text-[11px] text-muted-foreground">{t.inventory.create.nameHint}</span>
         </div>
         {!fixedParent && (
           <div className="flex flex-col gap-1">
-            <Label htmlFor="group-parent">Parent</Label>
+            <Label htmlFor="group-parent">{t.inventory.create.parent}</Label>
             <Select
               id="group-parent"
               // The hint names each row's own parent, so two groups sharing
@@ -65,12 +67,12 @@ export function CreateGroupDialog({
               }))}
               value={parent}
               onChange={setParent}
-              placeholder="— none (top level) —"
+              placeholder={t.inventory.create.parentNone}
             />
           </div>
         )}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="group-description">Description</Label>
+          <Label htmlFor="group-description">{t.inventory.create.description}</Label>
           <Input id="group-description" value={description} onChange={(e) => setDescription(e.target.value)} />
         </div>
         {error && (
@@ -80,10 +82,10 @@ export function CreateGroupDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending}>
-            Create group
+            {t.inventory.create.submit}
           </Button>
         </div>
       </form>

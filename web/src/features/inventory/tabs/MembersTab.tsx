@@ -9,10 +9,12 @@ import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useGroupMembers, useUnassignHost } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryMember } from '../../../api/types.ts';
 import { AssignHostDialog } from './AssignHostDialog.tsx';
+import { useT } from '../../../i18n/useT.ts';
 
 const COLUMNS = 'minmax(0, 1fr) 200px 150px';
 
 export function MembersTab({ org, group }: { org: string; group: InventoryGroup }) {
+  const t = useT();
   const toast = useToast();
   const members = useGroupMembers(org, group.id);
   const unassign = useUnassignHost(org, group.id);
@@ -27,16 +29,16 @@ export function MembersTab({ org, group }: { org: string; group: InventoryGroup 
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <span className="text-xs text-muted-foreground">
-          {list.length} direct members · {list.filter((m) => !m.complete).length} need values
+          {t.inventory.members.summary(list.length, list.filter((m) => !m.complete).length)}
         </span>
         <Button variant="primary" onClick={() => setDialog({})}>
-          Assign host
+          {t.inventory.members.assign}
         </Button>
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Host</span>
-          <span>Values</span>
+          <span>{t.inventory.members.columns.host}</span>
+          <span>{t.inventory.members.columns.values}</span>
           <span />
         </GridHeader>
         {list.map((m) => (
@@ -44,30 +46,30 @@ export function MembersTab({ org, group }: { org: string; group: InventoryGroup 
             <Link to="/o/$org/hosts/$id" params={{ org, id: m.host_id }} className="truncate font-mono text-[13px] hover:text-primary">
               {m.host_name}
             </Link>
-            <span>{m.complete ? <Pill tone="ok">complete</Pill> : <Pill tone="warn">{(m.problems ?? []).length} to fill in</Pill>}</span>
+            <span>{m.complete ? <Pill tone="ok">{t.inventory.members.complete}</Pill> : <Pill tone="warn">{t.inventory.members.toFill((m.problems ?? []).length)}</Pill>}</span>
             <span className="flex justify-end gap-1">
-              <Button variant="ghost" onClick={() => setDialog({ member: m })} aria-label={`Edit values of ${m.host_name}`}>
-                Edit
+              <Button variant="ghost" onClick={() => setDialog({ member: m })} aria-label={t.inventory.members.editLabel(m.host_name)}>
+                {t.inventory.members.edit}
               </Button>
               <Button
                 variant="ghost"
-                aria-label={`Remove ${m.host_name}`}
+                aria-label={t.inventory.members.removeLabel(m.host_name)}
                 onClick={async () => {
-                  if (!confirm(`Remove ${m.host_name} from ${group.name}? Its values for this group are deleted.`)) return;
+                  if (!confirm(t.inventory.members.confirmRemove(m.host_name, group.name))) return;
                   try {
                     await unassign.mutateAsync(m.host_id);
-                    toast.show(`${m.host_name} removed from ${group.name}`);
+                    toast.show(t.inventory.members.removed(m.host_name, group.name));
                   } catch (err) {
-                    toast.show(err instanceof Error ? err.message : 'Removing the host failed', 'destructive');
+                    toast.show(err instanceof Error ? err.message : t.inventory.members.removeFailed, 'destructive');
                   }
                 }}
               >
-                Remove
+                {t.common.remove}
               </Button>
             </span>
           </GridRow>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No hosts in this group yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.inventory.members.empty}</p>}
       </Card>
       {dialog && (
         <AssignHostDialog org={org} group={group} member={dialog.member} existing={list.map((m) => m.host_id)} onClose={() => setDialog(null)} />

@@ -1,4 +1,5 @@
 import type { Tone } from '../../ui/badge.tsx';
+import type { Messages } from '../../i18n/types.ts';
 
 /** statusTone maps a job status onto the design's state colours: the
  * active pair (running/cancelling) reads accent/warn, the terminal pair
@@ -20,18 +21,14 @@ export function statusTone(status: string): Tone {
   }
 }
 
-const KIND_LABEL: Record<string, string> = {
-  run: 'run',
-  adhoc: 'ad-hoc',
-  connection_test: 'connection test',
-  bootstrap: 'bootstrap',
-  rotate_key: 'key rotation',
-  revoke_key: 'old key removal',
-  sync_repo: 'repo sync',
-};
+export function kindLabel(kind: string, t: Messages): string {
+  return (t.runs.kind as Record<string, string>)[kind] ?? kind;
+}
 
-export function kindLabel(kind: string): string {
-  return KIND_LABEL[kind] ?? kind;
+/** statusLabel names a job status; a status this build does not know is
+ * shown as the API sent it. */
+export function statusLabel(status: string, t: Messages): string {
+  return (t.runs.status as Record<string, string>)[status] ?? status;
 }
 
 /** shortId renders a UUID the way the run list and detail do: the first

@@ -10,6 +10,8 @@
  * rule Ansible's own loader applies) and only the first play is inspected.
  */
 
+import type { Messages } from '../../i18n/types.ts';
+
 export const MAX_INLINE_BYTES = 512 * 1024;
 
 const KEY_RE = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^:#]*?)\s*:(?:\s+(.*))?\s*$/;
@@ -17,36 +19,38 @@ const KEY_RE = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^:#]*?)\s*:(?:\s+(.*))?\s*$/
 const PLAIN_NULL = new Set(['~', 'null', 'Null', 'NULL']);
 const PLAIN_BOOL = new Set(['true', 'True', 'TRUE', 'false', 'False', 'FALSE']);
 
-/** validateYAML returns the server's message for the first problem it
- * finds, or null when the document passes (or is outside the subset). */
-export function validateYAML(inline: string): string | null {
+/** validateYAML returns the message for the first problem it finds, or
+ * null when the document passes (or is outside the subset). The wording
+ * comes from the catalogue; the parser's own detail after "malformed YAML:"
+ * is passed through as the parser (go-yaml's vocabulary) words it. */
+export function validateYAML(inline: string, t: Messages): string | null {
   if (new TextEncoder().encode(inline).length > MAX_INLINE_BYTES) {
-    return 'playbook exceeds 512 KiB';
+    return t.playbooks.validate.tooLarge;
   }
   let doc: string[] | null;
   try {
     doc = firstDocument(inline);
   } catch (e) {
-    return `malformed YAML: ${e instanceof Error ? e.message : 'could not parse'}`;
+    return t.playbooks.validate.malformed(e instanceof Error ? e.message : t.playbooks.validate.couldNotParse);
   }
   if (doc === null) return null; // constructs outside the subset: the server judges
-  if (doc.every((l) => l.trim() === '')) return 'expected a list of plays';
+  if (doc.every((l) => l.trim() === '')) return t.playbooks.validate.expectedList;
 
   let root: Node;
   try {
     root = parseBlock(doc);
   } catch (e) {
-    return `malformed YAML: ${e instanceof Error ? e.message : 'could not parse'}`;
+    return t.playbooks.validate.malformed(e instanceof Error ? e.message : t.playbooks.validate.couldNotParse);
   }
   if (root.kind === 'skip') return null;
-  if (root.kind !== 'seq' || root.items.length === 0) return 'expected a list of plays';
+  if (root.kind !== 'seq' || root.items.length === 0) return t.playbooks.validate.expectedList;
 
   const play = root.items[0];
   if (play.kind === 'skip') return null;
-  if (play.kind !== 'map') return 'play 1: must be a mapping';
+  if (play.kind !== 'map') return t.playbooks.validate.playMapping;
   const hosts = play.entries.find(([key]) => key === 'hosts');
-  if (!hosts || hosts[1].kind === 'null' || (hosts[1].kind === 'scalar' && hosts[1].text === '')) return 'play 1: missing hosts';
-  if (hosts[1].kind === 'nested' || hosts[1].kind !== 'scalar' || hosts[1].type !== 'string') return 'play 1: hosts must be a string';
+  if (!hosts || hosts[1].kind === 'null' || (hosts[1].kind === 'scalar' && hosts[1].text === '')) return t.playbooks.validate.missingHosts;
+  if (hosts[1].kind === 'nested' || hosts[1].kind !== 'scalar' || hosts[1].type !== 'string') return t.playbooks.validate.hostsString;
   return null;
 }
 

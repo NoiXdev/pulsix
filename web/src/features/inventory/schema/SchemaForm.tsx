@@ -7,6 +7,7 @@ import { Select } from '../../../ui/Select.tsx';
 import { childPath, indexPath, inputId, problemAt } from './paths.ts';
 import { isKeepMarker, isRecord, type KeepMarker } from './secrets.ts';
 import type { FieldType, Problem, SchemaField, Vars } from './types.ts';
+import { useT } from '../../../i18n/useT.ts';
 
 export interface SchemaFormProps {
   fields: readonly SchemaField[];
@@ -28,7 +29,8 @@ export interface SchemaFormProps {
  * paths this component uses for its inputs.
  */
 export function SchemaForm({ fields, value, onChange, problems, disabled, idPrefix = 'sf', pathPrefix = '' }: SchemaFormProps) {
-  if (fields.length === 0) return <p className="text-xs text-muted-foreground">No fields.</p>;
+  const t = useT();
+  if (fields.length === 0) return <p className="text-xs text-muted-foreground">{t.inventory.form.noFields}</p>;
   return (
     <div className="flex flex-col gap-3">
       {fields.map((f) => (
@@ -142,6 +144,7 @@ interface CommonProps {
 }
 
 export function ScalarInput({ id, field, value, onChange, disabled, invalid, ariaLabel }: ScalarInputProps) {
+  const t = useT();
   const common: CommonProps = { id, disabled, 'aria-invalid': invalid ? true : undefined, 'aria-label': ariaLabel };
   switch (field.type) {
     case 'enum':
@@ -154,7 +157,7 @@ export function ScalarInput({ id, field, value, onChange, disabled, invalid, ari
           options={(field.options ?? []).map((o) => ({ value: o, label: o }))}
           value={typeof value === 'string' ? value : ''}
           onChange={(v) => onChange(v === '' ? undefined : v)}
-          placeholder={field.default !== undefined ? `default (${String(field.default)})` : '—'}
+          placeholder={field.default !== undefined ? t.inventory.form.defaultValue(String(field.default)) : '—'}
         />
       );
     case 'int':
@@ -229,6 +232,7 @@ function NumberInput({ common, field, value, onChange }: { common: CommonProps; 
 }
 
 function SecretInput({ id, value, onChange, disabled, invalid }: { id: string; value: unknown; onChange: (v: unknown) => void; disabled?: boolean; invalid?: boolean }) {
+  const t = useT();
   // The marker this input started with, so "Keep stored value" can undo a
   // replacement. The entry's component instance moves with the entry
   // (RepeaterInput keys entries stably), so this stays the right marker.
@@ -243,10 +247,10 @@ function SecretInput({ id, value, onChange, disabled, invalid }: { id: string; v
           disabled={disabled}
           aria-invalid={invalid ? true : undefined}
           className="font-mono text-muted-foreground"
-          value="•••••••• stored"
+          value={t.inventory.form.stored}
         />
         <Button type="button" variant="ghost" disabled={disabled} onClick={() => onChange(undefined)}>
-          Replace
+          {t.inventory.form.replace}
         </Button>
       </div>
     );
@@ -265,7 +269,7 @@ function SecretInput({ id, value, onChange, disabled, invalid }: { id: string; v
       />
       {original && (
         <Button type="button" variant="ghost" disabled={disabled} onClick={() => onChange(original)}>
-          Keep stored value
+          {t.inventory.form.keepStored}
         </Button>
       )}
     </div>
@@ -279,6 +283,7 @@ function emptyScalar(type: FieldType): unknown {
 }
 
 function ListInput({ field, path, value, onChange, problems, disabled, idPrefix, id, label, error }: FieldInputProps & { id: string; label: string; error?: string }) {
+  const t = useT();
   const items = Array.isArray(value) ? (value as unknown[]) : [];
   const item: SchemaField = field.item ?? { name: '', type: 'string' };
   const set = (next: unknown[]) => onChange(next.length === 0 && !field.required ? undefined : next);
@@ -299,13 +304,13 @@ function ListInput({ field, path, value, onChange, problems, disabled, idPrefix,
             invalid={!!problemAt(problems, indexPath(path, i))}
             onChange={(v) => set(items.map((x, j) => (j === i ? (v ?? emptyScalar(item.type)) : x)))}
           />
-          <Button type="button" variant="ghost" aria-label={`Remove ${label} ${i + 1}`} disabled={disabled} onClick={() => set(items.filter((_, j) => j !== i))}>
+          <Button type="button" variant="ghost" aria-label={t.inventory.form.removeItem(label, i + 1)} disabled={disabled} onClick={() => set(items.filter((_, j) => j !== i))}>
             <Trash2 size={14} />
           </Button>
         </div>
       ))}
       <Button type="button" variant="ghost" className="self-start" disabled={disabled || full} onClick={() => set([...items, emptyScalar(item.type)])}>
-        <Plus size={14} /> Add {label}
+        <Plus size={14} /> {t.inventory.form.add(label)}
       </Button>
       <FieldFooter field={field} error={error} />
     </div>
@@ -317,6 +322,7 @@ function newKey(): string {
 }
 
 function RepeaterInput({ field, path, value, onChange, problems, disabled, idPrefix, label, error }: FieldInputProps & { label: string; error?: string }) {
+  const t = useT();
   const items = Array.isArray(value) ? (value as unknown[]) : [];
   // Stable keys move with their entries, so an entry's inputs (and a
   // secret's remembered marker) follow it when entries are reordered. A
@@ -345,7 +351,7 @@ function RepeaterInput({ field, path, value, onChange, problems, disabled, idPre
           {field.required && <span aria-hidden="true" className="text-destructive"> *</span>}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          {items.length} {items.length === 1 ? 'entry' : 'entries'}
+          {t.inventory.form.entries(items.length)}
         </span>
       </div>
       {items.map((it, i) => {
@@ -357,16 +363,16 @@ function RepeaterInput({ field, path, value, onChange, problems, disabled, idPre
                 {label} {i + 1}
               </span>
               <div className="flex gap-1">
-                <Button type="button" variant="ghost" aria-label={`Move ${label} ${i + 1} up`} disabled={disabled || i === 0} onClick={() => move(i, i - 1)}>
+                <Button type="button" variant="ghost" aria-label={t.inventory.form.moveUp(label, i + 1)} disabled={disabled || i === 0} onClick={() => move(i, i - 1)}>
                   <ArrowUp size={14} />
                 </Button>
-                <Button type="button" variant="ghost" aria-label={`Move ${label} ${i + 1} down`} disabled={disabled || i === items.length - 1} onClick={() => move(i, i + 1)}>
+                <Button type="button" variant="ghost" aria-label={t.inventory.form.moveDown(label, i + 1)} disabled={disabled || i === items.length - 1} onClick={() => move(i, i + 1)}>
                   <ArrowDown size={14} />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  aria-label={`Remove ${label} ${i + 1}`}
+                  aria-label={t.inventory.form.removeItem(label, i + 1)}
                   disabled={disabled}
                   onClick={() => set(items.filter((_, j) => j !== i), stable.filter((_, j) => j !== i))}
                 >
@@ -387,7 +393,7 @@ function RepeaterInput({ field, path, value, onChange, problems, disabled, idPre
         );
       })}
       <Button type="button" variant="default" className="self-start" disabled={disabled || full} onClick={() => set([...items, {}], [...stable, newKey()])}>
-        <Plus size={14} /> Add {label}
+        <Plus size={14} /> {t.inventory.form.add(label)}
       </Button>
       <FieldFooter field={field} error={error} />
     </div>

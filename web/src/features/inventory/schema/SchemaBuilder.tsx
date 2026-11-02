@@ -9,6 +9,7 @@ import { SchemaForm, ScalarInput } from './SchemaForm.tsx';
 import { membershipFields, problemAt, scopeOf } from './paths.ts';
 import { FIELD_TYPES, SCALAR_TYPES, changeType, fieldPath, hasProblemUnder, moveField, newField, removeField, replaceField, typeLabel } from './fieldEditor.ts';
 import type { FieldType, Problem, SchemaField, VarSchema, Vars } from './types.ts';
+import { useT } from '../../../i18n/useT.ts';
 
 export interface SchemaBuilderProps {
   value: VarSchema;
@@ -50,6 +51,7 @@ function removeItem<T>(items: readonly T[], index: number): T[] {
  * and, at the top level, the generated assignment form as a live preview.
  */
 export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nested = false, types = FIELD_TYPES }: SchemaBuilderProps) {
+  const t = useT();
   const [selected, setSelected] = useState(0);
   const fields = value.fields;
   const index = Math.min(selected, fields.length - 1);
@@ -88,7 +90,7 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
             ))}
           </ul>
         )}
-        <ul className="flex flex-col gap-1" aria-label={nested ? 'Sub-fields' : 'Fields'}>
+        <ul className="flex flex-col gap-1" aria-label={nested ? t.inventory.builder.subFields : t.inventory.builder.fields}>
           {fields.map((f, i) => (
             <li key={i}>
               <button
@@ -100,11 +102,11 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
                 }`}
               >
                 <span className="flex-1 truncate font-mono text-xs">{f.name}</span>
-                <span className="text-[11px] text-muted-foreground">{typeLabel(f)}</span>
-                {!nested && scopeOf(f) === 'host' && <Tag>host</Tag>}
-                {f.required && <span className="text-[11px] text-destructive" aria-label="required">*</span>}
+                <span className="text-[11px] text-muted-foreground">{typeLabel(f, t)}</span>
+                {!nested && scopeOf(f) === 'host' && <Tag>{t.inventory.builder.hostTag}</Tag>}
+                {f.required && <span className="text-[11px] text-destructive" aria-label={t.inventory.builder.required}>*</span>}
                 {hasProblemUnder(problems, fieldPath(pathPrefix, i)) && (
-                  <span className="h-1.5 w-1.5 rounded-full bg-destructive" aria-label="has problems" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-destructive" aria-label={t.inventory.builder.hasProblems} />
                 )}
               </button>
             </li>
@@ -119,7 +121,7 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
             setSelected(fields.length);
           }}
         >
-          <Plus size={14} /> {nested ? 'Add sub-field' : 'Add field'}
+          <Plus size={14} /> {nested ? t.inventory.builder.addSubField : t.inventory.builder.addField}
         </Button>
       </div>
 
@@ -150,7 +152,7 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
           }}
         />
       ) : (
-        <p className="text-xs text-muted-foreground">No fields yet.</p>
+        <p className="text-xs text-muted-foreground">{t.inventory.builder.noFields}</p>
       )}
 
       {!nested && <AssignmentPreview schema={value} />}
@@ -173,6 +175,7 @@ interface FieldEditorProps {
 }
 
 function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, canMoveDown, onChange, onMove, onRemove }: FieldEditorProps) {
+  const t = useT();
   const id = (k: string) => `${idBase}-${k}`;
   const problem = (k: string) => problemAt(problems, `${path}.${k}`);
   const set = (patch: Partial<SchemaField>) => onChange({ ...field, ...patch });
@@ -213,14 +216,14 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
   });
 
   return (
-    <div role="group" aria-label={`Field ${field.name}`} className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-4">
+    <div role="group" aria-label={t.inventory.builder.fieldGroup(field.name)} className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-4">
       <div className="grid grid-cols-2 gap-3">
-        <TextField id={id('name')} label="Name" mono value={field.name} error={problem('name')} onChange={(v) => set({ name: v })} />
+        <TextField id={id('name')} label={t.inventory.builder.name} mono value={field.name} error={problem('name')} onChange={(v) => set({ name: v })} />
         <div className="flex flex-col gap-1">
-          <Label htmlFor={id('type')}>Type</Label>
+          <Label htmlFor={id('type')}>{t.inventory.builder.type}</Label>
           <Select
             id={id('type')}
-            options={types.map((t) => ({ value: t, label: t === 'object' ? 'sub-schema (object)' : t }))}
+            options={types.map((ty) => ({ value: ty, label: ty === 'object' ? t.inventory.builder.subSchemaObject : ty }))}
             value={field.type}
             onChange={(v) => onChange(changeType(field, v as FieldType))}
           />
@@ -231,19 +234,19 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
           )}
         </div>
       </div>
-      <TextField id={id('label')} label="Label" value={field.label ?? ''} onChange={(v) => set({ label: v || undefined })} />
-      <TextField id={id('description')} label="Description" value={field.description ?? ''} onChange={(v) => set({ description: v || undefined })} />
+      <TextField id={id('label')} label={t.inventory.builder.label} value={field.label ?? ''} onChange={(v) => set({ label: v || undefined })} />
+      <TextField id={id('description')} label={t.inventory.builder.description} value={field.description ?? ''} onChange={(v) => set({ description: v || undefined })} />
 
       {!nested && (
         <fieldset className="flex flex-col gap-1">
-          <legend className="text-[11px] font-medium text-muted-foreground">Scope</legend>
+          <legend className="text-[11px] font-medium text-muted-foreground">{t.inventory.builder.scope}</legend>
           <label className="flex items-center gap-2 text-xs">
             <input type="radio" name={id('scope')} checked={scopeOf(field) === 'group'} onChange={() => set({ scope: undefined })} />
-            Group (set once on the group)
+            {t.inventory.builder.scopeGroup}
           </label>
           <label className="flex items-center gap-2 text-xs">
             <input type="radio" name={id('scope')} checked={scopeOf(field) === 'host'} onChange={() => set({ scope: 'host', overridable: undefined })} />
-            Host (asked when a host is assigned)
+            {t.inventory.builder.scopeHost}
           </label>
           {problem('scope') && (
             <span role="alert" className="text-[11px] text-destructive">
@@ -252,10 +255,10 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
           )}
         </fieldset>
       )}
-      <Checkbox id={id('required')} label="Required" checked={!!field.required} onChange={(c) => set({ required: c || undefined })} />
+      <Checkbox id={id('required')} label={t.inventory.builder.requiredLabel} checked={!!field.required} onChange={(c) => set({ required: c || undefined })} />
       {showOverridable && (
         <div className="flex flex-col gap-1">
-          <Checkbox id={id('overridable')} label="Hosts may override" checked={!!field.overridable} onChange={(c) => set({ overridable: c || undefined })} />
+          <Checkbox id={id('overridable')} label={t.inventory.builder.hostsMayOverride} checked={!!field.overridable} onChange={(c) => set({ overridable: c || undefined })} />
           {problem('overridable') && (
             <span role="alert" className="text-[11px] text-destructive">
               {problem('overridable')}
@@ -269,23 +272,23 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
       )}
       {hasBounds && (
         <div className="grid grid-cols-2 gap-3">
-          <NumberField id={id('min')} label={isText ? 'Min length' : 'Min'} value={field.min} error={problem('min')} onChange={(min) => set({ min })} />
-          <NumberField id={id('max')} label={isText ? 'Max length' : 'Max'} value={field.max} error={problem('max')} onChange={(max) => set({ max })} />
+          <NumberField id={id('min')} label={isText ? t.inventory.builder.minLength : t.inventory.builder.min} value={field.min} error={problem('min')} onChange={(min) => set({ min })} />
+          <NumberField id={id('max')} label={isText ? t.inventory.builder.maxLength : t.inventory.builder.max} value={field.max} error={problem('max')} onChange={(max) => set({ max })} />
         </div>
       )}
-      {isText && <TextField id={id('pattern')} label="Pattern" mono value={field.pattern ?? ''} error={problem('pattern')} onChange={(v) => set({ pattern: v || undefined })} />}
+      {isText && <TextField id={id('pattern')} label={t.inventory.builder.pattern} mono value={field.pattern ?? ''} error={problem('pattern')} onChange={(v) => set({ pattern: v || undefined })} />}
       {isCollection && (
         <div className="grid grid-cols-2 gap-3">
-          <NumberField id={id('min_items')} label="Min items" value={field.min_items} error={problem('min_items')} onChange={(min_items) => set({ min_items })} />
-          <NumberField id={id('max_items')} label="Max items" value={field.max_items} error={problem('max_items')} onChange={(max_items) => set({ max_items })} />
+          <NumberField id={id('min_items')} label={t.inventory.builder.minItems} value={field.min_items} error={problem('min_items')} onChange={(min_items) => set({ min_items })} />
+          <NumberField id={id('max_items')} label={t.inventory.builder.maxItems} value={field.max_items} error={problem('max_items')} onChange={(max_items) => set({ max_items })} />
         </div>
       )}
       {field.type === 'list' && (
         <div className="flex flex-col gap-1">
-          <Label htmlFor={id('item')}>Item type</Label>
+          <Label htmlFor={id('item')}>{t.inventory.builder.itemType}</Label>
           <Select
             id={id('item')}
-            options={SCALAR_TYPES.map((t) => ({ value: t, label: t }))}
+            options={SCALAR_TYPES.map((ty) => ({ value: ty, label: ty }))}
             value={field.item?.type ?? 'string'}
             onChange={(v) => {
               const t = v as FieldType;
@@ -299,7 +302,7 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
       )}
       {hasDefault && (
         <div className="flex flex-col gap-1">
-          <Label htmlFor={id('default')}>Default</Label>
+          <Label htmlFor={id('default')}>{t.inventory.builder.default}</Label>
           <ScalarInput id={id('default')} field={{ ...field, default: undefined, required: false }} value={field.default} onChange={(d) => set({ default: d })} />
           {problem('default') && (
             <span role="alert" className="text-[11px] text-destructive">
@@ -310,7 +313,7 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
       )}
       {isSubSchema && (
         <div className="flex flex-col gap-2 border-t border-border pt-3">
-          <span className="text-[11px] font-semibold">Sub-schema</span>
+          <span className="text-[11px] font-semibold">{t.inventory.builder.subSchemaHeading}</span>
           {problem('fields') && (
             <span role="alert" className="text-[11px] text-destructive">
               {problem('fields')}
@@ -328,13 +331,13 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
       )}
       <div className="flex gap-2 border-t border-border pt-3">
         <Button type="button" variant="ghost" disabled={!canMoveUp} onClick={() => onMove(-1)}>
-          Move up
+          {t.inventory.builder.moveUp}
         </Button>
         <Button type="button" variant="ghost" disabled={!canMoveDown} onClick={() => onMove(1)}>
-          Move down
+          {t.inventory.builder.moveDown}
         </Button>
         <Button type="button" variant="destructive" className="ml-auto" onClick={onRemove}>
-          Delete field
+          {t.inventory.builder.deleteField}
         </Button>
       </div>
     </div>
@@ -382,10 +385,11 @@ function NumberField({ id, label, value, onChange, error }: { id: string; label:
 }
 
 function OptionsField({ id, value, onChange, error }: { id: string; value: string[]; onChange: (v: string[]) => void; error?: string }) {
+  const t = useT();
   const [text, setText] = useState(value.join('\n'));
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor={id}>Options (one per line)</Label>
+      <Label htmlFor={id}>{t.inventory.builder.options}</Label>
       <textarea
         id={id}
         rows={4}
@@ -415,11 +419,12 @@ function Checkbox({ id, label, checked, onChange }: { id: string; label: string;
 }
 
 function AssignmentPreview({ schema }: { schema: VarSchema }) {
+  const t = useT();
   const [vars, setVars] = useState<Vars>({});
   return (
-    <section aria-label="Assignment form preview" className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-4">
-      <h3 className="text-[13px] font-semibold">Assignment form</h3>
-      <p className="text-[11px] text-muted-foreground">What an operator fills in when assigning a host to this group. Group-scoped values stay on the group.</p>
+    <section aria-label={t.inventory.builder.previewLabel} className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-4">
+      <h3 className="text-[13px] font-semibold">{t.inventory.builder.previewHeading}</h3>
+      <p className="text-[11px] text-muted-foreground">{t.inventory.builder.previewHint}</p>
       <SchemaForm fields={membershipFields(schema)} value={vars} onChange={setVars} idPrefix="preview" />
     </section>
   );

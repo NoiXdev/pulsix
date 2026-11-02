@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { validateYAML } from './validate.ts';
+import { validateYAML as validate } from './validate.ts';
+import { en } from '../../i18n/en/index.ts';
+
+const validateYAML = (inline: string) => validate(inline, en);
 
 /** The same table internal/playbooks/validate_test.go runs, with the
  * messages shown to the operator as-is. */

@@ -8,7 +8,8 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useCreateBastion, useUpdateBastion } from '../../api/hooks/useSsh.ts';
 import type { Bastion, Credential } from '../../api/types.ts';
 import { AddCredentialDialog } from './AddCredentialDialog.tsx';
-import { KIND_LABEL } from './labels.ts';
+import { kindName } from './labels.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export function BastionDialog({
   org, bastion, bastions, credentials, canCreateCredential, onClose, onCreated, initialName,
@@ -28,6 +29,7 @@ export function BastionDialog({
   /** Prefills the name, from what had been typed into the picker. Same prop shape Task 7 gives AddCredentialDialog and ZoneDialog. */
   initialName?: string;
 }) {
+  const t = useT();
   const toast = useToast();
   const create = useCreateBastion(org);
   const update = useUpdateBastion(org, bastion?.id ?? '');
@@ -53,49 +55,49 @@ export function BastionDialog({
         const res = await create.mutateAsync(body);
         onCreated(res.bastion.id);
       }
-      toast.show(`Jump host ${name} saved`);
+      toast.show(t.credentials.bastion.saved(name));
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : t.credentials.bastion.saveFailed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} title={bastion ? `Jump host ${bastion.name}` : 'Add jump host'}>
+    <Dialog open onClose={onClose} title={bastion ? t.credentials.bastion.titleEdit(bastion.name) : t.credentials.bastion.titleAdd}>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="bastion-name">Name</Label>
+          <Label htmlFor="bastion-name">{t.credentials.bastion.name}</Label>
           <Input id="bastion-name" className="font-mono" required value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="grid grid-cols-[1fr_90px] gap-3">
           <div className="flex flex-col gap-1">
-            <Label htmlFor="bastion-address">Address</Label>
+            <Label htmlFor="bastion-address">{t.credentials.bastion.address}</Label>
             <Input id="bastion-address" className="font-mono" required value={address} onChange={(e) => setAddress(e.target.value)} />
           </div>
           <div className="flex flex-col gap-1">
-            <Label htmlFor="bastion-port">Port</Label>
+            <Label htmlFor="bastion-port">{t.credentials.bastion.port}</Label>
             <Input id="bastion-port" className="font-mono" inputMode="numeric" value={port} onChange={(e) => setPort(e.target.value)} />
           </div>
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="bastion-username">Username</Label>
+          <Label htmlFor="bastion-username">{t.credentials.bastion.username}</Label>
           <Input id="bastion-username" className="font-mono" required value={username} onChange={(e) => setUsername(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="bastion-credential">Credential</Label>
+          <Label htmlFor="bastion-credential">{t.credentials.bastion.credential}</Label>
           <Select
             id="bastion-credential"
             options={credentials
               .filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')
-              .map((c) => ({ value: c.id, label: c.name, hint: KIND_LABEL[c.kind] ?? c.kind }))}
+              .map((c) => ({ value: c.id, label: c.name, hint: kindName(c.kind, t) }))}
             value={credentialId}
             onChange={setCredentialId}
-            placeholder="— none —"
-            create={canCreateCredential ? { label: 'New credential…', onSelect: setNewCredentialName } : undefined}
+            placeholder={t.credentials.bastion.credentialNone}
+            create={canCreateCredential ? { label: t.credentials.bastion.newCredential, onSelect: setNewCredentialName } : undefined}
           />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="bastion-via">Reached through</Label>
+          <Label htmlFor="bastion-via">{t.credentials.bastion.via}</Label>
           {/* No create row here: it would open a second BastionDialog on
               top of this one, mid-creation of the jump host it's trying
               to chain through — the same self-nesting the CreateGroupDialog
@@ -105,7 +107,7 @@ export function BastionDialog({
             options={bastions.filter((b) => b.id !== bastion?.id).map((b) => ({ value: b.id, label: b.name }))}
             value={via}
             onChange={setVia}
-            placeholder="— directly —"
+            placeholder={t.credentials.bastion.viaNone}
           />
         </div>
         {error && (
@@ -115,10 +117,10 @@ export function BastionDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary">
-            {bastion ? 'Save jump host' : 'Create jump host'}
+            {bastion ? t.credentials.bastion.save : t.credentials.bastion.create}
           </Button>
         </div>
       </form>

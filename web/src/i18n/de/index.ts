@@ -7,18 +7,24 @@ import { deAuth } from './auth.ts';
 import { deCalendar } from './calendar.ts';
 import { deChecks } from './checks.ts';
 import { deCommon } from './common.ts';
+import { deCredentials } from './credentials.ts';
 import { deFleet } from './fleet.ts';
 import { deHosts } from './hosts.ts';
 import { deInstance } from './instance.ts';
+import { deInventory } from './inventory.ts';
 import { deLanguage } from './language.ts';
 import { deMaintenance } from './maintenance.ts';
 import { deMembers } from './members.ts';
 import { deNotifications } from './notifications.ts';
+import { dePlaybooks } from './playbooks.ts';
+import { deRepos } from './repos.ts';
 import { deRoutes } from './routes.ts';
+import { deRuns } from './runs.ts';
 import { deSchedules } from './schedules.ts';
 import { deSettings } from './settings.ts';
 import { deSetup } from './setup.ts';
 import { deShell } from './shell.ts';
+import { deTemplates } from './templates.ts';
 import { deTokens } from './tokens.ts';
 import { deTriggers } from './triggers.ts';
 import { deUi } from './ui.ts';
@@ -58,18 +64,24 @@ export const de: Messages = {
   calendar: deCalendar,
   checks: deChecks,
   common: deCommon,
+  credentials: deCredentials,
   fleet: deFleet,
   hosts: deHosts,
   instance: deInstance,
+  inventory: deInventory,
   language: deLanguage,
   maintenance: deMaintenance,
   members: deMembers,
   notifications: deNotifications,
+  playbooks: dePlaybooks,
+  repos: deRepos,
   routes: deRoutes,
+  runs: deRuns,
   schedules: deSchedules,
   settings: deSettings,
   setup: deSetup,
   shell: deShell,
+  templates: deTemplates,
   tokens: deTokens,
   triggers: deTriggers,
   ui: deUi,

@@ -4,6 +4,7 @@ import { Select } from '../../ui/Select.tsx';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import { useGroups } from '../../api/hooks/useInventory.ts';
 import { orderTree } from '../inventory/tree.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface Scope {
   /** "" = whole organization. */
@@ -20,6 +21,7 @@ const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 te
  * nothing selected runs against every managed host of the organization.
  */
 export function ScopePicker({ org, value, onChange }: { org: string; value: Scope; onChange: (next: Scope) => void }) {
+  const t = useT();
   const [q, setQ] = useState('');
   const groups = useGroups(org);
   const hosts = useHosts(org, { managed: true, q });
@@ -33,10 +35,10 @@ export function ScopePicker({ org, value, onChange }: { org: string; value: Scop
 
   return (
     <fieldset className="flex flex-col gap-2 rounded-md border border-border p-3">
-      <legend className="px-1 text-[11px] font-semibold">Scope</legend>
+      <legend className="px-1 text-[11px] font-semibold">{t.templates.picker.legend}</legend>
       <div className="flex flex-col gap-1">
         <label htmlFor="scope-group" className="text-[11px] font-medium text-muted-foreground">
-          Group
+          {t.templates.picker.group}
         </label>
         <Select
           id="scope-group"
@@ -50,17 +52,17 @@ export function ScopePicker({ org, value, onChange }: { org: string; value: Scop
           }))}
           value={value.group_id}
           onChange={(group_id) => onChange({ ...value, group_id })}
-          placeholder="Whole organization"
+          placeholder={t.templates.picker.wholeOrganization}
         />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor="scope-hosts" className="text-[11px] font-medium text-muted-foreground">
-          Hosts ({value.host_ids.length} selected)
+          {t.templates.picker.hosts(value.host_ids.length)}
         </label>
         <input
           id="scope-hosts"
           type="search"
-          placeholder="Search managed hosts…"
+          placeholder={t.templates.picker.searchPlaceholder}
           className={SELECT}
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -72,18 +74,18 @@ export function ScopePicker({ org, value, onChange }: { org: string; value: Scop
                 type="checkbox"
                 checked={value.host_ids.includes(h.id)}
                 onChange={() => toggleHost(h.id)}
-                aria-label={`Include ${h.name}`}
+                aria-label={t.templates.picker.include(h.name)}
               />
               <span className="font-mono">{h.name}</span>
             </label>
           ))}
           {!hosts.isPending && rows.length === 0 && (
-            <p className="px-3 py-2 text-[11px] text-muted-foreground">No managed host matches.</p>
+            <p className="px-3 py-2 text-[11px] text-muted-foreground">{t.templates.picker.noMatch}</p>
           )}
           {hasNextPage && <LoadMoreButton onClick={() => void fetchNextPage()} loading={isFetchingNextPage} />}
         </div>
       </div>
-      <span className="text-[11px] text-muted-foreground">Nothing selected runs against every managed host.</span>
+      <span className="text-[11px] text-muted-foreground">{t.templates.picker.hint}</span>
     </fieldset>
   );
 }

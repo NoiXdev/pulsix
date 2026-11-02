@@ -6,6 +6,7 @@ import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useCreatePlaybook, useDeletePlaybook, usePlaybook, useUpdatePlaybook } from '../../api/hooks/usePlaybooks.ts';
 import { validateYAML } from './validate.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface PlaybookEditorProps {
   org: string;
@@ -62,6 +63,7 @@ function PlaybookForm({
   existing?: { id: string; summary: string; inline: string };
   onClose: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const create = useCreatePlaybook(org);
   const update = useUpdatePlaybook(org, existing?.id ?? '');
@@ -71,41 +73,41 @@ function PlaybookForm({
 
   // The preview runs on every keystroke; a document outside the minimal
   // parser's subset yields no message (the server judges those).
-  const preview = validateYAML(text);
+  const preview = validateYAML(text, t);
   const previewOk = preview === null;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const message = validateYAML(text);
+    const message = validateYAML(text, t);
     if (message) return; // the preview already names it
     try {
       if (existing) await update.mutateAsync({ inline: text });
       else await create.mutateAsync({ inline: text });
-      toast.show(existing ? 'Playbook saved' : 'Playbook created');
+      toast.show(existing ? t.playbooks.editor.saved : t.playbooks.editor.created);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Saving failed');
+      setError(err instanceof Error ? err.message : t.playbooks.editor.saveFailed);
     }
   }
 
   async function onDelete() {
-    if (!confirm(`Delete playbook ${existing?.summary || 'editor playbook'}?`)) return;
+    if (!confirm(t.playbooks.editor.confirmDelete(existing?.summary || t.playbooks.editor.fallbackName))) return;
     try {
       await remove.mutateAsync(existing?.id ?? '');
-      toast.show('Playbook deleted');
+      toast.show(t.playbooks.editor.deleted);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Deleting failed');
+      setError(err instanceof Error ? err.message : t.playbooks.editor.deleteFailed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} size="wide" title={existing?.summary || 'New editor playbook'}>
+    <Dialog open onClose={onClose} size="wide" title={existing?.summary || t.playbooks.editor.newTitle}>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <label htmlFor="playbook-yaml" className="text-[11px] font-medium text-muted-foreground">
-            Playbook YAML
+            {t.playbooks.editor.yaml}
           </label>
           <textarea
             id="playbook-yaml"
@@ -117,7 +119,7 @@ function PlaybookForm({
           />
           {previewOk ? (
             <span role="status" className="text-[11px]" style={{ color: 'var(--px-ok)' }}>
-              Parses as a list of plays — ready to save.
+              {t.playbooks.editor.ready}
             </span>
           ) : (
             <span role="alert" className="text-[11px] text-destructive">
@@ -133,15 +135,15 @@ function PlaybookForm({
         <div className="flex items-center justify-between gap-2">
           {existing && (
             <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => void onDelete()}>
-              Delete
+              {t.common.delete}
             </Button>
           )}
           <div className="flex gap-2">
             <Button type="button" onClick={onClose}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button type="submit" variant="primary" disabled={create.isPending || update.isPending || !previewOk}>
-              Save playbook
+              {t.playbooks.editor.save}
             </Button>
           </div>
         </div>

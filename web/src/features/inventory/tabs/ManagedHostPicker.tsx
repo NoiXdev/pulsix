@@ -3,6 +3,7 @@ import { Label } from '../../../ui/label.tsx';
 import { Select } from '../../../ui/Select.tsx';
 import { LoadMoreButton } from '../../../ui/LoadMoreButton.tsx';
 import { useHosts } from '../../../api/hooks/useHosts.ts';
+import { useT } from '../../../i18n/useT.ts';
 
 const FIELD = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
@@ -19,6 +20,7 @@ export function ManagedHostPicker({
   value: string;
   onChange: (hostId: string) => void;
 }) {
+  const t = useT();
   const [q, setQ] = useState('');
   const hosts = useHosts(org, { managed: true, q });
   const assignable = (hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? []).filter((h) => !existing.includes(h.id));
@@ -39,11 +41,11 @@ export function ManagedHostPicker({
 
   return (
     <div className="flex flex-col gap-1">
-      <Label htmlFor="assign-host">Host</Label>
+      <Label htmlFor="assign-host">{t.inventory.picker.host}</Label>
       <input
         type="search"
-        aria-label="Search managed hosts"
-        placeholder="Search managed hosts…"
+        aria-label={t.inventory.picker.searchLabel}
+        placeholder={t.inventory.picker.searchPlaceholder}
         className={FIELD}
         value={q}
         onChange={(e) => {
@@ -57,30 +59,30 @@ export function ManagedHostPicker({
         options={assignable.map((h) => ({ value: h.id, label: h.name }))}
         value={value}
         onChange={onChange}
-        placeholder="Choose a managed host…"
+        placeholder={t.inventory.picker.choose}
       />
       {!hosts.data && hosts.isError && (
         <span role="alert" className="text-[11px] text-destructive">
-          Could not load managed hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
+          {t.inventory.picker.loadFailed(hosts.error instanceof Error ? hosts.error.message : '')}
         </span>
       )}
       {isFetchNextPageError && (
         <div className="flex items-center justify-between gap-2 text-[11px]">
           <span role="alert" className="text-destructive">
-            Could not load more managed hosts. {hosts.error instanceof Error ? hosts.error.message : ''}
+            {t.inventory.picker.loadMoreFailed(hosts.error instanceof Error ? hosts.error.message : '')}
           </span>
           <LoadMoreButton onClick={() => void fetchNextPage()} loading={isFetchingNextPage} />
         </div>
       )}
       {!isFetchNextPageError && hasNextPage && assignable.length > 0 && (
         <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-          <span>More managed hosts match. Search to narrow the list, or load more.</span>
+          <span>{t.inventory.picker.more}</span>
           <LoadMoreButton onClick={() => void fetchNextPage()} loading={isFetchingNextPage} />
         </div>
       )}
       {exhausted && (
         <span className="text-[11px] text-muted-foreground">
-          {q ? `No managed host matching “${q}” is left to assign.` : 'Every managed host is already a member.'}
+          {q ? t.inventory.picker.noneMatching(q) : t.inventory.picker.allMembers}
         </span>
       )}
     </div>

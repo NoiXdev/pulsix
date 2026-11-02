@@ -5,6 +5,7 @@
  * rejected save surfaces its detail at the field too).
  */
 import type { RepoInput, RepoUpdateInput } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 
 const NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,62}$/;
 const URL_PATTERN = /^(https:\/\/[^/ ]+|ssh:\/\/[^/ ]+|[^@/ ]+@[^:/ ]+:)/;
@@ -20,28 +21,28 @@ export interface RepoFormValues {
   subpath: string;
 }
 
-/** validateRepoInput returns one message per broken field, with the
- * server's exact wording. */
-export function validateRepoInput(values: RepoFormValues): Partial<Record<keyof RepoFormValues, string>> {
+/** validateRepoInput returns one message per broken field, worded by the
+ * catalogue (the server's own wording, in the active language). */
+export function validateRepoInput(values: RepoFormValues, t: Messages): Partial<Record<keyof RepoFormValues, string>> {
   const errors: Partial<Record<keyof RepoFormValues, string>> = {};
   if (!NAME_PATTERN.test(values.name)) {
-    errors.name = 'invalid name: must be lowercase letters, digits, dots, underscores or hyphens (1–63 characters), starting with a letter or digit';
+    errors.name = t.repos.validate.name;
   }
-  errors.url = urlError(values.url);
+  errors.url = urlError(values.url, t);
   if (values.branch !== '' && (values.branch.includes('..') || !BRANCH_PATTERN.test(values.branch))) {
-    errors.branch = 'invalid branch: may contain letters, digits, dots, slashes and hyphens (1–100 characters), no ".."';
+    errors.branch = t.repos.validate.branch;
   }
   if (values.subpath.includes('..') || !SUBPATH_PATTERN.test(values.subpath)) {
-    errors.subpath = 'invalid subpath: may be empty or contain letters, digits, dots, slashes and hyphens (up to 200 characters), no ".."';
+    errors.subpath = t.repos.validate.subpath;
   }
   return errors;
 }
 
-function urlError(url: string): string | undefined {
-  if (url === '') return 'invalid url: must be an https:// URL, an ssh:// URL or an SCP-like git URL';
-  if (/\s/.test(url)) return 'invalid url: must not contain whitespace';
-  if (url.length > MAX_URL_LENGTH) return `invalid url: exceeds ${MAX_URL_LENGTH} characters`;
-  if (!URL_PATTERN.test(url)) return 'invalid url: must be an https:// URL, an ssh:// URL or an SCP-like git URL';
+function urlError(url: string, t: Messages): string | undefined {
+  if (url === '') return t.repos.validate.urlForm;
+  if (/\s/.test(url)) return t.repos.validate.urlWhitespace;
+  if (url.length > MAX_URL_LENGTH) return t.repos.validate.urlLength(MAX_URL_LENGTH);
+  if (!URL_PATTERN.test(url)) return t.repos.validate.urlForm;
   return undefined;
 }
 

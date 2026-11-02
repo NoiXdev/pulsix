@@ -1,4 +1,5 @@
 import type { JobEvent } from '../../api/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const STATE_COLOR: Record<string, string> = {
   ok: 'var(--px-ok)',
@@ -20,18 +21,19 @@ const STATE_COLOR: Record<string, string> = {
  * log hook.
  */
 export function EventLog({ events }: { events: readonly JobEvent[] }) {
+  const t = useT();
   if (events.length === 0) {
-    return <p className="px-4 py-6 text-center text-xs text-muted-foreground">No events yet.</p>;
+    return <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.runs.events.empty}</p>;
   }
   const multiAttempt = new Set(events.map((e) => e.attempt)).size > 1;
   return (
-    <ol aria-label="Run events" className="flex flex-col gap-0.5 overflow-x-auto px-4 py-3">
+    <ol aria-label={t.runs.events.label} className="flex flex-col gap-0.5 overflow-x-auto px-4 py-3">
       {events.flatMap((e, i) => {
         const rows = [];
         if (multiAttempt && (i === 0 || events[i - 1].attempt !== e.attempt)) {
           rows.push(
             <li key={`attempt-${e.attempt}-${e.seq}`} className="mt-2 border-t border-border pt-1 text-[11px] font-medium text-muted-foreground first:mt-0 first:border-t-0 first:pt-0">
-              Attempt {e.attempt}
+              {t.runs.events.attempt(e.attempt)}
             </li>,
           );
         }
@@ -43,6 +45,7 @@ export function EventLog({ events }: { events: readonly JobEvent[] }) {
 }
 
 function EventRow({ e }: { e: JobEvent }) {
+  const t = useT();
   const text = typeof e.payload.text === 'string' ? (e.payload.text as string) : null;
   if (text !== null && text !== '') {
     return <li className="whitespace-pre-wrap break-all font-mono text-[11px] leading-5 text-foreground">{text}</li>;
@@ -57,7 +60,7 @@ function EventRow({ e }: { e: JobEvent }) {
         <span style={{ color }}>{e.state}</span>
         {e.host && <span className="text-muted-foreground">{e.host}</span>}
         {e.task && <span className="break-all text-foreground">{e.task}</span>}
-        {text === '' && <span className="text-muted-foreground">(empty stdout)</span>}
+        {text === '' && <span className="text-muted-foreground">{t.runs.events.emptyStdout}</span>}
       </span>
       {stdout !== '' && <span className="whitespace-pre-wrap break-all pl-4 text-muted-foreground">{stdout}</span>}
     </li>

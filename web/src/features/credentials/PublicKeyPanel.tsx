@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
+import { useT } from '../../i18n/useT.ts';
 
 interface Snippets {
   authorized_keys_command: string;
@@ -17,10 +18,11 @@ const SNIPPETS: Array<[keyof Snippets, string]> = [
 /** PublicKeyPanel shows the key an operator installs on a host, with the
  * spec §5 snippets. The private key never reaches the browser. */
 export function PublicKeyPanel({ publicKey, snippets }: { publicKey: string; snippets?: Snippets | null }) {
+  const t = useT();
   const [tab, setTab] = useState<keyof Snippets>('authorized_keys_command');
   return (
     <div className="flex flex-col gap-3">
-      <CopyBlock label="Public key" text={publicKey} />
+      <CopyBlock label={t.credentials.publicKey.label} text={publicKey} />
       {snippets && (
         <div className="flex flex-col gap-2">
           <div role="tablist" className="flex gap-4 border-b border-border">
@@ -45,12 +47,13 @@ export function PublicKeyPanel({ publicKey, snippets }: { publicKey: string; sni
 }
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
+  const t = useT();
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
-        <Button type="button" variant="ghost" aria-label={`Copy ${label}`} onClick={() => void navigator.clipboard.writeText(text)}>
-          <Copy size={14} /> Copy
+        <Button type="button" variant="ghost" aria-label={t.credentials.publicKey.copyLabel(label)} onClick={() => void navigator.clipboard.writeText(text)}>
+          <Copy size={14} /> {t.credentials.publicKey.copy}
         </Button>
       </div>
       <pre aria-label={label} className="overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] whitespace-pre-wrap break-all">

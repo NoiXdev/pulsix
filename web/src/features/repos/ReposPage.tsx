@@ -14,6 +14,8 @@ import { may } from '../../lib/roles.ts';
 import { RepoDialog } from './RepoDialog.tsx';
 import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
 import type { Repo } from '../../api/types.ts';
+import type { Messages } from '../../i18n/types.ts';
+import { useT } from '../../i18n/useT.ts';
 
 const COLUMNS = 'minmax(0, 0.7fr) minmax(0, 1.3fr) 110px 110px minmax(0, 0.9fr) 150px 110px';
 
@@ -22,6 +24,7 @@ const COLUMNS = 'minmax(0, 0.7fr) minmax(0, 1.3fr) 110px 110px minmax(0, 0.9fr) 
  * and the last sync's outcome. Writes are operator actions; a viewer gets
  * the read-only list. */
 export function ReposPage() {
+  const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
   const orgInfo = useOrg(org);
@@ -51,26 +54,26 @@ export function ReposPage() {
     <>
       <div className="flex items-center justify-between">
         <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">Repositories</h1>
+          <h1 className="text-xl font-semibold">{t.repos.list.title}</h1>
           <span className="text-[13px] text-muted-foreground">
-            {list.length} git repositories · playbooks reference a path inside one of these checkouts
+            {t.repos.list.summary(list.length)}
           </span>
         </div>
         {canWrite && (
           <Button variant="primary" onClick={() => setDialog('new')}>
-            <GitBranch size={15} /> Add repository
+            <GitBranch size={15} /> {t.repos.list.add}
           </Button>
         )}
       </div>
       <Card>
         <GridHeader columns={COLUMNS}>
-          <span>Name</span>
-          <span>URL</span>
-          <span>Branch</span>
-          <span>Subpath</span>
-          <span>Credential</span>
-          <span>Last sync</span>
-          <span>Actions</span>
+          <span>{t.repos.list.columns.name}</span>
+          <span>{t.repos.list.columns.url}</span>
+          <span>{t.repos.list.columns.branch}</span>
+          <span>{t.repos.list.columns.subpath}</span>
+          <span>{t.repos.list.columns.credential}</span>
+          <span>{t.repos.list.columns.lastSync}</span>
+          <span>{t.repos.list.columns.actions}</span>
         </GridHeader>
         {list.map((r) => (
           <GridRow key={r.id} columns={COLUMNS}>
@@ -86,22 +89,22 @@ export function ReposPage() {
                   definition (spec v0.2f decision 1) — RepoDialog disables its
                   name/url/branch/subpath and drops its delete action, so the
                   row needs to say why before the dialog ever opens. */}
-              {r.shared_repo_id && <Pill tone="accent">Installation-managed</Pill>}
+              {r.shared_repo_id && <Pill tone="accent">{t.repos.list.managed}</Pill>}
             </span>
             <span className="truncate font-mono text-xs text-muted-foreground">{r.url}</span>
             <span className="truncate font-mono text-xs">{r.branch}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{r.subpath || '—'}</span>
-            <span className="truncate text-xs">{credentialName(names, r.credential_id)}</span>
+            <span className="truncate text-xs">{credentialName(names, r.credential_id, t)}</span>
             <SyncState repo={r} />
             <span className="flex gap-1">
-              <Button type="button" variant="ghost" aria-label={`Triggers of ${r.name}`} onClick={() => setTriggers(r)}>
+              <Button type="button" variant="ghost" aria-label={t.repos.list.triggersLabel(r.name)} onClick={() => setTriggers(r)}>
                 <Webhook size={13} />
               </Button>
               {canWrite && <SyncButton org={org} repo={r} onStarted={syncStarted} />}
             </span>
           </GridRow>
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">No repositories yet.</p>}
+        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.repos.list.empty}</p>}
       </Card>
       {triggers && (
         <TriggersDialog
@@ -133,49 +136,51 @@ export function ReposPage() {
   );
 }
 
-function credentialName(credentials: readonly { id: string; name: string; kind: string }[], id: string | undefined): string {
+function credentialName(credentials: readonly { id: string; name: string; kind: string }[], id: string | undefined, t: Messages): string {
   if (!id) return '—';
   const c = credentials.find((x) => x.id === id);
   if (!c) return id.slice(0, 8);
-  return c.kind === 'git_key' ? `${c.name} (deploy key)` : c.name;
+  return c.kind === 'git_key' ? t.repos.list.deployKey(c.name) : c.name;
 }
 
 /** SyncState is the last sync outcome: crit when the checkout failed (the
  * error rides as the title), ok when it succeeded, warn while it never
  * ran. */
 function SyncState({ repo: r }: { repo: Repo }) {
+  const t = useT();
   if (r.last_sync_error) {
     return (
       <span title={r.last_sync_error}>
-        <Pill tone="crit">failed</Pill>
+        <Pill tone="crit">{t.repos.list.syncFailed}</Pill>
       </span>
     );
   }
-  if (r.last_sync) return <Pill tone="ok">synced {r.last_sync.slice(0, 10)}</Pill>;
-  return <Pill tone="warn">never synced</Pill>;
+  if (r.last_sync) return <Pill tone="ok">{t.repos.list.synced(r.last_sync.slice(0, 10))}</Pill>;
+  return <Pill tone="warn">{t.repos.list.neverSynced}</Pill>;
 }
 
 /** SyncButton starts a repo sync: the 202's job id is where the sync's own
  * progress lives, so the click lands on the run view. */
 function SyncButton({ org, repo: r, onStarted }: { org: string; repo: Repo; onStarted: (name: string, jobId: string) => void }) {
+  const t = useT();
   const toast = useToast();
   const sync = useSyncRepo(org);
   return (
     <Button
       type="button"
-      aria-label={`Sync ${r.name}`}
+      aria-label={t.repos.list.syncLabel(r.name)}
       disabled={sync.isPending}
       onClick={async () => {
         try {
           const { job } = await sync.mutateAsync(r.id);
-          toast.show(`Sync of ${r.name} started`);
+          toast.show(t.repos.list.syncStarted(r.name));
           onStarted(r.name, job.id);
         } catch (err) {
-          toast.show(err instanceof Error ? err.message : 'Sync failed', 'destructive');
+          toast.show(err instanceof Error ? err.message : t.repos.list.syncError, 'destructive');
         }
       }}
     >
-      <RefreshCw size={13} /> Sync
+      <RefreshCw size={13} /> {t.repos.list.sync}
     </Button>
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { invalidVaultLabel } from './vaultIdentity.ts';
+import { en } from '../i18n/en/index.ts';
 
 // invalidVaultLabel mirrors internal/vaultlabel.Invalid (Go is the
 // reference this file's regex is checked against — see that package's own
@@ -19,7 +20,7 @@ import { invalidVaultLabel } from './vaultIdentity.ts';
 // White_Space property, is the other way around), so which of the two
 // checks caught a given label used to decide the reported reason — the
 // exact same wording difference the BOM case below used to carry. Both
-// checks now share one message (WHITESPACE_OR_CONTROL_OR_FORMAT), so every
+// checks now share one message (the merged whitespaceOrControl message), so every
 // case below asserts the full merged wording, not a substring that would
 // still pass if the two halves disagreed again.
 describe('invalidVaultLabel', () => {
@@ -57,19 +58,19 @@ describe('invalidVaultLabel', () => {
   ];
   for (const [label, want] of cases) {
     it(`rejects ${JSON.stringify(label)} for ${JSON.stringify(want)}`, () => {
-      expect(invalidVaultLabel(label)).toContain(want);
+      expect(invalidVaultLabel(label, en)).toContain(want);
     });
   }
 
   it('accepts a plain label', () => {
-    expect(invalidVaultLabel('prod')).toBe('');
+    expect(invalidVaultLabel('prod', en)).toBe('');
   });
 
   it('accepts umlauts, which are neither control nor format characters', () => {
-    expect(invalidVaultLabel('produktion-ä')).toBe('');
+    expect(invalidVaultLabel('produktion-ä', en)).toBe('');
   });
 
   it(`rejects an overlong label for its own reason, not the character rule`, () => {
-    expect(invalidVaultLabel('a'.repeat(101))).toContain('exceeds');
+    expect(invalidVaultLabel('a'.repeat(101), en)).toContain('exceeds');
   });
 });

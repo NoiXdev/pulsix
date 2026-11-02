@@ -10,6 +10,7 @@ import { groupFields, membershipFields, problemsFromError } from '../schema/path
 import { declaredOnly, toKeepMarkers } from '../schema/secrets.ts';
 import type { Problem, Vars } from '../schema/types.ts';
 import { ManagedHostPicker } from './ManagedHostPicker.tsx';
+import { useT } from '../../../i18n/useT.ts';
 
 /** AssignHostDialog is the generated assignment form (SchemaBuilder mockup,
  * right column): a managed host, the group's host-scoped fields and
@@ -24,6 +25,7 @@ export function AssignHostDialog({
   existing: readonly string[];
   onClose: () => void;
 }) {
+  const t = useT();
   const toast = useToast();
   const schema = toVarSchema(group.schema);
   const fields = membershipFields(schema);
@@ -41,24 +43,24 @@ export function AssignHostDialog({
     try {
       await assign.mutateAsync({ hostId, vars: declaredOnly(fields, vars), revision: member?.revision });
       assign.reset();
-      toast.show(member ? `Values of ${member.host_name} saved` : `Host assigned to ${group.name}`);
+      toast.show(member ? t.inventory.assign.valuesSaved(member.host_name) : t.inventory.assign.assigned(group.name));
       onClose();
     } catch (err) {
-      if (errorStatus(err) === 412) return setError('These values changed since you opened them. Close the dialog, reload and try again.');
+      if (errorStatus(err) === 412) return setError(t.inventory.assign.stale);
       const ps = problemsFromError(err, 'body.vars');
       if (ps.length > 0) setProblems(ps);
-      else setError(err instanceof Error ? err.message : 'Saving failed');
+      else setError(err instanceof Error ? err.message : t.inventory.assign.saveFailed);
     }
   }
 
   return (
-    <Dialog open onClose={onClose} size="wide" title={member ? `Values of ${member.host_name}` : `Assign host to ${group.name}`}>
+    <Dialog open onClose={onClose} size="wide" title={member ? t.inventory.assign.titleValues(member.host_name) : t.inventory.assign.titleAssign(group.name)}>
       <form onSubmit={submit} className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto">
         {!member && <ManagedHostPicker org={org} existing={existing} value={hostId} onChange={setHostId} />}
         <SchemaForm fields={fields} value={vars} onChange={setVars} problems={problems} idPrefix="assign" />
         {ownFields.length > 0 && (
           <details className="rounded-md border border-border p-3">
-            <summary className="cursor-pointer text-xs font-semibold">Group values (read-only)</summary>
+            <summary className="cursor-pointer text-xs font-semibold">{t.inventory.assign.groupValues}</summary>
             <div className="pt-3">
               <SchemaForm fields={ownFields} value={toKeepMarkers(ownFields, (group.vars ?? {}) as Vars)} onChange={() => undefined} disabled idPrefix="group-ro" />
             </div>
@@ -71,10 +73,10 @@ export function AssignHostDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={!hostId || assign.isPending}>
-            {member ? 'Save values' : `Assign to ${group.name}`}
+            {member ? t.inventory.assign.saveValues : t.inventory.assign.submit(group.name)}
           </Button>
         </div>
       </form>

@@ -6,7 +6,8 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useCreateCredential } from '../../api/hooks/useCredentials.ts';
-import { KIND_LABEL } from './labels.ts';
+import { kindOptions } from './labels.ts';
+import { useT } from '../../i18n/useT.ts';
 import { PublicKeyPanel } from './PublicKeyPanel.tsx';
 
 export type CredentialKind = 'ssh_key' | 'ssh_password' | 'git_key' | 'git_token' | 'vault_password';
@@ -40,6 +41,7 @@ export function AddCredentialDialog({
    * fix round). Read only once, at mount, same as `initialName`. */
   initialKind?: CredentialKind;
 }) {
+  const t = useT();
   const toast = useToast();
   const create = useCreateCredential(org);
   const [kind, setKind] = useState<CredentialKind>(initialKind ?? 'ssh_key');
@@ -91,24 +93,24 @@ export function AddCredentialDialog({
       });
       clearSecrets();
       create.reset();
-      toast.show(`Credential ${res.credential.name} created`);
+      toast.show(t.credentials.add.created(res.credential.name));
       onCreated(res.credential.id);
       if (res.credential.public_key) setCreated({ publicKey: res.credential.public_key, snippets: res.snippets });
       else close();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Creating the credential failed');
+      setError(err instanceof Error ? err.message : t.credentials.add.failed);
     }
   }
 
   if (created) {
     return (
-      <Dialog open={open} onClose={close} size="wide" title="Install the public key">
+      <Dialog open={open} onClose={close} size="wide" title={t.credentials.add.installTitle}>
         <div className="flex flex-col gap-4">
-          <p className="text-xs text-muted-foreground">The private key stays sealed in Pulsix and is never shown. Install this public key where the credential logs in.</p>
+          <p className="text-xs text-muted-foreground">{t.credentials.add.installHint}</p>
           <PublicKeyPanel publicKey={created.publicKey} snippets={created.snippets} />
           <div className="flex justify-end">
             <Button variant="primary" onClick={close}>
-              Done
+              {t.credentials.add.done}
             </Button>
           </div>
         </div>
@@ -117,42 +119,42 @@ export function AddCredentialDialog({
   }
 
   return (
-    <Dialog open={open} onClose={close} title="Add credential">
+    <Dialog open={open} onClose={close} title={t.credentials.add.title}>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div className="flex flex-col gap-1">
-          <Label htmlFor="cred-kind">Kind</Label>
+          <Label htmlFor="cred-kind">{t.credentials.add.kind}</Label>
           <Select
             id="cred-kind"
-            options={Object.entries(KIND_LABEL).map(([k, label]) => ({ value: k, label }))}
+            options={kindOptions(t)}
             value={kind}
             onChange={(value) => setKind(value as CredentialKind)}
           />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="cred-name">Name</Label>
+          <Label htmlFor="cred-name">{t.credentials.add.name}</Label>
           <Input id="cred-name" className="font-mono" required value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="flex flex-col gap-1">
-          <Label htmlFor="cred-username">Username</Label>
+          <Label htmlFor="cred-username">{t.credentials.add.username}</Label>
           <Input id="cred-username" className="font-mono" value={username} onChange={(e) => setUsername(e.target.value)} />
           <span className="text-[11px] text-muted-foreground">
-            {kind.startsWith('ssh') ? 'The login user; a host can name another.' : 'Optional, for example oauth2 for GitLab tokens.'}
+            {kind.startsWith('ssh') ? t.credentials.add.usernameSsh : t.credentials.add.usernameOther}
           </span>
         </div>
         {isKey && (
           <fieldset className="flex flex-col gap-2">
-            <legend className="text-[11px] font-medium text-muted-foreground">Key</legend>
+            <legend className="text-[11px] font-medium text-muted-foreground">{t.credentials.add.key}</legend>
             <label className="flex items-center gap-2 text-xs">
-              <input type="radio" name="cred-mode" checked={mode === 'generate'} onChange={() => setMode('generate')} /> Generate a new ed25519 key
+              <input type="radio" name="cred-mode" checked={mode === 'generate'} onChange={() => setMode('generate')} /> {t.credentials.add.generate}
             </label>
             <label className="flex items-center gap-2 text-xs">
-              <input type="radio" name="cred-mode" checked={mode === 'import'} onChange={() => setMode('import')} /> Import a private key
+              <input type="radio" name="cred-mode" checked={mode === 'import'} onChange={() => setMode('import')} /> {t.credentials.add.import}
             </label>
             {mode === 'import' && (
               <>
-                <Label htmlFor="cred-private-key">Private key</Label>
+                <Label htmlFor="cred-private-key">{t.credentials.add.privateKey}</Label>
                 <textarea id="cred-private-key" rows={6} required className="rounded-md border border-border bg-background p-2 font-mono text-[11px]" value={privateKey} onChange={(e) => setPrivateKey(e.target.value)} />
-                <Label htmlFor="cred-passphrase">Passphrase (if the key has one; used once, never stored)</Label>
+                <Label htmlFor="cred-passphrase">{t.credentials.add.passphrase}</Label>
                 <Input id="cred-passphrase" type="password" autoComplete="off" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
               </>
             )}
@@ -161,13 +163,13 @@ export function AddCredentialDialog({
         {!isKey && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="cred-secret">
-              {kind === 'ssh_password' ? 'Password' : kind === 'vault_password' ? 'Vault password' : 'Token'}
+              {kind === 'ssh_password' ? t.credentials.add.password : kind === 'vault_password' ? t.credentials.add.vaultPassword : t.credentials.add.token}
             </Label>
             <Input id="cred-secret" type="password" autoComplete="new-password" required value={secret} onChange={(e) => setSecret(e.target.value)} />
           </div>
         )}
         <div className="flex flex-col gap-1">
-          <Label htmlFor="cred-expires">Expires (optional)</Label>
+          <Label htmlFor="cred-expires">{t.credentials.add.expires}</Label>
           <Input id="cred-expires" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
         </div>
         {error && (
@@ -177,10 +179,10 @@ export function AddCredentialDialog({
         )}
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={close}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={create.isPending}>
-            Create credential
+            {t.credentials.add.submit}
           </Button>
         </div>
       </form>
