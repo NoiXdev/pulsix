@@ -118,6 +118,13 @@ type adminDeactivateInput struct {
 // member. All four go through requireOrg and so are mounted on the
 // bearer-enabled *huma.Group in api.go, alongside the org-scoped
 // organization and token routes.
+//
+// The three that change who belongs to the organization also require an
+// interactive session (requireInteractiveSession), the rule token creation
+// already follows (backlog 7.31). A membership is a credential as much as
+// a token is: a bearer token that could invite an address of its holder's
+// minted an admin membership its own revocation never touched. Listing
+// stays open to a token with members.manage.
 func registerMemberRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/orgs/{org}/members", func(ctx context.Context, in *memberListInput) (*memberListOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
@@ -140,6 +147,9 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/invites", func(ctx context.Context, in *inviteCreateInput) (*inviteCreateOutput, error) {
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
 		if err != nil {
 			return nil, err
@@ -156,6 +166,9 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createInvite", "invite"))
 
 	huma.Patch(hapi, "/api/v1/orgs/{org}/members/{userId}", func(ctx context.Context, in *memberRoleInput) (*okOutput, error) {
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
 		if err != nil {
 			return nil, err
@@ -172,6 +185,9 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("changeMemberRole", "member"))
 
 	huma.Delete(hapi, "/api/v1/orgs/{org}/members/{userId}", func(ctx context.Context, in *memberRemoveInput) (*okOutput, error) {
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermMembersManage)
 		if err != nil {
 			return nil, err

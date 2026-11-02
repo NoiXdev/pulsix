@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
+	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
 // bearerRequest issues a request against path with an Authorization: Bearer
@@ -215,5 +216,47 @@ func TestBearerRequestsTouchLastUsedAtMostOncePerMinute(t *testing.T) {
 	}
 	if !second.Time.Equal(first.Time) {
 		t.Fatalf("second rapid request moved last_used_at %v -> %v, want one write per minute", first.Time, second.Time)
+	}
+}
+
+// TestBearerTokenCannotManageMembers is backlog 7.31: a token may not mint
+// a token, and a membership is the same kind of successor credential. An
+// owner-scoped token used to be able to invite an address of its holder's
+// and accept it as admin, a membership its own revocation never touched.
+// Inviting, changing a role and removing a member now need a person at an
+// interactive session, like creating a token.
+func TestBearerTokenCannotManageMembers(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("members-token@example.test", "correct horse battery")
+	org := s.SeedOrg("members-token-org", uid)
+	member := s.SeedUser("members-token-member@example.test", "correct horse battery")
+	s.AddMember(org, member, tenancy.RoleViewer)
+	plain, _, err := s.Deps.Tokens.Create(context.Background(), uid, org, "ci", "owner", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	for _, c := range []struct {
+		name, method, path string
+		body               any
+	}{
+		{"invite", http.MethodPost, "/api/v1/orgs/members-token-org/invites", map[string]any{"email": "successor@example.test", "role": "admin"}},
+		{"change role", http.MethodPatch, "/api/v1/orgs/members-token-org/members/" + member.String(), map[string]any{"role": "admin"}},
+		{"remove", http.MethodDelete, "/api/v1/orgs/members-token-org/members/" + member.String(), nil},
+	} {
+		resp := bearerRequestJSON(t, s, c.method, c.path, plain, c.body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s with a bearer token: status %d, want 403", c.name, resp.StatusCode)
+		}
+	}
+	if sent := s.Mail.Sent(); len(sent) != 0 {
+		t.Fatalf("a refused invitation was mailed: %+v", sent)
+	}
+
+	resp := bearerRequest(t, s, http.MethodGet, "/api/v1/orgs/members-token-org/members", plain)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("member list with a bearer token: status %d, want 200", resp.StatusCode)
 	}
 }
