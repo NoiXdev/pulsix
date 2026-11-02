@@ -725,7 +725,9 @@ Layered like Checkmk rulesets and Zabbix templates.
   name is resolved first and the connection dialled to the checked address, so a
   second DNS answer cannot slip in; a destination is refused as a whole when any of
   its addresses is loopback, link-local (metadata `169.254.169.254` included),
-  unspecified, multicast, broadcast, `100.100.100.200` or `fd00:ec2::254`, unless
+  unspecified, multicast, broadcast, `100.100.100.200`, or one of the IPv6
+  instance-service ranges `fd00:ec2::/64` (AWS), `fd20:ce::/64` (Google Cloud) and
+  `fd00:c1::/64` (Oracle Cloud) (backlog 7.43), unless
   `PULSIX_NOTIFY_ALLOW_CIDRS` re-admits the range; private ranges are allowed;
   redirects are not followed, proxy variables are ignored, and every request ends
   after 10 s. The URL (it can carry a token), header values and the signing secret
