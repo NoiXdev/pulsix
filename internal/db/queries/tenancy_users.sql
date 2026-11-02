@@ -65,9 +65,15 @@ VALUES ($1, $2, $3, $4, $5, $6, $7);
 -- name: PeekInvite :one
 -- Reads the invite TakeInvite would take, without taking it: AcceptInvite
 -- decides first whether this caller may accept it at all (backlog 7.10), so
--- a refused attempt never burns the invitation.
-SELECT * FROM invites
-WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz;
+-- a refused attempt never burns the invitation. The issuer condition is
+-- the same as in TakeInvite.
+SELECT i.* FROM invites AS i
+WHERE i.token_hash = sqlc.arg(token_hash) AND i.accepted_at IS NULL AND i.expires_at > sqlc.arg(now)::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM org_memberships AS m JOIN users AS u ON u.id = m.user_id
+      WHERE m.org_id = i.org_id AND m.user_id = i.invited_by
+        AND m.role::text = ANY(sqlc.arg(issuer_roles)::text[]) AND u.disabled_at IS NULL
+  );
 
 -- name: TakeInvite :one
 -- Atomically finds an invite that is unaccepted and unexpired as of now and
@@ -77,9 +83,20 @@ WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > sqlc.arg(now)::ti
 -- updates to the same row, so only the first commits and the second finds
 -- no matching row (mapped to ErrNotFound by the caller) rather than both
 -- reading "unaccepted" before either writes.
-UPDATE invites SET accepted_at = sqlc.arg(now)::timestamptz
-WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz
-RETURNING *;
+-- An invitation carries its issuer's authority to add members, so it is
+-- good only while the issuer still holds it (backlog 7.29): an active
+-- account with one of issuer_roles in the invite's organization. Removing,
+-- demoting or deactivating the issuer voids every invitation they sent
+-- that is still open. The accept path runs with no organization bound,
+-- so the RLS bypass lets this subquery see the memberships.
+UPDATE invites AS i SET accepted_at = sqlc.arg(now)::timestamptz
+WHERE i.token_hash = sqlc.arg(token_hash) AND i.accepted_at IS NULL AND i.expires_at > sqlc.arg(now)::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM org_memberships AS m JOIN users AS u ON u.id = m.user_id
+      WHERE m.org_id = i.org_id AND m.user_id = i.invited_by
+        AND m.role::text = ANY(sqlc.arg(issuer_roles)::text[]) AND u.disabled_at IS NULL
+  )
+RETURNING i.*;
 
 -- name: SetUserPasswordAndName :exec
 UPDATE users SET password_hash = $2, display_name = $3 WHERE id = $1;
@@ -108,6 +125,24 @@ UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL
 
 -- name: RevokeTokensForUser :exec
 UPDATE api_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL;
+
+-- name: ListPendingInvites :many
+-- The open invitations of one organization: those TakeInvite would still
+-- take, issuer condition included (backlog 7.29), newest first.
+SELECT i.id, i.email, i.role, i.invited_by, u.display_name AS invited_by_name, i.expires_at, i.created_at
+FROM invites AS i JOIN users AS u ON u.id = i.invited_by
+WHERE i.org_id = sqlc.arg(org_id) AND i.accepted_at IS NULL AND i.expires_at > sqlc.arg(now)::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM org_memberships AS m JOIN users AS iu ON iu.id = m.user_id
+      WHERE m.org_id = i.org_id AND m.user_id = i.invited_by
+        AND m.role::text = ANY(sqlc.arg(issuer_roles)::text[]) AND iu.disabled_at IS NULL
+  )
+ORDER BY i.created_at DESC, i.id;
+
+-- name: RevokeInvite :execrows
+-- Withdraws an open invitation of org_id (backlog 7.29); an accepted one
+-- is history and stays.
+DELETE FROM invites WHERE id = $1 AND org_id = $2 AND accepted_at IS NULL;
 
 -- name: DeleteInvite :exec
 -- Removes an invitation that was never delivered: tenancy.Service.Invite

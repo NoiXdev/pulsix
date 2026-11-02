@@ -448,6 +448,9 @@ func TestSQLStoreInviteLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	inviter := seedUser(t, q, "inviter@example.test")
+	if err := store.AddMembership(ctx, org.ID, inviter, tenancy.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	inv := tenancy.Invite{
 		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Email: "invitee@example.test", Role: tenancy.RoleOperator,
@@ -506,6 +509,89 @@ func TestSQLStoreInviteLifecycle(t *testing.T) {
 	}
 }
 
+// TestSQLStoreInviteNeedsItsIssuersAuthority is backlog 7.29: an
+// invitation carries its issuer's authority to add members, so it lapses
+// the moment that authority does — the issuer removed from the
+// organization, demoted below admin, or deactivated. Before, a removed
+// admin could keep an unaccepted invitation to an address of their own
+// and walk back in as admin with it.
+func TestSQLStoreInviteNeedsItsIssuersAuthority(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(d)
+	now := time.Now()
+
+	org := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "acme", Name: "Acme"}
+	if err := store.CreateOrg(ctx, org); err != nil {
+		t.Fatal(err)
+	}
+	owner := seedUser(t, q, "owner@example.test")
+	if err := store.AddMembership(ctx, org.ID, owner, tenancy.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		lapse func(t *testing.T, issuer uuid.UUID)
+	}{
+		{"removed", func(t *testing.T, issuer uuid.UUID) {
+			if err := store.DeleteMembership(ctx, org.ID, issuer); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"demoted", func(t *testing.T, issuer uuid.UUID) {
+			if err := store.UpdateMembershipRole(ctx, org.ID, issuer, tenancy.RoleOperator); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"deactivated", func(t *testing.T, issuer uuid.UUID) {
+			if err := store.DisableUser(ctx, issuer, now); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			issuer := seedUser(t, q, c.name+"-admin@example.test")
+			if err := store.AddMembership(ctx, org.ID, issuer, tenancy.RoleAdmin); err != nil {
+				t.Fatal(err)
+			}
+			inv := tenancy.Invite{
+				ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Email: c.name + "-alt@example.test", Role: tenancy.RoleAdmin,
+				InvitedBy: issuer, ExpiresAt: now.Add(time.Hour),
+			}
+			hash := hashOf(c.name + "-invite")
+			if err := store.InsertInvite(ctx, inv, hash); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.PeekInvite(ctx, hash, now); err != nil {
+				t.Fatalf("PeekInvite while the issuer is an admin: %v", err)
+			}
+
+			c.lapse(t, issuer)
+
+			if _, err := store.PeekInvite(ctx, hash, now); !errors.Is(err, tenancy.ErrNotFound) {
+				t.Fatalf("PeekInvite after the issuer was %s: %v, want ErrNotFound", c.name, err)
+			}
+			if _, err := store.TakeInvite(ctx, hash, now); !errors.Is(err, tenancy.ErrNotFound) {
+				t.Fatalf("TakeInvite after the issuer was %s: %v, want ErrNotFound", c.name, err)
+			}
+		})
+	}
+
+	// An owner's invitation is as good as an admin's.
+	inv := tenancy.Invite{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Email: "by-owner@example.test", Role: tenancy.RoleViewer,
+		InvitedBy: owner, ExpiresAt: now.Add(time.Hour),
+	}
+	if err := store.InsertInvite(ctx, inv, hashOf("by-owner")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.TakeInvite(ctx, hashOf("by-owner"), now); err != nil {
+		t.Fatalf("TakeInvite of an owner's invitation: %v", err)
+	}
+}
+
 func TestSQLStoreTakeInviteExcludesExpired(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
@@ -517,6 +603,9 @@ func TestSQLStoreTakeInviteExcludesExpired(t *testing.T) {
 		t.Fatal(err)
 	}
 	inviter := seedUser(t, q, "inviter2@example.test")
+	if err := store.AddMembership(ctx, org.ID, inviter, tenancy.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Now()
 	inv := tenancy.Invite{
 		ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Email: "late@example.test", Role: tenancy.RoleViewer,

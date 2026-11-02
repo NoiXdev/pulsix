@@ -14,7 +14,30 @@ export function useInviteMember(org: string) {
   return useMutation({
     mutationFn: (body: { email: string; role: 'admin' | 'operator' | 'viewer' }) =>
       unwrap(api.POST('/api/v1/orgs/{org}/invites', { params: { path: { org } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', org] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['members', org] });
+      void qc.invalidateQueries({ queryKey: ['invites', org] });
+    },
+  });
+}
+
+/** usePendingInvites lists the organization's open invitations (backlog
+ * 7.29). One whose sender may no longer add members is not open and is not
+ * listed, which is why a role change or a removal refreshes it too. */
+export function usePendingInvites(org: string) {
+  return useQuery({
+    queryKey: ['invites', org],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/invites', { params: { path: { org } } })),
+    enabled: !!org,
+  });
+}
+
+export function useRevokeInvite(org: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (inviteId: string) =>
+      unwrap(api.DELETE('/api/v1/orgs/{org}/invites/{inviteId}', { params: { path: { org, inviteId } } })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['invites', org] }),
   });
 }
 
@@ -28,7 +51,10 @@ export function useChangeMemberRole(org: string) {
           body: { role: role as 'owner' | 'admin' | 'operator' | 'viewer' },
         }),
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', org] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['members', org] });
+      void qc.invalidateQueries({ queryKey: ['invites', org] });
+    },
   });
 }
 
@@ -37,7 +63,10 @@ export function useRemoveMember(org: string) {
   return useMutation({
     mutationFn: (userId: string) =>
       unwrap(api.DELETE('/api/v1/orgs/{org}/members/{userId}', { params: { path: { org, userId } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['members', org] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['members', org] });
+      void qc.invalidateQueries({ queryKey: ['invites', org] });
+    },
   });
 }
 

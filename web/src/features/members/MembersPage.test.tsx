@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -32,6 +32,47 @@ function renderPage(qc: QueryClient) {
 }
 
 describe('MembersPage', () => {
+  // Backlog 7.29: open invitations are listed, and an admin can withdraw one
+  // so its link stops working.
+  it('lists open invitations and revokes one', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const revoked: string[] = [];
+    let invites = [
+      {
+        id: 'i1',
+        email: 'wrong@acme.io',
+        role: 'admin',
+        invited_by: 'u1',
+        invited_by_name: 'Tim R.',
+        expires_at: '2026-01-08T00:00:00Z',
+        created_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme/invites': () => ({ invites }),
+      'DELETE /api/v1/orgs/acme/invites/i1': () => {
+        revoked.push('i1');
+        invites = [];
+        return {};
+      },
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderPage(qc);
+
+    const section = await screen.findByRole('region', { name: 'Open invitations' });
+    expect(within(section).getByText('wrong@acme.io')).toBeInTheDocument();
+    expect(within(section).getByText(/Tim R\./)).toBeInTheDocument();
+    await user.click(within(section).getByRole('button', { name: 'Revoke invitation to wrong@acme.io' }));
+
+    expect(await screen.findByText('Invitation to wrong@acme.io revoked')).toBeInTheDocument();
+    expect(revoked).toEqual(['i1']);
+    expect(screen.queryByText('wrong@acme.io')).not.toBeInTheDocument();
+    confirmSpy.mockRestore();
+  });
+
   it('lists members and sends an invitation', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

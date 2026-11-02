@@ -1342,11 +1342,29 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get API v1 orgs by org invites */
+        get: operations["get-api-v1-orgs-by-org-invites"];
         put?: never;
         /** Post API v1 orgs by org invites */
         post: operations["createInvite"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/invites/{inviteId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete API v1 orgs by org invites by invite ID */
+        delete: operations["revokeInvite"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4102,6 +4120,15 @@ export interface components {
             mail_sent: boolean;
             role: string;
         };
+        InviteListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/InviteListOutputBody.json
+             */
+            readonly $schema?: string;
+            invites: components["schemas"]["PendingInviteDTO"][] | null;
+        };
         ItemDTO: {
             check_key: string;
             /** @description The decision that produced this verdict; absent when none matched (the default, watch) */
@@ -5071,6 +5098,17 @@ export interface components {
             ceremony_id: string;
             name: string;
             response: unknown;
+        };
+        PendingInviteDTO: {
+            /** Format: date-time */
+            created_at: string;
+            email: string;
+            /** Format: date-time */
+            expires_at: string;
+            id: string;
+            invited_by: string;
+            invited_by_name: string;
+            role: string;
         };
         PlaybookCreateInputBody: {
             /**
@@ -9941,6 +9979,37 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-orgs-by-org-invites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     createInvite: {
         parameters: {
             query?: never;
@@ -9963,6 +10032,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InviteCreateOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    revokeInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                inviteId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
                 };
             };
             /** @description Error */

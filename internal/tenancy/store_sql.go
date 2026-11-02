@@ -210,7 +210,7 @@ func (s *SQLStore) DeleteInvite(ctx context.Context, orgID, id uuid.UUID) error 
 }
 
 func (s *SQLStore) PeekInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error) {
-	row, err := s.q.PeekInvite(ctx, gen.PeekInviteParams{TokenHash: tokenHash, Now: now})
+	row, err := s.q.PeekInvite(ctx, gen.PeekInviteParams{TokenHash: tokenHash, Now: now, IssuerRoles: inviteIssuerRoles()})
 	if err != nil {
 		return Invite{}, mapErr(err)
 	}
@@ -221,7 +221,7 @@ func (s *SQLStore) PeekInvite(ctx context.Context, tokenHash []byte, now time.Ti
 }
 
 func (s *SQLStore) TakeInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error) {
-	row, err := s.q.TakeInvite(ctx, gen.TakeInviteParams{TokenHash: tokenHash, Now: now})
+	row, err := s.q.TakeInvite(ctx, gen.TakeInviteParams{TokenHash: tokenHash, Now: now, IssuerRoles: inviteIssuerRoles()})
 	if err != nil {
 		return Invite{}, mapErr(err)
 	}
@@ -229,6 +229,45 @@ func (s *SQLStore) TakeInvite(ctx context.Context, tokenHash []byte, now time.Ti
 		ID: row.ID, OrgID: row.OrgID, Email: row.Email, Role: Role(row.Role),
 		InvitedBy: row.InvitedBy, ExpiresAt: row.ExpiresAt,
 	}, nil
+}
+
+func (s *SQLStore) ListPendingInvites(ctx context.Context, orgID uuid.UUID, now time.Time) ([]PendingInvite, error) {
+	rows, err := s.q.ListPendingInvites(ctx, gen.ListPendingInvitesParams{OrgID: orgID, Now: now, IssuerRoles: inviteIssuerRoles()})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PendingInvite, len(rows))
+	for i, r := range rows {
+		out[i] = PendingInvite{
+			ID: r.ID, Email: r.Email, Role: Role(r.Role), InvitedBy: r.InvitedBy,
+			InvitedByName: r.InvitedByName, ExpiresAt: r.ExpiresAt, CreatedAt: r.CreatedAt,
+		}
+	}
+	return out, nil
+}
+
+func (s *SQLStore) RevokeInvite(ctx context.Context, orgID, id uuid.UUID) error {
+	n, err := s.q.RevokeInvite(ctx, gen.RevokeInviteParams{ID: id, OrgID: orgID})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// inviteIssuerRoles are the roles an invitation's issuer must still hold
+// for it to be accepted (backlog 7.29): those that may manage members,
+// read from the permission matrix rather than repeated in SQL.
+func inviteIssuerRoles() []string {
+	var out []string
+	for role := range rank {
+		if Allows(role, PermMembersManage) {
+			out = append(out, string(role))
+		}
+	}
+	return out
 }
 
 func fromPgTimestamptz(t pgtype.Timestamptz) *time.Time {

@@ -188,21 +188,86 @@ func (q *Queries) ListMembers(ctx context.Context, orgID uuid.UUID) ([]ListMembe
 	return items, nil
 }
 
+const listPendingInvites = `-- name: ListPendingInvites :many
+SELECT i.id, i.email, i.role, i.invited_by, u.display_name AS invited_by_name, i.expires_at, i.created_at
+FROM invites AS i JOIN users AS u ON u.id = i.invited_by
+WHERE i.org_id = $1 AND i.accepted_at IS NULL AND i.expires_at > $2::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM org_memberships AS m JOIN users AS iu ON iu.id = m.user_id
+      WHERE m.org_id = i.org_id AND m.user_id = i.invited_by
+        AND m.role::text = ANY($3::text[]) AND iu.disabled_at IS NULL
+  )
+ORDER BY i.created_at DESC, i.id
+`
+
+type ListPendingInvitesParams struct {
+	OrgID       uuid.UUID `json:"org_id"`
+	Now         time.Time `json:"now"`
+	IssuerRoles []string  `json:"issuer_roles"`
+}
+
+type ListPendingInvitesRow struct {
+	ID            uuid.UUID `json:"id"`
+	Email         string    `json:"email"`
+	Role          OrgRole   `json:"role"`
+	InvitedBy     uuid.UUID `json:"invited_by"`
+	InvitedByName string    `json:"invited_by_name"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// The open invitations of one organization: those TakeInvite would still
+// take, issuer condition included (backlog 7.29), newest first.
+func (q *Queries) ListPendingInvites(ctx context.Context, arg ListPendingInvitesParams) ([]ListPendingInvitesRow, error) {
+	rows, err := q.db.Query(ctx, listPendingInvites, arg.OrgID, arg.Now, arg.IssuerRoles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPendingInvitesRow
+	for rows.Next() {
+		var i ListPendingInvitesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Role,
+			&i.InvitedBy,
+			&i.InvitedByName,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const peekInvite = `-- name: PeekInvite :one
-SELECT id, org_id, email, role, token_hash, invited_by, expires_at, accepted_at, created_at FROM invites
-WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > $2::timestamptz
+SELECT i.id, i.org_id, i.email, i.role, i.token_hash, i.invited_by, i.expires_at, i.accepted_at, i.created_at FROM invites AS i
+WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.expires_at > $2::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM org_memberships AS m JOIN users AS u ON u.id = m.user_id
+      WHERE m.org_id = i.org_id AND m.user_id = i.invited_by
+        AND m.role::text = ANY($3::text[]) AND u.disabled_at IS NULL
+  )
 `
 
 type PeekInviteParams struct {
-	TokenHash []byte    `json:"token_hash"`
-	Now       time.Time `json:"now"`
+	TokenHash   []byte    `json:"token_hash"`
+	Now         time.Time `json:"now"`
+	IssuerRoles []string  `json:"issuer_roles"`
 }
 
 // Reads the invite TakeInvite would take, without taking it: AcceptInvite
 // decides first whether this caller may accept it at all (backlog 7.10), so
-// a refused attempt never burns the invitation.
+// a refused attempt never burns the invitation. The issuer condition is
+// the same as in TakeInvite.
 func (q *Queries) PeekInvite(ctx context.Context, arg PeekInviteParams) (Invite, error) {
-	row := q.db.QueryRow(ctx, peekInvite, arg.TokenHash, arg.Now)
+	row := q.db.QueryRow(ctx, peekInvite, arg.TokenHash, arg.Now, arg.IssuerRoles)
 	var i Invite
 	err := row.Scan(
 		&i.ID,
@@ -216,6 +281,25 @@ func (q *Queries) PeekInvite(ctx context.Context, arg PeekInviteParams) (Invite,
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const revokeInvite = `-- name: RevokeInvite :execrows
+DELETE FROM invites WHERE id = $1 AND org_id = $2 AND accepted_at IS NULL
+`
+
+type RevokeInviteParams struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+// Withdraws an open invitation of org_id (backlog 7.29); an accepted one
+// is history and stays.
+func (q *Queries) RevokeInvite(ctx context.Context, arg RevokeInviteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeInvite, arg.ID, arg.OrgID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const revokeSessionsForUser = `-- name: RevokeSessionsForUser :exec
@@ -252,14 +336,20 @@ func (q *Queries) SetUserPasswordAndName(ctx context.Context, arg SetUserPasswor
 }
 
 const takeInvite = `-- name: TakeInvite :one
-UPDATE invites SET accepted_at = $2::timestamptz
-WHERE token_hash = $1 AND accepted_at IS NULL AND expires_at > $2::timestamptz
-RETURNING id, org_id, email, role, token_hash, invited_by, expires_at, accepted_at, created_at
+UPDATE invites AS i SET accepted_at = $1::timestamptz
+WHERE i.token_hash = $2 AND i.accepted_at IS NULL AND i.expires_at > $1::timestamptz
+  AND EXISTS (
+      SELECT 1 FROM org_memberships AS m JOIN users AS u ON u.id = m.user_id
+      WHERE m.org_id = i.org_id AND m.user_id = i.invited_by
+        AND m.role::text = ANY($3::text[]) AND u.disabled_at IS NULL
+  )
+RETURNING i.id, i.org_id, i.email, i.role, i.token_hash, i.invited_by, i.expires_at, i.accepted_at, i.created_at
 `
 
 type TakeInviteParams struct {
-	TokenHash []byte    `json:"token_hash"`
-	Now       time.Time `json:"now"`
+	Now         time.Time `json:"now"`
+	TokenHash   []byte    `json:"token_hash"`
+	IssuerRoles []string  `json:"issuer_roles"`
 }
 
 // Atomically finds an invite that is unaccepted and unexpired as of now and
@@ -269,8 +359,14 @@ type TakeInviteParams struct {
 // updates to the same row, so only the first commits and the second finds
 // no matching row (mapped to ErrNotFound by the caller) rather than both
 // reading "unaccepted" before either writes.
+// An invitation carries its issuer's authority to add members, so it is
+// good only while the issuer still holds it (backlog 7.29): an active
+// account with one of issuer_roles in the invite's organization. Removing,
+// demoting or deactivating the issuer voids every invitation they sent
+// that is still open. The accept path runs with no organization bound,
+// so the RLS bypass lets this subquery see the memberships.
 func (q *Queries) TakeInvite(ctx context.Context, arg TakeInviteParams) (Invite, error) {
-	row := q.db.QueryRow(ctx, takeInvite, arg.TokenHash, arg.Now)
+	row := q.db.QueryRow(ctx, takeInvite, arg.Now, arg.TokenHash, arg.IssuerRoles)
 	var i Invite
 	err := row.Scan(
 		&i.ID,

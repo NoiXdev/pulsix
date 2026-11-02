@@ -15,18 +15,17 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { inviteFormSchema, type InviteFormValues } from '../../lib/schemas.ts';
+import { PendingInvites } from './PendingInvites.tsx';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
 const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 90px';
 
 /**
  * MembersPage follows design/mockups/build.mjs's MEMBERS / ACL artboard's
- * member table and invite dialog. The mockup also shows a combined
- * "Invitations" tab and pending-invite rows inline in the member list —
- * v0.1's API has no GET route that lists pending invitations (only
- * POST /invites to create one and POST /invites/accept to redeem it), so
- * that tab is left out here rather than built against data that does not
- * exist; see task-15a-report.md.
+ * member table and invite dialog. The mockup shows pending invitations
+ * inline in the member list; they sit in their own table below it instead
+ * (PendingInvites, backlog 7.29), since an invitation has none of a
+ * member's columns and one action of its own.
  */
 export function MembersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -118,6 +117,8 @@ export function MembersPage() {
           </GridRow>
         ))}
       </Card>
+
+      <PendingInvites org={org} />
 
       <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} title="Invite member">
         <form

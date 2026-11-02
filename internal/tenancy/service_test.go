@@ -363,6 +363,26 @@ func (f *fakeStore) TakeInvite(_ context.Context, tokenHash []byte, now time.Tim
 	return inv, nil
 }
 
+func (f *fakeStore) ListPendingInvites(_ context.Context, orgID uuid.UUID, now time.Time) ([]tenancy.PendingInvite, error) {
+	var out []tenancy.PendingInvite
+	for _, inv := range f.invites {
+		if inv.OrgID == orgID && now.Before(inv.ExpiresAt) {
+			out = append(out, tenancy.PendingInvite{ID: inv.ID, Email: inv.Email, Role: inv.Role, InvitedBy: inv.InvitedBy, ExpiresAt: inv.ExpiresAt})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) RevokeInvite(_ context.Context, orgID, id uuid.UUID) error {
+	for k, inv := range f.invites {
+		if inv.OrgID == orgID && inv.ID == id {
+			delete(f.invites, k)
+			return nil
+		}
+	}
+	return tenancy.ErrNotFound
+}
+
 // fakeMailer records every Send call.
 type fakeMailer struct {
 	sent    []sentMail

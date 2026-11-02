@@ -179,6 +179,12 @@ type Store interface {
 	// step) so two concurrent accepts of the same token can never both
 	// succeed.
 	TakeInvite(ctx context.Context, tokenHash []byte, now time.Time) (Invite, error)
+	// ListPendingInvites returns orgID's invitations TakeInvite would still
+	// take as of now.
+	ListPendingInvites(ctx context.Context, orgID uuid.UUID, now time.Time) ([]PendingInvite, error)
+	// RevokeInvite deletes an unaccepted invitation of orgID, returning
+	// ErrNotFound when there is none with that id.
+	RevokeInvite(ctx context.Context, orgID, id uuid.UUID) error
 }
 
 // Mailer sends transactional mail. Tests use a recording fake; production
