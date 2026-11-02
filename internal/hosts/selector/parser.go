@@ -5,11 +5,27 @@ import (
 	"strings"
 )
 
+// A selector's bounds (backlog 7.41). Every condition compiles into its
+// own correlated sub-query of one statement on the shared pool (see
+// Selector.SQL), and selectors are stored and re-evaluated on every
+// resolve, so an unbounded one was a way to make every later resolve of
+// the organization expensive. MaxConditions is far past any selector a
+// person writes; MaxLen leaves room for a long "in" list.
+const (
+	MaxConditions = 32
+	MaxLen        = 4096
+)
+
 // Parse parses s against the grammar in this package's own doc comment
 // (selector.go). Any input that is not exactly one valid expression is
 // rejected with an error naming where in s parsing stopped making sense —
-// never a panic, and never a partially-parsed result.
+// never a panic, and never a partially-parsed result. A selector longer
+// than MaxLen bytes or with more than MaxConditions conditions is
+// rejected too.
 func Parse(s string) (Selector, error) {
+	if len(s) > MaxLen {
+		return Selector{}, fmt.Errorf("selector: longer than %d bytes", MaxLen)
+	}
 	p := &parser{lex: newLexer(s)}
 	if err := p.advance(); err != nil {
 		return Selector{}, err
@@ -60,6 +76,9 @@ func (p *parser) parseExpr() (Selector, error) {
 	}
 	conds := []condition{first}
 	for p.isKeyword("and") {
+		if len(conds) == MaxConditions {
+			return Selector{}, p.errorf("more than %d conditions", MaxConditions)
+		}
 		if err := p.advance(); err != nil {
 			return Selector{}, err
 		}
