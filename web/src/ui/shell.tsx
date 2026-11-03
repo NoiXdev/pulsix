@@ -254,7 +254,7 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
             <Link
               to="/o/$org/runs"
               params={{ org: org.slug }}
-              search={{ status: undefined, kind: undefined, trigger: undefined, schedule: undefined }}
+              search={{ status: undefined, kind: undefined, trigger: undefined, schedule: undefined, host: undefined }}
               {...NAV_LINK_PROPS}
             >
               <Play size={16} />

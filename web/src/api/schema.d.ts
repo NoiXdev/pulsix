@@ -11135,6 +11135,8 @@ export interface operations {
                 trigger?: string;
                 /** @description Only the runs this schedule or webhook trigger started */
                 trigger_ref?: string;
+                /** @description Only the runs that targeted this host (the host was one of the run's target hosts) */
+                host_id?: string;
                 cursor?: string;
                 limit?: number;
             };

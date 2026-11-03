@@ -164,6 +164,7 @@ const runsRoute = createRoute({
     kind: typeof search.kind === 'string' ? search.kind : undefined,
     trigger: typeof search.trigger === 'string' ? search.trigger : undefined,
     schedule: typeof search.schedule === 'string' ? search.schedule : undefined,
+    host: typeof search.host === 'string' ? search.host : undefined,
   }),
   component: RunsPage,
 });

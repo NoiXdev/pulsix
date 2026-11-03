@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -25,6 +25,7 @@ function renderPage(initial = '/o/acme/runs') {
       kind: typeof s.kind === 'string' ? s.kind : undefined,
       trigger: typeof s.trigger === 'string' ? s.trigger : undefined,
       schedule: typeof s.schedule === 'string' ? s.schedule : undefined,
+      host: typeof s.host === 'string' ? s.host : undefined,
     }),
     component: RunsPage,
   });
@@ -138,5 +139,41 @@ describe('RunsPage', () => {
     expect(seen.some((q) => q.includes('trigger=schedule') && q.includes('trigger_ref=s1'))).toBe(true);
     await pickOption(screen, 'Filter by trigger', { value: 'webhook' });
     expect(screen.queryByLabelText('Filter by schedule')).not.toBeInTheDocument();
+  });
+
+  it('filters by host from the URL, names it in a chip and drops it when the chip is removed', async () => {
+    const user = userEvent.setup();
+    const seen: string[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search.toString());
+        return { jobs: [job()], next_cursor: '' };
+      },
+      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+    });
+    renderPage('/o/acme/runs?host=h1');
+    expect(await screen.findByText('Host: web-04.fra')).toBeInTheDocument();
+    expect(seen.some((q) => q.includes('host_id=h1'))).toBe(true);
+
+    await user.click(screen.getByRole('button', { name: 'Remove host filter' }));
+    await waitFor(() => expect(screen.queryByText('Host: web-04.fra')).not.toBeInTheDocument());
+    expect(seen[seen.length - 1]).not.toContain('host_id=h1');
+  });
+
+  it('keeps the host filter when another filter changes', async () => {
+    const seen: string[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': (req: MockRequest) => {
+        seen.push(req.search.toString());
+        return { jobs: [], next_cursor: '' };
+      },
+      'GET /api/v1/orgs/acme/hosts/h1': { host: { id: 'h1', name: 'web-04.fra', zone_id: 'z1', address: '10.0.0.4' } },
+    });
+    renderPage('/o/acme/runs?host=h1');
+    await screen.findByLabelText('Filter by status');
+    await pickOption(screen, 'Filter by status', { value: 'failed' });
+    await waitFor(() => expect(seen.some((q) => q.includes('status=failed') && q.includes('host_id=h1'))).toBe(true));
   });
 });

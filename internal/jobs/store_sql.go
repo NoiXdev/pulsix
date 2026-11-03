@@ -190,6 +190,7 @@ func (s *SQLStore) ListJobs(ctx context.Context, orgID uuid.UUID, f Filter, curs
 		RunGroupID: uuidToPg(f.RunGroupID),
 		Trigger:    textToPg(f.Trigger),
 		TriggerRef: uuidToPg(f.TriggerRef),
+		HostID:     uuidToPg(f.HostID),
 		CursorAt:   timeToPg(cursor, cursorAt),
 		CursorID:   uuidToPg(cursorIDPtr(cursor, cursorID)),
 		RowLimit:   int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.List before it ever reaches here

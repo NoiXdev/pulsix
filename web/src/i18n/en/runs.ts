@@ -43,6 +43,8 @@ export const enRuns = {
     allTriggers: 'All triggers',
     allSchedules: 'All schedules',
     runCommand: 'Run command',
+    hostFilter: (name: string) => `Host: ${name}`,
+    removeHostFilter: 'Remove host filter',
     columns: {
       run: 'Run',
       kind: 'Kind',

@@ -273,6 +273,9 @@ type Filter struct {
 	// system); TriggerRef to the runs one schedule or webhook started.
 	Trigger    *string
 	TriggerRef *uuid.UUID
+	// HostID narrows to the runs that targeted one host (the job's
+	// host_ids contain it).
+	HostID *uuid.UUID
 }
 
 // DefaultListLimit and MaxListLimit bound List's page size, the same

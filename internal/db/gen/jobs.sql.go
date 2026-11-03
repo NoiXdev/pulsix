@@ -620,12 +620,13 @@ WHERE org_id = $1
   AND ($6::uuid IS NULL OR run_group_id = $6::uuid)
   AND ($7::text IS NULL OR trigger = $7::text)
   AND ($8::uuid IS NULL OR trigger_ref = $8::uuid)
+  AND ($9::uuid IS NULL OR host_ids @> ARRAY[$9::uuid])
   AND (
-    $9::timestamptz IS NULL
-    OR (created_at, id) < ($9::timestamptz, $10::uuid)
+    $10::timestamptz IS NULL
+    OR (created_at, id) < ($10::timestamptz, $11::uuid)
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $11
+LIMIT $12
 `
 
 type ListJobsParams struct {
@@ -637,6 +638,7 @@ type ListJobsParams struct {
 	RunGroupID pgtype.UUID        `json:"run_group_id"`
 	Trigger    *string            `json:"trigger"`
 	TriggerRef pgtype.UUID        `json:"trigger_ref"`
+	HostID     pgtype.UUID        `json:"host_id"`
 	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
 	CursorID   pgtype.UUID        `json:"cursor_id"`
 	RowLimit   int32              `json:"row_limit"`
@@ -648,6 +650,11 @@ type ListJobsParams struct {
 // ListHosts uses. Ordering is descending on (created_at, id) — newest runs
 // first, id as the tiebreaker — so the cursor condition resumes strictly
 // before the last row of the previous page.
+//
+// host_id keeps the runs that TARGETED the host (jobs.host_ids contains
+// it). It is written as array containment (@>) rather than "= ANY(...)"
+// because only the containment operator can use the GIN index of
+// migration 00079.
 func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, error) {
 	rows, err := q.db.Query(ctx, listJobs,
 		arg.OrgID,
@@ -658,6 +665,7 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
+		arg.HostID,
 		arg.CursorAt,
 		arg.CursorID,
 		arg.RowLimit,

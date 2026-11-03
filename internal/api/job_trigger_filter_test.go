@@ -55,3 +55,31 @@ func TestRunsListFiltersByTrigger(t *testing.T) {
 		}
 	}
 }
+
+// TestRunsListFiltersByHost: host_id narrows the list to the runs that
+// targeted the host (jobs.host_ids), and a malformed id is a 400.
+func TestRunsListFiltersByHost(t *testing.T) {
+	f := newRunFixture(t, "runs-host")
+	c := f.operatorC
+	if resp := postJSON(t, c, f.s.HTTP.URL+"/api/v1/orgs/"+f.orgSlug+"/job-templates/"+f.templateID.String()+"/run", nil); resp.StatusCode != http.StatusAccepted {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	base := f.s.HTTP.URL + "/api/v1/orgs/" + f.orgSlug + "/jobs"
+	count := func(query string) int {
+		t.Helper()
+		var out struct {
+			Jobs []struct{} `json:"jobs"`
+		}
+		decodeInto(t, requestJSON(t, c, http.MethodGet, base+"?"+query, nil), &out)
+		return len(out.Jobs)
+	}
+	if n := count("host_id=" + f.hostA.String()); n != 1 {
+		t.Fatalf("host_id=<targeted host> = %d jobs, want 1", n)
+	}
+	if n := count("host_id=" + f.hostB.String()); n != 0 {
+		t.Fatalf("host_id=<host the template does not scope> = %d jobs, want 0", n)
+	}
+	if resp := requestJSON(t, c, http.MethodGet, base+"?host_id=not-a-uuid", nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("host_id=not-a-uuid = %d, want 400", resp.StatusCode)
+	}
+}

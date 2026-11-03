@@ -14,6 +14,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useSchedules } from '../../api/hooks/useSchedules.ts';
 import { may } from '../../lib/roles.ts';
 import { AdhocDialog } from './AdhocDialog.tsx';
+import { HostFilterChip } from './HostFilterChip.tsx';
 import { kindLabel, shortId, statusLabel, statusTone } from './status.ts';
 import { TRIGGERS, triggerLabel } from './trigger.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -27,14 +28,16 @@ const KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'revoke_key'
  * RunsPage is the org's run list (spec §7, backlog 2.12): keyset-paginated,
  * filterable by status, kind, trigger and schedule (spec 2026-09-18 §8),
  * each row a link into the run view. The filters live in the URL
- * (?status=&kind=&trigger=&schedule=), validated by the route.
+ * (?status=&kind=&trigger=&schedule=&host=), validated by the route; the
+ * host filter (the runs that targeted one host, linked from the host view)
+ * shows as a removable chip.
  */
 export function RunsPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const navigate = useNavigate();
-  const search = useSearch({ strict: false }) as { status?: string; kind?: string; trigger?: string; schedule?: string };
-  const jobs = useJobs(org, { status: search.status, kind: search.kind, trigger: search.trigger, triggerRef: search.schedule });
+  const search = useSearch({ strict: false }) as { status?: string; kind?: string; trigger?: string; schedule?: string; host?: string };
+  const jobs = useJobs(org, { status: search.status, kind: search.kind, trigger: search.trigger, triggerRef: search.schedule, host: search.host });
   const schedules = useSchedules(search.trigger === 'schedule' ? org : '');
   const orgInfo = useOrg(org);
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
@@ -45,7 +48,7 @@ export function RunsPage() {
   if (!jobs.data) return <QueryLoading />;
   const rows = jobs.data.pages.flatMap((p) => p.jobs ?? []);
 
-  function filter(next: { status?: string; kind?: string; trigger?: string; schedule?: string }) {
+  function filter(next: { status?: string; kind?: string; trigger?: string; schedule?: string; host?: string }) {
     const trigger = next.trigger ?? search.trigger;
     void navigate({
       to: '/o/$org/runs',
@@ -56,7 +59,16 @@ export function RunsPage() {
         trigger,
         // A schedule filter only makes sense for scheduled runs.
         schedule: trigger === 'schedule' ? (next.schedule ?? search.schedule) : undefined,
+        host: search.host,
       },
+    });
+  }
+
+  function clearHost() {
+    void navigate({
+      to: '/o/$org/runs',
+      params: { org },
+      search: { status: search.status, kind: search.kind, trigger: search.trigger, schedule: search.schedule, host: undefined },
     });
   }
 
@@ -105,6 +117,7 @@ export function RunsPage() {
           )}
         </div>
       </div>
+      {search.host && <HostFilterChip org={org} hostId={search.host} onRemove={clearHost} />}
       <Card>
         <GridHeader columns={COLUMNS}>
           <span>{t.runs.list.columns.run}</span>

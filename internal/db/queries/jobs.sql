@@ -45,6 +45,11 @@ WHERE j.org_id = $1 AND j.id = $2;
 -- ListHosts uses. Ordering is descending on (created_at, id) — newest runs
 -- first, id as the tiebreaker — so the cursor condition resumes strictly
 -- before the last row of the previous page.
+--
+-- host_id keeps the runs that TARGETED the host (jobs.host_ids contains
+-- it). It is written as array containment (@>) rather than "= ANY(...)"
+-- because only the containment operator can use the GIN index of
+-- migration 00079.
 SELECT * FROM jobs
 WHERE org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
@@ -54,6 +59,7 @@ WHERE org_id = sqlc.arg(org_id)
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR trigger_ref = sqlc.narg(trigger_ref)::uuid)
+  AND (sqlc.narg(host_id)::uuid IS NULL OR host_ids @> ARRAY[sqlc.narg(host_id)::uuid])
   AND (
     sqlc.narg(cursor_at)::timestamptz IS NULL
     OR (created_at, id) < (sqlc.narg(cursor_at)::timestamptz, sqlc.narg(cursor_id)::uuid)

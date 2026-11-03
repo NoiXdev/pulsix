@@ -100,6 +100,47 @@ func (emptyPins) PinnedKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.U
 	return map[uuid.UUID]string{}, nil
 }
 
+// TestSQLStoreListJobsByHost: the host filter returns exactly the runs whose
+// host_ids contain the host, newest first, and nothing else.
+func TestSQLStoreListJobsByHost(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedOrg(t, q, "jobs-host-filter-org")
+	store := jobs.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+	zone := seedZone(t, d, org)
+
+	hostA, hostB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	base := time.Now().Add(-time.Hour)
+	mk := func(age time.Duration, hosts ...uuid.UUID) jobs.Job {
+		j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
+		j.HostIDs = hosts
+		j.CreatedAt = base.Add(age)
+		if err := store.CreateJob(scoped, j, nil); err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+	oldest := mk(0, hostA)
+	mk(time.Minute, hostB)
+	newest := mk(2*time.Minute, hostB, hostA)
+
+	got, next, err := store.ListJobs(scoped, org, jobs.Filter{HostID: &hostA}, "", 10)
+	if err != nil || next != "" {
+		t.Fatalf("ListJobs by host: next %q, %v", next, err)
+	}
+	if len(got) != 2 || got[0].ID != newest.ID || got[1].ID != oldest.ID {
+		t.Fatalf("by host A = %v, want [%s %s]", got, newest.ID, oldest.ID)
+	}
+	if all, _, err := store.ListJobs(scoped, org, jobs.Filter{}, "", 10); err != nil || len(all) != 3 {
+		t.Fatalf("unfiltered = %d, %v", len(all), err)
+	}
+	unknown := uuid.Must(uuid.NewV7())
+	if none, _, err := store.ListJobs(scoped, org, jobs.Filter{HostID: &unknown}, "", 10); err != nil || len(none) != 0 {
+		t.Fatalf("unknown host = %d, %v", len(none), err)
+	}
+}
+
 func TestSQLStoreJobCRUD(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())

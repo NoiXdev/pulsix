@@ -46,6 +46,8 @@ export const deRuns: Messages['runs'] = {
     allTriggers: 'Alle Auslöser',
     allSchedules: 'Alle Zeitpläne',
     runCommand: 'Befehl ausführen',
+    hostFilter: (name: string) => `Host: ${name}`,
+    removeHostFilter: 'Host-Filter entfernen',
     columns: {
       run: 'Lauf',
       kind: 'Art',

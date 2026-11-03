@@ -11,6 +11,8 @@ export interface JobListFilter {
   trigger?: string;
   /** Only the runs this schedule (or webhook trigger) started. */
   triggerRef?: string;
+  /** Only the runs that targeted this host (a host id). */
+  host?: string;
 }
 
 /** useJobs is the keyset-paginated runs list; the filters are part of the
@@ -31,6 +33,7 @@ export function useJobs(org: string, filter: JobListFilter = {}) {
               kind: filter.kind ?? '',
               trigger: filter.trigger ?? '',
               trigger_ref: filter.triggerRef ?? '',
+              host_id: filter.host ?? '',
               cursor: pageParam || undefined,
               limit: JOBS_PAGE_SIZE,
             },

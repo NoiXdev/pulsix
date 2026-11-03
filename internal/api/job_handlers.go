@@ -271,6 +271,7 @@ type jobListInput struct {
 	Group      string `query:"group"`
 	Trigger    string `query:"trigger" doc:"manual, schedule, webhook or system"`
 	TriggerRef string `query:"trigger_ref" doc:"Only the runs this schedule or webhook trigger started"`
+	HostID     string `query:"host_id" doc:"Only the runs that targeted this host (the host was one of the run's target hosts)"`
 	Cursor     string `query:"cursor"`
 	Limit      int    `query:"limit"`
 }
@@ -441,6 +442,13 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		filter.Trigger, filter.TriggerRef, err = parseTriggerFilter(in.Trigger, in.TriggerRef)
 		if err != nil {
 			return nil, err
+		}
+		if in.HostID != "" {
+			hostID, err := parseUUID(in.HostID, "host_id")
+			if err != nil {
+				return nil, err
+			}
+			filter.HostID = &hostID
 		}
 		list, next, err := deps.Jobs.List(ctx, scope.OrgID, filter, in.Cursor, in.Limit)
 		if err != nil {

@@ -137,6 +137,9 @@ func (f *fakeStore) ListJobs(_ context.Context, orgID uuid.UUID, filter jobs.Fil
 		if filter.RunGroupID != nil && s.j.RunGroupID != *filter.RunGroupID {
 			continue
 		}
+		if filter.HostID != nil && !slices.Contains(s.j.HostIDs, *filter.HostID) {
+			continue
+		}
 		out = append(out, s.j)
 	}
 	next := ""
