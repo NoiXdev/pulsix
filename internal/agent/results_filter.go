@@ -37,12 +37,13 @@ func (w *invalidUTF8Warner) note(now time.Time) (covers int, due bool) {
 
 // validUTF8Results returns the results whose check_key, item, metric and
 // label (when set) are valid UTF-8; an error message is sanitised where it is
-// converted for sending instead (toCheckResultProtos). gRPC refuses to marshal a message carrying anything else and
-// finishes the stream, so one such result would take every result of its
-// chunk down with it (see unsentAfter for the chunk-level backstop); only
-// that result is dropped here, before it is buffered or sent, and logged at
-// most once per invalidUTF8WarnEvery. The common case, nothing invalid,
-// returns the slice itself.
+// converted for sending instead (toCheckResultProtos). gRPC refuses to
+// marshal a message carrying anything else and finishes the stream, so one
+// such result would take every result of its chunk down with it (see
+// unsentAfter for the chunk-level backstop); only that result is dropped
+// here, before it is buffered or sent, and logged at most once per
+// invalidUTF8WarnEvery. The common case, nothing invalid, returns the slice
+// itself.
 func (l *Loop) validUTF8Results(results []checks.Result) []checks.Result {
 	valid, copied := results, false
 	for i, r := range results {

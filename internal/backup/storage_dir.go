@@ -171,13 +171,12 @@ func (d *dirStorage) describe(e fs.DirEntry) (o Object, ok bool) {
 
 // CleanPartials removes the <name>.pxbak.partial files a stopped backup left
 // in the folder. Only that exact suffix qualifies, so a *.partial file some
-// other program keeps in the same folder survives. Only regular files directly
-// in the folder qualify: the entry
-// type comes from the directory itself (lstat semantics), so a symbolic link,
-// a directory or a special file that merely carries the suffix is left alone
-// and nothing below the folder is visited. A file that cannot be removed does
-// not stop the others; the first such failure is returned with the count of
-// the files that did go.
+// other program keeps in the same folder survives. Only regular files
+// directly in the folder qualify: the entry type comes from the directory
+// itself (lstat semantics), so a symbolic link, a directory or a special file
+// that merely carries the suffix is left alone and nothing below the folder
+// is visited. A file that cannot be removed does not stop the others; the
+// first such failure is returned with the count of the files that did go.
 func (d *dirStorage) CleanPartials(ctx context.Context) (int, error) {
 	entries, err := os.ReadDir(d.dir)
 	if err != nil {
