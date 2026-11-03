@@ -372,7 +372,10 @@ func copyTables(ctx context.Context, tx pgx.Tx, fr *FrameReader, tables []tableI
 	return nil
 }
 
-// reasonRestored is the error of an attempt a restore marks abandoned.
+// reasonRestored is the error of an attempt a restore marks abandoned. The
+// text is persisted in backup_runs.error and ListInterruptedBackupSlots
+// matches it to leave such slots out, so rewording it needs a migration that
+// rewrites the stored rows.
 const reasonRestored = "this backup was still running when the restored backup was taken"
 
 // abandonRunningAttempts marks backup attempts that were running when the
