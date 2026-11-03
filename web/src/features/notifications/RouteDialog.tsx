@@ -3,6 +3,7 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
 import type { AlertRoute, AlertRouteEventKind, AlertRouteInput, AlertRouteScope, AlertRouteSeverity, AlertRouteStep } from '../../api/types.ts';
 import { WEEKDAYS, compileWindow, decompileWindow, severityLabel, type Weekday, type WindowDraft } from './alertRoute.ts';
@@ -159,10 +160,10 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <Label htmlFor="rt-name">{m.name}</Label>
         <Input id="rt-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          {m.enabledLabel}
-        </label>
+        <div className="flex items-center gap-2 text-xs">
+          <Switch id="rt-enabled" checked={enabled} onCheckedChange={setEnabled} />
+          <label htmlFor="rt-enabled">{m.enabledLabel}</label>
+        </div>
         <Label htmlFor="rt-scope">{d.appliesTo}</Label>
         <Select
           id="rt-scope"
@@ -267,10 +268,10 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
           )}
         </fieldset>
         <StepsEditor steps={steps} onChange={setSteps} channels={channels} rotations={rotations} />
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={windowEnabled} onChange={(e) => setWindowEnabled(e.target.checked)} />
-          {d.windowOnly}
-        </label>
+        <div className="flex items-center gap-2 text-xs">
+          <Switch id="rt-window-enabled" checked={windowEnabled} onCheckedChange={setWindowEnabled} />
+          <label htmlFor="rt-window-enabled">{d.windowOnly}</label>
+        </div>
         {windowEnabled && (
           <fieldset className="flex flex-col gap-2 rounded-md border border-border p-2.5">
             <legend className="px-1 text-[11px] font-medium text-muted-foreground">{d.deliveryWindow}</legend>

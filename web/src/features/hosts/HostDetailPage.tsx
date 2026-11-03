@@ -3,6 +3,7 @@ import { useNavigate, useParams } from '@tanstack/react-router';
 import { Server, Terminal, Trash2, UserPlus } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { Tag } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -127,39 +128,21 @@ export function HostDetailPage() {
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Terminal size={14} /> {t.hosts.capability.managedLong}
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={h.managed}
+              <Switch
+                checked={h.managed}
                 aria-label={t.hosts.capability.managedLong}
-                onClick={() => setCapabilities.mutate({ managed: !h.managed })}
-                className={
-                  h.managed
-                    ? 'flex h-[18px] w-8 items-center rounded-full bg-primary px-0.5 justify-end'
-                    : 'flex h-[18px] w-8 items-center rounded-full bg-border px-0.5 justify-start'
-                }
-              >
-                <span className="h-3.5 w-3.5 rounded-full bg-background" />
-              </button>
+                onCheckedChange={(c) => setCapabilities.mutate({ managed: c })}
+              />
             </div>
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Server size={14} /> {t.hosts.capability.monitored}
               </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={h.monitored}
+              <Switch
+                checked={h.monitored}
                 aria-label={t.hosts.capability.monitored}
-                onClick={() => setCapabilities.mutate({ monitored: !h.monitored })}
-                className={
-                  h.monitored
-                    ? 'flex h-[18px] w-8 items-center rounded-full bg-primary px-0.5 justify-end'
-                    : 'flex h-[18px] w-8 items-center rounded-full bg-border px-0.5 justify-start'
-                }
-              >
-                <span className="h-3.5 w-3.5 rounded-full bg-background" />
-              </button>
+                onCheckedChange={(c) => setCapabilities.mutate({ monitored: c })}
+              />
             </div>
           </div>
         </Card>

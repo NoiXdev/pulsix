@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -64,10 +65,10 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
         {initial.next_run_at && <span className="text-xs text-muted-foreground">{m.next(nextRunLabel(initial.next_run_at, initial.timezone, fmt))}</span>}
       </div>
       <p className="text-xs text-muted-foreground">{m.description}</p>
-      <label className="flex items-center gap-2 text-xs">
-        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} disabled={!canWrite} />
-        {m.send}
-      </label>
+      <div className="flex items-center gap-2 text-xs">
+        <Switch id="digest-enabled" checked={enabled} onCheckedChange={setEnabled} disabled={!canWrite} />
+        <label htmlFor="digest-enabled">{m.send}</label>
+      </div>
       <div className="grid grid-cols-3 gap-2">
         <div className="flex flex-col gap-1">
           <Label htmlFor="digest-day">{m.day}</Label>

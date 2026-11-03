@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useCreateCheck, useUpdateCheck } from '../../api/hooks/useChecks.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
@@ -272,10 +273,10 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             onChange={setHostId}
           />
         )}
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          {t.checks.enabledField}
-        </label>
+        <div className="flex items-center gap-2 text-xs">
+          <Switch id="check-enabled" checked={enabled} onCheckedChange={setEnabled} />
+          <label htmlFor="check-enabled">{t.checks.enabledField}</label>
+        </div>
         {error && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
             {error}

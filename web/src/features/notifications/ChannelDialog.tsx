@@ -4,6 +4,7 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useCreateChannel, useUpdateChannel } from '../../api/hooks/useNotifications.ts';
 import type { NotifyChannel, NotifyChannelInput } from '../../api/types.ts';
@@ -109,10 +110,10 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
         />
         <Label htmlFor="ch-name">{m.name}</Label>
         <Input id="ch-name" value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} />
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          {m.enabledLabel}
-        </label>
+        <div className="flex items-center gap-2 text-xs">
+          <Switch id="ch-enabled" checked={enabled} onCheckedChange={setEnabled} />
+          <label htmlFor="ch-enabled">{m.enabledLabel}</label>
+        </div>
         {kind === 'email' ? (
           <>
             <Label htmlFor="ch-recipients">{d.recipients}</Label>
@@ -159,10 +160,10 @@ export function ChannelDialog({ org, channel, mailAvailable, onClose, onCreated,
             </Button>
             <Label htmlFor="ch-template">{d.bodyTemplate}</Label>
             <textarea id="ch-template" className={TEXTAREA} value={template} onChange={(e) => setTemplate(e.target.value)} placeholder='{"text": {{ schedule.name | json }}}' />
-            <label className="flex items-center gap-2 text-xs">
-              <input type="checkbox" checked={signed} onChange={(e) => setSigned(e.target.checked)} />
-              {d.sign}
-            </label>
+            <div className="flex items-center gap-2 text-xs">
+              <Switch id="ch-signed" checked={signed} onCheckedChange={setSigned} />
+              <label htmlFor="ch-signed">{d.sign}</label>
+            </div>
             {signed && (
               <>
                 <Label htmlFor="ch-secret">{d.signingSecret}</Label>

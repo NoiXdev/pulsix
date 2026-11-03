@@ -37,7 +37,7 @@ describe('RouteDialog', () => {
 describe('RouteDialog delivery window', () => {
   it('offers weekdays and times rather than a cron field', async () => {
     render(<RouteDialog open onClose={vi.fn()} channels={[{ id: 'c1', name: 'Ops mail' }]} rotations={[]} />);
-    await userEvent.click(screen.getByRole('checkbox', { name: /only deliver during/i }));
+    await userEvent.click(screen.getByRole('switch', { name: /only deliver during/i }));
     expect(screen.getByLabelText(/from/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/until/i)).toBeInTheDocument();
     expect(screen.getAllByRole('checkbox', { name: /mon|tue|wed|thu|fri|sat|sun/i })).toHaveLength(7);
@@ -47,7 +47,7 @@ describe('RouteDialog delivery window', () => {
   it('offers breakthrough severities only once a window is set', async () => {
     render(<RouteDialog open onClose={vi.fn()} channels={[{ id: 'c1', name: 'Ops mail' }]} rotations={[]} />);
     expect(screen.queryByText(/outside the window too/i)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('checkbox', { name: /only deliver during/i }));
+    await userEvent.click(screen.getByRole('switch', { name: /only deliver during/i }));
     expect(screen.getByText(/outside the window too/i)).toBeInTheDocument();
   });
 
@@ -56,7 +56,7 @@ describe('RouteDialog delivery window', () => {
     // set; the dialog must not be able to compose that request.
     render(<RouteDialog open onClose={vi.fn()} channels={[{ id: 'c1', name: 'Ops mail' }]} rotations={[]} />);
     await userEvent.click(screen.getByRole('checkbox', { name: /^critical$/i }));
-    await userEvent.click(screen.getByRole('checkbox', { name: /only deliver during/i }));
+    await userEvent.click(screen.getByRole('switch', { name: /only deliver during/i }));
     const group = screen.getByRole('group', { name: /outside the window too/i });
     expect(within(group).getAllByRole('checkbox')).toHaveLength(1);
   });

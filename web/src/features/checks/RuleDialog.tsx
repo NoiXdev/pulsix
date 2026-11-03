@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useCheckRule, useCreateRule, useUpdateRule } from '../../api/hooks/useRules.ts';
 import { RuleForm } from './RuleForm.tsx';
@@ -295,10 +296,10 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
             {t.checks.ruleDialog.toForm}
           </Button>
         )}
-        <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          {t.checks.enabledField}
-        </label>
+        <div className="flex items-center gap-2 text-xs">
+          <Switch id="rule-enabled" checked={enabled} onCheckedChange={setEnabled} />
+          <label htmlFor="rule-enabled">{t.checks.enabledField}</label>
+        </div>
         {error && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
             {error}

@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { Button } from '../../../ui/button.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
+import { Switch } from '../../../ui/switch.tsx';
 import { Select } from '../../../ui/Select.tsx';
 import { Tag } from '../../../ui/badge.tsx';
 import { SchemaForm, ScalarInput } from './SchemaForm.tsx';
@@ -255,10 +256,10 @@ function FieldEditor({ field, path, idBase, nested, types, problems, canMoveUp, 
           )}
         </fieldset>
       )}
-      <Checkbox id={id('required')} label={t.inventory.builder.requiredLabel} checked={!!field.required} onChange={(c) => set({ required: c || undefined })} />
+      <SwitchField id={id('required')} label={t.inventory.builder.requiredLabel} checked={!!field.required} onChange={(c) => set({ required: c || undefined })} />
       {showOverridable && (
         <div className="flex flex-col gap-1">
-          <Checkbox id={id('overridable')} label={t.inventory.builder.hostsMayOverride} checked={!!field.overridable} onChange={(c) => set({ overridable: c || undefined })} />
+          <SwitchField id={id('overridable')} label={t.inventory.builder.hostsMayOverride} checked={!!field.overridable} onChange={(c) => set({ overridable: c || undefined })} />
           {problem('overridable') && (
             <span role="alert" className="text-[11px] text-destructive">
               {problem('overridable')}
@@ -409,12 +410,12 @@ function OptionsField({ id, value, onChange, error }: { id: string; value: strin
   );
 }
 
-function Checkbox({ id, label, checked, onChange }: { id: string; label: string; checked: boolean; onChange: (c: boolean) => void }) {
+function SwitchField({ id, label, checked, onChange }: { id: string; label: string; checked: boolean; onChange: (c: boolean) => void }) {
   return (
-    <label htmlFor={id} className="flex items-center gap-2 text-xs">
-      <input id={id} type="checkbox" className="h-4 w-4 accent-[var(--px-accent)]" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      {label}
-    </label>
+    <div className="flex items-center gap-2 text-xs">
+      <Switch id={id} checked={checked} onCheckedChange={onChange} />
+      <label htmlFor={id}>{label}</label>
+    </div>
   );
 }
 

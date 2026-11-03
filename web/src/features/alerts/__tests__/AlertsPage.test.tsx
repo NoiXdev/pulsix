@@ -232,7 +232,7 @@ describe('AlertsPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
-    await screen.findByRole('checkbox', { name: /severity next changes/i });
+    await screen.findByRole('switch', { name: /severity next changes/i });
     // The dialog's own Save button is the one with type="submit" — the
     // row's own trigger (type="button") is still in the DOM behind the
     // native <dialog>, so a plain name query would match both. Neither
@@ -240,11 +240,11 @@ describe('AlertsPage', () => {
     const save = screen.getAllByRole('button', { name: /^snooze$/i }).find((b) => b.getAttribute('type') === 'submit')!;
     expect(save).toBeDisabled();
 
-    await user.click(screen.getByRole('checkbox', { name: /severity next changes/i }));
+    await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     expect(save).not.toBeDisabled();
 
     // Unchecking it with no date entered returns to neither-set.
-    await user.click(screen.getByRole('checkbox', { name: /severity next changes/i }));
+    await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     expect(save).toBeDisabled();
 
     expect(snoozeCalled).toBe(false);
@@ -264,8 +264,8 @@ describe('AlertsPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
-    await screen.findByRole('checkbox', { name: /severity next changes/i });
-    await user.click(screen.getByRole('checkbox', { name: /severity next changes/i }));
+    await screen.findByRole('switch', { name: /severity next changes/i });
+    await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     const save = screen.getAllByRole('button', { name: /^snooze$/i }).find((b) => b.getAttribute('type') === 'submit')!;
     await user.click(save);
 
@@ -309,7 +309,7 @@ describe('AlertsPage', () => {
     await user.type(untilField, '2026-11-01T10:00');
     expect(untilField).toHaveValue('2026-11-01T10:00');
 
-    await user.click(screen.getByRole('checkbox', { name: /severity next changes/i }));
+    await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     // Checking the box clears the date the operator had just typed, and
     // disables the field — a dialog that left the old date sitting in a
     // disabled input, or worse still submitted it alongside until_change,

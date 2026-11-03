@@ -6,6 +6,7 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { Switch } from '../../ui/switch.tsx';
 import { ApiError } from '../../api/client.ts';
 import {
   type SchedulePreviewBody,
@@ -276,14 +277,14 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
           </>
         )}
       </div>
-      <label className="flex items-center gap-2 text-xs">
-        <input type="checkbox" checked={overlapSkip} onChange={(e) => setOverlapSkip(e.target.checked)} disabled={!canWrite} />
-        {m.skipOverlap}
-      </label>
-      <label className="flex items-center gap-2 text-xs">
-        <input type="checkbox" checked={catchUp} onChange={(e) => setCatchUp(e.target.checked)} disabled={!canWrite} />
-        {m.catchUp}
-      </label>
+      <div className="flex items-center gap-2 text-xs">
+        <Switch id="sched-overlap-skip" checked={overlapSkip} onCheckedChange={setOverlapSkip} disabled={!canWrite} />
+        <label htmlFor="sched-overlap-skip">{m.skipOverlap}</label>
+      </div>
+      <div className="flex items-center gap-2 text-xs">
+        <Switch id="sched-catch-up" checked={catchUp} onCheckedChange={setCatchUp} disabled={!canWrite} />
+        <label htmlFor="sched-catch-up">{m.catchUp}</label>
+      </div>
       {catchUp ? (
         <>
           <Label htmlFor="sched-window">{m.catchUpWindow}</Label>

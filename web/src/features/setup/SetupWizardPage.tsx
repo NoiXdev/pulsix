@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { PulsixMark } from '../../ui/PulsixMark.tsx';
@@ -17,6 +17,7 @@ import { useRefetchMe } from '../../api/hooks/useMe.ts';
 import { useResetSession } from '../../lib/session.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { SlugField } from '../../ui/SlugField.tsx';
+import { Switch } from '../../ui/switch.tsx';
 
 type StepKey = 'admin' | 'org' | 'smtp' | 'mfa';
 
@@ -302,15 +303,10 @@ export function SetupWizardPage() {
             >
               <h2 className="text-xl font-semibold">{t.setup.steps.smtp.label}</h2>
               <p className="text-muted-foreground">{t.setup.smtp.intro}</p>
-              <label htmlFor="smtp_enabled" className="flex items-center gap-2 text-xs">
-                <input
-                  id="smtp_enabled"
-                  type="checkbox"
-                  checked={smtpEnabled}
-                  onChange={(e) => setSmtpEnabled(e.target.checked)}
-                />
-                {t.setup.smtp.configureNow}
-              </label>
+              <div className="flex items-center gap-2 text-xs">
+                <Switch id="smtp_enabled" checked={smtpEnabled} onCheckedChange={setSmtpEnabled} />
+                <label htmlFor="smtp_enabled">{t.setup.smtp.configureNow}</label>
+              </div>
               {smtpEnabled && (
                 <>
                   <Field id="smtp_host" label={t.instance.smtp.host} error={smtpForm.formState.errors.host?.message}>
@@ -328,10 +324,14 @@ export function SetupWizardPage() {
                   <Field id="smtp_from" label={t.instance.smtp.fromAddress} error={smtpForm.formState.errors.from?.message}>
                     <Input id="smtp_from" type="email" {...smtpForm.register('from')} />
                   </Field>
-                  <label className="flex items-center gap-2 text-xs">
-                    <input type="checkbox" {...smtpForm.register('start_tls')} defaultChecked />
-                    {t.instance.smtp.startTls}
-                  </label>
+                  <div className="flex items-center gap-2 text-xs">
+                    <Controller
+                      control={smtpForm.control}
+                      name="start_tls"
+                      render={({ field }) => <Switch id="smtp_start_tls" checked={field.value} onCheckedChange={field.onChange} />}
+                    />
+                    <label htmlFor="smtp_start_tls">{t.instance.smtp.startTls}</label>
+                  </div>
                 </>
               )}
               <div className="flex justify-between">

@@ -4,6 +4,7 @@ import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useSaveBackupSettings, useTestBackupSettings } from '../../api/hooks/useBackups.ts';
 import type { BackupSettings, BackupSettingsInput } from '../../api/types.ts';
@@ -209,19 +210,19 @@ export function BackupSettingsForm({ settings }: { settings: BackupSettings }) {
                   onChange={(e) => set('secretKey', e.target.value)}
                 />
               </Field>
-              <label className="col-span-2 flex items-center gap-2 text-xs">
-                <input type="checkbox" checked={draft.pathStyle} onChange={(e) => set('pathStyle', e.target.checked)} />
-                {t.backups.destination.pathStyle}
-              </label>
+              <div className="col-span-2 flex items-center gap-2 text-xs">
+                <Switch id="backup_path_style" checked={draft.pathStyle} onCheckedChange={(c) => set('pathStyle', c)} />
+                <label htmlFor="backup_path_style">{t.backups.destination.pathStyle}</label>
+              </div>
               {settings.s3.secret_key_set && (
-                <label className="col-span-2 flex items-center gap-2 text-[11px] text-muted-foreground">
-                  <input
-                    type="checkbox"
+                <div className="col-span-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <Switch
+                    id="backup_remove_secret"
                     checked={draft.removeSecret}
-                    onChange={(e) => set('removeSecret', e.target.checked)}
+                    onCheckedChange={(c) => set('removeSecret', c)}
                   />
-                  {t.backups.destination.removeSecret}
-                </label>
+                  <label htmlFor="backup_remove_secret">{t.backups.destination.removeSecret}</label>
+                </div>
               )}
             </div>
           )}
@@ -259,10 +260,10 @@ export function BackupSettingsForm({ settings }: { settings: BackupSettings }) {
       <Card>
         <div className="flex flex-col gap-3 p-4">
           <h2 className="text-sm font-semibold">{t.backups.schedule.title}</h2>
-          <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" checked={draft.enabled} onChange={(e) => set('enabled', e.target.checked)} />
-            {t.backups.schedule.enabled}
-          </label>
+          <div className="flex items-center gap-2 text-xs">
+            <Switch id="backup_enabled" checked={draft.enabled} onCheckedChange={(c) => set('enabled', c)} />
+            <label htmlFor="backup_enabled">{t.backups.schedule.enabled}</label>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field id="backup_time" label={t.backups.schedule.timeOfDay} error={errors.time}>
               <Input
@@ -313,14 +314,14 @@ export function BackupSettingsForm({ settings }: { settings: BackupSettings }) {
           </div>
           {errors.retention && <span className="text-[11px] text-destructive">{errors.retention}</span>}
           <span className="text-[11px] text-muted-foreground">{t.backups.schedule.keepHint}</span>
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
+          <div className="flex items-center gap-2 text-xs">
+            <Switch
+              id="backup_include_metrics"
               checked={draft.includeMetrics}
-              onChange={(e) => set('includeMetrics', e.target.checked)}
+              onCheckedChange={(c) => set('includeMetrics', c)}
             />
-            {t.backups.schedule.includeMetrics}
-          </label>
+            <label htmlFor="backup_include_metrics">{t.backups.schedule.includeMetrics}</label>
+          </div>
           <p className="text-[11px] text-muted-foreground">{t.backups.masterKey}</p>
         </div>
       </Card>

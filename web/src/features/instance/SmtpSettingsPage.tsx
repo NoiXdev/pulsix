@@ -1,12 +1,13 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useParams } from '@tanstack/react-router';
-import { useForm } from 'react-hook-form';
+import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Mail, Send } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -161,23 +162,27 @@ function SmtpForm({
       </Field>
       <p className="text-[11px] text-muted-foreground">{t.instance.smtp.passwordHint}</p>
       {configured && (
-        <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
-          <input
-            type="checkbox"
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <Switch
+            id="smtp_remove_stored"
             checked={removeStored}
-            onChange={(e) => setRemoveStored(e.target.checked)}
+            onCheckedChange={setRemoveStored}
             aria-label={t.instance.smtp.removeStoredAria}
           />
-          {t.instance.smtp.removeStored}
-        </label>
+          <label htmlFor="smtp_remove_stored">{t.instance.smtp.removeStored}</label>
+        </div>
       )}
       <Field id="smtp_from" label={t.instance.smtp.fromAddress} error={errors.from?.message}>
         <Input id="smtp_from" type="email" {...form.register('from')} />
       </Field>
-      <label className="flex items-center gap-2 text-xs">
-        <input type="checkbox" {...form.register('start_tls')} />
-        {t.instance.smtp.startTls}
-      </label>
+      <div className="flex items-center gap-2 text-xs">
+        <Controller
+          control={form.control}
+          name="start_tls"
+          render={({ field }) => <Switch id="smtp_start_tls" checked={field.value} onCheckedChange={field.onChange} />}
+        />
+        <label htmlFor="smtp_start_tls">{t.instance.smtp.startTls}</label>
+      </div>
       <div className="flex justify-end">
         <Button type="submit" variant="primary" disabled={saving}>
           <Mail size={14} /> {t.instance.smtp.save}

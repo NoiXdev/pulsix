@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { Button } from '../../../ui/button.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
+import { Switch } from '../../../ui/switch.tsx';
 import { Select } from '../../../ui/Select.tsx';
 import { childPath, indexPath, inputId, problemAt } from './paths.ts';
 import { isKeepMarker, isRecord, type KeepMarker } from './secrets.ts';
@@ -165,12 +166,12 @@ export function ScalarInput({ id, field, value, onChange, disabled, invalid, ari
       return <NumberInput common={common} field={field} value={value} onChange={onChange} />;
     case 'bool':
       return (
-        <input
-          {...common}
-          type="checkbox"
-          className="h-4 w-4 accent-[var(--px-accent)]"
+        <Switch
+          id={common.id}
+          disabled={common.disabled}
+          aria-label={common['aria-label']}
           checked={value === undefined ? field.default === true : value === true}
-          onChange={(e) => onChange(e.target.checked)}
+          onCheckedChange={onChange}
         />
       );
     default:

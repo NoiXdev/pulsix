@@ -4,6 +4,7 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { useSnoozeAlert } from '../../api/hooks/useAlerts.ts';
 import { fromLocalInput } from '../maintenance/time.ts';
 
@@ -74,10 +75,10 @@ export function SnoozeDialog({ org, alertId, onClose }: SnoozeDialogProps) {
           disabled={untilChange}
           onChange={(e) => onUntilChange(e.target.value)}
         />
-        <label className="flex items-center gap-2 text-xs text-foreground">
-          <input type="checkbox" checked={untilChange} onChange={(e) => onUntilChangeToggle(e.target.checked)} />
-          {t.alerts.snoozeDialog.untilChange}
-        </label>
+        <div className="flex items-center gap-2 text-xs text-foreground">
+          <Switch id="snooze-until-change" checked={untilChange} onCheckedChange={onUntilChangeToggle} />
+          <label htmlFor="snooze-until-change">{t.alerts.snoozeDialog.untilChange}</label>
+        </div>
         {error && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
             {error}

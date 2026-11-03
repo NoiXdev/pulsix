@@ -8,6 +8,7 @@ import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
@@ -254,12 +255,22 @@ export function HostsListPage() {
             <Label htmlFor="host_address">{t.hosts.list.dialog.address}</Label>
             <Input id="host_address" {...hostForm.register('address')} placeholder={t.hosts.list.dialog.addressPlaceholder} />
           </div>
-          <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" {...hostForm.register('managed')} /> {t.hosts.capability.managedLong}
-          </label>
-          <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" {...hostForm.register('monitored')} /> {t.hosts.capability.monitored}
-          </label>
+          <div className="flex items-center gap-2 text-xs">
+            <Controller
+              control={hostForm.control}
+              name="managed"
+              render={({ field }) => <Switch id="host_managed" checked={field.value} onCheckedChange={field.onChange} />}
+            />
+            <label htmlFor="host_managed">{t.hosts.capability.managedLong}</label>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <Controller
+              control={hostForm.control}
+              name="monitored"
+              render={({ field }) => <Switch id="host_monitored" checked={field.value} onCheckedChange={field.onChange} />}
+            />
+            <label htmlFor="host_monitored">{t.hosts.capability.monitored}</label>
+          </div>
           <div className="flex justify-end gap-2">
             <Button type="button" onClick={() => setAddOpen(false)}>
               {t.common.cancel}
