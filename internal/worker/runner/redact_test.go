@@ -303,6 +303,9 @@ func TestRedactsPythonReprSpellings(t *testing.T) {
 		{"single quote only", `it's-w0rd-9`, `"it's-w0rd-9"`},
 		{"double quote only", `say"hi"-w0rd-9`, `'say"hi"-w0rd-9'`},
 		{"both quotes", `Pa"ss'w0rd-9`, `'Pa"ss\'w0rd-9'`},
+		// Python picks the quote from the whole printed value: here a
+		// double quote elsewhere in it forces the single-quoted literal.
+		{"single quote inside a value holding a double quote", `it's-w0rd-9`, `'x "y" it\'s-w0rd-9'`},
 		{"backslash", `back\slash-w0rd-9`, `'back\\slash-w0rd-9'`},
 		{"non-printable byte", "ab\x01cd-w0rd-9", `'ab\x01cd-w0rd-9'`},
 		{"newline", "ab\ncd-w0rd-9", `'ab\ncd-w0rd-9'`},

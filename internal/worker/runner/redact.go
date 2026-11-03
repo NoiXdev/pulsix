@@ -59,7 +59,7 @@ func newRedactor(job *workerpb.Job) *redactor {
 		// The value as Python's repr() prints it (backlog 7.53) is another
 		// base text a run can show, and each base is in turn shown as
 		// JSON text.
-		for _, base := range []string{v, reprSpelling(v)} {
+		for _, base := range append([]string{v}, reprSpellings(v)...) {
 			set[base] = true
 			for _, esc := range jsonSpellings(base) {
 				set[esc] = true
@@ -194,6 +194,25 @@ func reprSpelling(v string) string {
 	if strings.Contains(v, "'") && !strings.Contains(v, `"`) {
 		quote = '"'
 	}
+	return reprBody(v, quote)
+}
+
+// reprSpellings is every repr() body a secret can appear in. Python picks the
+// quote from the WHOLE string it prints, not from the secret: a secret with
+// only a single quote, inside a larger value that also holds a double quote,
+// is printed in a single-quoted literal with the quote escaped ('it\'s-pw "x"'),
+// which reprSpelling alone (double-quoted for that secret) would miss.
+func reprSpellings(v string) []string {
+	out := []string{reprSpelling(v)}
+	if single := reprBody(v, '\''); single != out[0] {
+		out = append(out, single)
+	}
+	return out
+}
+
+// reprBody is v written between the given quote characters the way repr()
+// escapes it.
+func reprBody(v string, quote rune) string {
 	var sb strings.Builder
 	for _, r := range v {
 		switch {
