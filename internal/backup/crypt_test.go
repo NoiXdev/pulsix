@@ -174,4 +174,12 @@ func TestHeaderKeyDiffersFromBackupKey(t *testing.T) {
 	if bytes.Equal(hk, HeaderKey(keyTwo)) {
 		t.Fatal("HeaderKey is the same for two master keys")
 	}
+	// HKDF-SHA256(ikm = 0x01 followed by 31 zero bytes, salt nil, info
+	// "pulsix backup header v1", 32 bytes), computed independently with
+	// HMAC. A change of the label or the construction makes every existing
+	// backup unverified, so it must break this test first.
+	const golden = "91482514f490e250ac7f09e2469180e34de8442ca773718f6e9fe4d8cca56659"
+	if got := hex.EncodeToString(hk); got != golden {
+		t.Errorf("HeaderKey = %s, want %s", got, golden)
+	}
 }

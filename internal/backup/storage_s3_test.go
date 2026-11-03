@@ -161,13 +161,17 @@ func TestS3ListMarksUnreadableObjectDamaged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var badKey string
+	// The names are fixed before the proxy starts, so its handler only
+	// reads them. The writes below go to MinIO directly, past the proxy.
+	at := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	goodName := backup.ObjectName(at, "scheduled")
+	badName := backup.ObjectName(at.Add(time.Hour), "manual")
 	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
 		r.Out.URL.Scheme = upstream.Scheme
 		r.Out.URL.Host = upstream.Host
 	}}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, badKey) && badKey != "" {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, badName) {
 			w.Header().Set("Content-Type", "application/xml")
 			w.WriteHeader(http.StatusForbidden)
 			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>`))
@@ -188,15 +192,11 @@ func TestS3ListMarksUnreadableObjectDamaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	at := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
-	goodName := backup.ObjectName(at, "scheduled")
-	badName := backup.ObjectName(at.Add(time.Hour), "manual")
 	for name, kind := range map[string]string{goodName: "scheduled", badName: "manual"} {
 		if _, err := direct.Put(ctx, name, bytes.NewReader(backupFile(t, at, kind, "payload"))); err != nil {
 			t.Fatal(err)
 		}
 	}
-	badKey = badName
 
 	objs, err := s.List(ctx)
 	if err != nil || len(objs) != 2 {
