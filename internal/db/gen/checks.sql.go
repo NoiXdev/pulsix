@@ -13,6 +13,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countCheckCurrentForHost = `-- name: CountCheckCurrentForHost :one
+SELECT count(*) FROM check_current WHERE org_id = $1 AND host_id = $2
+`
+
+type CountCheckCurrentForHostParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// How many (check_key, item, metric) tuples one host holds, for the
+// per-host tuple cap (backlog 7.57). Served by the primary key's leading
+// host_id; ingest asks at most once per host per batch, and only when the
+// batch carries a tuple the host has never reported.
+func (q *Queries) CountCheckCurrentForHost(ctx context.Context, arg CountCheckCurrentForHostParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countCheckCurrentForHost, arg.OrgID, arg.HostID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createCheckDefinition = `-- name: CreateCheckDefinition :one
 INSERT INTO check_definitions (
   id, org_id, key, plugin, params, interval_seconds, enabled, origin, binding_kind, group_id, host_id
@@ -430,6 +450,49 @@ func (q *Queries) SeriesForHost(ctx context.Context, arg SeriesForHostParams) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateCheckCurrent = `-- name: UpdateCheckCurrent :execrows
+UPDATE check_current SET
+  value = $1, label = $2, at = $3, error = $4
+WHERE org_id = $5 AND host_id = $6
+  AND check_key = $7 AND item = $8 AND metric = $9
+`
+
+type UpdateCheckCurrentParams struct {
+	Value    *float64  `json:"value"`
+	Label    *string   `json:"label"`
+	At       time.Time `json:"at"`
+	Error    *string   `json:"error"`
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+}
+
+// The existing-tuple half of ingest (backlog 7.57): replaces an existing
+// row wholesale, exactly like UpsertCheckCurrent's conflict arm, and
+// reports 0 rows for a tuple the host has never reported. Only a tuple
+// that is new to the host counts against the per-host tuple cap, so ingest
+// tries this first and reaches for the cap and UpsertCheckCurrent only on
+// 0. The primary key's leading host_id makes it one index probe.
+func (q *Queries) UpdateCheckCurrent(ctx context.Context, arg UpdateCheckCurrentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateCheckCurrent,
+		arg.Value,
+		arg.Label,
+		arg.At,
+		arg.Error,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+		arg.Metric,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateCheckDefinition = `-- name: UpdateCheckDefinition :one

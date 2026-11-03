@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -186,5 +187,163 @@ func TestGroupStoreGenericErrorsSurface(t *testing.T) {
 	}
 	if err := st.Delete(canceled, org, g.ID); err == nil || errors.Is(err, checks.ErrNotFound) {
 		t.Fatalf("Delete on a canceled context = %v, want a plain wrapped error", err)
+	}
+}
+
+// seedTuples writes n distinct check_current tuples for host straight into
+// the table (seed/item-1..n/m), the cheapest way to put a host at the
+// per-host tuple cap without sending four batches of observations.
+func seedTuples(t *testing.T, d *db.DB, org, host uuid.UUID, n int) {
+	t.Helper()
+	if _, err := d.Pool().Exec(ctx, `
+		INSERT INTO check_current (org_id, host_id, check_key, item, metric, value, at)
+		SELECT $1, $2, 'seed', 'item-' || g, 'm', 1, now() FROM generate_series(1, $3::int) g`,
+		org, host, n); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// tupleCount is how many check_current rows host has.
+func tupleCount(t *testing.T, d *db.DB, host uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM check_current WHERE host_id = $1`, host).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// sampleCount is how many check_samples rows host has for one tuple.
+func sampleCount(t *testing.T, d *db.DB, host uuid.UUID, key, item, metric string) int {
+	t.Helper()
+	var n int
+	if err := d.Pool().QueryRow(ctx, `
+		SELECT count(*) FROM check_samples WHERE host_id = $1 AND check_key = $2 AND item = $3 AND metric = $4`,
+		host, key, item, metric).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestRecordObservationsCapsNewTuplesPerHost is backlog 7.57: nothing
+// prunes check_current, so a host's agent could otherwise grow its tuple
+// set by a thousand rows per batch without end. A host already holding
+// MaxTuplesPerHost tuples gets no new one: neither a check_current row nor
+// a sample, and the observation is counted as OverCap.
+func TestRecordObservationsCapsNewTuplesPerHost(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-tuple-cap")
+	host := seedHost(t, d, org, "tuple-cap-host")
+	seedTuples(t, d, org, host, checks.MaxTuplesPerHost)
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now))
+	scoped := db.WithOrgScope(ctx, org)
+
+	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(1)},
+		{HostID: host, CheckKey: "cpu", Metric: "errors", At: now, Err: "boom"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 0 || res.OverCap != 2 || res.Rejected() != 2 {
+		t.Fatalf("ingest = %+v, want both new tuples counted over the cap and nothing accepted", res)
+	}
+	if got := tupleCount(t, d, host); got != checks.MaxTuplesPerHost {
+		t.Fatalf("host has %d tuples, want it to stay at the cap %d", got, checks.MaxTuplesPerHost)
+	}
+	if got := sampleCount(t, d, host, "cpu", "", "usage"); got != 0 {
+		t.Fatalf("over-cap tuple stored %d samples, want none", got)
+	}
+	if _, marked := cursorDirtyAt(t, d, host); marked {
+		t.Fatal("a batch that stored nothing marked the host dirty")
+	}
+}
+
+// TestRecordObservationsAdmitsNewTuplesUpToTheCap: one below the cap, the
+// first new tuple of a batch is admitted (the host then holds exactly
+// MaxTuplesPerHost) and a second one is not. A repeat of the admitted tuple
+// later in the same batch is an existing tuple by then and still lands.
+func TestRecordObservationsAdmitsNewTuplesUpToTheCap(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-tuple-cap-edge")
+	host := seedHost(t, d, org, "tuple-cap-edge-host")
+	seedTuples(t, d, org, host, checks.MaxTuplesPerHost-1)
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now))
+	scoped := db.WithOrgScope(ctx, org)
+
+	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now.Add(-time.Second), Value: f64(1)},
+		{HostID: host, CheckKey: "cpu", Metric: "load1", At: now, Value: f64(2)},
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(3)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 2 || res.OverCap != 1 {
+		t.Fatalf("ingest = %+v, want 2 accepted (cpu/usage twice) and 1 over the cap (cpu/load1)", res)
+	}
+	if got := tupleCount(t, d, host); got != checks.MaxTuplesPerHost {
+		t.Fatalf("host has %d tuples, want exactly the cap %d", got, checks.MaxTuplesPerHost)
+	}
+	if got := sampleCount(t, d, host, "cpu", "", "usage"); got != 2 {
+		t.Fatalf("cpu/usage has %d samples, want 2", got)
+	}
+	if got := sampleCount(t, d, host, "cpu", "", "load1"); got != 0 {
+		t.Fatalf("cpu/load1 has %d samples, want none", got)
+	}
+	if _, marked := cursorDirtyAt(t, d, host); !marked {
+		t.Fatal("a batch that stored something did not mark the host dirty")
+	}
+}
+
+// TestRecordObservationsUpdatesExistingTuplesAtCap is Review Focus 5: a
+// host that already holds exactly the cap keeps updating the tuples it
+// has — value, label and error alike, with their samples — and another
+// host of the same organization is not affected by its neighbour's cap.
+func TestRecordObservationsUpdatesExistingTuplesAtCap(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-tuple-cap-update")
+	host := seedHost(t, d, org, "tuple-cap-full-host")
+	other := seedHost(t, d, org, "tuple-cap-other-host")
+	seedTuples(t, d, org, host, checks.MaxTuplesPerHost)
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now))
+	scoped := db.WithOrgScope(ctx, org)
+
+	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "seed", Item: "item-1", Metric: "m", At: now, Value: f64(99)},
+		{HostID: host, CheckKey: "seed", Item: "item-2", Metric: "m", At: now, Err: "boom"},
+		{HostID: other, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(7)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 3 || res.Rejected() != 0 {
+		t.Fatalf("ingest = %+v, want all 3 accepted", res)
+	}
+	current, err := svc.CurrentForHost(scoped, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byItem := map[string]checks.Current{}
+	for _, c := range current {
+		byItem[c.Item] = c
+	}
+	if c := byItem["item-1"]; c.Value == nil || *c.Value != 99 || !c.At.Equal(now) {
+		t.Fatalf("item-1 current = %+v, want value 99 at %v", c, now)
+	}
+	if c := byItem["item-2"]; c.Err != "boom" || c.Value != nil {
+		t.Fatalf("item-2 current = %+v, want the collection error", c)
+	}
+	if got := sampleCount(t, d, host, "seed", "item-1", "m"); got != 1 {
+		t.Fatalf("item-1 has %d samples, want 1", got)
+	}
+	if got := tupleCount(t, d, host); got != checks.MaxTuplesPerHost {
+		t.Fatalf("host has %d tuples, want %d", got, checks.MaxTuplesPerHost)
+	}
+	if got := sampleCount(t, d, other, "cpu", "", "usage"); got != 1 {
+		t.Fatalf("other host has %d samples, want 1", got)
 	}
 }

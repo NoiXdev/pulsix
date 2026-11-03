@@ -64,7 +64,7 @@ func TestRecordHostObservationsSavepointIsolatesAForeignKeyViolation(t *testing.
 	err = d.WithOrg(scoped, org.ID, func(tx pgx.Tx) error {
 		// The real host's own observation commits in its own savepoint
 		// first, exactly as a normal batch would.
-		ok, err := recordHostObservations(ctx, tx, org.ID, host.ID, []Observation{
+		_, ok, err := recordHostObservations(ctx, tx, org.ID, host.ID, []Observation{
 			{HostID: host.ID, CheckKey: "cpu", Metric: "usage", At: now, Value: float64Ptr(1)},
 		})
 		if err != nil || !ok {
@@ -76,7 +76,7 @@ func TestRecordHostObservationsSavepointIsolatesAForeignKeyViolation(t *testing.
 		// — and, crucially, tx itself must still be usable afterward: a
 		// savepoint failure must never abort the transaction it is
 		// nested in.
-		ok, err = recordHostObservations(ctx, tx, org.ID, missingHost, []Observation{
+		_, ok, err = recordHostObservations(ctx, tx, org.ID, missingHost, []Observation{
 			{HostID: missingHost, CheckKey: "cpu", Metric: "usage", At: now, Value: float64Ptr(2)},
 		})
 		if err != nil {

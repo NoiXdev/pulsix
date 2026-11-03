@@ -469,10 +469,11 @@ func TestCheckResultsRejectionLogNamesTheCause(t *testing.T) {
 		"accepted=0",
 		"rejected=2",
 		"rejected_unknown_host=2",
-		// The other two causes are named as well, at zero: a line that
-		// omits them cannot be read as "not the clock, not the agent".
+		// The other causes are named as well, at zero: a line that omits
+		// them cannot be read as "not the clock, not the agent".
 		"rejected_implausible_at=0",
 		"rejected_malformed=0",
+		"rejected_over_cap=0",
 	} {
 		if !strings.Contains(captured, want) {
 			t.Errorf("log does not carry %q:\n%s", want, captured)
@@ -1031,8 +1032,18 @@ func TestPushKeepsGoingAfterAnEncodeFault(t *testing.T) {
 // which is exactly right, since nothing here may reach them.
 type acceptingCheckStore struct{ checks.Store }
 
-func (acceptingCheckStore) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (int, int, error) {
-	return len(obs), 0, nil
+func (acceptingCheckStore) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (checks.Ingest, error) {
+	return checks.Ingest{Accepted: len(obs)}, nil
+}
+
+// cappedCheckStore is a checks.Store whose host is at the per-host tuple
+// cap: it accepts only the first observation of a batch and counts the rest
+// as over the cap, the way the real store answers for tuples it has never
+// seen (backlog 7.57).
+type cappedCheckStore struct{ checks.Store }
+
+func (cappedCheckStore) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (checks.Ingest, error) {
+	return checks.Ingest{Accepted: 1, OverCap: len(obs) - 1}, nil
 }
 
 // resultBatch builds n well-shaped numeric results, all for the same key.
@@ -1152,6 +1163,56 @@ func TestCheckResultsRejectionLogAttributesEachCauseSeparately(t *testing.T) {
 		"rejected_malformed=1",
 		"rejected_implausible_at=2",
 		"rejected_unknown_host=0",
+	} {
+		if !strings.Contains(captured, want) {
+			t.Errorf("log does not carry %q:\n%s", want, captured)
+		}
+	}
+}
+
+// TestCheckResultsRejectionLogNamesTheTupleCap: observations the per-host
+// tuple cap drops (backlog 7.57) are warned about once per batch, under
+// their own field and with the organization and host they belong to — the
+// remedy (narrow that host's checks, or look at what its agent invents) is
+// neither the clock, the agent build nor the enrolment.
+func TestCheckResultsRejectionLogNamesTheTupleCap(t *testing.T) {
+	h := newHarnessPort(t, true, nil, checks.NewService(cappedCheckStore{}))
+	_, client := enrollAnAgent(t, h, "web-1")
+
+	logs := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_CheckResults{CheckResults: &agentpb.CheckResults{
+		Results: []*agentpb.CheckResult{
+			checkResultValue("cpu", "", "cpu.used_pct", now, 1),
+			checkResultValue("x", "a", "m", now, 2),
+			checkResultValue("x", "b", "m", now, 3),
+		},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	if msg, err := recvWithin(t, stream, recvTimeout); err != nil || !msg.GetAck() {
+		t.Fatalf("check results ack = %+v, %v", msg, err)
+	}
+
+	captured := logs.String()
+	if n := strings.Count(captured, "agent check results partially rejected"); n != 1 {
+		t.Errorf("warned %d times, want once for the batch:\n%s", n, captured)
+	}
+	for _, want := range []string{
+		"level=WARN",
+		"accepted=1",
+		"rejected=2",
+		"rejected_over_cap=2",
+		"org_id=" + testOrg.String(),
+		"host_id=",
 	} {
 		if !strings.Contains(captured, want) {
 			t.Errorf("log does not carry %q:\n%s", want, captured)

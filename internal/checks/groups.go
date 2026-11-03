@@ -145,11 +145,12 @@ type Store interface {
 	// validated by the service (plausibility window, well-shaped
 	// value/label/err) — in one transaction: check_samples rows inserted,
 	// check_current rows upserted, both committing together. It applies
-	// exactly one rejection rule of its own: an Observation whose HostID
-	// does not belong to orgID is skipped rather than inserted, and
-	// counted in rejected instead of failing the rest of the batch.
-	// accepted + rejected == len(obs) always.
-	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error)
+	// the two rejection rules that need the database, each counted rather
+	// than failing the rest of the batch: an Observation whose HostID
+	// does not belong to orgID (UnknownHost), and one for a tuple new to
+	// a host that already holds MaxTuplesPerHost tuples (OverCap). Only
+	// Accepted, UnknownHost and OverCap are set, and they sum to len(obs).
+	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (Ingest, error)
 	// CurrentForHost returns hostID's latest known value per (check_key,
 	// item, metric). Rows are never deleted (Current's own doc comment),
 	// so an item that stopped being reported is still listed, however

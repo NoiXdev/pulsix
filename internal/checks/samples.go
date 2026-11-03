@@ -168,6 +168,19 @@ const (
 	MaxMetricLen            = 64
 )
 
+// MaxTuplesPerHost bounds the distinct (check_key, item, metric) tuples one
+// host can hold in check_current (backlog 7.57). Nothing prunes that table
+// (Current's own doc comment), check_key is never resolved against a
+// definition, and every rule evaluation of a host reads all of its tuples,
+// so without a bound one agent could grow its host's set by a thousand
+// rows per batch for as long as it stays connected. The built-in plugins
+// report a handful of metrics per mount, unit or interface, so even a host
+// with hundreds of those stays well below 4096. A tuple the host
+// already has is always updated, so reaching the cap never silences what a
+// host reports today — it only refuses tuples it has never reported
+// (Ingest.OverCap).
+const MaxTuplesPerHost = 4096
+
 // withinContract reports whether o's identifying strings are inside the
 // check-results contract's bounds. An empty item is legal — that is what
 // a whole-host metric reports — but an empty check_key or metric names
@@ -222,7 +235,7 @@ func wellShaped(o Observation) bool {
 
 // Ingest is what one RecordObservations batch did, with every rejection
 // attributed to the rule that rejected it rather than summed into one
-// number. The three causes are three different things to do about them,
+// number. The four causes are four different things to do about them,
 // and an operator reading a log line is the only consumer this milestone
 // has (there is no metrics endpoint in Pulsix yet — backlog 3.27):
 //
@@ -236,6 +249,10 @@ func wellShaped(o Observation) bool {
 //   - UnknownHost: the store recognised neither the host nor its
 //     organization. Ordinary right after a host is deleted while its
 //     agent is still connected; persistent means a stale enrolment.
+//   - OverCap: the observation names a tuple its host has never reported,
+//     and the host already holds MaxTuplesPerHost tuples. A host that
+//     legitimately reports this much needs its checks narrowed; one that
+//     keeps inventing keys is a broken or lying agent.
 //
 // Accepted + Rejected() == len(obs) always.
 type Ingest struct {
@@ -243,16 +260,18 @@ type Ingest struct {
 	Implausible int
 	Malformed   int
 	UnknownHost int
+	OverCap     int
 }
 
-// Rejected is the total across all three causes — what a caller reports
+// Rejected is the total across all four causes — what a caller reports
 // when it only has room for one number.
-func (i Ingest) Rejected() int { return i.Implausible + i.Malformed + i.UnknownHost }
+func (i Ingest) Rejected() int { return i.Implausible + i.Malformed + i.UnknownHost + i.OverCap }
 
 // RecordObservations validates and stores one ingest batch for orgID.
 // Every Observation is checked against its own shape and the plausibility
-// window; what survives is handed to the store, which applies the one
-// rejection rule that needs a database lookup — an unknown HostID. Every
+// window; what survives is handed to the store, which applies the two
+// rejection rules that need a database lookup — an unknown HostID and the
+// per-host tuple cap (MaxTuplesPerHost). Every
 // kind of rejection is counted, never turned into an error for the
 // batch: one skewed clock or one host that was deleted mid-flight must
 // never lose every other Observation in the same batch. err is non-nil
@@ -314,11 +333,11 @@ func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs [
 	// agent's own timestamps next to its own clock, and nothing persists
 	// the comparison (skew.go explains what is kept and why here).
 	s.offsets.note(valid, now)
-	accepted, unknownHost, err := s.store.RecordObservations(ctx, orgID, valid)
+	stored, err := s.store.RecordObservations(ctx, orgID, valid)
 	if err != nil {
 		return Ingest{}, fmt.Errorf("record observations: %w", err)
 	}
-	res.Accepted, res.UnknownHost = accepted, unknownHost
+	res.Accepted, res.UnknownHost, res.OverCap = stored.Accepted, stored.UnknownHost, stored.OverCap
 	return res, nil
 }
 

@@ -35,14 +35,14 @@ func fixedClock(t time.Time) checks.Option {
 // same rule). These three exist purely so *fakeStore — shared across
 // groups_test.go, definitions_test.go and resolver_test.go — keeps
 // satisfying checks.Store; no test exercises them.
-func (f *fakeStore) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (accepted, rejected int, err error) {
+func (f *fakeStore) RecordObservations(_ context.Context, _ uuid.UUID, obs []checks.Observation) (checks.Ingest, error) {
 	f.mu.Lock()
 	f.recordCalls++
 	f.mu.Unlock()
 	if f.err != nil {
-		return 0, 0, f.err
+		return checks.Ingest{}, f.err
 	}
-	return len(obs), 0, nil
+	return checks.Ingest{Accepted: len(obs)}, nil
 }
 
 // reachedStore reports how many batches actually got past the service's
@@ -634,7 +634,7 @@ func TestCheckCurrentConstraintRejectsErrorAlongsideValue(t *testing.T) {
 	st := checks.NewSQLStore(d)
 	scoped := db.WithOrgScope(context.Background(), org)
 
-	_, _, err := st.RecordObservations(scoped, org, []checks.Observation{
+	_, err := st.RecordObservations(scoped, org, []checks.Observation{
 		{HostID: host, CheckKey: "cpu", Metric: "usage", At: time.Now(), Err: "boom", Value: f64(1)},
 	})
 	if err == nil {
@@ -649,7 +649,7 @@ func TestCheckCurrentConstraintRejectsErrorAlongsideLabel(t *testing.T) {
 	st := checks.NewSQLStore(d)
 	scoped := db.WithOrgScope(context.Background(), org)
 
-	_, _, err := st.RecordObservations(scoped, org, []checks.Observation{
+	_, err := st.RecordObservations(scoped, org, []checks.Observation{
 		{HostID: host, CheckKey: "cpu", Metric: "usage", At: time.Now(), Err: "boom", Label: str("x")},
 	})
 	if err == nil {
@@ -927,7 +927,7 @@ func TestLookupIndexRejectsWhatTheContractBoundsForbid(t *testing.T) {
 	scoped := db.WithOrgScope(context.Background(), org)
 
 	big := incompressible(t, 3000)
-	_, _, err := store.RecordObservations(scoped, org, []checks.Observation{
+	_, err := store.RecordObservations(scoped, org, []checks.Observation{
 		{HostID: host, CheckKey: big, Item: big, Metric: big, At: time.Now(), Value: f64(1)},
 	})
 	if err == nil {
@@ -1132,5 +1132,15 @@ func TestRecordObservationsMarksTheHostOfACollectionError(t *testing.T) {
 	}
 	if _, marked := cursorDirtyAt(t, d, host); !marked {
 		t.Fatal("a batch of collection errors left the host's evaluation cursor unmarked")
+	}
+}
+
+// TestIngestRejectedCountsOverCap: an observation dropped by the per-host
+// tuple cap is a rejection like the other three, so Accepted + Rejected()
+// still adds up to the batch and the agent stream's warning fires for it.
+func TestIngestRejectedCountsOverCap(t *testing.T) {
+	res := checks.Ingest{Accepted: 1, Implausible: 2, Malformed: 3, UnknownHost: 4, OverCap: 5}
+	if got := res.Rejected(); got != 14 {
+		t.Fatalf("Rejected() = %d, want 14 (the over-cap observations included)", got)
 	}
 }

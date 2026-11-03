@@ -243,12 +243,17 @@ func toCurrent(r gen.CheckCurrent) Current {
 //
 // Before writing anything it looks up which of obs' host ids actually
 // belong to orgID (HostsExisting) and skips the rest, counting them in
-// rejected. This is deliberately a lookup-and-skip, not reliance on the
+// UnknownHost. This is deliberately a lookup-and-skip, not reliance on the
 // (org_id, host_id) foreign key on check_samples/check_current: a
 // constraint violation would abort the whole transaction on the first bad
 // row, failing every other Observation in the batch along with it — the
 // opposite of "one unknown host must not fail the rest of its batch".
-func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (accepted, rejected int, err error) {
+//
+// It also applies the per-host tuple cap (MaxTuplesPerHost): an
+// Observation for a tuple its host has never reported, arriving while the
+// host already holds the cap, is counted in OverCap and stores nothing.
+// The returned Ingest carries Accepted, UnknownHost and OverCap only.
+func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (Ingest, error) {
 	// Grouped by host, in first-seen order: each host's own rows are
 	// written inside their own savepoint (recordHostObservations), so a
 	// foreign-key violation on one host's insert can never take another
@@ -262,7 +267,8 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 		byHost[o.HostID] = append(byHost[o.HostID], o)
 	}
 
-	err = s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+	var res Ingest
+	err := s.d.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
 		q := gen.New(tx)
 		existingRows, err := q.HostsExisting(ctx, gen.HostsExistingParams{OrgID: orgID, HostIds: hostIDs})
 		if err != nil {
@@ -276,25 +282,26 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 		for _, hostID := range hostIDs {
 			hostObs := byHost[hostID]
 			if _, ok := exists[hostID]; !ok {
-				rejected += len(hostObs)
+				res.UnknownHost += len(hostObs)
 				continue
 			}
-			ok, err := recordHostObservations(ctx, tx, orgID, hostID, hostObs)
+			overCap, ok, err := recordHostObservations(ctx, tx, orgID, hostID, hostObs)
 			if err != nil {
 				return err
 			}
-			if ok {
-				accepted += len(hostObs)
-			} else {
-				rejected += len(hostObs)
+			if !ok {
+				res.UnknownHost += len(hostObs)
+				continue
 			}
+			res.Accepted += len(hostObs) - overCap
+			res.OverCap += overCap
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, 0, err
+		return Ingest{}, err
 	}
-	return accepted, rejected, nil
+	return res, nil
 }
 
 // recordHostObservations writes hostObs — all for hostID, already
@@ -309,36 +316,89 @@ func (s *SQLStore) RecordObservations(ctx context.Context, orgID uuid.UUID, obs 
 // transaction (and every other host's already-committed savepoint) left
 // untouched. Any other error is a genuine store failure and propagates,
 // aborting the whole batch — the same posture every other unexpected
-// store error already has.
-func recordHostObservations(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, hostObs []Observation) (ok bool, err error) {
+// store error already has. overCap is how many of hostObs the per-host
+// tuple cap dropped (writeHostObservations).
+func recordHostObservations(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, hostObs []Observation) (overCap int, ok bool, err error) {
 	sp, err := tx.Begin(ctx)
 	if err != nil {
-		return false, fmt.Errorf("begin host savepoint: %w", err)
+		return 0, false, fmt.Errorf("begin host savepoint: %w", err)
 	}
-	q := gen.New(sp)
+	overCap, err = writeHostObservations(ctx, gen.New(sp), orgID, hostID, hostObs)
+	if err != nil {
+		_ = sp.Rollback(ctx)
+		if db.IsForeignKeyViolation(err) {
+			return 0, false, nil
+		}
+		return 0, false, err
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return 0, false, fmt.Errorf("commit host savepoint: %w", err)
+	}
+	return overCap, true, nil
+}
+
+// writeHostObservations is recordHostObservations' body inside the
+// savepoint; the caller rolls back on any error.
+//
+// The per-host tuple cap (backlog 7.57): check_current is never pruned
+// (Current's own doc comment), and every rule evaluation of a host reads
+// all of its tuples, so a host may hold at most MaxTuplesPerHost of them.
+// Each Observation first updates its tuple in place; only when that finds
+// no row is the tuple new to the host, and only then is the host's tuple
+// count read — once per batch, and never on the steady-state path where an
+// agent keeps reporting what it already reported. A new tuple is admitted
+// while the count stays at or under the cap; past it, the Observation
+// stores nothing at all (no current row, no sample) and is counted in
+// overCap. A tuple that already exists is always written, so a host at the
+// cap keeps reporting everything it has. Two batches for the same host
+// running concurrently each count on their own, so they can together pass
+// the cap by at most one batch's worth of new tuples — a bound, not an
+// exact limit, which is all the cap is for.
+func writeHostObservations(ctx context.Context, q *gen.Queries, orgID, hostID uuid.UUID, hostObs []Observation) (overCap int, err error) {
+	tuples := -1 // not counted yet
 	for _, o := range hostObs {
+		updated, err := q.UpdateCheckCurrent(ctx, gen.UpdateCheckCurrentParams{
+			OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
+			Value: o.Value, Label: o.Label, At: o.At, Error: errPtr(o.Err),
+		})
+		if err != nil {
+			return 0, fmt.Errorf("update check current: %w", err)
+		}
+		if updated == 0 {
+			if tuples < 0 {
+				n, err := q.CountCheckCurrentForHost(ctx, gen.CountCheckCurrentForHostParams{OrgID: orgID, HostID: hostID})
+				if err != nil {
+					return 0, fmt.Errorf("count check current: %w", err)
+				}
+				tuples = int(n)
+			}
+			if tuples >= MaxTuplesPerHost {
+				overCap++
+				continue
+			}
+			// An upsert rather than a plain insert: another batch for the
+			// same host may have created the tuple since the update above.
+			if err := q.UpsertCheckCurrent(ctx, gen.UpsertCheckCurrentParams{
+				OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
+				Value: o.Value, Label: o.Label, At: o.At, Error: errPtr(o.Err),
+			}); err != nil {
+				return 0, fmt.Errorf("upsert check current: %w", err)
+			}
+			tuples++
+		}
 		if o.Err == "" {
 			if err := q.InsertCheckSample(ctx, gen.InsertCheckSampleParams{
 				At: o.At, OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
 				Value: o.Value, Label: o.Label,
 			}); err != nil {
-				_ = sp.Rollback(ctx)
-				if db.IsForeignKeyViolation(err) {
-					return false, nil
-				}
-				return false, fmt.Errorf("insert check sample: %w", err)
+				return 0, fmt.Errorf("insert check sample: %w", err)
 			}
 		}
-		if err := q.UpsertCheckCurrent(ctx, gen.UpsertCheckCurrentParams{
-			OrgID: orgID, HostID: o.HostID, CheckKey: o.CheckKey, Item: o.Item, Metric: o.Metric,
-			Value: o.Value, Label: o.Label, At: o.At, Error: errPtr(o.Err),
-		}); err != nil {
-			_ = sp.Rollback(ctx)
-			if db.IsForeignKeyViolation(err) {
-				return false, nil
-			}
-			return false, fmt.Errorf("upsert check current: %w", err)
-		}
+	}
+	if overCap == len(hostObs) {
+		// Nothing was stored, so there is nothing for the rule engine to
+		// judge (MarkHostDirty below).
+		return overCap, nil
 	}
 	// The evaluation mark (v0.3b-2 spec, "Trigger"): one single-row upsert
 	// per host per batch, telling the rule engine's ticker that this host
@@ -353,16 +413,9 @@ func recordHostObservations(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.U
 	// internal/rules; this is a call to a generated query, not a dependency
 	// on that package (see samples.go's own note).
 	if err := q.MarkHostDirty(ctx, gen.MarkHostDirtyParams{OrgID: orgID, HostID: hostID}); err != nil {
-		_ = sp.Rollback(ctx)
-		if db.IsForeignKeyViolation(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("mark host dirty: %w", err)
+		return 0, fmt.Errorf("mark host dirty: %w", err)
 	}
-	if err := sp.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit host savepoint: %w", err)
-	}
-	return true, nil
+	return overCap, nil
 }
 
 // CurrentForHost returns hostID's latest known value per (check_key,

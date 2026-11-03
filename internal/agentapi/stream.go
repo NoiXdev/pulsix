@@ -240,11 +240,13 @@ var errCheckResultsRejected = errors.New("check results rejected")
 // guessing it: one bad result must not cost the agent its connection or
 // the rest of the batch its data.
 //
-// The log line names WHICH rule rejected what, because the three have
+// The log line names WHICH rule rejected what, because the four have
 // nothing in common as remedies: an implausible timestamp is the host's
 // clock (NTP), a malformed shape is a broken agent build, an unknown host
-// is a stale enrolment. A single "rejected" count sends whoever reads it
-// looking in all three places. This is a log line and not a counter
+// is a stale enrolment, and an observation over the per-host tuple cap
+// (checks.MaxTuplesPerHost) is a host whose checks report too many items
+// or an agent inventing keys. A single "rejected" count sends whoever
+// reads it looking in all four places. This is a log line and not a counter
 // because Pulsix has no metrics endpoint at all yet (backlog 3.27) —
 // naming the cause is what can be done here without inventing one.
 func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIdentity, results *agentpb.CheckResults) error {
@@ -298,11 +300,12 @@ func (s *Service) recordCheckResults(ctx context.Context, agent agents.AgentIden
 			msg = "agent check results rejected in full"
 		}
 		slog.WarnContext(ctx, msg,
-			"serial", agent.Serial, "host_id", agent.HostID,
+			"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID,
 			"accepted", res.Accepted, "rejected", res.Rejected(),
 			"rejected_implausible_at", res.Implausible,
 			"rejected_malformed", res.Malformed,
-			"rejected_unknown_host", res.UnknownHost)
+			"rejected_unknown_host", res.UnknownHost,
+			"rejected_over_cap", res.OverCap)
 	} else {
 		slog.DebugContext(ctx, "agent check results recorded",
 			"serial", agent.Serial, "host_id", agent.HostID, "accepted", res.Accepted)

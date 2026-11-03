@@ -82,6 +82,25 @@ VALUES (
 ON CONFLICT (host_id, check_key, item, metric) DO UPDATE SET
   value = EXCLUDED.value, label = EXCLUDED.label, at = EXCLUDED.at, error = EXCLUDED.error;
 
+-- name: UpdateCheckCurrent :execrows
+-- The existing-tuple half of ingest (backlog 7.57): replaces an existing
+-- row wholesale, exactly like UpsertCheckCurrent's conflict arm, and
+-- reports 0 rows for a tuple the host has never reported. Only a tuple
+-- that is new to the host counts against the per-host tuple cap, so ingest
+-- tries this first and reaches for the cap and UpsertCheckCurrent only on
+-- 0. The primary key's leading host_id makes it one index probe.
+UPDATE check_current SET
+  value = sqlc.arg(value), label = sqlc.arg(label), at = sqlc.arg(at), error = sqlc.arg(error)
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+  AND check_key = sqlc.arg(check_key) AND item = sqlc.arg(item) AND metric = sqlc.arg(metric);
+
+-- name: CountCheckCurrentForHost :one
+-- How many (check_key, item, metric) tuples one host holds, for the
+-- per-host tuple cap (backlog 7.57). Served by the primary key's leading
+-- host_id; ingest asks at most once per host per batch, and only when the
+-- batch carries a tuple the host has never reported.
+SELECT count(*) FROM check_current WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
+
 -- name: ListCheckCurrent :many
 -- Every current row for one host, disappeared items included (they are
 -- never deleted — check_current's own doc comment) — ordering is only for
