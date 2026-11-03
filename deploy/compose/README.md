@@ -28,6 +28,26 @@ named volume `pulsix-db`, so it survives `docker compose down` (but not
 On first start, visit `PULSIX_PUBLIC_URL` in a browser: a fresh instance
 with no administrator yet redirects to the setup wizard.
 
+The wizard's first step asks for the **setup token**, so whoever reaches a
+fresh instance before you cannot claim it. The token is derived from
+`PULSIX_MASTER_KEY` (it stays the same across restarts) and is only needed
+until setup is completed. While setup is not completed, the manager logs
+it at every start, together with a link that opens the wizard with the
+token already filled in:
+
+```sh
+docker compose logs manager | grep -i "setup token"
+```
+
+Or print the token and the link on demand:
+
+```sh
+docker compose run --rm cli setup-token
+```
+
+Once setup is completed, the manager no longer logs a token and
+`setup-token` says that none is needed.
+
 ## The worker
 
 Jobs (playbook runs, ad-hoc commands, connection tests, bootstrap, key
