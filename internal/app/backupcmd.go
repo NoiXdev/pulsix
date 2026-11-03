@@ -55,7 +55,7 @@ func RunBackup(ctx context.Context, cfg config.Config, opts BackupOptions, stdou
 	if err != nil {
 		return err
 	}
-	svc := backup.NewService(store, crypto.NewBox(cfg.MasterKey), backupDump(d, cfg.MasterKey),
+	svc := backup.NewService(store, crypto.NewBox(cfg.MasterKey), backup.HeaderKey(cfg.MasterKey), backupDump(d, cfg.MasterKey),
 		backup.StorageFor(backup.DefaultDir), noAdminMailer{}, commandVersion(cfg), time.Now,
 		// Errors reach the operator as the command's own error.
 		slog.New(slog.DiscardHandler))

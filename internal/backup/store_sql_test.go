@@ -186,7 +186,7 @@ func sqlService(t *testing.T, app *db.DB, dir string, now func() time.Time, dump
 		return backup.Dump(ctx, app.Pool(), testKey, w, opts)
 	}
 	storageFor := func(backup.Settings, string) (backup.Storage, error) { return backup.NewDirStorage(dir), nil }
-	svc := backup.NewService(backup.NewSQLStore(app), crypto.NewBox(testKey), dump, storageFor, &fakeMailer{}, "1.2.3", now, nil)
+	svc := backup.NewService(backup.NewSQLStore(app), crypto.NewBox(testKey), backup.HeaderKey(testKey), dump, storageFor, &fakeMailer{}, "1.2.3", now, nil)
 	t.Cleanup(svc.Stop)
 	return svc
 }
@@ -352,7 +352,7 @@ func TestInterruptedScheduledBackupIsRetriedAgainstTheDatabase(t *testing.T) {
 		return backup.Dump(ctx, app.Pool(), testKey, w, opts)
 	}
 	storageFor := func(backup.Settings, string) (backup.Storage, error) { return backup.NewDirStorage(dir), nil }
-	svc := backup.NewService(backup.NewSQLStore(app), crypto.NewBox(testKey), dump, storageFor, &fakeMailer{}, "1.2.3", c.Now, nil)
+	svc := backup.NewService(backup.NewSQLStore(app), crypto.NewBox(testKey), backup.HeaderKey(testKey), dump, storageFor, &fakeMailer{}, "1.2.3", c.Now, nil)
 	t.Cleanup(svc.Stop)
 	in := backup.DefaultSettings()
 	in.Enabled = true

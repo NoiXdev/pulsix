@@ -54,7 +54,7 @@ func (m backupAdminMailer) SendToInstanceAdmins(ctx context.Context, subject, bo
 // which the org_isolation_bypass policies let read every organization.
 func newBackupService(appDB *db.DB, box *crypto.Box, masterKey [32]byte, smtp backupSMTP, version string) *backup.Service {
 	store := backup.NewSQLStore(appDB)
-	return backup.NewService(store, box, backupDump(appDB, masterKey), backup.StorageFor(backup.DefaultDir),
+	return backup.NewService(store, box, backup.HeaderKey(masterKey), backupDump(appDB, masterKey), backup.StorageFor(backup.DefaultDir),
 		backupAdminMailer{admins: store, smtp: smtp}, version, time.Now, slog.Default())
 }
 

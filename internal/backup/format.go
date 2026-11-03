@@ -4,11 +4,15 @@ package backup
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"time"
+	"unicode"
 )
 
 // FormatVersion is the version of the file layout described in this package.
@@ -35,6 +39,11 @@ var (
 // Header is the only plaintext part of a backup file. It is written as JSON
 // on one line right after the magic line, so a listing can describe a file
 // without decrypting it.
+//
+// Anyone who can write to the backup destination can write a header, so a
+// header is only trusted when it is Authentic: MAC is an HMAC under a key
+// derived from the master key (HeaderKey). Backups written before headers
+// were signed carry no MAC; they stay readable but are never trusted.
 type Header struct {
 	FormatVersion   int       `json:"format_version"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -42,6 +51,52 @@ type Header struct {
 	PulsixVersion   string    `json:"pulsix_version"`
 	SchemaVersion   int64     `json:"schema_version"`
 	IncludesMetrics bool      `json:"includes_metrics"`
+	// MAC is the lowercase hex HMAC-SHA256 of the header's JSON encoding
+	// with MAC empty and FormatVersion the current one; see SignHeader.
+	MAC string `json:"mac,omitempty"`
+}
+
+// SignHeader returns h with FormatVersion set to the current one and MAC
+// computed under key (HeaderKey of the master key).
+func SignHeader(h Header, key []byte) Header {
+	h.FormatVersion = FormatVersion
+	mac, ok := headerMAC(h, key)
+	if !ok {
+		// Only a time outside JSON's range fails to encode, and WriteHeader
+		// refuses such a header anyway.
+		h.MAC = ""
+		return h
+	}
+	h.MAC = hex.EncodeToString(mac)
+	return h
+}
+
+// Authentic reports whether h carries a MAC made under key. A header
+// without one, or with one that does not decode, is not authentic.
+func (h Header) Authentic(key []byte) bool {
+	if h.MAC == "" {
+		return false
+	}
+	got, err := hex.DecodeString(h.MAC)
+	if err != nil {
+		return false
+	}
+	want, ok := headerMAC(h, key)
+	return ok && hmac.Equal(got, want)
+}
+
+// headerMAC is the HMAC-SHA256 under key of h's JSON encoding with MAC
+// empty and the current FormatVersion.
+func headerMAC(h Header, key []byte) ([]byte, bool) {
+	h.MAC = ""
+	h.FormatVersion = FormatVersion
+	msg, err := json.Marshal(h)
+	if err != nil {
+		return nil, false
+	}
+	m := hmac.New(sha256.New, key)
+	m.Write(msg)
+	return m.Sum(nil), true
 }
 
 // Manifest is the last frame of the encrypted stream. A stream without one
@@ -127,5 +182,23 @@ func ReadHeader(r io.Reader) (Header, error) {
 	if h.FormatVersion != FormatVersion {
 		return Header{}, fmt.Errorf("%w: unsupported format version %d", ErrNotABackup, h.FormatVersion)
 	}
+	// The header is not authenticated here, and what it says ends up on an
+	// operator's screen: only values a backup can carry are accepted.
+	if h.Kind != KindScheduled && h.Kind != KindManual {
+		return Header{}, fmt.Errorf("%w: unknown backup kind %q", ErrCorrupt, h.Kind)
+	}
+	if !printable(h.PulsixVersion) {
+		return Header{}, fmt.Errorf("%w: the Pulsix version %q is not printable", ErrCorrupt, h.PulsixVersion)
+	}
 	return h, nil
+}
+
+// printable reports whether every rune of s is a printable character.
+func printable(s string) bool {
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
 }

@@ -43,6 +43,10 @@ type Object struct {
 	// HeaderErr is why the header could not be read: the file is not a
 	// backup, or is damaged. Such an object is still listed.
 	HeaderErr error
+	// Verified is set by MarkVerified: the header is authentic under this
+	// instance's header key and agrees with the object's name. Only a
+	// verified object is known to be a backup this instance wrote.
+	Verified bool
 }
 
 // created is the object's creation time and kind, from the header when it

@@ -311,9 +311,11 @@ func (m *memStorage) deletedNames() []string {
 
 // fakeDump writes a header and a short payload, or fails with err.
 type fakeDump struct {
-	mu    sync.Mutex
-	calls []backup.DumpOptions
-	err   error
+	// headerKey signs the header, as Dump does with the master key's.
+	headerKey []byte
+	mu        sync.Mutex
+	calls     []backup.DumpOptions
+	err       error
 	// block, when set, makes the dump wait for its context to end.
 	block  bool
 	panics bool
@@ -328,6 +330,7 @@ func (d *fakeDump) dump(ctx context.Context, w io.Writer, opts backup.DumpOption
 		panic("fake dump")
 	}
 	h := backup.Header{CreatedAt: opts.Now().UTC(), Kind: opts.Kind, PulsixVersion: opts.PulsixVersion, IncludesMetrics: opts.IncludeMetrics}
+	h = backup.SignHeader(h, d.headerKey)
 	if err := backup.WriteHeader(w, h); err != nil {
 		return backup.Header{}, err
 	}
@@ -387,6 +390,9 @@ func (c *clock) Set(t time.Time) {
 	c.now = t
 }
 
+// harnessKey is the master key of the harness's service.
+var harnessKey = [32]byte{9}
+
 // harness is a Service over fakes.
 type harness struct {
 	svc     *backup.Service
@@ -404,7 +410,7 @@ var errStorageConfig = errors.New("storage config refused")
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
-		store: newFakeStore(), storage: newMemStorage(), dump: &fakeDump{}, mailer: &fakeMailer{},
+		store: newFakeStore(), storage: newMemStorage(), dump: &fakeDump{headerKey: backup.HeaderKey(harnessKey)}, mailer: &fakeMailer{},
 		clock: &clock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)},
 	}
 	storageFor := func(s backup.Settings, secret string) (backup.Storage, error) {
@@ -414,7 +420,7 @@ func newHarness(t *testing.T) *harness {
 		}
 		return h.storage, nil
 	}
-	h.svc = backup.NewService(h.store, crypto.NewBox([32]byte{9}), h.dump.dump, storageFor, h.mailer, "1.2.3", h.clock.Now, nil)
+	h.svc = backup.NewService(h.store, crypto.NewBox(harnessKey), backup.HeaderKey(harnessKey), h.dump.dump, storageFor, h.mailer, "1.2.3", h.clock.Now, nil)
 	t.Cleanup(h.svc.Stop)
 	return h
 }

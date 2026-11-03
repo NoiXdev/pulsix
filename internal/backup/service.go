@@ -142,6 +142,9 @@ type Entry struct {
 	Size          int64
 	State         string
 	Error         string
+	// Verified is true for a stored backup whose header is authentic and
+	// matches its name (MarkVerified); false for every other entry.
+	Verified bool
 }
 
 // Service runs backups: on demand, on the daily schedule (RunDue, driven by
@@ -150,6 +153,7 @@ type Entry struct {
 type Service struct {
 	store      Store
 	box        *crypto.Box
+	headerKey  []byte
 	dump       DumpFunc
 	storageFor func(Settings, string) (Storage, error)
 	mailer     AdminMailer
@@ -166,11 +170,12 @@ type Service struct {
 	stopped bool
 }
 
-// NewService builds the service. storageFor opens the destination the
-// settings describe, given the S3 secret in the clear; version is the
-// Pulsix version written into every backup. A nil now is time.Now and a nil
-// log slog.Default.
-func NewService(store Store, box *crypto.Box, dump DumpFunc, storageFor func(Settings, string) (Storage, error), mailer AdminMailer, version string, now func() time.Time, log *slog.Logger) *Service {
+// NewService builds the service. headerKey is HeaderKey of the master key
+// the dump encrypts under; listings mark the backups it authenticates as
+// verified. storageFor opens the destination the settings describe, given
+// the S3 secret in the clear; version is the Pulsix version written into
+// every backup. A nil now is time.Now and a nil log slog.Default.
+func NewService(store Store, box *crypto.Box, headerKey []byte, dump DumpFunc, storageFor func(Settings, string) (Storage, error), mailer AdminMailer, version string, now func() time.Time, log *slog.Logger) *Service {
 	if now == nil {
 		now = time.Now
 	}
@@ -179,7 +184,7 @@ func NewService(store Store, box *crypto.Box, dump DumpFunc, storageFor func(Set
 	}
 	bg, cancel := context.WithCancel(context.Background())
 	return &Service{
-		store: store, box: box, dump: dump, storageFor: storageFor, mailer: mailer, version: version, now: now, log: log,
+		store: store, box: box, headerKey: headerKey, dump: dump, storageFor: storageFor, mailer: mailer, version: version, now: now, log: log,
 		bg: bg, cancel: cancel,
 	}
 }

@@ -16,6 +16,10 @@ import (
 // backup undecryptable.
 const keyInfo = "pulsix backup v1"
 
+// headerKeyInfo labels the HKDF derivation of the header MAC key. Changing it
+// makes every existing backup unverified.
+const headerKeyInfo = "pulsix backup header v1"
+
 // scryptWorkFactor is age's scrypt cost (log2 N). The passphrase is already
 // a 256-bit derived key, so the work factor only needs to be cheap enough for
 // a restore, not strong enough to slow guessing.
@@ -30,6 +34,18 @@ func DeriveKey(masterKey [32]byte) string {
 		panic(fmt.Sprintf("derive backup key: %v", err))
 	}
 	return hex.EncodeToString(okm)
+}
+
+// HeaderKey returns the key that signs backup headers (SignHeader):
+// HKDF-SHA256(masterKey, no salt, "pulsix backup header v1", 32 bytes),
+// independent of the encryption key DeriveKey returns.
+func HeaderKey(masterKey [32]byte) []byte {
+	okm, err := hkdf.Key(sha256.New, masterKey[:], nil, headerKeyInfo, 32)
+	if err != nil {
+		// Only a malformed length or hash can fail, and both are constants.
+		panic(fmt.Sprintf("derive backup header key: %v", err))
+	}
+	return okm
 }
 
 // Encrypt returns a writer that gzips what is written and encrypts the

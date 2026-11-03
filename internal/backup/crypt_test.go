@@ -3,6 +3,7 @@ package backup
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"regexp"
@@ -155,5 +156,22 @@ func TestDeriveKeyIsStableAndLabelled(t *testing.T) {
 	const golden = "8332e9b02b286cbae0ee6318069acc044eb1692638b58bef54c67404ccdf039a"
 	if got != golden {
 		t.Errorf("DeriveKey = %s, want %s", got, golden)
+	}
+}
+
+func TestHeaderKeyDiffersFromBackupKey(t *testing.T) {
+	hk := HeaderKey(keyOne)
+	if len(hk) != 32 {
+		t.Fatalf("HeaderKey is %d bytes, want 32", len(hk))
+	}
+	backupKey, err := hex.DecodeString(DeriveKey(keyOne))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(hk, backupKey) {
+		t.Fatal("HeaderKey equals the backup encryption key")
+	}
+	if bytes.Equal(hk, HeaderKey(keyTwo)) {
+		t.Fatal("HeaderKey is the same for two master keys")
 	}
 }

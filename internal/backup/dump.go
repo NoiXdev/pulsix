@@ -25,8 +25,8 @@ type DumpOptions struct {
 }
 
 // Dump writes a complete backup of pool's database to w: the plaintext
-// header, then every public table's rows and every sequence's state,
-// encrypted under masterKey.
+// header, signed under HeaderKey(masterKey), then every public table's rows
+// and every sequence's state, encrypted under masterKey.
 //
 // Everything is read in one REPEATABLE READ READ ONLY transaction, so the
 // backup is one consistent snapshot. pool may be the schema owner or
@@ -65,6 +65,9 @@ func Dump(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, w io.Writ
 		SchemaVersion:   version,
 		IncludesMetrics: opts.IncludeMetrics,
 	}
+	// The manifest repeats the signed header, MAC included, so Verify finds
+	// both copies equal.
+	h = SignHeader(h, HeaderKey(masterKey))
 	if err := WriteHeader(w, h); err != nil {
 		return Header{}, fmt.Errorf("dump: %w", err)
 	}

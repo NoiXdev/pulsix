@@ -708,7 +708,7 @@ func (s *Server) NewBackups(dir string, dump backup.DumpFunc) *backup.Service {
 	if dump == nil {
 		dump = s.DumpBackup
 	}
-	svc := backup.NewService(backup.NewSQLStore(s.DB), crypto.NewBox(testMasterKey), dump, backup.StorageFor(dir),
+	svc := backup.NewService(backup.NewSQLStore(s.DB), crypto.NewBox(testMasterKey), backup.HeaderKey(testMasterKey), dump, backup.StorageFor(dir),
 		noBackupMail{}, "test", time.Now, nil)
 	s.T.Cleanup(svc.Stop)
 	return svc

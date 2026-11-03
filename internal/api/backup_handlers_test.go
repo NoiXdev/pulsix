@@ -33,6 +33,7 @@ type backupItemDTO struct {
 	SizeBytes     int64   `json:"size_bytes"`
 	State         string  `json:"state"`
 	Error         string  `json:"error"`
+	Verified      bool    `json:"verified"`
 }
 
 type backupListDTO struct {

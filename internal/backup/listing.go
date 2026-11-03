@@ -28,6 +28,7 @@ func (s *Service) List(ctx context.Context) ([]Entry, error) {
 	if listErr == nil {
 		objs, listErr = st.List(ctx)
 	}
+	MarkVerified(objs, s.headerKey)
 	entries := merge(attempts, objs)
 	if listErr != nil {
 		return entries, fmt.Errorf("%w: %w", ErrStorageUnavailable, listErr)
@@ -84,7 +85,7 @@ func objectEntry(o Object) Entry {
 	}
 	return Entry{
 		Name: o.Name, CreatedAt: o.Header.CreatedAt, Kind: o.Header.Kind, PulsixVersion: o.Header.PulsixVersion,
-		Size: o.Size, State: StateSucceeded,
+		Size: o.Size, State: StateSucceeded, Verified: o.Verified,
 	}
 }
 
@@ -98,6 +99,7 @@ func (s *Service) find(ctx context.Context, name string) (Storage, Object, error
 	if err != nil {
 		return nil, Object{}, fmt.Errorf("list backups: %w", err)
 	}
+	MarkVerified(objs, s.headerKey)
 	for _, o := range objs {
 		if o.Name == name {
 			return st, o, nil
@@ -163,4 +165,23 @@ func (s *Service) Status(ctx context.Context) (nextRun *time.Time, destination s
 		return nextRun, "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
 	return nextRun, st.Describe(), nil
+}
+
+// MarkVerified sets each object's Verified: its header was read, is
+// Authentic under key (HeaderKey of the master key), and the object's name
+// is the one ObjectName gives that header's kind and creation time. The
+// name carries whole seconds, so the header's time counts truncated to the
+// second. An object copied under another name stays unverified.
+func MarkVerified(objs []Object, key []byte) {
+	for i := range objs {
+		o := &objs[i]
+		o.Verified = o.HeaderErr == nil && o.Header.Authentic(key) && namedAfterHeader(*o)
+	}
+}
+
+// namedAfterHeader reports whether o's name matches its header's kind and
+// creation time.
+func namedAfterHeader(o Object) bool {
+	at, kind, ok := ParseObjectName(o.Name)
+	return ok && kind == o.Header.Kind && at.Equal(o.Header.CreatedAt.UTC().Truncate(time.Second))
 }

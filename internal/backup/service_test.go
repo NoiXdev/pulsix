@@ -504,11 +504,13 @@ func TestListMergesAttemptsAndObjects(t *testing.T) {
 		t.Errorf("failed entry = %+v", failed)
 	}
 	if mine.Name != manual.Name || mine.State != backup.StateSucceeded || mine.Kind != backup.KindManual ||
-		mine.Actor == nil || *mine.Actor != actor || mine.ActorName != "Ada" || mine.PulsixVersion != "1.2.3" || mine.Size == 0 {
+		mine.Actor == nil || *mine.Actor != actor || mine.ActorName != "Ada" || mine.PulsixVersion != "1.2.3" || mine.Size == 0 ||
+		!mine.Verified {
 		t.Errorf("manual entry = %+v", mine)
 	}
 	if other.Name != foreign || other.State != backup.StateSucceeded || other.Kind != backup.KindScheduled ||
-		other.Actor != nil || other.PulsixVersion != "0.9.0" || !other.CreatedAt.Equal(time.Date(2026, 10, 31, 3, 0, 0, 0, time.UTC)) {
+		other.Actor != nil || other.PulsixVersion != "0.9.0" || !other.CreatedAt.Equal(time.Date(2026, 10, 31, 3, 0, 0, 0, time.UTC)) ||
+		other.Verified {
 		t.Errorf("foreign entry = %+v", other)
 	}
 }

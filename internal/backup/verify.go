@@ -13,8 +13,10 @@ import (
 // header equals the header inside the manifest. It changes nothing, so a
 // restore runs it before it drops anything.
 //
-// The plaintext header is not authenticated; only the manifest's copy is.
-// Callers decide on the returned Manifest.Header, never on ReadHeader's.
+// Verify does not check the plaintext header's MAC (a backup from before
+// headers were signed has none); the encryption authenticates the
+// manifest's copy, MAC included. Callers decide on the returned
+// Manifest.Header, never on ReadHeader's.
 func Verify(r io.Reader, masterKey [32]byte) (Manifest, error) {
 	plain, err := ReadHeader(r)
 	if err != nil {
@@ -96,8 +98,11 @@ func checkTables(seen, manifest []TableCount) error {
 }
 
 // sameHeader compares two headers field by field; times compare as instants.
+// The MAC counts too: a signed backup carries it in both copies, a backup
+// from before headers were signed in neither.
 func sameHeader(a, b Header) bool {
-	return a.FormatVersion == b.FormatVersion &&
+	return a.MAC == b.MAC &&
+		a.FormatVersion == b.FormatVersion &&
 		a.CreatedAt.Equal(b.CreatedAt) &&
 		a.Kind == b.Kind &&
 		a.PulsixVersion == b.PulsixVersion &&

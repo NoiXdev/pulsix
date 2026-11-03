@@ -115,6 +115,7 @@ type backupItem struct {
 	SizeBytes     int64     `json:"size_bytes"`
 	State         string    `json:"state" enum:"running,succeeded,failed,abandoned,damaged" doc:"damaged is a stored file whose header cannot be read"`
 	Error         string    `json:"error" doc:"Why a backup failed or is damaged; empty otherwise"`
+	Verified      bool      `json:"verified" doc:"True for a stored backup this instance wrote: its header is signed with the instance's master key and matches its name. A backup from an older version, another instance, or written by anyone else is unverified"`
 }
 
 type backupListOutput struct {
@@ -276,7 +277,7 @@ func registerBackupRoutes(hapi huma.API, deps Deps) {
 func backupItemOf(e backup.Entry) backupItem {
 	it := backupItem{
 		Name: e.Name, CreatedAt: e.CreatedAt, Kind: e.Kind, ActorName: e.ActorName,
-		PulsixVersion: e.PulsixVersion, SizeBytes: e.Size, State: e.State, Error: e.Error,
+		PulsixVersion: e.PulsixVersion, SizeBytes: e.Size, State: e.State, Error: e.Error, Verified: e.Verified,
 	}
 	if e.Actor != nil {
 		id := e.Actor.String()

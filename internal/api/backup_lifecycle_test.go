@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -23,7 +24,7 @@ func TestBackupLifecycle(t *testing.T) {
 	}
 
 	b := startBackup(t, s, admin)
-	if b.State != "succeeded" || b.Kind != "manual" || b.SizeBytes <= 0 || b.PulsixVersion != "test" || b.Error != "" {
+	if b.State != "succeeded" || b.Kind != "manual" || b.SizeBytes <= 0 || b.PulsixVersion != "test" || b.Error != "" || !b.Verified {
 		t.Fatalf("backup entry = %+v", b)
 	}
 	if _, _, ok := backup.ParseObjectName(b.Name); !ok {
@@ -99,6 +100,38 @@ func TestBackupLifecycle(t *testing.T) {
 		if action != "POST createBackup" && ev.ObjectID != b.Name {
 			t.Errorf("%s object id = %q, want the backup name", action, ev.ObjectID)
 		}
+	}
+}
+
+// TestBackupListMarksUnsignedBackupsUnverified: a file whose header carries
+// no MAC (a backup from before headers were signed, or one planted in the
+// folder) is listed and downloadable, but not verified.
+func TestBackupListMarksUnsignedBackupsUnverified(t *testing.T) {
+	s := apitest.New(t)
+	admin, _ := backupAdmin(t, s)
+	at := time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC)
+	name := backup.ObjectName(at, backup.KindScheduled)
+	var buf bytes.Buffer
+	if err := backup.WriteHeader(&buf, backup.Header{CreatedAt: at, Kind: backup.KindScheduled, PulsixVersion: "0.9.0"}); err != nil {
+		t.Fatal(err)
+	}
+	buf.WriteString("payload")
+	if err := os.WriteFile(filepath.Join(s.BackupDir, name), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	list := listBackups(t, s, admin)
+	if len(list.Items) != 1 || list.Items[0].Name != name || list.Items[0].State != "succeeded" || list.Items[0].Verified {
+		t.Fatalf("items = %+v, want %s succeeded and unverified", list.Items, name)
+	}
+	resp := requestJSON(t, admin, http.MethodGet, s.HTTP.URL+backupsPath+"/"+name+"/download", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	got, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil || !bytes.Equal(got, buf.Bytes()) {
+		t.Fatalf("downloaded %q (%v), want the stored file", got, err)
 	}
 }
 
