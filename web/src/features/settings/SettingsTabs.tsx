@@ -26,7 +26,7 @@ const INACTIVE = 'border-b-2 border-transparent py-2.5 text-[13px] font-medium t
  * sidebar entries under Infrastructure now, and their routes left
  * /settings with them (router.tsx).
  *
- * "Outgoing mail", "Language" and "Shared resources" are instance-wide and
+ * "Outgoing mail", "Language", "Backups" and "Shared resources" are instance-wide and
  * shown only to instance administrators — the only callers GET
  * /admin/settings/smtp, GET /admin/settings/locale and GET
  * /admin/repos/definitions admit, respectively (v0.2f, backlog 1.41).
@@ -123,6 +123,17 @@ export function SettingsTabs({ org }: { org: string }) {
           inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
         >
           {t.language.instance.tab}
+        </Link>
+      )}
+      {me.data?.instance_admin && (
+        <Link
+          to="/o/$org/settings/backups"
+          params={{ org }}
+          role="tab"
+          activeProps={{ className: ACTIVE, 'aria-selected': true }}
+          inactiveProps={{ className: INACTIVE, 'aria-selected': false }}
+        >
+          {t.backups.tab}
         </Link>
       )}
       {me.data?.instance_admin && (

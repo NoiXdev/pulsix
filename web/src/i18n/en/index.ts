@@ -3,6 +3,7 @@ import { enActivity } from './activity.ts';
 import { enAgents } from './agents.ts';
 import { enAlerts } from './alerts.ts';
 import { enAuth } from './auth.ts';
+import { enBackups } from './backups.ts';
 import { enCalendar } from './calendar.ts';
 import { enChecks } from './checks.ts';
 import { enCommon } from './common.ts';
@@ -47,6 +48,7 @@ export const en = {
   agents: enAgents,
   alerts: enAlerts,
   auth: enAuth,
+  backups: enBackups,
   calendar: enCalendar,
   checks: enChecks,
   common: enCommon,

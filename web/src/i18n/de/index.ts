@@ -4,6 +4,7 @@ import { deActivity } from './activity.ts';
 import { deAgents } from './agents.ts';
 import { deAlerts } from './alerts.ts';
 import { deAuth } from './auth.ts';
+import { deBackups } from './backups.ts';
 import { deCalendar } from './calendar.ts';
 import { deChecks } from './checks.ts';
 import { deCommon } from './common.ts';
@@ -61,6 +62,7 @@ export const de: Messages = {
   agents: deAgents,
   alerts: deAlerts,
   auth: deAuth,
+  backups: deBackups,
   calendar: deCalendar,
   checks: deChecks,
   common: deCommon,

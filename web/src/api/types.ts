@@ -259,3 +259,8 @@ export type OncallShift = components['schemas']['OncallShiftDTO'];
 // whatever the cycle says.
 export type OncallException = components['schemas']['OncallExceptionDTO'];
 export type OncallExceptionInput = components['schemas']['OncallExceptionBody'];
+
+export type BackupSettings = components['schemas']['BackupSettingsView'];
+export type BackupSettingsInput = components['schemas']['BackupSettingsBody'];
+export type BackupList = components['schemas']['BackupListOutputBody'];
+export type BackupEntry = components['schemas']['BackupItem'];

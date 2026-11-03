@@ -17,6 +17,7 @@ import { ActivityPage } from './features/activity/ActivityPage.tsx';
 import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
 import { LanguageSettingsPage } from './features/instance/LanguageSettingsPage.tsx';
+import { BackupsPage } from './features/instance/BackupsPage.tsx';
 import { SharedResourcesPage } from './features/instance/SharedResourcesPage.tsx';
 import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
@@ -258,6 +259,10 @@ const languageRoute = createRoute({
   path: '/language',
   component: LanguageSettingsPage,
 });
+// Instance backups (backlog 7.2): destination, schedule and the list of
+// backups, for instance administrators; filed under Settings for navigation
+// only, same as mail.
+const backupsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/backups', component: BackupsPage });
 // Instance-wide shared repository definitions (v0.2f), for instance
 // administrators; filed under Settings for navigation only, same as mail
 // above (see SharedResourcesPage).
@@ -306,6 +311,7 @@ const routeTree = rootRoute.addChildren([
       legacyJumpHostsRoute,
       mailRoute,
       languageRoute,
+      backupsRoute,
       sharedResourcesRoute,
       notificationsRoute,
       alertRoutesRoute,
