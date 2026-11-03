@@ -89,6 +89,8 @@ export const enBackups = {
     fromFile: 'Restore from a downloaded file',
     fromFileHint: 'Run it in the folder that holds the downloaded file.',
     copy: 'Copy command',
+    copied: 'Copied',
+    copyManual: 'Copying is not available here. The command is selected: press Ctrl+C (Cmd+C on a Mac) to copy it.',
     note: 'The master key of the instance that made the backup must be set in PULSIX_MASTER_KEY, and the manager must be stopped first (docker compose stop manager).',
     done: 'Close',
   },

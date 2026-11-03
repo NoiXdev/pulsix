@@ -86,6 +86,8 @@ export const deBackups: Messages['backups'] = {
     fromFile: 'Aus einer heruntergeladenen Datei wiederherstellen',
     fromFileHint: 'Im Ordner ausführen, der die heruntergeladene Datei enthält.',
     copy: 'Befehl kopieren',
+    copied: 'Kopiert',
+    copyManual: 'Kopieren ist hier nicht möglich. Der Befehl ist markiert: Strg+C (Cmd+C auf dem Mac) zum Kopieren drücken.',
     note: 'Der Master-Key der Instanz, die das Backup erstellt hat, muss in PULSIX_MASTER_KEY gesetzt sein, und der Manager muss vorher gestoppt werden (docker compose stop manager).',
     done: 'Schließen',
   },

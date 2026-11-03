@@ -6,7 +6,14 @@ import { restoreCommands } from './restoreCommands.ts';
 
 const NAME = 'pulsix-20261102T030000Z-scheduled.pxbak';
 
-afterEach(() => vi.restoreAllMocks());
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+afterEach(() => {
+  vi.restoreAllMocks();
+  window.getSelection()?.removeAllRanges();
+  // A test may have removed the Clipboard API; put back what was there.
+  if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard);
+  else delete (navigator as { clipboard?: unknown }).clipboard;
+});
 
 describe('restoreCommands', () => {
   it('builds the by-name command of a folder destination, always with --replace', () => {
@@ -54,11 +61,36 @@ describe('RestoreDialog', () => {
     expect(within(dialog).getByText(/docker compose stop manager/)).toBeInTheDocument();
   });
 
-  it('copies a command to the clipboard', async () => {
+  const folder = { destination: 'folder' as const, bucket: '', prefix: '' };
+  const COMMAND = `docker compose run --rm cli restore --replace ${NAME}`;
+
+  it('copies a command to the clipboard and says so', async () => {
     const user = userEvent.setup();
     const writeText = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
-    render(<RestoreDialog name={NAME} destination={{ destination: 'folder', bucket: '', prefix: '' }} onClose={() => {}} />);
+    render(<RestoreDialog name={NAME} destination={folder} onClose={() => {}} />);
     await user.click(screen.getAllByRole('button', { name: 'Copy command' })[0]);
-    expect(writeText).toHaveBeenCalledWith(`docker compose run --rm cli restore --replace ${NAME}`);
+    expect(writeText).toHaveBeenCalledWith(COMMAND);
+    expect(await screen.findByText('Copied')).toBeInTheDocument();
+    expect(screen.queryByText(/Copying is not available/)).not.toBeInTheDocument();
+  });
+
+  it('selects the command and asks for a manual copy where there is no Clipboard API (plain HTTP)', async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+    render(<RestoreDialog name={NAME} destination={folder} onClose={() => {}} />);
+    await user.click(screen.getAllByRole('button', { name: 'Copy command' })[0]);
+    expect(await screen.findByText(/Copying is not available here/)).toBeInTheDocument();
+    expect(window.getSelection()?.toString()).toBe(COMMAND);
+    expect(screen.queryByText('Copied')).not.toBeInTheDocument();
+  });
+
+  it('falls back the same way when the browser refuses the write', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new DOMException('denied', 'NotAllowedError'));
+    render(<RestoreDialog name={NAME} destination={folder} onClose={() => {}} />);
+    await user.click(screen.getAllByRole('button', { name: 'Copy command' })[1]);
+    expect(await screen.findByText(/Copying is not available here/)).toBeInTheDocument();
+    expect(window.getSelection()?.toString()).toBe(`docker compose run --rm -T cli restore --replace --yes - < ${NAME}`);
+    expect(screen.queryByText('Copied')).not.toBeInTheDocument();
   });
 });
