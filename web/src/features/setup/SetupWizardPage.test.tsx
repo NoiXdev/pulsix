@@ -8,7 +8,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { SetupWizardPage } from './SetupWizardPage.tsx';
 
-function renderWizard({ i18n = false }: { i18n?: boolean } = {}) {
+function renderWizard({ i18n = false, path = '/setup' }: { i18n?: boolean; path?: string } = {}) {
   const rootRoute = createRootRoute();
   const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <div>ROOT</div> });
   const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: SetupWizardPage });
@@ -18,7 +18,7 @@ function renderWizard({ i18n = false }: { i18n?: boolean } = {}) {
     component: () => <div>ENROLMENT PAGE</div>,
   });
   const routeTree = rootRoute.addChildren([indexRoute, setupRoute, securityRoute]);
-  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/setup'] }) });
+  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [path] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   const tree = <RouterProvider router={router} />;
@@ -26,6 +26,8 @@ function renderWizard({ i18n = false }: { i18n?: boolean } = {}) {
     <QueryClientProvider client={qc}>{i18n ? <I18nProvider>{tree}</I18nProvider> : tree}</QueryClientProvider>,
   );
 }
+
+const TOKEN = 'H2MA-EG3P-ZM6H-4K44';
 
 /**
  * Important 2 (task-15a-report.md fix round 1): the SMTP step validated
@@ -53,7 +55,8 @@ describe('SetupWizardPage — completing the wizard with SMTP off', () => {
 
     renderWizard();
 
-    await user.type(await screen.findByLabelText('Name'), 'Root Admin');
+    await user.type(await screen.findByLabelText('Setup token'), TOKEN);
+    await user.type(screen.getByLabelText('Name'), 'Root Admin');
     await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
     await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
     await user.type(screen.getByLabelText('Repeat password'), 'correct horse battery staple');
@@ -74,7 +77,7 @@ describe('SetupWizardPage — completing the wizard with SMTP off', () => {
     await user.click(screen.getByRole('button', { name: 'Create administrator & continue' }));
 
     expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
-    expect(completeBody).toMatchObject({ admin_email: 'root@acme.io', org_slug: 'acme' });
+    expect(completeBody).toMatchObject({ admin_email: 'root@acme.io', org_slug: 'acme', setup_token: TOKEN });
     // smtp: undefined is dropped by JSON serialization the same way the
     // real request body would be — the key must be entirely absent, not
     // present with some empty/default value the hidden fields left behind.
@@ -86,7 +89,8 @@ describe('SetupWizardPage — completing the wizard with SMTP off', () => {
     mockApi({ 'GET /api/v1/setup/status': { completed: false } });
     renderWizard();
 
-    await user.type(await screen.findByLabelText('Name'), 'Root Admin');
+    await user.type(await screen.findByLabelText('Setup token'), TOKEN);
+    await user.type(screen.getByLabelText('Name'), 'Root Admin');
     await user.type(screen.getByLabelText('Email address'), 'root@acme.io');
     await user.type(screen.getByLabelText('Password'), 'correct horse battery staple');
     await user.type(screen.getByLabelText('Repeat password'), 'correct horse battery staple');
@@ -119,7 +123,8 @@ describe('the administrator password is typed twice', () => {
   it('refuses to continue when the two do not match', async () => {
     mockApi({ 'GET /api/v1/setup/status': { completed: false } });
     renderWizard();
-    await userEvent.type(await screen.findByLabelText('Name'), 'Ada');
+    await userEvent.type(await screen.findByLabelText('Setup token'), TOKEN);
+    await userEvent.type(screen.getByLabelText('Name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Email address'), 'ada@example.test');
     await userEvent.type(screen.getByLabelText('Password'), 'a-long-enough-password');
     await userEvent.type(screen.getByLabelText('Repeat password'), 'a-long-enough-passwird');
@@ -135,7 +140,8 @@ describe('the administrator password is typed twice', () => {
   it('continues when the two agree', async () => {
     mockApi({ 'GET /api/v1/setup/status': { completed: false } });
     renderWizard();
-    await userEvent.type(await screen.findByLabelText('Name'), 'Ada');
+    await userEvent.type(await screen.findByLabelText('Setup token'), TOKEN);
+    await userEvent.type(screen.getByLabelText('Name'), 'Ada');
     await userEvent.type(screen.getByLabelText('Email address'), 'ada@example.test');
     await userEvent.type(screen.getByLabelText('Password'), 'a-long-enough-password');
     await userEvent.type(screen.getByLabelText('Repeat password'), 'a-long-enough-password');
@@ -171,6 +177,7 @@ describe('the language comes first', () => {
     await pickOption(screen, 'Language', 'Deutsch');
     expect(await screen.findByLabelText('Sprache')).toBeInTheDocument();
 
+    await user.type(screen.getByLabelText('Setup-Token'), TOKEN);
     await user.type(screen.getByLabelText('Name'), 'Root Admin');
     await user.type(screen.getByLabelText('E-Mail-Adresse'), 'root@acme.io');
     await user.type(screen.getByLabelText('Passwort'), 'correct horse battery staple');
@@ -211,7 +218,8 @@ describe('the language comes first', () => {
       },
     });
     renderWizard({ i18n: true });
-    await user.type(await screen.findByLabelText('Name'), 'Root Admin');
+    await user.type(await screen.findByLabelText('Setup-Token'), TOKEN);
+    await user.type(screen.getByLabelText('Name'), 'Root Admin');
     await user.type(screen.getByLabelText('E-Mail-Adresse'), 'root@acme.io');
     await user.type(screen.getByLabelText('Passwort'), 'correct horse battery staple');
     await user.type(screen.getByLabelText('Passwort wiederholen'), 'correct horse battery staple');
@@ -224,5 +232,98 @@ describe('the language comes first', () => {
     await user.click(await screen.findByRole('button', { name: 'Administrator anlegen und fortfahren' }));
     expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
     expect(completeBody).toMatchObject({ default_locale: 'de' });
+  });
+});
+
+/** Walks the wizard from its first step to "create" with the token field
+ * left as it is (pre-filled or typed by the caller). */
+async function walkToCreate(user: ReturnType<typeof userEvent.setup>, de = false) {
+  const l = de
+    ? { email: 'E-Mail-Adresse', password: 'Passwort', repeat: 'Passwort wiederholen', next: 'Weiter', org: 'Name der Organisation', slug: 'URL-Slug', mail: 'Ausgehende E-Mails', create: 'Administrator anlegen und fortfahren' }
+    : { email: 'Email address', password: 'Password', repeat: 'Repeat password', next: 'Continue', org: 'Organization name', slug: 'URL slug', mail: 'Outgoing mail', create: 'Create administrator & continue' };
+  await user.type(screen.getByLabelText('Name'), 'Root Admin');
+  await user.type(screen.getByLabelText(l.email), 'root@acme.io');
+  await user.type(screen.getByLabelText(l.password), 'correct horse battery staple');
+  await user.type(screen.getByLabelText(l.repeat), 'correct horse battery staple');
+  await user.click(screen.getByRole('button', { name: l.next }));
+  await user.type(await screen.findByLabelText(l.org), 'Acme Hosting');
+  await user.type(screen.getByLabelText(l.slug), 'acme');
+  await user.click(screen.getByRole('button', { name: l.next }));
+  await screen.findByRole('heading', { name: l.mail });
+  await user.click(screen.getByRole('button', { name: l.next }));
+  await user.click(await screen.findByRole('button', { name: l.create }));
+}
+
+function forbidden() {
+  return new Response(
+    JSON.stringify({ detail: "the setup token does not match; it is printed in the manager's log at start" }),
+    { status: 403, headers: { 'Content-Type': 'application/json' } },
+  );
+}
+
+describe('the setup token', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('is asked for on the first step, with where to find it', async () => {
+    mockApi({ 'GET /api/v1/setup/status': { completed: false } });
+    renderWizard();
+    const field = await screen.findByLabelText('Setup token');
+    expect(field).toHaveValue('');
+    expect(screen.getByText(/manager's log/i)).toBeInTheDocument();
+    expect(screen.getByText('docker compose run --rm cli setup-token')).toBeInTheDocument();
+
+    // Required: the step does not continue without it.
+    await userEvent.type(screen.getByLabelText('Name'), 'Ada');
+    await userEvent.type(screen.getByLabelText('Email address'), 'ada@example.test');
+    await userEvent.type(screen.getByLabelText('Password'), 'a-long-enough-password');
+    await userEvent.type(screen.getByLabelText('Repeat password'), 'a-long-enough-password');
+    await userEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('required')).toBeInTheDocument();
+    expect(screen.queryByText('Create the first organization')).not.toBeInTheDocument();
+  });
+
+  it('is pre-filled from ?token= and sent with the request', async () => {
+    const user = userEvent.setup();
+    let completeBody: unknown;
+    mockApi({
+      'GET /api/v1/setup/status': { completed: false },
+      'POST /api/v1/setup/complete': (req: MockRequest) => {
+        completeBody = req.body;
+        return {};
+      },
+      'GET /api/v1/auth/me': { user: { id: 'u1', email: 'root@acme.io', display_name: 'Root' }, mfa_complete: false },
+    });
+    renderWizard({ path: `/setup?token=${TOKEN}` });
+    expect(await screen.findByLabelText('Setup token')).toHaveValue(TOKEN);
+    await walkToCreate(user);
+    expect(await screen.findByText('ENROLMENT PAGE')).toBeInTheDocument();
+    expect(completeBody).toMatchObject({ setup_token: TOKEN });
+  });
+
+  it('shows a refused token at its field on the first step', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/setup/status': { completed: false }, 'POST /api/v1/setup/complete': forbidden });
+    renderWizard({ path: '/setup?token=WRON-GTOK-ENXX-XXXX' });
+    await screen.findByLabelText('Setup token');
+    await walkToCreate(user);
+    expect(await screen.findByText(/This setup token does not match/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Setup token')).toHaveValue('WRON-GTOK-ENXX-XXXX');
+    expect(screen.getByRole('heading', { name: 'Create the instance administrator' })).toBeInTheDocument();
+  });
+
+  it('shows a refused token in German too', async () => {
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('de-DE');
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/setup/status': { completed: false },
+      'GET /api/v1/auth/me': () =>
+        new Response(JSON.stringify({ detail: 'unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } }),
+      'POST /api/v1/setup/complete': forbidden,
+    });
+    renderWizard({ i18n: true, path: '/setup?token=WRON-GTOK-ENXX-XXXX' });
+    expect(await screen.findByLabelText('Setup-Token')).toHaveValue('WRON-GTOK-ENXX-XXXX');
+    expect(screen.getByText(/Log des Managers/)).toBeInTheDocument();
+    await walkToCreate(user, true);
+    expect(await screen.findByText(/Dieses Setup-Token passt nicht/)).toBeInTheDocument();
   });
 });

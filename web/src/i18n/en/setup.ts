@@ -17,6 +17,9 @@ export const enSetup = {
     title: 'Create the instance administrator',
     name: 'Name',
     repeatPassword: 'Repeat password',
+    token: 'Setup token',
+    tokenHint: "Printed in the manager's log when it starts. To show it again, run:",
+    tokenMismatch: "This setup token does not match. Copy it again from the manager's log, or run the command below.",
   },
   org: {
     title: 'Create the first organization',

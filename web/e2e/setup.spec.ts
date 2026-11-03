@@ -1,7 +1,16 @@
 import { test, expect } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { ADMIN, ADMIN_STORAGE_STATE, ORG, SMTP, TOTP_STATE_PATH, TOTP_STEP_STATE_PATH } from './env.ts';
+import {
+  ADMIN,
+  ADMIN_STORAGE_STATE,
+  MANAGER_LOG_PATH,
+  ORG,
+  SETUP_TOKEN,
+  SMTP,
+  TOTP_STATE_PATH,
+  TOTP_STEP_STATE_PATH,
+} from './env.ts';
 import { enrolTotp } from './enrol.ts';
 
 /**
@@ -25,7 +34,11 @@ test('a fresh instance redirects to /setup, the wizard creates the instance, and
   await page.goto('/');
   await expect(page).toHaveURL(/\/setup$/);
 
-  // Step 1: instance administrator.
+  // Step 1: instance administrator. The setup token is what the manager
+  // logged at start; the suite computes the same value from the master
+  // key and checks the log carries it.
+  expect(readFileSync(MANAGER_LOG_PATH, 'utf8')).toContain(SETUP_TOKEN);
+  await page.getByLabel('Setup token', { exact: true }).fill(SETUP_TOKEN);
   await page.getByLabel('Name', { exact: true }).fill(ADMIN.name);
   await page.getByLabel('Email address', { exact: true }).fill(ADMIN.email);
   await page.getByLabel('Password', { exact: true }).fill(ADMIN.password);

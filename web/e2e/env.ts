@@ -6,6 +6,7 @@
  * from here instead of repeating literals, so the port/URL story only
  * needs to agree in one place.
  */
+import { hkdfSync } from 'node:crypto';
 import path from 'node:path';
 
 // --- Test stack ports (must match deploy/compose/docker-compose.test.yml) ---
@@ -30,6 +31,30 @@ export const DATABASE_URL = `postgres://pulsix:pulsix@localhost:${DB_PORT}/pulsi
 // the same "ab" x32 convention internal/app's own tests use for a fixture
 // key that is obviously not a real secret.
 export const MASTER_KEY = 'ab'.repeat(32);
+
+/** setupToken mirrors internal/setup.Token: HKDF-SHA256 of the master key
+ * (no salt, info "pulsix setup token v1"), 10 bytes, RFC 4648 base32
+ * without padding, grouped XXXX-XXXX-XXXX-XXXX. internal/setup's
+ * TestTokenKnownValue pins the value for this very key. */
+function setupToken(masterKeyHex: string): string {
+  const okm = new Uint8Array(hkdfSync('sha256', Buffer.from(masterKeyHex, 'hex'), Buffer.alloc(0), 'pulsix setup token v1', 10));
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = 0;
+  let value = 0;
+  let out = '';
+  for (const byte of okm) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  return out.match(/.{4}/g)!.join('-');
+}
+/** The token the setup wizard asks for on this stack (the manager also
+ * logs it at start, to MANAGER_LOG_PATH). */
+export const SETUP_TOKEN = setupToken(MASTER_KEY);
 
 export const MAILPIT_HTTP_URL = `http://localhost:${MAILPIT_HTTP_PORT}`;
 

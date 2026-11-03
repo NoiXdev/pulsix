@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -12,12 +12,17 @@ import { Select } from '../../ui/Select.tsx';
 import { useLocale, useT } from '../../i18n/useT.ts';
 import { LOCALES, LOCALE_NAMES, isLocale, type Messages } from '../../i18n/types.ts';
 import { completeSetup, refetchSetupStatus, useSetupStatus } from '../../api/hooks/useSetupStatus.ts';
+import { ApiError } from '../../api/client.ts';
 import { useRefetchMe } from '../../api/hooks/useMe.ts';
 import { useResetSession } from '../../lib/session.ts';
 import { useQueryClient } from '@tanstack/react-query';
 import { SlugField } from '../../ui/SlugField.tsx';
 
 type StepKey = 'admin' | 'org' | 'smtp' | 'mfa';
+
+/** The command that prints the setup token again (pulsix-manager
+ * setup-token in the stock compose deployment). */
+const SETUP_TOKEN_COMMAND = 'docker compose run --rm cli setup-token';
 const STEP_KEYS: readonly StepKey[] = ['admin', 'org', 'smtp', 'mfa'];
 
 // The repeat is checked here rather than on the field, because a mismatch
@@ -32,6 +37,7 @@ function wizardSchemas(t: Messages) {
   const { emailSchema, passwordSchema, setupOrgSlugSchema, smtpSchema } = schemas(t);
   const adminSchema = z
     .object({
+      setup_token: z.string().trim().min(1, t.validation.required),
       admin_email: emailSchema,
       admin_password: passwordSchema,
       admin_password_repeat: z.string().min(1, t.validation.required),
@@ -61,6 +67,10 @@ export function SetupWizardPage() {
   const resetSession = useResetSession();
   const setupStatus = useSetupStatus();
   const t = useT();
+  // The manager logs a link that carries the setup token (?token=); the
+  // field starts from it so following the link is all it takes.
+  const search = useSearch({ strict: false }) as { token?: unknown };
+  const linkToken = typeof search.token === 'string' ? search.token : '';
   const steps = STEP_KEYS.map((key) => ({ key, ...t.setup.steps[key] }));
   // The wizard's language is the one it is shown in: before setup the
   // provider starts from the browser's, and choosing another here only
@@ -88,7 +98,10 @@ export function SetupWizardPage() {
 
   const stepIndex = steps.findIndex((s) => s.key === step);
 
-  const adminForm = useForm<AdminValues>({ resolver: zodResolver(adminSchema), defaultValues: admin ?? undefined });
+  const adminForm = useForm<AdminValues>({
+    resolver: zodResolver(adminSchema),
+    defaultValues: admin ?? { setup_token: linkToken },
+  });
   const orgForm = useForm<OrgValues>({ resolver: zodResolver(orgSchema), defaultValues: org ?? undefined });
   const smtpForm = useForm<SmtpFormValues>({
     resolver: zodResolver(smtpSchema),
@@ -101,6 +114,7 @@ export function SetupWizardPage() {
     setError(null);
     try {
       await completeSetup({
+        setup_token: admin.setup_token,
         admin_email: admin.admin_email,
         admin_password: admin.admin_password,
         admin_name: admin.admin_name,
@@ -119,6 +133,13 @@ export function SetupWizardPage() {
       await Promise.all([refetchMe(), refetchSetupStatus(qc)]);
       await navigate({ to: '/account/enrol' });
     } catch (err) {
+      // A refused token belongs to the first step's field: go back there
+      // and say so next to it, rather than at the end of the wizard.
+      if (err instanceof ApiError && err.status === 403) {
+        setStep('admin');
+        adminForm.setError('setup_token', { message: t.setup.admin.tokenMismatch }, { shouldFocus: true });
+        return;
+      }
       setError(err instanceof Error ? err.message : t.setup.failed);
     } finally {
       setSubmitting(false);
@@ -190,6 +211,12 @@ export function SetupWizardPage() {
                 />
                 <span className="text-[11px] text-muted-foreground">{t.language.wizard.hint}</span>
               </div>
+              <Field id="setup_token" label={t.setup.admin.token} error={adminForm.formState.errors.setup_token?.message}>
+                <Input id="setup_token" autoComplete="off" spellCheck={false} {...adminForm.register('setup_token')} />
+                <span className="text-[11px] text-muted-foreground">
+                  {t.setup.admin.tokenHint} <code className="font-mono">{SETUP_TOKEN_COMMAND}</code>
+                </span>
+              </Field>
               <Field id="admin_name" label={t.setup.admin.name} error={adminForm.formState.errors.admin_name?.message}>
                 <Input id="admin_name" {...adminForm.register('admin_name')} />
               </Field>

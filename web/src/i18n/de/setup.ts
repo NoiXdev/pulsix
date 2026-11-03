@@ -14,6 +14,10 @@ export const deSetup: Messages['setup'] = {
     title: 'Instanzadministrator anlegen',
     name: 'Name',
     repeatPassword: 'Passwort wiederholen',
+    token: 'Setup-Token',
+    tokenHint: 'Steht beim Start im Log des Managers. Erneut anzeigen mit:',
+    tokenMismatch:
+      'Dieses Setup-Token passt nicht. Kopieren Sie es erneut aus dem Log des Managers oder führen Sie den Befehl unten aus.',
   },
   org: {
     title: 'Erste Organisation anlegen',

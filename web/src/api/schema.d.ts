@@ -5940,6 +5940,8 @@ export interface components {
             default_locale?: "en" | "de";
             org_name: string;
             org_slug: string;
+            /** @description The instance's setup token, printed in the manager's log at start while setup is not completed (also: pulsix-manager setup-token); case, spaces and dashes do not matter */
+            setup_token: string;
             smtp?: components["schemas"]["SmtpSettingsBody"];
         };
         SetupCompleteOutputBody: {
