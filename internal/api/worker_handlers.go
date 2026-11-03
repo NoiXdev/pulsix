@@ -210,6 +210,17 @@ func registerWorkerRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/worker-enrollments", func(ctx context.Context, in *enrollmentCreateInput) (*enrollmentCreateOutput, error) {
+		// Credentials do not mint credentials (backlog 7.49): a worker
+		// enrollment token mints an identity (a worker with a client certificate)
+		// that outlives whatever created it, so creating one requires an
+		// interactive, MFA-complete browser session and refuses any request
+		// that authenticated with a bearer token, whatever its scope or
+		// role. Otherwise revoking a leaked API token would leave the
+		// worker it enrolled untouched. Listing and withdrawing stay
+		// available to tokens with PermWorkersWrite.
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermWorkersWrite)
 		if err != nil {
 			return nil, err

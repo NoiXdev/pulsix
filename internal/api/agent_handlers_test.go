@@ -288,3 +288,55 @@ func TestAgentRoutesRoleMatrix(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentTokenCreateRefusesBearerToken is backlog 7.49: an enrollment
+// token is a credential that mints an identity (a host agent with a client
+// certificate) outliving whatever created it, so a pxt_ API token must not
+// mint one — otherwise revoking a leaked API token would leave the agent it
+// enrolled untouched. Listing and withdrawing stay open to the token, and
+// an MFA-complete admin session still creates.
+func TestAgentTokenCreateRefusesBearerToken(t *testing.T) {
+	f := newAgentFixture(t, "agent-token-bearer")
+	admin := f.s.SeedUser("agent-token-bearer-admin@example.test", "correct horse battery")
+	f.s.AddMember(f.org, admin, tenancy.RoleAdmin)
+	plain, _, err := f.s.Deps.Tokens.Create(context.Background(), admin, f.org, "ci", "admin", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	path := "/api/v1/orgs/agent-token-bearer/agents/tokens"
+
+	resp := bearerRequestJSON(t, f.s, http.MethodPost, path, plain, map[string]any{
+		"zone_id": f.zone.String(), "name_hint": "edge-1", "max_uses": 1, "expires_in_minutes": 60,
+	})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "interactive session required") {
+		t.Fatalf("create with a bearer token: status %d, want 403 interactive session required: %s", resp.StatusCode, body)
+	}
+	// Nothing was minted.
+	if body := mustReadBody(t, requestJSON(t, f.owner, http.MethodGet, f.base+"/agents/tokens", nil)); strings.Contains(body, "edge-1") {
+		t.Fatalf("a refused create minted a token: %s", body)
+	}
+
+	// An MFA-complete admin session still creates it.
+	resp = postJSON(t, f.s.LoginAs(admin), f.base+"/agents/tokens", map[string]any{
+		"zone_id": f.zone.String(), "name_hint": "edge-2", "max_uses": 1, "expires_in_minutes": 60,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create with an admin session: %d: %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created struct {
+		Item struct {
+			ID string `json:"id"`
+		} `json:"token_record"`
+	}
+	decodeInto(t, resp, &created)
+
+	// The bearer token still lists and withdraws.
+	resp = bearerRequest(t, f.s, http.MethodGet, path, plain)
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusOK || !strings.Contains(body, created.Item.ID) {
+		t.Fatalf("list with a bearer token: status %d: %s", resp.StatusCode, body)
+	}
+	resp = bearerRequest(t, f.s, http.MethodDelete, path+"/"+created.Item.ID, plain)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("withdraw with a bearer token: status %d: %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}

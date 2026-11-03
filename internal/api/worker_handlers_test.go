@@ -370,3 +370,57 @@ func TestWorkerRoutesCrossOrgIsolation(t *testing.T) {
 		t.Fatalf("org A's enrollment must be untouched: %s", body)
 	}
 }
+
+// TestWorkerEnrollmentCreateRefusesBearerToken is backlog 7.49: a worker
+// enrollment token mints an identity (a worker with a client certificate)
+// that outlives whatever created it, so a pxt_ API token must not mint one
+// — revoking a leaked API token would leave the worker it enrolled
+// untouched. Listing and withdrawing stay open to the token, and an
+// MFA-complete admin session still creates.
+func TestWorkerEnrollmentCreateRefusesBearerToken(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("workers-bearer-owner@example.test", "correct horse battery")
+	admin := s.SeedUser("workers-bearer-admin@example.test", "correct horse battery")
+	org := s.SeedOrg("workers-bearer", owner)
+	s.AddMember(org, admin, tenancy.RoleAdmin)
+	zones, err := s.Deps.Hosts.ListZones(db.WithOrgScope(context.Background(), org), org)
+	if err != nil || len(zones) == 0 {
+		t.Fatalf("zones: %v", err)
+	}
+	plain, _, err := s.Deps.Tokens.Create(context.Background(), admin, org, "ci", "admin", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	path := "/api/v1/orgs/workers-bearer/worker-enrollments"
+
+	resp := bearerRequestJSON(t, s, http.MethodPost, path, plain, map[string]any{"zone_id": zones[0].ID.String(), "name": "bearer-1"})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "interactive session required") {
+		t.Fatalf("create with a bearer token: status %d, want 403 interactive session required: %s", resp.StatusCode, body)
+	}
+	// Nothing was minted.
+	if body := mustReadBody(t, requestJSON(t, s.LoginAs(owner), http.MethodGet, s.HTTP.URL+path, nil)); strings.Contains(body, "bearer-1") {
+		t.Fatalf("a refused create minted an enrollment: %s", body)
+	}
+
+	// An MFA-complete admin session still creates it.
+	resp = postJSON(t, s.LoginAs(admin), s.HTTP.URL+path, map[string]any{"zone_id": zones[0].ID.String(), "name": "session-1"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create with an admin session: %d: %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var created struct {
+		Enrollment struct {
+			ID string `json:"id"`
+		} `json:"enrollment"`
+	}
+	decodeInto(t, resp, &created)
+
+	// The bearer token still lists and withdraws.
+	resp = bearerRequest(t, s, http.MethodGet, path, plain)
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusOK || !strings.Contains(body, created.Enrollment.ID) {
+		t.Fatalf("list with a bearer token: status %d: %s", resp.StatusCode, body)
+	}
+	resp = bearerRequest(t, s, http.MethodDelete, path+"/"+created.Enrollment.ID, plain)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("withdraw with a bearer token: status %d: %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}

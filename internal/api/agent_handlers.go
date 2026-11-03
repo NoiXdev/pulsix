@@ -220,6 +220,17 @@ func registerAgentRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/agents/tokens", func(ctx context.Context, in *agentTokenCreateInput) (*agentTokenCreateOutput, error) {
+		// Credentials do not mint credentials (backlog 7.49): an agent
+		// enrollment token mints an identity (a host agent with a client certificate)
+		// that outlives whatever created it, so creating one requires an
+		// interactive, MFA-complete browser session and refuses any request
+		// that authenticated with a bearer token, whatever its scope or
+		// role. Otherwise revoking a leaked API token would leave the
+		// agent it enrolled untouched. Listing and withdrawing stay
+		// available to tokens with PermAgentsWrite.
+		if _, err := requireInteractiveSession(ctx); err != nil {
+			return nil, err
+		}
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermAgentsWrite)
 		if err != nil {
 			return nil, err
