@@ -1,0 +1,1509 @@
+[
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "github-workflows/release.yml:registry-secrets-reachable-outside-release-guard",
+    "title": "Release guard and registry credentials still sit only in workflow code that the triggering tag or branch supplies",
+    "description": "Unchanged since run 2: `git log 4f9c7103..7ae1808 -- .github/workflows/release.yml .github/workflows/tag.yml` lists no commit. release.yml runs on any pushed tag matching v* (lines 9-12). On a push event GitHub runs the workflow file stored at the pushed commit, so both the guard job (lines 24-58: tagged commit must be an ancestor of origin/main, newest ci.yml run for the SHA must be green) and the release job come from a file the tag author chooses. The release job's only link to the guard is `needs: guard` (line 61). It binds no `environment:`, and no workflow under .github/workflows declares one. DOCKERHUB_USERNAME/DOCKERHUB_TOKEN (lines 118-119) and HARBOR_USERNAME/HARBOR_PASSWORD (lines 125-126) are therefore repository or organization secrets. GitHub hands those to any non-fork workflow run on any ref. A principal who can push a v* tag can point it at a commit whose release.yml drops the guard, then build and push noixdev/pulsix-manager and noixdev/pulsix-worker under the version tag and `latest` to Docker Hub and harbor.cloud.noidee.dev. The compose stack defaults every Pulsix image to `latest`: the x-manager-base anchor shared by manager and cli (deploy/compose/docker-compose.yml:15), worker-enroll (line 158) and worker (line 191). An installation that keeps the default would pull such an image into the manager, which holds the master key and DB URL, and into the worker. tag.yml (workflow_dispatch only at line 37, `contents: write` at line 46, `secrets: inherit` at line 61) can be dispatched from any branch carrying an edited copy, and the commit pin at line 60 binds only the copy that runs. Neither route adds a principal beyond 'can push a ref': any pushed branch workflow can name repository secrets directly. The guard is therefore not a security boundary against write users, only against mistakes. A secondary weakness applies even when a genuine main release.yml runs. Its CI query (lines 52-54) takes the newest ci.yml run for head_sha with no event or branch filter, and ci.yml also runs on pull_request (ci.yml:2). A pull_request run whose workflow definition comes from a writer-controlled base branch can therefore satisfy the guard for a main commit whose CI failed. Exploitability depends entirely on hosted facts. Local history has one author, noidee (all 1013 commits). Backlog 1.38 records five automatic tag.yml runs (Actions has run in this repository at some point), while backlog 7.17 says CI is disabled. Backlog 7.16 still lists 'registry secrets belong in a protected release environment' as open.",
+    "claimed_root_cause": "Release authorization is enforced only in workflow code that the triggering ref supplies: the guard job in release.yml, and tag.yml when it is dispatched from a branch. The registry push credentials are repository or organization secrets, not environment secrets behind a tag-only deployment rule or required reviewers. Any principal who can push a ref (a v* tag, or any branch carrying a workflow) can therefore reach them, and nothing outside attacker-editable YAML separates that principal from a release-authorized one. The guard's CI query also accepts a ci.yml run of any event type for the SHA.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": ".github/workflows/release.yml",
+        "line": 10,
+        "scope": "on.push.tags \"v*\" (lines 9-12)",
+        "description": "Any pushed tag matching v* starts the workflow. For push events GitHub runs the workflow definition stored at the tagged commit (GITHUB_SHA), so the tag author chooses which release.yml runs, including one without the guard job."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 39,
+        "scope": "jobs.guard (lines 24-58)",
+        "description": "The on-main check (merge-base --is-ancestor, lines 34-42) and the CI-green check (lines 44-58) live in that same tag-supplied file. The CI query at line 53 filters only on workflow file and head_sha, with no event=push or branch=main filter."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 61,
+        "scope": "jobs.release.needs",
+        "description": "The publish job's only gate is `needs: guard` in the same file. No `environment:` key is bound, so GitHub evaluates no deployment protection rule (tag pattern, reviewers) before giving the job secrets."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/tag.yml",
+        "line": 37,
+        "scope": "on.workflow_dispatch; permissions contents: write (line 46); jobs.tag secrets: inherit (line 61)",
+        "description": "workflow_dispatch runs the tag.yml copy on whichever branch the dispatcher selects, with contents: write and every repository secret. The commit pin at line 60 protects only the copy that is dispatched. This is the same principal class as a tag pusher, not a new one."
+      },
+      {
+        "kind": "sink",
+        "file": ".github/workflows/release.yml",
+        "line": 119,
+        "scope": "jobs.release: Docker Hub/Harbor login (lines 115-126) and build-push (lines 128-156)",
+        "description": "secrets.DOCKERHUB_TOKEN (line 119) and secrets.HARBOR_PASSWORD (line 126) are handed to a job with no environment. build-push-action then pushes the version tag and `latest` of pulsix-manager and pulsix-worker to Docker Hub and harbor.cloud.noidee.dev."
+      }
+    ],
+    "evidence": [
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 15,
+        "description": "The comment states the intended invariant: a tag is not evidence, a hand-pushed tag must not be trusted, and the thing that publishes does the checking. The check lives in the tag-supplied file, so it cannot hold against the tag pusher."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 63,
+        "description": "The safety argument covers fork pull requests only. It assumes any write user who creates a tag is fine, which is the assumption the guard was meant to drop."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 53,
+        "description": "The CI query `workflows/ci.yml/runs?head_sha=$SHA&per_page=1` has no event or branch filter."
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "line": 2,
+        "description": "ci.yml triggers on [push, pull_request]. A pull_request run reports the PR head as head_sha but takes its workflow definition from the merge ref, so it can satisfy the guard's query."
+      },
+      {
+        "file": ".github/workflows/tag.yml",
+        "line": 61,
+        "description": "`secrets: inherit` remains, together with workflow_dispatch (line 37) and contents: write (line 46)."
+      },
+      {
+        "file": "deploy/compose/docker-compose.yml",
+        "line": 15,
+        "description": "The x-manager-base anchor (manager and cli) uses noixdev/pulsix-manager:${PULSIX_VERSION:-latest}. worker-enroll (line 158) and worker (line 191) default to latest too, so a pushed `latest` reaches installations that keep the default."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 559,
+        "description": "Backlog 7.16 lists 'the registry secrets belong in a protected release environment (1.38)' as still open outside this repo, which confirms they are not environment-bound today."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 96,
+        "description": "Backlog 1.38 records five failed automatic tag.yml runs, so Actions has executed in this repository at some point. Backlog 7.17 (line 560) says CI is disabled, so whether Actions is enabled now is an open hosted fact."
+      }
+    ],
+    "blockers": [
+      "Hosted fact: the scope of DOCKERHUB_USERNAME, DOCKERHUB_TOKEN, HARBOR_USERNAME and HARBOR_PASSWORD. Each is a repository secret or an organization secret, and for an organization secret the repository access list matters. Source shows only that they are not environment secrets: no `environment:` key exists in any workflow.",
+      "Hosted fact: whether any principal can push a branch or a v* tag, or dispatch workflows, without being authorized to cut releases. That means collaborators, teams, and GitHub Apps or bots with write or maintain access, plus any ruleset restricting refs/tags/v* creation. Local history has a single author (1013 commits by noidee). If every writer is a release manager, the bypass is same-principal and not a vulnerability.",
+      "Hosted fact: whether GitHub Actions is currently enabled for NoiXdev/pulsix (backlog 1.38 and 7.17 conflict), and whether any installation consumes the published `latest` images.",
+      "No safe local check: demonstrating secret release to a guardless tag-supplied workflow needs a real GitHub Actions run, and this audit may not contact GitHub or publish anything."
+    ],
+    "validation_plan": {
+      "local": "No in-audit local reproduction exists, because GitHub Actions secret delivery cannot be emulated offline. Source checks already done: release.yml and tag.yml are unchanged since 4f9c7103; no workflow declares `environment:`; the guard query has no event or branch filter. Optional owner-run step, outside this audit, never against NoiXdev/pulsix or a real registry: in a throwaway personal repository with a dummy repository secret REG_TOKEN=marker, (a) commit on main a release.yml with a guard job (fail unless the commit is on main) and a release job that prints only the length or sha256 of REG_TOKEN. Commit a guardless copy on a side branch, push tag v0.0.0-test at that commit, and observe the release job reading the secret. (b) Move REG_TOKEN into an environment `release` whose deployment rule allows only v* tags, with a tag ruleset restricting creation to a maintainer, and add `environment: release`. Repeat and observe that the secret is withheld or the job waits for review.",
+      "deployment": "Owner-observed only. Push no tag and no image. (1) In NoiXdev/pulsix Settings > Secrets and variables > Actions, and in the NoiXdev organization equivalent, record whether the four registry secrets are repository or organization secrets. For organization secrets, record which repositories can use them. (2) In Settings > Collaborators and teams and in the installed GitHub Apps, list every principal with write or maintain access. In Settings > Rules, check whether any ruleset restricts creating refs/tags/v* and who may bypass it. (3) Confirm whether Actions is enabled for the repository. The finding holds if the secrets are repository- or organization-scoped and any write principal or app is not meant to release. Fix: create a `release` environment whose deployment rule allows only v* tags (backed by a tag ruleset), optionally with a required reviewer. Move the four registry secrets into it and add `environment: release` to jobs.release. Add `&event=push&branch=main` to the guard's CI query. Replace tag.yml's `secrets: inherit` with the single declared secret once the shared workflow declares it (backlog 7.16 follow-up)."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/agent/checks/disk.go:reportableItem:invalid-utf8-mount-point-poisons-agent-stream",
+    "title": "A mount point with a quote and a non-UTF-8 byte still poisons the agent's stream after the 7.40 fix",
+    "description": "The 7.40 fix makes the disk plugin skip mount points the manager would refuse because they are too long or contain control characters. It does not skip mount points that are not valid UTF-8. gopsutil v4.26.8 runs each /proc/1/mountinfo path through unescapeFstab, which is strconv.Unquote. A path that contains a double quote fails to unquote and comes back as its raw bytes, so a byte such as 0xFF survives. Without the quote the byte is normalised to U+FFFD and is harmless. The item field of CheckResult is a proto3 string, so grpc-go refuses to encode the message on the client side and finishes the whole client stream. handleResults puts the unsent results back into the disconnect buffer. On every reconnect, streamSession sends facts and then calls activateSender, which replays the buffer before the first heartbeat. The replay fails on the same chunk and the session ends. The disk tick adds the item again at every interval, so the poison never ages out of the 15-minute buffer. The effect: a local user who can mount something in PID 1's mount namespace on a directory named, for example, a\"\\xffb stops that host's check results, heartbeats and configuration convergence. Facts still arrive at each stream open, and each open touches last_seen, so the host does not look offline. Its rule tuples go to unknown ('no data') after three check intervals, and no threshold alert can fire on it. Production placement does not change this. The shipped unit has ProtectHome=true and PrivateTmp=true, so statfs on a mount under /home or /tmp fails inside the agent's namespace. The plugin then emits three error observations that carry the same invalid item (disk.go:141-145) instead of value observations. The poison is the same either way.",
+    "root_cause": "reportableItem (internal/agent/checks/disk.go:37-41) mirrors only the manager's length and control-character rules. It leaves out the wire contract's UTF-8 requirement for proto3 string fields, even though gopsutil can return raw non-UTF-8 bytes for a mount point that contains a double quote. The session layer also treats a client-side encode failure like a transport failure. handleResults (session.go:366-385) and activateSender (session.go:321-344) put the unencodable chunk back and replay it ahead of every heartbeat, with no end.",
+    "intended_behavior": "Any mount point that cannot be carried on the wire is left out, like an over-long one. A chunk the client cannot encode is dropped or quarantined instead of replayed, so one item can never stop the host's other check results, heartbeats or configuration convergence.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/agent/checks/disk.go",
+        "line": 115,
+        "scope": "diskPlugin.Collect",
+        "description": "Discovery mode (no 'mounts' param) reads every mount point through gopsutil Partitions(ctx, true), which parses /proc/1/mountinfo. A local user who can mount (FUSE via setuid fusermount) chooses the path. unescapeFstab (gopsutil disk_unix.go:57-63) returns the raw bytes when strconv.Unquote fails on an embedded '\"'."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agent/checks/disk.go",
+        "line": 121,
+        "scope": "diskPlugin.Collect",
+        "description": "The only filter is reportableItem, which checks the length and control, U+2028 and U+2029 runes. Invalid UTF-8 decodes to U+FFFD, which is not a control rune, so the item passes."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agent/checks/disk.go",
+        "line": 152,
+        "scope": "diskPlugin.Collect",
+        "description": "Three value observations carry the mount point unchanged as Item. When statfs fails, for example under the unit's ProtectHome or PrivateTmp, lines 141-145 emit three error observations with the same Item instead."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agent/checks/scheduler.go",
+        "line": 270,
+        "scope": "Scheduler.runCheck",
+        "description": "Item is copied into the Result batch handed to the session sink (Loop.handleResults)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agent/session.go",
+        "line": 96,
+        "scope": "streamSender.sendResults",
+        "description": "The results become a CheckResults message, and stream.Send (session.go:62) encodes it. Marshalling fails with 'string field contains invalid UTF-8', grpc-go returns codes.Internal and finishes the client stream, and later Sends return EOF."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agent/session.go",
+        "line": 381,
+        "scope": "Loop.handleResults",
+        "description": "The unsent results, including the poisoned item, go back into the disconnect buffer. While no sender is live, every disk tick adds them there too."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/agent/session.go",
+        "line": 325,
+        "scope": "Loop.activateSender",
+        "description": "Every reconnect replays the buffer before the first heartbeat (session.go:185-201). The replay fails on the poisoned chunk, pending[sent:] goes back at session.go:336, and streamSession returns an error. loop.go:270-279 reconnects with jittered backoff indefinitely, so no heartbeat or check result is ever delivered."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/agent/checks/disk.go",
+        "line": 38,
+        "description": "reportableItem checks len(item) and unicode.IsControl/U+2028/U+2029 only. There is no utf8.ValidString."
+      },
+      {
+        "file": "proto/pulsix/agent/v1/agent.proto",
+        "line": 65,
+        "description": "'string item = 2;' in a file declared syntax = \"proto3\" (line 1). google.golang.org/protobuf refuses to marshal invalid UTF-8 in it."
+      },
+      {
+        "file": "internal/agent/session.go",
+        "line": 336,
+        "description": "A failed replay puts pending[sent:] back into the buffer and returns an error. That happens before the heartbeat at session.go:201."
+      },
+      {
+        "file": "internal/agent/loop.go",
+        "line": 270,
+        "description": "A failed session is retried with jittered backoff, with no limit on attempts."
+      },
+      {
+        "file": "internal/agentapi/stream.go",
+        "line": 44,
+        "description": "The manager treats each stream open as a heartbeat (Touch), so last_seen keeps moving while no real heartbeat or result arrives."
+      },
+      {
+        "file": "internal/agentdist/files/pulsix-agent.service",
+        "line": 29,
+        "description": "ProtectHome=true (with PrivateTmp=true on line 30) makes statfs on user-owned mounts fail inside the agent's namespace. The mount is still read from /proc/1/mountinfo and is emitted as error observations with the same invalid item, so the hardening does not block the path."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "A local unprivileged account on a monitored host."
+      },
+      {
+        "kind": "environmental_dependency",
+        "description": "The account can create a mount in PID 1's mount namespace, for example FUSE through setuid fusermount/fusermount3, on a directory it controls whose name contains '\"' and a non-UTF-8 byte. The 7.40 fix comment and backlog row name this capability as the threat model the fix defends against. Whether a given distribution allows it is a deployment fact."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "The disk check runs in discovery mode, with no explicit 'mounts' list. This is the default. Explicit mounts arrive as JSON strings from the manager and are valid UTF-8."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An unprivileged local user on a host running the Pulsix agent, who can mount a FUSE filesystem on a directory they own.",
+      "payloads": [
+        "mountinfo line: 40 22 0:50 / /home/u/q\"\\xffz rw,nosuid,nodev,relatime shared:30 - fuse.sshfs u@h:/ rw,user_id=1000,group_id=1000"
+      ],
+      "instructions": [
+        "Copy the repository to scratch. Add internal/agent/checks/v02_poison_test.go, which writes a fixture mountinfo with a '/' ext4 line, the payload line and a control line /home/u/n\\xffz that has no quote. It sets HOST_PROC_MOUNTINFO to the fixture, calls diskPlugin{gopsutilPartitions{}, fakeUsage}.Collect, logs each item's utf8.ValidString and reportableItem result, and proto.Marshals the resulting CheckResults.",
+        "Add internal/agent/v02_replay_test.go. It starts an in-memory bufconn gRPC AgentService that acks every message and counts stream opens, heartbeats and results. It builds a real Loop with NewLoop and puts the poisoned result plus a good result into the buffer through handleResults. Then, three times: it opens a real client AgentStream, calls activateSender, sends a heartbeat on the same sender, calls Recv, deactivates the sender, and re-adds the poison as a disconnected disk tick would. A control Loop without the poison runs the same steps.",
+        "Run each test in the approved Docker sandbox (--network none, read-only, env -i, resource limits): go test -count=1 -v -run TestV02DiscoveredMountItems ./internal/agent/checks/ and go test -count=1 -v -run TestV02PoisonReplayBlocksEveryReconnect ./internal/agent/."
+      ],
+      "observed_result": "Collect returned 9 observations with no error. The item '/home/u/q\"\\xffz' had validUTF8=false and reportable=true. The control item without a quote was normalised to '/home/u/n\\uFFFDz' and was valid. proto.Marshal failed with 'string field contains invalid UTF-8'. In the replay harness, each of 3 reconnects failed the same way. activateSender returned 'replay buffered check results: rpc error: code = Internal desc = grpc: error while marshaling: string field contains invalid UTF-8', the following heartbeat Send returned EOF, and Recv returned the same Internal error. The live sender was never installed, and the buffered count grew 2, 3, 4. The server recorded 3 stream opens, 0 heartbeats and 0 check results. The control loop replayed and sent its heartbeat without error."
+    },
+    "remediation": {
+      "strategy": "Add utf8.ValidString to reportableItem, which covers both discovered and explicit mounts. Add the same check to the manager's withinContract for parity. Update the plugin's error text and the 7.40 test to cover the UTF-8 rule. Defence in depth in the session: treat a client-side encode failure (codes.Internal 'error while marshaling' returned by Send before anything reaches the wire) as a poison chunk to drop and log rather than re-buffer, so no single result can block heartbeats. Add a regression test with a mountinfo fixture that contains '\"' plus 0xFF, expects the mount to be skipped, and expects every Collect output to marshal.",
+      "code_changes": [
+        {
+          "file_name": "internal/agent/checks/disk.go",
+          "fixed_code": "func reportableItem(item string) bool {\n\treturn len(item) <= maxItemLen && utf8.ValidString(item) && strings.IndexFunc(item, func(r rune) bool {\n\t\treturn unicode.IsControl(r) || r == '\\u2028' || r == '\\u2029'\n\t}) < 0\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "It needs a local account on a monitored host plus the ability to mount in init's namespace, for example FUSE with setuid fusermount. Many hosts allow this, but it is a deployment fact. The attacker needs one directory name and one mount, with no ongoing effort."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Monitoring of that one host stops persistently while the mount exists. No check results reach the manager, and no heartbeats are sent, which also stops configuration convergence. Threshold alerts for the host cannot fire. The host still looks seen, because stream opens touch last_seen and facts still arrive. Its rule tuples fall to unknown ('no data'), so the gap shows in the UI but is not reported as the host being offline. Other hosts and tenants are unaffected, and no data is disclosed or modified."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "I reproduced the whole chain independently in the approved sandbox with the real gopsutil v4.26.8 parser, real protobuf marshalling, a real grpc-go client stream and the agent's own Loop.handleResults, activateSender and sendHeartbeat. A control case passed. The reconnect-forever step follows from the loop.go:270-279 source."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/agents/facts.go:RecordFacts:unbounded-fact-key-length-and-merged-key-cardinality",
+    "title": "One host agent can grow hosts.facts without bound, and every org-wide host read pays for it",
+    "description": "The manager limits a facts push to 64 keys and each value to 512 bytes. It does not limit key length or key characters. Only the 16 MiB gRPC receive limit bounds key length. It also does not limit the number of distinct keys across pushes. The store merges with jsonb ||, which never removes a key. So one host agent identity (root on one compromised host) can loop on its own AgentStream. Each Facts message carries 64 new keys of about 256 KiB, roughly 16 MiB per message. This grows the agent's own hosts.facts until Postgres's jsonb size limit (about 255 MB) refuses the UPDATE. There is no per-stream message rate bound, and each push rewrites the whole growing jsonb value. The inflated document persists. No code path trims facts, so recovery needs operator action outside the product's facts path. ListAllHosts (SELECT * FROM hosts) reads the facts column and json-decodes every host's facts into map[string]any. It runs through checks.Service.ResolveHost/ResolveHosts/ResolveOrg → checksHostRoster.MonitoredHosts: on every heartbeat-driven resolve of every agent in the organization (at most once per 10 s per agent), on every rule evaluation's ContextForHost, on every inventory render, preview and job snapshot, and on several API and template paths. The paginated host list (ListHosts, also SELECT *) returns the document whenever that host is on the page. Inventory render also embeds the document as pulsix_facts when the host is in scope. One host's inflated document is therefore transferred and decoded many times per minute by the shared manager process and database. That load also lands on other tenants on the same instance. Locally observed so far: only the service layer and wire limits accept the input. Database growth and the cost of the reads are not observed.",
+    "claimed_root_cause": "Service.RecordFacts (internal/agents/facts.go:67-83) mirrors only part of the collector's normalization: the per-push key count and the value byte length. It omits key length, key charset and any aggregate bound on stored keys or document size. UpsertHostFacts (internal/db/queries/agents.sql:119-122) merges with jsonb || and keeps every key ever reported. There is no column CHECK on hosts.facts (internal/db/migrations/00010_hosts.sql:31). Hot org-wide paths read the full row (ListAllHosts SELECT *, internal/db/queries/hosts.sql:102) and decode it (internal/hosts/store_sql.go:246-252).",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/agentapi/stream.go",
+        "line": 148,
+        "scope": "Service.process",
+        "description": "On the mTLS-authenticated AgentStream of one host agent, every Facts message goes to FactsSink.RecordFacts for that agent's own org and host. receiveMessages (stream.go:89-127) has no rate or count bound. The shared gRPC server allows messages up to 16 MiB (internal/grpcsrv/server.go:181, internal/pb/workerpb/limits.go:20)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agents/facts.go",
+        "line": 68,
+        "scope": "Service.RecordFacts",
+        "description": "Checks only len(facts)<=64, non-empty keys and len(value)<=512. Key length and the total across pushes are not checked."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agents/store_sql.go",
+        "line": 290,
+        "scope": "SQLStore.RecordFacts",
+        "description": "The map is json.Marshal'ed and passed whole to UpsertHostFacts in an org-scoped write transaction."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/db/queries/agents.sql",
+        "line": 120,
+        "scope": "UpsertHostFacts",
+        "description": "facts = COALESCE(facts,'{}') || $facts merges the new keys, and keys missing from the push are kept forever. The only ceiling is Postgres's own jsonb size limit."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/app/checks_ports.go",
+        "line": 87,
+        "scope": "checksHostRoster.MonitoredHosts",
+        "description": "Every checks ResolveHost/ResolveHosts/ResolveOrg (internal/checks/resolver.go:324,365,409) loads ListAllHosts for the organization, facts column included, only to collect monitored host IDs."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/hosts/store_sql.go",
+        "line": 249,
+        "scope": "fromHostRow",
+        "description": "Each host row's facts are json.Unmarshal'ed into map[string]any on every such read: heartbeat resolve, rule-evaluation context, inventory render and job snapshot, and the ListAllHosts API and template paths."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/agents/facts.go",
+        "line": 75,
+        "description": "Values are the only thing whose size is checked. Keys have no length limit (constants at facts.go:28-37 define only MaxFactsKeys and MaxFactsValueLen)."
+      },
+      {
+        "file": "internal/db/queries/agents.sql",
+        "line": 120,
+        "description": "The jsonb || merge. The query comment (agents.sql:110-118) says every key the agent did not report survives untouched."
+      },
+      {
+        "file": "internal/db/migrations/00010_hosts.sql",
+        "line": 31,
+        "description": "facts jsonb NOT NULL DEFAULT '{}' with no size CHECK."
+      },
+      {
+        "file": "internal/db/queries/hosts.sql",
+        "line": 102,
+        "description": "ListAllHosts is SELECT * FROM hosts WHERE org_id = $1, so it includes facts and has no pagination."
+      },
+      {
+        "file": "internal/agentapi/stream.go",
+        "line": 185,
+        "description": "Heartbeat-driven ResolveHost runs for every agent in the org, at most once per heartbeatResolveInterval = 10 s (internal/agentapi/registry.go:53). It goes through MonitoredHosts to ListAllHosts."
+      },
+      {
+        "file": "internal/inventory/renderer.go",
+        "line": 135,
+        "description": "Every inventory render, including job snapshots, loads ListAllHosts. renderer.go:182 copies Facts into render.Host, and render.go:390-391 emits it as pulsix_facts for in-scope hosts."
+      },
+      {
+        "file": "internal/grpcsrv/server.go",
+        "line": 181,
+        "description": "MaxRecvMsgSize = MaxWorkerToManagerBytes (16 MiB) also applies to AgentService, which is registered on the same server (server.go:196). It is the only bound on key length. Independent sandboxed check (agents/v03-agent-data/artifacts/evidence.txt): 3 Facts messages of 64 distinct 261,120-byte keys each marshal to 16,712,389 bytes, under the 16,777,216-byte limit. Service.RecordFacts accepted all of them, and 50,135,040 key bytes were forwarded to the store."
+      }
+    ],
+    "blockers": [
+      "PostgreSQL cannot run in the approved sandbox: testcontainers and internal/db/testdb are forbidden. So nothing below was observed. The growth of hosts.facts across pushes. The per-push rewrite, TOAST and WAL cost. The exact jsonb ceiling at which UPDATE fails. The bytes and decode time ListAllHosts spends per call with one inflated row. Locally observed: only that the wire limit and the service layer accept and forward 64 distinct keys of about 256 KiB per push (agents/v03-agent-data/artifacts/evidence.txt; also agents/h05-agent-data/artifacts/evidence2.txt).",
+      "Whether the repeated read and decode measurably degrades the shared manager or database depends on deployment facts outside the repository: the manager container's memory limit, the database's I/O capacity and statement_timeout, and the number of agents and rules per organization."
+    ],
+    "validation_plan": {
+      "local": "Use internal/db/testdb in a Postgres-capable environment. Create one org with two monitored hosts A and B. Call agents.SQLStore.RecordFacts on host A 4 times, each with 64 distinct keys of 200 KiB and value \"v\". After each call, query SELECT pg_column_size(facts), octet_length(facts::text) FROM hosts WHERE id = A. Assert that the size grows monotonically to about 50 MB and that hosts.SQLStore.ListAllHosts returns all 256 keys for host A. Then measure one checks.Service.ResolveHost for host B with runtime.MemStats TotalAlloc and wall time, before and after the inflation, and record the difference. Optionally keep pushing until the UPDATE fails, and record the Postgres error and size at that point to establish the ceiling. Dummy data only, no stress loop.",
+      "deployment": "On an owner-controlled staging instance, give one test host an inflated facts document of about 50 MB, either through the store or with an UPDATE as the schema owner. Leave the org's other agents heartbeating and the rule ticker running for 10 minutes. Record manager RSS and GC CPU, database read and WAL bytes, and heartbeat-resolve latency. Compare them with the same window before the inflation and with the manager container's memory limit. Then remove the test keys with UPDATE hosts SET facts = '{}' and confirm recovery. No production instance, no saturation test."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/api/worker_snippets.go:workerSnippets:enroll-token-inline-in-compose-file",
+    "title": "Compose worker snippet writes the live enrollment token into a compose file with default permissions",
+    "description": "When an org member with workers.write creates a worker enrollment (POST /api/v1/orgs/{org}/worker-enrollments), the API returns the token plus a docker run snippet and a compose snippet (worker_handlers.go:232). Fix b6a8c56 (backlog 7.39) moved the docker run snippet's token out of the docker client's argv and into its environment. The compose snippet was left as it was: it still inlines the live, single-use worker enrollment token (pxw1 format) as a quoted YAML scalar (`PULSIX_ENROLL_TOKEN: \"pxw1....\"`, worker_snippets.go:53). The backlog row for 7.39 itself says 'The compose snippet still writes the token into the compose file, whose permissions are the operator's', so this residual is known but has not been fixed. The Add worker dialog offers the compose snippet with a copy button (AddWorkerDialog.tsx:86). Its only note is 'Token valid for one hour, single use ... shown only now' (workers.ts:55-56), with nothing about the file's permissions. To use the snippet, the admin saves it to a file on the worker host. That file's mode comes from the admin's umask (commonly 0644) and from where it is saved. The token stays redeemable until the worker first calls Enroll or the one-hour TTL runs out (EnrollmentTTL, enroll.go:23). Enroll is the one worker RPC that needs no client certificate, and it is rate limited only per client address (grpcsrv/enroll.go:21-33). Redemption checks only the secret hash, that the token is unused and that it has not expired (enroll.go:153). It then signs any CSR for the enrollment's org, zone and name (enroll.go:156) and marks the token used in the same transaction. A local account on the worker host can do this if it can read the file, cannot otherwise control docker (not root, not in the docker group) and can reach the manager's worker endpoint. That account can redeem the token first and receive an authenticated org+zone worker certificate. The genuine worker is then refused. The rogue identity can claim that zone's jobs, and the decrypted credentials they carry, until an admin notices the failed worker and revokes it. After redemption, the copy left in the file is inert: the worker ignores the token once a bundle exists (internal/worker/enroll.go:46-47), and the token is single use. Source establishes the code path completely. Whether a lower-trust reader can reach the file depends on where the admin saves it, the file and directory modes, and whether the host has such accounts. None of these is visible in source.",
+    "claimed_root_cause": "workerSnippets (internal/api/worker_snippets.go:53) renders the pre-redemption secret into the compose YAML as `PULSIX_ENROLL_TOKEN: %q`. Persisting the snippet as a compose file therefore persists the secret in a file whose access control the product neither sets nor advises. The docker run variant was moved to an owner-only channel (worker_snippets.go:31-39, backlog 7.39), but this one was not. The token is also not bound to anything only the intended host holds, so whoever reads it first wins. Possible fixes: render `PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN}` (compose interpolation from the invoking shell's environment, matching the docker variant), or reference an env_file the dialog tells the admin to create with mode 0600, and add a dialog or doc note on file permissions.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/worker_handlers.go",
+        "line": 212,
+        "scope": "POST /api/v1/orgs/{org}/worker-enrollments",
+        "description": "An org member with PermWorkersWrite creates a one-time worker enrollment token. The handler gets the token from CreateEnrollment (line 225) and passes it to workerSnippets (line 232), which returns it in compose_snippet."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/worker_snippets.go",
+        "line": 53,
+        "scope": "workerSnippets",
+        "description": "The compose snippet embeds the full token as a quoted YAML scalar (`PULSIX_ENROLL_TOKEN: %q`). The docker snippet instead takes the value from the client's environment (lines 36 and 39)."
+      },
+      {
+        "kind": "propagation",
+        "file": "web/src/features/workers/AddWorkerDialog.tsx",
+        "line": 86,
+        "scope": "AddWorkerDialog compose tab copy button",
+        "description": "The dialog renders the compose snippet with the token inline (lines 53 and 83) and offers a copy button. Its note (workers.ts:55-56) gives no guidance on the permissions of the file the admin saves on the worker host before running docker compose up."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/workers/enroll.go",
+        "line": 153,
+        "scope": "Service.Enroll",
+        "description": "Redemption checks only the secret hash, that the token is unused and that it has not expired. Whoever presents the token first gets a CSR signed for the enrollment's org, zone and worker name (line 156), and the token is marked used in the same transaction. The anonymous gRPC Enroll (grpcsrv/enroll.go:29) reaches this with only a per-address rate limit."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/api/worker_snippets.go",
+        "line": 53,
+        "description": "fmt.Sprintf(\"      PULSIX_ENROLL_TOKEN: %q\", token): the literal secret goes into the compose file content."
+      },
+      {
+        "file": "internal/api/worker_snippets.go",
+        "line": 31,
+        "description": "The backlog 7.39 fix comment covers only docker run ('The token reaches docker run as its environment ... the environment only for the client's own user and root'). The compose variant is unchanged."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 589,
+        "description": "Backlog 7.39 is marked done but states 'The compose snippet still writes the token into the compose file, whose permissions are the operator's': the residual is acknowledged and was not fixed."
+      },
+      {
+        "file": "internal/workers/enroll.go",
+        "line": 23,
+        "description": "EnrollmentTTL = time.Hour: a token saved in the file stays redeemable for up to an hour if the worker does not redeem it first."
+      },
+      {
+        "file": "internal/grpcsrv/enroll.go",
+        "line": 29,
+        "description": "Enroll is the one worker RPC callable without a client certificate. It is rate limited only per client address (lines 21-33)."
+      },
+      {
+        "file": "web/src/i18n/en/workers.ts",
+        "line": 55,
+        "description": "The dialog's tokenNote says only 'Token valid for one hour, single use ... shown only now'. It gives no instruction to keep the compose file owner-only."
+      },
+      {
+        "file": "internal/worker/enroll.go",
+        "line": 46,
+        "description": "Once a usable bundle exists, PULSIX_ENROLL_TOKEN is ignored, so the exposure window is from saving the file until the first successful Enroll or the TTL. After that the copy left in the file is inert."
+      }
+    ],
+    "blockers": [
+      "Where admins save the compose snippet on a worker host, and that file's mode and its parent directories' traversal permissions, are deployment facts. Source does not set them.",
+      "Whether supported worker hosts have local accounts that are not root, not in the docker group and not the admin, can read the file and can reach the manager's worker gRPC endpoint is a deployment fact. Without such an account, no trust boundary is crossed.",
+      "The real window between saving the file and the container's first Enroll depends on image pull time and on the admin's workflow, and source cannot show it. The approved sandbox cannot create OS accounts or simulate a multi-user host."
+    ],
+    "validation_plan": {
+      "local": "On a disposable Linux VM with no network beyond a local dummy registry, create an admin account in the docker group with default umask 022, and an unprivileged account 'probe' that is not in the docker group. As the admin, save a compose file with the exact shape workerSnippets renders, using the dummy token value pxw1.DUMMY. Save it to typical locations: /opt/pulsix-worker/compose.yml (created with sudo mkdir, default 0755) and ~/pulsix-worker/compose.yml, leaving the distro's default home-directory mode. As 'probe', run only `grep -c pxw1.DUMMY <file>` against each path. Record `stat -c '%a %U' <file>` for each file and its parent directories, together with the grep result. Redeem nothing, contact no manager, and destroy the VM afterwards.",
+      "deployment": "Have the owner confirm whether supported worker hosts are single-admin machines or shared hosts with other local accounts, and in which directory and with which umask admins normally save the compose snippet. If shared hosts are supported, inspect one compose file created from the dialog with `stat -c '%a %U' <file>` and check its parent directories' modes, without reading or using any live token."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/api:org-credential-minting-routes:bearer-token-mints-machine-enrollment",
+    "title": "An API token that may not mint tokens can still mint worker and agent enrollment tokens whose identities survive its revocation",
+    "description": "POST /api/v1/orgs/{org}/tokens and, since backlog 7.31, the invite and member-change routes refuse a bearer-token principal. The project gives the reason in code and in the plan: credentials do not mint credentials, so a leaked token cannot outlive its own revocation through a successor it created. Two routes on the same bearer-enabled org group do not apply that rule. POST /orgs/{org}/worker-enrollments (workers.write, admin) and POST /orgs/{org}/agents/tokens (agents.write, operator) authorize with requireOrg alone. A leaked admin-capped pxt_ token can mint a one-hour worker enrollment token and redeem it from a host the attacker controls. The result is an active worker for that zone, with a 90-day certificate that renews for the same key indefinitely. That worker keeps claiming the zone's jobs, with their revealed credentials, after the API token is revoked or its owner is demoted or deactivated. An operator-capped token can likewise mint an agent enrollment token valid for up to 7 days and 100 uses. After the API token is revoked, that token still creates monitored hosts with agent identities. If the token was minted for a bound host, it replaces that host's agent. Nothing ties either enrollment, or the identity redeemed from it, to the API token or to the issuer's continued authority.",
+    "root_cause": "The principal-kind gate (requireInteractiveSession, which refuses any principal with TokenID set) is opt-in per handler. requireOrg checks only membership role, intersected with the token's role cap; it never checks principal kind. The worker-enrollment and agent-token create handlers call requireOrg(PermWorkersWrite / PermAgentsWrite) without requireInteractiveSession. The enrollment rows record only created_by (a user id), and the redeem paths (workers.Service.Enroll with MarkWorkerEnrollmentUsed, agents.Service.ClaimToken with ConsumeAgentEnrollmentUse) check only the secret hash, use state and expiry. Token revocation (Tokens.Revoke, RevokeTokensForUser) updates api_tokens only. No user-lifecycle query touches worker_enrollments or agent_enrollments.",
+    "intended_behavior": "Credentials do not mint credentials (plan 2026-09-10-v0.1-core.md:54, token_handlers.go:89-92 and 100-106, member_handlers.go:122-127). A bearer token may list and withdraw enrollment tokens. Minting a worker or agent enrollment token, which redeems into a durable mTLS identity, requires an interactive, MFA-complete session. If token-driven provisioning is wanted, the owners must make that an explicit, documented exception, and an enrollment minted by a token must then die with that token.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/api.go",
+        "line": 558,
+        "scope": "registerRoutes org-scoped group",
+        "description": "bearerAuthMiddleware is mounted on the org group that registerWorkerRoutes (line 579) and registerAgentRoutes (line 580) use. A pxt_ bearer token therefore reaches these handlers as an MFA-complete principal with TokenID set."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/worker_handlers.go",
+        "line": 213,
+        "scope": "POST /api/v1/orgs/{org}/worker-enrollments",
+        "description": "The handler (line 212) calls requireOrg(ctx, deps, in.Org, tenancy.PermWorkersWrite) and nothing else. Unlike token_handlers.go:107 and member_handlers.go:150/169/188, it has no requireInteractiveSession."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/authz.go",
+        "line": 81,
+        "scope": "requireOrg",
+        "description": "For a token principal, the effective role is Lower(live membership, token role). An admin-capped token passes PermWorkersWrite (admin, roles.go:118), and an operator-capped token passes PermAgentsWrite (operator, roles.go:125). Principal kind is never checked."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/worker_handlers.go",
+        "line": 225,
+        "scope": "POST /api/v1/orgs/{org}/worker-enrollments",
+        "description": "Workers.CreateEnrollment stores a one-hour, single-use enrollment with created_by set to the token owner's user id (enroll.go:113) and returns the pxw1 token. The API token is neither recorded nor bound."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/workers/enroll.go",
+        "line": 149,
+        "scope": "workers.Service.Enroll",
+        "description": "Redemption checks only the secret hash, used_at and expiry (and, in SQL, MarkWorkerEnrollmentUsed's used_at/expires_at guard). It signs the CSR and creates an active worker with its certificate. Neither the minting token's state nor the issuer's authority is consulted."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/workers/enroll.go",
+        "line": 184,
+        "scope": "workers.Service.Renew",
+        "description": "The worker renews its certificate for the same key with no limit. Persistence ends only when an admin revokes the worker."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/grpcsrv/auth.go",
+        "line": 201,
+        "scope": "Server.lookupWorker",
+        "description": "Worker calls are authenticated only by the serial registry and the org/zone SANs. After the API token is revoked, the rogue worker still authenticates and claims the zone's jobs, which carry their revealed credentials (spec section 14, lines 664-672)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/api/token_handlers.go",
+        "line": 107,
+        "description": "The stated control. Creating an API token calls requireInteractiveSession so that a leaked credential cannot outlive its revocation through a successor it created (comments at lines 89-92 and 100-106)."
+      },
+      {
+        "file": "internal/api/member_handlers.go",
+        "line": 124,
+        "description": "Backlog 7.31 extended the rule to memberships with the words 'A membership is a credential as much as a token is'. The fix covers invites and member changes only."
+      },
+      {
+        "file": "docs/superpowers/plans/2026-09-10-v0.1-core.md",
+        "line": 54,
+        "description": "Plan invariant: 'Credentials do not mint credentials.'"
+      },
+      {
+        "file": "internal/api/worker_handlers.go",
+        "line": 213,
+        "description": "Worker enrollment create is gated by requireOrg(PermWorkersWrite) alone."
+      },
+      {
+        "file": "internal/api/agent_handlers.go",
+        "line": 223,
+        "description": "Agent enrollment-token create is gated by requireOrg(PermAgentsWrite) alone. The lifetime can be up to 7 days (line 35, maxTokenMinutes) and max_uses up to 100 (agents/service.go:286)."
+      },
+      {
+        "file": "internal/agents/service.go",
+        "line": 346,
+        "description": "ClaimToken checks only the hash, the use count and the expiry. Each claim creates a monitored host, or binds to the token's host. agentapi/service.go:220-223 then replaces that host's active agent."
+      },
+      {
+        "file": "internal/workers/enroll.go",
+        "line": 186,
+        "description": "Backlog 2.64 records the project's own view that key-bound persistence surviving removal of the original credential is a security problem."
+      },
+      {
+        "file": "internal/db/queries/tenancy_users.sql",
+        "line": 126,
+        "description": "RevokeTokensForUser (like Tokens.Revoke) updates api_tokens only. No user-lifecycle query references worker_enrollments or agent_enrollments."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authentication_level",
+        "description": "The attacker holds a valid pxt_ API token of the organization, for example one leaked from CI, logs or an automation host."
+      },
+      {
+        "kind": "authorization_role",
+        "description": "Worker variant: the token's role cap and its owner's live membership are both at least admin (PermWorkersWrite). Agent variant: at least operator (PermAgentsWrite). An operator token is refused on worker-enrollments (observed 403)."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "Worker variant: the gRPC worker endpoint is enabled (PULSIX_GRPC_LISTEN; deps.WorkerEndpoint.Addr is non-empty, otherwise 409) and reachable from an attacker host. Agent variant: the agent enrollment endpoint is reachable."
+      },
+      {
+        "kind": "timing_dependency",
+        "description": "The enrollment must be minted while the API token is valid. It can be redeemed after revocation: within 1 hour for a worker, within up to 7 days (and up to 100 times) for an agent token, unless an admin withdraws the pending enrollment first."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Holder of a leaked admin-capped (worker variant) or operator-capped (agent variant) org API token who expects the token to be revoked once the leak is noticed.",
+      "payloads": [
+        "POST /api/v1/orgs/acme/tokens  Authorization: Bearer <admin pxt_ token>  {\"name\":\"succ\",\"role\":\"viewer\"}",
+        "POST /api/v1/orgs/acme/worker-enrollments  Authorization: Bearer <admin pxt_ token>  {\"zone_id\":\"<zone>\",\"name\":\"rogue\"}",
+        "POST /api/v1/orgs/acme/agents/tokens  Authorization: Bearer <operator pxt_ token>  {\"zone_id\":\"<zone>\",\"name_hint\":\"rogue-host\",\"max_uses\":100,\"expires_in_minutes\":10080}",
+        "Tokens.Revoke(org, admin token id); Tokens.Revoke(org, operator token id); then workers.Service.Enroll({TokenID, Secret} from pxw1) and agents.Service.ClaimToken(org, parsed pxa1, \"\") twice"
+      ],
+      "instructions": [
+        "Copy the repository to scratch and add internal/api/zz_v13_token_mint_test.go (package api). It mounts registerTokenRoutes, registerWorkerRoutes and registerAgentRoutes on a huma.Group with the real bearerAuthMiddleware and orgScopeMiddleware. Behind them it runs the real auth.Tokens, tenancy.Service, hosts.Service, workers.Service and agents.Service over in-memory fake stores and a fake CA signer. The fixture has one org 'acme', one owner user, and three API tokens minted through auth.Tokens.Create: admin-, operator- and viewer-capped.",
+        "Run go test -count=1 -v -run TestV13BearerTokenMintsEnrollments ./internal/api/ inside the approved Docker sandbox (--network none, --read-only, --cap-drop ALL, no-new-privileges, user 65532, 2 CPU, 2 GiB, pids 512, env -i, GOPROXY=off, 300 s timeout).",
+        "Compare the bearer POST /tokens refusal with the bearer worker-enrollment and agent-token creates, including the role-cap controls. Then revoke both API tokens, confirm the bearers get 401, and redeem the minted enrollment tokens through the services."
+      ],
+      "observed_result": "V1 admin bearer POST /tokens: 403 'interactive session required'. V2 operator bearer POST /worker-enrollments: 403. V3 admin bearer POST /worker-enrollments: 201 with a pxw1 token. V4 viewer bearer POST /agents/tokens: 403. V5 operator bearer POST /agents/tokens (max_uses=100, 7 days): 201 with a pxa1 token. V6 after both revokes, the bearers get 401 on the list routes. V7 Workers.Enroll after revoke: err=nil, worker 'rogue', zone match, status active; GetBySerial resolves it as active. V8 two ClaimToken calls after revoke: both err=nil, both created a host (2 hosts). The CA signer and stores were fakes, so the CSR checks and the SQL single-use guard were not exercised. Source shows the SQL guards check only used_at, the use count and expires_at. These observations come from the Phase 3 verifier's harness run, preserved as the audit artifact agents/v13-token-mints/artifacts/evidence.txt (TestV13BearerTokenMintsEnrollments, PASS); that file is an audit artifact, not a repository source."
+    },
+    "remediation": {
+      "strategy": "Apply the principal-kind rule that token and membership minting already follow. Call requireInteractiveSession before requireOrg in POST /orgs/{org}/worker-enrollments and POST /orgs/{org}/agents/tokens. Listing and withdrawing stay open to tokens. If agent provisioning by automation is a wanted use case, make it an explicit, documented exception. In that case, record the minting API token id on the enrollment and void pending enrollments when that token is revoked, or when its owner is demoted or deactivated (as fc5fc6d does for invites). Regression test: a bearer token gets 403 on both creates, list and withdraw still return 200 for a token, and a session create still returns 201.",
+      "code_changes": [
+        {
+          "file_name": "internal/api/worker_handlers.go",
+          "fixed_code": "huma.Post(hapi, \"/api/v1/orgs/{org}/worker-enrollments\", func(ctx context.Context, in *enrollmentCreateInput) (*enrollmentCreateOutput, error) {\n\t// Credentials do not mint credentials: an enrollment token redeems into\n\t// a worker identity that outlives any bearer token that minted it.\n\tif _, err := requireInteractiveSession(ctx); err != nil {\n\t\treturn nil, err\n\t}\n\tscope, err := requireOrg(ctx, deps, in.Org, tenancy.PermWorkersWrite)\n\t// ... unchanged ..."
+        },
+        {
+          "file_name": "internal/api/agent_handlers.go",
+          "fixed_code": "huma.Post(hapi, \"/api/v1/orgs/{org}/agents/tokens\", func(ctx context.Context, in *agentTokenCreateInput) (*agentTokenCreateOutput, error) {\n\tif _, err := requireInteractiveSession(ctx); err != nil {\n\t\treturn nil, err\n\t}\n\tscope, err := requireOrg(ctx, deps, in.Org, tenancy.PermAgentsWrite)\n\t// ... unchanged ..."
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires an already leaked org API token: admin-capped for the worker variant, operator-capped for the agent variant. The attacker must mint before revocation, and for a worker must reach the gRPC endpoint within one hour. The new worker, host or pending enrollment shows on the Workers or Agents page and in the audit log (createWorkerEnrollment, createAgentToken), and an admin can withdraw or revoke it."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "A rogue worker outlives token revocation, owner demotion and owner deactivation. It keeps claiming a share of the zone's jobs with their revealed credentials, including jobs other members launch and credentials rotated after the incident, and it can report false results until an admin revokes it. The agent variant only creates or takes over monitoring identities for hosts. Calibration: while the token is valid, its holder already has its capped role's powers. For an operator, those include reading every credential the org's jobs use (spec section 14) and leaving other durable configuration such as schedules. Where play-uid separation is off (PULSIX_WORKER_PLAY_UID empty), a playbook can also reach the worker key. The increment is a durable authenticating machine identity that the project's own rule says a token must not mint. No other tenant is reached."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "medium",
+      "reason": "Source-complete for the handler gating, the role-only requireOrg, the missing lifecycle coupling in the stores and SQL, and redemption after revocation. The verifier reproduced it independently in a DB-free harness with the real middleware, handlers and services. The CA and stores were faked, and the gRPC claim behaviour comes from source and spec. The violation is of the project's own stated rule and its 7.31 generalization. The spec also says API tokens exist 'for automation' without an explicit exemption either way for machine enrollment, so the owners may instead choose a documented exception for agent provisioning."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/app/restorecmd.go:RunRestore:manager-check-not-held-through-wipe-and-load",
+    "title": "Restore checks for a running manager only once, before the confirmation and verification, and nothing holds that state through the wipe and load",
+    "description": "RunRestore refuses while a session named pulsix-manager is connected, but it checks only once (restorecmd.go:97). The check runs before the interactive confirmation (which can wait indefinitely), the stdin spool and the full Verify pass over the backup. Nothing is held afterwards. Managers take no lock that restore could take exclusively. wipe does not re-check. The load transaction does not assert that the freshly migrated tables are empty before COPY. For a backup at the binary's schema version, the version re-checks (restore.go:113 and :239) cannot see a manager either.\n\nSource narrows the two claimed outcomes.\n\nA manager started after the wipe runs Migrate and then caInst.Ensure (app.go:203, :449). Ensure inserts the singleton instance_ca row (id=1 CHECK, 00016_ca.sql:5). COPY of the backup's CA row then fails on the primary key and the load rolls back. Restore reports ErrRestoreIncomplete, and a later run is refused by the manager check. In the meantime the manager serves an empty instance whose public first-run setup is open. That is the documented fresh-install posture, during an operator-caused window. It is not a merge.\n\nA merge of foreign rows into the restored database is possible only for a manager started after the check but before the wipe (for example during the confirmation prompt or a long Verify). Such a manager does not run Ensure again. Between MigrateTo's commit and the moment the load transaction locks org_memberships (ALTER ... NO FORCE, forced RLS per 00002_rls.sql:17) and users (FK drop on the referenced table), it serves empty tables. An anonymous caller's setup Complete can create an instance admin, an org and a membership with fresh UUIDv7 ids and a distinct email and slug. If that setup transaction commits inside the window, COPY appends the backup's rows beside it and the restore commits with the attacker's instance admin.\n\nThe whole setup request has to fit inside that window: the pre-check, the argon2id hash, then the in-transaction AdminExists re-check under pg_advisory_xact_lock and the inserts. A setup whose re-check runs after the load has locked users blocks, then sees the restored admin and is refused (service.go:289). A setup that interleaves with the load's locks deadlocks with it.\n\nworker-enroll opens the owner URL without an application_name and runs Migrate (workeradd.go:103,108), so it is never counted. In the compose stack, though, it depends_on the manager (docker-compose.yml:162), its Migrate is serialized by advisory lock 7256 and gives the same schema, and it writes nothing until a zone exists. That makes it a detection gap with no separate impact. The cli service does not depend on the manager (docker-compose.yml:132), so the restore command itself starts no manager.\n\nAll of this requires an operator (or an orchestrator) to start a manager while a restore is running, against the restore's own instruction. An anonymous caller cannot cause that. Likelihood is therefore low, and the high-impact outcome (an extra instance admin in the restored database) also depends on a narrow timing window.",
+    "claimed_root_cause": "The manager-detection control is a single point-in-time pg_stat_activity count (internal/app/managers.go:24) evaluated once at internal/app/restorecmd.go:97. It is not repeated immediately before the wipe, and it is not backed by a lock every manager holds for its lifetime (the alternative the spec names). load() (internal/backup/restore.go:169) never asserts that the target tables are empty before COPY. So rows written by a manager that started between the check and the wipe can pass every later check when the backup's schema version equals the binary's.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/app/restorecmd.go",
+        "line": 97,
+        "scope": "RunRestore",
+        "description": "ManagersConnected is evaluated once, on the operator-run CLI restore; a manager that starts after this point is never detected."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/app/restorecmd.go",
+        "line": 106,
+        "scope": "RunRestore",
+        "description": "confirmReplace can block indefinitely on a terminal prompt, and openSource (line 111) spools stdin. Both run after the only manager check."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/restore.go",
+        "line": 64,
+        "scope": "Restore",
+        "description": "verifyFrom reads and decrypts the whole backup before the wipe, still with no manager re-check."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/restore.go",
+        "line": 80,
+        "scope": "Restore",
+        "description": "wipe commits an empty public schema in its own transaction without re-checking for managers. A manager that started after the check keeps running against it."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/restore.go",
+        "line": 113,
+        "scope": "migrateAndLoad",
+        "description": "The only later concurrency check compares the schema version with the backup's. It passes when the backup's version equals the binary's, even if a manager is serving."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/setup/service.go",
+        "line": 275,
+        "scope": "Service.Complete",
+        "description": "On the momentarily empty users table, AdminExists is false, so the public, token-less first-run setup proceeds. Its in-transaction re-check (line 289) only refuses if the load has already locked and filled users."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/backup/restore.go",
+        "line": 274,
+        "scope": "copyTables",
+        "description": "COPY appends the backup's rows to whatever the tables already hold; with no emptiness assertion, committed non-colliding foreign rows are kept by the restore's commit."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/app/managers.go",
+        "line": 24,
+        "description": "ManagersConnected is a point-in-time count of pg_stat_activity rows; it reserves nothing."
+      },
+      {
+        "file": "internal/backup/wipe.go",
+        "line": 65,
+        "description": "wipe runs in its own transaction and takes neither the migration lock (7256) nor any manager-exclusion lock."
+      },
+      {
+        "file": "internal/backup/restore.go",
+        "line": 184,
+        "description": "load begins its transaction and proceeds to NO FORCE / FK drops / COPY without checking that any table is empty."
+      },
+      {
+        "file": "internal/backup/catalog.go",
+        "line": 132,
+        "description": "Forced-RLS tables are altered in relname order. The load's first lock on org_memberships and users ends the window in which a concurrent setup transaction can commit unseen."
+      },
+      {
+        "file": "internal/db/migrations/00002_rls.sql",
+        "line": 17,
+        "description": "org_memberships forces RLS, so the load takes an ACCESS EXCLUSIVE lock on it (NO FORCE) before COPY."
+      },
+      {
+        "file": "internal/setup/store_sql.go",
+        "line": 67,
+        "description": "Setup's transaction takes pg_advisory_xact_lock(setupLockKey), which the restore never takes, and re-checks AdminExists inside it. That re-check refuses only if the backup's admin is already visible."
+      },
+      {
+        "file": "internal/db/migrations/00016_ca.sql",
+        "line": 5,
+        "description": "instance_ca is a singleton (id=1 CHECK). A manager that started after the wipe and ran Ensure makes the backup's COPY of instance_ca collide, so that variant fails the load instead of merging rows."
+      },
+      {
+        "file": "internal/app/app.go",
+        "line": 449,
+        "description": "A manager runs caInst.Ensure only at start (after Migrate at line 203). A manager started before the wipe does not re-insert the CA, which keeps the merge variant possible for it."
+      },
+      {
+        "file": "internal/app/workeradd.go",
+        "line": 103,
+        "description": "worker add opens cfg.DatabaseURL without WithApplicationName and runs Migrate at line 108, so restore never counts it. It writes nothing until a zone exists."
+      },
+      {
+        "file": "deploy/compose/docker-compose.yml",
+        "line": 162,
+        "description": "worker-enroll depends_on the manager (service_started), so in the shipped stack it only starts together with a manager. The cli service (line 132) depends only on db, so running restore starts no manager."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-11-02-backup-restore-design.md",
+        "line": 241,
+        "description": "The spec requires restore to refuse while a manager is running, and names a session advisory lock held by every manager as an alternative mechanism. That lock would cover the whole restore."
+      }
+    ],
+    "blockers": [
+      "The merge outcome depends on PostgreSQL lock interaction between the load transaction (NO FORCE on org_memberships, FK drops that lock users) and setup's transaction, and on whether a full setup request (pre-check, argon2id hash, in-tx re-check, inserts) can commit between MigrateTo's commit and those locks. This needs a real PostgreSQL/TimescaleDB, which this sandbox forbids (testcontainers and the host Docker socket are not allowed), so it could not be observed.",
+      "Whether a manager can start during a restore in supported deployments is a deployment and operator fact that source does not show: the shipped compose stack has no restart path after `docker compose down`, and the cli service does not depend on the manager. Candidates are an operator running `docker compose up -d` during the prompt, several managers, or an orchestrator with replicas."
+    ],
+    "validation_plan": {
+      "local": "DB-backed Go test in internal/backup using testdb (outside this sandbox). (1) Dump a fixture at the current schema version. Call Restore with RestoreOptions.afterMigrate set to a hook that inserts, over a separate pool connection, a users row (instance_admin=true, new UUIDv7, distinct email), an organizations row (distinct slug) and an owner org_memberships row, then commits. Expected today: Restore returns nil and the extra instance admin exists after commit. (2) Same hook, but also insert an instance_ca row. Expected: load fails on the instance_ca primary key with ErrRestoreIncomplete, which confirms that a manager started after the wipe cannot merge. (3) Timing: run setup.Service.Complete against the real store in a goroutine started from afterMigrate with the production argon2id parameters, and record whether it commits before the load's first lock or is refused or deadlocked. Regression tests for a fix: load must fail when users, organizations or org_memberships are non-empty before COPY. RunRestore must re-run ManagersConnected immediately before the wipe. Better still, every manager holds pg_advisory_lock_shared on a dedicated key for its lifetime, and restore takes pg_try_advisory_lock on that key for its whole run.",
+      "deployment": "Owner-observed on a disposable instance with dummy data only. Run `docker compose down`, then start `docker compose run --rm cli restore --replace <name>` and leave it at the confirmation prompt. In another shell run `docker compose up -d manager`, wait for it to serve, then type restore. Watch GET /api/v1/setup/status during the restore for completed=false. Afterwards check whether restore succeeded and which users have instance_admin=true. Repeat with the manager started after the wipe (after the prompt, during Verify of a large backup) and expect a load failure on instance_ca."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/app/restorecmd.go:listBackups:terminal-control-bytes-from-unauthenticated-backup-header",
+    "title": "restore --list writes terminal control sequences from unauthenticated backup headers and object names to the operator's terminal",
+    "description": "A writer of the backup storage (backup folder volume or S3 bucket/prefix), who by the architecture does not hold the master key, can plant or edit a *.pxbak object whose plaintext JSON header carries arbitrary strings in kind or pulsix_version, or whose object name contains control bytes. `pulsix-manager restore --list` (run by the operator, e.g. `docker compose run --rm cli restore --list`) reads every header without authentication and prints those strings verbatim through text/tabwriter, so ESC/CSI/OSC sequences reach the operator's terminal. Plain-text spoofing of the listing (a false created_at or kind) is already possible because the header is unauthenticated by design; what the control bytes add is control over the terminal itself: erasing or concealing other rows of the inventory the operator uses to pick a backup, clearing the screen, setting the window title, and any other escape-driven feature the operator's emulator honours (for example OSC 52 clipboard writes on terminals that allow them). Restoring a forged backup is still refused by Verify; the effect is confined to the operator's view and terminal.",
+    "root_cause": "listBackups in internal/app/restorecmd.go formats o.Name, o.Header.Kind and o.Header.PulsixVersion with %s without escaping non-printable characters, and neither ReadHeader (internal/backup/format.go, which checks only format_version) nor the dirStorage/s3Storage List implementations (which accept any name ending in .pxbak and do not call validName) constrain header strings or names to printable values, although the header and names are documented as unauthenticated.",
+    "intended_behavior": "Unauthenticated metadata from backup storage must be inert when it reaches a terminal: header fields should be validated (kind in {scheduled, manual}, pulsix_version a short printable token) or the listing should escape non-printable runes (strconv.Quote-style) for names and header strings, and objects with invalid metadata should be shown as damaged.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/app/restorecmd.go",
+        "line": 84,
+        "scope": "RunRestore --list",
+        "description": "With opts.List, RunRestore builds the storage for --from (default /var/lib/pulsix/backups, or s3://) via storageAt and calls listBackups (line 89) without opening the database; reached from cmd/manager/backupcmd.go:166 with os.Stdout. The lower-trust input is the backup storage content controlled by a storage writer."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/storage_dir.go",
+        "line": 88,
+        "scope": "dirStorage.List",
+        "description": "Every non-directory entry ending in .pxbak is listed regardless of other bytes in its name; describe opens it and headerObject (line 127) parses its first bytes. s3Storage.List (internal/backup/storage_s3.go:183) does the same for keys under the prefix, filtering only '/' and the suffix."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/format.go",
+        "line": 124,
+        "scope": "ReadHeader",
+        "description": "The plaintext header line is json.Unmarshal'ed into Header; Kind and PulsixVersion accept any JSON string including \\u001b and \\u0007 escapes; only FormatVersion is checked (line 127)."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/app/restorecmd.go",
+        "line": 291,
+        "scope": "listBackups",
+        "description": "fmt.Fprintf(tw, \"%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n\", o.Name, created, kind, version, ...) writes the raw object name and header strings to stdout through text/tabwriter, which passes ESC/BEL bytes through unchanged."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/app/restorecmd.go",
+        "line": 283,
+        "description": "kind and version are taken directly from the unauthenticated o.Header.Kind and o.Header.PulsixVersion when the header parses."
+      },
+      {
+        "file": "internal/backup/storage.go",
+        "line": 75,
+        "description": "validName rejects only empty names, a leading dot, slashes/backslashes and NUL, and neither List implementation calls it, so control bytes in names are kept."
+      },
+      {
+        "file": "internal/backup/verify.go",
+        "line": 16,
+        "description": "The package documents that the plaintext header is not authenticated and that callers decide on the manifest copy; restore --list necessarily shows the plaintext one."
+      },
+      {
+        "file": "internal/backup/format.go",
+        "line": 127,
+        "description": "ReadHeader validates only FormatVersion, not the content of Kind or PulsixVersion (Header fields at format.go:38-45)."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "Attacker can write to the backup storage (backup folder volume or the configured S3 bucket/prefix) but does not hold the master key, a principal the architecture explicitly models."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "An operator runs `pulsix-manager restore --list` (e.g. `docker compose run --rm cli restore --list`) against that storage with output going to a terminal."
+      },
+      {
+        "kind": "environmental_dependency",
+        "description": "Effects beyond hiding/rewriting rows and the window title (for example OSC 52 clipboard writes) depend on the operator's terminal emulator and its settings."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Writer of the backup folder or bucket without the master key, planting or editing *.pxbak objects that the operator later lists with restore --list.",
+      "payloads": [
+        "File pulsix-20260901T030000Z-manual.pxbak containing \"PULSIXBAK1\\n\" followed by the header line {\"format_version\":1,\"created_at\":\"2026-09-01T03:00:00Z\",\"kind\":\"man\\u001b[8mual\",\"pulsix_version\":\"0.9\\u001b]52;c;ZWNobyBoaQ==\\u0007\",\"schema_version\":1,\"includes_metrics\":false}",
+        "File named x\\x1b[2Jy.pxbak with arbitrary content (listed as damaged)"
+      ],
+      "instructions": [
+        "In a scratch copy of the repository, add an internal-package test in internal/app that writes the two payload files into t.TempDir() and calls RunRestore(context.Background(), config.Config{}, RestoreOptions{List: true, From: dir}, &out, &errb); the --list path opens no database.",
+        "Run it in the approved sandbox (network none, read-only root and source, non-root user, CPU/memory/pids limits, 300 s timeout): go test -count=1 -v -run TestAuditV06ListEmitsControlBytes ./internal/app/",
+        "Inspect the Go-quoted stdout logged by the test for raw \\x1b and \\a bytes."
+      ],
+      "observed_result": "Test PASS with err=nil. Logged stdout contained \"man\\x1b[8mual\" in the KIND column and \"0.9\\x1b]52;c;ZWNobyBoaQ==\\a\" in the VERSION column of the planted row, and \"x\\x1b[2Jy.pxbak\" in the NAME column of a damaged row: SGR conceal, an OSC 52 clipboard-write sequence and an erase-display sequence were emitted verbatim to restore --list stdout (agents/v06-backup-format/artifacts/evidence.txt). This independently reproduces the hunter's result (agents/h02-backup-format/artifacts/evidence.txt) with different payloads. Whether a given terminal acts on the sequences was not tested."
+    },
+    "remediation": {
+      "strategy": "Treat listing metadata as untrusted display data: escape non-printable runes in every name and header string that restore --list prints, and tighten ReadHeader to reject headers whose kind is not scheduled/manual or whose pulsix_version contains non-printable runes (so they list as damaged, which retention already never prunes). Add a regression test that a header field or object name containing \\x1b is rendered escaped.",
+      "code_changes": [
+        {
+          "file_name": "internal/app/restorecmd.go",
+          "fixed_code": "// printable escapes control and other non-printable runes so metadata from\n// backup storage cannot drive the operator's terminal.\nfunc printable(s string) string {\n\tq := strconv.Quote(s)\n\treturn q[1 : len(q)-1]\n}\n\n// in listBackups:\n_, _ = fmt.Fprintf(tw, \"%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n\", printable(o.Name), created, printable(kind), printable(version), formatSize(o.Size), metrics)"
+        },
+        {
+          "file_name": "internal/backup/format.go",
+          "fixed_code": "// in ReadHeader, after the format version check:\nif h.Kind != \"scheduled\" && h.Kind != \"manual\" {\n\treturn Header{}, fmt.Errorf(\"%w: unknown kind\", ErrCorrupt)\n}\nfor _, r := range h.PulsixVersion {\n\tif !unicode.IsPrint(r) {\n\t\treturn Header{}, fmt.Errorf(\"%w: unprintable version\", ErrCorrupt)\n\t}\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires write access to the backup storage plus a later operator running restore --list in a terminal; storage writers are an explicitly modelled but uncommon principal."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "Control of the operator's terminal display (hiding or rewriting inventory rows, clearing the screen, window title) and any further escape features the emulator honours; it cannot make a forged backup restore (Verify refuses it), plain-text listing spoofing is already possible by design, and a storage writer can already delete or replay authentic backups. Escalation such as clipboard poisoning depends on the terminal emulator."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Every trace line was checked at 7ae1808, the path is short and fully source-visible, and an independent sandboxed test with different payloads observed the raw control bytes in RunRestore --list output."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/backup/restore.go:load:post-snapshot-revocations-reactivated",
+    "title": "Restore silently reactivates sessions, API tokens and worker or agent certificates revoked after the backup was taken",
+    "description": "A backup is a full snapshot of every public table except, optionally, check_samples (dump.go:79). That covers sessions, api_tokens, worker_certificates, agent_certificates, workers, org memberships and users, with their revoked_at, status and disabled_at columns. Restore wipes the live database without reading it and COPYs the snapshot rows back as they were. The only reconciliation after the load marks running backup attempts abandoned. The authentication lookups decide only from those restored columns: GetAPITokenByHash (tokens.sql:18), GetSession (auth.sql:10-18) and the gRPC serial lookups (grpcsrv/auth.go:203). So any credential revoked between the snapshot and the restore works again after the restore. That covers an API token (expires_at may be NULL, so it never expires), a revoked worker certificate, an agent certificate superseded and revoked by a renewal (valid up to 90 days), a disabled user, a removed membership and an old password. A revoked session also works again, but only until its original absolute expiry (SessionTTL 12 h, auth/session.go:21), so it matters only for a restore soon after the snapshot. The holder of the revoked credential cannot trigger this. It needs the instance operator, who holds the master key and the owner database URL, to choose a backup older than the revocation. The likely trigger is incident response: credentials are revoked, then a pre-incident backup is restored to undo the damage. Nothing warns about this. The README promises a revoked worker certificate 'stops working at once' (deploy/compose/README.md:88,191). The CLI restore output, the README restore section, the design spec and the end-user backups page (noix-docs branch origin/pulsix, src/content/docs/pulsix/admin/backups.md) mention only certificates renewed after the backup. Yet the same feature's `worker add --replace` and worker-enroll refuse to re-enroll a revoked worker because that 'would undo the revocation'. Backlog 7.47 also says that accepting a stolen but superseded certificate after a restore needs a security decision. Calibration: every full-snapshot database restore in comparable products rolls back credential state in the same way. Whether Pulsix accepts that rollback as part of its restore contract is not stated anywhere in source or docs.",
+    "claimed_root_cause": "load() (internal/backup/restore.go:169-247) treats the snapshot as the whole truth for credential and authorization state. Before the wipe it never reads which credentials the replaced database had revoked. After the load it has no step that carries those revocations forward (by token hash, serial or session id), invalidates the restored sessions, or lists the reactivated credentials for the operator. The CLI does not surface the gap either: restoreNextStep (internal/app/restorecmd.go:66) and the docs cover only certificates renewed after the backup.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/app/restorecmd.go",
+        "line": 120,
+        "scope": "RunRestore",
+        "description": "The instance operator (compose cli service: master key and owner database URL) restores a backup older than a later revocation, replacing the database with --replace and confirmation."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/dump.go",
+        "line": 79,
+        "scope": "Dump",
+        "description": "Dump skips only check_samples (when metrics are excluded), so the snapshot holds sessions, api_tokens, worker_certificates, agent_certificates, workers, memberships and users with their revocation columns as of the snapshot."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/restore.go",
+        "line": 80,
+        "scope": "Restore",
+        "description": "wipe() drops the live database, which holds the post-snapshot revocations, without reading or recording them."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/restore.go",
+        "line": 274,
+        "scope": "copyTables",
+        "description": "Rows are COPYed back verbatim, so revoked_at, status and disabled_at return to their snapshot values (NULL or active)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/restore.go",
+        "line": 232,
+        "scope": "load",
+        "description": "The only reconciliation after the load is abandonRunningAttempts on backup_runs. Nothing touches credentials, sessions or memberships before Commit."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/db/queries/tokens.sql",
+        "line": 18,
+        "scope": "GetAPITokenByHash",
+        "description": "API token authentication accepts any token whose revoked_at IS NULL and whose expires_at is NULL or in the future, so a token revoked after the snapshot authenticates again. GetSession (auth.sql:18) and the worker and agent serial lookups (workers.sql:12, agents.sql:101, used by grpcsrv/auth.go:203) decide the same way from the restored columns."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "deploy/compose/README.md",
+        "line": 88,
+        "description": "Stated revocation contract: 'A revoked worker's certificate stops working at once' (also line 191: 'cuts it off at once'). Nothing qualifies it for a restore."
+      },
+      {
+        "file": "internal/app/workerreplace.go",
+        "line": 28,
+        "description": "The same feature's stated policy: 'A revoked worker is left alone: replacing it would undo the revocation.'"
+      },
+      {
+        "file": "internal/app/workerbundle.go",
+        "line": 167,
+        "description": "worker-enroll refuses to re-enroll a revoked bundle because that would undo the revocation. Restore undoes revocations wholesale without notice."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 541,
+        "description": "Backlog 7.47 treats accepting a stolen but superseded certificate after a restore as needing a security decision. Restore already revives serials that a renewal revoked after the snapshot (an agent renewal revokes the old serial)."
+      },
+      {
+        "file": "internal/app/restorecmd.go",
+        "line": 66,
+        "description": "restoreNextStep warns only about certificates renewed after the backup, not about revocations being undone. The README (lines 362-371) and the spec say the same."
+      },
+      {
+        "file": "internal/db/queries/auth.sql",
+        "line": 18,
+        "description": "Session lookup checks only revoked_at, expires_at and users.disabled_at, all restored from the snapshot. The absolute 12 h expiry (auth/session.go:21) limits session reactivation to restores soon after the snapshot."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-11-02-backup-restore-design.md",
+        "line": 53,
+        "description": "The spec defines a backup as a full snapshot (point-in-time recovery is a non-goal) but never states whether rolling back revocations is accepted."
+      }
+    ],
+    "blockers": [
+      "The decisive fact is the owner's restore contract. Is restore an accepted point-in-time rollback of credential and authorization state (then only documentation is missing), or must revocations made after the snapshot survive it? No source, spec, README or end-user docs page (noix-docs origin/pulsix admin/backups.md) states either. Source establishes the mechanism, not that it violates an intended guarantee.",
+      "A local demonstration needs a dump/restore round trip against PostgreSQL (internal/backup/dump_restore_test.go uses internal/db/testdb and testcontainers). That is forbidden in the approved sandbox, so reactivation was established from source only and not observed."
+    ],
+    "validation_plan": {
+      "local": "DB-backed test in internal/backup next to dump_restore_test.go (testdb.FreshDatabase, dummy org and user only). Seed one user with an API token (expires_at NULL), one session and one registered worker certificate, then Dump to a buffer. Then call RevokeAPIToken, revoke the session (UPDATE sessions SET revoked_at = now()), and RevokeWorker plus RevokeWorkerCertificates. Run Restore of the buffer with Replace: true. Assert that GetAPITokenByHash returns the token, GetSession returns the session (within its 12 h expiry), and LookupWorkerSerial returns the serial with revoked_at NULL and worker status not revoked. Expected today: all three usable again. Regression after a fix: the revocations survive (carried over by token hash, session id or serial), or restored sessions are revoked and the restore output lists the reactivated tokens and certificates.",
+      "deployment": "Owner decision, with no deployed system touched. Ask the product owner whether restore must preserve revocations made after the snapshot, or whether rolling back credential state is accepted. If it is accepted, the CLI restore output, deploy/compose/README.md and the end-user backups page should tell operators to re-revoke tokens, workers and agents and to re-disable members after restoring an older backup, especially after an incident. If it is not accepted, schedule a code fix in load()."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/backup/retention.go:Prune:unauthenticated-header-drives-deletion-of-authentic-backups",
+    "title": "Forged plaintext backup headers make scheduled retention delete every authentic backup, including the one just written",
+    "description": "Retention decides what to keep from the unauthenticated plaintext header of each *.pxbak object in the backup folder or bucket prefix. A party that can only create objects in the backup destination (no master key, no delete rights) can plant a few header-only objects, under any *.pxbak name, that claim to be scheduled backups from future dates. On the next scheduled run the manager writes its new backup, lists the destination, ranks the forged objects as the newest backups in every daily, weekly and monthly tier, and deletes all authentic scheduled backups with its own credentials, including the one it has just written. The forged objects stay, so every later scheduled backup is deleted right after it is written; the attempt is still recorded as succeeded, the listing hides succeeded attempts whose object is gone, and the forged objects are listed as succeeded scheduled backups. This breaks the spec rule that pruning never deletes the newest successful backup.",
+    "root_cause": "Prune (internal/backup/retention.go:22-80) ranks scheduled objects by Object.created() (internal/backup/storage.go:50-55), which returns the CreatedAt and Kind of the plaintext JSON header parsed by ReadHeader (internal/backup/format.go:91-131). That header sits outside the age-authenticated payload, is not MAC'd with a master-key-derived key, is not bound to the instance, and is not checked against the object name. The only built-in protection, keeping scheduled[0] (retention.go:70-72), protects the object with the newest claimed date rather than the backup the current run produced. RunDue calls prune with the full listing right after every successful scheduled backup (internal/backup/ticker.go:118-120) and Service.prune deletes each returned name with the manager's own storage credentials (ticker.go:142-143). Folder and S3 listings both accept any *.pxbak (storage_dir.go:101, storage_s3.go:194-195).",
+    "intended_behavior": "Retention should delete only backups this instance wrote and can authenticate, and must never delete the backup the current run just produced (docs/superpowers/specs/2026-11-02-backup-restore-design.md:196-197: pruning never deletes the newest successful backup). Objects whose header cannot be authenticated should be neither pruned nor counted toward any tier, as damaged objects already are.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/backup/storage_dir.go",
+        "line": 88,
+        "scope": "dirStorage.List",
+        "description": "Every *.pxbak file in the backup folder is listed, whatever its name and whoever wrote it (storage_s3.go:183-203 does the same for every *.pxbak key directly under the bucket prefix). This is where objects planted by a storage writer enter the manager."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/storage_dir.go",
+        "line": 127,
+        "scope": "dirStorage.describe",
+        "description": "headerObject builds the listing entry only from the plaintext header in the object's first bytes."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/format.go",
+        "line": 91,
+        "scope": "ReadHeader",
+        "description": "Checks the magic line, parses the JSON header (created_at, kind) and requires format_version 1. Nothing is authenticated, and the age payload after the header is never read."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/ticker.go",
+        "line": 119,
+        "scope": "Service.RunDue",
+        "description": "After every successful scheduled backup, RunDue prunes the destination with the stored retention."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/retention.go",
+        "line": 38,
+        "scope": "Prune",
+        "description": "Each object's time and kind come from created(), i.e. from the forged header. Future-dated forged entries sort first and fill every daily, weekly and monthly bucket."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/backup/retention.go",
+        "line": 71,
+        "scope": "Prune",
+        "description": "Only the newest object by claimed header time (a forged one) is always kept. The backup the run just wrote gets no protection."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/backup/ticker.go",
+        "line": 143,
+        "scope": "Service.prune",
+        "description": "st.Delete removes every authentic scheduled backup that Prune returned, using the manager's own storage credentials."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/backup/retention.go",
+        "line": 70,
+        "description": "The only unconditional keep is scheduled[0], the newest object by claimed header time. Prune is not told which object the current run wrote."
+      },
+      {
+        "file": "internal/backup/storage.go",
+        "line": 52,
+        "description": "created() returns Header.CreatedAt and Header.Kind whenever the header parses. The object name is ignored."
+      },
+      {
+        "file": "internal/backup/format.go",
+        "line": 35,
+        "description": "The header is documented as the only plaintext part of the file, and nothing authenticates it before it is used."
+      },
+      {
+        "file": "internal/backup/ticker.go",
+        "line": 118,
+        "description": "Prune runs after every successful scheduled backup, so planted objects cause deletions again on every later run."
+      },
+      {
+        "file": "internal/backup/storage_s3.go",
+        "line": 195,
+        "description": "The S3 listing accepts any *.pxbak key directly under the prefix, and its objects reach the same Prune and Delete path."
+      },
+      {
+        "file": "internal/backup/listing.go",
+        "line": 56,
+        "description": "A succeeded attempt whose object is gone is dropped from the listing, while objectEntry (listing.go:85-88) shows each forged object as a succeeded backup. The deletions therefore leave no visible failure."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-11-02-backup-restore-design.md",
+        "line": 197,
+        "description": "Spec invariant: pruning never deletes the newest successful backup."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "The attacker can create objects in the configured backup destination (the S3 bucket prefix, or the backup folder volume) but holds neither the master key nor the derived backup key. Delete or overwrite rights are not needed. A writer that also has delete rights could delete backups directly, so the added risk is for create-only or put-only writers."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "The daily schedule is enabled, because retention runs only after scheduled backups. Any retention values work if the attacker plants objects in enough distinct days, ISO weeks and months to fill every tier. For the defaults 7/4/6, seven objects dated in seven different months are enough."
+      },
+      {
+        "kind": "data_state",
+        "description": "Permanent loss needs a destination without versioning or object lock. On a versioned bucket the manager's deletes only add delete markers, and with object lock the deletes fail."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "A holder of create-only write access to the backup folder or bucket prefix, without the master key, who plants header-only objects once.",
+      "payloads": [
+        "Seven files zz-forged-1.pxbak .. zz-forged-7.pxbak (the names deliberately ignore the pulsix-<stamp>-<kind> scheme), each containing \"PULSIXBAK1\\n\" + {\"format_version\":1,\"created_at\":\"2031-MM-15T00:00:00Z\",\"kind\":\"scheduled\"} + \"\\nnot-age\\n\" for MM = 01..07"
+      ],
+      "instructions": [
+        "Copy the source to scratch and add the harness test TestV08ForgedHeadersPruneAuthenticBackups to package internal/backup (scratch/src/internal/backup/zz_v08_forged_prune_test.go). It builds the real backup.Service with the package's fakeStore, fakeDump, fakeMailer and clock fakes, a storageFor that returns backup.NewDirStorage(t.TempDir()), and DefaultSettings() with Enabled=true (folder, 03:00 UTC, retention 7/4/6).",
+        "Call RunDue at 2026-10-31 03:00:10 and at 2026-11-01 03:00:10 UTC to take two authentic scheduled backups.",
+        "Write the seven forged files into the folder with os.WriteFile.",
+        "Call RunDue at 2026-11-02 03:00:30 UTC and list the folder, then call RunDue at 2026-11-03 03:00:30 UTC and list the folder again.",
+        "Run in the approved sandbox: docker create --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges --user 65532:65532 (with the prescribed resource limits, tmpfs, read-only source and module cache, and env -i) golang:1.27.1-alpine ... timeout 300 go test -count=1 -v -run TestV08ForgedHeadersPruneAuthenticBackups ./internal/backup/"
+      ],
+      "observed_result": "The 2026-11-02 run logged 'backup finished ... pulsix-20261102T030030Z-scheduled.pxbak' and then 'pruned scheduled backup' for pulsix-20261102T030030Z, pulsix-20261101T030010Z and pulsix-20261031T030010Z, which left only zz-forged-1..7.pxbak. The 2026-11-03 run wrote pulsix-20261103T030030Z-scheduled.pxbak and pruned it at once. Zero authentic backups remained, while all four scheduled attempts were recorded as succeeded (artifact agents/v08-backup-storage/artifacts/evidence.txt). This reproduces the hunter's result independently and shows that the object names do not matter and that the deletion repeats on later runs."
+    },
+    "remediation": {
+      "strategy": "Stop trusting the plaintext header for destructive decisions. (1) Pass the name of the backup the current run wrote into Prune and always keep it. This alone restores the spec invariant. (2) Authenticate the header: write a MAC over the magic and header line, keyed by an HKDF of the master key with its own label (e.g. 'pulsix backup header v1'). Treat an object whose MAC is missing or wrong like a damaged object: never pruned, never counted toward a tier, and shown as unverified in the listing. (3) As defence in depth, require the name's stamp and kind (ParseObjectName) to match the header, and ignore objects that claim a CreatedAt later than the current run. A date filter alone is not enough, because a forged object dated earlier on the same day as an authentic one can still displace it within that day's bucket. Regression test: plant forged future-dated and same-day scheduled objects, run RunDue, and assert that no authentic backup is deleted, in particular the one just written.",
+      "code_changes": [
+        {
+          "file_name": "internal/backup/ticker.go",
+          "fixed_code": "if e.State == StateSucceeded {\n\ts.prune(ctx, st, set, e.Name)\n}\n\n// prune deletes the scheduled backups the retention no longer keeps; the\n// backup this run wrote is never among them.\nfunc (s *Service) prune(ctx context.Context, st Storage, set Settings, justWritten string) {\n\t// ... list as before ...\n\tfor _, name := range Prune(objs, set.Retention, loc, justWritten) {\n\t\t// ... delete as before ...\n\t}\n}"
+        },
+        {
+          "file_name": "internal/backup/retention.go",
+          "fixed_code": "func Prune(objs []Object, r Retention, loc *time.Location, justWritten string) (remove []string) {\n\t// ...\n\tfor _, o := range objs {\n\t\t// Damaged or unauthenticated headers are left alone and never counted.\n\t\tif o.HeaderErr != nil || !o.HeaderVerified {\n\t\t\tcontinue\n\t\t}\n\t\tif at, kind, ok := o.created(); ok && kind == KindScheduled {\n\t\t\tscheduled = append(scheduled, entry{o.Name, at})\n\t\t}\n\t}\n\t// ... tiers as before ...\n\tif justWritten != \"\" {\n\t\tkeep[justWritten] = true\n\t}\n\t// ...\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "The attack needs write access to the backup bucket prefix or folder. The shipped compose stack mounts the folder only in the manager and cli containers (files 0600, folder 0750), so the realistic routes are an S3 bucket or prefix shared with other writers, or a leaked put-only credential. An attentive administrator could notice forged entries dated years ahead in the listing."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "After a single write, the manager itself deletes every authentic scheduled backup, including each new one right after it is written. Disaster-recovery capability is lost silently and stays lost after the attacker's access is revoked, and the deletion is permanent on unversioned storage. Manual backups and the live database are not affected, and nothing is disclosed."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The unmodified Service.RunDue, Prune and NewDirStorage code ran in the approved sandbox against a real folder destination. An independent harness, using different forged names and dates from the hunter's, deleted all authentic scheduled backups on the first run after planting and the new backup on the next run. Source shows that the S3 destination reaches the same Prune and Delete path through the shared Storage interface. The authentic backups in the harness carry the fake dump's payload, which does not matter because Prune never reads the payload."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/checks/samples.go:RecordObservations:unbounded-per-host-tuple-cardinality",
+    "title": "One host agent can persist unbounded check tuples that every evaluation of that host re-reads",
+    "description": "Check results are bounded per message: 1000 observations, each check_key at most 64 bytes, item at most 512 and metric at most 64, with no control characters. Nothing bounds the total number of distinct (check_key, item, metric) tuples one host can accumulate. check_key is never checked against a check definition, so arbitrary keys are stored. Each accepted observation upserts one check_current row for the agent's own host and marks that host dirty. check_current rows are never deleted while the host exists. At every rule evaluation, the host's distinct non-empty (check_key, item) pairs are inserted into check_items, which is also never pruned. The principal is the host agent identity (mTLS, bound to one host), which any org operator can create by enrolling an agent (PermAgentsWrite = RoleOperator). It can grow its host's tuple set by 1000 per message, with no per-stream rate bound and no aggregate quota. The rule ticker is shared across orgs: it runs every 15 s, takes up to 200 dirty or due hosts ordered by next_due_at, and evaluates them one after another under one batch deadline of max(4x interval, 10 s) = 60 s. Each evaluation of the inflated host reads all of its check_current rows (ListCheckCurrent, no LIMIT) and passes all distinct items to Discover in one unnest INSERT. The org-wide GET /api/v1/orgs/{org}/items endpoint returns every check_items row of the org, with no pagination, plus two correlated check_current subqueries per row. Rows stay inside the attacker's own org under RLS, so no data crosses tenants. The open question is availability. A host whose evaluation keeps overrunning the batch deadline is rolled back and keeps its old next_due_at. It may then sort first in every tick and use up each batch's deadline, delaying evaluation of other orgs' hosts on a single-manager instance. Whether that happens depends on database cost at large tuple counts, which was not observed. Recovery: deleting the host cascades its check_current and check_items rows. Revoking the agent stops further growth.",
+    "claimed_root_cause": "Service.RecordObservations (internal/checks/samples.go:274-289) enforces only the 1000-observation batch bound and the per-string bounds in withinContract (samples.go:176-193). It deliberately never resolves check_key against check_definitions (samples.go:19-23) and never caps the distinct tuples per host. SQLStore.RecordObservations (internal/checks/store_sql.go:251, upsert at :332) adds one check_current row per new tuple. check_current is documented as never pruned (internal/db/migrations/00044_check_samples.sql:60-66), and neither is check_items (internal/db/queries/items.sql:34-37). The rule evaluator's Load reads the whole per-host set and re-submits it to Discover on every evaluation (internal/rules/load_sql.go:88,118).",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/agentapi/stream.go",
+        "line": 150,
+        "scope": "Service.process",
+        "description": "Every CheckResults message on an authenticated agent stream goes to recordCheckResults (stream.go:250). That function builds Observations with HostID = agent.HostID and calls checks.Service.RecordObservations. receiveMessages (stream.go:92-118) has no per-stream message rate bound; only the gRPC receive-size limit applies."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/samples.go",
+        "line": 279,
+        "scope": "Service.RecordObservations",
+        "description": "This is the batch bound of 1000 observations, plus withinContract's per-string checks. check_key existence and the number of distinct tuples per host are never checked. Valid observations go to the store."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/store_sql.go",
+        "line": 332,
+        "scope": "SQLStore.RecordObservations",
+        "description": "Each valid observation is upserted into check_current through UpsertCheckCurrent (queries/checks.sql:72-82), keyed by (host_id, check_key, item, metric). MarkHostDirty (store_sql.go:355) then makes the host due for the rule ticker."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/db/migrations/00044_check_samples.sql",
+        "line": 60,
+        "scope": "check_current",
+        "description": "The schema documents that nothing ever deletes a check_current row. Rows are removed only by ON DELETE CASCADE when the host or org is deleted."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/load_sql.go",
+        "line": 88,
+        "scope": "EvalSQLStore.Load",
+        "description": "Every evaluation of the dirty host lists all of its check_current rows with no LIMIT (queries/checks.sql:84-90) and builds a TupleSnapshot for each one."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/rules/load_sql.go",
+        "line": 118,
+        "scope": "EvalSQLStore.Load",
+        "description": "Discover receives every distinct non-empty (check_key, item) pair (seenItems, load_sql.go:244-259) and inserts them into check_items in one unnest INSERT ... ON CONFLICT DO NOTHING (items.sql:34-37). This runs on every evaluation, inside that host's transaction, within the shared cross-org ticker batch."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/checks/samples.go",
+        "line": 176,
+        "description": "withinContract bounds only the string lengths of check_key, item and metric, plus control characters."
+      },
+      {
+        "file": "internal/checks/samples.go",
+        "line": 19,
+        "description": "The Observation doc comment says RecordObservations never looks check_key up against check_definitions, and that an observation for a key with no definition is stored like any other."
+      },
+      {
+        "file": "internal/db/queries/items.sql",
+        "line": 34,
+        "description": "InsertCheckItems: one row per (host, check_key, item). Nothing in the code base deletes check_items rows except the host/org FK cascade."
+      },
+      {
+        "file": "internal/db/queries/items.sql",
+        "line": 77,
+        "description": "ListItemsForOrg has no LIMIT and two correlated check_current subqueries per row. It is served unpaginated by GET /api/v1/orgs/{org}/items (internal/api/item_handlers.go:379), which needs only PermChecksRead."
+      },
+      {
+        "file": "internal/rules/ticker.go",
+        "line": 37,
+        "description": "The shared evaluation cadence is 15 s, with a batch of 200 hosts across all organizations."
+      },
+      {
+        "file": "internal/rules/ticker.go",
+        "line": 73,
+        "description": "The batch deadline is 4 x interval (60 s at the defaults). When it fires, the remaining hosts in the batch are left due for a later tick (due_sql.go:146-155)."
+      },
+      {
+        "file": "internal/db/queries/rules.sql",
+        "line": 149,
+        "description": "ClaimDueEvalCursors orders by next_due_at. A host whose evaluation is rolled back keeps its old next_due_at, so it can be claimed first again on the next tick."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 125,
+        "description": "PermAgentsWrite is RoleOperator, so any org operator can enroll an agent and obtain the host-agent identity that drives this path."
+      }
+    ],
+    "blockers": [
+      "PostgreSQL/TimescaleDB cannot run in the approved sandbox: internal/db/testdb uses testcontainers and the host Docker socket, which is forbidden. The decisive fact was not observed: the wall-clock cost of ListCheckCurrent, Discover's unnest INSERT and the in-process evaluation for one host with a large tuple count (e.g. 10^5 to 10^6). Also unobserved: whether that cost exceeds the 60 s batch deadline and so delays other orgs' hosts in the shared ticker. Only the service-layer behaviour was reproduced in the sandbox (agents/v09-agent-data/artifacts/evidence.txt): 3 consecutive batches of 1000 distinct definition-less tuples for one host reached the store (3000 distinct tuples), and a batch of 1001 was refused.",
+      "Deployment facts decide the shared impact and are outside the repository: the number of manager replicas (other managers SKIP LOCKED past a host being evaluated), database sizing and any operator-set statement_timeout (the repository sets none), and the rule-evaluation latency other tenants can tolerate."
+    ],
+    "validation_plan": {
+      "local": "Only in an owner-run, isolated test environment with internal/db/testdb (a disposable Postgres/TimescaleDB container), non-destructive and with dummy orgs. Create org A with host HA and org B with host HB. Using checks.SQLStore.RecordObservations, write 100 batches of 1000 distinct tuples (check_key 'nodef-<b>', item 'item-<i>', metric 'm', a numeric value, at = now) for HA, and 10 normal tuples for HB. Mark both hosts dirty. (1) Time rules.EvalSQLStore.Load for HA against HB. (2) Run one rules.Ticker tick with the default batch and deadline, and record whether HB is evaluated in the same tick and how long the tick took. (3) Repeat at 10^5 and 10^6 tuples (stop at the first size where Load for HA exceeds the 60 s batch deadline) and check whether HB is still evaluated within one or two ticks. (4) Time items.SQLStore.ItemsForOrg for org A. Compare the results with the 200-host, 15 s ticker budget.",
+      "deployment": "The owner, on a staging instance only, enrolls a test agent in a test org and sends synthetic CheckResults with distinct definition-less check_keys. Then compare SELECT host_id, count(*) FROM check_current GROUP BY host_id and the same for check_items, observe the manager logs for 'evaluation batch cancelled' warnings and tick overruns affecting another test org's hosts, and record the replica count and any database statement_timeout. Afterwards delete the test host, which cascades its rows."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/outbound/policy.go:blockedRanges:ipv6-cloud-metadata-endpoints-unlisted",
+    "title": "Webhook policy still dials the IPv6 metadata addresses of cloud providers missing from its hand-written list",
+    "description": "An org admin with channels.write can store a notification webhook (POST or PUT, with chosen headers and a templated body) whose URL is an IPv6 literal, or a hostname resolving to one, in a cloud provider's IPv6 instance-metadata range. Any MFA-complete user can create an org and become its owner. Fix b397161 refuses the AWS, Google Cloud and Oracle /64s, but the rest of fc00::/7 is still allowed as private space. Two examples pass Policy.Check and are dialled: fd00:a9fe:a9fe::1, reported as the Akamai/Linode Metadata service address, and fd00:42::42, reported as the Scaleway metadata address. Both attributions are provider facts, not repository facts. The verifier's own sandboxed run under the approved controls showed Check returning nil for both. A PUT through outbound.NewClient, with a resolver answering those addresses, reached 'dial tcp [...]:80' and failed only because the sandbox has no network. In the same run fd00:ec2::254, fd20:ce::254, fd00:c1::a9fe:a9fe and 169.254.169.254 were refused (artifact agents/v10-notify/artifacts/evidence.txt). send.go reads the response body into io.Discard and surfaces only the status code ('the endpoint answered N') or a redacted transport error. The reachable effect is therefore at most a blind POST/PUT with chosen headers, plus a status and connect-error oracle, against the manager host's metadata service. It applies only on such a provider, and only when the manager has an IPv6 route to that address. The shipped compose network is IPv4-only.",
+    "claimed_root_cause": "blockedRanges() (internal/outbound/policy.go:31-61) still protects IPv6 metadata with a hand-enumerated list of provider /64s (lines 47-49) inside fc00::/7, which is otherwise allowed wholesale (package doc lines 8-10; spec 2026-09-10 lines 726-731). The package contract (lines 6-7) promises that cloud metadata addresses are refused. The b397161 fix widened the list from one AWS address to three provider /64s without changing that approach. A provider whose IPv6 metadata endpoint sits elsewhere in unique-local space is not refused, and no embedded-IPv4 extractor (policy.go:79-144) matches these addresses.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/notify_handlers.go",
+        "line": 182,
+        "scope": "POST /api/v1/orgs/{org}/notification-channels/{id}/test",
+        "description": "After notifyChannelScope requires tenancy.PermChannelsWrite (line 178), the org admin triggers a synchronous send of a channel whose URL, method (POST or PUT), headers and body template they stored. Queued alert, run and digest deliveries and resends use the same sender."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/notify/deliveries.go",
+        "line": 96,
+        "scope": "Service.SendTest",
+        "description": "Passes the channel to Sender.Send, which is the single ChannelSender wired at internal/app/app.go:485-486 with outbound.NewClient(outbound.NewPolicy(cfg.NotifyAllowCIDRs, cfg.NotifyNAT64Prefixes), ...)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/notify/send.go",
+        "line": 181,
+        "scope": "ChannelSender.sendWebhook",
+        "description": "s.http.Do(req) sends the stored method, URL and operator headers (lines 168-170) with the rendered body."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/outbound/client.go",
+        "line": 97,
+        "scope": "dialer.DialContext",
+        "description": "Each address, whether a parsed literal (line 85) or resolved (line 88), goes through Policy.Check. If every address passes, the checked address is dialled (lines 102-104). Proxy is nil and redirects are refused."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/outbound/policy.go",
+        "line": 197,
+        "scope": "Policy.Check / blockedRanges",
+        "description": "fd00:a9fe:a9fe::1 and fd00:42::42 fall in no blocked range. The only unique-local entries are fd00:ec2::/64, fd20:ce::/64 and fd00:c1::/64. p.embedded (line 202) finds no IPv4 address in either, so Check returns nil and the dial goes ahead."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/outbound/policy.go",
+        "line": 47,
+        "description": "The IPv6 metadata protection is three provider /64s (AWS line 47, Google Cloud line 48, Oracle line 49). No other provider range in fc00::/7 is listed."
+      },
+      {
+        "file": "internal/outbound/policy.go",
+        "line": 6,
+        "description": "The package contract says cloud metadata addresses are refused unless PULSIX_NOTIFY_ALLOW_CIDRS lists them. Lines 8-10 allow fc00::/7 as private space."
+      },
+      {
+        "file": "internal/outbound/client.go",
+        "line": 102,
+        "description": "After Check passes, each checked address is dialled. In the verifier's sandbox run, PUT via fd00:a9fe:a9fe::1 and fd00:42::42 reached 'dial tcp [...]:80: connect: network is unreachable' with blocked=false, while fd00:ec2::254 was refused before the dial (agents/v10-notify/artifacts/evidence.txt). This matches h13's agents/h13-notify/artifacts/evidence.txt."
+      },
+      {
+        "file": "internal/notify/send.go",
+        "line": 190,
+        "description": "The response body is read into io.Discard. Only 'the endpoint answered N' (lines 192-198) or a URL-redacted transport error is surfaced, so the effect is a blind request plus a status-code oracle, not credential disclosure."
+      },
+      {
+        "file": "deploy/compose/docker-compose.yml",
+        "line": 291,
+        "description": "The shipped stack's network is IPv4-only: subnet 10.213.73.0/24 and no enable_ipv6 anywhere in the file. The stock manager container has no IPv6 route to a metadata address unless the operator enables IPv6 or host networking."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-09-10-pulsix-architecture-design.md",
+        "line": 729,
+        "description": "The spec lists the refused IPv6 instance-service ranges as exactly the AWS, Google Cloud and Oracle /64s (backlog 7.43). Other providers are not considered."
+      }
+    ],
+    "blockers": [
+      "Provider facts not in the repository: whether Akamai/Linode serves its Metadata service at fd00:a9fe:a9fe::1, whether Scaleway serves its metadata API at fd00:42::42, whether other providers use other unique-local addresses, and which POST/PUT paths those endpoints accept from an unprivileged source port without the attacker reading the response. No network access is allowed in this audit.",
+      "Deployment fact: whether a manager deployed on such a provider has an IPv6 route from its process to the metadata address. The shipped compose network is IPv4-only (docker-compose.yml:291), so this needs an operator-enabled IPv6 network or host networking.",
+      "Impact fact: whether any blind POST/PUT to those endpoints changes state, or reveals more than reachability through the status code. send.go:190 discards response bodies. For example, a token-issuing PUT returns a token the attacker never sees."
+    ],
+    "validation_plan": {
+      "local": "Done under the approved sandbox (--network none, read-only, golang:1.27.1-alpine). A scratch-only test, internal/outbound/v10_audit_test.go, ran against unmodified policy.go. NewPolicy(nil, nil).Check returned nil for fd00:a9fe:a9fe::1, fd00:42::42 and fd12:3456::1. It returned ErrBlocked for fd00:ec2::254, fd20:ce::254, fd00:c1::a9fe:a9fe and 169.254.169.254. A PUT through NewClient with a fixed-answer resolver reached the TCP dial for the first two and was refused for fd00:ec2::254. TestPolicyRefusesIPv6CloudInstanceServices still passes. Regression gate after a fix: add fd00:a9fe:a9fe::1 and fd00:42::42 (and any other confirmed provider ranges) with allowed=false to TestPolicyRefusesIPv6CloudInstanceServices. Keep fd12:3456::1 allowed. Run go test -count=1 -run 'TestPolicyRefusesIPv6CloudInstanceServices|TestPolicyCheck$' ./internal/outbound/ in the same sandbox. Possible fixes: refuse the confirmed providers' /64s, or add an operator-configurable deny list for fc00::/7.",
+      "deployment": "Owner-observed, only on dedicated test instances the operator owns: one Linode/Akamai and one Scaleway instance with IPv6 enabled, running the manager in compose with IPv6 enabled (or host networking). From inside the manager container's network namespace, run curl -6 -sS -o /dev/null -w '%{http_code}' against http://[fd00:a9fe:a9fe::1]/ and http://[fd00:42::42]/conf. Use read-only root/info paths only, and record whether an HTTP status or a connect error comes back. Then, with a dummy org and dummy admin, create a webhook channel to http://[fd00:a9fe:a9fe::1]/ and press Send test. Record last_error: 'the endpoint answered N' shows the endpoint was reached, while 'destination address is not allowed' or a connect error does not. Do not call writable metadata paths (for example Scaleway user_data) and never target shared or third-party instances."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/rules/window_sql.go:windowStatement:unbounded-per-host-window-fanout-starves-shared-eval-ticker",
+    "title": "One tenant's window-heavy rule can starve the instance-wide rule evaluation ticker",
+    "description": "An operator of organization A (PermChecksWrite) can save one org-scope expression rule of under 4 KiB that names over a hundred distinct window aggregates of up to 24 h each (e.g. `max(disk.used_pct,1440m)>0 or rate(disk.free_bytes,1439m)>0 or ...`). For every reported item of every host of A, on every dirty/due evaluation, the shared evaluation ticker then runs one window statement holding (items x ~123) LATERAL aggregates over up to 24 h of raw check_samples each (a DB-free harness measured 123 distinct window keys from a 4085-byte rule, so 2460 requests and a 21.2 M-row upper bound for a host with 20 disk items at the 10 s minimum interval). The tenant also controls how many items and samples its own hosts report: ingest caps only 1000 observations per batch and 512-byte item names, with no per-host distinct-item cap, no per-tuple sample rate and no stream rate limit, so the row count per window is not bounded by the check interval either. The ticker is one sequential loop per manager (app.go:664) that claims up to 200 hosts of all organizations ordered only by next_due_at and gives the whole batch one 60 s deadline. A host whose evaluation outlives that deadline is rolled back with its cursor untouched, keeps the oldest next_due_at and heads every following claim. In a single-manager deployment (the default compose stack) that would stop rule evaluation for every other organization, and with it the opening and resolving of their alerts and the notifications those state changes produce (escalation of alerts that are already open runs in the separate alert follower loop and continues). Cheaper but still expensive hosts take a disproportionate share of each batch's 60 s, which delays everyone else's evaluations. Both effects keep the shared Postgres busy with A's aggregates. Whether one host's statement actually exceeds 60 s on TimescaleDB is not measured.",
+    "claimed_root_cause": "Per-host evaluation cost has no budget. The rule language bounds expression bytes (4096), window length (24 h) and nesting, but not the number of distinct window aggregates per rule. Nothing bounds the rows a host's window statement scans: no statement_timeout, no per-host item cap, and no per-tuple sample rate at ingest. The cross-tenant ticker has no per-organization fairness, no per-host time budget separate from the 60 s batch deadline, and no back-off that moves a repeatedly cut-off host behind other organizations' hosts.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/rule_handlers.go",
+        "line": 481,
+        "scope": "POST /api/v1/orgs/{org}/rules (requireOrg PermChecksWrite = operator)",
+        "description": "An operator of organization A creates an org-scope expression rule; requireOrg only checks checks.write, and Check/Create run the same validation."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/service.go",
+        "line": 209,
+        "scope": "Service.buildRule",
+        "description": "The only size bound on the expression is len <= 4096 bytes. Parse/TypeCheck accept any number of window calls with distinct lengths in [1m, 24h] (catalog.go:57, check at catalog.go:247)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/evaluate.go",
+        "line": 192,
+        "scope": "WindowRequests",
+        "description": "For each reported, non-ignored item judged by the winning rule, every distinct WindowKey of the tree becomes one WindowRequest; deduplication is only per (item, metric, agg, seconds)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/ticker.go",
+        "line": 349,
+        "scope": "Ticker.evaluate",
+        "description": "All window requests for the host are fetched in one statement inside the host's claim transaction, under the shared batch context created at ticker.go:275."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/window_sql.go",
+        "line": 133,
+        "scope": "EvalSQLStore.Windows / windowStatement",
+        "description": "windowStatement unnests all requests and runs a LATERAL count/avg/min/max/first/last over check_samples for each, for every sample at or after now minus the window (there is no upper time bound in the statement). It has no row or time limit of its own, and no statement_timeout is configured anywhere in the repository."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/due_sql.go",
+        "line": 147,
+        "scope": "EvalSQLStore.ProcessDue",
+        "description": "Hosts of every organization are evaluated sequentially. Once the batch deadline fires, the loop stops and leaves every remaining host for the next tick; the cut-off host's transaction is rolled back (evaluateOne, due_sql.go:202) with its cursor untouched."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/db/queries/rules.sql",
+        "line": 149,
+        "scope": "ClaimDueEvalCursors",
+        "description": "The next claim orders all organizations' cursors by next_due_at only, with no org filter or fairness, so A's cut-off host (oldest next_due_at) is first again and consumes the next batch. That delays or blocks other organizations' evaluations and alerts."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/rules/service.go",
+        "line": 36,
+        "description": "maxExpressionBytes = 4096 is the only size bound on an expression; nothing limits the number of window calls."
+      },
+      {
+        "file": "internal/rules/catalog.go",
+        "line": 57,
+        "description": "MaxWindow = 24h: each window may span a full day of raw samples."
+      },
+      {
+        "file": "internal/checks/definitions.go",
+        "line": 67,
+        "description": "minInterval = 10s: a legitimate agent produces up to 8640 samples per tuple per 24 h window."
+      },
+      {
+        "file": "internal/checks/samples.go",
+        "line": 274,
+        "description": "RecordObservations bounds only one batch (MaxObservationsPerBatch = 1000 at line 164, item <= 512 bytes) and timestamp plausibility (-1 h/+2 min). It has no per-host distinct-item cap and no per-tuple rate, so a tenant-controlled host can grow both the item count and the samples per window."
+      },
+      {
+        "file": "internal/rules/ticker.go",
+        "line": 73,
+        "description": "batchDeadlineFactor = 4 x the 15 s default interval gives one 60 s deadline for the whole cross-tenant batch; there is no per-host budget."
+      },
+      {
+        "file": "internal/rules/ticker.go",
+        "line": 38,
+        "description": "DefaultEvalBatch = 200 hosts drawn from all organizations by one manager-wide ticker (internal/app/app.go:664)."
+      },
+      {
+        "file": "internal/db/migrations/00044_check_samples.sql",
+        "line": 51,
+        "description": "check_samples_lookup_idx (org_id, host_id, check_key, item, metric, at DESC) makes each window an index range scan with heap fetches for value, so cost scales with windows x items x samples."
+      },
+      {
+        "file": "internal/rules/due_sql.go",
+        "line": 227,
+        "description": "LockOneEvalCursor uses SKIP LOCKED: with several managers only the manager holding the expensive host is stalled, so a full stall needs a single manager or at least as many expensive hosts as managers."
+      }
+    ],
+    "blockers": [
+      "The wall-clock cost of one windowStatement with ~2460 or more 24 h LATERAL aggregates on a TimescaleDB hypertable cannot be measured here, because Postgres/TimescaleDB containers are forbidden in this sandbox. So it is unproven whether a single host's evaluation exceeds the 60 s batch deadline, which would cause a persistent head-of-line stall, or only degrades throughput. That depends on Postgres sizing and buffer-cache state.",
+      "The deployed manager count decides the blast radius. With two or more managers, SKIP LOCKED lets the other managers skip the locked host, so a full stall needs a single-manager deployment (the default compose stack) or at least as many expensive hosts as managers."
+    ],
+    "validation_plan": {
+      "local": "Use a disposable Postgres+TimescaleDB built from the repo migrations. Create two dummy orgs. In org A, seed one host with 20 (then 100) disk items and 24 h of samples at 10 s, and save as an org-scope rule the 4085-byte rule from agents/h06-leftovers/artifacts (123 windows, 1430m-1440m, avg/min/max/rate over the three disk metrics). In org B, seed 50 hosts with a simple threshold rule and one tuple crossing it. Run rules.Ticker.Tick with a single EvalSQLStore at the default 15 s interval. Record (a) the EXPLAIN ANALYZE duration of windowStatement for org A's host, and (b) how many org B hosts each tick evaluates and the delay until org B's alert opens, compared with the same run without org A's rule. Stop at the first tick that shows org B hosts left unevaluated because of org A's host. Use dummy data only.",
+      "deployment": "Owner-observed, on a staging single-manager instance: while an org has a rule with many 24 h windows, check the 'evaluation tick overran its interval' and 'evaluation batch cancelled' warning counts (Ticker.Overruns) and the pg_stat_statements mean time of the window statement. Confirm whether evaluation latency and alert-open latency grow for other organizations."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/worker/runner/redact.go:newRedactor:python-repr-quote-escape",
+    "title": "Run-output redaction misses a secret containing both quote kinds when a play prints it inside a container interpolated into a string",
+    "description": "The worker's redactor removes a claim secret only in the literal spellings newRedactor lists: plain, Go and Python JSON escaping at one and two levels, base64, and long lines. When a task interpolates a dict or list that holds the secret into a larger string, for example debug msg \"cfg: {{ db }}\", ansible-core stringifies the container with Python repr. For a str containing both ' and \", repr wraps it in single quotes and writes the single quote as \\'. The decoded res.msg then holds Pa\"ss\\'w0rd-9 and the JSON display text holds Pa\\\"ss\\\\'w0rd-9. Neither matches a listed spelling, so both are forwarded unredacted, stored in job_events and served to every org member with jobs.read, including viewers. Reproduced end to end on the worker side. A real ansible-core 2.21.4 / ansible-runner 2.4.3 run in the worker image produced the event lines, and Runner.streamEvents with the real redactor forwarded them with the secret readable. The inline-dict and var-dict forms both leaked. A plain print and a double-quote-only secret were redacted.",
+    "root_cause": "newRedactor (internal/worker/runner/redact.go:51-102) adds per secret only jsonSpellings (redact.go:118-124), nestedJSONSpellings (redact.go:131-137), base64Spellings and multi-line pieces. redactor.text (redact.go:238-245) does literal strings.ReplaceAll on those values, and redactor.value applies it to every string leaf. No Python-repr spelling is listed. repr of a str containing both quote kinds inserts a backslash before each ', so the secret's bytes appear with an extra character inside and no listed literal matches. The result is forwarded by eventPayload (redact.go:273-294) in both event_data.res and stdout. Nothing on the manager side redacts it again: grpcsrv/events.go:107 stores the payload as received.",
+    "intended_behavior": "As stated in internal/jobs/redact.go:1-5, viewers with jobs.read must never see a credential, secret extra var or secret inventory var that a task happened to print. Every spelling of a claim secret that ansible-core's ordinary display produces should be replaced by [redacted] before the event leaves the worker. That includes Python repr of a container interpolated into a string, plus that form's JSON escaping in the display text.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 673,
+        "scope": "SQLQueue.buildPayload",
+        "description": "The claim's redact list carries the secret: secret inventory vars here, credentials at line 671, and secret extra vars via addExtraVarSecrets at line 553. The play receives the secret's value."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/runner.go",
+        "line": 278,
+        "scope": "Runner.Run",
+        "description": "The ansible-runner --json event stream is read through streamEvents with newRedactor(job). A task such as debug msg \"cfg: {{ db }}\" emits runner_on_ok whose res.msg and stdout hold repr(dict)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 51,
+        "scope": "newRedactor",
+        "description": "Listed spellings are plain, JSON (Go Marshal and Python json.dumps with ensure_ascii False or True) at one and two levels, base64, and long lines. Python repr, which writes ' as \\' when both quote kinds occur, is missing."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 238,
+        "scope": "redactor.text",
+        "description": "Literal strings.ReplaceAll per listed spelling. Neither Pa\"ss\\'w0rd-9 in res.msg nor Pa\\\"ss\\\\'w0rd-9 in the display text matches."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/runner.go",
+        "line": 450,
+        "scope": "Runner.streamEvents",
+        "description": "The event is forwarded as red.eventPayload(ev), and the secret survives in event_data.res.msg and stdout. The loop only size-bounds it (loop.go:395) before sending it to the manager."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/grpcsrv/events.go",
+        "line": 107,
+        "scope": "event stream handler (Events.Append)",
+        "description": "The manager stores the payload verbatim in job_events. There is no manager-side redaction."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/job_handlers.go",
+        "line": 491,
+        "scope": "GET /api/v1/orgs/{org}/jobs/{id}/events",
+        "description": "Gated by requireOrg(..., tenancy.PermJobsRead), which maps to RoleViewer (tenancy/roles.go:113). Stored payloads are returned through toJobEventDTO (job_handlers.go:330)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 131,
+        "description": "nestedJSONSpellings composes only JSON escapings, and jsonSpellings (line 118) lists only JSON forms. No repr (\\') spelling exists anywhere in newRedactor."
+      },
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 287,
+        "description": "Stdout is redacted with text(), which matches the listed spellings literally."
+      },
+      {
+        "file": "internal/jobs/redact.go",
+        "line": 1,
+        "description": "Stated contract: viewers with jobs.read must never see a credential, secret extra var or secret inventory var that a task printed."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 113,
+        "description": "PermJobsRead is granted to RoleViewer, the lowest org role."
+      },
+      {
+        "file": "internal/grpcsrv/events.go",
+        "line": 107,
+        "description": "The manager appends the worker's payload unchanged."
+      },
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 238,
+        "description": "redactor.text replaces only the exact listed spellings with strings.ReplaceAll, so a secret with one inserted backslash passes unchanged."
+      },
+      {
+        "file": "internal/worker/runner/runner.go",
+        "line": 450,
+        "description": "streamEvents forwards each mapped event as red.eventPayload(ev). This is the last redaction step before the event leaves the worker."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "data_state",
+        "description": "The secret value (credential password or token, secret extra var, or secret inventory var) contains at least one ' and at least one \". A random 20-character password from the full printable ASCII set does so roughly 3% of the time."
+      },
+      {
+        "kind": "data_state",
+        "description": "A task prints the secret inside a dict or list that is stringified into a larger string, for example debug msg \"cfg: {{ db }}\", \"{{ list }} ...\" or the string filter. A bare \"{{ db }}\" renders natively and is redacted."
+      },
+      {
+        "kind": "authorization_role",
+        "description": "The reader is any org member with jobs.read (viewer or above), or a pxt_ API token with that permission. The play author (operator+) is not the attacker, because operators can read the org's credentials by design. The exposure is an accidental print reaching lower-role readers."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An org viewer who reads run logs. Separately, an operator or admin authors or runs a template whose play debug-prints a config dict holding a secret extra var, inventory var or credential.",
+      "payloads": [
+        "secret extra var / inventory var: Pa\"ss'w0rd-9",
+        "- debug:\n    msg: \"cfg: {{ {'p': pw} }}\"",
+        "- debug:\n    msg: \"cfg: {{ db }}\"   # vars: db: {p: \"{{ pw }}\"}"
+      ],
+      "instructions": [
+        "Use dummy data only. In the worker image noixdev/pulsix-worker:dev (ansible-core 2.21.4, ansible-runner 2.4.3), run with --network none --read-only: ansible-runner run <pd> --json --playbook play.yml against localhost, with env/extravars {\"pw\": \"Pa\\\"ss'w0rd-9\"} and the two debug tasks above.",
+        "Capture the runner_on_ok JSONL lines.",
+        "Feed the lines to Runner.streamEvents with newRedactor(&workerpb.Job{Redact: []string{\"Pa\\\"ss'w0rd-9\"}}) and inspect the forwarded RunEvent payloads.",
+        "In a deployment, the same payload would be stored by grpcsrv and returned to a viewer by GET /api/v1/orgs/{org}/jobs/{id}/events. This last hop was traced in source and not executed, because it needs Postgres."
+      ],
+      "observed_result": "The forwarded payloads for both dict-interpolation tasks contained res.msg \"cfg: {'p': 'Pa\\\"ss\\\\'w0rd-9'}\" and stdout \"... 'Pa\\\\\\\"ss\\\\\\\\'w0rd-9' ...\". The secret was fully readable with one inserted backslash, and no [redacted] marker appeared. The control tasks were redacted. The ansible-side lines were captured from a real ansible-core 2.21.4 / ansible-runner 2.4.3 run in noixdev/pulsix-worker:dev with no network (audit artifact agents/v12-worker-run/artifacts/evidence.txt, lines 3-4). Runner.streamEvents with newRedactor(Redact=[secret]) reported res_leak=true and stdout_leak=true for the inline-dict and var-dict tasks, and no leak for the plain-print and double-quote-only controls (agents/v12-worker-run/artifacts/evidence2.txt). A fresh Phase 5 re-run fed the same two captured lines through ParseEvent and newRedactor(...).eventPayload at source ref 7ae1808 and got the same leak. Adding the repr spelling and its JSON spellings to the redactor's values redacted both res.msg and stdout (agents/f12-python-repr-quote-escape/artifacts/evidence.txt)."
+    },
+    "remediation": {
+      "strategy": "In newRedactor, add Python repr spellings for each secret and also add each of them in its JSON-escaped forms. That means repr's string body with ' escaped as \\' when both quote kinds occur, plus repr's \\xNN/\\uNNNN escapes for non-printables, so the display text is covered too. Add a regression test built from the captured ansible-core runner_on_ok lines.",
+      "code_changes": [
+        {
+          "file_name": "internal/worker/runner/redact.go",
+          "fixed_code": "// reprSpelling is v's string body as Python's repr() writes it (the form\n// ansible-core prints when a dict or list holding v is interpolated into a\n// larger string, or passed through the `string` filter). repr picks single\n// quotes unless v contains ' and no \", so only the both-quotes case escapes\n// a quote: ' becomes \\'. Backslash, \\n, \\r, \\t and other non-printables are\n// escaped as Python does (\\xNN, \\uNNNN, \\UNNNNNNNN).\nfunc reprSpelling(v string) string {\n\tsq := strings.Contains(v, \"'\") && strings.Contains(v, `\"`)\n\tvar sb strings.Builder\n\tfor _, r := range v {\n\t\tswitch {\n\t\tcase r == '\\\\':\n\t\t\tsb.WriteString(`\\\\`)\n\t\tcase r == '\\'' && sq:\n\t\t\tsb.WriteString(`\\'`)\n\t\tcase r == '\\n':\n\t\t\tsb.WriteString(`\\n`)\n\t\tcase r == '\\r':\n\t\t\tsb.WriteString(`\\r`)\n\t\tcase r == '\\t':\n\t\t\tsb.WriteString(`\\t`)\n\t\tcase r < 0x20 || r == 0x7f:\n\t\t\tfmt.Fprintf(&sb, `\\x%02x`, r)\n\t\tdefault:\n\t\t\tsb.WriteRune(r) // match str.isprintable() for non-ASCII in a full fix\n\t\t}\n\t}\n\treturn sb.String()\n}\n\n// in newRedactor's add():\n//\tif rp := reprSpelling(v); rp != v {\n//\t\tset[rp] = true\n//\t\tfor _, esc := range jsonSpellings(rp) { set[esc] = true }\n//\t}\n// plus a regression test built from the captured runner_on_ok lines\n// (res.msg \"cfg: {'p': 'Pa\\\"ss\\\\'w0rd-9'}\" and its display text)."
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Two conditions must hold together: a secret that contains both quote kinds (a few percent of full-charset random passwords), and a play that prints it inside a container interpolated into a string. Both are ordinary, but their combination is uncommon. No attacker action triggers it."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "A credential, secret extra var or secret inventory var is disclosed in full to every org member with jobs.read (viewer), contrary to the stated redaction contract. The disclosure stays within one org and needs no privilege escalation by the reader."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The ansible-side output was captured from a real run of the pinned ansible-core and ansible-runner in the worker image. The redaction result came from running the real streamEvents and newRedactor on those exact lines. The storage and API hops are short and source-verified, with no further redaction on them."
+    }
+  }
+]
