@@ -65,13 +65,15 @@ type fakeHostStore struct {
 	// reads a service call makes and not only what it returned — the
 	// difference between a batched lookup and the N+1 it replaced.
 	calls map[string]int
+	// extras records the HostExtras of the latest write per host.
+	extras map[uuid.UUID]hosts.HostExtras
 }
 
 func newFakeHostStore() *fakeHostStore {
 	return &fakeHostStore{
 		zones: map[uuid.UUID]hosts.Zone{}, list: map[uuid.UUID]hosts.Host{},
 		tags: map[uuid.UUID][]hosts.Tag{}, failNext: map[string]error{},
-		calls: map[string]int{},
+		calls: map[string]int{}, extras: map[uuid.UUID]hosts.HostExtras{},
 	}
 }
 
@@ -122,17 +124,34 @@ func (f *fakeHostStore) GetZone(_ context.Context, orgID, zoneID uuid.UUID) (hos
 	return z, nil
 }
 
-func (f *fakeHostStore) CreateHost(_ context.Context, h hosts.Host) error {
-	if err := f.take("CreateHost"); err != nil {
-		return err
+func (f *fakeHostStore) CreateHostWith(_ context.Context, h hosts.Host, x hosts.HostExtras) (hosts.Host, error) {
+	if err := f.take("CreateHostWith"); err != nil {
+		return hosts.Host{}, err
 	}
 	for _, existing := range f.list {
 		if existing.OrgID == h.OrgID && existing.Name == h.Name {
-			return hosts.ErrNameTaken
+			return hosts.Host{}, hosts.ErrNameTaken
 		}
 	}
 	f.list[h.ID] = h
-	return nil
+	f.applyExtras(h.ID, x)
+	return h, nil
+}
+
+// applyExtras records what a host write carried beyond the row, for tests
+// to inspect, and replaces the manual tags the way the real store does.
+func (f *fakeHostStore) applyExtras(hostID uuid.UUID, x hosts.HostExtras) {
+	f.extras[hostID] = x
+	if x.Tags == nil {
+		return
+	}
+	var kept []hosts.Tag
+	for _, t := range f.tags[hostID] {
+		if t.Source != hosts.TagSourceManual {
+			kept = append(kept, t)
+		}
+	}
+	f.tags[hostID] = append(kept, *x.Tags...)
 }
 
 func (f *fakeHostStore) GetHost(_ context.Context, orgID, hostID uuid.UUID) (hosts.Host, error) {
@@ -146,8 +165,8 @@ func (f *fakeHostStore) GetHost(_ context.Context, orgID, hostID uuid.UUID) (hos
 	return h, nil
 }
 
-func (f *fakeHostStore) UpdateHost(_ context.Context, h hosts.Host) (hosts.Host, error) {
-	if err := f.take("UpdateHost"); err != nil {
+func (f *fakeHostStore) UpdateHostWith(_ context.Context, h hosts.Host, x hosts.HostExtras) (hosts.Host, error) {
+	if err := f.take("UpdateHostWith"); err != nil {
 		return hosts.Host{}, err
 	}
 	existing, ok := f.list[h.ID]
@@ -171,6 +190,7 @@ func (f *fakeHostStore) UpdateHost(_ context.Context, h hosts.Host) (hosts.Host,
 	merged.ZoneID, merged.Name, merged.Address = h.ZoneID, h.Name, h.Address
 	merged.Managed, merged.Monitored = h.Managed, h.Monitored
 	f.list[h.ID] = merged
+	f.applyExtras(h.ID, x)
 	return merged, nil
 }
 

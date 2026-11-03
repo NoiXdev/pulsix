@@ -105,12 +105,17 @@ type Host struct {
 // that wants to change only one flag without touching the other uses
 // SetCapabilities instead, whose managed/monitored parameters are pointers
 // for exactly that reason.
+//
+// Jump and Tags are the host's jump host and manual tags, written in the
+// same transaction as the row (see HostExtras).
 type HostInput struct {
 	Name      string
 	Address   string
 	ZoneID    uuid.UUID
 	Managed   bool
 	Monitored bool
+	Jump      *Jump  // nil = leave unchanged (create: inherit)
+	Tags      *[]Tag // nil = leave unchanged (create: none)
 }
 
 // ListFilter narrows ListHosts. A zero ListFilter matches every host in the
@@ -135,7 +140,11 @@ type Store interface {
 	// organization — a zone from another org must be exactly as
 	// unusable as one that does not exist at all.
 	GetZone(ctx context.Context, orgID, zoneID uuid.UUID) (Zone, error)
-	CreateHost(ctx context.Context, h Host) error
+	// CreateHostWith inserts h and writes x in the same transaction, and
+	// returns the row as stored (its revision included). A failure in any
+	// part writes nothing; a jump host that does not exist in h's
+	// organization is ErrNotFound.
+	CreateHostWith(ctx context.Context, h Host, x HostExtras) (Host, error)
 	// GetHost returns the host identified by (orgID, hostID), or
 	// ErrNotFound if it does not exist or belongs to a different
 	// organization — the same invisible-rather-than-forbidden contract as
@@ -146,10 +155,13 @@ type Store interface {
 	// page (empty when there is none). cursor is opaque to the caller —
 	// see EncodeCursor/DecodeCursor.
 	ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter, cursor string, limit int) ([]Host, string, error)
-	// UpdateHost persists every mutable field of h (ZoneID, Name, Address,
-	// Managed, Monitored) and returns the row as stored, or ErrNotFound if
-	// no host matches (h.ID, h.OrgID).
-	UpdateHost(ctx context.Context, h Host) (Host, error)
+	// UpdateHostWith persists every mutable field of h (ZoneID, Name,
+	// Address, Managed, Monitored) while h.Revision is still current, and
+	// writes x in the same transaction, returning the row as stored.
+	// ErrNotFound if no host matches (h.ID, h.OrgID) or x names a jump host
+	// that does not exist in the organization, ErrRevisionMismatch if the
+	// revision moved; in every failure nothing is written.
+	UpdateHostWith(ctx context.Context, h Host, x HostExtras) (Host, error)
 	// PatchCapabilities atomically applies a partial update to the Managed
 	// and/or Monitored flag of the host identified by (orgID, hostID) in a
 	// single statement — a nil pointer leaves that column exactly as it
@@ -375,10 +387,15 @@ func (s *Service) ReconcileDefaultZones(ctx context.Context) (repaired int, err 
 // CreateHost creates a host under orgID. The zone must already belong to
 // orgID (checked via store.GetZone, so a zone id from another org fails
 // exactly like an unknown one — ErrNotFound), and the name must be valid
-// and unique within the organization.
+// and unique within the organization. in.Jump and in.Tags, when set, are
+// validated first and written in the same transaction as the host.
 func (s *Service) CreateHost(ctx context.Context, orgID uuid.UUID, in HostInput) (Host, error) {
 	if !hostNamePattern.MatchString(in.Name) {
 		return Host{}, fmt.Errorf("%w: host name must match %s", ErrInvalidInput, hostNamePattern.String())
+	}
+	extras, err := extrasFrom(in)
+	if err != nil {
+		return Host{}, err
 	}
 	// store.GetZone's contract already returns exactly ErrNotFound for a
 	// zone that does not exist or belongs to a different organization
@@ -392,10 +409,7 @@ func (s *Service) CreateHost(ctx context.Context, orgID uuid.UUID, in HostInput)
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address,
 		Managed: in.Managed, Monitored: in.Monitored, Facts: map[string]any{}, CreatedAt: s.now(),
 	}
-	if err := s.store.CreateHost(ctx, h); err != nil {
-		return Host{}, err
-	}
-	return h, nil
+	return s.store.CreateHostWith(ctx, h, extras)
 }
 
 // GetHost returns the host identified by (orgID, id), or ErrNotFound if it
@@ -410,16 +424,21 @@ func (s *Service) GetHost(ctx context.Context, orgID, id uuid.UUID) (Host, error
 // 1.31): the write only lands while it is still current, and
 // ErrRevisionMismatch comes back when someone else saved first, so a
 // second operator with the page open cannot silently overwrite the one
-// who saved before them.
+// who saved before them. in.Jump and in.Tags, when set, are written in
+// the same transaction under the same revision check; nil leaves them.
 func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, rev int64, in HostInput) (Host, error) {
 	if !hostNamePattern.MatchString(in.Name) {
 		return Host{}, fmt.Errorf("%w: host name must match %s", ErrInvalidInput, hostNamePattern.String())
+	}
+	extras, err := extrasFrom(in)
+	if err != nil {
+		return Host{}, err
 	}
 	if _, err := s.store.GetZone(ctx, orgID, in.ZoneID); err != nil {
 		return Host{}, err
 	}
 	h := Host{ID: id, OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address, Managed: in.Managed, Monitored: in.Monitored, Revision: rev}
-	return s.store.UpdateHost(ctx, h)
+	return s.store.UpdateHostWith(ctx, h, extras)
 }
 
 // SetCapabilities updates the Managed and/or Monitored flag of the host

@@ -65,12 +65,14 @@ type hostDTO struct {
 	Facts      map[string]any `json:"facts"`
 	LastSeenAt *time.Time     `json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
+	Revision   int64          `json:"revision" doc:"The host's revision; send it back as If-Match (quoted, like the ETag) on PATCH"`
 }
 
 func toHostDTO(h hosts.Host) hostDTO {
 	return hostDTO{
 		ID: h.ID.String(), ZoneID: h.ZoneID.String(), Name: h.Name, Address: h.Address,
 		Managed: h.Managed, Monitored: h.Monitored, Facts: h.Facts, LastSeenAt: h.LastSeenAt, CreatedAt: h.CreatedAt,
+		Revision: h.Revision,
 	}
 }
 
@@ -92,6 +94,19 @@ type hostInputBody struct {
 	// fields are pointers instead.
 	Managed   bool `json:"managed,omitempty"`
 	Monitored bool `json:"monitored,omitempty"`
+	// Jump and Tags are the exception to "every field is required": each
+	// is written with the host in one transaction when present and left
+	// exactly as it is when omitted, so a client that does not edit them
+	// cannot clear them by accident. Jump needs inventory.write on top of
+	// hosts.write, the bar PUT /hosts/{id}/ssh sets.
+	Jump *hostJumpBody `json:"jump,omitempty" doc:"The host's jump host; omitted leaves it (create: inherit). Needs inventory.write."`
+	Tags *[]tagInput   `json:"tags,omitempty" doc:"Replaces the host's manual tags; omitted leaves them (create: none)."`
+}
+
+// hostJumpBody is a host's jump-host choice on the wire.
+type hostJumpBody struct {
+	Mode      string  `json:"mode" enum:"inherit,none,explicit"`
+	BastionID *string `json:"bastion_id,omitempty" doc:"The jump host; required exactly when mode is explicit"`
 }
 
 func (b hostInputBody) toInput() (hosts.HostInput, error) {
@@ -99,7 +114,36 @@ func (b hostInputBody) toInput() (hosts.HostInput, error) {
 	if err != nil {
 		return hosts.HostInput{}, huma.Error400BadRequest("invalid zone_id")
 	}
-	return hosts.HostInput{Name: b.Name, Address: b.Address, ZoneID: zoneID, Managed: b.Managed, Monitored: b.Monitored}, nil
+	in := hosts.HostInput{Name: b.Name, Address: b.Address, ZoneID: zoneID, Managed: b.Managed, Monitored: b.Monitored}
+	if b.Jump != nil {
+		bastionID, err := parseOptionalUUID(b.Jump.BastionID, "jump.bastion_id")
+		if err != nil {
+			return hosts.HostInput{}, err
+		}
+		in.Jump = &hosts.Jump{Mode: b.Jump.Mode, BastionID: bastionID}
+	}
+	if b.Tags != nil {
+		tags := make([]hosts.Tag, len(*b.Tags))
+		for i, tg := range *b.Tags {
+			tags[i] = hosts.Tag{Key: tg.Key, Value: tg.Value, Source: hosts.TagSourceManual}
+		}
+		in.Tags = &tags
+	}
+	return in, nil
+}
+
+// authorizeHostWrite is requireOrg for POST and PATCH /hosts: hosts.write,
+// plus inventory.write when the body sets the jump host (the permission of
+// PUT /hosts/{id}/ssh, so this route is no back door around it).
+func authorizeHostWrite(ctx context.Context, deps Deps, org string, body hostInputBody) (Scope, error) {
+	scope, err := requireOrg(ctx, deps, org, tenancy.PermHostsWrite)
+	if err != nil {
+		return Scope{}, err
+	}
+	if body.Jump != nil && !tenancy.Allows(scope.Role, tenancy.PermInventoryWrite) {
+		return Scope{}, huma.Error403Forbidden("insufficient role")
+	}
+	return scope, nil
 }
 
 type hostCreateInput struct {
@@ -215,7 +259,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/hosts", func(ctx context.Context, in *hostCreateInput) (*hostCreateOutput, error) {
-		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermHostsWrite)
+		scope, err := authorizeHostWrite(ctx, deps, in.Org, in.Body)
 		if err != nil {
 			return nil, err
 		}
@@ -274,7 +318,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 	})
 
 	huma.Patch(hapi, "/api/v1/orgs/{org}/hosts/{id}", func(ctx context.Context, in *hostUpdateInput) (*hostGetOutput, error) {
-		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermHostsWrite)
+		scope, err := authorizeHostWrite(ctx, deps, in.Org, in.Body)
 		if err != nil {
 			return nil, err
 		}

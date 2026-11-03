@@ -297,6 +297,34 @@ func (q *Queries) UpdateBastion(ctx context.Context, arg UpdateBastionParams) (B
 	return i, err
 }
 
+const upsertHostBastion = `-- name: UpsertHostBastion :exec
+INSERT INTO host_ssh (host_id, org_id, bastion_mode, bastion_id)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (host_id) DO UPDATE
+SET bastion_mode = EXCLUDED.bastion_mode, bastion_id = EXCLUDED.bastion_id, updated_at = now()
+`
+
+type UpsertHostBastionParams struct {
+	HostID      uuid.UUID   `json:"host_id"`
+	OrgID       uuid.UUID   `json:"org_id"`
+	BastionMode string      `json:"bastion_mode"`
+	BastionID   pgtype.UUID `json:"bastion_id"`
+}
+
+// Sets only a host's jump host choice, as part of the host write itself
+// (hosts.SQLStore.CreateHostWith/UpdateHostWith). A host without SSH
+// settings gets the row with its defaults; an existing row keeps its user,
+// port, credential and host-key pin.
+func (q *Queries) UpsertHostBastion(ctx context.Context, arg UpsertHostBastionParams) error {
+	_, err := q.db.Exec(ctx, upsertHostBastion,
+		arg.HostID,
+		arg.OrgID,
+		arg.BastionMode,
+		arg.BastionID,
+	)
+	return err
+}
+
 const upsertHostSSH = `-- name: UpsertHostSSH :one
 INSERT INTO host_ssh (host_id, org_id, username, port, credential_id, bastion_mode, bastion_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7)

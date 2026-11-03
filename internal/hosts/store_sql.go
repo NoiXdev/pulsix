@@ -89,22 +89,11 @@ func toZone(r gen.Zone) Zone {
 	return Zone{ID: r.ID, OrgID: r.OrgID, Slug: r.Slug, Name: r.Name, BastionID: db.UUIDPtr(r.BastionID)}
 }
 
+// CreateHost inserts h with no jump host and no tags: CreateHostWith
+// without extras.
 func (s *SQLStore) CreateHost(ctx context.Context, h Host) error {
-	facts, err := marshalFacts(h.Facts)
-	if err != nil {
-		return err
-	}
-	_, err = s.q.CreateHost(ctx, gen.CreateHostParams{
-		ID: h.ID, OrgID: h.OrgID, ZoneID: h.ZoneID, Name: h.Name, Address: h.Address,
-		Managed: h.Managed, Monitored: h.Monitored, Facts: facts,
-	})
-	if err != nil {
-		if isUniqueViolation(err) {
-			return ErrNameTaken
-		}
-		return err
-	}
-	return nil
+	_, err := s.CreateHostWith(ctx, h, HostExtras{})
+	return err
 }
 
 func (s *SQLStore) GetHost(ctx context.Context, orgID, hostID uuid.UUID) (Host, error) {
@@ -115,27 +104,10 @@ func (s *SQLStore) GetHost(ctx context.Context, orgID, hostID uuid.UUID) (Host, 
 	return fromHostRow(row)
 }
 
+// UpdateHost updates h's row and leaves its jump host and tags:
+// UpdateHostWith without extras.
 func (s *SQLStore) UpdateHost(ctx context.Context, h Host) (Host, error) {
-	row, err := s.q.UpdateHost(ctx, gen.UpdateHostParams{
-		ID: h.ID, OrgID: h.OrgID, ZoneID: h.ZoneID, Name: h.Name, Address: h.Address,
-		Managed: h.Managed, Monitored: h.Monitored, Revision: h.Revision,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		// No row means one of two different answers, and the caller needs
-		// them apart: the host is gone (404), or someone saved first and
-		// this view is stale (412). Only a read can tell.
-		if _, getErr := s.q.GetHost(ctx, gen.GetHostParams{OrgID: h.OrgID, ID: h.ID}); getErr != nil {
-			return Host{}, mapErr(getErr)
-		}
-		return Host{}, ErrRevisionMismatch
-	}
-	if err != nil {
-		if isUniqueViolation(err) {
-			return Host{}, ErrNameTaken
-		}
-		return Host{}, mapErr(err)
-	}
-	return fromHostRow(row)
+	return s.UpdateHostWith(ctx, h, HostExtras{})
 }
 
 // PatchCapabilities applies a partial capabilities update in one atomic

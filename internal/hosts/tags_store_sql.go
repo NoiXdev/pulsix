@@ -64,7 +64,7 @@ func (s *SQLStore) ListTagKeyValueCounts(ctx context.Context, orgID uuid.UUID) (
 // two are not mechanically linked (unlike sqlc's generated code, this query
 // is hand-written, see QueryHosts' own doc comment), so a change to one
 // requires the matching change to the other.
-const queryHostsColumns = `h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at`
+const queryHostsColumns = `h.id, h.org_id, h.zone_id, h.name, h.address, h.managed, h.monitored, h.facts, h.last_seen_at, h.created_at, h.updated_at, h.revision`
 
 // QueryHosts returns every host in orgID whose *merged* tags (a "manual"
 // tag overriding a "fact" tag on the same key — see Service.SetTags' own
@@ -129,7 +129,7 @@ WHERE h.org_id = $1`
 	for rows.Next() {
 		var r gen.Host
 		if err := rows.Scan(&r.ID, &r.OrgID, &r.ZoneID, &r.Name, &r.Address, &r.Managed, &r.Monitored,
-			&r.Facts, &r.LastSeenAt, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.Facts, &r.LastSeenAt, &r.CreatedAt, &r.UpdatedAt, &r.Revision); err != nil {
 			return nil, err
 		}
 		h, err := fromHostRow(r)

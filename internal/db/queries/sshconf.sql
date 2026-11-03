@@ -37,3 +37,13 @@ RETURNING *;
 
 -- name: ListHostSSH :many
 SELECT * FROM host_ssh WHERE org_id = $1;
+
+-- name: UpsertHostBastion :exec
+-- Sets only a host's jump host choice, as part of the host write itself
+-- (hosts.SQLStore.CreateHostWith/UpdateHostWith). A host without SSH
+-- settings gets the row with its defaults; an existing row keeps its user,
+-- port, credential and host-key pin.
+INSERT INTO host_ssh (host_id, org_id, bastion_mode, bastion_id)
+VALUES (@host_id, @org_id, @bastion_mode, @bastion_id)
+ON CONFLICT (host_id) DO UPDATE
+SET bastion_mode = EXCLUDED.bastion_mode, bastion_id = EXCLUDED.bastion_id, updated_at = now();

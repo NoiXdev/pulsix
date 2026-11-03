@@ -4126,6 +4126,11 @@ export interface components {
             managed: boolean;
             monitored: boolean;
             name: string;
+            /**
+             * Format: int64
+             * @description The host's revision; send it back as If-Match (quoted, like the ETag) on PATCH
+             */
+            revision: number;
             zone_id: string;
         };
         HostGetOutputBody: {
@@ -4154,9 +4159,13 @@ export interface components {
              */
             readonly $schema?: string;
             address?: string;
+            /** @description The host's jump host; omitted leaves it (create: inherit). Needs inventory.write. */
+            jump?: components["schemas"]["HostJumpBody"];
             managed?: boolean;
             monitored?: boolean;
             name: string;
+            /** @description Replaces the host's manual tags; omitted leaves them (create: none). */
+            tags?: components["schemas"]["TagInput"][];
             zone_id: string;
         };
         HostItemsOutputBody: {
@@ -4167,6 +4176,12 @@ export interface components {
              */
             readonly $schema?: string;
             items: components["schemas"]["ItemDTO"][] | null;
+        };
+        HostJumpBody: {
+            /** @description The jump host; required exactly when mode is explicit */
+            bastion_id?: string;
+            /** @enum {string} */
+            mode: "inherit" | "none" | "explicit";
         };
         HostKeyInputBody: {
             /**
