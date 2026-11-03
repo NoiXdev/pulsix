@@ -81,7 +81,7 @@ export function ActivityPage() {
         ))}
       </div>
 
-      <div className="flex flex-col overflow-hidden rounded-[10px] border border-border bg-card">
+      <div className="flex shrink-0 flex-col overflow-clip rounded-[10px] border border-border bg-card">
         {grouped.length === 0 && (
           <div className="p-4 text-xs text-muted-foreground">
             {activity.isLoading ? t.common.loading : t.activity.empty}
