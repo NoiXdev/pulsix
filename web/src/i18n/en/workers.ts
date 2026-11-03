@@ -34,6 +34,12 @@ export const enWorkers = {
     offline: 'offline',
     revoked: 'revoked',
   },
+  // The badge next to a build version (also used by the Agents page and the
+  // host agent card): only the two states that need an operator's attention.
+  versionStatus: {
+    update_required: 'Update required',
+    newer: 'Newer than manager',
+  },
   empty: 'No workers yet.',
   revoke: 'Revoke',
   revokeLabel: (name: string) => `Revoke ${name}`,

@@ -36,6 +36,28 @@ function renderPage() {
 }
 
 describe('WorkersPage', () => {
+  it('badges a worker that needs an update or runs ahead of the manager, and nothing else', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': {
+        workers: [
+          worker({ id: 'w1', name: 'w-old', version: 'v1.1.0', version_status: 'update_required' }),
+          worker({ id: 'w2', name: 'w-newer', version: 'v1.9.0', version_status: 'newer' }),
+          worker({ id: 'w3', name: 'w-current', version: 'v1.4.0', version_status: 'current' }),
+          worker({ id: 'w4', name: 'w-previous', version: 'v1.3.0', version_status: 'previous_minor' }),
+          worker({ id: 'w5', name: 'w-dev', version: 'dev', version_status: 'unknown' }),
+        ],
+      },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [] },
+    });
+    renderPage();
+    expect(await screen.findByText('w-old')).toBeInTheDocument();
+    expect(screen.getAllByText('Update required')).toHaveLength(1);
+    expect(screen.getAllByText('Newer than manager')).toHaveLength(1);
+    // The version itself stays visible next to the badge.
+    expect(screen.getByText('v1.1.0')).toBeInTheDocument();
+  });
+
   it('lists workers with status, zone, expiry highlight and the current job', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),

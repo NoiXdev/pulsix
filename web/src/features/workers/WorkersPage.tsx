@@ -11,6 +11,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useDeleteWorker, useRevokeWorker, useWithdrawWorkerEnrollment, useWorkerEnrollments, useWorkers } from '../../api/hooks/useWorkers.ts';
 import { may } from '../../lib/roles.ts';
 import { useFormat } from '../../i18n/format.ts';
+import { VersionSkewBadge } from './VersionSkewBadge.tsx';
 import { useT } from '../../i18n/useT.ts';
 import type { Worker, WorkerEnrollment } from '../../api/types.ts';
 import { AddWorkerDialog } from './AddWorkerDialog.tsx';
@@ -19,7 +20,7 @@ import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from './expiry.ts'
 // The trailing 150px track is the Actions column, only rendered for
 // canWrite — dropped from the template for read-only viewers so the grid
 // doesn't reserve a permanently blank 8th column for them.
-const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 0.6fr) 100px 110px minmax(0, 0.6fr) 110px minmax(0, 0.7fr)';
+const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 0.6fr) 100px 110px minmax(0, 1fr) 110px minmax(0, 0.7fr)';
 const COLUMNS_WITH_ACTIONS = `${COLUMNS_BASE} 150px`;
 const STATUS_TONE: Record<string, Tone> = { online: 'ok', offline: 'warn', revoked: 'unknown' };
 
@@ -121,7 +122,10 @@ export function WorkersPage() {
                 <Pill tone={STATUS_TONE[w.status] ?? 'unknown'}>{statusLabel(w.status)}</Pill>
               </span>
               <span className={`text-xs ${w.status === 'offline' ? 'text-[var(--px-warn)]' : 'text-muted-foreground'}`}>{seenLabel(w.last_seen, now, t)}</span>
-              <span className="truncate font-mono text-xs">{w.version || '—'}</span>
+              <span className="flex min-w-0 items-center gap-2 text-xs">
+                <span className="truncate font-mono">{w.version || '—'}</span>
+                <VersionSkewBadge status={w.version_status} />
+              </span>
               <span className={`text-xs ${expiring ? 'font-semibold text-[var(--px-warn)]' : 'text-muted-foreground'}`} data-expiring={expiring || undefined}>
                 {w.status === 'revoked' ? '—' : expiryLabel(w.cert_expires_at, now, t)}
               </span>

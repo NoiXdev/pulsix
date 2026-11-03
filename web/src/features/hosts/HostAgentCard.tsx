@@ -4,6 +4,7 @@ import { Button } from '../../ui/button.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useHostAgent, useRevokeAgent } from '../../api/hooks/useAgents.ts';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from '../workers/expiry.ts';
+import { VersionSkewBadge } from '../workers/VersionSkewBadge.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 /** HostAgentCard shows the agent running on this host (v0.3a, spec §8):
@@ -54,7 +55,10 @@ export function HostAgentCard({ org, hostId, canWrite }: { org: string; hostId: 
           </div>
           <div className="flex justify-between gap-2">
             <span className="text-muted-foreground">{t.agents.columns.version}</span>
-            <span className="font-mono">{agent.version || '—'}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="font-mono">{agent.version || '—'}</span>
+              <VersionSkewBadge status={agent.version_status} />
+            </span>
           </div>
           <div className="flex justify-between gap-2">
             <span className="text-muted-foreground">{t.agents.columns.certificate}</span>

@@ -34,6 +34,26 @@ function renderPage() {
 }
 
 describe('AgentsPage', () => {
+  it('badges an agent that needs an update or runs ahead of the manager, and nothing else', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/agents': {
+        agents: [
+          agent({ host_id: 'h1', host_name: 'web-old', version: 'v1.1.0', version_status: 'update_required' }),
+          agent({ host_id: 'h2', host_name: 'web-newer', version: 'v1.9.0', version_status: 'newer' }),
+          agent({ host_id: 'h3', host_name: 'web-current', version: 'v1.4.0', version_status: 'current' }),
+          agent({ host_id: 'h4', host_name: 'web-previous', version: 'v1.3.0', version_status: 'previous_minor' }),
+          agent({ host_id: 'h5', host_name: 'web-dev', version: 'dev', version_status: 'unknown' }),
+        ],
+      },
+    });
+    renderPage();
+    expect(await screen.findByText('web-old')).toBeInTheDocument();
+    expect(screen.getAllByText('Update required')).toHaveLength(1);
+    expect(screen.getAllByText('Newer than manager')).toHaveLength(1);
+    expect(screen.getByText('v1.1.0')).toBeInTheDocument();
+  });
+
   it('lists agents with their host, status, version and certificate expiry', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),

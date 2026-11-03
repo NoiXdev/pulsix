@@ -37,6 +37,40 @@ describe('HostAgentCard', () => {
     expect(screen.getByRole('button', { name: 'Revoke agent on web-1' })).toBeInTheDocument();
   });
 
+  it.each([
+    ['update_required', 'Update required'],
+    ['newer', 'Newer than manager'],
+  ])('badges a %s agent', async (versionStatus, label) => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/agent': {
+        agent: {
+          host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online', last_seen: new Date().toISOString(),
+          version: 'v1.1.0', version_status: versionStatus, cert_expires_at: inDays(60), created_at: '',
+        },
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.getByText('v1.1.0')).toBeInTheDocument();
+  });
+
+  it.each(['current', 'previous_minor', 'unknown'])('shows no version badge for a %s agent', async (versionStatus) => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/agent': {
+        agent: {
+          host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online', last_seen: new Date().toISOString(),
+          version: 'v1.3.0', version_status: versionStatus, cert_expires_at: inDays(60), created_at: '',
+        },
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText('v1.3.0')).toBeInTheDocument();
+    expect(screen.queryByText('Update required')).not.toBeInTheDocument();
+    expect(screen.queryByText('Newer than manager')).not.toBeInTheDocument();
+  });
+
   it('highlights a certificate that is about to expire', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/agent': {

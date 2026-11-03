@@ -32,6 +32,10 @@ export const deWorkers: Messages['workers'] = {
     offline: 'offline',
     revoked: 'widerrufen',
   },
+  versionStatus: {
+    update_required: 'Update nötig',
+    newer: 'Neuer als Manager',
+  },
   empty: 'Noch keine Worker.',
   revoke: 'Widerrufen',
   revokeLabel: (name: string) => `${name} widerrufen`,

@@ -11,6 +11,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useAgentTokens, useAgents, useRevokeAgent, useWithdrawAgentToken } from '../../api/hooks/useAgents.ts';
 import { may } from '../../lib/roles.ts';
 import { useFormat } from '../../i18n/format.ts';
+import { VersionSkewBadge } from '../workers/VersionSkewBadge.tsx';
 import { useT } from '../../i18n/useT.ts';
 import type { Agent, AgentToken } from '../../api/types.ts';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from '../workers/expiry.ts';
@@ -18,7 +19,7 @@ import { AddAgentDialog } from './AddAgentDialog.tsx';
 
 // The trailing 130px track is the Actions column, only rendered for
 // canWrite — a read-only viewer gets no permanently blank column.
-const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 0.8fr) 90px 110px minmax(0, 0.5fr) 110px';
+const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 0.8fr) 90px 110px minmax(0, 0.9fr) 110px';
 const COLUMNS_WITH_ACTIONS = `${COLUMNS_BASE} 130px`;
 const TOKEN_COLUMNS = 'minmax(0, 1fr) 120px 110px 160px 110px';
 
@@ -112,7 +113,10 @@ export function AgentsPage() {
                 <Pill tone={a.status === 'online' ? 'ok' : 'warn'}>{statusLabel(a.status)}</Pill>
               </span>
               <span className={`text-xs ${a.status === 'online' ? 'text-muted-foreground' : 'text-[var(--px-warn)]'}`}>{seenLabel(a.last_seen, now, t)}</span>
-              <span className="truncate font-mono text-xs">{a.version || '—'}</span>
+              <span className="flex min-w-0 items-center gap-2 text-xs">
+                <span className="truncate font-mono">{a.version || '—'}</span>
+                <VersionSkewBadge status={a.version_status} />
+              </span>
               <span className={`text-xs ${expiring ? 'font-semibold text-[var(--px-warn)]' : 'text-muted-foreground'}`} data-expiring={expiring || undefined}>
                 {expiryLabel(a.cert_expires_at, now, t)}
               </span>

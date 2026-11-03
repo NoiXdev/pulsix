@@ -2733,6 +2733,11 @@ export interface components {
              */
             status: "online" | "offline";
             version?: string;
+            /**
+             * @description The build version against the manager's: the same or the previous minor version is accepted; update_required is older than that, newer is above the manager's
+             * @enum {string}
+             */
+            version_status: "current" | "previous_minor" | "update_required" | "newer" | "unknown";
         };
         AgentListOutputBody: {
             /**
@@ -6363,6 +6368,11 @@ export interface components {
              */
             status: "online" | "offline" | "revoked";
             version?: string;
+            /**
+             * @description The build version against the manager's: the same or the previous minor version is accepted; update_required is older than that, newer is above the manager's
+             * @enum {string}
+             */
+            version_status: "current" | "previous_minor" | "update_required" | "newer" | "unknown";
             zone_id: string;
             zone_slug: string;
         };
