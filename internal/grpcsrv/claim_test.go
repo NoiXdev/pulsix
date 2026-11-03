@@ -4,6 +4,8 @@ package grpcsrv
 
 import (
 	"log/slog"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -283,5 +285,72 @@ func TestClaimResultLogsCarryNoCredentialMaterial(t *testing.T) {
 		if strings.Contains(captured, forbidden) {
 			t.Fatalf("log output leaked %q:\n%s", forbidden, captured)
 		}
+	}
+}
+
+// TestClaimJobFailsJobWhosePayloadExceedsWorkerLimit (backlog 7.62): a
+// claimed job whose response would exceed MaxManagerToWorkerBytes can
+// never be sent — gRPC refuses it with ResourceExhausted after the claim
+// committed, the job stays running until the reaper requeues it, and only
+// after the attempt limit does it fail with a message that does not name
+// the size. The server must instead fail the job at once, as the claiming
+// worker, with an error naming the size and the limit, hand the worker an
+// empty response, and leave the organization's next queued job claimable.
+func TestClaimJobFailsJobWhosePayloadExceedsWorkerLimit(t *testing.T) {
+	h := newHarness(t)
+	certPEM, keyPEM, serial := h.issue("fra-1-a", orgID, zoneID, true)
+	client := h.client(certPEM, keyPEM)
+	row, err := h.store.GetBySerial(t.Context(), serial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := WorkerRef{ID: row.ID, OrgID: orgID, ZoneID: zoneID}
+
+	oversize, next := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	h.claims.Enqueue(&JobClaim{
+		Job: workerpb.Job{
+			Id: oversize.String(), Kind: "run", OrgId: orgID.String(), ZoneId: zoneID.String(),
+			InventoryDoc: strings.Repeat("x", workerpb.MaxManagerToWorkerBytes),
+		},
+		Token: testToken(oversize),
+	})
+	h.enqueueClaim(next, orgID, zoneID)
+	h.results.Bind(oversize.String(), ref)
+	h.results.Bind(next.String(), ref)
+
+	resp, err := client.ClaimJob(t.Context(), claimRequest(zoneID))
+	if err != nil {
+		t.Fatalf("oversize claim: %v, want an empty response", err)
+	}
+	if resp.GetJob() != nil {
+		t.Fatalf("oversize claim shipped job %q", resp.GetJob().GetId())
+	}
+	results := h.results.Results()
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want the oversize job failed once", len(results))
+	}
+	res := results[0]
+	if res.JobID != oversize.String() || res.Status != "error" || res.Worker != ref {
+		t.Fatalf("result = {job %s, status %q, worker %+v}, want the oversize job as error for the claiming worker",
+			res.JobID, res.Status, res.Worker)
+	}
+	limit := strconv.Itoa(workerpb.MaxManagerToWorkerBytes)
+	if !strings.Contains(res.Error, limit) || !regexp.MustCompile(`\b\d{8,} bytes\b`).MatchString(res.Error) {
+		t.Fatalf("error %q must name the payload size and the %s-byte limit", res.Error, limit)
+	}
+	if _, ok := h.srv.registry.lookup(oversize); ok {
+		t.Fatal("the unsent claim left a stream binding behind")
+	}
+	if strings.Contains(h.logs.String(), "xxxxxxxx") {
+		t.Fatal("the oversize payload reached the log")
+	}
+
+	// The organization's next queued job is claimable at once.
+	resp, err = client.ClaimJob(t.Context(), claimRequest(zoneID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.GetJob().GetId(); got != next.String() {
+		t.Fatalf("next claim = %q, want %s", got, next)
 	}
 }
