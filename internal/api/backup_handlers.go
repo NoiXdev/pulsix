@@ -223,11 +223,15 @@ func registerBackupRoutes(hapi huma.API, deps Deps) {
 			out.Body.StorageError = &msg
 		}
 		nextRun, label, err := deps.Backups.Status(ctx)
-		if err != nil && listErr == nil {
+		switch {
+		case err != nil && listErr == nil:
 			return nil, mapBackupErr(ctx, err)
+		case err != nil:
+			// With an unusable destination Status fails as List did; the
+			// storage error already says so, and the entries and the next
+			// run are still shown (Status computes it from the settings).
+			slog.WarnContext(ctx, "backup status without a usable destination", "err", err)
 		}
-		// With an unusable destination Status fails as List did; the
-		// storage error already says so, and the entries are still shown.
 		out.Body.NextRunAt, out.Body.DestinationLabel = nextRun, label
 		out.Body.Items = make([]backupItem, 0, len(entries))
 		for _, e := range entries {

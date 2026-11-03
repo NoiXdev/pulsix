@@ -165,3 +165,28 @@ func TestBackupNowIsRefusedWhileOneRuns(t *testing.T) {
 		t.Fatalf("%d createBackup events, want 1", n)
 	}
 }
+
+// TestBackupListKeepsTheScheduleWhenTheDestinationIsBroken (final review
+// minor 6): saved settings whose destination cannot be built (here an S3
+// destination without keys) still show when the next backup runs; the
+// storage error says what is wrong, and the label is empty.
+func TestBackupListKeepsTheScheduleWhenTheDestinationIsBroken(t *testing.T) {
+	s := apitest.New(t)
+	admin, _ := backupAdmin(t, s)
+	if _, err := s.DB.Pool().Exec(context.Background(),
+		`INSERT INTO instance_settings (key, value) VALUES ('backup', $1)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		[]byte(`{"destination":"s3","s3":{"bucket":"b"},"enabled":true,"time_of_day":"03:00","time_zone":"UTC"}`)); err != nil {
+		t.Fatal(err)
+	}
+	got := listBackups(t, s, admin)
+	if got.StorageError == nil || *got.StorageError == "" {
+		t.Fatalf("storage_error = %v, want the destination's error", got.StorageError)
+	}
+	if got.NextRunAt == nil {
+		t.Fatal("next_run_at is empty although the schedule is on")
+	}
+	if got.DestinationLabel != "" {
+		t.Errorf("destination_label = %q, want empty", got.DestinationLabel)
+	}
+}

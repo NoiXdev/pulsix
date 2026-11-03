@@ -286,15 +286,29 @@ func (s *Service) StartManual(ctx context.Context, actor uuid.UUID) (uuid.UUID, 
 	if !ok {
 		return uuid.Nil, ErrBusy
 	}
+	// Until the background backup owns the lock, every way out releases
+	// it, a panic in record included (final review minor 5).
+	defer func() {
+		if !started {
+			release()
+		}
+	}()
 	r, _, err := s.record(ctx, KindManual, nil, &actor)
 	if err != nil {
-		release()
 		return uuid.Nil, err
 	}
 	started = true
 	go func() {
 		defer s.wg.Done()
 		defer release()
+		// No request's recover reaches this goroutine: a panic in the
+		// upload or in recording the end would end the manager. It fails
+		// the attempt instead, and the lock is released after that.
+		defer func() {
+			if p := recover(); p != nil {
+				s.failPanicked(s.bg, r, p)
+			}
+		}()
 		_, _ = s.execute(s.bg, r, st, set.IncludeMetrics)
 	}()
 	return r.id, nil

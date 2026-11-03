@@ -181,6 +181,11 @@ func (s *s3Storage) Open(ctx context.Context, name string) (io.ReadCloser, error
 }
 
 func (s *s3Storage) List(ctx context.Context) ([]Object, error) {
+	// An early return stops reading the listing channel; cancelling ends
+	// the client's lister goroutine instead of leaving it blocked on a send
+	// (final review minor 7).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var objs []Object
 	for info := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{Prefix: s.prefix}) {
 		if info.Err != nil {

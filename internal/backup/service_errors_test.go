@@ -194,8 +194,8 @@ func TestDestinationFailures(t *testing.T) {
 	if err := h.svc.SaveSettings(ctx, in, ptr("x")); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := h.svc.Status(ctx); !errors.Is(err, errStorageConfig) {
-		t.Errorf("Status = %v", err)
+	if _, _, err := h.svc.Status(ctx); !errors.Is(err, errStorageConfig) || !errors.Is(err, backup.ErrStorageUnavailable) {
+		t.Errorf("Status = %v, want the storage error as ErrStorageUnavailable", err)
 	}
 	if _, err := h.svc.List(ctx); !errors.Is(err, backup.ErrStorageUnavailable) {
 		t.Errorf("List = %v, want ErrStorageUnavailable", err)
@@ -219,5 +219,38 @@ func TestDestinationFailures(t *testing.T) {
 	}
 	if len(h2.store.allAttempts()) != 1 {
 		t.Error("a retention change postponed the due slot")
+	}
+}
+
+// TestStatusKeepsTheScheduleWithoutADestination (final review minor 6): a
+// destination that cannot be built does not hide the schedule. Status
+// still returns the next run, with an empty label and the storage error,
+// so the strip does not say "Schedule off" for a schedule that is on.
+func TestStatusKeepsTheScheduleWithoutADestination(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	in := s3Settings()
+	in.S3.Bucket = "refused"
+	in.Enabled, in.TimeOfDay, in.TimeZone = true, "03:00", "UTC"
+	if err := h.svc.SaveSettings(ctx, in, ptr("x")); err != nil {
+		t.Fatal(err)
+	}
+	next, label, err := h.svc.Status(ctx)
+	if !errors.Is(err, backup.ErrStorageUnavailable) {
+		t.Fatalf("Status error = %v, want ErrStorageUnavailable", err)
+	}
+	if want := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC); next == nil || !next.Equal(want) {
+		t.Fatalf("next run = %v, want %v", next, want)
+	}
+	if label != "" {
+		t.Errorf("label = %q, want empty", label)
+	}
+
+	in.Enabled = false
+	if err := h.svc.SaveSettings(ctx, in, nil); err != nil {
+		t.Fatal(err)
+	}
+	if next, _, err := h.svc.Status(ctx); next != nil || !errors.Is(err, backup.ErrStorageUnavailable) {
+		t.Fatalf("Status with the schedule off = %v, %v; want no next run and the storage error", next, err)
 	}
 }

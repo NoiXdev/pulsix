@@ -66,8 +66,7 @@ func (s *Service) transfer(ctx context.Context, r run, st Storage, includeMetric
 			Now: func() time.Time { return r.startedAt },
 		})
 	}()
-	size, putErr := st.Put(ctx, r.name, pr)
-	pr.CloseWithError(errUploadEnded)
+	size, putErr := s.put(ctx, st, r.name, pr)
 	dumpErr := <-dumped
 
 	switch {
@@ -80,6 +79,33 @@ func (s *Service) transfer(ctx context.Context, r run, st Storage, includeMetric
 		return 0, dumpErr
 	}
 	return size, nil
+}
+
+// put uploads the pipe's output into st and closes the pipe's reading end
+// however the upload ends — a panic included — so the dump goroutine never
+// blocks on a write nobody reads.
+func (s *Service) put(ctx context.Context, st Storage, name string, pr *io.PipeReader) (int64, error) {
+	defer pr.CloseWithError(errUploadEnded)
+	return st.Put(ctx, name, pr)
+}
+
+// failPanicked records an attempt whose backup panicked as failed and logs
+// the panic. Recording it may panic as well (the store is what panicked);
+// that is logged too, and the attempt stays running until the next backup
+// marks it abandoned.
+func (s *Service) failPanicked(ctx context.Context, r run, p any) {
+	s.log.ErrorContext(ctx, "backup panicked", "kind", r.kind, "name", r.name, "panic", p, "stack", string(debug.Stack()))
+	defer func() {
+		if p2 := recover(); p2 != nil {
+			s.log.ErrorContext(ctx, "record a panicked backup attempt", "name", r.name, "panic", p2)
+		}
+	}()
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	f := Finish{At: s.now().UTC(), State: StateFailed, Error: fmt.Sprintf("the backup panicked: %v", p)}
+	if err := s.store.FinishAttempt(fctx, r.id, f); err != nil {
+		s.log.ErrorContext(ctx, "record a panicked backup attempt", "name", r.name, "err", err)
+	}
 }
 
 // pipeWriter remembers whether a write failed, which only happens when the

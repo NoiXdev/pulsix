@@ -217,11 +217,16 @@ type memStorage struct {
 	deleted []string
 	putErr  error
 	listErr error
+	// putPanics makes Put panic before it reads anything.
+	putPanics bool
 }
 
 func newMemStorage() *memStorage { return &memStorage{objects: map[string][]byte{}} }
 
 func (m *memStorage) Put(ctx context.Context, name string, r io.Reader) (int64, error) {
+	if m.putPanics {
+		panic("mem storage: put " + name)
+	}
 	data, err := io.ReadAll(r)
 	if err != nil {
 		return 0, fmt.Errorf("upload %s: %w", name, err)

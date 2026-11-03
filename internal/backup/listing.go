@@ -135,29 +135,32 @@ func (s *Service) Open(ctx context.Context, name string) (io.ReadCloser, int64, 
 }
 
 // Status returns when the next scheduled backup runs (nil while the
-// schedule is off) and a label for the configured destination.
+// schedule is off) and a label for the configured destination. The next
+// run comes from the settings alone: when the destination cannot be built,
+// Status still returns it, with an empty label and an error wrapping
+// ErrStorageUnavailable (final review minor 6).
 func (s *Service) Status(ctx context.Context) (nextRun *time.Time, destination string, err error) {
 	b, err := s.loadBlob(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	st, err := s.Destination(ctx)
-	if err != nil {
-		return nil, "", err
-	}
-	if !b.Enabled {
-		return nil, st.Describe(), nil
-	}
-	slot, due, err := s.dueSlot(ctx, b)
-	if err != nil {
-		return nil, "", err
-	}
-	if !due {
-		loc, err := location(b.TimeZone)
+	if b.Enabled {
+		slot, due, err := s.dueSlot(ctx, b)
 		if err != nil {
 			return nil, "", err
 		}
-		slot = nextSlotAfter(s.now(), b.TimeOfDay, loc)
+		if !due {
+			loc, err := location(b.TimeZone)
+			if err != nil {
+				return nil, "", err
+			}
+			slot = nextSlotAfter(s.now(), b.TimeOfDay, loc)
+		}
+		nextRun = &slot
 	}
-	return &slot, st.Describe(), nil
+	st, err := s.Destination(ctx)
+	if err != nil {
+		return nextRun, "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+	}
+	return nextRun, st.Describe(), nil
 }
