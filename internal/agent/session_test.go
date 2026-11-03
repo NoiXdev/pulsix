@@ -102,10 +102,11 @@ func TestUnencodableChunkIsDroppedNotRebuffered(t *testing.T) {
 	srv := &countingAgentServer{}
 	client := startCountingAgentServer(t, srv)
 
-	// One whole chunk that encodes, then a chunk carrying the poisoned
-	// result, then a short tail that encodes again.
+	// The poisoned result sits in the FIRST chunk, so nothing has gone out
+	// on the failing stream before gRPC resets it (a reset may discard
+	// data frames still queued); two chunks that encode follow it.
 	buffered := manyResults(2*maxResultsPerMessage+10, base)
-	buffered[maxResultsPerMessage+3].Item = "/home/u/q\"\xffz"
+	buffered[3].Item = "/home/u/q\"\xffz"
 	l.buffer.Add(buffered)
 
 	var activationErrs []error
@@ -129,6 +130,14 @@ func TestUnencodableChunkIsDroppedNotRebuffered(t *testing.T) {
 			Value: floatPtr(float64(reconnect)), At: base}})
 		l.deactivateSender(sender)
 		_ = sender.closeSend()
+		// End the stream cleanly before cancelling: wait for the server's
+		// io.EOF so everything sent has been read. Cancelling first sends
+		// RST_STREAM, which may lose a message still queued or buffered.
+		for {
+			if _, err := stream.Recv(); err != nil {
+				break
+			}
+		}
 		cancel()
 
 		if after := bufferLen(l); after > before {
@@ -146,10 +155,9 @@ func TestUnencodableChunkIsDroppedNotRebuffered(t *testing.T) {
 		t.Fatalf("the dropped chunk was not logged with its size (%d); log was:\n%s", maxResultsPerMessage, logs)
 	}
 
-	// Everything but the dropped chunk reaches the manager: the first
-	// chunk and the tail of the buffer, plus the live result of every
-	// session that came up (the first one's went to the buffer and out on
-	// the second reconnect).
+	// Everything but the dropped chunk reaches the manager: the two chunks
+	// after it, plus the live result of every session (the first one's
+	// went to the buffer and out on the second reconnect).
 	wantResults := maxResultsPerMessage + 10 + 3
 	waitFor(t, 2*time.Second, func() bool {
 		hb, res := srv.counts()
