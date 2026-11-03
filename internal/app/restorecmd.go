@@ -52,7 +52,7 @@ func (o RestoreOptions) Validate() error {
 	case o.Name == StdinName && o.From != "":
 		return UsageError("--from and - (standard input) exclude each other")
 	case o.Name == StdinName && o.StdinIsTerminal:
-		return UsageError("- reads the backup from standard input, which is a terminal here: pipe the file in (docker compose run --rm -T manager restore - < FILE.pxbak)")
+		return UsageError("- reads the backup from standard input, which is a terminal here: pipe the file in (docker compose run --rm -T cli restore - < FILE.pxbak)")
 	case o.Name == StdinName && o.Replace && !o.Yes:
 		return UsageError("standard input carries the backup and cannot answer the confirmation: --replace needs --yes")
 	}

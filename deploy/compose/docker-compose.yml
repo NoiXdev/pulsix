@@ -8,6 +8,59 @@
 # moment a required variable is unset or empty, so a copy-pasted .env with
 # a blank secret is caught at `docker compose up` time, before the manager
 # or the database ever runs with one.
+# What the manager and the one-off `cli` service below share: the image,
+# the environment and the backup volume. One definition, so the two cannot
+# drift apart.
+x-manager-base: &manager-base
+  image: noixdev/pulsix-manager:${PULSIX_VERSION:-latest}
+  environment:
+    # The "pulsix" role the `db` service below creates (POSTGRES_USER)
+    # owns the schema (it ran the migrations that created pulsix_app and
+    # granted it — migration 00002_rls.sql) and is therefore, in Postgres terms, a
+    # superuser-equivalent for this database: it can bypass row-level
+    # security entirely. That is fine ONLY because internal/app.Build
+    # never serves a single request through this connection string
+    # directly — it opens it once to run migrations, then reopens as
+    # the least-privilege pulsix_app role via SET ROLE and REFUSES TO
+    # START if that role could still bypass RLS (see
+    # internal/app/app.go's assertCannotBypassRLS). Do not point this at
+    # a role you have not verified is not itself a superuser or
+    # BYPASSRLS unless you trust the same guard to catch it.
+    PULSIX_DATABASE_URL: "postgres://pulsix:${DB_PASSWORD:?set DB_PASSWORD in .env (openssl rand -hex 32)}@db:5432/pulsix?sslmode=disable"
+    PULSIX_MASTER_KEY: "${PULSIX_MASTER_KEY:?run: openssl rand -hex 32}"
+    PULSIX_PUBLIC_URL: "${PULSIX_PUBLIC_URL:?e.g. https://pulsix.example.com}"
+    PULSIX_STATUS_DOMAIN: "${PULSIX_STATUS_DOMAIN:-}"
+    # The worker endpoint (spec §17): bound on every interface inside the
+    # container, so the `worker` service below reaches it over the
+    # compose network as "manager:8444". It is NOT published on the host:
+    # nothing outside this compose network needs it by default. To serve
+    # a worker running on another machine, publish it deliberately (see
+    # README.md, "Workers on other machines"). PULSIX_GRPC_SERVER_NAME
+    # gives the endpoint's server certificate a fixed name — the manager
+    # binds ":8444", which names no host of its own — and every worker
+    # must present that same name as its PULSIX_MANAGER_SERVER_NAME.
+    PULSIX_GRPC_LISTEN: "${PULSIX_GRPC_LISTEN:-:8444}"
+    PULSIX_GRPC_SERVER_NAME: "${PULSIX_GRPC_SERVER_NAME:-pulsix-manager}"
+    # Off by default, and only for trusted single-tenant setups: when on,
+    # playbooks run inside THIS container, next to PULSIX_MASTER_KEY and
+    # PULSIX_DATABASE_URL (a playbook task on localhost can read them),
+    # and this image has no Ansible runtime, so only connection tests
+    # would work. The `worker` service below is the default instead.
+    PULSIX_EMBEDDED_WORKER: "${PULSIX_EMBEDDED_WORKER:-0}"
+    # The reverse proxies whose X-Forwarded-For the manager believes
+    # (CIDRs or addresses, comma separated). The default is the bundled
+    # Traefik's fixed address below (PULSIX_PROXY_ADDR), which no other
+    # container can receive: it lies outside the network's dynamic
+    # range. Behind a proxy of your own, set it to that proxy's address
+    # — otherwise every caller looks like the proxy, webhook IP
+    # allowlists never match and audit entries record the proxy.
+    PULSIX_TRUSTED_PROXIES: "${PULSIX_TRUSTED_PROXIES:-${PULSIX_PROXY_ADDR:-10.213.73.254}}"
+  volumes:
+    # The backup folder (README.md, "Backup and restore"): where backups
+    # go unless the web interface names S3-compatible storage, and where
+    # `docker compose run --rm cli restore` looks by default.
+    - pulsix-backups:/var/lib/pulsix/backups
+
 services:
   db:
     # Keep this in sync with deploy/compose/docker-compose.test.yml's own
@@ -37,57 +90,10 @@ services:
     restart: unless-stopped
 
   manager:
-    image: noixdev/pulsix-manager:${PULSIX_VERSION:-latest}
+    <<: *manager-base
     depends_on:
       db:
         condition: service_healthy
-    environment:
-      # The "pulsix" role created by POSTGRES_USER above owns the schema
-      # (it ran the migrations that created pulsix_app and granted it —
-      # migration 00002_rls.sql) and is therefore, in Postgres terms, a
-      # superuser-equivalent for this database: it can bypass row-level
-      # security entirely. That is fine ONLY because internal/app.Build
-      # never serves a single request through this connection string
-      # directly — it opens it once to run migrations, then reopens as
-      # the least-privilege pulsix_app role via SET ROLE and REFUSES TO
-      # START if that role could still bypass RLS (see
-      # internal/app/app.go's assertCannotBypassRLS). Do not point this at
-      # a role you have not verified is not itself a superuser or
-      # BYPASSRLS unless you trust the same guard to catch it.
-      PULSIX_DATABASE_URL: "postgres://pulsix:${DB_PASSWORD:?set DB_PASSWORD in .env (openssl rand -hex 32)}@db:5432/pulsix?sslmode=disable"
-      PULSIX_MASTER_KEY: "${PULSIX_MASTER_KEY:?run: openssl rand -hex 32}"
-      PULSIX_PUBLIC_URL: "${PULSIX_PUBLIC_URL:?e.g. https://pulsix.example.com}"
-      PULSIX_STATUS_DOMAIN: "${PULSIX_STATUS_DOMAIN:-}"
-      # The worker endpoint (spec §17): bound on every interface inside the
-      # container, so the `worker` service below reaches it over the
-      # compose network as "manager:8444". It is NOT published on the host:
-      # nothing outside this compose network needs it by default. To serve
-      # a worker running on another machine, publish it deliberately (see
-      # README.md, "Workers on other machines"). PULSIX_GRPC_SERVER_NAME
-      # gives the endpoint's server certificate a fixed name — the manager
-      # binds ":8444", which names no host of its own — and every worker
-      # must present that same name as its PULSIX_MANAGER_SERVER_NAME.
-      PULSIX_GRPC_LISTEN: "${PULSIX_GRPC_LISTEN:-:8444}"
-      PULSIX_GRPC_SERVER_NAME: "${PULSIX_GRPC_SERVER_NAME:-pulsix-manager}"
-      # Off by default, and only for trusted single-tenant setups: when on,
-      # playbooks run inside THIS container, next to PULSIX_MASTER_KEY and
-      # PULSIX_DATABASE_URL (a playbook task on localhost can read them),
-      # and this image has no Ansible runtime, so only connection tests
-      # would work. The `worker` service below is the default instead.
-      PULSIX_EMBEDDED_WORKER: "${PULSIX_EMBEDDED_WORKER:-0}"
-      # The reverse proxies whose X-Forwarded-For the manager believes
-      # (CIDRs or addresses, comma separated). The default is the bundled
-      # Traefik's fixed address below (PULSIX_PROXY_ADDR), which no other
-      # container can receive: it lies outside the network's dynamic
-      # range. Behind a proxy of your own, set it to that proxy's address
-      # — otherwise every caller looks like the proxy, webhook IP
-      # allowlists never match and audit entries record the proxy.
-      PULSIX_TRUSTED_PROXIES: "${PULSIX_TRUSTED_PROXIES:-${PULSIX_PROXY_ADDR:-10.213.73.254}}"
-    volumes:
-      # The backup folder (README.md, "Backup and restore"): where backups
-      # go unless the web interface names S3-compatible storage, and where
-      # `docker compose run --rm manager restore` looks by default.
-      - pulsix-backups:/var/lib/pulsix/backups
     ports:
       # Host-side port is overridable (default 8080) for a machine that
       # already has something bound to 8080 — the container always
@@ -112,9 +118,25 @@ services:
       - traefik.http.routers.pulsix.tls.certresolver=letsencrypt
       - traefik.http.services.pulsix.loadbalancer.server.port=8080
 
+  # The manager's commands, run one-off: backup, restore, worker add.
+  #   docker compose run --rm cli backup
+  # Same image, environment and volumes as the manager (x-manager-base),
+  # but no Traefik labels and no ports: a one-off container of the
+  # `manager` service would carry its labels, and with the `proxy` profile
+  # active Traefik would send part of the requests to it — a container
+  # that does not serve HTTP — for as long as the command runs. The `cli`
+  # profile keeps `docker compose up` from ever starting it.
+  cli:
+    <<: *manager-base
+    profiles: [cli]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   # One-shot enrollment for the `worker` service below. It is the only
-  # container besides the manager that holds the database URL and the
-  # master key, and it runs no playbooks: it waits until the zone exists
+  # container besides the manager (and the one-off `cli` commands) that
+  # holds the database URL and the master key, and it runs no playbooks: it waits until the zone exists
   # (on a fresh instance: until the setup wizard has created the first
   # organization), issues and registers the worker's certificate, writes
   # the bundle into the pulsix-worker-bundle volume and exits. On every

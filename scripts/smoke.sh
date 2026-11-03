@@ -212,7 +212,7 @@ fi
 echo "smoke: the worker claimed and finished the job (status $job_status, sync error recorded)"
 
 echo "smoke: checking the documented enrollment command prints a bundle …"
-cli_out="$(compose run --rm --no-deps manager worker add --zone default --name smoke-cli)"
+cli_out="$(compose run --rm --no-deps cli worker add --zone default --name smoke-cli)"
 case "$cli_out" in
 *'# client certificate'*'# private key'*'# CA certificate'*'PULSIX_MANAGER_SERVER_NAME='*) ;;
 *)

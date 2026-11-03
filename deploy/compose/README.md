@@ -118,13 +118,14 @@ docker compose up -d --force-recreate worker-enroll worker
 ## Additional workers
 
 To add a worker for another zone, or a second worker for more
-throughput, enroll it with the manager image's `worker add` command. The
+throughput, enroll it with the manager image's `worker add` command,
+through the stack's one-off `cli` service (see "Commands" below). The
 image's entrypoint already is the manager binary, so pass only the
 subcommand:
 
 ```bash
 # Prints three PEM blocks and a usage note to stdout:
-docker compose run --rm --no-deps manager worker add --zone <slug> --name <name>
+docker compose run --rm --no-deps cli worker add --zone <slug> --name <name>
 ```
 
 Pass `--org <org-slug>` too if more than one organization uses the same
@@ -262,6 +263,18 @@ lists the proxies it trusts (CIDRs or addresses, comma separated).
   `.env.example`). Changing them recreates the network on the next
   `docker compose up -d`.
 
+## Commands
+
+The manager's commands (`backup`, `restore`, `worker add`) run in the
+`cli` service: the manager's image, environment and volumes, without the
+manager's proxy labels and ports, so a command never receives web
+traffic. It belongs to the `cli` profile, so `docker compose up` never
+starts it; `docker compose run --rm cli <command>` does, together with the
+database if that is not running yet. Run commands through `cli`, not
+`manager`: a one-off `manager` container carries the proxy labels, and
+with the `proxy` profile active Traefik would send part of the requests
+to it for as long as the command runs.
+
 ## Backup and restore
 
 Everything Pulsix keeps lives in the database, so a backup is the
@@ -272,7 +285,7 @@ key itself is **not** in it: keep your `.env` (or at least the master key)
 somewhere else than the backups. Without it no backup can be restored.
 
 Backups go to the `pulsix-backups` volume (`/var/lib/pulsix/backups` in the
-manager container) unless the web interface names S3-compatible storage
+manager and `cli` containers) unless the web interface names S3-compatible storage
 (*Instance settings → Backups*, which also sets the daily schedule and how
 many backups to keep).
 
@@ -280,21 +293,25 @@ many backups to keep).
 
 ```bash
 # To the destination set in the web interface (by default the volume):
-docker compose run --rm manager backup
+docker compose run --rm cli backup
 # Without the metric history:
-docker compose run --rm manager backup --without-metrics
-# To a bucket, whatever the web interface says:
+docker compose run --rm cli backup --without-metrics
+# To a bucket, whatever the web interface says. Export the PULSIX_BACKUP_S3_*
+# variables in your shell first; -e NAME without a value passes them through,
+# so the secret never appears on the command line:
 docker compose run --rm \
-  -e PULSIX_BACKUP_S3_ACCESS_KEY=… -e PULSIX_BACKUP_S3_SECRET_KEY=… \
-  -e PULSIX_BACKUP_S3_ENDPOINT=s3.example.com -e PULSIX_BACKUP_S3_PATH_STYLE=true \
-  manager backup --to s3://bucket/prefix
+  -e PULSIX_BACKUP_S3_ACCESS_KEY -e PULSIX_BACKUP_S3_SECRET_KEY \
+  -e PULSIX_BACKUP_S3_ENDPOINT -e PULSIX_BACKUP_S3_REGION -e PULSIX_BACKUP_S3_PATH_STYLE \
+  cli backup --to s3://bucket/prefix
 ```
 
 The command works while the stack runs and prints the backup's name and
 size. `PULSIX_BACKUP_S3_REGION` is optional; without
-`PULSIX_BACKUP_S3_ENDPOINT` the bucket is on AWS S3.
+`PULSIX_BACKUP_S3_ENDPOINT` the bucket is on AWS S3;
+`PULSIX_BACKUP_S3_PATH_STYLE=true` addresses the bucket as
+`endpoint/bucket` (MinIO and most self-hosted services need it).
 
-`docker compose run --rm manager backup key` prints the passphrase the
+`docker compose run --rm cli backup key` prints the passphrase the
 backups are encrypted with. With it, the stock `age` tool decrypts a
 backup without Pulsix (`tail -n +3 FILE.pxbak | age -d | gunzip`). Keep it
 as secret as the master key.
@@ -305,9 +322,9 @@ Restore needs the manager stopped; it refuses while one is connected to
 the database.
 
 ```bash
-docker compose run --rm manager restore --list    # name, time, kind, version, size
-docker compose down                               # stops the stack; the volumes stay
-docker compose run --rm manager restore pulsix-20261102T030000Z-scheduled.pxbak
+docker compose run --rm cli restore --list    # name, time, kind, version, size
+docker compose down                           # stops the stack; the volumes stay
+docker compose run --rm cli restore pulsix-20261102T030000Z-scheduled.pxbak
 docker compose up -d
 ```
 
@@ -315,12 +332,13 @@ docker compose up -d
   replaced with `--replace`, which asks you to type `restore`. In a script,
   add `--yes`.
 - **A downloaded backup** goes in on standard input (note `-T`):
-  `docker compose run --rm -T manager restore - < pulsix-….pxbak`.
+  `docker compose run --rm -T cli restore - < pulsix-….pxbak`.
   Standard input cannot answer the question, so replacing a database this
-  way needs `--replace --yes`.
+  way needs `--replace --yes`:
+  `docker compose run --rm -T cli restore --replace --yes - < pulsix-….pxbak`.
 - **From a bucket:** `restore --list --from s3://bucket/prefix` and
   `restore --from s3://bucket/prefix <name>`, with the
-  `PULSIX_BACKUP_S3_*` variables as above. Restore never reads the
+  `PULSIX_BACKUP_S3_*` variables passed through as above. Restore never reads the
   credentials from the database it replaces.
 
 Before it changes anything, restore reads the whole backup and checks it:
@@ -340,7 +358,7 @@ as part of the restore.
    `PULSIX_MASTER_KEY` in `.env` (copy the old `.env`, adjusting what
    differs).
 2. Restore before the first `docker compose up`:
-   `docker compose run --rm -T manager restore - < pulsix-….pxbak`
+   `docker compose run --rm -T cli restore - < pulsix-….pxbak`
    (or by name from the bucket). If the new instance was already set up,
    stop it with `docker compose down` and add `--replace --yes`.
 3. `docker compose up -d`. The new server has no worker bundle yet, so
@@ -354,7 +372,7 @@ as part of the restore.
 ```bash
 # in .env: set PULSIX_VERSION to the release you want (e.g. v0.2.0)
 docker compose pull
-docker compose run --rm manager backup   # optional, but cheap: a backup taken before the upgrade
+docker compose run --rm cli backup   # optional, but cheap: a backup taken before the upgrade
 docker compose up -d
 ```
 
