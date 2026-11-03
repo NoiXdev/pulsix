@@ -3682,7 +3682,10 @@ export interface components {
              * @example https://example.com/schemas/EnrollmentCreateOutputBody.json
              */
             readonly $schema?: string;
+            /** @description Holds no token; start it with compose_up_command */
             compose_snippet: string;
+            /** @description Starts the compose snippet with the token as the client's environment */
+            compose_up_command: string;
             docker_snippet: string;
             enrollment: components["schemas"]["WorkerEnrollmentDTO"];
             /** @description Shown once; valid for one hour and one enrollment */

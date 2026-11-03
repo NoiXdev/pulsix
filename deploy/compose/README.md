@@ -178,13 +178,22 @@ certificate bundle:
 2. Run that command on the worker's machine:
 
    ```bash
-   docker run -d --name pulsix-worker-hel-1 --restart unless-stopped \
+   PULSIX_ENROLL_TOKEN=pxw1.… docker run -d --init --name pulsix-worker-hel-1 --restart unless-stopped \
      -e PULSIX_MANAGER_ADDR=pulsix.example.com:8444 \
      -e PULSIX_MANAGER_SERVER_NAME=pulsix-manager \
-     -e PULSIX_ENROLL_TOKEN=pxw1.… \
+     -e PULSIX_ENROLL_TOKEN \
+     -e PULSIX_WORKER_PLAY_UID=65533 \
      -v pulsix-worker-hel-1:/var/lib/pulsix-worker \
      noixdev/pulsix-worker:<version>
    ```
+
+   The token is the docker client's environment (`PULSIX_ENROLL_TOKEN=… docker
+   run`) and a bare `-e PULSIX_ENROLL_TOKEN` hands it on, not
+   `-e PULSIX_ENROLL_TOKEN=pxw1.…`: an argument shows in the process list to
+   every local user of the machine. The dialog's Compose tab works the same
+   way: its file only names `${PULSIX_ENROLL_TOKEN}`, and the token is set on
+   the start command (`PULSIX_ENROLL_TOKEN=pxw1.… docker compose up -d`), so
+   the file can be saved or committed without a credential in it.
 
 3. The token is single use and valid for one hour. After the first start
    the worker's identity lives in the named volume, and the token is

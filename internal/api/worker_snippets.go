@@ -14,7 +14,8 @@ type WorkerEndpoint struct {
 }
 
 // workerSnippets renders the docker run and compose snippets the Add
-// worker dialog shows next to the token. Both start the worker under an init
+// worker dialog shows next to the token, and the command that starts the
+// compose service. Both start the worker under an init
 // process (--init, init: true): the worker is otherwise PID 1 and never
 // reaps what a run orphans outside its per-run supervisor (backlog 2.108).
 // The bundled compose file sets the same.
@@ -24,7 +25,12 @@ type WorkerEndpoint struct {
 // image leaves it unset only so that an existing worker is not opted in at
 // its next pull; a pasted snippet starts a new worker on a fresh volume,
 // which is the case the bundled compose file already opts in for.
-func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, compose string) {
+//
+// The compose snippet is a file an operator saves, commits and shares, so it
+// does not carry the token: it names PULSIX_ENROLL_TOKEN, refuses to start
+// without it, and composeUp is the start command that sets it as the compose
+// client's environment, like the docker snippet does (backlog 7.59).
+func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, compose, composeUp string) {
 	if version == "" || version == "dev" {
 		version = "latest"
 	}
@@ -50,12 +56,13 @@ func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, com
 		"    environment:",
 		fmt.Sprintf("      PULSIX_MANAGER_ADDR: %q", ep.Addr),
 		fmt.Sprintf("      PULSIX_MANAGER_SERVER_NAME: %q", ep.ServerName),
-		fmt.Sprintf("      PULSIX_ENROLL_TOKEN: %q", token),
+		"      PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:?set PULSIX_ENROLL_TOKEN}",
 		`      PULSIX_WORKER_PLAY_UID: "65533"`,
 		"    volumes:",
 		fmt.Sprintf("      - pulsix-worker-%s:/var/lib/pulsix-worker", name),
 		"volumes:",
 		fmt.Sprintf("  pulsix-worker-%s: {}", name),
 	}, "\n")
-	return docker, compose
+	composeUp = fmt.Sprintf("PULSIX_ENROLL_TOKEN=%s docker compose up -d", token)
+	return docker, compose, composeUp
 }

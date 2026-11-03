@@ -80,7 +80,8 @@ type enrollmentCreateOutput struct {
 		Enrollment     workerEnrollmentDTO `json:"enrollment"`
 		Token          string              `json:"token" doc:"Shown once; valid for one hour and one enrollment"`
 		DockerSnippet  string              `json:"docker_snippet"`
-		ComposeSnippet string              `json:"compose_snippet"`
+		ComposeSnippet string              `json:"compose_snippet" doc:"Holds no token; start it with compose_up_command"`
+		ComposeUp      string              `json:"compose_up_command" doc:"Starts the compose snippet with the token as the client's environment"`
 	}
 }
 
@@ -240,7 +241,7 @@ func registerWorkerRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, e.ID.String(), "created an enrollment token for worker "+e.Name)
 		out := &enrollmentCreateOutput{}
 		out.Body.Enrollment, out.Body.Token = toEnrollmentDTO(e), token
-		out.Body.DockerSnippet, out.Body.ComposeSnippet = workerSnippets(deps.WorkerEndpoint, e.Name, token, deps.Version)
+		out.Body.DockerSnippet, out.Body.ComposeSnippet, out.Body.ComposeUp = workerSnippets(deps.WorkerEndpoint, e.Name, token, deps.Version)
 		return out, nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAudit("createWorkerEnrollment", "worker_enrollment"))
 

@@ -61,6 +61,11 @@ export const deWorkers: Messages['workers'] = {
     done: 'Fertig',
     docker: 'Docker',
     compose: 'Compose-Service',
+    composeUp: 'Starten mit',
+    composeUpLabel: 'Startbefehl',
+    copyComposeUp: 'Startbefehl kopieren',
+    composeUpHint:
+      'Das Token steht nicht in der Datei, sondern nur in der Umgebung dieses Befehls. So lässt sich die Datei speichern und weitergeben.',
     zone: 'Zone',
     newZone: 'Neue Zone…',
     name: 'Name',

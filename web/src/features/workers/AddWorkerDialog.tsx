@@ -16,11 +16,14 @@ interface Created {
   token: string;
   docker: string;
   compose: string;
+  composeUp: string;
 }
 
 /** AddWorkerDialog creates a one-time enrollment token for a new worker
  * (zone + name) and shows it once, with the docker run and compose
- * snippets that start a worker enrolling with it. */
+ * snippets that start a worker enrolling with it. The compose file holds no
+ * token (it is a file people save and share); the command that starts it,
+ * shown below the file, sets the token as its environment. */
 export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => void }) {
   const t = useT();
   const zones = useZones(org);
@@ -43,7 +46,7 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
     }
     try {
       const res = await create.mutateAsync({ zone_id: zone, name });
-      setCreated({ token: res.token, docker: res.docker_snippet, compose: res.compose_snippet });
+      setCreated({ token: res.token, docker: res.docker_snippet, compose: res.compose_snippet, composeUp: res.compose_up_command });
     } catch (err) {
       setError(err instanceof Error ? err.message : t.workers.dialog.createFailed);
     }
@@ -82,6 +85,23 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
           <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px]" aria-label={t.workers.dialog.snippetLabel}>
             {snippet}
           </pre>
+          {tab === 'compose' && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[13px] font-semibold">{t.workers.dialog.composeUp}</span>
+              <div className="flex items-start gap-2">
+                <pre
+                  className="flex-1 overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px]"
+                  aria-label={t.workers.dialog.composeUpLabel}
+                >
+                  {created.composeUp}
+                </pre>
+                <Button type="button" variant="ghost" aria-label={t.workers.dialog.copyComposeUp} onClick={() => void navigator.clipboard.writeText(created.composeUp)}>
+                  <Copy size={13} />
+                </Button>
+              </div>
+              <span className="text-[11px] text-muted-foreground">{t.workers.dialog.composeUpHint}</span>
+            </div>
+          )}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" aria-label={t.workers.dialog.copySnippet} onClick={() => void navigator.clipboard.writeText(snippet)}>
               <Copy size={13} /> {t.workers.dialog.copy}

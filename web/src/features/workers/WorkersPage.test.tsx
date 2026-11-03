@@ -74,7 +74,8 @@ describe('WorkersPage', () => {
           enrollment: { id: 'e1', name: 'hel-1', zone_id: 'z1', expires_at: inDays(0.04), created_at: '' },
           token: 'pxw1.aaa.bbb.ccc',
           docker_snippet: 'docker run … PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc',
-          compose_snippet: 'services: … PULSIX_ENROLL_TOKEN: "pxw1.aaa.bbb.ccc"',
+          compose_snippet: 'services: … PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:?set PULSIX_ENROLL_TOKEN}',
+          compose_up_command: 'PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc docker compose up -d',
         };
       },
     });
@@ -88,6 +89,15 @@ describe('WorkersPage', () => {
     expect(screen.getByLabelText('Worker snippet')).toHaveTextContent('docker run');
     await user.click(screen.getByRole('tab', { name: 'Compose service' }));
     expect(screen.getByLabelText('Worker snippet')).toHaveTextContent('services:');
+    // Backlog 7.59: the file holds no token; the start command below it does,
+    // with its own copy button and a hint saying why.
+    expect(screen.getByLabelText('Worker snippet')).not.toHaveTextContent('pxw1.aaa.bbb.ccc');
+    expect(screen.getByLabelText('Start command')).toHaveTextContent('PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc docker compose up -d');
+    expect(screen.getByText(en.workers.dialog.composeUpHint)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Copy start command' }));
+    expect(await navigator.clipboard.readText()).toBe('PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc docker compose up -d');
+    await user.click(screen.getByRole('tab', { name: 'Docker' }));
+    expect(screen.queryByLabelText('Start command')).not.toBeInTheDocument();
   });
 
   it('refuses an invalid name before calling the server', async () => {
@@ -134,6 +144,7 @@ describe('WorkersPage', () => {
           token: 'pxw1.aaa.bbb.ccc',
           docker_snippet: 'docker run',
           compose_snippet: 'services:',
+          compose_up_command: 'PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc docker compose up -d',
         };
       },
     });

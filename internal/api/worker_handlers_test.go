@@ -66,11 +66,16 @@ func TestWorkerEnrollmentAndRevocation(t *testing.T) {
 		Token          string `json:"token"`
 		DockerSnippet  string `json:"docker_snippet"`
 		ComposeSnippet string `json:"compose_snippet"`
+		ComposeUp      string `json:"compose_up_command"`
 	}
 	decodeInto(t, resp, &created)
 	if !strings.HasPrefix(created.Token, "pxw1.") || !strings.Contains(created.DockerSnippet, created.Token) ||
 		!strings.Contains(created.DockerSnippet, "PULSIX_MANAGER_ADDR=localhost:8444") || !strings.Contains(created.ComposeSnippet, "PULSIX_ENROLL_TOKEN") {
 		t.Fatalf("created = %+v", created)
+	}
+	// The compose file never carries the token; the start command does (7.59).
+	if strings.Contains(created.ComposeSnippet, created.Token) || created.ComposeUp != "PULSIX_ENROLL_TOKEN="+created.Token+" docker compose up -d" {
+		t.Fatalf("compose snippet %q, up command %q", created.ComposeSnippet, created.ComposeUp)
 	}
 	if body := mustReadBody(t, requestJSON(t, c, http.MethodGet, base+"/worker-enrollments", nil)); !strings.Contains(body, created.Enrollment.ID) || strings.Contains(body, created.Token) ||
 		strings.Contains(body, strings.Split(created.Token, ".")[2]) {

@@ -62,6 +62,11 @@ export const enWorkers = {
     done: 'Done',
     docker: 'Docker',
     compose: 'Compose service',
+    composeUp: 'Start it with',
+    composeUpLabel: 'Start command',
+    copyComposeUp: 'Copy start command',
+    composeUpHint:
+      'The token stays out of the file: it is set only for this command, so the file can be saved or shared.',
     zone: 'Zone',
     newZone: 'New zone…',
     name: 'Name',
