@@ -83,7 +83,11 @@ in an upgrade.
 ## Roll order
 
 1. **Manager** (with the database): back up, then start the new version. It
-   migrates on start. Components one minor behind stay within the rule.
+   migrates on start. Components one minor behind stay within the rule. A
+   scheduled backup interrupted by the upgrade's own stop of the manager is
+   not mailed as interrupted: a graceful stop records the attempt as
+   abandoned, and migration 00078 marks existing abandoned scheduled attempts
+   as notified.
 2. **Workers**: they claim jobs from the manager, so they are updated after
    it. The bundled `worker` in the compose stack comes with `up -d`; a worker
    added by hand pins the image it was added with and is updated by pulling

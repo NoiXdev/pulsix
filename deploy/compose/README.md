@@ -454,12 +454,14 @@ the way back is a backup.
    MANAGER=https://pulsix.example.net      # your manager's public URL
    ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
    d=$(mktemp -d)
-   curl -fsSL -o "$d/pulsix-agent"        "$MANAGER/agents/bin/linux/$ARCH"
-   curl -fsSL -o "$d/pulsix-agent.sha256" "$MANAGER/agents/bin/linux/$ARCH.sha256"
-   [ "$(sha256sum "$d/pulsix-agent" | cut -d ' ' -f1)" = "$(cut -d ' ' -f1 "$d/pulsix-agent.sha256")" ] \
-     || { echo "checksum mismatch" >&2; exit 1; }
-   sudo install -m 0755 "$d/pulsix-agent" /usr/local/bin/pulsix-agent
-   sudo systemctl restart pulsix-agent
+   if curl -fsSL -o "$d/pulsix-agent"        "$MANAGER/agents/bin/linux/$ARCH" \
+      && curl -fsSL -o "$d/pulsix-agent.sha256" "$MANAGER/agents/bin/linux/$ARCH.sha256" \
+      && [ "$(sha256sum "$d/pulsix-agent" | cut -d ' ' -f1)" = "$(cut -d ' ' -f1 "$d/pulsix-agent.sha256")" ]; then
+     sudo install -m 0755 "$d/pulsix-agent" /usr/local/bin/pulsix-agent && sudo systemctl restart pulsix-agent
+   else
+     echo "download failed or checksum mismatch: nothing installed" >&2
+   fi
+   rm -rf "$d"
    ```
 
    The agent keeps its identity (`/etc/pulsix`) and reconnects on its own;
