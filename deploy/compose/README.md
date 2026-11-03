@@ -191,9 +191,11 @@ certificate bundle:
    run`) and a bare `-e PULSIX_ENROLL_TOKEN` hands it on, not
    `-e PULSIX_ENROLL_TOKEN=pxw1.…`: an argument shows in the process list to
    every local user of the machine. The dialog's Compose tab works the same
-   way: its file only names `${PULSIX_ENROLL_TOKEN}`, and the token is set on
-   the start command (`PULSIX_ENROLL_TOKEN=pxw1.… docker compose up -d`), so
-   the file can be saved or committed without a credential in it.
+   way: its file only names `${PULSIX_ENROLL_TOKEN:-}`, and the token is set
+   on the start command (`PULSIX_ENROLL_TOKEN=pxw1.… docker compose up -d`),
+   so the file can be saved or committed without a credential in it. Later
+   commands on the file (`docker compose ps`, `down`, `pull && up -d`) need
+   no token: the variable is simply empty then.
 
 3. The token is single use and valid for one hour. After the first start
    the worker's identity lives in the named volume, and the token is

@@ -67,10 +67,13 @@ func TestWorkerDockerSnippetKeepsTheTokenOutOfDockersArguments(t *testing.T) {
 
 // TestWorkerComposeSnippetKeepsTheTokenOutOfTheFile is backlog 7.59: a
 // compose file is saved, committed and shared, so a literal token in it is
-// a credential at rest. The file only names the variable (and refuses to
-// start without it); the token travels in the separate start command,
-// which sets it as the compose client's environment like the docker
-// snippet does.
+// a credential at rest. The file only names the variable; the token travels
+// in the separate start command, which sets it as the compose client's
+// environment like the docker snippet does. The variable defaults to empty
+// rather than being required: the token is single use, so after enrolment
+// it is unset, and a required variable would make every later compose
+// command on the file (ps, down, pull, up) abort. The worker itself ignores
+// the token once it has a bundle and refuses to start when it has neither.
 func TestWorkerComposeSnippetKeepsTheTokenOutOfTheFile(t *testing.T) {
 	ep := WorkerEndpoint{Addr: "pulsix.example.com:8444", ServerName: "pulsix-manager"}
 	docker, compose, up := workerSnippets(ep, "hel-1", "pxw1.token", "v0.5.0")
@@ -78,7 +81,7 @@ func TestWorkerComposeSnippetKeepsTheTokenOutOfTheFile(t *testing.T) {
 	if strings.Contains(compose, "pxw1.token") {
 		t.Errorf("the compose snippet must not contain the token:\n%s", compose)
 	}
-	want := "      PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:?set PULSIX_ENROLL_TOKEN}\n"
+	want := "      PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:-}\n"
 	if !strings.Contains(compose, want) {
 		t.Errorf("compose snippet must take the token from the environment, missing %q:\n%s", want, compose)
 	}

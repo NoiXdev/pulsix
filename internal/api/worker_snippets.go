@@ -27,9 +27,14 @@ type WorkerEndpoint struct {
 // which is the case the bundled compose file already opts in for.
 //
 // The compose snippet is a file an operator saves, commits and shares, so it
-// does not carry the token: it names PULSIX_ENROLL_TOKEN, refuses to start
-// without it, and composeUp is the start command that sets it as the compose
-// client's environment, like the docker snippet does (backlog 7.59).
+// does not carry the token: it names PULSIX_ENROLL_TOKEN, and composeUp is
+// the start command that sets it as the compose client's environment, like
+// the docker snippet does (backlog 7.59). The variable defaults to empty
+// instead of being required: the token is single use and unset after
+// enrolment, and a required variable would make every later compose command
+// on the file (ps, down, pull, up) abort. The worker ignores the token once
+// it has a certificate bundle and exits with its own message when it has
+// neither.
 func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, compose, composeUp string) {
 	if version == "" || version == "dev" {
 		version = "latest"
@@ -56,7 +61,7 @@ func workerSnippets(ep WorkerEndpoint, name, token, version string) (docker, com
 		"    environment:",
 		fmt.Sprintf("      PULSIX_MANAGER_ADDR: %q", ep.Addr),
 		fmt.Sprintf("      PULSIX_MANAGER_SERVER_NAME: %q", ep.ServerName),
-		"      PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:?set PULSIX_ENROLL_TOKEN}",
+		"      PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:-}",
 		`      PULSIX_WORKER_PLAY_UID: "65533"`,
 		"    volumes:",
 		fmt.Sprintf("      - pulsix-worker-%s:/var/lib/pulsix-worker", name),

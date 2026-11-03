@@ -74,7 +74,7 @@ describe('WorkersPage', () => {
           enrollment: { id: 'e1', name: 'hel-1', zone_id: 'z1', expires_at: inDays(0.04), created_at: '' },
           token: 'pxw1.aaa.bbb.ccc',
           docker_snippet: 'docker run … PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc',
-          compose_snippet: 'services: … PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:?set PULSIX_ENROLL_TOKEN}',
+          compose_snippet: 'services: … PULSIX_ENROLL_TOKEN: ${PULSIX_ENROLL_TOKEN:-}',
           compose_up_command: 'PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc docker compose up -d',
         };
       },
