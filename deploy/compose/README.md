@@ -301,7 +301,8 @@ somewhere else than the backups. Without it no backup can be restored.
 Backups go to the `pulsix-backups` volume (`/var/lib/pulsix/backups` in the
 manager and `cli` containers) unless the web interface names S3-compatible storage
 (*Settings → Backups*, which also sets the daily schedule and how
-many backups to keep).
+many backups to keep). A backup folder must not be shared between Pulsix
+instances: each one treats the backup files in it as its own.
 
 ### Taking a backup
 

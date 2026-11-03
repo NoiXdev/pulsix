@@ -364,10 +364,15 @@ func TestDirCleanPartialsRemovesOnlyRegularPartialFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// None of these may be touched: another file, a symlink and a directory
-	// that merely carry the suffix, and a partial file nested in a folder.
+	// None of these may be touched: another file, a partial file some other
+	// program left (the folder may be shared), a symlink and a directory that
+	// merely carry the suffix, and a partial file nested in a folder.
 	other := filepath.Join(dir, "notes.txt")
 	if err := os.WriteFile(other, []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	foreign := filepath.Join(dir, "foo.partial")
+	if err := os.WriteFile(foreign, []byte("not ours"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(t.TempDir(), "precious")
@@ -400,7 +405,7 @@ func TestDirCleanPartialsRemovesOnlyRegularPartialFiles(t *testing.T) {
 			t.Errorf("%s still exists: %v", name, err)
 		}
 	}
-	for _, p := range []string{filepath.Join(dir, kept), other, target, nested} {
+	for _, p := range []string{filepath.Join(dir, kept), other, foreign, target, nested} {
 		if _, err := os.Lstat(p); err != nil {
 			t.Errorf("%s was touched: %v", p, err)
 		}
