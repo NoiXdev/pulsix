@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	neturl "net/url"
 	"strings"
@@ -23,6 +24,10 @@ var migrations embed.FS
 // migrationLockKey is the PostgreSQL advisory lock that serializes migrations
 // across manager instances. The value is arbitrary but must never change.
 const migrationLockKey = 7256
+
+// ErrSchemaNewer is returned by CheckSchemaNotNewer when the database was
+// migrated by a newer Pulsix than this binary.
+var ErrSchemaNewer = errors.New("schema newer than this binary")
 
 // DB wraps the pgx pool.
 type DB struct{ pool *pgxpool.Pool }
@@ -100,6 +105,29 @@ func (d *DB) Pool() *pgxpool.Pool { return d.pool }
 
 // Close releases the pool.
 func (d *DB) Close() { d.pool.Close() }
+
+// CheckSchemaNotNewer refuses a database whose schema is ahead of this
+// binary: goose silently does nothing for such a database, so without this
+// an older Pulsix would start against tables it does not know. The error
+// wraps ErrSchemaNewer and names both versions. A database with no schema
+// yet, or one at or behind the newest embedded migration, passes. It reads
+// under the migration lock, so it never sees a migration half applied by
+// another manager; call it right before Migrate.
+func (d *DB) CheckSchemaNotNewer(ctx context.Context) error {
+	latest, err := LatestVersion()
+	if err != nil {
+		return err
+	}
+	current, err := d.SchemaVersion(ctx)
+	if err != nil {
+		return err
+	}
+	if current > latest {
+		return fmt.Errorf("%w: the database schema is at version %d, this Pulsix knows up to %d: run the newer version, or restore a backup taken by this one",
+			ErrSchemaNewer, current, latest)
+	}
+	return nil
+}
 
 // Migrate applies all embedded goose migrations under an advisory lock.
 func (d *DB) Migrate(ctx context.Context) error {

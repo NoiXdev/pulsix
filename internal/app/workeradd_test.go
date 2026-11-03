@@ -273,3 +273,18 @@ func splitPEMSections(out string) (certPEM, keyPEM, caPEM []byte, err error) {
 	}
 	return certPEM, keyPEM, caPEM, nil
 }
+
+// TestRunWorkerAddRefusesANewerSchema: `worker add` stops with ErrSchemaNewer
+// before migrating or enrolling anything when the database was migrated by a
+// newer Pulsix (backlog 7.3).
+func TestRunWorkerAddRefusesANewerSchema(t *testing.T) {
+	cfg, _, _ := newerSchemaConfig(t)
+	var stdout bytes.Buffer
+	err := RunWorkerAdd(t.Context(), cfg, WorkerAddOptions{ZoneSlug: "default", Name: "w-1"}, &stdout, io.Discard)
+	if !errors.Is(err, db.ErrSchemaNewer) {
+		t.Fatalf("RunWorkerAdd error = %v, want ErrSchemaNewer", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("a refused enrollment must print nothing, got:\n%s", stdout.String())
+	}
+}

@@ -200,6 +200,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	if err != nil {
 		return nil, fmt.Errorf("open migration database connection: %w", err)
 	}
+	// A database migrated by a newer Pulsix is refused before anything runs
+	// against it: goose would silently skip it (backlog 7.3).
+	if err := migrationDB.CheckSchemaNotNewer(ctx); err != nil {
+		migrationDB.Close()
+		return nil, err
+	}
 	migrateErr := migrationDB.Migrate(ctx)
 	migrationDB.Close()
 	if migrateErr != nil {

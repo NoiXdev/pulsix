@@ -105,6 +105,9 @@ func RunWorkerAdd(ctx context.Context, cfg config.Config, opts WorkerAddOptions,
 		return fmt.Errorf("open database: %w", err)
 	}
 	defer d.Close()
+	if err := d.CheckSchemaNotNewer(ctx); err != nil {
+		return err
+	}
 	if err := d.Migrate(ctx); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}

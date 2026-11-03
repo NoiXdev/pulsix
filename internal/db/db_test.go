@@ -2,6 +2,9 @@ package db_test
 
 import (
 	"context"
+	"errors"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/db"
@@ -68,4 +71,71 @@ func TestMigrateToStopsAtVersion(t *testing.T) {
 	if newest <= 20 {
 		t.Fatalf("newest schema version %d is not past 20; the test proves nothing", newest)
 	}
+}
+
+// TestCheckSchemaNotNewer: a database whose schema is ahead of this binary
+// is refused with ErrSchemaNewer naming both versions; one at the latest
+// version, one behind it and one with no schema at all pass.
+func TestCheckSchemaNotNewer(t *testing.T) {
+	ctx := context.Background()
+	latest, err := db.LatestVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("empty database passes", func(t *testing.T) {
+		d, err := db.Open(ctx, testdb.FreshDatabase(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		if err := d.CheckSchemaNotNewer(ctx); err != nil {
+			t.Fatalf("CheckSchemaNotNewer on an empty database: %v", err)
+		}
+	})
+
+	t.Run("at the latest version passes", func(t *testing.T) {
+		if err := testdb.Open(t).CheckSchemaNotNewer(ctx); err != nil {
+			t.Fatalf("CheckSchemaNotNewer at version %d: %v", latest, err)
+		}
+	})
+
+	t.Run("behind the latest version passes", func(t *testing.T) {
+		d, err := db.Open(ctx, testdb.FreshDatabase(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		if err := d.MigrateTo(ctx, 20); err != nil {
+			t.Fatal(err)
+		}
+		if err := d.CheckSchemaNotNewer(ctx); err != nil {
+			t.Fatalf("CheckSchemaNotNewer at version 20: %v", err)
+		}
+	})
+
+	t.Run("ahead of the latest version is refused", func(t *testing.T) {
+		d, err := db.Open(ctx, testdb.FreshDatabase(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer d.Close()
+		if err := d.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		ahead := latest + 3
+		if _, err := d.Pool().Exec(ctx,
+			`INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)`, ahead); err != nil {
+			t.Fatal(err)
+		}
+		err = d.CheckSchemaNotNewer(ctx)
+		if !errors.Is(err, db.ErrSchemaNewer) {
+			t.Fatalf("CheckSchemaNotNewer = %v, want ErrSchemaNewer", err)
+		}
+		for _, want := range []string{strconv.FormatInt(ahead, 10), strconv.FormatInt(latest, 10)} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name version %s", err, want)
+			}
+		}
+	})
 }

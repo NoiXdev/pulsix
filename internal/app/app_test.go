@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -265,6 +267,54 @@ func TestPublicURLIsHTTPS(t *testing.T) {
 	for in, want := range cases {
 		if got := publicURLIsHTTPS(in); got != want {
 			t.Errorf("publicURLIsHTTPS(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// newerSchemaConfig returns a config whose database is fully migrated and
+// then marked as migrated by a Pulsix three versions newer than this one.
+func newerSchemaConfig(t *testing.T) (cfg config.Config, latest, ahead int64) {
+	t.Helper()
+	ctx := context.Background()
+	latest, err := db.LatestVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := testdb.FreshDatabase(t)
+	d, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ahead = latest + 3
+	if _, err := d.Pool().Exec(ctx,
+		`INSERT INTO goose_db_version (version_id, is_applied) VALUES ($1, true)`, ahead); err != nil {
+		t.Fatal(err)
+	}
+	cfg = testConfig(t)
+	cfg.DatabaseURL = url
+	return cfg, latest, ahead
+}
+
+// TestBuildRefusesANewerSchema: a manager that finds the database migrated
+// by a newer Pulsix stops with ErrSchemaNewer instead of running against a
+// schema it does not know (backlog 7.3).
+func TestBuildRefusesANewerSchema(t *testing.T) {
+	cfg, latest, ahead := newerSchemaConfig(t)
+	a, err := Build(context.Background(), cfg)
+	if err == nil {
+		a.Close()
+		t.Fatal("Build against a newer schema: got nil error")
+	}
+	if !errors.Is(err, db.ErrSchemaNewer) {
+		t.Fatalf("Build error = %v, want ErrSchemaNewer", err)
+	}
+	for _, want := range []string{strconv.FormatInt(ahead, 10), strconv.FormatInt(latest, 10)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name version %s", err, want)
 		}
 	}
 }
