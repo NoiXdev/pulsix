@@ -114,10 +114,19 @@ WHERE c.serial = sqlc.arg(serial);
 -- the agent sends the complete set each push, so an unreported key is a
 -- stale fact from an older agent version, and keeping it (instead of
 -- deleting it) is the simplest honest behavior — the operator still sees
--- what the host used to report. 0 affected rows is the caller's
+-- what the host used to report. Stale keys are kept only while the
+-- merged object stays at or under max_keys (agents.MaxStoredFacts, backlog
+-- 7.56): a push whose merge would exceed it REPLACES the stored set with
+-- the reported one, so keys can never accumulate without bound across
+-- pushes. A set already above the cap (stored before it existed) is
+-- replaced by the next push the same way. 0 affected rows is the caller's
 -- ErrNotFound (unknown host, or one belonging to another organization).
 UPDATE hosts SET
-  facts = COALESCE(facts, '{}'::jsonb) || sqlc.arg(facts)::jsonb,
+  facts = CASE
+    WHEN (SELECT count(*) FROM jsonb_object_keys(COALESCE(facts, '{}'::jsonb) || sqlc.arg(facts)::jsonb)) <= sqlc.arg(max_keys)::integer
+      THEN COALESCE(facts, '{}'::jsonb) || sqlc.arg(facts)::jsonb
+    ELSE sqlc.arg(facts)::jsonb
+  END,
   updated_at = now()
 WHERE id = sqlc.arg(host_id) AND org_id = sqlc.arg(org_id);
 

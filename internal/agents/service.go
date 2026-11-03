@@ -221,7 +221,9 @@ type Store interface {
 	// and re-applies the automatic tags, in ONE org-bound transaction.
 	// Reported keys replace their previous values, keys the agent did
 	// not report survive (stale facts from an older agent version stay
-	// visible); the three automatic tags (os, arch, virt) upsert with
+	// visible) while the merged set stays at or under MaxStoredFacts
+	// keys — over it, the reported set replaces the stored one; the
+	// three automatic tags (os, arch, virt) upsert with
 	// source='fact', skipping any key that carries a manual row — a
 	// manual tag always wins, and once it is removed the next push
 	// re-applies the fact. ErrNotFound when the host does not exist in

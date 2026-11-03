@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -673,6 +674,92 @@ func TestRecordFactsManualPrecedence(t *testing.T) {
 	}
 	if tags := tagsOf(t, d, org, h.ID); tags["os"] != "linux" || tags["arch"] != "arm64" || tags["virt"] != "kvm" {
 		t.Fatalf("tags after manual removal + re-push = %v", tags)
+	}
+}
+
+// factKeys builds n distinct contract-valid fact keys with prefix, each
+// mapped to value.
+func factKeys(prefix string, n int, value string) map[string]string {
+	out := make(map[string]string, n)
+	for i := 0; i < n; i++ {
+		out[fmt.Sprintf("%s_%03d", prefix, i)] = value
+	}
+	return out
+}
+
+// TestUpsertHostFactsReplacesWhenMergeExceedsCap (backlog 7.56): the merge
+// keeps stale keys only while the merged object stays at or under
+// MaxStoredFacts; a push that would take it over the cap replaces the
+// stored set with the pushed one, so a host can never accumulate keys
+// across pushes without bound.
+func TestUpsertHostFactsReplacesWhenMergeExceedsCap(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-facts-cap")
+	h := createHost(t, d, org, zone, "facts-cap")
+
+	// 100 stored keys, built up over two pushes that each stay under the
+	// per-push bound and whose merge stays under the cap.
+	for _, prefix := range []string{"a", "b"} {
+		if err := svc.RecordFacts(ctx, org, h.ID, factKeys(prefix, 50, "old")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := factsOf(t, d, org, h.ID); len(got) != 100 {
+		t.Fatalf("stored %d keys after two merging pushes, want 100", len(got))
+	}
+
+	// 28 new keys: the merge lands on exactly the cap and keeps every
+	// stale key, as today.
+	if err := svc.RecordFacts(ctx, org, h.ID, factKeys("c", agents.MaxStoredFacts-100, "new")); err != nil {
+		t.Fatal(err)
+	}
+	if got := factsOf(t, d, org, h.ID); len(got) != agents.MaxStoredFacts || got["a_000"] != "old" || got["c_000"] != "new" {
+		t.Fatalf("merge at the cap stored %d keys (a_000=%q, c_000=%q), want %d merged",
+			len(got), got["a_000"], got["c_000"], agents.MaxStoredFacts)
+	}
+
+	// 64 different keys would take the merge to 192: the push replaces
+	// the stored set instead.
+	pushed := factKeys("d", agents.MaxFactsKeys, "fresh")
+	if err := svc.RecordFacts(ctx, org, h.ID, pushed); err != nil {
+		t.Fatal(err)
+	}
+	got := factsOf(t, d, org, h.ID)
+	if len(got) != len(pushed) {
+		t.Fatalf("over-cap merge stored %d keys, want exactly the %d pushed", len(got), len(pushed))
+	}
+	for k, v := range pushed {
+		if got[k] != v {
+			t.Fatalf("over-cap merge: key %q = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+// TestUpsertHostFactsReplacesAnAlreadyOversizeSet (review focus): a host
+// whose stored facts are already above the cap (written before the cap
+// existed) does not lose its next push — the push replaces the set.
+func TestUpsertHostFactsReplacesAnAlreadyOversizeSet(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-facts-oversize")
+	h := createHost(t, d, org, zone, "facts-oversize")
+	legacy, err := json.Marshal(factKeys("legacy", agents.MaxStoredFacts+72, "old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `UPDATE hosts SET facts = $1::jsonb WHERE id = $2`, legacy, h.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := factsOf(t, d, org, h.ID); len(got) != agents.MaxStoredFacts+72 {
+		t.Fatalf("seeded %d keys, want %d", len(got), agents.MaxStoredFacts+72)
+	}
+
+	pushed := map[string]string{"os": "linux", "arch": "amd64", "virt": "kvm"}
+	if err := svc.RecordFacts(ctx, org, h.ID, pushed); err != nil {
+		t.Fatal(err)
+	}
+	if got := factsOf(t, d, org, h.ID); len(got) != len(pushed) || got["os"] != "linux" || got["arch"] != "amd64" || got["virt"] != "kvm" {
+		t.Fatalf("push over an oversize set stored %v, want exactly %v", got, pushed)
+	}
+	if tags := tagsOf(t, d, org, h.ID); tags["os"] != "linux" || len(tags) != 3 {
+		t.Fatalf("push over an oversize set tags = %v", tags)
 	}
 }
 

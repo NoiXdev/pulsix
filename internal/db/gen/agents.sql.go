@@ -493,15 +493,20 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 
 const upsertHostFacts = `-- name: UpsertHostFacts :execrows
 UPDATE hosts SET
-  facts = COALESCE(facts, '{}'::jsonb) || $1::jsonb,
+  facts = CASE
+    WHEN (SELECT count(*) FROM jsonb_object_keys(COALESCE(facts, '{}'::jsonb) || $1::jsonb)) <= $2::integer
+      THEN COALESCE(facts, '{}'::jsonb) || $1::jsonb
+    ELSE $1::jsonb
+  END,
   updated_at = now()
-WHERE id = $2 AND org_id = $3
+WHERE id = $3 AND org_id = $4
 `
 
 type UpsertHostFactsParams struct {
-	Facts  []byte    `json:"facts"`
-	HostID uuid.UUID `json:"host_id"`
-	OrgID  uuid.UUID `json:"org_id"`
+	Facts   []byte    `json:"facts"`
+	MaxKeys int32     `json:"max_keys"`
+	HostID  uuid.UUID `json:"host_id"`
+	OrgID   uuid.UUID `json:"org_id"`
 }
 
 // The facts push's merge (RecordFacts, Task 8): the jsonb || concatenation
@@ -511,10 +516,20 @@ type UpsertHostFactsParams struct {
 // the agent sends the complete set each push, so an unreported key is a
 // stale fact from an older agent version, and keeping it (instead of
 // deleting it) is the simplest honest behavior — the operator still sees
-// what the host used to report. 0 affected rows is the caller's
+// what the host used to report. Stale keys are kept only while the
+// merged object stays at or under max_keys (agents.MaxStoredFacts, backlog
+// 7.56): a push whose merge would exceed it REPLACES the stored set with
+// the reported one, so keys can never accumulate without bound across
+// pushes. A set already above the cap (stored before it existed) is
+// replaced by the next push the same way. 0 affected rows is the caller's
 // ErrNotFound (unknown host, or one belonging to another organization).
 func (q *Queries) UpsertHostFacts(ctx context.Context, arg UpsertHostFactsParams) (int64, error) {
-	result, err := q.db.Exec(ctx, upsertHostFacts, arg.Facts, arg.HostID, arg.OrgID)
+	result, err := q.db.Exec(ctx, upsertHostFacts,
+		arg.Facts,
+		arg.MaxKeys,
+		arg.HostID,
+		arg.OrgID,
+	)
 	if err != nil {
 		return 0, err
 	}

@@ -288,7 +288,7 @@ func (s *SQLStore) RecordFacts(ctx context.Context, orgID, hostID uuid.UUID, fac
 			return fmt.Errorf("encode facts: %w", err)
 		}
 		n, err := s.q.UpsertHostFacts(ctx, gen.UpsertHostFactsParams{
-			OrgID: orgID, HostID: hostID, Facts: payload,
+			OrgID: orgID, HostID: hostID, Facts: payload, MaxKeys: MaxStoredFacts,
 		})
 		if err != nil {
 			return fmt.Errorf("merge host facts: %w", err)

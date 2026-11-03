@@ -76,6 +76,41 @@ func TestRecordFactsValidatesBounds(t *testing.T) {
 	}
 }
 
+// TestRecordFactsRefusesKeyOutsideContract (backlog 7.56): a key outside
+// the agent's own contract — [a-z0-9_], 1..MaxFactsKeyLen characters
+// (internal/agent/facts) — is ErrInvalidInput and nothing reaches the
+// store. Without the check only the gRPC message limit bounded a key.
+func TestRecordFactsRefusesKeyOutsideContract(t *testing.T) {
+	for name, key := range map[string]string{
+		"over-long":  strings.Repeat("k", agents.MaxFactsKeyLen+1),
+		"uppercase":  "OS",
+		"dash":       "kernel-version",
+		"dot":        "kernel.version",
+		"non-ascii":  "kernél",
+		"whitespace": "os ",
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc, f := newFactsService()
+			err := svc.RecordFacts(ctx, testOrg, testHost, map[string]string{"os": "linux", key: "v"})
+			if !errors.Is(err, agents.ErrInvalidInput) {
+				t.Fatalf("key %q: err = %v, want ErrInvalidInput", key, err)
+			}
+			if calls := f.factCalls(); len(calls) != 0 {
+				t.Fatalf("refused facts reached the store: %+v", calls)
+			}
+		})
+	}
+	// Exactly MaxFactsKeyLen characters of the contract's alphabet is legal.
+	svc, f := newFactsService()
+	atLimit := strings.Repeat("a", agents.MaxFactsKeyLen-4) + "_0z9"
+	if err := svc.RecordFacts(ctx, testOrg, testHost, map[string]string{atLimit: "v"}); err != nil {
+		t.Fatalf("key at the length limit: %v", err)
+	}
+	if calls := f.factCalls(); len(calls) != 1 {
+		t.Fatalf("forwarded = %+v, want one call", calls)
+	}
+}
+
 // TestRecordFactsAcceptsBoundaryShapes: exactly at the limits is legal,
 // and an empty push is a silent no-op.
 func TestRecordFactsAcceptsBoundaryShapes(t *testing.T) {
