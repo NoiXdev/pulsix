@@ -162,9 +162,9 @@ func TestPolicyEmbeddedIPv4RespectsAllowlist(t *testing.T) {
 	}
 }
 
-// TestPolicyRefusesIPv6CloudInstanceServices is backlog 7.43: the only
-// IPv6 metadata entry was AWS's IMDS address, and the rest of fc00::/7 is
-// allowed as private space, so the IPv6 metadata and instance-service
+// TestPolicyRefusesIPv6CloudInstanceServices is backlog 7.43 and 7.60: the
+// only IPv6 metadata entry was AWS's IMDS address, and the rest of fc00::/7
+// is allowed as private space, so the IPv6 metadata and instance-service
 // addresses of other providers — and AWS's own neighbours of that
 // address — were dialled. Each provider's instance-service /64 is refused;
 // ordinary unique-local space stays allowed.
@@ -176,12 +176,14 @@ func TestPolicyRefusesIPv6CloudInstanceServices(t *testing.T) {
 		"fd00:ec2::23",       // AWS, same instance-service range
 		"fd20:ce::254",       // Google Cloud metadata
 		"fd00:c1::a9fe:a9fe", // Oracle Cloud metadata
+		"fd00:a9fe:a9fe::1",  // Akamai/Linode metadata
+		"fd00:42::42",        // Scaleway metadata
 	} {
 		if err := p.Check(netip.MustParseAddr(addr)); !errors.Is(err, outbound.ErrBlocked) {
 			t.Errorf("Check(%s) = %v, want ErrBlocked", addr, err)
 		}
 	}
-	for _, addr := range []string{"fd00:ec3::1", "fd20:cf::254", "fd00:c2::1", "fd12:3456::1"} {
+	for _, addr := range []string{"fd00:ec3::1", "fd20:cf::254", "fd00:c2::1", "fd00:43::1", "fd12:3456::1"} {
 		if err := p.Check(netip.MustParseAddr(addr)); err != nil {
 			t.Errorf("Check(%s) = %v, want allowed (ordinary unique-local space)", addr, err)
 		}

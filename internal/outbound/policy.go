@@ -40,15 +40,17 @@ func blockedRanges() []blockedRange {
 		{netip.MustParsePrefix("ff00::/8"), "multicast"},
 		{netip.MustParsePrefix("255.255.255.255/32"), "broadcast"},
 		{netip.MustParsePrefix("100.100.100.200/32"), "cloud metadata"},
-		// The IPv6 instance-service ranges (backlog 7.43): fc00::/7 is
+		// The IPv6 instance-service ranges (backlog 7.43, 7.60): fc00::/7 is
 		// otherwise allowed as private space, so each provider's whole /64
 		// is refused, not only its metadata address — AWS keeps its DNS
 		// resolver and time service beside IMDS (fd00:ec2::254) there.
-		{netip.MustParsePrefix("fd00:ec2::/64"), "cloud metadata"},    // AWS
-		{netip.MustParsePrefix("fd20:ce::/64"), "cloud metadata"},     // Google Cloud (fd20:ce::254)
-		{netip.MustParsePrefix("fd00:c1::/64"), "cloud metadata"},     // Oracle Cloud (fd00:c1::a9fe:a9fe)
-		{netip.MustParsePrefix("192.0.0.192/32"), "cloud metadata"},   // Oracle Cloud's legacy metadata address
-		{netip.MustParsePrefix("168.63.129.16/32"), "cloud metadata"}, // Azure WireServer
+		{netip.MustParsePrefix("fd00:ec2::/64"), "cloud metadata"},       // AWS
+		{netip.MustParsePrefix("fd20:ce::/64"), "cloud metadata"},        // Google Cloud (fd20:ce::254)
+		{netip.MustParsePrefix("fd00:c1::/64"), "cloud metadata"},        // Oracle Cloud (fd00:c1::a9fe:a9fe)
+		{netip.MustParsePrefix("fd00:a9fe:a9fe::/64"), "cloud metadata"}, // Akamai/Linode (fd00:a9fe:a9fe::1)
+		{netip.MustParsePrefix("fd00:42::/64"), "cloud metadata"},        // Scaleway (fd00:42::42)
+		{netip.MustParsePrefix("192.0.0.192/32"), "cloud metadata"},      // Oracle Cloud's legacy metadata address
+		{netip.MustParsePrefix("168.63.129.16/32"), "cloud metadata"},    // Azure WireServer
 		{netip.MustParsePrefix("fec0::/10"), "site-local (deprecated)"},
 		// 64:ff9b:1::/48 (RFC 8215, NAT64 local use) is refused outright
 		// rather than having its embedded IPv4 address extracted: unlike
