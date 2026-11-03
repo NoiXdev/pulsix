@@ -63,24 +63,24 @@ func (o RestoreOptions) Validate() error {
 
 // restoreNextStep closes a successful restore. The manager accepts only
 // certificate serials the database knows, but after a restore it adopts an
-// agent or worker certificate issued between the backup and the restore
-// (backlog 7.47). A certificate issued before the backup and expired since
-// cannot be renewed and needs a new enrollment; an agent certificate is
-// adopted only when the restored database knows the agent's key, which only
-// certificates registered since migration 00077 record. The restore ends
-// every browser session, and every other credential and access decision is
-// back at the backup's state (passwords, passkeys, second factors, API
-// tokens, open invitations, enrollment tokens, certificates, memberships,
-// disabled users), so whatever was changed, revoked or used since is valid
-// again until it is changed anew (backlog 7.54, 7.63.1).
-const restoreNextStep = "Start the stack. Workers and agents reconnect on their own, also those whose\n" +
-	"certificate was issued after this backup was taken: the manager adopts it. Only a worker or\n" +
-	"agent whose certificate was issued before the backup and has expired since must be enrolled\n" +
-	"again (certificates renew about every 60 days); it shows as offline on the Agents or Workers\n" +
-	"page and its log says to enroll anew. The bundled compose worker re-enrolls itself.\n" +
-	"Agents reconnect on their own only if the restored database knows the agent's key, and\n" +
-	"certificates registered since this update record it. After restoring a backup taken before\n" +
-	"this update, agents whose certificate was renewed after the backup must be enrolled again.\n" +
+// agent or worker certificate renewed between the backup and the restore
+// (backlog 7.47). Three cases need a new enrollment: a worker or agent the
+// restored database does not know (enrolled after the backup); a certificate
+// issued before the backup and expired since, which cannot be renewed; and
+// an agent that renewed after a backup taken before migration 00077, since an
+// agent certificate is adopted only when the restored database knows the
+// agent's key and only certificates registered since 00077 record it. The
+// restore ends every browser session, and every other credential and access
+// decision is back at the backup's state (passwords, passkeys, second
+// factors, API tokens, open invitations, enrollment tokens, certificates,
+// memberships, disabled users), so whatever was changed, revoked or used
+// since is valid again until it is changed anew (backlog 7.54, 7.63.1).
+const restoreNextStep = "Start the stack. Workers and agents reconnect on their own. Enroll again: a worker or agent\n" +
+	"enrolled after the backup; one whose certificate was issued before the backup and has expired\n" +
+	"since (certificates renew about every 60 days); and, after restoring a backup taken before agent\n" +
+	"key fingerprints were recorded (this release), an agent that renewed its certificate after the\n" +
+	"backup. Its log says to enroll anew; enroll it from the Agents or Workers page. The bundled\n" +
+	"compose worker re-enrolls itself.\n" +
 	"Everyone must sign in again: the restore ended every browser session.\n" +
 	"Everything else that grants access is as it was when the backup was taken: passwords,\n" +
 	"passkeys, second factors (TOTP and recovery codes), API tokens, agent and worker enrollment\n" +

@@ -198,11 +198,12 @@ func TestRestoreNextStepSaysWhatIsAtTheBackupsState(t *testing.T) {
 	// Line breaks are layout; compare the words.
 	text := strings.Join(strings.Fields(out.String()), " ")
 	for _, want := range []string{
-		"reconnect on their own", "certificate was issued after this backup was taken",
-		"issued before the backup and has expired since", "enrolled again",
+		"Workers and agents reconnect on their own. Enroll again:",
+		"a worker or agent enrolled after the backup;",
+		"one whose certificate was issued before the backup and has expired since",
+		"after restoring a backup taken before agent key fingerprints were recorded (this release),",
+		"an agent that renewed its certificate after the backup",
 		"bundled compose worker re-enrolls itself",
-		"only if the restored database knows the agent's key",
-		"taken before this update", "agents whose certificate was renewed after the backup",
 		"agent and worker enrollment tokens", "redeemable again until it expires",
 		"withdraw pending ones on the Agents and Workers pages",
 		"sign in again", "as it was when the backup was taken",
@@ -213,6 +214,11 @@ func TestRestoreNextStepSaysWhatIsAtTheBackupsState(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("restore output lacks %q:\n%s", want, out.String())
 		}
+	}
+	// "Only a worker or agent whose certificate ... expired" contradicted the
+	// other re-enroll cases that followed it.
+	if strings.Contains(text, "Only a worker or agent") {
+		t.Errorf("restore output still names a single re-enroll case with \"Only\":\n%s", out.String())
 	}
 	// The old text said every renewed certificate is locked out.
 	if strings.Contains(text, "renewed their certificate after this backup") {

@@ -374,21 +374,17 @@ refused and the database stays as it was. If the restore fails after that
 (the connection drops, say), it says so: the database is then empty, and
 running the same command again finishes the job.
 
-On success restore prints what it restored. Start the stack: workers and
-agents reconnect on their own, also those whose certificate was issued
-after the backup was taken: the manager adopts it, since the instance CA
-comes back with the backup. Only a worker or agent whose certificate was
-issued before the backup and has expired since must be enrolled again
-(certificates renew about every 60 days); it shows as offline on the
-Agents or Workers page and its log says to enroll anew: enroll it again
-from that page. The bundled `worker` re-enrolls itself: `worker-enroll`
-enrolls it again, and the running worker picks up the new bundle without
-being recreated. Agents reconnect on their own only if the restored
-database knows the agent's key, and certificates registered since this
-update record it. After restoring a backup taken before this update,
-agents whose certificate was renewed after the backup must be enrolled
-again. A backup from an older Pulsix is migrated to the current version
-as part of the restore.
+On success restore prints what it restored. Start the stack. Workers and
+agents reconnect on their own. Enroll again: a worker or agent enrolled
+after the backup; one whose certificate was issued before the backup and
+has expired since (certificates renew about every 60 days); and, after
+restoring a backup taken before agent key fingerprints were recorded (this
+release), an agent that renewed its certificate after the backup. Its log
+says to enroll anew; enroll it from the Agents or Workers page. The
+bundled `worker` re-enrolls itself: `worker-enroll` enrolls it again, and
+the running worker picks up the new bundle without being recreated. A
+backup from an older Pulsix is migrated to the current version as part of
+the restore.
 
 A restore ends every browser session: everyone signs in again. Everything
 else that grants access is as it was when the backup was taken:
@@ -415,13 +411,14 @@ workers and agents, and make each of those changes again.
    stop it with `docker compose down` and add `--replace --yes`.
 3. `docker compose up -d`. The new server has no worker bundle yet, so
    `worker-enroll` enrolls the bundled worker again under its old name,
-   replacing the registration the backup brought along. Agents on your
-   hosts keep their certificates and reconnect once the new server is
-   reachable under the address they know, except agents and workers
-   whose certificate was issued before the backup and has expired since
-   (and, after a backup taken before this update, agents whose
-   certificate was renewed after the backup): enroll those again, as
-   above.
+   replacing the registration the backup brought along. Workers and
+   agents on your hosts keep their certificates and reconnect on their
+   own once the new server is reachable under the address they know.
+   Enroll again, as above: a worker or agent enrolled after the backup;
+   one whose certificate was issued before the backup and has expired
+   since; and, after restoring a backup taken before agent key
+   fingerprints were recorded (this release), an agent that renewed its
+   certificate after the backup.
 
 ## Upgrading
 

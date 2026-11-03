@@ -218,7 +218,7 @@ func TestRunRestoreByNameIntoFreshDatabase(t *testing.T) {
 	if got := organizationSlugs(t, target.DatabaseURL); len(got) != 1 || got[0] != "acme" {
 		t.Errorf("organizations after restore %v, want [acme]", got)
 	}
-	for _, want := range []string{name, "organizations", "Start the stack. Workers and agents reconnect on their own, also those whose", "enrolled again", "(ended by the restore)"} {
+	for _, want := range []string{name, "organizations", "Start the stack. Workers and agents reconnect on their own. Enroll again:", "(ended by the restore)"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("restore output lacks %q:\n%s", want, out.String())
 		}
