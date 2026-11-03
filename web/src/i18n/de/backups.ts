@@ -70,6 +70,9 @@ export const deBackups: Messages['backups'] = {
       abandoned: 'Unterbrochen',
       damaged: 'Beschädigt',
     },
+    unverified: 'Nicht bestätigt',
+    unverifiedHint:
+      'Die Angaben zu diesem Backup lassen sich nicht bestätigen: Es stammt von einer älteren Pulsix-Version, von einer anderen Instanz oder wurde von jemand anderem abgelegt. Eine Wiederherstellung prüft seinen Inhalt trotzdem mit dem Master-Key.',
     empty: 'Noch keine Backups.',
     download: 'Herunterladen',
     delete: 'Löschen',

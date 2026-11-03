@@ -27,7 +27,9 @@ const STATE_TONE: Record<BackupEntry['state'], Tone> = {
  * attempts. A stored file (succeeded, or damaged — its header cannot be
  * read) can be downloaded and deleted; only a readable one can be restored.
  * An attempt that left no file (running, failed, interrupted) has no
- * actions: there is nothing to act on.
+ * actions: there is nothing to act on. A readable file whose header this
+ * instance cannot authenticate (an older version's, another instance's, or
+ * one someone else put there) is marked unverified but keeps its actions.
  */
 export function BackupList({ items, destination }: { items: BackupEntry[]; destination: RestoreDestination }) {
   const t = useT();
@@ -58,6 +60,11 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
               <span>{item.size_bytes > 0 ? formatSize(f, item.size_bytes) : '—'}</span>
               <span className="flex flex-col items-start gap-1">
                 <Pill tone={STATE_TONE[item.state]}>{t.backups.list.states[item.state]}</Pill>
+                {item.state === 'succeeded' && !item.verified && (
+                  <span title={t.backups.list.unverifiedHint}>
+                    <Pill tone="unknown">{t.backups.list.unverified}</Pill>
+                  </span>
+                )}
                 {item.error && <span className="text-[11px] break-words text-destructive">{item.error}</span>}
               </span>
               <span className="flex flex-wrap justify-end gap-2">

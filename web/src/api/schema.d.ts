@@ -3102,6 +3102,8 @@ export interface components {
              * @enum {string}
              */
             state: "running" | "succeeded" | "failed" | "abandoned" | "damaged";
+            /** @description True for a stored backup this instance wrote: its header is signed with the instance's master key and matches its name. A backup from an older version, another instance, or written by anyone else is unverified */
+            verified: boolean;
         };
         BackupListOutputBody: {
             /**

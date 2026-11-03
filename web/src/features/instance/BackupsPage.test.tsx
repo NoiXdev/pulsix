@@ -50,6 +50,7 @@ const OK_ITEM = {
   size_bytes: 412 * 1024 * 1024,
   state: 'succeeded',
   error: '',
+  verified: true,
 };
 
 function list(items: unknown[], extra: Record<string, unknown> = {}) {
@@ -345,6 +346,24 @@ describe('BackupsPage', () => {
     // Only a readable stored file can be restored; a damaged one can still be downloaded or deleted.
     expect(screen.getAllByRole('button', { name: 'Restore…' })).toHaveLength(1);
     expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: 'Download' })).toHaveLength(2);
+  });
+
+  it('marks a backup whose header cannot be authenticated as unverified, and still offers its actions', async () => {
+    mockApi(
+      base({
+        'GET /api/v1/admin/backups': list([
+          { ...OK_ITEM, name: 'pulsix-20261103T030000Z-scheduled.pxbak', created_at: '2026-11-03T03:00:00Z' },
+          { ...OK_ITEM, verified: false },
+        ]),
+      }),
+    );
+    renderPage();
+
+    const label = await screen.findByText('Unverified');
+    expect(screen.getAllByText('Unverified')).toHaveLength(1);
+    expect(label.closest('[title]')).toHaveAttribute('title', expect.stringMatching(/cannot be authenticated/));
+    expect(screen.getAllByRole('button', { name: 'Restore…' })).toHaveLength(2);
     expect(screen.getAllByRole('link', { name: 'Download' })).toHaveLength(2);
   });
 
