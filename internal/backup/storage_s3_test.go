@@ -1,8 +1,14 @@
 package backup_test
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -140,6 +146,82 @@ func TestS3StorageStreamsLargeUnknownSizeInput(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.Trim(st.ETag, `"`), "-2") {
 		t.Fatalf("ETag = %s, want a two-part multipart ETag (-2): the upload was not streamed in 16 MiB parts", st.ETag)
+	}
+}
+
+// TestS3ListMarksUnreadableObjectDamaged puts a fault-injecting proxy between
+// the storage and MinIO that answers every ranged read of one key with an S3
+// error. SSE-C would need TLS on MinIO, and the storage takes no custom
+// transport, so the proxy (reached through the configurable endpoint, with the
+// Host header kept so the request signature still verifies) is the smallest
+// way to make one object unreadable for the configured key.
+func TestS3ListMarksUnreadableObjectDamaged(t *testing.T) {
+	cfg := startMinIO(t)
+	upstream, err := url.Parse(cfg.Endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var badKey string
+	proxy := &httputil.ReverseProxy{Rewrite: func(r *httputil.ProxyRequest) {
+		r.Out.URL.Scheme = upstream.Scheme
+		r.Out.URL.Host = upstream.Host
+	}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, badKey) && badKey != "" {
+			w.Header().Set("Content-Type", "application/xml")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>`))
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	// Write through MinIO directly, list through the proxy.
+	direct, err := backup.NewS3Storage(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Endpoint = srv.URL
+	s, err := backup.NewS3Storage(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	at := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	goodName := backup.ObjectName(at, "scheduled")
+	badName := backup.ObjectName(at.Add(time.Hour), "manual")
+	for name, kind := range map[string]string{goodName: "scheduled", badName: "manual"} {
+		if _, err := direct.Put(ctx, name, bytes.NewReader(backupFile(t, at, kind, "payload"))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	badKey = badName
+
+	objs, err := s.List(ctx)
+	if err != nil || len(objs) != 2 {
+		t.Fatalf("List = %+v, %v; want both objects and no error", objs, err)
+	}
+	for _, o := range objs {
+		switch o.Name {
+		case goodName:
+			if o.HeaderErr != nil {
+				t.Errorf("good object: HeaderErr = %v", o.HeaderErr)
+			}
+		case badName:
+			if o.HeaderErr == nil {
+				t.Errorf("unreadable object listed without HeaderErr")
+			}
+		default:
+			t.Errorf("unexpected object %s", o.Name)
+		}
+	}
+
+	// A cancelled context is still the caller's error, not a damaged object.
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := s.List(cctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("List with cancelled context = %v, want context.Canceled", err)
 	}
 }
 

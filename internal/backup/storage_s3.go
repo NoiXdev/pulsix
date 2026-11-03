@@ -199,36 +199,45 @@ func (s *s3Storage) List(ctx context.Context) ([]Object, error) {
 		if err != nil {
 			return nil, err
 		}
+		if o.Name == "" {
+			continue // deleted since the listing
+		}
 		objs = append(objs, o)
 	}
 	sortNewestFirst(objs)
 	return objs, nil
 }
 
-// describe reads the header from the first bytes of an object.
+// describe reads the header from the first bytes of an object. A failure to
+// read this one object, whether the request or the bytes, is reported as its
+// HeaderErr so one bad object cannot fail the listing; only the caller's own
+// cancellation is returned as an error. An object deleted since the listing
+// comes back as the zero Object.
 func (s *s3Storage) describe(ctx context.Context, name string, size int64) (Object, error) {
+	o := Object{Name: name, Size: size}
 	opts := minio.GetObjectOptions{}
 	if size > 0 {
 		if err := opts.SetRange(0, min(size, headerProbeLen)-1); err != nil {
-			return Object{}, fmt.Errorf("read header of %s: %w", name, err)
+			o.HeaderErr = fmt.Errorf("read header of %s: %w", name, err)
+			return o, nil
 		}
 	}
 	obj, err := s.client.GetObject(ctx, s.bucket, s.key(name), opts)
 	if err != nil {
-		return Object{}, fmt.Errorf("read header of %s: %w", name, err)
+		o.HeaderErr = fmt.Errorf("read header of %s: %w", name, err)
+	} else {
+		defer func() { _ = obj.Close() }()
+		o = headerObject(name, size, obj)
 	}
-	defer func() { _ = obj.Close() }()
-
-	o := headerObject(name, size, obj)
-	if o.HeaderErr != nil {
-		// A transport error is not a bad file: do not report it as one.
-		var resp minio.ErrorResponse
-		if errors.As(o.HeaderErr, &resp) {
-			return Object{}, fmt.Errorf("read header of %s: %w", name, o.HeaderErr)
-		}
-		if err := ctx.Err(); err != nil {
-			return Object{}, err
-		}
+	if o.HeaderErr == nil {
+		return o, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return Object{}, err
+	}
+	var resp minio.ErrorResponse
+	if errors.As(o.HeaderErr, &resp) && resp.Code == minio.NoSuchKey {
+		return Object{}, nil
 	}
 	return o, nil
 }

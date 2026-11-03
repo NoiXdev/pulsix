@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -234,5 +235,114 @@ func TestProbeAgainstDirStorage(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
 	if err := backup.Probe(context.Background(), backup.NewDirStorage(ro)); err == nil {
 		t.Fatal("Probe on a read-only folder succeeded")
+	}
+}
+
+// listWithin runs List and fails the test when it does not return promptly,
+// which is how a blocking open on a FIFO shows up.
+func listWithin(t *testing.T, s backup.Storage, limit time.Duration) ([]backup.Object, error) {
+	t.Helper()
+	type result struct {
+		objs []backup.Object
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		objs, err := s.List(context.Background())
+		done <- result{objs, err}
+	}()
+	select {
+	case r := <-done:
+		return r.objs, r.err
+	case <-time.After(limit):
+		t.Fatal("List did not return: it blocked on a storage entry")
+		return nil, nil
+	}
+}
+
+func TestDirListSkipsNonRegularEntries(t *testing.T) {
+	dir := t.TempDir()
+	s := backup.NewDirStorage(dir)
+	ctx := context.Background()
+
+	at := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	name := backup.ObjectName(at, "scheduled")
+	if _, err := s.Put(ctx, name, bytes.NewReader(backupFile(t, at, "scheduled", "x"))); err != nil {
+		t.Fatal(err)
+	}
+	fifo := backup.ObjectName(at.Add(time.Hour), "manual")
+	if err := syscall.Mkfifo(filepath.Join(dir, fifo), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := backup.ObjectName(at.Add(2*time.Hour), "manual")
+	if err := os.Symlink(filepath.Join(dir, name), filepath.Join(dir, link)); err != nil {
+		t.Fatal(err)
+	}
+
+	objs, err := listWithin(t, s, 5*time.Second)
+	if err != nil || len(objs) != 1 || objs[0].Name != name {
+		t.Fatalf("List = %+v, %v; want only the regular file", objs, err)
+	}
+
+	// Download and restore must not block on, or follow, them either.
+	for _, special := range []string{fifo, link} {
+		opened := make(chan error, 1)
+		go func() {
+			rc, err := s.Open(ctx, special)
+			if err == nil {
+				_ = rc.Close()
+			}
+			opened <- err
+		}()
+		select {
+		case err := <-opened:
+			if err == nil {
+				t.Errorf("Open(%s) succeeded, want a refusal", special)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("Open(%s) blocked", special)
+		}
+	}
+}
+
+func TestDirListMarksUnreadableEntryDamaged(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode 0000 file")
+	}
+	dir := t.TempDir()
+	s := backup.NewDirStorage(dir)
+	ctx := context.Background()
+
+	good := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	goodName := backup.ObjectName(good, "scheduled")
+	if _, err := s.Put(ctx, goodName, bytes.NewReader(backupFile(t, good, "scheduled", "x"))); err != nil {
+		t.Fatal(err)
+	}
+	badName := backup.ObjectName(good.Add(time.Hour), "manual")
+	badPath := filepath.Join(dir, badName)
+	if err := os.WriteFile(badPath, backupFile(t, good, "manual", "y"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(badPath, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	objs, err := s.List(ctx)
+	if err != nil || len(objs) != 2 {
+		t.Fatalf("List = %+v, %v; want both entries and no error", objs, err)
+	}
+	for _, o := range objs {
+		switch o.Name {
+		case goodName:
+			if o.HeaderErr != nil {
+				t.Errorf("good backup: HeaderErr = %v", o.HeaderErr)
+			}
+		case badName:
+			if o.HeaderErr == nil {
+				t.Errorf("unreadable backup listed without HeaderErr")
+			}
+		default:
+			t.Errorf("unexpected object %s", o.Name)
+		}
 	}
 }

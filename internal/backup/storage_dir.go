@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 const partialSuffix = ".partial"
@@ -75,7 +76,7 @@ func (d *dirStorage) Open(_ context.Context, name string) (io.ReadCloser, error)
 	if err := validName(name); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(filepath.Join(d.dir, name))
+	f, err := openRegular(filepath.Join(d.dir, name))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("open %s: %w", name, ErrObjectNotFound)
@@ -85,6 +86,35 @@ func (d *dirStorage) Open(_ context.Context, name string) (io.ReadCloser, error)
 	return f, nil
 }
 
+// errNotRegular marks a storage entry that is a FIFO, device, socket or
+// symbolic link rather than a file.
+var errNotRegular = errors.New("not a regular file")
+
+// openRegular opens path for reading only when it is a regular file. A symbolic
+// link is refused (O_NOFOLLOW), and the open never waits for a writer to
+// appear on a FIFO (O_NONBLOCK), so a stray special file cannot hang the
+// caller; the type is checked on the open descriptor, not on the path, so it
+// cannot be swapped in between.
+func openRegular(path string) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, errNotRegular
+	}
+	return f, nil
+}
+
+// List describes every regular *.pxbak file in the folder. Entries of any
+// other type are ignored, and an entry that cannot be read is listed as
+// damaged; only a failure to read the folder itself fails the listing.
 func (d *dirStorage) List(ctx context.Context) ([]Object, error) {
 	entries, err := os.ReadDir(d.dir)
 	if err != nil {
@@ -98,15 +128,14 @@ func (d *dirStorage) List(ctx context.Context) ([]Object, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if e.IsDir() || !strings.HasSuffix(e.Name(), objectSuffix) {
+		// The entry type comes from the directory itself (lstat semantics),
+		// so a symlink or FIFO is never opened here.
+		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), objectSuffix) {
 			continue
 		}
-		o, err := d.describe(e.Name())
-		if errors.Is(err, fs.ErrNotExist) {
-			continue // deleted since ReadDir
-		}
-		if err != nil {
-			return nil, err
+		o, ok := d.describe(e)
+		if !ok {
+			continue
 		}
 		objs = append(objs, o)
 	}
@@ -114,17 +143,30 @@ func (d *dirStorage) List(ctx context.Context) ([]Object, error) {
 	return objs, nil
 }
 
-func (d *dirStorage) describe(name string) (Object, error) {
-	f, err := os.Open(filepath.Join(d.dir, name))
-	if err != nil {
-		return Object{}, fmt.Errorf("open %s: %w", name, err)
+// describe reads the header of one entry. ok is false for an entry that
+// vanished or turned into something other than a file since ReadDir. Any
+// other failure is reported on the returned object as its HeaderErr.
+func (d *dirStorage) describe(e fs.DirEntry) (o Object, ok bool) {
+	name := e.Name()
+	o = Object{Name: name}
+	if info, err := e.Info(); err == nil {
+		o.Size = info.Size()
+	}
+	f, err := openRegular(filepath.Join(d.dir, name))
+	switch {
+	case err == nil:
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, errNotRegular):
+		return Object{}, false
+	default:
+		o.HeaderErr = fmt.Errorf("open %s: %w", name, err)
+		return o, true
 	}
 	defer func() { _ = f.Close() }()
-	st, err := f.Stat()
-	if err != nil {
-		return Object{}, fmt.Errorf("stat %s: %w", name, err)
+	if st, err := f.Stat(); err == nil {
+		o.Size = st.Size()
 	}
-	return headerObject(name, st.Size(), f), nil
+	o.Header, o.HeaderErr = ReadHeader(f)
+	return o, true
 }
 
 func (d *dirStorage) Delete(_ context.Context, name string) error {
