@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { fetchMock } from '../../test/fetchMock.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import type { Host } from '../../api/types.ts';
 import { HostDialog } from './HostDialog.tsx';
@@ -29,7 +30,7 @@ const HOST: Host = {
   created_at: '2026-01-01T00:00:00Z',
 };
 const SSH = { ssh: { host_id: 'h1', port: 22, username: '', bastion_mode: 'inherit' } };
-const PREVIEW = { vars: {}, warnings: [], connection: { host_id: 'h1', bastion_source: 'zone', bastions: ['b1'] } };
+const PREVIEW = { vars: {}, warnings: [], connection: { host_id: 'h1', bastion_source: 'zone', bastions: ['b3'] } };
 
 function baseRoutes(role = 'admin') {
   return {
@@ -196,7 +197,26 @@ describe('HostDialog', () => {
     renderDialog({ host: HOST });
 
     await screen.findByLabelText('Name');
-    await waitFor(() => expect(screen.getByLabelText('Jump host')).toHaveValue('Inherited: fra-jump'));
+    // The preview's chain (ams-jump) differs from the zone's default
+    // (fra-jump): only the resolved route can produce this label.
+    await waitFor(() => expect(screen.getByLabelText('Jump host')).toHaveValue('Inherited: ams-jump'));
+    expect(screen.queryByText(/an inventory group can override it/)).not.toBeInTheDocument();
+  });
+
+  it('shows the resolved jump host even when the preview arrives after the ssh settings', async () => {
+    mockApi(baseRoutes());
+    const inner = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input instanceof Request && input.url.includes('/inventory/preview')) {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+      return inner(input, init);
+    });
+    renderDialog({ host: HOST });
+
+    // The form is up (ssh, tags and zones are in) before the preview is.
+    await screen.findByLabelText('Name');
+    await waitFor(() => expect(screen.getByLabelText('Jump host')).toHaveValue('Inherited: ams-jump'));
     expect(screen.queryByText(/an inventory group can override it/)).not.toBeInTheDocument();
   });
 

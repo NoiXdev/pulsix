@@ -120,7 +120,8 @@ function HostDialogLoader({ org, host, onClose }: { org: string; host?: Host; on
       credentials={credentials.data?.credentials ?? []}
       initialTags={manualTags}
       initialJump={initialJump}
-      resolvedChain={preview.data?.connection?.bastions ?? undefined}
+      // A connection with a null chain is a resolved direct route, not an unknown one.
+      resolvedChain={preview.data?.connection ? (preview.data.connection.bastions ?? []) : undefined}
     />
   );
 }
@@ -154,8 +155,10 @@ function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zon
 
   // What the form opened with, kept apart from live query data: "changed"
   // means changed from what the person saw, not from whatever a background
-  // refetch brought in since.
-  const [initial] = useState({ tags: initialTags, jump: initialJump, zoneId: host?.zone_id ?? '', chain: resolvedChain });
+  // refetch brought in since. The resolved chain is deliberately not in it:
+  // it only feeds a label, and the inventory preview may well land after the
+  // form has mounted.
+  const [initial] = useState({ tags: initialTags, jump: initialJump, zoneId: host?.zone_id ?? '' });
 
   const { hostFormSchema } = useMemo(() => schemas(t), [t]);
   const form = useForm<HostFormValues>({
@@ -190,10 +193,10 @@ function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zon
   // host does inherit today, the inventory preview has already worked it
   // out (groups included). Otherwise only the zone's default is known, and
   // an inventory group may still override it.
-  const useResolved = isEdit && !zoneChanged && initial.jump === INHERIT && initial.chain !== undefined;
+  const useResolved = isEdit && !zoneChanged && initial.jump === INHERIT && resolvedChain !== undefined;
   let inheritedLabel = t.hosts.dialog.jumpInheritedBare;
   if (useResolved) {
-    inheritedLabel = t.hosts.dialog.jumpInherited(initial.chain!.length > 0 ? initial.chain!.map(bastionName).join(' → ') : t.hosts.dialog.jumpNone);
+    inheritedLabel = t.hosts.dialog.jumpInherited(resolvedChain.length > 0 ? resolvedChain.map(bastionName).join(' → ') : t.hosts.dialog.jumpNone);
   } else if (zone) {
     inheritedLabel = t.hosts.dialog.jumpInherited(zone.bastion_id ? bastionName(zone.bastion_id) : t.hosts.dialog.jumpNone);
   }
