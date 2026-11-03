@@ -127,11 +127,12 @@ SELECT * FROM agent_certificates WHERE serial = sqlc.arg(serial);
 -- The host's newest certificate, revoked ones included: its start
 -- (not_before, or created_at for a row written before migration 00039 that
 -- its backfill could not reach) and its key fingerprint (NULL for a row
--- written before migration 00077).
+-- written before migration 00077). Rows that start in the same instant are
+-- ordered by when they were written, then by serial, so the answer is stable.
 SELECT COALESCE(not_before, created_at)::timestamptz AS started, public_key_sha256
 FROM agent_certificates
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
-ORDER BY started DESC
+ORDER BY started DESC, created_at DESC, serial DESC
 LIMIT 1;
 
 -- name: UpsertHostFacts :execrows

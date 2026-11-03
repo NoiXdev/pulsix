@@ -391,3 +391,65 @@ func TestAdoptAgentCertificateChecksTheWindowBeforeLocking(t *testing.T) {
 		})
 	}
 }
+
+// TestNewestAgentCertificateBreaksTies: two certificates of one host can
+// start in the same second (a renewal right after an enrollment, or rows
+// from before 00039 whose start is their created_at). The newest is then
+// the one written last, and the serial decides between rows written in the
+// same instant, so adoption always compares against the same row.
+func TestNewestAgentCertificateBreaksTies(t *testing.T) {
+	w := newAdoptWorld(t)
+	started := w.registeredAt.Add(time.Minute)
+	written := w.registeredAt.Add(2 * time.Minute)
+	type certRow struct {
+		serial  string
+		created time.Time
+		key     string
+	}
+	cases := map[string]struct {
+		rows    []certRow
+		wantKey string
+	}{
+		"the row written last wins over a larger serial": {
+			rows: []certRow{
+				{"tie-created-z", written, "older"},
+				{"tie-created-a", written.Add(time.Second), "newer"},
+			},
+			wantKey: "newer",
+		},
+		"the larger serial wins among rows written together": {
+			rows: []certRow{
+				{"tie-serial-a", written, "smaller"},
+				{"tie-serial-b", written, "larger"},
+			},
+			wantKey: "larger",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			host := createHost(t, w.d, w.org, w.zone, tc.rows[0].serial).ID
+			for _, r := range tc.rows {
+				if _, err := w.d.Pool().Exec(ctx, `INSERT INTO agent_certificates
+					(serial, org_id, host_id, not_before, not_after, created_at, public_key_sha256)
+					VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+					r.serial, w.org, host, started, started.Add(90*24*time.Hour), r.created, r.key); err != nil {
+					t.Fatal(err)
+				}
+			}
+			newest, err := w.q.NewestAgentCertificate(ctx, gen.NewestAgentCertificateParams{OrgID: w.org, HostID: host})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := derefOr(newest.PublicKeySha256, "<nil>"); got != tc.wantKey {
+				t.Fatalf("newest certificate key = %q, want %q", got, tc.wantKey)
+			}
+		})
+	}
+}
+
+func derefOr(s *string, def string) string {
+	if s == nil {
+		return def
+	}
+	return *s
+}

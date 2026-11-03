@@ -455,7 +455,7 @@ const newestAgentCertificate = `-- name: NewestAgentCertificate :one
 SELECT COALESCE(not_before, created_at)::timestamptz AS started, public_key_sha256
 FROM agent_certificates
 WHERE org_id = $1 AND host_id = $2
-ORDER BY started DESC
+ORDER BY started DESC, created_at DESC, serial DESC
 LIMIT 1
 `
 
@@ -472,7 +472,8 @@ type NewestAgentCertificateRow struct {
 // The host's newest certificate, revoked ones included: its start
 // (not_before, or created_at for a row written before migration 00039 that
 // its backfill could not reach) and its key fingerprint (NULL for a row
-// written before migration 00077).
+// written before migration 00077). Rows that start in the same instant are
+// ordered by when they were written, then by serial, so the answer is stable.
 func (q *Queries) NewestAgentCertificate(ctx context.Context, arg NewestAgentCertificateParams) (NewestAgentCertificateRow, error) {
 	row := q.db.QueryRow(ctx, newestAgentCertificate, arg.OrgID, arg.HostID)
 	var i NewestAgentCertificateRow
