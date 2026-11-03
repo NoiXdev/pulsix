@@ -50,6 +50,9 @@ func TestMarkVerifiedRejectsNameStampMismatch(t *testing.T) {
 		{"a second later", backup.ObjectName(at.Add(time.Second), backup.KindScheduled)},
 		{"a day later", backup.ObjectName(at.AddDate(0, 0, 1), backup.KindScheduled)},
 		{"not a backup name", "copy-of-backup.pxbak"},
+		{"a fractional-second alias", "pulsix-20261102T030000.0Z-scheduled.pxbak"},
+		{"a nanosecond alias", "pulsix-20261102T030000.000000000Z-scheduled.pxbak"},
+		{"a comma alias", "pulsix-20261102T030000,0Z-scheduled.pxbak"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

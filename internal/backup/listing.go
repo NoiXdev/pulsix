@@ -179,9 +179,8 @@ func MarkVerified(objs []Object, key []byte) {
 	}
 }
 
-// namedAfterHeader reports whether o's name matches its header's kind and
-// creation time.
+// namedAfterHeader reports whether o's name is exactly the one ObjectName
+// gives its header's creation time (whole seconds) and kind.
 func namedAfterHeader(o Object) bool {
-	at, kind, ok := ParseObjectName(o.Name)
-	return ok && kind == o.Header.Kind && at.Equal(o.Header.CreatedAt.UTC().Truncate(time.Second))
+	return o.Name == ObjectName(o.Header.CreatedAt, o.Header.Kind)
 }

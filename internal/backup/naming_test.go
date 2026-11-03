@@ -39,6 +39,11 @@ func TestParseObjectNameRejects(t *testing.T) {
 		"pulsix-20261302T030000Z-scheduled.pxbak",
 		"pulsix-probe-ab12.tmp",
 		"x/pulsix-20261102T030000Z-scheduled.pxbak",
+		// Aliases Go's time parser accepts for 03:00:00: a fraction after
+		// the seconds, with a dot or a comma. ObjectName never writes one.
+		"pulsix-20261102T030000.0Z-scheduled.pxbak",
+		"pulsix-20261102T030000.000000000Z-scheduled.pxbak",
+		"pulsix-20261102T030000,0Z-scheduled.pxbak",
 	} {
 		if _, _, ok := backup.ParseObjectName(name); ok {
 			t.Errorf("ParseObjectName(%q) accepted", name)
