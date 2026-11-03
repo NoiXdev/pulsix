@@ -104,9 +104,24 @@ func rowCount(t *testing.T, pool *pgxpool.Pool, table string) int64 {
 // tableDigest is an order-independent fingerprint of a table's rows.
 func tableDigest(t *testing.T, pool *pgxpool.Pool, table string) string {
 	t.Helper()
+	return digestWhere(t, pool, table, "true")
+}
+
+// restoredTableDigest fingerprints a restored table's rows without the row
+// the restore itself adds: the restore marker (TestRestoreWritesRestoreMarker).
+func restoredTableDigest(t *testing.T, pool *pgxpool.Pool, table string) string {
+	t.Helper()
+	if table == "instance_settings" {
+		return digestWhere(t, pool, table, "t.key <> '"+backup.RestoreMarkerKey+"'")
+	}
+	return tableDigest(t, pool, table)
+}
+
+func digestWhere(t *testing.T, pool *pgxpool.Pool, table, where string) string {
+	t.Helper()
 	var digest *string
 	if err := pool.QueryRow(context.Background(),
-		"SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) FROM "+pgx.Identifier{"public", table}.Sanitize()+" t",
+		"SELECT md5(string_agg(t::text, '|' ORDER BY t::text)) FROM "+pgx.Identifier{"public", table}.Sanitize()+" t WHERE "+where,
 	).Scan(&digest); err != nil {
 		t.Fatalf("digest %s: %v", table, err)
 	}
@@ -156,7 +171,7 @@ func TestRoundTripRestoresEveryRow(t *testing.T) {
 		t.Fatalf("target tables %v, want %v", got, tables)
 	}
 	for _, name := range tables {
-		if got, want := tableDigest(t, target.Pool(), name), restoredDigest(t, src.Pool(), name); got != want {
+		if got, want := restoredTableDigest(t, target.Pool(), name), restoredDigest(t, src.Pool(), name); got != want {
 			t.Errorf("%s: restored rows differ from the source (digest %s, want %s)", name, got, want)
 		}
 	}
@@ -239,6 +254,9 @@ func TestDumpWithoutMetricsLeavesCheckSamplesEmpty(t *testing.T) {
 		got, want := rowCount(t, target.Pool(), name), rowCount(t, src.Pool(), name)
 		if name == "check_samples" || endedByRestore[name] {
 			want = 0
+		}
+		if name == "instance_settings" {
+			want++ // the restore marker
 		}
 		if got != want {
 			t.Errorf("%s: %d rows restored, want %d", name, got, want)

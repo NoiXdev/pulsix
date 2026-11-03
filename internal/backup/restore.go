@@ -188,7 +188,9 @@ func IsEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 // The load refuses to start when the freshly migrated schema already has a
 // user, an organization or a membership, which only something writing
 // during the restore can have put there, and it deletes every session
-// after the copy: a restore signs everybody out.
+// after the copy: a restore signs everybody out. It then records the restore
+// itself in the restore marker (see RestoreMarker), replacing any marker the
+// backup carried.
 func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func() (io.ReadCloser, error), want Manifest) error {
 	rc, err := open()
 	if err != nil {
@@ -249,6 +251,9 @@ func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func
 	// sessions cascades or refuses as it would anywhere else; before FORCE
 	// is, so no policy hides a row from the delete.
 	if err := endSessions(ctx, tx, tables); err != nil {
+		return err
+	}
+	if err := writeRestoreMarker(ctx, tx, want.Header.CreatedAt); err != nil {
 		return err
 	}
 	for _, name := range forced {

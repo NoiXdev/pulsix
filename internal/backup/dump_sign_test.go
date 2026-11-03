@@ -131,7 +131,7 @@ func TestRestoreAcceptsUnsignedBackup(t *testing.T) {
 		t.Errorf("manifest MAC = %q, want none", m.Header.MAC)
 	}
 	for _, name := range publicTables(t, src.Pool()) {
-		if got, want := tableDigest(t, target.Pool(), name), restoredDigest(t, src.Pool(), name); got != want {
+		if got, want := restoredTableDigest(t, target.Pool(), name), restoredDigest(t, src.Pool(), name); got != want {
 			t.Errorf("%s: restored rows differ from the source", name)
 		}
 	}
