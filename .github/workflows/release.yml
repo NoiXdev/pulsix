@@ -64,10 +64,11 @@ jobs:
     needs: guard
     runs-on: ubuntu-latest
     # Backlog 7.37. The `release` environment's deployment policy only lets
-    # `v*` tags deploy to it, so this job, and the registry credentials it
-    # is given, cannot be reached from any other ref. The registry secrets
-    # belong in that environment as environment secrets rather than as
-    # repository secrets; moving them there is the owner's step.
+    # `v*` tags deploy to it, so this job cannot run from any other ref. The
+    # registry credentials are out of reach of other refs only once they
+    # live in that environment as environment secrets: as repository
+    # secrets, any workflow on any branch can still read them. Moving them
+    # there is the owner's step.
     environment: release
     # A tag push is only ever triggered by someone with write access to
     # this repository creating a tag — GitHub does not fire `push` events
