@@ -192,7 +192,7 @@ func TestServeGRPCGracefulStopIsBounded(t *testing.T) {
 // TestDispatchRejectsUnknownArguments (fix round 1): an argument list that
 // names no known subcommand is a usage error (exit 2) — it must never fall
 // through to starting a second manager server. The first case is exactly
-// what `docker compose run manager /pulsix-manager worker add …` passes,
+// what `docker compose run cli /pulsix-manager worker add …` passes,
 // since the image's ENTRYPOINT already is /pulsix-manager.
 func TestDispatchRejectsUnknownArguments(t *testing.T) {
 	cases := [][]string{

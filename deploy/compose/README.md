@@ -286,7 +286,7 @@ somewhere else than the backups. Without it no backup can be restored.
 
 Backups go to the `pulsix-backups` volume (`/var/lib/pulsix/backups` in the
 manager and `cli` containers) unless the web interface names S3-compatible storage
-(*Instance settings → Backups*, which also sets the daily schedule and how
+(*Settings → Backups*, which also sets the daily schedule and how
 many backups to keep).
 
 ### Taking a backup
@@ -296,12 +296,14 @@ many backups to keep).
 docker compose run --rm cli backup
 # Without the metric history:
 docker compose run --rm cli backup --without-metrics
-# To a bucket, whatever the web interface says. Export the PULSIX_BACKUP_S3_*
-# variables in your shell first; -e NAME without a value passes them through,
-# so the secret never appears on the command line:
+# To a bucket, whatever the web interface says. Export the two keys in your
+# shell first; -e NAME without a value passes them through, so the secret
+# never appears on the command line. Endpoint, region and path style are not
+# secret and go on the command line as values:
+export PULSIX_BACKUP_S3_ACCESS_KEY=… PULSIX_BACKUP_S3_SECRET_KEY=…
 docker compose run --rm \
+  -e PULSIX_BACKUP_S3_ENDPOINT=https://s3.example.net -e PULSIX_BACKUP_S3_PATH_STYLE=true \
   -e PULSIX_BACKUP_S3_ACCESS_KEY -e PULSIX_BACKUP_S3_SECRET_KEY \
-  -e PULSIX_BACKUP_S3_ENDPOINT -e PULSIX_BACKUP_S3_REGION -e PULSIX_BACKUP_S3_PATH_STYLE \
   cli backup --to s3://bucket/prefix
 ```
 
@@ -337,9 +339,19 @@ docker compose up -d
   way needs `--replace --yes`:
   `docker compose run --rm -T cli restore --replace --yes - < pulsix-….pxbak`.
 - **From a bucket:** `restore --list --from s3://bucket/prefix` and
-  `restore --from s3://bucket/prefix <name>`, with the
-  `PULSIX_BACKUP_S3_*` variables passed through as above. Restore never reads the
-  credentials from the database it replaces.
+  `restore --from s3://bucket/prefix <name>`, with the endpoint (and path
+  style) as values and the two exported keys passed through, as above:
+
+  ```bash
+  docker compose run --rm \
+    -e PULSIX_BACKUP_S3_ENDPOINT=https://s3.example.net -e PULSIX_BACKUP_S3_PATH_STYLE=true \
+    -e PULSIX_BACKUP_S3_ACCESS_KEY -e PULSIX_BACKUP_S3_SECRET_KEY \
+    cli restore --from s3://bucket/prefix --replace pulsix-20261102T030000Z-scheduled.pxbak
+  ```
+
+  Restore never reads the credentials from the database it replaces; the
+  Restore… dialog in the web interface shows this command with your saved
+  endpoint, region and path style filled in.
 
 Before it changes anything, restore reads the whole backup and checks it:
 a damaged file, a file from a newer Pulsix or a different master key is
@@ -349,8 +361,14 @@ running the same command again finishes the job.
 
 On success restore prints what it restored. Start the stack: workers and
 agents reconnect on their own, since the instance CA comes back with the
-backup. A backup from an older Pulsix is migrated to the current version
-as part of the restore.
+backup, **unless they renewed their certificate after the backup was
+taken** (certificates renew about every 60 days). The restored database
+does not know a renewed certificate, so such an agent or worker shows as
+offline on the Agents or Workers page and its log says to enroll anew:
+enroll it again from that page. The bundled `worker` is the exception:
+`worker-enroll` enrolls it again by itself, and the running worker picks
+up the new bundle without being recreated. A backup from an older Pulsix
+is migrated to the current version as part of the restore.
 
 ### Moving to a new server
 
@@ -365,7 +383,9 @@ as part of the restore.
    `worker-enroll` enrolls the bundled worker again under its old name,
    replacing the registration the backup brought along. Agents on your
    hosts keep their certificates and reconnect once the new server is
-   reachable under the address they know.
+   reachable under the address they know, except agents (and other
+   workers) that renewed their certificate after the backup was taken:
+   enroll those again, as above.
 
 ## Upgrading
 

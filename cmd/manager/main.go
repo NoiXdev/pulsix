@@ -67,7 +67,7 @@ func main() {
 // stay a case of its own, ahead of the usage error, and does not touch the
 // environment or the configuration. Any other argument list is a usage
 // error (exit 2), never a server start:
-// `docker compose run manager /pulsix-manager worker add …`
+// `docker compose run cli /pulsix-manager worker add …`
 // (the image's ENTRYPOINT already is /pulsix-manager, so the binary sees
 // its own path as the first argument) used to fall through to run() and
 // start a second manager against the same database.

@@ -247,7 +247,16 @@ manager holds while it runs (the builder's choice, but planned explicitly).
 #### Workers after a restore
 
 On the same host the worker bundle volume survives and workers and agents
-reconnect on their own, since the CA comes back with the backup. **On a new
+reconnect on their own, since the CA comes back with the backup, **unless
+they renewed their certificate after the backup was taken** (certificates
+live 90 days and renew at two-thirds, so about every 60 days): the manager
+accepts only serials the database knows, so those show as offline / not
+connecting, their logs say to enroll anew, and they must be enrolled again
+from the Agents and Workers pages (final review I1; backlog 7.47 plans a
+fix). The bundled compose worker is the exception: `worker-enroll` re-enrols
+it when the database does not know its bundle's serial, and the worker
+re-reads its bundle before every handshake and after a refused certificate.
+**On a new
 server** the restored database already knows `worker-1`, so the compose
 `worker-enroll` service would fail with "name taken". `worker add` gains a
 way to re-enrol a worker of the same name, revoking the old identity, and
@@ -256,8 +265,9 @@ extra step *(implementer's call; it serves "as simple as possible")*. Agents
 on the hosts keep their certificates, which the restored CA still trusts.
 
 - On success restore prints what was restored (backup time, version, row
-  counts) and what happens next: start the stack, and workers and agents
-  reconnect.
+  counts) and what happens next: start the stack; workers and agents
+  reconnect, except those that renewed their certificate after the backup,
+  which must be enrolled again.
 
 ### API (instance administrators, audited)
 

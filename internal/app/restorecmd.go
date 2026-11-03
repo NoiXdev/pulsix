@@ -59,8 +59,14 @@ func (o RestoreOptions) Validate() error {
 	return nil
 }
 
-// restoreNextStep closes a successful restore.
-const restoreNextStep = "Start the stack; workers and agents reconnect on their own.\n"
+// restoreNextStep closes a successful restore. The manager accepts only
+// certificate serials the database knows, so an agent or worker that
+// renewed its certificate after the backup was taken is locked out until
+// it is enrolled again (final review I1; backlog 7.47).
+const restoreNextStep = "Start the stack. Workers and agents reconnect on their own, unless they renewed their certificate\n" +
+	"after this backup was taken (certificates renew about every 60 days): those show as offline on the Agents\n" +
+	"and Workers pages, their logs say to enroll anew, and they must be enrolled again. The bundled compose\n" +
+	"worker re-enrolls itself.\n"
 
 // RunRestore implements `restore`. It refuses while a manager is connected
 // to the database and, on a database that is not empty, without --replace
