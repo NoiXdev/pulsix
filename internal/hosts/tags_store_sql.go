@@ -2,6 +2,7 @@ package hosts
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/google/uuid"
 
@@ -33,18 +34,27 @@ func (s *SQLStore) ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUI
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit has succeeded
 
-	q := s.q.WithTx(tx)
-	if err := q.DeleteManualHostTags(ctx, gen.DeleteManualHostTagsParams{OrgID: orgID, HostID: hostID}); err != nil {
+	if err := replaceManualTags(ctx, s.q.WithTx(tx), orgID, hostID, tags); err != nil {
 		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// replaceManualTags is the one "replace manual tags" write: it deletes the
+// host's manual rows and inserts tags, on q, which must be bound to the
+// caller's transaction (ReplaceManualTags' own, or a host write's).
+func replaceManualTags(ctx context.Context, q *gen.Queries, orgID, hostID uuid.UUID, tags []Tag) error {
+	if err := q.DeleteManualHostTags(ctx, gen.DeleteManualHostTagsParams{OrgID: orgID, HostID: hostID}); err != nil {
+		return fmt.Errorf("clear manual tags: %w", err)
 	}
 	for _, t := range tags {
 		if err := q.InsertHostTag(ctx, gen.InsertHostTagParams{
 			HostID: hostID, OrgID: orgID, Key: t.Key, Value: t.Value, Source: string(t.Source),
 		}); err != nil {
-			return err
+			return fmt.Errorf("insert tag %q: %w", t.Key, err)
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }
 
 func (s *SQLStore) ListTagKeyValueCounts(ctx context.Context, orgID uuid.UUID) ([]TagValueCount, error) {

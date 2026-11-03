@@ -84,15 +84,8 @@ func (s *SQLStore) UpdateHostWith(ctx context.Context, h Host, x HostExtras) (Ho
 // which is bound to the caller's transaction.
 func writeExtras(ctx context.Context, q *gen.Queries, orgID, hostID uuid.UUID, x HostExtras) error {
 	if x.Tags != nil {
-		if err := q.DeleteManualHostTags(ctx, gen.DeleteManualHostTagsParams{OrgID: orgID, HostID: hostID}); err != nil {
-			return fmt.Errorf("clear manual tags: %w", err)
-		}
-		for _, t := range *x.Tags {
-			if err := q.InsertHostTag(ctx, gen.InsertHostTagParams{
-				HostID: hostID, OrgID: orgID, Key: t.Key, Value: t.Value, Source: string(t.Source),
-			}); err != nil {
-				return fmt.Errorf("insert tag %q: %w", t.Key, err)
-			}
+		if err := replaceManualTags(ctx, q, orgID, hostID, *x.Tags); err != nil {
+			return err
 		}
 	}
 	if x.Jump != nil {
