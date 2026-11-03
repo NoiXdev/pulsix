@@ -374,25 +374,33 @@ refused and the database stays as it was. If the restore fails after that
 running the same command again finishes the job.
 
 On success restore prints what it restored. Start the stack: workers and
-agents reconnect on their own, since the instance CA comes back with the
-backup, **unless they renewed their certificate after the backup was
-taken** (certificates renew about every 60 days). The restored database
-does not know a renewed certificate, so such an agent or worker shows as
-offline on the Agents or Workers page and its log says to enroll anew:
-enroll it again from that page. The bundled `worker` is the exception:
-`worker-enroll` enrolls it again by itself, and the running worker picks
-up the new bundle without being recreated. A backup from an older Pulsix
-is migrated to the current version as part of the restore.
+agents reconnect on their own, also those whose certificate was issued
+after the backup was taken: the manager adopts it, since the instance CA
+comes back with the backup. Only a worker or agent whose certificate was
+issued before the backup and has expired since must be enrolled again
+(certificates renew about every 60 days); it shows as offline on the
+Agents or Workers page and its log says to enroll anew: enroll it again
+from that page. The bundled `worker` re-enrolls itself: `worker-enroll`
+enrolls it again, and the running worker picks up the new bundle without
+being recreated. Agents reconnect on their own only if the restored
+database knows the agent's key, and certificates registered since this
+update record it. After restoring a backup taken before this update,
+agents whose certificate was renewed after the backup must be enrolled
+again. A backup from an older Pulsix is migrated to the current version
+as part of the restore.
 
 A restore ends every browser session: everyone signs in again. Everything
 else that grants access is as it was when the backup was taken:
 passwords, passkeys, second factors (TOTP and recovery codes), API tokens,
-open invitations, worker and agent certificates, organization memberships
-and disabled users. A password changed after the backup works with its old
-value again; a passkey, second factor, recovery code, API token,
-invitation or certificate removed, used or revoked after the backup is
-valid again; a member removed or a user disabled after the backup is back.
-After a restore, check the users, members, invitations, API tokens,
+agent and worker enrollment tokens, open invitations, worker and agent
+certificates, organization memberships and disabled users. A password
+changed after the backup works with its old value again; a passkey,
+second factor, recovery code, API token, invitation or certificate
+removed, used or revoked after the backup is valid again; a member removed
+or a user disabled after the backup is back. An enrollment token used up
+or withdrawn after the backup is redeemable again until it expires:
+withdraw pending ones on the Agents and Workers pages. After a restore,
+check the users, members, invitations, API tokens, enrollment tokens,
 workers and agents, and make each of those changes again.
 
 ### Moving to a new server
@@ -408,9 +416,11 @@ workers and agents, and make each of those changes again.
    `worker-enroll` enrolls the bundled worker again under its old name,
    replacing the registration the backup brought along. Agents on your
    hosts keep their certificates and reconnect once the new server is
-   reachable under the address they know, except agents (and other
-   workers) that renewed their certificate after the backup was taken:
-   enroll those again, as above.
+   reachable under the address they know, except agents and workers
+   whose certificate was issued before the backup and has expired since
+   (and, after a backup taken before this update, agents whose
+   certificate was renewed after the backup): enroll those again, as
+   above.
 
 ## Upgrading
 

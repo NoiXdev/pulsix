@@ -62,26 +62,35 @@ func (o RestoreOptions) Validate() error {
 }
 
 // restoreNextStep closes a successful restore. The manager accepts only
-// certificate serials the database knows, so an agent or worker that
-// renewed its certificate after the backup was taken is locked out until
-// it is enrolled again (final review I1; backlog 7.47). The restore ends
+// certificate serials the database knows, but after a restore it adopts an
+// agent or worker certificate issued between the backup and the restore
+// (backlog 7.47). A certificate issued before the backup and expired since
+// cannot be renewed and needs a new enrollment; an agent certificate is
+// adopted only when the restored database knows the agent's key, which only
+// certificates registered since migration 00077 record. The restore ends
 // every browser session, and every other credential and access decision is
 // back at the backup's state (passwords, passkeys, second factors, API
-// tokens, open invitations, certificates, memberships, disabled users), so
-// whatever was changed, revoked or used since is valid again until it is
-// changed anew (backlog 7.54).
-const restoreNextStep = "Start the stack. Workers and agents reconnect on their own, unless they renewed their\n" +
-	"certificate after this backup was taken (certificates renew about every 60 days): those show\n" +
-	"as offline on the Agents and Workers pages, their logs say to enroll anew, and they must be\n" +
-	"enrolled again. The bundled compose worker re-enrolls itself.\n" +
+// tokens, open invitations, enrollment tokens, certificates, memberships,
+// disabled users), so whatever was changed, revoked or used since is valid
+// again until it is changed anew (backlog 7.54, 7.63.1).
+const restoreNextStep = "Start the stack. Workers and agents reconnect on their own, also those whose\n" +
+	"certificate was issued after this backup was taken: the manager adopts it. Only a worker or\n" +
+	"agent whose certificate was issued before the backup and has expired since must be enrolled\n" +
+	"again (certificates renew about every 60 days); it shows as offline on the Agents or Workers\n" +
+	"page and its log says to enroll anew. The bundled compose worker re-enrolls itself.\n" +
+	"Agents reconnect on their own only if the restored database knows the agent's key, and\n" +
+	"certificates registered since this update record it. After restoring a backup taken before\n" +
+	"this update, agents whose certificate was renewed after the backup must be enrolled again.\n" +
 	"Everyone must sign in again: the restore ended every browser session.\n" +
 	"Everything else that grants access is as it was when the backup was taken: passwords,\n" +
-	"passkeys, second factors (TOTP and recovery codes), API tokens, open invitations, worker and\n" +
-	"agent certificates, memberships and disabled users. A password changed since works with its\n" +
-	"old value again; a passkey, second factor, recovery code, API token, invitation or certificate\n" +
-	"removed, used or revoked since is valid again; a member removed or a user disabled since is\n" +
-	"back. Check the users, members, invitations, API tokens, workers and agents, and make each of\n" +
-	"those changes again.\n"
+	"passkeys, second factors (TOTP and recovery codes), API tokens, agent and worker enrollment\n" +
+	"tokens, open invitations, worker and agent certificates, memberships and disabled users. A\n" +
+	"password changed since works with its old value again; a passkey, second factor, recovery\n" +
+	"code, API token, invitation or certificate removed, used or revoked since is valid again; a\n" +
+	"member removed or a user disabled since is back. An enrollment token used up or withdrawn\n" +
+	"since is redeemable again until it expires: withdraw pending ones on the Agents and Workers\n" +
+	"pages. Check the users, members, invitations, API tokens, enrollment tokens, workers and\n" +
+	"agents, and make each of those changes again.\n"
 
 // RunRestore implements `restore`. It refuses while a manager is connected
 // to the database and, on a database that is not empty, without --replace
