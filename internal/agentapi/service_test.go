@@ -68,6 +68,11 @@ func TestEnrollCreatesHostFromToken(t *testing.T) {
 	if err != nil || row.OrgID != testOrg || row.Name != "from-hint" {
 		t.Fatalf("registry row = %+v, %v", row, err)
 	}
+	// The certificate row records the agent's key, which adoption after a
+	// restore compares against (backlog 7.47).
+	if got := h.store.registeredKey(crt.SerialNumber.String()); got != agents.KeyFingerprint(crt) {
+		t.Fatalf("registered key = %q, want the leaf's %q", got, agents.KeyFingerprint(crt))
+	}
 	events := h.audit.recorded()
 	if len(events) != 1 || events[0].Operation != "agent.enroll" || events[0].OrgID != testOrg.String() {
 		t.Fatalf("audit = %+v", events)

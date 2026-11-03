@@ -16,12 +16,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/agents"
-	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/restoremark"
 )
 
 // memCAStore keeps the CA's sealed state in memory.
@@ -31,9 +31,10 @@ func (m *memCAStore) Load(context.Context) ([]byte, bool, error) { return m.save
 func (m *memCAStore) Save(_ context.Context, b []byte) error     { m.saved = b; return nil }
 
 // adoptWorld is a restored database: one org and zone, a host "web-1"
-// whose agent "web-1" holds one certificate issued before the backup, a
-// CA whose clock the test sets per certificate, and the times around the
-// restore. The certificate times are whole seconds, as the CA issues them.
+// whose agent "web-1" holds one certificate issued before the backup for
+// the agent's key, a CA whose clock the test sets per certificate, and the
+// times around the restore. The certificate times are whole seconds, as
+// the CA issues them.
 type adoptWorld struct {
 	d     *db.DB
 	q     *gen.Queries
@@ -43,6 +44,7 @@ type adoptWorld struct {
 	org   uuid.UUID
 	zone  uuid.UUID
 	host  uuid.UUID
+	key   *ecdsa.PrivateKey // web-1's agent key, kept across renewals
 	first *x509.Certificate
 
 	registeredAt, backupAt, restoredAt time.Time
@@ -69,10 +71,20 @@ func newAdoptWorld(t *testing.T) *adoptWorld {
 		t.Fatal(err)
 	}
 	w.ca = authority
+	w.key = newKey(t)
 	w.host = createHost(t, d, w.org, w.zone, "web-1").ID
 	w.first, _ = w.issue(t, w.org, "web-1", w.registeredAt)
 	w.register(t, w.host, "web-1", w.first)
 	return w
+}
+
+func newKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }
 
 // register records leaf as the agent called name on host, the way an
@@ -80,37 +92,36 @@ func newAdoptWorld(t *testing.T) *adoptWorld {
 func (w *adoptWorld) register(t *testing.T, host uuid.UUID, name string, leaf *x509.Certificate) {
 	t.Helper()
 	if err := w.svc.Register(ctx, agents.Registration{OrgID: w.org, HostID: host, AgentName: name, Version: "v1",
-		Serial: leaf.SerialNumber.String(), NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}); err != nil {
+		Serial: leaf.SerialNumber.String(), NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter,
+		PublicKeySHA256: agents.KeyFingerprint(leaf)}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// writeMarker stores the restore marker the way backup.Restore does.
+// writeMarker stores the restore marker the way backup.Restore does
+// (the marker rules themselves are internal/restoremark's tests).
 func (w *adoptWorld) writeMarker(t *testing.T) {
 	t.Helper()
-	w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.backupAt, RestoredAt: w.restoredAt})
-}
-
-// writeRawMarker stores m as it is, whatever its fields hold.
-func (w *adoptWorld) writeRawMarker(t *testing.T, m backup.RestoreMarker) {
-	t.Helper()
-	value, err := json.Marshal(m)
+	value, err := json.Marshal(restoremark.Marker{BackupCreatedAt: w.backupAt, RestoredAt: w.restoredAt})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.q.UpsertInstanceSetting(ctx, gen.UpsertInstanceSettingParams{Key: backup.RestoreMarkerKey, Value: value}); err != nil {
+	if err := w.q.UpsertInstanceSetting(ctx, gen.UpsertInstanceSettingParams{Key: restoremark.Key, Value: value}); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// issue signs an agent certificate for a fresh key with NotBefore at and
-// returns the leaf and the identity the interceptor would verify from it.
+// issue signs an agent certificate for the world's agent key with
+// NotBefore at and returns the leaf and the identity the interceptor would
+// verify from it.
 func (w *adoptWorld) issue(t *testing.T, orgID uuid.UUID, name string, at time.Time) (*x509.Certificate, *ca.ClientIdentity) {
 	t.Helper()
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	return w.issueFor(t, w.key, orgID, name, at)
+}
+
+// issueFor is issue for another key.
+func (w *adoptWorld) issueFor(t *testing.T, key *ecdsa.PrivateKey, orgID uuid.UUID, name string, at time.Time) (*x509.Certificate, *ca.ClientIdentity) {
+	t.Helper()
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	if err != nil {
 		t.Fatal(err)
@@ -158,12 +169,13 @@ func TestAdoptAgentCertificateInsideTheRestoreWindow(t *testing.T) {
 		t.Fatalf("AdoptCertificate = %+v, want host %s's agent carrying serial %s", got, w.host, serial)
 	}
 	var notBefore, notAfter time.Time
-	if err := w.d.Pool().QueryRow(ctx, `SELECT not_before, not_after FROM agent_certificates WHERE serial = $1 AND host_id = $2 AND revoked_at IS NULL`,
-		serial, w.host).Scan(&notBefore, &notAfter); err != nil {
+	var key *string
+	if err := w.d.Pool().QueryRow(ctx, `SELECT not_before, not_after, public_key_sha256 FROM agent_certificates WHERE serial = $1 AND host_id = $2 AND revoked_at IS NULL`,
+		serial, w.host).Scan(&notBefore, &notAfter, &key); err != nil {
 		t.Fatalf("adopted certificate row: %v", err)
 	}
-	if !notBefore.Equal(leaf.NotBefore) || !notAfter.Equal(leaf.NotAfter) {
-		t.Fatalf("row window = %v..%v, want the leaf's %v..%v", notBefore, notAfter, leaf.NotBefore, leaf.NotAfter)
+	if !notBefore.Equal(leaf.NotBefore) || !notAfter.Equal(leaf.NotAfter) || key == nil || *key != agents.KeyFingerprint(leaf) {
+		t.Fatalf("row = %v..%v key %v, want the leaf's %v..%v key %s", notBefore, notAfter, key, leaf.NotBefore, leaf.NotAfter, agents.KeyFingerprint(leaf))
 	}
 	bySerial, err := w.svc.GetBySerial(ctx, serial)
 	if err != nil || bySerial.HostID != w.host || bySerial.Revoked {
@@ -217,18 +229,6 @@ func TestAdoptAgentCertificateRefuses(t *testing.T) {
 			w.writeMarker(t)
 			return w.issue(t, w.org, "web-1", w.restoredAt.Add(time.Second))
 		}},
-		{"marker without a backup time", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
-			w.writeRawMarker(t, backup.RestoreMarker{RestoredAt: w.restoredAt})
-			return w.issue(t, w.org, "web-1", inside(w))
-		}},
-		{"marker without a restore time", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
-			w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.backupAt})
-			return w.issue(t, w.org, "web-1", inside(w))
-		}},
-		{"marker restored before its backup", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
-			w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.restoredAt, RestoredAt: w.backupAt})
-			return w.issue(t, w.org, "web-1", inside(w))
-		}},
 		{"not newer than the newest registered certificate", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			newer, _ := w.issue(t, w.org, "web-1", w.backupAt.Add(40*time.Minute))
@@ -244,6 +244,46 @@ func TestAdoptAgentCertificateRefuses(t *testing.T) {
 				t.Fatal(err)
 			}
 			return w.issue(t, w.org, "web-1", w.backupAt.Add(45*time.Minute))
+		}},
+		{"another key than the agent's", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeMarker(t)
+			return w.issueFor(t, newKey(t), w.org, "web-1", inside(w))
+		}},
+		{"the name now belongs to a new host with its own key", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			// Takeover: web-1's agent was revoked and a new host enrolled
+			// under the same agent name before the backup; a certificate
+			// issued to the old agent's key must not move onto it.
+			w.writeMarker(t)
+			if err := w.svc.Revoke(ctx, w.org, w.host); err != nil {
+				t.Fatal(err)
+			}
+			successor, _ := w.issueFor(t, newKey(t), w.org, "web-1", w.registeredAt.Add(time.Minute))
+			w.register(t, createHost(t, w.d, w.org, w.zone, "web-1-new").ID, "web-1", successor)
+			return w.issue(t, w.org, "web-1", inside(w))
+		}},
+		{"a revoked agent's registered serial after its name moved on", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			// The revoked host's agent row is gone, so its serial resolves
+			// to nothing and is offered for adoption; it is still
+			// registered to that host and refused.
+			w.writeMarker(t)
+			leaf, id := w.issue(t, w.org, "web-1", inside(w))
+			w.register(t, w.host, "web-1", leaf)
+			if err := w.svc.Revoke(ctx, w.org, w.host); err != nil {
+				t.Fatal(err)
+			}
+			successor, _ := w.issueFor(t, newKey(t), w.org, "web-1", w.registeredAt.Add(time.Minute))
+			w.register(t, createHost(t, w.d, w.org, w.zone, "web-1-new").ID, "web-1", successor)
+			return leaf, id
+		}},
+		{"newest certificate records no key", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			// A row written before fingerprints were recorded, e.g. after
+			// restoring an older backup.
+			w.writeMarker(t)
+			if _, err := w.d.Pool().Exec(ctx, `UPDATE agent_certificates SET public_key_sha256 = NULL WHERE serial = $1`,
+				w.first.SerialNumber.String()); err != nil {
+				t.Fatal(err)
+			}
+			return w.issue(t, w.org, "web-1", inside(w))
 		}},
 		{"no agent with that name", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
@@ -328,10 +368,10 @@ func TestAdoptAgentCertificateChecksTheWindowBeforeLocking(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	id := &ca.ClientIdentity{Serial: big.NewInt(4242), Kind: ca.KindAgent, OrgID: &org, WorkerName: "web-1"}
-	window := &agents.RestoreWindow{BackupCreatedAt: now.Add(-2 * time.Hour), RestoredAt: now.Add(-time.Hour)}
+	window := &restoremark.Window{BackupCreatedAt: now.Add(-2 * time.Hour), RestoredAt: now.Add(-time.Hour)}
 	tests := []struct {
 		name      string
-		window    *agents.RestoreWindow
+		window    *restoremark.Window
 		notBefore time.Time
 	}{
 		{"no restore marker", nil, now.Add(-90 * time.Minute)},

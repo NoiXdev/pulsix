@@ -29,6 +29,7 @@ import (
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/restoremark"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -77,7 +78,7 @@ type fakeWorkerStore struct {
 	lookupErr, enrollErr, addCertErr, adoptErr error
 	// restoreWindow is the restore marker RestoreWindow returns; nil is a
 	// database no restore ever touched.
-	restoreWindow *workers.RestoreWindow
+	restoreWindow *restoremark.Window
 }
 
 func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker, c workers.Certificate) (workers.Worker, error) {
@@ -225,7 +226,7 @@ func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(worker
 }
 
 // RestoreWindow returns the restore marker the test set.
-func (f *fakeWorkerStore) RestoreWindow(context.Context) (*workers.RestoreWindow, error) {
+func (f *fakeWorkerStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.restoreWindow, nil
@@ -265,14 +266,17 @@ type fakeAgentStore struct {
 	revoked           map[string]bool
 	lookupErr         error
 	revokeAfterLookup string
+	// issued is what Register recorded per serial: the certificate's start
+	// and key, which adoption compares against.
+	issued map[string]agents.Agent
 	// adoptErr injects an adoption fault; restoreWindow is the restore
 	// marker RestoreWindow returns, nil for a database no restore touched.
 	adoptErr      error
-	restoreWindow *agents.RestoreWindow
+	restoreWindow *restoremark.Window
 }
 
 func newFakeAgentStore() *fakeAgentStore {
-	return &fakeAgentStore{bySerial: map[string]agents.AgentIdentity{}, revoked: map[string]bool{}}
+	return &fakeAgentStore{bySerial: map[string]agents.AgentIdentity{}, revoked: map[string]bool{}, issued: map[string]agents.Agent{}}
 }
 
 func (f *fakeAgentStore) GetBySerial(_ context.Context, serial string) (agents.AgentIdentity, error) {
@@ -294,36 +298,40 @@ func (f *fakeAgentStore) GetBySerial(_ context.Context, serial string) (agents.A
 }
 
 // RestoreWindow returns the restore marker the test set.
-func (f *fakeAgentStore) RestoreWindow(context.Context) (*agents.RestoreWindow, error) {
+func (f *fakeAgentStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.restoreWindow, nil
 }
 
 // AdoptCertificate finds the one host whose live serial carries a's org
-// and agent name, lets allow judge it and registers the serial, revoking
-// the host's others. The fake keeps no certificate dates, so
-// NewestCertificate stays nil, and the interceptor only adopts unknown
-// serials, so Registered stays false.
+// and agent name, lets allow judge it against that serial's start and key
+// (the newest certificate, since registering revokes the older ones) and
+// registers the serial, revoking the host's others. The interceptor only
+// adopts unknown serials, so Registered stays false.
 func (f *fakeAgentStore) AdoptCertificate(_ context.Context, a agents.Agent, allow func(agents.AdoptionState) error) (agents.AgentIdentity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.adoptErr != nil {
 		return agents.AgentIdentity{}, f.adoptErr
 	}
-	var match []agents.AgentIdentity // one per host
+	var match []string // the live serial, one per host
 	seen := map[uuid.UUID]bool{}
 	for serial, id := range f.bySerial {
 		if id.OrgID == a.OrgID && id.Name == a.AgentName && !f.revoked[serial] && !seen[id.HostID] {
 			seen[id.HostID] = true
-			match = append(match, id)
+			match = append(match, serial)
 		}
 	}
 	if len(match) != 1 {
 		return agents.AgentIdentity{}, agents.ErrNotFound
 	}
-	id := match[0]
-	if err := allow(agents.AdoptionState{HostID: id.HostID}); err != nil {
+	id := f.bySerial[match[0]]
+	var st agents.AdoptionState
+	if newest, ok := f.issued[match[0]]; ok {
+		st.NewestCertificate, st.NewestPublicKeySHA256 = &newest.CertNotBefore, newest.CertPublicKeySHA256
+	}
+	if err := allow(st); err != nil {
 		return agents.AgentIdentity{}, err
 	}
 	for serial, other := range f.bySerial {
@@ -332,6 +340,7 @@ func (f *fakeAgentStore) AdoptCertificate(_ context.Context, a agents.Agent, all
 		}
 	}
 	f.bySerial[a.CertSerial] = id
+	f.issued[a.CertSerial] = a
 	return id, nil
 }
 
@@ -359,6 +368,7 @@ func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.bySerial[a.CertSerial] = agents.AgentIdentity{OrgID: a.OrgID, HostID: a.HostID, Name: a.AgentName, Version: a.Version}
+	f.issued[a.CertSerial] = a
 	return nil
 }
 
@@ -536,12 +546,19 @@ func (h *harness) issue(name string, orgID, zoneID uuid.UUID, register bool) (ce
 // (the agentapi service itself is stubbed here; Task 7's tests live in
 // internal/agentapi).
 func (h *harness) issueAgent(name string, orgID uuid.UUID, register bool) (certPEM, keyPEM []byte, serial *big.Int) {
-	t := h.t
-	t.Helper()
+	h.t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
+	return h.issueAgentWithKey(name, orgID, register, key)
+}
+
+// issueAgentWithKey is issueAgent for a given key: an agent keeps its key
+// across renewals.
+func (h *harness) issueAgentWithKey(name string, orgID uuid.UUID, register bool, key *ecdsa.PrivateKey) (certPEM, keyPEM []byte, serial *big.Int) {
+	t := h.t
+	t.Helper()
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, key)
 	if err != nil {
 		t.Fatal(err)
@@ -559,7 +576,7 @@ func (h *harness) issueAgent(name string, orgID uuid.UUID, register bool) (certP
 	if register {
 		if err := agents.NewService(h.agents).Register(context.Background(), agents.Registration{
 			OrgID: orgID, HostID: uuid.Must(uuid.NewV7()), AgentName: name, Version: "v0.3a",
-			Serial: serial.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter,
+			Serial: serial.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter, PublicKeySHA256: agents.KeyFingerprint(crt),
 		}); err != nil {
 			t.Fatal(err)
 		}

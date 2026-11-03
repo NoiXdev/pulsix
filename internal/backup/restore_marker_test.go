@@ -9,17 +9,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/noixdev/pulsix/internal/backup"
+	"github.com/noixdev/pulsix/internal/restoremark"
 )
 
 // readRestoreMarker decodes the restore row of instance_settings.
-func readRestoreMarker(t *testing.T, pool *pgxpool.Pool) backup.RestoreMarker {
+func readRestoreMarker(t *testing.T, pool *pgxpool.Pool) restoremark.Marker {
 	t.Helper()
 	var raw []byte
 	if err := pool.QueryRow(context.Background(),
-		`SELECT value FROM instance_settings WHERE key = $1`, backup.RestoreMarkerKey).Scan(&raw); err != nil {
+		`SELECT value FROM instance_settings WHERE key = $1`, restoremark.Key).Scan(&raw); err != nil {
 		t.Fatalf("read the restore marker: %v", err)
 	}
-	var m backup.RestoreMarker
+	var m restoremark.Marker
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("decode the restore marker %s: %v", raw, err)
 	}
@@ -33,7 +34,7 @@ func readRestoreMarker(t *testing.T, pool *pgxpool.Pool) backup.RestoreMarker {
 func TestRestoreWritesRestoreMarker(t *testing.T) {
 	src := sourceDB(t)
 	fillEveryTable(t, src.Pool())
-	stale := backup.RestoreMarker{
+	stale := restoremark.Marker{
 		BackupCreatedAt: time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
 		RestoredAt:      time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC),
 	}
@@ -42,7 +43,7 @@ func TestRestoreWritesRestoreMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := src.Pool().Exec(context.Background(),
-		`INSERT INTO instance_settings (key, value) VALUES ($1, $2)`, backup.RestoreMarkerKey, staleJSON); err != nil {
+		`INSERT INTO instance_settings (key, value) VALUES ($1, $2)`, restoremark.Key, staleJSON); err != nil {
 		t.Fatal(err)
 	}
 	data, h := dumpBytes(t, src.Pool(), backup.DumpOptions{})

@@ -2,15 +2,14 @@ package agents
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/restoremark"
 )
 
 // AdoptCertificate implements Store.AdoptCertificate in one transaction
@@ -31,7 +30,7 @@ func (s *SQLStore) AdoptCertificate(ctx context.Context, a Agent, allow func(Ado
 			return ErrNotFound
 		}
 		row := rows[0]
-		state := AdoptionState{HostID: row.HostID}
+		var state AdoptionState
 		// Two calls on a fresh connection can race in with the same
 		// unknown serial; the one that waited on the lock finds it the
 		// host's live certificate. A serial registered to another host,
@@ -45,10 +44,11 @@ func (s *SQLStore) AdoptCertificate(ctx context.Context, a Agent, allow func(Ado
 		case !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("look up certificate: %w", err)
 		}
-		newest, err := s.q.NewestAgentCertificateStart(ctx, gen.NewestAgentCertificateStartParams{OrgID: a.OrgID, HostID: row.HostID})
+		newest, err := s.q.NewestAgentCertificate(ctx, gen.NewestAgentCertificateParams{OrgID: a.OrgID, HostID: row.HostID})
 		switch {
 		case err == nil:
-			state.NewestCertificate = &newest
+			state.NewestCertificate = &newest.Started
+			state.NewestPublicKeySHA256 = derefText(newest.PublicKeySha256)
 		case !errors.Is(err, pgx.ErrNoRows):
 			return fmt.Errorf("newest certificate: %w", err)
 		}
@@ -77,34 +77,8 @@ func (s *SQLStore) AdoptCertificate(ctx context.Context, a Agent, allow func(Ado
 	return out, err
 }
 
-// restoreMarkerKey and restoreMarker mirror backup.RestoreMarkerKey and
-// backup.RestoreMarker, which write the row: this package reads it without
-// importing internal/backup. The key and both JSON field names must stay in
-// step with that package (adopt_test.go writes the marker through it).
-const restoreMarkerKey = "restore"
-
-type restoreMarker struct {
-	BackupCreatedAt time.Time `json:"backup_created_at"`
-	RestoredAt      time.Time `json:"restored_at"`
-}
-
-// RestoreWindow reads the last restore's marker. No marker, or one without
-// both times or whose restore is not after its backup, is nil: adoption
-// fails closed on a marker it cannot trust.
-func (s *SQLStore) RestoreWindow(ctx context.Context) (*RestoreWindow, error) {
-	row, err := s.q.GetInstanceSetting(ctx, restoreMarkerKey)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read restore marker: %w", err)
-	}
-	var m restoreMarker
-	if err := json.Unmarshal(row.Value, &m); err != nil {
-		return nil, fmt.Errorf("decode restore marker: %w", err)
-	}
-	if m.BackupCreatedAt.IsZero() || m.RestoredAt.IsZero() || !m.RestoredAt.After(m.BackupCreatedAt) {
-		return nil, nil
-	}
-	return &RestoreWindow{BackupCreatedAt: m.BackupCreatedAt, RestoredAt: m.RestoredAt}, nil
+// RestoreWindow reads the last restore's window (restoremark.Read): nil
+// when there is no marker or it cannot be trusted.
+func (s *SQLStore) RestoreWindow(ctx context.Context) (*restoremark.Window, error) {
+	return restoremark.Read(ctx, s.q)
 }

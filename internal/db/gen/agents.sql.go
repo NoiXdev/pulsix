@@ -129,7 +129,7 @@ func (q *Queries) DeleteHostAgent(ctx context.Context, arg DeleteHostAgentParams
 }
 
 const getAgentCertificate = `-- name: GetAgentCertificate :one
-SELECT serial, org_id, host_id, revoked_at, created_at, not_before, not_after FROM agent_certificates WHERE serial = $1
+SELECT serial, org_id, host_id, revoked_at, created_at, not_before, not_after, public_key_sha256 FROM agent_certificates WHERE serial = $1
 `
 
 // One certificate row by serial, inside the caller's org scope.
@@ -144,6 +144,7 @@ func (q *Queries) GetAgentCertificate(ctx context.Context, serial string) (Agent
 		&i.CreatedAt,
 		&i.NotBefore,
 		&i.NotAfter,
+		&i.PublicKeySha256,
 	)
 	return i, err
 }
@@ -199,20 +200,23 @@ func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (Get
 }
 
 const insertAgentCertificate = `-- name: InsertAgentCertificate :exec
-INSERT INTO agent_certificates (serial, org_id, host_id, not_before, not_after)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO agent_certificates (serial, org_id, host_id, not_before, not_after, public_key_sha256)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertAgentCertificateParams struct {
-	Serial    string             `json:"serial"`
-	OrgID     uuid.UUID          `json:"org_id"`
-	HostID    uuid.UUID          `json:"host_id"`
-	NotBefore pgtype.Timestamptz `json:"not_before"`
-	NotAfter  pgtype.Timestamptz `json:"not_after"`
+	Serial          string             `json:"serial"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	HostID          uuid.UUID          `json:"host_id"`
+	NotBefore       pgtype.Timestamptz `json:"not_before"`
+	NotAfter        pgtype.Timestamptz `json:"not_after"`
+	PublicKeySha256 *string            `json:"public_key_sha256"`
 }
 
 // The validity window comes from the issued leaf; it is display data (the
 // agent renews from its own certificate, the manager never re-reads this).
+// public_key_sha256 binds the row to the agent's key, which adoption
+// after a restore compares against (backlog 7.47).
 func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCertificateParams) error {
 	_, err := q.db.Exec(ctx, insertAgentCertificate,
 		arg.Serial,
@@ -220,6 +224,7 @@ func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCer
 		arg.HostID,
 		arg.NotBefore,
 		arg.NotAfter,
+		arg.PublicKeySha256,
 	)
 	return err
 }
@@ -446,27 +451,33 @@ func (q *Queries) LookupAgentSerial(ctx context.Context, serial string) (LookupA
 	return i, err
 }
 
-const newestAgentCertificateStart = `-- name: NewestAgentCertificateStart :one
-SELECT COALESCE(not_before, created_at)::timestamptz AS started
+const newestAgentCertificate = `-- name: NewestAgentCertificate :one
+SELECT COALESCE(not_before, created_at)::timestamptz AS started, public_key_sha256
 FROM agent_certificates
 WHERE org_id = $1 AND host_id = $2
 ORDER BY started DESC
 LIMIT 1
 `
 
-type NewestAgentCertificateStartParams struct {
+type NewestAgentCertificateParams struct {
 	OrgID  uuid.UUID `json:"org_id"`
 	HostID uuid.UUID `json:"host_id"`
 }
 
-// The latest start among a host's certificates, revoked ones included:
-// not_before, or created_at for a row written before migration 00039 that
-// its backfill could not reach.
-func (q *Queries) NewestAgentCertificateStart(ctx context.Context, arg NewestAgentCertificateStartParams) (time.Time, error) {
-	row := q.db.QueryRow(ctx, newestAgentCertificateStart, arg.OrgID, arg.HostID)
-	var started time.Time
-	err := row.Scan(&started)
-	return started, err
+type NewestAgentCertificateRow struct {
+	Started         time.Time `json:"started"`
+	PublicKeySha256 *string   `json:"public_key_sha256"`
+}
+
+// The host's newest certificate, revoked ones included: its start
+// (not_before, or created_at for a row written before migration 00039 that
+// its backfill could not reach) and its key fingerprint (NULL for a row
+// written before migration 00077).
+func (q *Queries) NewestAgentCertificate(ctx context.Context, arg NewestAgentCertificateParams) (NewestAgentCertificateRow, error) {
+	row := q.db.QueryRow(ctx, newestAgentCertificate, arg.OrgID, arg.HostID)
+	var i NewestAgentCertificateRow
+	err := row.Scan(&i.Started, &i.PublicKeySha256)
+	return i, err
 }
 
 const revokeAgentCertificates = `-- name: RevokeAgentCertificates :exec

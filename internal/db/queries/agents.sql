@@ -81,8 +81,10 @@ DELETE FROM host_agents WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(h
 -- name: InsertAgentCertificate :exec
 -- The validity window comes from the issued leaf; it is display data (the
 -- agent renews from its own certificate, the manager never re-reads this).
-INSERT INTO agent_certificates (serial, org_id, host_id, not_before, not_after)
-VALUES (sqlc.arg(serial), sqlc.arg(org_id), sqlc.arg(host_id), sqlc.arg(not_before), sqlc.arg(not_after));
+-- public_key_sha256 binds the row to the agent's key, which adoption
+-- after a restore compares against (backlog 7.47).
+INSERT INTO agent_certificates (serial, org_id, host_id, not_before, not_after, public_key_sha256)
+VALUES (sqlc.arg(serial), sqlc.arg(org_id), sqlc.arg(host_id), sqlc.arg(not_before), sqlc.arg(not_after), sqlc.narg(public_key_sha256));
 
 -- name: LockLiveAgentCertificate :execrows
 -- A renewal's proof, inside its own transaction, that the serial it renews
@@ -121,11 +123,12 @@ FOR UPDATE;
 -- One certificate row by serial, inside the caller's org scope.
 SELECT * FROM agent_certificates WHERE serial = sqlc.arg(serial);
 
--- name: NewestAgentCertificateStart :one
--- The latest start among a host's certificates, revoked ones included:
--- not_before, or created_at for a row written before migration 00039 that
--- its backfill could not reach.
-SELECT COALESCE(not_before, created_at)::timestamptz AS started
+-- name: NewestAgentCertificate :one
+-- The host's newest certificate, revoked ones included: its start
+-- (not_before, or created_at for a row written before migration 00039 that
+-- its backfill could not reach) and its key fingerprint (NULL for a row
+-- written before migration 00077).
+SELECT COALESCE(not_before, created_at)::timestamptz AS started, public_key_sha256
 FROM agent_certificates
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
 ORDER BY started DESC

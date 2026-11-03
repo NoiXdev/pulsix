@@ -59,13 +59,14 @@ func (ns NullOrgRole) Value() (driver.Value, error) {
 }
 
 type AgentCertificate struct {
-	Serial    string             `json:"serial"`
-	OrgID     uuid.UUID          `json:"org_id"`
-	HostID    uuid.UUID          `json:"host_id"`
-	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
-	CreatedAt time.Time          `json:"created_at"`
-	NotBefore pgtype.Timestamptz `json:"not_before"`
-	NotAfter  pgtype.Timestamptz `json:"not_after"`
+	Serial          string             `json:"serial"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	HostID          uuid.UUID          `json:"host_id"`
+	RevokedAt       pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt       time.Time          `json:"created_at"`
+	NotBefore       pgtype.Timestamptz `json:"not_before"`
+	NotAfter        pgtype.Timestamptz `json:"not_after"`
+	PublicKeySha256 *string            `json:"public_key_sha256"`
 }
 
 type AgentEnrollment struct {

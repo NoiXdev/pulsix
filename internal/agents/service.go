@@ -24,6 +24,7 @@ import (
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/restoremark"
 )
 
 // Sentinel errors mapped to HTTP / gRPC status by the transport layers.
@@ -71,6 +72,10 @@ type Agent struct {
 	// before migration 00039 that the backfill could not reach.
 	CertNotBefore time.Time
 	CertNotAfter  *time.Time
+	// CertPublicKeySHA256 is the hex SHA-256 of CertSerial's certificate's
+	// public key (KeyFingerprint), written with the certificate row;
+	// reads leave it empty.
+	CertPublicKeySHA256 string
 	// HostName is the host's name, read along with the agent so the
 	// Agents page can name its rows without resolving every host id.
 	HostName string
@@ -87,6 +92,10 @@ type Registration struct {
 	Serial    string
 	NotBefore time.Time
 	NotAfter  time.Time
+	// PublicKeySHA256 is the issued leaf's KeyFingerprint: certificate
+	// adoption after a restore only accepts a certificate for the same key
+	// (backlog 7.47).
+	PublicKeySHA256 string
 }
 
 // AgentIdentity is the org-unscoped serial lookup's answer: which
@@ -208,14 +217,14 @@ type Store interface {
 	GetBySerial(ctx context.Context, serial string) (AgentIdentity, error)
 	// RestoreWindow reads the last restore's window, outside any org scope
 	// and without a lock; nil when no usable restore marker exists.
-	RestoreWindow(ctx context.Context) (*RestoreWindow, error)
+	RestoreWindow(ctx context.Context) (*restoremark.Window, error)
 	// AdoptCertificate locks every agent row named a.AgentName in
 	// a.OrgID, hands what it read to allow and, when allow returns nil,
 	// registers a for that row's host the way Register does unless it is
 	// already the host's live certificate — one transaction. No such row,
 	// more than one, or a's serial registered elsewhere or revoked, is
-	// ErrNotFound. a carries the org, agent name, serial and validity
-	// window; host and version come from the locked row.
+	// ErrNotFound. a carries the org, agent name, serial, validity window
+	// and key fingerprint; host and version come from the locked row.
 	AdoptCertificate(ctx context.Context, a Agent, allow func(AdoptionState) error) (AgentIdentity, error)
 	// Touch records a heartbeat by serial, org-unscoped.
 	Touch(ctx context.Context, serial, version string) error
@@ -475,7 +484,7 @@ func (r Registration) agent() (Agent, error) {
 	notAfter := r.NotAfter
 	return Agent{
 		HostID: r.HostID, OrgID: r.OrgID, AgentName: r.AgentName, CertSerial: r.Serial, Version: r.Version,
-		CertNotBefore: r.NotBefore, CertNotAfter: &notAfter,
+		CertNotBefore: r.NotBefore, CertNotAfter: &notAfter, CertPublicKeySHA256: r.PublicKeySHA256,
 	}, nil
 }
 

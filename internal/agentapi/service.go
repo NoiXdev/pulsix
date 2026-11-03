@@ -213,6 +213,7 @@ func (s *Service) Enroll(ctx context.Context, req *agentpb.EnrollRequest) (*agen
 	if err := s.deps.Agents.Register(ctx, agents.Registration{
 		OrgID: orgID, HostID: res.HostID, AgentName: name, Version: req.GetVersion(),
 		Serial: crt.SerialNumber.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter,
+		PublicKeySHA256: agents.KeyFingerprint(crt),
 	}); err != nil {
 		slog.ErrorContext(ctx, "register agent", "token_id", tok.ID.String(), "host_id", res.HostID, "err", err)
 		return nil, status.Error(codes.Internal, "enrollment failed")
@@ -255,6 +256,7 @@ func (s *Service) Renew(ctx context.Context, req *agentpb.RenewRequest) (*agentp
 	err = s.deps.Agents.Renew(ctx, agents.Registration{
 		OrgID: agent.OrgID, HostID: agent.HostID, AgentName: agent.Name, Version: agent.Version,
 		Serial: crt.SerialNumber.String(), NotBefore: crt.NotBefore, NotAfter: crt.NotAfter,
+		PublicKeySHA256: agents.KeyFingerprint(crt),
 	}, agent.Serial)
 	switch {
 	case errors.Is(err, agents.ErrNotFound):

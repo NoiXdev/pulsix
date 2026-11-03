@@ -27,6 +27,7 @@ import (
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/restoremark"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -73,7 +74,7 @@ func (s *stubWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID
 func (s *stubWorkerStore) Enroll(context.Context, uuid.UUID, func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
 	return workers.Worker{}, workers.ErrNotFound
 }
-func (s *stubWorkerStore) RestoreWindow(context.Context) (*workers.RestoreWindow, error) {
+func (s *stubWorkerStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	return nil, nil
 }
 func (s *stubWorkerStore) AdoptCertificate(context.Context, string, workers.Certificate, func(workers.AdoptionState) error) (workers.Worker, error) {
@@ -181,7 +182,7 @@ func (f *integAgentStore) Register(_ context.Context, a agents.Agent) error {
 	return nil
 }
 
-func (f *integAgentStore) RestoreWindow(context.Context) (*agents.RestoreWindow, error) {
+func (f *integAgentStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	return nil, nil
 }
 

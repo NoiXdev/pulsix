@@ -16,18 +16,21 @@ After a restore, the manager adopts such a certificate on first use when all of 
    - worker: the certificate's org and CN name resolve to exactly one row in `workers` (UNIQUE(org_id, name)) with `status = 'active'`, and its zone SAN equals that row's zone;
    - agent: the org and CN name resolve to exactly one `host_agents` row (agent names are not unique; zero or several matches refuse).
 4. Its `NotBefore` is later than every certificate the database has for that worker/host (`not_before`, falling back to `created_at` where `not_before` is null). An older or equal certificate is never adopted.
+5. Agents only: the certificate carries the same key as the host's newest registered certificate. An agent keeps its key across renewals (`internal/agent` `LoadOrGenerateKey`), and every agent certificate row records the hex SHA-256 of the leaf's SubjectPublicKeyInfo in `agent_certificates.public_key_sha256` (migration 00077, written by enrollment, renewal and adoption). A newest certificate without a fingerprint (a row from before 00077, e.g. after restoring an older backup) refuses. This keeps a certificate of a revoked agent from moving onto a new host enrolled under the same agent name.
 
 Adoption registers the serial exactly like a renewal does: a worker certificate row is inserted (older serials stay valid until they expire, as today); for an agent, `host_agents.cert_serial` is updated, older certificates of that host are revoked and the new one inserted (the existing `register` path). Each adoption writes an audit event (`worker.certificate_adopted` / `agent.certificate_adopted`, actor the worker/agent, summary naming the serial) and an info log line. The call then proceeds as if the serial had been known.
 
 A worker or agent removed or revoked after the backup has no row or a revoked row in the restored database only if the removal happened before the backup; a removal after the backup is undone by the restore like every other revocation (accepted in 7.54). Adoption does not widen that: it only accepts certificates the instance itself issued after the backup.
 
 ### Restore marker
-`backup.Restore` writes, in the load transaction after the copy, an `instance_settings` row `restore` = `{"backup_created_at": <manifest header CreatedAt>, "restored_at": now()}`, replacing any earlier one. A restore without that row (none ever happened) adopts nothing. The marker is not read from the backup; the load writes it fresh.
+`backup.Restore` writes, in the load transaction after the copy, an `instance_settings` row `restore` = `{"backup_created_at": <manifest header CreatedAt>, "restored_at": now()}`, replacing any earlier one. A restore without that row (none ever happened) adopts nothing. The marker is not read from the backup; the load writes it fresh. A marker missing either time, or whose restore is not after its backup, counts as none; one that does not decode is an error.
+
+`internal/restoremark` owns the marker: the key, the JSON type, the `Window` with its strict `Contains`, and the fail-closed reader. `internal/backup` writes through it; `internal/workers` and `internal/agents` read through it.
 
 ### Where it lives
 - `internal/grpcsrv/auth.go`: on ErrNotFound from the serial lookup, call an `Adopt` port before refusing.
 - `internal/workers` and `internal/agents` services: `AdoptCertificate(ctx, cert *x509.Certificate, id ca.Identity) (…, error)` with the rules above; their SQL stores do the lookups and registration in one transaction.
-- The restore marker read/write: a small store in `internal/backup` (write) and a reader port wired into both services (read).
+- The restore marker read/write: `internal/restoremark` (see above), written by `internal/backup`, read by both registries' stores (`Store.RestoreWindow`) before any lock is taken.
 - Restore output, `deploy/compose/README.md`, end-user docs: replace "enroll them again" with "they reconnect on their own; a worker or agent whose certificate was issued before the backup and expired since must be enrolled again".
 
 ## 2. Backlog 7.3 — upgrade path and migrations policy

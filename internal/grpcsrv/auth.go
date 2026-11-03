@@ -249,10 +249,14 @@ func (s *Server) adoptWorkerCertificate(ctx context.Context, leaf *x509.Certific
 }
 
 // resolveAgent is resolveWorker's agent counterpart (v0.3a): the serial is
-// resolved in the agent registry and an unknown one offered for adoption
-// (backlog 7.47); a revoked serial never is. The certificate's org SAN
-// must match the row's organization (agent certificates carry no zone
-// SAN). Revoked serials read exactly like unknown ones.
+// resolved in the agent registry, and one the registry does not resolve is
+// offered for adoption (backlog 7.47). A serial whose certificate row is
+// marked revoked is never offered. A revoked agent's serials whose
+// host_agents row was deleted do not resolve, so they are offered, and the
+// registry refuses them: the serial is registered to a host with no agent
+// row. The certificate's org SAN must match the row's organization (agent
+// certificates carry no zone SAN). Revoked serials read exactly like
+// unknown ones.
 func (s *Server) resolveAgent(ctx context.Context, leaf *x509.Certificate, identity *ca.ClientIdentity) (agents.AgentIdentity, error) {
 	if s.deps.Agents == nil {
 		s.log().ErrorContext(ctx, "agent certificate presented but no agent registry is wired")
@@ -261,6 +265,10 @@ func (s *Server) resolveAgent(ctx context.Context, leaf *x509.Certificate, ident
 	agent, err := s.deps.Agents.GetBySerial(ctx, identity.Serial.String())
 	if errors.Is(err, agents.ErrNotFound) {
 		agent, err = s.adoptAgentCertificate(ctx, leaf, identity)
+		if err != nil && !errors.Is(err, agents.ErrNotFound) {
+			s.log().ErrorContext(ctx, "adopt agent certificate", "serial", identity.Serial.String(), "err", err)
+			return agents.AgentIdentity{}, status.Error(codes.Internal, "agent lookup failed")
+		}
 	}
 	if errors.Is(err, agents.ErrNotFound) {
 		return agents.AgentIdentity{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")

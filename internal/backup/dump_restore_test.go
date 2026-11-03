@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/restoremark"
 )
 
 var testKey = [32]byte{1, 2, 3}
@@ -112,7 +113,7 @@ func tableDigest(t *testing.T, pool *pgxpool.Pool, table string) string {
 func restoredTableDigest(t *testing.T, pool *pgxpool.Pool, table string) string {
 	t.Helper()
 	if table == "instance_settings" {
-		return digestWhere(t, pool, table, "t.key <> '"+backup.RestoreMarkerKey+"'")
+		return digestWhere(t, pool, table, "t.key <> '"+restoremark.Key+"'")
 	}
 	return tableDigest(t, pool, table)
 }

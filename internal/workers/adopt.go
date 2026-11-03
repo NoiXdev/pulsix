@@ -10,15 +10,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/ca"
+	"github.com/noixdev/pulsix/internal/restoremark"
 )
-
-// RestoreWindow is the span between the restored backup's creation and the
-// restore itself (backlog 7.47). A certificate the CA issued inside it is
-// unknown to the restored database although the instance issued it.
-type RestoreWindow struct {
-	BackupCreatedAt time.Time
-	RestoredAt      time.Time
-}
 
 // AdoptionState is what the store reads, under the worker row's lock, for
 // the service to decide an adoption on.
@@ -52,7 +45,7 @@ func (s *Service) AdoptCertificate(ctx context.Context, leaf *x509.Certificate, 
 	if err != nil {
 		return Worker{}, fmt.Errorf("adopt worker certificate: %w", err)
 	}
-	if !window.contains(leaf.NotBefore) {
+	if !window.Contains(leaf.NotBefore) {
 		return Worker{}, ErrNotFound
 	}
 	c := Certificate{Serial: id.Serial, OrgID: *id.OrgID, NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}
@@ -71,19 +64,13 @@ func (s *Service) AdoptCertificate(ctx context.Context, leaf *x509.Certificate, 
 	return w, nil
 }
 
-// contains reports whether t lies strictly inside the window; a nil
-// window (no restore) contains nothing.
-func (w *RestoreWindow) contains(t time.Time) bool {
-	return w != nil && t.After(w.BackupCreatedAt) && t.Before(w.RestoredAt)
-}
-
 // adoptable applies the adoption rules to what the store read. Every
 // comparison is strict: a certificate issued at the very second of the
 // backup, the restore or the newest registered certificate is refused. A
 // serial a concurrent adoption already registered for the worker is the
 // newest certificate itself, so only that comparison is skipped for it.
-func adoptable(st AdoptionState, window *RestoreWindow, zoneID uuid.UUID, notBefore time.Time) bool {
-	if st.Worker.Status != StatusActive || st.Worker.ZoneID != zoneID || !window.contains(notBefore) {
+func adoptable(st AdoptionState, window *restoremark.Window, zoneID uuid.UUID, notBefore time.Time) bool {
+	if st.Worker.Status != StatusActive || st.Worker.ZoneID != zoneID || !window.Contains(notBefore) {
 		return false
 	}
 	return st.Registered || st.NewestCertificate == nil || notBefore.After(*st.NewestCertificate)

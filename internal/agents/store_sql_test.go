@@ -858,3 +858,35 @@ func TestAgentRenewAfterRevokeDoesNotReRegister(t *testing.T) {
 		t.Fatalf("serial issued after revoke resolves: err = %v, want ErrNotFound", err)
 	}
 }
+
+// TestAgentRegisterAndRenewRecordTheKey: enrollment (Register) and renewal
+// (Renew) write the leaf's key fingerprint with the certificate row — what
+// adoption after a restore compares against (backlog 7.47).
+func TestAgentRegisterAndRenewRecordTheKey(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-keys")
+	h := createHost(t, d, org, zone, "web-k")
+	keyOf := func(serial string) *string {
+		t.Helper()
+		var key *string
+		if err := d.Pool().QueryRow(ctx, `SELECT public_key_sha256 FROM agent_certificates WHERE serial = $1`, serial).Scan(&key); err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	enrolled := registrationOf(org, h.ID, "agent-k", "v1", "5001")
+	enrolled.PublicKeySHA256 = strings.Repeat("ab", 32)
+	if err := svc.Register(ctx, enrolled); err != nil {
+		t.Fatal(err)
+	}
+	if got := keyOf("5001"); got == nil || *got != enrolled.PublicKeySHA256 {
+		t.Fatalf("enrolled key = %v, want %s", got, enrolled.PublicKeySHA256)
+	}
+	renewed := registrationOf(org, h.ID, "agent-k", "v1", "5002")
+	renewed.PublicKeySHA256 = strings.Repeat("cd", 32)
+	if err := svc.Renew(ctx, renewed, "5001"); err != nil {
+		t.Fatal(err)
+	}
+	if got := keyOf("5002"); got == nil || *got != renewed.PublicKeySHA256 {
+		t.Fatalf("renewed key = %v, want %s", got, renewed.PublicKeySHA256)
+	}
+}

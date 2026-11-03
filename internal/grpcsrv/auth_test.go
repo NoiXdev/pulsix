@@ -5,6 +5,9 @@ package grpcsrv
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
@@ -24,6 +27,7 @@ import (
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/restoremark"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -379,7 +383,7 @@ func (h *harness) adoptionEvents() []SystemEvent {
 func (h *harness) restoredAround(now time.Time) {
 	h.store.mu.Lock()
 	defer h.store.mu.Unlock()
-	h.store.restoreWindow = &workers.RestoreWindow{BackupCreatedAt: now.Add(-time.Hour), RestoredAt: now.Add(time.Hour)}
+	h.store.restoreWindow = &restoremark.Window{BackupCreatedAt: now.Add(-time.Hour), RestoredAt: now.Add(time.Hour)}
 }
 
 // TestAuthAdoptsAWorkerCertificateAfterARestore (backlog 7.47): a
@@ -494,7 +498,29 @@ func (h *harness) agentAdoptionEvents() []SystemEvent {
 func (h *harness) agentsRestoredAround(now time.Time) {
 	h.agents.mu.Lock()
 	defer h.agents.mu.Unlock()
-	h.agents.restoreWindow = &agents.RestoreWindow{BackupCreatedAt: now.Add(-time.Hour), RestoredAt: now.Add(time.Hour)}
+	h.agents.restoreWindow = &restoremark.Window{BackupCreatedAt: now.Add(-time.Hour), RestoredAt: now.Add(time.Hour)}
+}
+
+// newAgentKey is a fresh agent key; an agent keeps its key across renewals.
+func newAgentKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
+// registeredEarlier moves the start the fake registry recorded for serial
+// an hour back: the harness's CA issues at the wall clock, so two
+// certificates issued by one test share a second, and adoption only takes
+// a strictly newer one.
+func (h *harness) registeredEarlier(serial *big.Int) {
+	h.agents.mu.Lock()
+	defer h.agents.mu.Unlock()
+	a := h.agents.issued[serial.String()]
+	a.CertNotBefore = a.CertNotBefore.Add(-time.Hour)
+	h.agents.issued[serial.String()] = a
 }
 
 // agentRenew calls AgentService.Renew with the certificate; the harness's
@@ -511,13 +537,15 @@ func (h *harness) agentRenew(t *testing.T, certPEM, keyPEM []byte) error {
 // audited and logged once; the next call finds the serial registered.
 func TestAuthAdoptsAnAgentCertificateAfterARestore(t *testing.T) {
 	h := newHarness(t)
-	_, _, firstSerial := h.issueAgent("agt-1", orgID, true)
+	key := newAgentKey(t)
+	_, _, firstSerial := h.issueAgentWithKey("agt-1", orgID, true, key)
+	h.registeredEarlier(firstSerial)
 	agent, err := h.agents.GetBySerial(t.Context(), firstSerial.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.agentsRestoredAround(time.Now())
-	certPEM, keyPEM, serial := h.issueAgent("agt-1", orgID, false)
+	certPEM, keyPEM, serial := h.issueAgentWithKey("agt-1", orgID, false, key)
 
 	if err := h.agentRenew(t, certPEM, keyPEM); status.Code(err) != codes.Unimplemented {
 		t.Fatalf("Renew with a certificate issued after the backup: %v, want the interceptor to let it through", err)
@@ -558,10 +586,11 @@ func TestAuthAdoptsAnAgentCertificateAfterARestore(t *testing.T) {
 }
 
 // TestAuthRefusesAnAgentCertificateItCannotAdopt: without a restore
-// marker the unknown serial is refused exactly as before; a revoked serial
-// is never offered for adoption, restore or not; an agent whose row was
-// deleted has nothing to adopt into; and a registry fault during the
-// adoption is a generic Internal.
+// marker the unknown serial is refused exactly as before; a certificate
+// for another key than the agent's is refused; a revoked serial is never
+// offered for adoption, restore or not; an agent whose row was deleted has
+// nothing to adopt into; and a registry fault during the adoption is a
+// generic Internal (logged as an adoption fault).
 func TestAuthRefusesAnAgentCertificateItCannotAdopt(t *testing.T) {
 	refused := func(t *testing.T, h *harness, certPEM, keyPEM []byte) {
 		t.Helper()
@@ -575,18 +604,32 @@ func TestAuthRefusesAnAgentCertificateItCannotAdopt(t *testing.T) {
 	}
 	t.Run("no restore", func(t *testing.T) {
 		h := newHarness(t)
-		h.issueAgent("agt-1", orgID, true)
+		key := newAgentKey(t)
+		_, _, first := h.issueAgentWithKey("agt-1", orgID, true, key)
+		h.registeredEarlier(first)
+		certPEM, keyPEM, _ := h.issueAgentWithKey("agt-1", orgID, false, key)
+		refused(t, h, certPEM, keyPEM)
+	})
+	t.Run("another key", func(t *testing.T) {
+		h := newHarness(t)
+		_, _, first := h.issueAgent("agt-1", orgID, true)
+		h.registeredEarlier(first)
+		h.agentsRestoredAround(time.Now())
 		certPEM, keyPEM, _ := h.issueAgent("agt-1", orgID, false)
 		refused(t, h, certPEM, keyPEM)
 	})
 	t.Run("revoked serial", func(t *testing.T) {
 		h := newHarness(t)
 		certPEM, keyPEM, serial := h.issueAgent("agt-1", orgID, true)
-		// The host renewed since: its row lives on under a newer serial,
-		// the presented one is revoked.
+		// The host renewed since: its row lives on under an older-dated
+		// serial for the same key, the presented one is revoked — only the
+		// revocation refuses it.
 		h.agents.mu.Lock()
 		h.agents.revoked[serial.String()] = true
 		h.agents.bySerial["4242"] = h.agents.bySerial[serial.String()]
+		live := h.agents.issued[serial.String()]
+		live.CertSerial, live.CertNotBefore = "4242", live.CertNotBefore.Add(-time.Hour)
+		h.agents.issued["4242"] = live
 		h.agents.mu.Unlock()
 		h.agentsRestoredAround(time.Now())
 		refused(t, h, certPEM, keyPEM)
@@ -611,6 +654,9 @@ func TestAuthRefusesAnAgentCertificateItCannotAdopt(t *testing.T) {
 		err := h.agentRenew(t, certPEM, keyPEM)
 		if status.Code(err) != codes.Internal || strings.Contains(status.Convert(err).Message(), "host_agents") {
 			t.Fatalf("adoption fault: %v, want a generic Internal", err)
+		}
+		if logs := h.logs.String(); !strings.Contains(logs, `msg="adopt agent certificate"`) || strings.Contains(logs, "look up agent certificate") {
+			t.Fatalf("logs = %q, want the fault logged as an adoption fault", logs)
 		}
 	})
 }

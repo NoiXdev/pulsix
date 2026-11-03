@@ -22,6 +22,7 @@ import (
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
+	"github.com/noixdev/pulsix/internal/restoremark"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -146,7 +147,7 @@ func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(worker
 }
 
 // RestoreWindow reports no restore: these tests never restore a backup.
-func (f *fakeWorkerStore) RestoreWindow(context.Context) (*workers.RestoreWindow, error) {
+func (f *fakeWorkerStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	return nil, nil
 }
 

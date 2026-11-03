@@ -12,12 +12,12 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/crypto"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/restoremark"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -68,20 +68,15 @@ func newAdoptWorld(t *testing.T) *adoptWorld {
 	return w
 }
 
-// writeMarker stores the restore marker the way backup.Restore does.
+// writeMarker stores the restore marker the way backup.Restore does
+// (the marker rules themselves are internal/restoremark's tests).
 func (w *adoptWorld) writeMarker(t *testing.T) {
 	t.Helper()
-	w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.backupAt, RestoredAt: w.restoredAt})
-}
-
-// writeRawMarker stores m as it is, whatever its fields hold.
-func (w *adoptWorld) writeRawMarker(t *testing.T, m backup.RestoreMarker) {
-	t.Helper()
-	value, err := json.Marshal(m)
+	value, err := json.Marshal(restoremark.Marker{BackupCreatedAt: w.backupAt, RestoredAt: w.restoredAt})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.q.UpsertInstanceSetting(ctx, gen.UpsertInstanceSettingParams{Key: backup.RestoreMarkerKey, Value: value}); err != nil {
+	if err := w.q.UpsertInstanceSetting(ctx, gen.UpsertInstanceSettingParams{Key: restoremark.Key, Value: value}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -193,18 +188,6 @@ func TestAdoptWorkerCertificateRefuses(t *testing.T) {
 			w.writeMarker(t)
 			return w.issue(t, w.org, w.zone, "fra-1", w.restoredAt)
 		}},
-		{"marker without a backup time", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
-			w.writeRawMarker(t, backup.RestoreMarker{RestoredAt: w.restoredAt})
-			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
-		}},
-		{"marker without a restore time", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
-			w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.backupAt})
-			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
-		}},
-		{"marker restored before its backup", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
-			w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.restoredAt, RestoredAt: w.backupAt})
-			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
-		}},
 		{"issued after the restore", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			return w.issue(t, w.org, w.zone, "fra-1", w.restoredAt.Add(time.Second))
@@ -294,10 +277,10 @@ func TestAdoptCertificateChecksTheWindowBeforeLocking(t *testing.T) {
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	id := &ca.ClientIdentity{Serial: big.NewInt(4242), Kind: ca.KindWorker, OrgID: &org, ZoneID: zone, WorkerName: "fra-1"}
-	window := &workers.RestoreWindow{BackupCreatedAt: now.Add(-2 * time.Hour), RestoredAt: now.Add(-time.Hour)}
+	window := &restoremark.Window{BackupCreatedAt: now.Add(-2 * time.Hour), RestoredAt: now.Add(-time.Hour)}
 	tests := []struct {
 		name      string
-		window    *workers.RestoreWindow
+		window    *restoremark.Window
 		notBefore time.Time
 	}{
 		{"no restore marker", nil, now.Add(-90 * time.Minute)},

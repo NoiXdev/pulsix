@@ -59,6 +59,9 @@ func TestRenewRoundTrip(t *testing.T) {
 	if row, err := h.agentSvc.GetBySerial(t.Context(), newCrt.SerialNumber.String()); err != nil || row.Revoked {
 		t.Fatalf("new serial live: %+v, %v", row, err)
 	}
+	if got := h.store.registeredKey(newCrt.SerialNumber.String()); got != agents.KeyFingerprint(newCrt) {
+		t.Fatalf("registered key = %q, want the renewed leaf's %q", got, agents.KeyFingerprint(newCrt))
+	}
 	if row, err := h.agentSvc.GetBySerial(t.Context(), oldSerial); err != nil || !row.Revoked {
 		t.Fatalf("old serial must be revoked after the swap: %+v, %v", row, err)
 	}

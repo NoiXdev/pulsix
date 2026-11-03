@@ -189,7 +189,7 @@ func IsEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 // user, an organization or a membership, which only something writing
 // during the restore can have put there, and it deletes every session
 // after the copy: a restore signs everybody out. It then records the restore
-// itself in the restore marker (see RestoreMarker), replacing any marker the
+// itself in the restore marker (see restoremark.Marker), replacing any marker the
 // backup carried.
 func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func() (io.ReadCloser, error), want Manifest) error {
 	rc, err := open()

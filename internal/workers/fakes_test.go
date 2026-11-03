@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/restoremark"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -25,7 +26,7 @@ type fakeStore struct {
 	enrollHashes map[uuid.UUID][]byte
 	// window is what RestoreWindow returns; adoptCalls counts
 	// AdoptCertificate calls.
-	window     *workers.RestoreWindow
+	window     *restoremark.Window
 	adoptCalls int
 }
 
@@ -159,7 +160,7 @@ func (f *fakeStore) DeleteEnrollment(_ context.Context, orgID, id uuid.UUID) err
 }
 
 // RestoreWindow returns the window the test set.
-func (f *fakeStore) RestoreWindow(context.Context) (*workers.RestoreWindow, error) {
+func (f *fakeStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	return f.window, nil
 }
 

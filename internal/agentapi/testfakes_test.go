@@ -31,6 +31,7 @@ import (
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
+	"github.com/noixdev/pulsix/internal/restoremark"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -242,7 +243,20 @@ func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
 	return nil
 }
 
-func (f *fakeAgentStore) RestoreWindow(context.Context) (*agents.RestoreWindow, error) {
+// registeredKey is the key fingerprint the registry recorded with serial's
+// certificate ("" when none, or serial is not the host's current one).
+func (f *fakeAgentStore) registeredKey(serial string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, a := range f.agentsR {
+		if a.CertSerial == serial {
+			return a.CertPublicKeySHA256
+		}
+	}
+	return ""
+}
+
+func (f *fakeAgentStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	return nil, nil
 }
 
@@ -629,7 +643,7 @@ func (s *stubWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID
 func (s *stubWorkerStore) Enroll(context.Context, uuid.UUID, func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
 	return workers.Worker{}, workers.ErrNotFound
 }
-func (s *stubWorkerStore) RestoreWindow(context.Context) (*workers.RestoreWindow, error) {
+func (s *stubWorkerStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	return nil, nil
 }
 func (s *stubWorkerStore) AdoptCertificate(context.Context, string, workers.Certificate, func(workers.AdoptionState) error) (workers.Worker, error) {

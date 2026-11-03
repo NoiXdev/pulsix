@@ -15,6 +15,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
+	"github.com/noixdev/pulsix/internal/restoremark"
 )
 
 var ctx = context.Background()
@@ -109,11 +110,11 @@ type fakeStore struct {
 	factsErr   error
 	// window is the restore marker RestoreWindow returns; adoptCalls
 	// counts the store-side adoptions the service asked for.
-	window     *agents.RestoreWindow
+	window     *restoremark.Window
 	adoptCalls int
 }
 
-func (f *fakeStore) RestoreWindow(context.Context) (*agents.RestoreWindow, error) {
+func (f *fakeStore) RestoreWindow(context.Context) (*restoremark.Window, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.window, nil

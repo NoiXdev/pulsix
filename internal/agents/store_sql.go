@@ -190,8 +190,9 @@ func (s *SQLStore) register(ctx context.Context, a Agent) error {
 	}
 	if err := s.q.InsertAgentCertificate(ctx, gen.InsertAgentCertificateParams{
 		Serial: a.CertSerial, OrgID: a.OrgID, HostID: a.HostID,
-		NotBefore: pgtype.Timestamptz{Time: a.CertNotBefore, Valid: !a.CertNotBefore.IsZero()},
-		NotAfter:  pgtype.Timestamptz{Time: notAfter, Valid: !notAfter.IsZero()},
+		NotBefore:       pgtype.Timestamptz{Time: a.CertNotBefore, Valid: !a.CertNotBefore.IsZero()},
+		NotAfter:        pgtype.Timestamptz{Time: notAfter, Valid: !notAfter.IsZero()},
+		PublicKeySha256: nullText(a.CertPublicKeySHA256),
 	}); err != nil {
 		return fmt.Errorf("insert agent certificate: %w", err)
 	}
