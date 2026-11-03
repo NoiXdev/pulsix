@@ -1325,6 +1325,63 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 	}
 }
 
+// TestRunHostLogsWhatBecomesOfAFailedHost: a host whose evaluation panics
+// or whose commit fails is postponed only while the batch's context is
+// live (evaluateOne); once it is done the host is left due, and the log
+// line must not claim otherwise.
+func TestRunHostLogsWhatBecomesOfAFailedHost(t *testing.T) {
+	cases := []struct {
+		name string
+		// fn runs inside the host's transaction.
+		fn func(cancel context.CancelFunc) error
+		// want is the log text that names the failure.
+		want string
+	}{
+		{"panic with a live context", func(context.CancelFunc) error { panic("a rule tree exploded") }, "evaluating a host panicked"},
+		{"panic after the batch was cut short", func(cancel context.CancelFunc) error {
+			cancel()
+			panic("a rule tree exploded")
+		}, "evaluating a host panicked"},
+		{"commit after the batch was cut short", func(cancel context.CancelFunc) error {
+			cancel()
+			return nil
+		}, "commit host transaction"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := testdb.Open(t)
+			org := seedOrg(t, d, "failed-host-log")
+			host := seedHost(t, d, org, "h")
+			log, buf := quietLogger()
+			store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), log)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			setCursor(t, d, org, host, 0, -time.Hour, -time.Minute)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if _, err := store.ProcessDue(ctx, now, 10, func(context.Context, rules.Due) error {
+				return tc.fn(cancel)
+			}); err != nil {
+				t.Fatalf("ProcessDue: %v", err)
+			}
+
+			out := buf.String()
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("the failure was not logged; log was %q", out)
+			}
+			if ctx.Err() != nil {
+				if !strings.Contains(out, "batch cut short; the host stays due for the next tick") || strings.Contains(out, "postponing") || strings.Contains(out, "held out") {
+					t.Fatalf("a host of a cut-short batch is not postponed, but the log says otherwise: %q", out)
+				}
+				return
+			}
+			if !strings.Contains(out, "held out of the claim for a while") {
+				t.Fatalf("a failed host of a live batch is postponed; log was %q", out)
+			}
+		})
+	}
+}
+
 // TestABatchCutShortKeepsWhatItCommitted is what the batch deadline
 // relies on (see rules.batchDeadlineFactor): when the batch's context ends
 // mid-pass, the hosts that already committed are kept — each one committed

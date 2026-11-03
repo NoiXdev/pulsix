@@ -269,7 +269,7 @@ func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx conte
 func (s *EvalSQLStore) runHost(ctx context.Context, d Due, fn func(ctx context.Context, d Due) error) (outcome hostOutcome) {
 	defer func() {
 		if r := recover(); r != nil {
-			s.log.ErrorContext(context.WithoutCancel(ctx), "evaluating a host panicked; postponing it",
+			s.log.ErrorContext(context.WithoutCancel(ctx), "evaluating a host panicked; "+failedHostNext(ctx),
 				"org", d.OrgID, "host", d.HostID, "panic", r, "stack", string(debug.Stack()))
 			outcome = hostFailed
 		}
@@ -317,7 +317,7 @@ func (s *EvalSQLStore) runHost(ctx context.Context, d Due, fn func(ctx context.C
 		return hostFailed
 	}
 	if err := tx.Commit(ctx); err != nil {
-		s.log.ErrorContext(ctx, "commit host transaction; postponing the host",
+		s.log.ErrorContext(ctx, "commit host transaction; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", err)
 		return hostFailed
 	}

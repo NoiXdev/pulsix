@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -219,5 +220,110 @@ func TestHandleResultsDropsOnlyTheChunkItCannotEncode(t *testing.T) {
 				t.Fatalf("buffer starts at %q, want the first result after what was sent or dropped", first)
 			}
 		})
+	}
+}
+
+// TestHandleResultsDropsResultsWithInvalidUTF8 (backlog 7.63): a result
+// whose check_key, item or metric is not valid UTF-8 is dropped before it
+// is buffered or sent, instead of poisoning the whole chunk it travels in;
+// the valid results around it go out (or are buffered) untouched.
+func TestHandleResultsDropsResultsWithInvalidUTF8(t *testing.T) {
+	at := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	mixed := func() []checks.Result {
+		rs := manyResults(5, at)
+		rs[0].CheckKey = "di\xffsk"
+		rs[2].Item = "/home/u/q\"\xffz"
+		rs[4].Metric = "disk.\xc3(used_pct"
+		return rs
+	}
+	wantItems := []string{"/m1", "/m3"}
+
+	t.Run("buffered while disconnected", func(t *testing.T) {
+		lt := newLoopTest(t)
+		lt.now = func() time.Time { return at }
+		l := lt.newLoop()
+
+		l.handleResults(mixed())
+
+		var got []string
+		for _, r := range l.buffer.Drain() {
+			got = append(got, r.Item)
+		}
+		if !slices.Equal(got, wantItems) {
+			t.Fatalf("buffered items = %q, want %q", got, wantItems)
+		}
+	})
+
+	t.Run("sent while connected", func(t *testing.T) {
+		lt := newLoopTest(t)
+		lt.now = func() time.Time { return at }
+		l := lt.newLoop()
+		stream := &chunkingStream{}
+		l.sender = newStreamSender(stream)
+
+		l.handleResults(mixed())
+
+		var got []string
+		for _, batch := range stream.batches() {
+			for _, r := range batch {
+				got = append(got, r.GetItem())
+			}
+		}
+		if !slices.Equal(got, wantItems) {
+			t.Fatalf("sent items = %q, want %q", got, wantItems)
+		}
+		if n := bufferLen(l); n != 0 {
+			t.Fatalf("buffer holds %d results after a successful send, want none", n)
+		}
+	})
+
+	t.Run("a batch of only invalid results sends nothing", func(t *testing.T) {
+		lt := newLoopTest(t)
+		l := lt.newLoop()
+		stream := &chunkingStream{}
+		l.sender = newStreamSender(stream)
+
+		l.handleResults([]checks.Result{{CheckKey: "\xff", Metric: "m", At: at}})
+
+		if b := stream.batches(); len(b) != 0 {
+			t.Fatalf("sent %d messages, want none", len(b))
+		}
+		if n := bufferLen(l); n != 0 {
+			t.Fatalf("buffer holds %d results, want none", n)
+		}
+	})
+}
+
+// TestHandleResultsWarnsAboutInvalidUTF8AtMostOncePerMinute: a check that
+// reads a mangled file name every few seconds must not fill the host's
+// journal; the warning repeats once the minute is over and says how many
+// results it covers.
+func TestHandleResultsWarnsAboutInvalidUTF8AtMostOncePerMinute(t *testing.T) {
+	lt := newLoopTest(t)
+	now := time.Date(2026, 11, 3, 9, 0, 0, 0, time.UTC)
+	lt.now = func() time.Time { return now }
+	l := lt.newLoop()
+	bad := func() []checks.Result {
+		return []checks.Result{
+			{CheckKey: "disk", Item: "/a\xff", Metric: "disk.used_pct", At: now},
+			{CheckKey: "disk", Item: "/ok", Metric: "disk.used_pct", At: now},
+		}
+	}
+	warnings := func() int { return strings.Count(lt.logOutput(), "not valid UTF-8") }
+
+	l.handleResults(bad())
+	now = now.Add(30 * time.Second)
+	l.handleResults(bad())
+	if n := warnings(); n != 1 {
+		t.Fatalf("warnings within one minute = %d, want 1; log was:\n%s", n, lt.logOutput())
+	}
+
+	now = now.Add(31 * time.Second)
+	l.handleResults(bad())
+	if n := warnings(); n != 2 {
+		t.Fatalf("warnings after the minute = %d, want 2; log was:\n%s", n, lt.logOutput())
+	}
+	if !strings.Contains(lt.logOutput(), "dropped=2") {
+		t.Fatalf("the second warning should count the two results dropped since the first; log was:\n%s", lt.logOutput())
 	}
 }

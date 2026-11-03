@@ -138,6 +138,9 @@ type Loop struct {
 	// and deactivateSender in session.go.
 	routeMu sync.Mutex
 	sender  *streamSender
+
+	// utf8Warn rate-limits handleResults' warning about dropped results.
+	utf8Warn invalidUTF8Warner
 }
 
 // LoopOption overrides injected dependencies for tests.

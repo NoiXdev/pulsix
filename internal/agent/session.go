@@ -370,6 +370,10 @@ func (l *Loop) deactivateSender(sender *streamSender) {
 // function called from the scheduler's own per-check goroutines, never
 // from the session's main select loop.
 func (l *Loop) handleResults(results []checks.Result) {
+	results = l.validUTF8Results(results)
+	if len(results) == 0 {
+		return
+	}
 	l.routeMu.Lock()
 	sender := l.sender
 	l.routeMu.Unlock()
