@@ -134,8 +134,9 @@ export function SetupWizardPage() {
       await navigate({ to: '/account/enrol' });
     } catch (err) {
       // A refused token belongs to the first step's field: go back there
-      // and say so next to it, rather than at the end of the wizard.
-      if (err instanceof ApiError && err.status === 403) {
+      // and say so next to it, rather than at the end of the wizard. Other
+      // 403s (the cross-origin guard) keep their own message.
+      if (err instanceof ApiError && err.status === 403 && err.message.includes('setup token')) {
         setStep('admin');
         adminForm.setError('setup_token', { message: t.setup.admin.tokenMismatch }, { shouldFocus: true });
         return;

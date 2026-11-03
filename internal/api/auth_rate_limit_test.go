@@ -404,3 +404,29 @@ func TestAuthRateLimitTripsOnSetupComplete(t *testing.T) {
 	}
 	expectTrips(t, s, hit)
 }
+
+// TestAuthRateLimitTripsOnWrongSetupToken: the budget is what bounds
+// guessing the setup token, so each wrong token answers 403 and is
+// charged until the address gets 429.
+func TestAuthRateLimitTripsOnWrongSetupToken(t *testing.T) {
+	s := limitedServer(t)
+	hit := func(xff string) int {
+		resp, err := postFrom(s.HTTP.URL+"/api/v1/setup/complete", xff, map[string]string{
+			"admin_email": "root@example.test", "admin_name": "Root", "admin_password": "correct horse battery staple",
+			"org_slug": "acme", "org_name": "Acme", "setup_token": "AAAA-AAAA-AAAA-AAAA",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		switch resp.StatusCode {
+		case http.StatusTooManyRequests:
+			retryAfterOf(t, resp)
+		case http.StatusForbidden:
+		default:
+			t.Fatalf("wrong setup token = %d, want 403 or 429", resp.StatusCode)
+		}
+		return resp.StatusCode
+	}
+	expectTrips(t, s, hit)
+}

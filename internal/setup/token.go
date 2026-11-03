@@ -43,13 +43,17 @@ func Link(publicURL, token string) string {
 }
 
 // normalizeToken drops what a person may add or lose copying a token —
-// spaces and dashes — and folds the case, base32 being case-insensitive.
+// spaces and dashes — and folds ASCII case, base32 being case-insensitive.
+// Only a–z fold: unicode.ToUpper would also map ſ and ı onto S and I.
 func normalizeToken(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '-' || unicode.IsSpace(r) {
+		switch {
+		case r == '-' || unicode.IsSpace(r):
 			return -1
+		case 'a' <= r && r <= 'z':
+			return r - 'a' + 'A'
 		}
-		return unicode.ToUpper(r)
+		return r
 	}, s)
 }
 

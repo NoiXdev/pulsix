@@ -311,6 +311,23 @@ describe('the setup token', () => {
     expect(screen.getByRole('heading', { name: 'Create the instance administrator' })).toBeInTheDocument();
   });
 
+  it('leaves another 403 as the request error, not a token mismatch', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/setup/status': { completed: false },
+      'POST /api/v1/setup/complete': () =>
+        new Response(JSON.stringify({ detail: 'cross-origin request refused' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    });
+    renderWizard({ path: '/setup?token=H2MA-EG3P-ZM6H-4K44' });
+    await screen.findByLabelText('Setup token');
+    await walkToCreate(user);
+    expect(await screen.findByText('cross-origin request refused')).toBeInTheDocument();
+    expect(screen.queryByText(/This setup token does not match/)).not.toBeInTheDocument();
+  });
+
   it('shows a refused token in German too', async () => {
     vi.spyOn(navigator, 'language', 'get').mockReturnValue('de-DE');
     const user = userEvent.setup();

@@ -67,6 +67,8 @@ func TestCompleteRefusesAMissingOrWrongToken(t *testing.T) {
 		"truncated":     testToken[:len(testToken)-1],
 		"only dashes":   "----",
 		"right + extra": testToken + "A",
+		// The zero key's token has an I and an S; only ASCII folds.
+		"non-ASCII fold": strings.NewReplacer("I", "ı", "S", "ſ").Replace(testToken),
 	} {
 		t.Run(name, func(t *testing.T) {
 			st := newFakeSetupStore()
