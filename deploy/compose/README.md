@@ -85,7 +85,9 @@ What v0.2 offers for workers today:
 - Zones are created per organization in the web interface; every
   organization starts with a `default` zone.
 - The Workers page (owners and admins) lists every worker and revokes
-  or deletes it. A revoked worker's certificate stops working at once.
+  or deletes it. A revoked worker's certificate stops working at once
+  (restoring a backup taken before the revocation brings it back; see
+  "Restoring").
 
 A worker only ever claims jobs of the one zone of the one organization it
 was enrolled for.
@@ -188,7 +190,8 @@ certificate bundle:
    the worker's identity lives in the named volume, and the token is
    ignored on every later start. To re-enroll, remove the volume and use a
    new token from the Workers page.
-4. Revoking the worker on the Workers page cuts it off at once.
+4. Revoking the worker on the Workers page cuts it off at once, until a
+   backup taken before the revocation is restored (see "Restoring").
 
 `PULSIX_MANAGER_SERVER_NAME` is required whenever the address you dial is
 not the manager's `PULSIX_GRPC_SERVER_NAME` itself: the endpoint's
@@ -321,7 +324,7 @@ as secret as the master key.
 ### Restoring
 
 Restore needs the manager stopped; it refuses while one is connected to
-the database.
+the database, and checks again right before it clears the database.
 
 ```bash
 docker compose run --rm cli restore --list    # name, time, kind, version, size
@@ -369,6 +372,14 @@ enroll it again from that page. The bundled `worker` is the exception:
 `worker-enroll` enrolls it again by itself, and the running worker picks
 up the new bundle without being recreated. A backup from an older Pulsix
 is migrated to the current version as part of the restore.
+
+A restore ends every browser session: everyone signs in again. Everything
+else that grants access is as it was when the backup was taken: API
+tokens, worker and agent certificates, organization memberships and
+disabled users. A token or certificate revoked, a member removed or a user
+disabled after the backup is valid again. After a restore, check the API
+tokens, members, users, workers and agents, and revoke, remove or disable
+again what should stay so.
 
 ### Moving to a new server
 

@@ -64,11 +64,19 @@ func (o RestoreOptions) Validate() error {
 // restoreNextStep closes a successful restore. The manager accepts only
 // certificate serials the database knows, so an agent or worker that
 // renewed its certificate after the backup was taken is locked out until
-// it is enrolled again (final review I1; backlog 7.47).
+// it is enrolled again (final review I1; backlog 7.47). The restore ends
+// every browser session, and every other credential and access decision
+// is back at the backup's state, so whatever was revoked since is valid
+// again until it is revoked anew (backlog 7.54).
 const restoreNextStep = "Start the stack. Workers and agents reconnect on their own, unless they renewed their certificate\n" +
 	"after this backup was taken (certificates renew about every 60 days): those show as offline on the Agents\n" +
 	"and Workers pages, their logs say to enroll anew, and they must be enrolled again. The bundled compose\n" +
-	"worker re-enrolls itself.\n"
+	"worker re-enrolls itself.\n" +
+	"Everyone must sign in again: the restore ended every browser session.\n" +
+	"API tokens, worker and agent certificates, memberships and disabled users\n" +
+	"are as they were when the backup was taken: whatever was revoked, removed or disabled after that is\n" +
+	"valid again. Check the API tokens, members, users, workers and agents, and revoke, remove or disable\n" +
+	"it once more.\n"
 
 // RunRestore implements `restore`. It refuses while a manager is connected
 // to the database and, on a database that is not empty, without --replace
@@ -96,10 +104,11 @@ func RunRestore(ctx context.Context, cfg config.Config, opts RestoreOptions, std
 		return err
 	}
 	defer d.Close()
-	if n, err := ManagersConnected(ctx, d.Pool()); err != nil {
+	// Checked now, so a running manager is named before any question is
+	// asked, and again right before the wipe.
+	noManager := noManagerConnected(d.Pool())
+	if err := noManager(ctx); err != nil {
 		return err
-	} else if n > 0 {
-		return errors.New("a manager is connected to this database: stop the manager first (docker compose down stops the stack and keeps its volumes), then run restore again")
 	}
 	empty, err := backup.IsEmpty(ctx, d.Pool())
 	if err != nil {
@@ -119,7 +128,9 @@ func RunRestore(ctx context.Context, cfg config.Config, opts RestoreOptions, std
 	if err != nil {
 		return err
 	}
-	m, err := backup.Restore(ctx, d, cfg.MasterKey, open, backup.RestoreOptions{Replace: replace, BinarySchemaVersion: latest})
+	m, err := backup.Restore(ctx, d, cfg.MasterKey, open, backup.RestoreOptions{
+		Replace: replace, BinarySchemaVersion: latest, BeforeWipe: noManager,
+	})
 	if err != nil {
 		return explainRestore(err, label, from, m)
 	}
@@ -231,6 +242,8 @@ func explainRestore(err error, label, from string, m backup.Manifest) error {
 		msg = fmt.Sprintf("there is no backup named %q in %s; see restore --list --from %s", label, from, from)
 	case errors.Is(err, backup.ErrNotEmpty):
 		return errNotEmpty
+	case errors.Is(err, errManagerConnected):
+		msg = errManagerConnected.Error() + unchanged
 	case errors.Is(err, backup.ErrBackupTooNew):
 		msg = err.Error() + unchanged
 	default:

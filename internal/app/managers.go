@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,4 +31,24 @@ func ManagersConnected(ctx context.Context, pool *pgxpool.Pool) (int, error) {
 		return 0, fmt.Errorf("look for running managers: %w", err)
 	}
 	return n, nil
+}
+
+// errManagerConnected refuses a restore while a manager uses the database.
+var errManagerConnected = errors.New("a manager is connected to this database: stop the manager first (docker compose down stops the stack and keeps its volumes), then run restore again")
+
+// noManagerConnected returns a check that fails with errManagerConnected
+// while a manager holds a session on pool's database. restore runs it when
+// it starts and, as backup.RestoreOptions.BeforeWipe, right before the wipe,
+// for a manager started while the backup was being verified.
+func noManagerConnected(pool *pgxpool.Pool) func(context.Context) error {
+	return func(ctx context.Context) error {
+		n, err := ManagersConnected(ctx, pool)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return errManagerConnected
+		}
+		return nil
+	}
 }

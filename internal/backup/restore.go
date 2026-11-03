@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -37,6 +38,11 @@ type RestoreOptions struct {
 	Replace bool
 	// BinarySchemaVersion is the newest migration this binary carries.
 	BinarySchemaVersion int64
+	// BeforeWipe, when set, runs after every check and right before the
+	// wipe; its error stops the restore with the database unchanged. The
+	// restore command rechecks there that no manager has connected since
+	// it started.
+	BeforeWipe func(ctx context.Context) error
 
 	// afterMigrate runs between MigrateTo and the load; tests only.
 	afterMigrate func(*pgxpool.Pool) error
@@ -52,10 +58,11 @@ type RestoreOptions struct {
 // manifest header, never the plaintext one.
 //
 // After the checks (Verify, not empty unless Replace, not newer than the
-// binary) Restore drops public's objects, migrates up to the backup's schema
-// version, loads every table in one transaction and then runs the remaining
-// migrations, exactly as a manager start would. d must connect as the
-// schema owner; no superuser right is needed.
+// binary, BeforeWipe) Restore drops public's objects, migrates up to the
+// backup's schema version, loads every table in one transaction and then
+// runs the remaining migrations, exactly as a manager start would. The
+// load ends every session the backup holds. d must connect as the schema
+// owner; no superuser right is needed.
 //
 // A failure before the wipe leaves the database as it was. A failure after
 // it wraps ErrRestoreIncomplete (and ErrNotMigrated once the rows are in)
@@ -75,6 +82,11 @@ func Restore(ctx context.Context, d *db.DB, masterKey [32]byte, open func() (io.
 	if m.Header.SchemaVersion > opts.BinarySchemaVersion {
 		return Manifest{}, fmt.Errorf("%w: this backup is from Pulsix %s (schema %d, this binary knows %d); run restore with Pulsix %s or newer",
 			ErrBackupTooNew, m.Header.PulsixVersion, m.Header.SchemaVersion, opts.BinarySchemaVersion, m.Header.PulsixVersion)
+	}
+	if opts.BeforeWipe != nil {
+		if err := opts.BeforeWipe(ctx); err != nil {
+			return Manifest{}, fmt.Errorf("restore: %w", err)
+		}
 	}
 
 	if err := wipe(ctx, d.Pool()); err != nil {
@@ -166,6 +178,11 @@ func IsEmpty(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
 // (superuser only). The second read of the file is authenticated as well:
 // the transaction commits only after the stream was read to its end and its
 // manifest matched the verified one.
+//
+// The load refuses to start when the freshly migrated schema already has a
+// user, an organization or a membership, which only something writing
+// during the restore can have put there, and it deletes every session
+// after the copy: a restore signs everybody out.
 func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func() (io.ReadCloser, error), want Manifest) error {
 	rc, err := open()
 	if err != nil {
@@ -210,6 +227,9 @@ func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func
 		}
 	}
 
+	if err := refuseNonEmptyCore(ctx, tx, tables); err != nil {
+		return err
+	}
 	if err := copyTables(ctx, tx, fr, tables, want); err != nil {
 		return err
 	}
@@ -218,6 +238,12 @@ func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func
 		if _, err := tx.Exec(ctx, "ALTER TABLE "+qualified(fk.table)+" ADD CONSTRAINT "+pgx.Identifier{fk.name}.Sanitize()+" "+fk.definition); err != nil {
 			return fmt.Errorf("load: re-add foreign key %s on %s: %w", fk.name, fk.table, err)
 		}
+	}
+	// After the foreign keys are back, so a table that ever references
+	// sessions cascades or refuses as it would anywhere else; before FORCE
+	// is, so no policy hides a row from the delete.
+	if err := endSessions(ctx, tx, tables); err != nil {
+		return err
 	}
 	for _, name := range forced {
 		if _, err := tx.Exec(ctx, "ALTER TABLE "+qualified(name)+" FORCE ROW LEVEL SECURITY"); err != nil {
@@ -243,6 +269,53 @@ func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func
 		return fmt.Errorf("load: commit: %w", err)
 	}
 	return nil
+}
+
+// coreTables are the tables a freshly migrated schema leaves empty and
+// IsEmpty looks at, plus the memberships that join them.
+var coreTables = []string{"users", "organizations", "org_memberships"}
+
+// refuseNonEmptyCore fails when one of coreTables has a row before the
+// load. The tables are locked against writers until the load commits, so
+// nothing can slip in between the check and the copy.
+func refuseNonEmptyCore(ctx context.Context, tx pgx.Tx, tables []tableInfo) error {
+	var present, quoted []string
+	for _, name := range coreTables {
+		if hasTable(tables, name) {
+			present, quoted = append(present, name), append(quoted, qualified(name))
+		}
+	}
+	if len(present) == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, "LOCK TABLE "+strings.Join(quoted, ", ")+" IN SHARE MODE"); err != nil {
+		return fmt.Errorf("load: lock %s: %w", strings.Join(present, ", "), err)
+	}
+	for _, name := range present {
+		var found bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM "+qualified(name)+")").Scan(&found); err != nil {
+			return fmt.Errorf("load: look into %s: %w", name, err)
+		}
+		if found {
+			return fmt.Errorf("load: %s has rows before the load: something else wrote to the database during the restore (is a manager running?)", name)
+		}
+	}
+	return nil
+}
+
+// endSessions deletes every browser session the backup brought along.
+func endSessions(ctx context.Context, tx pgx.Tx, tables []tableInfo) error {
+	if !hasTable(tables, "sessions") {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, "DELETE FROM "+qualified("sessions")); err != nil {
+		return fmt.Errorf("load: end the restored sessions: %w", err)
+	}
+	return nil
+}
+
+func hasTable(tables []tableInfo, name string) bool {
+	return slices.ContainsFunc(tables, func(t tableInfo) bool { return t.name == name })
 }
 
 // copyTables streams every table of fr into its target table and checks each

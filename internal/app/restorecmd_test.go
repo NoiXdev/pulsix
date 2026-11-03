@@ -165,3 +165,22 @@ func TestPrintable(t *testing.T) {
 		}
 	}
 }
+
+// TestRestoreNextStepSaysWhatIsAtTheBackupsState: a restore ends every
+// browser session, and everything security-relevant is as it was when the
+// backup was taken (backlog 7.54).
+func TestRestoreNextStepSaysWhatIsAtTheBackupsState(t *testing.T) {
+	var out bytes.Buffer
+	if err := printRestored(&out, "x.pxbak", backup.Manifest{Header: backup.Header{Kind: "manual", PulsixVersion: "1.2.3"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"renewed their certificate", "enrolled again",
+		"sign in again", "API tokens", "worker and agent certificates", "memberships", "disabled users", "as they were when the backup was taken",
+		"revoke",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("restore output lacks %q:\n%s", want, out.String())
+		}
+	}
+}

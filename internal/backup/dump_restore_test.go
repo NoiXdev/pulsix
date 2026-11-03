@@ -123,6 +123,20 @@ func exec(t *testing.T, pool *pgxpool.Pool, sql string) {
 	}
 }
 
+// endedByRestore are the tables a restore empties on purpose: it signs
+// everybody out (TestRestoreEndsAllSessions).
+var endedByRestore = map[string]bool{"sessions": true}
+
+// restoredDigest is the digest table should have after restoring a backup
+// of pool: the source's, or empty for a table the restore ends.
+func restoredDigest(t *testing.T, pool *pgxpool.Pool, table string) string {
+	t.Helper()
+	if endedByRestore[table] {
+		return "<empty>"
+	}
+	return tableDigest(t, pool, table)
+}
+
 func TestRoundTripRestoresEveryRow(t *testing.T) {
 	src := sourceDB(t)
 	fillEveryTable(t, src.Pool())
@@ -142,7 +156,7 @@ func TestRoundTripRestoresEveryRow(t *testing.T) {
 		t.Fatalf("target tables %v, want %v", got, tables)
 	}
 	for _, name := range tables {
-		if got, want := tableDigest(t, target.Pool(), name), tableDigest(t, src.Pool(), name); got != want {
+		if got, want := tableDigest(t, target.Pool(), name), restoredDigest(t, src.Pool(), name); got != want {
 			t.Errorf("%s: restored rows differ from the source (digest %s, want %s)", name, got, want)
 		}
 	}
@@ -223,7 +237,7 @@ func TestDumpWithoutMetricsLeavesCheckSamplesEmpty(t *testing.T) {
 	}
 	for _, name := range publicTables(t, src.Pool()) {
 		got, want := rowCount(t, target.Pool(), name), rowCount(t, src.Pool(), name)
-		if name == "check_samples" {
+		if name == "check_samples" || endedByRestore[name] {
 			want = 0
 		}
 		if got != want {

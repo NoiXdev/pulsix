@@ -5,6 +5,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -386,5 +388,41 @@ func TestManagersConnectedCountsOnlyManagersOfThisDatabase(t *testing.T) {
 	defer manager.Close()
 	if n, err := ManagersConnected(ctx, cli.Pool()); err != nil || n < 1 {
 		t.Fatalf("ManagersConnected with a manager = %d, %v", n, err)
+	}
+}
+
+// TestRestoreRechecksForManagersBeforeTheWipe: the check RunRestore hands
+// backup.Restore as BeforeWipe refuses once a manager has connected, even
+// though none was there when the command started.
+func TestRestoreRechecksForManagersBeforeTheWipe(t *testing.T) {
+	ctx := context.Background()
+	url := testdb.FreshDatabase(t)
+	cli, err := db.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cli.Close()
+	check := noManagerConnected(cli.Pool())
+	if err := check(ctx); err != nil {
+		t.Fatalf("check without a manager: %v", err)
+	}
+	managerURL, err := db.WithApplicationName(url, "pulsix-manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := db.Open(ctx, managerURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err := manager.Pool().Ping(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := check(ctx); !errors.Is(err, errManagerConnected) {
+		t.Fatalf("check with a manager connected: %v, want errManagerConnected", err)
+	}
+	got := explainRestore(fmt.Errorf("restore: %w", errManagerConnected), "x", "/b", backup.Manifest{})
+	if !strings.Contains(got.Error(), "stop the manager first") || !strings.Contains(got.Error(), "not changed") {
+		t.Errorf("explained %q, want stop the manager first and that nothing changed", got)
 	}
 }
