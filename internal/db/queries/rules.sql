@@ -144,8 +144,14 @@ ON CONFLICT (host_id) DO UPDATE SET dirty_at = excluded.dirty_at;
 -- (check_eval_cursor_due_idx serves it), and the LIMIT bounds one tick — a
 -- manager that has fallen behind catches up over several ticks instead of
 -- in one pass long enough to matter to everything else sharing the pool.
+--
+-- retry_after (backlog 7.58) keeps a host whose last evaluation failed out
+-- of the claim until it passes, dirty or not: a host that fails every time
+-- stays dirty for ever, and without it would take a slot — and up to the
+-- statement timeout — in every batch ahead of healthy hosts.
 SELECT org_id, host_id FROM check_eval_cursor
-WHERE dirty_at > evaluated_at OR next_due_at <= now()
+WHERE (dirty_at > evaluated_at OR next_due_at <= now())
+  AND (retry_after IS NULL OR retry_after <= now())
 ORDER BY next_due_at
 LIMIT sqlc.arg(lim)
 FOR UPDATE SKIP LOCKED;
@@ -173,10 +179,12 @@ FOR UPDATE SKIP LOCKED;
 -- the same reason — a host another manager has finished evaluating in the
 -- meantime is no longer due, and re-evaluating it would be wasted work.
 -- Both cases return no row, which the caller reads as "skip, not an
--- error".
+-- error". retry_after is repeated too: a host another manager failed and
+-- held back between the scan and now must not be evaluated here anyway.
 SELECT org_id, host_id FROM check_eval_cursor
 WHERE host_id = sqlc.arg(host_id)
   AND (dirty_at > evaluated_at OR next_due_at <= now())
+  AND (retry_after IS NULL OR retry_after <= now())
 FOR UPDATE SKIP LOCKED;
 
 -- name: AdvanceEvalCursor :exec
@@ -207,24 +215,23 @@ FOR UPDATE SKIP LOCKED;
 -- a ripening candidate's own for_duration may be. In practice a host being
 -- ingested for is a host ingesting again shortly, which is the short half
 -- of that minimum.
+--
+-- retry_after is cleared here: an evaluation that committed ends whatever
+-- hold an earlier failure put on the host (PostponeEvalCursor).
 UPDATE check_eval_cursor
-SET evaluated_at = now(), next_due_at = sqlc.arg(next_due_at)
+SET evaluated_at = now(), next_due_at = sqlc.arg(next_due_at), retry_after = NULL
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
 
 -- name: PostponeEvalCursor :exec
--- Backlog 7.58: push back the next_due_at of a host whose own evaluation
--- just failed. It runs on the pool AFTER that host's transaction rolled
--- back — inside it, the rollback would undo it. Without it a failed host
--- kept its old next_due_at, and since ClaimDueEvalCursors orders by that
--- column, a host that fails every time (a statement timeout on every try)
--- headed every batch and spent the batch's deadline before any healthy
--- host was reached. Only next_due_at moves: dirty_at and evaluated_at stay
--- as they are, so a dirty host is still dirty and is still retried on the
--- next tick — after the hosts that are due ahead of it, not before them.
--- The delay is relative to the database's now(), like every other moment
--- the claim compares (backlog 2.80).
+-- Backlog 7.58: hold a host whose own evaluation just failed out of the
+-- claim (see retry_after in ClaimDueEvalCursors and migration 00076). It
+-- runs on the pool AFTER that host's transaction rolled back — inside it,
+-- the rollback would undo it. next_due_at and dirty_at are left as they
+-- are: once retry_after passes, the host is exactly as due as it was and
+-- is retried. The delay is relative to the database's now(), like every
+-- other moment the claim compares (backlog 2.80).
 UPDATE check_eval_cursor
-SET next_due_at = now() + make_interval(secs => sqlc.arg(backoff_seconds)::double precision)
+SET retry_after = now() + make_interval(secs => sqlc.arg(backoff_seconds)::double precision)
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
 
 -- name: GetHostFacts :one

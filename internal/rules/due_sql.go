@@ -37,9 +37,12 @@ import (
 // whole host, which is enough — the window statement is the one whose cost
 // an operator's rule controls.
 //
-// failedHostBackoff is how far a host whose own evaluation failed is
-// pushed back (PostponeEvalCursor), so the next claim reaches the hosts
-// due ahead of it first.
+// failedHostBackoff is how long a host whose own evaluation failed is
+// held out of the claim (PostponeEvalCursor sets its retry_after), so the
+// hosts behind it get their turn. Moving its next_due_at instead would not
+// do it: the host stays dirty, and a healthy dirty host's next_due_at is
+// its staleness deadline minutes ahead, so the failed one would still sort
+// first.
 const (
 	hostStatementTimeout = 10 * time.Second
 	failedHostBackoff    = 60 * time.Second
@@ -154,10 +157,11 @@ var errNoClaimTx = errors.New("rules: apply evaluation outside a claimed host's 
 // managers with skewed clocks still agree on which hosts are due.
 //
 // The returned count is the number of hosts fn returned nil for. A host
-// fn failed is rolled back entirely and only its next_due_at moves, by
-// failedHostBackoff (see evaluateOne) — it stays dirty if it was dirty, so
-// the next tick still retries it, the same at-least-once guarantee a failed
-// commit already gives, just no longer ahead of every healthy host.
+// fn failed is rolled back entirely and held out of the claim for
+// failedHostBackoff (see evaluateOne); its dirty_at and next_due_at are
+// untouched, so once the hold passes it is retried — the same
+// at-least-once guarantee a failed commit already gives, just no longer
+// ahead of every healthy host.
 func (s *EvalSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int, fn func(ctx context.Context, d Due) error) (int, error) {
 	due, err := s.claimDue(ctx, limit)
 	if err != nil {
@@ -224,10 +228,10 @@ const (
 )
 
 // evaluateOne evaluates one host (runHost) and reports whether it
-// committed. A host whose own evaluation failed is postponed by
-// failedHostBackoff on the pool, after its transaction has rolled back —
+// committed. A host whose own evaluation failed is held out of the claim
+// for failedHostBackoff, on the pool, after its transaction has rolled back —
 // inside it the rollback would undo the postponement — so a host that
-// fails every time stops heading every claim (backlog 7.58).
+// fails every time stops taking a slot in every claim (backlog 7.58).
 //
 // A failure while the batch's own context is done is not the host's
 // failure: the deadline fired or the manager is shutting down, and
@@ -240,7 +244,7 @@ func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx conte
 		if err := gen.New(s.d.Pool()).PostponeEvalCursor(ctx, gen.PostponeEvalCursorParams{
 			OrgID: d.OrgID, HostID: d.HostID, BackoffSeconds: failedHostBackoff.Seconds(),
 		}); err != nil {
-			s.log.ErrorContext(ctx, "postpone a failed host; it stays at its place in the claim",
+			s.log.ErrorContext(ctx, "postpone a failed host; the next claim may take it again",
 				"org", d.OrgID, "host", d.HostID, "err", err)
 		}
 	}

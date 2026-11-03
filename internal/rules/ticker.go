@@ -111,8 +111,8 @@ type HostLoad struct {
 // ProcessDue hands it, and the SQL implementation runs them inside that
 // host's own transaction — so a host's reads and its write-back are one
 // atomic unit, and a failure anywhere in it writes none of it: the host
-// is retried, only its next_due_at pushed back so it no longer heads the
-// claim (backlog 7.58). "Its own transaction" is literal, not a savepoint
+// is retried, only held out of the claim for a while so it cannot take a
+// slot in every batch (backlog 7.58). "Its own transaction" is literal, not a savepoint
 // in a batch-wide one: the cursor row lock it holds is the same lock the
 // ingest path takes, so its lifetime is one host's evaluation and no
 // longer (see EvalSQLStore.ProcessDue).
@@ -120,11 +120,11 @@ type EvalStore interface {
 	// ProcessDue lists up to limit cursors that are dirty or due and runs
 	// fn for each inside a transaction of its own, holding that one
 	// cursor's row lock for exactly as long as that host's evaluation.
-	// fn's error rolls that host back and only postpones its next_due_at
-	// (a dirty host stays dirty, so it is still retried); the other hosts
-	// are unaffected, and a batch whose ctx is done postpones nothing. A
-	// host another manager took between the listing and its own claim is
-	// skipped silently. It returns the number of hosts fn returned nil for
+	// fn's error rolls that host back and holds it out of the claim for a
+	// while (its cursor is otherwise untouched, so it is retried); the
+	// other hosts are unaffected, and a batch whose ctx is done postpones
+	// nothing. A host another manager took between the listing and its own
+	// claim is skipped silently. It returns the number of hosts fn returned nil for
 	// — the hosts actually evaluated, not the hosts listed.
 	ProcessDue(ctx context.Context, now time.Time, limit int, fn func(ctx context.Context, d Due) error) (int, error)
 	// Load gathers one host's inputs: its tuples with the intervals that

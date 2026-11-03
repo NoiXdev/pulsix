@@ -272,11 +272,12 @@ type CheckDefinition struct {
 }
 
 type CheckEvalCursor struct {
-	OrgID       uuid.UUID `json:"org_id"`
-	HostID      uuid.UUID `json:"host_id"`
-	DirtyAt     time.Time `json:"dirty_at"`
-	EvaluatedAt time.Time `json:"evaluated_at"`
-	NextDueAt   time.Time `json:"next_due_at"`
+	OrgID       uuid.UUID          `json:"org_id"`
+	HostID      uuid.UUID          `json:"host_id"`
+	DirtyAt     time.Time          `json:"dirty_at"`
+	EvaluatedAt time.Time          `json:"evaluated_at"`
+	NextDueAt   time.Time          `json:"next_due_at"`
+	RetryAfter  pgtype.Timestamptz `json:"retry_after"`
 }
 
 type CheckHostState struct {

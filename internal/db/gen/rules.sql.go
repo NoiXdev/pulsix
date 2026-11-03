@@ -15,7 +15,7 @@ import (
 
 const advanceEvalCursor = `-- name: AdvanceEvalCursor :exec
 UPDATE check_eval_cursor
-SET evaluated_at = now(), next_due_at = $1
+SET evaluated_at = now(), next_due_at = $1, retry_after = NULL
 WHERE org_id = $2 AND host_id = $3
 `
 
@@ -52,6 +52,9 @@ type AdvanceEvalCursorParams struct {
 // a ripening candidate's own for_duration may be. In practice a host being
 // ingested for is a host ingesting again shortly, which is the short half
 // of that minimum.
+//
+// retry_after is cleared here: an evaluation that committed ends whatever
+// hold an earlier failure put on the host (PostponeEvalCursor).
 func (q *Queries) AdvanceEvalCursor(ctx context.Context, arg AdvanceEvalCursorParams) error {
 	_, err := q.db.Exec(ctx, advanceEvalCursor, arg.NextDueAt, arg.OrgID, arg.HostID)
 	return err
@@ -59,7 +62,8 @@ func (q *Queries) AdvanceEvalCursor(ctx context.Context, arg AdvanceEvalCursorPa
 
 const claimDueEvalCursors = `-- name: ClaimDueEvalCursors :many
 SELECT org_id, host_id FROM check_eval_cursor
-WHERE dirty_at > evaluated_at OR next_due_at <= now()
+WHERE (dirty_at > evaluated_at OR next_due_at <= now())
+  AND (retry_after IS NULL OR retry_after <= now())
 ORDER BY next_due_at
 LIMIT $1
 FOR UPDATE SKIP LOCKED
@@ -104,6 +108,11 @@ type ClaimDueEvalCursorsRow struct {
 // (check_eval_cursor_due_idx serves it), and the LIMIT bounds one tick — a
 // manager that has fallen behind catches up over several ticks instead of
 // in one pass long enough to matter to everything else sharing the pool.
+//
+// retry_after (backlog 7.58) keeps a host whose last evaluation failed out
+// of the claim until it passes, dirty or not: a host that fails every time
+// stays dirty for ever, and without it would take a slot — and up to the
+// statement timeout — in every batch ahead of healthy hosts.
 func (q *Queries) ClaimDueEvalCursors(ctx context.Context, lim int32) ([]ClaimDueEvalCursorsRow, error) {
 	rows, err := q.db.Query(ctx, claimDueEvalCursors, lim)
 	if err != nil {
@@ -614,6 +623,7 @@ const lockOneEvalCursor = `-- name: LockOneEvalCursor :one
 SELECT org_id, host_id FROM check_eval_cursor
 WHERE host_id = $1
   AND (dirty_at > evaluated_at OR next_due_at <= now())
+  AND (retry_after IS NULL OR retry_after <= now())
 FOR UPDATE SKIP LOCKED
 `
 
@@ -644,7 +654,8 @@ type LockOneEvalCursorRow struct {
 // the same reason — a host another manager has finished evaluating in the
 // meantime is no longer due, and re-evaluating it would be wasted work.
 // Both cases return no row, which the caller reads as "skip, not an
-// error".
+// error". retry_after is repeated too: a host another manager failed and
+// held back between the scan and now must not be evaluated here anyway.
 func (q *Queries) LockOneEvalCursor(ctx context.Context, hostID uuid.UUID) (LockOneEvalCursorRow, error) {
 	row := q.db.QueryRow(ctx, lockOneEvalCursor, hostID)
 	var i LockOneEvalCursorRow
@@ -713,7 +724,7 @@ func (q *Queries) MarkHostsDirty(ctx context.Context, arg MarkHostsDirtyParams) 
 
 const postponeEvalCursor = `-- name: PostponeEvalCursor :exec
 UPDATE check_eval_cursor
-SET next_due_at = now() + make_interval(secs => $1::double precision)
+SET retry_after = now() + make_interval(secs => $1::double precision)
 WHERE org_id = $2 AND host_id = $3
 `
 
@@ -723,17 +734,13 @@ type PostponeEvalCursorParams struct {
 	HostID         uuid.UUID `json:"host_id"`
 }
 
-// Backlog 7.58: push back the next_due_at of a host whose own evaluation
-// just failed. It runs on the pool AFTER that host's transaction rolled
-// back — inside it, the rollback would undo it. Without it a failed host
-// kept its old next_due_at, and since ClaimDueEvalCursors orders by that
-// column, a host that fails every time (a statement timeout on every try)
-// headed every batch and spent the batch's deadline before any healthy
-// host was reached. Only next_due_at moves: dirty_at and evaluated_at stay
-// as they are, so a dirty host is still dirty and is still retried on the
-// next tick — after the hosts that are due ahead of it, not before them.
-// The delay is relative to the database's now(), like every other moment
-// the claim compares (backlog 2.80).
+// Backlog 7.58: hold a host whose own evaluation just failed out of the
+// claim (see retry_after in ClaimDueEvalCursors and migration 00076). It
+// runs on the pool AFTER that host's transaction rolled back — inside it,
+// the rollback would undo it. next_due_at and dirty_at are left as they
+// are: once retry_after passes, the host is exactly as due as it was and
+// is retried. The delay is relative to the database's now(), like every
+// other moment the claim compares (backlog 2.80).
 func (q *Queries) PostponeEvalCursor(ctx context.Context, arg PostponeEvalCursorParams) error {
 	_, err := q.db.Exec(ctx, postponeEvalCursor, arg.BackoffSeconds, arg.OrgID, arg.HostID)
 	return err

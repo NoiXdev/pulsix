@@ -1383,8 +1383,8 @@ func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 		// Not postponed either (backlog 7.58): the in-flight host failed
 		// because the batch was cut short, not because of anything about
 		// the host, so it keeps its place at the head of the next claim.
-		if countRows(t, d, `SELECT count(*) FROM check_eval_cursor WHERE host_id = $1 AND next_due_at <= now()`, host) != 1 {
-			t.Fatalf("the %s host's next_due_at moved into the future; a cancelled batch must not postpone it", name)
+		if countRows(t, d, `SELECT count(*) FROM check_eval_cursor WHERE host_id = $1 AND next_due_at <= now() AND retry_after IS NULL`, host) != 1 {
+			t.Fatalf("the %s host was postponed; a cancelled batch must not hold any host back", name)
 		}
 	}
 }
@@ -1614,24 +1614,42 @@ func TestEvaluateOneSetsStatementTimeout(t *testing.T) {
 	}
 }
 
-// TestFailedHostIsPostponed (backlog 7.58): the claim orders by
-// next_due_at, and a failed host used to be left exactly as it was — so a
-// host whose evaluation always fails (a statement timeout on every try)
-// kept the oldest next_due_at for ever and headed every batch, spending
-// the batch's deadline before any healthy host was reached. A failed host
-// is now pushed back by failedHostBackoff, measured on the database's own
-// clock, so the next claim reaches the healthy host first. It is still
-// retried — a dirty host stays dirty — only no longer first.
+// retryAfter reads one host's retry_after; ok is false while it is NULL.
+func retryAfter(t *testing.T, d *db.DB, host uuid.UUID) (at time.Time, ok bool) {
+	t.Helper()
+	var v *time.Time
+	if err := d.Pool().QueryRow(context.Background(),
+		`SELECT retry_after FROM check_eval_cursor WHERE host_id = $1`, host).Scan(&v); err != nil {
+		t.Fatal(err)
+	}
+	if v == nil {
+		return time.Time{}, false
+	}
+	return *v, true
+}
+
+// TestFailedHostIsPostponed (backlog 7.58): a host whose evaluation fails
+// every time (a statement timeout on every try) never advances its
+// cursor, so it is dirty for ever, and with the oldest next_due_at it
+// headed every claim — a handful of them spent each batch's deadline
+// before any other organization's host was reached. Pushing next_due_at
+// back would not help: a healthy dirty host's next_due_at is its
+// staleness deadline, minutes ahead, so the failed host would still sort
+// first. A failed host is instead held out of the claim altogether for
+// failedHostBackoff (retry_after), measured on the database's own clock,
+// and comes back once that passes; a committed evaluation clears the hold.
 func TestFailedHostIsPostponed(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "postpone-failed")
 	bad := seedHost(t, d, org, "bad")
 	good := seedHost(t, d, org, "good")
 	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
-	// Both dirty and overdue; the bad host is the older of the two, so it
-	// heads the batch.
+	// The bad host is overdue and dirty. The healthy one is dirty only:
+	// its next_due_at is the staleness deadline three minutes ahead, which
+	// is where a live host's sits between samples.
 	setCursor(t, d, org, bad, 0, -time.Hour, -2*time.Minute)
-	setCursor(t, d, org, good, 0, -time.Hour, -1*time.Minute)
+	setCursor(t, d, org, good, 0, -time.Hour, 3*time.Minute)
+	_, _, badNextDue := cursorRow(t, d, bad)
 
 	var before time.Time
 	if err := d.Pool().QueryRow(context.Background(), `SELECT now()`).Scan(&before); err != nil {
@@ -1642,7 +1660,7 @@ func TestFailedHostIsPostponed(t *testing.T) {
 			return errors.New("canceling statement due to statement timeout")
 		}
 		// The healthy host commits without advancing its cursor, so it is
-		// still due on the next claim below.
+		// still dirty on the next claim below.
 		return nil
 	})
 	if err != nil {
@@ -1652,13 +1670,53 @@ func TestFailedHostIsPostponed(t *testing.T) {
 		t.Fatalf("ProcessDue evaluated %d hosts, want 1 (the other failed)", n)
 	}
 
-	if _, _, nextDue := cursorRow(t, d, bad); nextDue.Before(before.Add(rules.FailedHostBackoff)) {
-		t.Fatalf("the failed host's next_due_at = %v, want at least %v (now + %s)", nextDue, before.Add(rules.FailedHostBackoff), rules.FailedHostBackoff)
+	at, held := retryAfter(t, d, bad)
+	if !held || at.Before(before.Add(rules.FailedHostBackoff)) {
+		t.Fatalf("the failed host's retry_after = %v (set %v), want at least %v (now + %s)", at, held, before.Add(rules.FailedHostBackoff), rules.FailedHostBackoff)
+	}
+	if _, _, nextDue := cursorRow(t, d, bad); !nextDue.Equal(badNextDue) {
+		t.Fatalf("the failed host's next_due_at moved from %v to %v; only retry_after may change", badNextDue, nextDue)
 	}
 	if !stillDue(t, d, bad) {
-		t.Fatal("the failed host is no longer due; postponing must only reorder it, a dirty host stays dirty")
+		t.Fatal("the failed host is no longer dirty or due; the hold must leave its cursor as it was")
 	}
-	if got := claimAll(t, store, 1); len(got) != 1 || got[0].HostID != good {
-		t.Fatalf("the next claim of one took %+v, want the healthy host ahead of the failed one", got)
+
+	// While held, the claim takes the healthy dirty host and not the failed
+	// one, however much older the failed one's next_due_at is.
+	if got := claimAll(t, store, 10); len(got) != 1 || got[0].HostID != good {
+		t.Fatalf("the claim while the failed host is held took %+v, want only the healthy host", got)
+	}
+	// The per-host lock refuses it too, so a host another manager held back
+	// between the scan and the lock is not evaluated anyway.
+	tx, err := d.Pool().Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gen.New(tx).LockOneEvalCursor(context.Background(), bad); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("LockOneEvalCursor on a held host = %v, want pgx.ErrNoRows", err)
+	}
+	_ = tx.Rollback(context.Background())
+
+	// Once the hold has passed the host is claimable again, ahead of the
+	// healthy one by its older next_due_at.
+	if _, err := d.Pool().Exec(context.Background(),
+		`UPDATE check_eval_cursor SET retry_after = now() - interval '1 second' WHERE host_id = $1`, bad); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	res := rules.Result{NextDue: now.Add(time.Hour)}
+	var order []uuid.UUID
+	if _, err := store.ProcessDue(context.Background(), now, 10, func(ctx context.Context, due rules.Due) error {
+		order = append(order, due.HostID)
+		return store.Apply(ctx, due, res)
+	}); err != nil {
+		t.Fatalf("ProcessDue after the hold: %v", err)
+	}
+	if len(order) != 2 || order[0] != bad {
+		t.Fatalf("the claim after the hold took %v, want the formerly failed host first, then the healthy one", order)
+	}
+	// And the evaluation that committed cleared the hold.
+	if at, held := retryAfter(t, d, bad); held {
+		t.Fatalf("retry_after = %v after a committed evaluation, want NULL", at)
 	}
 }
