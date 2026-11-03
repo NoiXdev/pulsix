@@ -6,9 +6,12 @@
 -- attempt is never mailed again, and the conditional update that sets it
 -- decides which manager sends the mail.
 --
--- Additive and nullable: a row from before this migration was never mailed
--- about.
+-- Additive and nullable. An interrupted scheduled attempt from before this
+-- migration counts as mailed: without the backfill the first tick after the
+-- upgrade would mail every interrupted slot in the history at once.
 ALTER TABLE backup_runs ADD COLUMN notified_at timestamptz;
+
+UPDATE backup_runs SET notified_at = now() WHERE kind = 'scheduled' AND state = 'abandoned';
 
 -- +goose Down
 ALTER TABLE backup_runs DROP COLUMN notified_at;
