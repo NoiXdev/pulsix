@@ -154,6 +154,12 @@ func (f *fakeStore) DeleteEnrollment(_ context.Context, orgID, id uuid.UUID) err
 	return nil
 }
 
+// AdoptCertificate is not exercised by the service tests: adoption is
+// covered against the SQL store (adopt_test.go).
+func (f *fakeStore) AdoptCertificate(context.Context, string, workers.Certificate, func(workers.AdoptionState) error) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
+
 func (f *fakeStore) Enroll(_ context.Context, id uuid.UUID, fn func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -73,8 +73,11 @@ type fakeWorkerStore struct {
 	// onLookup runs at the start of every serial lookup, so a test can
 	// observe the state the caller had reached by the time it looked up.
 	onLookup func()
-	// lookupErr, enrollErr and addCertErr inject store faults.
-	lookupErr, enrollErr, addCertErr error
+	// lookupErr, enrollErr, addCertErr and adoptErr inject store faults.
+	lookupErr, enrollErr, addCertErr, adoptErr error
+	// restoreWindow is the restore marker AdoptCertificate reads; nil is a
+	// database no restore ever touched.
+	restoreWindow *workers.RestoreWindow
 }
 
 func (f *fakeWorkerStore) Create(_ context.Context, w workers.Worker, c workers.Certificate) (workers.Worker, error) {
@@ -219,6 +222,30 @@ func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(worker
 	e.UsedAt = &now
 	f.enrollments[id] = e
 	return w, nil
+}
+
+// AdoptCertificate finds the worker by org and name, lets allow judge it
+// against restoreWindow and registers the serial. The fake keeps no
+// certificate dates, so NewestCertificate stays nil, and the interceptor
+// only adopts unknown serials, so Registered stays false.
+func (f *fakeWorkerStore) AdoptCertificate(_ context.Context, name string, c workers.Certificate, allow func(workers.AdoptionState) error) (workers.Worker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.adoptErr != nil {
+		return workers.Worker{}, f.adoptErr
+	}
+	for _, w := range f.bySerial {
+		if w.OrgID != c.OrgID || w.Name != name {
+			continue
+		}
+		if err := allow(workers.AdoptionState{Worker: w, Window: f.restoreWindow}); err != nil {
+			return workers.Worker{}, err
+		}
+		f.bySerial[c.Serial.String()] = w
+		w.CertSerial = c.Serial
+		return w, nil
+	}
+	return workers.Worker{}, workers.ErrNotFound
 }
 
 // fakeAgentStore is the in-memory agents.Store the harness runs the agent

@@ -104,6 +104,12 @@ type Store interface {
 	ListEnrollments(ctx context.Context, orgID uuid.UUID, now time.Time) ([]Enrollment, error)
 	DeleteEnrollment(ctx context.Context, orgID, id uuid.UUID) error
 	Enroll(ctx context.Context, id uuid.UUID, fn func(e Enrollment, secretHash []byte) (Worker, Certificate, error)) (Worker, error)
+	// AdoptCertificate locks the worker named name in c.OrgID, hands what
+	// it read to allow and, when allow returns nil, inserts c for that
+	// worker unless it is already registered there — one transaction. No
+	// such worker, or c's serial registered to another worker or revoked,
+	// is ErrNotFound.
+	AdoptCertificate(ctx context.Context, name string, c Certificate, allow func(AdoptionState) error) (Worker, error)
 }
 
 // Service implements the worker registry.

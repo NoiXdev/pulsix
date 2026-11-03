@@ -145,6 +145,11 @@ func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(worker
 	return w, nil
 }
 
+// AdoptCertificate adopts nothing: these tests never restore a backup.
+func (f *fakeWorkerStore) AdoptCertificate(context.Context, string, workers.Certificate, func(workers.AdoptionState) error) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
+
 // fakeClaims implements grpcsrv.Claimer from a queue the test seeds.
 type fakeClaims struct {
 	mu    sync.Mutex

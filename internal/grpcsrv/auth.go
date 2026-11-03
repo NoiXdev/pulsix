@@ -8,6 +8,7 @@ package grpcsrv
 import (
 	"context"
 	"crypto"
+	"crypto/x509"
 	"errors"
 	"strings"
 
@@ -155,7 +156,7 @@ func (s *Server) authenticate(ctx context.Context, fullMethod string) (context.C
 	}
 	switch identity.Kind {
 	case ca.KindWorker:
-		worker, err := s.lookupWorker(ctx, identity)
+		worker, err := s.resolveWorker(ctx, certs[0], identity)
 		if err != nil {
 			return ctx, err
 		}
@@ -194,12 +195,30 @@ func (s *Server) checkMethodKind(identity *ca.ClientIdentity, fullMethod string)
 	return nil
 }
 
+// resolveWorker is the interceptor's lookupWorker: an unknown serial may
+// be a certificate issued between a restored backup and the restore, which
+// the registry adopts when its rules allow (backlog 7.47). A revoked
+// serial never is.
+func (s *Server) resolveWorker(ctx context.Context, leaf *x509.Certificate, identity *ca.ClientIdentity) (workers.Worker, error) {
+	worker, err := s.deps.Workers.GetBySerial(ctx, identity.Serial)
+	if errors.Is(err, workers.ErrNotFound) {
+		worker, err = s.adoptWorkerCertificate(ctx, leaf, identity)
+	}
+	return s.matchWorker(ctx, identity, worker, err)
+}
+
 // lookupWorker resolves identity's serial to its registry row and checks
-// that the certificate's org and zone SANs match that row. Unknown and
-// revoked serials and a mismatch are all Unauthenticated; a registry fault
-// is a generic Internal (logged, never echoed to the caller).
+// that the certificate's org and zone SANs match that row.
 func (s *Server) lookupWorker(ctx context.Context, identity *ca.ClientIdentity) (workers.Worker, error) {
 	worker, err := s.deps.Workers.GetBySerial(ctx, identity.Serial)
+	return s.matchWorker(ctx, identity, worker, err)
+}
+
+// matchWorker turns a registry answer into the interceptor's: unknown and
+// revoked serials and an org or zone SAN that differs from the row are all
+// Unauthenticated; a registry fault is a generic Internal (logged, never
+// echoed to the caller).
+func (s *Server) matchWorker(ctx context.Context, identity *ca.ClientIdentity, worker workers.Worker, err error) (workers.Worker, error) {
 	if errors.Is(err, workers.ErrNotFound) || errors.Is(err, workers.ErrRevoked) {
 		return workers.Worker{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
 	}
@@ -210,6 +229,22 @@ func (s *Server) lookupWorker(ctx context.Context, identity *ca.ClientIdentity) 
 	if identity.OrgID == nil || *identity.OrgID != worker.OrgID || identity.ZoneID != worker.ZoneID {
 		return workers.Worker{}, status.Error(codes.Unauthenticated, "certificate does not match the worker's enrollment")
 	}
+	return worker, nil
+}
+
+// adoptWorkerCertificate asks the registry to adopt a certificate whose
+// serial it does not know, and audits and logs an adoption. Refusal is
+// workers.ErrNotFound, exactly what the lookup answered.
+func (s *Server) adoptWorkerCertificate(ctx context.Context, leaf *x509.Certificate, identity *ca.ClientIdentity) (workers.Worker, error) {
+	worker, err := s.deps.Workers.AdoptCertificate(ctx, leaf, identity)
+	if err != nil {
+		return workers.Worker{}, err
+	}
+	serial := identity.Serial.String()
+	s.log().InfoContext(ctx, "adopted a worker certificate issued after the restored backup",
+		"worker_id", worker.ID.String(), "org_id", worker.OrgID.String(), "serial", serial)
+	s.audit(ctx, SystemEvent{Operation: "worker.certificate_adopted", ObjectType: "worker", ObjectID: worker.ID.String(),
+		OrgID: worker.OrgID.String(), Summary: "worker " + worker.Name + " certificate " + serial + " adopted after a restore"})
 	return worker, nil
 }
 

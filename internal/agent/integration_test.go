@@ -73,6 +73,9 @@ func (s *stubWorkerStore) DeleteEnrollment(context.Context, uuid.UUID, uuid.UUID
 func (s *stubWorkerStore) Enroll(context.Context, uuid.UUID, func(workers.Enrollment, []byte) (workers.Worker, workers.Certificate, error)) (workers.Worker, error) {
 	return workers.Worker{}, workers.ErrNotFound
 }
+func (s *stubWorkerStore) AdoptCertificate(context.Context, string, workers.Certificate, func(workers.AdoptionState) error) (workers.Worker, error) {
+	return workers.Worker{}, workers.ErrNotFound
+}
 
 // integAgentStore is the in-memory agents.Store: the claim mirrors the
 // SQL store's shape (secret hash check, one use per claim), Register

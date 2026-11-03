@@ -361,3 +361,120 @@ func TestAuthLookupFailureIsGeneric(t *testing.T) {
 		t.Fatalf("lookup fault: %v, want a generic Internal", err)
 	}
 }
+
+// adoptionEvents returns the worker.certificate_adopted audit events.
+func (h *harness) adoptionEvents() []SystemEvent {
+	var out []SystemEvent
+	for _, ev := range h.audit.Events() {
+		if ev.Operation == "worker.certificate_adopted" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// restoredAround sets the restore marker the fake registry's adoption
+// reads: a backup an hour old, restored an hour from now, so a
+// certificate issued now lies inside the window.
+func (h *harness) restoredAround(now time.Time) {
+	h.store.mu.Lock()
+	defer h.store.mu.Unlock()
+	h.store.restoreWindow = &workers.RestoreWindow{BackupCreatedAt: now.Add(-time.Hour), RestoredAt: now.Add(time.Hour)}
+}
+
+// TestAuthAdoptsAWorkerCertificateAfterARestore (backlog 7.47): a
+// certificate the restored registry does not know is adopted when the
+// registry's rules allow it, the call goes through, and the adoption is
+// audited and logged once; the next call finds the serial registered.
+func TestAuthAdoptsAWorkerCertificateAfterARestore(t *testing.T) {
+	h := newHarness(t)
+	_, _, firstSerial := h.issue("fra-1", orgID, zoneID, true)
+	worker, err := h.store.GetBySerial(t.Context(), firstSerial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.restoredAround(time.Now())
+	certPEM, keyPEM, serial := h.issue("fra-1", orgID, zoneID, false)
+	client := h.client(certPEM, keyPEM)
+
+	if _, err := client.ClaimJob(t.Context(), claimRequest(zoneID)); err != nil {
+		t.Fatalf("ClaimJob with a certificate issued after the backup: %v", err)
+	}
+	if got, err := h.store.GetBySerial(t.Context(), serial); err != nil || got.ID != worker.ID {
+		t.Fatalf("adopted serial resolves to %+v, %v; want worker %s", got, err, worker.ID)
+	}
+	events := h.adoptionEvents()
+	if len(events) != 1 {
+		t.Fatalf("adoption events = %+v, want one", events)
+	}
+	ev := events[0]
+	if ev.ObjectType != "worker" || ev.ObjectID != worker.ID.String() || ev.OrgID != orgID.String() ||
+		!strings.Contains(ev.Summary, serial.String()) || !strings.Contains(ev.Summary, "fra-1") {
+		t.Fatalf("adoption event = %+v, want worker %s and serial %s named", ev, worker.ID, serial)
+	}
+	logs := h.logs.String()
+	adopted := ""
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, "adopted") {
+			if adopted != "" {
+				t.Fatalf("logs = %q, want one adoption line", logs)
+			}
+			adopted = line
+		}
+	}
+	if !strings.Contains(adopted, "level=INFO") || !strings.Contains(adopted, "serial="+serial.String()) {
+		t.Fatalf("logs = %q, want one info line naming serial %s", logs, serial)
+	}
+
+	if _, err := client.ClaimJob(t.Context(), claimRequest(zoneID)); err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if n := len(h.adoptionEvents()); n != 1 {
+		t.Fatalf("adoption events after the second call = %d, want still one", n)
+	}
+}
+
+// TestAuthRefusesACertificateItCannotAdopt: without a restore marker the
+// unknown serial is refused exactly as before; a revoked serial is never
+// offered for adoption, restore or not; and a registry fault during the
+// adoption is a generic Internal.
+func TestAuthRefusesACertificateItCannotAdopt(t *testing.T) {
+	refused := func(t *testing.T, h *harness, certPEM, keyPEM []byte) {
+		t.Helper()
+		_, err := h.client(certPEM, keyPEM).ClaimJob(t.Context(), claimRequest(zoneID))
+		if status.Code(err) != codes.Unauthenticated || status.Convert(err).Message() != "unknown or revoked certificate" {
+			t.Fatalf("%v, want Unauthenticated: unknown or revoked certificate", err)
+		}
+		if events := h.adoptionEvents(); len(events) != 0 {
+			t.Fatalf("adoption events = %+v, want none", events)
+		}
+	}
+	t.Run("no restore", func(t *testing.T) {
+		h := newHarness(t)
+		h.issue("fra-1", orgID, zoneID, true)
+		certPEM, keyPEM, _ := h.issue("fra-1", orgID, zoneID, false)
+		refused(t, h, certPEM, keyPEM)
+	})
+	t.Run("revoked serial", func(t *testing.T) {
+		h := newHarness(t)
+		certPEM, keyPEM, serial := h.issue("fra-1", orgID, zoneID, true)
+		h.store.mu.Lock()
+		h.store.revoked[serial.String()] = true
+		h.store.mu.Unlock()
+		h.restoredAround(time.Now())
+		refused(t, h, certPEM, keyPEM)
+	})
+	t.Run("registry fault", func(t *testing.T) {
+		h := newHarness(t)
+		h.issue("fra-1", orgID, zoneID, true)
+		h.restoredAround(time.Now())
+		h.store.mu.Lock()
+		h.store.adoptErr = errors.New(`relation "instance_settings" does not exist`)
+		h.store.mu.Unlock()
+		certPEM, keyPEM, _ := h.issue("fra-1", orgID, zoneID, false)
+		_, err := h.client(certPEM, keyPEM).ClaimJob(t.Context(), claimRequest(zoneID))
+		if status.Code(err) != codes.Internal || strings.Contains(status.Convert(err).Message(), "instance_settings") {
+			t.Fatalf("adoption fault: %v, want a generic Internal", err)
+		}
+	})
+}

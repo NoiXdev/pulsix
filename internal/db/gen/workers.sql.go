@@ -362,6 +362,36 @@ func (q *Queries) ListWorkers(ctx context.Context, orgID uuid.UUID) ([]Worker, e
 	return items, nil
 }
 
+const lockWorkerByName = `-- name: LockWorkerByName :one
+SELECT id, org_id, zone_id, name, cert_serial, last_seen, version, created_at, status, revoked_at FROM workers WHERE org_id = $1 AND name = $2 FOR UPDATE
+`
+
+type LockWorkerByNameParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Name  string    `json:"name"`
+}
+
+// Certificate adoption after a restore (backlog 7.47): the row stays
+// locked until the adopted certificate is inserted, so a revocation or a
+// renewal cannot slip in between the checks and the insert.
+func (q *Queries) LockWorkerByName(ctx context.Context, arg LockWorkerByNameParams) (Worker, error) {
+	row := q.db.QueryRow(ctx, lockWorkerByName, arg.OrgID, arg.Name)
+	var i Worker
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ZoneID,
+		&i.Name,
+		&i.CertSerial,
+		&i.LastSeen,
+		&i.Version,
+		&i.CreatedAt,
+		&i.Status,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const lockWorkerEnrollment = `-- name: LockWorkerEnrollment :one
 SELECT id, org_id, zone_id, name, secret_hash, expires_at, used_at, worker_id, created_by, created_at FROM worker_enrollments WHERE org_id = $1 AND id = $2 FOR UPDATE
 `
@@ -450,6 +480,27 @@ func (q *Queries) MarkWorkerEnrollmentUsed(ctx context.Context, arg MarkWorkerEn
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const newestWorkerCertificateStart = `-- name: NewestWorkerCertificateStart :one
+SELECT not_before FROM worker_certificates
+WHERE org_id = $1 AND worker_id = $2
+ORDER BY not_before DESC
+LIMIT 1
+`
+
+type NewestWorkerCertificateStartParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	WorkerID uuid.UUID `json:"worker_id"`
+}
+
+// The latest not_before among a worker's certificates, revoked ones
+// included (not_before is NOT NULL, so every certificate counts).
+func (q *Queries) NewestWorkerCertificateStart(ctx context.Context, arg NewestWorkerCertificateStartParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, newestWorkerCertificateStart, arg.OrgID, arg.WorkerID)
+	var not_before time.Time
+	err := row.Scan(&not_before)
+	return not_before, err
 }
 
 const revokeWorker = `-- name: RevokeWorker :one

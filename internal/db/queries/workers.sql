@@ -29,6 +29,20 @@ VALUES (sqlc.arg(serial), sqlc.arg(org_id), sqlc.arg(worker_id), sqlc.arg(not_be
 -- name: GetWorkerByName :one
 SELECT * FROM workers WHERE org_id = sqlc.arg(org_id) AND name = sqlc.arg(name);
 
+-- name: LockWorkerByName :one
+-- Certificate adoption after a restore (backlog 7.47): the row stays
+-- locked until the adopted certificate is inserted, so a revocation or a
+-- renewal cannot slip in between the checks and the insert.
+SELECT * FROM workers WHERE org_id = sqlc.arg(org_id) AND name = sqlc.arg(name) FOR UPDATE;
+
+-- name: NewestWorkerCertificateStart :one
+-- The latest not_before among a worker's certificates, revoked ones
+-- included (not_before is NOT NULL, so every certificate counts).
+SELECT not_before FROM worker_certificates
+WHERE org_id = sqlc.arg(org_id) AND worker_id = sqlc.arg(worker_id)
+ORDER BY not_before DESC
+LIMIT 1;
+
 -- name: CreateWorkerEnrollment :one
 INSERT INTO worker_enrollments (id, org_id, zone_id, name, secret_hash, expires_at, created_by)
 VALUES (sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(zone_id), sqlc.arg(name), sqlc.arg(secret_hash), sqlc.arg(expires_at), sqlc.narg(created_by))
