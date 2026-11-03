@@ -30,6 +30,12 @@ var (
 	// the migrations past the backup's schema version failed. It always
 	// comes wrapped together with ErrRestoreIncomplete.
 	ErrNotMigrated = errors.New("backup: the restored data was not migrated to this version")
+	// ErrWrittenDuringRestore means the load found that something else
+	// (a manager, most likely) wrote to the database or migrated it during
+	// the restore. The load did not commit, but the database may hold what
+	// the other writer put there, so it is not known to be empty. It always
+	// comes wrapped together with ErrRestoreIncomplete.
+	ErrWrittenDuringRestore = errors.New("backup: something else wrote to the database during the restore")
 )
 
 // RestoreOptions controls Restore.
@@ -263,7 +269,7 @@ func load(ctx context.Context, pool *pgxpool.Pool, masterKey [32]byte, open func
 	if v, err := db.ReadSchemaVersion(ctx, tx); err != nil {
 		return fmt.Errorf("load: %w", err)
 	} else if v != want.Header.SchemaVersion {
-		return fmt.Errorf("load: the schema moved to version %d during the load: something else migrated the database (is a manager running?)", v)
+		return fmt.Errorf("%w: the schema moved to version %d during the load", ErrWrittenDuringRestore, v)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("load: commit: %w", err)
@@ -297,7 +303,7 @@ func refuseNonEmptyCore(ctx context.Context, tx pgx.Tx, tables []tableInfo) erro
 			return fmt.Errorf("load: look into %s: %w", name, err)
 		}
 		if found {
-			return fmt.Errorf("load: %s has rows before the load: something else wrote to the database during the restore (is a manager running?)", name)
+			return fmt.Errorf("%w: %s had rows before the load started", ErrWrittenDuringRestore, name)
 		}
 	}
 	return nil

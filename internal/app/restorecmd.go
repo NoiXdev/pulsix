@@ -228,6 +228,10 @@ func explainRestore(err error, label, from string, m backup.Manifest) error {
 		msg = fmt.Sprintf("the backup's data is restored, but migrating it from schema version %d to this Pulsix failed: %s. "+
 			"The manager retries the migrations when it starts; to start over, run the restore again with --replace",
 			m.Header.SchemaVersion, detail(err, backup.ErrRestoreIncomplete, backup.ErrNotMigrated))
+	case errors.Is(err, backup.ErrWrittenDuringRestore):
+		msg = fmt.Sprintf("the restore failed after the database was cleared: something else wrote to the database during the restore (%s), "+
+			"so it may now hold that data instead of being empty. Stop every manager (docker compose down), then run the restore again with --replace",
+			detail(err, backup.ErrRestoreIncomplete, backup.ErrWrittenDuringRestore))
 	case errors.Is(err, backup.ErrRestoreIncomplete):
 		msg = fmt.Sprintf("the restore failed after the database was cleared: %s. "+
 			"The database is now empty, at most at the backup's schema version %d; run the same restore command again",

@@ -77,8 +77,8 @@ func TestLoadRefusesNonEmptyCoreTables(t *testing.T) {
 				return err
 			})
 			_, err := restoreBytes(target, testKey, data, opts)
-			if !errors.Is(err, backup.ErrRestoreIncomplete) {
-				t.Fatalf("restore over a row in %s: %v, want ErrRestoreIncomplete", tc.table, err)
+			if !errors.Is(err, backup.ErrRestoreIncomplete) || !errors.Is(err, backup.ErrWrittenDuringRestore) {
+				t.Fatalf("restore over a row in %s: %v, want ErrRestoreIncomplete and ErrWrittenDuringRestore", tc.table, err)
 			}
 			if !strings.Contains(err.Error(), tc.table) {
 				t.Errorf("err %q does not name %s", err, tc.table)

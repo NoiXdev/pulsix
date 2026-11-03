@@ -73,6 +73,14 @@ func TestExplainRestore(t *testing.T) {
 			[]string{"connection reset", "now empty", "schema version 70", "run the same restore command again"}, backup.ErrRestoreIncomplete},
 		{"not migrated", fmt.Errorf("restore: %w: %w: %w", backup.ErrRestoreIncomplete, backup.ErrNotMigrated, cause),
 			[]string{"data is restored", "schema version 70", "connection reset", "--replace"}, backup.ErrNotMigrated},
+		{"rows written during the restore", fmt.Errorf("restore: %w: %w", backup.ErrRestoreIncomplete,
+			fmt.Errorf("%w: users had rows before the load started", backup.ErrWrittenDuringRestore)),
+			[]string{"users had rows before the load started", "something else wrote to the database during the restore",
+				"Stop every manager", "--replace"}, backup.ErrWrittenDuringRestore},
+		{"schema moved during the load", fmt.Errorf("restore: %w: %w", backup.ErrRestoreIncomplete,
+			fmt.Errorf("%w: the schema moved to version 80 during the load", backup.ErrWrittenDuringRestore)),
+			[]string{"the schema moved to version 80 during the load", "something else wrote to the database during the restore",
+				"Stop every manager", "--replace"}, backup.ErrWrittenDuringRestore},
 		{"anything else", cause, []string{"connection reset"}, cause},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,6 +97,18 @@ func TestExplainRestore(t *testing.T) {
 	}
 	if got := explainRestore(fmt.Errorf("restore: %w: %w: %w", backup.ErrRestoreIncomplete, backup.ErrNotMigrated, cause), "x", "/b", m); strings.Contains(got.Error(), "now empty") {
 		t.Errorf("a restore whose rows are in says the database is empty: %q", got)
+	}
+	// Something else wrote to the database: it is not known to be empty,
+	// and the same command (without --replace) would be refused.
+	written := explainRestore(fmt.Errorf("restore: %w: %w", backup.ErrRestoreIncomplete,
+		fmt.Errorf("%w: users had rows before the load started", backup.ErrWrittenDuringRestore)), "x", "/b", m).Error()
+	for _, wrong := range []string{"now empty", "run the same restore command again"} {
+		if strings.Contains(written, wrong) {
+			t.Errorf("message for a database written during the restore says %q: %q", wrong, written)
+		}
+	}
+	if strings.Count(written, "during the restore") != 1 {
+		t.Errorf("message %q repeats the sentinel's text", written)
 	}
 	// The cause is shown once, without the sentinel's own text.
 	got := explainRestore(fmt.Errorf("restore: %w: %w", backup.ErrRestoreIncomplete, cause), "x", "/b", m).Error()
