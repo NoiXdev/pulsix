@@ -65,18 +65,23 @@ func (o RestoreOptions) Validate() error {
 // certificate serials the database knows, so an agent or worker that
 // renewed its certificate after the backup was taken is locked out until
 // it is enrolled again (final review I1; backlog 7.47). The restore ends
-// every browser session, and every other credential and access decision
-// is back at the backup's state, so whatever was revoked since is valid
-// again until it is revoked anew (backlog 7.54).
-const restoreNextStep = "Start the stack. Workers and agents reconnect on their own, unless they renewed their certificate\n" +
-	"after this backup was taken (certificates renew about every 60 days): those show as offline on the Agents\n" +
-	"and Workers pages, their logs say to enroll anew, and they must be enrolled again. The bundled compose\n" +
-	"worker re-enrolls itself.\n" +
+// every browser session, and every other credential and access decision is
+// back at the backup's state (passwords, passkeys, second factors, API
+// tokens, open invitations, certificates, memberships, disabled users), so
+// whatever was changed, revoked or used since is valid again until it is
+// changed anew (backlog 7.54).
+const restoreNextStep = "Start the stack. Workers and agents reconnect on their own, unless they renewed their\n" +
+	"certificate after this backup was taken (certificates renew about every 60 days): those show\n" +
+	"as offline on the Agents and Workers pages, their logs say to enroll anew, and they must be\n" +
+	"enrolled again. The bundled compose worker re-enrolls itself.\n" +
 	"Everyone must sign in again: the restore ended every browser session.\n" +
-	"API tokens, worker and agent certificates, memberships and disabled users\n" +
-	"are as they were when the backup was taken: whatever was revoked, removed or disabled after that is\n" +
-	"valid again. Check the API tokens, members, users, workers and agents, and revoke, remove or disable\n" +
-	"it once more.\n"
+	"Everything else that grants access is as it was when the backup was taken: passwords,\n" +
+	"passkeys, second factors (TOTP and recovery codes), API tokens, open invitations, worker and\n" +
+	"agent certificates, memberships and disabled users. A password changed since works with its\n" +
+	"old value again; a passkey, second factor, recovery code, API token, invitation or certificate\n" +
+	"removed, used or revoked since is valid again; a member removed or a user disabled since is\n" +
+	"back. Check the users, members, invitations, API tokens, workers and agents, and make each of\n" +
+	"those changes again.\n"
 
 // RunRestore implements `restore`. It refuses while a manager is connected
 // to the database and, on a database that is not empty, without --replace
@@ -278,7 +283,13 @@ func printRestored(stdout io.Writer, label string, m backup.Manifest) error {
 	}
 	_, _ = fmt.Fprintln(tw, "Rows per table:")
 	for _, t := range m.Tables {
-		_, _ = fmt.Fprintf(tw, "  %s\t%d\n", t.Name, t.Rows)
+		// The load deletes the sessions the backup brought along
+		// (backup.Restore), so their count is what the backup held.
+		ended := ""
+		if t.Name == "sessions" {
+			ended = " (ended by the restore)"
+		}
+		_, _ = fmt.Fprintf(tw, "  %s\t%d%s\n", t.Name, t.Rows, ended)
 	}
 	_, _ = fmt.Fprint(tw, restoreNextStep)
 	return tw.Flush()

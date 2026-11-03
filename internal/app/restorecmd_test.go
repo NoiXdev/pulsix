@@ -188,19 +188,62 @@ func TestPrintable(t *testing.T) {
 
 // TestRestoreNextStepSaysWhatIsAtTheBackupsState: a restore ends every
 // browser session, and everything security-relevant is as it was when the
-// backup was taken (backlog 7.54).
+// backup was taken (backlog 7.54): credentials, second factors and open
+// invitations as much as tokens, certificates, memberships and disabled users.
 func TestRestoreNextStepSaysWhatIsAtTheBackupsState(t *testing.T) {
 	var out bytes.Buffer
 	if err := printRestored(&out, "x.pxbak", backup.Manifest{Header: backup.Header{Kind: "manual", PulsixVersion: "1.2.3"}}); err != nil {
 		t.Fatal(err)
 	}
+	// Line breaks are layout; compare the words.
+	text := strings.Join(strings.Fields(out.String()), " ")
 	for _, want := range []string{
 		"renewed their certificate", "enrolled again",
-		"sign in again", "API tokens", "worker and agent certificates", "memberships", "disabled users", "as they were when the backup was taken",
-		"revoke",
+		"sign in again", "as it was when the backup was taken",
+		"passwords", "passkeys", "second factors (TOTP and recovery codes)", "API tokens", "open invitations",
+		"worker and agent certificates", "memberships", "disabled users",
+		"Check the users, members, invitations, API tokens, workers and agents",
 	} {
-		if !strings.Contains(out.String(), want) {
+		if !strings.Contains(text, want) {
 			t.Errorf("restore output lacks %q:\n%s", want, out.String())
 		}
+	}
+	// "revoke, remove or disable it once more" had no antecedent for "it".
+	if strings.Contains(text, "it once more") {
+		t.Errorf("restore output still says \"it once more\":\n%s", out.String())
+	}
+	for i, line := range strings.Split(strings.TrimSuffix(restoreNextStep, "\n"), "\n") {
+		if len(line) > 100 {
+			t.Errorf("line %d of the next step is %d characters, wider than 100: %q", i+1, len(line), line)
+		}
+	}
+}
+
+// TestPrintRestoredMarksTheEndedSessions: the manifest counts the sessions
+// the backup holds, but the restore deleted them, so the count must not read
+// as sessions that are still there.
+func TestPrintRestoredMarksTheEndedSessions(t *testing.T) {
+	var out bytes.Buffer
+	m := backup.Manifest{
+		Header: backup.Header{Kind: "manual", PulsixVersion: "1.2.3"},
+		Tables: []backup.TableCount{{Name: "users", Rows: 4}, {Name: "sessions", Rows: 3}},
+	}
+	if err := printRestored(&out, "x.pxbak", m); err != nil {
+		t.Fatal(err)
+	}
+	var sessions, users string
+	for _, line := range strings.Split(out.String(), "\n") {
+		switch f := strings.Fields(line); {
+		case len(f) > 0 && f[0] == "sessions":
+			sessions = line
+		case len(f) > 0 && f[0] == "users":
+			users = line
+		}
+	}
+	if !strings.Contains(sessions, "3") || !strings.Contains(sessions, "(ended by the restore)") {
+		t.Errorf("sessions line = %q, want the count marked as ended by the restore", sessions)
+	}
+	if strings.Contains(users, "ended") {
+		t.Errorf("users line = %q, only sessions were ended", users)
 	}
 }

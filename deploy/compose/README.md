@@ -385,12 +385,15 @@ up the new bundle without being recreated. A backup from an older Pulsix
 is migrated to the current version as part of the restore.
 
 A restore ends every browser session: everyone signs in again. Everything
-else that grants access is as it was when the backup was taken: API
-tokens, worker and agent certificates, organization memberships and
-disabled users. A token or certificate revoked, a member removed or a user
-disabled after the backup is valid again. After a restore, check the API
-tokens, members, users, workers and agents, and revoke, remove or disable
-again what should stay so.
+else that grants access is as it was when the backup was taken:
+passwords, passkeys, second factors (TOTP and recovery codes), API tokens,
+open invitations, worker and agent certificates, organization memberships
+and disabled users. A password changed after the backup works with its old
+value again; a passkey, second factor, recovery code, API token,
+invitation or certificate removed, used or revoked after the backup is
+valid again; a member removed or a user disabled after the backup is back.
+After a restore, check the users, members, invitations, API tokens,
+workers and agents, and make each of those changes again.
 
 ### Moving to a new server
 
