@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf16"
 
 	"github.com/noixdev/pulsix/internal/credentials"
@@ -44,9 +45,9 @@ type redactor struct {
 // every part of every credential the claim ships — defense in depth for a
 // claim whose list is incomplete. Each value is also redacted in its
 // JSON-escaped spellings (display text shows module results as JSON, see
-// jsonSpellings), escaped once more for JSON text shown as a JSON string
-// (nestedJSONSpellings), in
-// its base64 spellings (backlog 2.48, see base64Spellings) and, for a
+// jsonSpellings), in its Python repr() spelling (backlog 7.53, see
+// reprSpelling), escaped once more for JSON text shown as a JSON string
+// (nestedJSONSpellings), in its base64 spellings (backlog 2.48, see base64Spellings) and, for a
 // multi-line value, line by line.
 func newRedactor(job *workerpb.Job) *redactor {
 	set := map[string]bool{}
@@ -55,13 +56,15 @@ func newRedactor(job *workerpb.Job) *redactor {
 			return
 		}
 		set[v] = true
-		for _, esc := range jsonSpellings(v) {
-			if esc != v {
+		// The value as Python's repr() prints it (backlog 7.53) is another
+		// base text a run can show, and each base is in turn shown as
+		// JSON text.
+		for _, base := range []string{v, reprSpelling(v)} {
+			set[base] = true
+			for _, esc := range jsonSpellings(base) {
 				set[esc] = true
 			}
-		}
-		for _, esc := range nestedJSONSpellings(v) {
-			if esc != v {
+			for _, esc := range nestedJSONSpellings(base) {
 				set[esc] = true
 			}
 		}
@@ -172,6 +175,45 @@ func pythonJSON(v string, ensureASCII bool) string {
 			default:
 				sb.WriteRune(r)
 			}
+		}
+	}
+	return sb.String()
+}
+
+// reprSpelling is v's string body as Python's repr() writes it (backlog
+// 7.53). A template that renders a dict or list ("cfg: {{ cfg }}") prints
+// its string members through repr(), which is neither the plain value nor a
+// JSON spelling: the literal is single-quoted unless v holds a single quote
+// and no double quote, the chosen quote and the backslash are backslash-escaped, and
+// '\n', '\r' and '\t' and every non-printable character are written as
+// escapes (\xNN, \uNNNN, \UNNNNNNNN by size) while printable non-ASCII text
+// stays literal. A value holding both quote kinds therefore appears as
+// Pa"ss\'w0rd, which matches neither the value nor any JSON spelling of it.
+func reprSpelling(v string) string {
+	quote := '\''
+	if strings.Contains(v, "'") && !strings.Contains(v, `"`) {
+		quote = '"'
+	}
+	var sb strings.Builder
+	for _, r := range v {
+		switch {
+		case r == quote || r == '\\':
+			sb.WriteRune('\\')
+			sb.WriteRune(r)
+		case r == '\n':
+			sb.WriteString(`\n`)
+		case r == '\r':
+			sb.WriteString(`\r`)
+		case r == '\t':
+			sb.WriteString(`\t`)
+		case unicode.IsPrint(r):
+			sb.WriteRune(r)
+		case r <= 0xff:
+			fmt.Fprintf(&sb, `\x%02x`, r)
+		case r <= 0xffff:
+			fmt.Fprintf(&sb, `\u%04x`, r)
+		default:
+			fmt.Fprintf(&sb, `\U%08x`, r)
 		}
 	}
 	return sb.String()

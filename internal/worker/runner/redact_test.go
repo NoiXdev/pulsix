@@ -235,3 +235,88 @@ func TestRedactsASecretInsideJSONText(t *testing.T) {
 		})
 	}
 }
+
+// TestRedactorCoversPythonReprSpelling is backlog 7.53. A play that builds a
+// string from a dict or list ("cfg: {{ cfg }}") renders its members through
+// Python's repr(), which is neither a JSON spelling nor the plain secret: for
+// a value holding both quote kinds it writes a single-quoted literal with the
+// single quote backslash-escaped (Pa"ss\'w0rd-9), and the result display then
+// JSON-escapes that again (Pa\"ss\\'w0rd-9). The two event lines below are
+// ansible-core 2.21.4's own runner_on_ok output for such a secret (security
+// audit run 3, the secret is a dummy): the secret survived into both the
+// event's result and its display text.
+func TestRedactorCoversPythonReprSpelling(t *testing.T) {
+	const secret = `Pa"ss'w0rd-9`
+	r := newRedactor(&workerpb.Job{Redact: []string{secret}})
+
+	for name, line := range map[string]string{
+		"inline dict": `{"uuid": "fb33db89-3f67-4d77-98db-18e5ae27d452", "counter": 5, "stdout": "ok: [localhost] => {\r\n    \"msg\": \"cfg: {'p': 'Pa\\\"ss\\\\'w0rd-9'}\"\r\n}", "start_line": 4, "end_line": 7, "runner_ident": "v12", "event": "runner_on_ok", "pid": 16, "created": "2026-11-03T06:23:21.092959+00:00", "parent_uuid": "e575923b-c430-720b-5a92-000000000004", "event_data": {"playbook": "play.yml", "play": "localhost", "task": "inline-dict", "task_action": "debug", "resolved_action": "ansible.builtin.debug", "task_args": "", "host": "localhost", "remote_addr": "localhost", "res": {"changed": false, "msg": "cfg: {'p': 'Pa\"ss\\'w0rd-9'}", "_ansible_verbose_always": true}, "uuid": "fb33db89-3f67-4d77-98db-18e5ae27d452"}}`,
+		"var dict":    `{"uuid": "f8fa53ad-3901-4ce3-877e-d7ed7ed46a7f", "counter": 8, "stdout": "ok: [localhost] => {\r\n    \"msg\": \"cfg: {'p': 'Pa\\\"ss\\\\'w0rd-9'}\"\r\n}", "start_line": 9, "end_line": 12, "runner_ident": "v12", "event": "runner_on_ok", "pid": 16, "created": "2026-11-03T06:23:21.102852+00:00", "parent_uuid": "e575923b-c430-720b-5a92-000000000005", "event_data": {"playbook": "play.yml", "play": "localhost", "task": "var-dict", "task_action": "debug", "resolved_action": "ansible.builtin.debug", "task_args": "", "host": "localhost", "remote_addr": "localhost", "res": {"changed": false, "msg": "cfg: {'p': 'Pa\"ss\\'w0rd-9'}", "_ansible_verbose_always": true}, "uuid": "f8fa53ad-3901-4ce3-877e-d7ed7ed46a7f"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ev, _, err := ParseEvent([]byte(line))
+			if err != nil {
+				t.Fatalf("ParseEvent: %v", err)
+			}
+			got := r.eventPayload(ev)
+			// "w0rd-9" is the secret's tail: any surviving spelling keeps it.
+			if strings.Contains(got, "w0rd-9") {
+				t.Fatalf("a spelling of the secret survived: %s", got)
+			}
+			if !strings.Contains(got, redactedMarker) {
+				t.Fatalf("nothing was replaced: %s", got)
+			}
+		})
+	}
+}
+
+// TestReprSpellingMatchesCPython pins reprSpelling to repr()'s string body.
+// The expected bodies are what CPython 3 prints for each value.
+func TestReprSpellingMatchesCPython(t *testing.T) {
+	for _, tc := range []struct{ name, in, want string }{
+		{"plain", "plain-pw", "plain-pw"},
+		{"single quote only, double-quoted literal", `it's-a-pw`, `it's-a-pw`},
+		{"double quote only, single-quoted literal", `say"hi"-pw`, `say"hi"-pw`},
+		{"both quotes, single quote escaped", `Pa"ss'w0rd-9`, `Pa"ss\'w0rd-9`},
+		{"backslash", `back\slash-pw`, `back\\slash-pw`},
+		{"newline, return and tab", "a\nb\rc\td-pw", `a\nb\rc\td-pw`},
+		{"control character", "ab\x01cd-pw", `ab\x01cd-pw`},
+		{"delete", "ab\x7fcd-pw", `ab\x7fcd-pw`},
+		{"printable non-ASCII stays", "Pässwörd-€-😀", "Pässwörd-€-😀"},
+		{"no-break space", "ab cd-pw", `ab\xa0cd-pw`},
+		{"zero-width space", "ab\u200bcd-pw", `ab\u200bcd-pw`},
+		{"private use outside the BMP", "ab\U000f0000cd-pw", `ab\U000f0000cd-pw`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reprSpelling(tc.in); got != tc.want {
+				t.Fatalf("reprSpelling(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// Each secret below is printed the way a template renders a dict holding it
+// ({'p': <repr>}) and the way the result display shows that text (JSON-escaped
+// once more); neither may keep the secret's tail.
+func TestRedactsPythonReprSpellings(t *testing.T) {
+	for _, tc := range []struct{ name, secret, literal string }{
+		{"single quote only", `it's-w0rd-9`, `"it's-w0rd-9"`},
+		{"double quote only", `say"hi"-w0rd-9`, `'say"hi"-w0rd-9'`},
+		{"both quotes", `Pa"ss'w0rd-9`, `'Pa"ss\'w0rd-9'`},
+		{"backslash", `back\slash-w0rd-9`, `'back\\slash-w0rd-9'`},
+		{"non-printable byte", "ab\x01cd-w0rd-9", `'ab\x01cd-w0rd-9'`},
+		{"newline", "ab\ncd-w0rd-9", `'ab\ncd-w0rd-9'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRedactor(&workerpb.Job{Redact: []string{tc.secret}})
+			rendered := "cfg: {'p': " + tc.literal + "}"
+			shown := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(rendered)
+			for name, text := range map[string]string{"template output": rendered, "display text": shown} {
+				got := r.text(text)
+				if strings.Contains(got, "w0rd-9") || !strings.Contains(got, redactedMarker) {
+					t.Fatalf("%s kept the secret: %s", name, got)
+				}
+			}
+		})
+	}
+}
