@@ -39,8 +39,27 @@ func (s *Service) record(ctx context.Context, kind string, slot *time.Time, acto
 
 // execute dumps r into st and records how it ended.
 func (s *Service) execute(ctx context.Context, r run, st Storage, includeMetrics bool) (Entry, error) {
+	s.cleanPartials(ctx, st)
 	size, err := s.transfer(ctx, r, st, includeMetrics)
 	return s.finish(ctx, r, size, err)
+}
+
+// cleanPartials removes the half-written files an earlier, stopped backup left
+// in st, when st can have any. Every backup holds the instance-wide lock by
+// the time it gets here, so none of those files belongs to an upload in
+// flight. A failure is logged and never fails the backup.
+func (s *Service) cleanPartials(ctx context.Context, st Storage) {
+	c, ok := st.(PartialCleaner)
+	if !ok {
+		return
+	}
+	n, err := c.CleanPartials(ctx)
+	if err != nil {
+		s.log.WarnContext(ctx, "remove partial backup files", "destination", st.Describe(), "removed", n, "err", err)
+	}
+	if n > 0 {
+		s.log.InfoContext(ctx, "removed partial backup files a stopped backup left behind", "destination", st.Describe(), "count", n)
+	}
 }
 
 // transfer streams the dump into st through a pipe, so the backup is never

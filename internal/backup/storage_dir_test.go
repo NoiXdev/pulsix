@@ -346,3 +346,78 @@ func TestDirListMarksUnreadableEntryDamaged(t *testing.T) {
 		}
 	}
 }
+
+func TestDirCleanPartialsRemovesOnlyRegularPartialFiles(t *testing.T) {
+	dir := t.TempDir()
+	s := backup.NewDirStorage(dir)
+	ctx := context.Background()
+
+	at := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	kept := backup.ObjectName(at, "scheduled")
+	if _, err := s.Put(ctx, kept, bytes.NewReader(backupFile(t, at, "scheduled", "x"))); err != nil {
+		t.Fatal(err)
+	}
+	stale := backup.ObjectName(at.Add(time.Hour), "manual") + ".partial"
+	stale2 := backup.ObjectName(at.Add(2*time.Hour), "manual") + ".partial"
+	for _, name := range []string{stale, stale2} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("half"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// None of these may be touched: another file, a symlink and a directory
+	// that merely carry the suffix, and a partial file nested in a folder.
+	other := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(other, []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "precious")
+	if err := os.WriteFile(target, []byte("precious"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link.pxbak.partial")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	subdir := filepath.Join(dir, "folder.pxbak.partial")
+	if err := os.Mkdir(subdir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(subdir, "inner.pxbak.partial")
+	if err := os.WriteFile(nested, []byte("inner"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cleaner, ok := s.(backup.PartialCleaner)
+	if !ok {
+		t.Fatal("the folder storage does not implement PartialCleaner")
+	}
+	n, err := cleaner.CleanPartials(ctx)
+	if err != nil || n != 2 {
+		t.Fatalf("CleanPartials = %d, %v; want 2 files removed", n, err)
+	}
+	for _, name := range []string{stale, stale2} {
+		if _, err := os.Lstat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s still exists: %v", name, err)
+		}
+	}
+	for _, p := range []string{filepath.Join(dir, kept), other, target, nested} {
+		if _, err := os.Lstat(p); err != nil {
+			t.Errorf("%s was touched: %v", p, err)
+		}
+	}
+	if fi, err := os.Lstat(link); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the symlink was touched: %v", err)
+	}
+	if fi, err := os.Lstat(subdir); err != nil || !fi.IsDir() {
+		t.Errorf("the directory was touched: %v", err)
+	}
+
+	// Nothing left to remove, and a folder that does not exist yet is fine.
+	if n, err := cleaner.CleanPartials(ctx); err != nil || n != 0 {
+		t.Errorf("second CleanPartials = %d, %v; want 0, nil", n, err)
+	}
+	missing := backup.NewDirStorage(filepath.Join(dir, "missing")).(backup.PartialCleaner)
+	if n, err := missing.CleanPartials(ctx); err != nil || n != 0 {
+		t.Errorf("CleanPartials on a missing folder = %d, %v; want 0, nil", n, err)
+	}
+}

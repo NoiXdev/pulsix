@@ -169,6 +169,42 @@ func (d *dirStorage) describe(e fs.DirEntry) (o Object, ok bool) {
 	return o, true
 }
 
+// CleanPartials removes the <name>.partial files a stopped backup left in
+// the folder. Only regular files directly in the folder qualify: the entry
+// type comes from the directory itself (lstat semantics), so a symbolic link,
+// a directory or a special file that merely carries the suffix is left alone
+// and nothing below the folder is visited. A file that cannot be removed does
+// not stop the others; the first such failure is returned with the count of
+// the files that did go.
+func (d *dirStorage) CleanPartials(ctx context.Context) (int, error) {
+	entries, err := os.ReadDir(d.dir)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("list backup folder: %w", err)
+	}
+	removed := 0
+	var firstErr error
+	for _, e := range entries {
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), partialSuffix) {
+			continue
+		}
+		err := os.Remove(filepath.Join(d.dir, e.Name()))
+		switch {
+		case err == nil:
+			removed++
+		case errors.Is(err, fs.ErrNotExist):
+		case firstErr == nil:
+			firstErr = fmt.Errorf("remove %s: %w", e.Name(), err)
+		}
+	}
+	return removed, firstErr
+}
+
 func (d *dirStorage) Delete(_ context.Context, name string) error {
 	if err := validName(name); err != nil {
 		return err

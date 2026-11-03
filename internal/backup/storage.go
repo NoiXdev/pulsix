@@ -34,6 +34,17 @@ type Storage interface {
 	Describe() string
 }
 
+// PartialCleaner is implemented by a Storage that can leave half-written
+// files behind when a backup is stopped mid-upload. The service calls it at
+// the start of every backup, holding the backup lock, so no upload of this
+// instance is in flight. An object store discards an unfinished upload by
+// itself and does not implement it.
+type PartialCleaner interface {
+	// CleanPartials removes the half-written files and returns how many it
+	// removed.
+	CleanPartials(ctx context.Context) (int, error)
+}
+
 // Object is one listed backup file.
 type Object struct {
 	Name string

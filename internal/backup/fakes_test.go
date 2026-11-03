@@ -282,6 +282,12 @@ type memStorage struct {
 	// and wait this long before each read: a slow but steady destination.
 	slowRead  time.Duration
 	slowChunk int
+	// cleanups records, per CleanPartials call, what onClean returned;
+	// cleanErr makes the call fail, and cleaned is the count it reports.
+	cleanups []string
+	onClean  func() string
+	cleanErr error
+	cleaned  int
 }
 
 func newMemStorage() *memStorage { return &memStorage{objects: map[string][]byte{}} }
@@ -314,6 +320,18 @@ func (m *memStorage) Put(ctx context.Context, name string, r io.Reader) (int64, 
 	defer m.mu.Unlock()
 	m.objects[name] = data
 	return int64(len(data)), nil
+}
+
+// CleanPartials makes memStorage a PartialCleaner, like the folder storage.
+func (m *memStorage) CleanPartials(context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	note := ""
+	if m.onClean != nil {
+		note = m.onClean()
+	}
+	m.cleanups = append(m.cleanups, note)
+	return m.cleaned, m.cleanErr
 }
 
 // slowReader reads at most chunk bytes per call, each after delay.
