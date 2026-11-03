@@ -58,6 +58,27 @@ describe('WorkersPage', () => {
     expect(screen.getByText('v1.1.0')).toBeInTheDocument();
   });
 
+  it('does not badge a revoked worker: it never runs again, so there is nothing to update', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': {
+        workers: [
+          worker({ id: 'w1', name: 'w-revoked-old', status: 'revoked', cert_expires_at: null, version: 'v1.1.0', version_status: 'update_required' }),
+          worker({ id: 'w2', name: 'w-revoked-newer', status: 'revoked', cert_expires_at: null, version: 'v1.9.0', version_status: 'newer' }),
+          worker({ id: 'w3', name: 'w-active-old', version: 'v1.2.0', version_status: 'update_required' }),
+        ],
+      },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [] },
+    });
+    renderPage();
+    expect(await screen.findByText('w-revoked-old')).toBeInTheDocument();
+    // Only the active worker is badged; the revoked ones keep their version.
+    expect(screen.getAllByText('Update required')).toHaveLength(1);
+    expect(screen.queryByText('Newer than manager')).not.toBeInTheDocument();
+    expect(screen.getByText('v1.1.0')).toBeInTheDocument();
+    expect(screen.getByText('v1.9.0')).toBeInTheDocument();
+  });
+
   it('lists workers with status, zone, expiry highlight and the current job', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),

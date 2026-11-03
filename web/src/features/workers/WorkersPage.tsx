@@ -124,7 +124,8 @@ export function WorkersPage() {
               <span className={`text-xs ${w.status === 'offline' ? 'text-[var(--px-warn)]' : 'text-muted-foreground'}`}>{seenLabel(w.last_seen, now, t)}</span>
               <span className="flex min-w-0 items-center gap-2 text-xs">
                 <span className="truncate font-mono">{w.version || '—'}</span>
-                <VersionSkewBadge status={w.version_status} />
+                {/* A revoked worker never connects again: nothing to update. */}
+                {w.status !== 'revoked' && <VersionSkewBadge status={w.version_status} />}
               </span>
               <span className={`text-xs ${expiring ? 'font-semibold text-[var(--px-warn)]' : 'text-muted-foreground'}`} data-expiring={expiring || undefined}>
                 {w.status === 'revoked' ? '—' : expiryLabel(w.cert_expires_at, now, t)}
