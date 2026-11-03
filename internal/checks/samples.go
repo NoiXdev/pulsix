@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -172,7 +173,9 @@ const (
 // a whole-host metric reports — but an empty check_key or metric names
 // nothing that could ever be read back while still occupying a permanent
 // check_current row, so both are refused, exactly as RecordFacts refuses
-// an empty fact key.
+// an empty fact key. All three must be valid UTF-8 (backlog 7.52): they are
+// proto3 strings on the agent's wire and text in the store, and an agent's
+// own gRPC stack cannot even encode one that is not.
 func withinContract(o Observation) error {
 	switch {
 	case o.CheckKey == "":
@@ -185,6 +188,8 @@ func withinContract(o Observation) error {
 		return fmt.Errorf("%w: item for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxItemLen)
 	case len(o.Metric) > MaxMetricLen:
 		return fmt.Errorf("%w: metric for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxMetricLen)
+	case !utf8.ValidString(o.CheckKey) || !utf8.ValidString(o.Item) || !utf8.ValidString(o.Metric):
+		return fmt.Errorf("%w: check_key, item and metric must be valid UTF-8", ErrInvalidInput)
 	case breaksLine(o.CheckKey) || breaksLine(o.Item) || breaksLine(o.Metric):
 		return fmt.Errorf("%w: check_key, item and metric must not contain control characters or line breaks", ErrInvalidInput)
 	}

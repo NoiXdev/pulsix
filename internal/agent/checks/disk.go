@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/shirou/gopsutil/v4/disk"
 )
@@ -28,14 +29,21 @@ var pseudoFilesystems = map[string]bool{
 const maxItemLen = 512
 
 // reportableItem reports whether the manager's check-results contract
-// accepts item: at most maxItemLen bytes, and no control character or
-// line separator (internal/checks.withinContract). The manager refuses a
-// whole batch, and ends the stream, for one item that breaks it (backlog
-// 7.40), and a mount point is a path whoever can mount something chooses,
-// FUSE through a setuid helper included; one the agent cannot name inside
-// the contract is left out rather than cost every other mount its report.
+// accepts item: at most maxItemLen bytes, valid UTF-8, and no control
+// character or line separator (internal/checks.withinContract). The
+// manager refuses a whole batch, and ends the stream, for one item that
+// breaks it (backlog 7.40), and a mount point is a path whoever can mount
+// something chooses, FUSE through a setuid helper included; one the agent
+// cannot name inside the contract is left out rather than cost every other
+// mount its report.
+//
+// Valid UTF-8 is not the manager's rule alone (backlog 7.52): the item is
+// a proto3 string, and gRPC refuses to encode one that is not, on this
+// side, before anything reaches the wire. gopsutil hands such a path over
+// raw — it unescapes a mountinfo field through strconv.Unquote and returns
+// the input unchanged when that fails, which a '"' in the path makes it do.
 func reportableItem(item string) bool {
-	return len(item) <= maxItemLen && strings.IndexFunc(item, func(r rune) bool {
+	return len(item) <= maxItemLen && utf8.ValidString(item) && strings.IndexFunc(item, func(r rune) bool {
 		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
 	}) < 0
 }
@@ -103,7 +111,7 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 	if explicit {
 		for _, mp := range mounts {
 			if !reportableItem(mp) {
-				errs = append(errs, fmt.Errorf("disk: mount %q cannot be reported: longer than %d bytes or carrying a control character", mp, maxItemLen))
+				errs = append(errs, fmt.Errorf("disk: mount %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", mp, maxItemLen))
 				continue
 			}
 			candidates = append(candidates, mp)

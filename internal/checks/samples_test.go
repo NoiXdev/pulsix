@@ -695,6 +695,38 @@ func TestRecordObservationsRejectsLineBreaksAndControlCharacters(t *testing.T) {
 	}
 }
 
+// TestWithinContractRefusesInvalidUTF8 is backlog 7.52: check_key, item
+// and metric are proto3 strings on the agent's wire and text columns in
+// the store, so one that is not valid UTF-8 is outside the contract. The
+// agent's gRPC stack cannot even encode such a result, so the manager
+// never sees one from a well-behaved agent; this keeps the service's own
+// contract from depending on that.
+func TestWithinContractRefusesInvalidUTF8(t *testing.T) {
+	now := time.Now().UTC()
+	host := uuid.Must(uuid.NewV7())
+	cases := map[string]checks.Observation{
+		"item":      obsAt(host, now, "disk", "/home/u/q\"\xffz", "disk.used_pct"),
+		"check_key": obsAt(host, now, "di\xffsk", "/var", "disk.used_pct"),
+		"metric":    obsAt(host, now, "disk", "/var", "disk.used\xc3_pct"),
+	}
+	for name, bad := range cases {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore()
+			svc := checks.NewService(store, fixedClock(now))
+			_, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), []checks.Observation{bad})
+			if !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+			if !strings.Contains(err.Error(), "valid UTF-8") {
+				t.Fatalf("err = %v, want it to name valid UTF-8", err)
+			}
+			if store.reachedStore() != 0 {
+				t.Fatalf("store calls = %d, want 0", store.reachedStore())
+			}
+		})
+	}
+}
+
 // TestRecordObservationsBatchSizeBoundary: the count bound is a REFUSAL of
 // the whole batch (ErrInvalidInput, the shape agents.RecordFacts already
 // uses for its own contract's bounds), never a silent truncation, and the

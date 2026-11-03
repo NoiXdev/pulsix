@@ -14,9 +14,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
@@ -324,7 +327,10 @@ func (l *Loop) activateSender(sender *streamSender) error {
 	pending := l.buffer.Drain()
 	if sent, err := sender.sendResultsChunked(pending); err != nil {
 		// Only what did NOT go out goes back: the chunks already
-		// delivered must not be replayed again on the next reconnect.
+		// delivered must not be replayed again on the next reconnect,
+		// and a chunk this agent cannot encode at all is dropped rather
+		// than replayed into the same failure on every reconnect
+		// (unsentAfter).
 		//
 		// The put-back can itself drop: Drain evicts nothing, so a ring
 		// drained after a long outage carries results that have since
@@ -333,7 +339,7 @@ func (l *Loop) activateSender(sender *streamSender) error {
 		// a cause somebody can read — the same reason handleResults logs
 		// its own overflow (both are readable only on the monitored
 		// host's journal today; backlog 3.27).
-		if dropped := l.buffer.Add(pending[sent:]); dropped > 0 {
+		if dropped := l.buffer.Add(l.unsentAfter(pending, sent, err)); dropped > 0 {
 			l.log.Warn("check results aged out of the buffer while a reconnect replay failed; samples dropped",
 				"dropped", dropped, "replayed", sent, "err", err)
 		}
@@ -375,13 +381,47 @@ func (l *Loop) handleResults(results []checks.Result) {
 		// The send failed partway — the session's own recv/send paths
 		// will notice the dead stream independently and reconnect. Only
 		// the results that did NOT go out fall back to the buffer:
-		// re-buffering a delivered chunk would write those samples twice.
-		results = results[sent:]
+		// re-buffering a delivered chunk would write those samples twice,
+		// and re-buffering one that cannot be encoded would only fail the
+		// next reconnect's replay on it (unsentAfter).
+		results = l.unsentAfter(results, sent, err)
 	}
 	if dropped := l.buffer.Add(results); dropped > 0 {
 		l.log.Warn("check result buffer overflowed while disconnected; oldest samples dropped",
 			"dropped", dropped)
 	}
+}
+
+// unsentAfter returns what of results goes back to the disconnect buffer
+// after sendResultsChunked delivered sent of them and then failed with
+// err: everything after the delivered chunks, except when the failing
+// chunk could not be encoded at all (backlog 7.52). A result carrying a
+// string that is not valid UTF-8 makes gRPC refuse the whole message on
+// this side, before anything reaches the wire, and finish the stream; put
+// back, that chunk fails every later replay the same way, so the session
+// never reaches its heartbeat again and the buffer only grows. That chunk
+// alone is dropped, and logged, since it is a gap somebody may need to
+// explain; the results after it are buffered as for any other failure.
+func (l *Loop) unsentAfter(results []checks.Result, sent int, err error) []checks.Result {
+	rest := results[sent:]
+	if !isEncodeFailure(err) {
+		return rest
+	}
+	n := min(len(rest), maxResultsPerMessage)
+	l.log.Warn("a check results message could not be encoded and its results were dropped; "+
+		"a result carries text that is not valid UTF-8",
+		"dropped", n, "err", err)
+	return rest[n:]
+}
+
+// isEncodeFailure reports whether err is gRPC refusing to marshal the
+// outgoing message on the client side ("grpc: error while marshaling",
+// codes.Internal), as opposed to the stream failing underneath it. Any
+// other error, Internal ones included, leaves the message deliverable on
+// the next stream.
+func isEncodeFailure(err error) bool {
+	st, ok := status.FromError(err)
+	return ok && st.Code() == codes.Internal && strings.Contains(st.Message(), "marshal")
 }
 
 // consumeManagerMessages reads the manager's messages until the stream
