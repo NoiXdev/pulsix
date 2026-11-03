@@ -104,6 +104,9 @@ type Store interface {
 	ListEnrollments(ctx context.Context, orgID uuid.UUID, now time.Time) ([]Enrollment, error)
 	DeleteEnrollment(ctx context.Context, orgID, id uuid.UUID) error
 	Enroll(ctx context.Context, id uuid.UUID, fn func(e Enrollment, secretHash []byte) (Worker, Certificate, error)) (Worker, error)
+	// RestoreWindow reads the last restore's window, outside any org scope
+	// and without a lock; nil when no usable restore marker exists.
+	RestoreWindow(ctx context.Context) (*RestoreWindow, error)
 	// AdoptCertificate locks the worker named name in c.OrgID, hands what
 	// it read to allow and, when allow returns nil, inserts c for that
 	// worker unless it is already registered there — one transaction. No

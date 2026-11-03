@@ -25,9 +25,6 @@ type RestoreWindow struct {
 type AdoptionState struct {
 	// Worker is the row the certificate's org and name resolve to.
 	Worker Worker
-	// Window is the last restore's window; nil when no restore ever
-	// happened.
-	Window *RestoreWindow
 	// NewestCertificate is the latest NotBefore among the worker's
 	// certificates, revoked ones included; nil when it holds none.
 	NewestCertificate *time.Time
@@ -49,9 +46,18 @@ func (s *Service) AdoptCertificate(ctx context.Context, leaf *x509.Certificate, 
 	if leaf == nil || id == nil || id.Kind != ca.KindWorker || id.OrgID == nil || id.Serial == nil || id.Serial.Sign() <= 0 {
 		return Worker{}, ErrNotFound
 	}
+	// The window is checked before the store locks anything, so an
+	// unknown serial on an instance no restore touched costs one read.
+	window, err := s.store.RestoreWindow(ctx)
+	if err != nil {
+		return Worker{}, fmt.Errorf("adopt worker certificate: %w", err)
+	}
+	if !window.contains(leaf.NotBefore) {
+		return Worker{}, ErrNotFound
+	}
 	c := Certificate{Serial: id.Serial, OrgID: *id.OrgID, NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}
 	w, err := s.store.AdoptCertificate(ctx, id.WorkerName, c, func(st AdoptionState) error {
-		if !adoptable(st, id.ZoneID, leaf.NotBefore) {
+		if !adoptable(st, window, id.ZoneID, leaf.NotBefore) {
 			return ErrNotFound
 		}
 		return nil
@@ -65,18 +71,20 @@ func (s *Service) AdoptCertificate(ctx context.Context, leaf *x509.Certificate, 
 	return w, nil
 }
 
+// contains reports whether t lies strictly inside the window; a nil
+// window (no restore) contains nothing.
+func (w *RestoreWindow) contains(t time.Time) bool {
+	return w != nil && t.After(w.BackupCreatedAt) && t.Before(w.RestoredAt)
+}
+
 // adoptable applies the adoption rules to what the store read. Every
 // comparison is strict: a certificate issued at the very second of the
-// backup, the restore or the newest registered certificate is refused.
-func adoptable(st AdoptionState, zoneID uuid.UUID, notBefore time.Time) bool {
-	if st.Worker.Status != StatusActive || st.Worker.ZoneID != zoneID {
+// backup, the restore or the newest registered certificate is refused. A
+// serial a concurrent adoption already registered for the worker is the
+// newest certificate itself, so only that comparison is skipped for it.
+func adoptable(st AdoptionState, window *RestoreWindow, zoneID uuid.UUID, notBefore time.Time) bool {
+	if st.Worker.Status != StatusActive || st.Worker.ZoneID != zoneID || !window.contains(notBefore) {
 		return false
 	}
-	if st.Registered {
-		return true
-	}
-	if st.Window == nil || !notBefore.After(st.Window.BackupCreatedAt) || !notBefore.Before(st.Window.RestoredAt) {
-		return false
-	}
-	return st.NewestCertificate == nil || notBefore.After(*st.NewestCertificate)
+	return st.Registered || st.NewestCertificate == nil || notBefore.After(*st.NewestCertificate)
 }

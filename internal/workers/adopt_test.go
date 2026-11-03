@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"testing"
 	"time"
 
@@ -70,11 +71,27 @@ func newAdoptWorld(t *testing.T) *adoptWorld {
 // writeMarker stores the restore marker the way backup.Restore does.
 func (w *adoptWorld) writeMarker(t *testing.T) {
 	t.Helper()
-	value, err := json.Marshal(backup.RestoreMarker{BackupCreatedAt: w.backupAt, RestoredAt: w.restoredAt})
+	w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.backupAt, RestoredAt: w.restoredAt})
+}
+
+// writeRawMarker stores m as it is, whatever its fields hold.
+func (w *adoptWorld) writeRawMarker(t *testing.T, m backup.RestoreMarker) {
+	t.Helper()
+	value, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := w.q.UpsertInstanceSetting(ctx, gen.UpsertInstanceSettingParams{Key: backup.RestoreMarkerKey, Value: value}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// attach registers leaf for the worker called name, enrolling it in the
+// world's zone first when it does not exist yet.
+func (w *adoptWorld) attach(t *testing.T, name string, leaf *x509.Certificate) {
+	t.Helper()
+	if _, err := w.svc.RegisterOrAttach(ctx, w.org, workers.RegisterInput{ZoneID: w.zone, Name: name,
+		CertSerial: leaf.SerialNumber, NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -155,25 +172,44 @@ func TestAdoptWorkerCertificateInsideTheRestoreWindow(t *testing.T) {
 func TestAdoptWorkerCertificateRefuses(t *testing.T) {
 	tests := []struct {
 		name string
+		// known marks a serial the registry already holds (revoked, or for
+		// another worker), which GetBySerial must still resolve as before.
+		known bool
 		// arrange runs on the world and returns the certificate to adopt.
 		arrange func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity)
 	}{
-		{"no restore marker", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"no restore marker", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
 		}},
-		{"issued before the backup", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"issued before the backup", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(-time.Second))
 		}},
-		{"issued at the backup", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"issued at the backup", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt)
 		}},
-		{"issued after the restore", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"issued at the restore", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeMarker(t)
+			return w.issue(t, w.org, w.zone, "fra-1", w.restoredAt)
+		}},
+		{"marker without a backup time", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeRawMarker(t, backup.RestoreMarker{RestoredAt: w.restoredAt})
+			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
+		}},
+		{"marker without a restore time", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.backupAt})
+			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
+		}},
+		{"marker restored before its backup", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeRawMarker(t, backup.RestoreMarker{BackupCreatedAt: w.restoredAt, RestoredAt: w.backupAt})
+			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
+		}},
+		{"issued after the restore", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			return w.issue(t, w.org, w.zone, "fra-1", w.restoredAt.Add(time.Second))
 		}},
-		{"not newer than the newest registered certificate", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"not newer than the newest registered certificate", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			newer, _ := w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(40*time.Minute))
 			if _, err := w.svc.RegisterOrAttach(ctx, w.org, workers.RegisterInput{ZoneID: w.zone, Name: "fra-1",
@@ -182,26 +218,52 @@ func TestAdoptWorkerCertificateRefuses(t *testing.T) {
 			}
 			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(40*time.Minute))
 		}},
-		{"worker revoked", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"worker revoked", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			if _, err := workers.NewSQLStore(w.d).Revoke(ctx, w.org, w.worker.ID); err != nil {
 				t.Fatal(err)
 			}
 			return w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
 		}},
-		{"no worker with that name", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"no worker with that name", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			return w.issue(t, w.org, w.zone, "fra-2", w.backupAt.Add(30*time.Minute))
 		}},
-		{"zone differs from the row", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"zone differs from the row", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			other := seedZone(t, w.q, w.org, "other")
 			return w.issue(t, w.org, other, "fra-1", w.backupAt.Add(30*time.Minute))
 		}},
-		{"no org", func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+		{"no org", false, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			w.writeMarker(t)
 			leaf, id := w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
 			id.OrgID = nil
+			return leaf, id
+		}},
+		{"registered but revoked", true, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeMarker(t)
+			leaf, id := w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
+			w.attach(t, "fra-1", leaf)
+			if _, err := w.d.Pool().Exec(ctx, `UPDATE worker_certificates SET revoked_at = now() WHERE serial = $1`, leaf.SerialNumber.String()); err != nil {
+				t.Fatal(err)
+			}
+			return leaf, id
+		}},
+		{"registered to another worker", true, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeMarker(t)
+			leaf, id := w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
+			w.attach(t, "fra-2", leaf)
+			return leaf, id
+		}},
+		{"registered, no restore marker", true, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			leaf, id := w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
+			w.attach(t, "fra-1", leaf)
+			return leaf, id
+		}},
+		{"registered, issued after the restore", true, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeMarker(t)
+			leaf, id := w.issue(t, w.org, w.zone, "fra-1", w.restoredAt.Add(time.Second))
+			w.attach(t, "fra-1", leaf)
 			return leaf, id
 		}},
 	}
@@ -217,8 +279,40 @@ func TestAdoptWorkerCertificateRefuses(t *testing.T) {
 			if after := w.certificateCount(t); after != before {
 				t.Fatalf("certificate rows %d -> %d, want nothing inserted", before, after)
 			}
-			if _, err := w.svc.GetBySerial(ctx, leaf.SerialNumber); !errors.Is(err, workers.ErrNotFound) {
+			if _, err := w.svc.GetBySerial(ctx, leaf.SerialNumber); !tt.known && !errors.Is(err, workers.ErrNotFound) {
 				t.Fatalf("GetBySerial after a refused adoption: %v, want ErrNotFound", err)
+			}
+		})
+	}
+}
+
+// TestAdoptCertificateChecksTheWindowBeforeLocking: without a restore
+// marker, or with a certificate outside its window, the service refuses
+// without asking the store to lock the worker row — a refused worker's
+// reconnect loop must not serialize with renewals and heartbeats.
+func TestAdoptCertificateChecksTheWindowBeforeLocking(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	id := &ca.ClientIdentity{Serial: big.NewInt(4242), Kind: ca.KindWorker, OrgID: &org, ZoneID: zone, WorkerName: "fra-1"}
+	window := &workers.RestoreWindow{BackupCreatedAt: now.Add(-2 * time.Hour), RestoredAt: now.Add(-time.Hour)}
+	tests := []struct {
+		name      string
+		window    *workers.RestoreWindow
+		notBefore time.Time
+	}{
+		{"no restore marker", nil, now.Add(-90 * time.Minute)},
+		{"issued before the backup", window, now.Add(-3 * time.Hour)},
+		{"issued after the restore", window, now},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{window: tt.window}
+			_, err := workers.NewService(store).AdoptCertificate(ctx, &x509.Certificate{NotBefore: tt.notBefore, NotAfter: tt.notBefore.Add(ca.LeafValidity)}, id)
+			if !errors.Is(err, workers.ErrNotFound) {
+				t.Fatalf("AdoptCertificate err = %v, want ErrNotFound", err)
+			}
+			if store.adoptCalls != 0 {
+				t.Fatalf("store.AdoptCertificate called %d times, want none", store.adoptCalls)
 			}
 		})
 	}

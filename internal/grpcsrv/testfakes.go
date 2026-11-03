@@ -75,7 +75,7 @@ type fakeWorkerStore struct {
 	onLookup func()
 	// lookupErr, enrollErr, addCertErr and adoptErr inject store faults.
 	lookupErr, enrollErr, addCertErr, adoptErr error
-	// restoreWindow is the restore marker AdoptCertificate reads; nil is a
+	// restoreWindow is the restore marker RestoreWindow returns; nil is a
 	// database no restore ever touched.
 	restoreWindow *workers.RestoreWindow
 }
@@ -224,10 +224,17 @@ func (f *fakeWorkerStore) Enroll(_ context.Context, id uuid.UUID, fn func(worker
 	return w, nil
 }
 
+// RestoreWindow returns the restore marker the test set.
+func (f *fakeWorkerStore) RestoreWindow(context.Context) (*workers.RestoreWindow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.restoreWindow, nil
+}
+
 // AdoptCertificate finds the worker by org and name, lets allow judge it
-// against restoreWindow and registers the serial. The fake keeps no
-// certificate dates, so NewestCertificate stays nil, and the interceptor
-// only adopts unknown serials, so Registered stays false.
+// and registers the serial. The fake keeps no certificate dates, so
+// NewestCertificate stays nil, and the interceptor only adopts unknown
+// serials, so Registered stays false.
 func (f *fakeWorkerStore) AdoptCertificate(_ context.Context, name string, c workers.Certificate, allow func(workers.AdoptionState) error) (workers.Worker, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -238,7 +245,7 @@ func (f *fakeWorkerStore) AdoptCertificate(_ context.Context, name string, c wor
 		if w.OrgID != c.OrgID || w.Name != name {
 			continue
 		}
-		if err := allow(workers.AdoptionState{Worker: w, Window: f.restoreWindow}); err != nil {
+		if err := allow(workers.AdoptionState{Worker: w}); err != nil {
 			return workers.Worker{}, err
 		}
 		f.bySerial[c.Serial.String()] = w

@@ -213,16 +213,12 @@ func (s *SQLStore) Enroll(ctx context.Context, id uuid.UUID, fn func(e Enrollmen
 }
 
 // AdoptCertificate implements Store.AdoptCertificate in one transaction
-// bound to c.OrgID: read the restore marker, lock the worker row by
-// (org, name), read its certificates, ask allow and, unless the serial is
-// already registered for that worker, insert the certificate.
+// bound to c.OrgID: lock the worker row by (org, name), read its
+// certificates, ask allow and, unless the serial is already registered for
+// that worker, insert the certificate.
 func (s *SQLStore) AdoptCertificate(ctx context.Context, name string, c Certificate, allow func(AdoptionState) error) (Worker, error) {
 	var out Worker
 	err := s.d.WithWriteTx(ctx, c.OrgID, func(ctx context.Context) error {
-		window, err := s.restoreWindow(ctx)
-		if err != nil {
-			return err
-		}
 		row, err := s.q.LockWorkerByName(ctx, gen.LockWorkerByNameParams{OrgID: c.OrgID, Name: name})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -234,7 +230,7 @@ func (s *SQLStore) AdoptCertificate(ctx context.Context, name string, c Certific
 		if err != nil {
 			return err
 		}
-		state := AdoptionState{Worker: w, Window: window}
+		state := AdoptionState{Worker: w}
 		// Two calls on a fresh connection can race in with the same
 		// unknown serial; the one that waited on the lock finds it
 		// registered by the other. A serial registered anywhere else, or
@@ -282,8 +278,10 @@ type restoreMarker struct {
 	RestoredAt      time.Time `json:"restored_at"`
 }
 
-// restoreWindow reads the last restore's marker; nil when none exists.
-func (s *SQLStore) restoreWindow(ctx context.Context) (*RestoreWindow, error) {
+// RestoreWindow reads the last restore's marker. No marker, or one without
+// both times or whose restore is not after its backup, is nil: adoption
+// fails closed on a marker it cannot trust.
+func (s *SQLStore) RestoreWindow(ctx context.Context) (*RestoreWindow, error) {
 	row, err := s.q.GetInstanceSetting(ctx, restoreMarkerKey)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
@@ -294,6 +292,9 @@ func (s *SQLStore) restoreWindow(ctx context.Context) (*RestoreWindow, error) {
 	var m restoreMarker
 	if err := json.Unmarshal(row.Value, &m); err != nil {
 		return nil, fmt.Errorf("decode restore marker: %w", err)
+	}
+	if m.BackupCreatedAt.IsZero() || m.RestoredAt.IsZero() || !m.RestoredAt.After(m.BackupCreatedAt) {
+		return nil, nil
 	}
 	return &RestoreWindow{BackupCreatedAt: m.BackupCreatedAt, RestoredAt: m.RestoredAt}, nil
 }

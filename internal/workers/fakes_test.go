@@ -23,6 +23,10 @@ type fakeStore struct {
 	touched      []string
 	enrollments  map[uuid.UUID]workers.Enrollment
 	enrollHashes map[uuid.UUID][]byte
+	// window is what RestoreWindow returns; adoptCalls counts
+	// AdoptCertificate calls.
+	window     *workers.RestoreWindow
+	adoptCalls int
 }
 
 func (f *fakeStore) init() {
@@ -154,9 +158,17 @@ func (f *fakeStore) DeleteEnrollment(_ context.Context, orgID, id uuid.UUID) err
 	return nil
 }
 
-// AdoptCertificate is not exercised by the service tests: adoption is
-// covered against the SQL store (adopt_test.go).
+// RestoreWindow returns the window the test set.
+func (f *fakeStore) RestoreWindow(context.Context) (*workers.RestoreWindow, error) {
+	return f.window, nil
+}
+
+// AdoptCertificate only counts its calls: adoption itself is covered
+// against the SQL store (adopt_test.go).
 func (f *fakeStore) AdoptCertificate(context.Context, string, workers.Certificate, func(workers.AdoptionState) error) (workers.Worker, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.adoptCalls++
 	return workers.Worker{}, workers.ErrNotFound
 }
 
