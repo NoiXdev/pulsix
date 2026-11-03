@@ -116,7 +116,7 @@ func (s *Service) RunDue(ctx context.Context) error {
 		e, _ = s.execute(ctx, r, st, set.IncludeMetrics)
 	}
 	if e.State == StateSucceeded {
-		s.prune(ctx, st, set)
+		s.prune(ctx, st, set, r.name)
 	}
 	release()
 	held = false
@@ -127,9 +127,11 @@ func (s *Service) RunDue(ctx context.Context) error {
 	return nil
 }
 
-// prune deletes the scheduled backups the retention no longer keeps.
+// prune deletes the scheduled backups the retention no longer keeps. Only
+// backups whose header is authentic under this instance's header key take
+// part, and the backup this run just stored (written) is never deleted.
 // Failures are logged: the backup itself succeeded.
-func (s *Service) prune(ctx context.Context, st Storage, set Settings) {
+func (s *Service) prune(ctx context.Context, st Storage, set Settings, written string) {
 	loc, err := location(set.TimeZone)
 	if err != nil {
 		loc = time.UTC
@@ -139,7 +141,8 @@ func (s *Service) prune(ctx context.Context, st Storage, set Settings) {
 		s.log.ErrorContext(ctx, "prune backups: list", "err", err)
 		return
 	}
-	for _, name := range Prune(objs, set.Retention, loc) {
+	MarkVerified(objs, s.headerKey)
+	for _, name := range Prune(objs, set.Retention, loc, written, s.now()) {
 		if err := st.Delete(ctx, name); err != nil {
 			s.log.ErrorContext(ctx, "prune backups: delete", "name", name, "err", err)
 			continue

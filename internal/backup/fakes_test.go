@@ -282,18 +282,35 @@ func (m *memStorage) Delete(_ context.Context, name string) error {
 
 func (m *memStorage) Describe() string { return "memory" }
 
-// putBackup stores a header-only backup object created at at.
+// putBackup stores a header-only backup object created at at, with an
+// unsigned header.
 func (m *memStorage) putBackup(t *testing.T, at time.Time, kind string) string {
 	t.Helper()
+	name := backup.ObjectName(at, kind)
+	m.putHeader(t, name, backup.Header{CreatedAt: at, Kind: kind, PulsixVersion: "0.9.0"})
+	return name
+}
+
+// putSignedBackup is putBackup with the header signed under the harness's
+// header key, as the harness's own backups are.
+func (m *memStorage) putSignedBackup(t *testing.T, at time.Time, kind string) string {
+	t.Helper()
+	name := backup.ObjectName(at, kind)
+	h := backup.SignHeader(backup.Header{CreatedAt: at, Kind: kind, PulsixVersion: "0.9.0"}, backup.HeaderKey(harnessKey))
+	m.putHeader(t, name, h)
+	return name
+}
+
+// putHeader stores an object under name holding h and a short payload.
+func (m *memStorage) putHeader(t *testing.T, name string, h backup.Header) {
+	t.Helper()
 	var buf bytes.Buffer
-	if err := backup.WriteHeader(&buf, backup.Header{CreatedAt: at, Kind: kind, PulsixVersion: "0.9.0"}); err != nil {
+	if err := backup.WriteHeader(&buf, h); err != nil {
 		t.Fatal(err)
 	}
-	name := backup.ObjectName(at, kind)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.objects[name] = append(buf.Bytes(), "payload"...)
-	return name
 }
 
 func (m *memStorage) has(name string) bool {

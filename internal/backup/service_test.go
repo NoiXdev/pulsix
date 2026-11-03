@@ -3,6 +3,7 @@ package backup_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -388,9 +389,9 @@ func TestRunDuePrunesOnlyAfterSuccess(t *testing.T) {
 	r := backup.Retention{Daily: 1}
 	seed := func(h *harness) []string {
 		return []string{
-			h.storage.putBackup(t, time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC), backup.KindScheduled),
-			h.storage.putBackup(t, time.Date(2026, 10, 31, 3, 0, 0, 0, time.UTC), backup.KindScheduled),
-			h.storage.putBackup(t, time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC), backup.KindManual),
+			h.storage.putSignedBackup(t, time.Date(2026, 10, 30, 3, 0, 0, 0, time.UTC), backup.KindScheduled),
+			h.storage.putSignedBackup(t, time.Date(2026, 10, 31, 3, 0, 0, 0, time.UTC), backup.KindScheduled),
+			h.storage.putSignedBackup(t, time.Date(2026, 10, 29, 9, 0, 0, 0, time.UTC), backup.KindManual),
 		}
 	}
 	due := time.Date(2026, 11, 2, 3, 0, 30, 0, time.UTC)
@@ -428,9 +429,8 @@ func TestRunDuePrunesOnlyAfterSuccess(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		h := newHarness(t)
-		seed(h)
+		seeded := seed(h)
 		h.enableSchedule(t, "03:00", r)
-		objs, _ := h.storage.List(context.Background())
 		h.clock.Set(due)
 		if err := h.svc.RunDue(context.Background()); err != nil {
 			t.Fatal(err)
@@ -439,12 +439,11 @@ func TestRunDuePrunesOnlyAfterSuccess(t *testing.T) {
 		if len(after) != 2 {
 			t.Errorf("objects after the scheduled backup = %d, want the new one and the manual one", len(after))
 		}
-		// Prune over the listing with the new backup in it.
-		want := backup.Prune(append(objs, backup.Object{Header: backup.Header{CreatedAt: due, Kind: backup.KindScheduled}, Name: backup.ObjectName(due, backup.KindScheduled)}), r, time.UTC)
+		// Daily 1 keeps only the new backup of the scheduled ones.
+		want := seeded[:2]
 		got := h.storage.deletedNames()
 		slices.Sort(got)
-		slices.Sort(want)
-		if !slices.Equal(got, want) || len(got) != 2 {
+		if !slices.Equal(got, want) {
 			t.Errorf("deleted %v, want %v", got, want)
 		}
 		if len(h.mailer.sent()) != 0 {
@@ -708,5 +707,74 @@ func TestOldAbandonedSlotIsNotRerun(t *testing.T) {
 	}
 	if h.dump.count() != 0 {
 		t.Error("an abandoned slot of an earlier day was run again")
+	}
+}
+
+// TestRunDueForgedHeadersCannotPruneAuthenticBackups is the audit's
+// reproduction (backlog 7.50): objects planted in the destination by a
+// writer without the master key claim to be scheduled backups, dated in
+// the future and on the same days as authentic ones. Retention must not
+// delete a single authentic backup over them, least of all the new one.
+func TestRunDueForgedHeadersCannotPruneAuthenticBackups(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.clock.Set(time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC))
+	h.enableSchedule(t, "03:00", backup.DefaultSettings().Retention) // 7/4/6
+
+	var authentic []string
+	run := func(at time.Time) {
+		t.Helper()
+		h.clock.Set(at)
+		if err := h.svc.RunDue(ctx); err != nil {
+			t.Fatal(err)
+		}
+		name := backup.ObjectName(at, backup.KindScheduled)
+		if !h.storage.has(name) {
+			t.Fatalf("the backup %s of the run at %s is not stored; deleted so far: %v", name, at, h.storage.deletedNames())
+		}
+		authentic = append(authentic, name)
+		for _, n := range authentic {
+			if !h.storage.has(n) {
+				t.Errorf("after the run at %s the authentic backup %s is gone", at, n)
+			}
+		}
+	}
+	// A backup from before header MACs, earlier on the day of an authentic
+	// one: pruned if it counted, but unverified, so it stays.
+	h.storage.putBackup(t, time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC), backup.KindScheduled)
+	run(time.Date(2026, 10, 31, 3, 0, 10, 0, time.UTC))
+	run(time.Date(2026, 11, 1, 3, 0, 10, 0, time.UTC))
+
+	forged := func(at time.Time) backup.Header {
+		return backup.Header{FormatVersion: backup.FormatVersion, CreatedAt: at, Kind: backup.KindScheduled}
+	}
+	for m := 1; m <= 7; m++ {
+		at := time.Date(2031, time.Month(m), 15, 0, 0, 0, 0, time.UTC)
+		switch m % 3 {
+		case 0: // the audit's spelling: any name, no MAC
+			h.storage.putHeader(t, fmt.Sprintf("zz-forged-%d.pxbak", m), forged(at))
+		case 1: // the canonical name, no MAC
+			h.storage.putBackup(t, at, backup.KindScheduled)
+		default: // the canonical name and a MAC made under another key
+			h.storage.putHeader(t, backup.ObjectName(at, backup.KindScheduled), backup.SignHeader(forged(at), backup.HeaderKey([32]byte{1})))
+		}
+	}
+	// Same-day forgeries, later on the day of an authentic backup and
+	// earlier on the day of the next run, with a garbage MAC.
+	for _, at := range []time.Time{
+		time.Date(2026, 11, 1, 3, 0, 20, 0, time.UTC),
+		time.Date(2026, 11, 2, 3, 0, 20, 0, time.UTC),
+		time.Date(2026, 11, 3, 3, 0, 20, 0, time.UTC),
+	} {
+		f := forged(at)
+		f.MAC = strings.Repeat("ab", 32)
+		h.storage.putHeader(t, backup.ObjectName(at, backup.KindScheduled), f)
+	}
+
+	run(time.Date(2026, 11, 2, 3, 0, 30, 0, time.UTC))
+	run(time.Date(2026, 11, 3, 3, 0, 30, 0, time.UTC))
+
+	if d := h.storage.deletedNames(); len(d) != 0 {
+		t.Errorf("deleted %v; four authentic backups fit the retention, and unverified objects are never pruned", d)
 	}
 }
