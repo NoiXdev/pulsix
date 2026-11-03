@@ -710,6 +710,45 @@ func TestOldAbandonedSlotIsNotRerun(t *testing.T) {
 	}
 }
 
+// TestRunDueLogsHowManyUnverifiedScheduledBackupsItKeeps: a scheduled
+// backup written before header MACs (or one planted without the key) is
+// never pruned, so such objects pile up unless an administrator deletes
+// them. Each prune run says how many it skipped, once and as a count, not
+// per name; unverified manual backups are not part of the count, retention
+// never touches manual backups anyway.
+func TestRunDueLogsHowManyUnverifiedScheduledBackupsItKeeps(t *testing.T) {
+	h := newHarness(t)
+	h.enableSchedule(t, "03:00", backup.Retention{Daily: 1})
+	old1 := h.storage.putBackup(t, time.Date(2026, 10, 20, 3, 0, 0, 0, time.UTC), backup.KindScheduled)
+	old2 := h.storage.putBackup(t, time.Date(2026, 10, 21, 3, 0, 0, 0, time.UTC), backup.KindScheduled)
+	h.storage.putBackup(t, time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC), backup.KindManual)
+	h.storage.putSignedBackup(t, time.Date(2026, 10, 31, 3, 0, 0, 0, time.UTC), backup.KindScheduled)
+
+	h.clock.Set(time.Date(2026, 11, 2, 3, 0, 30, 0, time.UTC))
+	if err := h.svc.RunDue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	logs := h.logs.String()
+	const msg = "kept scheduled backups that are not verified"
+	if n := strings.Count(logs, msg); n != 1 {
+		t.Fatalf("want the skipped count logged once per prune run, logged %d times:\n%s", n, logs)
+	}
+	for _, want := range []string{"count=2", "until an administrator deletes them"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("log misses %q:\n%s", want, logs)
+		}
+	}
+	for _, name := range []string{old1, old2} {
+		if strings.Contains(logs, name) {
+			t.Errorf("log names the skipped object %s; it should only count them:\n%s", name, logs)
+		}
+		if !h.storage.has(name) {
+			t.Errorf("unverified scheduled backup %s was pruned", name)
+		}
+	}
+}
+
 // TestRunDueForgedHeadersCannotPruneAuthenticBackups is the audit's
 // reproduction (backlog 7.50): objects planted in the destination by a
 // writer without the master key claim to be scheduled backups, dated in

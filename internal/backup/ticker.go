@@ -129,7 +129,8 @@ func (s *Service) RunDue(ctx context.Context) error {
 
 // prune deletes the scheduled backups the retention no longer keeps. Only
 // backups whose header is authentic under this instance's header key take
-// part, and the backup this run just stored (written) is never deleted.
+// part, and the backup this run just stored (written) is never deleted; how
+// many scheduled backups were left out as unverified is logged as a count.
 // Failures are logged: the backup itself succeeded.
 func (s *Service) prune(ctx context.Context, st Storage, set Settings, written string) {
 	loc, err := location(set.TimeZone)
@@ -142,6 +143,13 @@ func (s *Service) prune(ctx context.Context, st Storage, set Settings, written s
 		return
 	}
 	MarkVerified(objs, s.headerKey)
+	// Unverified scheduled objects (written before header MACs, or not by
+	// this instance) never take part, so they would pile up unnoticed:
+	// say how many there are, once per run.
+	if n := unverifiedScheduled(objs); n > 0 {
+		s.log.WarnContext(ctx, "prune backups: kept scheduled backups that are not verified", "count", n,
+			"hint", "retention never deletes them; they stay until an administrator deletes them")
+	}
 	for _, name := range Prune(objs, set.Retention, loc, written, s.now()) {
 		if err := st.Delete(ctx, name); err != nil {
 			s.log.ErrorContext(ctx, "prune backups: delete", "name", name, "err", err)
@@ -149,6 +157,19 @@ func (s *Service) prune(ctx context.Context, st Storage, set Settings, written s
 		}
 		s.log.InfoContext(ctx, "pruned scheduled backup", "name", name)
 	}
+}
+
+// unverifiedScheduled counts the scheduled objects MarkVerified did not
+// verify; the kind comes from the header, or from the name when the header
+// is unreadable.
+func unverifiedScheduled(objs []Object) int {
+	n := 0
+	for _, o := range objs {
+		if _, kind, ok := o.created(); ok && kind == KindScheduled && !o.Verified {
+			n++
+		}
+	}
+	return n
 }
 
 // notifyFailure mails every instance administrator about a failed

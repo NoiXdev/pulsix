@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -418,8 +419,28 @@ type harness struct {
 	dump    *fakeDump
 	mailer  *fakeMailer
 	clock   *clock
+	// logs holds what the service logged.
+	logs *logBuffer
 	// secrets records the secret every storageFor call received.
 	secrets []string
+}
+
+// logBuffer is a bytes.Buffer safe for the service's concurrent logging.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 var errStorageConfig = errors.New("storage config refused")
@@ -428,7 +449,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{
 		store: newFakeStore(), storage: newMemStorage(), dump: &fakeDump{headerKey: backup.HeaderKey(harnessKey)}, mailer: &fakeMailer{},
-		clock: &clock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)},
+		clock: &clock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}, logs: &logBuffer{},
 	}
 	storageFor := func(s backup.Settings, secret string) (backup.Storage, error) {
 		h.secrets = append(h.secrets, secret)
@@ -437,7 +458,7 @@ func newHarness(t *testing.T) *harness {
 		}
 		return h.storage, nil
 	}
-	h.svc = backup.NewService(h.store, crypto.NewBox(harnessKey), backup.HeaderKey(harnessKey), h.dump.dump, storageFor, h.mailer, "1.2.3", h.clock.Now, nil)
+	h.svc = backup.NewService(h.store, crypto.NewBox(harnessKey), backup.HeaderKey(harnessKey), h.dump.dump, storageFor, h.mailer, "1.2.3", h.clock.Now, slog.New(slog.NewTextHandler(h.logs, nil)))
 	t.Cleanup(h.svc.Stop)
 	return h
 }
