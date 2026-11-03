@@ -424,7 +424,8 @@ workers and agents, and make each of those changes again.
 
 ## Upgrading
 
-The rules behind this are in `docs/upgrades.md`. In short: the manager
+The rules behind this are in `docs/upgrades.md` in the Pulsix repository.
+In short: the manager
 migrates the database by itself on every start, migrations only go up, and
 the way back is a backup.
 
@@ -448,9 +449,24 @@ the way back is a backup.
 3. **Workers you added by hand** keep the image they were started with
    (`noixdev/pulsix-worker:<version>`). Pull the new image and recreate each
    container.
-4. **Agents last**, host by host: replace the agent binary with the one the
-   manager serves (`/agents/bin/<os>/<arch>`), which is its own release's.
-   There is no automatic agent update yet.
+4. **Agents last**, host by host. The manager serves the agent binary of
+   its own release; replace the installed one and restart the service:
+
+   ```bash
+   MANAGER=https://pulsix.example.net      # your manager's public URL
+   ARCH=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
+   curl -fsSL -o /tmp/pulsix-agent        "$MANAGER/agents/bin/linux/$ARCH"
+   curl -fsSL -o /tmp/pulsix-agent.sha256 "$MANAGER/agents/bin/linux/$ARCH.sha256"
+   [ "$(sha256sum /tmp/pulsix-agent | cut -d ' ' -f1)" = "$(cut -d ' ' -f1 /tmp/pulsix-agent.sha256)" ] \
+     && sudo install -m 0755 /tmp/pulsix-agent /usr/local/bin/pulsix-agent \
+     && sudo systemctl restart pulsix-agent
+   ```
+
+   The agent keeps its identity (`/etc/pulsix`) and reconnects on its own;
+   it needs no new token. Do not run the install script again for an update:
+   it asks for an enrollment token, overwrites `/etc/pulsix/agent.env`, and
+   its `systemctl enable --now` does not restart a running service, so the
+   old binary would keep running. There is no automatic agent update yet.
 
 Roll in that order: manager, then workers, then agents. A worker or agent
 one minor version behind the manager (v0.1.x under v0.2.x) is supported.
@@ -470,9 +486,20 @@ Development builds (`dev`) never show a badge.
 Migrations never go down. A manager that finds the database at a schema
 newer than it knows refuses to start, with "the database schema is at
 version N, this Pulsix knows up to M: run the newer version, or restore a
-backup taken by this one". To go back to an older release, set
-`PULSIX_VERSION` to it and restore the backup taken before the upgrade (see
-"Restoring"); everything written since that backup is lost.
+backup taken by this one". To go back to an older release, stop the stack,
+set `PULSIX_VERSION` to the old release and restore the backup taken before
+the upgrade over the database, which is in use and so needs `--replace`
+(see "Restoring"):
+
+```bash
+docker compose down
+# in .env: set PULSIX_VERSION back to the old release
+docker compose run --rm cli restore --replace pulsix-….pxbak   # asks you to type "restore"
+docker compose up -d
+```
+
+Everything written since that backup is lost, including workers and agents
+enrolled after it.
 
 ### Network (since v0.2c)
 

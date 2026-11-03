@@ -89,6 +89,16 @@ in an upgrade.
    added by hand pins the image it was added with and is updated by pulling
    the new image.
 3. **Agents**: last, host by host. There is no auto-update yet (backlog 3.18).
+   Per host: download `$MANAGER/agents/bin/linux/<amd64|arm64>` and its
+   `.sha256` from the manager, verify the checksum, `install -m 0755` the
+   binary over `/usr/local/bin/pulsix-agent` and
+   `systemctl restart pulsix-agent`; the exact commands are in
+   `deploy/compose/README.md` ("Upgrading"). The identity in `/etc/pulsix`
+   survives, so no token is needed. Do **not** re-run `install.sh` for an
+   update: it prompts for an enrollment token (and fails when piped without
+   a terminal), overwrites `/etc/pulsix/agent.env`, and ends with
+   `systemctl enable --now`, which does not restart an active unit, so the
+   old binary would keep running.
 
 Because a component one minor behind is accepted, the manager can move to a
 new minor first and the rest follow at the operator's pace. A component that
@@ -98,10 +108,20 @@ falls two minors behind (a release skipped) shows "Update required".
 
 There is none in place. A newer schema is refused (above), and migrations do
 not go down. To go back to an older release, restore a backup taken **before**
-the upgrade with the older version
-(`docker compose run --rm cli restore <name>`, see "Backup and restore" in
-`deploy/compose/README.md`); everything written after that backup is lost, as
-with any restore. That is why the upgrade steps start with a backup.
+the upgrade with the older version. The database is in use, so the restore
+needs `--replace` (it asks you to type `restore`; `--yes` in a script):
+
+```bash
+docker compose down
+# in .env: set PULSIX_VERSION back to the old release
+docker compose run --rm cli restore --replace <name>
+docker compose up -d
+```
+
+Everything written after that backup is lost, as with any restore, including
+workers and agents enrolled after it; see "Restoring" in
+`deploy/compose/README.md` for what a restore brings back and what it does
+not. That is why the upgrade steps start with a backup.
 
 ## Checklist for a change that touches the schema
 
