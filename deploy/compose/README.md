@@ -424,21 +424,62 @@ workers and agents, and make each of those changes again.
 
 ## Upgrading
 
-```bash
-# in .env: set PULSIX_VERSION to the release you want (e.g. v0.2.0)
-docker compose pull
-docker compose run --rm cli backup   # optional, but cheap: a backup taken before the upgrade
-docker compose up -d
-```
+The rules behind this are in `docs/upgrades.md`. In short: the manager
+migrates the database by itself on every start, migrations only go up, and
+the way back is a backup.
+
+1. **Take a backup first.** It is the only way back (see "No downgrade"
+   below):
+
+   ```bash
+   docker compose run --rm cli backup
+   ```
+
+2. **Manager and bundled worker.** In `.env`, set `PULSIX_VERSION` to the
+   release you want (e.g. `v0.2.0`), then:
+
+   ```bash
+   docker compose pull
+   docker compose up -d
+   ```
+
+   There is no separate migration step: the manager runs its migrations
+   when it starts.
+3. **Workers you added by hand** keep the image they were started with
+   (`noixdev/pulsix-worker:<version>`). Pull the new image and recreate each
+   container.
+4. **Agents last**, host by host: replace the agent binary with the one the
+   manager serves (`/agents/bin/<os>/<arch>`), which is its own release's.
+   There is no automatic agent update yet.
+
+Roll in that order: manager, then workers, then agents. A worker or agent
+one minor version behind the manager (v0.1.x under v0.2.x) is supported.
+Further behind, or ahead of the manager, it still works but the Workers
+page, the Agents page and the host's agent card show a badge, and the
+manager logs one warning for it:
+
+- **Update required**: two or more minor versions (or a major) behind the
+  manager. Update it.
+- **Newer than manager**: ahead of the manager, usually because the manager
+  was rolled back or is not updated yet. Update the manager.
+
+Development builds (`dev`) never show a badge.
+
+### No downgrade
+
+Migrations never go down. A manager that finds the database at a schema
+newer than it knows refuses to start, with "the database schema is at
+version N, this Pulsix knows up to M: run the newer version, or restore a
+backup taken by this one". To go back to an older release, set
+`PULSIX_VERSION` to it and restore the backup taken before the upgrade (see
+"Restoring"); everything written since that backup is lost.
+
+### Network (since v0.2c)
 
 Since v0.2c the stack's network has a fixed subnet (see "Client addresses
 behind a proxy"). The first `docker compose up -d` after that upgrade
 recreates the network; if your Compose version refuses to, run
 `docker compose down` (volumes stay) and then `docker compose up -d`.
-
-The manager runs its own migrations on every start, so an upgrade is just
-"pull the new images, restart the containers" — there is no separate
-migration step to run by hand.
 
 ## Tearing down
 

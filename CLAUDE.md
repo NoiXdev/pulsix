@@ -42,7 +42,7 @@ backlog: `docs/BACKLOG.md`, brand: `brand/`.
 
 - Conventional Commits, footer `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - Commit or push only when the user asks. Repo is private until v1.0.
-- Migrations are additive only.
+- Migrations are additive only; the migration, upgrade and version-skew rules are in `docs/upgrades.md`.
 
 ## Documentation
 
