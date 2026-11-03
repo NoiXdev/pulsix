@@ -3,7 +3,8 @@
 # deploy/compose/docker-compose.yml and proves the basics work: the
 # worker image's runtime user can use ssh (scripts/worker-image-test.sh), the
 # manager starts, answers /healthz, reports setup as not yet completed on
-# a fresh database, and serves the SPA; after the setup wizard's API call
+# a fresh database, logs the setup token that `setup-token` also prints,
+# and serves the SPA; after the setup wizard's API call
 # the worker-enroll service enrolls the worker container, which holds
 # neither the master key nor the database credentials, heartbeats and
 # runs a job to its terminal state; the documented `worker add` CLI form
@@ -151,9 +152,20 @@ worker_heartbeating() {
 	[ "$(psql "SELECT count(*) FROM workers WHERE name = 'worker-1' AND last_seen > now() - interval '1 minute'")" = "1" ]
 }
 
+echo "smoke: reading the setup token through the documented CLI form …"
+setup_token="$(compose run --rm --no-deps cli setup-token | sed -n 's/^Setup token: *//p')"
+if [ -z "$setup_token" ]; then
+	echo "smoke: setup-token printed no token" >&2
+	exit 1
+fi
+if ! compose logs --no-log-prefix manager 2>&1 | grep -i "setup token" | grep -q -- "$setup_token"; then
+	echo "smoke: the manager's start log does not carry the setup token" >&2
+	exit 1
+fi
+
 echo "smoke: completing the setup wizard through the API …"
 setup_code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
-	-d '{"admin_email":"smoke@example.test","admin_password":"correct horse battery staple","admin_name":"Smoke","org_slug":"smoke","org_name":"Smoke"}' \
+	-d '{"admin_email":"smoke@example.test","admin_password":"correct horse battery staple","admin_name":"Smoke","org_slug":"smoke","org_name":"Smoke","setup_token":"'"$setup_token"'"}' \
 	"$base_url/api/v1/setup/complete")"
 if [ "$setup_code" != "201" ] && [ "$setup_code" != "200" ]; then
 	echo "smoke: setup/complete answered $setup_code" >&2

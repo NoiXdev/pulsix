@@ -1,5 +1,5 @@
 // Command manager runs the Pulsix manager (API, SPA, scheduler) and its
-// operator subcommands (`worker add`, `backup`, `restore`).
+// operator subcommands (`worker add`, `backup`, `restore`, `setup-token`).
 package main
 
 import (
@@ -59,6 +59,7 @@ func main() {
 // to stdout and exits, no server or database involved — see
 // api.Document's doc comment), the "worker add" enrollment subcommand (see
 // app.RunWorkerAdd), the "backup" and "restore" commands (backupcmd.go),
+// the "setup-token" command (setuptokencmd.go),
 // the play supervisor's reserved argument, or — with no
 // arguments at all — starts the manager server. The supervisor case (and
 // the sweep beside it, backlog 7.21) exists
@@ -87,6 +88,8 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 		return runBackup(args[1:], stdout, stderr)
 	case args[0] == "restore":
 		return runRestore(args[1:], stdout, stderr)
+	case args[0] == "setup-token":
+		return runSetupToken(args[1:], stdout, stderr)
 	}
 	_, _ = fmt.Fprintf(stderr, "pulsix-manager: unknown command %q\n%s", strings.Join(args, " "), usageText)
 	return 2
@@ -105,6 +108,7 @@ const usageText = `usage:
                                   list backups (default: /var/lib/pulsix/backups)
   pulsix-manager restore [--from <dir>|s3://bucket/prefix] [--replace] [--yes] <name>|-
                                   restore a backup (- reads it from standard input); stop the manager first
+  pulsix-manager setup-token      print the token the first-run setup wizard asks for, and its link
 `
 
 // runWorkerAdd parses `worker add`'s flags and enrolls a worker. Errors go
