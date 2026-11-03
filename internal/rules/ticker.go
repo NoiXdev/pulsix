@@ -112,10 +112,10 @@ type HostLoad struct {
 // host's own transaction — so a host's reads and its write-back are one
 // atomic unit, and a failure anywhere in it writes none of it: the host
 // is retried, only held out of the claim for a while so it cannot take a
-// slot in every batch (backlog 7.58). "Its own transaction" is literal, not a savepoint
-// in a batch-wide one: the cursor row lock it holds is the same lock the
-// ingest path takes, so its lifetime is one host's evaluation and no
-// longer (see EvalSQLStore.ProcessDue).
+// slot in every batch (backlog 7.58). "Its own transaction" is literal,
+// not a savepoint in a batch-wide one: the cursor row lock it holds is the
+// same lock the ingest path takes, so its lifetime is one host's
+// evaluation and no longer (see EvalSQLStore.ProcessDue).
 type EvalStore interface {
 	// ProcessDue lists up to limit cursors that are dirty or due and runs
 	// fn for each inside a transaction of its own, holding that one
@@ -124,8 +124,8 @@ type EvalStore interface {
 	// while (its cursor is otherwise untouched, so it is retried); the
 	// other hosts are unaffected, and a batch whose ctx is done postpones
 	// nothing. A host another manager took between the listing and its own
-	// claim is skipped silently. It returns the number of hosts fn returned nil for
-	// — the hosts actually evaluated, not the hosts listed.
+	// claim is skipped silently. It returns the number of hosts fn returned
+	// nil for — the hosts actually evaluated, not the hosts listed.
 	ProcessDue(ctx context.Context, now time.Time, limit int, fn func(ctx context.Context, d Due) error) (int, error)
 	// Load gathers one host's inputs: its tuples with the intervals that
 	// define staleness, its effective rules, its facts, its previous
@@ -324,12 +324,14 @@ func (t *Ticker) batchDeadline() time.Duration {
 // evaluate is one host: load, fetch the windows its rules ask for,
 // evaluate, apply, then feed the same result to the alert sink on the
 // claimed host's own transaction. Every error is returned, which is what
-// rolls that one host back and leaves it due — and logged here, where the
-// host is still in hand to name.
+// rolls that one host back and holds it out of the claim for a while
+// (failedHostBackoff, due_sql.go), or leaves it due when the batch itself
+// was cut short — and logged here, where the host is still in hand to
+// name.
 func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 	load, err := t.store.Load(ctx, d)
 	if err != nil {
-		t.log.ErrorContext(ctx, "load host for evaluation; leaving it due for the next tick",
+		t.log.ErrorContext(ctx, "load host for evaluation; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", err)
 		return err
 	}
@@ -350,7 +352,7 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 	if reqs := WindowRequests(snap); len(reqs) > 0 {
 		windows, err := t.store.Windows(ctx, d, reqs, now)
 		if err != nil {
-			t.log.ErrorContext(ctx, "fetch window aggregates; leaving the host due for the next tick",
+			t.log.ErrorContext(ctx, "fetch window aggregates; "+failedHostNext(ctx),
 				"org", d.OrgID, "host", d.HostID, "windows", len(reqs), "err", err)
 			return err
 		}
@@ -358,7 +360,7 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 	}
 	res := Evaluate(snap)
 	if err := t.store.Apply(ctx, d, res); err != nil {
-		t.log.ErrorContext(ctx, "apply evaluation; leaving the host due for the next tick",
+		t.log.ErrorContext(ctx, "apply evaluation; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", err)
 		return err
 	}
@@ -377,7 +379,7 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 		// function's own doc comment promises every error is logged here,
 		// and a silent return would leave the host skipped every tick
 		// forever with nothing in the logs to say why.
-		t.log.ErrorContext(ctx, "apply alerts outside a claimed host's transaction; leaving the host due for the next tick",
+		t.log.ErrorContext(ctx, "apply alerts outside a claimed host's transaction; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", errNoClaimTx)
 		return errNoClaimTx
 	}
@@ -386,11 +388,22 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 		Changes: res.Changes, States: res.States, Host: res.Host,
 		Unmeasured: res.Unmeasured,
 	}); err != nil {
-		t.log.ErrorContext(ctx, "apply alerts; leaving the host due for the next tick",
+		t.log.ErrorContext(ctx, "apply alerts; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", err)
 		return err
 	}
 	return nil
+}
+
+// failedHostNext says what becomes of a host whose evaluation failed:
+// EvalSQLStore.evaluateOne (due_sql.go) holds it out of the claim for
+// failedHostBackoff, unless the batch's context is done, which leaves the
+// host exactly as it is, due for the next tick.
+func failedHostNext(ctx context.Context) string {
+	if ctx.Err() != nil {
+		return "batch cut short; the host stays due for the next tick"
+	}
+	return "the host is held out of the claim for a while, then retried"
 }
 
 // Run ticks until ctx ends, returning ctx's own error. The first tick

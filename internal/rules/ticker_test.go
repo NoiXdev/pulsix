@@ -538,6 +538,49 @@ func TestRunLogsATickFailureAndKeepsGoing(t *testing.T) {
 }
 
 // panicStore panics on its first claim and behaves on every later one.
+// TestTickLogsWhatBecomesOfAFailedHost: a host whose evaluation fails is
+// held out of the claim for a while (EvalSQLStore.evaluateOne), not left due
+// for the next tick; only a failure in a batch whose context is done leaves
+// the host due as it is. The log line says which of the two happened.
+func TestTickLogsWhatBecomesOfAFailedHost(t *testing.T) {
+	t.Run("host failure", func(t *testing.T) {
+		store := newFakeEvalStore(cpuLoad(), due(hostA))
+		store.loadErr[hostA] = errors.New("boom")
+		log, buf := quietLogger()
+		tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }), rules.WithTickerLogger(log))
+		if _, err := tk.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+		if !strings.Contains(buf.String(), "held out of the claim for a while, then retried") || strings.Contains(buf.String(), "next tick") {
+			t.Fatalf("want the failed host logged as held out of the claim; log was %q", buf.String())
+		}
+	})
+	t.Run("batch cut short", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		store := &cancelOnLoadStore{fakeEvalStore: newFakeEvalStore(cpuLoad(), due(hostA)), cancel: cancel}
+		log, buf := quietLogger()
+		tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerClock(func() time.Time { return tickEpoch }), rules.WithTickerLogger(log))
+		_, _ = tk.Tick(ctx)
+		if !strings.Contains(buf.String(), "batch cut short; the host stays due for the next tick") || strings.Contains(buf.String(), "held out of the claim") {
+			t.Fatalf("want the host logged as still due; log was %q", buf.String())
+		}
+	})
+}
+
+// cancelOnLoadStore cancels the tick's context from inside Load and fails
+// that load, as a batch deadline firing mid-host does.
+type cancelOnLoadStore struct {
+	*fakeEvalStore
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnLoadStore) Load(ctx context.Context, d rules.Due) (rules.HostLoad, error) {
+	c.cancel()
+	<-ctx.Done()
+	return rules.HostLoad{}, ctx.Err()
+}
+
 type panicStore struct {
 	*fakeEvalStore
 	panicked bool
