@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/versioncompat"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -23,6 +24,7 @@ type workerDTO struct {
 	Status        string     `json:"status" enum:"online,offline,revoked" doc:"online = seen within 2 minutes"`
 	LastSeen      *time.Time `json:"last_seen,omitempty"`
 	Version       string     `json:"version,omitempty"`
+	VersionStatus string     `json:"version_status" enum:"current,previous_minor,update_required,newer,unknown" doc:"The build version against the manager's: the same or the previous minor version is accepted; update_required is older than that, newer is above the manager's"`
 	CertExpiresAt *time.Time `json:"cert_expires_at,omitempty"`
 	CurrentJobID  string     `json:"current_job_id,omitempty"`
 	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
@@ -85,10 +87,10 @@ type enrollmentCreateOutput struct {
 	}
 }
 
-func toWorkerDTO(v workers.View) workerDTO {
+func toWorkerDTO(v workers.View, managerVersion string) workerDTO {
 	dto := workerDTO{
 		ID: v.ID.String(), Name: v.Name, ZoneID: v.ZoneID.String(), ZoneSlug: v.ZoneSlug, LastSeen: v.LastSeen,
-		Version: v.Version, CertExpiresAt: v.CertExpiresAt, RevokedAt: v.RevokedAt, CreatedAt: v.CreatedAt,
+		Version: v.Version, VersionStatus: string(versioncompat.Of(managerVersion, v.Version)), CertExpiresAt: v.CertExpiresAt, RevokedAt: v.RevokedAt, CreatedAt: v.CreatedAt,
 	}
 	switch {
 	case v.Status == workers.StatusRevoked:
@@ -124,7 +126,7 @@ func registerWorkerRoutes(hapi huma.API, deps Deps) {
 		out := &workerListOutput{}
 		out.Body.Workers = make([]workerDTO, len(list))
 		for i, v := range list {
-			out.Body.Workers[i] = toWorkerDTO(v)
+			out.Body.Workers[i] = toWorkerDTO(v, deps.Version)
 		}
 		return out, nil
 	})
@@ -172,7 +174,7 @@ func registerWorkerRoutes(hapi huma.API, deps Deps) {
 		}
 		setAuditObject(ctx, id.String(), fmt.Sprintf("revoked worker %s (%d stream(s) closed, %d job(s) requeued, %d ended)", w.Name, res.Streams, res.Requeued, res.Ended))
 		out := &workerRevokeOutput{}
-		out.Body.Worker = toWorkerDTO(workers.View{Worker: w, ZoneSlug: zoneSlug})
+		out.Body.Worker = toWorkerDTO(workers.View{Worker: w, ZoneSlug: zoneSlug}, deps.Version)
 		out.Body.StreamsClosed, out.Body.JobsRequeued, out.Body.JobsEnded = res.Streams, res.Requeued, res.Ended
 		return out, nil
 	}, withAudit("revokeWorker", "worker"))

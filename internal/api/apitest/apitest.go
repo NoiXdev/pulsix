@@ -308,6 +308,13 @@ func WithAuthRateLimit(n int) Option {
 	return func(s *Server) { s.Deps.AuthRateLimit = n }
 }
 
+// WithVersion sets Deps.Version, the manager's build version: the value the
+// version_status of workers and agents is measured against. Left unset it
+// is empty, which makes every status "unknown".
+func WithVersion(version string) Option {
+	return func(s *Server) { s.Deps.Version = version }
+}
+
 // WithAgentBinaries sets Deps.AgentBinaries — the agent distribution
 // GET /agents/bin/{os}/{arch} serves. A test build embeds no real agent
 // binaries (that needs `make agent-binaries`), so a test that wants the

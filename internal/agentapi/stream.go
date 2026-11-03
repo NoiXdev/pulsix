@@ -153,6 +153,23 @@ func (s *Service) process(ctx context.Context, agent agents.AgentIdentity, msg *
 	}
 }
 
+// noteVersion logs, once per agent and process, an agent whose reported
+// build is outside the supported range against the manager's. The heartbeat
+// carries the authoritative version, so this is the one place it is judged.
+func (s *Service) noteVersion(ctx context.Context, agent agents.AgentIdentity, version string) {
+	st, first := s.skew.Observe("agent/"+agent.HostID.String(), s.deps.Version, version)
+	if !first {
+		return
+	}
+	log := s.deps.Log
+	if log == nil {
+		log = slog.Default()
+	}
+	log.WarnContext(ctx, "agent version outside the supported range",
+		"agent", agent.Name, "org", agent.OrgID, "host_id", agent.HostID, "version", version,
+		"manager_version", s.deps.Version, "status", string(st))
+}
+
 // processHeartbeat touches the registry with the agent's reported build
 // version, then — if a checks service is wired — resolves the host's
 // configuration and compares its version against what the agent reports
@@ -170,6 +187,7 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 	if err := s.deps.Agents.Touch(ctx, agent.Serial, hb.GetVersion()); err != nil {
 		return nil, err
 	}
+	s.noteVersion(ctx, agent, hb.GetVersion())
 	if s.deps.Checks == nil {
 		return nil, nil
 	}

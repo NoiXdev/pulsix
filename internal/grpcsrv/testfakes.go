@@ -469,7 +469,11 @@ func (h *harness) advance(d time.Duration) {
 // newHarness builds the server, serves it on a fresh bufconn listener and
 // registers cleanup. The AgentService is registered as a stub: the agent
 // method-kind tests only need the interceptor to run ahead of the handler.
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { return newHarnessVersion(t, "") }
+
+// newHarnessVersion is newHarness for a manager that reports version as its
+// own build version.
+func newHarnessVersion(t *testing.T, version string) *harness {
 	t.Helper()
 	h := &harness{
 		t: t,
@@ -497,7 +501,7 @@ func newHarness(t *testing.T) *harness {
 		CA: h.ca, Workers: workers.NewService(h.store, workers.WithSigner(h.ca)),
 		Agents: agents.NewService(h.agents), AgentService: agentpb.UnimplementedAgentServiceServer{},
 		Claims: h.claims, Events: h.events, Results: h.results, Audit: h.audit,
-		Clock: h.clock, CancelPollInterval: 10 * time.Millisecond,
+		Clock: h.clock, CancelPollInterval: 10 * time.Millisecond, Version: version,
 		Log: slog.New(slog.NewTextHandler(&h.logs, nil)),
 	}
 	h.srv, err = newServer(deps)

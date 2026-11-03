@@ -354,3 +354,45 @@ func TestClaimJobFailsJobWhosePayloadExceedsWorkerLimit(t *testing.T) {
 		t.Fatalf("next claim = %q, want %s", got, next)
 	}
 }
+
+// TestClaimJobWarnsOnceAboutAWorkerOutsideTheVersionRange is backlog 7.3:
+// a worker whose build is older than the previous minor, or newer than the
+// manager, is logged once per process — not on every claim — and is never
+// refused.
+func TestClaimJobWarnsOnceAboutAWorkerOutsideTheVersionRange(t *testing.T) {
+	const warning = "worker version outside the supported range"
+	for _, tt := range []struct {
+		name, version string
+		wantWarnings  int
+		wantStatus    string
+	}{
+		{"old", "v1.1.0", 1, "update_required"},
+		{"newer", "v1.9.0", 1, "newer"},
+		{"current", "v1.4.2", 0, ""},
+		{"previous minor", "v1.3.0", 0, ""},
+		{"dev build", "dev", 0, ""},
+		{"no version", "", 0, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarnessVersion(t, "v1.4.0")
+			certPEM, keyPEM, _ := h.issue("fra-1-a", orgID, zoneID, true)
+			client := h.client(certPEM, keyPEM)
+			for range 3 {
+				if _, err := client.ClaimJob(t.Context(), &workerpb.ClaimJobRequest{Version: tt.version, ZoneIds: []string{zoneID.String()}}); err != nil {
+					t.Fatalf("a worker outside the range must still claim: %v", err)
+				}
+			}
+			logs := h.logs.String()
+			if got := strings.Count(logs, warning); got != tt.wantWarnings {
+				t.Fatalf("%d warnings, want %d; logs:\n%s", got, tt.wantWarnings, logs)
+			}
+			if tt.wantWarnings > 0 {
+				for _, want := range []string{"fra-1-a", tt.version, "v1.4.0", tt.wantStatus} {
+					if !strings.Contains(logs, want) {
+						t.Errorf("warning does not mention %q:\n%s", want, logs)
+					}
+				}
+			}
+		})
+	}
+}

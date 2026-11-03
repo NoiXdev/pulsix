@@ -429,3 +429,85 @@ func TestWorkerEnrollmentCreateRefusesBearerToken(t *testing.T) {
 		t.Fatalf("withdraw with a bearer token: status %d: %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 }
+
+// TestWorkerVersionStatus is backlog 7.3: each worker row says how its
+// build relates to the manager's, so the Workers page can badge the ones to
+// update. The verdict is shown, never enforced.
+func TestWorkerVersionStatus(t *testing.T) {
+	s := apitest.New(t, apitest.WithVersion("v1.4.0"))
+	owner := s.SeedUser("worker-skew-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("worker-skew", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/worker-skew"
+	zones, err := s.Deps.Hosts.ListZones(db.WithOrgScope(context.Background(), org), org)
+	if err != nil || len(zones) == 0 {
+		t.Fatalf("zones: %v", err)
+	}
+
+	want := map[string]string{
+		"w-current": "current", "w-previous": "previous_minor", "w-old": "update_required",
+		"w-newer": "newer", "w-dev": "unknown", "w-none": "unknown",
+	}
+	versions := map[string]string{
+		"w-current": "v1.4.7", "w-previous": "v1.3.0", "w-old": "v1.1.0",
+		"w-newer": "v1.5.0", "w-dev": "dev", "w-none": "",
+	}
+	for name, version := range versions {
+		var created struct {
+			Token string `json:"token"`
+		}
+		decodeInto(t, postJSON(t, c, base+"/worker-enrollments", map[string]any{"zone_id": zones[0].ID.String(), "name": name}), &created)
+		tok, err := enrolltoken.Parse(created.Token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.Deps.Workers.Enroll(context.Background(), workers.EnrollInput{TokenID: tok.ID, Secret: tok.Secret, CSRPEM: workerCSR(t), Version: version}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var list struct {
+		Workers []struct {
+			Name          string `json:"name"`
+			Version       string `json:"version"`
+			VersionStatus string `json:"version_status"`
+		} `json:"workers"`
+	}
+	decodeInto(t, requestJSON(t, c, http.MethodGet, base+"/workers", nil), &list)
+	if len(list.Workers) != len(want) {
+		t.Fatalf("workers = %+v", list.Workers)
+	}
+	for _, w := range list.Workers {
+		if w.VersionStatus != want[w.Name] {
+			t.Errorf("worker %s (version %q): version_status = %q, want %q", w.Name, w.Version, w.VersionStatus, want[w.Name])
+		}
+	}
+}
+
+// A manager without a version (a development build) has no basis for a
+// verdict: every worker reads "unknown", never "update_required".
+func TestWorkerVersionStatusUnknownForDevelopmentManager(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("worker-dev-owner@example.test", "correct horse battery")
+	org := s.SeedOrg("worker-dev", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/worker-dev"
+	zones, err := s.Deps.Hosts.ListZones(db.WithOrgScope(context.Background(), org), org)
+	if err != nil || len(zones) == 0 {
+		t.Fatalf("zones: %v", err)
+	}
+	var created struct {
+		Token string `json:"token"`
+	}
+	decodeInto(t, postJSON(t, c, base+"/worker-enrollments", map[string]any{"zone_id": zones[0].ID.String(), "name": "w-1"}), &created)
+	tok, err := enrolltoken.Parse(created.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Deps.Workers.Enroll(context.Background(), workers.EnrollInput{TokenID: tok.ID, Secret: tok.Secret, CSRPEM: workerCSR(t), Version: "v0.1.0"}); err != nil {
+		t.Fatal(err)
+	}
+	if body := mustReadBody(t, requestJSON(t, c, http.MethodGet, base+"/workers", nil)); !strings.Contains(body, `"version_status":"unknown"`) {
+		t.Fatalf("workers = %s", body)
+	}
+}

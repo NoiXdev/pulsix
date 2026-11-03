@@ -5,6 +5,7 @@
 package agentapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -13,6 +14,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"log/slog"
 	"math/big"
 	"net"
 	"sync"
@@ -667,9 +669,29 @@ type harness struct {
 	svc      *Service
 	gs       *grpc.Server
 	lis      *bufconn.Listener
+	logs     syncBuffer
 
 	mu  sync.Mutex
 	now time.Time
+}
+
+// syncBuffer collects what the injected logger writes; the service logs
+// from several goroutines.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func (h *harness) clock() time.Time {
@@ -717,6 +739,16 @@ func newHarnessOpts(t *testing.T, withFacts bool, checksPort *fakeChecks) *harne
 // for — a fake port returning a canned error would prove only the
 // mapping, which is a different (and already pinned) claim.
 func newHarnessPort(t *testing.T, withFacts bool, checksPort *fakeChecks, realPort ChecksPort) *harness {
+	return newHarnessFull(t, withFacts, checksPort, realPort, "")
+}
+
+// newHarnessVersion is newHarness for a manager that reports version as
+// its own build version.
+func newHarnessVersion(t *testing.T, version string) *harness {
+	return newHarnessFull(t, true, nil, nil, version)
+}
+
+func newHarnessFull(t *testing.T, withFacts bool, checksPort *fakeChecks, realPort ChecksPort, version string) *harness {
 	t.Helper()
 	h := &harness{
 		t:     t,
@@ -740,7 +772,7 @@ func newHarnessPort(t *testing.T, withFacts bool, checksPort *fakeChecks, realPo
 	h.signer = &fakeSigner{inner: h.ca}
 	deps := Deps{
 		CA: h.signer, Agents: h.agentSvc, Audit: h.audit,
-		Clock: h.clock,
+		Clock: h.clock, Version: version, Log: slog.New(slog.NewTextHandler(&h.logs, nil)),
 	}
 	if withFacts {
 		deps.Facts = h.sink

@@ -29,7 +29,14 @@ type agentFixture struct {
 
 func newAgentFixture(t *testing.T, slug string) agentFixture {
 	t.Helper()
-	s := apitest.New(t)
+	return newAgentFixtureWith(t, slug)
+}
+
+// newAgentFixtureWith is newAgentFixture with apitest options (a manager
+// version, say).
+func newAgentFixtureWith(t *testing.T, slug string, opts ...apitest.Option) agentFixture {
+	t.Helper()
+	s := apitest.New(t, opts...)
 	owner := s.SeedUser(slug+"-owner@example.test", "correct horse battery")
 	operator := s.SeedUser(slug+"-operator@example.test", "correct horse battery")
 	viewer := s.SeedUser(slug+"-viewer@example.test", "correct horse battery")
@@ -338,5 +345,47 @@ func TestAgentTokenCreateRefusesBearerToken(t *testing.T) {
 	resp = bearerRequest(t, f.s, http.MethodDelete, path+"/"+created.Item.ID, plain)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("withdraw with a bearer token: status %d: %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// TestAgentVersionStatus is backlog 7.3: the Agents page and the host's
+// Agent card both read version_status, measured against the manager's own
+// version, and a development manager has no basis for a verdict.
+func TestAgentVersionStatus(t *testing.T) {
+	for _, tt := range []struct {
+		name, manager, agent, want string
+	}{
+		{"current", "v1.4.0", "v1.4.3", "current"},
+		{"previous minor", "v1.4.0", "v1.3.0", "previous_minor"},
+		{"update required", "v1.4.0", "v1.1.0", "update_required"},
+		{"newer", "v1.4.0", "v1.5.0", "newer"},
+		{"agent is a dev build", "v1.4.0", "dev", "unknown"},
+		{"agent reported nothing", "v1.4.0", "", "unknown"},
+		{"manager is a dev build", "", "v0.0.1", "unknown"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			slug := "agent-skew-" + strings.ReplaceAll(tt.name, " ", "-")
+			f := newAgentFixtureWith(t, slug, apitest.WithVersion(tt.manager))
+			f.enroll(t, "agent-a", tt.agent, "serial-"+slug, true)
+
+			var list struct {
+				Agents []struct {
+					VersionStatus string `json:"version_status"`
+				} `json:"agents"`
+			}
+			decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/agents", nil), &list)
+			if len(list.Agents) != 1 || list.Agents[0].VersionStatus != tt.want {
+				t.Fatalf("agents = %+v, want version_status %q", list.Agents, tt.want)
+			}
+			var card struct {
+				Agent struct {
+					VersionStatus string `json:"version_status"`
+				} `json:"agent"`
+			}
+			decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/hosts/"+f.host.ID.String()+"/agent", nil), &card)
+			if card.Agent.VersionStatus != tt.want {
+				t.Fatalf("host card version_status = %q, want %q", card.Agent.VersionStatus, tt.want)
+			}
+		})
 	}
 }

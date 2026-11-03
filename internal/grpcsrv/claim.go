@@ -39,6 +39,11 @@ func (s *Server) ClaimJob(ctx context.Context, req *workerpb.ClaimJobRequest) (*
 	if err := s.deps.Workers.Touch(ctx, worker.ID, req.GetVersion()); err != nil {
 		return nil, status.Errorf(codes.Internal, "touch worker: %v", err)
 	}
+	if st, first := s.skew.Observe("worker/"+worker.ID.String(), s.deps.Version, req.GetVersion()); first {
+		s.log().WarnContext(ctx, "worker version outside the supported range",
+			"worker", worker.Name, "org", worker.OrgID, "version", req.GetVersion(),
+			"manager_version", s.deps.Version, "status", string(st))
+	}
 
 	claim, err := s.deps.Claims.Claim(ctx, ClaimScope{WorkerID: worker.ID, OrgID: worker.OrgID, ZoneIDs: zones}, req.GetVersion(), req.GetCancelStopsPlay())
 	if err != nil {

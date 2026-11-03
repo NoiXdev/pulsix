@@ -37,6 +37,7 @@ import (
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
+	"github.com/noixdev/pulsix/internal/versioncompat"
 )
 
 // The agent Enroll rate limit mirrors the worker one (grpcsrv's
@@ -108,6 +109,12 @@ type Deps struct {
 	Checks ChecksPort
 	// Clock drives the enrollment rate limit; nil uses time.Now.
 	Clock func() time.Time
+	// Version is the manager's build version. An agent whose build is
+	// outside the supported range against it is logged once per process
+	// (backlog 7.3, internal/versioncompat); empty or "dev" judges nothing.
+	Version string
+	// Log receives the version warning; nil is slog.Default().
+	Log *slog.Logger
 }
 
 // Service implements agentpb.AgentServiceServer on top of Deps.
@@ -116,6 +123,8 @@ type Service struct {
 	deps      Deps
 	streams   *StreamRegistry
 	enrollLim *clientip.Limiter
+	// skew remembers which agents were already warned about.
+	skew versioncompat.Warner
 }
 
 // New validates the wiring and builds the Service.

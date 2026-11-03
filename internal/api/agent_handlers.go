@@ -17,6 +17,7 @@ import (
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/tenancy"
+	"github.com/noixdev/pulsix/internal/versioncompat"
 )
 
 // The Agents page and the host's Agent card (v0.3a, spec §8). Reading is
@@ -40,6 +41,7 @@ type agentDTO struct {
 	HostName      string     `json:"host_name"`
 	AgentName     string     `json:"agent_name"`
 	Version       string     `json:"version,omitempty"`
+	VersionStatus string     `json:"version_status" enum:"current,previous_minor,update_required,newer,unknown" doc:"The build version against the manager's: the same or the previous minor version is accepted; update_required is older than that, newer is above the manager's"`
 	Status        string     `json:"status" enum:"online,offline" doc:"online = a heartbeat within three heartbeat intervals"`
 	LastSeen      *time.Time `json:"last_seen,omitempty"`
 	CertExpiresAt *time.Time `json:"cert_expires_at,omitempty"`
@@ -113,10 +115,11 @@ type agentTokenCreateOutput struct {
 	}
 }
 
-func toAgentDTO(v agents.View) agentDTO {
+func toAgentDTO(v agents.View, managerVersion string) agentDTO {
 	dto := agentDTO{
 		HostID: v.HostID.String(), HostName: v.HostName, AgentName: v.AgentName, Version: v.Version,
-		LastSeen: v.LastSeen, CertExpiresAt: v.CertNotAfter, CreatedAt: v.CreatedAt, Status: "offline",
+		VersionStatus: string(versioncompat.Of(managerVersion, v.Version)),
+		LastSeen:      v.LastSeen, CertExpiresAt: v.CertNotAfter, CreatedAt: v.CreatedAt, Status: "offline",
 	}
 	if v.Online {
 		dto.Status = "online"
@@ -149,7 +152,7 @@ func registerAgentRoutes(hapi huma.API, deps Deps) {
 		out := &agentListOutput{}
 		out.Body.Agents = make([]agentDTO, len(list))
 		for i, v := range list {
-			out.Body.Agents[i] = toAgentDTO(v)
+			out.Body.Agents[i] = toAgentDTO(v, deps.Version)
 		}
 		return out, nil
 	})
@@ -168,7 +171,7 @@ func registerAgentRoutes(hapi huma.API, deps Deps) {
 			return nil, mapAgentsErr(ctx, err)
 		}
 		out := &agentOutput{}
-		out.Body.Agent = toAgentDTO(v)
+		out.Body.Agent = toAgentDTO(v, deps.Version)
 		return out, nil
 	})
 

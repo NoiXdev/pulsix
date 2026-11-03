@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -449,5 +450,53 @@ func TestStreamFactsBoundsRejected(t *testing.T) {
 	}
 	if _, err := recvWithin(t, stream, recvTimeout); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("over-bounds facts: %v, want InvalidArgument", err)
+	}
+}
+
+// TestHeartbeatWarnsOnceAboutAnAgentOutsideTheVersionRange is backlog 7.3:
+// an agent whose build is older than the previous minor, or newer than the
+// manager, is logged once per process — not on every heartbeat — and its
+// heartbeat is still accepted.
+func TestHeartbeatWarnsOnceAboutAnAgentOutsideTheVersionRange(t *testing.T) {
+	const warning = "agent version outside the supported range"
+	for _, tt := range []struct {
+		name, version string
+		wantWarnings  int
+		wantStatus    string
+	}{
+		{"old", "v1.1.0", 1, "update_required"},
+		{"newer", "v1.9.0", 1, "newer"},
+		{"current", "v1.4.2", 0, ""},
+		{"previous minor", "v1.3.0", 0, ""},
+		{"dev build", "dev", 0, ""},
+		{"no version", "", 0, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarnessVersion(t, "v1.4.0")
+			_, client := enrollAnAgent(t, h, "web-1")
+			stream, err := (*client).AgentStream(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 3 {
+				if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: &agentpb.Heartbeat{Version: tt.version}}}); err != nil {
+					t.Fatal(err)
+				}
+				if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
+					t.Fatalf("an agent outside the range must still be acknowledged: %+v, %v", ack, err)
+				}
+			}
+			logs := h.logs.String()
+			if got := strings.Count(logs, warning); got != tt.wantWarnings {
+				t.Fatalf("%d warnings, want %d; logs:\n%s", got, tt.wantWarnings, logs)
+			}
+			if tt.wantWarnings > 0 {
+				for _, want := range []string{"web-1", tt.version, "v1.4.0", tt.wantStatus} {
+					if !strings.Contains(logs, want) {
+						t.Errorf("warning does not mention %q:\n%s", want, logs)
+					}
+				}
+			}
+		})
 	}
 }

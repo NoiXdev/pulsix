@@ -477,7 +477,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	agentSvc, err := agentapi.New(agentapi.Deps{
 		CA: caInst, Agents: agentsSvc, Audit: systemAuditor{auditRec},
 		Streams: agentStreams, Facts: agentsSvc, Checks: checksSvc,
-		Clock: time.Now,
+		Clock: time.Now, Version: cfg.Version, Log: slog.Default(),
 	})
 	if err != nil {
 		appDB.Close()
@@ -693,6 +693,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			Agents: agentsSvc, AgentService: agentSvc,
 			Claims: jobsClaimer{jobsQueue}, Events: jobsEventRecorder{jobsQueue}, Results: jobsResultRecorder{jobsQueue},
 			Audit: systemAuditor{auditRec}, Clock: time.Now, Streams: streams, Log: slog.Default(),
+			Version: cfg.Version,
 		})
 		if err != nil {
 			reaperStop()

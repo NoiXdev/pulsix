@@ -23,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/versioncompat"
 	"github.com/noixdev/pulsix/internal/workers"
 )
 
@@ -88,6 +89,11 @@ type Deps struct {
 	// which reach it through Server.log(). nil is slog.Default()
 	// (backlog 2.64, completed under 2.68).
 	Log *slog.Logger
+	// Version is the manager's build version. A worker or agent whose
+	// build is outside the supported range against it is logged once per
+	// process (backlog 7.3, internal/versioncompat); empty or "dev"
+	// judges nothing.
+	Version string
 
 	// CancelPollInterval overrides DefaultCancelPollInterval; zero keeps
 	// the default. Injected so tests can poll without waiting half a
@@ -114,6 +120,8 @@ type Server struct {
 	registry    *tokenRegistry
 	streams     *StreamRegistry
 	enrollLimit *clientip.Limiter
+	// skew remembers which workers were already warned about.
+	skew versioncompat.Warner
 }
 
 // newServer builds the Server: the gRPC listener's server certificate
