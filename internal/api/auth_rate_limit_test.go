@@ -391,7 +391,7 @@ func TestAuthRateLimitTripsOnSetupComplete(t *testing.T) {
 	hit := func(xff string) int {
 		resp, err := postFrom(s.HTTP.URL+"/api/v1/setup/complete", xff, map[string]string{
 			"admin_email": "root@example.test", "admin_name": "Root", "admin_password": "short",
-			"org_slug": "acme", "org_name": "Acme",
+			"org_slug": "acme", "org_name": "Acme", "setup_token": apitest.SetupToken(),
 		})
 		if err != nil {
 			t.Fatal(err)

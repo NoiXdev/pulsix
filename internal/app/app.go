@@ -251,7 +251,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	tokens := auth.NewTokens(auth.NewSQLTokenStore(appDB), time.Now)
 	authSvc := auth.NewService(auth.NewSQLStore(q), sessions, auth.AnyEnabled(totp, passkeys))
 
-	setupSvc := setup.NewService(setup.NewSQLStore(appDB), sessions, box, time.Now)
+	setupToken := setup.Token(cfg.MasterKey)
+	setupSvc := setup.NewService(setup.NewSQLStore(appDB), sessions, box, time.Now, setupToken)
+	// While nobody has completed setup, every start logs the token the
+	// wizard asks for, so only whoever can read this log can claim a
+	// fresh instance.
+	logSetupToken(ctx, slog.Default(), setupSvc, setupToken, cfg.PublicURL)
 	// mail.NewSMTP resolves its settings through setupSvc.LoadSMTP on every
 	// call, so a settings change made through PUT /admin/settings/smtp
 	// takes effect on the very next send — there is no separate mailer to

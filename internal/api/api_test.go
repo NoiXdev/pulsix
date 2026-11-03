@@ -64,7 +64,7 @@ func testAudit() *audit.Recorder {
 // wizard (nil interface values are only a problem once called), mirroring
 // testTenancy and testAudit above.
 func testSetup() *setup.Service {
-	return setup.NewService(nil, nil, crypto.NewBox([32]byte{}), time.Now)
+	return setup.NewService(nil, nil, crypto.NewBox([32]byte{}), time.Now, "")
 }
 
 // testMailer builds a *mail.SMTP whose loader never actually runs in tests

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,8 +21,78 @@ import (
 func completeSetupBody(email, orgSlug string) map[string]any {
 	return map[string]any{
 		"admin_email": email, "admin_password": "correct horse battery", "admin_name": "Root Admin",
-		"org_slug": orgSlug, "org_name": "Acme",
+		"org_slug": orgSlug, "org_name": "Acme", "setup_token": apitest.SetupToken(),
 	}
+}
+
+// TestSetupCompleteRequiresTheSetupToken: whoever reaches a fresh instance
+// first cannot claim it without the token the manager logs at start. A
+// wrong or empty token is a 403 naming where the token is; the right one,
+// however it is typed, completes setup.
+func TestSetupCompleteRequiresTheSetupToken(t *testing.T) {
+	s := apitest.New(t)
+	c := s.Client()
+	for _, tok := range []string{"", "AAAA-BBBB-CCCC-DDDD"} {
+		body := completeSetupBody("root@example.test", "acme")
+		body["setup_token"] = tok
+		resp := postJSON(t, c, s.HTTP.URL+"/api/v1/setup/complete", body)
+		got := mustReadBody(t, resp)
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("token %q: status %d, want 403; body %s", tok, resp.StatusCode, got)
+		}
+		if !strings.Contains(got, "setup token does not match") || !strings.Contains(got, "manager's log") {
+			t.Fatalf("token %q: body %s, want the message naming the manager's log", tok, got)
+		}
+	}
+	if st := statusCompleted(t, c, s.HTTP.URL); st {
+		t.Fatal("a refused token completed setup")
+	}
+
+	body := completeSetupBody("root@example.test", "acme")
+	body["setup_token"] = strings.ToLower(strings.ReplaceAll(apitest.SetupToken(), "-", " "))
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/setup/complete", body)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("right token, typed loosely: status %d, want 201; body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	// Once completed, a wrong token answers what any second attempt does.
+	body = completeSetupBody("again@example.test", "again")
+	body["setup_token"] = "AAAA-BBBB-CCCC-DDDD"
+	if resp := postJSON(t, c, s.HTTP.URL+"/api/v1/setup/complete", body); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("wrong token on a completed instance: status %d, want 409", resp.StatusCode)
+	}
+}
+
+// TestSetupStatusReportsTheManagerVersion: the wizard's status carries the
+// build version /healthz reports, not a constant of its own.
+func TestSetupStatusReportsTheManagerVersion(t *testing.T) {
+	for _, tc := range []struct{ version, want string }{{"1.4.2", "1.4.2"}, {"", "dev"}} {
+		s := apitest.New(t, apitest.WithVersion(tc.version))
+		resp := requestJSON(t, s.Client(), http.MethodGet, s.HTTP.URL+"/api/v1/setup/status", nil)
+		var out struct {
+			Version string `json:"version"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if out.Version != tc.want {
+			t.Errorf("Deps.Version %q: status version = %q, want %q", tc.version, out.Version, tc.want)
+		}
+	}
+}
+
+func statusCompleted(t *testing.T, c *http.Client, base string) bool {
+	t.Helper()
+	resp := requestJSON(t, c, http.MethodGet, base+"/api/v1/setup/status", nil)
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Completed bool `json:"completed"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out.Completed
 }
 
 // TestSetupStatusCompleteFlow walks the whole first-run wizard against a

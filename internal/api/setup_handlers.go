@@ -42,6 +42,9 @@ type setupCompleteInput struct {
 		// DefaultLocale is the instance's default GUI language; absent
 		// means English.
 		DefaultLocale string `json:"default_locale,omitempty" enum:"en,de"`
+		// SetupToken has no length rule here: an empty one must reach the
+		// service and be refused as a wrong token (403), like any other.
+		SetupToken string `json:"setup_token" doc:"The instance's setup token, printed in the manager's log at start while setup is not completed (also: pulsix-manager setup-token); case, spaces and dashes do not matter"`
 	}
 }
 
@@ -67,7 +70,7 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 			return nil, mapSetupErr(ctx, err)
 		}
 		out := &setupStatusOutput{}
-		out.Body.Completed, out.Body.Version = st.Completed, st.Version
+		out.Body.Completed, out.Body.Version = st.Completed, managerVersion(deps)
 		out.Body.DefaultLocale = st.DefaultLocale
 		// Completed and Version stay public unconditionally — the SPA calls
 		// this route on load, before it has any session, to decide whether
@@ -89,6 +92,7 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 		input := setup.Input{
 			AdminEmail: in.Body.AdminEmail, AdminPassword: in.Body.AdminPassword, AdminName: in.Body.AdminName,
 			OrgSlug: in.Body.OrgSlug, OrgName: in.Body.OrgName, DefaultLocale: in.Body.DefaultLocale,
+			SetupToken: in.Body.SetupToken,
 		}
 		if in.Body.SMTP != nil {
 			s := in.Body.SMTP.toSettings()
@@ -113,7 +117,8 @@ func registerSetupRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 		// Backlog 7.27: public and argon2id-hashing, so it shares the
 		// sign-in routes' per-address budget; a refusal on a completed
-		// instance (409) is a 4xx and is charged like one.
+		// instance (409) or a wrong setup token (403) is a 4xx and is
+		// charged like one, which is what bounds guessing the token.
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusCreated }, withAuthRateLimit(deps), withAudit("completeSetup", "setup"))
 }
 
@@ -330,6 +335,8 @@ func mapSetupErr(ctx context.Context, err error) error {
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, setup.ErrAlreadyCompleted):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, setup.ErrSetupToken):
+		return huma.Error403Forbidden("the setup token does not match; it is printed in the manager's log at start")
 	default:
 		slog.ErrorContext(ctx, "unmapped setup error", "err", err)
 		return huma.Error500InternalServerError("internal error")

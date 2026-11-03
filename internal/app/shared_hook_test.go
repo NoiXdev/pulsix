@@ -13,6 +13,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/shared"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
@@ -68,7 +69,7 @@ func TestBuildProjectsSharedRepoDefinitionsIntoNewOrganizations(t *testing.T) {
 		t.Fatalf("CreateCheckDefinition (definition): %v", err)
 	}
 
-	body := `{"admin_email":"shared-admin@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"shared-org","org_name":"Shared Org"}`
+	body := `{"admin_email":"shared-admin@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"shared-org","org_name":"Shared Org","setup_token":"` + setup.Token(cfg.MasterKey) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

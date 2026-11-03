@@ -23,14 +23,14 @@ func newSQLService(t *testing.T) (*setup.Service, *gen.Queries) {
 	q := gen.New(d.Pool())
 	sessions := auth.NewSessions(q, time.Now)
 	store := setup.NewSQLStore(d)
-	return setup.NewService(store, sessions, crypto.NewBox([32]byte{}), time.Now), q
+	return setup.NewService(store, sessions, crypto.NewBox([32]byte{}), time.Now, testToken), q
 }
 
 func TestSQLStoreCompleteCreatesAdminOrgAndMembership(t *testing.T) {
 	svc, q := newSQLService(t)
 	ctx := context.Background()
 
-	res, err := svc.Complete(ctx, setup.Input{
+	res, err := svc.Complete(ctx, setup.Input{SetupToken: testToken,
 		AdminEmail: "root@example.test", AdminPassword: "correct horse battery", AdminName: "Root",
 		OrgSlug: "acme", OrgName: "Acme",
 	})
@@ -57,7 +57,7 @@ func TestSQLStoreCompleteCreatesAdminOrgAndMembership(t *testing.T) {
 		t.Fatalf("membership role = %s, want owner", m.Role)
 	}
 
-	if _, err := svc.Complete(ctx, setup.Input{
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken,
 		AdminEmail: "again@example.test", AdminPassword: "correct horse battery", AdminName: "Again",
 		OrgSlug: "again", OrgName: "Again",
 	}); !errors.Is(err, setup.ErrAlreadyCompleted) {
@@ -81,7 +81,7 @@ func TestSQLStoreConcurrentCompleteOnlyOneSucceeds(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := svc.Complete(ctx, setup.Input{
+			_, err := svc.Complete(ctx, setup.Input{SetupToken: testToken,
 				AdminEmail: fmt.Sprintf("racer-%d@example.test", i), AdminPassword: "correct horse battery",
 				AdminName: fmt.Sprintf("Racer %d", i), OrgSlug: fmt.Sprintf("racer-%d", i), OrgName: fmt.Sprintf("Racer %d", i),
 			})
@@ -127,7 +127,7 @@ func TestSQLStoreAdminMFAEnrolledReflectsConfirmedTOTP(t *testing.T) {
 	svc, q := newSQLService(t)
 	ctx := context.Background()
 
-	res, err := svc.Complete(ctx, setup.Input{
+	res, err := svc.Complete(ctx, setup.Input{SetupToken: testToken,
 		AdminEmail: "root@example.test", AdminPassword: "correct horse battery", AdminName: "Root",
 		OrgSlug: "acme", OrgName: "Acme",
 	})

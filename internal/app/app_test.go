@@ -16,6 +16,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/setup"
 )
 
 // testConfig builds a valid config.Config against the shared test
@@ -119,7 +120,7 @@ func TestBuildSeedsRuleSetOnOrgCreation(t *testing.T) {
 	}
 	defer a.Close()
 
-	body := `{"admin_email":"ruleseed-admin@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"ruleseed-org","org_name":"Rule Seed Org"}`
+	body := `{"admin_email":"ruleseed-admin@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"ruleseed-org","org_name":"Rule Seed Org","setup_token":"` + setup.Token(cfg.MasterKey) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -198,7 +199,7 @@ func TestBuildSetsSecureCookieForHTTPSPublicURL(t *testing.T) {
 	}
 	defer a.Close()
 
-	body := `{"admin_email":"root@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"acme","org_name":"Acme"}`
+	body := `{"admin_email":"root@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"acme","org_name":"Acme","setup_token":"` + setup.Token(cfg.MasterKey) + `"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()

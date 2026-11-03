@@ -35,6 +35,7 @@ import (
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/runner"
 	"github.com/noixdev/pulsix/internal/worker/sshprobe"
@@ -228,6 +229,7 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc, 
 		"admin_name":     "E2E Admin",
 		"org_slug":       org,
 		"org_name":       "E2E Org",
+		"setup_token":    setup.Token(masterKey),
 	}, nil)
 	// A second factor is mandatory: the completed wizard's session is the
 	// enrolment session, and confirming TOTP completes it in place.

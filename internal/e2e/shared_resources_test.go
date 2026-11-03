@@ -47,6 +47,7 @@ import (
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/setup"
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/runner"
 )
@@ -389,6 +390,7 @@ func TestSharedRepositoryEndToEnd(t *testing.T) {
 	admin.do(http.MethodPost, "/api/v1/setup/complete", map[string]any{
 		"admin_email": "provider@e2e.test", "admin_password": "correct horse battery",
 		"admin_name": "Provider Admin", "org_slug": "org-a", "org_name": "Org A",
+		"setup_token": setup.Token(masterKey),
 	}, nil)
 	var adminEnrol struct {
 		Secret string `json:"secret"`

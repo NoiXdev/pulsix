@@ -2,7 +2,9 @@
 // administrator and the first organization, and stores instance-wide
 // settings (SMTP today, branding later) sealed with the instance master
 // key. It is the one privileged operation the API serves with no principal
-// at all, gated only on "no instance administrator exists yet".
+// at all, gated on "no instance administrator exists yet" and on the setup
+// token (Token), which only whoever can read the manager's log or run its
+// setup-token command has.
 package setup
 
 import (
@@ -24,19 +26,16 @@ import (
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
-// Version is reported by Status so the SPA (and support requests) can tell
-// which build completed the wizard. It intentionally duplicates the
-// literal huma API version in internal/api/api.go rather than importing
-// it: package api depends on this package (Deps.Setup), and this package
-// must not depend back on it.
-const Version = "0.1.0"
-
 // Sentinel errors mapped to HTTP status by the transport layer.
 var (
 	// ErrAlreadyCompleted means an instance administrator already exists —
 	// Complete refuses to run a second time, whether the two calls arrive
 	// one after another or genuinely concurrently (see SQLStore.InTx).
 	ErrAlreadyCompleted = errors.New("setup already completed")
+	// ErrSetupToken means Complete was called without the instance's setup
+	// token (Token), or with a different one. Only a first run sees it:
+	// a completed instance answers ErrAlreadyCompleted whatever the token.
+	ErrSetupToken = errors.New("setup token does not match")
 	// ErrInvalidInput is wrapped with a human-readable reason by
 	// Input.validate; callers should present err.Error() directly rather
 	// than a generic "bad request".
@@ -69,6 +68,10 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$`)
 
 // Input is what the wizard needs to complete first-run setup.
 type Input struct {
+	// SetupToken must match the instance's Token: it is what keeps whoever
+	// reaches a fresh instance before its owner from claiming it. The
+	// manager logs it at start while setup is not completed.
+	SetupToken    string
 	AdminEmail    string
 	AdminPassword string
 	AdminName     string
@@ -134,7 +137,6 @@ type Status struct {
 	// the SPA keep insisting on second-factor enrolment across reloads,
 	// the same way a pending session does mid-wizard.
 	AdminMFAEnrolled bool
-	Version          string
 	// DefaultLocale is the instance's default GUI language, public so the
 	// sign-in page and the wizard can pick their language before any
 	// session exists.
@@ -201,15 +203,19 @@ type Service struct {
 	// Complete hashed at all (export_test.go).
 	hashPassword func(string) (string, error)
 	log          *slog.Logger
+	// token is the setup token Complete requires (Token of the master
+	// key); empty refuses every attempt.
+	token string
 }
 
 // NewService wires the store, session opener, the box used to seal secrets
-// inside instance settings (the SMTP password), and the clock. No
-// OrgCreatedHook is installed by default — see SetOrgCreatedHook.
-func NewService(store Store, sessions SessionStore, box *crypto.Box, now func() time.Time) *Service {
+// inside instance settings (the SMTP password), the clock, and the setup
+// token Complete requires (Token of the same master key the box seals
+// with). No OrgCreatedHook is installed by default — see SetOrgCreatedHook.
+func NewService(store Store, sessions SessionStore, box *crypto.Box, now func() time.Time, setupToken string) *Service {
 	return &Service{
 		store: store, sessions: sessions, box: box, now: now,
-		hashPassword: auth.HashPassword, log: slog.Default(),
+		hashPassword: auth.HashPassword, log: slog.Default(), token: setupToken,
 	}
 }
 
@@ -247,7 +253,7 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{Completed: completed, AdminMFAEnrolled: enrolled, Version: Version, DefaultLocale: def}, nil
+	return Status{Completed: completed, AdminMFAEnrolled: enrolled, DefaultLocale: def}, nil
 }
 
 // Complete runs the wizard: it validates in, then atomically (inside one
@@ -268,6 +274,11 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 // checking only inside the transaction let any anonymous caller buy one
 // per request for as long as the instance runs. The check inside InTx
 // stays: it is what settles two first runs racing each other.
+//
+// The setup token is checked after that, also before the hash: a wrong
+// token must not cost argon2id either, and a completed instance answers
+// ErrAlreadyCompleted whatever token it is sent, so the token says nothing
+// once it has served its purpose.
 func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 	if err := in.validate(); err != nil {
 		return Result{}, err
@@ -278,6 +289,9 @@ func (s *Service) Complete(ctx context.Context, in Input) (Result, error) {
 	}
 	if exists {
 		return Result{}, ErrAlreadyCompleted
+	}
+	if !tokenMatches(s.token, in.SetupToken) {
+		return Result{}, ErrSetupToken
 	}
 	hash, err := s.hashPassword(in.AdminPassword)
 	if err != nil {

@@ -40,6 +40,8 @@ import (
 	glssh "github.com/gliderlabs/ssh"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/noixdev/pulsix/internal/setup"
 )
 
 // freePort picks an ephemeral TCP port on loopback and releases it
@@ -202,6 +204,7 @@ func TestEmbeddedWorkerClaimsAndCompletesConnectionTest(t *testing.T) {
 	client.do(http.MethodPost, "/api/v1/setup/complete", map[string]any{
 		"admin_email": "root@embedded.test", "admin_password": "correct horse battery",
 		"admin_name": "Embedded Admin", "org_slug": org, "org_name": "Embedded Org",
+		"setup_token": setup.Token(cfg.MasterKey),
 	}, nil)
 	// A second factor is mandatory before the session can drive any other
 	// route (internal/e2e's own scenario does the same).

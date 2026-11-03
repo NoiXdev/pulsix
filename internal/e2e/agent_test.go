@@ -40,6 +40,7 @@ import (
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/setup"
 )
 
 // agentWorld is the wired manager the agent scenario drives.
@@ -128,6 +129,7 @@ func wireAgentManager(t *testing.T, ctx context.Context, notifyAllow ...netip.Pr
 		"admin_name":     "E2E Admin",
 		"org_slug":       org,
 		"org_name":       "E2E Org",
+		"setup_token":    setup.Token(masterKey),
 	}, nil)
 	var enrolOut struct {
 		Secret string `json:"secret"`

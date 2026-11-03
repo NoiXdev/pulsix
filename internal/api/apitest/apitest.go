@@ -131,6 +131,10 @@ func (m *Mailer) Sent() []SentMail {
 // tests. Never used outside apitest.
 var testMasterKey = [32]byte{'p', 'u', 'l', 's', 'i', 'x', '-', 't', 'e', 's', 't', '-', 'k', 'e', 'y'}
 
+// SetupToken is the setup token of testMasterKey, which POST
+// /api/v1/setup/complete requires on every server New builds.
+func SetupToken() string { return setup.Token(testMasterKey) }
+
 // Server is a running API plus helpers.
 type Server struct {
 	T        *testing.T
@@ -449,7 +453,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	// TOTP does, not only at the passkey login endpoints — otherwise a
 	// passkey-only account's password alone would produce an MFA-complete
 	// session (Finding 2, fix round 1).
-	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now)
+	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now, SetupToken())
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(d), s.Mail, publicURL, time.Now)
 	s.HostReads = &HostReadCounter{}
 	hostsSvc := hosts.NewService(countingHostStore{Store: hosts.NewSQLStore(d), counter: s.HostReads}, time.Now)

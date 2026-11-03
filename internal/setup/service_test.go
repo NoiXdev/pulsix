@@ -194,8 +194,8 @@ var ctx = context.Background()
 
 func TestCompleteCreatesAdminOrgAndSession(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-	res, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"})
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+	res, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"})
 	if err != nil || res.Cookie == "" {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestCompleteCreatesAdminOrgAndSession(t *testing.T) {
 	if st.memberships[res.OrgID][res.UserID] != tenancy.RoleOwner {
 		t.Fatal("admin is not owner")
 	}
-	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "again@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "b", OrgName: "B"}); !errors.Is(err, setup.ErrAlreadyCompleted) {
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "again@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "b", OrgName: "B"}); !errors.Is(err, setup.ErrAlreadyCompleted) {
 		t.Fatalf("second complete: %v", err)
 	}
 }
@@ -217,8 +217,8 @@ func TestCompleteCreatesAdminOrgAndSession(t *testing.T) {
 // after, or every anonymous call keeps paying for one.
 func TestCompleteOnACompletedInstanceDoesNotHash(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-	in := setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+	in := setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}
 	if _, err := svc.Complete(ctx, in); err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestCompleteOnACompletedInstanceDoesNotHash(t *testing.T) {
 // callback.
 func TestCompleteRunsOrgCreatedHook(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	var gotOrgID uuid.UUID
 	calls := 0
 	svc.SetOrgCreatedHook(func(_ context.Context, orgID uuid.UUID) error {
@@ -255,7 +255,7 @@ func TestCompleteRunsOrgCreatedHook(t *testing.T) {
 		}
 		return nil
 	})
-	res, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"})
+	res, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,16 +272,16 @@ func TestCompleteRunsOrgCreatedHook(t *testing.T) {
 // tenancy.Service.CreateOrg gives its own hook.
 func TestCompletePropagatesOrgCreatedHookError(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	boom := errors.New("boom")
 	svc.SetOrgCreatedHook(func(context.Context, uuid.UUID) error { return boom })
-	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); !errors.Is(err, boom) {
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want wrapped %v", err, boom)
 	}
 }
 
 func TestCompleteValidatesInput(t *testing.T) {
-	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	for name, in := range map[string]setup.Input{
 		"short password": {AdminEmail: "a@x.test", AdminPassword: "short", AdminName: "A", OrgSlug: "acme", OrgName: "Acme"},
 		"bad slug":       {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "Acme Inc", OrgName: "Acme"},
@@ -322,8 +322,8 @@ func TestCompleteSlugBoundaries(t *testing.T) {
 		strings.Repeat("a", 41): false,
 	} {
 		st := newFakeSetupStore()
-		svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-		_, err := svc.Complete(ctx, setup.Input{AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: slug, OrgName: "Acme"})
+		svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+		_, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: slug, OrgName: "Acme"})
 		gotValid := !errors.Is(err, setup.ErrInvalidInput)
 		if gotValid != wantValid {
 			t.Errorf("slug %q: err = %v, want valid=%v", slug, err, wantValid)
@@ -333,9 +333,9 @@ func TestCompleteSlugBoundaries(t *testing.T) {
 
 func TestCompleteWithSMTPStoresSealedSettings(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	smtp := mail.SMTPSettings{Host: "smtp.x.test", Port: 587, Username: "u", Password: "p", From: "pulsix@x.test", StartTLS: true}
-	if _, err := svc.Complete(ctx, setup.Input{
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken,
 		AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme", SMTP: &smtp,
 	}); err != nil {
 		t.Fatal(err)
@@ -357,22 +357,22 @@ func TestCompleteWithSMTPStoresSealedSettings(t *testing.T) {
 func TestCompleteRollsBackOnFailure(t *testing.T) {
 	st := newFakeSetupStore()
 	st.failNext["AddMembership"] = errors.New("simulated failure")
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err == nil {
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err == nil {
 		t.Fatal("expected the simulated failure to propagate")
 	}
 	if len(st.users) != 0 || len(st.orgs) != 0 {
 		t.Fatalf("a failed Complete left state behind: users=%v orgs=%v", st.users, st.orgs)
 	}
 	// A retry after the rollback must succeed — nothing was left reserved.
-	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err != nil {
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err != nil {
 		t.Fatalf("retry after rollback: %v", err)
 	}
 }
 
 func TestSMTPSettingsRoundTripSealsPassword(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	in := mail.SMTPSettings{Host: "smtp.x", Port: 587, Username: "u", Password: "p", From: "pulsix@x", StartTLS: true}
 	if err := svc.SaveSMTP(ctx, in); err != nil {
 		t.Fatal(err)
@@ -387,7 +387,7 @@ func TestSMTPSettingsRoundTripSealsPassword(t *testing.T) {
 }
 
 func TestLoadSMTPBeforeAnySaveReportsNotFound(t *testing.T) {
-	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	if _, err := svc.LoadSMTP(ctx); !errors.Is(err, setup.ErrNotFound) {
 		t.Fatalf("LoadSMTP before any save: %v, want ErrNotFound", err)
 	}
@@ -395,7 +395,7 @@ func TestLoadSMTPBeforeAnySaveReportsNotFound(t *testing.T) {
 
 func TestStatusReportsCompletionAndMFAEnrolment(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 
 	st0, err := svc.Status(ctx)
 	if err != nil {
@@ -405,7 +405,7 @@ func TestStatusReportsCompletionAndMFAEnrolment(t *testing.T) {
 		t.Fatal("a fresh instance must report Completed = false")
 	}
 
-	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err != nil {
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err != nil {
 		t.Fatal(err)
 	}
 	st1, err := svc.Status(ctx)
@@ -415,13 +415,10 @@ func TestStatusReportsCompletionAndMFAEnrolment(t *testing.T) {
 	if !st1.Completed {
 		t.Fatal("after Complete, Status must report Completed = true")
 	}
-	if st1.Version == "" {
-		t.Fatal("Status must report a non-empty Version")
-	}
 }
 
 func TestDefaultLocaleIsEnglishBeforeAnyWrite(t *testing.T) {
-	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	got, err := svc.DefaultLocale(ctx)
 	if err != nil || got != "en" {
 		t.Fatalf("DefaultLocale = %q, %v; want en, nil", got, err)
@@ -430,7 +427,7 @@ func TestDefaultLocaleIsEnglishBeforeAnyWrite(t *testing.T) {
 
 func TestSetDefaultLocaleRoundTrips(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	if err := svc.SetDefaultLocale(ctx, "de"); err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +442,7 @@ func TestSetDefaultLocaleRoundTrips(t *testing.T) {
 
 func TestSetDefaultLocaleRejectsAnUnsupportedLanguage(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	for _, l := range []string{"fr", "", "DE", "de-DE"} {
 		if err := svc.SetDefaultLocale(ctx, l); !errors.Is(err, setup.ErrInvalidInput) {
 			t.Errorf("SetDefaultLocale(%q) = %v, want ErrInvalidInput", l, err)
@@ -458,8 +455,8 @@ func TestSetDefaultLocaleRejectsAnUnsupportedLanguage(t *testing.T) {
 
 func TestCompleteStoresTheDefaultLocaleInItsTransaction(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-	if _, err := svc.Complete(ctx, setup.Input{
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken,
 		AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme", DefaultLocale: "de",
 	}); err != nil {
 		t.Fatal(err)
@@ -472,8 +469,8 @@ func TestCompleteStoresTheDefaultLocaleInItsTransaction(t *testing.T) {
 	// admin and organization written before it roll back too.
 	st2 := newFakeSetupStore()
 	st2.failNext["SaveSetting"] = errors.New("simulated failure")
-	svc2 := setup.NewService(st2, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-	if _, err := svc2.Complete(ctx, setup.Input{
+	svc2 := setup.NewService(st2, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+	if _, err := svc2.Complete(ctx, setup.Input{SetupToken: testToken,
 		AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme", DefaultLocale: "de",
 	}); err == nil {
 		t.Fatal("expected the simulated failure to propagate")
@@ -485,8 +482,8 @@ func TestCompleteStoresTheDefaultLocaleInItsTransaction(t *testing.T) {
 
 func TestCompleteWithoutALocaleKeepsEnglish(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-	if _, err := svc.Complete(ctx, setup.Input{AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err != nil {
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+	if _, err := svc.Complete(ctx, setup.Input{SetupToken: testToken, AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme"}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := svc.DefaultLocale(ctx); err != nil || got != "en" {
@@ -496,8 +493,8 @@ func TestCompleteWithoutALocaleKeepsEnglish(t *testing.T) {
 
 func TestCompleteRefusesAnUnsupportedLocaleBeforeWritingAnything(t *testing.T) {
 	st := newFakeSetupStore()
-	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
-	_, err := svc.Complete(ctx, setup.Input{
+	svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
+	_, err := svc.Complete(ctx, setup.Input{SetupToken: testToken,
 		AdminEmail: "root@x.test", AdminPassword: "correct horse battery", AdminName: "Root", OrgSlug: "acme", OrgName: "Acme", DefaultLocale: "fr",
 	})
 	if !errors.Is(err, setup.ErrInvalidInput) {
@@ -509,7 +506,7 @@ func TestCompleteRefusesAnUnsupportedLocaleBeforeWritingAnything(t *testing.T) {
 }
 
 func TestStatusCarriesTheDefaultLocale(t *testing.T) {
-	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	before, err := svc.Status(ctx)
 	if err != nil || before.DefaultLocale != "en" {
 		t.Fatalf("Status before = %+v, %v; want DefaultLocale en", before, err)
@@ -540,7 +537,7 @@ func TestDefaultLocaleDegradesAnUnusableStoredValueToEnglish(t *testing.T) {
 			st := newFakeSetupStore()
 			st.settings["default_locale"] = []byte(tt.stored)
 			var logged bytes.Buffer
-			svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now)
+			svc := setup.NewService(st, &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 			svc.SetLogger(slog.New(slog.NewTextHandler(&logged, nil)))
 			got, err := svc.DefaultLocale(ctx)
 			if err != nil || got != "en" {
