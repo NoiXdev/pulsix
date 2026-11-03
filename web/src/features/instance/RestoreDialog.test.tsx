@@ -16,33 +16,54 @@ afterEach(() => {
 });
 
 describe('restoreCommands', () => {
+  const FOLDER = { destination: 'folder' as const, bucket: '', prefix: '', endpoint: '', region: '', pathStyle: false };
+  const S3 = { ...FOLDER, destination: 's3' as const };
+
   it('builds the by-name command of a folder destination, always with --replace', () => {
-    expect(restoreCommands(NAME, { destination: 'folder', bucket: '', prefix: '' })).toEqual({
+    expect(restoreCommands(NAME, FOLDER)).toEqual({
       byName: `docker compose run --rm cli restore --replace ${NAME}`,
       fromFile: `docker compose run --rm -T cli restore --replace --yes - < ${NAME}`,
     });
   });
 
-  it('passes the S3 credentials through by name and never by value', () => {
-    const { byName } = restoreCommands(NAME, { destination: 's3', bucket: 'firma-backups', prefix: '/pulsix/' });
+  it('carries the saved endpoint, region and path style, and passes only the two keys through by name', () => {
+    const { byName } = restoreCommands(NAME, {
+      ...S3,
+      bucket: 'firma-backups',
+      prefix: '/pulsix/',
+      endpoint: 'https://s3.example.net',
+      region: 'eu-central-1',
+      pathStyle: true,
+    });
     expect(byName).toBe(
-      'docker compose run --rm -e PULSIX_BACKUP_S3_ENDPOINT -e PULSIX_BACKUP_S3_REGION -e PULSIX_BACKUP_S3_ACCESS_KEY ' +
-        '-e PULSIX_BACKUP_S3_SECRET_KEY -e PULSIX_BACKUP_S3_PATH_STYLE cli restore --from s3://firma-backups/pulsix ' +
-        `--replace ${NAME}`,
+      'docker compose run --rm -e PULSIX_BACKUP_S3_ENDPOINT=https://s3.example.net -e PULSIX_BACKUP_S3_REGION=eu-central-1 ' +
+        '-e PULSIX_BACKUP_S3_PATH_STYLE=true -e PULSIX_BACKUP_S3_ACCESS_KEY -e PULSIX_BACKUP_S3_SECRET_KEY ' +
+        `cli restore --from s3://firma-backups/pulsix --replace ${NAME}`,
     );
-    expect(byName).not.toMatch(/-e [A-Z_0-9]+=/);
+    expect(byName).not.toMatch(/ACCESS_KEY=|SECRET_KEY=/);
   });
 
-  it('leaves the prefix out of the URL when there is none', () => {
-    const { byName } = restoreCommands(NAME, { destination: 's3', bucket: 'b', prefix: '' });
-    expect(byName).toContain('--from s3://b --replace');
+  it('leaves out the endpoint, region and path style that are not set (AWS)', () => {
+    const { byName } = restoreCommands(NAME, { ...S3, bucket: 'b' });
+    expect(byName).toBe(
+      'docker compose run --rm -e PULSIX_BACKUP_S3_ACCESS_KEY -e PULSIX_BACKUP_S3_SECRET_KEY ' +
+        `cli restore --from s3://b --replace ${NAME}`,
+    );
+  });
+
+  it('shell-quotes values that need it', () => {
+    const { byName } = restoreCommands(NAME, {
+      ...S3,
+      bucket: 'b',
+      prefix: "team's backups",
+      endpoint: 'http://minio:9000/x y',
+    });
+    expect(byName).toContain(`-e PULSIX_BACKUP_S3_ENDPOINT='http://minio:9000/x y' `);
+    expect(byName).toContain(String.raw`--from 's3://b/team'\''s backups' --replace`);
   });
 
   it('never has a --yes without --replace', () => {
-    for (const dest of [
-      { destination: 'folder' as const, bucket: '', prefix: '' },
-      { destination: 's3' as const, bucket: 'b', prefix: 'p' },
-    ]) {
+    for (const dest of [FOLDER, { ...S3, bucket: 'b', prefix: 'p' }]) {
       const { byName, fromFile } = restoreCommands(NAME, dest);
       for (const c of [byName, fromFile]) if (c.includes('--yes')) expect(c).toContain('--replace');
     }
@@ -50,19 +71,28 @@ describe('restoreCommands', () => {
 });
 
 describe('RestoreDialog', () => {
+  const folder = { destination: 'folder' as const, bucket: '', prefix: '', endpoint: '', region: '', pathStyle: false };
+  const COMMAND = `docker compose run --rm cli restore --replace ${NAME}`;
+
   it('shows both commands, the master key note and the stop command', () => {
-    render(<RestoreDialog name={NAME} destination={{ destination: 'folder', bucket: '', prefix: '' }} onClose={() => {}} />);
+    render(<RestoreDialog name={NAME} destination={folder} onClose={() => {}} />);
     const dialog = screen.getByRole('dialog', { name: 'Restore a backup' });
     expect(within(dialog).getByText(`docker compose run --rm cli restore --replace ${NAME}`)).toBeInTheDocument();
     expect(
       within(dialog).getByText(`docker compose run --rm -T cli restore --replace --yes - < ${NAME}`),
     ).toBeInTheDocument();
     expect(within(dialog).getByText(/PULSIX_MASTER_KEY/)).toBeInTheDocument();
-    expect(within(dialog).getByText(/docker compose stop manager/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/docker compose down/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/export/i)).not.toBeInTheDocument();
   });
 
-  const folder = { destination: 'folder' as const, bucket: '', prefix: '' };
-  const COMMAND = `docker compose run --rm cli restore --replace ${NAME}`;
+  it('asks to export the two S3 keys first for an S3 destination', () => {
+    render(<RestoreDialog name={NAME} destination={{ ...folder, destination: 's3', bucket: 'b' }} onClose={() => {}} />);
+    const dialog = screen.getByRole('dialog', { name: 'Restore a backup' });
+    expect(
+      within(dialog).getByText(/Export PULSIX_BACKUP_S3_ACCESS_KEY and PULSIX_BACKUP_S3_SECRET_KEY in the shell first/),
+    ).toBeInTheDocument();
+  });
 
   it('copies a command to the clipboard and says so', async () => {
     const user = userEvent.setup();

@@ -27,6 +27,9 @@ export function RestoreDialog({
     <Dialog open onClose={onClose} title={t.backups.restore.title} size="wide">
       <div className="flex flex-col gap-4">
         <p className="text-xs text-muted-foreground">{t.backups.restore.intro}</p>
+        {destination.destination === 's3' && (
+          <p className="text-xs text-muted-foreground">{t.backups.restore.s3Credentials}</p>
+        )}
         <CommandBlock label={t.backups.restore.byName} command={commands.byName} />
         <CommandBlock label={t.backups.restore.fromFile} hint={t.backups.restore.fromFileHint} command={commands.fromFile} />
         <p className="text-xs text-muted-foreground">{t.backups.restore.note}</p>

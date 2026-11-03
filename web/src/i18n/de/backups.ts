@@ -88,7 +88,9 @@ export const deBackups: Messages['backups'] = {
     copy: 'Befehl kopieren',
     copied: 'Kopiert',
     copyManual: 'Kopieren ist hier nicht möglich. Der Befehl ist markiert: Strg+C (Cmd+C auf dem Mac) zum Kopieren drücken.',
-    note: 'Der Master-Key der Instanz, die das Backup erstellt hat, muss in PULSIX_MASTER_KEY gesetzt sein, und der Manager muss vorher gestoppt werden (docker compose stop manager).',
+    s3Credentials:
+      'Vorher PULSIX_BACKUP_S3_ACCESS_KEY und PULSIX_BACKUP_S3_SECRET_KEY in der Shell exportieren: Der Befehl reicht sie durch, ohne sie in die Kommandozeile zu schreiben.',
+    note: 'Der Master-Key der Instanz, die das Backup erstellt hat, muss in PULSIX_MASTER_KEY gesetzt sein, und Pulsix muss vorher gestoppt werden (docker compose down; die Volumes bleiben erhalten).',
     done: 'Schließen',
   },
 };

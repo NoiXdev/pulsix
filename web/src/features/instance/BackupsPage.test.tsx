@@ -370,13 +370,18 @@ describe('BackupsPage', () => {
     expect(confirm).toHaveBeenCalledTimes(2);
   });
 
-  it('shows the restore commands of an S3 destination with its bucket and prefix', async () => {
+  it('shows the restore commands of an S3 destination with its saved endpoint, region, path style, bucket and prefix', async () => {
     const user = userEvent.setup();
     mockApi(base({ 'GET /api/v1/admin/backups/settings': S3_SETTINGS }));
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Restore…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Restore a backup' });
-    expect(within(dialog).getByText(/cli restore --from s3:\/\/firma-backups\/pulsix --replace pulsix-2026/)).toBeInTheDocument();
+    const command = within(dialog).getByText(/cli restore --from s3:\/\/firma-backups\/pulsix --replace pulsix-2026/);
+    expect(command.textContent).toContain(
+      '-e PULSIX_BACKUP_S3_ENDPOINT=https://s3.example.com -e PULSIX_BACKUP_S3_REGION=eu-central-1 -e PULSIX_BACKUP_S3_PATH_STYLE=true ' +
+        '-e PULSIX_BACKUP_S3_ACCESS_KEY -e PULSIX_BACKUP_S3_SECRET_KEY cli restore',
+    );
+    expect(command.textContent).not.toContain('AKIA123');
   });
 });
 

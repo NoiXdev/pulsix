@@ -64,6 +64,9 @@ export function BackupsPage() {
           destination: settings.data.destination,
           bucket: settings.data.s3.bucket,
           prefix: settings.data.s3.prefix,
+          endpoint: settings.data.s3.endpoint,
+          region: settings.data.s3.region,
+          pathStyle: settings.data.s3.path_style,
         }}
       />
     </>

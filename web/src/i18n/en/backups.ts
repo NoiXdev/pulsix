@@ -91,7 +91,9 @@ export const enBackups = {
     copy: 'Copy command',
     copied: 'Copied',
     copyManual: 'Copying is not available here. The command is selected: press Ctrl+C (Cmd+C on a Mac) to copy it.',
-    note: 'The master key of the instance that made the backup must be set in PULSIX_MASTER_KEY, and the manager must be stopped first (docker compose stop manager).',
+    s3Credentials:
+      'Export PULSIX_BACKUP_S3_ACCESS_KEY and PULSIX_BACKUP_S3_SECRET_KEY in the shell first: the command passes them through without putting them on the command line.',
+    note: 'The master key of the instance that made the backup must be set in PULSIX_MASTER_KEY, and Pulsix must be stopped first (docker compose down; the volumes stay).',
     done: 'Close',
   },
 };
