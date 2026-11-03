@@ -4,6 +4,76 @@
  */
 
 export interface paths {
+    "/api/v1/admin/backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin backups */
+        get: operations["get-api-v1-admin-backups"];
+        put?: never;
+        /** Post API v1 admin backups */
+        post: operations["createBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/backups/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin backups settings */
+        get: operations["get-api-v1-admin-backups-settings"];
+        /** Put API v1 admin backups settings */
+        put: operations["updateBackupSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/backups/settings/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 admin backups settings test */
+        post: operations["post-api-v1-admin-backups-settings-test"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/backups/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete API v1 admin backups by name */
+        delete: operations["deleteBackup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/checks/definitions": {
         parameters: {
             query?: never;
@@ -3006,6 +3076,169 @@ export interface components {
             event?: components["schemas"]["AlertEventDTO"];
             /** @enum {string} */
             kind: "event" | "state_change";
+        };
+        BackupItem: {
+            /**
+             * Format: uuid
+             * @description Who started a manual backup; null for a scheduled one or without a recorded attempt
+             */
+            actor_id: string | null;
+            /** @description The actor's display name; empty without an actor or once the account is gone */
+            actor_name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Why a backup failed or is damaged; empty otherwise */
+            error: string;
+            /** @enum {string} */
+            kind: "scheduled" | "manual";
+            /** @description The backup's file or object name, also its identity in the download and delete routes */
+            name: string;
+            /** @description The Pulsix version that wrote the backup; empty while it has not been written */
+            pulsix_version: string;
+            /** Format: int64 */
+            size_bytes: number;
+            /**
+             * @description damaged is a stored file whose header cannot be read
+             * @enum {string}
+             */
+            state: "running" | "succeeded" | "failed" | "abandoned" | "damaged";
+        };
+        BackupListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BackupListOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Where backups are stored, for display */
+            destination_label: string;
+            /** @description Newest first */
+            items: components["schemas"]["BackupItem"][] | null;
+            /**
+             * Format: date-time
+             * @description When the next scheduled backup runs; null while the schedule is off
+             */
+            next_run_at: string | null;
+            /** @description Set when the destination could not be listed: items then holds only the recorded attempts */
+            storage_error: string | null;
+        };
+        BackupRetentionBody: {
+            /**
+             * Format: int64
+             * @description Scheduled backups kept per day, newest days first
+             */
+            daily: number;
+            /**
+             * Format: int64
+             * @description Scheduled backups kept per month
+             */
+            monthly: number;
+            /**
+             * Format: int64
+             * @description Scheduled backups kept per week
+             */
+            weekly: number;
+        };
+        BackupS3Body: {
+            access_key?: string;
+            bucket?: string;
+            /** @description Base URL of the S3-compatible service, e.g. https://s3.example.com; empty for AWS S3 */
+            endpoint?: string;
+            /** @description Address the bucket as endpoint/bucket instead of bucket.endpoint */
+            path_style?: boolean;
+            /** @description Key prefix inside the bucket */
+            prefix?: string;
+            region?: string;
+            /** @description Absent or null keeps the stored secret key; an empty string removes it */
+            secret_key?: string;
+            /** @description Ignored in a request */
+            readonly secret_key_set?: boolean;
+        };
+        BackupS3View: {
+            access_key: string;
+            bucket: string;
+            /** @description Base URL of the S3-compatible service; empty for AWS S3 */
+            endpoint: string;
+            /** @description Address the bucket as endpoint/bucket instead of bucket.endpoint */
+            path_style: boolean;
+            /** @description Key prefix inside the bucket */
+            prefix: string;
+            region: string;
+            /** @description Whether a secret key is stored */
+            secret_key_set: boolean;
+        };
+        BackupSettingsBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BackupSettingsBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description folder is the backup folder inside the manager container
+             * @enum {string}
+             */
+            destination: "folder" | "s3";
+            /** @description Whether the daily schedule runs */
+            enabled: boolean;
+            /** @description Whether the stored check samples are part of a backup */
+            include_metrics: boolean;
+            /** @description Applies to scheduled backups only; manual backups are never pruned */
+            retention: components["schemas"]["BackupRetentionBody"];
+            s3?: components["schemas"]["BackupS3Body"];
+            /**
+             * @description HH:MM, local to time_zone
+             * @example 03:00
+             */
+            time_of_day: string;
+            /**
+             * @description IANA time zone name
+             * @example Europe/Berlin
+             */
+            time_zone: string;
+        };
+        BackupSettingsView: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BackupSettingsView.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description folder is the backup folder inside the manager container
+             * @enum {string}
+             */
+            destination: "folder" | "s3";
+            /** @description Whether the daily schedule runs */
+            enabled: boolean;
+            /** @description Whether the stored check samples are part of a backup */
+            include_metrics: boolean;
+            /** @description Applies to scheduled backups only; manual backups are never pruned */
+            retention: components["schemas"]["BackupRetentionBody"];
+            s3: components["schemas"]["BackupS3View"];
+            /**
+             * @description HH:MM, local to time_zone
+             * @example 03:00
+             */
+            time_of_day: string;
+            /**
+             * @description IANA time zone name
+             * @example Europe/Berlin
+             */
+            time_zone: string;
+        };
+        BackupStartedOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/BackupStartedOutputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: uuid
+             * @description The backup attempt; it appears in the list as running until it ends
+             */
+            attempt_id: string;
         };
         BastionBodyDTO: {
             /**
@@ -6214,6 +6447,185 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    "get-api-v1-admin-backups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    createBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupStartedOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-admin-backups-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupSettingsView"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateBackupSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-v1-admin-backups-settings-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BackupSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A backup name as the list returns it */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "get-api-v1-admin-checks-definitions": {
         parameters: {
             query?: never;

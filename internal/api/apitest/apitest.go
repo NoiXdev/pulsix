@@ -29,6 +29,7 @@ import (
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/calendar"
 	"github.com/noixdev/pulsix/internal/checks"
@@ -143,6 +144,9 @@ type Server struct {
 	Queue *jobs.SQLQueue
 	Deps  api.Deps
 	HTTP  *httptest.Server
+	// BackupDir is the folder the default Deps.Backups writes its backups
+	// to (backup.DestinationFolder), a fresh temporary directory.
+	BackupDir string
 	// Checks is the monitoring check pipeline's service (v0.3b-1), the
 	// same instance Deps.Checks carries — exposed here, exactly like
 	// Queue, so SeedOrg can give a fixture org the "Linux base" seed set
@@ -661,6 +665,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Alerts:      s.Alerts,
 		AlertRoutes: s.AlertRoutes,
 		Oncall:      s.Oncall,
+		Backups:     s.newBackups(),
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},
@@ -681,6 +686,37 @@ func New(t *testing.T, opts ...Option) *Server {
 	t.Cleanup(ts.Close)
 	s.HTTP = ts
 	return s
+}
+
+// noBackupMail is the backup.AdminMailer of the test fixtures: nobody is
+// told about a failed scheduled backup.
+type noBackupMail struct{}
+
+func (noBackupMail) SendToInstanceAdmins(context.Context, string, string) error { return nil }
+
+// DumpBackup is backup.Dump bound to the test database and the fixtures'
+// master key, the DumpFunc app.Build gives the manager.
+func (s *Server) DumpBackup(ctx context.Context, w io.Writer, opts backup.DumpOptions) (backup.Header, error) {
+	return backup.Dump(ctx, s.DB.Pool(), testMasterKey, w, opts)
+}
+
+// NewBackups builds a backup.Service on the test database that writes to
+// dir, like the one app.Build wires with a folder in place of the
+// container's /var/lib/pulsix/backups. dump is the service's DumpFunc,
+// DumpBackup when nil. The service is stopped when the test ends.
+func (s *Server) NewBackups(dir string, dump backup.DumpFunc) *backup.Service {
+	if dump == nil {
+		dump = s.DumpBackup
+	}
+	svc := backup.NewService(backup.NewSQLStore(s.DB), crypto.NewBox(testMasterKey), dump, backup.StorageFor(dir),
+		noBackupMail{}, "test", time.Now, nil)
+	s.T.Cleanup(svc.Stop)
+	return svc
+}
+
+func (s *Server) newBackups() api.BackupService {
+	s.BackupDir = s.T.TempDir()
+	return s.NewBackups(s.BackupDir, nil)
 }
 
 // Client returns an HTTP client with a cookie jar and, deliberately, a

@@ -92,6 +92,11 @@ var auditAllowlist = map[string]string{
 	// POST /auth/totp/verify off the audit trail above.
 	"POST /api/v1/admin/settings/smtp/test": "sends a one-off test message through the currently stored SMTP settings; persists nothing, so there is no object mutation to record",
 
+	// Backlog 7.2: probes the destination the request body describes with a
+	// throwaway object and saves nothing — PUT /admin/backups/settings
+	// (audited) is the route that changes the configuration.
+	"POST /api/v1/admin/backups/settings/test": "probes the destination the body describes with a throwaway object; persists nothing, so there is no object mutation to record",
+
 	// Task 14: a read — it lists hosts matching a selector, exactly like
 	// GET /orgs/{org}/hosts with a filter — that only uses POST because its
 	// filter (an arbitrary selector expression) belongs in a request body,

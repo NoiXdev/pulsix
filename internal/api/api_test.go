@@ -17,6 +17,7 @@ import (
 	"github.com/noixdev/pulsix/internal/api"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/calendar"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
@@ -230,6 +231,9 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		// API. Zero-valued for the same reason every sibling on this line
 		// is — this fixture registers every route and drives none.
 		Oncall: &oncall.Service{},
+		// Backlog 7.2's required dependency: the instance backup API.
+		// Zero-valued like its siblings — nothing here drives a route.
+		Backups: &backup.Service{},
 	}
 }
 

@@ -546,6 +546,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
 		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
+		Backups: backupsSvc,
 		// Backlog 1.20: the auth endpoints' per-address limiter size
 		// (PULSIX_AUTH_RATE_LIMIT; 0 from config disables it).
 		AuthRateLimit: cfg.AuthRateLimit,

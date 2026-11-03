@@ -173,6 +173,10 @@ type Deps struct {
 	// lookup in production (internal/app.Build) — nothing here drives that
 	// side, only the six routes registerOncallRoutes wires.
 	Oncall *oncall.Service
+	// Backups is the instance backup service (backlog 7.2): settings, the
+	// backup list, "Back up now", download and delete. See
+	// registerBackupRoutes and registerBackupDownloadRoute.
+	Backups BackupService
 	// AuthRateLimit is how many failed authentication attempts one client
 	// address may make per minute on each rate-limited auth endpoint
 	// (login, TOTP verify, passkey login finish, invite accept) —
@@ -348,6 +352,9 @@ func (d Deps) validate() error {
 	if d.Oncall == nil {
 		missing = append(missing, "Oncall")
 	}
+	if d.Backups == nil {
+		missing = append(missing, "Backups")
+	}
 	if len(missing) > 0 {
 		return errors.New("api.New: Deps missing required field(s): " + strings.Join(missing, ", "))
 	}
@@ -423,6 +430,11 @@ func New(deps Deps) (http.Handler, error) {
 	if err := registerInstallRoutes(r, deps); err != nil {
 		return nil, err
 	}
+
+	// The backup download streams a file, which huma cannot; it takes the
+	// same instance-admin session guard as the backup routes registered
+	// with the API below. See backup_download.go.
+	registerBackupDownloadRoute(r, deps)
 
 	r.Get("/api/explorer", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -513,6 +525,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerSMTPSettingsRoutes(hapi, deps)   // /admin/settings/smtp... — instance admin, session only
 	registerLocaleRoutes(hapi, deps)         // PUT /auth/me/locale — the user's own GUI language
 	registerLocaleSettingsRoutes(hapi, deps) // /admin/settings/locale — instance admin, session only
+	registerBackupRoutes(hapi, deps)         // /admin/backups... — instance admin, session only
 	// /admin/repos/definitions... — instance admin, session only (spec
 	// v0.2f decision 8: no org_id, no per-org access at all).
 	registerSharedRepoRoutes(hapi, deps)
