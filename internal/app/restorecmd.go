@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/config"
@@ -265,7 +267,8 @@ func printRestored(stdout io.Writer, label string, m backup.Manifest) error {
 	return tw.Flush()
 }
 
-// listBackups prints the backups in st, newest first.
+// listBackups prints the backups in st, newest first. Names and header
+// strings come from the storage, so they pass through printable.
 func listBackups(ctx context.Context, st backup.Storage, stdout io.Writer) error {
 	objs, err := st.List(ctx)
 	if err != nil {
@@ -288,7 +291,18 @@ func listBackups(ctx context.Context, st backup.Storage, stdout io.Writer) error
 		} else if at, k, ok := backup.ParseObjectName(o.Name); ok {
 			created, kind = at.Format("2006-01-02 15:04:05"), k
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", o.Name, created, kind, version, formatSize(o.Size), metrics)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", printable(o.Name), created, printable(kind), printable(version), formatSize(o.Size), metrics)
 	}
 	return tw.Flush()
+}
+
+// printable is s as it may reach a terminal: unchanged when it is valid
+// UTF-8 of printable runes only, otherwise Go-quoted, so an escape
+// sequence, a tab or a bidirectional override shows as text instead of
+// acting on the operator's terminal or the table's columns.
+func printable(s string) string {
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool { return !strconv.IsPrint(r) }) {
+		return s
+	}
+	return strconv.Quote(s)
 }

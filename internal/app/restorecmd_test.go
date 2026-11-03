@@ -2,10 +2,13 @@
 package app
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noixdev/pulsix/internal/backup"
 )
@@ -114,5 +117,51 @@ func TestStorageAt(t *testing.T) {
 	st, err = storageAt("/srv/backups", nil)
 	if err != nil || st.Describe() != "/srv/backups" {
 		t.Errorf("folder storage = %v, %v", st, err)
+	}
+}
+
+// listedStorage is a Storage whose List returns fixed objects.
+type listedStorage struct {
+	backup.Storage
+	objs []backup.Object
+}
+
+func (s listedStorage) List(context.Context) ([]backup.Object, error) { return s.objs, nil }
+func (s listedStorage) Describe() string                              { return "fixed" }
+
+// TestRestoreListEscapesControlBytes: object names and header strings come
+// from the storage, which anyone with write access to it controls. Terminal
+// escapes in them are shown escaped, never sent to the operator's terminal.
+func TestRestoreListEscapesControlBytes(t *testing.T) {
+	at := time.Date(2026, 11, 2, 3, 0, 0, 0, time.UTC)
+	st := listedStorage{objs: []backup.Object{
+		{Name: "pulsix-\x1b[2J.pxbak", Size: 10, HeaderErr: backup.ErrNotABackup},
+		{Name: "forged\x1b]0;x\a.pxbak", Size: 20, Header: backup.Header{CreatedAt: at, Kind: "\x1b[8mmanual", PulsixVersion: "1.0\x1b[0m\t"}},
+	}}
+	var out bytes.Buffer
+	if err := listBackups(context.Background(), st, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(out.String(), "\x1b\a") {
+		t.Fatalf("the listing carries control bytes: %q", out.String())
+	}
+	for _, want := range []string{`pulsix-\x1b[2J.pxbak`, `forged\x1b]0;x\a.pxbak`, `\x1b[8mmanual`, `1.0\x1b[0m\t`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("listing lacks the escaped %s:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestPrintable(t *testing.T) {
+	for in, want := range map[string]string{
+		"pulsix-20261102T030000Z-manual.pxbak": "pulsix-20261102T030000Z-manual.pxbak",
+		"1.2.3 (dev)":                          "1.2.3 (dev)",
+		"a\x1bb":                               `"a\x1bb"`,
+		"bad\xffutf8":                          `"bad\xffutf8"`,
+		"rtl\u202eoverride":                    `"rtl\u202eoverride"`,
+	} {
+		if got := printable(in); got != want {
+			t.Errorf("printable(%q) = %s, want %s", in, got, want)
+		}
 	}
 }
