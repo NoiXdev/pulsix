@@ -53,7 +53,7 @@ The architecture spec (2026-09-10, lines 877-882) says the manager accepts the s
 
 1. **Stall guard.** The transfer is bounded by progress: if no byte reaches the destination for 10 minutes (`stallTimeout`), the run is cancelled and recorded as failed with "stalled: no progress for 10m". Implemented as a watchdog on the pipe between dump and `Put`, cancelling the run's context; the lock is released as on any failure.
 2. **Mail when a day had only interrupted attempts.** When the ticker finds that a past scheduled slot has attempts and all of them are `abandoned` and none succeeded, it mails the instance admins once ("the scheduled backup of <date> did not complete; the manager was stopped during it"). Once is recorded with an additive nullable `backup_runs.notified_at` set on the slot's newest attempt; a slot with a mailed attempt is not mailed again.
-3. **Stale `*.partial` files.** The folder destination removes every `*.partial` file in its directory at the start of each backup run, while the run holds the backup lock (so no other backup is writing one).
+3. **Stale `*.partial` files.** The folder destination removes every `*.pxbak.partial` file in its directory (narrowed in the final review: a `--to` folder may hold other `*.partial` files) at the start of each backup run, while the run holds the backup lock (so no other backup is writing one).
 
 ## 4. Backlog 7.63 — leftovers
 
