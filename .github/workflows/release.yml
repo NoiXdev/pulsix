@@ -47,10 +47,13 @@ jobs:
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
         run: |
-          # The newest ci run for this exact commit. No run at all is a
-          # failure, not a pass: "never tested" must not publish either.
+          # The newest ci run for this exact commit that was a push to main.
+          # A run for the same SHA from a pull request or another branch does
+          # not count: only the main-branch run says the commit was tested as
+          # main. No run at all is a failure, not a pass: "never tested" must
+          # not publish either.
           conclusion=$(gh api \
-            "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=1" \
+            "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&branch=main&per_page=1" \
             --jq '.workflow_runs[0].conclusion // "none"')
           if [ "$conclusion" != "success" ]; then
             echo "::error::ci for $SHA concluded '$conclusion'; only a green commit is published" >&2
@@ -60,6 +63,12 @@ jobs:
   release:
     needs: guard
     runs-on: ubuntu-latest
+    # Backlog 7.37. The `release` environment's deployment policy only lets
+    # `v*` tags deploy to it, so this job, and the registry credentials it
+    # is given, cannot be reached from any other ref. The registry secrets
+    # belong in that environment as environment secrets rather than as
+    # repository secrets; moving them there is the owner's step.
+    environment: release
     # A tag push is only ever triggered by someone with write access to
     # this repository creating a tag — GitHub does not fire `push` events
     # for tags from a fork's pull request, so this workflow, and the
