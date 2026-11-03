@@ -1380,6 +1380,12 @@ func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 		if !stillDue(t, d, host) {
 			t.Fatalf("the %s host's cursor advanced; it must stay due", name)
 		}
+		// Not postponed either (backlog 7.58): the in-flight host failed
+		// because the batch was cut short, not because of anything about
+		// the host, so it keeps its place at the head of the next claim.
+		if countRows(t, d, `SELECT count(*) FROM check_eval_cursor WHERE host_id = $1 AND next_due_at <= now()`, host) != 1 {
+			t.Fatalf("the %s host's next_due_at moved into the future; a cancelled batch must not postpone it", name)
+		}
 	}
 }
 
@@ -1573,5 +1579,86 @@ func TestEvalCursorRLS(t *testing.T) {
 	}
 	if len(seen) != 1 || seen[0] != orgA {
 		t.Fatalf("RLS leak on check_eval_cursor: saw %v, want only [%s]", seen, orgA)
+	}
+}
+
+// TestEvaluateOneSetsStatementTimeout (backlog 7.58): one host's
+// evaluation is bounded on its own, inside its own transaction, so a host
+// whose window statement would run for minutes is cut off after 10 s and
+// fails alone rather than consuming the whole batch's deadline. SET LOCAL,
+// so the setting dies with the transaction and never leaks onto the
+// pooled connection.
+func TestEvaluateOneSetsStatementTimeout(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "statement-timeout")
+	host := seedHost(t, d, org, "h")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	setCursor(t, d, org, host, 0, -time.Hour, -time.Minute)
+
+	var inside string
+	n, err := store.ProcessDue(context.Background(), time.Now(), 10, func(ctx context.Context, _ rules.Due) error {
+		tx, ok := rules.ClaimedTx(ctx)
+		if !ok {
+			return errors.New("fn ran without the host's transaction")
+		}
+		return tx.QueryRow(ctx, `SHOW statement_timeout`).Scan(&inside)
+	})
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ProcessDue evaluated %d hosts, want 1", n)
+	}
+	if inside != "10s" {
+		t.Fatalf("statement_timeout inside the host's transaction = %q, want %q", inside, "10s")
+	}
+}
+
+// TestFailedHostIsPostponed (backlog 7.58): the claim orders by
+// next_due_at, and a failed host used to be left exactly as it was — so a
+// host whose evaluation always fails (a statement timeout on every try)
+// kept the oldest next_due_at for ever and headed every batch, spending
+// the batch's deadline before any healthy host was reached. A failed host
+// is now pushed back by failedHostBackoff, measured on the database's own
+// clock, so the next claim reaches the healthy host first. It is still
+// retried — a dirty host stays dirty — only no longer first.
+func TestFailedHostIsPostponed(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "postpone-failed")
+	bad := seedHost(t, d, org, "bad")
+	good := seedHost(t, d, org, "good")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	// Both dirty and overdue; the bad host is the older of the two, so it
+	// heads the batch.
+	setCursor(t, d, org, bad, 0, -time.Hour, -2*time.Minute)
+	setCursor(t, d, org, good, 0, -time.Hour, -1*time.Minute)
+
+	var before time.Time
+	if err := d.Pool().QueryRow(context.Background(), `SELECT now()`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	n, err := store.ProcessDue(context.Background(), time.Now(), 10, func(_ context.Context, due rules.Due) error {
+		if due.HostID == bad {
+			return errors.New("canceling statement due to statement timeout")
+		}
+		// The healthy host commits without advancing its cursor, so it is
+		// still due on the next claim below.
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("ProcessDue: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("ProcessDue evaluated %d hosts, want 1 (the other failed)", n)
+	}
+
+	if _, _, nextDue := cursorRow(t, d, bad); nextDue.Before(before.Add(rules.FailedHostBackoff)) {
+		t.Fatalf("the failed host's next_due_at = %v, want at least %v (now + %s)", nextDue, before.Add(rules.FailedHostBackoff), rules.FailedHostBackoff)
+	}
+	if !stillDue(t, d, bad) {
+		t.Fatal("the failed host is no longer due; postponing must only reorder it, a dirty host stays dirty")
+	}
+	if got := claimAll(t, store, 1); len(got) != 1 || got[0].HostID != good {
+		t.Fatalf("the next claim of one took %+v, want the healthy host ahead of the failed one", got)
 	}
 }

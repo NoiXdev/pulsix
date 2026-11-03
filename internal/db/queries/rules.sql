@@ -211,6 +211,22 @@ UPDATE check_eval_cursor
 SET evaluated_at = now(), next_due_at = sqlc.arg(next_due_at)
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
 
+-- name: PostponeEvalCursor :exec
+-- Backlog 7.58: push back the next_due_at of a host whose own evaluation
+-- just failed. It runs on the pool AFTER that host's transaction rolled
+-- back — inside it, the rollback would undo it. Without it a failed host
+-- kept its old next_due_at, and since ClaimDueEvalCursors orders by that
+-- column, a host that fails every time (a statement timeout on every try)
+-- headed every batch and spent the batch's deadline before any healthy
+-- host was reached. Only next_due_at moves: dirty_at and evaluated_at stay
+-- as they are, so a dirty host is still dirty and is still retried on the
+-- next tick — after the hosts that are due ahead of it, not before them.
+-- The delay is relative to the database's now(), like every other moment
+-- the claim compares (backlog 2.80).
+UPDATE check_eval_cursor
+SET next_due_at = now() + make_interval(secs => sqlc.arg(backoff_seconds)::double precision)
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
+
 -- name: GetHostFacts :one
 -- Task 9: the facts a rule's fact() node reads (v0.3b-2 spec, "Facts are
 -- strings"). Only the one jsonb column, never the whole host row — this

@@ -25,6 +25,26 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
+// The two bounds that keep one host from starving the ticker (backlog
+// 7.58). The batch deadline is 4 × the 15-second interval and the claim
+// orders by next_due_at, so a host whose evaluation runs for minutes, or
+// fails on every try, would otherwise spend every batch's deadline before
+// any healthy host behind it was reached.
+//
+// hostStatementTimeout is SET LOCAL on each host's own transaction: a
+// window statement over a day of raw samples for a host with many items
+// is cut off and fails that host alone. It bounds each statement, not the
+// whole host, which is enough — the window statement is the one whose cost
+// an operator's rule controls.
+//
+// failedHostBackoff is how far a host whose own evaluation failed is
+// pushed back (PostponeEvalCursor), so the next claim reaches the hosts
+// due ahead of it first.
+const (
+	hostStatementTimeout = 10 * time.Second
+	failedHostBackoff    = 60 * time.Second
+)
+
 // EvalSQLStore implements EvalStore.
 type EvalSQLStore struct {
 	d      *db.DB
@@ -134,9 +154,10 @@ var errNoClaimTx = errors.New("rules: apply evaluation outside a claimed host's 
 // managers with skewed clocks still agree on which hosts are due.
 //
 // The returned count is the number of hosts fn returned nil for. A host
-// fn failed is left exactly as it was — its cursor untouched, so it is
-// still dirty or still overdue and the next tick retries it, the same
-// at-least-once guarantee a failed commit already gives.
+// fn failed is rolled back entirely and only its next_due_at moves, by
+// failedHostBackoff (see evaluateOne) — it stays dirty if it was dirty, so
+// the next tick still retries it, the same at-least-once guarantee a failed
+// commit already gives, just no longer ahead of every healthy host.
 func (s *EvalSQLStore) ProcessDue(ctx context.Context, now time.Time, limit int, fn func(ctx context.Context, d Due) error) (int, error) {
 	due, err := s.claimDue(ctx, limit)
 	if err != nil {
@@ -185,12 +206,54 @@ func (s *EvalSQLStore) claimDue(ctx context.Context, limit int) ([]Due, error) {
 	return due, nil
 }
 
-// evaluateOne claims one host for real and runs fn for it inside that
-// host's own transaction, reporting whether it committed. Any failure —
-// the host already taken or no longer due, fn's own error, a transaction
-// that will not begin or commit — leaves the host untouched and still due;
-// a panic is recovered here so that one host's bug costs that host and not
-// the batch, the belt to Ticker.tickSafely's suspenders.
+// hostOutcome is how one host's evaluation ended, which decides what
+// evaluateOne does after its transaction is over.
+type hostOutcome int
+
+const (
+	// hostSkipped: nothing about the host itself went wrong — another
+	// manager has it, it is no longer due, or the database would not open
+	// or set up its transaction. Left exactly as it is.
+	hostSkipped hostOutcome = iota
+	// hostCommitted: fn returned nil and the transaction committed.
+	hostCommitted
+	// hostFailed: the host's own evaluation failed — fn's error, a panic,
+	// or a commit that did not go through. Postponed (unless the batch
+	// itself was cut short; see evaluateOne).
+	hostFailed
+)
+
+// evaluateOne evaluates one host (runHost) and reports whether it
+// committed. A host whose own evaluation failed is postponed by
+// failedHostBackoff on the pool, after its transaction has rolled back —
+// inside it the rollback would undo the postponement — so a host that
+// fails every time stops heading every claim (backlog 7.58).
+//
+// A failure while the batch's own context is done is not the host's
+// failure: the deadline fired or the manager is shutting down, and
+// ProcessDue's contract for that case is that every host it did not finish
+// is left exactly as it is, still at the head of the next claim. So
+// nothing is postponed then.
+func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx context.Context, d Due) error) bool {
+	outcome := s.runHost(ctx, d, fn)
+	if outcome == hostFailed && ctx.Err() == nil {
+		if err := gen.New(s.d.Pool()).PostponeEvalCursor(ctx, gen.PostponeEvalCursorParams{
+			OrgID: d.OrgID, HostID: d.HostID, BackoffSeconds: failedHostBackoff.Seconds(),
+		}); err != nil {
+			s.log.ErrorContext(ctx, "postpone a failed host; it stays at its place in the claim",
+				"org", d.OrgID, "host", d.HostID, "err", err)
+		}
+	}
+	return outcome == hostCommitted
+}
+
+// runHost claims one host for real and runs fn for it inside that host's
+// own transaction, which is over — committed or rolled back — by the time
+// it returns. Any failure — the host already taken or no longer due, fn's
+// own error, a transaction that will not begin or commit — rolls the
+// host's writes back; a panic is recovered here so that one host's bug
+// costs that host and not the batch, the belt to Ticker.tickSafely's
+// suspenders.
 //
 // The commit runs on ctx itself rather than on a detached context.
 // internal/schedules' processRow has to detach, because its write-back
@@ -199,12 +262,12 @@ func (s *EvalSQLStore) claimDue(ctx context.Context, limit int) ([]Due, error) {
 // an upsert or an append that is rolled back with it, so a host whose
 // transaction is cut off by the batch deadline is simply evaluated again
 // on the next tick, writing the same state and the same single change.
-func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx context.Context, d Due) error) (committed bool) {
+func (s *EvalSQLStore) runHost(ctx context.Context, d Due, fn func(ctx context.Context, d Due) error) (outcome hostOutcome) {
 	defer func() {
 		if r := recover(); r != nil {
-			s.log.ErrorContext(context.WithoutCancel(ctx), "evaluating a host panicked; leaving it due for the next tick",
+			s.log.ErrorContext(context.WithoutCancel(ctx), "evaluating a host panicked; postponing it",
 				"org", d.OrgID, "host", d.HostID, "panic", r, "stack", string(debug.Stack()))
-			committed = false
+			outcome = hostFailed
 		}
 	}()
 
@@ -212,13 +275,25 @@ func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx conte
 	if err != nil {
 		s.log.ErrorContext(ctx, "begin host transaction; leaving the host due for the next tick",
 			"org", d.OrgID, "host", d.HostID, "err", err)
-		return false
+		return hostSkipped
 	}
+	committed := false
 	defer func() {
 		if !committed {
 			tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
 		}
 	}()
+
+	// First, before anything the host's data decides the cost of: every
+	// statement of this host's evaluation is bounded (hostStatementTimeout).
+	// SET LOCAL, so it ends with this transaction and never stays on the
+	// pooled connection. A SET takes no bind parameter; the value is this
+	// package's own constant.
+	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", hostStatementTimeout.Milliseconds())); err != nil {
+		s.log.ErrorContext(ctx, "bound host statement time; leaving the host due for the next tick",
+			"org", d.OrgID, "host", d.HostID, "err", err)
+		return hostSkipped
+	}
 
 	// The claim proper. No row means another manager locked this host, or
 	// finished it, between the scan and now — not an error, and not worth a
@@ -226,23 +301,24 @@ func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx conte
 	// fleet.
 	switch _, err := gen.New(tx).LockOneEvalCursor(ctx, d.HostID); {
 	case errors.Is(err, pgx.ErrNoRows):
-		return false
+		return hostSkipped
 	case err != nil:
 		s.log.ErrorContext(ctx, "lock host cursor; leaving the host due for the next tick",
 			"org", d.OrgID, "host", d.HostID, "err", err)
-		return false
+		return hostSkipped
 	}
 
 	if err := fn(context.WithValue(ctx, evalTxKey{}, tx), d); err != nil {
 		// fn (Ticker.evaluate) has already logged which step failed and why.
-		return false
+		return hostFailed
 	}
 	if err := tx.Commit(ctx); err != nil {
-		s.log.ErrorContext(ctx, "commit host transaction; leaving the host due for the next tick",
+		s.log.ErrorContext(ctx, "commit host transaction; postponing the host",
 			"org", d.OrgID, "host", d.HostID, "err", err)
-		return false
+		return hostFailed
 	}
-	return true
+	committed = true
+	return hostCommitted
 }
 
 // Apply implements EvalStore: states, changes, roll-up and the cursor's

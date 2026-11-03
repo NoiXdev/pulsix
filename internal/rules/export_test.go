@@ -18,3 +18,13 @@ import (
 func ContextWithClaimedTx(ctx context.Context, tx pgx.Tx) context.Context {
 	return context.WithValue(ctx, evalTxKey{}, tx)
 }
+
+// ClaimedTx is the other half of ContextWithClaimedTx: it hands a test
+// the transaction evaluateOne bound for the host fn is evaluating, so a
+// test can read the session settings that transaction runs under.
+func ClaimedTx(ctx context.Context) (pgx.Tx, bool) {
+	return claimTx(ctx)
+}
+
+// FailedHostBackoff exposes failedHostBackoff to this package's tests.
+const FailedHostBackoff = failedHostBackoff

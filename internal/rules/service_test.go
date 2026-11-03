@@ -3,6 +3,7 @@ package rules_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -684,4 +685,93 @@ func TestCheckAcceptsASiblingMetricOfTheSameCheck(t *testing.T) {
 	if err != nil || !checked.OK {
 		t.Fatalf("Check(%q) = %+v, %v; a rule may read its own check's other metrics", in.Expression, checked, err)
 	}
+}
+
+// windowChain is an expression of n distinct window aggregates of
+// cpu.used_pct, one per window length 1m..nm, joined by "or" — valid in
+// every other respect, so only a per-rule window bound can refuse it.
+func windowChain(n int) string {
+	terms := make([]string, n)
+	for i := range terms {
+		terms[i] = fmt.Sprintf("avg(cpu.used_pct, %dm) > 90", i+1)
+	}
+	return strings.Join(terms, " or ")
+}
+
+// TestRuleRefusesMoreThan16DistinctWindows (backlog 7.58): every distinct
+// window aggregate is one more aggregate the ticker's window statement
+// computes over up to a day of raw samples, per matching item, per host,
+// on every evaluation. Byte length alone did not bound that — 4 KiB holds
+// over a hundred 24-hour windows — so a single org-scope rule could make
+// every host's evaluation outlast the batch deadline. The count uses
+// WindowRequests' own identity (metric, aggregate, seconds), so repeating
+// a window, even spelled differently, costs nothing and counts once.
+func TestRuleRefusesMoreThan16DistinctWindows(t *testing.T) {
+	host := uuid.Must(uuid.NewV7())
+	org := uuid.Must(uuid.NewV7())
+	svc := rules.NewService(newFakeStore())
+
+	expressionRule := func(expr string) rules.RuleInput {
+		in := hostForm(host)
+		in.Mode, in.Form = "expression", nil
+		in.Expression = expr
+		return in
+	}
+
+	t.Run("16 distinct windows are accepted", func(t *testing.T) {
+		in := expressionRule(windowChain(rules.MaxWindowsPerRule))
+		if checked, err := svc.Check(ctx, org, in); err != nil || !checked.OK {
+			t.Fatalf("Check(16 windows) = %+v, %v; want OK", checked, err)
+		}
+		if _, err := svc.Create(ctx, org, in); err != nil {
+			t.Fatalf("Create(16 windows) = %v, want nil", err)
+		}
+	})
+
+	t.Run("a repeated window counts once", func(t *testing.T) {
+		// 60s is the same window as 1m: same metric, aggregate and seconds.
+		expr := windowChain(rules.MaxWindowsPerRule) +
+			" or avg(cpu.used_pct, 1m) > 95 or avg(cpu.used_pct, 60s) < 1"
+		if checked, err := svc.Check(ctx, org, expressionRule(expr)); err != nil || !checked.OK {
+			t.Fatalf("Check(16 distinct windows, some repeated) = %+v, %v; want OK", checked, err)
+		}
+	})
+
+	t.Run("17 distinct windows are refused", func(t *testing.T) {
+		expr := windowChain(rules.MaxWindowsPerRule + 1)
+		in := expressionRule(expr)
+		checked, err := svc.Check(ctx, org, in)
+		if !errors.Is(err, rules.ErrInvalidInput) {
+			t.Fatalf("Check(17 windows) = %v, want ErrInvalidInput", err)
+		}
+		if checked.OK {
+			t.Fatal("Checked.OK is true for 17 distinct windows")
+		}
+		if !strings.Contains(checked.Message, "at most 16") {
+			t.Fatalf("message = %q, want it to name the limit of 16", checked.Message)
+		}
+		// The caret points at the window that went over the limit.
+		if want := strings.Index(expr, "avg(cpu.used_pct, 17m)"); checked.Pos != want {
+			t.Fatalf("Pos = %d, want %d (the 17th distinct window)", checked.Pos, want)
+		}
+		if _, err := svc.Create(ctx, org, in); !errors.Is(err, rules.ErrInvalidInput) {
+			t.Fatalf("Create(17 windows) = %v, want ErrInvalidInput", err)
+		}
+	})
+
+	t.Run("different aggregates of one window are distinct", func(t *testing.T) {
+		// Four aggregates times four cpu metrics is 16; one more length
+		// makes 17, all distinct by metric or aggregate rather than length.
+		var terms []string
+		for _, metric := range []string{"cpu.used_pct", "cpu.load1", "cpu.load5", "cpu.load15"} {
+			for _, agg := range []string{"avg", "min", "max", "rate"} {
+				terms = append(terms, fmt.Sprintf("%s(%s, 5m) > 1", agg, metric))
+			}
+		}
+		terms = append(terms, "avg(cpu.used_pct, 6m) > 1")
+		in := expressionRule(strings.Join(terms, " or "))
+		if _, err := svc.Check(ctx, org, in); !errors.Is(err, rules.ErrInvalidInput) {
+			t.Fatalf("Check(17 distinct (metric, aggregate) windows) = %v, want ErrInvalidInput", err)
+		}
+	})
 }

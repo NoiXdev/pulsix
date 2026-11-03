@@ -57,6 +57,22 @@ const (
 	MaxWindow = 24 * time.Hour
 )
 
+// MaxWindowsPerRule bounds how many distinct window aggregates one tree
+// may name (backlog 7.58). Each one is another aggregate the ticker's
+// window statement computes over up to MaxWindow of raw samples, for every
+// matching item of every host the rule reaches, on every evaluation. The
+// expression's byte bound did not limit that: 4 KiB holds over a hundred
+// 24-hour windows, enough for one org-scope rule to make each host's
+// evaluation outlast the batch deadline. Distinct means WindowRequests'
+// own identity — metric, aggregate and length in seconds — so a window
+// repeated in the tree, however it is spelled, is fetched once and counts
+// once. TypeCheck counts per tree, which is per rule: only an expression
+// rule's trigger can hold a window (Form.Compile never emits one, and an
+// expression rule has no clear tree). A rule already stored with more is
+// not re-checked: rule loading reads the stored tree and never runs
+// TypeCheck again, so such a rule keeps evaluating exactly as before.
+const MaxWindowsPerRule = 16
+
 // ErrInvalidRule is the sentinel every TypeCheck failure wraps. Callers
 // that only care whether a tree is valid use errors.Is(err, ErrInvalidRule);
 // callers that need the offending position (the parser, the API's error
@@ -148,18 +164,22 @@ func checkTreeBelongsTo(n Node, checkKey string) error {
 
 // TypeCheck validates a tree for storage: known metrics, matching kinds
 // (a numeric operator never touches a discrete metric and vice versa),
-// window bounds, nesting within maxRuleDepth, and a boolean root. The
+// window bounds, at most MaxWindowsPerRule distinct windows, nesting
+// within maxRuleDepth, and a boolean root. The
 // evaluator (Match) never meets a tree TypeCheck has rejected, but it
 // still treats one as "does not match" rather than trusting that TypeCheck
 // was always called first.
 func TypeCheck(n Node) error {
-	return checkBool(n, 0)
+	return checkBool(n, 0, make(map[WindowKey]bool))
 }
 
 // checkBool validates n as a boolean-producing node — the shape every
 // rule's root, and every argument of and/or/not, must have. depth is how
-// many ancestors n has; see maxRuleDepth for what it guards.
-func checkBool(n Node, depth int) error {
+// many ancestors n has; see maxRuleDepth for what it guards. windows is
+// the set of distinct window aggregates seen so far in the whole tree,
+// shared across the walk so the MaxWindowsPerRule bound is counted in the
+// same pass that checks each window's length.
+func checkBool(n Node, depth int, windows map[WindowKey]bool) error {
 	if depth > maxRuleDepth {
 		return typeErr(n.Pos, "nests deeper than %d levels", maxRuleDepth)
 	}
@@ -174,7 +194,7 @@ func checkBool(n Node, depth int) error {
 			return typeErr(n.Pos, "compare: needs exactly two operands, got %d", len(n.Args))
 		}
 		for _, a := range n.Args {
-			if err := checkNumber(a, depth+1); err != nil {
+			if err := checkNumber(a, depth+1, windows); err != nil {
 				return err
 			}
 		}
@@ -198,7 +218,7 @@ func checkBool(n Node, depth int) error {
 			return typeErr(n.Pos, "%s: needs at least one operand", n.Kind)
 		}
 		for _, a := range n.Args {
-			if err := checkBool(a, depth+1); err != nil {
+			if err := checkBool(a, depth+1, windows); err != nil {
 				return err
 			}
 		}
@@ -207,7 +227,7 @@ func checkBool(n Node, depth int) error {
 		if len(n.Args) != 1 {
 			return typeErr(n.Pos, "not: needs exactly one operand, got %d", len(n.Args))
 		}
-		return checkBool(n.Args[0], depth+1)
+		return checkBool(n.Args[0], depth+1, windows)
 	default:
 		return typeErr(n.Pos, "%s: not a boolean expression", n.Kind)
 	}
@@ -215,8 +235,9 @@ func checkBool(n Node, depth int) error {
 
 // checkNumber validates n as a numeric-producing node — the shape every
 // argument of arith and compare, and a window's underlying metric, must
-// have. depth is how many ancestors n has; see maxRuleDepth.
-func checkNumber(n Node, depth int) error {
+// have. depth is how many ancestors n has; see maxRuleDepth. windows is
+// checkBool's set of distinct windows, see there.
+func checkNumber(n Node, depth int, windows map[WindowKey]bool) error {
 	if depth > maxRuleDepth {
 		return typeErr(n.Pos, "nests deeper than %d levels", maxRuleDepth)
 	}
@@ -247,6 +268,13 @@ func checkNumber(n Node, depth int) error {
 		if d < MinWindow || d > MaxWindow {
 			return typeErr(n.Pos, "window: length %s outside [%s, %s]", d, MinWindow, MaxWindow)
 		}
+		key := WindowKey{Metric: n.Name, Agg: n.Agg, Seconds: n.Seconds}
+		if !windows[key] {
+			if len(windows) >= MaxWindowsPerRule {
+				return typeErr(n.Pos, "window: a rule may use at most %d distinct windows", MaxWindowsPerRule)
+			}
+			windows[key] = true
+		}
 		return nil
 	case KindFact:
 		if n.Name == "" {
@@ -263,7 +291,7 @@ func checkNumber(n Node, depth int) error {
 			return typeErr(n.Pos, "arith: needs exactly two operands, got %d", len(n.Args))
 		}
 		for _, a := range n.Args {
-			if err := checkNumber(a, depth+1); err != nil {
+			if err := checkNumber(a, depth+1, windows); err != nil {
 				return err
 			}
 		}

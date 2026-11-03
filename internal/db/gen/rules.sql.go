@@ -711,6 +711,34 @@ func (q *Queries) MarkHostsDirty(ctx context.Context, arg MarkHostsDirtyParams) 
 	return err
 }
 
+const postponeEvalCursor = `-- name: PostponeEvalCursor :exec
+UPDATE check_eval_cursor
+SET next_due_at = now() + make_interval(secs => $1::double precision)
+WHERE org_id = $2 AND host_id = $3
+`
+
+type PostponeEvalCursorParams struct {
+	BackoffSeconds float64   `json:"backoff_seconds"`
+	OrgID          uuid.UUID `json:"org_id"`
+	HostID         uuid.UUID `json:"host_id"`
+}
+
+// Backlog 7.58: push back the next_due_at of a host whose own evaluation
+// just failed. It runs on the pool AFTER that host's transaction rolled
+// back — inside it, the rollback would undo it. Without it a failed host
+// kept its old next_due_at, and since ClaimDueEvalCursors orders by that
+// column, a host that fails every time (a statement timeout on every try)
+// headed every batch and spent the batch's deadline before any healthy
+// host was reached. Only next_due_at moves: dirty_at and evaluated_at stay
+// as they are, so a dirty host is still dirty and is still retried on the
+// next tick — after the hosts that are due ahead of it, not before them.
+// The delay is relative to the database's now(), like every other moment
+// the claim compares (backlog 2.80).
+func (q *Queries) PostponeEvalCursor(ctx context.Context, arg PostponeEvalCursorParams) error {
+	_, err := q.db.Exec(ctx, postponeEvalCursor, arg.BackoffSeconds, arg.OrgID, arg.HostID)
+	return err
+}
+
 const updateRule = `-- name: UpdateRule :execrows
 UPDATE check_rules
 SET name = $1, enabled = $2, scope = $3,
