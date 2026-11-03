@@ -18,7 +18,9 @@ it is usually the moment the instance is broken or brand new.
 
 - **One command to take a backup, one command to put it back.**
   `pulsix-manager backup` and `pulsix-manager restore <name>`, runnable as
-  `docker compose run --rm manager …` against the shipped compose file. No
+  `docker compose run --rm cli …` against the shipped compose file. The
+  one-off commands use the `cli` service, not `manager`, because a one-off
+  container of the manager service would carry its Traefik labels. No
   `pg_dump`, no extension dance, no order of steps the operator has to know.
 - **Web interface** (instance administrators only), a *Backups* tab under the
   instance settings beside SMTP and Language, as in the approved mockup:
@@ -217,7 +219,7 @@ every backup an instance makes.
   credentials from the environment when restoring from a bucket (never from
   the database being replaced).
 - **A downloaded file** goes in on standard input:
-  `docker compose run --rm -T manager restore - < pulsix-….pxbak`
+  `docker compose run --rm -T cli restore - < pulsix-….pxbak`
   *(implementer's call: no bind mount or copying into a volume to explain)*.
   Input on stdin cannot answer a prompt, so `--replace` then needs `--yes`.
   The *Restore…* dialog in the web interface shows both forms: by name from
