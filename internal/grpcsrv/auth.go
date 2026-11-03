@@ -166,7 +166,7 @@ func (s *Server) authenticate(ctx context.Context, fullMethod string) (context.C
 		ctx = context.WithValue(ctx, peerKeyKey{}, certs[0].PublicKey)
 		return context.WithValue(context.WithValue(ctx, identityKey{}, identity), workerKey{}, worker), nil
 	case ca.KindAgent:
-		agent, err := s.lookupAgent(ctx, identity)
+		agent, err := s.resolveAgent(ctx, certs[0], identity)
 		if err != nil {
 			return ctx, err
 		}
@@ -248,16 +248,20 @@ func (s *Server) adoptWorkerCertificate(ctx context.Context, leaf *x509.Certific
 	return worker, nil
 }
 
-// lookupAgent is lookupWorker's agent counterpart (v0.3a): the serial is
-// resolved in the agent registry, the certificate's org SAN must match the
-// row's organization (agent certificates carry no zone SAN). Revoked
-// serials read exactly like unknown ones.
-func (s *Server) lookupAgent(ctx context.Context, identity *ca.ClientIdentity) (agents.AgentIdentity, error) {
+// resolveAgent is resolveWorker's agent counterpart (v0.3a): the serial is
+// resolved in the agent registry and an unknown one offered for adoption
+// (backlog 7.47); a revoked serial never is. The certificate's org SAN
+// must match the row's organization (agent certificates carry no zone
+// SAN). Revoked serials read exactly like unknown ones.
+func (s *Server) resolveAgent(ctx context.Context, leaf *x509.Certificate, identity *ca.ClientIdentity) (agents.AgentIdentity, error) {
 	if s.deps.Agents == nil {
 		s.log().ErrorContext(ctx, "agent certificate presented but no agent registry is wired")
 		return agents.AgentIdentity{}, status.Error(codes.Internal, "agent lookup failed")
 	}
 	agent, err := s.deps.Agents.GetBySerial(ctx, identity.Serial.String())
+	if errors.Is(err, agents.ErrNotFound) {
+		agent, err = s.adoptAgentCertificate(ctx, leaf, identity)
+	}
 	if errors.Is(err, agents.ErrNotFound) {
 		return agents.AgentIdentity{}, status.Error(codes.Unauthenticated, "unknown or revoked certificate")
 	}
@@ -271,6 +275,22 @@ func (s *Server) lookupAgent(ctx context.Context, identity *ca.ClientIdentity) (
 	if identity.OrgID == nil || *identity.OrgID != agent.OrgID {
 		return agents.AgentIdentity{}, status.Error(codes.Unauthenticated, "certificate does not match the agent's enrollment")
 	}
+	return agent, nil
+}
+
+// adoptAgentCertificate asks the agent registry to adopt a certificate
+// whose serial it does not know, and audits and logs an adoption. Refusal
+// is agents.ErrNotFound, exactly what the lookup answered.
+func (s *Server) adoptAgentCertificate(ctx context.Context, leaf *x509.Certificate, identity *ca.ClientIdentity) (agents.AgentIdentity, error) {
+	agent, err := s.deps.Agents.AdoptCertificate(ctx, leaf, identity)
+	if err != nil {
+		return agents.AgentIdentity{}, err
+	}
+	serial := identity.Serial.String()
+	s.log().InfoContext(ctx, "adopted an agent certificate issued after the restored backup",
+		"host_id", agent.HostID.String(), "org_id", agent.OrgID.String(), "serial", serial)
+	s.audit(ctx, SystemEvent{Operation: "agent.certificate_adopted", ObjectType: "agent", ObjectID: agent.HostID.String(),
+		OrgID: agent.OrgID.String(), Summary: "agent " + agent.Name + " certificate " + serial + " adopted after a restore"})
 	return agent, nil
 }
 

@@ -265,6 +265,10 @@ type fakeAgentStore struct {
 	revoked           map[string]bool
 	lookupErr         error
 	revokeAfterLookup string
+	// adoptErr injects an adoption fault; restoreWindow is the restore
+	// marker RestoreWindow returns, nil for a database no restore touched.
+	adoptErr      error
+	restoreWindow *agents.RestoreWindow
 }
 
 func newFakeAgentStore() *fakeAgentStore {
@@ -286,6 +290,48 @@ func (f *fakeAgentStore) GetBySerial(_ context.Context, serial string) (agents.A
 	if f.revokeAfterLookup == serial {
 		f.revokeAfterLookup, f.revoked[serial] = "", true
 	}
+	return id, nil
+}
+
+// RestoreWindow returns the restore marker the test set.
+func (f *fakeAgentStore) RestoreWindow(context.Context) (*agents.RestoreWindow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.restoreWindow, nil
+}
+
+// AdoptCertificate finds the one host whose live serial carries a's org
+// and agent name, lets allow judge it and registers the serial, revoking
+// the host's others. The fake keeps no certificate dates, so
+// NewestCertificate stays nil, and the interceptor only adopts unknown
+// serials, so Registered stays false.
+func (f *fakeAgentStore) AdoptCertificate(_ context.Context, a agents.Agent, allow func(agents.AdoptionState) error) (agents.AgentIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.adoptErr != nil {
+		return agents.AgentIdentity{}, f.adoptErr
+	}
+	var match []agents.AgentIdentity // one per host
+	seen := map[uuid.UUID]bool{}
+	for serial, id := range f.bySerial {
+		if id.OrgID == a.OrgID && id.Name == a.AgentName && !f.revoked[serial] && !seen[id.HostID] {
+			seen[id.HostID] = true
+			match = append(match, id)
+		}
+	}
+	if len(match) != 1 {
+		return agents.AgentIdentity{}, agents.ErrNotFound
+	}
+	id := match[0]
+	if err := allow(agents.AdoptionState{HostID: id.HostID}); err != nil {
+		return agents.AgentIdentity{}, err
+	}
+	for serial, other := range f.bySerial {
+		if other.HostID == id.HostID {
+			f.revoked[serial] = true
+		}
+	}
+	f.bySerial[a.CertSerial] = id
 	return id, nil
 }
 

@@ -106,6 +106,31 @@ FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = sqlc.arg(serial);
 
+-- name: LockHostAgentsByName :many
+-- Certificate adoption after a restore (backlog 7.47): an agent
+-- certificate names only its organization and agent name, and agent names
+-- are not unique, so every matching row is locked and the caller refuses
+-- unless exactly one matched. The lock holds until the adopted certificate
+-- is registered, so a revocation or a renewal cannot slip in between the
+-- checks and the swap.
+SELECT * FROM host_agents
+WHERE org_id = sqlc.arg(org_id) AND agent_name = sqlc.arg(agent_name)
+FOR UPDATE;
+
+-- name: GetAgentCertificate :one
+-- One certificate row by serial, inside the caller's org scope.
+SELECT * FROM agent_certificates WHERE serial = sqlc.arg(serial);
+
+-- name: NewestAgentCertificateStart :one
+-- The latest start among a host's certificates, revoked ones included:
+-- not_before, or created_at for a row written before migration 00039 that
+-- its backfill could not reach.
+SELECT COALESCE(not_before, created_at)::timestamptz AS started
+FROM agent_certificates
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+ORDER BY started DESC
+LIMIT 1;
+
 -- name: UpsertHostFacts :execrows
 -- The facts push's merge (RecordFacts, Task 8): the jsonb || concatenation
 -- is an object merge where the RIGHT side wins for duplicate keys — every

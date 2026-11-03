@@ -128,6 +128,26 @@ func (q *Queries) DeleteHostAgent(ctx context.Context, arg DeleteHostAgentParams
 	return result.RowsAffected(), nil
 }
 
+const getAgentCertificate = `-- name: GetAgentCertificate :one
+SELECT serial, org_id, host_id, revoked_at, created_at, not_before, not_after FROM agent_certificates WHERE serial = $1
+`
+
+// One certificate row by serial, inside the caller's org scope.
+func (q *Queries) GetAgentCertificate(ctx context.Context, serial string) (AgentCertificate, error) {
+	row := q.db.QueryRow(ctx, getAgentCertificate, serial)
+	var i AgentCertificate
+	err := row.Scan(
+		&i.Serial,
+		&i.OrgID,
+		&i.HostID,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.NotBefore,
+		&i.NotAfter,
+	)
+	return i, err
+}
+
 const getAgentEnrollmentOrg = `-- name: GetAgentEnrollmentOrg :one
 SELECT org_id FROM agent_enrollments WHERE id = $1
 `
@@ -325,6 +345,51 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 	return i, err
 }
 
+const lockHostAgentsByName = `-- name: LockHostAgentsByName :many
+SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at FROM host_agents
+WHERE org_id = $1 AND agent_name = $2
+FOR UPDATE
+`
+
+type LockHostAgentsByNameParams struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	AgentName string    `json:"agent_name"`
+}
+
+// Certificate adoption after a restore (backlog 7.47): an agent
+// certificate names only its organization and agent name, and agent names
+// are not unique, so every matching row is locked and the caller refuses
+// unless exactly one matched. The lock holds until the adopted certificate
+// is registered, so a revocation or a renewal cannot slip in between the
+// checks and the swap.
+func (q *Queries) LockHostAgentsByName(ctx context.Context, arg LockHostAgentsByNameParams) ([]HostAgent, error) {
+	rows, err := q.db.Query(ctx, lockHostAgentsByName, arg.OrgID, arg.AgentName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []HostAgent
+	for rows.Next() {
+		var i HostAgent
+		if err := rows.Scan(
+			&i.HostID,
+			&i.OrgID,
+			&i.AgentName,
+			&i.CertSerial,
+			&i.LastSeen,
+			&i.Version,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockLiveAgentCertificate = `-- name: LockLiveAgentCertificate :execrows
 SELECT 1 FROM agent_certificates
 WHERE serial = $1 AND org_id = $2 AND host_id = $3 AND revoked_at IS NULL
@@ -379,6 +444,29 @@ func (q *Queries) LookupAgentSerial(ctx context.Context, serial string) (LookupA
 		&i.CertRevokedAt,
 	)
 	return i, err
+}
+
+const newestAgentCertificateStart = `-- name: NewestAgentCertificateStart :one
+SELECT COALESCE(not_before, created_at)::timestamptz AS started
+FROM agent_certificates
+WHERE org_id = $1 AND host_id = $2
+ORDER BY started DESC
+LIMIT 1
+`
+
+type NewestAgentCertificateStartParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// The latest start among a host's certificates, revoked ones included:
+// not_before, or created_at for a row written before migration 00039 that
+// its backfill could not reach.
+func (q *Queries) NewestAgentCertificateStart(ctx context.Context, arg NewestAgentCertificateStartParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, newestAgentCertificateStart, arg.OrgID, arg.HostID)
+	var started time.Time
+	err := row.Scan(&started)
+	return started, err
 }
 
 const revokeAgentCertificates = `-- name: RevokeAgentCertificates :exec

@@ -478,3 +478,139 @@ func TestAuthRefusesACertificateItCannotAdopt(t *testing.T) {
 		}
 	})
 }
+
+// agentAdoptionEvents returns the agent.certificate_adopted audit events.
+func (h *harness) agentAdoptionEvents() []SystemEvent {
+	var out []SystemEvent
+	for _, ev := range h.audit.Events() {
+		if ev.Operation == "agent.certificate_adopted" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// agentsRestoredAround is restoredAround for the agent registry.
+func (h *harness) agentsRestoredAround(now time.Time) {
+	h.agents.mu.Lock()
+	defer h.agents.mu.Unlock()
+	h.agents.restoreWindow = &agents.RestoreWindow{BackupCreatedAt: now.Add(-time.Hour), RestoredAt: now.Add(time.Hour)}
+}
+
+// agentRenew calls AgentService.Renew with the certificate; the harness's
+// stub answers Unimplemented once the interceptor lets the call through.
+func (h *harness) agentRenew(t *testing.T, certPEM, keyPEM []byte) error {
+	t.Helper()
+	_, err := agentpb.NewAgentServiceClient(h.conn(certPEM, keyPEM)).Renew(t.Context(), &agentpb.RenewRequest{})
+	return err
+}
+
+// TestAuthAdoptsAnAgentCertificateAfterARestore (backlog 7.47): an agent
+// certificate the restored registry does not know is adopted when the
+// registry's rules allow it, the call goes through, and the adoption is
+// audited and logged once; the next call finds the serial registered.
+func TestAuthAdoptsAnAgentCertificateAfterARestore(t *testing.T) {
+	h := newHarness(t)
+	_, _, firstSerial := h.issueAgent("agt-1", orgID, true)
+	agent, err := h.agents.GetBySerial(t.Context(), firstSerial.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.agentsRestoredAround(time.Now())
+	certPEM, keyPEM, serial := h.issueAgent("agt-1", orgID, false)
+
+	if err := h.agentRenew(t, certPEM, keyPEM); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("Renew with a certificate issued after the backup: %v, want the interceptor to let it through", err)
+	}
+	if got, err := h.agents.GetBySerial(t.Context(), serial.String()); err != nil || got.HostID != agent.HostID || got.Revoked {
+		t.Fatalf("adopted serial resolves to %+v, %v; want host %s", got, err, agent.HostID)
+	}
+	events := h.agentAdoptionEvents()
+	if len(events) != 1 {
+		t.Fatalf("adoption events = %+v, want one", events)
+	}
+	ev := events[0]
+	if ev.ObjectType != "agent" || ev.ObjectID != agent.HostID.String() || ev.OrgID != orgID.String() ||
+		!strings.Contains(ev.Summary, serial.String()) || !strings.Contains(ev.Summary, "agt-1") {
+		t.Fatalf("adoption event = %+v, want host %s and serial %s named", ev, agent.HostID, serial)
+	}
+	logs := h.logs.String()
+	adopted := ""
+	for _, line := range strings.Split(logs, "\n") {
+		if strings.Contains(line, "adopted") {
+			if adopted != "" {
+				t.Fatalf("logs = %q, want one adoption line", logs)
+			}
+			adopted = line
+		}
+	}
+	if !strings.Contains(adopted, "level=INFO") || !strings.Contains(adopted, "serial="+serial.String()) ||
+		!strings.Contains(adopted, "host_id="+agent.HostID.String()) {
+		t.Fatalf("logs = %q, want one info line naming host %s and serial %s", logs, agent.HostID, serial)
+	}
+
+	if err := h.agentRenew(t, certPEM, keyPEM); status.Code(err) != codes.Unimplemented {
+		t.Fatalf("second call: %v", err)
+	}
+	if n := len(h.agentAdoptionEvents()); n != 1 {
+		t.Fatalf("adoption events after the second call = %d, want still one", n)
+	}
+}
+
+// TestAuthRefusesAnAgentCertificateItCannotAdopt: without a restore
+// marker the unknown serial is refused exactly as before; a revoked serial
+// is never offered for adoption, restore or not; an agent whose row was
+// deleted has nothing to adopt into; and a registry fault during the
+// adoption is a generic Internal.
+func TestAuthRefusesAnAgentCertificateItCannotAdopt(t *testing.T) {
+	refused := func(t *testing.T, h *harness, certPEM, keyPEM []byte) {
+		t.Helper()
+		err := h.agentRenew(t, certPEM, keyPEM)
+		if status.Code(err) != codes.Unauthenticated || status.Convert(err).Message() != "unknown or revoked certificate" {
+			t.Fatalf("%v, want Unauthenticated: unknown or revoked certificate", err)
+		}
+		if events := h.agentAdoptionEvents(); len(events) != 0 {
+			t.Fatalf("adoption events = %+v, want none", events)
+		}
+	}
+	t.Run("no restore", func(t *testing.T) {
+		h := newHarness(t)
+		h.issueAgent("agt-1", orgID, true)
+		certPEM, keyPEM, _ := h.issueAgent("agt-1", orgID, false)
+		refused(t, h, certPEM, keyPEM)
+	})
+	t.Run("revoked serial", func(t *testing.T) {
+		h := newHarness(t)
+		certPEM, keyPEM, serial := h.issueAgent("agt-1", orgID, true)
+		// The host renewed since: its row lives on under a newer serial,
+		// the presented one is revoked.
+		h.agents.mu.Lock()
+		h.agents.revoked[serial.String()] = true
+		h.agents.bySerial["4242"] = h.agents.bySerial[serial.String()]
+		h.agents.mu.Unlock()
+		h.agentsRestoredAround(time.Now())
+		refused(t, h, certPEM, keyPEM)
+	})
+	t.Run("agent row deleted", func(t *testing.T) {
+		h := newHarness(t)
+		certPEM, keyPEM, serial := h.issueAgent("agt-1", orgID, true)
+		h.agents.mu.Lock()
+		delete(h.agents.bySerial, serial.String())
+		h.agents.mu.Unlock()
+		h.agentsRestoredAround(time.Now())
+		refused(t, h, certPEM, keyPEM)
+	})
+	t.Run("registry fault", func(t *testing.T) {
+		h := newHarness(t)
+		h.issueAgent("agt-1", orgID, true)
+		h.agentsRestoredAround(time.Now())
+		h.agents.mu.Lock()
+		h.agents.adoptErr = errors.New(`relation "host_agents" does not exist`)
+		h.agents.mu.Unlock()
+		certPEM, keyPEM, _ := h.issueAgent("agt-1", orgID, false)
+		err := h.agentRenew(t, certPEM, keyPEM)
+		if status.Code(err) != codes.Internal || strings.Contains(status.Convert(err).Message(), "host_agents") {
+			t.Fatalf("adoption fault: %v, want a generic Internal", err)
+		}
+	})
+}

@@ -181,6 +181,14 @@ func (f *integAgentStore) Register(_ context.Context, a agents.Agent) error {
 	return nil
 }
 
+func (f *integAgentStore) RestoreWindow(context.Context) (*agents.RestoreWindow, error) {
+	return nil, nil
+}
+
+func (f *integAgentStore) AdoptCertificate(context.Context, agents.Agent, func(agents.AdoptionState) error) (agents.AgentIdentity, error) {
+	return agents.AgentIdentity{}, agents.ErrNotFound
+}
+
 func (f *integAgentStore) GetBySerial(_ context.Context, serial string) (agents.AgentIdentity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

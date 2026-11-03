@@ -107,6 +107,25 @@ type fakeStore struct {
 	// SQL store's integration tests.
 	factsCalls []factsCall
 	factsErr   error
+	// window is the restore marker RestoreWindow returns; adoptCalls
+	// counts the store-side adoptions the service asked for.
+	window     *agents.RestoreWindow
+	adoptCalls int
+}
+
+func (f *fakeStore) RestoreWindow(context.Context) (*agents.RestoreWindow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.window, nil
+}
+
+// AdoptCertificate only counts: the adoption rules run against the real
+// store in adopt_test.go.
+func (f *fakeStore) AdoptCertificate(context.Context, agents.Agent, func(agents.AdoptionState) error) (agents.AgentIdentity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.adoptCalls++
+	return agents.AgentIdentity{}, agents.ErrNotFound
 }
 
 // factsCall is one forwarded RecordFacts call.

@@ -206,6 +206,17 @@ type Store interface {
 	// GetBySerial resolves a presented serial without an organization
 	// filter; ErrNotFound when unknown.
 	GetBySerial(ctx context.Context, serial string) (AgentIdentity, error)
+	// RestoreWindow reads the last restore's window, outside any org scope
+	// and without a lock; nil when no usable restore marker exists.
+	RestoreWindow(ctx context.Context) (*RestoreWindow, error)
+	// AdoptCertificate locks every agent row named a.AgentName in
+	// a.OrgID, hands what it read to allow and, when allow returns nil,
+	// registers a for that row's host the way Register does unless it is
+	// already the host's live certificate — one transaction. No such row,
+	// more than one, or a's serial registered elsewhere or revoked, is
+	// ErrNotFound. a carries the org, agent name, serial and validity
+	// window; host and version come from the locked row.
+	AdoptCertificate(ctx context.Context, a Agent, allow func(AdoptionState) error) (AgentIdentity, error)
 	// Touch records a heartbeat by serial, org-unscoped.
 	Touch(ctx context.Context, serial, version string) error
 	List(ctx context.Context, orgID uuid.UUID) ([]Agent, error)
