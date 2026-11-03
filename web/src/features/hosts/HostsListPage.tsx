@@ -1,25 +1,18 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useParams, useSearch } from '@tanstack/react-router';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { Controller, useForm } from 'react-hook-form';
 import { Globe, Search, Server } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Dialog } from '../../ui/dialog.tsx';
-import { Input } from '../../ui/input.tsx';
-import { Label } from '../../ui/label.tsx';
-import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
-import { useCreateHost, useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
+import { useHosts, useZones, type HostListFilter } from '../../api/hooks/useHosts.ts';
 import { useHostQuery } from '../../api/hooks/useTags.ts';
-import { useToast } from '../../ui/toastContext.ts';
-import { schemas, type HostFormValues } from '../../lib/schemas.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useAgents } from '../../api/hooks/useAgents.ts';
 import { HostRow } from './HostRow.tsx';
+import { HostDialog } from './HostDialog.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
 
 const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 210px 210px 70px 24px';
@@ -31,7 +24,6 @@ export function HostsListPage() {
   // mount and whenever it changes, since navigating to this same route
   // with a new search value does not remount the component.
   const routeSearch = useSearch({ strict: false }) as { q?: string };
-  const toast = useToast();
   const t = useT();
 
   const [filter, setFilter] = useState<HostListFilter>({ q: routeSearch.q ?? '' });
@@ -46,25 +38,16 @@ export function HostsListPage() {
     setFilter((f) => ({ ...f, q: routeSearch.q ?? '' }));
   }
   const [addOpen, setAddOpen] = useState(false);
-  // Two entry points open ZoneDialog: the page's own "Add zone" button, and
-  // the Add host form's Zone picker create row — tracked as one state (not
-  // two) so there is exactly one mounted ZoneDialog, and onCreated only
-  // reaches into the host form when the picker is what asked for it.
-  const [zoneDialog, setZoneDialog] = useState<{ from: 'button' } | { from: 'picker'; name: string } | null>(null);
+  // The page's own "Add zone" button. The host dialog's Zone picker has its
+  // own ZoneDialog, since it is what selects the zone it creates.
+  const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
   const [selectorText, setSelectorText] = useState('');
   const [selectorActive, setSelectorActive] = useState(false);
 
   const hosts = useHosts(org, filter);
   const zones = useZones(org);
   const agents = useAgents(org);
-  const createHost = useCreateHost(org);
   const hostQuery = useHostQuery(org);
-
-  const { hostFormSchema } = useMemo(() => schemas(t), [t]);
-  const hostForm = useForm<HostFormValues>({
-    resolver: zodResolver(hostFormSchema),
-    defaultValues: { name: '', zone_id: '', address: '', managed: false, monitored: false },
-  });
 
   async function runSelector(e: FormEvent) {
     e.preventDefault();
@@ -103,7 +86,7 @@ export function HostsListPage() {
           </span>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => setZoneDialog({ from: 'button' })}>
+          <Button onClick={() => setZoneDialogOpen(true)}>
             <Globe size={15} /> {t.hosts.list.addZone}
           </Button>
           <Button variant="primary" onClick={() => setAddOpen(true)}>
@@ -194,93 +177,9 @@ export function HostsListPage() {
         <LoadMoreButton onClick={() => void hosts.fetchNextPage()} loading={hosts.isFetchingNextPage} />
       )}
 
-      {zoneDialog && (
-        <ZoneDialog
-          org={org}
-          open
-          onClose={() => setZoneDialog(null)}
-          initialName={zoneDialog.from === 'picker' ? zoneDialog.name : undefined}
-          onCreated={(id) => {
-            // Only the picker-originated open wants the new zone selected —
-            // the page's own "Add zone" button has nothing of its own to
-            // put it into; the page's own list refetches via the mutation's
-            // invalidation.
-            if (zoneDialog.from === 'picker') hostForm.setValue('zone_id', id, { shouldValidate: true });
-          }}
-        />
-      )}
+      {zoneDialogOpen && <ZoneDialog org={org} open onClose={() => setZoneDialogOpen(false)} onCreated={() => {}} />}
 
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} title={t.hosts.list.dialog.title}>
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={hostForm.handleSubmit(async (values) => {
-            try {
-              await createHost.mutateAsync(values);
-              toast.show(t.hosts.list.dialog.created(values.name));
-              setAddOpen(false);
-              hostForm.reset();
-            } catch (err) {
-              toast.show(err instanceof Error ? err.message : t.hosts.list.dialog.createFailed, 'destructive');
-            }
-          })}
-        >
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="host_name">{t.hosts.list.dialog.name}</Label>
-            <Input id="host_name" {...hostForm.register('name')} placeholder={t.hosts.list.dialog.namePlaceholder} />
-            {hostForm.formState.errors.name && (
-              <span className="text-[11px] text-destructive">{hostForm.formState.errors.name.message}</span>
-            )}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="host_zone">{t.hosts.list.dialog.zone}</Label>
-            <Controller
-              control={hostForm.control}
-              name="zone_id"
-              render={({ field }) => (
-                <Select
-                  id="host_zone"
-                  options={(zones.data?.zones ?? []).map((z) => ({ value: z.id, label: z.name }))}
-                  value={field.value}
-                  onChange={field.onChange}
-                  placeholder={t.hosts.list.dialog.selectZone}
-                  create={{ label: t.hosts.list.dialog.newZone, onSelect: (text) => setZoneDialog({ from: 'picker', name: text }) }}
-                />
-              )}
-            />
-            {hostForm.formState.errors.zone_id && (
-              <span className="text-[11px] text-destructive">{hostForm.formState.errors.zone_id.message}</span>
-            )}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="host_address">{t.hosts.list.dialog.address}</Label>
-            <Input id="host_address" {...hostForm.register('address')} placeholder={t.hosts.list.dialog.addressPlaceholder} />
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <Controller
-              control={hostForm.control}
-              name="managed"
-              render={({ field }) => <Switch id="host_managed" checked={field.value} onCheckedChange={field.onChange} />}
-            />
-            <label htmlFor="host_managed">{t.hosts.capability.managedLong}</label>
-          </div>
-          <div className="flex items-center gap-2 text-xs">
-            <Controller
-              control={hostForm.control}
-              name="monitored"
-              render={({ field }) => <Switch id="host_monitored" checked={field.value} onCheckedChange={field.onChange} />}
-            />
-            <label htmlFor="host_monitored">{t.hosts.capability.monitored}</label>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button type="button" onClick={() => setAddOpen(false)}>
-              {t.common.cancel}
-            </Button>
-            <Button type="submit" variant="primary" disabled={createHost.isPending}>
-              {t.hosts.list.dialog.create}
-            </Button>
-          </div>
-        </form>
-      </Dialog>
+      <HostDialog org={org} open={addOpen} onOpenChange={setAddOpen} />
     </>
   );
 }

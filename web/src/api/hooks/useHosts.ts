@@ -50,20 +50,69 @@ export function useHosts(org: string, filter: HostListFilter = {}) {
   });
 }
 
-export function useHost(org: string, id: string) {
-  return useQuery({
+function hostQueryOptions(org: string, id: string) {
+  return {
     queryKey: ['host', org, id],
     queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/hosts/{id}', { params: { path: { org, id } } })),
-    enabled: !!org && !!id,
+  };
+}
+
+export function useHost(org: string, id: string) {
+  return useQuery({ ...hostQueryOptions(org, id), enabled: !!org && !!id });
+}
+
+const ifMatch = (revision: number) => ({ 'If-Match': `"${revision}"` });
+
+/** A host write also moves what the detail page and the SSH card show: the
+ * manual tags, the host's SSH settings (its jump host) and the inventory
+ * preview whose connection resolves that jump host. */
+function useInvalidateHost(org: string) {
+  const qc = useQueryClient();
+  return (id?: string) => {
+    void qc.invalidateQueries({ queryKey: ['hosts', org] });
+    void qc.invalidateQueries({ queryKey: id ? ['host', org, id] : ['host', org] });
+    void qc.invalidateQueries({ queryKey: ['host-tags', org] });
+    void qc.invalidateQueries({ queryKey: ['ssh', org] });
+    void qc.invalidateQueries({ queryKey: ['inventory', org] });
+  };
+}
+
+/** useCreateHost creates a host; `jump` and `tags` ride along, so the host
+ * is never visible half-configured. */
+export function useCreateHost(org: string) {
+  const invalidate = useInvalidateHost(org);
+  return useMutation({
+    mutationFn: (body: HostInput) => unwrap(api.POST('/api/v1/orgs/{org}/hosts', { params: { path: { org } }, body })),
+    onSuccess: () => invalidate(),
   });
 }
 
-export function useCreateHost(org: string) {
-  const qc = useQueryClient();
+/** useUpdateHost replaces a host's own fields under If-Match: a stale
+ * revision answers 412 (an ApiError with that status). `jump` and `tags`
+ * left out of the body stay as they are. */
+export function useUpdateHost(org: string, id: string) {
+  const invalidate = useInvalidateHost(org);
   return useMutation({
-    mutationFn: (body: HostInput) => unwrap(api.POST('/api/v1/orgs/{org}/hosts', { params: { path: { org } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hosts', org] }),
+    mutationFn: ({ revision, ...body }: HostInput & { revision: number }) =>
+      unwrap(api.PATCH('/api/v1/orgs/{org}/hosts/{id}', { params: { path: { org, id }, header: ifMatch(revision) }, body })),
+    onSuccess: () => invalidate(id),
   });
+}
+
+/** useReloadHost refetches everything the host dialog pre-fills from — the
+ * host (its revision), its tags, its SSH settings and the resolved
+ * connection — and resolves with the fresh host. */
+export function useReloadHost(org: string, id: string) {
+  const qc = useQueryClient();
+  return async () => {
+    const res = await qc.fetchQuery({ ...hostQueryOptions(org, id), staleTime: 0 });
+    await Promise.all([
+      qc.refetchQueries({ queryKey: ['host-tags', org, id] }),
+      qc.refetchQueries({ queryKey: ['ssh', org, 'host', id] }),
+      qc.refetchQueries({ queryKey: ['inventory', org, 'host-preview', id] }),
+    ]);
+    return res.host;
+  };
 }
 
 export function useSetHostCapabilities(org: string, id: string) {
