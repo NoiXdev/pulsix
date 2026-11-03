@@ -220,6 +220,14 @@ type memStorage struct {
 	listErr error
 	// putPanics makes Put panic before it reads anything.
 	putPanics bool
+	// stallAfter, when positive, makes Put stop reading once it has read
+	// that many bytes and wait for its context to end: a destination that
+	// hangs.
+	stallAfter int
+	// slowRead, when set, makes Put read at most slowChunk bytes at a time
+	// and wait this long before each read: a slow but steady destination.
+	slowRead  time.Duration
+	slowChunk int
 }
 
 func newMemStorage() *memStorage { return &memStorage{objects: map[string][]byte{}} }
@@ -227,6 +235,16 @@ func newMemStorage() *memStorage { return &memStorage{objects: map[string][]byte
 func (m *memStorage) Put(ctx context.Context, name string, r io.Reader) (int64, error) {
 	if m.putPanics {
 		panic("mem storage: put " + name)
+	}
+	if m.stallAfter > 0 {
+		if _, err := io.ReadFull(r, make([]byte, m.stallAfter)); err != nil {
+			return 0, fmt.Errorf("upload %s: %w", name, err)
+		}
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+	if m.slowRead > 0 {
+		r = &slowReader{r: r, delay: m.slowRead, chunk: m.slowChunk}
 	}
 	data, err := io.ReadAll(r)
 	if err != nil {
@@ -242,6 +260,18 @@ func (m *memStorage) Put(ctx context.Context, name string, r io.Reader) (int64, 
 	defer m.mu.Unlock()
 	m.objects[name] = data
 	return int64(len(data)), nil
+}
+
+// slowReader reads at most chunk bytes per call, each after delay.
+type slowReader struct {
+	r     io.Reader
+	delay time.Duration
+	chunk int
+}
+
+func (s *slowReader) Read(p []byte) (int, error) {
+	time.Sleep(s.delay)
+	return s.r.Read(p[:min(len(p), s.chunk)])
 }
 
 func (m *memStorage) Open(_ context.Context, name string) (io.ReadCloser, error) {

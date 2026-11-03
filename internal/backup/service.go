@@ -160,6 +160,9 @@ type Service struct {
 	version    string
 	now        func() time.Time
 	log        *slog.Logger
+	// stallTimeout is how long a backup may go without a byte reaching
+	// its destination before it is cancelled.
+	stallTimeout time.Duration
 
 	// bg is the context of backups running in the background; Stop
 	// cancels it and waits for them.
@@ -185,7 +188,7 @@ func NewService(store Store, box *crypto.Box, headerKey []byte, dump DumpFunc, s
 	bg, cancel := context.WithCancel(context.Background())
 	return &Service{
 		store: store, box: box, headerKey: headerKey, dump: dump, storageFor: storageFor, mailer: mailer, version: version, now: now, log: log,
-		bg: bg, cancel: cancel,
+		stallTimeout: stallTimeout, bg: bg, cancel: cancel,
 	}
 }
 

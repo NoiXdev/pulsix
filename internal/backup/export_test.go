@@ -1,6 +1,10 @@
 package backup
 
-import "github.com/jackc/pgx/v5/pgxpool"
+import (
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
 
 // SetAfterMigrate installs a hook Restore runs on the target pool right after
 // MigrateTo and before the load, so a test can add a table the migrations do
@@ -15,3 +19,9 @@ func SetAfterWipe(o *RestoreOptions, fn func(*pgxpool.Pool) error) { o.afterWipe
 // WaitIdle waits until every backup StartManual began in the background has
 // finished.
 func WaitIdle(s *Service) { s.wg.Wait() }
+
+// SetStallTimeout shortens how long a backup may go without progress.
+func SetStallTimeout(s *Service, d time.Duration) { s.stallTimeout = d }
+
+// StallTimeoutOf is the stall timeout s runs backups with.
+func StallTimeoutOf(s *Service) time.Duration { return s.stallTimeout }

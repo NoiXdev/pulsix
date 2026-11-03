@@ -45,9 +45,25 @@ func (s *Service) execute(ctx context.Context, r run, st Storage, includeMetrics
 
 // transfer streams the dump into st through a pipe, so the backup is never
 // held in memory or on a local disk first.
+//
+// A watchdog bounds the transfer by progress: every read the upload takes
+// from the pipe re-arms it. When no byte has reached the destination for
+// the stall timeout, it cancels the transfer's context and closes both
+// ends of the pipe, so an upload waiting in Read and a dump waiting in
+// Write return as well, and the attempt fails as stalled. The caller's ctx
+// is left alone, so the attempt is recorded failed, not abandoned.
 func (s *Service) transfer(ctx context.Context, r run, st Storage, includeMetrics bool) (int64, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	pr, pw := io.Pipe()
 	w := &pipeWriter{pw: pw}
+	stalled := stalledError{after: s.stallTimeout}
+	wd := startWatchdog(s.stallTimeout, func() {
+		cancel()
+		pw.CloseWithError(stalled)
+		pr.CloseWithError(stalled)
+	})
+	defer wd.halt()
 	dumped := make(chan error, 1)
 	go func() {
 		var err error
@@ -66,10 +82,13 @@ func (s *Service) transfer(ctx context.Context, r run, st Storage, includeMetric
 			Now: func() time.Time { return r.startedAt },
 		})
 	}()
-	size, putErr := s.put(ctx, st, r.name, pr)
+	size, putErr := s.put(ctx, st, r.name, pr, wd)
 	dumpErr := <-dumped
 
 	switch {
+	case (dumpErr != nil || putErr != nil) && wd.fired.Load():
+		// Whatever either side saw is a consequence of the cancellation.
+		return 0, stalled
 	case dumpErr != nil && !w.failed.Load():
 		// The dump failed on its own; the upload only saw it end.
 		return 0, dumpErr
@@ -81,12 +100,13 @@ func (s *Service) transfer(ctx context.Context, r run, st Storage, includeMetric
 	return size, nil
 }
 
-// put uploads the pipe's output into st and closes the pipe's reading end
-// however the upload ends — a panic included — so the dump goroutine never
-// blocks on a write nobody reads.
-func (s *Service) put(ctx context.Context, st Storage, name string, pr *io.PipeReader) (int64, error) {
+// put uploads the pipe's output into st, reporting every read to wd as
+// progress, and closes the pipe's reading end however the upload ends — a
+// panic included — so the dump goroutine never blocks on a write nobody
+// reads.
+func (s *Service) put(ctx context.Context, st Storage, name string, pr *io.PipeReader, wd *watchdog) (int64, error) {
 	defer pr.CloseWithError(errUploadEnded)
-	return st.Put(ctx, name, pr)
+	return st.Put(ctx, name, progressReader{r: pr, wd: wd})
 }
 
 // failPanicked records an attempt whose backup panicked as failed and logs
