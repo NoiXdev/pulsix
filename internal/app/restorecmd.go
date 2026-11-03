@@ -78,8 +78,8 @@ func (o RestoreOptions) Validate() error {
 const restoreNextStep = "Start the stack. Workers and agents reconnect on their own. Enroll again: a worker or agent\n" +
 	"enrolled after the backup; one whose certificate was issued before the backup and has expired\n" +
 	"since (certificates renew about every 60 days); and, after restoring a backup taken before agent\n" +
-	"key fingerprints were recorded (this release), an agent that renewed its certificate after the\n" +
-	"backup. Its log says to enroll anew; enroll it from the Agents or Workers page. The bundled\n" +
+	"key fingerprints were recorded, an agent that renewed its certificate after the backup. Each\n" +
+	"one's log says to enroll anew; enroll them from the Agents or Workers page. The bundled\n" +
 	"compose worker re-enrolls itself.\n" +
 	"Everyone must sign in again: the restore ended every browser session.\n" +
 	"Everything else that grants access is as it was when the backup was taken: passwords,\n" +

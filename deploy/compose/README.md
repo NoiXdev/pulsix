@@ -378,13 +378,13 @@ On success restore prints what it restored. Start the stack. Workers and
 agents reconnect on their own. Enroll again: a worker or agent enrolled
 after the backup; one whose certificate was issued before the backup and
 has expired since (certificates renew about every 60 days); and, after
-restoring a backup taken before agent key fingerprints were recorded (this
-release), an agent that renewed its certificate after the backup. Its log
-says to enroll anew; enroll it from the Agents or Workers page. The
-bundled `worker` re-enrolls itself: `worker-enroll` enrolls it again, and
-the running worker picks up the new bundle without being recreated. A
-backup from an older Pulsix is migrated to the current version as part of
-the restore.
+restoring a backup taken before agent key fingerprints were recorded, an
+agent that renewed its certificate after the backup. Each one's log says to
+enroll anew; enroll them from the Agents or Workers page. The bundled
+`worker` re-enrolls itself: `worker-enroll` enrolls it again, and the
+running worker picks up the new bundle without being recreated. A backup
+from an older Pulsix is migrated to the current version as part of the
+restore.
 
 A restore ends every browser session: everyone signs in again. Everything
 else that grants access is as it was when the backup was taken:
@@ -417,8 +417,8 @@ workers and agents, and make each of those changes again.
    Enroll again, as above: a worker or agent enrolled after the backup;
    one whose certificate was issued before the backup and has expired
    since; and, after restoring a backup taken before agent key
-   fingerprints were recorded (this release), an agent that renewed its
-   certificate after the backup.
+   fingerprints were recorded, an agent that renewed its certificate after
+   the backup.
 
 ## Upgrading
 
