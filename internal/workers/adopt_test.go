@@ -238,6 +238,18 @@ func TestAdoptWorkerCertificateRefuses(t *testing.T) {
 			w.attach(t, "fra-2", leaf)
 			return leaf, id
 		}},
+		// The org scope hides the other organization's row, so only the
+		// insert finds the serial taken.
+		{"registered in another organization", true, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
+			w.writeMarker(t)
+			leaf, id := w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
+			other := seedOrg(t, w.q, "adopt-other-org")
+			if _, err := w.svc.Register(ctx, other, workers.RegisterInput{ZoneID: seedZone(t, w.q, other, "default"), Name: "fra-1",
+				CertSerial: leaf.SerialNumber, NotBefore: leaf.NotBefore, NotAfter: leaf.NotAfter}); err != nil {
+				t.Fatal(err)
+			}
+			return leaf, id
+		}},
 		{"registered, no restore marker", true, func(t *testing.T, w *adoptWorld) (*x509.Certificate, *ca.ClientIdentity) {
 			leaf, id := w.issue(t, w.org, w.zone, "fra-1", w.backupAt.Add(30*time.Minute))
 			w.attach(t, "fra-1", leaf)

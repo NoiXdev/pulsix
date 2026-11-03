@@ -257,6 +257,12 @@ func (s *SQLStore) AdoptCertificate(ctx context.Context, name string, c Certific
 		if !state.Registered {
 			c.WorkerID = w.ID
 			if err := s.insertCert(ctx, c); err != nil {
+				// The serial is the primary key of every organization's
+				// certificates: one this org scope cannot see is still
+				// taken, and still not this adoption's.
+				if db.IsUniqueViolation(err) {
+					return ErrNotFound
+				}
 				return fmt.Errorf("insert certificate: %w", err)
 			}
 		}
