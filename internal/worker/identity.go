@@ -29,6 +29,7 @@ import (
 // later check until it succeeds — see PersistPending.
 type Identity struct {
 	certPath string
+	keyPath  string
 	mu       sync.RWMutex
 	cert     *tls.Certificate
 	diskLeaf *x509.Certificate
@@ -46,7 +47,7 @@ func LoadIdentity(certPath, keyPath string) (*Identity, error) {
 			return nil, fmt.Errorf("parse worker certificate %s: %w", certPath, err)
 		}
 	}
-	return &Identity{certPath: certPath, cert: &pair, diskLeaf: pair.Leaf}, nil
+	return &Identity{certPath: certPath, keyPath: keyPath, cert: &pair, diskLeaf: pair.Leaf}, nil
 }
 
 // Certificate is the current client certificate.

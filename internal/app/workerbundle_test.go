@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/workers"
 )
 
 // readBundle reads the three bundle files, failing the test when one is
@@ -242,5 +245,80 @@ func TestRunWorkerAddReusesBundleBeforeResolvingTheZone(t *testing.T) {
 	err := RunWorkerAdd(runCtx, cfg, WorkerAddOptions{ZoneSlug: "default", Name: "worker-2", BundleDir: t.TempDir(), Wait: true, WaitInterval: 50 * time.Millisecond}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "--org") || runCtx.Err() != nil {
 		t.Fatalf("ambiguous enrollment = %v (ctx %v), want an immediate error naming --org", err, runCtx.Err())
+	}
+}
+
+// TestRunWorkerAddReenrolsABundleTheDatabaseDoesNotKnow (integration,
+// final review I2a): a restore older than the worker's last renewal
+// leaves a bundle whose certificate is CA-signed and unexpired but whose
+// serial the restored database never saw (it knows only the serial from
+// before the renewal). Such a bundle is not reusable: without --replace
+// the name is taken, with it the worker is enrolled again under the same
+// name and the bundle is rewritten with a registered serial.
+func TestRunWorkerAddReenrolsABundleTheDatabaseDoesNotKnow(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig(t)
+	_, zoneID := seedDefaultZone(t, cfg.DatabaseURL)
+	dir := t.TempDir()
+	opts := WorkerAddOptions{ZoneSlug: "default", Name: "worker-1", BundleDir: dir}
+	if err := RunWorkerAdd(ctx, cfg, opts, io.Discard, io.Discard); err != nil {
+		t.Fatalf("first enrollment: %v", err)
+	}
+	certPEM, _, _ := readBundle(t, dir)
+
+	// The restored database knows the worker, but only by an older serial.
+	admin, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	if _, err := admin.Pool().Exec(ctx,
+		`UPDATE worker_certificates SET serial = '1' || serial WHERE worker_id IN (SELECT id FROM workers WHERE zone_id = $1)`, zoneID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RunWorkerAdd(ctx, cfg, opts, io.Discard, io.Discard); !errors.Is(err, workers.ErrNameTaken) {
+		t.Fatalf("rerun without --replace = %v, want ErrNameTaken (the bundle must not be reused)", err)
+	}
+	if cert, _, _ := readBundle(t, dir); !bytes.Equal(cert, certPEM) {
+		t.Fatal("a failed enrollment must leave the bundle alone")
+	}
+
+	opts.Replace = true
+	var stderr bytes.Buffer
+	if err := RunWorkerAdd(ctx, cfg, opts, io.Discard, &stderr); err != nil {
+		t.Fatalf("rerun with --replace: %v", err)
+	}
+	if strings.Contains(stderr.String(), "reusing") {
+		t.Fatalf("the unknown bundle was reused: %s", stderr.String())
+	}
+	newCert, newKey, _ := readBundle(t, dir)
+	if bytes.Equal(newCert, certPEM) {
+		t.Fatal("the bundle was not rewritten")
+	}
+	pair, err := tls.X509KeyPair(newCert, newKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registered int
+	if err := admin.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM worker_certificates WHERE serial = $1 AND revoked_at IS NULL`, leaf.SerialNumber.String()).Scan(&registered); err != nil {
+		t.Fatal(err)
+	}
+	if registered != 1 {
+		t.Fatalf("the rewritten bundle's serial is registered %d times, want 1", registered)
+	}
+	if n := workerRows(t, cfg.DatabaseURL, zoneID); n != 1 {
+		t.Fatalf("worker rows after --replace = %d, want 1", n)
+	}
+
+	// And the rewritten bundle is reused from now on.
+	stderr.Reset()
+	if err := RunWorkerAdd(ctx, cfg, opts, io.Discard, &stderr); err != nil || !strings.Contains(stderr.String(), "reusing") {
+		t.Fatalf("rerun after re-enrollment = %v (stderr %q), want the bundle reused", err, stderr.String())
 	}
 }

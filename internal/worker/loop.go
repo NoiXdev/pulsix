@@ -105,6 +105,10 @@ type Loop struct {
 	now      func() time.Time
 	log      *slog.Logger
 	identity *Identity
+	// onUnauthenticated runs on every claim refused with Unauthenticated
+	// and reports whether it reconnected with a new identity
+	// (WithOnUnauthenticated).
+	onUnauthenticated func(ctx context.Context) bool
 	// playUIDAlive lists the live processes of a uid (livePIDsOfUID on
 	// /proc); the sweep's check (backlog 7.35).
 	playUIDAlive func(uid uint32) ([]int, error)
@@ -146,6 +150,17 @@ func withPlayUIDProbe(fn func(uid uint32) ([]int, error)) LoopOption {
 // the latter, worse case.
 func WithIdentity(id *Identity) LoopOption {
 	return func(l *Loop) { l.identity = id }
+}
+
+// WithOnUnauthenticated sets a hook the loop runs whenever a claim is
+// refused with Unauthenticated, before it diagnoses the refusal.
+// cmd/worker passes RedialOnNewIdentity: when `worker add --replace` has
+// rewritten the bundle under the running worker (a restore older than the
+// worker's last renewal), the hook reconnects with the new certificate
+// and reports true, and the loop says so instead of calling the worker
+// revoked.
+func WithOnUnauthenticated(fn func(ctx context.Context) bool) LoopOption {
+	return func(l *Loop) { l.onUnauthenticated = fn }
 }
 
 // NewLoop wires the loop over an already-dialed client (worker.Dial builds
@@ -216,9 +231,13 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 			d := backoff(backoffShift)
 			backoffShift = nextBackoffShift(backoffShift)
-			if status.Code(err) == codes.Unauthenticated {
+			switch {
+			case status.Code(err) == codes.Unauthenticated && l.onUnauthenticated != nil && l.onUnauthenticated(ctx):
+				l.log.InfoContext(ctx, "the manager refused the old certificate, but the identity files changed on disk; "+
+					"reconnected with the new certificate", "backoff", d)
+			case status.Code(err) == codes.Unauthenticated:
 				l.logUnauthenticated(ctx, d)
-			} else {
+			default:
 				l.log.WarnContext(ctx, "claim failed; backing off", "backoff", d, "err", err)
 			}
 			if err := l.sleep(ctx, d); err != nil {

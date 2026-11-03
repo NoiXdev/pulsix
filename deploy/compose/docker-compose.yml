@@ -146,10 +146,14 @@ services:
   # enrollment on an instance where several organizations have the zone
   # slug fails with a message asking for PULSIX_WORKER_ORG; the bounded
   # restart policy keeps that from spinning forever. --replace serves a
-  # restore on a new server: the restored database already knows the
-  # worker's name, but the new server has no bundle for it, so the old
-  # registration is revoked and replaced. A revoked worker is never
-  # replaced (see README.md, "If the bundled worker was revoked").
+  # restore: on a new server the restored database already knows the
+  # worker's name but there is no bundle for it, and after a restore older
+  # than the worker's last certificate renewal the database does not know
+  # the bundle's serial; either way the old registration is revoked and
+  # replaced and the bundle rewritten. The running worker picks the new
+  # bundle up by itself (it re-reads it before every handshake). A revoked
+  # worker is never replaced (see README.md, "If the bundled worker was
+  # revoked").
   worker-enroll:
     image: noixdev/pulsix-manager:${PULSIX_VERSION:-latest}
     depends_on:

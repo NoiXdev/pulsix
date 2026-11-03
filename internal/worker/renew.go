@@ -32,12 +32,24 @@ type Renewer struct {
 	// WithRoots finds out at the first renewal instead of silently
 	// losing the check (backlog 2.64).
 	roots *x509.CertPool
+	// loadRoots, when set, replaces roots: it is asked on every check
+	// that renews, so a CA file rewritten by `worker add --replace` is
+	// honoured without a restart (final review I2b).
+	loadRoots func() (*x509.CertPool, error)
 }
 
 // WithRoots gives the renewer the CAs a renewed certificate must chain
 // to (worker.CAPool). Without them Check refuses to renew.
 func WithRoots(pool *x509.CertPool) RenewerOption {
 	return func(r *Renewer) { r.roots = pool }
+}
+
+// WithRootsFrom makes the renewer read the CAs a renewed certificate
+// must chain to on every renewal instead of once (cmd/worker passes
+// worker.CAPool over its configuration, the same file every handshake
+// reads). It takes precedence over WithRoots.
+func WithRootsFrom(load func() (*x509.CertPool, error)) RenewerOption {
+	return func(r *Renewer) { r.loadRoots = load }
 }
 
 // RenewerOption overrides a Renewer's optional behavior.
@@ -133,6 +145,15 @@ func (r *Renewer) Check(ctx context.Context) error {
 	if !r.id.NeedsRenewal(r.now()) {
 		return nil
 	}
+	// Read before the request, so an unreadable CA file costs no
+	// registered-and-orphaned certificate on the manager.
+	roots := r.roots
+	if r.loadRoots != nil {
+		var err error
+		if roots, err = r.loadRoots(); err != nil {
+			return fmt.Errorf("read the CA a renewed certificate must chain to: %w", err)
+		}
+	}
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, r.id.Signer())
 	if err != nil {
 		return fmt.Errorf("create renewal request: %w", err)
@@ -151,7 +172,7 @@ func (r *Renewer) Check(ctx context.Context) error {
 	// back on. The agent side checks the same thing in Identity.Replace,
 	// where the data dir holds the CA; here the roots come from the
 	// configuration the dial already uses.
-	if err := verifyRenewedChain(resp.GetCertificate(), r.roots); err != nil {
+	if err := verifyRenewedChain(resp.GetCertificate(), roots); err != nil {
 		return err
 	}
 	before := r.id.Leaf().SerialNumber

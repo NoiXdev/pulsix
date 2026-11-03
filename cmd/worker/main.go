@@ -29,6 +29,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"log/slog"
 	"os"
@@ -135,16 +136,20 @@ func run(env []string, probeSupervisor func() error) int {
 	// The renewer checks that a renewed certificate was issued by the
 	// same CA the dial trusts (backlog 2.64); without roots it refuses
 	// to renew at all, so this is not optional wiring.
-	renewRoots, err := worker.CAPool(cfg)
-	if err != nil {
+	// The roots are read on every renewal, like every handshake reads the
+	// CA file: `worker add --replace` may have rewritten the bundle with
+	// another CA since the start (final review I2b).
+	if _, err := worker.CAPool(cfg); err != nil {
 		slog.Error("read the CA the renewer checks against", "err", err)
 		return 1
 	}
-	go worker.NewRenewer(client, id, nil, nil, slog.Default(), worker.WithRoots(renewRoots), worker.WithOnRenewed(func(renewCtx context.Context) {
-		client.Redial(renewCtx, func(dialCtx context.Context) (*grpc.ClientConn, error) {
-			return worker.DialIdentity(dialCtx, cfg, id)
-		})
-	})).Run(ctx)
+	redial := func(dialCtx context.Context) (*grpc.ClientConn, error) {
+		return worker.DialIdentity(dialCtx, cfg, id)
+	}
+	go worker.NewRenewer(client, id, nil, nil, slog.Default(),
+		worker.WithRootsFrom(func() (*x509.CertPool, error) { return worker.CAPool(cfg) }),
+		worker.WithOnRenewed(func(renewCtx context.Context) { client.Redial(renewCtx, redial) }),
+	).Run(ctx)
 
 	// The kind dispatch: the ansible-runner executor serves run and ad-hoc
 	// jobs and the Task 11 system playbooks (bootstrap and rotate_key —
@@ -168,6 +173,10 @@ func run(env []string, probeSupervisor func() error) int {
 		}),
 		worker.WithLogger(slog.Default()),
 		worker.WithIdentity(id),
+		// A refused certificate may mean `worker add --replace` rewrote
+		// the bundle under this process (a restore older than the last
+		// renewal): pick the new one up and reconnect with it.
+		worker.WithOnUnauthenticated(worker.RedialOnNewIdentity(id, client, redial, slog.Default())),
 	)
 	return workerLoop(ctx, loop)
 }

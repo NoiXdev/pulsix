@@ -8,14 +8,12 @@ package worker
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"net"
 	"os"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
@@ -72,18 +70,12 @@ func dialIdentity(_ context.Context, cfg Config, id *Identity, extra []grpc.Dial
 	if err != nil {
 		return nil, err
 	}
-	tlsCfg := &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		RootCAs:    pool,
-		ServerName: serverName,
-		// Every handshake presents the identity's current certificate, so a
-		// renewal takes effect on the next connection.
-		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			return id.Certificate(), nil
-		},
-	}
 	opts := append([]grpc.DialOption{
-		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
+		// Every handshake re-reads the bundle (reloadingTLS) and presents
+		// the identity's current certificate, so a renewal or a bundle
+		// rewritten by `worker add --replace` takes effect on the next
+		// connection.
+		grpc.WithTransportCredentials(newReloadingTLS(cfg, id, serverName, pool)),
 		// The same explicit limits the manager's server sets
 		// (workerpb/limits.go): a claim embeds the inventory snapshot.
 		grpc.WithDefaultCallOptions(
