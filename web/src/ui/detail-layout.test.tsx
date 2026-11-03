@@ -52,6 +52,47 @@ describe('DetailLayout', () => {
     expect(screen.getByRole('link', { name: /Alerts/ })).not.toHaveAttribute('aria-current');
   });
 
+  it('falls back to the first item when the current one leaves the nav', () => {
+    vi.stubGlobal('IntersectionObserver', undefined);
+    const children = (
+      <>
+        <Section id="alerts" title="Alerts">a</Section>
+        <Section id="runs" title="Runs">r</Section>
+      </>
+    );
+    const { rerender } = renderLayout();
+    expect(screen.getByRole('link', { name: /Overview/ })).toHaveAttribute('aria-current', 'location');
+    // Sections drop out (an unmonitored host has no alerts): Overview is gone.
+    rerender(<DetailLayout sidebar={<div>sidebar body</div>} nav={NAV.slice(1)}>{children}</DetailLayout>);
+    expect(screen.queryByRole('link', { name: /Overview/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Alerts/ })).toHaveAttribute('aria-current', 'location');
+    expect(screen.getByRole('link', { name: /Runs/ })).not.toHaveAttribute('aria-current');
+  });
+
+  it('falls back to the first remaining item when the observed current one is removed', () => {
+    let callback: IntersectionObserverCallback = () => {};
+    class FakeObserver {
+      constructor(cb: IntersectionObserverCallback) {
+        callback = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+    const { rerender } = renderLayout();
+    const runs = document.getElementById('runs') as HTMLElement;
+    act(() => callback([{ target: runs, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver));
+    expect(screen.getByRole('link', { name: /Runs/ })).toHaveAttribute('aria-current', 'location');
+    rerender(
+      <DetailLayout sidebar={<div>sidebar body</div>} nav={NAV.slice(0, 2)}>
+        <Section id="overview" title="Overview">o</Section>
+        <Section id="alerts" title="Alerts">a</Section>
+      </DetailLayout>,
+    );
+    expect(screen.getByRole('link', { name: /Overview/ })).toHaveAttribute('aria-current', 'location');
+  });
+
   it('follows the section the observer reports as intersecting', () => {
     let callback: IntersectionObserverCallback = () => {};
     const observed: Element[] = [];

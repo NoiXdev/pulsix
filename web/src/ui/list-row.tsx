@@ -1,13 +1,16 @@
 import {
   createContext,
   useContext,
+  useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, type LinkProps } from '@tanstack/react-router';
 import { MoreHorizontal } from 'lucide-react';
 import { cn } from '../lib/utils.ts';
@@ -58,7 +61,29 @@ export function ListRow({
 }
 
 interface MenuContextValue {
-  close: () => void;
+  /** Closes the menu and puts focus back on its trigger. */
+  select: () => void;
+}
+
+/** Gap between the trigger and the popover, and the minimum distance the
+ * popover keeps from the viewport edges. */
+const GAP = 4;
+const EDGE = 8;
+
+interface Position {
+  top: number;
+  left: number;
+}
+
+/** Places a popover of the given size under the trigger, right-aligned to it,
+ * flipping above when it would cross the viewport bottom and there is room. */
+function place(trigger: DOMRect, width: number, height: number): Position {
+  const below = trigger.bottom + GAP;
+  const fitsBelow = below + height <= window.innerHeight - EDGE;
+  const above = trigger.top - GAP - height;
+  const top = fitsBelow || above < EDGE ? below : above;
+  const left = Math.max(EDGE, Math.min(trigger.right - width, window.innerWidth - width - EDGE));
+  return { top, left };
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null);
@@ -76,31 +101,69 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
+  const [pos, setPos] = useState<Position | null>(null);
+
+  const close = useCallback((restoreFocus: boolean) => {
+    setOpen(false);
+    setPos(null);
+    if (restoreFocus) triggerRef.current?.focus();
+  }, []);
 
   function items(): HTMLElement[] {
     return Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
   }
 
+  // The popover is portalled to <body> with fixed positioning: a list sits in
+  // a Card whose overflow-clip would cut off a menu opened near its bottom.
+  // Measured before paint so it never shows at the wrong place.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current || !menuRef.current) return;
+    const menu = menuRef.current.getBoundingClientRect();
+    setPos(place(triggerRef.current.getBoundingClientRect(), menu.width, menu.height));
+  }, [open]);
+
+  // Focus waits for the position: an element hidden by `visibility` cannot
+  // take focus.
+  const positioned = pos !== null;
+  useEffect(() => {
+    if (open && positioned) items()[0]?.focus();
+  }, [open, positioned]);
+
   useEffect(() => {
     if (!open) return;
-    items()[0]?.focus();
     function onPointerDown(e: MouseEvent) {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) close(false);
+    }
+    // A fixed popover does not follow its row, so any scroll (of the page or
+    // of a scroll container) or a resize closes it. Scrolling the menu itself
+    // is not that.
+    function onScroll(e: Event) {
+      if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
+      close(false);
+    }
+    function onResize() {
+      close(false);
     }
     document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
-  }, [open]);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+    };
+  }, [open, close]);
 
   function onMenuKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      setOpen(false);
-      triggerRef.current?.focus();
+      close(true);
       return;
     }
     if (e.key === 'Tab') {
-      setOpen(false);
+      close(false);
       return;
     }
     const list = items();
@@ -127,26 +190,30 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          setOpen((o) => !o);
+          if (open) close(false);
+          else setOpen(true);
         }}
         className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       >
         <MoreHorizontal size={16} />
       </button>
-      {open && (
-        <MenuContext.Provider value={{ close: () => setOpen(false) }}>
-          <div
-            ref={menuRef}
-            id={menuId}
-            role="menu"
-            aria-label={label}
-            onKeyDown={onMenuKeyDown}
-            className="absolute right-0 z-20 mt-1 flex min-w-40 flex-col gap-0.5 rounded-md border border-border bg-card p-1 shadow-lg"
-          >
-            {children}
-          </div>
-        </MenuContext.Provider>
-      )}
+      {open &&
+        createPortal(
+          <MenuContext.Provider value={{ select: () => close(true) }}>
+            <div
+              ref={menuRef}
+              id={menuId}
+              role="menu"
+              aria-label={label}
+              onKeyDown={onMenuKeyDown}
+              style={{ position: 'fixed', top: pos?.top ?? 0, left: pos?.left ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+              className="z-50 flex min-w-40 flex-col gap-0.5 rounded-md border border-border bg-card p-1 shadow-lg"
+            >
+              {children}
+            </div>
+          </MenuContext.Provider>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -170,7 +237,7 @@ export function RowMenuItem({
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        menu?.close();
+        menu?.select();
         onSelect();
       }}
       className={cn(

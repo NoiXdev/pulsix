@@ -21,6 +21,7 @@ const OBSERVER_MARGIN = '-10% 0px -70% 0px';
  * current, which is also what the page shows before anything has scrolled.
  * Of the sections that intersect the observed strip the topmost one in nav
  * order wins; when none does (a gap between sections) the previous one stays.
+ * A current id that has left `ids` falls back to the first one.
  */
 function useCurrentSection(ids: string[]): string | undefined {
   const [current, setCurrent] = useState<string | undefined>(ids[0]);
@@ -49,7 +50,10 @@ function useCurrentSection(ids: string[]): string | undefined {
     return () => observer.disconnect();
   }, [key]);
 
-  return current;
+  // The nav can change under a live page (sections come and go with what the
+  // host has); a seeded or observed id that is no longer in it falls back to
+  // the first item instead of leaving nothing highlighted.
+  return current !== undefined && ids.includes(current) ? current : ids[0];
 }
 
 /**
