@@ -135,7 +135,10 @@ func toCheckResultProtos(results []checks.Result) []*agentpb.CheckResult {
 		case r.Label != nil:
 			cr.Observation = &agentpb.CheckResult_Label{Label: *r.Label}
 		case r.Err != "":
-			cr.Observation = &agentpb.CheckResult_Error{Error: r.Err}
+			// An error may quote a file name in the wrong encoding; gRPC
+			// cannot encode that, and the message stays useful with a
+			// replacement rune where the bytes were.
+			cr.Observation = &agentpb.CheckResult_Error{Error: strings.ToValidUTF8(r.Err, "\uFFFD")}
 		}
 		out = append(out, cr)
 	}

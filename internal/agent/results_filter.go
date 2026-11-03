@@ -35,8 +35,9 @@ func (w *invalidUTF8Warner) note(now time.Time) (covers int, due bool) {
 	return covers, true
 }
 
-// validUTF8Results returns the results whose check_key, item and metric are
-// valid UTF-8. gRPC refuses to marshal a message carrying anything else and
+// validUTF8Results returns the results whose check_key, item, metric and
+// label (when set) are valid UTF-8; an error message is sanitised where it is
+// converted for sending instead (toCheckResultProtos). gRPC refuses to marshal a message carrying anything else and
 // finishes the stream, so one such result would take every result of its
 // chunk down with it (see unsentAfter for the chunk-level backstop); only
 // that result is dropped here, before it is buffered or sent, and logged at
@@ -45,7 +46,7 @@ func (w *invalidUTF8Warner) note(now time.Time) (covers int, due bool) {
 func (l *Loop) validUTF8Results(results []checks.Result) []checks.Result {
 	valid, copied := results, false
 	for i, r := range results {
-		if utf8.ValidString(r.CheckKey) && utf8.ValidString(r.Item) && utf8.ValidString(r.Metric) {
+		if validUTF8Result(r) {
 			if copied {
 				valid = append(valid, r)
 			}
@@ -64,4 +65,11 @@ func (l *Loop) validUTF8Results(results []checks.Result) []checks.Result {
 		}
 	}
 	return valid
+}
+
+// validUTF8Result reports whether every string of r that is sent as is, the
+// error message aside, is valid UTF-8.
+func validUTF8Result(r checks.Result) bool {
+	return utf8.ValidString(r.CheckKey) && utf8.ValidString(r.Item) && utf8.ValidString(r.Metric) &&
+		(r.Label == nil || utf8.ValidString(*r.Label))
 }
