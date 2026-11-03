@@ -54,11 +54,21 @@ func (s *Service) dueSlotIfEnabled(ctx context.Context, b settingsBlob) (*time.T
 // An abandoned attempt gives its slot back, so a backup cut short by a
 // shutdown or a crash is taken again on a later tick, as long as its slot
 // is still the current one; an earlier day's slot is never run again.
+// Every tick ends by mailing the administrators about such an earlier slot
+// that was only ever interrupted (notifyInterrupted).
 func (s *Service) RunDue(ctx context.Context) error {
 	b, err := s.loadBlob(ctx)
 	if err != nil {
 		return err
 	}
+	if err := s.runSlot(ctx, b); err != nil || ctx.Err() != nil {
+		return err // a tick cut short by a shutdown ends with its backup
+	}
+	return s.notifyInterrupted(ctx, b)
+}
+
+// runSlot is RunDue's backup of the current slot under the settings b.
+func (s *Service) runSlot(ctx context.Context, b settingsBlob) error {
 	slot, err := s.dueSlotIfEnabled(ctx, b)
 	if err != nil {
 		return err
@@ -189,8 +199,14 @@ func (s *Service) notifyFailure(ctx context.Context, slot time.Time, set Setting
 	body := fmt.Sprintf("The scheduled Pulsix backup of %s did not complete.\n\nDestination: %s\nError: %s\n\n"+
 		"The next scheduled backup runs at the usual time. Until one succeeds, the newest backup is older than planned.\n",
 		slot.In(loc).Format("2006-01-02 15:04 MST"), dest, reason)
-	if err := s.mailer.SendToInstanceAdmins(ctx, "Pulsix backup failed", body); err != nil {
-		s.log.ErrorContext(ctx, "mail instance administrators about a failed backup", "err", err)
+	s.mailAdmins(ctx, "Pulsix backup failed", body)
+}
+
+// mailAdmins sends a backup mail to every instance administrator; a
+// failure to send is logged.
+func (s *Service) mailAdmins(ctx context.Context, subject, body string) {
+	if err := s.mailer.SendToInstanceAdmins(ctx, subject, body); err != nil {
+		s.log.ErrorContext(ctx, "mail instance administrators about a backup", "subject", subject, "err", err)
 	}
 }
 

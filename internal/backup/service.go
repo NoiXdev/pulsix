@@ -94,6 +94,21 @@ type Store interface {
 	FinishAttempt(ctx context.Context, id uuid.UUID, f Finish) error
 	// RecentAttempts returns the newest attempts first.
 	RecentAttempts(ctx context.Context, limit int) ([]Attempt, error)
+	// InterruptedSlots returns the scheduled slots before before, oldest
+	// first, whose attempts were all interrupted (abandoned, none of them
+	// by a restore) and none of which is marked notified, each with its
+	// newest attempt.
+	InterruptedSlots(ctx context.Context, before time.Time) ([]InterruptedSlot, error)
+	// MarkNotified marks the attempt id as the one the administrators
+	// were told about. marked is false when it already was.
+	MarkNotified(ctx context.Context, id uuid.UUID, at time.Time) (marked bool, err error)
+}
+
+// InterruptedSlot is a past scheduled slot whose every attempt was
+// interrupted.
+type InterruptedSlot struct {
+	Slot          time.Time
+	NewestAttempt uuid.UUID
 }
 
 // NewAttempt is an attempt as it starts.

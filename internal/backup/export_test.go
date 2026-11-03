@@ -25,3 +25,6 @@ func SetStallTimeout(s *Service, d time.Duration) { s.stallTimeout = d }
 
 // StallTimeoutOf is the stall timeout s runs backups with.
 func StallTimeoutOf(s *Service) time.Duration { return s.stallTimeout }
+
+// ReasonRestored is the error of an attempt a restore marks abandoned.
+const ReasonRestored = reasonRestored

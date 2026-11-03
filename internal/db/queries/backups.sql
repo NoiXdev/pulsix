@@ -35,3 +35,27 @@ LIMIT sqlc.arg(max_rows);
 -- name: ListInstanceAdminEmails :many
 -- Who hears about a failed scheduled backup: every enabled instance administrator.
 SELECT email FROM users WHERE instance_admin AND disabled_at IS NULL ORDER BY email;
+
+-- name: ListInterruptedBackupSlots :many
+-- The scheduled slots before the given one whose attempts were all
+-- interrupted and that nobody was told about yet, each with its newest
+-- attempt. A slot with an attempt that is running, succeeded or failed is
+-- left out (a failure is mailed when it happens), and so is one with an
+-- attempt a restore abandoned (error = restored_reason): that attempt is
+-- the backup the restore came from, which did complete.
+SELECT DISTINCT ON (r.slot) r.id, r.slot
+FROM backup_runs r
+WHERE r.kind = 'scheduled' AND r.slot < sqlc.arg(before)
+  AND NOT EXISTS (
+    SELECT 1 FROM backup_runs o
+    WHERE o.kind = 'scheduled' AND o.slot = r.slot
+      AND (o.state <> 'abandoned' OR o.notified_at IS NOT NULL OR o.error IS NOT DISTINCT FROM sqlc.arg(restored_reason)::text)
+  )
+ORDER BY r.slot, r.started_at DESC, r.id DESC;
+
+-- name: MarkBackupRunNotified :execrows
+-- Records the interrupted-slot mail on the slot's newest attempt. No row
+-- comes back changed when another manager marked it first; only the one
+-- that marked it sends the mail.
+UPDATE backup_runs SET notified_at = sqlc.arg(notified_at)
+WHERE id = sqlc.arg(id) AND notified_at IS NULL;

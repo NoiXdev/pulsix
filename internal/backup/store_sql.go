@@ -145,6 +145,28 @@ func (s *SQLStore) RecentAttempts(ctx context.Context, limit int) ([]Attempt, er
 	return out, nil
 }
 
+// InterruptedSlots implements Store. An attempt abandoned with
+// reasonRestored is the backup a restore came from: that backup completed,
+// so its slot is not an interrupted one.
+func (s *SQLStore) InterruptedSlots(ctx context.Context, before time.Time) ([]InterruptedSlot, error) {
+	rows, err := s.q.ListInterruptedBackupSlots(ctx, gen.ListInterruptedBackupSlotsParams{Before: db.NullTime(&before), RestoredReason: reasonRestored})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]InterruptedSlot, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, InterruptedSlot{Slot: r.Slot.Time, NewestAttempt: r.ID})
+	}
+	return out, nil
+}
+
+// MarkNotified implements Store; the update only changes an attempt not
+// marked yet, so of several managers exactly one marks it.
+func (s *SQLStore) MarkNotified(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	n, err := s.q.MarkBackupRunNotified(ctx, gen.MarkBackupRunNotifiedParams{ID: id, NotifiedAt: db.NullTime(&at)})
+	return n == 1, err
+}
+
 // InstanceAdminEmails returns the address of every enabled instance
 // administrator, for the failure mail.
 func (s *SQLStore) InstanceAdminEmails(ctx context.Context) ([]string, error) {

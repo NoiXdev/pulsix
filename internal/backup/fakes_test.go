@@ -28,13 +28,14 @@ type fakeStore struct {
 	panicOn         string
 	settings        map[string][]byte
 	attempts        []backup.Attempt
+	notified        map[uuid.UUID]time.Time
 	lockedElsewhere bool
 	locked          bool
 	lockCalls       int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{settings: map[string][]byte{}, fail: map[string]error{}}
+	return &fakeStore{settings: map[string][]byte{}, fail: map[string]error{}, notified: map[uuid.UUID]time.Time{}}
 }
 
 // failure returns the injected error of method; the caller holds f.mu.
@@ -178,6 +179,59 @@ func (f *fakeStore) RecentAttempts(_ context.Context, limit int) ([]backup.Attem
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (f *fakeStore) InterruptedSlots(_ context.Context, before time.Time) ([]backup.InterruptedSlot, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure("InterruptedSlots"); err != nil {
+		return nil, err
+	}
+	bySlot := map[int64][]backup.Attempt{}
+	for _, a := range f.attempts {
+		if a.Kind == backup.KindScheduled && a.Slot != nil && a.Slot.Before(before) {
+			bySlot[a.Slot.UnixNano()] = append(bySlot[a.Slot.UnixNano()], a)
+		}
+	}
+	var out []backup.InterruptedSlot
+	for _, attempts := range bySlot {
+		newest, interrupted := attempts[0], true
+		for _, a := range attempts {
+			_, notified := f.notified[a.ID]
+			if a.State != backup.StateAbandoned || notified || a.Error == backup.ReasonRestored {
+				interrupted = false
+			}
+			if a.StartedAt.After(newest.StartedAt) {
+				newest = a
+			}
+		}
+		if interrupted {
+			out = append(out, backup.InterruptedSlot{Slot: *newest.Slot, NewestAttempt: newest.ID})
+		}
+	}
+	slices.SortFunc(out, func(a, b backup.InterruptedSlot) int { return a.Slot.Compare(b.Slot) })
+	return out, nil
+}
+
+func (f *fakeStore) MarkNotified(_ context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure("MarkNotified"); err != nil {
+		return false, err
+	}
+	if _, done := f.notified[id]; done || !slices.ContainsFunc(f.attempts, func(a backup.Attempt) bool { return a.ID == id }) {
+		return false, nil
+	}
+	f.notified[id] = at
+	return true, nil
+}
+
+// wasNotified reports whether MarkNotified marked the attempt id.
+func (f *fakeStore) wasNotified(id uuid.UUID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.notified[id]
+	return ok
 }
 
 // attempt returns the attempt with id.

@@ -136,6 +136,54 @@ func (q *Queries) ListInstanceAdminEmails(ctx context.Context) ([]string, error)
 	return items, nil
 }
 
+const listInterruptedBackupSlots = `-- name: ListInterruptedBackupSlots :many
+SELECT DISTINCT ON (r.slot) r.id, r.slot
+FROM backup_runs r
+WHERE r.kind = 'scheduled' AND r.slot < $1
+  AND NOT EXISTS (
+    SELECT 1 FROM backup_runs o
+    WHERE o.kind = 'scheduled' AND o.slot = r.slot
+      AND (o.state <> 'abandoned' OR o.notified_at IS NOT NULL OR o.error IS NOT DISTINCT FROM $2::text)
+  )
+ORDER BY r.slot, r.started_at DESC, r.id DESC
+`
+
+type ListInterruptedBackupSlotsParams struct {
+	Before         pgtype.Timestamptz `json:"before"`
+	RestoredReason string             `json:"restored_reason"`
+}
+
+type ListInterruptedBackupSlotsRow struct {
+	ID   uuid.UUID          `json:"id"`
+	Slot pgtype.Timestamptz `json:"slot"`
+}
+
+// The scheduled slots before the given one whose attempts were all
+// interrupted and that nobody was told about yet, each with its newest
+// attempt. A slot with an attempt that is running, succeeded or failed is
+// left out (a failure is mailed when it happens), and so is one with an
+// attempt a restore abandoned (error = restored_reason): that attempt is
+// the backup the restore came from, which did complete.
+func (q *Queries) ListInterruptedBackupSlots(ctx context.Context, arg ListInterruptedBackupSlotsParams) ([]ListInterruptedBackupSlotsRow, error) {
+	rows, err := q.db.Query(ctx, listInterruptedBackupSlots, arg.Before, arg.RestoredReason)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInterruptedBackupSlotsRow
+	for rows.Next() {
+		var i ListInterruptedBackupSlotsRow
+		if err := rows.Scan(&i.ID, &i.Slot); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentBackupRuns = `-- name: ListRecentBackupRuns :many
 SELECT r.id, r.kind, r.slot, r.started_at, r.finished_at, r.state, r.object_name, r.size_bytes, r.error, r.actor_id,
        COALESCE(u.display_name, '')::text AS actor_name
@@ -189,4 +237,25 @@ func (q *Queries) ListRecentBackupRuns(ctx context.Context, maxRows int32) ([]Li
 		return nil, err
 	}
 	return items, nil
+}
+
+const markBackupRunNotified = `-- name: MarkBackupRunNotified :execrows
+UPDATE backup_runs SET notified_at = $1
+WHERE id = $2 AND notified_at IS NULL
+`
+
+type MarkBackupRunNotifiedParams struct {
+	NotifiedAt pgtype.Timestamptz `json:"notified_at"`
+	ID         uuid.UUID          `json:"id"`
+}
+
+// Records the interrupted-slot mail on the slot's newest attempt. No row
+// comes back changed when another manager marked it first; only the one
+// that marked it sends the mail.
+func (q *Queries) MarkBackupRunNotified(ctx context.Context, arg MarkBackupRunNotifiedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markBackupRunNotified, arg.NotifiedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

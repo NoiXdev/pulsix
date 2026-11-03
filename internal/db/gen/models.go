@@ -225,6 +225,7 @@ type BackupRun struct {
 	SizeBytes  *int64             `json:"size_bytes"`
 	Error      *string            `json:"error"`
 	ActorID    pgtype.UUID        `json:"actor_id"`
+	NotifiedAt pgtype.Timestamptz `json:"notified_at"`
 }
 
 type Bastion struct {
