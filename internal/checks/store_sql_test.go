@@ -311,17 +311,19 @@ func TestRecordObservationsUpdatesExistingTuplesAtCap(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now))
 	scoped := db.WithOrgScope(ctx, org)
+	label := "degraded"
 
 	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
 		{HostID: host, CheckKey: "seed", Item: "item-1", Metric: "m", At: now, Value: f64(99)},
 		{HostID: host, CheckKey: "seed", Item: "item-2", Metric: "m", At: now, Err: "boom"},
+		{HostID: host, CheckKey: "seed", Item: "item-3", Metric: "m", At: now, Label: &label},
 		{HostID: other, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(7)},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Accepted != 3 || res.Rejected() != 0 {
-		t.Fatalf("ingest = %+v, want all 3 accepted", res)
+	if res.Accepted != 4 || res.Rejected() != 0 {
+		t.Fatalf("ingest = %+v, want all 4 accepted", res)
 	}
 	current, err := svc.CurrentForHost(scoped, org, host)
 	if err != nil {
@@ -336,6 +338,9 @@ func TestRecordObservationsUpdatesExistingTuplesAtCap(t *testing.T) {
 	}
 	if c := byItem["item-2"]; c.Err != "boom" || c.Value != nil {
 		t.Fatalf("item-2 current = %+v, want the collection error", c)
+	}
+	if c := byItem["item-3"]; c.Label == nil || *c.Label != label || c.Value != nil {
+		t.Fatalf("item-3 current = %+v, want label %q and no value", c, label)
 	}
 	if got := sampleCount(t, d, host, "seed", "item-1", "m"); got != 1 {
 		t.Fatalf("item-1 has %d samples, want 1", got)

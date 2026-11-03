@@ -36,15 +36,9 @@ func TestRecordFactsValidatesBounds(t *testing.T) {
 		want  string
 	}{
 		{
-			name: "too many keys",
-			facts: func() map[string]string {
-				m := map[string]string{}
-				for i := 0; i < agents.MaxFactsKeys+1; i++ {
-					m[strings.Repeat("k", 1)+strings.Repeat("_", i)] = "v"
-				}
-				return m
-			}(),
-			want: "at most",
+			name:  "too many keys",
+			facts: factKeys("k", agents.MaxFactsKeys+1, "v"), // distinct valid keys
+			want:  "at most",
 		},
 		{
 			name: "over-long value",

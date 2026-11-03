@@ -537,7 +537,6 @@ func TestRunLogsATickFailureAndKeepsGoing(t *testing.T) {
 	}
 }
 
-// panicStore panics on its first claim and behaves on every later one.
 // TestTickLogsWhatBecomesOfAFailedHost: a host whose evaluation fails is
 // held out of the claim for a while (EvalSQLStore.evaluateOne), not left due
 // for the next tick; only a failure in a batch whose context is done leaves
@@ -581,6 +580,7 @@ func (c *cancelOnLoadStore) Load(ctx context.Context, d rules.Due) (rules.HostLo
 	return rules.HostLoad{}, ctx.Err()
 }
 
+// panicStore panics on its first claim and behaves on every later one.
 type panicStore struct {
 	*fakeEvalStore
 	panicked bool

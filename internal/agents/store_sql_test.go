@@ -769,10 +769,7 @@ func TestUpsertHostFactsReplacesAnAlreadyOversizeSet(t *testing.T) {
 func TestRecordFactsBoundsRejected(t *testing.T) {
 	svc, _, d, org, zone := newAgentWorld(t, "agent-facts-bounds")
 	h := createHost(t, d, org, zone, "facts-bounds")
-	tooMany := map[string]string{}
-	for i := 0; i < agents.MaxFactsKeys+1; i++ {
-		tooMany[strings.Repeat("k", i+1)+"x"] = "v" // distinct valid keys
-	}
+	tooMany := factKeys("k", agents.MaxFactsKeys+1, "v") // distinct valid keys
 	if err := svc.RecordFacts(ctx, org, h.ID, tooMany); !errors.Is(err, agents.ErrInvalidInput) {
 		t.Fatalf("65 keys: %v", err)
 	}

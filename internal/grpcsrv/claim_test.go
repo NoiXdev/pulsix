@@ -3,9 +3,8 @@
 package grpcsrv
 
 import (
+	"fmt"
 	"log/slog"
-	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 )
@@ -314,6 +314,13 @@ func TestClaimJobFailsJobWhosePayloadExceedsWorkerLimit(t *testing.T) {
 		},
 		Token: testToken(oversize),
 	})
+	// The size the server measures: the job with the binding token set, as
+	// ClaimJob puts it into the response (claim.go).
+	wantSize := proto.Size(&workerpb.ClaimJobResponse{Job: &workerpb.Job{
+		Id: oversize.String(), Kind: "run", OrgId: orgID.String(), ZoneId: zoneID.String(),
+		InventoryDoc: strings.Repeat("x", workerpb.MaxManagerToWorkerBytes),
+		WorkerToken:  testToken(oversize),
+	}})
 	h.enqueueClaim(next, orgID, zoneID)
 	h.results.Bind(oversize.String(), ref)
 	h.results.Bind(next.String(), ref)
@@ -334,9 +341,9 @@ func TestClaimJobFailsJobWhosePayloadExceedsWorkerLimit(t *testing.T) {
 		t.Fatalf("result = {job %s, status %q, worker %+v}, want the oversize job as error for the claiming worker",
 			res.JobID, res.Status, res.Worker)
 	}
-	limit := strconv.Itoa(workerpb.MaxManagerToWorkerBytes)
-	if !strings.Contains(res.Error, limit) || !regexp.MustCompile(`\b\d{8,} bytes\b`).MatchString(res.Error) {
-		t.Fatalf("error %q must name the payload size and the %s-byte limit", res.Error, limit)
+	wantText := fmt.Sprintf("the job's claim is %d bytes, over the %d bytes a worker accepts", wantSize, workerpb.MaxManagerToWorkerBytes)
+	if !strings.Contains(res.Error, wantText) {
+		t.Fatalf("error %q must contain %q (the exact payload size, then the limit)", res.Error, wantText)
 	}
 	if _, ok := h.srv.registry.lookup(oversize); ok {
 		t.Fatal("the unsent claim left a stream binding behind")
