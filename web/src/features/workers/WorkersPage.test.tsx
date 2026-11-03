@@ -94,6 +94,8 @@ describe('WorkersPage', () => {
     expect(screen.getByLabelText('Worker snippet')).not.toHaveTextContent('pxw1.aaa.bbb.ccc');
     expect(screen.getByLabelText('Start command')).toHaveTextContent('PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc docker compose up -d');
     expect(screen.getByText(en.workers.dialog.composeUpHint)).toBeInTheDocument();
+    // Labelled like the snippet's own copy button, not icon-only.
+    expect(screen.getByRole('button', { name: 'Copy start command' })).toHaveTextContent(en.workers.dialog.copy);
     await user.click(screen.getByRole('button', { name: 'Copy start command' }));
     expect(await navigator.clipboard.readText()).toBe('PULSIX_ENROLL_TOKEN=pxw1.aaa.bbb.ccc docker compose up -d');
     await user.click(screen.getByRole('tab', { name: 'Docker' }));

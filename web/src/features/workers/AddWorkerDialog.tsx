@@ -96,7 +96,7 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
                   {created.composeUp}
                 </pre>
                 <Button type="button" variant="ghost" aria-label={t.workers.dialog.copyComposeUp} onClick={() => void navigator.clipboard.writeText(created.composeUp)}>
-                  <Copy size={13} />
+                  <Copy size={13} /> {t.workers.dialog.copy}
                 </Button>
               </div>
               <span className="text-[11px] text-muted-foreground">{t.workers.dialog.composeUpHint}</span>
