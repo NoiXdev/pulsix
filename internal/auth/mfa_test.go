@@ -104,7 +104,7 @@ func TestLoginWithAnyEnabledChecksBothFactors(t *testing.T) {
 
 	t.Run("passkey only is still a second factor", func(t *testing.T) {
 		sess := &fakeSessions{}
-		svc := auth.NewService(store, sess, auth.AnyEnabled(auth.NoMFA{}, mfaOn{}))
+		svc := auth.NewService(store, sess, auth.AnyEnabled(auth.NoMFA{}, mfaOn{}), time.Now)
 		res, err := svc.Login(context.Background(), "a@x", "correct horse")
 		if err != nil {
 			t.Fatal(err)
@@ -116,7 +116,7 @@ func TestLoginWithAnyEnabledChecksBothFactors(t *testing.T) {
 
 	t.Run("neither factor enrolled", func(t *testing.T) {
 		sess := &fakeSessions{}
-		svc := auth.NewService(store, sess, auth.AnyEnabled(auth.NoMFA{}, auth.NoMFA{}))
+		svc := auth.NewService(store, sess, auth.AnyEnabled(auth.NoMFA{}, auth.NoMFA{}), time.Now)
 		res, err := svc.Login(context.Background(), "a@x", "correct horse")
 		if err != nil {
 			t.Fatal(err)
@@ -133,7 +133,7 @@ func TestLoginWithAnyEnabledChecksBothFactors(t *testing.T) {
 			auth.AnyEnabled(auth.NoMFA{}, mfaErr{err: sentinel}),
 		} {
 			sess := &fakeSessions{}
-			svc := auth.NewService(store, sess, mfa)
+			svc := auth.NewService(store, sess, mfa, time.Now)
 			if _, err := svc.Login(context.Background(), "a@x", "correct horse"); !errors.Is(err, sentinel) {
 				t.Fatalf("Login err = %v, want to wrap %v", err, sentinel)
 			}

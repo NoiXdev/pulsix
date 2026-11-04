@@ -68,8 +68,8 @@ type inviteAcceptInput struct {
 		// the account (or gives an existing, password-less one its first
 		// password). A signed-in account accepting an invitation for its
 		// own address sends neither. tenancy.Service.AcceptInvite enforces
-		// both, including the 8-character floor a signup form would have,
-		// once it knows which case it is in (backlog 7.10).
+		// both, including the password floor (auth.MinPasswordLength), once
+		// it knows which case it is in (backlog 7.10).
 		DisplayName string `json:"display_name,omitempty" required:"false"`
 		Password    string `json:"password,omitempty" required:"false"`
 	}
@@ -285,10 +285,11 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 // session, uuid.Nil otherwise. A bearer token never counts — joining an
 // organization is an account-level act, like the credential routes that
 // requireInteractiveSession guards — and a half-signed-in session (second
-// factor still due) does not either.
+// factor still due) does not either, nor does a session whose account must
+// change its password first (refuseUntilPasswordChanged).
 func inviteAcceptor(ctx context.Context) uuid.UUID {
 	p, ok := auth.FromContext(ctx)
-	if !ok || !p.MFAComplete || p.TokenID != nil {
+	if !ok || !p.MFAComplete || p.TokenID != nil || refuseUntilPasswordChanged(p) != nil {
 		return uuid.Nil
 	}
 	return p.UserID

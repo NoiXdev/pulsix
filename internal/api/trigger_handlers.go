@@ -123,6 +123,14 @@ func loadTrigger(ctx context.Context, deps Deps, org, rawID string, write bool) 
 // repo_sync triggers, plus jobs.run for a template_run test call.
 func registerTriggerRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/orgs/{org}/triggers", func(ctx context.Context, in *triggerListInput) (*triggerListOutput, error) {
+		// The permission requireOrg checks depends on the filter, so the
+		// filter is read first; the session's own gates run ahead of it, so
+		// a caller who may not be here at all (a pending second factor, a
+		// forced password change) is refused as such rather than told
+		// about its query.
+		if _, err := requireMFAComplete(ctx); err != nil {
+			return nil, err
+		}
 		var filter triggers.ListFilter
 		var perm tenancy.Permission
 		switch {

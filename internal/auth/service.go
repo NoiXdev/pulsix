@@ -25,6 +25,9 @@ type User struct {
 	// Locale is the user's own GUI language, nil until they choose one
 	// (the instance default then applies — see internal/locale).
 	Locale *string
+	// TempPasswordExpiresAt is set while the password is a temporary one an
+	// instance admin issued; from that moment on Login refuses it.
+	TempPasswordExpiresAt *time.Time
 }
 
 // Sentinel errors mapped to HTTP status by the transport layer.
@@ -114,11 +117,13 @@ type Service struct {
 	store    Store
 	sessions SessionStore
 	mfa      MFAChecker
+	now      func() time.Time
 }
 
-// NewService wires the dependencies.
-func NewService(store Store, sessions SessionStore, mfa MFAChecker) *Service {
-	return &Service{store: store, sessions: sessions, mfa: mfa}
+// NewService wires the dependencies. now is the clock a temporary
+// password's expiry is measured against.
+func NewService(store Store, sessions SessionStore, mfa MFAChecker, now func() time.Time) *Service {
+	return &Service{store: store, sessions: sessions, mfa: mfa, now: now}
 }
 
 // LoginResult is what the transport needs to answer a login. A password
@@ -148,6 +153,10 @@ type LoginResult struct {
 // outcome and reveals nothing through response timing either (Finding 2,
 // Task 10 fix round 1).
 //
+// An expired temporary password (u.TempPasswordExpiresAt not after now) is
+// refused the same way and at the same point, for the same two reasons: it
+// reveals nothing about the account, and it costs the same time.
+//
 // This is deliberately not the only place deactivation is enforced:
 // Sessions.Lookup and Tokens.Resolve both refuse a disabled user's row at
 // the query level too (see auth.sql's GetSession and tokens.sql's
@@ -172,6 +181,9 @@ func (s *Service) Login(ctx context.Context, email, password string) (LoginResul
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	if u.DisabledAt != nil {
+		return LoginResult{}, ErrInvalidCredentials
+	}
+	if u.TempPasswordExpiresAt != nil && !s.now().Before(*u.TempPasswordExpiresAt) {
 		return LoginResult{}, ErrInvalidCredentials
 	}
 	hasFactor, err := s.mfa.Enabled(ctx, u.ID)

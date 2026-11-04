@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
@@ -202,6 +203,7 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 	return api.Deps{
 		Sessions: auth.NewSessions(nil, time.Now), Auth: fakeAuthService{}, TOTP: auth.NewTOTP(nil, nil, "test", time.Now),
 		Passkeys: testPasskeys(t), Tokens: auth.NewTokens(nil, time.Now), Enrolment: &auth.Enrolment{}, Tenancy: testTenancy(), Audit: testAudit(),
+		Accounts: &accounts.Service{},
 		ClientIP: clientip.New(nil),
 		Setup:    testSetup(), Mailer: testMailer(), Hosts: testHosts(), Credentials: testCredentials(), SSH: testSSH(),
 		Inventory: testInventory(), Renderer: testRenderer(),
@@ -511,5 +513,15 @@ func TestNotFoundAPIPathStays404(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "<html") {
 		t.Errorf("GET /api/v1/does-not-exist: 404 body looks like the SPA index page, not a real 404: %q", rec.Body.String())
+	}
+}
+
+// TestNewRejectsDepsWithoutAccounts: the password route dereferences
+// Deps.Accounts on every request, so a Deps without it is refused up front.
+func TestNewRejectsDepsWithoutAccounts(t *testing.T) {
+	deps := baseHealthzDeps(t)
+	deps.Accounts = nil
+	if _, err := api.New(deps); err == nil || !strings.Contains(err.Error(), "Accounts") {
+		t.Fatalf("api.New without Accounts: err = %v, want one naming Accounts", err)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 
+	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/agentapi"
 	"github.com/noixdev/pulsix/internal/agentdist"
 	"github.com/noixdev/pulsix/internal/agents"
@@ -249,7 +250,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		return nil, fmt.Errorf("build passkey service: %w", err)
 	}
 	tokens := auth.NewTokens(auth.NewSQLTokenStore(appDB), time.Now)
-	authSvc := auth.NewService(auth.NewSQLStore(q), sessions, auth.AnyEnabled(totp, passkeys))
+	authSvc := auth.NewService(auth.NewSQLStore(q), sessions, auth.AnyEnabled(totp, passkeys), time.Now)
 
 	setupToken := setup.Token(cfg.MasterKey)
 	setupSvc := setup.NewService(setup.NewSQLStore(appDB), sessions, box, time.Now, setupToken)
@@ -556,7 +557,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
-		Tenancy: tenancySvc, Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
+		Tenancy: tenancySvc, Accounts: accounts.NewService(accounts.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now, rand.Reader),
+		Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Backups: backupsSvc,
 		// Backlog 1.20: the auth endpoints' per-address limiter size
 		// (PULSIX_AUTH_RATE_LIMIT; 0 from config disables it).

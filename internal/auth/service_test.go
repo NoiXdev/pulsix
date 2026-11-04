@@ -83,7 +83,7 @@ func TestLoginFailsClosedOnMFACheckError(t *testing.T) {
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash}}}
 	sess := &fakeSessions{}
 	sentinel := errors.New("mfa store unavailable")
-	svc := auth.NewService(store, sess, mfaErr{err: sentinel})
+	svc := auth.NewService(store, sess, mfaErr{err: sentinel}, time.Now)
 
 	if _, err := svc.Login(context.Background(), "a@x", "correct horse"); !errors.Is(err, sentinel) {
 		t.Fatalf("Login err = %v, want to wrap %v", err, sentinel)
@@ -107,7 +107,7 @@ func TestLoginRejectsDisabledUser(t *testing.T) {
 	now := time.Now()
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash, DisabledAt: &now}}}
 	sess := &fakeSessions{}
-	svc := auth.NewService(store, sess, auth.NoMFA{})
+	svc := auth.NewService(store, sess, auth.NoMFA{}, time.Now)
 	if _, err := svc.Login(context.Background(), "a@x", "correct horse"); !errors.Is(err, auth.ErrInvalidCredentials) {
 		t.Fatalf("Login(disabled user, correct password) err = %v, want ErrInvalidCredentials", err)
 	}
@@ -116,11 +116,51 @@ func TestLoginRejectsDisabledUser(t *testing.T) {
 	}
 }
 
+// TestLoginRefusesExpiredTemporaryPassword: a temporary password an
+// administrator set stops working once temp_password_expires_at has
+// passed. Like a disabled account it answers ErrInvalidCredentials, after
+// the argon2id verification, so the endpoint reveals nothing about which
+// accounts carry an expired temporary password. Before the expiry it
+// still signs in.
+func TestLoginRefusesExpiredTemporaryPassword(t *testing.T) {
+	hash, _ := auth.HashPassword("correct horse")
+	uid := uuid.Must(uuid.NewV7())
+	now := time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
+	clock := func() time.Time { return now }
+	for _, tc := range []struct {
+		name    string
+		expires time.Time
+		wantErr error
+	}{
+		{"expired a second ago", now.Add(-time.Second), auth.ErrInvalidCredentials},
+		{"expires exactly now", now, auth.ErrInvalidCredentials},
+		{"still valid", now.Add(time.Second), nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			exp := tc.expires
+			store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash, TempPasswordExpiresAt: &exp}}}
+			sess := &fakeSessions{}
+			svc := auth.NewService(store, sess, auth.NoMFA{}, clock)
+			_, err := svc.Login(context.Background(), "a@x", "correct horse")
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Login err = %v, want %v", err, tc.wantErr)
+			}
+			wantSessions := 0
+			if tc.wantErr == nil {
+				wantSessions = 1
+			}
+			if len(sess.created) != wantSessions {
+				t.Fatalf("sessions created = %d, want %d", len(sess.created), wantSessions)
+			}
+		})
+	}
+}
+
 func TestLoginRejectsUnknownUserAndWrongPassword(t *testing.T) {
 	hash, _ := auth.HashPassword("correct horse")
 	uid := uuid.Must(uuid.NewV7())
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash}}}
-	svc := auth.NewService(store, &fakeSessions{}, auth.NoMFA{})
+	svc := auth.NewService(store, &fakeSessions{}, auth.NoMFA{}, time.Now)
 	for _, tc := range []struct{ email, pw string }{{"nobody@x", "correct horse"}, {"a@x", "wrong"}} {
 		_, err := svc.Login(context.Background(), tc.email, tc.pw)
 		if !errors.Is(err, auth.ErrInvalidCredentials) {
@@ -134,7 +174,7 @@ func TestLoginCreatesSessionAndFlagsMFA(t *testing.T) {
 	uid := uuid.Must(uuid.NewV7())
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash}}}
 	sess := &fakeSessions{}
-	svc := auth.NewService(store, sess, mfaOn{})
+	svc := auth.NewService(store, sess, mfaOn{}, time.Now)
 	res, err := svc.Login(context.Background(), "a@x", "correct horse")
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +192,7 @@ func TestLoginWithoutAFactorRequiresEnrolment(t *testing.T) {
 	uid := uuid.Must(uuid.NewV7())
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", PasswordHash: &hash}}}
 	sess := &fakeSessions{}
-	svc := auth.NewService(store, sess, auth.NoMFA{})
+	svc := auth.NewService(store, sess, auth.NoMFA{}, time.Now)
 	res, err := svc.Login(context.Background(), "a@x", "correct horse")
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +204,7 @@ func TestLoginWithoutAFactorRequiresEnrolment(t *testing.T) {
 
 func TestServiceLogout(t *testing.T) {
 	sess := &fakeSessions{}
-	svc := auth.NewService(&fakeStore{}, sess, auth.NoMFA{})
+	svc := auth.NewService(&fakeStore{}, sess, auth.NoMFA{}, time.Now)
 	sid := uuid.Must(uuid.NewV7())
 	if err := svc.Logout(context.Background(), auth.Principal{SessionID: sid}); err != nil {
 		t.Fatal(err)
@@ -177,7 +217,7 @@ func TestServiceLogout(t *testing.T) {
 func TestServiceMe(t *testing.T) {
 	uid := uuid.Must(uuid.NewV7())
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x", DisplayName: "A"}}}
-	svc := auth.NewService(store, &fakeSessions{}, auth.NoMFA{})
+	svc := auth.NewService(store, &fakeSessions{}, auth.NoMFA{}, time.Now)
 	u, err := svc.Me(context.Background(), auth.Principal{UserID: uid})
 	if err != nil || u.Email != "a@x" || u.DisplayName != "A" {
 		t.Fatalf("Me = %+v, %v", u, err)
@@ -194,7 +234,7 @@ func strPtr(s string) *string { return &s }
 func TestSetLocale(t *testing.T) {
 	uid := uuid.Must(uuid.NewV7())
 	store := &fakeStore{users: map[string]auth.User{"a@x": {ID: uid, Email: "a@x"}}}
-	svc := auth.NewService(store, &fakeSessions{}, auth.NoMFA{})
+	svc := auth.NewService(store, &fakeSessions{}, auth.NoMFA{}, time.Now)
 	ctx := context.Background()
 	p := auth.Principal{UserID: uid}
 

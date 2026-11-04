@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -51,7 +52,7 @@ func TestLoginUnknownUserStillVerifiesDummyHash(t *testing.T) {
 		return orig(hash, pw)
 	}
 
-	svc := NewService(notFoundStore{}, noopSessions{}, NoMFA{})
+	svc := NewService(notFoundStore{}, noopSessions{}, NoMFA{}, time.Now)
 	_, err := svc.Login(context.Background(), "nobody@example.test", "whatever")
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("err = %v, want ErrInvalidCredentials", err)

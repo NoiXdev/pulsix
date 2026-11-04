@@ -36,7 +36,9 @@ type Scope struct {
 //  2. A session principal that has not completed its second factor → 403
 //     (the same rule requireMFAComplete applies everywhere else; a bearer
 //     token principal is always MFA-complete by construction, see
-//     auth.Tokens.Resolve, so this only ever rejects a pending session).
+//     auth.Tokens.Resolve, so this only ever rejects a pending session),
+//     and a cookie session whose account must change its password → 403
+//     password_change_required (refuseUntilPasswordChanged).
 //  3. The org does not exist → 404.
 //  4. The principal is not a member of the org → 403. This is deliberately
 //     distinguished from step 3's 404 (an unknown slug and "you're a member
@@ -69,6 +71,9 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 	}
 	if !p.MFAComplete {
 		return Scope{}, huma.Error403Forbidden("second factor required")
+	}
+	if err := refuseUntilPasswordChanged(p); err != nil {
+		return Scope{}, err
 	}
 	if route.err != nil {
 		return Scope{}, mapTenancyErr(ctx, route.err)

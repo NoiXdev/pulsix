@@ -90,6 +90,12 @@ type meOutput struct {
 		// else the instance default, else English (backlog 1.41).
 		Locale          *string `json:"locale" enum:"en,de" nullable:"true"`
 		EffectiveLocale string  `json:"effective_locale" enum:"en,de"`
+		// MustChangePassword is true while the account must replace a
+		// password an administrator set: such a session may reach only this
+		// route, logout, the second-factor routes and POST /auth/password,
+		// and everything else answers 403 password_change_required. The SPA
+		// takes it straight to the change-password screen.
+		MustChangePassword bool `json:"must_change_password"`
 	}
 }
 
@@ -147,6 +153,7 @@ func registerAuthRoutes(hapi huma.API, deps Deps) {
 		out := &meOutput{}
 		out.Body.User.ID, out.Body.User.Email, out.Body.User.DisplayName = u.ID.String(), u.Email, u.DisplayName
 		out.Body.MFAComplete, out.Body.InstanceAdmin = p.MFAComplete, p.InstanceAdmin
+		out.Body.MustChangePassword = p.MustChangePassword && p.TokenID == nil
 		out.Body.TOTPConfirmed = totpConfirmed
 		def, err := deps.Setup.DefaultLocale(ctx)
 		if err != nil {
@@ -199,6 +206,17 @@ func sessionCookie(value string, secure bool) http.Cookie {
 //   - requireInteractiveSession: removing a second factor (TOTP disable,
 //     passkey delete), creating API tokens, and every instance-admin route
 //     — MFA-complete and never a bearer token.
+//
+// An account that must change its password (users.must_change_password,
+// raised by an administrator's temporary password) is held back one step
+// further, whichever way its session was signed in, a passkey included:
+// requireMFAComplete (and so requireInteractiveSession, requireInstanceAdmin
+// and requireOrg) refuses its cookie sessions with 403
+// password_change_required. What stays reachable is what the table above
+// grants before MFA-complete — requireSession's three routes and the
+// enrolment routes — plus POST /auth/password, the one route that lifts the
+// flag, through requirePasswordChangeSession. An API token is not gated: it
+// never signs in with a password.
 
 // requireSession returns the principal or a 401. It is the right check for
 // /auth/logout, /auth/me and /auth/totp/verify: routes that a
@@ -225,10 +243,53 @@ func requireSession(ctx context.Context) (auth.Principal, error) {
 // requireSession's or requireEnrolmentSession's lists above must use this
 // (or a stricter gate) or it will silently accept a half-authenticated
 // caller.
+//
+// It also refuses a cookie session whose account must change its password
+// (see refuseUntilPasswordChanged).
 func requireMFAComplete(ctx context.Context) (auth.Principal, error) {
 	p, err := requireSession(ctx)
 	if err != nil {
 		return p, err
+	}
+	if !p.MFAComplete {
+		return p, huma.Error403Forbidden("second factor required")
+	}
+	if err := refuseUntilPasswordChanged(p); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+// passwordChangeRequired is the detail a refusal for an account that must
+// change its password carries. The SPA matches on it to show the
+// change-password screen, so it is part of the contract rather than prose.
+const passwordChangeRequired = "password_change_required"
+
+// refuseUntilPasswordChanged refuses a cookie session whose account must
+// change its password. The flag is read per request through the session
+// lookup (auth.Principal.MustChangePassword), so it applies to every
+// session of the account at once, however it was signed in, and lifts the
+// moment the password is changed. An API token is never refused: it does
+// not sign in with a password (controller's ruling, backlog 7.74).
+func refuseUntilPasswordChanged(p auth.Principal) error {
+	if p.MustChangePassword && p.TokenID == nil {
+		return huma.Error403Forbidden(passwordChangeRequired)
+	}
+	return nil
+}
+
+// requirePasswordChangeSession is the gate of POST /auth/password alone: an
+// MFA-complete cookie session, whether or not its account must change its
+// password — that route is how the flag is lifted, so it must not be held
+// back by it. A bearer token is refused, as on every route that changes a
+// credential of the account.
+func requirePasswordChangeSession(ctx context.Context) (auth.Principal, error) {
+	p, err := requireSession(ctx)
+	if err != nil {
+		return p, err
+	}
+	if p.TokenID != nil {
+		return p, huma.Error403Forbidden("interactive session required")
 	}
 	if !p.MFAComplete {
 		return p, huma.Error403Forbidden("second factor required")
@@ -315,6 +376,12 @@ func requireFreshFactor(ctx context.Context, deps Deps, p auth.Principal) error 
 // Whether the account has a factor is read live, not remembered from login:
 // once any session of the account enrols one, every other pending session of
 // that account loses enrolment access and must verify instead.
+//
+// It does not apply the must-change-password gate: a forced change follows
+// an enrolment (an administrator may have reset the factor too), and the
+// enrolment routes stay reachable for such an account. The passkey list,
+// the one read on this gate, applies it itself once the session is
+// complete.
 func requireEnrolmentSession(ctx context.Context, deps Deps) (auth.Principal, error) {
 	p, err := requireSession(ctx)
 	if err != nil {

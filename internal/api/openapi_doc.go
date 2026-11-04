@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/audit"
 	"github.com/noixdev/pulsix/internal/auth"
 	"github.com/noixdev/pulsix/internal/hosts"
@@ -56,6 +57,7 @@ func stubDeps() Deps {
 		Passkeys: &auth.Passkeys{},
 		Tokens:   &auth.Tokens{},
 		Tenancy:  &tenancy.Service{},
+		Accounts: &accounts.Service{},
 		Audit:    &audit.Recorder{},
 		Setup:    &setup.Service{},
 		Hosts:    &hosts.Service{},

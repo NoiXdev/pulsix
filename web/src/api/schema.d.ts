@@ -425,6 +425,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 auth password */
+        post: operations["changePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/recovery-codes": {
         parameters: {
             query?: never;
@@ -3372,6 +3389,16 @@ export interface components {
             /** @description Go duration, 1m to 24h (default 1h) */
             window?: string;
         };
+        ChangePasswordInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/ChangePasswordInputBody.json
+             */
+            readonly $schema?: string;
+            current_password: string;
+            new_password: string;
+        };
         CheckDTO: {
             detail: string;
             name: string;
@@ -4802,6 +4829,7 @@ export interface components {
             locale: "en" | "de" | null;
             mfa_complete: boolean;
             mfa_enrolment_required: boolean;
+            must_change_password: boolean;
             /** Format: int64 */
             recovery_codes_remaining: number;
             totp_confirmed: boolean;
@@ -7617,6 +7645,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    changePassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangePasswordInputBody"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

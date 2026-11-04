@@ -41,6 +41,7 @@ func toUser(r gen.User) User {
 	return User{
 		ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, PasswordHash: r.PasswordHash, InstanceAdmin: r.InstanceAdmin,
 		DisabledAt: fromPgTimestamptz(r.DisabledAt), Locale: r.Locale,
+		TempPasswordExpiresAt: fromPgTimestamptz(r.TempPasswordExpiresAt),
 	}
 }
 

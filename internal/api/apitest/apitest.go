@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
@@ -625,10 +626,11 @@ func New(t *testing.T, opts ...Option) *Server {
 	agentsSvc := agents.NewService(agents.NewSQLStore(d), agents.WithProvisioner(app.NewAgentHostProvisioner(hostsSvc)),
 		agents.WithCA(testCA))
 	s.Deps = api.Deps{
-		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys)), TOTP: totp, Passkeys: passkeys,
+		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys), time.Now), TOTP: totp, Passkeys: passkeys,
 		Tokens:    auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
 		Enrolment: auth.NewEnrolment(totp, s.Sessions, d),
 		Tenancy:   tenancySvc,
+		Accounts:  accounts.NewService(accounts.NewSQLStore(d), s.Mail, publicURL, time.Now, rand.Reader),
 		Audit:     auditRec,
 		ClientIP:  clientip.New(nil),
 		Setup:     setupSvc,

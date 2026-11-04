@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alertroutes"
 	"github.com/noixdev/pulsix/internal/alerts"
@@ -56,7 +57,10 @@ type Deps struct {
 	// session it was pending for, in one transaction (backlog 1.26).
 	Enrolment *auth.Enrolment
 	Tenancy   *tenancy.Service
-	Audit     *audit.Recorder
+	// Accounts is account administration: changing one's own password
+	// (backlog 7.74).
+	Accounts *accounts.Service
+	Audit    *audit.Recorder
 	// ClientIP resolves request source addresses behind
 	// PULSIX_TRUSTED_PROXIES; required.
 	ClientIP *clientip.Resolver
@@ -273,6 +277,9 @@ func (d Deps) validate() error {
 	}
 	if d.Tenancy == nil {
 		missing = append(missing, "Tenancy")
+	}
+	if d.Accounts == nil {
+		missing = append(missing, "Accounts")
 	}
 	if d.Audit == nil {
 		missing = append(missing, "Audit")
@@ -530,6 +537,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerHookRoutes(hapi, deps)
 	registerSMTPSettingsRoutes(hapi, deps)   // /admin/settings/smtp... — instance admin, session only
 	registerLocaleRoutes(hapi, deps)         // PUT /auth/me/locale — the user's own GUI language
+	registerPasswordRoutes(hapi, deps)       // POST /auth/password — the user's own password
 	registerLocaleSettingsRoutes(hapi, deps) // /admin/settings/locale — instance admin, session only
 	registerBackupRoutes(hapi, deps)         // /admin/backups... — instance admin, session only
 	// /admin/repos/definitions... — instance admin, session only (spec
