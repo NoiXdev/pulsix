@@ -2,6 +2,7 @@ package accounts_test
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,6 +37,13 @@ type fakeStore struct {
 	// account; tokens is the password_reset_tokens table.
 	emails map[string]uuid.UUID
 	tokens []*fakeToken
+	// release, when set, makes AccountByEmail wait until it is closed;
+	// emailErr makes it fail.
+	release  chan struct{}
+	emailErr error
+	// beforeTokenLock, when set, runs between ResetTokenOwner and
+	// LockResetToken: what a concurrent request does in between.
+	beforeTokenLock func()
 
 	inTx          bool
 	setCalls      []setPasswordCall
@@ -160,6 +168,12 @@ func (f *fakeStore) Reactivate(_ context.Context, _ uuid.UUID) error {
 }
 
 func (f *fakeStore) AccountByEmail(_ context.Context, email string) (uuid.UUID, error) {
+	if f.release != nil {
+		<-f.release
+	}
+	if f.emailErr != nil {
+		return uuid.Nil, f.emailErr
+	}
 	id, ok := f.emails[email]
 	if !ok {
 		return uuid.Nil, accounts.ErrNotFound
@@ -195,15 +209,27 @@ func (f *fakeStore) InsertResetToken(_ context.Context, t accounts.ResetToken) e
 	return nil
 }
 
-// LockResetToken mirrors the SQL: the token unused and unexpired at now,
-// its account not deactivated.
-func (f *fakeStore) LockResetToken(_ context.Context, hash []byte, now time.Time) (uuid.UUID, error) {
+func (f *fakeStore) ResetTokenOwner(_ context.Context, hash []byte) (uuid.UUID, error) {
 	for _, t := range f.tokens {
-		if string(t.Hash) == string(hash) && t.usedAt == nil && now.Before(t.ExpiresAt) && !f.deactivated[t.UserID] {
+		if string(t.Hash) == string(hash) {
+			if f.beforeTokenLock != nil {
+				f.beforeTokenLock()
+			}
 			return t.UserID, nil
 		}
 	}
 	return uuid.Nil, accounts.ErrNotFound
+}
+
+// LockResetToken mirrors the SQL: the token of userID, unused and
+// unexpired at now.
+func (f *fakeStore) LockResetToken(_ context.Context, hash []byte, userID uuid.UUID, now time.Time) error {
+	for _, t := range f.tokens {
+		if string(t.Hash) == string(hash) && t.UserID == userID && t.usedAt == nil && now.Before(t.ExpiresAt) {
+			return nil
+		}
+	}
+	return accounts.ErrNotFound
 }
 
 func (f *fakeStore) NoticeRecipient(_ context.Context, _ uuid.UUID) (accounts.Recipient, error) {
@@ -214,15 +240,25 @@ func (f *fakeStore) NoticeRecipient(_ context.Context, _ uuid.UUID) (accounts.Re
 type fakeMailer struct {
 	unconfigured bool
 	sendErr      error
-	sent         []sentMail
+	// cancelAware makes Send fail with the context's error once it is
+	// done, as a real SMTP conversation would.
+	cancelAware bool
+	// mu guards sent: concurrent sends happen in the SQL race test.
+	mu   sync.Mutex
+	sent []sentMail
 }
 
 type sentMail struct{ to, subject, body string }
 
-func (m *fakeMailer) Send(_ context.Context, to, subject, body string) error {
+func (m *fakeMailer) Send(ctx context.Context, to, subject, body string) error {
+	if m.cancelAware && ctx.Err() != nil {
+		return ctx.Err()
+	}
 	if m.sendErr != nil {
 		return m.sendErr
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.sent = append(m.sent, sentMail{to, subject, body})
 	return nil
 }

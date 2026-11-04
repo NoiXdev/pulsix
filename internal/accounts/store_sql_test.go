@@ -547,13 +547,14 @@ func TestSQLStoreResetTokens(t *testing.T) {
 	}
 
 	lock := func(h string, at time.Time) (uuid.UUID, error) {
-		var got uuid.UUID
-		err := store.InTx(ctx, func(ctx context.Context) error {
-			var err error
-			got, err = store.LockResetToken(ctx, []byte(h), at)
-			return err
+		owner, err := store.ResetTokenOwner(ctx, []byte(h))
+		if err != nil {
+			return uuid.Nil, err
+		}
+		err = store.InTx(ctx, func(ctx context.Context) error {
+			return store.LockResetToken(ctx, []byte(h), owner, at)
 		})
-		return got, err
+		return owner, err
 	}
 	if got, err := lock("recent", now); err != nil || got != uid {
 		t.Fatalf("LockResetToken(recent) = %v, %v; want %v", got, err, uid)
@@ -568,18 +569,19 @@ func TestSQLStoreResetTokens(t *testing.T) {
 		t.Fatalf("LockResetToken(unknown) err = %v, want ErrNotFound", err)
 	}
 
-	if _, err := d.Pool().Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, uid); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := lock("recent", now); !errors.Is(err, accounts.ErrNotFound) {
-		t.Fatalf("LockResetToken(deactivated account) err = %v, want ErrNotFound", err)
-	}
-	if _, err := d.Pool().Exec(ctx, `UPDATE users SET disabled_at = NULL WHERE id = $1`, uid); err != nil {
-		t.Fatal(err)
+	if err := store.InTx(ctx, func(ctx context.Context) error {
+		return store.LockResetToken(ctx, []byte("recent"), other, now)
+	}); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("LockResetToken(another account's token) err = %v, want ErrNotFound", err)
 	}
 
 	if err := store.VoidResetTokens(ctx, uid, now); err != nil {
 		t.Fatal(err)
+	}
+	// The owner is still found unlocked, used or not; the locked re-check
+	// is what refuses a token used in between.
+	if got, err := store.ResetTokenOwner(ctx, []byte("recent")); err != nil || got != uid {
+		t.Fatalf("ResetTokenOwner(used) = %v, %v; want %v", got, err, uid)
 	}
 	if _, err := lock("recent", now); !errors.Is(err, accounts.ErrNotFound) {
 		t.Fatalf("LockResetToken(voided) err = %v, want ErrNotFound", err)
@@ -617,7 +619,7 @@ func TestResetFlowSQL(t *testing.T) {
 		if err := svc.RequestReset(ctx, "FLOW@example.test"); err != nil {
 			t.Fatal(err)
 		}
-		accounts.WaitForMail(svc)
+		svc.Wait()
 	}
 	if len(mailer.sent) != 2 {
 		t.Fatalf("mails %d, want 2", len(mailer.sent))
@@ -650,5 +652,68 @@ func TestResetFlowSQL(t *testing.T) {
 	}
 	if _, err := svc.ResetPassword(ctx, token, "another new password"); !errors.Is(err, accounts.ErrInvalidResetToken) {
 		t.Fatalf("the token again: err %v, want ErrInvalidResetToken", err)
+	}
+
+	t.Run("a deactivated account's token", func(t *testing.T) {
+		if err := svc.RequestReset(ctx, "flow@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		svc.Wait()
+		token := resetLink.FindStringSubmatch(mailer.sent[len(mailer.sent)-1].body)[1]
+		if _, err := d.Pool().Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, uid); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := svc.ResetPassword(ctx, token, "another new password"); !errors.Is(err, accounts.ErrInvalidResetToken) {
+			t.Fatalf("err %v, want ErrInvalidResetToken", err)
+		}
+	})
+}
+
+// TestResetConcurrentWithLinkRequestsSQL: resets and requests for a new
+// link on one account, run at once, take their locks in the same order
+// (the account, then its tokens), so none of them deadlocks; exactly one
+// reset with a given token wins.
+func TestResetConcurrentWithLinkRequestsSQL(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	hash := "$argon2id$old"
+	uid := seedUser(t, d, "race@example.test", &hash)
+	mailer := &fakeMailer{}
+	svc := accounts.NewService(accounts.NewSQLStore(d), mailer, "https://pulsix.example", time.Now, &cyclingReader{})
+	if err := accounts.RequestResetNow(svc, ctx, "race@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	token := resetLink.FindStringSubmatch(mailer.sent[0].body)[1]
+	other := uuid.Must(uuid.NewV7())
+
+	const n = 4
+	resetErrs, linkErrs := make(chan error, n), make(chan error, n)
+	for range n {
+		go func() {
+			_, err := svc.ResetPassword(ctx, token, "a brand new password")
+			resetErrs <- err
+		}()
+		go func() {
+			_, err := svc.SendResetLink(ctx, true, other, uid)
+			linkErrs <- err
+		}()
+	}
+	won := 0
+	for range n {
+		switch err := <-resetErrs; {
+		case err == nil:
+			won++
+		case errors.Is(err, accounts.ErrInvalidResetToken):
+		default:
+			t.Fatalf("concurrent reset: %v", err)
+		}
+		if err := <-linkErrs; err != nil {
+			t.Fatalf("concurrent link request: %v", err)
+		}
+	}
+	// A new link voids the raced one, so it may lose to them all; it never
+	// wins twice.
+	if won > 1 {
+		t.Fatalf("%d resets with one token succeeded, want at most 1", won)
 	}
 }

@@ -65,7 +65,7 @@ func (f *resetFixture) mailedToken(t *testing.T) string {
 	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
 		t.Fatal(err)
 	}
-	accounts.WaitForMail(f.svc)
+	f.svc.Wait()
 	if len(f.mailer.sent) != sentBefore+1 {
 		t.Fatalf("mails %d, want one more than %d", len(f.mailer.sent), sentBefore)
 	}
@@ -105,10 +105,17 @@ func TestRequestResetSilentCases(t *testing.T) {
 			if tc.prepare != nil {
 				tc.prepare(f)
 			}
+			// The background work itself answers nil (it is not a store
+			// failure) and does nothing; so does the whole request.
+			if !f.mailer.unconfigured {
+				if err := accounts.RequestResetNow(f.svc, context.Background(), tc.email); err != nil {
+					t.Fatalf("background work err %v, want nil", err)
+				}
+			}
 			if err := f.svc.RequestReset(context.Background(), tc.email); err != nil {
 				t.Fatalf("err %v, want nil", err)
 			}
-			accounts.WaitForMail(f.svc)
+			f.svc.Wait()
 			if len(f.mailer.sent) != 0 || len(f.store.tokens) != tc.wantRows {
 				t.Fatalf("mails %d, token rows %d; want no mail and %d rows", len(f.mailer.sent), len(f.store.tokens), tc.wantRows)
 			}
@@ -159,6 +166,53 @@ func TestRequestResetMailsFragmentLink(t *testing.T) {
 	}
 }
 
+// TestRequestResetReturnsBeforeTheStore: past the mail check, nothing
+// RequestReset does depends on the address before it returns — the store
+// is not even asked yet.
+func TestRequestResetReturnsBeforeTheStore(t *testing.T) {
+	f := newResetFixture()
+	release := make(chan struct{})
+	f.store.release = release
+	done := make(chan error, 1)
+	go func() { done <- f.svc.RequestReset(context.Background(), "person@example.test") }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("err %v, want nil", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("RequestReset waited for the store")
+	}
+	if len(f.mailer.sent) != 0 {
+		t.Fatal("a mail went out before the store answered")
+	}
+	close(release)
+	f.svc.Wait()
+	if len(f.mailer.sent) != 1 || len(f.store.tokens) != 1 {
+		t.Fatalf("mails %d, token rows %d after the store answered; want 1 and 1", len(f.mailer.sent), len(f.store.tokens))
+	}
+}
+
+// TestRequestResetStoreFailure: the background work reports a store
+// failure, and RequestReset itself still answers nil; the log names
+// neither the address nor a link.
+func TestRequestResetStoreFailure(t *testing.T) {
+	f := newResetFixture()
+	f.store.emailErr = errors.New("db down")
+	if err := accounts.RequestResetNow(f.svc, context.Background(), "person@example.test"); err == nil || !strings.Contains(err.Error(), "db down") {
+		t.Fatalf("background work err %v, want the store failure", err)
+	}
+	logs := captureLog(t)
+	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+		t.Fatalf("RequestReset err %v, want nil", err)
+	}
+	f.svc.Wait()
+	if !strings.Contains(logs.String(), "db down") || strings.Contains(logs.String(), "person@example.test") {
+		t.Fatalf("log %s; want the failure without the address", logs)
+	}
+}
+
 func TestRequestResetSendFailureIsSilent(t *testing.T) {
 	f := newResetFixture()
 	logs := captureLog(t)
@@ -166,7 +220,7 @@ func TestRequestResetSendFailureIsSilent(t *testing.T) {
 	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
 		t.Fatalf("a failed send failed the request: %v", err)
 	}
-	accounts.WaitForMail(f.svc)
+	f.svc.Wait()
 	if !strings.Contains(logs.String(), "smtp down") {
 		t.Fatalf("the failure was not logged: %s", logs)
 	}
@@ -228,6 +282,25 @@ func TestResetPassword(t *testing.T) {
 		}
 	})
 
+	// A concurrent reset uses the token up between the unlocked owner
+	// lookup and the lock: the locked re-check refuses it.
+	t.Run("a token used in between", func(t *testing.T) {
+		f := newResetFixture()
+		token := f.mailedToken(t)
+		f.store.beforeTokenLock = func() {
+			for _, tok := range f.store.tokens {
+				used := testNow
+				tok.usedAt = &used
+			}
+		}
+		if _, err := f.svc.ResetPassword(ctx, token, next); !errors.Is(err, accounts.ErrInvalidResetToken) {
+			t.Fatalf("err %v, want ErrInvalidResetToken", err)
+		}
+		if len(f.store.setCalls) != 0 {
+			t.Fatal("a password was stored with a used token")
+		}
+	})
+
 	t.Run("an unknown token", func(t *testing.T) {
 		f := newResetFixture()
 		if _, err := f.svc.ResetPassword(ctx, "not-a-token", next); !errors.Is(err, accounts.ErrInvalidResetToken) {
@@ -266,8 +339,9 @@ func TestSendResetLink(t *testing.T) {
 				CreatedAt: testNow.Add(-time.Minute), ExpiresAt: testNow.Add(59 * time.Minute),
 			}})
 		}
-		if err := f.svc.SendResetLink(ctx, true, actor, f.user); err != nil {
-			t.Fatal(err)
+		notice, err := f.svc.SendResetLink(ctx, true, actor, f.user)
+		if err != nil || notice != accounts.NoticeSent {
+			t.Fatalf("notice %q, err %v; want sent", notice, err)
 		}
 		if len(f.mailer.sent) != 1 || !resetLink.MatchString(f.mailer.sent[0].body) || len(f.store.tokens) != 4 {
 			t.Fatalf("mails %+v, token rows %d; want one link and a 4th row", f.mailer.sent, len(f.store.tokens))
@@ -282,7 +356,7 @@ func TestSendResetLink(t *testing.T) {
 	t.Run("mail not configured", func(t *testing.T) {
 		f := newResetFixture()
 		f.mailer.unconfigured = true
-		if err := f.svc.SendResetLink(ctx, true, actor, f.user); !errors.Is(err, accounts.ErrMailNotConfigured) {
+		if _, err := f.svc.SendResetLink(ctx, true, actor, f.user); !errors.Is(err, accounts.ErrMailNotConfigured) {
 			t.Fatalf("err %v, want ErrMailNotConfigured", err)
 		}
 		if len(f.store.tokens) != 0 || len(f.mailer.sent) != 0 {
@@ -293,11 +367,35 @@ func TestSendResetLink(t *testing.T) {
 	t.Run("a deactivated account gets nothing", func(t *testing.T) {
 		f := newResetFixture()
 		f.store.deactivated[f.user] = true
-		if err := f.svc.SendResetLink(ctx, true, actor, f.user); err != nil {
-			t.Fatal(err)
+		notice, err := f.svc.SendResetLink(ctx, true, actor, f.user)
+		if err != nil || notice != accounts.NoticeSkipped {
+			t.Fatalf("notice %q, err %v; want skipped", notice, err)
 		}
 		if len(f.store.tokens) != 0 || len(f.mailer.sent) != 0 {
 			t.Fatal("a deactivated account got a reset link")
+		}
+	})
+
+	t.Run("a failed send", func(t *testing.T) {
+		f := newResetFixture()
+		logs := captureLog(t)
+		f.mailer.sendErr = errors.New("smtp down")
+		notice, err := f.svc.SendResetLink(ctx, true, actor, f.user)
+		if err != nil || notice != accounts.NoticeFailed {
+			t.Fatalf("notice %q, err %v; want failed", notice, err)
+		}
+		if len(f.store.tokens) != 1 || !strings.Contains(logs.String(), "smtp down") || strings.Contains(logs.String(), "token=") {
+			t.Fatalf("token rows %d, log %s; want the token issued and the failure logged without the link", len(f.store.tokens), logs)
+		}
+	})
+
+	t.Run("a browser that went away", func(t *testing.T) {
+		f := newResetFixture()
+		f.mailer.cancelAware = true
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		if notice, err := f.svc.SendResetLink(cancelled, true, actor, f.user); err != nil || notice != accounts.NoticeSent {
+			t.Fatalf("notice %q, err %v; want the send to go ahead", notice, err)
 		}
 	})
 
@@ -319,7 +417,7 @@ func TestSendResetLink(t *testing.T) {
 			if tc.prepare != nil {
 				tc.prepare(f)
 			}
-			if err := f.svc.SendResetLink(ctx, tc.isAdmin, tc.actor(f), tc.target(f)); !errors.Is(err, tc.want) {
+			if _, err := f.svc.SendResetLink(ctx, tc.isAdmin, tc.actor(f), tc.target(f)); !errors.Is(err, tc.want) {
 				t.Fatalf("err %v, want %v", err, tc.want)
 			}
 			if len(f.store.tokens) != 0 || len(f.mailer.sent) != 0 {

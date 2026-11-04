@@ -113,8 +113,10 @@ func (s *Service) EndSessions(ctx context.Context, actorIsAdmin bool, actor, tar
 // it was deactivated stay revoked, and in the same transaction every
 // session of target is revoked again: deactivation disables the account
 // and revokes its sessions in two steps, not one transaction, so a session
-// could have outlived it, and must not come back to life now. The common
-// checks (checkActor, withAccount) apply.
+// could have outlived it, and must not come back to life now. For the same
+// reason every unused reset link of target is voided: one issued before
+// the deactivation must not work again after it. The common checks
+// (checkActor, withAccount) apply.
 func (s *Service) Reactivate(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) error {
 	if err := checkActor(actorIsAdmin, actor, target); err != nil {
 		return err
@@ -125,6 +127,9 @@ func (s *Service) Reactivate(ctx context.Context, actorIsAdmin bool, actor, targ
 		}
 		if err := s.store.RevokeAllSessions(ctx, target); err != nil {
 			return fmt.Errorf("revoke sessions: %w", err)
+		}
+		if err := s.store.VoidResetTokens(ctx, target, s.now()); err != nil {
+			return fmt.Errorf("void reset tokens: %w", err)
 		}
 		return nil
 	})

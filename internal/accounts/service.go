@@ -27,12 +27,14 @@ var (
 	ErrTemporaryPasswordExpired = errors.New("the temporary password has expired")
 	// ErrSamePassword is a new password equal to the current one.
 	ErrSamePassword = errors.New("the new password must differ from the current one")
-	// ErrNotFound is an account the path asking for it does not see. The
-	// public paths and a person's own (a reset link, changing one's
-	// password) see only accounts that are not deactivated, so there a
-	// deactivated account is not found; the instance admin's paths see
-	// every account, a deactivated one included, so there only an unknown
-	// id is not found.
+	// ErrNotFound is an account, or a reset token, that does not exist, or
+	// an account the path asking for it does not see. Changing one's own
+	// password sees only accounts that are not deactivated, so there a
+	// deactivated account is not found. Everywhere else — the instance
+	// admin's paths, and the reset flow's lookups by address and by token
+	// — a deactivated account is found, and the service decides what that
+	// means (a forgotten password sends it nothing, a reset link of it is
+	// ErrInvalidResetToken).
 	ErrNotFound = errors.New("not found")
 	// ErrForbidden is a caller who is not an instance admin.
 	ErrForbidden = errors.New("instance admin required")
@@ -121,11 +123,14 @@ type Store interface {
 	VoidResetTokens(ctx context.Context, userID uuid.UUID, at time.Time) error
 	// InsertResetToken stores a reset token by its hash.
 	InsertResetToken(ctx context.Context, t ResetToken) error
-	// LockResetToken returns the account the token hash belongs to while
-	// the token is unused and unexpired at now and the account is not
-	// deactivated, and locks both rows for the rest of the transaction.
-	// ErrNotFound otherwise.
-	LockResetToken(ctx context.Context, hash []byte, now time.Time) (uuid.UUID, error)
+	// ResetTokenOwner returns the account a token hash belongs to, used or
+	// not, without locking anything. ErrNotFound for an unknown hash.
+	ResetTokenOwner(ctx context.Context, hash []byte) (uuid.UUID, error)
+	// LockResetToken locks the token row of hash while it belongs to
+	// userID and is unused and unexpired at now; ErrNotFound otherwise.
+	// Callers lock the account first (LockAccount): one lock order for
+	// every reset path.
+	LockResetToken(ctx context.Context, hash []byte, userID uuid.UUID, now time.Time) error
 }
 
 // LockedAccount is what an administrative action reads about its target
@@ -165,9 +170,9 @@ type Service struct {
 	publicURL string
 	now       func() time.Time
 	rnd       io.Reader
-	// mails tracks the reset mails RequestReset hands to the mailer in the
-	// background, so a test can wait for them.
-	mails sync.WaitGroup
+	// background tracks the reset requests RequestReset hands to the
+	// background (Wait).
+	background sync.WaitGroup
 }
 
 // NewService wires the dependencies. publicURL is the instance's public

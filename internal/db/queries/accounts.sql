@@ -142,12 +142,18 @@ WHERE user_id = sqlc.arg(user_id) AND used_at IS NULL;
 INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at)
 VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(token_hash), sqlc.arg(created_at), sqlc.arg(expires_at));
 
+-- name: ResetTokenOwner :one
+-- The account a reset token belongs to, used or not, unlocked: a reset
+-- locks the account first and the token second (LockResetToken), the order
+-- every reset path takes, so it reads the owner before taking any lock.
+SELECT user_id FROM password_reset_tokens WHERE token_hash = sqlc.arg(token_hash);
+
 -- name: LockResetToken :one
--- The account a reset token belongs to, while the token is unused and
--- unexpired and the account is not deactivated. Both rows stay locked for
--- the rest of the transaction, so two resets with the same token happen
--- one after the other and the second finds it used.
-SELECT t.user_id FROM password_reset_tokens t JOIN users u ON u.id = t.user_id
-WHERE t.token_hash = sqlc.arg(token_hash) AND t.used_at IS NULL
-  AND t.expires_at > sqlc.arg(now)::timestamptz AND u.disabled_at IS NULL
-FOR UPDATE OF t, u;
+-- The token row, locked for the rest of the transaction, while it belongs
+-- to user_id and is unused and unexpired. The caller holds the account's
+-- row lock already. Two resets with the same token serialize here, and the
+-- second, re-checking used_at on the row the first committed, finds none.
+SELECT id FROM password_reset_tokens
+WHERE token_hash = sqlc.arg(token_hash) AND user_id = sqlc.arg(user_id)
+  AND used_at IS NULL AND expires_at > sqlc.arg(now)::timestamptz
+FOR UPDATE;

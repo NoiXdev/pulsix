@@ -298,6 +298,16 @@ func TestAdminDeactivateAndReactivate(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || body.Notice != "skipped" || len(s.Mail.Sent()) != 1 {
 		t.Fatalf("deactivating again: status %d, notice %q, mails %d; want 200, skipped, still 1", resp.StatusCode, body.Notice, len(s.Mail.Sent()))
 	}
+	// A reset link issued before the deactivation (here: written straight
+	// into the table, since the forgot route sends a deactivated account
+	// nothing) is void after the reactivation.
+	const staleToken = "a-link-from-before-the-deactivation"
+	if _, err := s.DB.Pool().Exec(t.Context(),
+		`INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES (gen_random_uuid(), $1, sha256($2::bytea), now() + interval '1 hour')`,
+		target, []byte(staleToken)); err != nil {
+		t.Fatal(err)
+	}
+
 	// Deactivation disables the account and revokes its sessions in two
 	// steps; a session that slipped between them ends on reactivation.
 	survivor := s.LoginAs(target)
@@ -314,6 +324,10 @@ func TestAdminDeactivateAndReactivate(t *testing.T) {
 	}
 	if resp := requestJSON(t, survivor, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("a session from before the reactivation: status %d, want 401", resp.StatusCode)
+	}
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/password/reset", map[string]string{"token": staleToken, "new_password": "a password from the old link"})
+	if d := problemDetail(t, resp); resp.StatusCode != http.StatusBadRequest || d != "invalid_or_expired_link" {
+		t.Fatalf("a reset link from before the deactivation: status %d detail %q, want 400 invalid_or_expired_link", resp.StatusCode, d)
 	}
 	if n, match, _ := auditEvents(t, s, "POST reactivateUser", admin, target); n != 1 || !match {
 		t.Fatalf("audit: %d reactivateUser events (match %v), want 1", n, match)

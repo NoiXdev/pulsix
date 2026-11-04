@@ -1,5 +1,9 @@
 package accounts
 
-// WaitForMail waits until every reset mail RequestReset sent in the
-// background has been handed to the mailer (or failed).
-func WaitForMail(s *Service) { s.mails.Wait() }
+import "context"
+
+// RequestResetNow runs RequestReset's background work in the caller's
+// goroutine and returns its error.
+func RequestResetNow(s *Service, ctx context.Context, email string) error {
+	return s.requestReset(ctx, email)
+}

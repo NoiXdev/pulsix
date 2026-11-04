@@ -246,7 +246,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get API v1 admin users */
-        get: operations["get-api-v1-admin-users"];
+        get: operations["listAdminUsers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -263,7 +263,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get API v1 admin users by user ID */
-        get: operations["get-api-v1-admin-users-by-user-id"];
+        get: operations["getAdminUser"];
         put?: never;
         post?: never;
         delete?: never;
@@ -571,7 +571,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Post API v1 auth password forgot */
-        post: operations["post-api-v1-auth-password-forgot"];
+        post: operations["requestPasswordReset"];
         delete?: never;
         options?: never;
         head?: never;
@@ -603,7 +603,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get API v1 auth password reset available */
-        get: operations["get-api-v1-auth-password-reset-available"];
+        get: operations["getPasswordResetAvailable"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7604,7 +7604,7 @@ export interface operations {
             };
         };
     };
-    "get-api-v1-admin-users": {
+    listAdminUsers: {
         parameters: {
             query?: {
                 q?: string;
@@ -7637,7 +7637,7 @@ export interface operations {
             };
         };
     };
-    "get-api-v1-admin-users-by-user-id": {
+    getAdminUser: {
         parameters: {
             query?: never;
             header?: never;
@@ -7710,12 +7710,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description No Content */
-            204: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["NoticeOutputBody"];
+                };
             };
             /** @description Error */
             default: {
@@ -8190,7 +8192,7 @@ export interface operations {
             };
         };
     };
-    "post-api-v1-auth-password-forgot": {
+    requestPasswordReset: {
         parameters: {
             query?: never;
             header?: never;
@@ -8254,7 +8256,7 @@ export interface operations {
             };
         };
     };
-    "get-api-v1-auth-password-reset-available": {
+    getPasswordResetAvailable: {
         parameters: {
             query?: never;
             header?: never;

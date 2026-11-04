@@ -77,16 +77,21 @@ func registerPasswordResetRoutes(hapi huma.API, deps Deps) {
 		out := &resetAvailableOutput{}
 		out.Body.Available = ok
 		return out, nil
-	})
+	}, func(o *huma.Operation) { o.OperationID = "getPasswordResetAvailable" })
 
 	huma.Post(hapi, "/api/v1/auth/password/forgot", func(ctx context.Context, in *forgotPasswordInput) (*forgotPasswordOutput, error) {
-		// Even a store failure answers 202: any other answer could depend
-		// on the address. The failure is logged, without the address.
+		// Past the mail check, which is the same for every address, the
+		// whole request runs in the background (accounts.RequestReset), so
+		// neither the answer nor its timing depends on the address. A
+		// failure of that check still answers 202, logged.
 		if err := deps.Accounts.RequestReset(ctx, in.Body.Email); err != nil {
 			slog.ErrorContext(ctx, "forgot password", "err", err)
 		}
 		return &forgotPasswordOutput{}, nil
-	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusAccepted }, withForgotRateLimit(deps))
+	}, func(o *huma.Operation) {
+		o.OperationID = "requestPasswordReset"
+		o.DefaultStatus = http.StatusAccepted
+	}, withForgotRateLimit(deps))
 
 	huma.Post(hapi, "/api/v1/auth/password/reset", func(ctx context.Context, in *resetPasswordInput) (*noContentOutput, error) {
 		userID, err := deps.Accounts.ResetPassword(ctx, in.Body.Token, in.Body.NewPassword)

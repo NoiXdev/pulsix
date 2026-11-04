@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/auth"
+	"github.com/noixdev/pulsix/internal/mail"
 )
 
 // ResetTokenTTL is how long a reset link works.
@@ -38,16 +39,12 @@ func (s *Service) ResetAvailable(ctx context.Context) (bool, error) {
 }
 
 // RequestReset mails a reset link to the account with this address. The
-// caller learns nothing from it: it returns nil whether or not a link was
-// sent, and an error only when the store fails. No link is sent when the
-// instance has no outbound mail, when no account has the address, when the
-// account is deactivated or its invitation is still pending, or when the
-// account was already issued resetRequestLimit links within
-// resetRequestWindow.
-//
-// A new link voids the account's older ones. The mail is handed to the
-// mailer in the background, so how long the answer takes does not depend
-// on the mail server; a failed send is logged without the link.
+// caller learns nothing from it, not even from how long it takes: past the
+// check whether the instance has outbound mail at all (the same for every
+// address), the whole request — finding the account, issuing the token,
+// sending the mail — runs in the background, detached from the caller, and
+// RequestReset returns nil at once. An error comes back only from that
+// first check. What the background work does is requestReset's.
 func (s *Service) RequestReset(ctx context.Context, email string) error {
 	configured, err := s.mailer.Configured(ctx)
 	if err != nil {
@@ -56,6 +53,30 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	if !configured {
 		return nil
 	}
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		if err := s.requestReset(context.WithoutCancel(ctx), email); err != nil {
+			// Not the address: the log must not tell which ones were asked
+			// about any more than the answer does.
+			slog.ErrorContext(ctx, "password reset request failed", "error", err)
+		}
+	}()
+	return nil
+}
+
+// Wait blocks until the work RequestReset handed to the background has
+// finished: for a clean shutdown, and for tests.
+func (s *Service) Wait() { s.background.Wait() }
+
+// requestReset is RequestReset's background work. No link is sent when no
+// account has the address, when the account is deactivated or its
+// invitation is still pending (AccountByEmail finds those; the locked read
+// sorts them out), or when the account was already issued
+// resetRequestLimit links within resetRequestWindow. Otherwise a new token
+// voids the account's older ones and is mailed; a failed send is logged
+// without the link. The error is a store failure, nil in every other case.
+func (s *Service) requestReset(ctx context.Context, email string) error {
 	userID, err := s.store.AccountByEmail(ctx, strings.TrimSpace(email))
 	if errors.Is(err, ErrNotFound) {
 		return nil
@@ -91,30 +112,30 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	if err != nil {
 		return fmt.Errorf("read recipient: %w", err)
 	}
-	s.mails.Add(1)
-	go func() {
-		defer s.mails.Done()
-		s.mailResetLink(context.WithoutCancel(ctx), userID, to, token)
-	}()
+	_ = s.mailResetLink(ctx, userID, to, token)
 	return nil
 }
 
-// SendResetLink is an instance admin mailing target a reset link. The
-// common checks (checkActor, withAccount) apply, and without outbound mail
-// it is ErrMailNotConfigured. Otherwise it is RequestReset without the
-// per-address limit: a deactivated account gets nothing, a new link voids
-// the older ones, and a failed send is logged without the link. The
-// account's current password keeps working until the link is used.
-func (s *Service) SendResetLink(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) error {
+// SendResetLink is an instance admin mailing target a reset link, and
+// reports how that went (Notice). The common checks (checkActor,
+// withAccount) apply, and without outbound mail it is
+// ErrMailNotConfigured. Otherwise it is requestReset without the
+// per-address limit: a new link voids the older ones and is mailed
+// (NoticeSent, or NoticeFailed with the failure logged without the link);
+// a deactivated account gets no token at all (NoticeSkipped). The send is
+// detached from the request, so a browser that goes away does not cancel
+// it once the token is committed. The account's current password keeps
+// working until the link is used.
+func (s *Service) SendResetLink(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) (Notice, error) {
 	if err := checkActor(actorIsAdmin, actor, target); err != nil {
-		return err
+		return "", err
 	}
 	configured, err := s.mailer.Configured(ctx)
 	if err != nil {
-		return fmt.Errorf("check outgoing mail: %w", err)
+		return "", fmt.Errorf("check outgoing mail: %w", err)
 	}
 	if !configured {
-		return ErrMailNotConfigured
+		return "", ErrMailNotConfigured
 	}
 	var token string
 	err = s.withAccount(ctx, target, func(ctx context.Context, acct LockedAccount) error {
@@ -125,15 +146,27 @@ func (s *Service) SendResetLink(ctx context.Context, actorIsAdmin bool, actor, t
 		token, err = s.issueResetToken(ctx, target, s.now())
 		return err
 	})
-	if err != nil || token == "" {
-		return err
+	if err != nil {
+		return "", err
 	}
+	if token == "" {
+		return NoticeSkipped, nil
+	}
+	ctx = context.WithoutCancel(ctx)
 	to, err := s.store.NoticeRecipient(ctx, target)
 	if err != nil {
-		return fmt.Errorf("read recipient: %w", err)
+		slog.WarnContext(ctx, "reset link not sent", "user_id", target.String(), "error", fmt.Errorf("read recipient: %w", err))
+		return NoticeFailed, nil
 	}
-	s.mailResetLink(ctx, target, to, token)
-	return nil
+	switch err := s.mailResetLink(ctx, target, to, token); {
+	case err == nil:
+		return NoticeSent, nil
+	case errors.Is(err, mail.ErrNotConfigured):
+		// The settings went away between the check and the send.
+		return NoticeNotConfigured, nil
+	default:
+		return NoticeFailed, nil
+	}
 }
 
 // ResetPassword sets a new password with a reset token and returns whose
@@ -144,12 +177,31 @@ func (s *Service) SendResetLink(ctx context.Context, actorIsAdmin bool, actor, t
 // token of the account and revokes every session of it. It never signs
 // anyone in: the next sign-in takes the new password and the second
 // factor.
+//
+// Locks are taken in the one order every reset path uses — the account's
+// row, then its token rows — so a reset and a concurrent request for a new
+// link cannot deadlock: the token only names its account here, unlocked,
+// and is locked and checked again once the account is.
 func (s *Service) ResetPassword(ctx context.Context, token, next string) (uuid.UUID, error) {
 	sum := sha256.Sum256([]byte(token))
 	var userID uuid.UUID
 	err := s.store.InTx(ctx, func(ctx context.Context) error {
+		id, err := s.store.ResetTokenOwner(ctx, sum[:])
+		if errors.Is(err, ErrNotFound) {
+			return ErrInvalidResetToken
+		}
+		if err != nil {
+			return fmt.Errorf("find reset token: %w", err)
+		}
+		acct, err := s.store.LockAccount(ctx, id)
+		if err != nil {
+			return fmt.Errorf("lock account: %w", err)
+		}
+		if !acct.active() {
+			return ErrInvalidResetToken
+		}
 		now := s.now()
-		id, err := s.store.LockResetToken(ctx, sum[:], now)
+		err = s.store.LockResetToken(ctx, sum[:], id, now)
 		if errors.Is(err, ErrNotFound) {
 			return ErrInvalidResetToken
 		}
@@ -209,13 +261,15 @@ func (s *Service) issueResetToken(ctx context.Context, userID uuid.UUID, now tim
 // mailResetLink sends the reset link to the account's own address, in its
 // effective language. The token travels in the URL fragment, which a
 // browser never sends to a server, so it reaches no request log. A failure
-// is logged with the account only, never the link.
-func (s *Service) mailResetLink(ctx context.Context, userID uuid.UUID, to Recipient, token string) {
+// is logged with the account only, never the link, and returned.
+func (s *Service) mailResetLink(ctx context.Context, userID uuid.UUID, to Recipient, token string) error {
 	link := strings.TrimRight(s.publicURL, "/") + "/reset-password#token=" + token
 	subject, body := compose(to, noticeResetLink, link)
 	sendCtx, cancel := context.WithTimeout(ctx, noticeSendTimeout)
 	defer cancel()
 	if err := s.mailer.Send(sendCtx, to.Email, subject, body); err != nil {
 		slog.WarnContext(ctx, "reset link not sent", "user_id", userID.String(), "error", err)
+		return err
 	}
+	return nil
 }

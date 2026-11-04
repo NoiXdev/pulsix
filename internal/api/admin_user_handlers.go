@@ -132,7 +132,7 @@ func registerAdminUserRoutes(hapi huma.API, deps Deps) {
 		}
 		out.Body.NextCursor = next
 		return out, nil
-	})
+	}, func(o *huma.Operation) { o.OperationID = "listAdminUsers" })
 
 	huma.Get(hapi, "/api/v1/admin/users/{userId}", func(ctx context.Context, in *adminUserInput) (*adminUserOutput, error) {
 		p, err := requireInstanceAdmin(ctx)
@@ -150,7 +150,7 @@ func registerAdminUserRoutes(hapi huma.API, deps Deps) {
 		out := &adminUserOutput{}
 		out.Body.User = adminUserDetailDTOOf(u)
 		return out, nil
-	})
+	}, func(o *huma.Operation) { o.OperationID = "getAdminUser" })
 
 	huma.Post(hapi, "/api/v1/admin/users/{userId}/temporary-password", func(ctx context.Context, in *adminUserInput) (*temporaryPasswordOutput, error) {
 		p, target, err := adminAction(ctx, deps, in.UserID)
@@ -208,18 +208,37 @@ func registerAdminUserRoutes(hapi huma.API, deps Deps) {
 
 	// The link goes to the account's own address and nowhere else: not in
 	// the response, the log or the audit entry. Without outbound mail there
-	// is no link (409 mail_not_configured).
-	huma.Post(hapi, "/api/v1/admin/users/{userId}/password-reset-link", func(ctx context.Context, in *adminUserInput) (*noContentOutput, error) {
+	// is no link (409 mail_not_configured); otherwise the answer is how the
+	// mail went (notice), and so is the audit summary — a deactivated
+	// account gets no link at all (skipped).
+	huma.Post(hapi, "/api/v1/admin/users/{userId}/password-reset-link", func(ctx context.Context, in *adminUserInput) (*noticeOutput, error) {
 		p, target, err := adminAction(ctx, deps, in.UserID)
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Accounts.SendResetLink(ctx, p.InstanceAdmin, p.UserID, target); err != nil {
+		notice, err := deps.Accounts.SendResetLink(ctx, p.InstanceAdmin, p.UserID, target)
+		if err != nil {
 			return nil, mapAdminAccountsErr(ctx, err)
 		}
-		auditAdminAction(ctx, p.UserID, target, "sent a password reset link")
-		return &noContentOutput{}, nil
+		auditAdminAction(ctx, p.UserID, target, resetLinkSummary(notice))
+		out := &noticeOutput{}
+		out.Body.Notice = string(notice)
+		return out, nil
 	}, withAudit("sendPasswordResetLink", "user"))
+}
+
+// resetLinkSummary is the audit summary of a reset link request: what
+// actually happened, so the trail never claims a link reached someone it
+// did not.
+func resetLinkSummary(n accounts.Notice) string {
+	switch n {
+	case accounts.NoticeSent:
+		return "sent a password reset link"
+	case accounts.NoticeSkipped:
+		return "requested a password reset link; none was issued, the account is deactivated"
+	default:
+		return "issued a password reset link; the mail was not sent (" + string(n) + ")"
+	}
 }
 
 // adminAction is the gate of every account action: an instance admin's

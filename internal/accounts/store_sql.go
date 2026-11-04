@@ -220,14 +220,26 @@ func (s *SQLStore) InsertResetToken(ctx context.Context, t ResetToken) error {
 	return nil
 }
 
-// LockResetToken implements Store.
-func (s *SQLStore) LockResetToken(ctx context.Context, hash []byte, now time.Time) (uuid.UUID, error) {
-	id, err := s.q.LockResetToken(ctx, gen.LockResetTokenParams{TokenHash: hash, Now: now})
+// ResetTokenOwner implements Store.
+func (s *SQLStore) ResetTokenOwner(ctx context.Context, hash []byte) (uuid.UUID, error) {
+	id, err := s.q.ResetTokenOwner(ctx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return uuid.Nil, ErrNotFound
 	}
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("lock reset token: %w", err)
+		return uuid.Nil, fmt.Errorf("reset token owner: %w", err)
 	}
 	return id, nil
+}
+
+// LockResetToken implements Store.
+func (s *SQLStore) LockResetToken(ctx context.Context, hash []byte, userID uuid.UUID, now time.Time) error {
+	_, err := s.q.LockResetToken(ctx, gen.LockResetTokenParams{TokenHash: hash, UserID: userID, Now: now})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("lock reset token: %w", err)
+	}
+	return nil
 }

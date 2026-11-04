@@ -160,7 +160,9 @@ func TestReactivate(t *testing.T) {
 	// Deactivation disables the account and revokes its sessions in two
 	// steps, not one transaction, so reactivating ends any session that
 	// slipped through, together with lifting the deactivation.
-	if strings.Join(store.actions, ", ") != "reactivate, revoke sessions" || store.writesOutside != 0 || len(mailer.sent) != 0 {
+	// For the same reason a reset link issued before the deactivation is
+	// voided.
+	if strings.Join(store.actions, ", ") != "reactivate, revoke sessions, void reset tokens" || store.writesOutside != 0 || len(mailer.sent) != 0 {
 		t.Fatalf("writes %v (%d outside), mails %d", store.actions, store.writesOutside, len(mailer.sent))
 	}
 }

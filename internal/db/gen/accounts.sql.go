@@ -319,26 +319,27 @@ func (q *Queries) LockAccount(ctx context.Context, id uuid.UUID) (LockAccountRow
 }
 
 const lockResetToken = `-- name: LockResetToken :one
-SELECT t.user_id FROM password_reset_tokens t JOIN users u ON u.id = t.user_id
-WHERE t.token_hash = $1 AND t.used_at IS NULL
-  AND t.expires_at > $2::timestamptz AND u.disabled_at IS NULL
-FOR UPDATE OF t, u
+SELECT id FROM password_reset_tokens
+WHERE token_hash = $1 AND user_id = $2
+  AND used_at IS NULL AND expires_at > $3::timestamptz
+FOR UPDATE
 `
 
 type LockResetTokenParams struct {
 	TokenHash []byte    `json:"token_hash"`
+	UserID    uuid.UUID `json:"user_id"`
 	Now       time.Time `json:"now"`
 }
 
-// The account a reset token belongs to, while the token is unused and
-// unexpired and the account is not deactivated. Both rows stay locked for
-// the rest of the transaction, so two resets with the same token happen
-// one after the other and the second finds it used.
+// The token row, locked for the rest of the transaction, while it belongs
+// to user_id and is unused and unexpired. The caller holds the account's
+// row lock already. Two resets with the same token serialize here, and the
+// second, re-checking used_at on the row the first committed, finds none.
 func (q *Queries) LockResetToken(ctx context.Context, arg LockResetTokenParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, lockResetToken, arg.TokenHash, arg.Now)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
+	row := q.db.QueryRow(ctx, lockResetToken, arg.TokenHash, arg.UserID, arg.Now)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const lockUserPassword = `-- name: LockUserPassword :one
@@ -376,6 +377,20 @@ func (q *Queries) ReactivateUser(ctx context.Context, id uuid.UUID) (int64, erro
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const resetTokenOwner = `-- name: ResetTokenOwner :one
+SELECT user_id FROM password_reset_tokens WHERE token_hash = $1
+`
+
+// The account a reset token belongs to, used or not, unlocked: a reset
+// locks the account first and the token second (LockResetToken), the order
+// every reset path takes, so it reads the owner before taking any lock.
+func (q *Queries) ResetTokenOwner(ctx context.Context, tokenHash []byte) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, resetTokenOwner, tokenHash)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const revokeUserSessionsExcept = `-- name: RevokeUserSessionsExcept :exec

@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strings"
@@ -95,8 +96,10 @@ func TestForgotPasswordConstantShape(t *testing.T) {
 			t.Fatalf("%s: body %q differs from %q", email, body, first)
 		}
 	}
+	// Drain the background work of all four requests, so a late mail or
+	// row would be counted.
+	s.Deps.Accounts.Wait()
 	waitForResetMail(t, s, "forgot-existing@example.test")
-	time.Sleep(100 * time.Millisecond)
 	if sent := s.Mail.Sent(); len(sent) != 1 {
 		t.Fatalf("mails %+v, want only the existing account's", sent)
 	}
@@ -225,13 +228,18 @@ func TestAdminSendResetLink(t *testing.T) {
 	target := s.SeedUser("link-target@example.test", "correct horse battery")
 
 	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "password-reset-link"), nil)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status %d (%s), want 204", resp.StatusCode, mustReadBody(t, resp))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d (%s), want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var body noticeBody
+	decodeInto(t, resp, &body)
+	if body.Notice != "sent" {
+		t.Fatalf("notice %q, want sent", body.Notice)
 	}
 	token := waitForResetMail(t, s, "link-target@example.test")
 	n, match, trail := auditEvents(t, s, "POST sendPasswordResetLink", admin, target)
-	if n != 1 || !match {
-		t.Fatalf("audit: %d sendPasswordResetLink events (match %v), want 1", n, match)
+	if n != 1 || !match || !strings.Contains(trail, "sent a password reset link") {
+		t.Fatalf("audit: %d sendPasswordResetLink events (match %v, trail %q), want 1 saying it was sent", n, match, trail)
 	}
 	if strings.Contains(trail, token) {
 		t.Fatal("the audit trail carries the reset token")
@@ -266,6 +274,57 @@ func TestAdminSendResetLink(t *testing.T) {
 			t.Errorf("stale factor: status %d detail %q, want 403 step_up_required", resp.StatusCode, d)
 		}
 	})
+}
+
+// TestAdminSendResetLinkOutcomes: the answer and the audit summary say what
+// happened — no link for a deactivated account, a link whose mail failed.
+func TestAdminSendResetLinkOutcomes(t *testing.T) {
+	s := apitest.New(t)
+	logs := captureLog(t)
+	admin, adminClient := adminWithFactor(t, s, "outcome-admin@example.test")
+	deactivated := s.SeedUser("outcome-off@example.test", "correct horse battery")
+	if _, err := s.DB.Pool().Exec(t.Context(), `UPDATE users SET disabled_at = now() WHERE id = $1`, deactivated); err != nil {
+		t.Fatal(err)
+	}
+	failing := s.SeedUser("outcome-fail@example.test", "correct horse battery")
+
+	send := func(target uuid.UUID) string {
+		t.Helper()
+		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "password-reset-link"), nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status %d (%s), want 200", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var body noticeBody
+		decodeInto(t, resp, &body)
+		return body.Notice
+	}
+
+	if notice := send(deactivated); notice != "skipped" {
+		t.Fatalf("deactivated: notice %q, want skipped", notice)
+	}
+	_, _, trail := auditEvents(t, s, "POST sendPasswordResetLink", admin, deactivated)
+	if strings.Contains(trail, "sent a password reset link") || !strings.Contains(trail, "deactivated") {
+		t.Fatalf("deactivated: audit trail %q claims a link or misses why", trail)
+	}
+	var rows int
+	if err := s.DB.Pool().QueryRow(t.Context(), `SELECT count(*) FROM password_reset_tokens WHERE user_id = $1`, deactivated).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("%d tokens for a deactivated account, want 0", rows)
+	}
+
+	s.Mail.FailWith(errors.New("smtp down"))
+	if notice := send(failing); notice != "failed" {
+		t.Fatalf("failed send: notice %q, want failed", notice)
+	}
+	_, _, trail = auditEvents(t, s, "POST sendPasswordResetLink", admin, failing)
+	if strings.Contains(trail, "sent a password reset link") || !strings.Contains(trail, "failed") {
+		t.Fatalf("failed send: audit trail %q", trail)
+	}
+	if !strings.Contains(logs.String(), "smtp down") || strings.Contains(logs.String(), "token=") {
+		t.Fatal("the failure was not logged, or the log carries the link")
+	}
 }
 
 func TestAdminSendResetLinkWithoutMail(t *testing.T) {
