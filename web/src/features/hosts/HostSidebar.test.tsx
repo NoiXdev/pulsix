@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { fetchMock } from '../../test/fetchMock.ts';
 import { QueryClient } from '@tanstack/react-query';
 import { alertBody, HOST, hostRoutes, orgBody, renderAt, type HostFixture } from '../../test/hostDetail.tsx';
 import type { Host } from '../../api/types.ts';
@@ -53,6 +54,25 @@ describe('HostSidebar', () => {
     expect(await facts().findByText('bastion-fra')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Managed' })).toBeChecked();
     expect(screen.getByRole('switch', { name: 'Monitored' })).toBeChecked();
+  });
+
+  it('shows no zone until the zones are loaded, not a piece of the zone id', async () => {
+    const zoneId = 'f00dcafe-0000-4000-8000-000000000001';
+    mockApi(hostRoutes({ host: { zone_id: zoneId } }));
+    // The zones request never answers: the sidebar must not fill the gap
+    // with the id it has.
+    const answered = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (new URL(url, 'http://localhost').pathname === '/api/v1/orgs/acme/zones') return new Promise<Response>(() => {});
+      return answered(input, init);
+    });
+    renderSidebar({ zone_id: zoneId });
+
+    await screen.findByRole('heading', { level: 1, name: 'web-04.fra' });
+    const zone = facts().getByText('Zone').nextElementSibling!;
+    expect(zone).toHaveTextContent('—');
+    expect(screen.queryByText(/f00dcafe/)).not.toBeInTheDocument();
   });
 
   it('reads a direct route, a missing agent and an unknown system plainly', async () => {

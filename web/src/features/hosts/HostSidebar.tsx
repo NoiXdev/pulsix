@@ -154,7 +154,9 @@ function HostFacts({ org, host }: { org: string; host: Host }) {
     <SidebarFacts
       items={[
         { label: t.hosts.detail.fact.address, value: <span className="font-mono">{host.address || NONE}</span> },
-        { label: t.hosts.detail.fact.zone, value: <span className="font-mono">{zone?.slug ?? host.zone_id.slice(0, 8)}</span> },
+        // Nothing until the zones are known: a piece of the id would read as
+        // a zone name. Only a zone that is truly missing falls back to it.
+        { label: t.hosts.detail.fact.zone, value: <span className="font-mono">{zone?.slug ?? (zones.data ? host.zone_id.slice(0, 8) : NONE)}</span> },
         { label: t.hosts.detail.fact.system, value: systemLabel(host.facts) ?? NONE },
         { label: t.hosts.detail.fact.agent, value: agentValue },
         { label: t.hosts.detail.fact.jumpHost, value: <span className="font-mono">{jump}</span> },
