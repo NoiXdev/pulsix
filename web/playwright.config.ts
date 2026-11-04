@@ -91,6 +91,11 @@ export default defineConfig({
     // has nothing to point at without a template.
     { name: 'workers', testMatch: /workers\.spec\.ts/, dependencies: ['notifications'] },
     { name: 'triggers', testMatch: /triggers\.spec\.ts/, dependencies: ['workers'] },
-    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['triggers'] },
+    // Account administration (backlog 7.74): the administrator sets a
+    // temporary password for members.spec's operator, who must then change
+    // it. It changes that operator's password, so it runs after every spec
+    // that signs the operator in with the original one.
+    { name: 'accounts', testMatch: /accounts\.spec\.ts/, dependencies: ['triggers'] },
+    { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['accounts'] },
   ],
 });

@@ -13,11 +13,11 @@ test('a second organization\'s user cannot see the first organization\'s hosts, 
   page,
   browser,
 }) => {
-  // The administrator (owner of ORG "acme") creates a second, unrelated
-  // organization through the API directly — there is no "create another
-  // organization" screen in the SPA (see task-15a-report.md's own note:
-  // the wizard creates the *first* org, once), and the brief explicitly
-  // allows a direct API call for this spec.
+  // The administrator (owner of ORG "acme", and an instance administrator —
+  // the only kind of account that may create an organization) creates a
+  // second, unrelated organization through the API directly. The org
+  // switcher's "New organization" does the same; this spec is about
+  // isolation, not about that dialog.
   const createOrg = await page.request.post('/api/v1/orgs', { data: SECOND_ORG });
   expect(createOrg.ok()).toBeTruthy();
 

@@ -71,6 +71,15 @@ export const ADMIN = {
   password: 'Sup3rSecret-Pw!',
 };
 export const ORG = { slug: 'acme', name: 'Acme Hosting' };
+/** The operator members.spec invites into ORG. accounts.spec later sets a
+ * temporary password for this account, and the person replaces it with
+ * `changedPassword`. */
+export const OPERATOR = {
+  email: 'ops@example.test',
+  name: 'Otto Operator',
+  password: 'operator-password',
+  changedPassword: 'operator-own-password',
+};
 
 // SMTP delivered straight to the mailpit container started above — no
 // STARTTLS, no auth, matching what internal/mail.deliver does when

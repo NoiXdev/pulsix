@@ -1,14 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { ADMIN_STORAGE_STATE, ORG, OPERATOR_TOTP_STATE_PATH, OPERATOR_TOTP_STEP_STATE_PATH, SMTP } from './env.ts';
+import { ADMIN_STORAGE_STATE, OPERATOR, ORG, OPERATOR_TOTP_STATE_PATH, OPERATOR_TOTP_STEP_STATE_PATH, SMTP } from './env.ts';
 import { extractInviteLink, waitForMessageTo } from './mailpit.ts';
 import { enrolTotp } from './enrol.ts';
 import { nextTotpCode } from './otp.ts';
 import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
-
-const OPERATOR = { email: 'ops@example.test', name: 'Otto Operator', password: 'operator-password' };
 
 test('invite an operator by e-mail, accept the invite, and confirm the operator is refused the members page', async ({
   page,
@@ -154,7 +152,7 @@ test("re-inviting an address that already has an account adds the membership but
 // configured, saves it back, and a test e-mail really arrives.
 test('the Outgoing mail settings show the configured server and send a test e-mail', async ({ page }) => {
   await page.goto(`/o/${ORG.slug}/settings/members`);
-  await page.getByRole('tab', { name: 'Outgoing mail' }).click();
+  await page.getByRole('navigation', { name: 'Settings' }).getByRole('link', { name: 'Outgoing mail' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/mail$`));
   await expect(page.getByRole('heading', { name: 'Outgoing mail' })).toBeVisible();
   await expect(page.getByText('configured', { exact: true })).toBeVisible();
