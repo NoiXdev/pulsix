@@ -44,17 +44,29 @@ describe('stateTiles', () => {
     ]);
   });
 
-  it('picks the disk item with the highest used_pct', () => {
-    const tiles = stateTiles(
-      checks(
-        check('disk', 'disk', [
-          reading('disk.used_pct', 41, { item: '/' }),
-          reading('disk.free_bytes', 99, { item: '/srv' }),
-          reading('disk.used_pct', 87, { item: '/var', state: 'warn' }),
-        ]),
-      ),
-    );
-    expect(tiles).toEqual([{ kind: 'disk', check: 'disk', item: '/var', metric: 'disk.used_pct', value: 87, tone: 'warn' }]);
+  it.each([
+    {
+      name: 'picks the disk item with the highest used_pct',
+      values: [
+        reading('disk.used_pct', 41, { item: '/' }),
+        reading('disk.free_bytes', 99, { item: '/srv' }),
+        reading('disk.used_pct', 87, { item: '/var', state: 'warn' }),
+      ],
+      want: { item: '/var', value: 87, tone: 'warn' },
+    },
+    {
+      name: 'prefers a current reading over a fuller stale one',
+      values: [reading('disk.used_pct', 95, { item: '/old', stale: true }), reading('disk.used_pct', 41, { item: '/' })],
+      want: { item: '/', value: 41, tone: 'ok' },
+    },
+    {
+      name: 'falls back to the fullest stale reading when none is current',
+      values: [reading('disk.used_pct', 60, { item: '/', stale: true }), reading('disk.used_pct', 95, { item: '/var', stale: true })],
+      want: { item: '/var', value: 95, tone: 'unknown' },
+    },
+  ])('$name', ({ values, want }) => {
+    const tiles = stateTiles(checks(check('disk', 'disk', values)));
+    expect(tiles).toEqual([{ kind: 'disk', check: 'disk', metric: 'disk.used_pct', ...want }]);
   });
 
   it('leaves out load when no check reports it', () => {

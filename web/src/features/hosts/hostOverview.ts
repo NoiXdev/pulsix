@@ -90,13 +90,17 @@ function tile(kind: TileKind, c: Candidate | undefined): StateTile[] {
  * stateTiles picks the State section's tiles from the host's checks, by
  * plugin rather than by check key (keys are the operator's to choose): CPU
  * (`cpu.used_pct`), RAM (`mem.used_pct`), the fullest disk (the mount
- * whose current `disk.used_pct` is highest) and load (`cpu.load1`, only
- * when a check reports it). A tile without a current numeric reading is
- * left out.
+ * whose `disk.used_pct` is highest, among the non-stale readings while
+ * there is one — a mount that stopped reporting must not hide a current
+ * one — and among the stale ones only when none is current) and load
+ * (`cpu.load1`, only when a check reports it). A tile without a numeric
+ * reading is left out.
  */
 export function stateTiles(checks: readonly HostCheck[]): StateTile[] {
   const wholeHost = (plugin: HostCheck['plugin'], metric: string) => readings(checks, plugin, metric).find((c) => c.value.item === '');
-  const fullestDisk = readings(checks, 'disk', 'disk.used_pct').reduce<Candidate | undefined>(
+  const disks = readings(checks, 'disk', 'disk.used_pct');
+  const current = disks.filter((c) => !c.value.stale);
+  const fullestDisk = (current.length > 0 ? current : disks).reduce<Candidate | undefined>(
     (best, c) => (best === undefined || c.value.value > best.value.value ? c : best),
     undefined,
   );
