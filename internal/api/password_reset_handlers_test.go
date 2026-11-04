@@ -117,6 +117,9 @@ func TestForgotPasswordConstantShape(t *testing.T) {
 // address keeps its own budget.
 func TestForgotPasswordRateLimit(t *testing.T) {
 	s := apitest.New(t, apitest.WithTrustedProxies(loopbackTrusted()))
+	// The accepted requests start background work; it must be done before
+	// the test's database goes away.
+	t.Cleanup(s.Deps.Accounts.Wait)
 	for i := range 10 {
 		resp, err := postFrom(s.HTTP.URL+forgotPath, addressA, map[string]string{"email": "nobody@example.test"})
 		if err != nil {

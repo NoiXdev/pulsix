@@ -111,6 +111,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/orgs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin orgs */
+        get: operations["listAdminOrgs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/repos/definitions": {
         parameters: {
             query?: never;
@@ -2918,6 +2935,25 @@ export interface components {
             /** @enum {string} */
             role: "owner" | "admin" | "operator" | "viewer";
             slug: string;
+        };
+        AdminOrgDTO: {
+            actor_is_member: boolean;
+            /** Format: date-time */
+            created_at: string;
+            id: string;
+            /** Format: int64 */
+            member_count: number;
+            name: string;
+            slug: string;
+        };
+        AdminOrgListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AdminOrgListOutputBody.json
+             */
+            readonly $schema?: string;
+            orgs: components["schemas"]["AdminOrgDTO"][] | null;
         };
         AdminUserDTO: {
             display_name: string;
@@ -7120,6 +7156,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    listAdminOrgs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminOrgListOutputBody"];
                 };
             };
             /** @description Error */

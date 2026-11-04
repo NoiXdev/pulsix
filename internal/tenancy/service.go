@@ -92,6 +92,17 @@ type Org struct {
 	CreatedAt time.Time
 }
 
+// OrgOverview is one organization as the instance admin's list shows it:
+// whatever its members, with how many it has and whether the admin is one.
+type OrgOverview struct {
+	ID            uuid.UUID
+	Slug          string
+	Name          string
+	MemberCount   int
+	CreatedAt     time.Time
+	ActorIsMember bool
+}
+
 // OrgMembership is one of a user's org memberships, joined with the org's
 // own slug and name so ListOrgsForUser needs no second round trip.
 type OrgMembership struct {
@@ -151,6 +162,9 @@ type Store interface {
 	GetOrgByID(ctx context.Context, id uuid.UUID) (Org, error)
 	UpdateOrg(ctx context.Context, o Org) error
 	ListOrgsForUser(ctx context.Context, userID uuid.UUID) ([]OrgMembership, error)
+	// ListAllOrgs lists every organization ordered by name, with whether
+	// actor is a member. It runs outside any organization scope.
+	ListAllOrgs(ctx context.Context, actor uuid.UUID) ([]OrgOverview, error)
 	GetMembership(ctx context.Context, orgID, userID uuid.UUID) (Role, error)
 	AddMembership(ctx context.Context, orgID, userID uuid.UUID, role Role) error
 	UpdateMembershipRole(ctx context.Context, orgID, userID uuid.UUID, role Role) error
@@ -276,6 +290,16 @@ func (s *Service) CreateOrg(ctx context.Context, ownerID uuid.UUID, slug, name s
 // ListOrgsForUser lists every organization userID belongs to.
 func (s *Service) ListOrgsForUser(ctx context.Context, userID uuid.UUID) ([]OrgMembership, error) {
 	return s.store.ListOrgsForUser(ctx, userID)
+}
+
+// ListAllOrgs lists every organization on the instance, ordered by name, for
+// an instance admin (ErrForbidden for anyone else). actor is the admin, so
+// each row says whether they are a member and can open the organization.
+func (s *Service) ListAllOrgs(ctx context.Context, actorIsAdmin bool, actor uuid.UUID) ([]OrgOverview, error) {
+	if !actorIsAdmin {
+		return nil, ErrForbidden
+	}
+	return s.store.ListAllOrgs(ctx, actor)
 }
 
 // GetOrgBySlug looks up an organization by its slug.

@@ -90,6 +90,21 @@ func (s *SQLStore) ListOrgsForUser(ctx context.Context, userID uuid.UUID) ([]Org
 	return out, nil
 }
 
+// ListAllOrgs runs outside WithOrgScope on purpose: org_memberships lets a
+// query with no org scope read every row (00002_rls.sql), which is what
+// counting the members of organizations the caller is not in needs.
+func (s *SQLStore) ListAllOrgs(ctx context.Context, actor uuid.UUID) ([]OrgOverview, error) {
+	rows, err := s.q.ListOrganizationOverviews(ctx, actor)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]OrgOverview, len(rows))
+	for i, r := range rows {
+		out[i] = OrgOverview{ID: r.ID, Slug: r.Slug, Name: r.Name, MemberCount: int(r.MemberCount), CreatedAt: r.CreatedAt, ActorIsMember: r.ActorIsMember}
+	}
+	return out, nil
+}
+
 func (s *SQLStore) GetMembership(ctx context.Context, orgID, userID uuid.UUID) (Role, error) {
 	row, err := s.q.GetMembership(ctx, gen.GetMembershipParams{OrgID: orgID, UserID: userID})
 	if err != nil {

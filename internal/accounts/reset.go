@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -27,6 +28,15 @@ const ResetTokenTTL = 60 * time.Minute
 const (
 	resetRequestLimit  = 3
 	resetRequestWindow = time.Hour
+)
+
+// The bounds of the background work a forgot-password request starts. The
+// route is unauthenticated, so what it can keep busy is capped: at most
+// maxResetJobs requests are in flight, and one that is still running after
+// resetJobTimeout (a hung database or mail server) is cancelled.
+const (
+	maxResetJobs    = 16
+	resetJobTimeout = 60 * time.Second
 )
 
 // resetTokenBytes is the randomness in one reset token: 256 bits.
@@ -53,13 +63,31 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	if !configured {
 		return nil
 	}
+	select {
+	case s.resetSlots <- struct{}{}:
+	default:
+		// The caller still hears 202: a drop must not be observable. The
+		// log carries no address.
+		slog.WarnContext(ctx, "password reset request dropped: too many in flight", "limit", maxResetJobs)
+		return nil
+	}
 	s.background.Add(1)
 	go func() {
 		defer s.background.Done()
-		if err := s.requestReset(context.WithoutCancel(ctx), email); err != nil {
+		defer func() { <-s.resetSlots }()
+		jobCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), resetJobTimeout)
+		defer cancel()
+		defer func() {
+			if r := recover(); r != nil {
+				// The kind of the panic, not its value: a value built from
+				// the request could carry the address.
+				slog.ErrorContext(jobCtx, "password reset request panicked", "panic", fmt.Sprintf("%T", r), "stack", string(debug.Stack()))
+			}
+		}()
+		if err := s.requestReset(jobCtx, email); err != nil {
 			// Not the address: the log must not tell which ones were asked
 			// about any more than the answer does.
-			slog.ErrorContext(ctx, "password reset request failed", "error", err)
+			slog.ErrorContext(jobCtx, "password reset request failed", "error", err)
 		}
 	}()
 	return nil

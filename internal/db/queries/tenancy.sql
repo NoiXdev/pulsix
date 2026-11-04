@@ -34,3 +34,12 @@ SELECT * FROM org_memberships WHERE org_id = $1 AND user_id = $2;
 
 -- name: ListMembershipsForUser :many
 SELECT m.*, o.slug, o.name FROM org_memberships m JOIN organizations o ON o.id = m.org_id WHERE m.user_id = $1;
+
+-- name: ListOrganizationOverviews :many
+-- Every organization with its member count and whether @actor_id belongs to
+-- it. Run outside an org scope: org_memberships is readable across orgs then.
+SELECT o.id, o.slug, o.name, o.created_at,
+       (SELECT count(*) FROM org_memberships m WHERE m.org_id = o.id)::int AS member_count,
+       EXISTS (SELECT 1 FROM org_memberships m WHERE m.org_id = o.id AND m.user_id = @actor_id::uuid) AS actor_is_member
+FROM organizations o
+ORDER BY o.name, o.id;

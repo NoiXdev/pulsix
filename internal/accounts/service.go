@@ -173,11 +173,16 @@ type Service struct {
 	// background tracks the reset requests RequestReset hands to the
 	// background (Wait).
 	background sync.WaitGroup
+	// resetSlots bounds the reset requests in flight (maxResetJobs).
+	resetSlots chan struct{}
 }
 
 // NewService wires the dependencies. publicURL is the instance's public
 // address, for links in mails; now and rnd are the clock and the source of
 // randomness for expiries and generated secrets.
 func NewService(store Store, mailer Mailer, publicURL string, now func() time.Time, rnd io.Reader) *Service {
-	return &Service{store: store, mailer: mailer, publicURL: publicURL, now: now, rnd: rnd}
+	return &Service{
+		store: store, mailer: mailer, publicURL: publicURL, now: now, rnd: rnd,
+		resetSlots: make(chan struct{}, maxResetJobs),
+	}
 }

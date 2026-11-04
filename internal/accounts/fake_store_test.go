@@ -3,6 +3,7 @@ package accounts_test
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +42,12 @@ type fakeStore struct {
 	// emailErr makes it fail.
 	release  chan struct{}
 	emailErr error
+	// emailLookups counts the AccountByEmail calls that started;
+	// emailPanic makes it panic; emailDeadline records whether the
+	// context it got carried a deadline.
+	emailLookups  atomic.Int32
+	emailPanic    bool
+	emailDeadline atomic.Bool
 	// beforeTokenLock, when set, runs between ResetTokenOwner and
 	// LockResetToken: what a concurrent request does in between.
 	beforeTokenLock func()
@@ -167,7 +174,14 @@ func (f *fakeStore) Reactivate(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (f *fakeStore) AccountByEmail(_ context.Context, email string) (uuid.UUID, error) {
+func (f *fakeStore) AccountByEmail(ctx context.Context, email string) (uuid.UUID, error) {
+	f.emailLookups.Add(1)
+	if _, ok := ctx.Deadline(); ok {
+		f.emailDeadline.Store(true)
+	}
+	if f.emailPanic {
+		panic("store exploded for " + email)
+	}
 	if f.release != nil {
 		<-f.release
 	}

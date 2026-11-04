@@ -832,3 +832,50 @@ func TestSQLStorePendingInvitesListAndRevoke(t *testing.T) {
 		t.Fatalf("a revoked invitation was taken: %v", err)
 	}
 }
+
+// TestSQLStoreListAllOrgs: every organization comes back, ordered by name,
+// with its member count across the memberships RLS would hide from an org
+// scope, and whether the actor belongs to it.
+func TestSQLStoreListAllOrgs(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(d)
+
+	actor := seedUser(t, q, "all-orgs-actor@example.test")
+	other := seedUser(t, q, "all-orgs-other@example.test")
+	orgB := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "b-org", Name: "Bravo"}
+	orgA := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "a-org", Name: "Alpha"}
+	empty := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "c-org", Name: "Charlie"}
+	for _, o := range []tenancy.Org{orgB, orgA, empty} {
+		if err := store.CreateOrg(ctx, o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, m := range []struct {
+		org  uuid.UUID
+		user uuid.UUID
+	}{{orgA.ID, actor}, {orgA.ID, other}, {orgB.ID, other}} {
+		if err := store.AddMembership(ctx, m.org, m.user, tenancy.RoleViewer); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := store.ListAllOrgs(ctx, actor)
+	if err != nil {
+		t.Fatalf("ListAllOrgs: %v", err)
+	}
+	want := []struct {
+		slug   string
+		count  int
+		member bool
+	}{{"a-org", 2, true}, {"b-org", 1, false}, {"c-org", 0, false}}
+	if len(got) != len(want) {
+		t.Fatalf("ListAllOrgs = %+v, want %d orgs", got, len(want))
+	}
+	for i, w := range want {
+		if got[i].Slug != w.slug || got[i].MemberCount != w.count || got[i].ActorIsMember != w.member || got[i].CreatedAt.IsZero() {
+			t.Errorf("org %d = %+v, want slug %s, %d members, actor member %v", i, got[i], w.slug, w.count, w.member)
+		}
+	}
+}

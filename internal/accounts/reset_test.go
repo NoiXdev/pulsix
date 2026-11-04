@@ -194,6 +194,76 @@ func TestRequestResetReturnsBeforeTheStore(t *testing.T) {
 	}
 }
 
+// TestRequestResetCapsWorkInFlight: with the store blocked, only
+// MaxResetJobs requests start background work; the rest are dropped with a
+// warning that names no address, and every call still answers nil.
+func TestRequestResetCapsWorkInFlight(t *testing.T) {
+	f := newResetFixture()
+	logs := captureLog(t)
+	release := make(chan struct{})
+	f.store.release = release
+	for range accounts.MaxResetJobs + 1 {
+		if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+			t.Fatalf("err %v, want nil", err)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for f.store.emailLookups.Load() < accounts.MaxResetJobs && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	// The released jobs end at the lookup: the fake is not safe for the
+	// concurrent transactions the rest of the flow would open.
+	f.store.emailErr = errors.New("stop here")
+	close(release)
+	f.svc.Wait()
+	f.store.emailErr = nil
+	if got := f.store.emailLookups.Load(); got != accounts.MaxResetJobs {
+		t.Fatalf("%d jobs started, want the cap %d", got, accounts.MaxResetJobs)
+	}
+	if !strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "person@example.test") {
+		t.Fatalf("log %s; want a warning without the address", logs)
+	}
+	// The slots are free again once the work is done.
+	f.store.release = nil
+	before := f.store.emailLookups.Load()
+	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Wait()
+	if f.store.emailLookups.Load() != before+1 {
+		t.Fatal("a request after the work drained was dropped")
+	}
+}
+
+// TestRequestResetWorkHasADeadline: the detached context carries a
+// deadline, so a hung store cannot pin the goroutine forever.
+func TestRequestResetWorkHasADeadline(t *testing.T) {
+	f := newResetFixture()
+	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Wait()
+	if !f.store.emailDeadline.Load() {
+		t.Fatalf("the background context has no deadline (want %v)", accounts.ResetJobTimeout)
+	}
+}
+
+// TestRequestResetRecoversFromPanic: a store that panics does not take the
+// process down, Wait still returns, and the log carries the panic's kind
+// but not the address.
+func TestRequestResetRecoversFromPanic(t *testing.T) {
+	f := newResetFixture()
+	logs := captureLog(t)
+	f.store.emailPanic = true
+	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+		t.Fatalf("err %v, want nil", err)
+	}
+	f.svc.Wait()
+	if !strings.Contains(logs.String(), "panicked") || strings.Contains(logs.String(), "person@example.test") {
+		t.Fatalf("log %s; want the panic without the address", logs)
+	}
+}
+
 // TestRequestResetStoreFailure: the background work reports a store
 // failure, and RequestReset itself still answers nil; the log names
 // neither the address nor a link.

@@ -615,8 +615,9 @@ func TestOrgCreationProjectsAnExistingSharedCheckDefinition(t *testing.T) {
 	}
 	defID := created.Definition.ID
 
-	owner := s.SeedUser("check-proj-on-create-owner@example.test", "correct horse battery")
-	ownerClient := s.LoginAs(owner)
+	// Only the instance admin can create an organization, and becomes its
+	// owner.
+	ownerClient := adminClient
 	resp = postJSON(t, ownerClient, s.HTTP.URL+"/api/v1/orgs", map[string]any{
 		"slug": "check-proj-on-create-org", "name": "Check Proj On Create Org",
 	})

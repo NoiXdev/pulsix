@@ -60,6 +60,7 @@ func decodeHost(t *testing.T, resp *http.Response) hostDTO {
 func TestOrgCreationProvisionsDefaultZone(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("hostzone-owner@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, owner)
 	c := s.LoginAs(owner)
 
 	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs", map[string]any{"slug": "hostzone-org", "name": "Host Zone Org"})
@@ -97,6 +98,7 @@ func TestOrgCreationProvisionsDefaultZone(t *testing.T) {
 func TestOrgCreationSeedsCheckDefinitions(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("checkseed-owner@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, owner)
 	c := s.LoginAs(owner)
 
 	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/orgs", map[string]any{"slug": "checkseed-org", "name": "Check Seed Org"})

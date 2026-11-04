@@ -214,6 +214,52 @@ func (q *Queries) ListMembershipsForUser(ctx context.Context, userID uuid.UUID) 
 	return items, nil
 }
 
+const listOrganizationOverviews = `-- name: ListOrganizationOverviews :many
+SELECT o.id, o.slug, o.name, o.created_at,
+       (SELECT count(*) FROM org_memberships m WHERE m.org_id = o.id)::int AS member_count,
+       EXISTS (SELECT 1 FROM org_memberships m WHERE m.org_id = o.id AND m.user_id = $1::uuid) AS actor_is_member
+FROM organizations o
+ORDER BY o.name, o.id
+`
+
+type ListOrganizationOverviewsRow struct {
+	ID            uuid.UUID `json:"id"`
+	Slug          string    `json:"slug"`
+	Name          string    `json:"name"`
+	CreatedAt     time.Time `json:"created_at"`
+	MemberCount   int32     `json:"member_count"`
+	ActorIsMember bool      `json:"actor_is_member"`
+}
+
+// Every organization with its member count and whether @actor_id belongs to
+// it. Run outside an org scope: org_memberships is readable across orgs then.
+func (q *Queries) ListOrganizationOverviews(ctx context.Context, actorID uuid.UUID) ([]ListOrganizationOverviewsRow, error) {
+	rows, err := q.db.Query(ctx, listOrganizationOverviews, actorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrganizationOverviewsRow
+	for rows.Next() {
+		var i ListOrganizationOverviewsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Name,
+			&i.CreatedAt,
+			&i.MemberCount,
+			&i.ActorIsMember,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setUserLocale = `-- name: SetUserLocale :execrows
 UPDATE users SET locale = $1 WHERE id = $2
 `

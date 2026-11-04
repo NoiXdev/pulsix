@@ -362,6 +362,7 @@ func TestAuthRateLimitKeysOnTheResolvedAddress(t *testing.T) {
 func TestAuthRateLimitLeavesOtherRoutesAlone(t *testing.T) {
 	s := apitest.New(t, apitest.WithAuthRateLimit(1), apitest.WithTrustedProxies(loopbackTrusted()))
 	uid := s.SeedUser("spill@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, uid)
 	resp, err := postFrom(s.HTTP.URL+"/api/v1/auth/login", addressA, map[string]string{"email": "spill@example.test", "password": "wrong"})
 	if err != nil {
 		t.Fatal(err)

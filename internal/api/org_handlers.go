@@ -60,7 +60,8 @@ type orgUpdateInput struct {
 
 // registerOrgRoutes wires the two organization routes that are not scoped
 // to an existing org and so never consult auth.TokenScopeFromContext:
-// creating one (any logged-in user; the caller becomes its owner) and
+// creating one (an instance admin only, backlog 7.74; the caller becomes
+// its owner) and
 // listing the caller's own. Both are registered directly on the root API,
 // deliberately outside the org-scoped *huma.Group api.go mounts
 // auth.BearerMiddleware on — a bearer token is meant to act within the one
@@ -69,7 +70,7 @@ type orgUpdateInput struct {
 // can reach them.
 func registerOrgRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/orgs", func(ctx context.Context, in *orgCreateInput) (*orgOutput, error) {
-		p, err := requireMFAComplete(ctx)
+		p, err := requireInstanceAdmin(ctx)
 		if err != nil {
 			return nil, err
 		}

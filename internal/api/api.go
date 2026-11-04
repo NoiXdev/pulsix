@@ -524,6 +524,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all
 	registerAdminRoutes(hapi, deps)       // POST /admin/users/{id}/deactivate — instance admin, session only
 	registerAdminUserRoutes(hapi, deps)   // /admin/users… — the Users and account pages, instance admin, session only
+	registerAdminOrgRoutes(hapi, deps)    // GET /admin/orgs — every organization, instance admin, session only
 	registerSetupRoutes(hapi, deps)       // GET /setup/status, POST /setup/complete — public
 	// POST /hooks/jobs/{id}, POST /hooks/repos/{id} — public, unauthenticated
 	// webhook receivers; the trigger's own secret is the credential (spec

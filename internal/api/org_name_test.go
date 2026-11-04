@@ -7,13 +7,14 @@ import (
 	"github.com/noixdev/pulsix/internal/api/apitest"
 )
 
-// TestOrgNamesWithLineBreaksAreRejected covers M4 over HTTP: any logged-in
-// user can create an organization, and its name goes into the Subject
+// TestOrgNamesWithLineBreaksAreRejected covers M4 over HTTP: an instance
+// admin can create an organization, and its name goes into the Subject
 // header of every invitation, so a CR or LF in it is refused on create and
 // on rename.
 func TestOrgNamesWithLineBreaksAreRejected(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("crlf-owner@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, owner)
 	s.SeedOrg("crlf-org", owner)
 	c := s.LoginAs(owner)
 

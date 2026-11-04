@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,25 @@ func (f *fakeStore) ListOrgsForUser(_ context.Context, userID uuid.UUID) ([]tena
 		org := f.orgs[key[0]]
 		out = append(out, tenancy.OrgMembership{OrgID: org.ID, Slug: org.Slug, Name: org.Name, Role: role, CreatedAt: org.CreatedAt})
 	}
+	return out, nil
+}
+
+func (f *fakeStore) ListAllOrgs(_ context.Context, actor uuid.UUID) ([]tenancy.OrgOverview, error) {
+	if err := f.take("ListAllOrgs"); err != nil {
+		return nil, err
+	}
+	var out []tenancy.OrgOverview
+	for _, org := range f.orgs {
+		o := tenancy.OrgOverview{ID: org.ID, Slug: org.Slug, Name: org.Name, CreatedAt: org.CreatedAt}
+		for key := range f.memberships {
+			if key[0] == org.ID {
+				o.MemberCount++
+				o.ActorIsMember = o.ActorIsMember || key[1] == actor
+			}
+		}
+		out = append(out, o)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
@@ -1657,5 +1677,26 @@ func TestPendingInvitesAndRevokeGoThroughTheStore(t *testing.T) {
 	store.failNext["ListPendingInvites"] = errors.New("store down")
 	if _, err := svc.PendingInvites(ctx, org); err == nil {
 		t.Fatal("a store failure was swallowed")
+	}
+}
+
+func TestListAllOrgsIsForInstanceAdminsOnly(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	if _, err := svc.CreateOrg(ctx, owner, "acme", "Acme"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := svc.ListAllOrgs(ctx, false, owner); !errors.Is(err, tenancy.ErrForbidden) {
+		t.Fatalf("non-admin: %v, want ErrForbidden", err)
+	}
+	orgs, err := svc.ListAllOrgs(ctx, true, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orgs) != 1 || orgs[0].Slug != "acme" || orgs[0].MemberCount != 1 || !orgs[0].ActorIsMember {
+		t.Fatalf("orgs = %+v, want acme with its owner", orgs)
 	}
 }
