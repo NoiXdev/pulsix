@@ -34,8 +34,12 @@ type TemporaryPassword struct {
 }
 
 // SetTemporaryPassword gives target a generated password that expires
-// after TemporaryPasswordTTL and must be changed at the next sign-in, and
-// ends every session of target, in one transaction. The person is told by
+// after TemporaryPasswordTTL and must be changed at the next sign-in, ends
+// every session of target and voids every unused reset link of target, in
+// one transaction. An administrator does this to lock out someone who may
+// have the account, maybe its mailbox too: a link issued before must not
+// let them choose a password instead (and the forgotten-password route
+// issues none while the change is pending, requestReset). The person is told by
 // mail (Notice) unless the account is deactivated; the password itself is
 // only in the result. The common checks (checkActor, withAccount) apply.
 func (s *Service) SetTemporaryPassword(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) (TemporaryPassword, Notice, error) {
@@ -60,6 +64,9 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actorIsAdmin bool, a
 		if err := s.store.RevokeAllSessions(ctx, target); err != nil {
 			return fmt.Errorf("revoke sessions: %w", err)
 		}
+		if err := s.store.VoidResetTokens(ctx, target, s.now()); err != nil {
+			return fmt.Errorf("void reset tokens: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
@@ -69,8 +76,11 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actorIsAdmin bool, a
 }
 
 // ResetSecondFactor removes target's TOTP secret, recovery codes and every
-// passkey and ends every session of target, in one transaction. At the
-// next sign-in the person enrols a new factor. The person is told by mail
+// passkey, ends every session of target and voids every unused reset link
+// of target, in one transaction: until a new factor is enrolled, whoever
+// sets the password can enrol one, so a link issued before the reset must
+// not be the way in. At the next sign-in the person enrols a new factor.
+// The person is told by mail
 // (Notice) unless the account is deactivated. The common checks
 // (checkActor, withAccount) apply.
 func (s *Service) ResetSecondFactor(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) (Notice, error) {
@@ -85,6 +95,9 @@ func (s *Service) ResetSecondFactor(ctx context.Context, actorIsAdmin bool, acto
 		}
 		if err := s.store.RevokeAllSessions(ctx, target); err != nil {
 			return fmt.Errorf("revoke sessions: %w", err)
+		}
+		if err := s.store.VoidResetTokens(ctx, target, s.now()); err != nil {
+			return fmt.Errorf("void reset tokens: %w", err)
 		}
 		return nil
 	})

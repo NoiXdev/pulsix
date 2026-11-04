@@ -62,8 +62,8 @@ func TestSetTemporaryPassword(t *testing.T) {
 	if ok, err := auth.VerifyPassword(store.tempCalls[0].hash, tmp.Password); err != nil || !ok {
 		t.Fatalf("the stored hash does not verify the temporary password: ok=%v err=%v", ok, err)
 	}
-	if strings.Join(store.actions, ", ") != "set temporary password, revoke sessions" || store.writesOutside != 0 {
-		t.Fatalf("writes %v (%d outside the transaction), want the password and the revoke inside it", store.actions, store.writesOutside)
+	if strings.Join(store.actions, ", ") != "set temporary password, revoke sessions, void reset tokens" || store.writesOutside != 0 {
+		t.Fatalf("writes %v (%d outside the transaction), want the password, the revoke and the voided links inside it", store.actions, store.writesOutside)
 	}
 	if notice != accounts.NoticeSent || len(mailer.sent) != 1 || mailer.sent[0].to != "target@example.test" {
 		t.Fatalf("notice %q, mails %+v, want one sent to the target", notice, mailer.sent)
@@ -130,11 +130,48 @@ func TestResetSecondFactor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(store.actions, ", ") != "delete second factors, revoke sessions" || store.writesOutside != 0 {
+	if strings.Join(store.actions, ", ") != "delete second factors, revoke sessions, void reset tokens" || store.writesOutside != 0 {
 		t.Fatalf("writes %v (%d outside the transaction)", store.actions, store.writesOutside)
 	}
 	if notice != accounts.NoticeSent || len(mailer.sent) != 1 {
 		t.Fatalf("notice %q, mails %+v", notice, mailer.sent)
+	}
+}
+
+// TestLockOutVoidsResetLinks: an administrator who sets a temporary
+// password or resets the second factor suspects someone else has the
+// account, maybe its mailbox too. A reset link issued before that must
+// not undo the lock-out by setting a password of the holder's choosing.
+func TestLockOutVoidsResetLinks(t *testing.T) {
+	ctx := context.Background()
+	actor, target := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for name, act := range map[string]func(svc *accounts.Service) error{
+		"temporary password": func(svc *accounts.Service) error {
+			_, _, err := svc.SetTemporaryPassword(ctx, true, actor, target)
+			return err
+		},
+		"second factor reset": func(svc *accounts.Service) error {
+			_, err := svc.ResetSecondFactor(ctx, true, actor, target)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outstanding := &fakeToken{ResetToken: accounts.ResetToken{
+				ID: uuid.Must(uuid.NewV7()), UserID: target, Hash: []byte("outstanding"),
+				CreatedAt: testNow.Add(-time.Minute), ExpiresAt: testNow.Add(59 * time.Minute),
+			}}
+			store := &fakeStore{
+				accounts:  map[uuid.UUID]bool{target: true},
+				recipient: accounts.Recipient{Email: "target@example.test"},
+				tokens:    []*fakeToken{outstanding},
+			}
+			if err := act(actionService(store, &fakeMailer{})); err != nil {
+				t.Fatal(err)
+			}
+			if outstanding.usedAt == nil || store.writesOutside != 0 {
+				t.Fatalf("the outstanding reset link is still usable (writes outside the transaction: %d)", store.writesOutside)
+			}
+		})
 	}
 }
 

@@ -125,7 +125,7 @@ func (s *SQLStore) LockAccount(ctx context.Context, id uuid.UUID) (LockedAccount
 	if err != nil {
 		return LockedAccount{}, fmt.Errorf("lock account: %w", err)
 	}
-	return LockedAccount{HasPassword: row.HasPassword, Deactivated: row.Deactivated}, nil
+	return LockedAccount{HasPassword: row.HasPassword, Deactivated: row.Deactivated, MustChangePassword: row.MustChangePassword}, nil
 }
 
 // SetTemporaryPassword implements Store.

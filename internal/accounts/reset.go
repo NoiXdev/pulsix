@@ -100,7 +100,10 @@ func (s *Service) Wait() { s.background.Wait() }
 // requestReset is RequestReset's background work. No link is sent when no
 // account has the address, when the account is deactivated or its
 // invitation is still pending (AccountByEmail finds those; the locked read
-// sorts them out), or when the account was already issued
+// sorts them out), when it must change its password (an administrator set
+// a temporary one to lock someone out, and a link would let whoever reads
+// the mailbox undo that; the administrator's own SendResetLink still
+// works), or when the account was already issued
 // resetRequestLimit links within resetRequestWindow. Otherwise a new token
 // voids the account's older ones and is mailed; a failed send is logged
 // without the link. The error is a store failure, nil in every other case.
@@ -119,7 +122,7 @@ func (s *Service) requestReset(ctx context.Context, email string) error {
 		if err != nil {
 			return fmt.Errorf("lock account: %w", err)
 		}
-		if !acct.active() {
+		if !acct.active() || acct.MustChangePassword {
 			return nil
 		}
 		now := s.now()

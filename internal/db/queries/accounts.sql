@@ -75,13 +75,14 @@ WHERE m.user_id = sqlc.arg(user_id)
 ORDER BY o.name, o.id;
 
 -- name: LockAccount :one
--- Whether the account has a password and whether it is deactivated,
--- locking its row for the rest of the transaction, so an administrator's
--- action and a concurrent change of the same account (the owner's own
--- password change, an invitation being accepted, a reset) happen one after
--- the other. A deactivated account is found too: an administrator may act
--- on it, and reactivating needs it.
-SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated FROM users
+-- Whether the account has a password, whether it is deactivated and
+-- whether it must change its password, locking its row for the rest of
+-- the transaction, so an administrator's action and a concurrent change of
+-- the same account (the owner's own password change, an invitation being
+-- accepted, a reset) happen one after the other. A deactivated account is
+-- found too: an administrator may act on it, and reactivating needs it.
+SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated,
+  must_change_password FROM users
 WHERE id = $1
 FOR UPDATE;
 

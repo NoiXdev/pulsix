@@ -210,6 +210,45 @@ func TestResetDoesNotSignIn(t *testing.T) {
 	}
 }
 
+// TestTemporaryPasswordLocksOutAResetLink: an administrator who sets a
+// temporary password suspects someone else has the account, maybe the
+// mailbox too. A link mailed before stops working, and asking for a new
+// one sends none while the change is pending, so neither undoes the
+// lock-out with a password of the holder's choosing.
+func TestTemporaryPasswordLocksOutAResetLink(t *testing.T) {
+	s := apitest.New(t)
+	const email = "locked-out@example.test"
+	target := s.SeedUser(email, "the old password 1")
+	_, adminClient := adminWithFactor(t, s, "lockout-admin@example.test")
+
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email}); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("forgot: status %d", resp.StatusCode)
+	}
+	earlier := waitForResetMail(t, s, email)
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "temporary-password"), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("temporary password: status %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	_ = resp.Body.Close()
+
+	again := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": earlier, "new_password": "the holder's password"})
+	if d := problemDetail(t, again); again.StatusCode != http.StatusBadRequest || d != "invalid_or_expired_link" {
+		t.Fatalf("the earlier link: status %d detail %q, want 400 invalid_or_expired_link", again.StatusCode, d)
+	}
+
+	mailsBefore := len(s.Mail.Sent())
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email}); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("forgot again: status %d, want 202", resp.StatusCode)
+	}
+	s.Deps.Accounts.Wait()
+	for _, m := range s.Mail.Sent()[mailsBefore:] {
+		if resetTokenInMail.MatchString(m.Body) {
+			t.Fatal("forgot mailed a reset link while the password change is pending")
+		}
+	}
+}
+
 func TestResetRefusesUnknownToken(t *testing.T) {
 	s := apitest.New(t)
 	resp := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": "made-up", "new_password": "the new password 22"})

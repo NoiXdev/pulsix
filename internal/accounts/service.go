@@ -91,9 +91,10 @@ type Store interface {
 	// ListMemberships returns the organizations userID belongs to, each
 	// marked with whether actor belongs to it too.
 	ListMemberships(ctx context.Context, userID, actor uuid.UUID) ([]Membership, error)
-	// LockAccount reads whether the account has a password and whether it
-	// is deactivated, and locks its row for the rest of the transaction; a
-	// deactivated account is found too. ErrNotFound for an unknown id.
+	// LockAccount reads whether the account has a password, whether it is
+	// deactivated and whether it must change its password, and locks its
+	// row for the rest of the transaction; a deactivated account is found
+	// too. ErrNotFound for an unknown id.
 	LockAccount(ctx context.Context, id uuid.UUID) (LockedAccount, error)
 	// SetTemporaryPassword stores an administrator's temporary password:
 	// the hash, the forced change and the expiry. ErrNotFound for an
@@ -139,6 +140,9 @@ type LockedAccount struct {
 	// HasPassword is false while the invitation is still pending.
 	HasPassword bool
 	Deactivated bool
+	// MustChangePassword is set while an administrator's temporary
+	// password waits to be replaced.
+	MustChangePassword bool
 }
 
 // active reports whether the account is in use: its invitation accepted

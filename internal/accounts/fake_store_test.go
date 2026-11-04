@@ -32,7 +32,9 @@ type fakeStore struct {
 	// deactivated marks the ones among them that are deactivated.
 	accounts    map[uuid.UUID]bool
 	deactivated map[uuid.UUID]bool
-	recipient   accounts.Recipient
+	// mustChange marks the accounts that must change their password.
+	mustChange map[uuid.UUID]bool
+	recipient  accounts.Recipient
 
 	// The reset flow (reset_test.go). emails maps an address to its
 	// account; tokens is the password_reset_tokens table.
@@ -51,6 +53,11 @@ type fakeStore struct {
 	// beforeTokenLock, when set, runs between ResetTokenOwner and
 	// LockResetToken: what a concurrent request does in between.
 	beforeTokenLock func()
+	// beforePasswordLock, when set, runs as LockPassword starts: what a
+	// concurrent change does between the unlocked read and the lock.
+	beforePasswordLock func()
+	// locks counts the row locks taken (LockPassword, LockAccount).
+	locks int
 
 	inTx          bool
 	setCalls      []setPasswordCall
@@ -142,11 +149,12 @@ func (f *fakeStore) ListMemberships(_ context.Context, user, actor uuid.UUID) ([
 }
 
 func (f *fakeStore) LockAccount(_ context.Context, id uuid.UUID) (accounts.LockedAccount, error) {
+	f.locks++
 	hasPassword, ok := f.accounts[id]
 	if !ok {
 		return accounts.LockedAccount{}, accounts.ErrNotFound
 	}
-	return accounts.LockedAccount{HasPassword: hasPassword, Deactivated: f.deactivated[id]}, nil
+	return accounts.LockedAccount{HasPassword: hasPassword, Deactivated: f.deactivated[id], MustChangePassword: f.mustChange[id]}, nil
 }
 
 func (f *fakeStore) SetTemporaryPassword(_ context.Context, id uuid.UUID, hash string, expiresAt time.Time) error {

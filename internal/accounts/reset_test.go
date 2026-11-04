@@ -87,6 +87,11 @@ func TestRequestResetSilentCases(t *testing.T) {
 		{name: "unknown address", email: "nobody@example.test"},
 		{name: "deactivated", email: "person@example.test", prepare: func(f *resetFixture) { f.store.deactivated[f.user] = true }},
 		{name: "invite pending", email: "person@example.test", prepare: func(f *resetFixture) { f.store.accounts[f.user] = false }},
+		// An administrator set a temporary password: the lock-out holds
+		// until the person changes it, so no link may set one instead.
+		{name: "must change password", email: "person@example.test", prepare: func(f *resetFixture) {
+			f.store.mustChange = map[uuid.UUID]bool{f.user: true}
+		}},
 		{
 			name: "the 4th request in an hour", email: "person@example.test", wantRows: 3,
 			prepare: func(f *resetFixture) {
@@ -420,6 +425,17 @@ func TestSendResetLink(t *testing.T) {
 			if tok.usedAt == nil {
 				t.Fatal("an earlier token was not voided")
 			}
+		}
+	})
+
+	// The administrator's link is an explicit choice, so it still goes to
+	// an account that must change its password, where forgot sends none.
+	t.Run("an account that must change its password", func(t *testing.T) {
+		f := newResetFixture()
+		f.store.mustChange = map[uuid.UUID]bool{f.user: true}
+		notice, err := f.svc.SendResetLink(ctx, true, actor, f.user)
+		if err != nil || notice != accounts.NoticeSent || len(f.mailer.sent) != 1 {
+			t.Fatalf("notice %q, err %v, mails %d; want one sent", notice, err, len(f.mailer.sent))
 		}
 	})
 

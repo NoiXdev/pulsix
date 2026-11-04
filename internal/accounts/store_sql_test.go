@@ -266,7 +266,11 @@ func TestSQLStoreAccountActions(t *testing.T) {
 	hash := "$argon2id$h"
 	uid := seedUser(t, d, "actions@example.test", &hash)
 	pending := seedUser(t, d, "actions-pending@example.test", nil)
+	mustChange := seedUser(t, d, "actions-must-change@example.test", &hash)
 	if _, err := d.Pool().Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `UPDATE users SET must_change_password = true WHERE id = $1`, mustChange); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,6 +279,10 @@ func TestSQLStoreAccountActions(t *testing.T) {
 			got, err := store.LockAccount(ctx, uid)
 			if want := (accounts.LockedAccount{HasPassword: true, Deactivated: true}); err != nil || got != want {
 				t.Errorf("LockAccount(deactivated with a password) = %+v, %v; want %+v", got, err, want)
+			}
+			got, err = store.LockAccount(ctx, mustChange)
+			if want := (accounts.LockedAccount{HasPassword: true, MustChangePassword: true}); err != nil || got != want {
+				t.Errorf("LockAccount(must change password) = %+v, %v; want %+v", got, err, want)
 			}
 			got, err = store.LockAccount(ctx, pending)
 			if want := (accounts.LockedAccount{}); err != nil || got != want {
@@ -596,7 +604,8 @@ func TestSQLStoreResetTokens(t *testing.T) {
 
 // TestResetFlowSQL: a reset through the real store sets the password,
 // lifts a forced change, uses up every token of the account and ends its
-// sessions.
+// sessions. While the change is pending, forgot sends no link; the
+// administrator's does.
 func TestResetFlowSQL(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
@@ -615,11 +624,18 @@ func TestResetFlowSQL(t *testing.T) {
 	mailer := &fakeMailer{}
 	svc := accounts.NewService(store, mailer, "https://pulsix.example", time.Now, &cyclingReader{})
 
+	if err := svc.RequestReset(ctx, "FLOW@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	svc.Wait()
+	if len(mailer.sent) != 0 {
+		t.Fatalf("forgot mailed %d links to an account that must change its password, want none", len(mailer.sent))
+	}
+	admin := uuid.Must(uuid.NewV7())
 	for range 2 {
-		if err := svc.RequestReset(ctx, "FLOW@example.test"); err != nil {
-			t.Fatal(err)
+		if notice, err := svc.SendResetLink(ctx, true, admin, uid); err != nil || notice != accounts.NoticeSent {
+			t.Fatalf("SendResetLink = %q, %v; want sent", notice, err)
 		}
-		svc.Wait()
 	}
 	if len(mailer.sent) != 2 {
 		t.Fatalf("mails %d, want 2", len(mailer.sent))

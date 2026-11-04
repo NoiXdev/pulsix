@@ -295,26 +295,28 @@ func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]L
 }
 
 const lockAccount = `-- name: LockAccount :one
-SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated FROM users
+SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated,
+  must_change_password FROM users
 WHERE id = $1
 FOR UPDATE
 `
 
 type LockAccountRow struct {
-	HasPassword bool `json:"has_password"`
-	Deactivated bool `json:"deactivated"`
+	HasPassword        bool `json:"has_password"`
+	Deactivated        bool `json:"deactivated"`
+	MustChangePassword bool `json:"must_change_password"`
 }
 
-// Whether the account has a password and whether it is deactivated,
-// locking its row for the rest of the transaction, so an administrator's
-// action and a concurrent change of the same account (the owner's own
-// password change, an invitation being accepted, a reset) happen one after
-// the other. A deactivated account is found too: an administrator may act
-// on it, and reactivating needs it.
+// Whether the account has a password, whether it is deactivated and
+// whether it must change its password, locking its row for the rest of
+// the transaction, so an administrator's action and a concurrent change of
+// the same account (the owner's own password change, an invitation being
+// accepted, a reset) happen one after the other. A deactivated account is
+// found too: an administrator may act on it, and reactivating needs it.
 func (q *Queries) LockAccount(ctx context.Context, id uuid.UUID) (LockAccountRow, error) {
 	row := q.db.QueryRow(ctx, lockAccount, id)
 	var i LockAccountRow
-	err := row.Scan(&i.HasPassword, &i.Deactivated)
+	err := row.Scan(&i.HasPassword, &i.Deactivated, &i.MustChangePassword)
 	return i, err
 }
 
