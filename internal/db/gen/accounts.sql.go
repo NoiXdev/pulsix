@@ -146,6 +146,27 @@ func (q *Queries) GetNoticeRecipient(ctx context.Context, id uuid.UUID) (GetNoti
 	return i, err
 }
 
+const getUserPassword = `-- name: GetUserPassword :one
+SELECT password_hash, temp_password_expires_at FROM users
+WHERE id = $1 AND disabled_at IS NULL
+`
+
+type GetUserPasswordRow struct {
+	PasswordHash          *string            `json:"password_hash"`
+	TempPasswordExpiresAt pgtype.Timestamptz `json:"temp_password_expires_at"`
+}
+
+// LockUserPassword without the lock: a password change verifies the
+// current password against this read before it locks the row, so the slow
+// hash comparison never holds the lock, and then re-reads under the lock
+// to make sure the hash it verified is still the one stored.
+func (q *Queries) GetUserPassword(ctx context.Context, id uuid.UUID) (GetUserPasswordRow, error) {
+	row := q.db.QueryRow(ctx, getUserPassword, id)
+	var i GetUserPasswordRow
+	err := row.Scan(&i.PasswordHash, &i.TempPasswordExpiresAt)
+	return i, err
+}
+
 const insertResetToken = `-- name: InsertResetToken :exec
 INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at)
 VALUES ($1, $2, $3, $4, $5)

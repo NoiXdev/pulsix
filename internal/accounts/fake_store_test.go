@@ -106,7 +106,18 @@ func (f *fakeStore) InTx(ctx context.Context, fn func(ctx context.Context) error
 	return fn(ctx)
 }
 
+func (f *fakeStore) ReadPassword(_ context.Context, _ uuid.UUID) (accounts.PasswordState, error) {
+	if f.lookupErr != nil {
+		return accounts.PasswordState{}, f.lookupErr
+	}
+	return accounts.PasswordState{Hash: f.hash, TempPasswordExpiresAt: f.tempUntil}, nil
+}
+
 func (f *fakeStore) LockPassword(_ context.Context, _ uuid.UUID) (accounts.PasswordState, error) {
+	f.locks++
+	if f.beforePasswordLock != nil {
+		f.beforePasswordLock()
+	}
 	if f.lookupErr != nil {
 		return accounts.PasswordState{}, f.lookupErr
 	}

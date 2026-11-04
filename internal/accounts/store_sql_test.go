@@ -60,6 +60,10 @@ func TestSQLStorePasswordRoundTrip(t *testing.T) {
 	if st.Hash == nil || *st.Hash != hash || st.TempPasswordExpiresAt == nil || !st.TempPasswordExpiresAt.Equal(expires) {
 		t.Fatalf("LockPassword = %+v, want hash %q and expiry %v", st, hash, expires)
 	}
+	if read, err := store.ReadPassword(ctx, uid); err != nil || read.Hash == nil || *read.Hash != hash ||
+		read.TempPasswordExpiresAt == nil || !read.TempPasswordExpiresAt.Equal(expires) {
+		t.Fatalf("ReadPassword = %+v, %v; want hash %q and expiry %v", read, err, hash, expires)
+	}
 
 	if err := store.SetPassword(ctx, uid, "$argon2id$new", true); err != nil {
 		t.Fatal(err)
@@ -109,6 +113,12 @@ func TestSQLStorePasswordRoundTrip(t *testing.T) {
 		}
 		if _, err := store.LockPassword(ctx, disabled); !errors.Is(err, accounts.ErrNotFound) {
 			t.Fatalf("LockPassword(deactivated) err = %v, want ErrNotFound", err)
+		}
+		if _, err := store.ReadPassword(ctx, uuid.Must(uuid.NewV7())); !errors.Is(err, accounts.ErrNotFound) {
+			t.Fatalf("ReadPassword(unknown) err = %v, want ErrNotFound", err)
+		}
+		if _, err := store.ReadPassword(ctx, disabled); !errors.Is(err, accounts.ErrNotFound) {
+			t.Fatalf("ReadPassword(deactivated) err = %v, want ErrNotFound", err)
 		}
 	})
 }

@@ -42,6 +42,18 @@ func (s *SQLStore) LockPassword(ctx context.Context, userID uuid.UUID) (Password
 	return PasswordState{Hash: row.PasswordHash, TempPasswordExpiresAt: db.TimePtr(row.TempPasswordExpiresAt)}, nil
 }
 
+// ReadPassword implements Store.
+func (s *SQLStore) ReadPassword(ctx context.Context, userID uuid.UUID) (PasswordState, error) {
+	row, err := s.q.GetUserPassword(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PasswordState{}, ErrNotFound
+	}
+	if err != nil {
+		return PasswordState{}, fmt.Errorf("get user password: %w", err)
+	}
+	return PasswordState{Hash: row.PasswordHash, TempPasswordExpiresAt: db.TimePtr(row.TempPasswordExpiresAt)}, nil
+}
+
 // SetPassword implements Store.
 func (s *SQLStore) SetPassword(ctx context.Context, userID uuid.UUID, hash string, clearMustChange bool) error {
 	n, err := s.q.SetUserPassword(ctx, gen.SetUserPasswordParams{ID: userID, PasswordHash: hash, ClearMustChange: clearMustChange})

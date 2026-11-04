@@ -209,22 +209,35 @@ func (s *Service) SendResetLink(ctx context.Context, actorIsAdmin bool, actor, t
 // anyone in: the next sign-in takes the new password and the second
 // factor.
 //
-// Locks are taken in the one order every reset path uses — the account's
-// row, then its token rows — so a reset and a concurrent request for a new
-// link cannot deadlock: the token only names its account here, unlocked,
-// and is locked and checked again once the account is.
+// The token only names its account, unlocked, before anything is locked;
+// an unknown one costs nothing more. The policy check and the slow hashing
+// come next, still without a lock, so the account's row is held only for
+// the writes. Locks are then taken in the one order every reset path uses
+// — the account's row, then its token rows — so a reset and a concurrent
+// request for a new link cannot deadlock, and the token is checked again
+// once the account is locked.
 func (s *Service) ResetPassword(ctx context.Context, token, next string) (uuid.UUID, error) {
 	sum := sha256.Sum256([]byte(token))
-	var userID uuid.UUID
-	err := s.store.InTx(ctx, func(ctx context.Context) error {
-		id, err := s.store.ResetTokenOwner(ctx, sum[:])
+	id, err := s.store.ResetTokenOwner(ctx, sum[:])
+	if errors.Is(err, ErrNotFound) {
+		return uuid.Nil, ErrInvalidResetToken
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("find reset token: %w", err)
+	}
+	if err := auth.CheckPasswordPolicy(next); err != nil {
+		return uuid.Nil, err
+	}
+	hash, err := auth.HashPassword(next)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("hash password: %w", err)
+	}
+	err = s.store.InTx(ctx, func(ctx context.Context) error {
+		acct, err := s.store.LockAccount(ctx, id)
 		if errors.Is(err, ErrNotFound) {
+			// The account went since the token named it.
 			return ErrInvalidResetToken
 		}
-		if err != nil {
-			return fmt.Errorf("find reset token: %w", err)
-		}
-		acct, err := s.store.LockAccount(ctx, id)
 		if err != nil {
 			return fmt.Errorf("lock account: %w", err)
 		}
@@ -239,13 +252,6 @@ func (s *Service) ResetPassword(ctx context.Context, token, next string) (uuid.U
 		if err != nil {
 			return fmt.Errorf("lock reset token: %w", err)
 		}
-		if err := auth.CheckPasswordPolicy(next); err != nil {
-			return err
-		}
-		hash, err := auth.HashPassword(next)
-		if err != nil {
-			return fmt.Errorf("hash password: %w", err)
-		}
 		if err := s.store.SetPassword(ctx, id, hash, true); err != nil {
 			return fmt.Errorf("set password: %w", err)
 		}
@@ -255,13 +261,12 @@ func (s *Service) ResetPassword(ctx context.Context, token, next string) (uuid.U
 		if err := s.store.RevokeAllSessions(ctx, id); err != nil {
 			return fmt.Errorf("revoke sessions: %w", err)
 		}
-		userID = id
 		return nil
 	})
 	if err != nil {
 		return uuid.Nil, err
 	}
-	return userID, nil
+	return id, nil
 }
 
 // issueResetToken voids userID's unused tokens and stores a new one,

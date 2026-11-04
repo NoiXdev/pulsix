@@ -58,6 +58,11 @@ func TestChangePassword(t *testing.T) {
 				if len(store.setCalls) != 0 || len(store.revokeCalls) != 0 {
 					t.Fatalf("a refused change wrote: set %+v, revoke %+v", store.setCalls, store.revokeCalls)
 				}
+				// The checks and the hashing happen before the row is
+				// locked: a refused change never holds the lock.
+				if store.locks != 0 {
+					t.Fatalf("a refused change locked the account's row %d times", store.locks)
+				}
 				return
 			}
 			if len(store.setCalls) != 1 {
@@ -77,5 +82,29 @@ func TestChangePassword(t *testing.T) {
 				t.Fatalf("%d writes happened outside the transaction", store.writesOutside)
 			}
 		})
+	}
+}
+
+// TestChangePasswordRechecksUnderTheLock: the current password is verified
+// before the row is locked, so a change that lands in between (an
+// administrator's temporary password, another session's change) must be
+// noticed under the lock, and the verified password no longer counts.
+func TestChangePasswordRechecksUnderTheLock(t *testing.T) {
+	const current = "current password 1"
+	oldHash, err := auth.HashPassword(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced := "$argon2id$replaced-in-between"
+	store := &fakeStore{hash: &oldHash}
+	store.beforePasswordLock = func() { store.hash = &replaced }
+	svc := accounts.NewService(store, &fakeMailer{}, "https://pulsix.example", func() time.Time { return testNow }, rand.Reader)
+
+	err = svc.ChangePassword(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), current, "a brand new password")
+	if !errors.Is(err, accounts.ErrInvalidCredentials) {
+		t.Fatalf("err %v, want ErrInvalidCredentials", err)
+	}
+	if len(store.setCalls) != 0 || len(store.revokeCalls) != 0 {
+		t.Fatalf("a change against a replaced password wrote: set %+v, revoke %+v", store.setCalls, store.revokeCalls)
 	}
 }

@@ -69,6 +69,9 @@ type Store interface {
 	// context it is handed joins it, and they commit together or not at
 	// all.
 	InTx(ctx context.Context, fn func(ctx context.Context) error) error
+	// ReadPassword reads an active account's password state without
+	// locking anything; ErrNotFound for an unknown or deactivated account.
+	ReadPassword(ctx context.Context, userID uuid.UUID) (PasswordState, error)
 	// LockPassword reads an active account's password state and locks the
 	// row for the rest of the transaction; ErrNotFound for an unknown or
 	// deactivated account.

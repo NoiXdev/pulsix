@@ -376,21 +376,40 @@ func TestResetPassword(t *testing.T) {
 		}
 	})
 
+	// The account goes between the unlocked owner lookup and the lock.
+	t.Run("an account gone in between", func(t *testing.T) {
+		f := newResetFixture()
+		token := f.mailedToken(t)
+		f.store.beforeTokenLock = func() { delete(f.store.accounts, f.user) }
+		if _, err := f.svc.ResetPassword(ctx, token, next); !errors.Is(err, accounts.ErrInvalidResetToken) {
+			t.Fatalf("err %v, want ErrInvalidResetToken", err)
+		}
+	})
+
 	t.Run("an unknown token", func(t *testing.T) {
 		f := newResetFixture()
 		if _, err := f.svc.ResetPassword(ctx, "not-a-token", next); !errors.Is(err, accounts.ErrInvalidResetToken) {
 			t.Fatalf("err %v, want ErrInvalidResetToken", err)
+		}
+		if f.store.locks != 0 {
+			t.Fatalf("an unknown token locked a row %d times", f.store.locks)
 		}
 	})
 
 	t.Run("an 11-character password", func(t *testing.T) {
 		f := newResetFixture()
 		token := f.mailedToken(t)
+		locks := f.store.locks
 		if _, err := f.svc.ResetPassword(ctx, token, "elevenchars"); !errors.Is(err, auth.ErrPasswordTooShort) {
 			t.Fatalf("err %v, want ErrPasswordTooShort", err)
 		}
 		if len(f.store.setCalls) != 0 {
 			t.Fatal("a refused password was stored")
+		}
+		// The policy check and the hashing happen before the account's
+		// row is locked.
+		if f.store.locks != locks {
+			t.Fatalf("a refused password locked the account's row %d times", f.store.locks-locks)
 		}
 		if _, err := f.svc.ResetPassword(ctx, token, next); err != nil {
 			t.Fatalf("the token was consumed by the refused password: %v", err)

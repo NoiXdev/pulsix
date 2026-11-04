@@ -8,6 +8,14 @@ SELECT password_hash, temp_password_expires_at FROM users
 WHERE id = $1 AND disabled_at IS NULL
 FOR UPDATE;
 
+-- name: GetUserPassword :one
+-- LockUserPassword without the lock: a password change verifies the
+-- current password against this read before it locks the row, so the slow
+-- hash comparison never holds the lock, and then re-reads under the lock
+-- to make sure the hash it verified is still the one stored.
+SELECT password_hash, temp_password_expires_at FROM users
+WHERE id = $1 AND disabled_at IS NULL;
+
 -- name: SetUserPassword :execrows
 -- clear_must_change ends a forced change: the flag drops and so does the
 -- temporary password's expiry, which only ever applies to a password an
