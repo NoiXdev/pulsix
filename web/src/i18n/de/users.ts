@@ -53,6 +53,8 @@ export const deUsers: Messages['users'] = {
       label: 'Link zum Zurücksetzen des Passworts senden',
       description: 'Schickt der Person per E-Mail einen Link, mit dem sie ein neues Passwort setzt.',
       unavailable: 'Auf dieser Instanz ist kein ausgehender Mailversand eingerichtet, daher kann kein Link gesendet werden.',
+      checking: 'Prüfe, ob ausgehender Mailversand eingerichtet ist …',
+      checkFailed: 'Es ließ sich nicht prüfen, ob ausgehender Mailversand eingerichtet ist, daher kann kein Link gesendet werden.',
       body: (email: string) =>
         `An ${email} geht eine E-Mail mit einem Link, mit dem ein neues Passwort gesetzt wird. Der Link funktioniert einmal und läuft nach 60 Minuten ab. Das aktuelle Passwort funktioniert weiter, bis der Link benutzt wird.`,
       confirm: 'Link senden',

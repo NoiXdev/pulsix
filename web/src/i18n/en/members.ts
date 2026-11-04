@@ -12,6 +12,7 @@ export const enMembers = {
     role: 'Role',
     joined: 'Joined',
     status: 'Status',
+    actions: 'Actions',
   },
   disabled: 'disabled',
   active: 'active',

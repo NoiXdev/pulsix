@@ -66,7 +66,8 @@ describe('UsersPage', () => {
 
     await waitFor(() => expect(screen.queryByText('Ada')).not.toBeInTheDocument());
     expect(screen.getByText('Eve')).toBeInTheDocument();
-    expect(terms).toContain('eve');
+    // Debounced: the term goes out once typing pauses, not per keystroke.
+    expect(terms).toEqual([null, 'eve']);
   });
 
   it('opens the account page from a row', async () => {

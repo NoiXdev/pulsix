@@ -39,6 +39,13 @@ describe('crumbLabels', () => {
     ]);
   });
 
+  it('names a member or account id by what it is, not by the raw id', () => {
+    const id = '550e8400-e29b-41d4-a716-446655440000';
+    expect(crumbLabels(`/o/acme/settings/members/${id}`, 'acme')).toEqual(['Settings', 'Members', 'Member']);
+    expect(crumbLabels(`/o/acme/settings/users/${id}`, 'acme')).toEqual(['Settings', 'Users', 'Account']);
+    expect(crumbLabelsFor(`/o/acme/settings/users/${id}`, 'acme', de)).toEqual(['Einstellungen', 'Benutzer', 'Konto']);
+  });
+
   it('shows a non-UUID unknown segment verbatim', () => {
     expect(crumbLabels('/o/acme/hosts/web-04', 'acme')).toEqual(['Hosts', 'web-04']);
   });

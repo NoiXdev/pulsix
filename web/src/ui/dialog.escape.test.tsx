@@ -47,4 +47,26 @@ describe('Escape on a dialog', () => {
     expect(screen.getByRole('dialog', { hidden: true })).not.toHaveAttribute('open');
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  // Backlog 7.74: a dialog whose request is in flight must not be
+  // dismissed, or the answer (a one-time password) is lost unseen.
+  it('stays open and does not call the close handler while not dismissible', async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <Dialog open onClose={onClose} title="Add credential" dismissible={false}>
+        <p>body</p>
+      </Dialog>,
+    );
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('dialog')).toHaveAttribute('open');
+    expect(onClose).not.toHaveBeenCalled();
+
+    rerender(
+      <Dialog open onClose={onClose} title="Add credential">
+        <p>body</p>
+      </Dialog>,
+    );
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

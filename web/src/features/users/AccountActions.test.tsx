@@ -47,7 +47,9 @@ describe('AccountActions', () => {
     });
 
     for (const label of ACTIONS) {
-      await user.click(await screen.findByRole('button', { name: label }));
+      const button = await screen.findByRole('button', { name: label });
+      await waitFor(() => expect(button).toBeEnabled());
+      await user.click(button);
       const dialog = await screen.findByRole('dialog', { name: label });
       await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
       await waitFor(() => expect(screen.queryByRole('dialog', { name: label })).not.toBeInTheDocument());
@@ -99,6 +101,63 @@ describe('AccountActions', () => {
       ...qc.getMutationCache().getAll().map((m) => m.state),
     ];
     expect(JSON.stringify(cached)).not.toContain(SECRET);
+  });
+
+  it('keeps the dialog open on Escape while the temporary password is being set, with a busy note, then reveals it', async () => {
+    const user = userEvent.setup();
+    let answer: (body: unknown) => void = () => {};
+    render(accountDetail(), {
+      'POST /api/v1/admin/users/u2/temporary-password': () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Set temporary password' }));
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Set temporary password' });
+    await user.click(within(confirmDialog).getByRole('button', { name: 'Set temporary password' }));
+
+    expect(await within(confirmDialog).findByText(/This can take a moment while the notice e-mail is sent/)).toBeInTheDocument();
+    expect(within(confirmDialog).getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await user.keyboard('{Escape}');
+    expect(confirmDialog).toHaveAttribute('open');
+
+    answer({ password: SECRET, expires_at: '2026-11-05T10:00:00Z', notice: 'sent' });
+    const reveal = await screen.findByRole('dialog', { name: 'Temporary password' });
+    expect(within(reveal).getByLabelText('Temporary password')).toHaveTextContent(SECRET);
+  });
+
+  it('says in the reveal when the notice mail failed', async () => {
+    const user = userEvent.setup();
+    render(accountDetail(), {
+      'POST /api/v1/admin/users/u2/temporary-password': { password: SECRET, expires_at: '2026-11-05T10:00:00Z', notice: 'failed' },
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Set temporary password' }));
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Set temporary password' });
+    await user.click(within(confirmDialog).getByRole('button', { name: 'Set temporary password' }));
+
+    const reveal = await screen.findByRole('dialog', { name: 'Temporary password' });
+    const line = within(reveal).getByText('The notice e-mail to the person could not be sent.');
+    expect(line).toHaveAttribute('data-tone', 'warn');
+  });
+
+  it('keeps "Send password reset link" disabled with the reason until mail is known to be available', async () => {
+    render(accountDetail(), {
+      'GET /api/v1/auth/password/reset-available': () => new Promise(() => {}),
+    });
+
+    expect(await screen.findByRole('button', { name: 'Send password reset link' })).toBeDisabled();
+    expect(screen.getByText('Checking whether outgoing mail is configured…')).toBeInTheDocument();
+  });
+
+  it('keeps "Send password reset link" disabled with the reason when the mail check failed', async () => {
+    render(accountDetail(), {
+      'GET /api/v1/auth/password/reset-available': () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }),
+    });
+
+    expect(await screen.findByText('Could not check whether outgoing mail is configured, so no link can be sent.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send password reset link' })).toBeDisabled();
   });
 
   it('disables "Send password reset link" with the reason when no mail is configured', async () => {
@@ -165,7 +224,7 @@ describe('AccountActions', () => {
     const user = userEvent.setup();
     render(accountDetail({ instance_admin: true }), {
       'POST /api/v1/admin/users/u2/deactivate': () =>
-        new Response(JSON.stringify({ detail: 'the instance needs at least one active instance administrator' }), {
+        new Response(JSON.stringify({ detail: 'last_instance_admin' }), {
           status: 409,
         }),
     });

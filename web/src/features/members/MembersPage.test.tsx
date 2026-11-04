@@ -15,6 +15,8 @@ const MEMBERS = {
   ],
 };
 
+const ORG = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
+
 function renderPage(qc: QueryClient) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -202,6 +204,17 @@ describe('MembersPage', () => {
     expect(router.state.location.pathname).toBe('/o/acme/settings/members/u2');
   });
 
+  it('offers Remove… in the row menu only to roles that may manage members', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme/members': MEMBERS, 'GET /api/v1/orgs/acme': ORG('operator') });
+
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
+    expect(screen.getByRole('menuitem', { name: 'Open' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Remove…' })).not.toBeInTheDocument();
+  });
+
   it('removes a member after confirmation', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -209,6 +222,7 @@ describe('MembersPage', () => {
     window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme': ORG('admin'),
       'DELETE /api/v1/orgs/acme/members/u2': {},
     });
 
@@ -228,6 +242,7 @@ describe('MembersPage', () => {
     window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme': ORG('admin'),
       'DELETE /api/v1/orgs/acme/members/u2': () => new Response(JSON.stringify({ detail: 'cannot remove the last owner' }), { status: 409 }),
     });
 

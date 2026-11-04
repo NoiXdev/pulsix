@@ -49,16 +49,16 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
     <>
       <div className="flex flex-col rounded-[10px] border border-border bg-card">
         {availableActions(user.state).map((kind) => {
-          const unavailable = kind === 'resetLink' && resetAvailable.data?.available === false;
+          const blocked = kind === 'resetLink' ? resetLinkBlocked(t, resetAvailable) : null;
           return (
             <div key={kind} className="flex items-center gap-4 border-b border-border px-4 py-3 last:border-b-0">
               <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-                {unavailable ? a.resetLink.unavailable : a[kind].description}
+                {blocked ?? a[kind].description}
               </span>
               <Button
                 type="button"
                 variant={DESTRUCTIVE.has(kind) ? 'destructive' : 'default'}
-                disabled={unavailable}
+                disabled={blocked !== null}
                 onClick={() => setOpen(kind)}
               >
                 {a[kind].label}
@@ -70,6 +70,15 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
       {open && <ActionDialog key={open} kind={open} user={user} onClose={() => setOpen(null)} />}
     </>
   );
+}
+
+/** Why the reset link cannot be sent, or null when it can: it needs
+ * outbound mail, so it stays off until the server says mail is there. */
+function resetLinkBlocked(t: Messages, available: { data?: { available: boolean }; isError: boolean }): string | null {
+  const a = t.users.actions.resetLink;
+  if (available.data?.available) return null;
+  if (available.data) return a.unavailable;
+  return available.isError ? a.checkFailed : a.checking;
 }
 
 interface Revealed {
@@ -124,7 +133,7 @@ function ActionDialog({ kind, user, onClose }: { kind: ActionKind; user: AdminUs
 
   return (
     <>
-      <Dialog open onClose={onClose} title={text.label}>
+      <Dialog open onClose={onClose} title={text.label} dismissible={!busy}>
         <div className="flex flex-col gap-4">
           <p className="text-xs text-muted-foreground">{kind === 'resetLink' ? a.resetLink.body(user.email) : a[kind].body}</p>
           {kind === 'resetFactor' && (
@@ -173,7 +182,10 @@ function TemporaryPasswordReveal({ revealed, onClose }: { revealed: Revealed; on
           {revealed.password}
         </code>
         <p className="text-xs text-muted-foreground">{a.expires(fmt.dateTime(revealed.expiresAt))}</p>
-        <p className={revealed.notice === 'failed' ? 'text-xs text-[var(--px-warn)]' : 'text-xs text-muted-foreground'}>
+        <p
+          data-tone={revealed.notice === 'failed' ? 'warn' : 'default'}
+          className={revealed.notice === 'failed' ? 'text-xs text-[var(--px-warn)]' : 'text-xs text-muted-foreground'}
+        >
           {t.users.actions.notice[revealed.notice]}
         </p>
         {copy === 'failed' && (
@@ -225,8 +237,9 @@ function successMessage(t: Messages, kind: ActionKind, email: string, notice: Ac
 }
 
 /** The refusals the account routes answer with, in the reader's language;
- * anything else is the server's own message. The last-admin detail is
- * internal/tenancy's ErrLastInstanceAdmin text. */
+ * anything else is the server's own message. `instance admin required`
+ * is prose, not a code, and only a fallback: the pages are not offered to
+ * anyone else. */
 function describeError(t: Messages, err: unknown): string {
   const e = t.users.actions.errors;
   const message = err instanceof Error ? err.message : '';
@@ -237,7 +250,7 @@ function describeError(t: Messages, err: unknown): string {
       return e.invitePending;
     case 'mail_not_configured':
       return e.mailNotConfigured;
-    case 'the instance needs at least one active instance administrator':
+    case 'last_instance_admin':
       return e.lastInstanceAdmin;
     case 'instance admin required':
       return e.instanceAdminRequired;

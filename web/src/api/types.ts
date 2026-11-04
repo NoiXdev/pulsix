@@ -268,9 +268,7 @@ export type BackupEntry = components['schemas']['BackupItem'];
 /** One account on the Users page (GET /admin/users). */
 export type AdminUser = components['schemas']['AdminUserDTO'];
 export type AccountState = AdminUser['state'];
-/** One account on the account page (GET /admin/users/{userId}). The server
- * embeds AdminUserDTO's fields in the detail; the generated schema lists
- * only the detail's own, so the two are joined here. */
-export type AdminUserDetail = AdminUser & components['schemas']['AdminUserDetailDTO'];
+/** One account on the account page (GET /admin/users/{userId}). */
+export type AdminUserDetail = components['schemas']['AdminUserDetailDTO'];
 /** Whether the person was told about an admin action by mail. */
 export type AccountNotice = components['schemas']['NoticeOutputBody']['notice'];

@@ -2974,9 +2974,19 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             disabled_at: string | null;
+            display_name: string;
+            email: string;
             factors: components["schemas"]["AdminFactorsDTO"];
+            id: string;
+            instance_admin: boolean;
+            /** Format: date-time */
+            last_sign_in_at: string | null;
             memberships: components["schemas"]["AdminMembershipDTO"][] | null;
             must_change_password: boolean;
+            /** Format: int64 */
+            org_count: number;
+            /** @enum {string} */
+            state: "active" | "deactivated" | "invite_pending" | "must_change_password" | "no_second_factor";
             /** Format: date-time */
             temp_password_expires_at: string | null;
         };

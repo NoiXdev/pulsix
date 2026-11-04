@@ -1,6 +1,6 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
-import type { AccountNotice, AdminUserDetail } from '../types.ts';
+import type { AccountNotice } from '../types.ts';
 
 /** Accounts fetched per page of the Users list; the API defaults to 50 and
  * clamps at 200. */
@@ -32,8 +32,7 @@ export function useAdminUsers(q: string) {
 export function useAdminUser(userId: string, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['admin-user', userId],
-    queryFn: async () =>
-      (await unwrap(api.GET('/api/v1/admin/users/{userId}', { params: { path: { userId } } }))).user as AdminUserDetail,
+    queryFn: async () => (await unwrap(api.GET('/api/v1/admin/users/{userId}', { params: { path: { userId } } }))).user,
     enabled: !!userId && (opts.enabled ?? true),
   });
 }

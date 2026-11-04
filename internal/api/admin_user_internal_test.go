@@ -29,12 +29,12 @@ func statusAndDetail(t *testing.T, err error) (int, string) {
 // TestMapTenancyErrLastInstanceAdmin: the deactivate route refuses its
 // caller's own account before the last-admin rule, so over HTTP an admin
 // meets that rule only when two admins deactivate each other at once
-// (tenancy's store test races exactly that). It still answers 409, and the
-// self refusal has its own detail.
+// (tenancy's store test races exactly that). It still answers 409 with the
+// stable detail the SPA matches on, and the self refusal has its own.
 func TestMapTenancyErrLastInstanceAdmin(t *testing.T) {
 	ctx := context.Background()
-	if code, _ := statusAndDetail(t, mapTenancyErr(ctx, fmt.Errorf("disable user: %w", tenancy.ErrLastInstanceAdmin))); code != http.StatusConflict {
-		t.Fatalf("ErrLastInstanceAdmin: status %d, want 409", code)
+	if code, d := statusAndDetail(t, mapTenancyErr(ctx, fmt.Errorf("disable user: %w", tenancy.ErrLastInstanceAdmin))); code != http.StatusConflict || d != lastInstanceAdmin {
+		t.Fatalf("ErrLastInstanceAdmin: status %d detail %q, want 409 %q", code, d, lastInstanceAdmin)
 	}
 	if code, d := statusAndDetail(t, mapTenancyErr(ctx, tenancy.ErrNotOnOwnAccount)); code != http.StatusConflict || d != notOnOwnAccount {
 		t.Fatalf("ErrNotOnOwnAccount: status %d detail %q, want 409 %q", code, d, notOnOwnAccount)

@@ -111,3 +111,32 @@ func TestAlertDetailDTOSchemaCarriesEveryAlertField(t *testing.T) {
 		}
 	}
 }
+
+// TestAdminUserDetailDTOSchemaCarriesEveryUserField is the same guard for
+// the account page (backlog 7.74): AdminUserDetailDTO embeds AdminUserDTO,
+// and the SPA reads the embedded fields from the generated client.
+func TestAdminUserDetailDTOSchemaCarriesEveryUserField(t *testing.T) {
+	doc, err := Document()
+	if err != nil {
+		t.Fatalf("Document() error = %v", err)
+	}
+	var parsed struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]any `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatalf("Document() did not produce valid JSON: %v", err)
+	}
+	detail, ok := parsed.Components.Schemas["AdminUserDetailDTO"]
+	if !ok {
+		t.Fatal(`Document() components.schemas missing "AdminUserDetailDTO"`)
+	}
+	for _, field := range []string{"id", "email", "display_name", "instance_admin", "state", "org_count", "last_sign_in_at", "memberships", "factors"} {
+		if _, ok := detail.Properties[field]; !ok {
+			t.Errorf("AdminUserDetailDTO schema missing %q (properties: %+v)", field, detail.Properties)
+		}
+	}
+}

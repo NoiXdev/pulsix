@@ -55,6 +55,8 @@ export const enUsers = {
       label: 'Send password reset link',
       description: 'E-mails the person a link to set a new password.',
       unavailable: 'Outgoing mail is not configured on this instance, so no link can be sent.',
+      checking: 'Checking whether outgoing mail is configured…',
+      checkFailed: 'Could not check whether outgoing mail is configured, so no link can be sent.',
       body: (email: string) =>
         `An e-mail with a link to set a new password goes to ${email}. The link works once and expires after 60 minutes. The current password keeps working until the link is used.`,
       confirm: 'Send link',

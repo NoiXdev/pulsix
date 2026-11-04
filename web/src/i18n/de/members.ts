@@ -8,6 +8,7 @@ export const deMembers: Messages['members'] = {
     role: 'Rolle',
     joined: 'Beigetreten',
     status: 'Status',
+    actions: 'Aktionen',
   },
   disabled: 'deaktiviert',
   active: 'aktiv',

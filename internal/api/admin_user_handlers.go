@@ -18,9 +18,14 @@ const (
 	notOnOwnAccount   = "not_on_own_account"
 	invitePending     = "invite_pending"
 	mailNotConfigured = "mail_not_configured"
+	lastInstanceAdmin = "last_instance_admin"
 )
 
-type adminUserDTO struct {
+// AdminUserDTO is one account on the Users page. It is exported because
+// adminUserDetailDTO embeds it: huma's schema builder skips an embedded
+// field of an unexported type, so the detail's OpenAPI schema would lose
+// these fields although the JSON carries them (see AlertDTO).
+type AdminUserDTO struct {
 	ID            string     `json:"id"`
 	Email         string     `json:"email"`
 	DisplayName   string     `json:"display_name"`
@@ -47,7 +52,7 @@ type adminFactorsDTO struct {
 }
 
 type adminUserDetailDTO struct {
-	adminUserDTO
+	AdminUserDTO
 	CreatedAt             time.Time            `json:"created_at"`
 	DisabledAt            *time.Time           `json:"disabled_at" nullable:"true"`
 	MustChangePassword    bool                 `json:"must_change_password"`
@@ -67,7 +72,7 @@ type adminUserListInput struct {
 
 type adminUserListOutput struct {
 	Body struct {
-		Users      []adminUserDTO `json:"users"`
+		Users      []AdminUserDTO `json:"users"`
 		NextCursor string         `json:"next_cursor"`
 	}
 }
@@ -126,7 +131,7 @@ func registerAdminUserRoutes(hapi huma.API, deps Deps) {
 			return nil, mapAdminAccountsErr(ctx, err)
 		}
 		out := &adminUserListOutput{}
-		out.Body.Users = make([]adminUserDTO, len(users))
+		out.Body.Users = make([]AdminUserDTO, len(users))
 		for i, u := range users {
 			out.Body.Users[i] = adminUserDTOOf(u)
 		}
@@ -272,8 +277,8 @@ func auditAdminAction(ctx context.Context, admin, target uuid.UUID, summary stri
 	setAuditObject(ctx, target.String(), summary)
 }
 
-func adminUserDTOOf(u accounts.UserSummary) adminUserDTO {
-	return adminUserDTO{
+func adminUserDTOOf(u accounts.UserSummary) AdminUserDTO {
+	return AdminUserDTO{
 		ID: u.ID.String(), Email: u.Email, DisplayName: u.DisplayName, InstanceAdmin: u.InstanceAdmin,
 		State: string(u.State), OrgCount: u.OrgCount, LastSignInAt: u.LastSignInAt,
 	}
@@ -281,7 +286,7 @@ func adminUserDTOOf(u accounts.UserSummary) adminUserDTO {
 
 func adminUserDetailDTOOf(u accounts.UserDetail) adminUserDetailDTO {
 	out := adminUserDetailDTO{
-		adminUserDTO:          adminUserDTOOf(u.UserSummary),
+		AdminUserDTO:          adminUserDTOOf(u.UserSummary),
 		CreatedAt:             u.CreatedAt,
 		DisabledAt:            u.DisabledAt,
 		MustChangePassword:    u.MustChangePassword,

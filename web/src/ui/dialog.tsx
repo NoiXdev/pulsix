@@ -9,6 +9,9 @@ export interface DialogProps {
    * assignment form next to the group's read-only values); default fits
    * every other dialog in the app. */
   size?: 'default' | 'wide';
+  /** false keeps Escape from closing the dialog, for while a request it
+   * started is in flight and its answer must not be lost. */
+  dismissible?: boolean;
 }
 
 const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
@@ -26,7 +29,7 @@ const SIZE_CLASS: Record<NonNullable<DialogProps['size']>, string> = {
  * heading inside it, so a test or assistive technology can find the
  * dialog by name: `getByRole('dialog', { name: 'Add credential' })`.
  */
-export function Dialog({ open, onClose, title, children, size = 'default' }: DialogProps) {
+export function Dialog({ open, onClose, title, children, size = 'default', dismissible = true }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
 
@@ -49,6 +52,11 @@ export function Dialog({ open, onClose, title, children, size = 'default' }: Dia
       // `close` is the one to keep: it also fires for the programmatic
       // el.close() below, which `cancel` does not.
       onClose={onClose}
+      // Escape sends `cancel` first; preventing it is the one way to keep
+      // the dialog open (the `close` above then never fires).
+      onCancel={(e) => {
+        if (!dismissible) e.preventDefault();
+      }}
       aria-labelledby={titleId}
       // m-auto is not decoration: a native <dialog> centres itself in the
       // viewport through the user-agent stylesheet's own `margin: auto`,

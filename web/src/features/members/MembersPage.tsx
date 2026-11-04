@@ -17,6 +17,8 @@ import { useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/us
 import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
+import { may } from '../../lib/roles.ts';
 import { PendingInvites } from './PendingInvites.tsx';
 
 const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 40px';
@@ -29,7 +31,8 @@ const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 40px';
  * member's columns and one action of its own.
  *
  * A row opens the member page (MemberPage, backlog 7.74), where the role
- * is changed; its menu also removes the member.
+ * is changed; for a role that may manage members its menu also removes
+ * the member.
  */
 export function MembersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -37,6 +40,7 @@ export function MembersPage() {
   const navigate = useNavigate();
 
   const members = useMembers(org);
+  const canManage = may(useOrg(org).data?.org.role, 'members.manage');
   const invite = useInviteMember(org);
   const removeMember = useRemoveMember(org);
 
@@ -86,7 +90,7 @@ export function MembersPage() {
           <span>{t.members.columns.role}</span>
           <span>{t.members.columns.joined}</span>
           <span>{t.members.columns.status}</span>
-          <span className="sr-only">{t.users.actions.title}</span>
+          <span className="sr-only">{t.members.columns.actions}</span>
         </GridHeader>
         {(members.data?.members ?? []).map((m) => (
           <ListRow
@@ -100,9 +104,11 @@ export function MembersPage() {
                 <RowMenuItem onSelect={() => void navigate({ to: '/o/$org/settings/members/$userId', params: { org, userId: m.user_id } })}>
                   {t.members.open}
                 </RowMenuItem>
-                <RowMenuItem destructive onSelect={() => void remove(m.user_id, m.display_name)}>
-                  {t.members.removeItem}
-                </RowMenuItem>
+                {canManage && (
+                  <RowMenuItem destructive onSelect={() => void remove(m.user_id, m.display_name)}>
+                    {t.members.removeItem}
+                  </RowMenuItem>
+                )}
               </RowMenu>
             }
           >

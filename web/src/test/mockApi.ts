@@ -52,7 +52,9 @@ export function mockApi(routes: Record<string, MockRoute>) {
     }
 
     const route = routes[key];
-    const resolved =
+    // A route function may return a promise, to hold a request open until
+    // the test resolves it.
+    const resolved = await (
       typeof route === 'function'
         ? (route as (req: MockRequest) => unknown)({
             method,
@@ -61,7 +63,8 @@ export function mockApi(routes: Record<string, MockRoute>) {
             body,
             headers: request.headers,
           })
-        : route;
+        : route
+    );
     // A route function that wants a non-200 (e.g. simulating a 500) can
     // return a real Response directly instead of a JSON body.
     if (resolved instanceof Response) return resolved;

@@ -55,4 +55,9 @@ export const deShell: Messages['shell'] = {
     credentials: 'Zugangsdaten',
     'jump-hosts': 'Sprunghosts',
   },
+  /** The crumb of an id segment, keyed by the segment before it. */
+  crumbIds: {
+    members: 'Mitglied',
+    users: 'Konto',
+  },
 };

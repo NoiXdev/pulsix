@@ -59,4 +59,9 @@ export const enShell = {
     credentials: 'Credentials',
     'jump-hosts': 'Jump hosts',
   },
+  /** The crumb of an id segment, keyed by the segment before it. */
+  crumbIds: {
+    members: 'Member',
+    users: 'Account',
+  },
 };
