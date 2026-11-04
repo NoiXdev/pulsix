@@ -61,6 +61,11 @@ export function schemas(t: Messages) {
     name: z.string().min(1, v.required),
   });
 
+  const orgFormSchema = z.object({
+    slug: slugSchema,
+    name: z.string().min(1, v.required),
+  });
+
   const inviteFormSchema = z.object({
     email: emailSchema,
     role: z.enum(['admin', 'operator', 'viewer']),
@@ -75,6 +80,7 @@ export function schemas(t: Messages) {
     smtpSchema,
     hostFormSchema,
     zoneFormSchema,
+    orgFormSchema,
     inviteFormSchema,
   };
 }
@@ -90,4 +96,5 @@ export type SmtpSaveValues = Omit<SmtpFormValues, 'password'> & { password?: str
 
 export type HostFormValues = z.infer<Schemas['hostFormSchema']>;
 export type ZoneFormValues = z.infer<Schemas['zoneFormSchema']>;
+export type OrgFormValues = z.infer<Schemas['orgFormSchema']>;
 export type InviteFormValues = z.infer<Schemas['inviteFormSchema']>;

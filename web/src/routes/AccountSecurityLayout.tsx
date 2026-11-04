@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { AppShell } from '../ui/shell.tsx';
 import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
@@ -11,6 +12,7 @@ import { useT } from '../i18n/useT.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 import { sessionState } from '../lib/sessionState.ts';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
+import { CreateOrgDialog } from '../features/orgs/CreateOrgDialog.tsx';
 
 /**
  * AccountSecurityLayout renders /account/security inside the same
@@ -25,6 +27,7 @@ export function AccountSecurityLayout() {
   const navigate = useNavigate();
   const resetSession = useResetSession();
   const t = useT();
+  const [creatingOrg, setCreatingOrg] = useState(false);
   const me = useMe({ enabled: true });
   // GET /orgs is refused to a session that is not MFA-complete or must
   // change its password; such a session is sent on to enrolment,
@@ -55,6 +58,7 @@ export function AccountSecurityLayout() {
       org={{ slug: firstOrg.slug, name: firstOrg.name, role: firstOrg.role }}
       orgs={(orgs.data.orgs ?? []).map((o) => ({ slug: o.slug, name: o.name }))}
       onSelectOrg={(slug) => void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } })}
+      onCreateOrg={me.data.instance_admin ? () => setCreatingOrg(true) : undefined}
       crumbs={
         <>
           <span>{t.routes.accountSecurity.crumbAccount}</span>
@@ -78,6 +82,7 @@ export function AccountSecurityLayout() {
       }}
     >
       <AccountSecurityPage />
+      <CreateOrgDialog open={creatingOrg} onClose={() => setCreatingOrg(false)} />
     </AppShell>
   );
 }

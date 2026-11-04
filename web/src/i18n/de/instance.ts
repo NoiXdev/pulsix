@@ -1,6 +1,24 @@
 import type { Messages } from '../types.ts';
 
 export const deInstance: Messages['instance'] = {
+  orgs: {
+    hint: 'Alle Organisationen dieser Instanz. Die Mitgliederzahlen enthalten deaktivierte Konten.',
+    columns: { organization: 'Organisation', members: 'Mitglieder', created: 'Erstellt' },
+    notMember: 'kein Mitglied',
+    notMemberTitle: 'Du bist kein Mitglied dieser Organisation und kannst sie deshalb nicht öffnen.',
+    empty: 'Es gibt noch keine Organisationen.',
+    create: {
+      title: 'Neue Organisation',
+      open: 'Neue Organisation',
+      name: 'Name',
+      slug: 'Slug',
+      slugHint: 'Teil jeder URL und jedes API-Token-Geltungsbereichs der Organisation. Er lässt sich später nicht ändern.',
+      submit: 'Organisation erstellen',
+      slugTaken: 'Dieser Slug ist bereits vergeben. Wähle einen anderen.',
+      created: (name: string) => `Organisation ${name} erstellt`,
+      failed: 'Die Organisation konnte nicht erstellt werden',
+    },
+  },
   smtp: {
     hint: 'Für die ganze Instanz: wird für die Einladungen aller Organisationen verwendet.',
     configured: 'konfiguriert',

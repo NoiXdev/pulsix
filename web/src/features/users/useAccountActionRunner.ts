@@ -57,8 +57,8 @@ export function useAccountActionRunner(user: AdminUserDetail) {
   }
 
   // The action handles its own failures, except the step-up refusal, which
-  // useStepUp turns into the second-factor prompt and a retry. A retry
-  // runs outside run()'s error handling, so nothing else may escape it.
+  // useStepUp turns into the second-factor prompt and a retry. A retry that
+  // fails again is handed to `refuse` by useStepUp.
   async function perform(kind: ActionKind) {
     setRunning(kind);
     setError(null);

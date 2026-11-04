@@ -5,6 +5,7 @@
  */
 export const enShell = {
   organization: 'Organization',
+  newOrganization: 'New organization',
   nav: {
     infrastructure: 'Infrastructure',
     monitoring: 'Monitoring',
@@ -37,6 +38,7 @@ export const enShell = {
   /** Breadcrumb labels, keyed by the URL segment they stand for. */
   crumbs: {
     users: 'Users',
+    organizations: 'Organizations',
     hosts: 'Hosts',
     settings: 'Settings',
     general: 'General',

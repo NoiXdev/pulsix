@@ -19,7 +19,9 @@ export function useResetAvailable() {
  */
 
 /** useRequestReset asks for a reset link. The server answers 202 to every
- * address alike (or 429 when the client or address is rate limited). */
+ * address alike, or 429 when the client's IP address has asked too often.
+ * That limit counts requests per client IP only and does not depend on the
+ * e-mail address (internal/api/forgot_rate_limit.go). */
 export function useRequestReset() {
   return useMutation({
     mutationFn: (email: string) => unwrap(api.POST('/api/v1/auth/password/forgot', { body: { email } })),

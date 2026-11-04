@@ -29,6 +29,10 @@ export interface AppShellProps {
    * nothing. */
   orgs: ShellOrg[];
   onSelectOrg: (slug: string) => void;
+  /** Adds "+ New organization" as the switcher's last entry and calls this
+   * when it is chosen. Only an instance admin may create an organization,
+   * so a caller passes it for no one else (backlog 7.74). */
+  onCreateOrg?: () => void;
   crumbs: ReactNode;
   user: ShellUser;
   /** Finding "Important 6": there was no logout anywhere in the shell and
@@ -87,7 +91,7 @@ function initials(name: string): string {
  * descendant of /o/$org/settings, which is exactly the set of routes the
  * mockup groups under it.
  */
-export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, children }: AppShellProps) {
+export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, onLogout, children }: AppShellProps) {
   const navigate = useNavigate();
   const t = useT();
   const [search, setSearch] = useState('');
@@ -118,10 +122,10 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
           </span>
         </div>
 
-        {/* No create row (v0.4g Move 3): an organization is the most
-            deliberate object in the product, and this switcher is only
-            ever handed the organizations the signed-in user already
-            belongs to. */}
+        {/* The switcher is handed the organizations the signed-in user
+            belongs to. A create row ends it only when the caller passes
+            onCreateOrg, which is for instance admins alone: an organization
+            is the most deliberate object in the product (v0.4g Move 3). */}
         {/* The <label> is a sibling of Select, not a wrapper around it, with
             htmlFor carrying the association instead: an <li role="option">
             in the dropdown below is not interactive content, so wrapping it
@@ -142,6 +146,7 @@ export function AppShell({ org, orgs, onSelectOrg, crumbs, user, onLogout, child
             options={(orgs.length > 0 ? orgs : [org]).map((o) => ({ value: o.slug, label: o.name }))}
             value={org.slug}
             onChange={onSelectOrg}
+            create={onCreateOrg ? { label: t.shell.newOrganization, onSelect: onCreateOrg } : undefined}
           />
         </div>
 

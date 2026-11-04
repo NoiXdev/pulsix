@@ -50,7 +50,7 @@ export function PasswordChangeForm({
 
   // The attempt handles its own failures, except the step-up refusal,
   // which useStepUp turns into the second-factor prompt and a retry. A
-  // retry runs outside run()'s error handling, so nothing else may escape.
+  // retry that fails again is handed to `refused` by useStepUp.
   async function attempt() {
     try {
       await change.mutateAsync({ current_password: current, new_password: next });
@@ -97,7 +97,9 @@ export function PasswordChangeForm({
           <Input
             id={`${variant}-current-password`}
             type="password"
-            autoComplete="current-password"
+            // The temporary password was typed in from a note, not saved:
+            // a browser must not offer the old password here.
+            autoComplete={temporary ? 'one-time-code' : 'current-password'}
             required
             value={current}
             onChange={(e) => setCurrent(e.target.value)}

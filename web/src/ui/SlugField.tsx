@@ -21,6 +21,10 @@ export interface SlugFieldProps {
   readSource: () => string;
   /** Writes the generated slug back into the form. */
   write: (slug: string) => void;
+  /** Set by Field: the hint or error that describes the input, and
+   * whether it is showing an error. */
+  'aria-describedby'?: string;
+  'aria-invalid'?: boolean;
 }
 
 /**
@@ -39,13 +43,15 @@ export interface SlugFieldProps {
  * name yields nothing slug-worthy the click does nothing rather than
  * clearing the field, which would leave somebody retyping what they had.
  */
-export function SlugField({ id, inputProps, readSource, write }: SlugFieldProps) {
+export function SlugField({ id, inputProps, readSource, write, 'aria-describedby': describedBy, 'aria-invalid': invalid }: SlugFieldProps) {
   const t = useT();
   return (
     <div className="flex items-center gap-2">
       <Input
         {...inputProps}
         id={id}
+        aria-describedby={describedBy}
+        aria-invalid={invalid}
         onBlur={(e) => {
           inputProps.onBlur?.(e);
           if (e.target.value.trim() !== '') return;

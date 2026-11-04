@@ -1,11 +1,31 @@
 /**
- * The instance administrators' pages: outgoing mail (SMTP) and the shared
- * resources every organization receives. The page titles are
- * `settings.tabs.mail` and `settings.tabs.shared{Repos,Templates,Checks}`; the default
+ * The instance administrators' pages: outgoing mail (SMTP), the shared
+ * resources every organization receives, and the organizations list with its
+ * create dialog. The page titles are `settings.tabs.mail`,
+ * `settings.tabs.organizations` and
+ * `settings.tabs.shared{Repos,Templates,Checks}`; the default
  * language page is `language.instance`. The SMTP field labels are also the
  * setup wizard's.
  */
 export const enInstance = {
+  orgs: {
+    hint: 'Every organization on this instance. Member counts include deactivated accounts.',
+    columns: { organization: 'Organization', members: 'Members', created: 'Created' },
+    notMember: 'not a member',
+    notMemberTitle: 'You are not a member of this organization, so you cannot open it.',
+    empty: 'There are no organizations yet.',
+    create: {
+      title: 'New organization',
+      open: 'New organization',
+      name: 'Name',
+      slug: 'Slug',
+      slugHint: 'Part of every URL and API token scope of the organization. It cannot be changed later.',
+      submit: 'Create organization',
+      slugTaken: 'That slug is already taken. Choose another one.',
+      created: (name: string) => `Organization ${name} created`,
+      failed: 'The organization could not be created',
+    },
+  },
   smtp: {
     hint: "Instance-wide: used for every organization's invitations.",
     configured: 'configured',

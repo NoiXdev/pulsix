@@ -11,6 +11,7 @@ export const enSettings = {
   },
   tabs: {
     users: 'Users',
+    organizations: 'Organizations',
     general: 'General',
     members: 'Members',
     activity: 'Activity',

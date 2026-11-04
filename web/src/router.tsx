@@ -20,6 +20,7 @@ import { MembersPage } from './features/members/MembersPage.tsx';
 import { MemberPage } from './features/members/MemberPage.tsx';
 import { UsersPage } from './features/users/UsersPage.tsx';
 import { AccountPage } from './features/users/AccountPage.tsx';
+import { OrganizationsPage } from './features/instance/OrganizationsPage.tsx';
 import { ActivityPage } from './features/activity/ActivityPage.tsx';
 import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
@@ -305,6 +306,13 @@ const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mai
 // administrators; filed under Settings for navigation only, same as mail.
 const usersRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/users', component: UsersPage });
 const accountRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/users/$userId', component: AccountPage });
+// Every organization on the instance, for instance administrators; filed
+// under Settings for navigation only, same as users.
+const organizationsRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/organizations',
+  component: OrganizationsPage,
+});
 // The instance's default GUI language (backlog 1.41), for instance
 // administrators; filed under Settings for navigation only, same as mail.
 const languageRoute = createRoute({
@@ -388,6 +396,7 @@ const routeTree = rootRoute.addChildren([
       legacyJumpHostsRoute,
       usersRoute,
       accountRoute,
+      organizationsRoute,
       mailRoute,
       languageRoute,
       backupsRoute,

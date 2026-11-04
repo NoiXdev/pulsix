@@ -272,3 +272,6 @@ export type AccountState = AdminUser['state'];
 export type AdminUserDetail = components['schemas']['AdminUserDetailDTO'];
 /** Whether the person was told about an admin action by mail. */
 export type AccountNotice = components['schemas']['NoticeOutputBody']['notice'];
+
+/** One organization on the Organizations page (GET /admin/orgs). */
+export type AdminOrg = components['schemas']['AdminOrgDTO'];

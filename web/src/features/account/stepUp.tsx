@@ -18,19 +18,24 @@ export function isStepUpRequired(err: unknown): boolean {
  * user's actual intent survives the interruption instead of turning into
  * an error they have to understand and repeat themselves.
  *
- * Any other failure is handed back to the caller's own error handling.
+ * Any other failure is handed back to the caller's own error handling,
+ * and so is a failure of the retry itself, a second step-up refusal
+ * included: after a proof the dialog is gone and nothing else is left to
+ * report it, so it goes to the same `onError` the first attempt's
+ * failures go to. A caller's action rethrows only the step-up refusal; its
+ * other failures it handles itself.
  */
 export function useStepUp() {
-  const [pending, setPending] = useState<(() => Promise<void>) | null>(null);
+  const [pending, setPending] = useState<{ action: () => Promise<void>; onError: (err: unknown) => void } | null>(
+    null,
+  );
 
   async function run(action: () => Promise<void>, onError: (err: unknown) => void) {
     try {
       await action();
     } catch (err) {
       if (isStepUpRequired(err)) {
-        // Stored as a value, not called: setState treats a function
-        // argument as an updater.
-        setPending(() => action);
+        setPending({ action, onError });
         return;
       }
       onError(err);
@@ -41,9 +46,13 @@ export function useStepUp() {
     <StepUpDialog
       onClose={() => setPending(null)}
       onProved={async () => {
-        const retry = pending;
+        const { action, onError } = pending;
         setPending(null);
-        await retry();
+        try {
+          await action();
+        } catch (err) {
+          onError(err);
+        }
       }}
     />
   ) : null;

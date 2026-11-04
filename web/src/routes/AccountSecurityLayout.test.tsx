@@ -143,5 +143,26 @@ describe('AccountSecurityLayout', () => {
     expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
     await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
   });
+
+  it.each([
+    [true, ['Acme Hosting', 'New organization']],
+    [false, ['Acme Hosting']],
+  ])('offers the org switcher a create entry only to an instance admin (admin: %s)', async (admin, labels) => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        totp_confirmed: true,
+        instance_admin: admin,
+      },
+      'GET /api/v1/orgs': ORGS,
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+    });
+    renderAt();
+
+    await user.click(await screen.findByRole('combobox', { name: 'Organization' }));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-label'))).toEqual(labels);
+  });
 });
 

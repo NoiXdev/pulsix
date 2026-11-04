@@ -21,7 +21,7 @@ const ORGS: ShellOrg[] = [
  * itself so the "active route" assertions reflect real client-side
  * routing (finding "Important 11": the router's own activeProps, not a
  * hand-set `active` prop the shell used to take). */
-function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string } = {}) {
+function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void } = {}) {
   const rootRoute = createRootRoute();
 
   function leaf(path: string) {
@@ -36,6 +36,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
           crumbs={<span>Hosts</span>}
           user={{ displayName: 'Tim R.', subtitle: 'Owner' }}
           onLogout={opts.onLogout ?? (() => {})}
+          onCreateOrg={opts.onCreateOrg}
         >
           <div>page content</div>
         </AppShell>
@@ -120,6 +121,26 @@ describe('AppShell', () => {
     await user.click(combo);
     expect(screen.getByRole('option', { name: 'Acme Hosting' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Hosts Inc' })).toBeInTheDocument();
+  });
+
+  it('offers no create entry in the org switcher without onCreateOrg', async () => {
+    const user = userEvent.setup();
+    renderShellAt('/o/acme/hosts');
+    await user.click(await screen.findByRole('combobox', { name: 'Organization' }));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-label'))).toEqual(['Acme Hosting', 'Hosts Inc']);
+  });
+
+  it('ends the org switcher with "+ New organization" when onCreateOrg is set, and calls it on choosing it', async () => {
+    const user = userEvent.setup();
+    const onCreateOrg = vi.fn();
+    renderShellAt('/o/acme/hosts', { onCreateOrg });
+    await user.click(await screen.findByRole('combobox', { name: 'Organization' }));
+
+    const options = screen.getAllByRole('option');
+    expect(options.map((o) => o.getAttribute('data-label'))).toEqual(['Acme Hosting', 'Hosts Inc', 'New organization']);
+    await user.click(options[2]);
+
+    expect(onCreateOrg).toHaveBeenCalledTimes(1);
   });
 
   it('marks Hosts active — via the router\'s own activeProps — and leaves Settings unmarked', async () => {

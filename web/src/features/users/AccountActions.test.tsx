@@ -280,6 +280,23 @@ describe('AccountActions', () => {
     expect(attempts).toBe(2);
   });
 
+  it('shows the refusal in the dialog when the retry after the proof is refused again', async () => {
+    const user = userEvent.setup();
+    render(accountDetail(), {
+      'POST /api/v1/auth/totp/verify': { ok: true },
+      'POST /api/v1/admin/users/u2/sessions/revoke': stepUpRequired,
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'End all sessions' }));
+    const dialog = await screen.findByRole('dialog', { name: 'End all sessions' });
+    await user.click(within(dialog).getByRole('button', { name: 'End all sessions' }));
+    const stepUp = await screen.findByRole('dialog', { name: 'Confirm it is you' });
+    await user.type(within(stepUp).getByLabelText('Authenticator or recovery code'), '123456');
+    await user.click(within(stepUp).getByRole('button', { name: 'Confirm' }));
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('step_up_required');
+  });
+
   it('shows the reason inside the dialog when the server refuses', async () => {
     const user = userEvent.setup();
     render(accountDetail({ instance_admin: true }), {

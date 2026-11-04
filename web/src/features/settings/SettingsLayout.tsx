@@ -21,9 +21,9 @@ import { useT } from '../../i18n/useT.ts';
  *   alert_route_handlers.go and oncall_handlers.go gate their own reads on
  *   that same permission, since either decides where alert data leaves the
  *   system, the same weight a channel itself carries.
- * - Instance (Users, Outgoing mail, Language, Backups, Shared repositories,
+ * - Instance (Users, Organizations, Outgoing mail, Language, Backups, Shared repositories,
  *   Shared job templates, Shared check definitions): instance administrators
- *   only, the only callers GET /admin/users, /admin/settings/smtp,
+ *   only, the only callers GET /admin/users, /admin/orgs, /admin/settings/smtp,
  *   /admin/settings/locale, /admin/backups and
  *   /admin/{repos,templates,checks}/definitions admit.
  *
@@ -64,6 +64,7 @@ export function SettingsLayout() {
       label: t.settings.nav.instance,
       items: [
         { to: '/o/$org/settings/users', params, label: t.settings.tabs.users },
+        { to: '/o/$org/settings/organizations', params, label: t.settings.tabs.organizations },
         { to: '/o/$org/settings/mail', params, label: t.settings.tabs.mail },
         { to: '/o/$org/settings/language', params, label: t.language.instance.tab },
         { to: '/o/$org/settings/backups', params, label: t.backups.tab },

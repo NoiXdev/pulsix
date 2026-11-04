@@ -16,8 +16,8 @@ import { useT } from '../../i18n/useT.ts';
  *
  * The answer never tells whether the address has an account: the server
  * answers every address alike, and so does this page. A rate limit is the
- * one other answer; it is about the client and the address, not about an
- * account, so it is said as it is.
+ * one other answer; it counts requests per client IP and does not depend
+ * on the e-mail address or on any account, so it is said as it is.
  */
 export function ForgotPasswordPage() {
   const t = useT();

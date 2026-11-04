@@ -9,6 +9,7 @@ export const deSettings: Messages['settings'] = {
   },
   tabs: {
     users: 'Benutzer',
+    organizations: 'Organisationen',
     general: 'Allgemein',
     members: 'Mitglieder',
     activity: 'Aktivität',

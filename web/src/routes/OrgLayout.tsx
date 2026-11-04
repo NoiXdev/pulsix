@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Outlet, useNavigate, useParams, useRouterState } from '@tanstack/react-router';
 import { AppShell } from '../ui/shell.tsx';
@@ -11,6 +12,7 @@ import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { useT } from '../i18n/useT.ts';
 import { sessionState } from '../lib/sessionState.ts';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
+import { CreateOrgDialog } from '../features/orgs/CreateOrgDialog.tsx';
 
 /** OrgLayout is the route-connected wrapper around the pure AppShell
  * component (src/ui/shell.tsx): it resolves the current org, the user's
@@ -32,6 +34,7 @@ export function OrgLayout() {
   const navigate = useNavigate();
   const resetSession = useResetSession();
   const t = useT();
+  const [creatingOrg, setCreatingOrg] = useState(false);
 
   const me = useMe({ enabled: true });
   // A session that is not MFA-complete, or whose account must change its
@@ -62,6 +65,7 @@ export function OrgLayout() {
         if (slug === orgSlug) return;
         void navigate({ to: '/o/$org/hosts', params: { org: slug }, search: { q: undefined } });
       }}
+      onCreateOrg={me.data.instance_admin ? () => setCreatingOrg(true) : undefined}
       crumbs={
         <>
           {crumbs.map((label, i) => (
@@ -88,6 +92,7 @@ export function OrgLayout() {
       }}
     >
       <Outlet />
+      <CreateOrgDialog open={creatingOrg} onClose={() => setCreatingOrg(false)} />
     </AppShell>
   );
 }

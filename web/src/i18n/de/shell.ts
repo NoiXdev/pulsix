@@ -2,6 +2,7 @@ import type { Messages } from '../types.ts';
 
 export const deShell: Messages['shell'] = {
   organization: 'Organisation',
+  newOrganization: 'Neue Organisation',
   nav: {
     infrastructure: 'Infrastruktur',
     monitoring: 'Überwachung',
@@ -33,6 +34,7 @@ export const deShell: Messages['shell'] = {
   notifications: 'Benachrichtigungen',
   crumbs: {
     users: 'Benutzer',
+    organizations: 'Organisationen',
     hosts: 'Hosts',
     settings: 'Einstellungen',
     general: 'Allgemein',

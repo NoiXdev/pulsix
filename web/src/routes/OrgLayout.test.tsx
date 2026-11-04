@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../ui/toast.tsx';
@@ -122,5 +123,36 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
 
     expect(await screen.findByText('You do not have access')).toBeInTheDocument();
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [true, ['Acme Hosting', 'New organization']],
+    [false, ['Acme Hosting']],
+  ])('offers the org switcher a create entry only to an instance admin (admin: %s)', async (admin, labels) => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': { ...ME_OK, instance_admin: admin },
+      'GET /api/v1/orgs': ORGS_OK,
+    });
+    renderAt('/o/acme/hosts');
+
+    await user.click(await screen.findByRole('combobox', { name: 'Organization' }));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-label'))).toEqual(labels);
+  });
+
+  it('opens the create dialog from the switcher entry', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': { ...ME_OK, instance_admin: true },
+      'GET /api/v1/orgs': ORGS_OK,
+    });
+    renderAt('/o/acme/hosts');
+
+    await user.click(await screen.findByRole('combobox', { name: 'Organization' }));
+    await user.click(screen.getByRole('option', { name: 'New organization' }));
+
+    expect(await screen.findByRole('dialog', { name: 'New organization' })).toBeInTheDocument();
   });
 });

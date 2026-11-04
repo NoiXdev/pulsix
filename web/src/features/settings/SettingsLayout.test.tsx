@@ -11,7 +11,7 @@ function renderLayout(path = '/o/acme/settings/members') {
   const settingsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings', component: SettingsLayout });
   const page = (p: string) =>
     createRoute({ getParentRoute: () => settingsRoute, path: p, component: () => <div>page {p}</div> });
-  const leaves = ['/general', '/members', '/activity', '/tokens', '/notifications', '/mail', '/shared/repos', '/shared/repos/$id', '/users', '/users/$userId'].map(page);
+  const leaves = ['/general', '/members', '/activity', '/tokens', '/notifications', '/mail', '/shared/repos', '/shared/repos/$id', '/users', '/users/$userId', '/organizations'].map(page);
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([settingsRoute.addChildren(leaves)])]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -46,6 +46,7 @@ describe('SettingsLayout', () => {
     expect(screen.queryByRole('link', { name: 'Notifications' })).not.toBeInTheDocument();
     expect(screen.queryByText('Instance')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Outgoing mail' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Organizations' })).not.toBeInTheDocument();
   });
 
   it('shows an operator the Alerting group as well', async () => {
@@ -64,9 +65,12 @@ describe('SettingsLayout', () => {
     expect(await screen.findByText('Instance')).toBeInTheDocument();
     const users = screen.getByRole('link', { name: 'Users' });
     expect(users).toHaveAttribute('href', '/o/acme/settings/users');
-    // Users leads the Instance group.
+    // Users leads the Instance group, Organizations follows it.
+    const organizations = screen.getByRole('link', { name: 'Organizations' });
+    expect(organizations).toHaveAttribute('href', '/o/acme/settings/organizations');
     const links = screen.getAllByRole('link');
-    expect(links[links.indexOf(users) + 1]).toHaveAccessibleName('Outgoing mail');
+    expect(links[links.indexOf(users) + 1]).toBe(organizations);
+    expect(links[links.indexOf(organizations) + 1]).toHaveAccessibleName('Outgoing mail');
     expect(links[links.indexOf(users) - 1]).toHaveAccessibleName('API tokens');
     expect(screen.getByRole('link', { name: 'Outgoing mail' })).toHaveAttribute('href', '/o/acme/settings/mail');
     expect(screen.getByRole('link', { name: 'Language' })).toBeInTheDocument();

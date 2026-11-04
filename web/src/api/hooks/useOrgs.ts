@@ -33,3 +33,26 @@ export function useUpdateOrg(slug: string) {
     },
   });
 }
+
+/** useAdminOrgs is the instance admin's list of every organization, with
+ * member counts and whether the admin is a member of each. */
+export function useAdminOrgs() {
+  return useQuery({
+    queryKey: ['admin-orgs'],
+    queryFn: async () => (await unwrap(api.GET('/api/v1/admin/orgs'))).orgs ?? [],
+  });
+}
+
+/** useCreateOrg creates an organization (POST /orgs, instance admins
+ * only); the caller becomes its owner. Refreshes every list of
+ * organizations: the switcher's and the Organizations page's. */
+export function useCreateOrg() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { slug: string; name: string }) => unwrap(api.POST('/api/v1/orgs', { body })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['orgs'] });
+      void qc.invalidateQueries({ queryKey: ['admin-orgs'] });
+    },
+  });
+}
