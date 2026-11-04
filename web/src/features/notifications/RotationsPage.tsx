@@ -7,7 +7,6 @@ import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -52,8 +51,8 @@ function rosterRange(): { from: string; to: string } {
  * alert data leaves the system, the same weight those two already carry)
  * — operators read, admins manage.
  *
- * Reachable from the Notifications/Alert routes tab strip
- * (SettingsTabs.tsx) and from RouteDialog's "On-call rotation" channel
+ * Reachable from the Alerting group of the Settings side navigation
+ * (SettingsLayout.tsx) and from RouteDialog's "On-call rotation" channel
  * source — before this page existed, that radio option had nothing
  * feeding it (task-10-brief.md's own context note).
  */
@@ -80,10 +79,7 @@ export function RotationsPage() {
   if (rotationsGuard) return rotationsGuard;
   if (!orgInfo.data) return <QueryLoading />;
   const header = (
-    <div className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">{m.title}</h1>
-      <SettingsTabs org={org} />
-    </div>
+    <h1 className="text-xl font-semibold">{m.title}</h1>
   );
   if (!canRead) {
     return (

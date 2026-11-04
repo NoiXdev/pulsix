@@ -5,7 +5,6 @@ import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
@@ -54,10 +53,7 @@ export function ChannelsPage() {
   if (channelsGuard) return channelsGuard;
   if (!orgInfo.data) return <QueryLoading />;
   const header = (
-    <div className="flex flex-col gap-2">
-      <h1 className="text-xl font-semibold">{m.title}</h1>
-      <SettingsTabs org={org} />
-    </div>
+    <h1 className="text-xl font-semibold">{m.title}</h1>
   );
   if (!canRead) {
     return (

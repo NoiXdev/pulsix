@@ -97,7 +97,6 @@ describe('BackupsPage', () => {
     renderPage();
 
     expect(await screen.findByRole('heading', { name: 'Backups', level: 1 })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Backups' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText('Bucket')).toHaveValue('firma-backups'));
     expect(screen.getByLabelText('Endpoint')).toHaveValue('https://s3.example.com');
     expect(screen.getByLabelText('Path prefix')).toHaveValue('pulsix/');

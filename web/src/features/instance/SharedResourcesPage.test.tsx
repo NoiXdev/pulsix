@@ -43,7 +43,7 @@ function renderPage() {
 // repository definitions (spec decisions 1-8) — the installation-owned side
 // of what ReposPage.tsx's RepoDialog shows read-only inside an organization.
 describe('SharedResourcesPage', () => {
-  it('lists repository definitions and shows the Shared resources tab', async () => {
+  it('lists repository definitions and shows the Shared resources title', async () => {
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/repos/definitions': { definitions: [def()] },
@@ -51,7 +51,7 @@ describe('SharedResourcesPage', () => {
     renderPage();
     expect(await screen.findByText('ansible-base')).toBeInTheDocument();
     expect(screen.getByText('https://git.example/provider/ansible-base.git')).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Shared resources' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Shared resources', level: 1 })).toBeInTheDocument();
   });
 
   it('creates a repository definition, projected into every organization by the server', async () => {

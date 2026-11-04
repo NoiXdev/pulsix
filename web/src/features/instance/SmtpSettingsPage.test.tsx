@@ -53,7 +53,7 @@ describe('SmtpSettingsPage (I4: outgoing mail can be configured after setup)', (
 
     renderPage();
     expect(await screen.findByText('not configured')).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Outgoing mail' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Outgoing mail', level: 1 })).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('Host'), 'smtp.acme.io');
     await user.clear(screen.getByLabelText('Port'));

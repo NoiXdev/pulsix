@@ -1,5 +1,4 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { useParams } from '@tanstack/react-router';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Mail, Send } from 'lucide-react';
@@ -12,7 +11,6 @@ import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useSaveSmtpSettings, useSmtpSettings, useTestSmtpSettings } from '../../api/hooks/useSmtpSettings.ts';
 import { schemas, type SmtpFormValues, type SmtpSaveValues } from '../../lib/schemas.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -29,7 +27,6 @@ import { useT } from '../../i18n/useT.ts';
  * never sent back, so saving always sends the password field as typed.
  */
 export function SmtpSettingsPage() {
-  const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
   const t = useT();
   const settings = useSmtpSettings();
@@ -44,10 +41,7 @@ export function SmtpSettingsPage() {
   const current = settings.data;
   return (
     <>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">{t.settings.tabs.mail}</h1>
-        <SettingsTabs org={org} />
-      </div>
+      <h1 className="text-xl font-semibold">{t.settings.tabs.mail}</h1>
       <div className="flex items-center gap-3">
         <span className="text-[13px] text-muted-foreground">{t.instance.smtp.hint}</span>
         {current.configured ? (

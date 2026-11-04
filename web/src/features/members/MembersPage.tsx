@@ -12,7 +12,6 @@ import { Select } from '../../ui/Select.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
 import { useFormat } from '../../i18n/format.ts';
@@ -59,10 +58,7 @@ export function MembersPage() {
   return (
     <>
       <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">{t.settings.tabs.members}</h1>
-          <SettingsTabs org={org} />
-        </div>
+        <h1 className="text-xl font-semibold">{t.settings.tabs.members}</h1>
         <Button variant="primary" onClick={() => setInviteOpen(true)}>
           <UserPlus size={15} /> {t.members.invite}
         </Button>

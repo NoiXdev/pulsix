@@ -34,6 +34,7 @@ export const deShell: Messages['shell'] = {
   crumbs: {
     hosts: 'Hosts',
     settings: 'Einstellungen',
+    general: 'Allgemein',
     members: 'Mitglieder',
     activity: 'Aktivität',
     tokens: 'Tokens',

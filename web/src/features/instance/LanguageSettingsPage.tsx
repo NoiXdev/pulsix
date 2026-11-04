@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useParams } from '@tanstack/react-router';
 import { Languages } from 'lucide-react';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -8,7 +7,6 @@ import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useMe } from '../../api/hooks/useMe.ts';
 import { useInstanceLocale, useSaveInstanceLocale } from '../../api/hooks/useLocaleSettings.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -24,7 +22,6 @@ import { LOCALES, LOCALE_NAMES, isLocale, type Locale } from '../../i18n/types.t
  * the page says.
  */
 export function LanguageSettingsPage() {
-  const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
   const toast = useToast();
   const me = useMe({ enabled: true });
@@ -39,10 +36,7 @@ export function LanguageSettingsPage() {
   const value = chosen ?? settings.data.default_locale;
   return (
     <>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">{t.language.instance.title}</h1>
-        <SettingsTabs org={org} />
-      </div>
+      <h1 className="text-xl font-semibold">{t.language.instance.title}</h1>
       <span className="text-[13px] text-muted-foreground">{t.language.instance.hint}</span>
 
       <div className="grid grid-cols-2 items-start gap-4">

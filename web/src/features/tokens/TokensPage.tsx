@@ -13,7 +13,6 @@ import { Select } from '../../ui/Select.tsx';
 import { RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useCreateToken, useRevokeToken, useTokens } from '../../api/hooks/useTokens.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -50,10 +49,7 @@ export function TokensPage() {
   return (
     <>
       <div className="flex items-center justify-between">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-xl font-semibold">{t.tokens.title}</h1>
-          <SettingsTabs org={org} />
-        </div>
+        <h1 className="text-xl font-semibold">{t.tokens.title}</h1>
         <Button variant="primary" onClick={() => setCreateOpen(true)}>
           <KeyRound size={15} /> {t.tokens.create}
         </Button>

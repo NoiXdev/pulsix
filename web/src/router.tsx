@@ -33,6 +33,8 @@ import { ChecksPage } from './features/checks/ChecksPage.tsx';
 import { MonitoringGroupsPage } from './features/checks/MonitoringGroupsPage.tsx';
 import { RulesPage } from './features/checks/RulesPage.tsx';
 import { ItemsPage } from './features/checks/ItemsPage.tsx';
+import { SettingsLayout } from './features/settings/SettingsLayout.tsx';
+import { OrgGeneralPage } from './features/settings/OrgGeneralPage.tsx';
 import { ChannelsPage } from './features/notifications/ChannelsPage.tsx';
 import { AlertRoutesPage } from './features/notifications/AlertRoutesPage.tsx';
 import { RotationsPage } from './features/notifications/RotationsPage.tsx';
@@ -210,7 +212,8 @@ const rulesRoute = createRoute({ getParentRoute: () => checksRoute, path: '/rule
 const itemsRoute = createRoute({ getParentRoute: () => checksRoute, path: '/items', component: ItemsPage });
 
 /**
- * settingsRoute is the layout route for Members, Activity, API tokens,
+ * settingsRoute is the layout route (SettingsLayout: a grouped side
+ * navigation beside the page) for General, Members, Activity, API tokens,
  * outgoing mail and the notification pages (channels, alert routes,
  * on-call rotations) — finding "Important 6": the mockup
  * (Members.dc.html, Activity.dc.html) files them under one "Settings"
@@ -221,7 +224,11 @@ const itemsRoute = createRoute({ getParentRoute: () => checksRoute, path: '/item
  * the router's own activeProps (matching any descendant of /settings)
  * instead of hand-rolled pathname string matching.
  */
-const settingsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings' });
+const settingsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: '/settings',
+  component: SettingsLayout,
+});
 const settingsIndexRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: '/',
@@ -229,6 +236,7 @@ const settingsIndexRoute = createRoute({
     throw redirect({ to: '/o/$org/settings/members', params: { org: params.org } });
   },
 });
+const generalRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/general', component: OrgGeneralPage });
 const membersRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/members', component: MembersPage });
 const activityRoute = createRoute({
   getParentRoute: () => settingsRoute,
@@ -305,6 +313,7 @@ const routeTree = rootRoute.addChildren([
     checksRoute.addChildren([checksIndexRoute, monitoringGroupsRoute, rulesRoute, itemsRoute]),
     settingsRoute.addChildren([
       settingsIndexRoute,
+      generalRoute,
       membersRoute,
       activityRoute,
       tokensRoute,

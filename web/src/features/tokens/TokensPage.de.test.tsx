@@ -8,7 +8,7 @@ import { mockApi } from '../../test/mockApi.ts';
 import { TokensPage } from './TokensPage.tsx';
 
 describe('TokensPage in German', () => {
-  it('renders the page, its tab strip and its dates in German', async () => {
+  it('renders the page and its dates in German', async () => {
     mockApi({
       'GET /api/v1/auth/me': {
         user: { id: 'u1', email: 'a@acme.io', display_name: 'A' },
@@ -44,8 +44,7 @@ describe('TokensPage in German', () => {
 
     expect(await screen.findByRole('button', { name: 'Token erstellen' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'API-Tokens' })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Mitglieder' })).toBeInTheDocument();
-    expect(screen.getByText('4.3.2026')).toBeInTheDocument();
+    expect(await screen.findByText('4.3.2026')).toBeInTheDocument();
     expect(screen.getByText('nie')).toBeInTheDocument();
   });
 });

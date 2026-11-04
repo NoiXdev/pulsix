@@ -39,3 +39,14 @@ describe('the Settings paths Credentials and Jump hosts left behind', () => {
     expect(await settledAt('/o/acme/settings/tokens')).toBe('/o/acme/settings/tokens');
   });
 });
+
+describe('the Settings section', () => {
+  it('still sends /settings to Members', async () => {
+    expect(await settledAt('/o/acme/settings')).toBe('/o/acme/settings/members');
+  });
+
+  it('has a General page', async () => {
+    expect(await settledAt('/o/acme/settings/general')).toBe('/o/acme/settings/general');
+    expect(router.state.matches.some((m) => m.routeId.endsWith('/settings/general'))).toBe(true);
+  });
+});

@@ -1,11 +1,9 @@
-import { useParams } from '@tanstack/react-router';
 import { DatabaseBackup } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { useBackupSettings, useBackups, useCreateBackup } from '../../api/hooks/useBackups.ts';
 import type { BackupEntry } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -22,7 +20,6 @@ import { BackupSettingsForm } from './BackupSettingsForm.tsx';
  * organization's Settings only for navigation; it is instance-wide.
  */
 export function BackupsPage() {
-  const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
   const settings = useBackupSettings();
   const backups = useBackups();
@@ -36,10 +33,7 @@ export function BackupsPage() {
   const items = backups.data.items ?? [];
   return (
     <>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">{t.backups.title}</h1>
-        <SettingsTabs org={org} />
-      </div>
+      <h1 className="text-xl font-semibold">{t.backups.title}</h1>
       <span className="text-[13px] text-muted-foreground">{t.backups.hint}</span>
 
       {backups.data.storage_error && (

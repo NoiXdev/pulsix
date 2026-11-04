@@ -4,7 +4,6 @@ import { useOrgActivity } from '../../api/hooks/useActivity.ts';
 import { useMembers } from '../../api/hooks/useMembers.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { Select } from '../../ui/Select.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useFormat, type Format } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -58,10 +57,7 @@ export function ActivityPage() {
 
   return (
     <>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">{t.activity.title}</h1>
-        <SettingsTabs org={org} />
-      </div>
+      <h1 className="text-xl font-semibold">{t.activity.title}</h1>
       <span className="text-[13px] text-muted-foreground">{t.activity.subtitle}</span>
 
       <div className="flex flex-wrap items-center gap-2">

@@ -60,7 +60,6 @@ describe('LanguageSettingsPage', () => {
     renderPage();
 
     expect(await screen.findByRole('heading', { name: 'Default language' })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Language' })).toBeInTheDocument();
     await waitFor(() => expect(screen.getByLabelText('Default language')).toHaveValue('English'));
 
     await pickOption(screen, 'Default language', 'Deutsch');

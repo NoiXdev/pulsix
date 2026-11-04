@@ -38,6 +38,7 @@ export const enShell = {
   crumbs: {
     hosts: 'Hosts',
     settings: 'Settings',
+    general: 'General',
     members: 'Members',
     activity: 'Activity',
     tokens: 'Tokens',

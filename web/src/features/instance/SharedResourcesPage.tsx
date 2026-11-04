@@ -1,5 +1,4 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
-import { useParams } from '@tanstack/react-router';
 import { Activity, GitBranch, ListPlus, Trash2 } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -10,7 +9,6 @@ import { Dialog } from '../../ui/dialog.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
-import { SettingsTabs } from '../settings/SettingsTabs.tsx';
 import { SchemaBuilder } from '../inventory/schema/SchemaBuilder.tsx';
 import { SchemaForm } from '../inventory/schema/SchemaForm.tsx';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
@@ -79,14 +77,10 @@ const CHECK_COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 1fr) 90px';
  * sharing state.
  */
 export function SharedResourcesPage() {
-  const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
   return (
     <>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">{t.settings.tabs.sharedResources}</h1>
-        <SettingsTabs org={org} />
-      </div>
+      <h1 className="text-xl font-semibold">{t.settings.tabs.sharedResources}</h1>
       <RepoDefinitionsSection />
       <TemplateDefinitionsSection />
       <CheckDefinitionsSection />
