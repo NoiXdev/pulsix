@@ -155,6 +155,23 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 	return err
 }
 
+const deleteExpiredResetTokens = `-- name: DeleteExpiredResetTokens :execrows
+DELETE FROM password_reset_tokens WHERE expires_at < $1::timestamptz
+`
+
+// The auth reaper's password reset link pass (backlog 7.74). A link stops
+// working at expires_at whether it was used or not, so the row only bounds
+// the table's growth from then on; it keeps the sessions' 7-day grace
+// (auth.SessionRetentionGrace) for the same forensic reason, and
+// expired_before arrives as now - SessionRetentionGrace.
+func (q *Queries) DeleteExpiredResetTokens(ctx context.Context, expiredBefore time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredResetTokens, expiredBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :execrows
 DELETE FROM sessions WHERE expires_at < $1::timestamptz
 `

@@ -27,12 +27,15 @@ type fakeReaperStore struct {
 	ceremonyCuts []time.Time
 	sessionCuts  []time.Time
 	enrolCuts    []time.Time
+	resetCuts    []time.Time
 	ceremonies   int64
 	sessions     int64
 	enrolments   int64
+	resetTokens  int64
 	errCeremony  error
 	errSession   error
 	errEnrolment error
+	errReset     error
 }
 
 func (f *fakeReaperStore) DeleteExpiredCeremonies(_ context.Context, expiredBefore time.Time) (int64, error) {
@@ -54,6 +57,13 @@ func (f *fakeReaperStore) ClearAbandonedTOTPEnrolments(_ context.Context, starte
 	defer f.mu.Unlock()
 	f.enrolCuts = append(f.enrolCuts, startedBefore)
 	return f.enrolments, f.errEnrolment
+}
+
+func (f *fakeReaperStore) DeleteExpiredResetTokens(_ context.Context, expiredBefore time.Time) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resetCuts = append(f.resetCuts, expiredBefore)
+	return f.resetTokens, f.errReset
 }
 
 func (f *fakeReaperStore) calls() (int, int) {
@@ -127,6 +137,29 @@ func TestReaperSweepSelectsRowsByThePredicates(t *testing.T) {
 	}
 	if wantEnrol := now().Add(-auth.PendingEnrolmentTTL); !store.enrolCuts[0].Equal(wantEnrol) {
 		t.Fatalf("enrolment cutoff = %v, want now - PendingEnrolmentTTL = %v", store.enrolCuts[0], wantEnrol)
+	}
+	// Password reset links (backlog 7.74): the sessions' retention grace.
+	if len(store.resetCuts) != 1 || !store.resetCuts[0].Equal(want) {
+		t.Fatalf("reset token cutoffs = %v, want one at now - 7d = %v", store.resetCuts, want)
+	}
+}
+
+// TestReaperSweepReportsResetTokens: the reset token pass's count comes
+// back, and its failure keeps what the passes before it removed.
+func TestReaperSweepReportsResetTokens(t *testing.T) {
+	store := &fakeReaperStore{ceremonies: 1, sessions: 2, enrolments: 3, resetTokens: 4}
+	res, err := auth.NewReaper(store, nil, 0, fakeClock(), nil).Sweep(ctx)
+	if err != nil || res != (auth.SweepResult{Ceremonies: 1, Sessions: 2, Enrolments: 3, ResetTokens: 4}) {
+		t.Fatalf("Sweep = %+v, %v; want 1/2/3/4", res, err)
+	}
+
+	store.errReset = errors.New("delete failed")
+	res, err = auth.NewReaper(store, nil, 0, fakeClock(), nil).Sweep(ctx)
+	if !errors.Is(err, store.errReset) {
+		t.Fatalf("Sweep err = %v, want the store's error wrapped", err)
+	}
+	if res != (auth.SweepResult{Ceremonies: 1, Sessions: 2, Enrolments: 3}) {
+		t.Fatalf("Sweep = %+v, want the earlier passes' counts", res)
 	}
 }
 

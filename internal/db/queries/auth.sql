@@ -65,6 +65,14 @@ UPDATE sessions SET revoked_at = now() WHERE id = $1;
 -- injected clock so the predicate (and its boundary) is testable.
 DELETE FROM sessions WHERE expires_at < @expired_before::timestamptz;
 
+-- name: DeleteExpiredResetTokens :execrows
+-- The auth reaper's password reset link pass (backlog 7.74). A link stops
+-- working at expires_at whether it was used or not, so the row only bounds
+-- the table's growth from then on; it keeps the sessions' 7-day grace
+-- (auth.SessionRetentionGrace) for the same forensic reason, and
+-- expired_before arrives as now - SessionRetentionGrace.
+DELETE FROM password_reset_tokens WHERE expires_at < @expired_before::timestamptz;
+
 -- name: UpsertTOTPSecret :exec
 -- The enrolling secret goes into the pending columns; a confirmed secret
 -- already in secret_sealed is left exactly as it is, so an abandoned

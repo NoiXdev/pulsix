@@ -6,7 +6,9 @@
 // deletes the row whose id is presented, which an abandoned ceremony's
 // never is. `sessions` rows outlive every 12-hour expiry and every logout
 // (a revoke only stamps revoked_at). Both tables grow without bound
-// without this sweep — the blocker's whole point.
+// without this sweep — the blocker's whole point. Backlog 7.74 added a
+// third: `password_reset_tokens`, written by an unauthenticated forgot
+// request, whose rows stay after they are used or expire.
 //
 // Deleting an expired session is safe: GetSession (the login lookup's own
 // query) never resolves a row with expires_at <= now(), so an expired
@@ -62,9 +64,9 @@ const (
 	AdvisoryKeyAuthReaper = int64(8312)
 )
 
-// ReaperStore is the reaper's narrow write port: the two expired-row
-// deletes, org-unscoped (sessions and ceremonies are user/instance rows,
-// not org rows).
+// ReaperStore is the reaper's narrow write port: the expired-row deletes
+// and the abandoned-enrolment clear, org-unscoped (sessions, ceremonies
+// and reset tokens are user/instance rows, not org rows).
 type ReaperStore interface {
 	// DeleteExpiredCeremonies removes every ceremony whose expires_at is
 	// past expiredBefore (the sweep's now) and reports how many went.
@@ -77,6 +79,10 @@ type ReaperStore interface {
 	// re-enrolment begun before startedBefore and never finished. It clears
 	// the attempt, never the confirmed factor on the same row.
 	ClearAbandonedTOTPEnrolments(ctx context.Context, startedBefore time.Time) (int64, error)
+	// DeleteExpiredResetTokens removes every password reset token whose
+	// expires_at is past expiredBefore (the sweep's now minus
+	// SessionRetentionGrace), used or not, and reports how many went.
+	DeleteExpiredResetTokens(ctx context.Context, expiredBefore time.Time) (int64, error)
 }
 
 // Locker is the advisory-lock port (schedule.AdvisoryLocker satisfies it):
@@ -88,7 +94,8 @@ type Locker interface {
 	Unlock(ctx context.Context)
 }
 
-// Reaper sweeps expired ceremonies and sessions on an interval.
+// Reaper sweeps expired ceremonies, sessions and password reset tokens,
+// and abandoned TOTP re-enrolments, on an interval.
 type Reaper struct {
 	store    ReaperStore
 	locker   Locker
@@ -126,13 +133,14 @@ func (r *Reaper) Run(ctx context.Context) {
 // by side are a mis-ordering waiting to happen, and every caller reads
 // them for a log line where the wrong label is invisible.
 type SweepResult struct {
-	Ceremonies int64
-	Sessions   int64
-	Enrolments int64
+	Ceremonies  int64
+	Sessions    int64
+	Enrolments  int64
+	ResetTokens int64
 }
 
 // Sweep does one pass and reports what it removed. The advisory lock
-// (when wired) is held across all three passes, so a concurrent
+// (when wired) is held across all four passes, so a concurrent
 // instance's sweep skips wholesale. The passes run in order and each
 // returns the counts collected so far alongside its error — a failure
 // midway is accounted for rather than reported as nothing done, and the
@@ -164,6 +172,11 @@ func (r *Reaper) Sweep(ctx context.Context) (SweepResult, error) {
 	if err != nil {
 		return SweepResult{Ceremonies: res.Ceremonies, Sessions: res.Sessions},
 			fmt.Errorf("clear abandoned totp enrolments: %w", err)
+	}
+	res.ResetTokens, err = r.store.DeleteExpiredResetTokens(ctx, now.Add(-SessionRetentionGrace))
+	if err != nil {
+		res.ResetTokens = 0
+		return res, fmt.Errorf("delete expired reset tokens: %w", err)
 	}
 	return res, nil
 }

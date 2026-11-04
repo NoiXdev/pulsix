@@ -43,3 +43,7 @@ func (stubReaperStore) DeleteExpiredSessions(context.Context, time.Time) (int64,
 func (stubReaperStore) ClearAbandonedTOTPEnrolments(context.Context, time.Time) (int64, error) {
 	return 0, nil
 }
+
+func (stubReaperStore) DeleteExpiredResetTokens(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}

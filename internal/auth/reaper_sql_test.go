@@ -206,6 +206,10 @@ func (s *blockingReaperStore) ClearAbandonedTOTPEnrolments(inner context.Context
 	return s.inner.ClearAbandonedTOTPEnrolments(inner, startedBefore)
 }
 
+func (s *blockingReaperStore) DeleteExpiredResetTokens(inner context.Context, expiredBefore time.Time) (int64, error) {
+	return s.inner.DeleteExpiredResetTokens(inner, expiredBefore)
+}
+
 func heldAdvisoryLocks(t *testing.T, d *db.DB, key int64) int {
 	t.Helper()
 	var n int
@@ -363,5 +367,71 @@ func TestReaperSQLClearsAbandonedEnrolmentsSparesLiveOnes(t *testing.T) {
 	}
 	if confirmed != 1 {
 		t.Fatal("clearing the abandoned attempt must not touch the confirmed secret on the same row")
+	}
+}
+
+// putResetTokenAt stores a password reset token of uid that expires at
+// expiresAt, used or not.
+func putResetTokenAt(t *testing.T, q *gen.Queries, d *db.DB, uid uuid.UUID, expiresAt time.Time, used bool) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if err := q.InsertResetToken(ctx, gen.InsertResetTokenParams{
+		ID: id, UserID: uid, TokenHash: id[:], CreatedAt: expiresAt.Add(-time.Hour), ExpiresAt: expiresAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if used {
+		if _, err := d.Pool().Exec(ctx, `UPDATE password_reset_tokens SET used_at = $2 WHERE id = $1`, id, expiresAt.Add(-time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return id
+}
+
+func countResetTokens(t *testing.T, d *db.DB, id uuid.UUID) int {
+	t.Helper()
+	var n int
+	if err := d.Pool().QueryRow(ctx, `SELECT count(*) FROM password_reset_tokens WHERE id = $1`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// TestReaperSQLReapsExpiredResetTokens (backlog 7.74): a reset link is
+// worthless once it expired, used or not, but the row stays for the same
+// 7-day grace a session does; past it the row goes. The cutoff is strict,
+// like the sessions'.
+func TestReaperSQLReapsExpiredResetTokens(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	clock := newMutableClock(baseTime)
+	reaper := auth.NewReaper(q, nil, 0, clock.Now, nil)
+	uid := seedReaperUser(t, q, "reaper-reset@example.test")
+
+	gone := putResetTokenAt(t, q, d, uid, baseTime.Add(-auth.SessionRetentionGrace-time.Microsecond), false)
+	goneUsed := putResetTokenAt(t, q, d, uid, baseTime.Add(-auth.SessionRetentionGrace-time.Microsecond), true)
+	boundary := putResetTokenAt(t, q, d, uid, baseTime.Add(-auth.SessionRetentionGrace), false)
+	withinGrace := putResetTokenAt(t, q, d, uid, baseTime.Add(-time.Hour), true)
+	live := putResetTokenAt(t, q, d, uid, baseTime.Add(time.Hour), false)
+
+	res, err := reaper.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if res.ResetTokens != 2 {
+		t.Fatalf("Sweep removed %d reset tokens, want 2", res.ResetTokens)
+	}
+	if countResetTokens(t, d, gone) != 0 || countResetTokens(t, d, goneUsed) != 0 {
+		t.Fatal("the reset tokens past the grace window must be deleted, used or not")
+	}
+	for _, id := range []uuid.UUID{boundary, withinGrace, live} {
+		if countResetTokens(t, d, id) != 1 {
+			t.Fatalf("reset token %s must survive the sweep", id)
+		}
+	}
+
+	clock.Advance(time.Microsecond)
+	if res, err = reaper.Sweep(ctx); err != nil || res.ResetTokens != 1 || countResetTokens(t, d, boundary) != 0 {
+		t.Fatalf("second Sweep = %+v, %v; want the boundary token gone", res, err)
 	}
 }
