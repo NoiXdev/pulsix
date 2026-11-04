@@ -35,6 +35,19 @@ describe('HostStateSection', () => {
     expect(tile).toHaveAttribute('data-tone', 'warn');
   });
 
+  it('wraps a long mount path instead of cutting it off', async () => {
+    const mount = '/var/lib/containers/storage/overlay/very-long-mount-path';
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': checksRoute([check('disk', 'disk', [reading('disk.used_pct', 41, { item: mount })])]),
+      'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+    });
+    renderSection();
+
+    const label = await screen.findByText(`Disk ${mount}`);
+    expect(label).not.toHaveClass('truncate');
+    expect(label).toHaveClass('break-all');
+  });
+
   it('shows CPU, RAM and load with their current values, and asks one series per tile', async () => {
     const asked: string[] = [];
     mockApi({

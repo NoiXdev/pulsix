@@ -67,8 +67,9 @@ function Tile({ org, hostId, tile }: { org: string; hostId: string; tile: StateT
 
   return (
     <div data-tile data-tone={tile.tone} className="flex min-w-0 flex-col gap-1 rounded-[10px] border border-border bg-card px-3.5 py-3">
-      {/* Not uppercased: a mount path is case-sensitive. */}
-      <span className="truncate font-mono text-[11px] font-semibold text-muted-foreground" title={label}>
+      {/* Not uppercased: a mount path is case-sensitive. It wraps rather
+          than truncating, so the whole path is always readable. */}
+      <span className="font-mono text-[11px] font-semibold break-all text-muted-foreground">
         {label}
       </span>
       <span className="font-mono text-lg font-bold" style={alarming ? { color: TONE[tile.tone] } : undefined}>
