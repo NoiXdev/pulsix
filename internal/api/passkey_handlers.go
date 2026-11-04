@@ -145,18 +145,12 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 	}, withAudit("finishPasskeyRegistration", "passkey"))
 
 	huma.Get(hapi, "/api/v1/auth/passkeys", func(ctx context.Context, _ *struct{}) (*passkeyListOutput, error) {
+		// The enrolment page reads the list while the session is still
+		// pending; once complete, an account that must change its password
+		// has the change ahead of it, and the gate refuses it.
 		p, err := requireEnrolmentSession(ctx, deps)
 		if err != nil {
 			return nil, err
-		}
-		// The enrolment page reads the list while the session is still
-		// pending; once complete, an account that must change its password
-		// has the change ahead of it and no business on the account
-		// security page.
-		if p.MFAComplete {
-			if err := refuseUntilPasswordChanged(p); err != nil {
-				return nil, err
-			}
 		}
 		creds, err := deps.Passkeys.List(ctx, p.UserID)
 		if err != nil {

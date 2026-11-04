@@ -74,6 +74,11 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
 
   const hasPasskey = (passkeys.data?.passkeys ?? []).length > 0;
   const hasSecondFactor = me.data?.totp_confirmed === true || hasPasskey;
+  // A TOTP confirm on the enrolment page completes the session while the
+  // recovery codes are still on screen. If the account must also change
+  // its password, the API refuses every enrolment route from then on, so
+  // no passkey is offered until the change is done.
+  const passwordChangePending = me.data?.mfa_complete === true && me.data?.must_change_password === true;
 
   return (
     <>
@@ -120,32 +125,34 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
             {(passkeys.data?.passkeys ?? []).length === 0 && (
               <span className="text-xs text-muted-foreground">{t.account.passkeys.none}</span>
             )}
-            <form
-              className="flex items-center gap-2 pt-1"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!newPasskeyName.trim()) return;
-                void stepUp.run(
-                  async () => {
-                    await registerPasskey(newPasskeyName.trim(), t);
-                    toast.show(t.account.passkeys.addedToast);
-                    setNewPasskeyName('');
-                    await passkeys.refetch();
-                    await onEnrolled?.();
-                  },
-                  (err) => toast.show(err instanceof Error ? err.message : t.account.passkeys.addFailed, 'destructive'),
-                );
-              }}
-            >
-              <Input
-                value={newPasskeyName}
-                onChange={(e) => setNewPasskeyName(e.target.value)}
-                placeholder={t.account.passkeys.namePlaceholder}
-              />
-              <Button type="submit" variant="primary">
-                <KeyRound size={14} /> {t.account.passkeys.add}
-              </Button>
-            </form>
+            {!passwordChangePending && (
+              <form
+                className="flex items-center gap-2 pt-1"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!newPasskeyName.trim()) return;
+                  void stepUp.run(
+                    async () => {
+                      await registerPasskey(newPasskeyName.trim(), t);
+                      toast.show(t.account.passkeys.addedToast);
+                      setNewPasskeyName('');
+                      await passkeys.refetch();
+                      await onEnrolled?.();
+                    },
+                    (err) => toast.show(err instanceof Error ? err.message : t.account.passkeys.addFailed, 'destructive'),
+                  );
+                }}
+              >
+                <Input
+                  value={newPasskeyName}
+                  onChange={(e) => setNewPasskeyName(e.target.value)}
+                  placeholder={t.account.passkeys.namePlaceholder}
+                />
+                <Button type="submit" variant="primary">
+                  <KeyRound size={14} /> {t.account.passkeys.add}
+                </Button>
+              </form>
+            )}
           </div>
         </Card>
 

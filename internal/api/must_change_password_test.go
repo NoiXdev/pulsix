@@ -19,18 +19,17 @@ import (
 // passwordChangeRequired is the refusal detail the SPA matches on.
 const passwordChangeRequired = "password_change_required"
 
-// mustChangeAllowed is every operation a session whose account must change
-// its password may still reach: who am I, sign out, verify a factor, the
-// enrolment routes, and the password change itself.
+// mustChangeAllowed is every operation a complete session whose account
+// must change its password may still reach: who am I, sign out, the
+// password change itself, and verifying a factor, which the change's
+// step-up needs. Enrolling a factor is not on it: only a pending session
+// of an account without one may enrol, before the change
+// (TestMustChangePasswordPendingSessionCanEnrol).
 var mustChangeAllowed = map[string]bool{
-	"GET /api/v1/auth/me":                        true,
-	"POST /api/v1/auth/logout":                   true,
-	"POST /api/v1/auth/password":                 true,
-	"POST /api/v1/auth/totp/verify":              true,
-	"POST /api/v1/auth/totp/enrol":               true,
-	"POST /api/v1/auth/totp/confirm":             true,
-	"POST /api/v1/auth/passkeys/register/begin":  true,
-	"POST /api/v1/auth/passkeys/register/finish": true,
+	"GET /api/v1/auth/me":           true,
+	"POST /api/v1/auth/logout":      true,
+	"POST /api/v1/auth/password":    true,
+	"POST /api/v1/auth/totp/verify": true,
 }
 
 // mustChangeSkippedExact and mustChangeSkippedPrefixes are the routes that
@@ -236,26 +235,43 @@ func TestMustChangePasswordPasskeySession(t *testing.T) {
 // TestMustChangePasswordPendingSessionCanEnrol: a must-change account
 // whose second factor was reset signs in with the temporary password and
 // must enrol first; the gate never stands in the way of the enrolment
-// routes, the passkey list the enrolment page reads included.
+// routes, the passkey list the enrolment page reads included. Confirming
+// completes the session, and from then on the change comes first: the
+// enrolment routes refuse the complete session like everything else.
 func TestMustChangePasswordPendingSessionCanEnrol(t *testing.T) {
 	s := apitest.New(t)
 	uid := s.SeedUser("enrol-must-change@example.test", "correct horse battery")
 	markMustChange(t, s, uid)
 	c := s.LoginAsPending(uid)
 
+	if resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/auth/passkeys", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /auth/passkeys: status %d (%s), want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	enrolAndConfirmTOTP(t, s, c)
+
+	resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil)
+	var me struct {
+		MFAComplete        bool `json:"mfa_complete"`
+		MustChangePassword bool `json:"must_change_password"`
+	}
+	decodeInto(t, resp, &me)
+	if !me.MFAComplete || !me.MustChangePassword {
+		t.Fatalf("/auth/me after confirming = %+v, want a complete session that must change its password", me)
+	}
+
 	for _, r := range []struct {
 		method, path string
 		body         any
 	}{
-		{http.MethodGet, "/api/v1/auth/passkeys", nil},
 		{http.MethodPost, "/api/v1/auth/totp/enrol", map[string]any{}},
+		{http.MethodPost, "/api/v1/auth/totp/confirm", map[string]any{"code": "123456"}},
+		{http.MethodPost, "/api/v1/auth/passkeys/register/begin", nil},
+		{http.MethodGet, "/api/v1/auth/passkeys", nil},
 	} {
 		resp := requestJSON(t, c, r.method, s.HTTP.URL+r.path, r.body)
-		if resp.StatusCode != http.StatusOK {
-			t.Errorf("%s %s: status %d (%s), want 200", r.method, r.path, resp.StatusCode, mustReadBody(t, resp))
-			continue
+		if d := problemDetail(t, resp); resp.StatusCode != http.StatusForbidden || d != passwordChangeRequired {
+			t.Errorf("%s %s after enrolling: status %d detail %q, want 403 %s", r.method, r.path, resp.StatusCode, d, passwordChangeRequired)
 		}
-		_ = resp.Body.Close()
 	}
 }
 

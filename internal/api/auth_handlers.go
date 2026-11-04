@@ -92,8 +92,10 @@ type meOutput struct {
 		EffectiveLocale string  `json:"effective_locale" enum:"en,de"`
 		// MustChangePassword is true while the account must replace a
 		// password an administrator set: such a session may reach only this
-		// route, logout, the second-factor routes and POST /auth/password,
-		// and everything else answers 403 password_change_required. The SPA
+		// route, logout, second-factor verification and POST
+		// /auth/password (a pending session of an account without a factor
+		// enrols one first), and everything else answers 403
+		// password_change_required. The SPA
 		// takes it straight to the change-password screen.
 		MustChangePassword bool `json:"must_change_password"`
 	}
@@ -212,11 +214,14 @@ func sessionCookie(value string, secure bool) http.Cookie {
 // further, whichever way its session was signed in, a passkey included:
 // requireMFAComplete (and so requireInteractiveSession, requireInstanceAdmin
 // and requireOrg) refuses its cookie sessions with 403
-// password_change_required. What stays reachable is what the table above
-// grants before MFA-complete — requireSession's three routes and the
-// enrolment routes — plus POST /auth/password, the one route that lifts the
-// flag, through requirePasswordChangeSession. An API token is not gated: it
-// never signs in with a password.
+// password_change_required, and so does requireEnrolmentSession once the
+// session is complete. What stays reachable is requireSession's three
+// routes (/auth/totp/verify among them: the change's step-up needs it),
+// POST /auth/password, the one route that lifts the flag, through
+// requirePasswordChangeSession, and — for a pending session of an account
+// without a factor, which must enrol before it can change anything — the
+// enrolment routes. An API token is not gated: it never signs in with a
+// password.
 
 // requireSession returns the principal or a 401. It is the right check for
 // /auth/logout, /auth/me and /auth/totp/verify: routes that a
@@ -377,11 +382,12 @@ func requireFreshFactor(ctx context.Context, deps Deps, p auth.Principal) error 
 // once any session of the account enrols one, every other pending session of
 // that account loses enrolment access and must verify instead.
 //
-// It does not apply the must-change-password gate: a forced change follows
-// an enrolment (an administrator may have reset the factor too), and the
-// enrolment routes stay reachable for such an account. The passkey list,
-// the one read on this gate, applies it itself once the session is
-// complete.
+// It applies the must-change-password gate to a complete session only
+// (403 password_change_required): such a session may change its password,
+// read /auth/me and sign out, and nothing else (spec 7.74 §4). A pending
+// session of an account without a factor — an administrator reset the
+// factor and set a temporary password — still enrols here first; the
+// change follows once the enrolment has completed the session.
 func requireEnrolmentSession(ctx context.Context, deps Deps) (auth.Principal, error) {
 	p, err := requireSession(ctx)
 	if err != nil {
@@ -391,6 +397,9 @@ func requireEnrolmentSession(ctx context.Context, deps Deps) (auth.Principal, er
 		return p, huma.Error403Forbidden("interactive session required")
 	}
 	if p.MFAComplete {
+		if err := refuseUntilPasswordChanged(p); err != nil {
+			return p, err
+		}
 		return p, nil
 	}
 	enrolled, err := secondFactors(deps).Enrolled(ctx, p.UserID)

@@ -161,4 +161,59 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
     expect(router.state.location.pathname).toBe('/account/password');
     expect(passkeyRequests).toBeLessThanOrEqual(2);
   });
+
+  // The same forced flow through the authenticator app: confirming
+  // completes the session while the recovery codes are still on screen.
+  // From then on the API refuses every enrolment route until the password
+  // is changed, so the page stops offering a passkey; saving the codes
+  // carries on to the change.
+  it('stops offering a passkey once a TOTP confirm completes a session that must change its password', async () => {
+    const user = userEvent.setup();
+    let confirmed = false;
+    mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': () => ({ ...(confirmed ? COMPLETE : ENROLLING), must_change_password: true }),
+      'GET /api/v1/auth/passkeys': () =>
+        confirmed
+          ? new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail: 'password_change_required' }), { status: 403 })
+          : { passkeys: [] },
+      'POST /api/v1/auth/totp/enrol': { secret: 'JBSWY3DPEHPK3PXP', otpauth_url: 'otpauth://totp/pulsix?secret=JBSWY3DPEHPK3PXP' },
+      'POST /api/v1/auth/totp/confirm': () => {
+        confirmed = true;
+        return { recovery_codes: ['aaaa-bbbb', 'cccc-dddd'] };
+      },
+    });
+
+    const rootRoute = createRootRoute({ component: RootLayout });
+    const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: RootRedirect });
+    const enrolRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/enrol', component: EnrolmentLayout });
+    const passwordRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/account/password',
+      component: () => <div>CHANGE PASSWORD</div>,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([indexRoute, enrolRoute, passwordRoute]),
+      history: createMemoryHistory({ initialEntries: ['/account/enrol'] }),
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Enrol authenticator app' }));
+    await user.type(await screen.findByPlaceholderText('482913'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText('aaaa-bbbb')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('second factor active')).toBeInTheDocument());
+    expect(screen.queryByRole('button', { name: /Add passkey/ })).not.toBeInTheDocument();
+    expect(screen.getByText('aaaa-bbbb')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'I have saved these' }));
+    expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
+  });
 });
