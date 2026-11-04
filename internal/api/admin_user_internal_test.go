@@ -51,6 +51,7 @@ func TestMapAdminAccountsErr(t *testing.T) {
 		{accounts.ErrForbidden, http.StatusForbidden, ""},
 		{accounts.ErrNotOnOwnAccount, http.StatusConflict, notOnOwnAccount},
 		{fmt.Errorf("lock: %w", accounts.ErrInvitePending), http.StatusConflict, invitePending},
+		{accounts.ErrMailNotConfigured, http.StatusConflict, mailNotConfigured},
 		{fmt.Errorf("lock: %w", accounts.ErrNotFound), http.StatusNotFound, ""},
 		{accounts.ErrInvalidCursor, http.StatusBadRequest, ""},
 		{errors.New("boom"), http.StatusInternalServerError, ""},

@@ -12,11 +12,17 @@ import (
 // huma (the backup download, the API explorer and its spec) in the problem
 // shape every huma route answers with. The detail is part of the contract
 // — the SPA matches on password_change_required and step_up_required — so
-// it must reach the client here too, not only the status. An error that is
-// not a huma problem answers 401.
+// it must reach the client here too, not only the status. Another
+// huma.StatusError keeps its status, with its message as the detail; only
+// an error that carries no status at all answers 401.
 func writeGateRefusal(w http.ResponseWriter, err error) {
 	var problem *huma.ErrorModel
-	if !errors.As(err, &problem) {
+	var se huma.StatusError
+	switch {
+	case errors.As(err, &problem):
+	case errors.As(err, &se):
+		problem = &huma.ErrorModel{Status: se.GetStatus(), Title: http.StatusText(se.GetStatus()), Detail: se.Error()}
+	default:
 		problem = &huma.ErrorModel{Status: http.StatusUnauthorized, Title: http.StatusText(http.StatusUnauthorized), Detail: "login required"}
 	}
 	w.Header().Set("Content-Type", "application/problem+json")

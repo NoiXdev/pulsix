@@ -17,11 +17,14 @@ import (
 // administrator did to their account.
 type Notice string
 
-// The notice outcomes. The action stands in every case.
+// The notice outcomes. The action stands in every case. NoticeSkipped is an
+// account that was not in use when the action happened — deactivated, or
+// its invitation never accepted — whose person is not mailed.
 const (
 	NoticeSent          Notice = "sent"
 	NoticeNotConfigured Notice = "not_configured"
 	NoticeFailed        Notice = "failed"
+	NoticeSkipped       Notice = "skipped"
 )
 
 // Recipient is where an account notice goes: the address, the account's
@@ -33,13 +36,15 @@ type Recipient struct {
 	DefaultLocale string
 }
 
-// noticeKind names the administrator's action a notice reports.
+// noticeKind names a mail this package sends: the administrator's action a
+// notice reports, or the reset link.
 type noticeKind string
 
 const (
 	noticeTemporaryPassword noticeKind = "temporary_password"
 	noticeSecondFactorReset noticeKind = "second_factor_reset"
 	noticeDeactivated       noticeKind = "deactivated"
+	noticeResetLink         noticeKind = "reset_link"
 )
 
 // noticeSendTimeout bounds one notice's SMTP conversation. The send is
@@ -48,9 +53,11 @@ const (
 // administrator's browser staying on the page.
 const noticeSendTimeout = 45 * time.Second
 
-// noticeTexts are the subject and body of each notice, by language. They
-// say what happened and never carry a secret: a temporary password reaches
-// the person only through the administrator.
+// noticeTexts are the subject and body of each mail, by language. Every
+// body takes one link (%s). The notices say what happened and never carry
+// a secret: a temporary password reaches the person only through the
+// administrator. The reset mail is the one that carries a secret, the
+// link, and it goes only to the account's own address.
 var noticeTexts = map[string]map[noticeKind][2]string{
 	locale.EN: {
 		noticeTemporaryPassword: {
@@ -69,6 +76,12 @@ var noticeTexts = map[string]map[noticeKind][2]string{
 			"Your Pulsix account was deactivated",
 			"An administrator deactivated your account on %s. You can no longer sign in there.\n\n" +
 				"If you think this is a mistake, contact your administrator.",
+		},
+		noticeResetLink: {
+			"Reset your Pulsix password",
+			"A new password was requested for your Pulsix account. To choose one, open this link within 60 minutes:\n\n%s\n\n" +
+				"The link works once. Your current password keeps working until you use it, and you still sign in with your second factor.\n\n" +
+				"If you did not ask for this, ignore this mail.",
 		},
 	},
 	locale.DE: {
@@ -89,21 +102,35 @@ var noticeTexts = map[string]map[noticeKind][2]string{
 			"Ihre Administration hat Ihr Konto auf %s deaktiviert. Sie können sich dort nicht mehr anmelden.\n\n" +
 				"Wenn Sie das für einen Irrtum halten, wenden Sie sich an Ihre Administration.",
 		},
+		noticeResetLink: {
+			"Ihr Pulsix-Passwort zurücksetzen",
+			"Für Ihr Pulsix-Konto wurde ein neues Passwort angefordert. Um eines zu wählen, öffnen Sie diesen Link innerhalb von 60 Minuten:\n\n%s\n\n" +
+				"Der Link funktioniert einmal. Ihr bisheriges Passwort gilt weiter, bis Sie ihn verwenden, und bei der Anmeldung brauchen Sie weiterhin Ihren zweiten Faktor.\n\n" +
+				"Wenn Sie das nicht angefordert haben, ignorieren Sie diese E-Mail.",
+		},
 	},
 }
 
 // NotifyDeactivated tells the person that their account was deactivated.
 // The deactivate route calls it once tenancy.Service.DeactivateUser
-// succeeded; deactivation itself stays in tenancy.
-func (s *Service) NotifyDeactivated(ctx context.Context, target uuid.UUID) Notice {
-	return s.notify(ctx, target, noticeDeactivated)
+// succeeded, with what that reported: whether the account was active right
+// before. Deactivating an account that was already deactivated, or whose
+// invitation was never accepted, tells nobody (NoticeSkipped).
+// Deactivation itself stays in tenancy.
+func (s *Service) NotifyDeactivated(ctx context.Context, target uuid.UUID, wasActive bool) Notice {
+	return s.notify(ctx, target, wasActive, noticeDeactivated)
 }
 
 // notify mails the person the notice of kind in their effective language,
-// resolved as /auth/me resolves it. It is best-effort: a failure is logged,
-// without the mail's body, and reported as NoticeFailed, never as an error,
-// since the action it reports has already happened.
-func (s *Service) notify(ctx context.Context, target uuid.UUID, kind noticeKind) Notice {
+// resolved as /auth/me resolves it, when the account was active at the
+// time of the action (NoticeSkipped otherwise). It is best-effort: a
+// failure is logged, without the mail's body, and reported as
+// NoticeFailed, never as an error, since the action it reports has already
+// happened.
+func (s *Service) notify(ctx context.Context, target uuid.UUID, active bool, kind noticeKind) Notice {
+	if !active {
+		return NoticeSkipped
+	}
 	log := func(err error) Notice {
 		slog.WarnContext(ctx, "account notice not sent", "notice", string(kind), "user_id", target.String(), "error", err)
 		return NoticeFailed
@@ -119,12 +146,11 @@ func (s *Service) notify(ctx context.Context, target uuid.UUID, kind noticeKind)
 	if err != nil {
 		return log(fmt.Errorf("read recipient: %w", err))
 	}
-	text := noticeTexts[locale.Resolve(to.Locale, to.DefaultLocale)][kind]
-	body := fmt.Sprintf(text[1], s.publicURL)
+	subject, body := compose(to, kind, s.publicURL)
 
 	sendCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), noticeSendTimeout)
 	defer cancel()
-	if err := s.mailer.Send(sendCtx, to.Email, text[0], body); err != nil {
+	if err := s.mailer.Send(sendCtx, to.Email, subject, body); err != nil {
 		if errors.Is(err, mail.ErrNotConfigured) {
 			// The settings went away between the check and the send.
 			return NoticeNotConfigured
@@ -132,4 +158,11 @@ func (s *Service) notify(ctx context.Context, target uuid.UUID, kind noticeKind)
 		return log(err)
 	}
 	return NoticeSent
+}
+
+// compose writes the mail of kind for to in their effective language,
+// resolved as /auth/me resolves it, with link in its body.
+func compose(to Recipient, kind noticeKind, link string) (subject, body string) {
+	text := noticeTexts[locale.Resolve(to.Locale, to.DefaultLocale)][kind]
+	return text[0], fmt.Sprintf(text[1], link)
 }

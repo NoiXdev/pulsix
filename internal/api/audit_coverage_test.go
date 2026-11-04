@@ -84,6 +84,14 @@ var auditAllowlist = map[string]string{
 	"POST /api/v1/auth/passkeys/login/begin":  "passkey login ceremony begin; no organization, and no actor is established until the ceremony completes",
 	"POST /api/v1/auth/passkeys/login/finish": "passkey login ceremony finish; the passkey equivalent of POST /auth/login — no organization, and completing it only ever establishes a session, the same routine event login already is",
 
+	// Backlog 7.74: a forgotten password. The caller proves nothing, so
+	// there is no actor, and recording an event only when the address
+	// belongs to an account would put into the trail exactly what the
+	// route's constant answer hides. Nothing about the account changes
+	// until the link is used, and POST /auth/password/reset (audited) is
+	// that change.
+	"POST /api/v1/auth/password/forgot": "public and anonymous: no actor, and an event per known address would record what the constant answer hides; nothing changes until POST /auth/password/reset, which is audited",
+
 	// Task 12: sends a one-off message through whatever SMTP settings are
 	// currently stored, to let an administrator confirm they work. It
 	// persists nothing — PUT /admin/settings/smtp (audited) is the route

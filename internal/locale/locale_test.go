@@ -49,3 +49,19 @@ func TestResolve(t *testing.T) {
 		})
 	}
 }
+
+func TestSupported(t *testing.T) {
+	got := locale.Supported()
+	if len(got) != 2 || got[0] != locale.EN || got[1] != locale.DE {
+		t.Fatalf("locale.Supported() = %v, want [en de]", got)
+	}
+	for _, s := range got {
+		if !locale.Valid(s) {
+			t.Errorf("%q is listed but not valid", s)
+		}
+	}
+	got[0] = "xx"
+	if locale.Supported()[0] != locale.EN {
+		t.Fatal("locale.Supported() hands out its own backing array")
+	}
+}

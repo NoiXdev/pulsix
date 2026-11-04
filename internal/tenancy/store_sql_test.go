@@ -314,10 +314,10 @@ func TestSQLStoreListMembersIncludesDisabledAt(t *testing.T) {
 		t.Fatal(err)
 	}
 	at := time.Now().Truncate(time.Microsecond)
-	if err := store.DisableUser(ctx, disabled, at); err != nil {
+	if _, err := store.DisableUser(ctx, disabled, at); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.DisableUser(ctx, uuid.Must(uuid.NewV7()), at); !errors.Is(err, tenancy.ErrNotFound) {
+	if _, err := store.DisableUser(ctx, uuid.Must(uuid.NewV7()), at); !errors.Is(err, tenancy.ErrNotFound) {
 		t.Fatalf("DisableUser for an unknown user: %v, want ErrNotFound", err)
 	}
 
@@ -337,6 +337,40 @@ func TestSQLStoreListMembersIncludesDisabledAt(t *testing.T) {
 	}
 	if byID[disabled].DisabledAt == nil || !byID[disabled].DisabledAt.Equal(at) {
 		t.Fatalf("disabled member DisabledAt = %v, want %v", byID[disabled].DisabledAt, at)
+	}
+}
+
+// TestSQLStoreDisableUserReportsWhetherActive: DisableUser tells whether
+// the account was active right before (not disabled, with a password);
+// disabling an account again succeeds, keeps its first deactivation and
+// reports it inactive.
+func TestSQLStoreDisableUserReportsWhetherActive(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	q := gen.New(d.Pool())
+	store := tenancy.NewSQLStore(d)
+	claimed := seedUser(t, q, "claimed@example.test")
+	if _, err := d.Pool().Exec(ctx, `UPDATE users SET password_hash = '$argon2id$x' WHERE id = $1`, claimed); err != nil {
+		t.Fatal(err)
+	}
+	pending := seedUser(t, q, "pending@example.test")
+	at := time.Now().Truncate(time.Microsecond)
+
+	if was, err := store.DisableUser(ctx, claimed, at); err != nil || !was {
+		t.Fatalf("DisableUser(active) = %v, %v; want active", was, err)
+	}
+	if was, err := store.DisableUser(ctx, claimed, at.Add(time.Hour)); err != nil || was {
+		t.Fatalf("DisableUser(already disabled) = %v, %v; want nil and not active", was, err)
+	}
+	var disabledAt time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT disabled_at FROM users WHERE id = $1`, claimed).Scan(&disabledAt); err != nil {
+		t.Fatal(err)
+	}
+	if !disabledAt.Equal(at) {
+		t.Fatalf("disabled_at %v after disabling again, want the first %v", disabledAt, at)
+	}
+	if was, err := store.DisableUser(ctx, pending, at); err != nil || was {
+		t.Fatalf("DisableUser(invite pending) = %v, %v; want nil and not active", was, err)
 	}
 }
 
@@ -545,7 +579,7 @@ func TestSQLStoreInviteNeedsItsIssuersAuthority(t *testing.T) {
 			}
 		}},
 		{"deactivated", func(t *testing.T, issuer uuid.UUID) {
-			if err := store.DisableUser(ctx, issuer, now); err != nil {
+			if _, err := store.DisableUser(ctx, issuer, now); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -696,14 +730,14 @@ func TestSQLStoreDisableUserKeepsOneInstanceAdmin(t *testing.T) {
 	}
 
 	first := makeAdmin("first-admin@example.test")
-	if err := store.DisableUser(ctx, first, time.Now()); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
+	if _, err := store.DisableUser(ctx, first, time.Now()); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
 		t.Fatalf("disabling the only instance admin: %v, want ErrLastInstanceAdmin", err)
 	}
 	second := makeAdmin("second-admin@example.test")
 
 	errs := make(chan error, 2)
 	for _, pair := range [][2]uuid.UUID{{first, second}, {second, first}} {
-		go func(target uuid.UUID) { errs <- store.DisableUser(ctx, target, time.Now()) }(pair[0])
+		go func(target uuid.UUID) { _, err := store.DisableUser(ctx, target, time.Now()); errs <- err }(pair[0])
 	}
 	var ok, refused int
 	for range 2 {

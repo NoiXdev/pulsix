@@ -534,6 +534,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerSMTPSettingsRoutes(hapi, deps)   // /admin/settings/smtp... — instance admin, session only
 	registerLocaleRoutes(hapi, deps)         // PUT /auth/me/locale — the user's own GUI language
 	registerPasswordRoutes(hapi, deps)       // POST /auth/password — the user's own password
+	registerPasswordResetRoutes(hapi, deps)  // /auth/password/{reset-available,forgot,reset} — public
 	registerLocaleSettingsRoutes(hapi, deps) // /admin/settings/locale — instance admin, session only
 	registerBackupRoutes(hapi, deps)         // /admin/backups... — instance admin, session only
 	// /admin/repos/definitions... — instance admin, session only (spec

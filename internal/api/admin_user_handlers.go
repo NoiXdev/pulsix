@@ -15,8 +15,9 @@ import (
 
 // Refusal details of the account actions the SPA matches on.
 const (
-	notOnOwnAccount = "not_on_own_account"
-	invitePending   = "invite_pending"
+	notOnOwnAccount   = "not_on_own_account"
+	invitePending     = "invite_pending"
+	mailNotConfigured = "mail_not_configured"
 )
 
 type adminUserDTO struct {
@@ -88,15 +89,17 @@ type temporaryPasswordOutput struct {
 	Body         struct {
 		Password  string    `json:"password"`
 		ExpiresAt time.Time `json:"expires_at"`
-		Notice    string    `json:"notice" enum:"sent,not_configured,failed"`
+		Notice    string    `json:"notice" enum:"sent,not_configured,failed,skipped"`
 	}
 }
 
 // noticeOutput reports whether the person was told by mail. The action
-// happened either way.
+// happened either way; skipped is an account that was not in use
+// (deactivated, or its invitation never accepted), whose person is not
+// mailed.
 type noticeOutput struct {
 	Body struct {
-		Notice string `json:"notice" enum:"sent,not_configured,failed"`
+		Notice string `json:"notice" enum:"sent,not_configured,failed,skipped"`
 	}
 }
 
@@ -202,6 +205,21 @@ func registerAdminUserRoutes(hapi huma.API, deps Deps) {
 		auditAdminAction(ctx, p.UserID, target, "reactivated user account")
 		return &noContentOutput{}, nil
 	}, withAudit("reactivateUser", "user"))
+
+	// The link goes to the account's own address and nowhere else: not in
+	// the response, the log or the audit entry. Without outbound mail there
+	// is no link (409 mail_not_configured).
+	huma.Post(hapi, "/api/v1/admin/users/{userId}/password-reset-link", func(ctx context.Context, in *adminUserInput) (*noContentOutput, error) {
+		p, target, err := adminAction(ctx, deps, in.UserID)
+		if err != nil {
+			return nil, err
+		}
+		if err := deps.Accounts.SendResetLink(ctx, p.InstanceAdmin, p.UserID, target); err != nil {
+			return nil, mapAdminAccountsErr(ctx, err)
+		}
+		auditAdminAction(ctx, p.UserID, target, "sent a password reset link")
+		return &noContentOutput{}, nil
+	}, withAudit("sendPasswordResetLink", "user"))
 }
 
 // adminAction is the gate of every account action: an instance admin's
@@ -272,6 +290,8 @@ func mapAdminAccountsErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict(notOnOwnAccount)
 	case errors.Is(err, accounts.ErrInvitePending):
 		return huma.Error409Conflict(invitePending)
+	case errors.Is(err, accounts.ErrMailNotConfigured):
+		return huma.Error409Conflict(mailNotConfigured)
 	case errors.Is(err, accounts.ErrNotFound):
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, accounts.ErrInvalidCursor):

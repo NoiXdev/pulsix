@@ -160,10 +160,14 @@ type Store interface {
 	GetUserByEmail(ctx context.Context, email string) (User, error)
 	CreateUser(ctx context.Context, u User) error
 	SetUserPasswordAndName(ctx context.Context, id uuid.UUID, hash, name string) error
-	// DisableUser disables id, returning ErrNotFound for an unknown user and
-	// ErrLastInstanceAdmin — atomically, so two concurrent calls cannot both
-	// succeed — when id is the last active instance administrator.
-	DisableUser(ctx context.Context, id uuid.UUID, at time.Time) error
+	// DisableUser disables id and reports whether it was active right
+	// before: not yet disabled, with a password (its invitation accepted).
+	// An account that is already disabled stays as it is, its first
+	// deactivation kept, and is reported inactive. ErrNotFound for an
+	// unknown user, and ErrLastInstanceAdmin — atomically, so two
+	// concurrent calls cannot both succeed — when id is the last active
+	// instance administrator.
+	DisableUser(ctx context.Context, id uuid.UUID, at time.Time) (wasActive bool, err error)
 	RevokeSessionsForUser(ctx context.Context, id uuid.UUID) error
 	RevokeTokensForUser(ctx context.Context, id uuid.UUID) error
 	InsertInvite(ctx context.Context, inv Invite, tokenHash []byte) error
@@ -577,21 +581,28 @@ func (s *Service) RemoveMember(ctx context.Context, orgID uuid.UUID, actorRole R
 // actorIsInstanceAdmin is supplied by the handler from the caller's
 // auth.Principal — the tenancy package has no notion of instance-level
 // roles of its own, only org membership, so it cannot look this up itself.
-func (s *Service) DeactivateUser(ctx context.Context, actorIsInstanceAdmin bool, actor, target uuid.UUID) error {
+//
+// wasActive reports whether the account was in use right before: not yet
+// deactivated, and with its invitation accepted (it has a password). Only
+// then is its person told (accounts.Service.NotifyDeactivated).
+// Deactivating an account that is already deactivated keeps its first
+// deactivation, revokes again, and reports false.
+func (s *Service) DeactivateUser(ctx context.Context, actorIsInstanceAdmin bool, actor, target uuid.UUID) (wasActive bool, err error) {
 	if !actorIsInstanceAdmin {
-		return ErrForbidden
+		return false, ErrForbidden
 	}
 	if actor == target {
-		return ErrNotOnOwnAccount
+		return false, ErrNotOnOwnAccount
 	}
-	if err := s.store.DisableUser(ctx, target, s.now()); err != nil {
-		return fmt.Errorf("disable user: %w", err)
+	wasActive, err = s.store.DisableUser(ctx, target, s.now())
+	if err != nil {
+		return false, fmt.Errorf("disable user: %w", err)
 	}
 	if err := s.store.RevokeSessionsForUser(ctx, target); err != nil {
-		return fmt.Errorf("revoke sessions: %w", err)
+		return false, fmt.Errorf("revoke sessions: %w", err)
 	}
 	if err := s.store.RevokeTokensForUser(ctx, target); err != nil {
-		return fmt.Errorf("revoke tokens: %w", err)
+		return false, fmt.Errorf("revoke tokens: %w", err)
 	}
-	return nil
+	return wasActive, nil
 }

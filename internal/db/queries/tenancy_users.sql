@@ -101,24 +101,30 @@ RETURNING i.*;
 -- name: SetUserPasswordAndName :exec
 UPDATE users SET password_hash = $2, display_name = $3 WHERE id = $1;
 
--- name: DisableUser :execrows
--- Disables id, but refuses (0 rows affected) to disable the instance's last
--- active instance administrator: setup is gated on "no instance
--- administrator exists", so losing the last one would leave the instance
--- unrecoverable without editing the database. The guard is atomic in the
+-- name: DisableUser :one
+-- Disables id and reports whether it was active right before: it had
+-- accepted its invitation (it has a password). An account that is already
+-- disabled is left as it is, its first deactivation kept, and so is the
+-- instance's last active instance administrator: setup is gated on "no
+-- instance administrator exists", so losing the last one would leave the
+-- instance unrecoverable without editing the database. Either way no row
+-- comes back; the store tells the cases apart. The guard is atomic in the
 -- same way UpdateMembershipRole's last-owner guard is: the FOR UPDATE
 -- subquery locks every active administrator's row before counting them, so
 -- two administrators deactivating each other concurrently serialize, and
 -- the second sees the first's change instead of both reading "two active".
+-- Two deactivations of the same account serialize on its row the same way,
+-- so only the first reports it active.
 UPDATE users AS u SET disabled_at = $2
 WHERE u.id = $1
+  AND u.disabled_at IS NULL
   AND (
     NOT u.instance_admin
-    OR u.disabled_at IS NOT NULL
     OR (SELECT count(*) FROM (
           SELECT 1 FROM users AS a WHERE a.instance_admin AND a.disabled_at IS NULL FOR UPDATE
         ) AS locked_admins) > 1
-  );
+  )
+RETURNING (u.password_hash IS NOT NULL)::boolean AS was_active;
 
 -- name: RevokeSessionsForUser :exec
 UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL;

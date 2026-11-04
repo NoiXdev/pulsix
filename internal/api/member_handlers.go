@@ -305,7 +305,8 @@ func inviteAcceptor(ctx context.Context) uuid.UUID {
 // factor, refuses the admin's own account (409 not_on_own_account) and
 // tells the person by mail, reporting how that went (notice). Deactivation
 // itself stays tenancy's; the notice is accounts', sent only once
-// deactivation succeeded.
+// deactivation succeeded and only when the account was in use right before
+// (otherwise skipped).
 //
 // Audited with no organization (Task 11 fix round 1, Finding 1): the
 // original report left this route unwired entirely, reasoning there was no
@@ -319,7 +320,8 @@ func registerAdminRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.Tenancy.DeactivateUser(ctx, p.InstanceAdmin, p.UserID, target); err != nil {
+		wasActive, err := deps.Tenancy.DeactivateUser(ctx, p.InstanceAdmin, p.UserID, target)
+		if err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
 		// No requireOrg here — there is no organization to resolve one
@@ -328,7 +330,7 @@ func registerAdminRoutes(hapi huma.API, deps Deps) {
 		// actor; target is the object being acted on.
 		auditAdminAction(ctx, p.UserID, target, "deactivated user account")
 		out := &noticeOutput{}
-		out.Body.Notice = string(deps.Accounts.NotifyDeactivated(ctx, target))
+		out.Body.Notice = string(deps.Accounts.NotifyDeactivated(ctx, target, wasActive))
 		return out, nil
 	}, withAudit("deactivateUser", "user"))
 }

@@ -36,8 +36,8 @@ type TemporaryPassword struct {
 // SetTemporaryPassword gives target a generated password that expires
 // after TemporaryPasswordTTL and must be changed at the next sign-in, and
 // ends every session of target, in one transaction. The person is told by
-// mail (Notice); the password itself is only in the result. The common
-// checks (checkActor, withAccount) apply.
+// mail (Notice) unless the account is deactivated; the password itself is
+// only in the result. The common checks (checkActor, withAccount) apply.
 func (s *Service) SetTemporaryPassword(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) (TemporaryPassword, Notice, error) {
 	if err := checkActor(actorIsAdmin, actor, target); err != nil {
 		return TemporaryPassword{}, "", err
@@ -51,7 +51,9 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actorIsAdmin bool, a
 		return TemporaryPassword{}, "", fmt.Errorf("hash temporary password: %w", err)
 	}
 	expiresAt := s.now().Add(TemporaryPasswordTTL)
-	err = s.withAccount(ctx, target, func(ctx context.Context) error {
+	var active bool
+	err = s.withAccount(ctx, target, func(ctx context.Context, acct LockedAccount) error {
+		active = acct.active()
 		if err := s.store.SetTemporaryPassword(ctx, target, hash, expiresAt); err != nil {
 			return fmt.Errorf("set temporary password: %w", err)
 		}
@@ -63,18 +65,21 @@ func (s *Service) SetTemporaryPassword(ctx context.Context, actorIsAdmin bool, a
 	if err != nil {
 		return TemporaryPassword{}, "", err
 	}
-	return TemporaryPassword{Password: password, ExpiresAt: expiresAt}, s.notify(ctx, target, noticeTemporaryPassword), nil
+	return TemporaryPassword{Password: password, ExpiresAt: expiresAt}, s.notify(ctx, target, active, noticeTemporaryPassword), nil
 }
 
 // ResetSecondFactor removes target's TOTP secret, recovery codes and every
 // passkey and ends every session of target, in one transaction. At the
 // next sign-in the person enrols a new factor. The person is told by mail
-// (Notice). The common checks (checkActor, withAccount) apply.
+// (Notice) unless the account is deactivated. The common checks
+// (checkActor, withAccount) apply.
 func (s *Service) ResetSecondFactor(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) (Notice, error) {
 	if err := checkActor(actorIsAdmin, actor, target); err != nil {
 		return "", err
 	}
-	err := s.withAccount(ctx, target, func(ctx context.Context) error {
+	var active bool
+	err := s.withAccount(ctx, target, func(ctx context.Context, acct LockedAccount) error {
+		active = acct.active()
 		if err := s.store.DeleteSecondFactors(ctx, target); err != nil {
 			return fmt.Errorf("delete second factors: %w", err)
 		}
@@ -86,7 +91,7 @@ func (s *Service) ResetSecondFactor(ctx context.Context, actorIsAdmin bool, acto
 	if err != nil {
 		return "", err
 	}
-	return s.notify(ctx, target, noticeSecondFactorReset), nil
+	return s.notify(ctx, target, active, noticeSecondFactorReset), nil
 }
 
 // EndSessions signs target out everywhere. API tokens are not touched:
@@ -96,7 +101,7 @@ func (s *Service) EndSessions(ctx context.Context, actorIsAdmin bool, actor, tar
 	if err := checkActor(actorIsAdmin, actor, target); err != nil {
 		return err
 	}
-	return s.withAccount(ctx, target, func(ctx context.Context) error {
+	return s.withAccount(ctx, target, func(ctx context.Context, _ LockedAccount) error {
 		if err := s.store.RevokeAllSessions(ctx, target); err != nil {
 			return fmt.Errorf("revoke sessions: %w", err)
 		}
@@ -105,15 +110,21 @@ func (s *Service) EndSessions(ctx context.Context, actorIsAdmin bool, actor, tar
 }
 
 // Reactivate lifts target's deactivation. Sessions and tokens revoked when
-// it was deactivated stay revoked. The common checks (checkActor,
-// withAccount) apply.
+// it was deactivated stay revoked, and in the same transaction every
+// session of target is revoked again: deactivation disables the account
+// and revokes its sessions in two steps, not one transaction, so a session
+// could have outlived it, and must not come back to life now. The common
+// checks (checkActor, withAccount) apply.
 func (s *Service) Reactivate(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) error {
 	if err := checkActor(actorIsAdmin, actor, target); err != nil {
 		return err
 	}
-	return s.withAccount(ctx, target, func(ctx context.Context) error {
+	return s.withAccount(ctx, target, func(ctx context.Context, _ LockedAccount) error {
 		if err := s.store.Reactivate(ctx, target); err != nil {
 			return fmt.Errorf("reactivate: %w", err)
+		}
+		if err := s.store.RevokeAllSessions(ctx, target); err != nil {
+			return fmt.Errorf("revoke sessions: %w", err)
 		}
 		return nil
 	})
@@ -138,17 +149,18 @@ func checkActor(actorIsAdmin bool, actor, target uuid.UUID) error {
 // account whose invitation is still pending (no password) is
 // ErrInvitePending — no action may hand a password, or a way to one, to an
 // account its owner never claimed. Deactivation is the one action allowed
-// there, and it lives in tenancy.
-func (s *Service) withAccount(ctx context.Context, target uuid.UUID, fn func(ctx context.Context) error) error {
+// there, and it lives in tenancy. fn gets what the lock read, so an action
+// can tell a deactivated account from an active one.
+func (s *Service) withAccount(ctx context.Context, target uuid.UUID, fn func(ctx context.Context, acct LockedAccount) error) error {
 	return s.store.InTx(ctx, func(ctx context.Context) error {
-		hasPassword, err := s.store.LockAccount(ctx, target)
+		acct, err := s.store.LockAccount(ctx, target)
 		if err != nil {
 			return fmt.Errorf("lock account: %w", err)
 		}
-		if !hasPassword {
+		if !acct.HasPassword {
 			return ErrInvitePending
 		}
-		return fn(ctx)
+		return fn(ctx, acct)
 	})
 }
 

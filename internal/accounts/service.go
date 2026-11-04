@@ -1,7 +1,7 @@
 // Package accounts is account administration at the instance level: a
 // person changing their own password, an instance admin managing other
 // people's accounts (admin.go, actions.go) and telling them about it
-// (notices.go), and (in a later task) the password reset flow.
+// (notices.go), and the password reset flow (reset.go).
 // Signing in, sessions and second factors stay in internal/auth; this
 // package builds on its password policy and hashing.
 package accounts
@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -26,7 +27,12 @@ var (
 	ErrTemporaryPasswordExpired = errors.New("the temporary password has expired")
 	// ErrSamePassword is a new password equal to the current one.
 	ErrSamePassword = errors.New("the new password must differ from the current one")
-	// ErrNotFound is an account that does not exist or is deactivated.
+	// ErrNotFound is an account the path asking for it does not see. The
+	// public paths and a person's own (a reset link, changing one's
+	// password) see only accounts that are not deactivated, so there a
+	// deactivated account is not found; the instance admin's paths see
+	// every account, a deactivated one included, so there only an unknown
+	// id is not found.
 	ErrNotFound = errors.New("not found")
 	// ErrForbidden is a caller who is not an instance admin.
 	ErrForbidden = errors.New("instance admin required")
@@ -83,10 +89,10 @@ type Store interface {
 	// ListMemberships returns the organizations userID belongs to, each
 	// marked with whether actor belongs to it too.
 	ListMemberships(ctx context.Context, userID, actor uuid.UUID) ([]Membership, error)
-	// LockAccount reports whether the account has a password and locks
-	// its row for the rest of the transaction; a deactivated account is
-	// found too. ErrNotFound for an unknown id.
-	LockAccount(ctx context.Context, id uuid.UUID) (hasPassword bool, err error)
+	// LockAccount reads whether the account has a password and whether it
+	// is deactivated, and locks its row for the rest of the transaction; a
+	// deactivated account is found too. ErrNotFound for an unknown id.
+	LockAccount(ctx context.Context, id uuid.UUID) (LockedAccount, error)
 	// SetTemporaryPassword stores an administrator's temporary password:
 	// the hash, the forced change and the expiry. ErrNotFound for an
 	// unknown id.
@@ -103,9 +109,49 @@ type Store interface {
 	// NoticeRecipient reads where an account notice goes and the languages
 	// it may be written in. ErrNotFound for an unknown id.
 	NoticeRecipient(ctx context.Context, id uuid.UUID) (Recipient, error)
+
+	// AccountByEmail returns the id of the account with this address,
+	// matched case-insensitively. ErrNotFound when there is none.
+	AccountByEmail(ctx context.Context, email string) (uuid.UUID, error)
+	// CountResetTokensSince counts the reset tokens the account was issued
+	// at or after since, used or not.
+	CountResetTokensSince(ctx context.Context, userID uuid.UUID, since time.Time) (int, error)
+	// VoidResetTokens marks every unused reset token of the account used
+	// at at.
+	VoidResetTokens(ctx context.Context, userID uuid.UUID, at time.Time) error
+	// InsertResetToken stores a reset token by its hash.
+	InsertResetToken(ctx context.Context, t ResetToken) error
+	// LockResetToken returns the account the token hash belongs to while
+	// the token is unused and unexpired at now and the account is not
+	// deactivated, and locks both rows for the rest of the transaction.
+	// ErrNotFound otherwise.
+	LockResetToken(ctx context.Context, hash []byte, now time.Time) (uuid.UUID, error)
 }
 
-// Mailer sends the account notices and (in a later task) reset links.
+// LockedAccount is what an administrative action reads about its target
+// under the row lock.
+type LockedAccount struct {
+	// HasPassword is false while the invitation is still pending.
+	HasPassword bool
+	Deactivated bool
+}
+
+// active reports whether the account is in use: its invitation accepted
+// and not deactivated. Only such an account is mailed about what happens
+// to it.
+func (a LockedAccount) active() bool { return a.HasPassword && !a.Deactivated }
+
+// ResetToken is one password reset link as stored: by the SHA-256 of the
+// token, never the token itself.
+type ResetToken struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Hash      []byte
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+// Mailer sends the account notices and the reset links.
 // *mail.SMTP satisfies it.
 type Mailer interface {
 	Send(ctx context.Context, to, subject, body string) error
@@ -119,6 +165,9 @@ type Service struct {
 	publicURL string
 	now       func() time.Time
 	rnd       io.Reader
+	// mails tracks the reset mails RequestReset hands to the mailer in the
+	// background, so a test can wait for them.
+	mails sync.WaitGroup
 }
 
 // NewService wires the dependencies. publicURL is the instance's public

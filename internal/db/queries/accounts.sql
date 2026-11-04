@@ -75,12 +75,13 @@ WHERE m.user_id = sqlc.arg(user_id)
 ORDER BY o.name, o.id;
 
 -- name: LockAccount :one
--- Whether the account has a password, locking its row for the rest of the
--- transaction, so an administrator's action and a concurrent change of the
--- same account (the owner's own password change, an invitation being
--- accepted) happen one after the other. A deactivated account is found
--- too: an administrator may act on it, and reactivating needs it.
-SELECT (password_hash IS NOT NULL)::boolean AS has_password FROM users
+-- Whether the account has a password and whether it is deactivated,
+-- locking its row for the rest of the transaction, so an administrator's
+-- action and a concurrent change of the same account (the owner's own
+-- password change, an invitation being accepted, a reset) happen one after
+-- the other. A deactivated account is found too: an administrator may act
+-- on it, and reactivating needs it.
+SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated FROM users
 WHERE id = $1
 FOR UPDATE;
 
@@ -105,7 +106,8 @@ WITH totp AS (
 DELETE FROM passkeys WHERE passkeys.user_id = $1;
 
 -- name: ReactivateUser :execrows
--- Clears the deactivation. Revoked sessions and tokens stay revoked.
+-- Clears the deactivation. Revoked sessions and tokens stay revoked; the
+-- service also revokes any session that is not (accounts.Reactivate).
 UPDATE users SET disabled_at = NULL WHERE id = $1;
 
 -- name: GetNoticeRecipient :one
@@ -117,3 +119,35 @@ SELECT u.email, u.locale,
   coalesce((SELECT s.value #>> '{}' FROM instance_settings s WHERE s.key = 'default_locale'), '')::text AS default_locale
 FROM users u
 WHERE u.id = $1;
+
+-- name: GetAccountIDByEmail :one
+-- The account with this address, for a forgotten password. email is
+-- citext, so the match is case-insensitive.
+SELECT id FROM users WHERE email = sqlc.arg(email)::text::citext;
+
+-- name: CountResetTokensSince :one
+-- How many reset tokens the account was issued since the given instant,
+-- used or not: the per-address limit of the forgot route.
+SELECT count(*) FROM password_reset_tokens
+WHERE user_id = sqlc.arg(user_id) AND created_at >= sqlc.arg(since)::timestamptz;
+
+-- name: VoidResetTokens :exec
+-- Uses up every unused reset token of the account: a newer link voids the
+-- older ones, and a completed reset voids all of them.
+UPDATE password_reset_tokens SET used_at = sqlc.arg(at)::timestamptz
+WHERE user_id = sqlc.arg(user_id) AND used_at IS NULL;
+
+-- name: InsertResetToken :exec
+-- Only the token's hash is stored; the token itself is in the mail.
+INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at)
+VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(token_hash), sqlc.arg(created_at), sqlc.arg(expires_at));
+
+-- name: LockResetToken :one
+-- The account a reset token belongs to, while the token is unused and
+-- unexpired and the account is not deactivated. Both rows stay locked for
+-- the rest of the transaction, so two resets with the same token happen
+-- one after the other and the second finds it used.
+SELECT t.user_id FROM password_reset_tokens t JOIN users u ON u.id = t.user_id
+WHERE t.token_hash = sqlc.arg(token_hash) AND t.used_at IS NULL
+  AND t.expires_at > sqlc.arg(now)::timestamptz AND u.disabled_at IS NULL
+FOR UPDATE OF t, u;

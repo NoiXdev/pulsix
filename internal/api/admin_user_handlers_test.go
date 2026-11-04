@@ -292,6 +292,19 @@ func TestAdminDeactivateAndReactivate(t *testing.T) {
 		t.Fatalf("login while deactivated: status %d, want 401", code)
 	}
 
+	// Deactivating it again changes nothing and tells nobody.
+	resp = postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "deactivate"), nil)
+	decodeInto(t, resp, &body)
+	if resp.StatusCode != http.StatusOK || body.Notice != "skipped" || len(s.Mail.Sent()) != 1 {
+		t.Fatalf("deactivating again: status %d, notice %q, mails %d; want 200, skipped, still 1", resp.StatusCode, body.Notice, len(s.Mail.Sent()))
+	}
+	// Deactivation disables the account and revokes its sessions in two
+	// steps; a session that slipped between them ends on reactivation.
+	survivor := s.LoginAs(target)
+	if _, err := s.DB.Pool().Exec(t.Context(), `UPDATE sessions SET revoked_at = NULL WHERE user_id = $1`, target); err != nil {
+		t.Fatal(err)
+	}
+
 	resp = postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "reactivate"), nil)
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("reactivate: status %d (%s), want 204", resp.StatusCode, mustReadBody(t, resp))
@@ -299,8 +312,38 @@ func TestAdminDeactivateAndReactivate(t *testing.T) {
 	if code := login(); code != http.StatusOK {
 		t.Fatalf("login after reactivation: status %d, want 200", code)
 	}
+	if resp := requestJSON(t, survivor, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a session from before the reactivation: status %d, want 401", resp.StatusCode)
+	}
 	if n, match, _ := auditEvents(t, s, "POST reactivateUser", admin, target); n != 1 || !match {
 		t.Fatalf("audit: %d reactivateUser events (match %v), want 1", n, match)
+	}
+}
+
+// TestAdminActionOnDeactivatedAccountSkipsNotice: an action on a
+// deactivated account happens, but its person is not mailed about it.
+func TestAdminActionOnDeactivatedAccountSkipsNotice(t *testing.T) {
+	s := apitest.New(t)
+	_, adminClient := adminWithFactor(t, s, "skip-admin@example.test")
+	target := s.SeedUser("skip-target@example.test", "correct horse battery")
+	if _, err := s.DB.Pool().Exec(t.Context(), `UPDATE users SET disabled_at = now() WHERE id = $1`, target); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "temporary-password"), nil)
+	var tmp temporaryPasswordBody
+	decodeInto(t, resp, &tmp)
+	if resp.StatusCode != http.StatusOK || tmp.Notice != "skipped" || tmp.Password == "" {
+		t.Fatalf("temporary password: status %d, notice %q; want 200, a password and skipped", resp.StatusCode, tmp.Notice)
+	}
+	resp = postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "second-factor/reset"), nil)
+	var body noticeBody
+	decodeInto(t, resp, &body)
+	if resp.StatusCode != http.StatusOK || body.Notice != "skipped" {
+		t.Fatalf("second factor reset: status %d, notice %q; want 200 and skipped", resp.StatusCode, body.Notice)
+	}
+	if sent := s.Mail.Sent(); len(sent) != 0 {
+		t.Fatalf("mails %+v, want none", sent)
 	}
 }
 
@@ -345,6 +388,7 @@ func TestAdminUserRoutesRequireInstanceAdminAndStepUp(t *testing.T) {
 		adminUserPath(target, "second-factor/reset"),
 		adminUserPath(target, "sessions/revoke"),
 		adminUserPath(target, "reactivate"),
+		adminUserPath(target, "password-reset-link"),
 		adminUserPath(target, "deactivate"),
 	}
 
@@ -363,18 +407,18 @@ func TestAdminUserRoutesRequireInstanceAdminAndStepUp(t *testing.T) {
 	})
 
 	// The bearer credential is resolved only on the org-scoped routes, so on
-	// these instance-level ones a token is no principal at all (401); were
-	// it ever resolved, requireInstanceAdmin refuses a token principal
-	// (403). Either way the token of an instance admin gets nowhere.
+	// these instance-level ones a token is no principal at all: 401. (Were
+	// it ever resolved, requireInstanceAdmin would refuse a token principal
+	// with 403 — a change this test would flag.)
 	t.Run("a bearer token of an instance admin", func(t *testing.T) {
 		for _, p := range reads {
-			if resp := bearerRequestJSON(t, s, http.MethodGet, p, tok, nil); resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
-				t.Errorf("GET %s: status %d, want 401 or 403", p, resp.StatusCode)
+			if resp := bearerRequestJSON(t, s, http.MethodGet, p, tok, nil); resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("GET %s: status %d, want 401", p, resp.StatusCode)
 			}
 		}
 		for _, p := range actions {
-			if resp := bearerRequestJSON(t, s, http.MethodPost, p, tok, nil); resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
-				t.Errorf("POST %s: status %d, want 401 or 403", p, resp.StatusCode)
+			if resp := bearerRequestJSON(t, s, http.MethodPost, p, tok, nil); resp.StatusCode != http.StatusUnauthorized {
+				t.Errorf("POST %s: status %d, want 401", p, resp.StatusCode)
 			}
 		}
 	})
@@ -413,7 +457,7 @@ func TestAdminActionsRefuseOwnAccountAndInvitePending(t *testing.T) {
 	s := apitest.New(t)
 	admin, adminClient := adminWithFactor(t, s, "edge-admin@example.test")
 	pending := seedInvitePending(t, s, "edge-pending@example.test")
-	actions := []string{"temporary-password", "second-factor/reset", "sessions/revoke", "reactivate", "deactivate"}
+	actions := []string{"temporary-password", "second-factor/reset", "sessions/revoke", "reactivate", "password-reset-link", "deactivate"}
 
 	for _, a := range actions {
 		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(admin, a), nil)
@@ -433,7 +477,7 @@ func TestAdminActionsRefuseOwnAccountAndInvitePending(t *testing.T) {
 		t.Fatalf("the admin's session after the refusals: status %d, want 200", resp.StatusCode)
 	}
 
-	for _, a := range actions[:4] {
+	for _, a := range actions[:5] {
 		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(pending, a), nil)
 		if d := problemDetail(t, resp); resp.StatusCode != http.StatusConflict || d != "invite_pending" {
 			t.Errorf("%s on an invite-pending account: status %d detail %q, want 409 invite_pending", a, resp.StatusCode, d)
@@ -446,8 +490,16 @@ func TestAdminActionsRefuseOwnAccountAndInvitePending(t *testing.T) {
 	if hasPassword {
 		t.Fatal("an invite-pending account was given a password")
 	}
-	if resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(pending, "deactivate"), nil); resp.StatusCode != http.StatusOK {
+	// Deactivating it works, and tells nobody: the account was never in
+	// use.
+	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(pending, "deactivate"), nil)
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("deactivating an invite-pending account: status %d (%s), want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var body noticeBody
+	decodeInto(t, resp, &body)
+	if body.Notice != "skipped" || len(s.Mail.Sent()) != 0 {
+		t.Fatalf("deactivating an invite-pending account: notice %q, mails %+v; want skipped and none", body.Notice, s.Mail.Sent())
 	}
 }
 

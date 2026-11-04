@@ -26,9 +26,16 @@ type fakeStore struct {
 	memberCalls []memberCall
 
 	// The admin actions (actions_test.go). accounts holds the accounts the
-	// actions may find, by id, with whether each has a password.
-	accounts  map[uuid.UUID]bool
-	recipient accounts.Recipient
+	// actions may find, by id, with whether each has a password;
+	// deactivated marks the ones among them that are deactivated.
+	accounts    map[uuid.UUID]bool
+	deactivated map[uuid.UUID]bool
+	recipient   accounts.Recipient
+
+	// The reset flow (reset_test.go). emails maps an address to its
+	// account; tokens is the password_reset_tokens table.
+	emails map[string]uuid.UUID
+	tokens []*fakeToken
 
 	inTx          bool
 	setCalls      []setPasswordCall
@@ -52,6 +59,12 @@ type listCall struct {
 }
 
 type memberCall struct{ user, actor uuid.UUID }
+
+// fakeToken is one row of password_reset_tokens.
+type fakeToken struct {
+	accounts.ResetToken
+	usedAt *time.Time
+}
 
 type tempPasswordCall struct {
 	userID    uuid.UUID
@@ -113,12 +126,12 @@ func (f *fakeStore) ListMemberships(_ context.Context, user, actor uuid.UUID) ([
 	return f.memberships, nil
 }
 
-func (f *fakeStore) LockAccount(_ context.Context, id uuid.UUID) (bool, error) {
+func (f *fakeStore) LockAccount(_ context.Context, id uuid.UUID) (accounts.LockedAccount, error) {
 	hasPassword, ok := f.accounts[id]
 	if !ok {
-		return false, accounts.ErrNotFound
+		return accounts.LockedAccount{}, accounts.ErrNotFound
 	}
-	return hasPassword, nil
+	return accounts.LockedAccount{HasPassword: hasPassword, Deactivated: f.deactivated[id]}, nil
 }
 
 func (f *fakeStore) SetTemporaryPassword(_ context.Context, id uuid.UUID, hash string, expiresAt time.Time) error {
@@ -144,6 +157,53 @@ func (f *fakeStore) Reactivate(_ context.Context, _ uuid.UUID) error {
 	f.write()
 	f.actions = append(f.actions, "reactivate")
 	return nil
+}
+
+func (f *fakeStore) AccountByEmail(_ context.Context, email string) (uuid.UUID, error) {
+	id, ok := f.emails[email]
+	if !ok {
+		return uuid.Nil, accounts.ErrNotFound
+	}
+	return id, nil
+}
+
+func (f *fakeStore) CountResetTokensSince(_ context.Context, userID uuid.UUID, since time.Time) (int, error) {
+	n := 0
+	for _, t := range f.tokens {
+		if t.UserID == userID && !t.CreatedAt.Before(since) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeStore) VoidResetTokens(_ context.Context, userID uuid.UUID, at time.Time) error {
+	f.write()
+	f.actions = append(f.actions, "void reset tokens")
+	for _, t := range f.tokens {
+		if t.UserID == userID && t.usedAt == nil {
+			t.usedAt = &at
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) InsertResetToken(_ context.Context, t accounts.ResetToken) error {
+	f.write()
+	f.actions = append(f.actions, "insert reset token")
+	f.tokens = append(f.tokens, &fakeToken{ResetToken: t})
+	return nil
+}
+
+// LockResetToken mirrors the SQL: the token unused and unexpired at now,
+// its account not deactivated.
+func (f *fakeStore) LockResetToken(_ context.Context, hash []byte, now time.Time) (uuid.UUID, error) {
+	for _, t := range f.tokens {
+		if string(t.Hash) == string(hash) && t.usedAt == nil && now.Before(t.ExpiresAt) && !f.deactivated[t.UserID] {
+			return t.UserID, nil
+		}
+	}
+	return uuid.Nil, accounts.ErrNotFound
 }
 
 func (f *fakeStore) NoticeRecipient(_ context.Context, _ uuid.UUID) (accounts.Recipient, error) {

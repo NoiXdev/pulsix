@@ -272,13 +272,13 @@ func TestSQLStoreAccountActions(t *testing.T) {
 
 	t.Run("LockAccount", func(t *testing.T) {
 		err := store.InTx(ctx, func(ctx context.Context) error {
-			has, err := store.LockAccount(ctx, uid)
-			if err != nil || !has {
-				t.Errorf("LockAccount(deactivated with a password) = %v, %v; want true", has, err)
+			got, err := store.LockAccount(ctx, uid)
+			if want := (accounts.LockedAccount{HasPassword: true, Deactivated: true}); err != nil || got != want {
+				t.Errorf("LockAccount(deactivated with a password) = %+v, %v; want %+v", got, err, want)
 			}
-			has, err = store.LockAccount(ctx, pending)
-			if err != nil || has {
-				t.Errorf("LockAccount(invite pending) = %v, %v; want false", has, err)
+			got, err = store.LockAccount(ctx, pending)
+			if want := (accounts.LockedAccount{}); err != nil || got != want {
+				t.Errorf("LockAccount(invite pending) = %+v, %v; want %+v", got, err, want)
 			}
 			if _, err := store.LockAccount(ctx, uuid.Must(uuid.NewV7())); !errors.Is(err, accounts.ErrNotFound) {
 				t.Errorf("LockAccount(unknown) err = %v, want ErrNotFound", err)
@@ -508,4 +508,147 @@ func TestSQLStoreAccountReads(t *testing.T) {
 			t.Fatalf("ListMemberships = %+v, want %+v", got, want)
 		}
 	})
+}
+
+// TestSQLStoreResetTokens: the reset token queries against the real
+// schema — finding an account by address, the per-address count, voiding,
+// and the lookup a reset makes.
+func TestSQLStoreResetTokens(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	store := accounts.NewSQLStore(d)
+	hash := "$argon2id$h"
+	uid := seedUser(t, d, "Reset.Person@example.test", &hash)
+	other := seedUser(t, d, "reset-other@example.test", &hash)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	if got, err := store.AccountByEmail(ctx, "reset.person@EXAMPLE.test"); err != nil || got != uid {
+		t.Fatalf("AccountByEmail(other case) = %v, %v; want %v", got, err, uid)
+	}
+	if _, err := store.AccountByEmail(ctx, "nobody@example.test"); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("AccountByEmail(unknown) err = %v, want ErrNotFound", err)
+	}
+
+	insert := func(user uuid.UUID, h string, created, expires time.Time) {
+		t.Helper()
+		if err := store.InsertResetToken(ctx, accounts.ResetToken{
+			ID: uuid.Must(uuid.NewV7()), UserID: user, Hash: []byte(h), CreatedAt: created, ExpiresAt: expires,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert(uid, "old", now.Add(-2*time.Hour), now.Add(-time.Hour))
+	insert(uid, "recent", now.Add(-30*time.Minute), now.Add(30*time.Minute))
+	insert(uid, "expired", now.Add(-61*time.Minute), now.Add(-time.Minute))
+	insert(other, "bystander", now, now.Add(time.Hour))
+
+	if n, err := store.CountResetTokensSince(ctx, uid, now.Add(-time.Hour)); err != nil || n != 1 {
+		t.Fatalf("CountResetTokensSince(1 h) = %d, %v; want 1", n, err)
+	}
+
+	lock := func(h string, at time.Time) (uuid.UUID, error) {
+		var got uuid.UUID
+		err := store.InTx(ctx, func(ctx context.Context) error {
+			var err error
+			got, err = store.LockResetToken(ctx, []byte(h), at)
+			return err
+		})
+		return got, err
+	}
+	if got, err := lock("recent", now); err != nil || got != uid {
+		t.Fatalf("LockResetToken(recent) = %v, %v; want %v", got, err, uid)
+	}
+	if _, err := lock("expired", now); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("LockResetToken(expired) err = %v, want ErrNotFound", err)
+	}
+	if _, err := lock("recent", now.Add(30*time.Minute)); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("LockResetToken(at its expiry) err = %v, want ErrNotFound", err)
+	}
+	if _, err := lock("unknown", now); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("LockResetToken(unknown) err = %v, want ErrNotFound", err)
+	}
+
+	if _, err := d.Pool().Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lock("recent", now); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("LockResetToken(deactivated account) err = %v, want ErrNotFound", err)
+	}
+	if _, err := d.Pool().Exec(ctx, `UPDATE users SET disabled_at = NULL WHERE id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.VoidResetTokens(ctx, uid, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lock("recent", now); !errors.Is(err, accounts.ErrNotFound) {
+		t.Fatalf("LockResetToken(voided) err = %v, want ErrNotFound", err)
+	}
+	if got, err := lock("bystander", now); err != nil || got != other {
+		t.Fatalf("voiding one account's tokens touched another's: %v, %v", got, err)
+	}
+	if n, err := store.CountResetTokensSince(ctx, uid, now.Add(-time.Hour)); err != nil || n != 1 {
+		t.Fatalf("CountResetTokensSince after voiding = %d, %v; want used tokens still counted (1)", n, err)
+	}
+}
+
+// TestResetFlowSQL: a reset through the real store sets the password,
+// lifts a forced change, uses up every token of the account and ends its
+// sessions.
+func TestResetFlowSQL(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	store := accounts.NewSQLStore(d)
+	sessions := auth.NewSessions(gen.New(d.Pool()), time.Now)
+	hash := "$argon2id$old"
+	uid := seedUser(t, d, "flow@example.test", &hash)
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE users SET must_change_password = true, temp_password_expires_at = now() + interval '1 hour' WHERE id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	sid, _, err := sessions.Create(ctx, uid, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mailer := &fakeMailer{}
+	svc := accounts.NewService(store, mailer, "https://pulsix.example", time.Now, &cyclingReader{})
+
+	for range 2 {
+		if err := svc.RequestReset(ctx, "FLOW@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		accounts.WaitForMail(svc)
+	}
+	if len(mailer.sent) != 2 {
+		t.Fatalf("mails %d, want 2", len(mailer.sent))
+	}
+	token := resetLink.FindStringSubmatch(mailer.sent[1].body)[1]
+	if _, err := svc.ResetPassword(ctx, token, "a brand new password"); err != nil {
+		t.Fatal(err)
+	}
+
+	var (
+		got        string
+		mustChange bool
+		tempUntil  *time.Time
+		unused     int
+	)
+	if err := d.Pool().QueryRow(ctx,
+		`SELECT password_hash, must_change_password, temp_password_expires_at,
+		        (SELECT count(*) FROM password_reset_tokens WHERE user_id = $1 AND used_at IS NULL)
+		   FROM users WHERE id = $1`, uid).Scan(&got, &mustChange, &tempUntil, &unused); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := auth.VerifyPassword(got, "a brand new password"); err != nil || !ok {
+		t.Fatalf("the new password does not verify: %v %v", ok, err)
+	}
+	if mustChange || tempUntil != nil || unused != 0 {
+		t.Fatalf("must change %v, temp until %v, unused tokens %d; want false, nil, 0", mustChange, tempUntil, unused)
+	}
+	if !sessionRevoked(t, d, sid) {
+		t.Fatal("the session survived the reset")
+	}
+	if _, err := svc.ResetPassword(ctx, token, "another new password"); !errors.Is(err, accounts.ErrInvalidResetToken) {
+		t.Fatalf("the token again: err %v, want ErrInvalidResetToken", err)
+	}
 }

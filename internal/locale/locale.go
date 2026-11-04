@@ -10,6 +10,10 @@ const (
 	DE = "de"
 )
 
+// Supported lists the supported language codes, English first. The slice is
+// the caller's own.
+func Supported() []string { return []string{EN, DE} }
+
 // Valid reports whether s is exactly one of the supported language codes.
 func Valid(s string) bool { return s == EN || s == DE }
 

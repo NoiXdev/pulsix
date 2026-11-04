@@ -280,16 +280,22 @@ func (f *fakeStore) SetUserPasswordAndName(_ context.Context, id uuid.UUID, hash
 	return nil
 }
 
-// DisableUser mirrors the SQL guard: an unknown user is ErrNotFound, and
-// the last active instance administrator cannot be disabled.
-func (f *fakeStore) DisableUser(_ context.Context, id uuid.UUID, at time.Time) error {
+// DisableUser mirrors the SQL guard: an unknown user is ErrNotFound, the
+// last active instance administrator cannot be disabled, and an account
+// that is already disabled keeps its first deactivation. It reports
+// whether the account was active (not disabled, with a password) before.
+func (f *fakeStore) DisableUser(_ context.Context, id uuid.UUID, at time.Time) (bool, error) {
 	if err := f.take("DisableUser"); err != nil {
-		return err
+		return false, err
 	}
-	if _, ok := f.users[id]; !ok {
-		return tenancy.ErrNotFound
+	u, ok := f.users[id]
+	if !ok {
+		return false, tenancy.ErrNotFound
 	}
-	if _, alreadyDisabled := f.disabledAt[id]; f.instanceAdmins[id] && !alreadyDisabled {
+	if _, alreadyDisabled := f.disabledAt[id]; alreadyDisabled {
+		return false, nil
+	}
+	if f.instanceAdmins[id] {
 		active := 0
 		for admin := range f.instanceAdmins {
 			if _, disabled := f.disabledAt[admin]; !disabled {
@@ -297,11 +303,11 @@ func (f *fakeStore) DisableUser(_ context.Context, id uuid.UUID, at time.Time) e
 			}
 		}
 		if active <= 1 {
-			return tenancy.ErrLastInstanceAdmin
+			return false, tenancy.ErrLastInstanceAdmin
 		}
 	}
 	f.disabledAt[id] = at
-	return nil
+	return u.PasswordHash != nil, nil
 }
 
 func (f *fakeStore) RevokeSessionsForUser(_ context.Context, id uuid.UUID) error {
@@ -1207,7 +1213,7 @@ func TestDeactivateUserRequiresInstanceAdmin(t *testing.T) {
 	st := newFakeStore()
 	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 	target := st.addUser("target@x", true)
-	if err := svc.DeactivateUser(ctx, false, uuid.Must(uuid.NewV7()), target); !errors.Is(err, tenancy.ErrForbidden) {
+	if _, err := svc.DeactivateUser(ctx, false, uuid.Must(uuid.NewV7()), target); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Fatalf("non-admin: %v, want ErrForbidden", err)
 	}
 	if _, disabled := st.disabledAt[target]; disabled {
@@ -1232,7 +1238,7 @@ func TestDeactivateUserRefusesTheLastInstanceAdmin(t *testing.T) {
 	// and against two admins deactivating each other at once.
 	actor := uuid.Must(uuid.NewV7())
 
-	if err := svc.DeactivateUser(ctx, true, actor, admin); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
+	if _, err := svc.DeactivateUser(ctx, true, actor, admin); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
 		t.Fatalf("deactivating the only instance admin: %v, want ErrLastInstanceAdmin", err)
 	}
 	if st.revokedSess[admin] || st.revokedTok[admin] {
@@ -1241,10 +1247,10 @@ func TestDeactivateUserRefusesTheLastInstanceAdmin(t *testing.T) {
 
 	second := st.addUser("second@x", true)
 	st.instanceAdmins[second] = true
-	if err := svc.DeactivateUser(ctx, true, actor, admin); err != nil {
+	if _, err := svc.DeactivateUser(ctx, true, actor, admin); err != nil {
 		t.Fatalf("deactivating one of two instance admins: %v", err)
 	}
-	if err := svc.DeactivateUser(ctx, true, actor, second); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
+	if _, err := svc.DeactivateUser(ctx, true, actor, second); !errors.Is(err, tenancy.ErrLastInstanceAdmin) {
 		t.Fatalf("deactivating the remaining instance admin: %v, want ErrLastInstanceAdmin", err)
 	}
 }
@@ -1261,14 +1267,42 @@ func TestDeactivateUserRefusesOwnAccount(t *testing.T) {
 	other := st.addUser("other@x", true)
 	st.instanceAdmins[other] = true
 
-	if err := svc.DeactivateUser(ctx, true, self, self); !errors.Is(err, tenancy.ErrNotOnOwnAccount) {
+	if _, err := svc.DeactivateUser(ctx, true, self, self); !errors.Is(err, tenancy.ErrNotOnOwnAccount) {
 		t.Fatalf("deactivating one's own account: %v, want ErrNotOnOwnAccount", err)
 	}
 	if _, disabled := st.disabledAt[self]; disabled || st.revokedSess[self] || st.revokedTok[self] {
 		t.Fatal("the refused deactivation still disabled or revoked something")
 	}
-	if err := svc.DeactivateUser(ctx, false, self, self); !errors.Is(err, tenancy.ErrForbidden) {
+	if _, err := svc.DeactivateUser(ctx, false, self, self); !errors.Is(err, tenancy.ErrForbidden) {
 		t.Fatalf("not an admin, own account: %v, want ErrForbidden first", err)
+	}
+}
+
+// TestDeactivateUserReportsWhetherTheAccountWasActive: the caller tells
+// the person only when the account was in use right before — not yet
+// deactivated, and with its invitation accepted. Deactivating again keeps
+// the first deactivation and still revokes everything.
+func TestDeactivateUserReportsWhetherTheAccountWasActive(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	actor := uuid.Must(uuid.NewV7())
+	active := st.addUser("active@x", true)
+	pending := st.addUser("pending@x", false)
+
+	if was, err := svc.DeactivateUser(ctx, true, actor, active); err != nil || !was {
+		t.Fatalf("an active account: was active %v, err %v; want true", was, err)
+	}
+	first := st.disabledAt[active]
+	st.revokedSess[active], st.revokedTok[active] = false, false
+	if was, err := svc.DeactivateUser(ctx, true, actor, active); err != nil || was {
+		t.Fatalf("an account already deactivated: was active %v, err %v; want false", was, err)
+	}
+	if !st.disabledAt[active].Equal(first) || !st.revokedSess[active] || !st.revokedTok[active] {
+		t.Fatal("deactivating again moved the first deactivation or skipped the revoke")
+	}
+	if was, err := svc.DeactivateUser(ctx, true, actor, pending); err != nil || was {
+		t.Fatalf("an invite-pending account: was active %v, err %v; want false", was, err)
 	}
 }
 
@@ -1277,7 +1311,7 @@ func TestDeactivateUserRevokesSessionsAndTokens(t *testing.T) {
 	st := newFakeStore()
 	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 	target := st.addUser("target@x", true)
-	if err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); err != nil {
+	if _, err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := st.disabledAt[target]; !ok {
@@ -1508,7 +1542,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 		target := st.addUser("target@x", true)
 		st.failNext["DisableUser"] = boom
-		if err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); !errors.Is(err, boom) {
+		if _, err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); !errors.Is(err, boom) {
 			t.Fatalf("DeactivateUser DisableUser failure: %v, want %v", err, boom)
 		}
 	})
@@ -1518,7 +1552,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 		target := st.addUser("target@x", true)
 		st.failNext["RevokeSessionsForUser"] = boom
-		if err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); !errors.Is(err, boom) {
+		if _, err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); !errors.Is(err, boom) {
 			t.Fatalf("DeactivateUser RevokeSessionsForUser failure: %v, want %v", err, boom)
 		}
 	})
@@ -1528,7 +1562,7 @@ func TestStoreFailuresPropagate(t *testing.T) {
 		svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
 		target := st.addUser("target@x", true)
 		st.failNext["RevokeTokensForUser"] = boom
-		if err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); !errors.Is(err, boom) {
+		if _, err := svc.DeactivateUser(ctx, true, uuid.Must(uuid.NewV7()), target); !errors.Is(err, boom) {
 			t.Fatalf("DeactivateUser RevokeTokensForUser failure: %v, want %v", err, boom)
 		}
 	})

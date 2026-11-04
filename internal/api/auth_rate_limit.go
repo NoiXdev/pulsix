@@ -81,7 +81,7 @@ func authRateLimitMiddleware(deps Deps, lim *clientip.Limiter) func(huma.Context
 		ip := clientAddr(deps, ctx)
 		r, remaining, ok := lim.Reserve(ip)
 		if !ok {
-			writeRateLimited(ctx, remaining)
+			writeRateLimited(ctx, remaining, "too many failed attempts from this address; retry later")
 			return
 		}
 		next(ctx)
@@ -94,11 +94,12 @@ func authRateLimitMiddleware(deps Deps, lim *clientip.Limiter) func(huma.Context
 
 // writeRateLimited answers a refused attempt: 429 with Retry-After naming
 // the seconds (ceil, at least 1) until the address's window ends and its
-// budget returns. The body is written by hand rather than through
-// huma.WriteErr so the answer never depends on the caller's Accept header —
-// a hostile client must not be able to trade its 429 for a 406 by sending
-// garbage — in exactly the shape huma's own error model produces.
-func writeRateLimited(ctx huma.Context, remaining time.Duration) {
+// budget returns, and detail saying what was counted. The body is written
+// by hand rather than through huma.WriteErr so the answer never depends on
+// the caller's Accept header — a hostile client must not be able to trade
+// its 429 for a 406 by sending garbage — in exactly the shape huma's own
+// error model produces.
+func writeRateLimited(ctx huma.Context, remaining time.Duration, detail string) {
 	secs := int(math.Ceil(remaining.Seconds()))
 	if secs < 1 {
 		secs = 1
@@ -110,7 +111,7 @@ func writeRateLimited(ctx huma.Context, remaining time.Duration) {
 	}{
 		Title:  http.StatusText(http.StatusTooManyRequests),
 		Status: http.StatusTooManyRequests,
-		Detail: "too many failed attempts from this address; retry later",
+		Detail: detail,
 	})
 	ctx.SetHeader("Content-Type", "application/json")
 	ctx.AppendHeader("Retry-After", strconv.Itoa(secs))

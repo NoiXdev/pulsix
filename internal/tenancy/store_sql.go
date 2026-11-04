@@ -175,19 +175,25 @@ func (s *SQLStore) SetUserPasswordAndName(ctx context.Context, id uuid.UUID, has
 // DisableUser returns ErrNotFound for an unknown id and ErrLastInstanceAdmin
 // when the query's own atomic guard refused to disable the last active
 // instance administrator (see tenancy_users.sql). The guard is what decides;
-// the follow-up lookup only tells its two "no row affected" outcomes apart.
-func (s *SQLStore) DisableUser(ctx context.Context, id uuid.UUID, at time.Time) error {
-	n, err := s.q.DisableUser(ctx, gen.DisableUserParams{ID: id, DisabledAt: pgtype.Timestamptz{Time: at, Valid: true}})
+// when no row came back, the follow-up lookup only tells its outcomes
+// apart: an unknown id, an account that was already disabled (left as it
+// is, and so not active before), or the guard's refusal.
+func (s *SQLStore) DisableUser(ctx context.Context, id uuid.UUID, at time.Time) (bool, error) {
+	wasActive, err := s.q.DisableUser(ctx, gen.DisableUserParams{ID: id, DisabledAt: pgtype.Timestamptz{Time: at, Valid: true}})
+	if err == nil {
+		return wasActive, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return false, err
+	}
+	u, err := s.q.GetUserByID(ctx, id)
 	if err != nil {
-		return err
+		return false, mapErr(err)
 	}
-	if n > 0 {
-		return nil
+	if u.DisabledAt.Valid {
+		return false, nil
 	}
-	if _, err := s.q.GetUserByID(ctx, id); err != nil {
-		return mapErr(err)
-	}
-	return ErrLastInstanceAdmin
+	return false, ErrLastInstanceAdmin
 }
 
 func (s *SQLStore) RevokeSessionsForUser(ctx context.Context, id uuid.UUID) error {

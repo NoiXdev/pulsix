@@ -117,15 +117,15 @@ func (s *SQLStore) ListMemberships(ctx context.Context, userID, actor uuid.UUID)
 }
 
 // LockAccount implements Store.
-func (s *SQLStore) LockAccount(ctx context.Context, id uuid.UUID) (bool, error) {
-	hasPassword, err := s.q.LockAccount(ctx, id)
+func (s *SQLStore) LockAccount(ctx context.Context, id uuid.UUID) (LockedAccount, error) {
+	row, err := s.q.LockAccount(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, ErrNotFound
+		return LockedAccount{}, ErrNotFound
 	}
 	if err != nil {
-		return false, fmt.Errorf("lock account: %w", err)
+		return LockedAccount{}, fmt.Errorf("lock account: %w", err)
 	}
-	return hasPassword, nil
+	return LockedAccount{HasPassword: row.HasPassword, Deactivated: row.Deactivated}, nil
 }
 
 // SetTemporaryPassword implements Store.
@@ -179,4 +179,55 @@ func (s *SQLStore) NoticeRecipient(ctx context.Context, id uuid.UUID) (Recipient
 		return Recipient{}, fmt.Errorf("get notice recipient: %w", err)
 	}
 	return Recipient{Email: r.Email, Locale: r.Locale, DefaultLocale: r.DefaultLocale}, nil
+}
+
+// AccountByEmail implements Store.
+func (s *SQLStore) AccountByEmail(ctx context.Context, email string) (uuid.UUID, error) {
+	id, err := s.q.GetAccountIDByEmail(ctx, email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("get account by email: %w", err)
+	}
+	return id, nil
+}
+
+// CountResetTokensSince implements Store.
+func (s *SQLStore) CountResetTokensSince(ctx context.Context, userID uuid.UUID, since time.Time) (int, error) {
+	n, err := s.q.CountResetTokensSince(ctx, gen.CountResetTokensSinceParams{UserID: userID, Since: since})
+	if err != nil {
+		return 0, fmt.Errorf("count reset tokens: %w", err)
+	}
+	return int(n), nil
+}
+
+// VoidResetTokens implements Store.
+func (s *SQLStore) VoidResetTokens(ctx context.Context, userID uuid.UUID, at time.Time) error {
+	if err := s.q.VoidResetTokens(ctx, gen.VoidResetTokensParams{UserID: userID, At: at}); err != nil {
+		return fmt.Errorf("void reset tokens: %w", err)
+	}
+	return nil
+}
+
+// InsertResetToken implements Store.
+func (s *SQLStore) InsertResetToken(ctx context.Context, t ResetToken) error {
+	if err := s.q.InsertResetToken(ctx, gen.InsertResetTokenParams{
+		ID: t.ID, UserID: t.UserID, TokenHash: t.Hash, CreatedAt: t.CreatedAt, ExpiresAt: t.ExpiresAt,
+	}); err != nil {
+		return fmt.Errorf("insert reset token: %w", err)
+	}
+	return nil
+}
+
+// LockResetToken implements Store.
+func (s *SQLStore) LockResetToken(ctx context.Context, hash []byte, now time.Time) (uuid.UUID, error) {
+	id, err := s.q.LockResetToken(ctx, gen.LockResetTokenParams{TokenHash: hash, Now: now})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("lock reset token: %w", err)
+	}
+	return id, nil
 }

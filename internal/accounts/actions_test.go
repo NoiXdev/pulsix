@@ -157,8 +157,43 @@ func TestReactivate(t *testing.T) {
 	if err := actionService(store, mailer).Reactivate(ctx, true, actor, target); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(store.actions, ", ") != "reactivate" || store.writesOutside != 0 || len(mailer.sent) != 0 {
+	// Deactivation disables the account and revokes its sessions in two
+	// steps, not one transaction, so reactivating ends any session that
+	// slipped through, together with lifting the deactivation.
+	if strings.Join(store.actions, ", ") != "reactivate, revoke sessions" || store.writesOutside != 0 || len(mailer.sent) != 0 {
 		t.Fatalf("writes %v (%d outside), mails %d", store.actions, store.writesOutside, len(mailer.sent))
+	}
+}
+
+// TestNoticesSkipDeactivatedAccounts: an action on a deactivated account
+// still happens, but the person is not mailed about it (NoticeSkipped).
+func TestNoticesSkipDeactivatedAccounts(t *testing.T) {
+	ctx := context.Background()
+	actor, target := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	newStore := func() *fakeStore {
+		return &fakeStore{
+			accounts:    map[uuid.UUID]bool{target: true},
+			deactivated: map[uuid.UUID]bool{target: true},
+			recipient:   accounts.Recipient{Email: "target@example.test"},
+		}
+	}
+
+	store, mailer := newStore(), &fakeMailer{}
+	_, notice, err := actionService(store, mailer).SetTemporaryPassword(ctx, true, actor, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notice != accounts.NoticeSkipped || len(mailer.sent) != 0 || len(store.tempCalls) != 1 {
+		t.Fatalf("temporary password: notice %q, mails %d, password set %d times; want skipped, none, once", notice, len(mailer.sent), len(store.tempCalls))
+	}
+
+	store, mailer = newStore(), &fakeMailer{}
+	notice, err = actionService(store, mailer).ResetSecondFactor(ctx, true, actor, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if notice != accounts.NoticeSkipped || len(mailer.sent) != 0 || len(store.actions) == 0 {
+		t.Fatalf("second factor: notice %q, mails %d, writes %v; want skipped, none, the reset done", notice, len(mailer.sent), store.actions)
 	}
 }
 
@@ -249,7 +284,7 @@ func TestNotifyDeactivated(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mailer := &fakeMailer{}
-			notice := actionService(&fakeStore{recipient: tc.recipient}, mailer).NotifyDeactivated(context.Background(), uuid.Must(uuid.NewV7()))
+			notice := actionService(&fakeStore{recipient: tc.recipient}, mailer).NotifyDeactivated(context.Background(), uuid.Must(uuid.NewV7()), true)
 			if notice != accounts.NoticeSent || len(mailer.sent) != 1 {
 				t.Fatalf("notice %q, mails %+v", notice, mailer.sent)
 			}
@@ -259,12 +294,19 @@ func TestNotifyDeactivated(t *testing.T) {
 		})
 	}
 
-	if notice := actionService(&fakeStore{}, &fakeMailer{unconfigured: true}).NotifyDeactivated(context.Background(), uuid.Must(uuid.NewV7())); notice != accounts.NoticeNotConfigured {
+	// An account that was already deactivated, or never claimed its
+	// invitation, is told nothing.
+	skipped := &fakeMailer{}
+	if notice := actionService(&fakeStore{recipient: accounts.Recipient{Email: "a@example.test"}}, skipped).NotifyDeactivated(context.Background(), uuid.Must(uuid.NewV7()), false); notice != accounts.NoticeSkipped || len(skipped.sent) != 0 {
+		t.Fatalf("not active before: notice %q, mails %d; want skipped and none", notice, len(skipped.sent))
+	}
+
+	if notice := actionService(&fakeStore{}, &fakeMailer{unconfigured: true}).NotifyDeactivated(context.Background(), uuid.Must(uuid.NewV7()), true); notice != accounts.NoticeNotConfigured {
 		t.Fatalf("without mail: notice %q, want not_configured", notice)
 	}
 	// The settings went away between the check and the send.
 	gone := &fakeMailer{sendErr: fmt.Errorf("load smtp settings: %w", mail.ErrNotConfigured)}
-	if notice := actionService(&fakeStore{}, gone).NotifyDeactivated(context.Background(), uuid.Must(uuid.NewV7())); notice != accounts.NoticeNotConfigured {
+	if notice := actionService(&fakeStore{}, gone).NotifyDeactivated(context.Background(), uuid.Must(uuid.NewV7()), true); notice != accounts.NoticeNotConfigured {
 		t.Fatalf("mail settings removed before the send: notice %q, want not_configured", notice)
 	}
 }

@@ -1,0 +1,288 @@
+package api_test
+
+import (
+	"net/http"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/api/apitest"
+)
+
+const (
+	forgotPath         = "/api/v1/auth/password/forgot"
+	resetPath          = "/api/v1/auth/password/reset"
+	resetAvailablePath = "/api/v1/auth/password/reset-available"
+)
+
+// resetTokenInMail finds the token of a reset link: in the fragment, never
+// in the query.
+var resetTokenInMail = regexp.MustCompile(`/reset-password#token=([A-Za-z0-9_-]+)`)
+
+// waitForResetMail waits for the reset mail to reach to (the forgot route
+// hands it to the mailer in the background) and returns its token.
+func waitForResetMail(t *testing.T, s *apitest.Server, to string) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, m := range s.Mail.Sent() {
+			if m.To == to {
+				match := resetTokenInMail.FindStringSubmatch(m.Body)
+				if match == nil || strings.Contains(m.Body, "?token=") {
+					t.Fatalf("the reset mail carries no fragment link: %q", m.Body)
+				}
+				return match[1]
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no reset mail to %s", to)
+	return ""
+}
+
+func TestResetAvailable(t *testing.T) {
+	s := apitest.New(t)
+	get := func() bool {
+		t.Helper()
+		resp := requestJSON(t, s.Client(), http.MethodGet, s.HTTP.URL+resetAvailablePath, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status %d (%s), want 200", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var body struct {
+			Available bool `json:"available"`
+		}
+		decodeInto(t, resp, &body)
+		return body.Available
+	}
+	if !get() {
+		t.Fatal("available = false with mail configured")
+	}
+	s.Mail.SetConfigured(false)
+	if get() {
+		t.Fatal("available = true without mail")
+	}
+}
+
+// TestForgotPasswordConstantShape: the answer never tells whether an
+// address has an account, or what state it is in.
+func TestForgotPasswordConstantShape(t *testing.T) {
+	s := apitest.New(t)
+	s.SeedUser("forgot-existing@example.test", "correct horse battery")
+	deactivated := s.SeedUser("forgot-deactivated@example.test", "correct horse battery")
+	if _, err := s.DB.Pool().Exec(t.Context(), `UPDATE users SET disabled_at = now() WHERE id = $1`, deactivated); err != nil {
+		t.Fatal(err)
+	}
+	seedInvitePending(t, s, "forgot-pending@example.test")
+
+	var first string
+	for _, email := range []string{
+		"forgot-existing@example.test",
+		"forgot-unknown@example.test",
+		"forgot-deactivated@example.test",
+		"forgot-pending@example.test",
+	} {
+		resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email})
+		body := mustReadBody(t, resp)
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("%s: status %d (%s), want 202", email, resp.StatusCode, body)
+		}
+		if first == "" {
+			first = body
+		} else if body != first {
+			t.Fatalf("%s: body %q differs from %q", email, body, first)
+		}
+	}
+	waitForResetMail(t, s, "forgot-existing@example.test")
+	time.Sleep(100 * time.Millisecond)
+	if sent := s.Mail.Sent(); len(sent) != 1 {
+		t.Fatalf("mails %+v, want only the existing account's", sent)
+	}
+	var rows int
+	if err := s.DB.Pool().QueryRow(t.Context(), `SELECT count(*) FROM password_reset_tokens`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("%d token rows, want 1", rows)
+	}
+}
+
+// TestForgotPasswordRateLimit: every request counts, whatever it asked
+// for; the 11th from one address within 15 minutes is refused, another
+// address keeps its own budget.
+func TestForgotPasswordRateLimit(t *testing.T) {
+	s := apitest.New(t, apitest.WithTrustedProxies(loopbackTrusted()))
+	for i := range 10 {
+		resp, err := postFrom(s.HTTP.URL+forgotPath, addressA, map[string]string{"email": "nobody@example.test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusAccepted {
+			t.Fatalf("request %d: status %d, want 202", i+1, resp.StatusCode)
+		}
+	}
+	resp, err := postFrom(s.HTTP.URL+forgotPath, addressA, map[string]string{"email": "nobody@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("11th request: status %d, want 429", resp.StatusCode)
+	}
+	if ra := retryAfterOf(t, resp); ra > 15*60 {
+		t.Fatalf("Retry-After %d s, want at most the 15 min window", ra)
+	}
+	other, err := postFrom(s.HTTP.URL+forgotPath, addressB, map[string]string{"email": "nobody@example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = other.Body.Close()
+	if other.StatusCode != http.StatusAccepted {
+		t.Fatalf("another address: status %d, want 202", other.StatusCode)
+	}
+}
+
+// TestResetDoesNotSignIn: a reset sets the password and ends every session,
+// but signs nobody in; the next sign-in still needs the second factor. The
+// token appears in neither the log nor the audit trail.
+func TestResetDoesNotSignIn(t *testing.T) {
+	s := apitest.New(t)
+	logs := captureLog(t)
+	const email = "reset-me@example.test"
+	uid := s.SeedUser(email, "the old password 1")
+	s.SeedPasskey(uid, "my key")
+	oldSession := s.LoginAs(uid)
+
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email}); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("forgot: status %d", resp.StatusCode)
+	}
+	token := waitForResetMail(t, s, email)
+
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": token, "new_password": "short"}); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("a short password: status %d, want 422", resp.StatusCode)
+	}
+
+	resp := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": token, "new_password": "the new password 22"})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("reset: status %d (%s), want 204", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if c := resp.Header.Values("Set-Cookie"); len(c) != 0 {
+		t.Fatalf("the reset set cookies: %v", c)
+	}
+	if resp := requestJSON(t, oldSession, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the old session after the reset: status %d, want 401", resp.StatusCode)
+	}
+
+	again := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": token, "new_password": "yet another password"})
+	if d := problemDetail(t, again); again.StatusCode != http.StatusBadRequest || d != "invalid_or_expired_link" {
+		t.Fatalf("the same link again: status %d detail %q, want 400 invalid_or_expired_link", again.StatusCode, d)
+	}
+
+	login := postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]string{"email": email, "password": "the new password 22"})
+	if login.StatusCode != http.StatusOK {
+		t.Fatalf("login with the new password: status %d", login.StatusCode)
+	}
+	var body struct {
+		MFARequired bool `json:"mfa_required"`
+	}
+	decodeInto(t, login, &body)
+	if !body.MFARequired {
+		t.Fatal("the sign-in after a reset skipped the second factor")
+	}
+
+	n, match, trail := auditEvents(t, s, "POST resetPassword", uid, uid)
+	if n != 1 || !match {
+		t.Fatalf("audit: %d resetPassword events (instance-level, the user acting on themselves: %v), want 1", n, match)
+	}
+	for where, text := range map[string]string{"log": logs.String(), "audit trail": trail} {
+		if strings.Contains(text, token) {
+			t.Fatalf("the %s carries the reset token", where)
+		}
+	}
+}
+
+func TestResetRefusesUnknownToken(t *testing.T) {
+	s := apitest.New(t)
+	resp := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": "made-up", "new_password": "the new password 22"})
+	if d := problemDetail(t, resp); resp.StatusCode != http.StatusBadRequest || d != "invalid_or_expired_link" {
+		t.Fatalf("status %d detail %q, want 400 invalid_or_expired_link", resp.StatusCode, d)
+	}
+	var events int
+	if err := s.DB.Pool().QueryRow(t.Context(), `SELECT count(*) FROM audit_events WHERE action = 'POST resetPassword'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 0 {
+		t.Fatalf("%d audit events for a refused reset, want 0", events)
+	}
+}
+
+func TestAdminSendResetLink(t *testing.T) {
+	s := apitest.New(t)
+	admin, adminClient := adminWithFactor(t, s, "link-admin@example.test")
+	target := s.SeedUser("link-target@example.test", "correct horse battery")
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "password-reset-link"), nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status %d (%s), want 204", resp.StatusCode, mustReadBody(t, resp))
+	}
+	token := waitForResetMail(t, s, "link-target@example.test")
+	n, match, trail := auditEvents(t, s, "POST sendPasswordResetLink", admin, target)
+	if n != 1 || !match {
+		t.Fatalf("audit: %d sendPasswordResetLink events (match %v), want 1", n, match)
+	}
+	if strings.Contains(trail, token) {
+		t.Fatal("the audit trail carries the reset token")
+	}
+	// The current password keeps working until the link is used.
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]string{
+		"email": "link-target@example.test", "password": "correct horse battery",
+	}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("the current password after the link was sent: status %d, want 200", resp.StatusCode)
+	}
+
+	t.Run("refusals", func(t *testing.T) {
+		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(admin, "password-reset-link"), nil)
+		if d := problemDetail(t, resp); resp.StatusCode != http.StatusConflict || d != "not_on_own_account" {
+			t.Errorf("own account: status %d detail %q, want 409 not_on_own_account", resp.StatusCode, d)
+		}
+		pending := seedInvitePending(t, s, "link-pending@example.test")
+		resp = postJSON(t, adminClient, s.HTTP.URL+adminUserPath(pending, "password-reset-link"), nil)
+		if d := problemDetail(t, resp); resp.StatusCode != http.StatusConflict || d != "invite_pending" {
+			t.Errorf("invite pending: status %d detail %q, want 409 invite_pending", resp.StatusCode, d)
+		}
+		if resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(uuid.Must(uuid.NewV7()), "password-reset-link"), nil); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("unknown account: status %d, want 404", resp.StatusCode)
+		}
+		owner := s.SeedUser("link-owner@example.test", "correct horse battery")
+		if resp := postJSON(t, s.LoginAs(owner), s.HTTP.URL+adminUserPath(target, "password-reset-link"), nil); resp.StatusCode != http.StatusForbidden {
+			t.Errorf("not an instance admin: status %d, want 403", resp.StatusCode)
+		}
+		stale(t, s, admin)
+		resp = postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "password-reset-link"), nil)
+		if d := problemDetail(t, resp); resp.StatusCode != http.StatusForbidden || d != "step_up_required" {
+			t.Errorf("stale factor: status %d detail %q, want 403 step_up_required", resp.StatusCode, d)
+		}
+	})
+}
+
+func TestAdminSendResetLinkWithoutMail(t *testing.T) {
+	s := apitest.New(t)
+	_, adminClient := adminWithFactor(t, s, "nolink-admin@example.test")
+	target := s.SeedUser("nolink-target@example.test", "correct horse battery")
+	s.Mail.SetConfigured(false)
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "password-reset-link"), nil)
+	if d := problemDetail(t, resp); resp.StatusCode != http.StatusConflict || d != "mail_not_configured" {
+		t.Fatalf("status %d detail %q, want 409 mail_not_configured", resp.StatusCode, d)
+	}
+	var rows int
+	if err := s.DB.Pool().QueryRow(t.Context(), `SELECT count(*) FROM password_reset_tokens`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 || len(s.Mail.Sent()) != 0 {
+		t.Fatalf("token rows %d, mails %d; want none", rows, len(s.Mail.Sent()))
+	}
+}

@@ -13,6 +13,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countResetTokensSince = `-- name: CountResetTokensSince :one
+SELECT count(*) FROM password_reset_tokens
+WHERE user_id = $1 AND created_at >= $2::timestamptz
+`
+
+type CountResetTokensSinceParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	Since  time.Time `json:"since"`
+}
+
+// How many reset tokens the account was issued since the given instant,
+// used or not: the per-address limit of the forgot route.
+func (q *Queries) CountResetTokensSince(ctx context.Context, arg CountResetTokensSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countResetTokensSince, arg.UserID, arg.Since)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteSecondFactors = `-- name: DeleteSecondFactors :exec
 WITH totp AS (
   DELETE FROM totp_secrets WHERE totp_secrets.user_id = $1
@@ -90,6 +109,19 @@ func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, 
 	return i, err
 }
 
+const getAccountIDByEmail = `-- name: GetAccountIDByEmail :one
+SELECT id FROM users WHERE email = $1::text::citext
+`
+
+// The account with this address, for a forgotten password. email is
+// citext, so the match is case-insensitive.
+func (q *Queries) GetAccountIDByEmail(ctx context.Context, email string) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, getAccountIDByEmail, email)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getNoticeRecipient = `-- name: GetNoticeRecipient :one
 SELECT u.email, u.locale,
   coalesce((SELECT s.value #>> '{}' FROM instance_settings s WHERE s.key = 'default_locale'), '')::text AS default_locale
@@ -112,6 +144,31 @@ func (q *Queries) GetNoticeRecipient(ctx context.Context, id uuid.UUID) (GetNoti
 	var i GetNoticeRecipientRow
 	err := row.Scan(&i.Email, &i.Locale, &i.DefaultLocale)
 	return i, err
+}
+
+const insertResetToken = `-- name: InsertResetToken :exec
+INSERT INTO password_reset_tokens (id, user_id, token_hash, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+`
+
+type InsertResetTokenParams struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	TokenHash []byte    `json:"token_hash"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// Only the token's hash is stored; the token itself is in the mail.
+func (q *Queries) InsertResetToken(ctx context.Context, arg InsertResetTokenParams) error {
+	_, err := q.db.Exec(ctx, insertResetToken,
+		arg.ID,
+		arg.UserID,
+		arg.TokenHash,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
 }
 
 const listAccountMemberships = `-- name: ListAccountMemberships :many
@@ -238,21 +295,50 @@ func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]L
 }
 
 const lockAccount = `-- name: LockAccount :one
-SELECT (password_hash IS NOT NULL)::boolean AS has_password FROM users
+SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated FROM users
 WHERE id = $1
 FOR UPDATE
 `
 
-// Whether the account has a password, locking its row for the rest of the
-// transaction, so an administrator's action and a concurrent change of the
-// same account (the owner's own password change, an invitation being
-// accepted) happen one after the other. A deactivated account is found
-// too: an administrator may act on it, and reactivating needs it.
-func (q *Queries) LockAccount(ctx context.Context, id uuid.UUID) (bool, error) {
+type LockAccountRow struct {
+	HasPassword bool `json:"has_password"`
+	Deactivated bool `json:"deactivated"`
+}
+
+// Whether the account has a password and whether it is deactivated,
+// locking its row for the rest of the transaction, so an administrator's
+// action and a concurrent change of the same account (the owner's own
+// password change, an invitation being accepted, a reset) happen one after
+// the other. A deactivated account is found too: an administrator may act
+// on it, and reactivating needs it.
+func (q *Queries) LockAccount(ctx context.Context, id uuid.UUID) (LockAccountRow, error) {
 	row := q.db.QueryRow(ctx, lockAccount, id)
-	var has_password bool
-	err := row.Scan(&has_password)
-	return has_password, err
+	var i LockAccountRow
+	err := row.Scan(&i.HasPassword, &i.Deactivated)
+	return i, err
+}
+
+const lockResetToken = `-- name: LockResetToken :one
+SELECT t.user_id FROM password_reset_tokens t JOIN users u ON u.id = t.user_id
+WHERE t.token_hash = $1 AND t.used_at IS NULL
+  AND t.expires_at > $2::timestamptz AND u.disabled_at IS NULL
+FOR UPDATE OF t, u
+`
+
+type LockResetTokenParams struct {
+	TokenHash []byte    `json:"token_hash"`
+	Now       time.Time `json:"now"`
+}
+
+// The account a reset token belongs to, while the token is unused and
+// unexpired and the account is not deactivated. Both rows stay locked for
+// the rest of the transaction, so two resets with the same token happen
+// one after the other and the second finds it used.
+func (q *Queries) LockResetToken(ctx context.Context, arg LockResetTokenParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockResetToken, arg.TokenHash, arg.Now)
+	var user_id uuid.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const lockUserPassword = `-- name: LockUserPassword :one
@@ -282,7 +368,8 @@ const reactivateUser = `-- name: ReactivateUser :execrows
 UPDATE users SET disabled_at = NULL WHERE id = $1
 `
 
-// Clears the deactivation. Revoked sessions and tokens stay revoked.
+// Clears the deactivation. Revoked sessions and tokens stay revoked; the
+// service also revokes any session that is not (accounts.Reactivate).
 func (q *Queries) ReactivateUser(ctx context.Context, id uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, reactivateUser, id)
 	if err != nil {
@@ -355,4 +442,21 @@ func (q *Queries) SetUserPassword(ctx context.Context, arg SetUserPasswordParams
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const voidResetTokens = `-- name: VoidResetTokens :exec
+UPDATE password_reset_tokens SET used_at = $1::timestamptz
+WHERE user_id = $2 AND used_at IS NULL
+`
+
+type VoidResetTokensParams struct {
+	At     time.Time `json:"at"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+// Uses up every unused reset token of the account: a newer link voids the
+// older ones, and a completed reset voids all of them.
+func (q *Queries) VoidResetTokens(ctx context.Context, arg VoidResetTokensParams) error {
+	_, err := q.db.Exec(ctx, voidResetTokens, arg.At, arg.UserID)
+	return err
 }
