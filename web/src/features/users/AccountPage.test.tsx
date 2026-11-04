@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { mockApi } from '../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../test/renderRoutes.tsx';
 import { AccountPage } from './AccountPage.tsx';
 import { accountDetail } from './testFixtures.ts';
 
-function render() {
-  return renderRoutes([{ path: '/settings/users/$userId', component: AccountPage }], '/o/acme/settings/users/u2');
+function render(initial = '/o/acme/settings/users/u2') {
+  return renderRoutes([{ path: '/settings/users/$userId', component: AccountPage }], initial);
 }
 
 describe('AccountPage', () => {
@@ -58,5 +59,37 @@ describe('AccountPage', () => {
     });
     render();
     expect(await screen.findByText('You do not have access')).toBeInTheDocument();
+  });
+
+  // The router keeps the page mounted when only the account in the address
+  // changes; a temporary password must not be left on screen beside
+  // another account.
+  it('drops an open temporary-password reveal when the page moves to another account', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/auth/password/reset-available': { available: true },
+      'GET /api/v1/admin/users/u2': { user: accountDetail() },
+      'GET /api/v1/admin/users/u3': { user: accountDetail({ id: 'u3', email: 'tom@acme.io', display_name: 'Tom B.' }) },
+      'POST /api/v1/admin/users/u2/temporary-password': {
+        password: 'Tmp-pass-9f3k2L-x7Q',
+        expires_at: '2026-11-05T10:00:00Z',
+        notice: 'sent',
+      },
+    });
+    const router = render('/o/acme/settings/users/u3');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Tom B.' })).toBeInTheDocument();
+    await router.navigate({ to: '/o/$org/settings/users/$userId', params: { org: 'acme', userId: 'u2' } });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sara K.' })).toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: 'Set temporary password' }));
+    const confirm = await screen.findByRole('dialog', { name: 'Set temporary password' });
+    await user.click(within(confirm).getByRole('button', { name: 'Set temporary password' }));
+    expect(await screen.findByRole('dialog', { name: 'Temporary password' })).toHaveTextContent('sara@acme.io');
+
+    await router.navigate({ to: '/o/$org/settings/users/$userId', params: { org: 'acme', userId: 'u3' } });
+    expect(await screen.findByRole('heading', { level: 1, name: 'Tom B.' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Temporary password' })).not.toBeInTheDocument());
+    expect(document.body.innerHTML).not.toContain('Tmp-pass-9f3k2L-x7Q');
   });
 });

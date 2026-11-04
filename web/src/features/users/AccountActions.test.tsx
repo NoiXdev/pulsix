@@ -90,6 +90,9 @@ describe('AccountActions', () => {
     const reveal = await screen.findByRole('dialog', { name: 'Temporary password' });
     expect(within(reveal).getByLabelText('Temporary password')).toHaveTextContent(SECRET);
     expect(reveal).toHaveTextContent(/separate channel/);
+    // It names the account it belongs to, so it cannot be mistaken for
+    // another account's.
+    expect(reveal).toHaveTextContent('sara@acme.io');
     await user.click(within(reveal).getByRole('button', { name: 'Copy password' }));
     expect(await navigator.clipboard.readText()).toBe(SECRET);
 

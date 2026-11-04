@@ -103,6 +103,14 @@ function renderLoginAt(
   render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{tree}</I18nProvider> : tree}</QueryClientProvider>);
 }
 
+describe('LoginPage forgotten password (backlog 7.74)', () => {
+  it('links to /forgot-password from the password step', async () => {
+    renderLoginAt();
+
+    expect(await screen.findByRole('link', { name: 'Forgot password?' })).toHaveAttribute('href', '/forgot-password');
+  });
+});
+
 describe('LoginPage TOTP step (Important 5)', () => {
   it('offers "back" to the password step', async () => {
     const user = userEvent.setup();

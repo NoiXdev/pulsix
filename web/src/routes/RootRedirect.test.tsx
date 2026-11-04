@@ -26,6 +26,11 @@ function renderRoot() {
     },
   });
   const enrolRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/enrol', component: () => <div>ENROLMENT</div> });
+  const passwordRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/account/password',
+    component: () => <div>CHANGE PASSWORD</div>,
+  });
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const hostsRoute = createRoute({
     getParentRoute: () => orgRoute,
@@ -33,7 +38,7 @@ function renderRoot() {
     validateSearch: (s: Record<string, unknown>) => ({ q: typeof s.q === 'string' ? s.q : undefined }),
     component: () => <div>HOSTS PAGE</div>,
   });
-  const routeTree = rootRoute.addChildren([indexRoute, setupRoute, loginRoute, enrolRoute, orgRoute.addChildren([hostsRoute])]);
+  const routeTree = rootRoute.addChildren([indexRoute, setupRoute, loginRoute, enrolRoute, passwordRoute, orgRoute.addChildren([hostsRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/'] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -88,6 +93,25 @@ describe('RootRedirect', () => {
     });
     renderRoot();
     expect(await screen.findByText('ENROLMENT')).toBeInTheDocument();
+  });
+
+  it('redirects to /account/password when the account must change its password, without asking for organizations', async () => {
+    const calls = mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        mfa_enrolment_required: false,
+        totp_confirmed: true,
+        instance_admin: false,
+        must_change_password: true,
+      },
+    });
+    calls.mockClear();
+    renderRoot();
+    expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
+    const requested = calls.mock.calls.map(([input]) => new URL((input as Request).url).pathname);
+    expect(requested).not.toContain('/api/v1/orgs');
   });
 
   it('redirects to the first organization for a ready session', async () => {

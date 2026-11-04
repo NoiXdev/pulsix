@@ -27,6 +27,10 @@ const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(['resetFactor', 'deactivate
  * The request and its answer belong to this component
  * (useAccountActionRunner), not to the confirm dialog, so a dialog the
  * browser closed mid-request loses nothing.
+ *
+ * Callers key it by the account (`key={user.id}`): the router keeps a page
+ * mounted when only the account in its address changes, and a temporary
+ * password revealed for one account must not stay open beside another.
  */
 export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId: string }) {
   const t = useT();
@@ -158,6 +162,7 @@ function TemporaryPasswordReveal({ revealed, onClose }: { revealed: Revealed; on
   return (
     <Dialog open onClose={onClose} title={a.revealTitle}>
       <div className="flex flex-col gap-4">
+        <p className="text-xs">{a.revealAccount(revealed.email)}</p>
         <p className="text-xs text-muted-foreground">{a.revealNote}</p>
         <code
           aria-label={a.passwordLabel}

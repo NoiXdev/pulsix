@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from '@tanstack/react-router';
 import { LogOut } from 'lucide-react';
-import { PulsixMark } from '../ui/PulsixMark.tsx';
+import { BarePage } from '../ui/bare-page.tsx';
 import { Button } from '../ui/button.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
@@ -27,6 +27,14 @@ import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx
  * reports the session complete, but the recovery codes are still on
  * screen and must stay there until the user has saved them — only then
  * (AccountSecurityPage's onEnrolled) does it continue into the app.
+ *
+ * An account that must also change its password (an administrator reset
+ * its second factor and set a temporary password) is refused everything
+ * but /auth/me and the change once enrolment completes the session — the
+ * passkey list refetched after a registration included. The page does not
+ * act on that refusal (nor does RootLayout, while it is here): it reads
+ * the passkey list only for its status pill, and continues to the root
+ * redirect, which sends the session on to /account/password.
  */
 export function EnrolmentLayout() {
   const navigate = useNavigate();
@@ -48,14 +56,8 @@ export function EnrolmentLayout() {
   if (!enrolling) return <Navigate to="/" />;
 
   return (
-    <div className="min-h-screen bg-background text-foreground text-[13px]">
-      <header className="flex items-center justify-between border-b border-border px-8 py-4">
-        <div className="flex items-center gap-3">
-          <PulsixMark size={28} />
-          <span className="font-mono text-xl font-extrabold tracking-tight">
-            pulsi<span className="text-brand">x</span>
-          </span>
-        </div>
+    <BarePage
+      action={
         <Button
           type="button"
           onClick={async () => {
@@ -66,21 +68,20 @@ export function EnrolmentLayout() {
         >
           <LogOut size={14} /> {t.routes.enrolment.signOut}
         </Button>
-      </header>
-      <main className="mx-auto flex max-w-[980px] flex-col gap-5 px-8 py-8">
-        <div className="flex flex-col gap-1.5">
-          <h1 className="text-xl font-semibold">{t.routes.enrolment.title}</h1>
-          <p className="text-muted-foreground">
-            {t.routes.enrolment.signedInAs(me.data.user.email)} {t.routes.enrolment.intro}
-          </p>
-        </div>
-        <AccountSecurityPage
-          onEnrolled={async () => {
-            await refetchMe();
-            await navigate({ to: '/' });
-          }}
-        />
-      </main>
-    </div>
+      }
+    >
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-xl font-semibold">{t.routes.enrolment.title}</h1>
+        <p className="text-muted-foreground">
+          {t.routes.enrolment.signedInAs(me.data.user.email)} {t.routes.enrolment.intro}
+        </p>
+      </div>
+      <AccountSecurityPage
+        onEnrolled={async () => {
+          await refetchMe();
+          await navigate({ to: '/' });
+        }}
+      />
+    </BarePage>
   );
 }

@@ -24,6 +24,11 @@ function renderAt(initialPath: string) {
     component: () => <div>LOGIN PAGE</div>,
   });
   const enrolRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/enrol', component: () => <div>ENROLMENT</div> });
+  const passwordRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/account/password',
+    component: () => <div>CHANGE PASSWORD</div>,
+  });
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org', component: OrgLayout });
   const membersRoute = createRoute({
     getParentRoute: () => orgRoute,
@@ -31,7 +36,7 @@ function renderAt(initialPath: string) {
     component: () => <div>MEMBERS PAGE</div>,
   });
   const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: () => <div>HOSTS PAGE</div> });
-  const routeTree = rootRoute.addChildren([loginRoute, enrolRoute, orgRoute.addChildren([hostsRoute, membersRoute])]);
+  const routeTree = rootRoute.addChildren([loginRoute, enrolRoute, passwordRoute, orgRoute.addChildren([hostsRoute, membersRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -90,6 +95,22 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
       expect(orgRequested).toBe(false);
     },
   );
+
+  it('sends a session whose account must change its password to /account/password without requesting the organization', async () => {
+    let orgRequested = false;
+    mockApi({
+      'GET /api/v1/auth/me': { ...ME_OK, mfa_enrolment_required: false, must_change_password: true },
+      'GET /api/v1/orgs/acme': () => {
+        orgRequested = true;
+        return ORG_OK;
+      },
+      'GET /api/v1/orgs': ORGS_OK,
+    });
+    renderAt('/o/acme/hosts');
+
+    expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
+    expect(orgRequested).toBe(false);
+  });
 
   it('shows a friendly "no access" page on a 403 rather than hanging', async () => {
     mockApi({

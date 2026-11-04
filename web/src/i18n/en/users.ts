@@ -72,6 +72,7 @@ export const enUsers = {
       confirm: 'Set temporary password',
       busy: 'Setting the temporary password… This can take a moment while the notice e-mail is sent.',
       revealTitle: 'Temporary password',
+      revealAccount: (email: string) => `This is the temporary password of ${email}.`,
       revealNote: 'This password is shown only this once. Pass it on by a separate channel, not in the same message as the account name.',
       passwordLabel: 'Temporary password',
       expires: (when: string) => `Expires ${when}.`,

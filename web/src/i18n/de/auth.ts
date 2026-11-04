@@ -13,6 +13,32 @@ export const deAuth: Messages['auth'] = {
   verify: 'Bestätigen',
   useRecoveryCode: 'Wiederherstellungscode verwenden',
   useSixDigitCode: 'Stattdessen 6-stelligen Code verwenden',
+  forgotPassword: 'Passwort vergessen?',
+  newPassword: 'Neues Passwort',
+  repeatNewPassword: 'Neues Passwort wiederholen',
+  minLengthHint: (min: number) => `Mindestens ${min} Zeichen.`,
+  forgot: {
+    title: 'Passwort zurücksetzen',
+    intro: 'Die E-Mail-Adresse des Kontos eingeben; wir schicken einen Link, um ein neues Passwort zu wählen.',
+    submit: 'Link senden',
+    sent: 'Falls zu dieser Adresse ein Konto existiert, haben wir einen Link dorthin geschickt. Der Link gilt einmal, für 60 Minuten.',
+    unavailable:
+      'Das Zurücksetzen per E-Mail ist auf dieser Instanz nicht verfügbar. Bitte einen Instanz-Administrator bitten, ein temporäres Passwort zu setzen.',
+    checkFailed: 'Es konnte nicht geprüft werden, ob ein Link verschickt werden kann. Später erneut versuchen.',
+    failed: 'Die Anfrage konnte nicht gesendet werden. Erneut versuchen.',
+    backToSignIn: 'Zurück zur Anmeldung',
+  },
+  reset: {
+    title: 'Neues Passwort wählen',
+    submit: 'Passwort setzen',
+    doneTitle: 'Das Passwort ist gesetzt',
+    done: 'Mit dem neuen Passwort und dem zweiten Faktor anmelden.',
+    goToSignIn: 'Zur Anmeldung',
+    invalidLink:
+      'Dieser Link ist ungültig oder abgelaufen. Ein Link gilt einmal, für 60 Minuten, und ein neuerer Link ersetzt ihn.',
+    requestNew: 'Neuen Link anfordern',
+    failed: 'Das Passwort konnte nicht gesetzt werden.',
+  },
   errors: {
     signInFailed: 'Anmeldung fehlgeschlagen',
     verificationFailed: 'Bestätigung fehlgeschlagen',

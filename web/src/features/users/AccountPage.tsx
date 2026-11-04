@@ -46,7 +46,7 @@ export function AccountPage() {
         <AccountSignIn user={user} />
       </Section>
       <Section id="actions" title={t.users.actions.title}>
-        {me.data ? <AccountActions user={user} selfId={me.data.user.id} /> : <QueryLoading />}
+        {me.data ? <AccountActions key={user.id} user={user} selfId={me.data.user.id} /> : <QueryLoading />}
       </Section>
     </DetailLayout>
   );

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Messages } from '../i18n/types.ts';
+import { MIN_PASSWORD_LENGTH } from './password.ts';
 
 /**
  * Zod schemas mirroring the API's own struct-tag validation, so a form can
@@ -34,7 +35,7 @@ export function schemas(t: Messages) {
 
   const hostNameSchema = z.string().min(1, v.required).max(254, v.maxChars(254));
 
-  const passwordSchema = z.string().min(12, v.minChars(12));
+  const passwordSchema = z.string().min(MIN_PASSWORD_LENGTH, v.minChars(MIN_PASSWORD_LENGTH));
 
   const emailSchema = z.string().min(3, v.email).email(v.email);
 

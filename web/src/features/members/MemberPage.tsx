@@ -64,7 +64,7 @@ export function MemberPage() {
           </Section>
           <Section id="actions" title={t.users.actions.title}>
             {account.data && me.data ? (
-              <AccountActions user={account.data} selfId={me.data.user.id} />
+              <AccountActions key={account.data.id} user={account.data} selfId={me.data.user.id} />
             ) : (
               <AccountPending error={account.error} />
             )}

@@ -48,7 +48,34 @@ export async function rejectIfNotOk(response: Response): Promise<Response> {
   } catch {
     body = undefined;
   }
-  throw new ApiError(response.status, body);
+  const err = new ApiError(response.status, body);
+  if (err.status === 403 && err.message === PASSWORD_CHANGE_REQUIRED) {
+    for (const listener of passwordChangeListeners) listener();
+  }
+  throw err;
+}
+
+/** PASSWORD_CHANGE_REQUIRED is the detail of the 403 the server answers
+ * every route with, but the few that change the password, while the
+ * account must replace a password an administrator set (backlog 7.74). It
+ * is a contract, not prose: internal/api/auth_handlers.go sends exactly
+ * this. */
+export const PASSWORD_CHANGE_REQUIRED = 'password_change_required';
+
+const passwordChangeListeners = new Set<() => void>();
+
+/**
+ * onPasswordChangeRequired calls `listener` whenever any request is refused
+ * with PASSWORD_CHANGE_REQUIRED, whichever page or hook sent it, so the app
+ * can take the person to the change-password screen from wherever they
+ * are (routes/RootLayout.tsx). The request still fails as usual. Returns
+ * the function that stops listening.
+ */
+export function onPasswordChangeRequired(listener: () => void): () => void {
+  passwordChangeListeners.add(listener);
+  return () => {
+    passwordChangeListeners.delete(listener);
+  };
 }
 
 const throwOnError: Middleware = {

@@ -14,16 +14,14 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useStepUp } from './stepUp.tsx';
 import { LanguageCard } from './LanguageCard.tsx';
+import { PasswordCard } from './PasswordCard.tsx';
 
 /**
  * AccountSecurityPage follows design/mockups/build.mjs's ACCOUNT SECURITY
- * artboard's Passkeys, Authenticator app and Recovery codes cards. That
- * mockup also has Password-change and Sessions cards — v0.1's API has no
- * change-password or list-sessions route (see internal/api/auth_handlers.go,
- * internal/api/mfa_handlers.go, internal/api/passkey_handlers.go: nothing
- * beyond login/logout/me, TOTP and passkeys), so those two cards are left
- * out rather than wired to endpoints that do not exist; see
- * task-15a-report.md.
+ * artboard's Passkeys, Authenticator app and Recovery codes cards, and its
+ * Password card (backlog 7.74, PasswordCard). The mockup's Sessions card is
+ * left out: the API has no route to list one's own sessions (a non-goal of
+ * 7.74 too).
  *
  * Two fixes from that report's fix round 1 live here:
  *
@@ -47,8 +45,8 @@ import { LanguageCard } from './LanguageCard.tsx';
  * shell (AccountSecurityLayout) and second-factor enrolment for an account
  * that has none yet (EnrolmentLayout, which passes onEnrolled).
  *
- * The Language card (backlog 1.41) sits below the factor cards on the
- * account page only.
+ * The Password and Language cards (backlog 7.74 and 1.41) sit below the
+ * factor cards on the account page only.
  *
  * onEnrolled, when given, is called once the
  * account has just gained a second factor and the user is done with this
@@ -271,6 +269,7 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
 
         {/* Not during second-factor enrolment (EnrolmentLayout passes
             onEnrolled): that page has one job. */}
+        {!onEnrolled && <PasswordCard />}
         {!onEnrolled && <LanguageCard />}
       </div>
       {stepUp.dialog}

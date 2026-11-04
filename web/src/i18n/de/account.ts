@@ -32,6 +32,26 @@ export const deAccount: Messages['account'] = {
     shownOnce: 'Wiederherstellungscodes — werden nur einmal angezeigt. Jeder gilt nur einmal.',
     saved: 'Ich habe sie gespeichert',
   },
+  password: {
+    title: 'Passwort',
+    intro: 'Eine Änderung des Passworts meldet alle anderen Sitzungen ab; diese Sitzung bleibt.',
+    current: 'Aktuelles Passwort',
+    temporary: 'Temporäres Passwort',
+    submit: 'Passwort ändern',
+    changed: 'Passwort geändert. Die anderen Sitzungen wurden abgemeldet.',
+    invalidCurrent: 'Das aktuelle Passwort ist nicht richtig.',
+    invalidTemporary: 'Das temporäre Passwort ist nicht richtig.',
+    temporaryExpired: 'Das temporäre Passwort ist abgelaufen. Einen Instanz-Administrator um ein neues bitten.',
+    sameAsCurrent: 'Das neue Passwort muss sich vom aktuellen unterscheiden.',
+    sameAsTemporary: 'Das neue Passwort muss sich vom temporären unterscheiden.',
+    failed: 'Das Passwort konnte nicht geändert werden.',
+  },
+  forced: {
+    title: 'Neues Passwort wählen',
+    intro: (email: string) =>
+      `Ein Administrator hat ein temporäres Passwort für ${email} gesetzt. Zum Fortfahren ein eigenes Passwort wählen.`,
+    signOut: 'Abmelden',
+  },
   stepUp: {
     title: 'Identität bestätigen',
     intro:

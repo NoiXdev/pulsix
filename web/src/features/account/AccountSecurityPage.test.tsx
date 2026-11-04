@@ -387,3 +387,96 @@ describe('the Language card', () => {
     expect(screen.queryByLabelText('Language')).not.toBeInTheDocument();
   });
 });
+
+describe('the Password card', () => {
+  const ME = {
+    user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+    mfa_complete: true,
+    mfa_enrolment_required: false,
+    totp_confirmed: true,
+    instance_admin: false,
+    must_change_password: false,
+  };
+
+  async function change(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(await screen.findByLabelText('Current password'), 'my-old-long-password');
+    await user.type(screen.getByLabelText('New password'), 'my-new-long-password');
+    await user.type(screen.getByLabelText('Repeat the new password'), 'my-new-long-password');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+  }
+
+  it('renders on Account security with the current and the new password', async () => {
+    mockApi({ 'GET /api/v1/auth/me': ME, 'GET /api/v1/auth/passkeys': NO_PASSKEYS });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    expect(await screen.findByRole('heading', { name: 'Password' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Current password')).toHaveAttribute('type', 'password');
+    expect(screen.getByLabelText('New password')).toHaveAttribute('type', 'password');
+    expect(screen.getByLabelText('Repeat the new password')).toHaveAttribute('type', 'password');
+  });
+
+  it('asks for the second factor on step_up_required, then changes the password and says the other sessions ended', async () => {
+    const user = userEvent.setup();
+    let stale = true;
+    const posted: unknown[] = [];
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'POST /api/v1/auth/totp/verify': () => {
+        stale = false;
+        return {};
+      },
+      'POST /api/v1/auth/password': (req: { body: unknown }) => {
+        if (stale) {
+          return new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail: 'step_up_required' }), { status: 403 });
+        }
+        posted.push(req.body);
+        return new Response(null, { status: 204 });
+      },
+    });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await change(user);
+    expect(await screen.findByText('Confirm it is you')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Authenticator or recovery code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    const toast = await screen.findByRole('status');
+    expect(toast).toHaveTextContent(/Password changed/);
+    expect(toast).toHaveTextContent(/other sessions/);
+    expect(posted).toEqual([{ current_password: 'my-old-long-password', new_password: 'my-new-long-password' }]);
+    // The form starts over: no password stays in a field.
+    expect(screen.getByLabelText('Current password')).toHaveValue('');
+    expect(screen.getByLabelText('New password')).toHaveValue('');
+  });
+
+  it('says so when the current password is wrong', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'POST /api/v1/auth/password': () =>
+        new Response(JSON.stringify({ title: 'Bad Request', status: 400, detail: 'invalid_current_password' }), { status: 400 }),
+    });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await change(user);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The current password is not correct.');
+  });
+
+  it('is left out of second-factor enrolment, which has one job', async () => {
+    mockApi({ 'GET /api/v1/auth/me': { ...ME, totp_confirmed: false }, 'GET /api/v1/auth/passkeys': NO_PASSKEYS });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <AccountSecurityPage onEnrolled={() => {}} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    await screen.findByRole('button', { name: 'Enrol authenticator app' });
+    expect(screen.queryByLabelText('Current password')).not.toBeInTheDocument();
+  });
+});

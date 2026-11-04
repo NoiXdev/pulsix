@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { ApiError, rejectIfNotOk, unwrap } from './client.ts';
+import { describe, expect, it, vi } from 'vitest';
+import { ApiError, onPasswordChangeRequired, rejectIfNotOk, unwrap } from './client.ts';
 
 describe('ApiError', () => {
   it('uses the body\'s "detail" field as the message when present', () => {
@@ -51,5 +51,31 @@ describe('unwrap', () => {
   it('resolves with the typed data field', async () => {
     const result = await unwrap(Promise.resolve({ data: { status: 'ok' } }));
     expect(result).toEqual({ status: 'ok' });
+  });
+});
+
+describe('onPasswordChangeRequired', () => {
+  const refusal = (detail: string) =>
+    new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail }), { status: 403 });
+
+  it('tells its listeners when the server refuses a session that must change its password, and still throws', async () => {
+    const listener = vi.fn();
+    const stop = onPasswordChangeRequired(listener);
+    try {
+      await expect(rejectIfNotOk(refusal('password_change_required'))).rejects.toMatchObject({ status: 403 });
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+    }
+  });
+
+  it('stays quiet on any other refusal, and after the listener stops', async () => {
+    const listener = vi.fn();
+    const stop = onPasswordChangeRequired(listener);
+    await expect(rejectIfNotOk(refusal('step_up_required'))).rejects.toBeInstanceOf(ApiError);
+    await expect(rejectIfNotOk(new Response('{}', { status: 401 }))).rejects.toBeInstanceOf(ApiError);
+    stop();
+    await expect(rejectIfNotOk(refusal('password_change_required'))).rejects.toBeInstanceOf(ApiError);
+    expect(listener).not.toHaveBeenCalled();
   });
 });

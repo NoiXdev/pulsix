@@ -17,7 +17,12 @@ function renderAt(initialPath = '/account/security', qc = new QueryClient({ defa
     component: () => <div>LOGIN PAGE</div>,
   });
   const enrolRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/enrol', component: () => <div>ENROLMENT</div> });
-  const routeTree = rootRoute.addChildren([securityRoute, loginRoute, enrolRoute]);
+  const passwordRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/account/password',
+    component: () => <div>CHANGE PASSWORD</div>,
+  });
+  const routeTree = rootRoute.addChildren([securityRoute, loginRoute, enrolRoute, passwordRoute]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
 
   return render(
@@ -71,6 +76,30 @@ describe('AccountSecurityLayout', () => {
     renderAt();
 
     expect(await screen.findByText('ENROLMENT')).toBeInTheDocument();
+    expect(orgsRequested).toBe(false);
+  });
+
+  it('sends a session whose account must change its password to /account/password, without requesting organizations', async () => {
+    let orgsRequested = false;
+    mockApi({
+      'GET /api/v1/auth/me': {
+        user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+        mfa_complete: true,
+        mfa_enrolment_required: false,
+        totp_confirmed: true,
+        instance_admin: false,
+        must_change_password: true,
+      },
+      'GET /api/v1/orgs': () => {
+        orgsRequested = true;
+        return ORGS;
+      },
+      'GET /api/v1/auth/passkeys': { passkeys: [] },
+    });
+
+    renderAt();
+
+    expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
     expect(orgsRequested).toBe(false);
   });
 

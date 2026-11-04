@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -6,7 +6,17 @@ import { createRootRoute, createRoute, createRouter, createMemoryHistory, Router
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
 import { fetchMock } from '../test/fetchMock.ts';
+import { registerPasskey } from '../features/auth/passkeys.ts';
 import { EnrolmentLayout } from './EnrolmentLayout.tsx';
+import { RootLayout } from './RootLayout.tsx';
+import { RootRedirect } from './RootRedirect.tsx';
+
+// The WebAuthn ceremony itself is the browser's; what is under test is what
+// the page does once it succeeded.
+vi.mock('../features/auth/passkeys.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../features/auth/passkeys.ts')>()),
+  registerPasskey: vi.fn(),
+}));
 
 const USER = { id: 'u1', email: 'new@acme.io', display_name: 'New Person' };
 const ENROLLING = { user: USER, mfa_complete: false, mfa_enrolment_required: true, totp_confirmed: false, instance_admin: false };
@@ -98,5 +108,57 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
 
     expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
     await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
+  });
+
+  // After an administrator reset the second factor and set a temporary
+  // password, the person signs in with the password, enrols, and only then
+  // changes the password. Registering the passkey completes the session,
+  // and from that moment the passkey list is refused with
+  // password_change_required: the page must neither break nor loop on that
+  // refusal, but carry on to the password change.
+  it('carries on to the password change when the account must change its password, through the refused passkey refetch', async () => {
+    const user = userEvent.setup();
+    let complete = false;
+    let passkeyRequests = 0;
+    vi.mocked(registerPasskey).mockImplementation(async () => {
+      complete = true;
+    });
+    mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': () => ({ ...(complete ? COMPLETE : ENROLLING), must_change_password: true }),
+      'GET /api/v1/auth/passkeys': () => {
+        passkeyRequests += 1;
+        return complete
+          ? new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail: 'password_change_required' }), { status: 403 })
+          : { passkeys: [] };
+      },
+    });
+
+    const rootRoute = createRootRoute({ component: RootLayout });
+    const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: RootRedirect });
+    const enrolRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/enrol', component: EnrolmentLayout });
+    const passwordRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/account/password',
+      component: () => <div>CHANGE PASSWORD</div>,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([indexRoute, enrolRoute, passwordRoute]),
+      history: createMemoryHistory({ initialEntries: ['/account/enrol'] }),
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.type(await screen.findByPlaceholderText('e.g. MacBook Pro'), 'Laptop');
+    await user.click(screen.getByRole('button', { name: /Add passkey/ }));
+
+    expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/account/password');
+    expect(passkeyRequests).toBeLessThanOrEqual(2);
   });
 });

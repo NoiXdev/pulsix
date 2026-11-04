@@ -15,7 +15,10 @@ import { useT } from '../i18n/useT.ts';
  *   3. session, factor to verify    -> /login?step=totp
  *   4. session, no factor yet       -> /account/enrol (a second factor is
  *                                      mandatory; nothing else is reachable)
- *   5. ready session                -> /o/{first org}/hosts
+ *   5. session, temporary password  -> /account/password (the account must
+ *                                      replace a password an administrator
+ *                                      set; nothing else is reachable)
+ *   6. ready session                -> /o/{first org}/hosts
  *
  * It calls useSetupStatus and useMe directly (not a router loader) so the
  * same TanStack Query cache both hooks share is what every other page
@@ -40,7 +43,8 @@ export function RootRedirect() {
   // the order in the effect below: it waits for the setup status and acts
   // on `completed` before it ever looks at `me.isError`.
   const me = useMe({ enabled: setupStatus.data?.completed === true });
-  const orgs = useOrgs({ enabled: me.data?.mfa_complete === true });
+  const ready = me.data?.mfa_complete === true && !me.data.must_change_password;
+  const orgs = useOrgs({ enabled: ready });
 
   useEffect(() => {
     if (!setupStatus.data) return;
@@ -61,6 +65,10 @@ export function RootRedirect() {
       }
       return;
     }
+    if (me.data.must_change_password) {
+      void navigate({ to: '/account/password' });
+      return;
+    }
     if (!orgs.data) return;
     const firstOrg = orgs.data.orgs?.[0];
     if (firstOrg) {
@@ -69,7 +77,7 @@ export function RootRedirect() {
   }, [navigate, setupStatus.data, me.data, me.isError, orgs.data]);
 
   if (setupStatus.isError) return <QueryError error={setupStatus.error} />;
-  if (me.data?.mfa_complete) {
+  if (ready) {
     if (orgs.isError) return <QueryError error={orgs.error} />;
     if (orgs.data && !orgs.data.orgs?.length) {
       return (

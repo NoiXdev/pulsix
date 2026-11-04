@@ -1,7 +1,9 @@
 /**
  * The account's security page (passkeys, authenticator app, recovery
- * codes) and the step-up dialog that re-asks for a second factor. The
- * Language card is `language.*`.
+ * codes, password) and the step-up dialog that re-asks for a second
+ * factor, and the change-password screen for an account that must replace
+ * a temporary password. The Language card is `language.*`; the labels of
+ * a new password typed twice are `auth.*`, shared with the reset page.
  */
 export const enAccount = {
   title: 'Security',
@@ -33,6 +35,26 @@ export const enAccount = {
     regenerateFailed: 'Could not regenerate the recovery codes.',
     shownOnce: 'Recovery codes — shown once. Each works one time.',
     saved: 'I have saved these',
+  },
+  password: {
+    title: 'Password',
+    intro: 'Changing the password signs you out everywhere else; this session stays.',
+    current: 'Current password',
+    temporary: 'Temporary password',
+    submit: 'Change password',
+    changed: 'Password changed. Your other sessions were signed out.',
+    invalidCurrent: 'The current password is not correct.',
+    invalidTemporary: 'The temporary password is not correct.',
+    temporaryExpired: 'Your temporary password has expired. Ask an instance administrator for a new one.',
+    sameAsCurrent: 'The new password must differ from the current one.',
+    sameAsTemporary: 'The new password must differ from the temporary one.',
+    failed: 'The password could not be changed.',
+  },
+  forced: {
+    title: 'Choose a new password',
+    intro: (email: string) =>
+      `An administrator set a temporary password for ${email}. Choose a password of your own to continue.`,
+    signOut: 'Sign out',
   },
   stepUp: {
     title: 'Confirm it is you',

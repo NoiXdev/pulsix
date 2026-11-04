@@ -70,6 +70,7 @@ export const deUsers: Messages['users'] = {
       confirm: 'Temporäres Passwort setzen',
       busy: 'Temporäres Passwort wird gesetzt … Das kann einen Moment dauern, während die Benachrichtigung verschickt wird.',
       revealTitle: 'Temporäres Passwort',
+      revealAccount: (email: string) => `Dies ist das temporäre Passwort von ${email}.`,
       revealNote:
         'Dieses Passwort wird nur dieses eine Mal angezeigt. Über einen getrennten Kanal weitergeben, nicht in derselben Nachricht wie den Kontonamen.',
       passwordLabel: 'Temporäres Passwort',

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate, useSearch } from '@tanstack/react-router';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
 import { ArrowLeft, KeyRound } from 'lucide-react';
 import { PulsixMark } from '../../ui/PulsixMark.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -148,6 +148,9 @@ export function LoginPage() {
             <Button type="submit" variant="primary" disabled={busy}>
               {t.auth.signIn}
             </Button>
+            <Link to="/forgot-password" className="text-left text-[11px] text-brand-dim">
+              {t.auth.forgotPassword}
+            </Link>
             {passkeysSupported() && (
               <Button type="button" variant="default" disabled={busy} onClick={handlePasskeyLogin}>
                 <KeyRound size={15} /> {t.auth.usePasskey}

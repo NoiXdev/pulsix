@@ -6,8 +6,10 @@ import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useAccountActionCalls, type ActionKind } from './useAccountActionCalls.ts';
 
-/** A temporary password, held for its one-time reveal. */
+/** A temporary password, held for its one-time reveal, with the address
+ * of the account it belongs to. */
 export interface Revealed {
+  email: string;
   password: string;
   expiresAt: string;
   notice: AccountNotice;
@@ -64,7 +66,7 @@ export function useAccountActionRunner(user: AdminUserDetail) {
       const res = await calls[kind]();
       if (res.temporary) {
         const { password, expires_at, notice } = res.temporary;
-        setRevealed({ password, expiresAt: expires_at, notice });
+        setRevealed({ email: user.email, password, expiresAt: expires_at, notice });
       } else {
         toast.show(successMessage(t, kind, user.email, res.notice), res.notice === 'failed' ? 'warn' : 'default');
       }

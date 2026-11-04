@@ -1,9 +1,13 @@
 import { createRootRoute, createRoute, createRouter, redirect } from '@tanstack/react-router';
+import { RootLayout } from './routes/RootLayout.tsx';
 import { RootRedirect } from './routes/RootRedirect.tsx';
 import { OrgLayout } from './routes/OrgLayout.tsx';
 import { AccountSecurityLayout } from './routes/AccountSecurityLayout.tsx';
 import { EnrolmentLayout } from './routes/EnrolmentLayout.tsx';
 import { LoginPage } from './features/auth/LoginPage.tsx';
+import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage.tsx';
+import { ResetPasswordPage } from './features/auth/ResetPasswordPage.tsx';
+import { ChangePasswordPage } from './features/account/ChangePasswordPage.tsx';
 import { SetupWizardPage } from './features/setup/SetupWizardPage.tsx';
 import { InviteAcceptPage } from './features/members/InviteAcceptPage.tsx';
 import { HostsListPage } from './features/hosts/HostsListPage.tsx';
@@ -56,7 +60,9 @@ import { MaintenancePage } from './features/maintenance/MaintenancePage.tsx';
  * generation step no CI job here runs on its own. Every route from the
  * task brief's Interfaces section is declared explicitly below instead.
  */
-const rootRoute = createRootRoute();
+// RootLayout takes a session that must change its password to
+// /account/password from wherever a request is refused for it.
+const rootRoute = createRootRoute({ component: RootLayout });
 
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: RootRedirect });
 
@@ -69,6 +75,20 @@ const loginRoute = createRoute({
     step: typeof search.step === 'string' ? search.step : undefined,
   }),
   component: LoginPage,
+});
+
+// The forgotten-password pages are public (backlog 7.74). The reset link
+// carries its token in the fragment (#token=…), which no route parses: the
+// page reads it, and it never reaches the server in a URL.
+const forgotPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/forgot-password',
+  component: ForgotPasswordPage,
+});
+const resetPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/reset-password',
+  component: ResetPasswordPage,
 });
 
 const inviteRoute = createRoute({
@@ -90,6 +110,15 @@ const enrolRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/account/enrol',
   component: EnrolmentLayout,
+});
+
+// /account/password is where a session whose account must replace a
+// password an administrator set is sent; like enrolment, it renders
+// without the app shell.
+const changePasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/account/password',
+  component: ChangePasswordPage,
 });
 
 const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org', component: OrgLayout });
@@ -322,9 +351,12 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   setupRoute,
   loginRoute,
+  forgotPasswordRoute,
+  resetPasswordRoute,
   inviteRoute,
   accountSecurityRoute,
   enrolRoute,
+  changePasswordRoute,
   orgRoute.addChildren([
     orgIndexRoute,
     hostsRoute,

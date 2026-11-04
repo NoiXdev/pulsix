@@ -71,3 +71,10 @@ describe('the shared resources pages', () => {
     }
   });
 });
+
+describe('the password pages (backlog 7.74)', () => {
+  it.each(['/forgot-password', '/reset-password', '/account/password'])('routes %s to a page of its own', async (path) => {
+    expect(await settledAt(path)).toBe(path);
+    expect(router.state.matches.some((m) => m.routeId === path)).toBe(true);
+  });
+});

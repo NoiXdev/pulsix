@@ -174,4 +174,29 @@ describe('InviteAcceptPage', () => {
 
     expect(await screen.findByText('invitation expired')).toBeInTheDocument();
   });
+
+  // The floor is the product's one password floor, 12 characters (backlog
+  // 7.74); it used to be 8 here.
+  it('refuses a password under 12 characters before asking the server', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let posted = false;
+    mockApi({
+      'GET /api/v1/auth/me': anonymous,
+      'POST /api/v1/invites/accept': () => {
+        posted = true;
+        return { user_id: 'u2', org_id: 'o1', signed_in: true };
+      },
+    });
+
+    renderPage(qc);
+    await user.type(await screen.findByLabelText('Your name'), 'Ops User');
+    const password = screen.getByLabelText('Choose a password');
+    expect(password).toHaveAttribute('minLength', '12');
+    await user.type(password, 'eleven-char');
+    await user.click(screen.getByRole('button', { name: 'Accept invitation' }));
+
+    expect(await screen.findByText('at least 12 characters')).toBeInTheDocument();
+    expect(posted).toBe(false);
+  });
 });
