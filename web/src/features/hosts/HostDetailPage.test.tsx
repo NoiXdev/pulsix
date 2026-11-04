@@ -25,6 +25,16 @@ const MONITORED_CHECKS = {
   checks: [check('cpu', 'cpu', [reading('cpu.used_pct', 23)]), check('memory', 'memory', [reading('mem.used_pct', 61)])],
 };
 
+/** isClipped: a class list that hides vertical overflow (`overflow-hidden`,
+ * `overflow-clip` or their `-y-` forms) at a fixed height or max-height, which cuts a card's content off. Responsive and
+ * state variants (`md:`, `hover:`) are stripped before matching. */
+function isClipped(classes: string[]): boolean {
+  const base = classes.map((c) => c.replace(/^.*:/, ''));
+  const hides = base.some((c) => /^overflow(-y)?-(hidden|clip)$/.test(c));
+  const fixedHeight = /^(max-)?h-(\d|\[)/;
+  return hides && base.some((c) => fixedHeight.test(c));
+}
+
 describe('HostDetailPage', () => {
   it('renders sidebar facts and section nav', async () => {
     mockApi(
@@ -107,11 +117,20 @@ describe('HostDetailPage', () => {
 
     // A card that hides its overflow at a fixed height cuts its content off;
     // every card on this page grows with what it holds instead.
-    const fixedHeight = /^(max-)?h-(\d|\[)/;
-    const clipped = [...container.querySelectorAll<HTMLElement>('*')].filter(
-      (el) => el.classList.contains('overflow-hidden') && [...el.classList].some((c) => fixedHeight.test(c.replace(/^.*:/, ''))),
-    );
+    const clipped = [...container.querySelectorAll<HTMLElement>('*')].filter((el) => isClipped([...el.classList]));
     expect(clipped).toEqual([]);
+  });
+
+  it.each([
+    { classes: 'overflow-hidden h-40', want: true },
+    { classes: 'overflow-clip max-h-[300px]', want: true },
+    { classes: 'overflow-y-hidden h-64', want: true },
+    { classes: 'md:overflow-y-hidden lg:max-h-96', want: true },
+    { classes: 'overflow-y-auto max-h-48', want: false },
+    { classes: 'overflow-hidden rounded-md', want: false },
+    { classes: 'h-8 w-8', want: false },
+  ])('the clipped-card guard reads "$classes" as clipped: $want', ({ classes, want }) => {
+    expect(isClipped(classes.split(' '))).toBe(want);
   });
 
   it('monitored off hides state, alerts and checks and shows the hint', async () => {
