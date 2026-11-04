@@ -172,6 +172,17 @@ describe('RowMenu', () => {
     expect(trigger).toHaveFocus();
   });
 
+  it('closes on Tab and returns focus to the trigger, not to the end of the page', async () => {
+    const user = userEvent.setup();
+    renderRow();
+    const trigger = await screen.findByRole('button', { name: 'Actions for web-01' });
+    await user.click(trigger);
+    expect(screen.getAllByRole('menuitem')[0]).toHaveFocus();
+    await user.tab();
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
   it('closes on an outside click', async () => {
     const user = userEvent.setup();
     renderRow();

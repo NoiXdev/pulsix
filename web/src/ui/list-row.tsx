@@ -91,7 +91,7 @@ const MenuContext = createContext<MenuContextValue | null>(null);
 /**
  * RowMenu is a small popover menu for a row's secondary actions. The trigger
  * swallows its click (preventDefault and stopPropagation) so a menu placed
- * over a row never also activates the row. The menu closes on Escape (focus
+ * over a row never also activates the row. The menu closes on Escape or Tab (focus
  * returns to the trigger), on a click outside it and after an item is
  * selected; the arrow keys, Home and End move between the items.
  */
@@ -162,8 +162,12 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
       close(true);
       return;
     }
+    // The menu is portalled to the end of <body>, so letting Tab move on
+    // from here would send focus past the whole page. It goes back to the
+    // trigger instead, and the next Tab continues from the row.
     if (e.key === 'Tab') {
-      close(false);
+      e.preventDefault();
+      close(true);
       return;
     }
     const list = items();
