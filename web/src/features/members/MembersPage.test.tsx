@@ -19,16 +19,22 @@ function renderPage(qc: QueryClient) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const membersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/members', component: MembersPage });
-  const routeTree = rootRoute.addChildren([orgRoute.addChildren([membersRoute])]);
+  const memberRoute = createRoute({
+    getParentRoute: () => orgRoute,
+    path: '/settings/members/$userId',
+    component: () => <div>member page</div>,
+  });
+  const routeTree = rootRoute.addChildren([orgRoute.addChildren([membersRoute, memberRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/o/acme/settings/members'] }) });
 
-  return render(
+  render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return router;
 }
 
 describe('MembersPage', () => {
@@ -177,36 +183,23 @@ describe('MembersPage', () => {
     expect(await screen.findByText('the invitation e-mail could not be delivered')).toBeInTheDocument();
   });
 
-  it('changes a member\'s role', async () => {
+  // Backlog 7.74: a row opens the member page, where the role is changed;
+  // the role dialog is gone.
+  it('links each row to the member page and has no role dialog', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    let changedTo: string | undefined;
-    mockApi({
-      'GET /api/v1/orgs/acme/members': MEMBERS,
-      'PATCH /api/v1/orgs/acme/members/u2': (req: MockRequest) => {
-        changedTo = (req.body as { role: string }).role;
-        return {};
-      },
-    });
+    mockApi({ 'GET /api/v1/orgs/acme/members': MEMBERS });
 
-    renderPage(qc);
+    const router = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
-    // Scoped by DOM structure, not by a CSS class name (backlog 3.33, the
-    // same fix FleetPage.test.tsx already carries for its own row lookup):
-    // MembersPage renders the name/e-mail pair as GridRow's direct child
-    // div, with the name itself one span below that — so the name's
-    // grandparent is the row, two parentElement hops up rather than a
-    // class-substring match that an unrelated styling rename would
-    // silently break.
-    const saraName = await screen.findByText('Sara K.');
-    const saraRow = saraName.parentElement?.parentElement as HTMLElement;
-    await user.click(within(saraRow).getByText('viewer'));
+    const row = await screen.findByRole('link', { name: 'Sara K.' });
+    expect(row).toHaveAttribute('href', '/o/acme/settings/members/u2');
+    expect(within(row).getByText('viewer')).toBeInTheDocument();
+    expect(within(row).queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Change role/)).not.toBeInTheDocument();
 
-    const roleDialog = (await screen.findByText('Change role · Sara K.')).closest('dialog') as HTMLElement;
-    await user.click(within(roleDialog).getByRole('button', { name: /operator/ }));
-
-    expect(await screen.findByText('Role updated to operator')).toBeInTheDocument();
-    expect(changedTo).toBe('operator');
+    await user.click(row);
+    expect(await screen.findByText('member page')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/settings/members/u2');
   });
 
   it('removes a member after confirmation', async () => {
@@ -221,8 +214,8 @@ describe('MembersPage', () => {
 
     renderPage(qc);
 
-    const removeButtons = await screen.findAllByText('remove');
-    await user.click(removeButtons[1]);
+    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remove…' }));
 
     expect(await screen.findByText('Sara K. removed')).toBeInTheDocument();
     window.confirm = originalConfirm;
@@ -240,8 +233,8 @@ describe('MembersPage', () => {
 
     renderPage(qc);
 
-    const removeButtons = await screen.findAllByText('remove');
-    await user.click(removeButtons[1]);
+    await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remove…' }));
 
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('cannot remove the last owner');

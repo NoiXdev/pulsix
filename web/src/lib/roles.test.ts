@@ -26,6 +26,12 @@ describe('may', () => {
     expect(may('owner', 'org.manage')).toBe(true);
   });
 
+  it('lets admins and owners manage members', () => {
+    expect(may('operator', 'members.manage')).toBe(false);
+    expect(may('admin', 'members.manage')).toBe(true);
+    expect(may('owner', 'members.manage')).toBe(true);
+  });
+
   it('fails closed for an unknown role or permission', () => {
     expect(may('superuser', 'repos.write')).toBe(false);
     expect(may(undefined, 'repos.write')).toBe(false);

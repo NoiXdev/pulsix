@@ -28,7 +28,8 @@ export type UiPermission =
   | 'channels.read'
   | 'channels.write'
   | 'maintenance.write'
-  | 'org.manage';
+  | 'org.manage'
+  | 'members.manage';
 
 /** Minimum role per permission, exactly internal/tenancy/roles.go's matrix:
  * operators drive hosts, inventory, repos, playbooks, templates and runs
@@ -61,6 +62,10 @@ const MINIMUM_ROLE: Record<UiPermission, Role> = {
   'maintenance.write': 'operator',
   // Renaming the organization (internal/tenancy/roles.go PermOrgManage).
   'org.manage': 'admin',
+  // Changing a member's role or removing a member (PermMembersManage). The
+  // owner rules on top (only an owner touches an owner, the last owner
+  // stays) are the server's.
+  'members.manage': 'admin',
 };
 
 const RANK: Record<Role, number> = { viewer: 1, operator: 2, admin: 3, owner: 4 };

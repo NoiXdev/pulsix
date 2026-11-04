@@ -36,6 +36,7 @@ export const enShell = {
   notifications: 'Notifications',
   /** Breadcrumb labels, keyed by the URL segment they stand for. */
   crumbs: {
+    users: 'Users',
     hosts: 'Hosts',
     settings: 'Settings',
     general: 'General',

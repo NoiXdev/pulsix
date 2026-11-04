@@ -13,6 +13,9 @@ import { AlertsPage } from './features/alerts/AlertsPage.tsx';
 import { GroupsPage } from './features/inventory/GroupsPage.tsx';
 import { GroupDetailPage } from './features/inventory/GroupDetailPage.tsx';
 import { MembersPage } from './features/members/MembersPage.tsx';
+import { MemberPage } from './features/members/MemberPage.tsx';
+import { UsersPage } from './features/users/UsersPage.tsx';
+import { AccountPage } from './features/users/AccountPage.tsx';
 import { ActivityPage } from './features/activity/ActivityPage.tsx';
 import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
@@ -243,6 +246,9 @@ const settingsIndexRoute = createRoute({
 });
 const generalRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/general', component: OrgGeneralPage });
 const membersRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/members', component: MembersPage });
+// A member's page in this organization: the role, and for an instance
+// administrator the account's sign-in and actions too (backlog 7.74).
+const memberRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/members/$userId', component: MemberPage });
 const activityRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: '/activity',
@@ -266,6 +272,10 @@ const legacyJumpHostsRoute = createRoute({
 // Instance-wide outgoing mail settings, for instance administrators; filed
 // under Settings for navigation only (see SmtpSettingsPage).
 const mailRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/mail', component: SmtpSettingsPage });
+// Every account on the instance and one account's page, for instance
+// administrators; filed under Settings for navigation only, same as mail.
+const usersRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/users', component: UsersPage });
+const accountRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/users/$userId', component: AccountPage });
 // The instance's default GUI language (backlog 1.41), for instance
 // administrators; filed under Settings for navigation only, same as mail.
 const languageRoute = createRoute({
@@ -339,10 +349,13 @@ const routeTree = rootRoute.addChildren([
       settingsIndexRoute,
       generalRoute,
       membersRoute,
+      memberRoute,
       activityRoute,
       tokensRoute,
       legacyCredentialsRoute,
       legacyJumpHostsRoute,
+      usersRoute,
+      accountRoute,
       mailRoute,
       languageRoute,
       backupsRoute,

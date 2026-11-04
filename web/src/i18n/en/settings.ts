@@ -10,6 +10,7 @@ export const enSettings = {
     instance: 'Instance',
   },
   tabs: {
+    users: 'Users',
     general: 'General',
     members: 'Members',
     activity: 'Activity',

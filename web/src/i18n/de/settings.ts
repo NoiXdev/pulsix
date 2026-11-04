@@ -8,6 +8,7 @@ export const deSettings: Messages['settings'] = {
     instance: 'Instanz',
   },
   tabs: {
+    users: 'Benutzer',
     general: 'Allgemein',
     members: 'Mitglieder',
     activity: 'Aktivität',

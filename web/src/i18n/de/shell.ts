@@ -32,6 +32,7 @@ export const deShell: Messages['shell'] = {
   logOut: 'Abmelden',
   notifications: 'Benachrichtigungen',
   crumbs: {
+    users: 'Benutzer',
     hosts: 'Hosts',
     settings: 'Einstellungen',
     general: 'Allgemein',

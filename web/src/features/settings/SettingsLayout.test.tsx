@@ -11,7 +11,7 @@ function renderLayout(path = '/o/acme/settings/members') {
   const settingsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings', component: SettingsLayout });
   const page = (p: string) =>
     createRoute({ getParentRoute: () => settingsRoute, path: p, component: () => <div>page {p}</div> });
-  const leaves = ['/general', '/members', '/activity', '/tokens', '/notifications', '/mail', '/shared/repos', '/shared/repos/$id'].map(page);
+  const leaves = ['/general', '/members', '/activity', '/tokens', '/notifications', '/mail', '/shared/repos', '/shared/repos/$id', '/users', '/users/$userId'].map(page);
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([settingsRoute.addChildren(leaves)])]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -62,6 +62,12 @@ describe('SettingsLayout', () => {
     mockApi({ 'GET /api/v1/auth/me': me(true), 'GET /api/v1/orgs/acme': org('viewer') });
     renderLayout();
     expect(await screen.findByText('Instance')).toBeInTheDocument();
+    const users = screen.getByRole('link', { name: 'Users' });
+    expect(users).toHaveAttribute('href', '/o/acme/settings/users');
+    // Users leads the Instance group.
+    const links = screen.getAllByRole('link');
+    expect(links[links.indexOf(users) + 1]).toHaveAccessibleName('Outgoing mail');
+    expect(links[links.indexOf(users) - 1]).toHaveAccessibleName('API tokens');
     expect(screen.getByRole('link', { name: 'Outgoing mail' })).toHaveAttribute('href', '/o/acme/settings/mail');
     expect(screen.getByRole('link', { name: 'Language' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Backups' })).toBeInTheDocument();
@@ -86,6 +92,12 @@ describe('SettingsLayout', () => {
     renderLayout('/o/acme/settings/shared/repos/d1');
     expect(await screen.findByRole('link', { name: 'Shared repositories' })).toHaveAttribute('aria-current', 'page');
     expect(screen.getByRole('link', { name: 'Shared job templates' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('keeps the Users item current on an account page', async () => {
+    mockApi({ 'GET /api/v1/auth/me': me(true), 'GET /api/v1/orgs/acme': org('viewer') });
+    renderLayout('/o/acme/settings/users/u2');
+    expect(await screen.findByRole('link', { name: 'Users' })).toHaveAttribute('aria-current', 'page');
   });
 
   it('marks the item of the current route and renders the page beside it', async () => {

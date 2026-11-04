@@ -1,7 +1,9 @@
 import { createContext, useContext } from 'react';
 
 export interface ToastContextValue {
-  show: (text: string, tone?: 'default' | 'destructive') => void;
+  /** `warn` is for an action that went through with a side effect that
+   * did not (a notice mail that could not be sent). */
+  show: (text: string, tone?: 'default' | 'warn' | 'destructive') => void;
 }
 
 export const ToastContext = createContext<ToastContextValue | null>(null);

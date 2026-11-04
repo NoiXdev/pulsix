@@ -28,6 +28,7 @@ import { deShell } from './shell.ts';
 import { deTemplates } from './templates.ts';
 import { deTokens } from './tokens.ts';
 import { deTriggers } from './triggers.ts';
+import { deUsers } from './users.ts';
 import { deUi } from './ui.ts';
 import { deValidation } from './validation.ts';
 import { deWorkers } from './workers.ts';
@@ -86,6 +87,7 @@ export const de: Messages = {
   templates: deTemplates,
   tokens: deTokens,
   triggers: deTriggers,
+  users: deUsers,
   ui: deUi,
   validation: deValidation,
   workers: deWorkers,

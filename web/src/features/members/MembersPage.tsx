@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
-import { useParams } from '@tanstack/react-router';
+import { useNavigate, useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
 import { Copy, UserPlus } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Card, GridHeader } from '../../ui/table.tsx';
+import { ListRow, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -12,14 +13,13 @@ import { Select } from '../../ui/Select.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useChangeMemberRole, useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
+import { useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { PendingInvites } from './PendingInvites.tsx';
 
-const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
-const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 90px';
+const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 40px';
 
 /**
  * MembersPage follows design/mockups/build.mjs's MEMBERS / ACL artboard's
@@ -27,14 +27,17 @@ const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 90px';
  * inline in the member list; they sit in their own table below it instead
  * (PendingInvites, backlog 7.29), since an invitation has none of a
  * member's columns and one action of its own.
+ *
+ * A row opens the member page (MemberPage, backlog 7.74), where the role
+ * is changed; its menu also removes the member.
  */
 export function MembersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const navigate = useNavigate();
 
   const members = useMembers(org);
   const invite = useInviteMember(org);
-  const changeRole = useChangeMemberRole(org);
   const removeMember = useRemoveMember(org);
 
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -42,7 +45,6 @@ export function MembersPage() {
   // instance has no outgoing mail configured: the link is shown for the
   // administrator to hand over instead.
   const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
-  const [roleTarget, setRoleTarget] = useState<{ userId: string; name: string; role: string } | null>(null);
 
   const t = useT();
   const fmt = useFormat();
@@ -51,6 +53,16 @@ export function MembersPage() {
     resolver: zodResolver(inviteFormSchema),
     defaultValues: { email: '', role: 'operator' },
   });
+
+  async function remove(userId: string, name: string) {
+    if (!confirm(t.members.confirmRemove(name))) return;
+    try {
+      await removeMember.mutateAsync(userId);
+      toast.show(t.members.removed(name));
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : t.members.removeFailed, 'destructive');
+    }
+  }
 
   const membersGuard = useQueryGuard(members);
   if (membersGuard) return membersGuard;
@@ -74,10 +86,26 @@ export function MembersPage() {
           <span>{t.members.columns.role}</span>
           <span>{t.members.columns.joined}</span>
           <span>{t.members.columns.status}</span>
-          <span />
+          <span className="sr-only">{t.users.actions.title}</span>
         </GridHeader>
         {(members.data?.members ?? []).map((m) => (
-          <GridRow key={m.user_id} columns={COLUMNS}>
+          <ListRow
+            key={m.user_id}
+            to="/o/$org/settings/members/$userId"
+            params={{ org, userId: m.user_id }}
+            columns={COLUMNS}
+            label={m.display_name}
+            menu={
+              <RowMenu label={t.members.rowActions(m.display_name)}>
+                <RowMenuItem onSelect={() => void navigate({ to: '/o/$org/settings/members/$userId', params: { org, userId: m.user_id } })}>
+                  {t.members.open}
+                </RowMenuItem>
+                <RowMenuItem destructive onSelect={() => void remove(m.user_id, m.display_name)}>
+                  {t.members.removeItem}
+                </RowMenuItem>
+              </RowMenu>
+            }
+          >
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-dim text-[11px] font-bold text-background">
               {m.display_name
                 .split(' ')
@@ -89,13 +117,9 @@ export function MembersPage() {
               <span className="truncate text-xs font-semibold">{m.display_name}</span>
               <span className="truncate text-[11px] text-muted-foreground">{m.email}</span>
             </div>
-            <button
-              type="button"
-              className="w-fit"
-              onClick={() => setRoleTarget({ userId: m.user_id, name: m.display_name, role: m.role })}
-            >
+            <span>
               <RoleBadge role={m.role} />
-            </button>
+            </span>
             <span className="text-[11px] text-muted-foreground">{fmt.date(m.created_at)}</span>
             <span>
               {m.disabled_at ? (
@@ -104,22 +128,8 @@ export function MembersPage() {
                 <Pill tone="ok">{t.members.active}</Pill>
               )}
             </span>
-            <button
-              type="button"
-              className="text-[11px] text-destructive"
-              onClick={async () => {
-                if (!confirm(t.members.confirmRemove(m.display_name))) return;
-                try {
-                  await removeMember.mutateAsync(m.user_id);
-                  toast.show(t.members.removed(m.display_name));
-                } catch (err) {
-                  toast.show(err instanceof Error ? err.message : t.members.removeFailed, 'destructive');
-                }
-              }}
-            >
-              {t.members.remove}
-            </button>
-          </GridRow>
+            <span />
+          </ListRow>
         ))}
       </Card>
 
@@ -216,38 +226,6 @@ export function MembersPage() {
         )}
       </Dialog>
 
-      <Dialog
-        open={!!roleTarget}
-        onClose={() => setRoleTarget(null)}
-        title={roleTarget ? t.members.roleDialog.title(roleTarget.name) : t.members.roleDialog.titleFallback}
-      >
-        {roleTarget && (
-          <div className="flex flex-col gap-2">
-            {ROLES.map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={async () => {
-                  try {
-                    await changeRole.mutateAsync({ userId: roleTarget.userId, role: r });
-                    toast.show(t.members.roleDialog.updated(r));
-                    setRoleTarget(null);
-                  } catch (err) {
-                    toast.show(err instanceof Error ? err.message : t.members.roleDialog.failed, 'destructive');
-                  }
-                }}
-                className={
-                  r === roleTarget.role
-                    ? 'flex items-center gap-3 rounded-md border border-primary p-2.5'
-                    : 'flex items-center gap-3 rounded-md border border-border p-2.5'
-                }
-              >
-                <RoleBadge role={r} />
-              </button>
-            ))}
-          </div>
-        )}
-      </Dialog>
     </>
   );
 }

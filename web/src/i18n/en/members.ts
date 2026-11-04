@@ -1,6 +1,6 @@
 /**
- * The members page (list, invite dialog, role dialog, open invitations)
- * and the page an invitation link opens. The page title is
+ * The members page (list, invite dialog, open invitations), the member
+ * page (role and removal) and the page an invitation link opens. The page title is
  * `settings.tabs.members`. Role names (viewer, operator, admin, owner)
  * are product terms and stay English in every language.
  */
@@ -39,11 +39,21 @@ export const enMembers = {
     copyFailed: 'Could not copy — select the link and copy it by hand',
     done: 'Done',
   },
-  roleDialog: {
-    title: (name: string) => `Change role · ${name}`,
-    titleFallback: 'Change role',
+  rowActions: (name: string) => `Actions for ${name}`,
+  open: 'Open',
+  removeItem: 'Remove…',
+  page: {
+    email: 'E-mail',
+    joined: 'Joined',
+    status: 'Status',
+    roleTitle: 'Role',
+    roleLabel: 'Role in this organization',
+    changeRole: 'Change role',
     updated: (role: string) => `Role updated to ${role}`,
     failed: 'failed to change role',
+    removeHint: 'Removing the member ends their access to this organization. The account itself stays.',
+    removeButton: 'Remove from organization',
+    readOnly: 'Only owners and admins can change roles or remove members.',
   },
   pending: {
     title: 'Open invitations',

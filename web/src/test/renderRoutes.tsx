@@ -19,9 +19,14 @@ export interface TestRoute {
 /**
  * Renders the given pages under /o/$org in a memory router with a query
  * client and toasts, starting at `initial`. Returns the router, so a test
- * can read where navigation ended up.
+ * can read where navigation ended up. A test that inspects the cache passes
+ * its own query client.
  */
-export function renderRoutes(routes: TestRoute[], initial: string) {
+export function renderRoutes(
+  routes: TestRoute[],
+  initial: string,
+  qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const children: AnyRoute[] = routes.map((r) =>
@@ -31,7 +36,6 @@ export function renderRoutes(routes: TestRoute[], initial: string) {
     routeTree: rootRoute.addChildren([orgRoute.addChildren(children)]),
     history: createMemoryHistory({ initialEntries: [initial] }),
   });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
       <ToastProvider>

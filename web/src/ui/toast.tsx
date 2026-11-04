@@ -5,7 +5,7 @@ import { ToastContext } from './toastContext.ts';
 interface ToastMessage {
   id: number;
   text: string;
-  tone: 'default' | 'destructive';
+  tone: 'default' | 'warn' | 'destructive';
 }
 
 let nextId = 1;
@@ -33,11 +33,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           <div
             key={m.id}
             role="status"
+            data-tone={m.tone}
             className={cn(
               'rounded-md border px-4 py-2.5 text-[13px] font-medium shadow-lg',
-              m.tone === 'destructive'
-                ? 'border-destructive/40 bg-card text-destructive'
-                : 'border-border bg-card text-foreground',
+              m.tone === 'destructive' && 'border-destructive/40 bg-card text-destructive',
+              m.tone === 'warn' && 'border-[var(--px-warn)] bg-card text-[var(--px-warn)]',
+              m.tone === 'default' && 'border-border bg-card text-foreground',
             )}
           >
             {m.text}
