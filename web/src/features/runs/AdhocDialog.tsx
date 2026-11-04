@@ -5,7 +5,7 @@ import { Button } from '../../ui/button.tsx';
 import { Label } from '../../ui/label.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { useToast } from '../../ui/toastContext.ts';
-import { useHosts } from '../../api/hooks/useHosts.ts';
+import { useHost, useHosts } from '../../api/hooks/useHosts.ts';
 import { useRunAdhocCommand } from '../../api/hooks/useJobs.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -23,6 +23,11 @@ const MAX_ARGV = 8 << 10;
  * server-side so v0.3 can extend it, nothing to choose here yet. On
  * success the dialog navigates to the run view of the first job of the
  * group, the same landing every other run action uses.
+ *
+ * A selected host that is not on the loaded page — a preselected one that
+ * sorts past the first page, or one picked before the search changed — is
+ * pinned above the list as a checked row, its name read with useHost, so
+ * the selection the dialog will send is always on screen.
  */
 export function AdhocDialog({
   org,
@@ -46,6 +51,9 @@ export function AdhocDialog({
 
   const hosts = useHosts(org, { managed: true, q });
   const page = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
+  // Only once the page is known: before that every selection would be
+  // pinned and then jump into the list as the page arrives.
+  const pinned = hosts.data ? selected.filter((id) => !page.some((h) => h.id === id)) : [];
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = hosts;
 
   function toggle(id: string) {
@@ -93,6 +101,9 @@ export function AdhocDialog({
             onChange={(e) => setQ(e.target.value)}
           />
           <div className="flex max-h-48 flex-col gap-1 overflow-y-auto rounded-md border border-border p-2">
+            {pinned.map((id) => (
+              <PinnedHostRow key={id} org={org} id={id} onToggle={() => toggle(id)} />
+            ))}
             {page.map((h) => (
               <label key={h.id} className="flex items-center gap-2 text-xs">
                 <input type="checkbox" checked={selected.includes(h.id)} onChange={() => toggle(h.id)} aria-label={h.name} />
@@ -142,5 +153,19 @@ export function AdhocDialog({
         </div>
       </form>
     </Dialog>
+  );
+}
+
+/** PinnedHostRow is one selected host that the loaded page does not carry:
+ * checked, and unchecking it drops it from the selection (and so from
+ * view). Its name comes from GET /hosts/{id}; the id stands in until then. */
+function PinnedHostRow({ org, id, onToggle }: { org: string; id: string; onToggle: () => void }) {
+  const host = useHost(org, id);
+  const name = host.data?.host.name ?? id;
+  return (
+    <label className="flex items-center gap-2 text-xs">
+      <input type="checkbox" checked onChange={onToggle} aria-label={name} />
+      {name}
+    </label>
   );
 }

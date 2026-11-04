@@ -56,6 +56,32 @@ describe('AdhocDialog', () => {
     expect(posted).toEqual({ host_ids: ['h2'], module: 'shell', argv: 'uptime' });
   });
 
+  it('shows a preselected host that is not on the loaded page as a pinned, checked row', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    mockApi({
+      // h9 sorts past the first page, so the list never carries it.
+      'GET /api/v1/orgs/acme/hosts': { hosts: [host('h1', 'web-01'), host('h2', 'web-02')], next_cursor: 'c1' },
+      'GET /api/v1/orgs/acme/hosts/h9': { host: host('h9', 'zz-db-09') },
+      'POST /api/v1/orgs/acme/hosts/command': (req: MockRequest) => {
+        posted = req.body;
+        return { jobs: [{ id: 'job-1', zone_id: 'z', kind: 'adhoc', status: 'queued', trigger: 'manual', run_group_id: 'g1', created_at: '2026-09-16T00:00:00Z' }] };
+      },
+    });
+    renderDialog(undefined, ['h9']);
+    const dialog = await screen.findByRole('dialog', { name: 'Run command' });
+    const pinned = await within(dialog).findByRole('checkbox', { name: 'zz-db-09' });
+    expect(pinned).toBeChecked();
+    // Pinned above the page, not appended after it.
+    const boxes = within(dialog).getAllByRole('checkbox');
+    expect(boxes.map((b) => b.getAttribute('aria-label'))).toEqual(['zz-db-09', 'web-01', 'web-02']);
+    expect(within(dialog).getByText('1 host(s) selected')).toBeInTheDocument();
+
+    await user.type(within(dialog).getByLabelText('Command'), 'uptime');
+    await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
+    expect(posted).toEqual({ host_ids: ['h9'], module: 'shell', argv: 'uptime' });
+  });
+
   it('runs a shell command on the selected hosts and lands on the run view', async () => {
     const user = userEvent.setup();
     let posted: unknown;
