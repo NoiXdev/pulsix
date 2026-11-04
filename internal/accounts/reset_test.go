@@ -531,3 +531,59 @@ func TestSendResetLink(t *testing.T) {
 		})
 	}
 }
+
+// TestShutdownWaitsForResetWork: Shutdown waits for the reset requests
+// already in the background, and from then on starts no more: one that
+// arrives later still answers nil, as a dropped one does, and touches
+// nothing.
+func TestShutdownWaitsForResetWork(t *testing.T) {
+	f := newResetFixture()
+	release := make(chan struct{})
+	f.store.release = release
+	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- f.svc.Shutdown(context.Background()) }()
+	select {
+	case err := <-done:
+		t.Fatalf("Shutdown returned %v while a reset was still running", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("Shutdown = %v, want nil", err)
+	}
+	if len(f.mailer.sent) != 1 {
+		t.Fatalf("mails %d, want the running reset's one", len(f.mailer.sent))
+	}
+
+	lookups := f.store.emailLookups.Load()
+	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+		t.Fatalf("a request after Shutdown: err %v, want nil", err)
+	}
+	f.svc.Wait()
+	if f.store.emailLookups.Load() != lookups || len(f.mailer.sent) != 1 {
+		t.Fatal("a request after Shutdown started background work")
+	}
+}
+
+// TestShutdownIsBounded: work that does not finish in time leaves Shutdown
+// with the context's error rather than hanging it.
+func TestShutdownIsBounded(t *testing.T) {
+	f := newResetFixture()
+	release := make(chan struct{})
+	f.store.release = release
+	defer func() {
+		close(release)
+		f.svc.Wait()
+	}()
+	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := f.svc.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Shutdown = %v, want the deadline", err)
+	}
+}

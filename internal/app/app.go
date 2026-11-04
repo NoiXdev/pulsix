@@ -129,13 +129,38 @@ type App struct {
 	// (registerItemRoutes); this field itself is kept only because nothing
 	// else in this package needs to read it back out of App.
 	items *items.Service
+	// background is the account service's work that outlives a request:
+	// the reset links an accepted forgot-password request still has to
+	// mail. Close waits for it, bounded by backgroundDrainTimeout, once the
+	// HTTP server has drained and before the pool closes.
+	background interface {
+		Shutdown(ctx context.Context) error
+	}
 }
+
+// backgroundDrainTimeout bounds how long Close waits for background work
+// (App.background): as long as the HTTP server's own drain may take. A
+// package var so a test can shrink it.
+var backgroundDrainTimeout = 10 * time.Second
 
 // Close releases the application's database pool and stops the reaper. It
 // does not touch the migration pool Build opens: that one is already closed
 // before Build returns, successfully or not — see Build's own comment on
 // why.
+//
+// It first waits for the background work requests left behind
+// (App.background), bounded by backgroundDrainTimeout. That must come
+// after the HTTP server has stopped and drained — cmd/manager defers Close
+// until serve has returned, which is after http.Server.Shutdown — so no
+// request still adds work, and before the pool closes under it.
 func (a *App) Close() {
+	if a.background != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), backgroundDrainTimeout)
+		if err := a.background.Shutdown(ctx); err != nil {
+			slog.Warn("background work did not finish before shutdown", "err", err, "timeout", backgroundDrainTimeout)
+		}
+		cancel()
+	}
 	if a.stopReaper != nil {
 		a.stopReaper()
 	}
@@ -555,9 +580,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// schedule starts below, once nothing can fail any more.
 	backupsSvc := newBackupService(appDB, box, cfg.MasterKey, mailer, cfg.Version)
 
+	accountsSvc := accounts.NewService(accounts.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now, rand.Reader)
 	handler, err := api.New(api.Deps{
 		Sessions: sessions, Auth: authSvc, TOTP: totp, Passkeys: passkeys, Tokens: tokens, Enrolment: enrolment,
-		Tenancy: tenancySvc, Accounts: accounts.NewService(accounts.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now, rand.Reader),
+		Tenancy: tenancySvc, Accounts: accountsSvc,
 		Audit: auditRec, ClientIP: clientip.New(cfg.TrustedProxies), Setup: setupSvc, Mailer: mailer, Hosts: hostsSvc, Secure: publicURLIsHTTPS(cfg.PublicURL),
 		Backups: backupsSvc,
 		// Backlog 1.20: the auth endpoints' per-address limiter size
@@ -753,7 +779,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
 		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopEmbedded: stopEmbedded,
-		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop,
+		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }
 

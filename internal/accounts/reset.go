@@ -63,15 +63,19 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	if !configured {
 		return nil
 	}
+	// The caller hears 202 whatever happens below: a drop must not be
+	// observable. The logs carry no address.
+	if !s.startBackground() {
+		slog.WarnContext(ctx, "password reset request dropped: shutting down")
+		return nil
+	}
 	select {
 	case s.resetSlots <- struct{}{}:
 	default:
-		// The caller still hears 202: a drop must not be observable. The
-		// log carries no address.
+		s.background.Done()
 		slog.WarnContext(ctx, "password reset request dropped: too many in flight", "limit", maxResetJobs)
 		return nil
 	}
-	s.background.Add(1)
 	go func() {
 		defer s.background.Done()
 		defer func() { <-s.resetSlots }()
@@ -93,9 +97,45 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	return nil
 }
 
+// startBackground counts one more piece of background work, unless
+// Shutdown has begun.
+func (s *Service) startBackground() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.background.Add(1)
+	return true
+}
+
 // Wait blocks until the work RequestReset handed to the background has
-// finished: for a clean shutdown, and for tests.
+// finished. It is for tests, which start no more work while it waits; a
+// process shutting down uses Shutdown.
 func (s *Service) Wait() { s.background.Wait() }
+
+// Shutdown stops RequestReset from starting background work (a request
+// from then on is dropped, and still answered as usual) and waits until
+// the work already started has finished, or ctx is done, whichever comes
+// first; then it returns ctx's error. Work still running past that keeps
+// its own deadline (resetJobTimeout). Call it once the HTTP server has
+// drained, so no reset link an accepted request promised is lost.
+func (s *Service) Shutdown(ctx context.Context) error {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		s.background.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for password reset requests: %w", ctx.Err())
+	}
+}
 
 // requestReset is RequestReset's background work. No link is sent when no
 // account has the address, when the account is deactivated or its

@@ -178,8 +178,12 @@ type Service struct {
 	now       func() time.Time
 	rnd       io.Reader
 	// background tracks the reset requests RequestReset hands to the
-	// background (Wait).
+	// background (Wait, Shutdown). mu guards closed, and every
+	// background.Add happens under it, so once Shutdown has set closed no
+	// Add can race its wait.
 	background sync.WaitGroup
+	mu         sync.Mutex
+	closed     bool
 	// resetSlots bounds the reset requests in flight (maxResetJobs).
 	resetSlots chan struct{}
 }
