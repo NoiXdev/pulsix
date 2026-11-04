@@ -33,8 +33,9 @@ async function addHost(
 }
 
 /** The row for one host, scoped so capability/tag assertions never
- * accidentally match another host's cells — HostRow renders the host name
- * as a Link that is a direct child of its GridRow container. */
+ * accidentally match another host's cells — HostRow renders the whole row as
+ * a Link (named by the host) that is a direct child of the row container,
+ * which also holds the row menu. */
 function hostRow(page: Page, name: string): Locator {
   return page.getByRole('link', { name, exact: true }).locator('xpath=..');
 }
@@ -58,23 +59,28 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
   await addHost(page, { name: 'cache-01.fra' });
 
   const rowA = hostRow(page, 'web-04.fra');
-  await expect(rowA.getByRole('button', { name: /enable/ })).toHaveCount(2); // both capabilities off
+  // The list's capabilities are read-only pills; switching is a row menu action.
+  await expect(rowA.getByText('not managed')).toBeVisible();
+  await expect(rowA.getByText('not monitored')).toBeVisible();
 
-  // Enable Managed first. This is PATCH …/hosts/{id}/capabilities with
+  // Switch management on first. This is PATCH …/hosts/{id}/capabilities with
   // {managed: true} alone — the assertion that matters is not just that
   // Managed turned on, but that Monitored is still untouched.
-  await rowA.getByRole('button', { name: /enable/ }).first().click();
-  await expect(rowA.getByText('Ansible', { exact: true })).toBeVisible();
-  await expect(rowA.getByRole('button', { name: /enable/ })).toHaveCount(1); // only Monitored's is left
+  await rowA.getByRole('button', { name: 'Actions for web-04.fra' }).click();
+  await page.getByRole('menuitem', { name: 'Switch management on' }).click();
+  await expect(rowA.getByText('Managed', { exact: true })).toBeVisible();
+  await expect(rowA.getByText('not monitored')).toBeVisible(); // untouched
+  await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/hosts$`)); // the menu did not navigate
 
-  // Now enable Monitored on the same host. If the capabilities patch were
-  // not truly independent-fields (e.g. it silently defaulted the field it
-  // was not given back to false), this would reset Managed to off —
+  // Now switch monitoring on for the same host. If the capabilities patch
+  // were not truly independent-fields (e.g. it silently defaulted the field
+  // it was not given back to false), this would reset Managed to off —
   // asserting both are on afterward is what actually catches that.
-  await rowA.getByRole('button', { name: /enable/ }).first().click();
-  await expect(rowA.getByText('Agent', { exact: true })).toBeVisible();
-  await expect(rowA.getByText('Ansible', { exact: true })).toBeVisible();
-  await expect(rowA.getByRole('button', { name: /enable/ })).toHaveCount(0);
+  await rowA.getByRole('button', { name: 'Actions for web-04.fra' }).click();
+  await page.getByRole('menuitem', { name: 'Switch monitoring on' }).click();
+  await expect(rowA.getByText('Monitored', { exact: true })).toBeVisible();
+  await expect(rowA.getByText('Managed', { exact: true })).toBeVisible();
+  await expect(rowA.getByText('not managed')).toHaveCount(0);
 
   // Tag host A through its detail page.
   await page.getByRole('link', { name: 'web-04.fra', exact: true }).click();

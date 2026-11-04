@@ -24,13 +24,23 @@ const MAX_ARGV = 8 << 10;
  * success the dialog navigates to the run view of the first job of the
  * group, the same landing every other run action uses.
  */
-export function AdhocDialog({ org, onClose }: { org: string; onClose: () => void }) {
+export function AdhocDialog({
+  org,
+  onClose,
+  initialHostIds,
+}: {
+  org: string;
+  onClose: () => void;
+  /** Hosts selected when the dialog opens, e.g. the host a row menu was
+   * opened on. The user can still change the selection. */
+  initialHostIds?: string[];
+}) {
   const t = useT();
   const toast = useToast();
   const navigate = useNavigate();
   const runAdhoc = useRunAdhocCommand(org);
   const [q, setQ] = useState('');
-  const [selected, setSelected] = useState<readonly string[]>([]);
+  const [selected, setSelected] = useState<readonly string[]>(initialHostIds ?? []);
   const [argv, setArgv] = useState('');
   const [error, setError] = useState<string | null>(null);
 

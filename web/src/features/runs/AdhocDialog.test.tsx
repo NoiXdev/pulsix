@@ -9,7 +9,7 @@ import { AdhocDialog } from './AdhocDialog.tsx';
 
 const host = (id: string, name: string) => ({ id, name, zone_id: 'z', address: '', managed: true, monitored: false, facts: {}, created_at: '' });
 
-function renderDialog(onClose = () => undefined) {
+function renderDialog(onClose = () => undefined, initialHostIds?: string[]) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({
@@ -17,7 +17,7 @@ function renderDialog(onClose = () => undefined) {
     path: '/o/$org',
     component: () => (
       <>
-        <AdhocDialog org="acme" onClose={onClose} />
+        <AdhocDialog org="acme" onClose={onClose} initialHostIds={initialHostIds} />
         <Outlet />
       </>
     ),
@@ -37,6 +37,25 @@ function renderDialog(onClose = () => undefined) {
 }
 
 describe('AdhocDialog', () => {
+  it('starts with the given hosts selected', async () => {
+    const user = userEvent.setup();
+    let posted: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': { hosts: [host('h1', 'web-01'), host('h2', 'web-02')], next_cursor: '' },
+      'POST /api/v1/orgs/acme/hosts/command': (req: MockRequest) => {
+        posted = req.body;
+        return { jobs: [{ id: 'job-1', zone_id: 'z', kind: 'adhoc', status: 'queued', trigger: 'manual', run_group_id: 'g1', created_at: '2026-09-16T00:00:00Z' }] };
+      },
+    });
+    renderDialog(undefined, ['h2']);
+    const dialog = await screen.findByRole('dialog', { name: 'Run command' });
+    expect(await within(dialog).findByRole('checkbox', { name: 'web-02' })).toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: 'web-01' })).not.toBeChecked();
+    await user.type(within(dialog).getByLabelText('Command'), 'uptime');
+    await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
+    expect(posted).toEqual({ host_ids: ['h2'], module: 'shell', argv: 'uptime' });
+  });
+
   it('runs a shell command on the selected hosts and lands on the run view', async () => {
     const user = userEvent.setup();
     let posted: unknown;

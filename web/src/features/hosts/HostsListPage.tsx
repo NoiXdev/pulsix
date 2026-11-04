@@ -15,7 +15,7 @@ import { HostRow } from './HostRow.tsx';
 import { HostDialog } from './HostDialog.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
 
-const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 210px 210px 70px 24px';
+const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 120px 120px 70px 40px';
 
 export function HostsListPage() {
   const { org } = useParams({ strict: false }) as { org: string };

@@ -1,62 +1,21 @@
-import { Terminal, Activity } from 'lucide-react';
+import { Pill } from '../../ui/badge.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 export type CapabilityKind = 'managed' | 'monitored';
-export type CapabilityPatch = { managed: boolean } | { monitored: boolean };
-
-export interface CapabilityCellProps {
-  kind: CapabilityKind;
-  on: boolean;
-  /** A short human-readable detail shown alongside the capability's label
-   * when it is on — e.g. "user@ · key" for managed (SSH user and key
-   * name) or a check count for monitored. Omit it when there is nothing
-   * more specific to say. */
-  detail?: string;
-  onChange: (patch: CapabilityPatch) => void;
-}
-
-const LABEL: Record<CapabilityKind, string> = { managed: 'Ansible', monitored: 'Agent' };
-const ICON: Record<CapabilityKind, typeof Terminal> = { managed: Terminal, monitored: Activity };
 
 /**
- * CapabilityCell renders one cell of the hosts table's Managed/Monitored
- * columns (design/mockups/build.mjs, HOST LIST's `cap()` generator):
- * an icon and label when the capability is on, or a dashed "off · enable"
- * affordance when it is off. It never toggles the *other* capability —
- * clicking "enable" always sends a patch naming only this cell's own
- * `kind`, matching PATCH …/hosts/{id}/capabilities' independent-fields
- * contract (a field not present in the request body is left untouched,
- * not reset to false).
+ * CapabilityCell shows one of a host's two capabilities in the list as a
+ * read-only pill: "Managed" / "Monitored" in the ok style when on, a muted
+ * "not managed" / "not monitored" when off. It is deliberately not
+ * operable: the whole row is a link, and switching a capability is a row
+ * menu action (or the switch on the host page).
  */
-export function CapabilityCell({ kind, on, detail, onChange }: CapabilityCellProps) {
+export function CapabilityCell({ kind, on }: { kind: CapabilityKind; on: boolean }) {
   const t = useT();
-  const Icon = ICON[kind];
-
-  if (on) {
-    return (
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand">
-          <Icon size={13} />
-        </span>
-        <span className="truncate text-xs font-semibold">
-          {detail ? `${LABEL[kind]} · ${detail}` : LABEL[kind]}
-        </span>
-      </div>
-    );
-  }
-
+  if (on) return <Pill tone="ok">{t.hosts.capability[kind]}</Pill>;
   return (
-    <button
-      type="button"
-      className="flex items-center gap-2 text-muted-foreground"
-      onClick={() => onChange(kind === 'managed' ? { managed: true } : { monitored: true })}
-    >
-      <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border border-dashed border-border">
-        <Icon size={13} />
-      </span>
-      <span className="text-xs">
-        {t.hosts.capability.off} <span className="text-brand-dim">{t.hosts.capability.enable}</span>
-      </span>
-    </button>
+    <span className="truncate text-xs text-muted-foreground">
+      {kind === 'managed' ? t.hosts.capability.notManaged : t.hosts.capability.notMonitored}
+    </span>
   );
 }

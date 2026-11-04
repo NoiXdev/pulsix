@@ -1,10 +1,8 @@
-import { Link } from '@tanstack/react-router';
-import { MoreHorizontal } from 'lucide-react';
-import { GridRow } from '../../ui/table.tsx';
+import { ListRow, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
 import { Tag } from '../../ui/badge.tsx';
 import { CapabilityCell } from './capabilities.tsx';
+import { useHostActions } from './useHostActions.tsx';
 import { useHostTags } from '../../api/hooks/useTags.ts';
-import { useSetHostCapabilities } from '../../api/hooks/useHosts.ts';
 import type { Host } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -40,47 +38,64 @@ export function HostRow({
 }) {
   const t = useT();
   const tags = useHostTags(org, host.id);
-  const setCapabilities = useSetHostCapabilities(org, host.id);
+  const actions = useHostActions(org, host);
   const agentStatusLabel = agentStatus && agentStatus in t.agents.status ? t.agents.status[agentStatus as keyof typeof t.agents.status] : (agentStatus ?? '');
 
   return (
-    <GridRow columns={columns}>
-      {/* The host's agent is what can honestly claim a state (v0.3a): it
-         reports on a heartbeat, and the server decides online from its
-         age. A host without an agent stays unknown — remote checks
-         (v0.3b) are what will speak for those. */}
-      <span
-        className="h-2 w-2 rounded-full"
-        style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus ? 'var(--px-warn)' : 'var(--px-unknown)' }}
-        title={agentStatus ? t.hosts.row.agentTitle(agentStatusLabel) : t.hosts.row.unknown}
-      />
-      <Link
+    <>
+      <ListRow
         to="/o/$org/hosts/$id"
         params={{ org, id: host.id }}
-        className="truncate font-mono text-xs font-semibold text-foreground hover:text-brand"
+        columns={columns}
+        label={host.name}
+        menu={
+          <RowMenu label={t.hosts.row.actions(host.name)}>
+            <RowMenuItem onSelect={actions.open}>{t.hosts.row.open}</RowMenuItem>
+            {actions.canEdit && <RowMenuItem onSelect={actions.edit}>{t.hosts.row.edit}</RowMenuItem>}
+            {actions.canRun && <RowMenuItem onSelect={actions.runPlay}>{t.hosts.row.runPlay}</RowMenuItem>}
+            {actions.canSwitch && (
+              <>
+                <RowMenuItem onSelect={actions.toggleMonitoring}>
+                  {host.monitored ? t.hosts.row.monitoringOff : t.hosts.row.monitoringOn}
+                </RowMenuItem>
+                <RowMenuItem onSelect={actions.toggleManagement}>
+                  {host.managed ? t.hosts.row.managementOff : t.hosts.row.managementOn}
+                </RowMenuItem>
+              </>
+            )}
+            {actions.canDelete && (
+              <RowMenuItem onSelect={actions.remove} destructive>
+                {t.hosts.row.delete}
+              </RowMenuItem>
+            )}
+          </RowMenu>
+        }
       >
-        {host.name}
-      </Link>
-      <span className="truncate font-mono text-xs text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>
-      <div className="flex flex-wrap gap-1">
-        {(tags.data?.tags ?? []).map((tag) => (
-          <Tag key={tag.key}>
-            {tag.key}={tag.value}
-          </Tag>
-        ))}
-      </div>
-      <CapabilityCell
-        kind="managed"
-        on={host.managed}
-        onChange={(patch) => setCapabilities.mutate(patch)}
-      />
-      <CapabilityCell
-        kind="monitored"
-        on={host.monitored}
-        onChange={(patch) => setCapabilities.mutate(patch)}
-      />
-      <span className="font-mono text-[11px] text-muted-foreground">{timeAgo(host.last_seen_at, t)}</span>
-      <MoreHorizontal size={15} className="text-muted-foreground" />
-    </GridRow>
+        {/* The host's agent is what can honestly claim a state (v0.3a): it
+           reports on a heartbeat, and the server decides online from its
+           age. A host without an agent stays unknown — remote checks
+           (v0.3b) are what will speak for those. */}
+        <span
+          className="h-2 w-2 rounded-full"
+          style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus ? 'var(--px-warn)' : 'var(--px-unknown)' }}
+          title={agentStatus ? t.hosts.row.agentTitle(agentStatusLabel) : t.hosts.row.unknown}
+        />
+        <span className="truncate font-mono text-xs font-semibold text-foreground">{host.name}</span>
+        <span className="truncate font-mono text-xs text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>
+        <div className="flex flex-wrap gap-1">
+          {(tags.data?.tags ?? []).map((tag) => (
+            <Tag key={tag.key}>
+              {tag.key}={tag.value}
+            </Tag>
+          ))}
+        </div>
+        <CapabilityCell kind="managed" on={host.managed} />
+        <CapabilityCell kind="monitored" on={host.monitored} />
+        <span className="font-mono text-[11px] text-muted-foreground">{timeAgo(host.last_seen_at, t)}</span>
+        {/* The menu sits over this cell, outside the anchor. */}
+        <span />
+      </ListRow>
+      {actions.dialogs}
+    </>
   );
 }

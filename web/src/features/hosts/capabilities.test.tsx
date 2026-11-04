@@ -1,39 +1,35 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { CapabilityCell } from './capabilities.tsx';
 
 describe('CapabilityCell', () => {
-  it('renders "Ansible · user@ · key" when managed', () => {
-    render(<CapabilityCell kind="managed" on detail="user@ · key" onChange={vi.fn()} />);
-    expect(screen.getByText('Ansible · user@ · key')).toBeInTheDocument();
+  it('shows "Managed" when the host is managed', () => {
+    render(<CapabilityCell kind="managed" on />);
+    expect(screen.getByText('Managed')).toBeInTheDocument();
   });
 
-  it('renders "off · enable" when not managed', () => {
-    render(<CapabilityCell kind="managed" on={false} onChange={vi.fn()} />);
-    expect(screen.getByRole('button', { name: 'off · enable' })).toBeInTheDocument();
+  it('shows a muted "not managed" when it is not', () => {
+    render(<CapabilityCell kind="managed" on={false} />);
+    expect(screen.getByText('not managed')).toBeInTheDocument();
+    expect(screen.queryByText('Managed')).not.toBeInTheDocument();
   });
 
-  it('clicking "enable" calls the handler with {managed: true} only', async () => {
-    const onChange = vi.fn();
-    render(<CapabilityCell kind="managed" on={false} onChange={onChange} />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'off · enable' }));
-
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({ managed: true });
+  it('shows "Monitored" and "not monitored" for the monitored kind', () => {
+    const { rerender } = render(<CapabilityCell kind="monitored" on />);
+    expect(screen.getByText('Monitored')).toBeInTheDocument();
+    rerender(<CapabilityCell kind="monitored" on={false} />);
+    expect(screen.getByText('not monitored')).toBeInTheDocument();
   });
 
-  it('clicking "enable" on the monitored cell calls the handler with {monitored: true} only', async () => {
-    const onChange = vi.fn();
-    render(<CapabilityCell kind="monitored" on={false} onChange={onChange} />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'off · enable' }));
-
-    expect(onChange).toHaveBeenCalledExactlyOnceWith({ monitored: true });
-  });
-
-  it('renders just "Agent" with no separator when monitored is on but no detail is given', () => {
-    render(<CapabilityCell kind="monitored" on onChange={vi.fn()} />);
-    expect(screen.getByText('Agent')).toBeInTheDocument();
+  it('is read-only: nothing in it can be operated', () => {
+    render(
+      <>
+        <CapabilityCell kind="managed" on={false} />
+        <CapabilityCell kind="monitored" on />
+      </>,
+    );
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 });

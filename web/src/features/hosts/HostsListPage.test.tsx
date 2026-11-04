@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
@@ -34,16 +34,18 @@ function renderPage(qc: QueryClient, initialPath = '/o/acme/hosts') {
     validateSearch: (s: Record<string, unknown>) => ({ q: typeof s.q === 'string' ? s.q : undefined }),
     component: HostsListPage,
   });
-  const routeTree = rootRoute.addChildren([orgRoute.addChildren([hostsRoute])]);
+  const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST PAGE</div> });
+  const routeTree = rootRoute.addChildren([orgRoute.addChildren([hostsRoute, hostRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: [initialPath] }) });
 
-  return render(
+  const result = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return { ...result, router };
 }
 
 describe('HostsListPage', () => {
@@ -239,5 +241,204 @@ describe('zone filter', () => {
     await waitFor(() => {
       expect(asked.at(-1)).toBe('z1');
     });
+  });
+});
+
+const org = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
+const MONITORED_HOST = { ...HOSTS.hosts[0], monitored: true };
+
+function rowRoutes(role: string, host: Record<string, unknown> = MONITORED_HOST) {
+  return {
+    'GET /api/v1/orgs/acme': org(role),
+    'GET /api/v1/orgs/acme/hosts': { hosts: [host] },
+    'GET /api/v1/orgs/acme/zones': ZONES,
+  };
+}
+
+describe('host rows', () => {
+  it('whole row links to the host page', async () => {
+    mockApi(rowRoutes('operator'));
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    const link = await screen.findByRole('link', { name: 'web-04.fra' });
+    expect(link).toHaveAttribute('href', '/o/acme/hosts/h1');
+    expect(link).toHaveTextContent('fra');
+    expect(link).toHaveTextContent('Managed');
+    expect(link).toHaveTextContent('Monitored');
+  });
+
+  it('shows muted "not managed" / "not monitored" for a host without the capabilities', async () => {
+    mockApi(rowRoutes('operator', { ...HOSTS.hosts[0], managed: false, monitored: false }));
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    const link = await screen.findByRole('link', { name: 'web-04.fra' });
+    expect(link).toHaveTextContent('not managed');
+    expect(link).toHaveTextContent('not monitored');
+  });
+
+  it('menu toggle does not navigate', async () => {
+    const user = userEvent.setup();
+    let patched: unknown;
+    mockApi({
+      ...rowRoutes('operator'),
+      'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
+        patched = req.body;
+        return { host: { ...MONITORED_HOST, monitored: false } };
+      },
+    });
+    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Switch monitoring off' }));
+
+    await waitFor(() => expect(patched).toEqual({ monitored: false }));
+    expect(router.state.location.pathname).toBe('/o/acme/hosts');
+    expect(screen.queryByText('HOST PAGE')).not.toBeInTheDocument();
+  });
+
+  it('switches management on for an unmanaged host', async () => {
+    const user = userEvent.setup();
+    let patched: unknown;
+    mockApi({
+      ...rowRoutes('operator', { ...HOSTS.hosts[0], managed: false }),
+      'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
+        patched = req.body;
+        return { host: HOSTS.hosts[0] };
+      },
+    });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Switch management on' }));
+
+    await waitFor(() => expect(patched).toEqual({ managed: true }));
+  });
+
+  it('capabilities in the list are not interactive', async () => {
+    mockApi(rowRoutes('admin'));
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await screen.findByRole('link', { name: 'web-04.fra' });
+    expect(screen.queryAllByRole('switch')).toHaveLength(0);
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /enable/ })).not.toBeInTheDocument();
+  });
+
+  it('viewer sees only Open', async () => {
+    const user = userEvent.setup();
+    mockApi(rowRoutes('viewer'));
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual(['Open']);
+  });
+
+  it('operator sees every item, in order', async () => {
+    const user = userEvent.setup();
+    mockApi(rowRoutes('operator'));
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual([
+      'Open',
+      'Edit',
+      'Run play',
+      'Switch monitoring off',
+      'Switch management off',
+      'Delete…',
+    ]);
+  });
+
+  it('offers no Run play for a host that is not managed', async () => {
+    const user = userEvent.setup();
+    mockApi(rowRoutes('operator', { ...HOSTS.hosts[0], managed: false }));
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await screen.findAllByRole('menuitem');
+    expect(screen.queryByRole('menuitem', { name: 'Run play' })).not.toBeInTheDocument();
+  });
+
+  it('Open navigates to the host page', async () => {
+    const user = userEvent.setup();
+    mockApi(rowRoutes('viewer'));
+    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Open' }));
+
+    expect(await screen.findByText('HOST PAGE')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/hosts/h1');
+  });
+
+  it('Edit opens the host dialog without leaving the list', async () => {
+    const user = userEvent.setup();
+    mockApi(rowRoutes('operator'));
+    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Edit host web-04.fra' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/hosts');
+  });
+
+  it('Run play opens the ad-hoc dialog with this host selected', async () => {
+    const user = userEvent.setup();
+    mockApi(rowRoutes('operator'));
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Run play' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Run command' });
+    expect(await within(dialog).findByRole('checkbox', { name: 'web-04.fra' })).toBeChecked();
+    expect(within(dialog).getByText('1 host(s) selected')).toBeInTheDocument();
+  });
+
+  it('Delete asks first, then deletes and stays on the list', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let deleted = false;
+    mockApi({
+      ...rowRoutes('operator'),
+      'DELETE /api/v1/orgs/acme/hosts/h1': () => {
+        deleted = true;
+        return {};
+      },
+    });
+    const { router } = renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+
+    await waitFor(() => expect(deleted).toBe(true));
+    expect(confirm).toHaveBeenCalledWith('Delete host web-04.fra? This cannot be undone.');
+    expect(await screen.findByText('Host web-04.fra deleted')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/hosts');
+    confirm.mockRestore();
+  });
+
+  it('Delete does nothing when the confirmation is declined', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    let deleted = false;
+    mockApi({
+      ...rowRoutes('operator'),
+      'DELETE /api/v1/orgs/acme/hosts/h1': () => {
+        deleted = true;
+        return {};
+      },
+    });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+
+    expect(confirm).toHaveBeenCalled();
+    expect(deleted).toBe(false);
+    confirm.mockRestore();
   });
 });
