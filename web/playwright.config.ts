@@ -93,8 +93,9 @@ export default defineConfig({
     { name: 'triggers', testMatch: /triggers\.spec\.ts/, dependencies: ['workers'] },
     // Account administration (backlog 7.74): the administrator sets a
     // temporary password for members.spec's operator, who must then change
-    // it. It changes that operator's password, so it runs after every spec
-    // that signs the operator in with the original one.
+    // it, and the operator then resets it through a mailed link. It
+    // changes that operator's password, so it runs after every spec that
+    // signs the operator in with the original one.
     { name: 'accounts', testMatch: /accounts\.spec\.ts/, dependencies: ['triggers'] },
     { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['accounts'] },
   ],

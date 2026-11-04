@@ -79,6 +79,8 @@ export const OPERATOR = {
   name: 'Otto Operator',
   password: 'operator-password',
   changedPassword: 'operator-own-password',
+  // accounts.spec's reset-link journey sets this one through a mailed link.
+  resetPassword: 'operator-reset-password',
 };
 
 // SMTP delivered straight to the mailpit container started above — no

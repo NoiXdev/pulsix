@@ -10,6 +10,7 @@ import {
   TOTP_STEP_STATE_PATH,
 } from './env.ts';
 import { nextTotpCode } from './otp.ts';
+import { waitForMessageMatching } from './mailpit.ts';
 
 // Account administration end to end: the instance administrator sets a
 // temporary password for the operator members.spec created, and that
@@ -100,6 +101,66 @@ test('an instance admin sets a temporary password and the person must change it 
 
     await expect(operatorPage).toHaveURL(/\/o\/[^/]+\/hosts$/);
     await expect(operatorPage.getByRole('heading', { name: 'Hosts' })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+// The reset link a forgot-password mail carries, token in the fragment.
+const RESET_LINK = /\/reset-password#token=([A-Za-z0-9_-]+)/;
+
+// Forgot password end to end: the operator asks for a link on the sign-in
+// page, follows the one the mail carries, and chooses a new password. The
+// page takes the token out of the address bar as soon as it has read it,
+// and the reset signs nobody in: the next sign-in takes the new password
+// and still asks for the second factor. Runs after the temporary-password
+// journey above, which leaves the operator with no pending change (while
+// one is pending, forgot sends no link).
+test('a person resets a forgotten password through the mailed link and still signs in with the second factor', async ({
+  browser,
+}) => {
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const page = await context.newPage();
+  try {
+    // --- Ask for a link ----------------------------------------------------
+    await page.goto('/login');
+    await page.getByRole('link', { name: 'Forgot password?' }).click();
+    await expect(page).toHaveURL(/\/forgot-password$/);
+    await page.getByLabel('Email address').fill(OPERATOR.email);
+    await page.getByRole('button', { name: 'Send link' }).click();
+    await expect(page.getByText('If an account exists for this address, we sent a link to it.', { exact: false })).toBeVisible();
+
+    const mail = await waitForMessageMatching(OPERATOR.email, RESET_LINK);
+    const token = mail.match(RESET_LINK)?.[1];
+    if (!token) throw new Error(`the reset mail carries no link:\n${mail}`);
+
+    // --- Follow it: the token leaves the address bar -----------------------
+    await page.goto(`/reset-password#token=${token}`);
+    await expect(page.getByRole('heading', { name: 'Choose a new password' })).toBeVisible();
+    await expect.poll(() => page.url()).not.toContain(token);
+    expect(new URL(page.url()).hash).toBe('');
+    await expect(page).toHaveURL(/\/reset-password$/);
+
+    await page.getByLabel('New password', { exact: true }).fill(OPERATOR.resetPassword);
+    await page.getByLabel('Repeat the new password').fill(OPERATOR.resetPassword);
+    await page.getByRole('button', { name: 'Set password' }).click();
+    await expect(page.getByRole('heading', { name: 'Your password is set' })).toBeVisible();
+
+    // --- Sign in: the new password, and the second factor all the same ------
+    await page.getByRole('link', { name: 'Go to sign in' }).click();
+    await expect(page).toHaveURL(/\/login/);
+    await page.getByLabel('Email address').fill(OPERATOR.email);
+    await page.getByLabel('Password').fill(OPERATOR.resetPassword);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Enter your second-factor code' })).toBeVisible();
+    await page
+      .getByLabel('6-digit code')
+      .fill(await nextTotpCode(secretOf(OPERATOR_TOTP_STATE_PATH), OPERATOR_TOTP_STEP_STATE_PATH));
+    await page.getByRole('button', { name: 'Verify' }).click();
+
+    await expect(page).toHaveURL(/\/o\/[^/]+\/hosts$/);
+    await expect(page.getByRole('heading', { name: 'Hosts' })).toBeVisible();
   } finally {
     await context.close();
   }

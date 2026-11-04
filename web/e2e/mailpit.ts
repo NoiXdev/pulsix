@@ -48,6 +48,24 @@ export async function waitForMessageTo(to: string, timeoutMs = 15_000): Promise<
   }
 }
 
+/**
+ * waitForMessageMatching polls like waitForMessageTo, but returns only once
+ * the newest message to `to` matches `pattern`: for an address that was
+ * already sent other mail (a notice, an earlier link) before the one the
+ * test is waiting for.
+ */
+export async function waitForMessageMatching(to: string, pattern: RegExp, timeoutMs = 15_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const last = await waitForMessageTo(to, Math.max(0, deadline - Date.now()));
+    if (pattern.test(last)) return last;
+    if (Date.now() > deadline) {
+      throw new Error(`no mail to ${to} matched ${pattern} within ${timeoutMs}ms; the newest was:\n${last}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 /** extractInviteLink pulls the "Accept: <url>" link out of the invite
  * e-mail body internal/tenancy.Service.Invite sends (see its own
  * fmt.Sprintf call), and the bare token from the end of that URL. */
