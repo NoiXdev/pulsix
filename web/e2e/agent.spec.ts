@@ -37,11 +37,17 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
     await page.getByLabel('Host name (optional)').fill(AGENT_HOST);
     await page.getByRole('button', { name: 'Create token' }).click();
 
-    // The token is shown once, with the command that uses it.
+    // The token is shown once, beside the command but not inside it: the
+    // command line of the root installer is readable by every local user
+    // of the host, so the installer asks for the token on the terminal
+    // instead (backlog 7.30; internal/api/agent_handlers_test.go asserts
+    // the same on the API).
     const token = (await page.getByLabel('Enrollment token').textContent())?.trim() ?? '';
     expect(token).toMatch(/^pxa1\./);
-    await expect(page.getByLabel('Install command')).toContainText('/install.sh');
-    await expect(page.getByLabel('Install command')).toContainText(token);
+    const command = page.getByLabel('Install command');
+    await expect(command).toContainText('/install.sh');
+    await expect(command).not.toContainText(token);
+    await expect(command).not.toContainText('--token ');
     await page.getByRole('button', { name: 'Done' }).click();
 
     // Until it is redeemed the token waits on the page, without its secret.
