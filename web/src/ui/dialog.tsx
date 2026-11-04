@@ -9,8 +9,12 @@ export interface DialogProps {
    * assignment form next to the group's read-only values); default fits
    * every other dialog in the app. */
   size?: 'default' | 'wide';
-  /** false keeps Escape from closing the dialog, for while a request it
-   * started is in flight and its answer must not be lost. */
+  /** false asks the browser not to close the dialog on Escape (it prevents
+   * the native `cancel`), for while a request it started is in flight. It is
+   * a request, not a guarantee: under the close-watcher rules a `cancel` is
+   * cancelable only with user activation, so a repeated Escape can still
+   * close the dialog. A caller must not keep anything it cannot lose in the
+   * dialog's own lifetime (see features/users/useAccountActionRunner.ts). */
   dismissible?: boolean;
 }
 

@@ -5,14 +5,13 @@ import { Button } from '../../ui/button.tsx';
 import { buttonClass } from '../../ui/buttonStyles.ts';
 import { Dialog } from '../../ui/dialog.tsx';
 import { DisabledHint } from '../../ui/detail-layout.tsx';
-import { useToast } from '../../ui/toastContext.ts';
 import { useResetAvailable } from '../../api/hooks/usePassword.ts';
-import type { AccountNotice, AdminUserDetail } from '../../api/types.ts';
-import { isStepUpRequired, useStepUp } from '../account/stepUp.tsx';
+import type { AdminUserDetail } from '../../api/types.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
-import { useAccountActionCalls, type ActionKind } from './useAccountActionCalls.ts';
+import type { ActionKind } from './useAccountActionCalls.ts';
+import { useAccountActionRunner, type Revealed } from './useAccountActionRunner.ts';
 import { availableActions } from './accountState.ts';
 
 const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(['resetFactor', 'deactivate']);
@@ -24,12 +23,17 @@ const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(['resetFactor', 'deactivate
  * the notice mail to the person went. On the admin's own account it offers
  * nothing and points to Account security instead. Shared by the account
  * page and the member page.
+ *
+ * The request and its answer belong to this component
+ * (useAccountActionRunner), not to the confirm dialog, so a dialog the
+ * browser closed mid-request loses nothing.
  */
 export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId: string }) {
   const t = useT();
   const resetAvailable = useResetAvailable();
-  const [open, setOpen] = useState<ActionKind | null>(null);
+  const runner = useAccountActionRunner(user);
   const a = t.users.actions;
+  const openKind = runner.open;
 
   if (user.id === selfId) {
     return (
@@ -58,8 +62,9 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
               <Button
                 type="button"
                 variant={DESTRUCTIVE.has(kind) ? 'destructive' : 'default'}
-                disabled={blocked !== null}
-                onClick={() => setOpen(kind)}
+                disabled={blocked !== null || runner.running !== null}
+                aria-busy={runner.running === kind}
+                onClick={() => runner.setOpen(kind)}
               >
                 {a[kind].label}
               </Button>
@@ -67,7 +72,19 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
           );
         })}
       </div>
-      {open && <ActionDialog key={open} kind={open} user={user} onClose={() => setOpen(null)} />}
+      {openKind && (
+        <ConfirmDialog
+          key={openKind}
+          kind={openKind}
+          email={user.email}
+          busy={runner.running === openKind}
+          error={runner.error}
+          onConfirm={() => runner.confirm(openKind)}
+          onClose={() => runner.setOpen(null)}
+        />
+      )}
+      {runner.revealed && <TemporaryPasswordReveal revealed={runner.revealed} onClose={runner.closeReveal} />}
+      {runner.stepUpDialog}
     </>
   );
 }
@@ -81,88 +98,55 @@ function resetLinkBlocked(t: Messages, available: { data?: { available: boolean 
   return available.isError ? a.checkFailed : a.checking;
 }
 
-interface Revealed {
-  password: string;
-  expiresAt: string;
-  notice: AccountNotice;
-}
-
-/**
- * ActionDialog confirms one action and runs it. For the temporary password
- * it then turns into the one-time reveal: the password lives in this
- * dialog's state and nowhere else, and is gone when the dialog closes
- * (AccountActions unmounts it).
- */
-function ActionDialog({ kind, user, onClose }: { kind: ActionKind; user: AdminUserDetail; onClose: () => void }) {
+/** ConfirmDialog says what an action will do and starts it. It holds no
+ * state of the request: closing it mid-request loses nothing. */
+function ConfirmDialog({
+  kind,
+  email,
+  busy,
+  error,
+  onConfirm,
+  onClose,
+}: {
+  kind: ActionKind;
+  email: string;
+  busy: boolean;
+  error: string | null;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
   const t = useT();
-  const toast = useToast();
-  const stepUp = useStepUp();
-  const calls = useAccountActionCalls(user.id);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<Revealed | null>(null);
   const a = t.users.actions;
   const text = a[kind];
-
-  // The action handles its own failures, except the step-up refusal, which
-  // useStepUp turns into the second-factor prompt and a retry. A retry
-  // runs outside run()'s error handling, so nothing may escape it.
-  async function action() {
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await calls[kind]();
-      if (res.temporary) {
-        const { password, expires_at, notice } = res.temporary;
-        setRevealed({ password, expiresAt: expires_at, notice });
-        return;
-      }
-      toast.show(successMessage(t, kind, user.email, res.notice), res.notice === 'failed' ? 'warn' : 'default');
-      onClose();
-    } catch (err) {
-      if (isStepUpRequired(err)) throw err;
-      setError(describeError(t, err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (revealed) {
-    return <TemporaryPasswordReveal revealed={revealed} onClose={onClose} />;
-  }
-
   return (
-    <>
-      <Dialog open onClose={onClose} title={text.label} dismissible={!busy}>
-        <div className="flex flex-col gap-4">
-          <p className="text-xs text-muted-foreground">{kind === 'resetLink' ? a.resetLink.body(user.email) : a[kind].body}</p>
-          {kind === 'resetFactor' && (
-            <p className="rounded-md border border-[var(--px-warn)] p-3 text-xs text-[var(--px-warn)]">{a.resetFactor.warning}</p>
-          )}
-          {busy && kind === 'tempPassword' && <p className="text-xs text-muted-foreground">{a.tempPassword.busy}</p>}
-          {error && (
-            <p role="alert" className="text-xs text-destructive">
-              {error}
-            </p>
-          )}
-          <div className="flex justify-end gap-2">
-            <Button type="button" disabled={busy} onClick={onClose}>
-              {a.cancel}
-            </Button>
-            <Button
-              type="button"
-              variant={DESTRUCTIVE.has(kind) ? 'destructive' : 'primary'}
-              disabled={busy}
-              aria-busy={busy}
-              onClick={() => void stepUp.run(action, (err) => setError(describeError(t, err)))}
-            >
-              {busy ? a.working : text.confirm}
-            </Button>
-          </div>
+    <Dialog open onClose={onClose} title={text.label} dismissible={!busy}>
+      <div className="flex flex-col gap-4">
+        <p className="text-xs text-muted-foreground">{kind === 'resetLink' ? a.resetLink.body(email) : a[kind].body}</p>
+        {kind === 'resetFactor' && (
+          <p className="rounded-md border border-[var(--px-warn)] p-3 text-xs text-[var(--px-warn)]">{a.resetFactor.warning}</p>
+        )}
+        {busy && kind === 'tempPassword' && <p className="text-xs text-muted-foreground">{a.tempPassword.busy}</p>}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" disabled={busy} onClick={onClose}>
+            {a.cancel}
+          </Button>
+          <Button
+            type="button"
+            variant={DESTRUCTIVE.has(kind) ? 'destructive' : 'primary'}
+            disabled={busy}
+            aria-busy={busy}
+            onClick={onConfirm}
+          >
+            {busy ? a.working : text.confirm}
+          </Button>
         </div>
-      </Dialog>
-      {stepUp.dialog}
-    </>
+      </div>
+    </Dialog>
   );
 }
 
@@ -214,47 +198,4 @@ function TemporaryPasswordReveal({ revealed, onClose }: { revealed: Revealed; on
       </div>
     </Dialog>
   );
-}
-
-/** The toast after an action: what happened, and how the mail to the person
- * went. A failed mail is reported, but the action itself stands. */
-function successMessage(t: Messages, kind: ActionKind, email: string, notice: AccountNotice | undefined): string {
-  const a = t.users.actions;
-  if (kind === 'resetLink') {
-    switch (notice) {
-      case 'failed':
-        return a.resetLink.failed;
-      case 'skipped':
-        return a.resetLink.skipped;
-      case 'not_configured':
-        return a.resetLink.notConfigured;
-      default:
-        return a.resetLink.sent(email);
-    }
-  }
-  const done = kind === 'tempPassword' ? '' : a[kind].done;
-  return notice ? `${done} ${a.notice[notice]}`.trim() : done;
-}
-
-/** The refusals the account routes answer with, in the reader's language;
- * anything else is the server's own message. `instance admin required`
- * is prose, not a code, and only a fallback: the pages are not offered to
- * anyone else. */
-function describeError(t: Messages, err: unknown): string {
-  const e = t.users.actions.errors;
-  const message = err instanceof Error ? err.message : '';
-  switch (message) {
-    case 'not_on_own_account':
-      return e.notOnOwnAccount;
-    case 'invite_pending':
-      return e.invitePending;
-    case 'mail_not_configured':
-      return e.mailNotConfigured;
-    case 'last_instance_admin':
-      return e.lastInstanceAdmin;
-    case 'instance admin required':
-      return e.instanceAdminRequired;
-    default:
-      return message || e.failed;
-  }
 }

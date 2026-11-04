@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { mockApi, type MockRoute } from '../../test/mockApi.ts';
@@ -125,6 +125,63 @@ describe('AccountActions', () => {
     answer({ password: SECRET, expires_at: '2026-11-05T10:00:00Z', notice: 'sent' });
     const reveal = await screen.findByRole('dialog', { name: 'Temporary password' });
     expect(within(reveal).getByLabelText('Temporary password')).toHaveTextContent(SECRET);
+  });
+
+  // A real browser may close a <dialog> even while its cancel is
+  // prevented (close watchers: a repeated Escape without user activation
+  // fires a cancel that cannot be prevented). The answer must survive that.
+  it('reveals the temporary password even when the confirm dialog was closed while the request ran', async () => {
+    const user = userEvent.setup();
+    let answer: (body: unknown) => void = () => {};
+    render(accountDetail(), {
+      'POST /api/v1/admin/users/u2/temporary-password': () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Set temporary password' }));
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Set temporary password' });
+    await user.click(within(confirmDialog).getByRole('button', { name: 'Set temporary password' }));
+    await within(confirmDialog).findByText(/This can take a moment/);
+
+    act(() => (confirmDialog as HTMLDialogElement).close());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Set temporary password' })).not.toBeInTheDocument());
+    // Nothing else can start while the request runs.
+    expect(screen.getByRole('button', { name: 'Set temporary password' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'End all sessions' })).toBeDisabled();
+
+    answer({ password: SECRET, expires_at: '2026-11-05T10:00:00Z', notice: 'sent' });
+    const reveal = await screen.findByRole('dialog', { name: 'Temporary password' });
+    expect(within(reveal).getByLabelText('Temporary password')).toHaveTextContent(SECRET);
+    expect(screen.getByRole('button', { name: 'End all sessions' })).toBeEnabled();
+  });
+
+  it('reports a refusal as a toast when the confirm dialog was closed while the request ran', async () => {
+    const user = userEvent.setup();
+    let answer: (res: Response) => void = () => {};
+    render(accountDetail({ instance_admin: true }), {
+      'POST /api/v1/admin/users/u2/deactivate': () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Deactivate account' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Deactivate account' });
+    await user.click(within(dialog).getByRole('button', { name: 'Deactivate account' }));
+    await within(dialog).findByRole('button', { name: 'Working…' });
+
+    act(() => {
+      dialog.dispatchEvent(new Event('cancel', { cancelable: false }));
+      (dialog as HTMLDialogElement).close();
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Deactivate account' })).not.toBeInTheDocument());
+
+    answer(new Response(JSON.stringify({ detail: 'last_instance_admin' }), { status: 409 }));
+    const toast = await screen.findByRole('status');
+    expect(toast).toHaveTextContent('The last active instance administrator cannot be deactivated.');
+    expect(toast).toHaveAttribute('data-tone', 'destructive');
   });
 
   it('says in the reveal when the notice mail failed', async () => {
