@@ -13,6 +13,8 @@ export interface JobListFilter {
   triggerRef?: string;
   /** Only the runs that targeted this host (a host id). */
   host?: string;
+  /** Page size; JOBS_PAGE_SIZE when omitted. */
+  limit?: number;
 }
 
 /** useJobs is the keyset-paginated runs list; the filters are part of the
@@ -35,7 +37,7 @@ export function useJobs(org: string, filter: JobListFilter = {}) {
               trigger_ref: filter.triggerRef ?? '',
               host_id: filter.host ?? '',
               cursor: pageParam || undefined,
-              limit: JOBS_PAGE_SIZE,
+              limit: filter.limit ?? JOBS_PAGE_SIZE,
             },
           },
         }),

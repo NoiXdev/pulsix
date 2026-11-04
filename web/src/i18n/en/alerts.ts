@@ -112,7 +112,6 @@ export const enAlerts = {
     failed: 'Snoozing this alert failed',
   },
   hostCard: {
-    title: 'Alerts',
     fullHistory: 'Full history, including closed alerts',
     readFailed: 'Could not read this host’s alerts.',
     none: 'No open alerts for this host right now — it is healthy.',

@@ -64,7 +64,8 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
     await expect(agentCard).toBeVisible();
     // Facts the agent collected from the machine it runs on, and the
     // automatic tag derived from them.
-    await expect(page.getByText('Facts')).toBeVisible();
+    // The Facts section's heading: the section nav carries the same word.
+    await expect(page.getByRole('heading', { name: 'Facts', exact: true })).toBeVisible();
     await expect(page.getByText(/^os$/).first()).toBeVisible({ timeout: 60_000 });
     // Enrolment is what makes a host monitored.
     await expect(page.getByRole('switch', { name: /Monitored/i })).toBeChecked();

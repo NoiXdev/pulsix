@@ -104,9 +104,8 @@ describe('HostChecksCard when the chart chunk does not arrive', () => {
     expect(fallback).toHaveStyle({ height: '180px' });
     // The router's own error component would have replaced all of this.
     expect(screen.getByRole('heading', { name: 'web-04.fra' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'cpu' })).toBeInTheDocument();
     expect(screen.getByText('12.5')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Manage checks' })).toBeInTheDocument();
     expect(screen.queryByText(/Something went wrong/)).not.toBeInTheDocument();
     // The range switch stays usable: only the drawing surface is gone.
     expect(screen.getByRole('button', { name: '24 h' })).toBeInTheDocument();

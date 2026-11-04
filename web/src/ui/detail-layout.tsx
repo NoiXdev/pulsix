@@ -76,7 +76,9 @@ export function DetailLayout({
 
   return (
     <div className="grid grid-cols-1 items-start gap-6 min-[1100px]:grid-cols-[300px_minmax(0,1fr)]">
-      <aside className="flex min-w-0 flex-col gap-4 min-[1100px]:sticky min-[1100px]:top-0 min-[1100px]:max-h-[calc(100vh-8rem)] min-[1100px]:overflow-y-auto">
+      {/* top-6 matches the shell's <main> padding: <main> is the scroller,
+          and sticking at 0 would pin the sidebar flush to its top edge. */}
+      <aside className="flex min-w-0 flex-col gap-4 min-[1100px]:sticky min-[1100px]:top-6 min-[1100px]:max-h-[calc(100vh-8rem)] min-[1100px]:overflow-y-auto">
         {sidebar}
         {nav.length > 0 && (
           <nav className="flex flex-col gap-0.5">

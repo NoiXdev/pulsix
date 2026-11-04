@@ -108,7 +108,6 @@ export const deAlerts: Messages['alerts'] = {
     failed: 'Der Alarm konnte nicht zurückgestellt werden',
   },
   hostCard: {
-    title: 'Alarme',
     fullHistory: 'Vollständiger Verlauf, einschließlich geschlossener Alarme',
     readFailed: 'Die Alarme dieses Hosts konnten nicht gelesen werden.',
     none: 'Derzeit keine offenen Alarme für diesen Host – er ist in Ordnung.',

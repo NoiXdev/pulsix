@@ -32,7 +32,8 @@ export interface HostAlertsCardProps {
  * list: a host that ever had a single alert would show a row forever and
  * could never again read as healthy.
  *
- * The history is not lost, only moved: the link beside the heading sends
+ * The history is not lost, only moved: HostAlertsHistoryLink, which the
+ * host page puts beside its Alerts section title, sends
  * `search={{ host: hostId }}` to the org-wide Alerts page — `alertsRoute`
  * validates that search parameter (router.tsx) and `AlertsPage` seeds its
  * own filter from it, so the operator lands pre-scoped to this host,
@@ -71,20 +72,6 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
 
   return (
     <Card className="p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">{t.alerts.hostCard.title}</h2>
-        {canRead && (
-          <Link
-            to="/o/$org/alerts"
-            params={{ org }}
-            search={{ host: hostId }}
-            className="text-xs text-muted-foreground hover:text-primary"
-          >
-            {t.alerts.hostCard.fullHistory}
-          </Link>
-        )}
-      </div>
-
       {!canRead && <p className="text-xs text-muted-foreground">{t.alerts.noAccess}</p>}
       {canRead && alerts.isError && (
         <p role="alert" className="text-xs text-destructive">
@@ -142,5 +129,19 @@ function AlertTimelinePanel({ org, alertId }: { org: string; alertId: string }) 
         />
       )}
     </div>
+  );
+}
+
+/** HostAlertsHistoryLink is the way from the host's open alerts to all of
+ * them, closed ones included: the org-wide Alerts page pre-filtered to the
+ * host (see HostAlertsCard). The host page renders it beside the Alerts
+ * section's title, which names the card. Nothing without `checks.read`. */
+export function HostAlertsHistoryLink({ org, hostId, canRead }: HostAlertsCardProps) {
+  const t = useT();
+  if (!canRead) return null;
+  return (
+    <Link to="/o/$org/alerts" params={{ org }} search={{ host: hostId }} className="text-xs text-muted-foreground hover:text-primary">
+      {t.alerts.hostCard.fullHistory}
+    </Link>
   );
 }

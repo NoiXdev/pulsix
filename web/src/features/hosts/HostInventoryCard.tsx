@@ -5,13 +5,13 @@ import { useHostInventoryGroups } from '../../api/hooks/useInventory.ts';
 import { useT } from '../../i18n/useT.ts';
 
 /** HostInventoryCard lists the inventory groups a managed host is a direct
- * member of, with whether its values are complete. */
+ * member of, with whether its values are complete. It has no title of its
+ * own: the host page's Inventory section names it. */
 export function HostInventoryCard({ org, hostId, managed }: { org: string; hostId: string; managed: boolean }) {
   const t = useT();
   const groups = useHostInventoryGroups(org, managed ? hostId : '');
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-[13px] font-semibold">{t.hosts.inventory.title}</h2>
       {!managed && <p className="text-xs text-muted-foreground">{t.hosts.inventory.needsManaged}</p>}
       {managed && groups.data && (groups.data.groups ?? []).length === 0 && <p className="text-xs text-muted-foreground">{t.hosts.inventory.none}</p>}
       {managed && (

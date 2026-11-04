@@ -13,8 +13,8 @@ export interface HostChecksCardProps {
   hostId: string;
   /** `checks.read` — a viewer's right; without it nothing is requested. */
   canRead: boolean;
-  /** `checks.write` — an operator's; the card itself edits nothing, so
-   * this only decides whether the way to the editor is offered. */
+  /** `checks.write` — an operator's; it offers the per-value item
+   * decisions (the way to the editor is ManageChecksLink's). */
   canWrite: boolean;
 }
 
@@ -85,15 +85,6 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
 
   return (
     <Card className="p-4">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">{t.hosts.checks.title}</h2>
-        {canWrite && (
-          <Link to="/o/$org/checks" params={{ org }} className="text-xs text-muted-foreground hover:text-primary">
-            {t.hosts.checks.manage}
-          </Link>
-        )}
-      </div>
-
       {!canRead && <p className="text-xs text-muted-foreground">{t.hosts.checks.noAccess}</p>}
       {canRead && query.isError && (
         <p role="alert" className="text-xs text-destructive">
@@ -154,5 +145,18 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
         </>
       )}
     </Card>
+  );
+}
+
+/** ManageChecksLink is the way from the host's checks to the editor, for a
+ * role with `checks.write`. The host page renders it beside the Checks
+ * section's title, which names HostChecksCard. */
+export function ManageChecksLink({ org, canWrite }: { org: string; canWrite: boolean }) {
+  const t = useT();
+  if (!canWrite) return null;
+  return (
+    <Link to="/o/$org/checks" params={{ org }} className="text-xs text-muted-foreground hover:text-primary">
+      {t.hosts.checks.manage}
+    </Link>
   );
 }

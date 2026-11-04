@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { HostChecksCard } from './HostChecksCard.tsx';
+import { HostChecksCard, ManageChecksLink } from './HostChecksCard.tsx';
 
 const NOW = '2026-09-27T12:00:00Z';
 
@@ -68,7 +68,14 @@ function renderCard(canRead = true, canWrite = true, retry: number | boolean = f
   const hostRoute = createRoute({
     getParentRoute: () => orgRoute,
     path: '/hosts/$id',
-    component: () => <HostChecksCard org="acme" hostId="h1" canRead={canRead} canWrite={canWrite} />,
+    // ManageChecksLink sits beside the host page's Checks section title;
+    // rendered together here as the page renders them.
+    component: () => (
+      <>
+        <ManageChecksLink org="acme" canWrite={canWrite} />
+        <HostChecksCard org="acme" hostId="h1" canRead={canRead} canWrite={canWrite} />
+      </>
+    ),
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([checksRoute, hostRoute])]),

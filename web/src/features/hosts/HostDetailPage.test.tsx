@@ -1,227 +1,265 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
-import { ToastProvider } from '../../ui/toast.tsx';
+import { QueryClient } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { alertBody, check, HOST, hostRoutes, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
 import { HostDetailPage } from './HostDetailPage.tsx';
 
-const HOST = {
-  host: {
-    id: 'h1',
-    name: 'web-04.fra',
-    zone_id: 'z1',
-    address: '203.0.113.4',
-    managed: false,
-    monitored: false,
-    last_seen_at: '2026-03-01T00:00:00Z',
-    facts: { os: 'debian-13' },
-  },
-};
+const renderPage = (qc?: QueryClient) => renderAt(HostDetailPage, qc);
 
-/** The org response carries the role every permission on this page is
- * derived from. Every test mocks it: a page that renders before it lands
- * is the state this file's last two cases are about. */
-const ORG = { org: { id: 'o1', name: 'Acme', slug: 'acme', role: 'admin', created_at: '2026-01-01T00:00:00Z' } };
-
-const NO_CHECKS = { host_id: 'h1', monitored: false, checks: [] };
-
-function renderPage(qc: QueryClient) {
-  const rootRoute = createRootRoute();
-  const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  const hostsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts', component: () => <div>HOSTS PAGE</div> });
-  const detailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: HostDetailPage });
-  const routeTree = rootRoute.addChildren([orgRoute.addChildren([hostsRoute, detailRoute])]);
-  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/o/acme/hosts/h1'] }) });
-
-  return render(
-    <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
-    </QueryClientProvider>,
-  );
+/** The section nav, as label → count ('' for an item without one). */
+function navItems(): Array<[string, string]> {
+  const nav = screen.getByRole('navigation');
+  return within(nav)
+    .getAllByRole('link')
+    .map((a) => {
+      const spans = a.querySelectorAll('span');
+      return [spans[0]?.textContent ?? '', spans[1]?.textContent ?? ''];
+    });
 }
 
+const MONITORED_CHECKS = {
+  host_id: 'h1',
+  monitored: true,
+  checks: [check('cpu', 'cpu', [reading('cpu.used_pct', 23)]), check('memory', 'memory', [reading('mem.used_pct', 61)])],
+};
+
 describe('HostDetailPage', () => {
-  it('renders facts and toggles the Managed capability', async () => {
+  it('renders sidebar facts and section nav', async () => {
+    mockApi(
+      hostRoutes(
+        { host: { managed: true, monitored: true } },
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS,
+          'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn'), alertBody('a2', 'warn')], next_cursor: '' },
+          'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+        },
+      ),
+    );
+    renderPage();
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'web-04.fra' })).toBeInTheDocument();
+    const facts = within(screen.getByTestId('host-facts'));
+    expect(facts.getByText('Address')).toBeInTheDocument();
+    expect(facts.getByText('203.0.113.4')).toBeInTheDocument();
+    expect(await facts.findByText('fra-1')).toBeInTheDocument();
+    expect(facts.getByText('debian 13')).toBeInTheDocument();
+    expect(await screen.findByText('2 warnings')).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(navItems()).toEqual([
+        ['State', ''],
+        ['Alerts', '2'],
+        ['Checks', '2'],
+        ['Runs', ''],
+        ['Connection & SSH', ''],
+        ['Inventory', ''],
+        ['Facts', ''],
+      ]),
+    );
+    const alertsLink = within(screen.getByRole('navigation')).getByRole('link', { name: /Alerts/ });
+    expect(alertsLink).toHaveAttribute('href', '#alerts');
+    for (const id of ['state', 'alerts', 'checks', 'runs', 'connection', 'inventory', 'facts']) {
+      expect(document.getElementById(id)).not.toBeNull();
+    }
+    // The section titles name the cards; the cards no longer repeat them.
+    expect(screen.queryByRole('heading', { name: 'Monitoring' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Manage checks' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Full history/ })).toHaveAttribute('href', '/o/acme/alerts?host=h1');
+  });
+
+  it('no clipped cards', async () => {
+    mockApi(
+      hostRoutes(
+        { host: { managed: true, monitored: true } },
+        { 'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS, 'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] } },
+      ),
+    );
+    const { container } = renderPage();
+    await screen.findByRole('navigation');
+    await screen.findByText('23 %');
+
+    // A card that hides its overflow at a fixed height cuts its content off;
+    // every card on this page grows with what it holds instead.
+    const fixedHeight = /^(max-)?h-(\d|\[)/;
+    const clipped = [...container.querySelectorAll<HTMLElement>('*')].filter(
+      (el) => el.classList.contains('overflow-hidden') && [...el.classList].some((c) => fixedHeight.test(c.replace(/^.*:/, ''))),
+    );
+    expect(clipped).toEqual([]);
+  });
+
+  it('monitored off hides state, alerts and checks and shows the hint', async () => {
+    const asked: string[] = [];
+    mockApi(
+      hostRoutes(
+        {},
+        {
+          // What would apply if it were on: none of it may show.
+          'GET /api/v1/orgs/acme/hosts/h1/checks': (req: MockRequest) => {
+            asked.push(req.path);
+            return { ...MONITORED_CHECKS, monitored: false };
+          },
+        },
+      ),
+    );
+    renderPage();
+
+    expect(await screen.findByText('Monitoring is off')).toBeInTheDocument();
+    expect(screen.getByText('No checks are measured and no alerts raised.')).toBeInTheDocument();
+    expect(screen.queryByText(/cpu/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/still open/)).not.toBeInTheDocument();
+    await waitFor(() => expect(navItems().map(([label]) => label)).toEqual(['Runs', 'Connection & SSH', 'Inventory', 'Facts']));
+    for (const id of ['state', 'alerts', 'checks']) expect(document.getElementById(id)).toBeNull();
+    expect(asked).toEqual([]);
+  });
+
+  it('monitored off: Enable switches monitoring on', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     let patched: unknown;
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-      'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
-        patched = req.body;
-        return { host: { ...HOST.host, managed: true } };
-      },
-    });
+    mockApi(
+      hostRoutes(
+        {},
+        {
+          'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
+            patched = req.body;
+            return { host: { ...HOST, monitored: true } };
+          },
+        },
+      ),
+    );
+    renderPage();
 
-    renderPage(qc);
-
-    expect(await screen.findByText('web-04.fra')).toBeInTheDocument();
-    expect(screen.getByText('debian-13')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('switch', { name: /Managed/ }));
-    expect(patched).toEqual({ managed: true });
+    const hint = (await screen.findByText('Monitoring is off')).parentElement as HTMLElement;
+    await user.click(within(hint).getByRole('button', { name: 'Enable' }));
+    await waitFor(() => expect(patched).toEqual({ monitored: true }));
   });
 
-  it('adds and removes a manual tag', async () => {
-    const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    let putTags: unknown;
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-      'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
-        putTags = req.body;
-        return { tags: [{ key: 'role', value: 'db', source: 'manual' }] };
-      },
-    });
+  it('monitored off with 2 open alerts shows the link', async () => {
+    mockApi(
+      hostRoutes({}, { 'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn'), alertBody('a2', 'crit')], next_cursor: '' } }),
+    );
+    renderPage();
 
-    renderPage(qc);
-
-    await user.type(await screen.findByPlaceholderText('role=db'), 'role=db');
-    await user.click(screen.getByRole('button', { name: 'Add tag' }));
-
-    expect(putTags).toEqual([{ key: 'role', value: 'db' }]);
+    const link = await screen.findByRole('link', { name: '2 alerts are still open from before' });
+    expect(link).toHaveAttribute('href', '/o/acme/alerts?host=h1');
+    expect(screen.getByText('Monitoring off')).toBeInTheDocument();
+    // The nav carries no counts while monitoring is off.
+    expect(navItems().every(([, count]) => count === '')).toBe(true);
   });
 
-  it('rejects a malformed tag chip inline without a round trip', async () => {
+  it('managed off keeps the agent in Connection and replaces SSH and Inventory with the hint', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-    });
+    let patched: unknown;
+    mockApi(
+      hostRoutes(
+        {},
+        {
+          'PATCH /api/v1/orgs/acme/hosts/h1/capabilities': (req: MockRequest) => {
+            patched = req.body;
+            return { host: { ...HOST, managed: true } };
+          },
+        },
+      ),
+    );
+    renderPage();
 
-    renderPage(qc);
+    const connection = within(await screen.findByRole('region', { name: 'Connection & SSH' }));
+    expect(await connection.findByRole('heading', { name: 'Agent' })).toBeInTheDocument();
+    expect(connection.getByText('Management is off')).toBeInTheDocument();
+    expect(connection.queryByText('SSH access')).not.toBeInTheDocument();
+    expect(connection.queryByRole('button', { name: 'Run connection test' })).not.toBeInTheDocument();
 
-    await user.type(await screen.findByPlaceholderText('role=db'), 'Role=db');
-    await user.click(screen.getByRole('button', { name: 'Add tag' }));
+    const inventory = within(screen.getByRole('region', { name: 'Inventory' }));
+    expect(inventory.getByText('Management is off')).toBeInTheDocument();
+    expect(inventory.queryByRole('button', { name: 'Enable' })).not.toBeInTheDocument();
 
-    expect(await screen.findByText(/not a valid tag key/)).toBeInTheDocument();
+    await user.click(connection.getByRole('button', { name: 'Enable' }));
+    await waitFor(() => expect(patched).toEqual({ managed: true }));
   });
 
-  it('deletes the host after confirmation and returns to the list', async () => {
+  it('renders the facts the host reported', async () => {
+    mockApi(hostRoutes({ host: { facts: { os: 'linux', cpu_count: 4 } } }));
+    renderPage();
+
+    const facts = within(await screen.findByRole('region', { name: 'Facts' }));
+    expect(facts.getByText('cpu_count')).toBeInTheDocument();
+    expect(facts.getByText('4')).toBeInTheDocument();
+  });
+
+  it('Edit opens the dialog prefilled', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi(hostRoutes());
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Edit' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Edit host web-04.fra' });
+    expect(await within(dialog).findByLabelText('Name')).toHaveValue('web-04.fra');
+    expect(within(dialog).getByLabelText('Address')).toHaveValue('203.0.113.4');
+  });
+
+  it('deletes the host from the menu after confirmation and returns to the list', async () => {
+    const user = userEvent.setup();
     const originalConfirm = window.confirm;
     window.confirm = () => true;
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-      'DELETE /api/v1/orgs/acme/hosts/h1': {},
-    });
+    try {
+      mockApi(hostRoutes({}, { 'DELETE /api/v1/orgs/acme/hosts/h1': {} }));
+      renderPage();
 
-    renderPage(qc);
+      await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
 
-    await user.click(await screen.findByRole('button', { name: /Delete host/ }));
-
-    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
-    window.confirm = originalConfirm;
+      expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
+    } finally {
+      window.confirm = originalConfirm;
+    }
   });
 
   it('surfaces a toast instead of an unhandled rejection when delete fails', async () => {
     const user = userEvent.setup();
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const originalConfirm = window.confirm;
     window.confirm = () => true;
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-      'DELETE /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'host still managed' }), { status: 409 }),
-    });
+    try {
+      mockApi(
+        hostRoutes(
+          {},
+          { 'DELETE /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'host still managed' }), { status: 409 }) },
+        ),
+      );
+      renderPage();
 
-    renderPage(qc);
+      await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
+      await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
 
-    await user.click(await screen.findByRole('button', { name: /Delete host/ }));
-
-    const toast = await screen.findByRole('status');
-    expect(toast).toHaveTextContent('host still managed');
-    window.confirm = originalConfirm;
+      expect(await screen.findByRole('status')).toHaveTextContent('host still managed');
+      expect(screen.queryByText('HOSTS PAGE')).not.toBeInTheDocument();
+    } finally {
+      window.confirm = originalConfirm;
+    }
   });
 
-  it('mounts the monitoring section for a member who may read checks', async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({
-      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } },
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': {
-        host_id: 'h1',
-        monitored: true,
-        checks: [
-          {
-            definition_id: 'd1', key: 'cpu', plugin: 'cpu', params: {}, interval_seconds: 60,
-            enabled: true, origin: 'seed', source: 'org',
-            values: [{ item: '', metric: 'usage_percent', value: 7.5, at: '2026-03-01T00:00:00Z', stale: false, state: null, flapping: false }],
+  it('mounts the monitoring sections for a viewer who may read checks', async () => {
+    mockApi(
+      hostRoutes(
+        { role: 'viewer', host: { monitored: true } },
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/checks': {
+            host_id: 'h1',
+            monitored: true,
+            checks: [check('cpu', 'cpu', [reading('usage_percent', 7.5)])],
           },
-        ],
-      },
-    });
+        },
+      ),
+    );
+    renderPage();
 
-    renderPage(qc);
-
-    // The section is wired to the host's own id and to the caller's
+    // The checks section is wired to the host's own id and to the caller's
     // checks.read — dropping either leaves the page with no monitoring at
     // all, which is what this pins.
-    expect(await screen.findByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
-    expect(await screen.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
-    expect(screen.getByText('7.5')).toBeInTheDocument();
+    const checks = within(await screen.findByRole('region', { name: 'Checks' }));
+    expect(await checks.findByRole('heading', { name: 'cpu' })).toBeInTheDocument();
+    expect(checks.getByText('7.5')).toBeInTheDocument();
+    expect(checks.queryByRole('link', { name: 'Manage checks' })).not.toBeInTheDocument();
   });
 
   it('never claims a member is not one while the role is still in flight', async () => {
@@ -232,19 +270,8 @@ describe('HostDetailPage', () => {
     // used to render fully in, telling an admin that "monitoring is
     // visible to members of this organization" because may(undefined, …)
     // is false.
-    qc.setQueryData(['host', 'acme', 'h1'], HOST);
-    const fetch = mockApi({
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-    });
+    qc.setQueryData(['host', 'acme', 'h1'], { host: { ...HOST, monitored: true } });
+    const fetch = mockApi(hostRoutes({ host: { monitored: true } }));
 
     // The org answer is held back until this test releases it; every
     // other route answers normally, so the page has everything it needs
@@ -258,7 +285,7 @@ describe('HostDetailPage', () => {
       const request = input instanceof Request ? input : new Request(input, init);
       if (new URL(request.url, 'http://localhost').pathname === '/api/v1/orgs/acme') {
         await held;
-        return new Response(JSON.stringify(ORG), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify(orgBody()), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
       return base(input, init);
     });
@@ -274,25 +301,15 @@ describe('HostDetailPage', () => {
 
     // And once the role lands the section is rendered for real.
     release();
-    expect(await screen.findByRole('heading', { name: 'Monitoring' })).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Checks' })).toBeInTheDocument();
     expect(screen.queryByText(/Monitoring is visible to members/)).not.toBeInTheDocument();
   });
 
   it('reports a failed org read instead of rendering the page without a role', async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({
-      'GET /api/v1/orgs/acme': () => new Response(JSON.stringify({ detail: 'org store unavailable' }), { status: 500 }),
-      'GET /api/v1/orgs/acme/hosts/h1': HOST,
-      'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/ssh': { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } },
-      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/inventory/preview': { vars: {}, connection: { host_id: 'h1', bastion_source: 'none' }, warnings: [] },
-    });
-
-    renderPage(qc);
+    mockApi(
+      hostRoutes({}, { 'GET /api/v1/orgs/acme': () => new Response(JSON.stringify({ detail: 'org store unavailable' }), { status: 500 }) }),
+    );
+    renderPage();
 
     // A 500 on the org read has no role in it, so there is nothing to
     // derive a permission from — and no retry, no loading state and no
@@ -302,16 +319,10 @@ describe('HostDetailPage', () => {
   });
 
   it('shows the not-found page for a 404 instead of hanging on "Loading…" (Important 7)', async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
-      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
-      'GET /api/v1/orgs/acme/hosts/h1/checks': NO_CHECKS,
-      'GET /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'not found' }), { status: 404 }),
-    });
-
-    renderPage(qc);
+    mockApi(
+      hostRoutes({}, { 'GET /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'not found' }), { status: 404 }) }),
+    );
+    renderPage();
 
     expect(await screen.findByText('Not found')).toBeInTheDocument();
   });

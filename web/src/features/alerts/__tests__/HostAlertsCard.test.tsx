@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider, useSearch } from '@tanstack/react-router';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
-import { HostAlertsCard } from '../HostAlertsCard.tsx';
+import { HostAlertsCard, HostAlertsHistoryLink } from '../HostAlertsCard.tsx';
 
 const alert = (over: Record<string, unknown> = {}) => ({
   id: 'a1',
@@ -33,7 +33,7 @@ function AlertsPageStub() {
   return <div>ALERTS PAGE host={search.host ?? '(none)'}</div>;
 }
 
-/** HostAlertsCard links to the org-wide Alerts page (`<Link to="/o/$org/alerts">`),
+/** HostAlertsHistoryLink links to the org-wide Alerts page (`<Link to="/o/$org/alerts">`),
  * which needs a real router context to resolve — this builds the same
  * minimal host-route-plus-destination-route tree HostChecksCard.test.tsx
  * already uses for its own "Manage checks" link. `alertsRoute` carries the
@@ -54,7 +54,14 @@ function renderCard(canRead = true) {
   const hostRoute = createRoute({
     getParentRoute: () => orgRoute,
     path: '/hosts/$id',
-    component: () => <HostAlertsCard org="acme" hostId="h1" canRead={canRead} />,
+    // The link sits beside the host page's Alerts section title, not in
+    // the card; rendered together here as the page renders them.
+    component: () => (
+      <>
+        <HostAlertsHistoryLink org="acme" hostId="h1" canRead={canRead} />
+        <HostAlertsCard org="acme" hostId="h1" canRead={canRead} />
+      </>
+    ),
   });
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([alertsRoute, hostRoute])]),
