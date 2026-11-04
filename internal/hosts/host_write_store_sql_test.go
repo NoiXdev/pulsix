@@ -247,3 +247,45 @@ func TestUpdateHostWithStaleRevisionWritesNothing(t *testing.T) {
 		t.Fatalf("a stale update must not write tags, got %+v, %v", tags, err)
 	}
 }
+
+// TestPatchCapabilitiesBumpsRevision: a capability change (agent enrolment,
+// agent revocation, the row-menu and sidebar switches) moves the host's
+// revision, so an edit dialog opened before it answers 412 rather than
+// writing its stale managed/monitored pre-fill over the change.
+func TestPatchCapabilitiesBumpsRevision(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hostwrite-caprev-org")
+	zone := seedZone(t, store, org, "fra")
+	h := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "web-01"}
+	if err := store.CreateHost(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.GetHost(ctx, org, h.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	on := true
+	patched, err := store.PatchCapabilities(ctx, org, h.ID, nil, &on)
+	if err != nil {
+		t.Fatalf("PatchCapabilities: %v", err)
+	}
+	if patched.Revision != before.Revision+1 {
+		t.Fatalf("revision after a capability patch = %d, want %d", patched.Revision, before.Revision+1)
+	}
+
+	_, err = store.UpdateHostWith(ctx, hosts.Host{ID: h.ID, OrgID: org, ZoneID: zone.ID, Name: "web-01", Revision: before.Revision},
+		hosts.HostExtras{})
+	if !errors.Is(err, hosts.ErrRevisionMismatch) {
+		t.Fatalf("edit with the pre-patch revision = %v, want ErrRevisionMismatch", err)
+	}
+	got, err := store.GetHost(ctx, org, h.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Monitored {
+		t.Fatal("the stale edit overwrote the capability change")
+	}
+}

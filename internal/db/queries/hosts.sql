@@ -56,10 +56,14 @@ RETURNING *;
 -- turns on monitored) can each read the pre-update row and each write back
 -- a version that clobbers the other's change (Task 13 fix round 1, finding
 -- 2). A NULL parameter here leaves that column exactly as it was.
+-- It bumps revision like UpdateHost does, without checking it: the edit
+-- dialog sends managed/monitored from its pre-fill, so an edit opened
+-- before a capability change (agent enrolment or revocation, the row-menu
+-- and sidebar switches) must answer 412 instead of silently undoing it.
 UPDATE hosts
 SET managed = COALESCE(sqlc.narg(managed)::boolean, managed),
     monitored = COALESCE(sqlc.narg(monitored)::boolean, monitored),
-    updated_at = now()
+    revision = revision + 1, updated_at = now()
 WHERE id = $1 AND org_id = $2
 RETURNING *;
 

@@ -485,7 +485,7 @@ const patchHostCapabilities = `-- name: PatchHostCapabilities :one
 UPDATE hosts
 SET managed = COALESCE($3::boolean, managed),
     monitored = COALESCE($4::boolean, monitored),
-    updated_at = now()
+    revision = revision + 1, updated_at = now()
 WHERE id = $1 AND org_id = $2
 RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision
 `
@@ -506,6 +506,10 @@ type PatchHostCapabilitiesParams struct {
 // turns on monitored) can each read the pre-update row and each write back
 // a version that clobbers the other's change (Task 13 fix round 1, finding
 // 2). A NULL parameter here leaves that column exactly as it was.
+// It bumps revision like UpdateHost does, without checking it: the edit
+// dialog sends managed/monitored from its pre-fill, so an edit opened
+// before a capability change (agent enrolment or revocation, the row-menu
+// and sidebar switches) must answer 412 instead of silently undoing it.
 func (q *Queries) PatchHostCapabilities(ctx context.Context, arg PatchHostCapabilitiesParams) (Host, error) {
 	row := q.db.QueryRow(ctx, patchHostCapabilities,
 		arg.ID,
