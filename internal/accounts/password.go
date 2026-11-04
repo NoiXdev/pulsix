@@ -11,7 +11,8 @@ import (
 
 // ChangePassword replaces the user's own password. current must verify
 // against the stored hash, and a temporary password counts only until it
-// expires; next must pass auth.CheckPasswordPolicy and differ from current.
+// expires (ErrTemporaryPasswordExpired, checked only once it verified);
+// next must pass auth.CheckPasswordPolicy and differ from current.
 // In one transaction it stores next, ends a forced change (the flag and the
 // temporary password's expiry) and revokes every session of the user except
 // keepSessionID, the one making the change. Neither password ever appears in
@@ -37,7 +38,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID, keepSessionID uuid
 			return ErrInvalidCredentials
 		}
 		if st.TempPasswordExpiresAt != nil && !s.now().Before(*st.TempPasswordExpiresAt) {
-			return ErrInvalidCredentials
+			return ErrTemporaryPasswordExpired
 		}
 		if err := auth.CheckPasswordPolicy(next); err != nil {
 			return err

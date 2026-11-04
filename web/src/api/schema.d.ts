@@ -238,6 +238,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/admin/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin users */
+        get: operations["get-api-v1-admin-users"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 admin users by user ID */
+        get: operations["get-api-v1-admin-users-by-user-id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users/{userId}/deactivate": {
         parameters: {
             query?: never;
@@ -249,6 +283,74 @@ export interface paths {
         put?: never;
         /** Post API v1 admin users by user ID deactivate */
         post: operations["deactivateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/reactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 admin users by user ID reactivate */
+        post: operations["reactivateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/second-factor/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 admin users by user ID second factor reset */
+        post: operations["resetSecondFactor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/sessions/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 admin users by user ID sessions revoke */
+        post: operations["revokeUserSessions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/users/{userId}/temporary-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Post API v1 admin users by user ID temporary password */
+        post: operations["setTemporaryPassword"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2734,6 +2836,65 @@ export interface components {
             /** @description Only shell is supported in v0.2b */
             module: string;
         };
+        AdminFactorsDTO: {
+            /** Format: int64 */
+            passkeys: number;
+            /** Format: int64 */
+            recovery_codes_left: number;
+            totp: boolean;
+        };
+        AdminMembershipDTO: {
+            actor_is_member: boolean;
+            name: string;
+            org_id: string;
+            /** @enum {string} */
+            role: "owner" | "admin" | "operator" | "viewer";
+            slug: string;
+        };
+        AdminUserDTO: {
+            display_name: string;
+            email: string;
+            id: string;
+            instance_admin: boolean;
+            /** Format: date-time */
+            last_sign_in_at: string | null;
+            /** Format: int64 */
+            org_count: number;
+            /** @enum {string} */
+            state: "active" | "deactivated" | "invite_pending" | "must_change_password" | "no_second_factor";
+        };
+        AdminUserDetailDTO: {
+            /** Format: int64 */
+            active_sessions: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            disabled_at: string | null;
+            factors: components["schemas"]["AdminFactorsDTO"];
+            memberships: components["schemas"]["AdminMembershipDTO"][] | null;
+            must_change_password: boolean;
+            /** Format: date-time */
+            temp_password_expires_at: string | null;
+        };
+        AdminUserListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AdminUserListOutputBody.json
+             */
+            readonly $schema?: string;
+            next_cursor: string;
+            users: components["schemas"]["AdminUserDTO"][] | null;
+        };
+        AdminUserOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AdminUserOutputBody.json
+             */
+            readonly $schema?: string;
+            user: components["schemas"]["AdminUserDetailDTO"];
+        };
         AgentDTO: {
             agent_name: string;
             /** Format: date-time */
@@ -4936,6 +5097,16 @@ export interface components {
             count: number;
             hosts: components["schemas"]["PreviewHostDTO"][] | null;
         };
+        NoticeOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/NoticeOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @enum {string} */
+            notice: "sent" | "not_configured" | "failed";
+        };
         NotifyChannelBody: {
             /**
              * Format: uri
@@ -6218,6 +6389,19 @@ export interface components {
             scope?: components["schemas"]["TemplateScopeInput"];
             vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
+        TemporaryPasswordOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemporaryPasswordOutputBody.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** @enum {string} */
+            notice: "sent" | "not_configured" | "failed";
+            password: string;
+        };
         TokenDTO: {
             /** Format: date-time */
             created_at: string;
@@ -7316,6 +7500,70 @@ export interface operations {
             };
         };
     };
+    "get-api-v1-admin-users": {
+        parameters: {
+            query?: {
+                q?: string;
+                cursor?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-admin-users-by-user-id": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminUserOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     deactivateUser: {
         parameters: {
             query?: never;
@@ -7333,7 +7581,128 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OkOutputBody"];
+                    "application/json": components["schemas"]["NoticeOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    reactivateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    resetSecondFactor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoticeOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    revokeUserSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setTemporaryPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemporaryPasswordOutputBody"];
                 };
             };
             /** @description Error */

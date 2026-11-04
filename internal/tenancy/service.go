@@ -40,6 +40,10 @@ var (
 	// already has an account, unless the request is signed in as that
 	// account (backlog 7.10). The invitation is not used up.
 	ErrSignInRequired = errors.New("this address already has an account: sign in to it, then accept the invitation")
+	// ErrNotOnOwnAccount refuses an administrator deactivating their own
+	// account (backlog 7.74): for their own account they use Account
+	// security, like every other account action.
+	ErrNotOnOwnAccount = errors.New("not on own account")
 )
 
 // maxOrgNameLength bounds an organization's display name.
@@ -563,16 +567,22 @@ func (s *Service) RemoveMember(ctx context.Context, orgID uuid.UUID, actorRole R
 
 // DeactivateUser disables target's account instance-wide and ends its
 // access immediately: sessions and API tokens are revoked, not merely
-// flagged for later. It refuses, with ErrLastInstanceAdmin and before
-// revoking anything, to disable the last active instance administrator —
-// the caller themselves included — since the instance could then only be
-// recovered by editing the database. actorIsInstanceAdmin is supplied by the handler from
-// the caller's auth.Principal — the tenancy package has no notion of
-// instance-level roles of its own, only org membership, so it cannot look
-// this up itself.
-func (s *Service) DeactivateUser(ctx context.Context, actorIsInstanceAdmin bool, target uuid.UUID) error {
+// flagged for later. It refuses the caller's own account
+// (ErrNotOnOwnAccount, backlog 7.74), and it refuses, with
+// ErrLastInstanceAdmin and before revoking anything, to disable the last
+// active instance administrator, since the instance could then only be
+// recovered by editing the database. With the self refusal in front, an
+// administrator meets that rule only when two of them deactivate each
+// other at once; the store's guard is atomic for exactly that case.
+// actorIsInstanceAdmin is supplied by the handler from the caller's
+// auth.Principal — the tenancy package has no notion of instance-level
+// roles of its own, only org membership, so it cannot look this up itself.
+func (s *Service) DeactivateUser(ctx context.Context, actorIsInstanceAdmin bool, actor, target uuid.UUID) error {
 	if !actorIsInstanceAdmin {
 		return ErrForbidden
+	}
+	if actor == target {
+		return ErrNotOnOwnAccount
 	}
 	if err := s.store.DisableUser(ctx, target, s.now()); err != nil {
 		return fmt.Errorf("disable user: %w", err)

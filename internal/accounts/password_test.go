@@ -13,63 +13,6 @@ import (
 	"github.com/noixdev/pulsix/internal/auth"
 )
 
-// fakeStore is an in-memory accounts.Store. It records the writes the
-// service makes, and InTx only reports whether fn ran inside it, so a test
-// can tell that every write happened inside the transaction.
-type fakeStore struct {
-	hash      *string
-	tempUntil *time.Time
-	lookupErr error
-
-	inTx          bool
-	setCalls      []setPasswordCall
-	revokeCalls   []revokeCall
-	writesOutside int
-}
-
-type setPasswordCall struct {
-	userID          uuid.UUID
-	hash            string
-	clearMustChange bool
-}
-
-type revokeCall struct{ userID, keep uuid.UUID }
-
-func (f *fakeStore) InTx(ctx context.Context, fn func(ctx context.Context) error) error {
-	f.inTx = true
-	defer func() { f.inTx = false }()
-	return fn(ctx)
-}
-
-func (f *fakeStore) LockPassword(_ context.Context, _ uuid.UUID) (accounts.PasswordState, error) {
-	if f.lookupErr != nil {
-		return accounts.PasswordState{}, f.lookupErr
-	}
-	return accounts.PasswordState{Hash: f.hash, TempPasswordExpiresAt: f.tempUntil}, nil
-}
-
-func (f *fakeStore) SetPassword(_ context.Context, userID uuid.UUID, hash string, clearMustChange bool) error {
-	if !f.inTx {
-		f.writesOutside++
-	}
-	f.setCalls = append(f.setCalls, setPasswordCall{userID, hash, clearMustChange})
-	return nil
-}
-
-func (f *fakeStore) RevokeSessionsExcept(_ context.Context, userID, keep uuid.UUID) error {
-	if !f.inTx {
-		f.writesOutside++
-	}
-	f.revokeCalls = append(f.revokeCalls, revokeCall{userID, keep})
-	return nil
-}
-
-// fakeMailer satisfies accounts.Mailer; ChangePassword sends nothing.
-type fakeMailer struct{ sent int }
-
-func (m *fakeMailer) Send(context.Context, string, string, string) error { m.sent++; return nil }
-func (m *fakeMailer) Configured(context.Context) (bool, error)           { return true, nil }
-
 func TestChangePassword(t *testing.T) {
 	const current = "current password 1"
 	oldHash, err := auth.HashPassword(current)
@@ -92,7 +35,8 @@ func TestChangePassword(t *testing.T) {
 		{name: "wrong current password", hash: &oldHash, current: "not the password", next: "a brand new password", wantErr: accounts.ErrInvalidCredentials},
 		{name: "account without a password", current: current, next: "a brand new password", wantErr: accounts.ErrInvalidCredentials},
 		{name: "unknown account", lookupErr: accounts.ErrNotFound, current: current, next: "a brand new password", wantErr: accounts.ErrNotFound},
-		{name: "expired temporary password", hash: &oldHash, tempUntil: &past, current: current, next: "a brand new password", wantErr: accounts.ErrInvalidCredentials},
+		{name: "expired temporary password", hash: &oldHash, tempUntil: &past, current: current, next: "a brand new password", wantErr: accounts.ErrTemporaryPasswordExpired},
+		{name: "wrong password while the temporary one has expired", hash: &oldHash, tempUntil: &past, current: "not the password", next: "a brand new password", wantErr: accounts.ErrInvalidCredentials},
 		{name: "eleven-character new password", hash: &oldHash, current: current, next: "elevenchars", wantErr: auth.ErrPasswordTooShort},
 		{name: "new password equals the current one", hash: &oldHash, current: current, next: current, wantErr: accounts.ErrSamePassword},
 		{name: "success", hash: &oldHash, current: current, next: "a brand new password"},
@@ -107,8 +51,8 @@ func TestChangePassword(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("ChangePassword err = %v, want %v", err, tc.wantErr)
 			}
-			if mailer.sent != 0 {
-				t.Fatalf("ChangePassword sent %d mails, want none", mailer.sent)
+			if len(mailer.sent) != 0 {
+				t.Fatalf("ChangePassword sent %d mails, want none", len(mailer.sent))
 			}
 			if tc.wantErr != nil {
 				if len(store.setCalls) != 0 || len(store.revokeCalls) != 0 {

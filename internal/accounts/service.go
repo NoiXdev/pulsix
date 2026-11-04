@@ -1,6 +1,7 @@
 // Package accounts is account administration at the instance level: a
-// person changing their own password, and (in later tasks) an instance
-// admin managing other people's accounts and the password reset flow.
+// person changing their own password, an instance admin managing other
+// people's accounts (admin.go, actions.go) and telling them about it
+// (notices.go), and (in a later task) the password reset flow.
 // Signing in, sessions and second factors stay in internal/auth; this
 // package builds on its password policy and hashing.
 package accounts
@@ -16,9 +17,13 @@ import (
 
 // Sentinel errors, mapped to HTTP status by the transport layer.
 var (
-	// ErrInvalidCredentials is a current password that does not verify,
-	// including an expired temporary one.
+	// ErrInvalidCredentials is a current password that does not verify.
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrTemporaryPasswordExpired is a current password that verifies but
+	// is a temporary one past its expiry. Only a caller who knows the
+	// password ever sees it, so it gives nothing away; the person needs a
+	// new temporary password or a reset link.
+	ErrTemporaryPasswordExpired = errors.New("the temporary password has expired")
 	// ErrSamePassword is a new password equal to the current one.
 	ErrSamePassword = errors.New("the new password must differ from the current one")
 	// ErrNotFound is an account that does not exist or is deactivated.
@@ -37,6 +42,8 @@ var (
 	// ErrInvalidResetToken is a reset token that is unknown, used, expired
 	// or belongs to a deactivated account.
 	ErrInvalidResetToken = errors.New("invalid or expired reset token")
+	// ErrInvalidCursor is a page cursor the account list did not issue.
+	ErrInvalidCursor = errors.New("invalid cursor")
 )
 
 // PasswordState is what a password change reads about the account.
@@ -65,10 +72,41 @@ type Store interface {
 	// RevokeSessionsExcept ends every session of the user except keep.
 	// API tokens are untouched.
 	RevokeSessionsExcept(ctx context.Context, userID, keep uuid.UUID) error
+
+	// ListAccounts returns up to limit accounts ordered by e-mail,
+	// case-insensitively, starting after the address after ("" for the
+	// first page). A non-empty query keeps the accounts whose e-mail or
+	// display name contains it, case-insensitively.
+	ListAccounts(ctx context.Context, query, after string, limit int) ([]AccountRecord, error)
+	// GetAccount reads one account; ErrNotFound for an unknown id.
+	GetAccount(ctx context.Context, id uuid.UUID) (AccountDetailRecord, error)
+	// ListMemberships returns the organizations userID belongs to, each
+	// marked with whether actor belongs to it too.
+	ListMemberships(ctx context.Context, userID, actor uuid.UUID) ([]Membership, error)
+	// LockAccount reports whether the account has a password and locks
+	// its row for the rest of the transaction; a deactivated account is
+	// found too. ErrNotFound for an unknown id.
+	LockAccount(ctx context.Context, id uuid.UUID) (hasPassword bool, err error)
+	// SetTemporaryPassword stores an administrator's temporary password:
+	// the hash, the forced change and the expiry. ErrNotFound for an
+	// unknown id.
+	SetTemporaryPassword(ctx context.Context, id uuid.UUID, hash string, expiresAt time.Time) error
+	// RevokeAllSessions ends every session of the account. API tokens are
+	// untouched.
+	RevokeAllSessions(ctx context.Context, id uuid.UUID) error
+	// DeleteSecondFactors removes the account's TOTP secret, recovery
+	// codes and passkeys.
+	DeleteSecondFactors(ctx context.Context, id uuid.UUID) error
+	// Reactivate clears the account's deactivation. ErrNotFound for an
+	// unknown id.
+	Reactivate(ctx context.Context, id uuid.UUID) error
+	// NoticeRecipient reads where an account notice goes and the languages
+	// it may be written in. ErrNotFound for an unknown id.
+	NoticeRecipient(ctx context.Context, id uuid.UUID) (Recipient, error)
 }
 
-// Mailer sends the notices and reset links of later tasks. *mail.SMTP
-// satisfies it.
+// Mailer sends the account notices and (in a later task) reset links.
+// *mail.SMTP satisfies it.
 type Mailer interface {
 	Send(ctx context.Context, to, subject, body string) error
 	Configured(ctx context.Context) (bool, error)

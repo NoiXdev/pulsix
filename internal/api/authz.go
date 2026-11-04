@@ -104,15 +104,15 @@ func requireOrg(ctx context.Context, deps Deps, orgSlug string, perm tenancy.Per
 }
 
 // requireInstanceAdmin gates instance-level routes that are not scoped to
-// any organization (POST /admin/users/{id}/deactivate). It builds on
-// requireInteractiveSession, not the bare requireSession the brief for this
-// task sketched: deactivating a user revokes their sessions and tokens
-// outright (tenancy.Service.DeactivateUser), which is exactly the kind of
-// account-security-impacting action requireInteractiveSession already
-// exists to gate everywhere else — a half-authenticated session must not
-// reach it, and neither should a bearer token, however privileged its
-// owner, since there is no per-org scope here for a token to be narrowed
-// against.
+// any organization (/admin/users…, /admin/backups…, the shared resources).
+// It builds on requireInteractiveSession, not the bare requireSession the
+// brief for this task sketched: deactivating a user revokes their sessions
+// and tokens outright (tenancy.Service.DeactivateUser), which is exactly
+// the kind of account-security-impacting action requireInteractiveSession
+// already exists to gate everywhere else — a half-authenticated session
+// must not reach it, and neither should a bearer token, however privileged
+// its owner, since there is no per-org scope here for a token to be
+// narrowed against.
 func requireInstanceAdmin(ctx context.Context) (auth.Principal, error) {
 	p, err := requireInteractiveSession(ctx)
 	if err != nil {
@@ -142,6 +142,8 @@ func mapTenancyErr(ctx context.Context, err error) error {
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, tenancy.ErrSignInRequired):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, tenancy.ErrNotOnOwnAccount):
+		return huma.Error409Conflict(notOnOwnAccount)
 	case errors.Is(err, tenancy.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, tenancy.ErrInviteDelivery):

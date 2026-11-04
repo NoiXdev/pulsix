@@ -7,10 +7,253 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const deleteSecondFactors = `-- name: DeleteSecondFactors :exec
+WITH totp AS (
+  DELETE FROM totp_secrets WHERE totp_secrets.user_id = $1
+), codes AS (
+  DELETE FROM recovery_codes WHERE recovery_codes.user_id = $1
+)
+DELETE FROM passkeys WHERE passkeys.user_id = $1
+`
+
+// Removes every second factor of the account at once: the TOTP secret
+// (and with it the factor-attempt lockout), the recovery codes and every
+// passkey. One statement, so no state with only some of them gone exists.
+func (q *Queries) DeleteSecondFactors(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteSecondFactors, userID)
+	return err
+}
+
+const getAccount = `-- name: GetAccount :one
+SELECT
+  u.id, u.email, u.display_name, u.instance_admin, u.disabled_at, u.created_at,
+  (u.password_hash IS NOT NULL)::boolean AS has_password, u.must_change_password, u.temp_password_expires_at, u.last_sign_in_at,
+  EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL) AS totp,
+  (SELECT count(*) FROM passkeys p WHERE p.user_id = u.id) AS passkeys,
+  (SELECT count(*) FROM recovery_codes r WHERE r.user_id = u.id AND r.used_at IS NULL) AS recovery_codes_left,
+  (SELECT count(*) FROM sessions s WHERE s.user_id = u.id AND s.mfa_complete AND s.revoked_at IS NULL AND s.expires_at > now()) AS active_sessions,
+  (SELECT count(*) FROM org_memberships m WHERE m.user_id = u.id) AS org_count
+FROM users u
+WHERE u.id = $1
+`
+
+type GetAccountRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	Email                 string             `json:"email"`
+	DisplayName           string             `json:"display_name"`
+	InstanceAdmin         bool               `json:"instance_admin"`
+	DisabledAt            pgtype.Timestamptz `json:"disabled_at"`
+	CreatedAt             time.Time          `json:"created_at"`
+	HasPassword           bool               `json:"has_password"`
+	MustChangePassword    bool               `json:"must_change_password"`
+	TempPasswordExpiresAt pgtype.Timestamptz `json:"temp_password_expires_at"`
+	LastSignInAt          pgtype.Timestamptz `json:"last_sign_in_at"`
+	Totp                  bool               `json:"totp"`
+	Passkeys              int64              `json:"passkeys"`
+	RecoveryCodesLeft     int64              `json:"recovery_codes_left"`
+	ActiveSessions        int64              `json:"active_sessions"`
+	OrgCount              int64              `json:"org_count"`
+}
+
+// One account for the instance admin's account page: what ListAccounts
+// shows, plus the second factors and the sessions. A confirmed TOTP secret
+// is the authenticator app (an enrolment that was begun and never confirmed
+// is none); recovery codes count only while unspent; a session counts
+// while it is complete, unrevoked and unexpired — the ones GetSession would
+// still resolve to a signed-in principal.
+func (q *Queries) GetAccount(ctx context.Context, id uuid.UUID) (GetAccountRow, error) {
+	row := q.db.QueryRow(ctx, getAccount, id)
+	var i GetAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.DisplayName,
+		&i.InstanceAdmin,
+		&i.DisabledAt,
+		&i.CreatedAt,
+		&i.HasPassword,
+		&i.MustChangePassword,
+		&i.TempPasswordExpiresAt,
+		&i.LastSignInAt,
+		&i.Totp,
+		&i.Passkeys,
+		&i.RecoveryCodesLeft,
+		&i.ActiveSessions,
+		&i.OrgCount,
+	)
+	return i, err
+}
+
+const getNoticeRecipient = `-- name: GetNoticeRecipient :one
+SELECT u.email, u.locale,
+  coalesce((SELECT s.value #>> '{}' FROM instance_settings s WHERE s.key = 'default_locale'), '')::text AS default_locale
+FROM users u
+WHERE u.id = $1
+`
+
+type GetNoticeRecipientRow struct {
+	Email         string  `json:"email"`
+	Locale        *string `json:"locale"`
+	DefaultLocale string  `json:"default_locale"`
+}
+
+// Where an account notice goes, and in which language: the account's own
+// choice and the instance default (the default_locale instance setting, a
+// JSON string, read as text; ” when unset). The service resolves the two
+// the way /auth/me does (locale.Resolve).
+func (q *Queries) GetNoticeRecipient(ctx context.Context, id uuid.UUID) (GetNoticeRecipientRow, error) {
+	row := q.db.QueryRow(ctx, getNoticeRecipient, id)
+	var i GetNoticeRecipientRow
+	err := row.Scan(&i.Email, &i.Locale, &i.DefaultLocale)
+	return i, err
+}
+
+const listAccountMemberships = `-- name: ListAccountMemberships :many
+SELECT o.id AS org_id, o.slug, o.name, m.role::text AS role,
+  EXISTS (SELECT 1 FROM org_memberships a WHERE a.org_id = m.org_id AND a.user_id = $1) AS actor_is_member
+FROM org_memberships m JOIN organizations o ON o.id = m.org_id
+WHERE m.user_id = $2
+ORDER BY o.name, o.id
+`
+
+type ListAccountMembershipsParams struct {
+	ActorID uuid.UUID `json:"actor_id"`
+	UserID  uuid.UUID `json:"user_id"`
+}
+
+type ListAccountMembershipsRow struct {
+	OrgID         uuid.UUID `json:"org_id"`
+	Slug          string    `json:"slug"`
+	Name          string    `json:"name"`
+	Role          string    `json:"role"`
+	ActorIsMember bool      `json:"actor_is_member"`
+}
+
+// The organizations user_id belongs to, with their role, and whether
+// actor_id belongs to each as well (the account page links only those).
+func (q *Queries) ListAccountMemberships(ctx context.Context, arg ListAccountMembershipsParams) ([]ListAccountMembershipsRow, error) {
+	rows, err := q.db.Query(ctx, listAccountMemberships, arg.ActorID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAccountMembershipsRow
+	for rows.Next() {
+		var i ListAccountMembershipsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.Slug,
+			&i.Name,
+			&i.Role,
+			&i.ActorIsMember,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAccounts = `-- name: ListAccounts :many
+SELECT
+  u.id, u.email, u.display_name, u.instance_admin, u.disabled_at,
+  (u.password_hash IS NOT NULL)::boolean AS has_password, u.must_change_password, u.last_sign_in_at,
+  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor,
+  (SELECT count(*) FROM org_memberships m WHERE m.user_id = u.id) AS org_count
+FROM users u
+WHERE ($1::text = ''
+       OR strpos(lower(u.email::text), lower($1::text)) > 0
+       OR strpos(lower(u.display_name), lower($1::text)) > 0)
+  AND ($2::text = '' OR u.email > $2::text::citext)
+ORDER BY u.email
+LIMIT $3
+`
+
+type ListAccountsParams struct {
+	Query string `json:"query"`
+	After string `json:"after"`
+	Lim   int32  `json:"lim"`
+}
+
+type ListAccountsRow struct {
+	ID                 uuid.UUID          `json:"id"`
+	Email              string             `json:"email"`
+	DisplayName        string             `json:"display_name"`
+	InstanceAdmin      bool               `json:"instance_admin"`
+	DisabledAt         pgtype.Timestamptz `json:"disabled_at"`
+	HasPassword        bool               `json:"has_password"`
+	MustChangePassword bool               `json:"must_change_password"`
+	LastSignInAt       pgtype.Timestamptz `json:"last_sign_in_at"`
+	HasSecondFactor    bool               `json:"has_second_factor"`
+	OrgCount           int64              `json:"org_count"`
+}
+
+// One page of every account on the instance for the instance admin's Users
+// page, ordered by e-mail. email is citext, so both the order and the
+// keyset bound (after) are case-insensitive, and as the column is unique
+// the address alone resumes a page. The search is a case-insensitive
+// substring of the address or the display name; strpos, not LIKE, so a %
+// or _ in the search is matched as itself. The membership count reads
+// org_memberships across organizations, which this instance-level request
+// may (no organization is bound, so org_isolation_bypass applies).
+func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]ListAccountsRow, error) {
+	rows, err := q.db.Query(ctx, listAccounts, arg.Query, arg.After, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAccountsRow
+	for rows.Next() {
+		var i ListAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.DisplayName,
+			&i.InstanceAdmin,
+			&i.DisabledAt,
+			&i.HasPassword,
+			&i.MustChangePassword,
+			&i.LastSignInAt,
+			&i.HasSecondFactor,
+			&i.OrgCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAccount = `-- name: LockAccount :one
+SELECT (password_hash IS NOT NULL)::boolean AS has_password FROM users
+WHERE id = $1
+FOR UPDATE
+`
+
+// Whether the account has a password, locking its row for the rest of the
+// transaction, so an administrator's action and a concurrent change of the
+// same account (the owner's own password change, an invitation being
+// accepted) happen one after the other. A deactivated account is found
+// too: an administrator may act on it, and reactivating needs it.
+func (q *Queries) LockAccount(ctx context.Context, id uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, lockAccount, id)
+	var has_password bool
+	err := row.Scan(&has_password)
+	return has_password, err
+}
 
 const lockUserPassword = `-- name: LockUserPassword :one
 SELECT password_hash, temp_password_expires_at FROM users
@@ -35,6 +278,19 @@ func (q *Queries) LockUserPassword(ctx context.Context, id uuid.UUID) (LockUserP
 	return i, err
 }
 
+const reactivateUser = `-- name: ReactivateUser :execrows
+UPDATE users SET disabled_at = NULL WHERE id = $1
+`
+
+// Clears the deactivation. Revoked sessions and tokens stay revoked.
+func (q *Queries) ReactivateUser(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, reactivateUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeUserSessionsExcept = `-- name: RevokeUserSessionsExcept :exec
 UPDATE sessions SET revoked_at = now()
 WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL
@@ -50,6 +306,30 @@ type RevokeUserSessionsExceptParams struct {
 func (q *Queries) RevokeUserSessionsExcept(ctx context.Context, arg RevokeUserSessionsExceptParams) error {
 	_, err := q.db.Exec(ctx, revokeUserSessionsExcept, arg.UserID, arg.KeepID)
 	return err
+}
+
+const setTemporaryPassword = `-- name: SetTemporaryPassword :execrows
+UPDATE users SET
+  password_hash = $1::text,
+  must_change_password = true,
+  temp_password_expires_at = $2::timestamptz
+WHERE id = $3
+`
+
+type SetTemporaryPasswordParams struct {
+	PasswordHash string    `json:"password_hash"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	ID           uuid.UUID `json:"id"`
+}
+
+// An administrator's temporary password: it forces a change at the next
+// sign-in and stops working at expires_at.
+func (q *Queries) SetTemporaryPassword(ctx context.Context, arg SetTemporaryPasswordParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTemporaryPassword, arg.PasswordHash, arg.ExpiresAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setUserPassword = `-- name: SetUserPassword :execrows

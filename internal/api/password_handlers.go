@@ -13,8 +13,9 @@ import (
 
 // Refusal details of POST /auth/password the SPA matches on.
 const (
-	invalidCurrentPassword = "invalid_current_password"
-	samePassword           = "same_password"
+	invalidCurrentPassword   = "invalid_current_password"
+	temporaryPasswordExpired = "temporary_password_expired"
+	samePassword             = "same_password"
 )
 
 type changePasswordInput struct {
@@ -66,6 +67,11 @@ func mapAccountsErr(ctx context.Context, err error) error {
 		// Not 401: the session is fine, only the password it typed is not,
 		// and the SPA treats a 401 as "signed out".
 		return huma.Error400BadRequest(invalidCurrentPassword)
+	case errors.Is(err, accounts.ErrTemporaryPasswordExpired):
+		// Only a caller who typed the right password gets here, and they
+		// are signed in: telling them it expired gives nothing away, and
+		// lets the SPA send them to an administrator for a new one.
+		return huma.Error400BadRequest(temporaryPasswordExpired)
 	case errors.Is(err, accounts.ErrSamePassword):
 		return huma.Error422UnprocessableEntity(samePassword)
 	case errors.Is(err, auth.ErrInvalidInput):

@@ -295,10 +295,17 @@ func inviteAcceptor(ctx context.Context) uuid.UUID {
 	return p.UserID
 }
 
-// registerAdminRoutes wires the one instance-level (not org-scoped) route
-// this task adds: deactivating a user. It is registered on the root API,
-// not the bearer-enabled group — see requireInstanceAdmin's doc comment for
-// why a bearer token must never reach it.
+// registerAdminRoutes wires deactivating a user, the first instance-level
+// (not org-scoped) account action; the others are in registerAdminUserRoutes
+// (admin_user_handlers.go) and share its gate. It is registered on the root
+// API, not the bearer-enabled group — see requireInstanceAdmin's doc
+// comment for why a bearer token must never reach it.
+//
+// Like the other account actions (backlog 7.74) it needs a fresh second
+// factor, refuses the admin's own account (409 not_on_own_account) and
+// tells the person by mail, reporting how that went (notice). Deactivation
+// itself stays tenancy's; the notice is accounts', sent only once
+// deactivation succeeded.
 //
 // Audited with no organization (Task 11 fix round 1, Finding 1): the
 // original report left this route unwired entirely, reasoning there was no
@@ -307,24 +314,21 @@ func inviteAcceptor(ctx context.Context) uuid.UUID {
 // doc comment) — disabling an account is exactly the kind of high-value
 // forensic action Finding 1 says must not go unrecorded.
 func registerAdminRoutes(hapi huma.API, deps Deps) {
-	huma.Post(hapi, "/api/v1/admin/users/{userId}/deactivate", func(ctx context.Context, in *adminDeactivateInput) (*okOutput, error) {
-		p, err := requireInstanceAdmin(ctx)
+	huma.Post(hapi, "/api/v1/admin/users/{userId}/deactivate", func(ctx context.Context, in *adminDeactivateInput) (*noticeOutput, error) {
+		p, target, err := adminAction(ctx, deps, in.UserID)
 		if err != nil {
 			return nil, err
 		}
-		target, err := uuid.Parse(in.UserID)
-		if err != nil {
-			return nil, huma.Error400BadRequest("invalid user id")
-		}
-		if err := deps.Tenancy.DeactivateUser(ctx, p.InstanceAdmin, target); err != nil {
+		if err := deps.Tenancy.DeactivateUser(ctx, p.InstanceAdmin, p.UserID, target); err != nil {
 			return nil, mapTenancyErr(ctx, err)
 		}
 		// No requireOrg here — there is no organization to resolve one
 		// from — so the carrier's scope is filled in directly, with a nil
 		// org and the administrator (not the deactivated user) as the
-		// actor; target is the object being acted on, set below.
-		setAuditScope(ctx, nil, p.UserID)
-		setAuditObject(ctx, target.String(), "deactivated user account")
-		return &okOutput{}, nil
+		// actor; target is the object being acted on.
+		auditAdminAction(ctx, p.UserID, target, "deactivated user account")
+		out := &noticeOutput{}
+		out.Body.Notice = string(deps.Accounts.NotifyDeactivated(ctx, target))
+		return out, nil
 	}, withAudit("deactivateUser", "user"))
 }

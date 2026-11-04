@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/go-chi/chi/v5"
 
 	"github.com/noixdev/pulsix/internal/audit"
@@ -34,12 +33,7 @@ func registerBackupDownloadRoute(r chi.Router, deps Deps) {
 		ctx := req.Context()
 		p, err := requireInstanceAdmin(ctx)
 		if err != nil {
-			status := http.StatusUnauthorized
-			var se huma.StatusError
-			if errors.As(err, &se) {
-				status = se.GetStatus()
-			}
-			http.Error(w, http.StatusText(status), status)
+			writeGateRefusal(w, err)
 			return
 		}
 		name := chi.URLParam(req, "name")

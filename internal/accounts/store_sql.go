@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -58,4 +60,123 @@ func (s *SQLStore) RevokeSessionsExcept(ctx context.Context, userID, keep uuid.U
 		return fmt.Errorf("revoke user sessions: %w", err)
 	}
 	return nil
+}
+
+// ListAccounts implements Store.
+func (s *SQLStore) ListAccounts(ctx context.Context, query, after string, limit int) ([]AccountRecord, error) {
+	rows, err := s.q.ListAccounts(ctx, gen.ListAccountsParams{Query: query, After: after, Lim: int32(min(limit, math.MaxInt32))}) //nolint:gosec // bounded just above
+	if err != nil {
+		return nil, fmt.Errorf("list accounts: %w", err)
+	}
+	out := make([]AccountRecord, len(rows))
+	for i, r := range rows {
+		out[i] = AccountRecord{
+			ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, InstanceAdmin: r.InstanceAdmin,
+			HasPassword: r.HasPassword, MustChangePassword: r.MustChangePassword, HasSecondFactor: r.HasSecondFactor,
+			DisabledAt: db.TimePtr(r.DisabledAt), LastSignInAt: db.TimePtr(r.LastSignInAt), OrgCount: int(r.OrgCount),
+		}
+	}
+	return out, nil
+}
+
+// GetAccount implements Store.
+func (s *SQLStore) GetAccount(ctx context.Context, id uuid.UUID) (AccountDetailRecord, error) {
+	r, err := s.q.GetAccount(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AccountDetailRecord{}, ErrNotFound
+	}
+	if err != nil {
+		return AccountDetailRecord{}, fmt.Errorf("get account: %w", err)
+	}
+	factors := Factors{TOTP: r.Totp, Passkeys: int(r.Passkeys), RecoveryCodesLeft: int(r.RecoveryCodesLeft)}
+	return AccountDetailRecord{
+		AccountRecord: AccountRecord{
+			ID: r.ID, Email: r.Email, DisplayName: r.DisplayName, InstanceAdmin: r.InstanceAdmin,
+			HasPassword: r.HasPassword, MustChangePassword: r.MustChangePassword,
+			HasSecondFactor: factors.TOTP || factors.Passkeys > 0,
+			DisabledAt:      db.TimePtr(r.DisabledAt), LastSignInAt: db.TimePtr(r.LastSignInAt), OrgCount: int(r.OrgCount),
+		},
+		CreatedAt:             r.CreatedAt,
+		TempPasswordExpiresAt: db.TimePtr(r.TempPasswordExpiresAt),
+		Factors:               factors,
+		ActiveSessions:        int(r.ActiveSessions),
+	}, nil
+}
+
+// ListMemberships implements Store.
+func (s *SQLStore) ListMemberships(ctx context.Context, userID, actor uuid.UUID) ([]Membership, error) {
+	rows, err := s.q.ListAccountMemberships(ctx, gen.ListAccountMembershipsParams{UserID: userID, ActorID: actor})
+	if err != nil {
+		return nil, fmt.Errorf("list memberships: %w", err)
+	}
+	out := make([]Membership, len(rows))
+	for i, r := range rows {
+		out[i] = Membership{OrgID: r.OrgID, Slug: r.Slug, Name: r.Name, Role: r.Role, ActorIsMember: r.ActorIsMember}
+	}
+	return out, nil
+}
+
+// LockAccount implements Store.
+func (s *SQLStore) LockAccount(ctx context.Context, id uuid.UUID) (bool, error) {
+	hasPassword, err := s.q.LockAccount(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrNotFound
+	}
+	if err != nil {
+		return false, fmt.Errorf("lock account: %w", err)
+	}
+	return hasPassword, nil
+}
+
+// SetTemporaryPassword implements Store.
+func (s *SQLStore) SetTemporaryPassword(ctx context.Context, id uuid.UUID, hash string, expiresAt time.Time) error {
+	n, err := s.q.SetTemporaryPassword(ctx, gen.SetTemporaryPasswordParams{ID: id, PasswordHash: hash, ExpiresAt: expiresAt})
+	if err != nil {
+		return fmt.Errorf("set temporary password: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RevokeAllSessions implements Store, with tenancy's query for the same
+// thing (deactivation ends every session too).
+func (s *SQLStore) RevokeAllSessions(ctx context.Context, id uuid.UUID) error {
+	if err := s.q.RevokeSessionsForUser(ctx, id); err != nil {
+		return fmt.Errorf("revoke sessions: %w", err)
+	}
+	return nil
+}
+
+// DeleteSecondFactors implements Store.
+func (s *SQLStore) DeleteSecondFactors(ctx context.Context, id uuid.UUID) error {
+	if err := s.q.DeleteSecondFactors(ctx, id); err != nil {
+		return fmt.Errorf("delete second factors: %w", err)
+	}
+	return nil
+}
+
+// Reactivate implements Store.
+func (s *SQLStore) Reactivate(ctx context.Context, id uuid.UUID) error {
+	n, err := s.q.ReactivateUser(ctx, id)
+	if err != nil {
+		return fmt.Errorf("reactivate user: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// NoticeRecipient implements Store.
+func (s *SQLStore) NoticeRecipient(ctx context.Context, id uuid.UUID) (Recipient, error) {
+	r, err := s.q.GetNoticeRecipient(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Recipient{}, ErrNotFound
+	}
+	if err != nil {
+		return Recipient{}, fmt.Errorf("get notice recipient: %w", err)
+	}
+	return Recipient{Email: r.Email, Locale: r.Locale, DefaultLocale: r.DefaultLocale}, nil
 }

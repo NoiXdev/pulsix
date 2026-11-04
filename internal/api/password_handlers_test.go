@@ -201,3 +201,42 @@ func TestLoginRefusesExpiredTemporaryPasswordOverHTTP(t *testing.T) {
 		t.Fatalf("login with an expired temporary password: status %d, want 401", code)
 	}
 }
+
+// TestChangePasswordRefusesExpiredTemporaryPassword: a session that is
+// still signed in (a passkey sign-in never saw the password) cannot use an
+// expired temporary password as the current one. The refusal has its own
+// detail, so the SPA can tell the person to ask an administrator for a new
+// one; the caller is authenticated, so the detail gives nothing away. A
+// wrong password still gets the generic detail.
+func TestChangePasswordRefusesExpiredTemporaryPassword(t *testing.T) {
+	const password = "the temporary password"
+	s := apitest.New(t)
+	logs := captureLog(t)
+	uid := s.SeedUser("temp-expired-change@example.test", password)
+	markMustChange(t, s, uid)
+	if _, err := s.DB.Pool().Exec(t.Context(),
+		`UPDATE users SET temp_password_expires_at = now() - interval '1 second' WHERE id = $1`, uid); err != nil {
+		t.Fatal(err)
+	}
+	c := s.LoginAs(uid)
+
+	for _, tc := range []struct {
+		current, wantDetail string
+	}{
+		{password, "temporary_password_expired"},
+		{"not the password", "invalid_current_password"},
+	} {
+		resp := postJSON(t, c, s.HTTP.URL+changePasswordPath, map[string]string{
+			"current_password": tc.current, "new_password": "a brand new password",
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status %d, want 400", resp.StatusCode)
+		}
+		if d := problemDetail(t, resp); d != tc.wantDetail {
+			t.Fatalf("detail %q, want %q", d, tc.wantDetail)
+		}
+	}
+	if strings.Contains(logs.String(), password) {
+		t.Fatalf("the server log carries a password: %s", logs)
+	}
+}

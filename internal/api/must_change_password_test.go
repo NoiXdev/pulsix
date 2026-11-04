@@ -33,16 +33,22 @@ var mustChangeAllowed = map[string]bool{
 	"POST /api/v1/auth/passkeys/register/finish": true,
 }
 
-// mustChangeSkippedPrefixes are the routes that never take a session at
-// all, listed by path prefix: everything else, including any route added
-// later, must refuse a must-change session.
+// mustChangeSkippedExact and mustChangeSkippedPrefixes are the routes that
+// never take a session at all: everything else, including any route added
+// later, must refuse a must-change session. A single route is listed
+// exactly, so a later route that merely shares its beginning (say
+// /auth/login-history) is walked rather than skipped; a prefix ends in a
+// slash and covers a family of routes.
+var mustChangeSkippedExact = map[string]bool{
+	"/api/v1/health":         true,
+	"/api/v1/auth/login":     true, // password sign-in
+	"/api/v1/invites/accept": true, // the invite token is the credential
+}
+
 var mustChangeSkippedPrefixes = []string{
-	"/api/v1/health",
 	"/api/v1/setup/",               // first-run wizard and its status
-	"/api/v1/auth/login",           // password sign-in
 	"/api/v1/auth/passkeys/login/", // passkey sign-in
 	"/api/v1/auth/password/",       // public forgot and reset routes (Task 4)
-	"/api/v1/invites/accept",       // the invite token is the credential
 	"/api/v1/hooks/",               // webhook receivers, the trigger secret is the credential
 }
 
@@ -154,20 +160,43 @@ func TestMustChangePasswordRouteWalk(t *testing.T) {
 		"/api/openapi.json",
 	} {
 		resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+path, nil)
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Errorf("GET %s: status %d, want 403", path, resp.StatusCode)
+		if detail := problemDetail(t, resp); resp.StatusCode != http.StatusForbidden || detail != passwordChangeRequired {
+			t.Errorf("GET %s: status %d detail %q, want 403 %q", path, resp.StatusCode, detail, passwordChangeRequired)
 		}
 	}
 }
 
 func skippedForMustChange(path string) bool {
+	if mustChangeSkippedExact[path] {
+		return true
+	}
 	for _, p := range mustChangeSkippedPrefixes {
 		if strings.HasPrefix(path, p) {
 			return true
 		}
 	}
 	return false
+}
+
+// TestMustChangeSkipListIsExact: a single skipped route does not hide the
+// routes that merely begin like it.
+func TestMustChangeSkipListIsExact(t *testing.T) {
+	for path, want := range map[string]bool{
+		"/api/v1/auth/login":                   true,
+		"/api/v1/auth/login-history":           false,
+		"/api/v1/health":                       true,
+		"/api/v1/healthcheck":                  false,
+		"/api/v1/invites/accept":               true,
+		"/api/v1/invites/accepted":             false,
+		"/api/v1/auth/passkeys/login/begin":    true,
+		"/api/v1/auth/password":                false,
+		"/api/v1/auth/password/forgot":         true,
+		"/api/v1/admin/users/{userId}/disable": false,
+	} {
+		if got := skippedForMustChange(path); got != want {
+			t.Errorf("skippedForMustChange(%q) = %v, want %v", path, got, want)
+		}
+	}
 }
 
 // TestMustChangePasswordPasskeySession: a session created already complete

@@ -473,29 +473,3 @@ func TestDeactivateUserIsInstanceAdminOnly(t *testing.T) {
 		t.Fatalf("fresh login for a deactivated user: status %d, want 401", resp.StatusCode)
 	}
 }
-
-// TestDeactivateRefusesTheLastInstanceAdmin covers M6 over HTTP: the only
-// active instance administrator cannot deactivate themselves (setup is gated
-// on "no instance administrator exists", so the instance would be
-// unrecoverable), and an unknown user id is a 404 rather than a silent 200.
-func TestDeactivateRefusesTheLastInstanceAdmin(t *testing.T) {
-	s := apitest.New(t)
-	admin := s.SeedUser("only-admin@example.test", "correct horse battery")
-	if _, err := s.DB.Pool().Exec(t.Context(), "UPDATE users SET instance_admin = true WHERE id = $1", admin); err != nil {
-		t.Fatal(err)
-	}
-	c := s.LoginAs(admin)
-
-	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/admin/users/"+admin.String()+"/deactivate", nil)
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("deactivating the last instance admin: status %d, want 409; body %s", resp.StatusCode, mustReadBody(t, resp))
-	}
-	if resp := requestJSON(t, c, http.MethodGet, s.HTTP.URL+"/api/v1/auth/me", nil); resp.StatusCode != http.StatusOK {
-		t.Fatalf("the refused deactivation still ended the admin's session: status %d", resp.StatusCode)
-	}
-
-	resp = postJSON(t, c, s.HTTP.URL+"/api/v1/admin/users/"+uuid.Must(uuid.NewV7()).String()+"/deactivate", nil)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("deactivating an unknown user: status %d, want 404", resp.StatusCode)
-	}
-}

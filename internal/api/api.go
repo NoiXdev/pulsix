@@ -495,12 +495,7 @@ func requireMFAForExplorer(next http.Handler) http.Handler {
 		if r.URL.Path == "/api/explorer" || strings.HasPrefix(r.URL.Path, "/api/openapi") ||
 			strings.HasPrefix(r.URL.Path, "/api/schemas/") {
 			if _, err := requireMFAComplete(r.Context()); err != nil {
-				status := http.StatusUnauthorized
-				var se huma.StatusError
-				if errors.As(err, &se) {
-					status = se.GetStatus()
-				}
-				http.Error(w, "login required", status)
+				writeGateRefusal(w, err)
 				return
 			}
 		}
@@ -528,6 +523,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerOrgRoutes(hapi, deps)         // POST/GET /orgs — no org in the path, no bearer credential accepted
 	registerInviteAcceptRoute(hapi, deps) // POST /invites/accept — public, no principal at all
 	registerAdminRoutes(hapi, deps)       // POST /admin/users/{id}/deactivate — instance admin, session only
+	registerAdminUserRoutes(hapi, deps)   // /admin/users… — the Users and account pages, instance admin, session only
 	registerSetupRoutes(hapi, deps)       // GET /setup/status, POST /setup/complete — public
 	// POST /hooks/jobs/{id}, POST /hooks/repos/{id} — public, unauthenticated
 	// webhook receivers; the trigger's own secret is the credential (spec
