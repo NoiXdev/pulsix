@@ -101,6 +101,7 @@ INSERT INTO instance_settings (key, value) VALUES ('fixture', '{"a": 1}');
 INSERT INTO passkeys (id, user_id, name, credential_id, public_key, attestation) VALUES ('00000000-0000-4000-8000-00000000002e', '00000000-0000-4000-8000-000000000002', 'key', '\x08', '\x09', 'none');
 INSERT INTO recovery_codes (user_id, code_hash) VALUES ('00000000-0000-4000-8000-000000000002', '\x0a');
 INSERT INTO sessions (id, user_id, secret_hash, expires_at) VALUES ('00000000-0000-4000-8000-00000000002f', '00000000-0000-4000-8000-000000000002', '\x0b', now() + interval '1 day');
+INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES ('00000000-0000-4000-8000-000000000032', '00000000-0000-4000-8000-000000000002', '\x0e', now() + interval '1 hour');
 INSERT INTO totp_secrets (user_id, secret_sealed) VALUES ('00000000-0000-4000-8000-000000000002', '\x0c');
 INSERT INTO webauthn_ceremonies (id, kind, user_id, data, expires_at) VALUES ('00000000-0000-4000-8000-000000000030', 'login', '00000000-0000-4000-8000-000000000002', '\x0d', now() + interval '1 hour');
 `

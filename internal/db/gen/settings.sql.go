@@ -14,7 +14,7 @@ import (
 const createInstanceAdmin = `-- name: CreateInstanceAdmin :one
 INSERT INTO users (id, email, display_name, password_hash, instance_admin)
 VALUES ($1, $2, $3, $4, true)
-RETURNING id, email, display_name, password_hash, instance_admin, created_at, disabled_at, locale
+RETURNING id, email, display_name, password_hash, instance_admin, created_at, disabled_at, locale, must_change_password, temp_password_expires_at, last_sign_in_at
 `
 
 type CreateInstanceAdminParams struct {
@@ -41,6 +41,9 @@ func (q *Queries) CreateInstanceAdmin(ctx context.Context, arg CreateInstanceAdm
 		&i.CreatedAt,
 		&i.DisabledAt,
 		&i.Locale,
+		&i.MustChangePassword,
+		&i.TempPasswordExpiresAt,
+		&i.LastSignInAt,
 	)
 	return i, err
 }

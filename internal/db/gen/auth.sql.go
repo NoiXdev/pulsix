@@ -118,8 +118,14 @@ func (q *Queries) CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID
 }
 
 const createSession = `-- name: CreateSession :exec
-INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at)
-VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END)
+WITH new_session AS (
+    INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at)
+    VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END)
+    RETURNING user_id, mfa_complete
+)
+UPDATE users SET last_sign_in_at = now()
+FROM new_session
+WHERE users.id = new_session.user_id AND new_session.mfa_complete
 `
 
 type CreateSessionParams struct {
@@ -135,6 +141,9 @@ type CreateSessionParams struct {
 // the proof's timestamp from the start (backlog 1.28). Without it a
 // passkey user would never hold a fresh factor and could never reach the
 // account-security actions at all.
+// A session created complete is also a completed sign-in, so it stamps
+// users.last_sign_in_at in the same statement (backlog 7.74); a pending one
+// stamps nothing until MarkSessionMFAComplete completes it.
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
 	_, err := q.db.Exec(ctx, createSession,
 		arg.ID,
@@ -178,20 +187,21 @@ func (q *Queries) DeleteTOTP(ctx context.Context, userID uuid.UUID) error {
 }
 
 const getSession = `-- name: GetSession :one
-SELECT s.id, s.user_id, s.secret_hash, s.mfa_complete, s.created_at, s.expires_at, s.revoked_at, s.mfa_at, u.instance_admin FROM sessions s JOIN users u ON u.id = s.user_id
+SELECT s.id, s.user_id, s.secret_hash, s.mfa_complete, s.created_at, s.expires_at, s.revoked_at, s.mfa_at, u.instance_admin, u.must_change_password FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled_at IS NULL
 `
 
 type GetSessionRow struct {
-	ID            uuid.UUID          `json:"id"`
-	UserID        uuid.UUID          `json:"user_id"`
-	SecretHash    []byte             `json:"secret_hash"`
-	MfaComplete   bool               `json:"mfa_complete"`
-	CreatedAt     time.Time          `json:"created_at"`
-	ExpiresAt     time.Time          `json:"expires_at"`
-	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
-	MfaAt         pgtype.Timestamptz `json:"mfa_at"`
-	InstanceAdmin bool               `json:"instance_admin"`
+	ID                 uuid.UUID          `json:"id"`
+	UserID             uuid.UUID          `json:"user_id"`
+	SecretHash         []byte             `json:"secret_hash"`
+	MfaComplete        bool               `json:"mfa_complete"`
+	CreatedAt          time.Time          `json:"created_at"`
+	ExpiresAt          time.Time          `json:"expires_at"`
+	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
+	MfaAt              pgtype.Timestamptz `json:"mfa_at"`
+	InstanceAdmin      bool               `json:"instance_admin"`
+	MustChangePassword bool               `json:"must_change_password"`
 }
 
 // u.disabled_at IS NULL is the backstop for deactivation (Finding 2, Task
@@ -213,6 +223,7 @@ func (q *Queries) GetSession(ctx context.Context, id uuid.UUID) (GetSessionRow, 
 		&i.RevokedAt,
 		&i.MfaAt,
 		&i.InstanceAdmin,
+		&i.MustChangePassword,
 	)
 	return i, err
 }
@@ -253,8 +264,14 @@ func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCode
 }
 
 const markSessionMFAComplete = `-- name: MarkSessionMFAComplete :execrows
+WITH previous AS (
+    SELECT user_id, mfa_complete FROM sessions WHERE id = $2
+), stamp AS (
+    UPDATE users SET last_sign_in_at = now()
+    WHERE users.id IN (SELECT user_id FROM previous WHERE NOT mfa_complete)
+)
 UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = $1
-WHERE id = $2
+WHERE sessions.id = $2
 `
 
 type MarkSessionMFACompleteParams struct {
@@ -271,6 +288,10 @@ type MarkSessionMFACompleteParams struct {
 // the freshness window (backlog 1.28).
 // secret_hash is replaced too (backlog 7.19): the cookie a session had
 // before its second factor must not be the one that carries it afterwards.
+// last_sign_in_at is stamped only when the session was not yet complete
+// (backlog 7.74): a step-up re-proves the factor on a session that already
+// signed in and must not read as a new sign-in. The CTE reads the row as it
+// was before this statement's own update.
 func (q *Queries) MarkSessionMFAComplete(ctx context.Context, arg MarkSessionMFACompleteParams) (int64, error) {
 	result, err := q.db.Exec(ctx, markSessionMFAComplete, arg.SecretHash, arg.ID)
 	if err != nil {

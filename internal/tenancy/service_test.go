@@ -670,6 +670,26 @@ func TestAcceptInviteNewAccountNeedsAPassword(t *testing.T) {
 	}
 }
 
+// TestAcceptInviteRejectsElevenCharacterPassword: an invitation creates an
+// account, so it shares the one password floor (auth.MinPasswordLength).
+func TestAcceptInviteRejectsElevenCharacterPassword(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	svc := tenancy.NewService(st, &fakeMailer{}, testPublicURL, time.Now)
+	owner := st.addUser("owner@x", true)
+	org, _ := svc.CreateOrg(ctx, owner, "acme", "Acme")
+	inv, err := svc.Invite(ctx, org.ID, owner, "new@x", tenancy.RoleViewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "elevenchars"); !errors.Is(err, tenancy.ErrInvalidInput) {
+		t.Fatalf("11-character password: %v, want ErrInvalidInput", err)
+	}
+	if _, _, _, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New", "twelve chars"); err != nil {
+		t.Fatalf("12-character password after the refusal: %v", err)
+	}
+}
+
 func TestAcceptInviteUnknownTokenNotFound(t *testing.T) {
 	ctx := context.Background()
 	svc := tenancy.NewService(newFakeStore(), &fakeMailer{}, testPublicURL, time.Now)

@@ -764,6 +764,15 @@ type Passkey struct {
 	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
 }
 
+type PasswordResetToken struct {
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
+	TokenHash []byte             `json:"token_hash"`
+	CreatedAt time.Time          `json:"created_at"`
+	ExpiresAt time.Time          `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+}
+
 type Playbook struct {
 	ID        uuid.UUID   `json:"id"`
 	OrgID     uuid.UUID   `json:"org_id"`
@@ -902,14 +911,17 @@ type TriggerDelivery struct {
 }
 
 type User struct {
-	ID            uuid.UUID          `json:"id"`
-	Email         string             `json:"email"`
-	DisplayName   string             `json:"display_name"`
-	PasswordHash  *string            `json:"password_hash"`
-	InstanceAdmin bool               `json:"instance_admin"`
-	CreatedAt     time.Time          `json:"created_at"`
-	DisabledAt    pgtype.Timestamptz `json:"disabled_at"`
-	Locale        *string            `json:"locale"`
+	ID                    uuid.UUID          `json:"id"`
+	Email                 string             `json:"email"`
+	DisplayName           string             `json:"display_name"`
+	PasswordHash          *string            `json:"password_hash"`
+	InstanceAdmin         bool               `json:"instance_admin"`
+	CreatedAt             time.Time          `json:"created_at"`
+	DisabledAt            pgtype.Timestamptz `json:"disabled_at"`
+	Locale                *string            `json:"locale"`
+	MustChangePassword    bool               `json:"must_change_password"`
+	TempPasswordExpiresAt pgtype.Timestamptz `json:"temp_password_expires_at"`
+	LastSignInAt          pgtype.Timestamptz `json:"last_sign_in_at"`
 }
 
 type WebauthnCeremony struct {

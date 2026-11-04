@@ -4,8 +4,17 @@
 -- the proof's timestamp from the start (backlog 1.28). Without it a
 -- passkey user would never hold a fresh factor and could never reach the
 -- account-security actions at all.
-INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at)
-VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END);
+-- A session created complete is also a completed sign-in, so it stamps
+-- users.last_sign_in_at in the same statement (backlog 7.74); a pending one
+-- stamps nothing until MarkSessionMFAComplete completes it.
+WITH new_session AS (
+    INSERT INTO sessions (id, user_id, secret_hash, mfa_complete, expires_at, mfa_at)
+    VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END)
+    RETURNING user_id, mfa_complete
+)
+UPDATE users SET last_sign_in_at = now()
+FROM new_session
+WHERE users.id = new_session.user_id AND new_session.mfa_complete;
 
 -- name: GetSession :one
 -- u.disabled_at IS NULL is the backstop for deactivation (Finding 2, Task
@@ -14,7 +23,7 @@ VALUES ($1, $2, $3, $4, $5, CASE WHEN $4 THEN now() ELSE NULL END);
 -- or future caller of Sessions.Lookup to forget the check — a disabled
 -- user's session simply stops resolving here, the same way an expired or
 -- revoked one already does.
-SELECT s.*, u.instance_admin FROM sessions s JOIN users u ON u.id = s.user_id
+SELECT s.*, u.instance_admin, u.must_change_password FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled_at IS NULL;
 
 -- name: MarkSessionMFAComplete :execrows
@@ -27,8 +36,18 @@ WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled
 -- the freshness window (backlog 1.28).
 -- secret_hash is replaced too (backlog 7.19): the cookie a session had
 -- before its second factor must not be the one that carries it afterwards.
+-- last_sign_in_at is stamped only when the session was not yet complete
+-- (backlog 7.74): a step-up re-proves the factor on a session that already
+-- signed in and must not read as a new sign-in. The CTE reads the row as it
+-- was before this statement's own update.
+WITH previous AS (
+    SELECT user_id, mfa_complete FROM sessions WHERE id = sqlc.arg(id)
+), stamp AS (
+    UPDATE users SET last_sign_in_at = now()
+    WHERE users.id IN (SELECT user_id FROM previous WHERE NOT mfa_complete)
+)
 UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = sqlc.arg(secret_hash)
-WHERE id = sqlc.arg(id);
+WHERE sessions.id = sqlc.arg(id);
 
 -- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1;

@@ -1,6 +1,7 @@
 package auth_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -96,5 +97,33 @@ func TestVerifyPasswordMalformedHash(t *testing.T) {
 				t.Fatalf("expected ok=false for %s", name)
 			}
 		})
+	}
+}
+
+func TestCheckPasswordPolicy(t *testing.T) {
+	for name, tc := range map[string]struct {
+		pw      string
+		wantErr bool
+	}{
+		"empty":                  {"", true},
+		"eleven characters":      {"elevenchars", true},
+		"twelve characters":      {"twelve chars", false},
+		"long":                   {"correct horse battery staple", false},
+		"eleven multibyte runes": {string([]rune("äääääääääääää")[:11]), true},
+		"twelve multibyte runes": {string([]rune("äääääääääääää")[:12]), false},
+	} {
+		err := auth.CheckPasswordPolicy(tc.pw)
+		if tc.wantErr {
+			if !errors.Is(err, auth.ErrPasswordTooShort) || !errors.Is(err, auth.ErrInvalidInput) {
+				t.Errorf("%s: err = %v, want ErrPasswordTooShort wrapping ErrInvalidInput", name, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: err = %v, want nil", name, err)
+		}
+	}
+	if auth.MinPasswordLength != 12 {
+		t.Errorf("MinPasswordLength = %d, want 12", auth.MinPasswordLength)
 	}
 }

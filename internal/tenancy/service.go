@@ -42,10 +42,6 @@ var (
 	ErrSignInRequired = errors.New("this address already has an account: sign in to it, then accept the invitation")
 )
 
-// minInvitePasswordLen is the floor for the password of an account an
-// invitation creates: a basic guard, not a full strength policy.
-const minInvitePasswordLen = 8
-
 // maxOrgNameLength bounds an organization's display name.
 const maxOrgNameLength = 200
 
@@ -471,7 +467,7 @@ func (s *Service) AcceptInvite(ctx context.Context, acceptor uuid.UUID, token, d
 // checkAcceptor decides, before an invitation is taken, whether this request
 // may accept it: an address with a password-bearing account only through
 // that account's own session, a new account only with a name and a password
-// of minInvitePasswordLen or more.
+// that passes auth.CheckPasswordPolicy.
 func checkAcceptor(exists bool, u User, acceptor uuid.UUID, displayName, password string) error {
 	if exists && u.PasswordHash != nil {
 		if u.ID != acceptor {
@@ -482,8 +478,8 @@ func checkAcceptor(exists bool, u User, acceptor uuid.UUID, displayName, passwor
 	if strings.TrimSpace(displayName) == "" {
 		return fmt.Errorf("%w: a name is required to create the account", ErrInvalidInput)
 	}
-	if len(password) < minInvitePasswordLen {
-		return fmt.Errorf("%w: the password must be at least %d characters", ErrInvalidInput, minInvitePasswordLen)
+	if auth.CheckPasswordPolicy(password) != nil {
+		return fmt.Errorf("%w: the password must be at least %d characters", ErrInvalidInput, auth.MinPasswordLength)
 	}
 	return nil
 }

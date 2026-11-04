@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -25,6 +26,25 @@ const (
 	// value.
 	maxArgonMemoryKiB = 1 << 20 // 1 GiB
 )
+
+// MinPasswordLength is the one password floor of the product, in
+// characters (runes, not bytes): the setup wizard, an accepted invitation
+// and every later password change or reset hold a new credential to it.
+const MinPasswordLength = 12
+
+// ErrPasswordTooShort is what CheckPasswordPolicy returns for a password
+// under MinPasswordLength. It wraps ErrInvalidInput, so a transport that
+// maps that sentinel to 422 needs no case of its own.
+var ErrPasswordTooShort = fmt.Errorf("%w: the password must be at least %d characters", ErrInvalidInput, MinPasswordLength)
+
+// CheckPasswordPolicy reports whether pw may become a stored credential.
+// It is the floor only, a basic guard rather than a strength meter.
+func CheckPasswordPolicy(pw string) error {
+	if utf8.RuneCountInString(pw) < MinPasswordLength {
+		return ErrPasswordTooShort
+	}
+	return nil
+}
 
 // HashPassword returns a PHC-formatted argon2id hash.
 func HashPassword(pw string) (string, error) {

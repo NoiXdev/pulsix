@@ -45,12 +45,6 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
-// minPasswordLength is the wizard's password floor. It exists nowhere else
-// in this codebase (see auth_handlers.go's loginInput.Password comment):
-// this is the one place a brand-new credential is actually created, so it
-// is the one place a strength floor belongs.
-const minPasswordLength = 12
-
 // maxSlugLength bounds Input.OrgSlug the same way orgCreateInput does in
 // package api (63 there), but tighter: this pattern's own capture group is
 // bounded to 40 total characters (1 plus up to 38 plus 1), matching a DNS
@@ -96,8 +90,8 @@ func (in Input) validate() error {
 	if strings.TrimSpace(in.AdminName) == "" {
 		problems = append(problems, "admin name is required")
 	}
-	if len(in.AdminPassword) < minPasswordLength {
-		problems = append(problems, fmt.Sprintf("admin password must be at least %d characters", minPasswordLength))
+	if auth.CheckPasswordPolicy(in.AdminPassword) != nil {
+		problems = append(problems, fmt.Sprintf("admin password must be at least %d characters", auth.MinPasswordLength))
 	}
 	if len(in.OrgSlug) > maxSlugLength || !slugPattern.MatchString(in.OrgSlug) {
 		problems = append(problems, "organization slug must be lowercase letters, digits and hyphens, 1-40 characters, and must not start or end with a hyphen")

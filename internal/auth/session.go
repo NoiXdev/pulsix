@@ -34,6 +34,9 @@ type Principal struct {
 	// one that never did (and for every session that predates the column).
 	// The account-security actions ask FactorFresh about it.
 	MFAAt *time.Time
+	// MustChangePassword is the account's forced-change flag, read from the
+	// session lookup. It is carried here and enforced elsewhere.
+	MustChangePassword bool
 }
 
 // StepUpWindow is how long a proven second factor keeps the
@@ -119,7 +122,7 @@ func (s *Sessions) Lookup(ctx context.Context, cookie string) (Principal, error)
 	if subtle.ConstantTimeCompare(sum[:], row.SecretHash) != 1 {
 		return Principal{}, ErrUnauthenticated
 	}
-	p := Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete}
+	p := Principal{UserID: row.UserID, SessionID: row.ID, InstanceAdmin: row.InstanceAdmin, MFAComplete: row.MfaComplete, MustChangePassword: row.MustChangePassword}
 	if row.MfaAt.Valid {
 		at := row.MfaAt.Time
 		p.MFAAt = &at

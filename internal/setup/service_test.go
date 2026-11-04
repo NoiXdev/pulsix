@@ -283,12 +283,13 @@ func TestCompletePropagatesOrgCreatedHookError(t *testing.T) {
 func TestCompleteValidatesInput(t *testing.T) {
 	svc := setup.NewService(newFakeSetupStore(), &fakeSessions{}, crypto.NewBox([32]byte{}), time.Now, testToken)
 	for name, in := range map[string]setup.Input{
-		"short password": {AdminEmail: "a@x.test", AdminPassword: "short", AdminName: "A", OrgSlug: "acme", OrgName: "Acme"},
-		"bad slug":       {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "Acme Inc", OrgName: "Acme"},
-		"no email":       {AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "acme", OrgName: "Acme"},
-		"no name":        {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", OrgSlug: "acme", OrgName: "Acme"},
-		"no org name":    {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "acme"},
-		"slug too short": {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "a-", OrgName: "Acme"},
+		"short password":    {AdminEmail: "a@x.test", AdminPassword: "short", AdminName: "A", OrgSlug: "acme", OrgName: "Acme"},
+		"eleven characters": {AdminEmail: "a@x.test", AdminPassword: "elevenchars", AdminName: "A", OrgSlug: "acme", OrgName: "Acme"},
+		"bad slug":          {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "Acme Inc", OrgName: "Acme"},
+		"no email":          {AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "acme", OrgName: "Acme"},
+		"no name":           {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", OrgSlug: "acme", OrgName: "Acme"},
+		"no org name":       {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "acme"},
+		"slug too short":    {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "a-", OrgName: "Acme"},
 		// M4: the name goes into every invitation's Subject header.
 		"org name with a line break": {AdminEmail: "a@x.test", AdminPassword: "correct horse battery", AdminName: "A", OrgSlug: "acme", OrgName: "Acme\r\nBcc: x@evil.test"},
 	} {
