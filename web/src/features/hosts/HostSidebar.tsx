@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Pencil, Play } from 'lucide-react';
+import { Pencil, Terminal } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { Switch } from '../../ui/switch.tsx';
@@ -53,8 +53,8 @@ export function HostSidebar({ org, host, actions }: { org: string; host: Host; a
       {(actions.canRun || actions.canEdit || canBootstrap || actions.canDelete) && (
         <div className="flex flex-wrap items-center gap-2">
           {actions.canRun && (
-            <Button variant="primary" onClick={actions.runPlay}>
-              <Play size={14} /> {t.hosts.detail.runPlay}
+            <Button variant="primary" onClick={actions.runCommand}>
+              <Terminal size={14} /> {t.hosts.detail.runCommand}
             </Button>
           )}
           {actions.canEdit && (

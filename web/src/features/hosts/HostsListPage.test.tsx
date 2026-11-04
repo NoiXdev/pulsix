@@ -344,21 +344,21 @@ describe('host rows', () => {
     expect(items.map((i) => i.textContent)).toEqual([
       'Open',
       'Edit',
-      'Run play',
+      'Run command',
       'Switch monitoring off',
       'Switch management off',
       'Delete…',
     ]);
   });
 
-  it('offers no Run play for a host that is not managed', async () => {
+  it('offers no Run command for a host that is not managed', async () => {
     const user = userEvent.setup();
     mockApi(rowRoutes('operator', { ...HOSTS.hosts[0], managed: false }));
     renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await screen.findAllByRole('menuitem');
-    expect(screen.queryByRole('menuitem', { name: 'Run play' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Run command' })).not.toBeInTheDocument();
   });
 
   it('Open navigates to the host page', async () => {
@@ -385,13 +385,13 @@ describe('host rows', () => {
     expect(router.state.location.pathname).toBe('/o/acme/hosts');
   });
 
-  it('Run play opens the ad-hoc dialog with this host selected', async () => {
+  it('Run command opens the ad-hoc dialog with this host selected', async () => {
     const user = userEvent.setup();
     mockApi(rowRoutes('operator'));
     renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Run play' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Run command' }));
 
     const dialog = await screen.findByRole('dialog', { name: 'Run command' });
     expect(await within(dialog).findByRole('checkbox', { name: 'web-04.fra' })).toBeChecked();

@@ -140,12 +140,12 @@ describe('HostSidebar', () => {
     expect(await screen.findByText(/not a valid tag key/)).toBeInTheDocument();
   });
 
-  it('offers Run play, Edit and a menu with Bootstrap and Delete to an admin on a managed host', async () => {
+  it('offers Run command, Edit and a menu with Bootstrap and Delete to an admin on a managed host', async () => {
     const user = userEvent.setup();
     mockApi(hostRoutes({ host: { managed: true } }));
     renderSidebar({ managed: true });
 
-    expect(await screen.findByRole('button', { name: 'Run play' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Run command' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'More actions for web-04.fra' }));
     const items = await screen.findAllByRole('menuitem');
@@ -155,7 +155,7 @@ describe('HostSidebar', () => {
     expect(await screen.findByRole('dialog', { name: 'Bootstrap web-04.fra' })).toBeInTheDocument();
   });
 
-  it('offers no Bootstrap and no Run play for a host that is not managed', async () => {
+  it('offers no Bootstrap and no Run command for a host that is not managed', async () => {
     const user = userEvent.setup();
     mockApi(hostRoutes());
     renderSidebar();
@@ -163,7 +163,7 @@ describe('HostSidebar', () => {
     await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
     const items = await screen.findAllByRole('menuitem');
     expect(items.map((i) => i.textContent)).toEqual(['Delete…']);
-    expect(screen.queryByRole('button', { name: 'Run play' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run command' })).not.toBeInTheDocument();
   });
 
   it('gives a viewer read-only switches and no actions', async () => {
@@ -178,7 +178,7 @@ describe('HostSidebar', () => {
     expect(screen.getByRole('switch', { name: 'Managed' })).toBeDisabled();
     expect(screen.getByRole('switch', { name: 'Monitored' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Run play' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run command' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /More actions/ })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('role=db')).not.toBeInTheDocument();
   });

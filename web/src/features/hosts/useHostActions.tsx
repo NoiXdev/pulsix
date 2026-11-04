@@ -17,7 +17,7 @@ export interface HostActions {
   canDelete: boolean;
   open: () => void;
   edit: () => void;
-  runPlay: () => void;
+  runCommand: () => void;
   toggleMonitoring: () => void;
   toggleManagement: () => void;
   remove: () => void;
@@ -69,7 +69,7 @@ export function useHostActions(org: string, host: Host, opts: { onDeleted?: () =
     canDelete: canWrite,
     open: () => void navigate({ to: '/o/$org/hosts/$id', params: { org, id: host.id } }),
     edit: () => setDialog('edit'),
-    runPlay: () => setDialog('run'),
+    runCommand: () => setDialog('run'),
     toggleMonitoring: () => patch({ monitored: !host.monitored }),
     toggleManagement: () => patch({ managed: !host.managed }),
     remove: () => void remove(),

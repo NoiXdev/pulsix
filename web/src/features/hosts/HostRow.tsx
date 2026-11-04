@@ -52,7 +52,7 @@ export function HostRow({
           <RowMenu label={t.hosts.row.actions(host.name)}>
             <RowMenuItem onSelect={actions.open}>{t.hosts.row.open}</RowMenuItem>
             {actions.canEdit && <RowMenuItem onSelect={actions.edit}>{t.hosts.row.edit}</RowMenuItem>}
-            {actions.canRun && <RowMenuItem onSelect={actions.runPlay}>{t.hosts.row.runPlay}</RowMenuItem>}
+            {actions.canRun && <RowMenuItem onSelect={actions.runCommand}>{t.hosts.row.runCommand}</RowMenuItem>}
             {actions.canSwitch && (
               <>
                 <RowMenuItem onSelect={actions.toggleMonitoring}>

@@ -17,7 +17,7 @@ Success: opening a host shows everything about it at a glance without scrolling 
      - a key–value block: address, zone, operating system (from facts), agent (status and version), and the effective jump host;
      - capability switches (Managed, Monitored);
      - tags;
-     - the actions: **Run play** (primary), **Edit**, and **⋯** (Bootstrap, Delete);
+     - the actions: **Run command** (primary; opens the ad-hoc run dialog, which runs one shell command — it was called "Run play" until the final review, see backlog 7.76 for running a job template), **Edit**, and **⋯** (Bootstrap, Delete);
      - a section navigation of anchor links. The current section is highlighted while scrolling, and the alert and check counts sit beside their links.
    - A **right column** of sections, one long page in this order:
      1. **State:** metric tiles with a sparkline for CPU, RAM, the fullest disk and load. Show only the tiles the host has data for; colour a tile by its check state.
@@ -34,7 +34,7 @@ Success: opening a host shows everything about it at a glance without scrolling 
    - *(Controller's call, by analogy.)* When **Managed** is off, the Connection & SSH and Inventory sections get the same treatment ("Management is off …" plus Enable). The agent card stays, because the agent is part of monitoring.
 3. **Host list:**
    - The **whole row is a link** to the host page: hover highlight, keyboard-focusable, opens in a new tab with middle-click or Cmd-click.
-   - The **⋯** at the row's end opens a real menu: Open, Edit, Run play, Switch monitoring on/off, Switch management on/off, Delete… (with confirmation). Items the role may not use are hidden.
+   - The **⋯** at the row's end opens a real menu: Open, Edit, Run command, Switch monitoring on/off, Switch management on/off, Delete… (with confirmation). Items the role may not use are hidden.
    - In the list, capabilities are **read-only pills** ("Managed" / "not managed" and so on), not switches, so a click on the row never toggles anything by accident.
    - Clicking the menu never also navigates.
 4. **One dialog for adding and editing a host.**
