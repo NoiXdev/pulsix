@@ -125,6 +125,35 @@ async function renderAndWait(path: string) {
   return router;
 }
 
+describe('SharedTemplateFormPage — repository list', () => {
+  it('shows the reason instead of an empty picker when the repository list cannot be loaded', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': () =>
+        new Response(JSON.stringify({ detail: 'repository store unavailable' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      'GET /api/v1/admin/templates/definitions': { definitions: [] },
+    });
+    renderPage(`${LIST}/new`);
+    expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.getByText('repository store unavailable')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Shared repository')).not.toBeInTheDocument();
+  });
+
+  it('shows the access-denied page on the new page to someone who is not an instance administrator', async () => {
+    const denied = () => new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 });
+    mockApi({
+      'GET /api/v1/auth/me': { ...ADMIN, instance_admin: false },
+      'GET /api/v1/admin/repos/definitions': denied,
+      'GET /api/v1/admin/templates/definitions': denied,
+    });
+    renderPage(`${LIST}/new`);
+    expect(await screen.findByText('You do not have access')).toBeInTheDocument();
+  });
+});
+
 describe('SharedTemplateFormPage — edit', () => {
   it('loads the definition, puts the change and goes back to the list', async () => {
     const user = userEvent.setup();
@@ -222,6 +251,38 @@ describe('SharedTemplateFormPage — edit', () => {
     // would be offering a save that cannot succeed.
     expect(screen.queryByRole('option', { name: 'secret' })).toBeNull();
     expect(screen.getByRole('option', { name: 'string' })).toBeInTheDocument();
+  });
+
+  // Backlog 7.74 fix round 1: SchemaBuilder and SchemaForm must not make an
+  // untouched form look changed (by normalizing the schema or the values on
+  // mount), or every visit to a template with extra vars would end in an
+  // unsaved-changes question.
+  it('leaves a template with an extra vars schema and values without asking when nothing was touched', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
+      'GET /api/v1/admin/templates/definitions': {
+        definitions: [
+          tplDef({
+            extra_vars: { region: 'eu-west-1', replicas: 3, debug: true },
+            extra_vars_schema: {
+              fields: [
+                { name: 'region', type: 'string' },
+                { name: 'replicas', type: 'int' },
+                { name: 'debug', type: 'bool' },
+              ],
+            },
+          }),
+        ],
+      },
+    });
+    const router = renderPage(`${LIST}/t1`);
+    await screen.findByDisplayValue('eu-west-1');
+    await user.click(screen.getByRole('link', { name: 'Cancel' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(LIST));
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it('shows the not-found page for an id that does not exist', async () => {

@@ -1,6 +1,6 @@
 import { useParams } from '@tanstack/react-router';
 import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
-import { useToast } from '../../../ui/toastContext.ts';
+import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useDeleteRepoDefinition, useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
@@ -17,38 +17,31 @@ const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1.3fr) 110px minmax(0, 0.9fr)';
  * belongs to a definition (decision 3).
  *
  * Reachable with Principal.InstanceAdmin only: GET /admin/repos/definitions
- * admits no other caller, so anyone else who reaches the route (the nav item
- * is hidden from them, the route itself is not guarded client-side) sees the
- * 403 page instead of the list. It lives under an organization's Settings
- * for navigation only — the definitions are instance-wide.
+ * admits no other caller. The nav item is hidden from everyone else and the
+ * route itself is not guarded client-side, so anyone else who reaches it —
+ * this list, or the form pages, which load the same list first
+ * (DefinitionLoader) — sees the 403 page rather than a screen that could
+ * only fail. It lives under an organization's Settings for navigation only —
+ * the definitions are instance-wide.
  *
- * A row opens SharedRepoFormPage; Delete… confirms and then deletes. A
- * definition a schedule, trigger or playbook still references refuses with
- * 409 (spec decision 5), and the server composes that sentence — naming the
- * organization and what references it — specifically so this screen can show
- * it verbatim, which is why the toast carries err.message.
+ * A row opens SharedRepoFormPage; Delete… confirms and then deletes
+ * (useDeleteWithConfirm, which also shows a refused delete's own message).
  */
 export function SharedReposPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
-  const toast = useToast();
   const definitions = useRepoDefinitions();
   const remove = useDeleteRepoDefinition();
+  const onDelete = useDeleteWithConfirm<RepoDefinition>({
+    remove: remove.mutateAsync,
+    confirmMessage: (d) => t.instance.shared.repos.confirmDelete(d.name),
+    deletedMessage: (d) => t.instance.shared.repos.deleted(d.name),
+  });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
   if (!definitions.data) return <QueryLoading />;
   const list = definitions.data.definitions ?? [];
-
-  async function onDelete(d: RepoDefinition) {
-    if (!confirm(t.instance.shared.repos.confirmDelete(d.name))) return;
-    try {
-      await remove.mutateAsync(d.id);
-      toast.show(t.instance.shared.repos.deleted(d.name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.instance.shared.deleteFailed, 'destructive');
-    }
-  }
 
   return (
     <SharedListFrame

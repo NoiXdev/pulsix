@@ -1,6 +1,6 @@
 import { useParams } from '@tanstack/react-router';
 import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
-import { useToast } from '../../../ui/toastContext.ts';
+import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
@@ -24,10 +24,14 @@ const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.8fr) minmax(0, 1.1fr) 110px';
 export function SharedTemplatesPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
-  const toast = useToast();
   const definitions = useTemplateDefinitions();
   const repoDefinitions = useRepoDefinitions();
   const remove = useDeleteTemplateDefinition();
+  const onDelete = useDeleteWithConfirm<TemplateDefinition>({
+    remove: remove.mutateAsync,
+    confirmMessage: (d) => t.instance.shared.templates.confirmDelete(d.name),
+    deletedMessage: (d) => t.instance.shared.templates.deleted(d.name),
+  });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
@@ -37,16 +41,6 @@ export function SharedTemplatesPage() {
   // list's own query. Until that loads (or if it fails) the id's head shows
   // instead — a legitimate state, not an error.
   const repoName = new Map((repoDefinitions.data?.definitions ?? []).map((d) => [d.id, d.name]));
-
-  async function onDelete(d: TemplateDefinition) {
-    if (!confirm(t.instance.shared.templates.confirmDelete(d.name))) return;
-    try {
-      await remove.mutateAsync(d.id);
-      toast.show(t.instance.shared.templates.deleted(d.name));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.instance.shared.deleteFailed, 'destructive');
-    }
-  }
 
   return (
     <SharedListFrame

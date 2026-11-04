@@ -1,6 +1,6 @@
 import { useParams } from '@tanstack/react-router';
 import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
-import { useToast } from '../../../ui/toastContext.ts';
+import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useCheckDefinitions, useDeleteCheckDefinition } from '../../../api/hooks/useSharedCheckDefinitions.ts';
@@ -24,24 +24,18 @@ const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 0.6fr) minmax(0, 1fr)';
 export function SharedChecksPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
-  const toast = useToast();
   const definitions = useCheckDefinitions();
   const remove = useDeleteCheckDefinition();
+  const onDelete = useDeleteWithConfirm<CheckDefinitionDef>({
+    remove: remove.mutateAsync,
+    confirmMessage: (d) => t.instance.shared.checks.confirmDelete(d.key),
+    deletedMessage: (d) => t.instance.shared.checks.deleted(d.key),
+  });
 
   const guard = useQueryGuard(definitions);
   if (guard) return guard;
   if (!definitions.data) return <QueryLoading />;
   const list = definitions.data.definitions ?? [];
-
-  async function onDelete(d: CheckDefinitionDef) {
-    if (!confirm(t.instance.shared.checks.confirmDelete(d.key))) return;
-    try {
-      await remove.mutateAsync(d.id);
-      toast.show(t.instance.shared.checks.deleted(d.key));
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.instance.shared.deleteFailed, 'destructive');
-    }
-  }
 
   return (
     <SharedListFrame

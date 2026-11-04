@@ -4,9 +4,7 @@ import { FormPage } from '../../../ui/form-page.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
-import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
-import { QueryError, QueryLoading } from '../../../ui/QueryState.tsx';
-import { ApiError } from '../../../api/client.ts';
+import { DefinitionLoader } from './DefinitionLoader.tsx';
 import {
   useCreateRepoDefinition,
   useRepoDefinitions,
@@ -25,17 +23,11 @@ import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx'
  */
 export function SharedRepoFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
-  return id ? <EditRepo org={org} id={id} /> : <RepoForm org={org} />;
-}
-
-function EditRepo({ org, id }: { org: string; id: string }) {
-  const definitions = useRepoDefinitions();
-  const guard = useQueryGuard(definitions);
-  if (guard) return guard;
-  if (!definitions.data) return <QueryLoading />;
-  const definition = (definitions.data.definitions ?? []).find((d) => d.id === id);
-  if (!definition) return <QueryError error={new ApiError(404, null)} />;
-  return <RepoForm key={definition.id} org={org} definition={definition} />;
+  return (
+    <DefinitionLoader useDefinitions={useRepoDefinitions} id={id}>
+      {(definition) => <RepoForm org={org} definition={definition} />}
+    </DefinitionLoader>
+  );
 }
 
 interface DefinitionFormValues {

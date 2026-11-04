@@ -5,9 +5,7 @@ import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
 import { Select } from '../../../ui/Select.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
-import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
-import { QueryError, QueryLoading } from '../../../ui/QueryState.tsx';
-import { ApiError } from '../../../api/client.ts';
+import { DefinitionLoader } from './DefinitionLoader.tsx';
 import {
   useCheckDefinitions,
   useCreateCheckDefinition,
@@ -31,17 +29,11 @@ import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx'
  */
 export function SharedCheckFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
-  return id ? <EditCheck org={org} id={id} /> : <CheckForm org={org} />;
-}
-
-function EditCheck({ org, id }: { org: string; id: string }) {
-  const definitions = useCheckDefinitions();
-  const guard = useQueryGuard(definitions);
-  if (guard) return guard;
-  if (!definitions.data) return <QueryLoading />;
-  const definition = (definitions.data.definitions ?? []).find((d) => d.id === id);
-  if (!definition) return <QueryError error={new ApiError(404, null)} />;
-  return <CheckForm key={definition.id} org={org} definition={definition} />;
+  return (
+    <DefinitionLoader useDefinitions={useCheckDefinitions} id={id}>
+      {(definition) => <CheckForm org={org} definition={definition} />}
+    </DefinitionLoader>
+  );
 }
 
 interface CheckDefinitionFormValues {

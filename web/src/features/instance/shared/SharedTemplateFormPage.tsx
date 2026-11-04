@@ -6,8 +6,8 @@ import { Label } from '../../../ui/label.tsx';
 import { Select } from '../../../ui/Select.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
-import { QueryError, QueryLoading } from '../../../ui/QueryState.tsx';
-import { ApiError } from '../../../api/client.ts';
+import { QueryLoading } from '../../../ui/QueryState.tsx';
+import { DefinitionLoader } from './DefinitionLoader.tsx';
 import { SchemaBuilder } from '../../inventory/schema/SchemaBuilder.tsx';
 import { SchemaForm } from '../../inventory/schema/SchemaForm.tsx';
 import { toVarSchema } from '../../../api/hooks/useInventory.ts';
@@ -33,21 +33,31 @@ import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx'
  * a template always resolves its playbook against a shared repository, never
  * an organization's own (shared_job_templates.shared_repo_id's own NOT NULL,
  * migration 00061). An empty repository list is a legitimate state (none
- * exists yet), not an error; validation refuses to submit without one.
+ * exists yet), not an error; validation refuses to submit without one. A
+ * repository list that fails to load is an error, shown as such
+ * (TemplateFormWithRepos), never an empty picker.
  */
 export function SharedTemplateFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
-  return id ? <EditTemplate org={org} id={id} /> : <TemplateForm org={org} />;
+  return (
+    <DefinitionLoader useDefinitions={useTemplateDefinitions} id={id}>
+      {(definition) => <TemplateFormWithRepos org={org} definition={definition} />}
+    </DefinitionLoader>
+  );
 }
 
-function EditTemplate({ org, id }: { org: string; id: string }) {
-  const definitions = useTemplateDefinitions();
-  const guard = useQueryGuard(definitions);
+/** The repository picker's options come from the repositories list, which
+ * has to be there before the form is: a picker that is silently empty
+ * because that query failed would read as "no repository exists yet", and
+ * the form could not be submitted. So the list loads (or fails, with its
+ * reason) first. */
+function TemplateFormWithRepos({ org, definition }: { org: string; definition?: TemplateDefinition }) {
+  const repoDefinitions = useRepoDefinitions();
+  const guard = useQueryGuard(repoDefinitions);
   if (guard) return guard;
-  if (!definitions.data) return <QueryLoading />;
-  const definition = (definitions.data.definitions ?? []).find((d) => d.id === id);
-  if (!definition) return <QueryError error={new ApiError(404, null)} />;
-  return <TemplateForm key={definition.id} org={org} definition={definition} />;
+  if (!repoDefinitions.data) return <QueryLoading />;
+  const repoOptions = (repoDefinitions.data.definitions ?? []).map((d) => ({ value: d.id, label: d.name }));
+  return <TemplateForm org={org} definition={definition} repoOptions={repoOptions} />;
 }
 
 interface TemplateDefinitionFormValues {
@@ -84,11 +94,15 @@ const SHARED_FIELD_TYPES: readonly FieldType[] = ['string', 'int', 'float', 'boo
 
 type TextKey = Exclude<keyof TemplateDefinitionFormValues, 'sharedRepoId'>;
 
-function TemplateForm({ org, definition }: { org: string; definition?: TemplateDefinition }) {
+function TemplateForm({
+  org, definition, repoOptions,
+}: {
+  org: string;
+  definition?: TemplateDefinition;
+  repoOptions: { value: string; label: string }[];
+}) {
   const t = useT();
   const toast = useToast();
-  const repoDefinitions = useRepoDefinitions();
-  const repoOptions = (repoDefinitions.data?.definitions ?? []).map((d) => ({ value: d.id, label: d.name }));
   const labels: Record<TextKey, string> = {
     name: t.instance.shared.name,
     playbookPath: t.instance.shared.templates.playbookPath,

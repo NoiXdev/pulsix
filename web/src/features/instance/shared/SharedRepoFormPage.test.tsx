@@ -116,6 +116,22 @@ describe('SharedRepoFormPage — new', () => {
   });
 });
 
+describe('SharedRepoFormPage — access', () => {
+  // The new page used to render the whole form for anyone and only failed
+  // with a 403 on save; it now shows the same access-denied state as the
+  // list and the edit page.
+  it('shows the access-denied page on the new page to someone who is not an instance administrator', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': { ...ADMIN, instance_admin: false },
+      'GET /api/v1/admin/repos/definitions': () =>
+        new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 }),
+    });
+    renderPage(`${LIST}/new`);
+    expect(await screen.findByText('You do not have access')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+  });
+});
+
 describe('SharedRepoFormPage — edit', () => {
   it('loads the definition, puts the change and goes back to the list', async () => {
     const user = userEvent.setup();
