@@ -3,10 +3,13 @@ import { Link } from '@tanstack/react-router';
 import { useT } from '../../i18n/useT.ts';
 import { Button } from '../../ui/button.tsx';
 import { Card } from '../../ui/table.tsx';
-import { useAlert, useAlerts } from '../../api/hooks/useAlerts.ts';
+import { useToast } from '../../ui/toastContext.ts';
+import { useAlert, useAlerts, useUnacknowledgeAlert, useUnsnoozeAlert } from '../../api/hooks/useAlerts.ts';
 import { AlertRow } from './AlertRow.tsx';
-import { alertToRowAlert } from './alertRow.ts';
+import { alertToRowAlert, type AlertRowAlert } from './alertRow.ts';
 import { AlertTimeline } from './AlertTimeline.tsx';
+import { AcknowledgeDialog } from './AcknowledgeDialog.tsx';
+import { SnoozeDialog } from './SnoozeDialog.tsx';
 
 export interface HostAlertsCardProps {
   org: string;
@@ -14,6 +17,9 @@ export interface HostAlertsCardProps {
   /** `checks.read` — the same bar HostChecksCard and the org-wide Alerts
    * page both hold for monitoring data; without it nothing is requested. */
   canRead: boolean;
+  /** `checks.write` — the same bar the org-wide Alerts page holds for
+   * acknowledging and snoozing; without it each row is read-only. */
+  canWrite?: boolean;
 }
 
 /**
@@ -48,10 +54,12 @@ export interface HostAlertsCardProps {
  * drift from the org-wide page's own three-facts rendering (whether the
  * alert is open, its episode's peak severity, how its tuple reads right
  * now) or its tense-aware flapping marker by inventing a second, slightly
- * different presentation of the same row. `canWrite` is never passed
- * (AlertRow defaults it to false): acknowledging and snoozing stay the
- * Alerts page's own job — this card only answers "what does this host
- * currently have open" and, per alert, "what is its full story".
+ * different presentation of the same row. The row's actions are the
+ * Alerts page's own as well (spec 1.2, "open alerts with snooze"):
+ * `canWrite` is `checks.write`, the same gate AlertsPage uses, and this
+ * card owns the same AcknowledgeDialog and SnoozeDialog and the same
+ * unacknowledge/unsnooze mutations, so an operator triaging one machine
+ * never has to leave its page to silence what they are looking at.
  *
  * That second question is AlertTimeline, fetched from the detail endpoint
  * (useAlert) only once an operator actually opens one alert's disclosure
@@ -59,10 +67,31 @@ export interface HostAlertsCardProps {
  * GraphPanel already uses for a metric's series, so a host with several
  * alerts costs one list request until something is actually expanded.
  */
-export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
+export function HostAlertsCard({ org, hostId, canRead, canWrite = false }: HostAlertsCardProps) {
   const t = useT();
+  const toast = useToast();
   const alerts = useAlerts(org, { host: hostId, state: 'open' }, canRead);
+  const unacknowledge = useUnacknowledgeAlert(org);
+  const unsnooze = useUnsnoozeAlert(org);
   const [open, setOpen] = useState<string | null>(null);
+  const [acking, setAcking] = useState<string | null>(null);
+  const [snoozing, setSnoozing] = useState<string | null>(null);
+
+  async function onUnacknowledge(a: AlertRowAlert) {
+    try {
+      await unacknowledge.mutateAsync(a.id);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : t.alerts.unacknowledgeFailed, 'destructive');
+    }
+  }
+
+  async function onUnsnooze(a: AlertRowAlert) {
+    try {
+      await unsnooze.mutateAsync(a.id);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : t.alerts.unsnoozeFailed, 'destructive');
+    }
+  }
 
   // One page is the whole of this card's answer: it asks for open alerts
   // on one host, and a host with more than a page of simultaneously open
@@ -88,7 +117,14 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
             const isOpen = open === a.id;
             return (
               <li key={a.id} className="rounded-md border border-border">
-                <AlertRow alert={a} />
+                <AlertRow
+                  alert={a}
+                  canWrite={canWrite}
+                  onAcknowledge={(alert) => setAcking(alert.id)}
+                  onUnacknowledge={(alert) => void onUnacknowledge(alert)}
+                  onSnooze={(alert) => setSnoozing(alert.id)}
+                  onUnsnooze={(alert) => void onUnsnooze(alert)}
+                />
                 <div className="flex justify-end border-t border-border px-4 py-1.5">
                   <Button type="button" variant="ghost" aria-expanded={isOpen} onClick={() => setOpen(isOpen ? null : a.id)}>
                     {isOpen ? t.alerts.hideTimeline : t.alerts.showTimeline}
@@ -100,6 +136,8 @@ export function HostAlertsCard({ org, hostId, canRead }: HostAlertsCardProps) {
           })}
         </ul>
       )}
+      {acking && <AcknowledgeDialog org={org} alertId={acking} onClose={() => setAcking(null)} />}
+      {snoozing && <SnoozeDialog org={org} alertId={snoozing} onClose={() => setSnoozing(null)} />}
     </Card>
   );
 }

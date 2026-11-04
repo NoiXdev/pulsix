@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider, useSearch } from '@tanstack/react-router';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
+import { ToastProvider } from '../../../ui/toast.tsx';
 import { HostAlertsCard, HostAlertsHistoryLink } from '../HostAlertsCard.tsx';
 
 const alert = (over: Record<string, unknown> = {}) => ({
@@ -39,7 +40,7 @@ function AlertsPageStub() {
  * already uses for its own "Manage checks" link. `alertsRoute` carries the
  * same `validateSearch` the real `router.tsx` declares, so a test clicking
  * through exercises the same search-parsing the app does. */
-function renderCard(canRead = true) {
+function renderCard(canRead = true, canWrite = false) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -59,7 +60,7 @@ function renderCard(canRead = true) {
     component: () => (
       <>
         <HostAlertsHistoryLink org="acme" hostId="h1" canRead={canRead} />
-        <HostAlertsCard org="acme" hostId="h1" canRead={canRead} />
+        <HostAlertsCard org="acme" hostId="h1" canRead={canRead} canWrite={canWrite} />
       </>
     ),
   });
@@ -69,7 +70,9 @@ function renderCard(canRead = true) {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <RouterProvider router={router} />
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
     </QueryClientProvider>,
   );
 }
@@ -227,5 +230,70 @@ describe('HostAlertsCard', () => {
 
     expect(await screen.findByText(/alert opened/i)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('snoozes one of the host\'s open alerts from the host page (spec 1.2: open alerts with snooze)', async () => {
+    const user = userEvent.setup();
+    let sentBody: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
+      'POST /api/v1/orgs/acme/alerts/a1/snooze': (req: MockRequest) => {
+        sentBody = req.body;
+        return {};
+      },
+    });
+    renderCard(true, true);
+
+    await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
+    await user.click(await screen.findByRole('switch', { name: /severity next changes/i }));
+    const save = screen.getAllByRole('button', { name: /^snooze$/i }).find((b) => b.getAttribute('type') === 'submit')!;
+    await user.click(save);
+
+    await waitFor(() => expect(sentBody).toEqual({ until_change: true }));
+  });
+
+  it('acknowledges one of the host\'s open alerts from the host page', async () => {
+    const user = userEvent.setup();
+    let acked = false;
+    mockApi({
+      'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
+      'POST /api/v1/orgs/acme/alerts/a1/acknowledge': () => {
+        acked = true;
+        return {};
+      },
+    });
+    renderCard(true, true);
+
+    await user.click(await screen.findByRole('button', { name: /^acknowledge$/i }));
+    const save = (await screen.findAllByRole('button', { name: /^acknowledge$/i })).find((b) => b.getAttribute('type') === 'submit')!;
+    await user.click(save);
+
+    await waitFor(() => expect(acked).toBe(true));
+  });
+
+  it('lifts a snooze from the host page', async () => {
+    const user = userEvent.setup();
+    let unsnoozed = false;
+    mockApi({
+      'GET /api/v1/orgs/acme/alerts': { alerts: [alert({ snooze_until_change: true, muted: true, mute_reason: 'snooze' })] },
+      'DELETE /api/v1/orgs/acme/alerts/a1/snooze': () => {
+        unsnoozed = true;
+        return {};
+      },
+    });
+    renderCard(true, true);
+
+    await user.click(await screen.findByRole('button', { name: /unsnooze/i }));
+
+    await waitFor(() => expect(unsnoozed).toBe(true));
+  });
+
+  it('offers a viewer (no checks.write) no alert actions on the host page', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] } });
+    renderCard(true, false);
+
+    await screen.findByTestId('alert-open');
+    expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /snooze/i })).not.toBeInTheDocument();
   });
 });

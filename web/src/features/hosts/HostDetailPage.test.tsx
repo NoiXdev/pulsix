@@ -69,6 +69,31 @@ describe('HostDetailPage', () => {
     expect(screen.getByRole('link', { name: /Full history/ })).toHaveAttribute('href', '/o/acme/alerts?host=h1');
   });
 
+  it('offers snooze on the Alerts section to checks.write and nothing to a viewer', async () => {
+    const routes = (role: string) =>
+      hostRoutes(
+        { host: { managed: true, monitored: true }, role },
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS,
+          'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn')], next_cursor: '' },
+          'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+        },
+      );
+    mockApi(routes('operator'));
+    const { unmount } = renderPage();
+    const alerts = await screen.findByTestId('alert-open');
+    const section = alerts.closest('section') ?? document.getElementById('alerts')!;
+    expect(await within(section).findByRole('button', { name: /^snooze$/i })).toBeInTheDocument();
+    expect(within(section).getByRole('button', { name: /^acknowledge$/i })).toBeInTheDocument();
+    unmount();
+
+    mockApi(routes('viewer'));
+    renderPage();
+    await screen.findByTestId('alert-open');
+    expect(screen.queryByRole('button', { name: /^snooze$/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^acknowledge$/i })).not.toBeInTheDocument();
+  });
+
   it('no clipped cards', async () => {
     mockApi(
       hostRoutes(
