@@ -62,5 +62,6 @@ export const enAccount = {
       'Changing how you sign in needs your second factor again. This keeps an unattended screen from being enough to take the account over.',
     codeLabel: 'Authenticator or recovery code',
     failed: 'could not confirm your second factor',
+    refusedAgain: 'Confirming your identity did not work. Try again.',
   },
 };

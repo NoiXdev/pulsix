@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useToast } from '../../ui/toastContext.ts';
 import type { AccountNotice, AdminUserDetail } from '../../api/types.ts';
-import { isStepUpRequired, useStepUp } from '../account/stepUp.tsx';
+import { isStepUpRequired, STEP_UP_REQUIRED, useStepUp } from '../account/stepUp.tsx';
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useAccountActionCalls, type ActionKind } from './useAccountActionCalls.ts';
@@ -132,6 +132,9 @@ function describeError(t: Messages, err: unknown): string {
       return e.lastInstanceAdmin;
     case 'instance admin required':
       return e.instanceAdminRequired;
+    // Reaches here only when the retry after a proof was refused again.
+    case STEP_UP_REQUIRED:
+      return t.account.stepUp.refusedAgain;
     default:
       return message || e.failed;
   }

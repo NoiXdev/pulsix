@@ -7,7 +7,7 @@ import { ApiError } from '../../api/client.ts';
 import { MIN_PASSWORD_LENGTH, newPasswordProblem } from '../../lib/password.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
-import { isStepUpRequired, useStepUp } from './stepUp.tsx';
+import { isStepUpRequired, STEP_UP_REQUIRED, useStepUp } from './stepUp.tsx';
 
 /** The refusals of POST /auth/password the form explains in words
  * (internal/api/password_handlers.go). A policy refusal is any other 422. */
@@ -173,6 +173,9 @@ function describeError(t: Messages, err: unknown, temporary: boolean): string {
       return temporary ? p.invalidTemporary : p.invalidCurrent;
     case TEMPORARY_PASSWORD_EXPIRED:
       return p.temporaryExpired;
+    // Reaches here only when the retry after a proof was refused again.
+    case STEP_UP_REQUIRED:
+      return t.account.stepUp.refusedAgain;
     default:
       if (err instanceof ApiError && err.status === 429) return t.auth.errors.tooManyAttempts;
       return message || p.failed;

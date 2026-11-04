@@ -47,6 +47,8 @@ describe('PasswordChangeForm', () => {
     await user.type(await screen.findByLabelText('Authenticator or recovery code'), '123456');
     await user.click(screen.getByRole('button', { name: 'Confirm' }));
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('step_up_required');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Confirming your identity did not work. Try again.',
+    );
   });
 });

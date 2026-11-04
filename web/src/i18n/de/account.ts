@@ -58,5 +58,6 @@ export const deAccount: Messages['account'] = {
       'Zum Ändern der Anmeldung wird der zweite Faktor erneut benötigt. So reicht ein unbeaufsichtigter Bildschirm nicht aus, um das Konto zu übernehmen.',
     codeLabel: 'Code der Authenticator-App oder Wiederherstellungscode',
     failed: 'Zweiter Faktor konnte nicht bestätigt werden',
+    refusedAgain: 'Die Bestätigung der Identität hat nicht geklappt. Bitte erneut versuchen.',
   },
 };

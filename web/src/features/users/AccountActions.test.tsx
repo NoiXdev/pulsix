@@ -294,7 +294,9 @@ describe('AccountActions', () => {
     await user.type(within(stepUp).getByLabelText('Authenticator or recovery code'), '123456');
     await user.click(within(stepUp).getByRole('button', { name: 'Confirm' }));
 
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('step_up_required');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Confirming your identity did not work. Try again.',
+    );
   });
 
   it('shows the reason inside the dialog when the server refuses', async () => {
