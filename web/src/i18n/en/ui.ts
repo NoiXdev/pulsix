@@ -25,6 +25,10 @@ export const enUi = {
     loadMoreFailed: 'Could not load more — showing what is already loaded.',
     refreshFailed: 'Could not refresh this page — showing the last loaded data.',
   },
+  formPage: {
+    actions: 'Form actions',
+    unsaved: 'Leave this page? Your unsaved changes will be lost.',
+  },
   slug: {
     generateLabel: 'Generate slug from the name',
     generateTitle: 'Generate from the name',

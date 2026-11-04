@@ -16,7 +16,9 @@ export const deSettings: Messages['settings'] = {
     alertRoutes: 'Alarmrouten',
     rotations: 'Bereitschaftsrotationen',
     mail: 'E-Mail-Versand',
-    sharedResources: 'Geteilte Ressourcen',
+    sharedRepos: 'Gemeinsame Repositories',
+    sharedTemplates: 'Gemeinsame Job-Vorlagen',
+    sharedChecks: 'Gemeinsame Check-Definitionen',
   },
   general: {
     title: 'Allgemein',

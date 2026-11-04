@@ -11,7 +11,7 @@ function renderLayout(path = '/o/acme/settings/members') {
   const settingsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings', component: SettingsLayout });
   const page = (p: string) =>
     createRoute({ getParentRoute: () => settingsRoute, path: p, component: () => <div>page {p}</div> });
-  const leaves = ['/general', '/members', '/activity', '/tokens', '/notifications', '/mail'].map(page);
+  const leaves = ['/general', '/members', '/activity', '/tokens', '/notifications', '/mail', '/shared/repos', '/shared/repos/$id'].map(page);
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([settingsRoute.addChildren(leaves)])]),
     history: createMemoryHistory({ initialEntries: [path] }),
@@ -65,11 +65,27 @@ describe('SettingsLayout', () => {
     expect(screen.getByRole('link', { name: 'Outgoing mail' })).toHaveAttribute('href', '/o/acme/settings/mail');
     expect(screen.getByRole('link', { name: 'Language' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Backups' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Shared resources' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Shared repositories' })).toHaveAttribute(
       'href',
-      '/o/acme/settings/shared-resources',
+      '/o/acme/settings/shared/repos',
     );
+    expect(screen.getByRole('link', { name: 'Shared job templates' })).toHaveAttribute(
+      'href',
+      '/o/acme/settings/shared/templates',
+    );
+    expect(screen.getByRole('link', { name: 'Shared check definitions' })).toHaveAttribute(
+      'href',
+      '/o/acme/settings/shared/checks',
+    );
+    expect(screen.queryByRole('link', { name: 'Shared resources' })).not.toBeInTheDocument();
     expect(screen.queryByText('Alerting')).not.toBeInTheDocument();
+  });
+
+  it('keeps the shared repositories item current on one of its own pages', async () => {
+    mockApi({ 'GET /api/v1/auth/me': me(true), 'GET /api/v1/orgs/acme': org('viewer') });
+    renderLayout('/o/acme/settings/shared/repos/d1');
+    expect(await screen.findByRole('link', { name: 'Shared repositories' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Shared job templates' })).not.toHaveAttribute('aria-current');
   });
 
   it('marks the item of the current route and renders the page beside it', async () => {

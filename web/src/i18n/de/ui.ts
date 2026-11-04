@@ -22,6 +22,10 @@ export const deUi: Messages['ui'] = {
     loadMoreFailed: 'Weitere Einträge konnten nicht geladen werden – angezeigt wird, was bereits geladen ist.',
     refreshFailed: 'Die Seite konnte nicht aktualisiert werden – angezeigt werden die zuletzt geladenen Daten.',
   },
+  formPage: {
+    actions: 'Formularaktionen',
+    unsaved: 'Diese Seite verlassen? Ungespeicherte Änderungen gehen verloren.',
+  },
   slug: {
     generateLabel: 'Slug aus dem Namen erzeugen',
     generateTitle: 'Aus dem Namen erzeugen',

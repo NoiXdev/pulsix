@@ -21,10 +21,10 @@ import { useT } from '../../i18n/useT.ts';
  *   alert_route_handlers.go and oncall_handlers.go gate their own reads on
  *   that same permission, since either decides where alert data leaves the
  *   system, the same weight a channel itself carries.
- * - Instance (Outgoing mail, Language, Backups, Shared resources):
- *   instance administrators only, the only callers GET /admin/settings/smtp,
- *   /admin/settings/locale, /admin/backups and /admin/repos/definitions
- *   admit.
+ * - Instance (Outgoing mail, Language, Backups, Shared repositories, Shared job
+ *   templates, Shared check definitions): instance administrators only, the
+ *   only callers GET /admin/settings/smtp, /admin/settings/locale,
+ *   /admin/backups and /admin/{repos,templates,checks}/definitions admit.
  *
  * Credentials and Jump hosts are sidebar entries under Infrastructure, not
  * Settings items (v0.4f).
@@ -65,7 +65,9 @@ export function SettingsLayout() {
         { to: '/o/$org/settings/mail', params, label: t.settings.tabs.mail },
         { to: '/o/$org/settings/language', params, label: t.language.instance.tab },
         { to: '/o/$org/settings/backups', params, label: t.backups.tab },
-        { to: '/o/$org/settings/shared-resources', params, label: t.settings.tabs.sharedResources },
+        { to: '/o/$org/settings/shared/repos', params, label: t.settings.tabs.sharedRepos },
+        { to: '/o/$org/settings/shared/templates', params, label: t.settings.tabs.sharedTemplates },
+        { to: '/o/$org/settings/shared/checks', params, label: t.settings.tabs.sharedChecks },
       ],
     });
   }

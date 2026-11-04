@@ -18,7 +18,12 @@ import { TokensPage } from './features/tokens/TokensPage.tsx';
 import { SmtpSettingsPage } from './features/instance/SmtpSettingsPage.tsx';
 import { LanguageSettingsPage } from './features/instance/LanguageSettingsPage.tsx';
 import { BackupsPage } from './features/instance/BackupsPage.tsx';
-import { SharedResourcesPage } from './features/instance/SharedResourcesPage.tsx';
+import { SharedReposPage } from './features/instance/shared/SharedReposPage.tsx';
+import { SharedRepoFormPage } from './features/instance/shared/SharedRepoFormPage.tsx';
+import { SharedTemplatesPage } from './features/instance/shared/SharedTemplatesPage.tsx';
+import { SharedTemplateFormPage } from './features/instance/shared/SharedTemplateFormPage.tsx';
+import { SharedChecksPage } from './features/instance/shared/SharedChecksPage.tsx';
+import { SharedCheckFormPage } from './features/instance/shared/SharedCheckFormPage.tsx';
 import { CredentialsPage } from './features/credentials/CredentialsPage.tsx';
 import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 import { ReposPage } from './features/repos/ReposPage.tsx';
@@ -272,14 +277,33 @@ const languageRoute = createRoute({
 // backups, for instance administrators; filed under Settings for navigation
 // only, same as mail.
 const backupsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/backups', component: BackupsPage });
-// Instance-wide shared repository definitions (v0.2f), for instance
-// administrators; filed under Settings for navigation only, same as mail
-// above (see SharedResourcesPage).
-const sharedResourcesRoute = createRoute({
+// Instance-wide shared resources (v0.2f), for instance administrators; filed
+// under Settings for navigation only, same as mail above. Each kind has a
+// list page and a form page (`new` creates, `$id` edits); `/shared` and the
+// former single page `/shared-resources` land on the first list.
+const sharedRoute = createRoute({
+  getParentRoute: () => settingsRoute,
+  path: '/shared',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$org/settings/shared/repos', params: { org: params.org } });
+  },
+});
+const legacySharedResourcesRoute = createRoute({
   getParentRoute: () => settingsRoute,
   path: '/shared-resources',
-  component: SharedResourcesPage,
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$org/settings/shared/repos', params: { org: params.org } });
+  },
 });
+const sharedReposRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/repos', component: SharedReposPage });
+const sharedRepoNewRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/repos/new', component: SharedRepoFormPage });
+const sharedRepoEditRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/repos/$id', component: SharedRepoFormPage });
+const sharedTemplatesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/templates', component: SharedTemplatesPage });
+const sharedTemplateNewRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/templates/new', component: SharedTemplateFormPage });
+const sharedTemplateEditRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/templates/$id', component: SharedTemplateFormPage });
+const sharedChecksRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks', component: SharedChecksPage });
+const sharedCheckNewRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks/new', component: SharedCheckFormPage });
+const sharedCheckEditRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/shared/checks/$id', component: SharedCheckFormPage });
 const notificationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/notifications', component: ChannelsPage });
 const alertRoutesRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/alert-routes', component: AlertRoutesPage });
 const rotationsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/rotations', component: RotationsPage });
@@ -322,7 +346,17 @@ const routeTree = rootRoute.addChildren([
       mailRoute,
       languageRoute,
       backupsRoute,
-      sharedResourcesRoute,
+      sharedRoute,
+      legacySharedResourcesRoute,
+      sharedReposRoute,
+      sharedRepoNewRoute,
+      sharedRepoEditRoute,
+      sharedTemplatesRoute,
+      sharedTemplateNewRoute,
+      sharedTemplateEditRoute,
+      sharedChecksRoute,
+      sharedCheckNewRoute,
+      sharedCheckEditRoute,
       notificationsRoute,
       alertRoutesRoute,
       rotationsRoute,

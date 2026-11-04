@@ -40,12 +40,12 @@ function useNarrow(): boolean {
  * pushing the page down. Presentational: the caller decides which groups
  * and items exist.
  */
-export function SideNav({ groups, label }: { groups: SideNavGroup[]; label?: string }) {
+export function SideNav({ groups, label }: { groups: SideNavGroup[]; label: string }) {
   const narrow = useNarrow();
   return narrow ? <NarrowNav groups={groups} label={label} /> : <WideNav groups={groups} label={label} />;
 }
 
-function WideNav({ groups, label }: { groups: SideNavGroup[]; label?: string }) {
+function WideNav({ groups, label }: { groups: SideNavGroup[]; label: string }) {
   return (
     <nav aria-label={label} className="flex flex-col gap-4">
       {groups.map((group) => (
@@ -77,7 +77,7 @@ function WideNav({ groups, label }: { groups: SideNavGroup[]; label?: string }) 
   );
 }
 
-function NarrowNav({ groups, label }: { groups: SideNavGroup[]; label?: string }) {
+function NarrowNav({ groups, label }: { groups: SideNavGroup[]; label: string }) {
   const router = useRouter();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -89,7 +89,12 @@ function NarrowNav({ groups, label }: { groups: SideNavGroup[]; label?: string }
       path: router.buildLocation({ to: item.to, params: item.params }).pathname,
     })),
   );
-  const current = entries.find((e) => e.path === pathname);
+  // The wide list marks an item active by prefix, so a nested page such as
+  // /settings/shared/repos/123 keeps its parent item current. The longest
+  // prefix wins, so an item nested under another's path is not shadowed.
+  const current = entries
+    .filter((e) => pathname === e.path || pathname.startsWith(`${e.path.replace(/\/$/, '')}/`))
+    .sort((a, b) => b.path.length - a.path.length)[0];
 
   const onChange = (path: string) => {
     const target = entries.find((e) => e.path === path);
@@ -97,11 +102,13 @@ function NarrowNav({ groups, label }: { groups: SideNavGroup[]; label?: string }
   };
 
   return (
-    <Select
-      aria-label={label}
-      options={entries.map((e) => ({ value: e.path, label: e.item.label, hint: e.group }))}
-      value={current?.path ?? ''}
-      onChange={onChange}
-    />
+    <nav aria-label={label}>
+      <Select
+        aria-label={label}
+        options={entries.map((e) => ({ value: e.path, label: e.item.label, hint: e.group }))}
+        value={current?.path ?? ''}
+        onChange={onChange}
+      />
+    </nav>
   );
 }

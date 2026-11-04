@@ -1,7 +1,7 @@
 /**
  * The instance administrators' pages: outgoing mail (SMTP) and the shared
  * resources every organization receives. The page titles are
- * `settings.tabs.mail` and `settings.tabs.sharedResources`; the default
+ * `settings.tabs.mail` and `settings.tabs.shared{Repos,Templates,Checks}`; the default
  * language page is `language.instance`. The SMTP field labels are also the
  * setup wizard's.
  */
@@ -34,7 +34,9 @@ export const enInstance = {
   shared: {
     actions: 'Actions',
     name: 'Name',
-    deleteAria: (name: string) => `Delete ${name}`,
+    open: 'Open',
+    deleteItem: 'Delete…',
+    rowActions: (name: string) => `Actions for ${name}`,
     deleteFailed: 'Deleting failed',
     saveFailed: 'Saving failed',
     saveDefinition: 'Save definition',
@@ -71,6 +73,8 @@ export const enInstance = {
       newTitle: 'New job template definition',
       sharedRepository: 'Shared repository',
       sharedRepositoryPlaceholder: 'Choose a shared repository…',
+      extraVarsSection: 'Extra vars',
+      extraVarsSectionHint: "Defined once here and copied into every organization's template. A secret field is not available: the value would be copied unsealed.",
       extraVarsSchema: 'Extra vars schema',
       extraVars: 'Extra vars',
       hint: 'Projected into every organization as a read-only template, extra vars included; each one supplies its own scope and SSH credential here, not on this definition.',

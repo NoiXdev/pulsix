@@ -18,7 +18,9 @@ export const enSettings = {
     alertRoutes: 'Alert routes',
     rotations: 'On-call rotations',
     mail: 'Outgoing mail',
-    sharedResources: 'Shared resources',
+    sharedRepos: 'Shared repositories',
+    sharedTemplates: 'Shared job templates',
+    sharedChecks: 'Shared check definitions',
   },
   general: {
     title: 'General',

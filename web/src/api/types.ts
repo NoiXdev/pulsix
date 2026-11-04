@@ -43,7 +43,7 @@ export type RepoInput = components['schemas']['RepoCreateInputBody'];
 export type TemplateInput = components['schemas']['TemplateCreateInputBody'];
 
 // RepoDefinition is the installation-owned half of a shared repository
-// (v0.2f decision 2, SharedResourcesPage): name, url, branch and subpath,
+// (v0.2f decision 2, features/instance/shared): name, url, branch and subpath,
 // read-only inside every organization once projected (RepoDTO's own
 // shared_repo_id names the projection). RepoDefinitionInput is the same
 // four fields as the body both create and update send — unlike
@@ -54,7 +54,7 @@ export type RepoDefinition = components['schemas']['RepoDefinitionDTO'];
 export type RepoDefinitionInput = components['schemas']['RepoDefinitionBody'];
 
 // TemplateDefinition is the same idea as RepoDefinition, for job templates
-// (v0.2f Task 6, SharedResourcesPage): name, the shared repository it
+// (v0.2f Task 6, features/instance/shared): name, the shared repository it
 // resolves its playbook against, the playbook's path within that
 // repository, limit, extra vars and their schema — read-only inside every
 // organization once projected (TemplateDTO's own shared_template_id names
@@ -143,7 +143,7 @@ export type CheckPlugin = CheckDefinition['plugin'];
 export type CheckBindingKind = CheckDefinition['binding_kind'];
 
 // CheckDefinitionDef is the installation-owned half of a shared check
-// definition (v0.2f Task 7, SharedResourcesPage): key, plugin, params and
+// definition (v0.2f Task 7, features/instance/shared): key, plugin, params and
 // interval — read-only inside every organization once projected
 // (CheckDefinition's own shared_definition_id names the projection). No
 // binding, no enabled flag: decision 2 keeps both on the projection for

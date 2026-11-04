@@ -50,3 +50,24 @@ describe('the Settings section', () => {
     expect(router.state.matches.some((m) => m.routeId.endsWith('/settings/general'))).toBe(true);
   });
 });
+
+describe('the shared resources pages', () => {
+  it('sends /settings/shared to the repositories list', async () => {
+    expect(await settledAt('/o/acme/settings/shared')).toBe('/o/acme/settings/shared/repos');
+  });
+
+  it('sends the former /settings/shared-resources page to the repositories list', async () => {
+    expect(await settledAt('/o/acme/settings/shared-resources')).toBe('/o/acme/settings/shared/repos');
+  });
+
+  it('carries the organization slug through the redirect', async () => {
+    expect(await settledAt('/o/hosts-inc/settings/shared')).toBe('/o/hosts-inc/settings/shared/repos');
+  });
+
+  it.each(['repos', 'templates', 'checks'])('has a list, a new and an edit page for %s', async (kind) => {
+    for (const tail of ['', '/new', '/abc']) {
+      const path = `/o/acme/settings/shared/${kind}${tail}`;
+      expect(await settledAt(path)).toBe(path);
+    }
+  });
+});
