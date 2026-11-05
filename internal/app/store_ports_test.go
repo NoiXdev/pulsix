@@ -137,7 +137,7 @@ func TestChecksHostAdaptersAndAlertRouteGroups(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := hostsSvc.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "env", Value: env}}); err != nil {
+		if _, err := hostsSvc.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "env", Value: env}}, nil); err != nil {
 			t.Fatal(err)
 		}
 		return h.ID

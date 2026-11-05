@@ -12,6 +12,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const bumpHostRevision = `-- name: BumpHostRevision :one
+UPDATE hosts
+SET revision = revision + 1, updated_at = now()
+WHERE id = $1 AND org_id = $2
+  AND ($3::bigint IS NULL OR revision = $3::bigint)
+RETURNING revision
+`
+
+type BumpHostRevisionParams struct {
+	ID         uuid.UUID `json:"id"`
+	OrgID      uuid.UUID `json:"org_id"`
+	IfRevision *int64    `json:"if_revision"`
+}
+
+// Backlog 7.79: a write to what hangs off a host (its manual tags, its SSH
+// settings) moves the host's revision like UpdateHost does, so a host edit
+// opened before it answers 412. The caller's revision is optional: NULL
+// bumps unconditionally (API-token clients never sent one), a value bumps
+// only while it is still current. No row back means an unknown host or a
+// stale revision; the store reads the host to tell the two apart.
+func (q *Queries) BumpHostRevision(ctx context.Context, arg BumpHostRevisionParams) (int64, error) {
+	row := q.db.QueryRow(ctx, bumpHostRevision, arg.ID, arg.OrgID, arg.IfRevision)
+	var revision int64
+	err := row.Scan(&revision)
+	return revision, err
+}
+
 const createHost = `-- name: CreateHost :one
 INSERT INTO hosts (id, org_id, zone_id, name, address, managed, monitored, facts)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

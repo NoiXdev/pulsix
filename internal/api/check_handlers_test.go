@@ -100,7 +100,7 @@ func seedCheckHost(t *testing.T, s *apitest.Server, ctx context.Context, org, zo
 		t.Fatal(err)
 	}
 	if role != "" {
-		if err := s.Deps.Hosts.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: role, Source: hosts.TagSourceManual}}); err != nil {
+		if _, err := s.Deps.Hosts.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: role, Source: hosts.TagSourceManual}}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}

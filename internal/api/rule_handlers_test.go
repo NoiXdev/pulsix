@@ -117,7 +117,7 @@ func newRulesFixture(t *testing.T, slug string) rulesFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Deps.Hosts.SetTags(scoped, org, h.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}); err != nil {
+	if _, err := s.Deps.Hosts.SetTags(scoped, org, h.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}, nil); err != nil {
 		t.Fatal(err)
 	}
 

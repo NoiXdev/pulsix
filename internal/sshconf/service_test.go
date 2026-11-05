@@ -19,7 +19,12 @@ type fakeStore struct {
 	bastions map[uuid.UUID]sshconf.Bastion
 	zones    map[uuid.UUID]zoneRow
 	hostSSH  map[uuid.UUID]sshconf.HostSSH
+
+	putIfRevision *int64
+	putErr        error
 }
+
+const fakeHostRevision = 7
 
 type zoneRow struct {
 	org     uuid.UUID
@@ -103,8 +108,15 @@ func (f *fakeStore) GetHostSSH(_ context.Context, orgID, hostID uuid.UUID) (sshc
 	return h, nil
 }
 
-func (f *fakeStore) PutHostSSH(_ context.Context, h sshconf.HostSSH) (sshconf.HostSSH, error) {
+// PutHostSSH records the If-Match revision it was handed and answers with a
+// fixed host revision, standing in for the real store's bump.
+func (f *fakeStore) PutHostSSH(_ context.Context, h sshconf.HostSSH, ifRevision *int64) (sshconf.HostSSH, error) {
+	f.putIfRevision = ifRevision
+	if f.putErr != nil {
+		return sshconf.HostSSH{}, f.putErr
+	}
 	f.hostSSH[h.HostID] = h
+	h.HostRevision = fakeHostRevision
 	return h, nil
 }
 
@@ -334,6 +346,25 @@ func TestHostSSH(t *testing.T) {
 	}
 	if list, err := f.svc.ListHostSSH(ctx, f.org); err != nil || len(list) != 1 {
 		t.Fatalf("ListHostSSH = %v, %v", list, err)
+	}
+}
+
+// TestSetHostSSHPassesTheRevisionThrough: the caller's If-Match revision
+// reaches the store untouched, the host's new revision comes back, and a
+// stale one is the store's ErrRevisionMismatch (backlog 7.79).
+func TestSetHostSSHPassesTheRevisionThrough(t *testing.T) {
+	f := newFixture()
+	got, err := f.svc.SetHostSSH(ctx, f.org, f.host, sshconf.HostSSHInput{})
+	if err != nil || got.HostRevision != fakeHostRevision || f.store.putIfRevision != nil {
+		t.Fatalf("without If-Match: %+v, %v, store saw %v", got, err, f.store.putIfRevision)
+	}
+	rev := int64(5)
+	if _, err := f.svc.SetHostSSH(ctx, f.org, f.host, sshconf.HostSSHInput{IfRevision: &rev}); err != nil || f.store.putIfRevision == nil || *f.store.putIfRevision != 5 {
+		t.Fatalf("with If-Match: %v, store saw %v", err, f.store.putIfRevision)
+	}
+	f.store.putErr = sshconf.ErrRevisionMismatch
+	if _, err := f.svc.SetHostSSH(ctx, f.org, f.host, sshconf.HostSSHInput{IfRevision: &rev}); !errors.Is(err, sshconf.ErrRevisionMismatch) {
+		t.Fatalf("stale: %v, want ErrRevisionMismatch", err)
 	}
 }
 

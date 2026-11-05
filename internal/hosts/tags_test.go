@@ -36,14 +36,21 @@ func (f *fakeHostStore) ListHostTags(_ context.Context, orgID, hostID uuid.UUID)
 // and replaced wholesale, while every fact tag survives untouched — the
 // same delete-then-insert-manual-only shape SQLStore.ReplaceManualTags
 // gives it against the real host_tags table.
-func (f *fakeHostStore) ReplaceManualTags(_ context.Context, orgID, hostID uuid.UUID, tags []hosts.Tag) error {
+func (f *fakeHostStore) ReplaceManualTags(_ context.Context, orgID, hostID uuid.UUID, tags []hosts.Tag, ifRevision *int64) (int64, error) {
 	if err := f.take("ReplaceManualTags"); err != nil {
-		return err
+		return 0, err
 	}
 	h, ok := f.list[hostID]
 	if !ok || h.OrgID != orgID {
-		return hosts.ErrNotFound
+		return 0, hosts.ErrNotFound
 	}
+	// Backlog 7.79: like the real store, a stale revision writes nothing
+	// and a write bumps the host's revision.
+	if ifRevision != nil && *ifRevision != h.Revision {
+		return 0, hosts.ErrRevisionMismatch
+	}
+	h.Revision++
+	f.list[hostID] = h
 	var kept []hosts.Tag
 	for _, t := range f.tags[hostID] {
 		if t.Source != hosts.TagSourceManual {
@@ -52,7 +59,7 @@ func (f *fakeHostStore) ReplaceManualTags(_ context.Context, orgID, hostID uuid.
 	}
 	kept = append(kept, tags...)
 	f.tags[hostID] = kept
-	return nil
+	return h.Revision, nil
 }
 
 func (f *fakeHostStore) ListTagKeyValueCounts(_ context.Context, orgID uuid.UUID) ([]hosts.TagValueCount, error) {
@@ -148,7 +155,7 @@ func TestSetTagsRejectsBadKey(t *testing.T) {
 		{Key: "", Value: "x"},                      // empty
 		{Key: strings.Repeat("k", 65), Value: "x"}, // too long (65 > 64)
 	} {
-		if err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{bad}); !errors.Is(err, hosts.ErrInvalidInput) {
+		if _, err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{bad}, nil); !errors.Is(err, hosts.ErrInvalidInput) {
 			t.Errorf("tag %+v: err = %v, want ErrInvalidInput", bad, err)
 		}
 	}
@@ -162,7 +169,7 @@ func TestSetTagsRejectsOverLongValue(t *testing.T) {
 	h, _ := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-01", ZoneID: zone.ID})
 
 	tag := hosts.Tag{Key: "note", Value: strings.Repeat("x", 257)}
-	if err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{tag}); !errors.Is(err, hosts.ErrInvalidInput) {
+	if _, err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{tag}, nil); !errors.Is(err, hosts.ErrInvalidInput) {
 		t.Fatalf("err = %v, want ErrInvalidInput", err)
 	}
 }
@@ -178,7 +185,7 @@ func TestSetTagsRejectsMoreThan50Tags(t *testing.T) {
 	for i := range tags {
 		tags[i] = hosts.Tag{Key: "k" + string(rune('a'+i%26)) + string(rune('0'+i/26)), Value: "v"}
 	}
-	if err := svc.SetTags(ctx, org, h.ID, tags); !errors.Is(err, hosts.ErrInvalidInput) {
+	if _, err := svc.SetTags(ctx, org, h.ID, tags, nil); !errors.Is(err, hosts.ErrInvalidInput) {
 		t.Fatalf("err = %v, want ErrInvalidInput", err)
 	}
 }
@@ -191,7 +198,7 @@ func TestSetTagsRejectsDuplicateKey(t *testing.T) {
 	h, _ := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-01", ZoneID: zone.ID})
 
 	tags := []hosts.Tag{{Key: "role", Value: "db"}, {Key: "role", Value: "web"}}
-	if err := svc.SetTags(ctx, org, h.ID, tags); !errors.Is(err, hosts.ErrInvalidInput) {
+	if _, err := svc.SetTags(ctx, org, h.ID, tags, nil); !errors.Is(err, hosts.ErrInvalidInput) {
 		t.Fatalf("err = %v, want ErrInvalidInput", err)
 	}
 }
@@ -200,7 +207,7 @@ func TestSetTagsUnknownHost(t *testing.T) {
 	st := newFakeHostStore()
 	svc := hosts.NewService(st, time.Now)
 	org := uuid.Must(uuid.NewV7())
-	if err := svc.SetTags(ctx, org, uuid.Must(uuid.NewV7()), []hosts.Tag{{Key: "role", Value: "db"}}); !errors.Is(err, hosts.ErrNotFound) {
+	if _, err := svc.SetTags(ctx, org, uuid.Must(uuid.NewV7()), []hosts.Tag{{Key: "role", Value: "db"}}, nil); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -221,10 +228,10 @@ func TestSetTagsReplacesManualKeepsFact(t *testing.T) {
 	st.seedFact(h.ID, "os", "debian")
 	st.seedFact(h.ID, "role", "web") // will be overridden by a manual "role" below
 
-	if err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{
+	if _, err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{
 		{Key: "role", Value: "db"},
 		{Key: "env", Value: "prod"},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("SetTags: %v", err)
 	}
 
@@ -252,7 +259,7 @@ func TestSetTagsReplacesManualKeepsFact(t *testing.T) {
 	// A second SetTags call that omits "env" must remove only the manual
 	// "env" tag (a full replace, not a merge) while still leaving every
 	// fact tag alone.
-	if err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: "db"}}); err != nil {
+	if _, err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: "db"}}, nil); err != nil {
 		t.Fatalf("SetTags (second call): %v", err)
 	}
 	got, err = svc.ListTags(ctx, org, h.ID)
@@ -289,7 +296,7 @@ func TestListTagsInvisibleAcrossOrgs(t *testing.T) {
 	if _, err := svc.ListTags(ctx, orgB, h.ID); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
-	if err := svc.SetTags(ctx, orgB, h.ID, []hosts.Tag{{Key: "role", Value: "db"}}); !errors.Is(err, hosts.ErrNotFound) {
+	if _, err := svc.SetTags(ctx, orgB, h.ID, []hosts.Tag{{Key: "role", Value: "db"}}, nil); !errors.Is(err, hosts.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
@@ -317,7 +324,7 @@ func TestQueryHostsMergesFactAndManual(t *testing.T) {
 	// dbHost: fact says role=web, but a manual tag overrides it to role=db
 	// — QueryHosts must see the manual value, not the fact one underneath.
 	st.seedFact(dbHost.ID, "role", "web")
-	if err := svc.SetTags(ctx, org, dbHost.ID, []hosts.Tag{{Key: "role", Value: "db"}}); err != nil {
+	if _, err := svc.SetTags(ctx, org, dbHost.ID, []hosts.Tag{{Key: "role", Value: "db"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// webHost: no manual override, fact value applies as-is.
@@ -356,10 +363,10 @@ func TestListTagKeys(t *testing.T) {
 	h1, _ := svc.CreateHost(ctx, org, hosts.HostInput{Name: "a-host", ZoneID: zone.ID})
 	h2, _ := svc.CreateHost(ctx, org, hosts.HostInput{Name: "b-host", ZoneID: zone.ID})
 
-	if err := svc.SetTags(ctx, org, h1.ID, []hosts.Tag{{Key: "role", Value: "db"}}); err != nil {
+	if _, err := svc.SetTags(ctx, org, h1.ID, []hosts.Tag{{Key: "role", Value: "db"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.SetTags(ctx, org, h2.ID, []hosts.Tag{{Key: "role", Value: "web"}}); err != nil {
+	if _, err := svc.SetTags(ctx, org, h2.ID, []hosts.Tag{{Key: "role", Value: "web"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -377,5 +384,32 @@ func TestListTagKeys(t *testing.T) {
 		if v.Count != 1 {
 			t.Fatalf("count for %q = %d, want 1", v.Value, v.Count)
 		}
+	}
+}
+
+// TestSetTagsReturnsTheBumpedRevisionAndHonoursIfRevision: the service hands
+// the caller's If-Match revision to the store and returns the new revision;
+// a stale one is ErrRevisionMismatch and writes nothing (backlog 7.79).
+func TestSetTagsReturnsTheBumpedRevisionAndHonoursIfRevision(t *testing.T) {
+	st := newFakeHostStore()
+	svc := hosts.NewService(st, time.Now)
+	org := uuid.Must(uuid.NewV7())
+	zone, _ := svc.CreateZone(ctx, org, "fra", "F")
+	h, _ := svc.CreateHost(ctx, org, hosts.HostInput{Name: "web-01", ZoneID: zone.ID})
+
+	rev, err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: "db"}}, nil)
+	if err != nil || rev != h.Revision+1 {
+		t.Fatalf("SetTags without If-Match = %d, %v; want %d", rev, err, h.Revision+1)
+	}
+	stale := h.Revision
+	if _, err := svc.SetTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: "web"}}, &stale); !errors.Is(err, hosts.ErrRevisionMismatch) {
+		t.Fatalf("stale SetTags = %v, want ErrRevisionMismatch", err)
+	}
+	got, _ := svc.ListTags(ctx, org, h.ID)
+	if len(got) != 1 || got[0].Value != "db" {
+		t.Fatalf("tags after a refused write = %+v, want role=db", got)
+	}
+	if rev, err := svc.SetTags(ctx, org, h.ID, nil, &rev); err != nil || rev != h.Revision+2 {
+		t.Fatalf("SetTags with the current revision = %d, %v", rev, err)
 	}
 }

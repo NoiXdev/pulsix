@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,7 +18,8 @@ type tagDTO struct {
 }
 
 type tagsOutput struct {
-	Tags []tagDTO `json:"tags"`
+	Tags         []tagDTO `json:"tags"`
+	HostRevision int64    `json:"host_revision"`
 }
 
 func decodeTags(t *testing.T, resp *http.Response) tagsOutput {
@@ -345,5 +347,116 @@ func TestPutHostTagsMalformedHostID(t *testing.T) {
 	resp = requestJSON(t, c, http.MethodPut, s.HTTP.URL+"/api/v1/orgs/tags-malformed-org/hosts/not-a-uuid/tags", []map[string]any{{"key": "role", "value": "db"}})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("malformed host id (PUT): status %d, want 400", resp.StatusCode)
+	}
+}
+
+// hostETag reads the host's current ETag through the host GET.
+func hostETag(t *testing.T, c *http.Client, hostURL string) string {
+	t.Helper()
+	resp := requestJSON(t, c, http.MethodGet, hostURL, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get host: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	etag := resp.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("GET host returned no ETag")
+	}
+	return etag
+}
+
+func quotedRevision(rev int64) string { return `"` + strconv.FormatInt(rev, 10) + `"` }
+
+// Backlog 7.79: PUT /hosts/{id}/tags bumps the host's revision and checks
+// If-Match when one is sent; without one it stays unconditional.
+func TestSetHostTagsHonoursIfMatch(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("tags-ifmatch-owner@example.test", "correct horse battery")
+	s.SeedOrg("tags-ifmatch-org", owner)
+	c := s.LoginAs(owner)
+	hostID := createHostFor(t, c, s.HTTP.URL, "tags-ifmatch-org", "web-01")
+	hostURL := s.HTTP.URL + "/api/v1/orgs/tags-ifmatch-org/hosts/" + hostID
+	url := hostURL + "/tags"
+	before, err := strconv.ParseInt(strings.Trim(hostETag(t, c, hostURL), `"`), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No header: unconditional, and the revision moves.
+	resp := requestJSON(t, c, http.MethodPut, url, []map[string]any{{"key": "role", "value": "db"}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("no If-Match: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if got := resp.Header.Get("ETag"); got != quotedRevision(before+1) {
+		t.Fatalf("ETag = %q, want %s", got, quotedRevision(before+1))
+	}
+	if out := decodeTags(t, resp); out.HostRevision != before+1 {
+		t.Fatalf("host_revision = %d, want %d", out.HostRevision, before+1)
+	}
+
+	// The current ETag is accepted.
+	cur := quotedRevision(before + 1)
+	resp = requestWithHeaders(t, c, http.MethodPut, url, []map[string]any{{"key": "role", "value": "web"}}, map[string]string{"If-Match": cur})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("current If-Match: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if out := decodeTags(t, resp); out.HostRevision != before+2 {
+		t.Fatalf("host_revision after the second write = %d, want %d", out.HostRevision, before+2)
+	}
+
+	// A stale or malformed one is 412 and writes nothing.
+	for name, header := range map[string]string{"stale": cur, "unquoted": "7"} {
+		resp = requestWithHeaders(t, c, http.MethodPut, url, []map[string]any{{"key": "role", "value": "other"}}, map[string]string{"If-Match": header})
+		if resp.StatusCode != http.StatusPreconditionFailed {
+			t.Fatalf("%s If-Match: status %d, want 412, body %s", name, resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+	got := decodeTags(t, requestJSON(t, c, http.MethodGet, url, nil))
+	if len(got.Tags) != 1 || got.Tags[0].Value != "web" {
+		t.Fatalf("tags after refused writes = %+v, want role=web", got.Tags)
+	}
+	if rev := hostETag(t, c, hostURL); rev != quotedRevision(before+2) {
+		t.Fatalf("host ETag after refused writes = %s, want %s", rev, quotedRevision(before+2))
+	}
+
+	// An unknown host stays 404 even with an If-Match.
+	resp = requestWithHeaders(t, c, http.MethodPut, s.HTTP.URL+"/api/v1/orgs/tags-ifmatch-org/hosts/"+"0198a000-0000-7000-8000-000000000000/tags",
+		[]map[string]any{}, map[string]string{"If-Match": cur})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown host: status %d, want 404", resp.StatusCode)
+	}
+}
+
+// A host dialog opened before a sidebar tag write must answer 412 on save,
+// even though the tag write sent no If-Match itself (backlog 7.79).
+func TestHostEditAfterATagWriteAnswers412(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("tags-race-owner@example.test", "correct horse battery")
+	s.SeedOrg("tags-race-org", owner)
+	c := s.LoginAs(owner)
+	hostID := createHostFor(t, c, s.HTTP.URL, "tags-race-org", "web-01")
+	hostURL := s.HTTP.URL + "/api/v1/orgs/tags-race-org/hosts/" + hostID
+
+	opened := hostETag(t, c, hostURL) // the dialog loads the host
+	zone := decodeHost(t, requestJSON(t, c, http.MethodGet, hostURL, nil)).ZoneID
+	if resp := requestJSON(t, c, http.MethodPut, hostURL+"/tags", []map[string]any{{"key": "env", "value": "prod"}}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("put tags: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp := requestWithHeaders(t, c, http.MethodPatch, hostURL, map[string]any{"name": "web-01-renamed", "zone_id": zone, "managed": false, "monitored": false}, map[string]string{"If-Match": opened})
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("PATCH with the pre-tag ETag: status %d, want 412, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// Review Focus 3: an API-token client that never sent If-Match keeps working.
+func TestSetHostTagsWithoutIfMatchStillWorksForTokens(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	hostID := s.SeedHost(t, org)
+	req := func(body any) *http.Response {
+		return requestWithHeaders(t, http.DefaultClient, http.MethodPut, s.HTTP.URL+"/api/v1/orgs/"+org.String()+"/hosts/"+hostID.String()+"/tags",
+			body, map[string]string{"Authorization": "Bearer " + tok})
+	}
+	if resp := req([]map[string]any{{"key": "role", "value": "db"}}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("token PUT tags without If-Match: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 }

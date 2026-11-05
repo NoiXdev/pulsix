@@ -133,11 +133,11 @@ func TestSQLStoreHostSSH(t *testing.T) {
 		t.Fatalf("unset: %v", err)
 	}
 	h := sshconf.HostSSH{HostID: f.host, OrgID: f.org, Username: "deploy", Port: 2200, CredentialID: &f.key, BastionMode: sshconf.ModeNone}
-	if _, err := f.store.PutHostSSH(ctx, h); err != nil {
+	if _, err := f.store.PutHostSSH(ctx, h, nil); err != nil {
 		t.Fatalf("PutHostSSH: %v", err)
 	}
 	h.Port = 22
-	if _, err := f.store.PutHostSSH(ctx, h); err != nil {
+	if _, err := f.store.PutHostSSH(ctx, h, nil); err != nil {
 		t.Fatalf("second PutHostSSH: %v", err)
 	}
 	got, err := f.store.GetHostSSH(ctx, f.org, f.host)
@@ -156,5 +156,64 @@ func TestSQLStoreHostSSH(t *testing.T) {
 	}
 	if list, _ := f.store.ListHostSSH(ctx, f.org); len(list) != 0 {
 		t.Fatalf("settings survived their host: %v", list)
+	}
+}
+
+// hostRevision reads the fixture host's current revision.
+func (f sqlFixture) hostRevision(t *testing.T) int64 {
+	t.Helper()
+	h, err := f.hosts.GetHost(ctx, f.org, f.host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h.Revision
+}
+
+// Backlog 7.79: an SSH settings write moves the host's revision, so a host
+// dialog opened before it answers 412 instead of overwriting it.
+func TestPutHostSSHBumpsTheHostRevision(t *testing.T) {
+	f := newSQLFixture(t)
+	before := f.hostRevision(t)
+	h := sshconf.HostSSH{HostID: f.host, OrgID: f.org, Username: "deploy", Port: 2200, BastionMode: sshconf.ModeNone}
+
+	got, err := f.store.PutHostSSH(ctx, h, nil)
+	if err != nil {
+		t.Fatalf("PutHostSSH: %v", err)
+	}
+	if got.HostRevision != before+1 || f.hostRevision(t) != before+1 {
+		t.Fatalf("revision: returned %d, stored %d, want %d", got.HostRevision, f.hostRevision(t), before+1)
+	}
+
+	// The current revision, when sent, is accepted and spent.
+	cur := before + 1
+	if got, err := f.store.PutHostSSH(ctx, h, &cur); err != nil || got.HostRevision != cur+1 {
+		t.Fatalf("with the current revision: %+v, %v", got, err)
+	}
+}
+
+func TestPutHostSSHRefusesAStaleRevision(t *testing.T) {
+	f := newSQLFixture(t)
+	h := sshconf.HostSSH{HostID: f.host, OrgID: f.org, Username: "deploy", Port: 2200, BastionMode: sshconf.ModeNone}
+	if _, err := f.store.PutHostSSH(ctx, h, nil); err != nil {
+		t.Fatal(err)
+	}
+	before := f.hostRevision(t)
+
+	stale := before - 1
+	h.Port = 2300
+	if _, err := f.store.PutHostSSH(ctx, h, &stale); !errors.Is(err, sshconf.ErrRevisionMismatch) {
+		t.Fatalf("stale revision = %v, want ErrRevisionMismatch", err)
+	}
+	got, err := f.store.GetHostSSH(ctx, f.org, f.host)
+	if err != nil || got.Port != 2200 {
+		t.Fatalf("settings after a refused write = %+v, %v; want port 2200 untouched", got, err)
+	}
+	if f.hostRevision(t) != before {
+		t.Fatalf("revision moved on a refused write: %d, want %d", f.hostRevision(t), before)
+	}
+
+	unknown := uuid.Must(uuid.NewV7())
+	if _, err := f.store.PutHostSSH(ctx, sshconf.HostSSH{HostID: unknown, OrgID: f.org, Port: 22, BastionMode: sshconf.ModeInherit}, &stale); !errors.Is(err, sshconf.ErrNotFound) {
+		t.Fatalf("unknown host = %v, want ErrNotFound", err)
 	}
 }

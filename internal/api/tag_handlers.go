@@ -48,9 +48,21 @@ type tagInput struct {
 }
 
 type hostTagsSetInput struct {
-	Org  string `path:"org"`
-	ID   string `path:"id"`
-	Body []tagInput
+	Org     string `path:"org"`
+	ID      string `path:"id"`
+	IfMatch string `header:"If-Match" doc:"The host's ETag; optional — when sent, a stale one answers 412"`
+	Body    []tagInput
+}
+
+// hostTagsPutOutput is the PUT answer: the tags as GET returns them, plus
+// the host's new revision (also as ETag), so a client holding the host open
+// stays current without a re-read (backlog 7.79).
+type hostTagsPutOutput struct {
+	ETag string `header:"ETag"`
+	Body struct {
+		Tags         []tagDTO `json:"tags"`
+		HostRevision int64    `json:"host_revision" doc:"The host's revision after this write; the ETag carries the same value"`
+	}
 }
 
 // orgTagKeysInput has no query parameters — GET /orgs/{org}/tags always
@@ -124,7 +136,7 @@ func registerTagRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Put(hapi, "/api/v1/orgs/{org}/hosts/{id}/tags", func(ctx context.Context, in *hostTagsSetInput) (*hostTagsOutput, error) {
+	huma.Put(hapi, "/api/v1/orgs/{org}/hosts/{id}/tags", func(ctx context.Context, in *hostTagsSetInput) (*hostTagsPutOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermHostsWrite)
 		if err != nil {
 			return nil, err
@@ -133,11 +145,16 @@ func registerTagRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid host id")
 		}
+		ifRev, err := optionalIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
 		tags := make([]hosts.Tag, len(in.Body))
 		for i, tg := range in.Body {
 			tags[i] = hosts.Tag{Key: tg.Key, Value: tg.Value, Source: hosts.TagSourceManual}
 		}
-		if err := deps.Hosts.SetTags(ctx, scope.OrgID, id, tags); err != nil {
+		rev, err := deps.Hosts.SetTags(ctx, scope.OrgID, id, tags, ifRev)
+		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
 		setAuditObject(ctx, id.String(), "set tags for host")
@@ -146,7 +163,8 @@ func registerTagRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
-		out := &hostTagsOutput{}
+		out := &hostTagsPutOutput{ETag: revisionETag(rev)}
+		out.Body.HostRevision = rev
 		out.Body.Tags = make([]tagDTO, len(all))
 		for i, tg := range all {
 			out.Body.Tags[i] = toTagDTO(tg)

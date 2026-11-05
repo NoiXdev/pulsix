@@ -2,9 +2,11 @@ package hosts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/hosts/selector"
@@ -22,22 +24,47 @@ func (s *SQLStore) ListHostTags(ctx context.Context, orgID, hostID uuid.UUID) ([
 	return out, nil
 }
 
-// ReplaceManualTags deletes every existing "manual" row for the host and
-// inserts tags in its place, inside one transaction — a partial write
-// (some new tags inserted, others not, or the delete applied but the
-// insert failing) would leave the host with neither its old manual tag set
-// nor its new one, which is worse than either.
-func (s *SQLStore) ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag) error {
-	tx, err := s.db.Begin(ctx)
+// ReplaceManualTags bumps the host's revision (under ifRevision, when one is
+// given), then deletes every existing "manual" row for the host and inserts
+// tags in its place, inside one transaction bound to the organization — a
+// partial write (some new tags inserted, others not, or the delete applied
+// but the insert failing) would leave the host with neither its old manual
+// tag set nor its new one, which is worse than either. The bump goes first
+// so a stale revision or an unknown host fails before any tag is touched.
+// It returns the host's new revision.
+func (s *SQLStore) ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag, ifRevision *int64) (int64, error) {
+	var rev int64
+	err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		var err error
+		if rev, err = bumpRevision(ctx, q, orgID, hostID, ifRevision); err != nil {
+			return err
+		}
+		return replaceManualTags(ctx, q, orgID, hostID, tags)
+	})
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }() // no-op once Commit has succeeded
+	return rev, nil
+}
 
-	if err := replaceManualTags(ctx, s.q.WithTx(tx), orgID, hostID, tags); err != nil {
-		return err
+// bumpRevision moves the host's revision by one, only while ifRevision (when
+// non-nil) is still current, and returns the new value. No row back means
+// either answer UpdateHostWith distinguishes the same way: the host is gone
+// (ErrNotFound) or the caller's view is stale (ErrRevisionMismatch); only a
+// read can tell them apart. q must be bound to the caller's transaction.
+func bumpRevision(ctx context.Context, q *gen.Queries, orgID, hostID uuid.UUID, ifRevision *int64) (int64, error) {
+	rev, err := q.BumpHostRevision(ctx, gen.BumpHostRevisionParams{ID: hostID, OrgID: orgID, IfRevision: ifRevision})
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, getErr := q.GetHost(ctx, gen.GetHostParams{OrgID: orgID, ID: hostID}); getErr != nil {
+			return 0, mapErr(getErr)
+		}
+		return 0, ErrRevisionMismatch
 	}
-	return tx.Commit(ctx)
+	if err != nil {
+		return 0, mapErr(err)
+	}
+	return rev, nil
 }
 
 // replaceManualTags is the one "replace manual tags" write: it deletes the

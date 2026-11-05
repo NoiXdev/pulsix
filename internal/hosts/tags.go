@@ -135,18 +135,21 @@ func (s *Service) ListTags(ctx context.Context, orgID, hostID uuid.UUID) ([]Tag,
 // a call that would leave the host over MaxManualTags, or that names an
 // invalid key or an over-long value, changes nothing at all rather than
 // partially applying.
-func (s *Service) SetTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag) error {
+//
+// The write bumps the host's revision and returns the new one (backlog
+// 7.79), so a host edit opened before it answers ErrRevisionMismatch. A
+// non-nil ifRevision is checked first: a stale one writes nothing and
+// returns ErrRevisionMismatch; nil writes unconditionally. An unknown host
+// is ErrNotFound either way.
+func (s *Service) SetTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag, ifRevision *int64) (int64, error) {
 	if err := validateTags(tags); err != nil {
-		return err
-	}
-	if _, err := s.store.GetHost(ctx, orgID, hostID); err != nil {
-		return err
+		return 0, err
 	}
 	manual := make([]Tag, len(tags))
 	for i, t := range tags {
 		manual[i] = Tag{Key: t.Key, Value: t.Value, Source: TagSourceManual}
 	}
-	return s.store.ReplaceManualTags(ctx, orgID, hostID, manual)
+	return s.store.ReplaceManualTags(ctx, orgID, hostID, manual, ifRevision)
 }
 
 // ListTagKeys returns, for orgID, every tag key currently in use across its

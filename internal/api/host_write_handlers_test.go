@@ -207,13 +207,13 @@ func TestHostDTOCarriesRevision(t *testing.T) {
 	}
 
 	// The selector query reads hosts with its own column list; it carries
-	// the revision too.
+	// the revision too. The tag write moves it once more (backlog 7.79).
 	if resp := requestJSON(t, f.c, http.MethodPut, url+"/tags", []map[string]any{{"key": "role", "value": "web"}}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("put tags: %d %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 	list.Hosts = nil
 	decodeInto(t, requestJSON(t, f.c, http.MethodPost, f.org+"/hosts/query", map[string]any{"selector": "role = web"}), &list)
-	if len(list.Hosts) != 1 || list.Hosts[0].Revision != h.Revision+1 {
+	if len(list.Hosts) != 1 || list.Hosts[0].Revision != h.Revision+2 {
 		t.Fatalf("queried hosts = %+v, want the current revision", list.Hosts)
 	}
 }

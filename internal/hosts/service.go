@@ -196,7 +196,11 @@ type Store interface {
 	// untouched. Every element of tags must already carry
 	// Source == TagSourceManual — Service.SetTags is what enforces that,
 	// and what validates the tags themselves, before this is ever called.
-	ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag) error
+	// It also bumps the host's revision and returns the new one (backlog
+	// 7.79), in the same transaction: ErrNotFound for an unknown host,
+	// ErrRevisionMismatch when a non-nil ifRevision is stale (nothing is
+	// written then).
+	ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUID, tags []Tag, ifRevision *int64) (int64, error)
 	// ListTagKeyValueCounts returns, for orgID, every distinct (key, value)
 	// pair recorded on any of its hosts (either source) and how many hosts
 	// carry it, ordered by key then value — Service.ListTagKeys groups

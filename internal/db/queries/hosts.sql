@@ -67,6 +67,19 @@ SET managed = COALESCE(sqlc.narg(managed)::boolean, managed),
 WHERE id = $1 AND org_id = $2
 RETURNING *;
 
+-- name: BumpHostRevision :one
+-- Backlog 7.79: a write to what hangs off a host (its manual tags, its SSH
+-- settings) moves the host's revision like UpdateHost does, so a host edit
+-- opened before it answers 412. The caller's revision is optional: NULL
+-- bumps unconditionally (API-token clients never sent one), a value bumps
+-- only while it is still current. No row back means an unknown host or a
+-- stale revision; the store reads the host to tell the two apart.
+UPDATE hosts
+SET revision = revision + 1, updated_at = now()
+WHERE id = @id AND org_id = @org_id
+  AND (sqlc.narg(if_revision)::bigint IS NULL OR revision = sqlc.narg(if_revision)::bigint)
+RETURNING revision;
+
 -- name: DeleteHost :execrows
 DELETE FROM hosts WHERE id = $1 AND org_id = $2;
 

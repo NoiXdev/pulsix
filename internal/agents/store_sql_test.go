@@ -640,9 +640,9 @@ func TestRecordFactsManualPrecedence(t *testing.T) {
 	facts := map[string]string{"os": "linux", "arch": "amd64", "virt": "kvm"}
 
 	// The operator sets os manually BEFORE any facts push exists.
-	if err := hostsSvc.SetTags(db.WithOrgScope(ctx, org), org, h.ID, []hosts.Tag{
+	if _, err := hostsSvc.SetTags(db.WithOrgScope(ctx, org), org, h.ID, []hosts.Tag{
 		{Key: "os", Value: "windows"}, // the operator insists
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.RecordFacts(ctx, org, h.ID, facts); err != nil {
@@ -666,7 +666,7 @@ func TestRecordFactsManualPrecedence(t *testing.T) {
 
 	// The manual tag is removed (a SetTags without it): the next push
 	// re-applies the fact tag — and updates arch while at it.
-	if err := hostsSvc.SetTags(db.WithOrgScope(ctx, org), org, h.ID, []hosts.Tag{}); err != nil {
+	if _, err := hostsSvc.SetTags(db.WithOrgScope(ctx, org), org, h.ID, []hosts.Tag{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.RecordFacts(ctx, org, h.ID, map[string]string{"os": "linux", "arch": "arm64", "virt": "kvm"}); err != nil {

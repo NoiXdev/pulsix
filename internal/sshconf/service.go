@@ -24,6 +24,9 @@ var (
 	ErrInvalidInput = errors.New("invalid input")
 	ErrNotFound     = errors.New("not found")
 	ErrNameTaken    = errors.New("name already in use")
+	// ErrRevisionMismatch is a host SSH write whose If-Match named a host
+	// revision that is no longer current (backlog 7.79).
+	ErrRevisionMismatch = errors.New("revision does not match")
 	// ErrInUse means a zone, group, host or another jump host still
 	// references the jump host.
 	ErrInUse = errors.New("jump host is in use")
@@ -87,6 +90,9 @@ type HostSSH struct {
 	CredentialID *uuid.UUID
 	BastionMode  BastionMode
 	BastionID    *uuid.UUID
+	// HostRevision is the host's revision after the write that returned
+	// this value (backlog 7.79); zero on a read.
+	HostRevision int64
 }
 
 // HostSSHInput replaces a host's SSH settings. Port 0 means 22 and an empty
@@ -97,6 +103,9 @@ type HostSSHInput struct {
 	CredentialID *uuid.UUID
 	BastionMode  BastionMode
 	BastionID    *uuid.UUID
+	// IfRevision, when set, is the host revision the caller's edit is based
+	// on; a stale one is ErrRevisionMismatch. Nil writes unconditionally.
+	IfRevision *int64
 }
 
 // Store persists jump hosts, zone defaults and host SSH settings.
@@ -110,7 +119,11 @@ type Store interface {
 	ZoneBastions(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID]uuid.UUID, error)
 	// GetHostSSH returns ErrNotFound when the host has no stored settings.
 	GetHostSSH(ctx context.Context, orgID, hostID uuid.UUID) (HostSSH, error)
-	PutHostSSH(ctx context.Context, h HostSSH) (HostSSH, error)
+	// PutHostSSH upserts the settings and bumps the host's revision in one
+	// transaction (backlog 7.79), returning them with HostRevision set. A
+	// non-nil ifRevision that is no longer current writes nothing and is
+	// ErrRevisionMismatch; an unknown host is ErrNotFound.
+	PutHostSSH(ctx context.Context, h HostSSH, ifRevision *int64) (HostSSH, error)
 	ListHostSSH(ctx context.Context, orgID uuid.UUID) ([]HostSSH, error)
 	// WithChainLock runs fn against a Store bound to one transaction holding
 	// orgID's jump-host chain advisory lock (backlog 2.15): a chain read
@@ -299,7 +312,7 @@ func (s *Service) SetHostSSH(ctx context.Context, orgID, hostID uuid.UUID, in Ho
 	if err := s.checkCredential(ctx, orgID, h.CredentialID); err != nil {
 		return HostSSH{}, err
 	}
-	return s.store.PutHostSSH(ctx, h)
+	return s.store.PutHostSSH(ctx, h, in.IfRevision)
 }
 
 // ListHostSSH returns every stored host SSH setting of the organization.

@@ -141,15 +141,41 @@ func (s *SQLStore) GetHostSSH(ctx context.Context, orgID, hostID uuid.UUID) (Hos
 	return toHostSSH(row), nil
 }
 
-func (s *SQLStore) PutHostSSH(ctx context.Context, h HostSSH) (HostSSH, error) {
-	row, err := s.q.UpsertHostSSH(ctx, gen.UpsertHostSSHParams{
-		HostID: h.HostID, OrgID: h.OrgID, Username: h.Username, Port: int32(h.Port),
-		CredentialID: db.NullUUID(h.CredentialID), BastionMode: string(h.BastionMode), BastionID: db.NullUUID(h.BastionID),
+// PutHostSSH bumps the host's revision (under ifRevision, when one is given)
+// and upserts its SSH settings in one transaction bound to the organization.
+// The bump goes first, so a stale revision or an unknown host fails before
+// the settings are touched. No row from the bump means the host is gone
+// (ErrNotFound) or the caller's view is stale (ErrRevisionMismatch); only a
+// read can tell them apart, the same way hosts.SQLStore.UpdateHostWith does.
+func (s *SQLStore) PutHostSSH(ctx context.Context, h HostSSH, ifRevision *int64) (HostSSH, error) {
+	var out HostSSH
+	err := s.db.WithOrg(ctx, h.OrgID, func(tx pgx.Tx) error {
+		q := s.q.WithTx(tx)
+		rev, err := q.BumpHostRevision(ctx, gen.BumpHostRevisionParams{ID: h.HostID, OrgID: h.OrgID, IfRevision: ifRevision})
+		if errors.Is(err, pgx.ErrNoRows) {
+			if _, getErr := q.GetHost(ctx, gen.GetHostParams{OrgID: h.OrgID, ID: h.HostID}); getErr != nil {
+				return mapErr(getErr)
+			}
+			return ErrRevisionMismatch
+		}
+		if err != nil {
+			return mapErr(err)
+		}
+		row, err := q.UpsertHostSSH(ctx, gen.UpsertHostSSHParams{
+			HostID: h.HostID, OrgID: h.OrgID, Username: h.Username, Port: int32(h.Port),
+			CredentialID: db.NullUUID(h.CredentialID), BastionMode: string(h.BastionMode), BastionID: db.NullUUID(h.BastionID),
+		})
+		if err != nil {
+			return mapWriteErr(err)
+		}
+		out = toHostSSH(row)
+		out.HostRevision = rev
+		return nil
 	})
 	if err != nil {
-		return HostSSH{}, mapWriteErr(err)
+		return HostSSH{}, err
 	}
-	return toHostSSH(row), nil
+	return out, nil
 }
 
 func (s *SQLStore) ListHostSSH(ctx context.Context, orgID uuid.UUID) ([]HostSSH, error) {

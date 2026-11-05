@@ -200,10 +200,22 @@ type hostSSHOutput struct {
 	}
 }
 
-type hostSSHPutInput struct {
-	Org  string `path:"org"`
-	ID   string `path:"id"`
+// hostSSHPutOutput is the PUT answer: the settings as GET returns them, plus
+// the host's new revision (also as ETag) — a client holding the host open
+// stays current without a re-read (backlog 7.79). GET keeps hostSSHOutput.
+type hostSSHPutOutput struct {
+	ETag string `header:"ETag"`
 	Body struct {
+		SSH          hostSSHDTO `json:"ssh"`
+		HostRevision int64      `json:"host_revision" doc:"The host's revision after this write; the ETag carries the same value"`
+	}
+}
+
+type hostSSHPutInput struct {
+	Org     string `path:"org"`
+	ID      string `path:"id"`
+	IfMatch string `header:"If-Match" doc:"The host's ETag; optional — when sent, a stale one answers 412"`
+	Body    struct {
 		Username     string  `json:"username,omitempty" maxLength:"64"`
 		Port         int     `json:"port,omitempty" minimum:"0" maximum:"65535" doc:"0 or omitted means 22"`
 		CredentialID *string `json:"credential_id,omitempty"`
@@ -431,12 +443,16 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		return out, nil
 	})
 
-	huma.Put(hapi, "/api/v1/orgs/{org}/hosts/{id}/ssh", func(ctx context.Context, in *hostSSHPutInput) (*hostSSHOutput, error) {
+	huma.Put(hapi, "/api/v1/orgs/{org}/hosts/{id}/ssh", func(ctx context.Context, in *hostSSHPutInput) (*hostSSHPutOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermInventoryWrite)
 		if err != nil {
 			return nil, err
 		}
 		id, err := parseUUID(in.ID, "host id")
+		if err != nil {
+			return nil, err
+		}
+		ifRev, err := optionalIfMatch(in.IfMatch)
 		if err != nil {
 			return nil, err
 		}
@@ -451,12 +467,14 @@ func registerSSHRoutes(hapi huma.API, deps Deps) {
 		h, err := deps.SSH.SetHostSSH(ctx, scope.OrgID, id, sshconf.HostSSHInput{
 			Username: in.Body.Username, Port: in.Body.Port, CredentialID: cred,
 			BastionMode: sshconf.BastionMode(in.Body.BastionMode), BastionID: bastion,
+			IfRevision: ifRev,
 		})
 		if err != nil {
 			return nil, mapSSHErr(ctx, err)
 		}
 		setAuditObject(ctx, id.String(), "updated SSH settings")
-		out := &hostSSHOutput{}
+		out := &hostSSHPutOutput{ETag: revisionETag(h.HostRevision)}
+		out.Body.HostRevision = h.HostRevision
 		out.Body.SSH = toHostSSHDTO(h)
 		// The pin is untouched by this write, but the response keeps the
 		// read's shape: the same pin state travels back.
@@ -473,6 +491,10 @@ func mapSSHErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, sshconf.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
+	case errors.Is(err, sshconf.ErrRevisionMismatch):
+		// Someone else saved the host first: 412, not 404 — the host is
+		// there, the caller's view of it is not current (backlog 7.79).
+		return huma.Error412PreconditionFailed("the host changed since you loaded it; reload and try again")
 	case errors.Is(err, sshconf.ErrNotFound):
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, sshconf.ErrNameTaken):

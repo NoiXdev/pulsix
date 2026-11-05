@@ -4611,6 +4611,20 @@ export interface components {
             port?: number;
             username?: string;
         };
+        HostSSHPutOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostSSHPutOutputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The host's revision after this write; the ETag carries the same value
+             */
+            host_revision: number;
+            ssh: components["schemas"]["HostSSHDTO"];
+        };
         HostTagsOutputBody: {
             /**
              * Format: uri
@@ -4618,6 +4632,20 @@ export interface components {
              * @example https://example.com/schemas/HostTagsOutputBody.json
              */
             readonly $schema?: string;
+            tags: components["schemas"]["TagDTO"][] | null;
+        };
+        HostTagsPutOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/HostTagsPutOutputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description The host's revision after this write; the ETag carries the same value
+             */
+            host_revision: number;
             tags: components["schemas"]["TagDTO"][] | null;
         };
         HostTestDTO: {
@@ -10829,7 +10857,10 @@ export interface operations {
     setHostSSH: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The host's ETag; optional — when sent, a stale one answers 412 */
+                "If-Match"?: string;
+            };
             path: {
                 org: string;
                 id: string;
@@ -10845,10 +10876,11 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HostSSHOutputBody"];
+                    "application/json": components["schemas"]["HostSSHPutOutputBody"];
                 };
             };
             /** @description Error */
@@ -10897,7 +10929,10 @@ export interface operations {
     setHostTags: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The host's ETag; optional — when sent, a stale one answers 412 */
+                "If-Match"?: string;
+            };
             path: {
                 org: string;
                 id: string;
@@ -10913,10 +10948,11 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HostTagsOutputBody"];
+                    "application/json": components["schemas"]["HostTagsPutOutputBody"];
                 };
             };
             /** @description Error */

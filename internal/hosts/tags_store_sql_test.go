@@ -2,6 +2,7 @@ package hosts_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -39,10 +40,10 @@ func TestSQLStoreListHostTagsAndReplaceManualTags(t *testing.T) {
 
 	insertRawTag(t, q, org, h.ID, "os", "debian", hosts.TagSourceFact)
 
-	if err := store.ReplaceManualTags(ctx, org, h.ID, []hosts.Tag{
+	if _, err := store.ReplaceManualTags(ctx, org, h.ID, []hosts.Tag{
 		{Key: "role", Value: "db", Source: hosts.TagSourceManual},
 		{Key: "env", Value: "prod", Source: hosts.TagSourceManual},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("ReplaceManualTags: %v", err)
 	}
 
@@ -56,9 +57,9 @@ func TestSQLStoreListHostTagsAndReplaceManualTags(t *testing.T) {
 
 	// Replacing again with a different manual set must drop "env" and
 	// "role" but leave "os" (the fact tag) alone.
-	if err := store.ReplaceManualTags(ctx, org, h.ID, []hosts.Tag{
+	if _, err := store.ReplaceManualTags(ctx, org, h.ID, []hosts.Tag{
 		{Key: "role", Value: "web", Source: hosts.TagSourceManual},
-	}); err != nil {
+	}, nil); err != nil {
 		t.Fatalf("ReplaceManualTags (second call): %v", err)
 	}
 	got, err = store.ListHostTags(ctx, org, h.ID)
@@ -83,24 +84,90 @@ func TestSQLStoreListHostTagsAndReplaceManualTags(t *testing.T) {
 	}
 }
 
-// TestSQLStoreReplaceManualTagsUnknownHostFailsOnForeignKey proves
-// ReplaceManualTags itself does no existence check of its own (that is
-// Service.SetTags' job, via GetHost, before this is ever called) — calling
-// it directly against a host id that was never created still fails, but
-// only because host_tags.host_id has a foreign key to hosts(id), not
-// because the store checked anything. This pins the store method's own
-// contract (a plain DB operation relying on the schema's own constraints)
-// as distinct from the service-level ErrNotFound behavior already covered
-// by TestSetTagsUnknownHost (tags_test.go).
-func TestSQLStoreReplaceManualTagsUnknownHostFailsOnForeignKey(t *testing.T) {
+// TestSQLStoreReplaceManualTagsUnknownHostIsNotFound pins the store's own
+// contract for a host id that does not exist in the organization: the bump
+// finds no row, the follow-up read finds none either, and the answer is
+// ErrNotFound (not a revision mismatch, not a foreign-key error).
+func TestSQLStoreReplaceManualTagsUnknownHostIsNotFound(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
 	store := hosts.NewSQLStore(d)
 	org := seedOrg(t, q, "tags-replace-unknown-org")
+	tags := []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}
 
-	err := store.ReplaceManualTags(ctx, org, uuid.Must(uuid.NewV7()), []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}})
-	if err == nil {
-		t.Fatal("expected the foreign-key violation on an unknown host_id to surface as an error")
+	if _, err := store.ReplaceManualTags(ctx, org, uuid.Must(uuid.NewV7()), tags, nil); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("unknown host, no revision = %v, want ErrNotFound", err)
+	}
+	stale := int64(3)
+	if _, err := store.ReplaceManualTags(ctx, org, uuid.Must(uuid.NewV7()), tags, &stale); !errors.Is(err, hosts.ErrNotFound) {
+		t.Fatalf("unknown host, with revision = %v, want ErrNotFound", err)
+	}
+}
+
+// seedTaggedHost creates one host carrying the manual tag role=db and
+// returns it with its current revision.
+func seedTaggedHost(t *testing.T, store *hosts.SQLStore, org uuid.UUID) (hosts.Host, int64) {
+	t.Helper()
+	zone := seedZone(t, store, org, "fra")
+	h := hosts.Host{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "web-01"}
+	if err := store.CreateHost(ctx, h); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ReplaceManualTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := store.GetHost(ctx, org, h.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h, cur.Revision
+}
+
+// Backlog 7.79: a tag write moves the host's revision, so a host dialog
+// opened before it answers 412 instead of overwriting it.
+func TestReplaceManualTagsBumpsTheRevision(t *testing.T) {
+	d := testdb.Open(t)
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, gen.New(d.Pool()), "tags-bump-org")
+	h, before := seedTaggedHost(t, store, org)
+
+	got, err := store.ReplaceManualTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}, nil)
+	if err != nil {
+		t.Fatalf("ReplaceManualTags: %v", err)
+	}
+	if got != before+1 {
+		t.Fatalf("returned revision = %d, want %d", got, before+1)
+	}
+	after, err := store.GetHost(ctx, org, h.ID)
+	if err != nil || after.Revision != before+1 {
+		t.Fatalf("stored revision = %d, %v; want %d", after.Revision, err, before+1)
+	}
+
+	// The current revision, when sent, is accepted and spent.
+	cur := after.Revision
+	if got, err := store.ReplaceManualTags(ctx, org, h.ID, nil, &cur); err != nil || got != cur+1 {
+		t.Fatalf("with the current revision = %d, %v; want %d", got, err, cur+1)
+	}
+}
+
+func TestReplaceManualTagsRefusesAStaleRevision(t *testing.T) {
+	d := testdb.Open(t)
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, gen.New(d.Pool()), "tags-stale-org")
+	h, before := seedTaggedHost(t, store, org)
+
+	stale := before - 1
+	_, err := store.ReplaceManualTags(ctx, org, h.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}, &stale)
+	if !errors.Is(err, hosts.ErrRevisionMismatch) {
+		t.Fatalf("stale revision = %v, want ErrRevisionMismatch", err)
+	}
+	tags, err := store.ListHostTags(ctx, org, h.ID)
+	if err != nil || len(tags) != 1 || tags[0].Value != "db" {
+		t.Fatalf("manual tags after a refused write = %+v, %v; want role=db untouched", tags, err)
+	}
+	after, err := store.GetHost(ctx, org, h.ID)
+	if err != nil || after.Revision != before {
+		t.Fatalf("revision after a refused write = %d, %v; want %d", after.Revision, err, before)
 	}
 }
 
@@ -118,10 +185,10 @@ func TestSQLStoreListTagKeyValueCounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := store.ReplaceManualTags(ctx, org, h1.ID, []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}); err != nil {
+	if _, err := store.ReplaceManualTags(ctx, org, h1.ID, []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReplaceManualTags(ctx, org, h2.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}); err != nil {
+	if _, err := store.ReplaceManualTags(ctx, org, h2.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// h1 also carries role=db as a fact tag — ListTagKeyValueCounts counts
@@ -173,10 +240,10 @@ func TestSQLStoreQueryHostsFiltersByRoleAndZone(t *testing.T) {
 	}{
 		{dbFra, "db", "fra"}, {webFra, "web", "fra"}, {dbHel, "db", "hel"},
 	} {
-		if err := store.ReplaceManualTags(ctx, org, seed.host.ID, []hosts.Tag{
+		if _, err := store.ReplaceManualTags(ctx, org, seed.host.ID, []hosts.Tag{
 			{Key: "role", Value: seed.role, Source: hosts.TagSourceManual},
 			{Key: "zone", Value: seed.zone, Source: hosts.TagSourceManual},
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -217,7 +284,7 @@ func TestSQLStoreQueryHostsMergesFactAndManual(t *testing.T) {
 	}
 	// dbHost: fact says role=web, but a manual tag overrides it to role=db.
 	insertRawTag(t, q, org, dbHost.ID, "role", "web", hosts.TagSourceFact)
-	if err := store.ReplaceManualTags(ctx, org, dbHost.ID, []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}); err != nil {
+	if _, err := store.ReplaceManualTags(ctx, org, dbHost.ID, []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	// webHost: fact value applies as-is, no manual override.
@@ -318,7 +385,7 @@ func TestSQLStoreQueryHostsAgreesWithMatches(t *testing.T) {
 			}
 		}
 		if len(manual) > 0 {
-			if err := store.ReplaceManualTags(ctx, org, h.ID, manual); err != nil {
+			if _, err := store.ReplaceManualTags(ctx, org, h.ID, manual, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -382,10 +449,10 @@ func TestHostTagsAreIsolatedPerOrgByRLS(t *testing.T) {
 	if err := store.CreateHost(ctx, hB); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReplaceManualTags(ctx, orgA, hA.ID, []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}); err != nil {
+	if _, err := store.ReplaceManualTags(ctx, orgA, hA.ID, []hosts.Tag{{Key: "role", Value: "db", Source: hosts.TagSourceManual}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ReplaceManualTags(ctx, orgB, hB.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}); err != nil {
+	if _, err := store.ReplaceManualTags(ctx, orgB, hB.ID, []hosts.Tag{{Key: "role", Value: "web", Source: hosts.TagSourceManual}}, nil); err != nil {
 		t.Fatal(err)
 	}
 

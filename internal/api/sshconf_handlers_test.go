@@ -298,3 +298,85 @@ func TestSSHPermissionsAndIsolation(t *testing.T) {
 		t.Fatalf("cross-org credential: %d %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 }
+
+func sshRevisionOf(t *testing.T, f sshFixture) int64 {
+	t.Helper()
+	return decodeHost(t, requestJSON(t, f.c, http.MethodGet, f.org+"/hosts/"+f.hostID, nil)).Revision
+}
+
+// Backlog 7.79: PUT /hosts/{id}/ssh bumps the host's revision and checks
+// If-Match when one is sent; without one it stays unconditional.
+func TestSetHostSSHHonoursIfMatch(t *testing.T) {
+	f := newSSHFixture(t, "ssh-ifmatch-org")
+	url := f.org + "/hosts/" + f.hostID + "/ssh"
+	before := sshRevisionOf(t, f)
+
+	type putBody struct {
+		HostRevision int64 `json:"host_revision"`
+	}
+	// No header: unconditional, and the revision moves.
+	resp := requestJSON(t, f.c, http.MethodPut, url, map[string]any{"username": "deploy", "port": 2222})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("no If-Match: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if got := resp.Header.Get("ETag"); got != quotedRevision(before+1) {
+		t.Fatalf("ETag = %q, want %s", got, quotedRevision(before+1))
+	}
+	var pb putBody
+	decodeInto(t, resp, &pb)
+	if pb.HostRevision != before+1 {
+		t.Fatalf("host_revision = %d, want %d", pb.HostRevision, before+1)
+	}
+
+	// The current ETag is accepted.
+	cur := quotedRevision(before + 1)
+	resp = requestWithHeaders(t, f.c, http.MethodPut, url, map[string]any{"username": "deploy", "port": 2223}, map[string]string{"If-Match": cur})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("current If-Match: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	// A stale or malformed one is 412 and writes nothing.
+	for name, header := range map[string]string{"stale": cur, "unquoted": "7"} {
+		resp = requestWithHeaders(t, f.c, http.MethodPut, url, map[string]any{"username": "deploy", "port": 2999}, map[string]string{"If-Match": header})
+		if resp.StatusCode != http.StatusPreconditionFailed {
+			t.Fatalf("%s If-Match: status %d, want 412, body %s", name, resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+	var got hostSSHBody
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, url, nil), &got)
+	if got.SSH.Port != 2223 {
+		t.Fatalf("port after refused writes = %d, want 2223", got.SSH.Port)
+	}
+	if rev := sshRevisionOf(t, f); rev != before+2 {
+		t.Fatalf("host revision after refused writes = %d, want %d", rev, before+2)
+	}
+}
+
+// A host dialog opened before an SSH card write must answer 412 on save,
+// even though the SSH write sent no If-Match itself (backlog 7.79).
+func TestHostEditAfterAnSSHWriteAnswers412(t *testing.T) {
+	f := newSSHFixture(t, "ssh-race-org")
+	hostURL := f.org + "/hosts/" + f.hostID
+	opened := hostETag(t, f.c, hostURL)
+
+	if resp := requestJSON(t, f.c, http.MethodPut, hostURL+"/ssh", map[string]any{"username": "deploy"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("put ssh: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp := requestWithHeaders(t, f.c, http.MethodPatch, hostURL,
+		map[string]any{"name": "web-01-renamed", "zone_id": f.zoneID, "managed": true, "monitored": false}, map[string]string{"If-Match": opened})
+	if resp.StatusCode != http.StatusPreconditionFailed {
+		t.Fatalf("PATCH with the pre-SSH-write ETag: status %d, want 412, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+// Review Focus 3: an API-token client that never sent If-Match keeps working.
+func TestSetHostSSHWithoutIfMatchStillWorksForTokens(t *testing.T) {
+	s := apitest.New(t)
+	org, tok := s.OrgWithToken(t)
+	hostID := s.SeedHost(t, org)
+	resp := requestWithHeaders(t, http.DefaultClient, http.MethodPut, s.HTTP.URL+"/api/v1/orgs/"+org.String()+"/hosts/"+hostID.String()+"/ssh",
+		map[string]any{"username": "deploy"}, map[string]string{"Authorization": "Bearer " + tok})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("token PUT ssh without If-Match: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
