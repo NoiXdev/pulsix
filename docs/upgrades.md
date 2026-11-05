@@ -113,11 +113,30 @@ flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
   `. _ / + @ = -` (a space, `:`, `,`, a quote, `%`, `#`, `;`, a line break
   or a non-ASCII letter would split or end a setting in a run's
   `ansible.cfg`, SSH arguments or inventory wrapper); move the data dir
-  before upgrading such a worker.
+  before upgrading such a worker. Move it with its contents, or set
+  `PULSIX_WORKER_IDENTITY_DIR` to the old `<data dir>/identity`: the
+  enrolled certificate lives there by default, and a worker that does not
+  find it needs a new enrollment token. The manager's embedded worker
+  (`PULSIX_EMBEDDED_WORKER=1`) reads `PULSIX_WORKER_DATA_DIR` from the
+  manager's environment: with a refused data dir it does not start, while the manager
+  keeps running and logs only `embedded worker: configuration`; runs in the
+  default zone it serves then stay queued unless another worker serves
+  that zone.
 - **7.90, variable editor:** a role a playbook in a subdirectory uses is no
   longer read from the repository subpath's root `roles/` — runs never found
   it there — and shows as not found after the next sync, as the run reports
   it; a role directory next to the playbook is now read, as the run finds it.
+  The worker reads the variable sources, so this shows only after a sync
+  run by an upgraded worker. For a template of such a playbook, the fields
+  the role declared disappear from the source; since a role not found means
+  the source was not read completely, no template marks them gone: automatic
+  and manual templates alike keep them unchanged, and the template's sync
+  review shows a `role_not_found` note and a `not_checked` warning naming
+  the role. Stored values are never dropped. Fields of a role newly found
+  next to the playbook come as additions: an automatic template takes them
+  (those that need review wait for a person), a manual template shows them
+  in its sync review. To keep a role found, move it to `<playbook
+  dir>/roles/` or install it from `requirements.yml`.
 
 ## Roll order
 

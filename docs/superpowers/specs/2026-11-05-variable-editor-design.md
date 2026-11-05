@@ -65,7 +65,7 @@ On every successful repo sync the worker, after fetching:
 
 The manager stores, per repo, the commit, the time, and per playbook path its parsed result, replacing the previous sync's record. A discovered playbook can be picked in the template's playbook choice; picking it creates or reuses the `playbooks` row (`repo_id` + `path`). Inline playbooks are parsed by the manager from their stored text whenever the playbook is saved, with the same parser (a shared Go package used by worker and manager).
 
-The parser searches roles where the run will find them, in `ansible-playbook`'s order: `roles/` next to the playbook (`<playbook dir>/roles`), then the roles installed from `requirements.yml` (the run's `roles_path`), then the playbook's own directory (corrected by backlog 7.90: the run never searched the subpath's root `roles/` for a playbook in a subdirectory). It does not read role variables from anywhere a run would not load them. (Today the sync installs galaxy roles into a directory the run's roles path does not include; that is a separate defect, see "Found while specifying".)
+The parser searches roles where the run will find them, in `ansible-playbook`'s order: `roles/` next to the playbook (`<playbook dir>/roles`), then the roles installed from `requirements.yml` (the run's `roles_path`), then the playbook's own directory (corrected by backlog 7.90: the run never searched the subpath's root `roles/` for a playbook in a subdirectory). It does not read role variables from anywhere a run would not load them.
 
 ### 5. Template sync: modes, preview, apply
 
