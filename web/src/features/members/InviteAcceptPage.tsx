@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate } from '@tanstack/react-router';
 import { AuthShell } from '../../ui/auth-shell.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -9,6 +9,7 @@ import { acceptInvite } from '../../api/hooks/useMembers.ts';
 import { useMe, useRefetchMe } from '../../api/hooks/useMe.ts';
 import { ApiError } from '../../api/client.ts';
 import { useResetSession } from '../../lib/session.ts';
+import { tokenFromFragment } from '../../lib/fragment.ts';
 import { MIN_PASSWORD_LENGTH, passwordLength } from '../../lib/password.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -28,11 +29,16 @@ import { useT } from '../../i18n/useT.ts';
  *   posts the token alone; the server checks that the invitation is for
  *   this account's address.
  *
+ * The token rides in the URL fragment (/invite#token=…), which a browser
+ * never sends to a server, so no request log records it (backlog 7.80). The
+ * page reads it once, takes it out of the address bar, and sends it only in
+ * the request body. A link without a token says so and posts nothing. Links
+ * mailed earlier (/invite/{token}) are rewritten to this form by the router.
+ *
  * Any failure — of acceptance itself, or of loading the new session
  * afterwards — is reported as such, never mistaken for another outcome.
  */
 export function InviteAcceptPage() {
-  const { token } = useParams({ strict: false }) as { token: string };
   const navigate = useNavigate();
   const t = useT();
   const refetchMe = useRefetchMe();
@@ -40,12 +46,29 @@ export function InviteAcceptPage() {
   const me = useMe();
   const qc = useQueryClient();
 
+  const [token] = useState(() => tokenFromFragment(window.location.hash));
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [tooShort, setTooShort] = useState(false);
   const [busy, setBusy] = useState(false);
   const [signInRequired, setSignInRequired] = useState(false);
+
+  useEffect(() => {
+    if (!window.location.hash) return;
+    window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search);
+  }, []);
+
+  if (!token) {
+    return (
+      <AuthShell>
+        <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
+          <h1 className="text-lg font-semibold">{t.members.accept.invalidTitle}</h1>
+          <p className="text-xs text-muted-foreground">{t.members.accept.invalidBody}</p>
+        </div>
+      </AuthShell>
+    );
+  }
 
   if (me.isPending) {
     return (

@@ -80,7 +80,10 @@ const loginRoute = createRoute({
 
 // The forgotten-password pages are public (backlog 7.74). The reset link
 // carries its token in the fragment (#token=…), which no route parses: the
-// page reads it, and it never reaches the server in a URL.
+// page reads it, and it never reaches the server in a URL. The invitation
+// link does the same (/invite#token=…, backlog 7.80); invitation links
+// mailed earlier (/invite/{token}) are rewritten to that form, so the token
+// leaves the path (and the request log) as soon as the SPA loads.
 const forgotPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/forgot-password',
@@ -94,8 +97,15 @@ const resetPasswordRoute = createRoute({
 
 const inviteRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: '/invite/$token',
+  path: '/invite',
   component: InviteAcceptPage,
+});
+const legacyInviteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/invite/$token',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/invite', hash: `token=${params.token}`, replace: true });
+  },
 });
 
 const accountSecurityRoute = createRoute({
@@ -362,6 +372,7 @@ const routeTree = rootRoute.addChildren([
   forgotPasswordRoute,
   resetPasswordRoute,
   inviteRoute,
+  legacyInviteRoute,
   accountSecurityRoute,
   enrolRoute,
   changePasswordRoute,

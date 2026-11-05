@@ -6,6 +6,7 @@ import { Input } from '../../ui/input.tsx';
 import { Field } from '../../ui/field.tsx';
 import { useResetPassword } from '../../api/hooks/usePassword.ts';
 import { ApiError } from '../../api/client.ts';
+import { tokenFromFragment } from '../../lib/fragment.ts';
 import { MIN_PASSWORD_LENGTH, newPasswordProblem, type NewPasswordProblem } from '../../lib/password.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -13,11 +14,6 @@ import { useT } from '../../i18n/useT.ts';
  * unknown, used, expired or replaced (internal/api/password_reset_handlers.go);
  * it does not say which. */
 const INVALID_OR_EXPIRED_LINK = 'invalid_or_expired_link';
-
-/** tokenFromFragment reads `token` from a `#token=…` fragment. */
-function tokenFromFragment(hash: string): string | null {
-  return new URLSearchParams(hash.replace(/^#/, '')).get('token') || null;
-}
 
 type Outcome = 'form' | 'done' | 'invalid';
 

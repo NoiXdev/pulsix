@@ -78,3 +78,13 @@ describe('the password pages (backlog 7.74)', () => {
     expect(router.state.matches.some((m) => m.routeId === path)).toBe(true);
   });
 });
+
+describe('an invitation link mailed before the token moved into the fragment (backlog 7.80)', () => {
+  it('rewrites /invite/{token} to /invite#token={token}', async () => {
+    await router.navigate({ to: '/invite/$token', params: { token: 'tok_old' } });
+    await router.load();
+
+    expect(router.state.location.pathname).toBe('/invite');
+    expect(router.state.location.hash).toBe('token=tok_old');
+  });
+});

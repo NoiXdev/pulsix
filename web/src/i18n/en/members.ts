@@ -69,6 +69,8 @@ export const enMembers = {
   accept: {
     joinTitle: 'Join the organization',
     acceptFailed: 'failed to accept invitation',
+    invalidTitle: 'This invitation link is not valid',
+    invalidBody: 'The link is incomplete. Open the link from the invitation mail again, or ask for a new invitation.',
     alreadyTitle: 'You already have an account',
     alreadyBody:
       'This address already belongs to an account. Sign in to it with its own password and second factor, then open this invitation link again to join the organization.',

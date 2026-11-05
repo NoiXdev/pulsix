@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { fetchMock } from '../../test/fetchMock.ts';
 import { InviteAcceptPage } from './InviteAcceptPage.tsx';
 
-function renderPage(qc: QueryClient) {
+/** Opens the page the way the invitation mail does: the token rides in the
+ * fragment of the address the browser shows. */
+function renderPage(qc: QueryClient, hash = '#token=tok_abc123') {
+  window.history.replaceState(null, '', `/invite${hash}`);
   const rootRoute = createRootRoute();
-  const inviteRoute = createRoute({ getParentRoute: () => rootRoute, path: '/invite/$token', component: InviteAcceptPage });
+  const inviteRoute = createRoute({ getParentRoute: () => rootRoute, path: '/invite', component: InviteAcceptPage });
   const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: () => <div>ROOT</div> });
   const accountSecurityRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -24,7 +28,7 @@ function renderPage(qc: QueryClient) {
     component: () => <div>LOGIN</div>,
   });
   const routeTree = rootRoute.addChildren([indexRoute, accountSecurityRoute, loginRoute, inviteRoute]);
-  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/invite/tok_abc123'] }) });
+  const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/invite'] }) });
 
   return render(
     <QueryClientProvider client={qc}>
@@ -32,6 +36,10 @@ function renderPage(qc: QueryClient) {
     </QueryClientProvider>,
   );
 }
+
+afterEach(() => {
+  window.history.replaceState(null, '', '/');
+});
 
 async function fillAndSubmit(user: ReturnType<typeof userEvent.setup>) {
   await user.type(await screen.findByLabelText('Your name'), 'Ops User');
@@ -198,5 +206,29 @@ describe('InviteAcceptPage', () => {
 
     expect(await screen.findByText('at least 12 characters')).toBeInTheDocument();
     expect(posted).toBe(false);
+  });
+
+  it('takes the token out of the address bar once it has read it', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({ 'GET /api/v1/auth/me': anonymous });
+
+    renderPage(qc);
+    await screen.findByLabelText('Your name');
+
+    expect(window.location.hash).toBe('');
+    expect(window.location.href).not.toContain('tok_abc123');
+  });
+
+  it('without a token the page says the link is invalid and posts nothing', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({ 'GET /api/v1/auth/me': anonymous });
+    fetchMock.mockClear();
+
+    renderPage(qc, '');
+
+    expect(await screen.findByText('This invitation link is not valid')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Choose a password')).not.toBeInTheDocument();
+    const urls = fetchMock.mock.calls.map(([input]) => (input instanceof Request ? input.url : String(input)));
+    expect(urls.some((u) => u.includes('/api/v1/invites/accept'))).toBe(false);
   });
 });

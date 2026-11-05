@@ -66,6 +66,8 @@ export const deMembers: Messages['members'] = {
   accept: {
     joinTitle: 'Der Organisation beitreten',
     acceptFailed: 'Einladung konnte nicht angenommen werden',
+    invalidTitle: 'Dieser Einladungslink ist ungültig',
+    invalidBody: 'Der Link ist unvollständig. Den Link aus der Einladungsmail erneut öffnen oder eine neue Einladung anfordern.',
     alreadyTitle: 'Es gibt bereits ein Konto',
     alreadyBody:
       'Diese Adresse gehört bereits zu einem Konto. Dort mit dem eigenen Passwort und zweiten Faktor anmelden und anschließend diesen Einladungslink erneut öffnen, um der Organisation beizutreten.',
