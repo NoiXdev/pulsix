@@ -23,6 +23,7 @@ import { schemas, type HostFormValues } from '../../lib/schemas.ts';
 import { useT } from '../../i18n/useT.ts';
 import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { parseTagChip, type ParsedTag } from './selectorInput.ts';
+import { manualTagPairs } from './tags.ts';
 import { ZoneDialog } from './ZoneDialog.tsx';
 
 /** The two jump choices that are not a jump host. A bastion id is a uuid,
@@ -102,7 +103,7 @@ function HostDialogLoader({ org, host, onClose }: { org: string; host?: Host; on
     );
   }
 
-  const manualTags = (tags.data?.tags ?? []).filter((tag) => tag.source === 'manual').map((tag) => ({ key: tag.key, value: tag.value }));
+  const manualTags = manualTagPairs(tags.data?.tags);
   const sshInitial = ssh.data?.ssh;
   const initialJump = sshInitial?.bastion_mode === 'explicit' && sshInitial.bastion_id ? sshInitial.bastion_id : (sshInitial?.bastion_mode ?? INHERIT);
 

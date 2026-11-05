@@ -3,13 +3,16 @@ import { Button } from '../../ui/button.tsx';
 import { useHostTags, useSetHostTags } from '../../api/hooks/useTags.ts';
 import { useT } from '../../i18n/useT.ts';
 import { parseTagChip } from './selectorInput.ts';
+import { manualTagPairs } from './tags.ts';
 
 /**
  * HostTagsEditor is the sidebar's tag list: every tag the host carries,
  * and for a role with `hosts.write` a field to add one and a remove button
  * on each manual one (an automatic tag comes from the facts and is not the
  * operator's to remove). A malformed chip is refused inline, without a
- * request.
+ * request. A write sends the manual tags only: the server stores whatever
+ * it is sent as manual, so an automatic tag follows the facts only while it
+ * stays out of the body.
  */
 export function HostTagsEditor({ org, hostId, canWrite }: { org: string; hostId: string; canWrite: boolean }) {
   const t = useT();
@@ -17,7 +20,7 @@ export function HostTagsEditor({ org, hostId, canWrite }: { org: string; hostId:
   const setTags = useSetHostTags(org, hostId);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const current = () => (tags.data?.tags ?? []).map((tag) => ({ key: tag.key, value: tag.value }));
+  const current = () => manualTagPairs(tags.data?.tags);
 
   async function add(e: FormEvent) {
     e.preventDefault();

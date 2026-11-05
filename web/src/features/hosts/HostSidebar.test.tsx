@@ -149,6 +149,36 @@ describe('HostSidebar', () => {
     await waitFor(() => expect(puts[1]).toEqual([]));
   });
 
+  it('sends only the manual tags when a tag is added or removed', async () => {
+    const user = userEvent.setup();
+    const puts: unknown[] = [];
+    mockApi(
+      hostRoutes(
+        {},
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/tags': {
+            tags: [
+              { key: 'env', value: 'prod', source: 'manual' },
+              { key: 'os', value: 'debian', source: 'fact' },
+            ],
+          },
+          'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
+            puts.push(req.body);
+            return { tags: [] };
+          },
+        },
+      ),
+    );
+    renderSidebar();
+
+    await user.type(await screen.findByPlaceholderText('role=db'), 'team=ops');
+    await user.click(screen.getByRole('button', { name: 'Add tag' }));
+    await waitFor(() => expect(puts[0]).toEqual([{ key: 'env', value: 'prod' }, { key: 'team', value: 'ops' }]));
+
+    await user.click(screen.getByRole('button', { name: 'remove env' }));
+    await waitFor(() => expect(puts[1]).toEqual([]));
+  });
+
   it('rejects a malformed tag chip inline without a round trip', async () => {
     const user = userEvent.setup();
     mockApi(hostRoutes());
