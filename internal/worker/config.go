@@ -163,8 +163,8 @@ func Load(env []string) (Config, error) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = defaultDataDir
 	}
-	if strings.ContainsAny(cfg.DataDir, ":\n\r") {
-		return cfg, fmt.Errorf("%s %q must not contain ':' or a line break: the worker writes paths below it into each run's ansible.cfg, where ':' separates roles_path entries and a line break ends a setting", envDataDir, cfg.DataDir)
+	if !dataDirSafe(cfg.DataDir) {
+		return cfg, fmt.Errorf("%s %q may only contain letters, digits and . _ / + @ = -: the worker writes paths below it into each run's ansible.cfg and SSH arguments, where other characters split or end a setting", envDataDir, cfg.DataDir)
 	}
 	// The certificate bundle: either all three paths (the bundle `pulsix-manager
 	// worker add` prints) or none, then the identity directory token
@@ -325,4 +325,21 @@ func orDefault(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// dataDirSafe reports whether every character of dir survives the places the
+// worker writes paths below it: a run's ansible.cfg (':' splits roles_path,
+// ',' splits vault_identity_list, a line break or a comment marker ends a
+// setting, '%' and '$' are interpolated), ssh_args (split on whitespace and
+// quotes) and the inventory wrapper (single-quoted).
+func dataDirSafe(dir string) bool {
+	for _, c := range dir {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.ContainsRune("._/+@=-", c):
+		default:
+			return false
+		}
+	}
+	return true
 }

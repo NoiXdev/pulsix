@@ -158,3 +158,25 @@ func TestSyncExecutorInstalledRolesThatCannotBeOpened(t *testing.T) {
 		})
 	}
 }
+
+func TestPrependNotes(t *testing.T) {
+	a := varsource.ReadFailed("a")
+	b := varsource.ReadFailed("b")
+	for _, tc := range []struct {
+		name        string
+		front, rest []varsource.Note
+		want        []varsource.Note
+	}{
+		{"both nil", nil, nil, []varsource.Note{}},
+		{"front only", []varsource.Note{a}, nil, []varsource.Note{a}},
+		{"rest only", nil, []varsource.Note{b}, []varsource.Note{b}},
+		{"both in order", []varsource.Note{a}, []varsource.Note{b}, []varsource.Note{a, b}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := prependNotes(tc.front, tc.rest)
+			if got == nil || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("prependNotes = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
