@@ -44,7 +44,7 @@ func TestSQLServiceSealsLegacyPlaintextOnKeepSave(t *testing.T) {
 
 	// The service reads the raw row (the store, not a masked read), so the
 	// marker resolves against the plaintext and the save seals it.
-	svc := templates.NewService(store, playbooks.NewSQLStore(d), nil, nil, nil, box)
+	svc := templates.NewService(store, playbookStoreLookup{playbooks.NewSQLStore(d)}, nil, nil, nil, box)
 	updated, err := svc.Update(scoped, org, legacy.ID, templates.UpdateInput{
 		Name: "legacy", PlaybookID: playbookID,
 		ExtraVarsSchema: secretSchema(),

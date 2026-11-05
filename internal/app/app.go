@@ -453,6 +453,11 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// The variable sources a successful sync read (backlog 7.75) are
 	// stored by the repository registry, inside the finish transaction.
 	jobsQueue.SetSourceSink(reposSvc)
+	// Once a sync stored new sources (after its finish committed), and
+	// once an editor playbook is saved, the templates in automatic mode
+	// take them (backlog 7.75, plan decisions 6 and 9).
+	jobsQueue.SetSourceApplier(templatesSvc)
+	playbooksSvc.SetInlineApplier(templatesSvc)
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.
 	jobsQueue.SetRepoSource(repoRefSource{reposSvc})

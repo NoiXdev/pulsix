@@ -20,6 +20,14 @@ import (
 )
 
 // testBoxKey builds a 32-byte key from a label, the way the jobs tests do.
+// playbookStoreLookup is the playbooks store as the service's
+// PlaybookLookup, for tests that read no variable sources.
+type playbookStoreLookup struct{ *playbooks.SQLStore }
+
+func (playbookStoreLookup) VarSource(context.Context, uuid.UUID, uuid.UUID) (playbooks.VarSource, error) {
+	return playbooks.VarSource{}, nil
+}
+
 func testBoxKey(label string) [32]byte {
 	var key [32]byte
 	copy(key[:], label)
@@ -266,7 +274,7 @@ func TestATemplateAndItsVaultCredentialsLandTogetherOrNotAtAll(t *testing.T) {
 	// The real credential store, so the service's own validation of the
 	// named vault credential runs for real and the failure under test is
 	// the store write, not a short-circuit before it.
-	svc := templates.NewService(store, playbooks.NewSQLStore(d), nil, nil, credentials.NewSQLStore(d), crypto.NewBox(testBoxKey("tmpl-atomic-key-1234")))
+	svc := templates.NewService(store, playbookStoreLookup{playbooks.NewSQLStore(d)}, nil, nil, credentials.NewSQLStore(d), crypto.NewBox(testBoxKey("tmpl-atomic-key-1234")))
 
 	scoped := db.WithOrgScope(ctx, org)
 	if _, err := svc.Create(scoped, org, templates.CreateInput{

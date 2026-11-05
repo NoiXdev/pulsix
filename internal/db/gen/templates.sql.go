@@ -124,6 +124,108 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 	return i, err
 }
 
+const listAutomaticTemplatesForPlaybook = `-- name: ListAutomaticTemplatesForPlaybook :many
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates
+WHERE org_id = $1 AND playbook_id = $2 AND vars_mode = 'automatic'
+ORDER BY name
+`
+
+type ListAutomaticTemplatesForPlaybookParams struct {
+	OrgID      uuid.UUID   `json:"org_id"`
+	PlaybookID pgtype.UUID `json:"playbook_id"`
+}
+
+// The templates an editor playbook's save applies its new variable
+// sources to: those of the playbook in automatic mode.
+func (q *Queries) ListAutomaticTemplatesForPlaybook(ctx context.Context, arg ListAutomaticTemplatesForPlaybookParams) ([]JobTemplate, error) {
+	rows, err := q.db.Query(ctx, listAutomaticTemplatesForPlaybook, arg.OrgID, arg.PlaybookID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JobTemplate
+	for rows.Next() {
+		var i JobTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.PlaybookID,
+			&i.Scope,
+			&i.Limit,
+			&i.ExtraVars,
+			&i.ExtraVarsSchema,
+			&i.CredentialID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SharedTemplateID,
+			&i.Revision,
+			&i.VarsMode,
+			&i.VarsSourceRev,
+			&i.VarsAppliedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAutomaticTemplatesForRepo = `-- name: ListAutomaticTemplatesForRepo :many
+SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates
+WHERE job_templates.org_id = $1 AND job_templates.vars_mode = 'automatic'
+  AND job_templates.playbook_id IN (
+    SELECT p.id FROM playbooks p WHERE p.org_id = $1 AND p.repo_id = $2)
+ORDER BY job_templates.name
+`
+
+type ListAutomaticTemplatesForRepoParams struct {
+	OrgID  uuid.UUID   `json:"org_id"`
+	RepoID pgtype.UUID `json:"repo_id"`
+}
+
+// The templates a repository's sync applies its new variable sources to:
+// those in automatic mode whose playbook belongs to the repository.
+func (q *Queries) ListAutomaticTemplatesForRepo(ctx context.Context, arg ListAutomaticTemplatesForRepoParams) ([]JobTemplate, error) {
+	rows, err := q.db.Query(ctx, listAutomaticTemplatesForRepo, arg.OrgID, arg.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JobTemplate
+	for rows.Next() {
+		var i JobTemplate
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.Name,
+			&i.PlaybookID,
+			&i.Scope,
+			&i.Limit,
+			&i.ExtraVars,
+			&i.ExtraVarsSchema,
+			&i.CredentialID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SharedTemplateID,
+			&i.Revision,
+			&i.VarsMode,
+			&i.VarsSourceRev,
+			&i.VarsAppliedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplates = `-- name: ListTemplates :many
 SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates WHERE org_id = $1 ORDER BY name
 `
@@ -256,6 +358,62 @@ type UpdateTemplateVariablesParams struct {
 func (q *Queries) UpdateTemplateVariables(ctx context.Context, arg UpdateTemplateVariablesParams) (JobTemplate, error) {
 	row := q.db.QueryRow(ctx, updateTemplateVariables,
 		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.VarsMode,
+		arg.VarsSourceRev,
+		arg.VarsAppliedAt,
+		arg.OrgID,
+		arg.ID,
+		arg.IfRevision,
+	)
+	var i JobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PlaybookID,
+		&i.Scope,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
+		&i.CredentialID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SharedTemplateID,
+		&i.Revision,
+		&i.VarsMode,
+		&i.VarsSourceRev,
+		&i.VarsAppliedAt,
+	)
+	return i, err
+}
+
+const updateTemplateVarsSource = `-- name: UpdateTemplateVarsSource :one
+UPDATE job_templates SET
+  extra_vars_schema = $1,
+  vars_mode = $2, vars_source_rev = $3, vars_applied_at = $4,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = $5 AND id = $6
+  AND ($7::bigint IS NULL OR revision = $7)
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+`
+
+type UpdateTemplateVarsSourceParams struct {
+	ExtraVarsSchema []byte             `json:"extra_vars_schema"`
+	VarsMode        string             `json:"vars_mode"`
+	VarsSourceRev   string             `json:"vars_source_rev"`
+	VarsAppliedAt   pgtype.Timestamptz `json:"vars_applied_at"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	ID              uuid.UUID          `json:"id"`
+	IfRevision      *int64             `json:"if_revision"`
+}
+
+// A template's fields and variables source columns without its values: a
+// mode change and the automatic apply (backlog 7.75), neither of which
+// may seal, unseal or drop a stored value. Under UpdateTemplate's
+// revision guard.
+func (q *Queries) UpdateTemplateVarsSource(ctx context.Context, arg UpdateTemplateVarsSourceParams) (JobTemplate, error) {
+	row := q.db.QueryRow(ctx, updateTemplateVarsSource,
 		arg.ExtraVarsSchema,
 		arg.VarsMode,
 		arg.VarsSourceRev,

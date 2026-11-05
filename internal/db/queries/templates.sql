@@ -43,6 +43,35 @@ WHERE org_id = @org_id AND id = @id
   AND (sqlc.narg(if_revision)::bigint IS NULL OR revision = sqlc.narg(if_revision))
 RETURNING *;
 
+-- name: UpdateTemplateVarsSource :one
+-- A template's fields and variables source columns without its values: a
+-- mode change and the automatic apply (backlog 7.75), neither of which
+-- may seal, unseal or drop a stored value. Under UpdateTemplate's
+-- revision guard.
+UPDATE job_templates SET
+  extra_vars_schema = @extra_vars_schema,
+  vars_mode = @vars_mode, vars_source_rev = @vars_source_rev, vars_applied_at = @vars_applied_at,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = @org_id AND id = @id
+  AND (sqlc.narg(if_revision)::bigint IS NULL OR revision = sqlc.narg(if_revision))
+RETURNING *;
+
+-- name: ListAutomaticTemplatesForRepo :many
+-- The templates a repository's sync applies its new variable sources to:
+-- those in automatic mode whose playbook belongs to the repository.
+SELECT * FROM job_templates
+WHERE job_templates.org_id = @org_id AND job_templates.vars_mode = 'automatic'
+  AND job_templates.playbook_id IN (
+    SELECT p.id FROM playbooks p WHERE p.org_id = @org_id AND p.repo_id = @repo_id)
+ORDER BY job_templates.name;
+
+-- name: ListAutomaticTemplatesForPlaybook :many
+-- The templates an editor playbook's save applies its new variable
+-- sources to: those of the playbook in automatic mode.
+SELECT * FROM job_templates
+WHERE org_id = @org_id AND playbook_id = @playbook_id AND vars_mode = 'automatic'
+ORDER BY name;
+
 -- name: DeleteTemplate :execrows
 -- Jobs reference templates by template_id with no foreign key on purpose:
 -- deleting a template that ran before is allowed, and a finished run keeps

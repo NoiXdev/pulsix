@@ -26,9 +26,15 @@ type fakeStore struct {
 	byID    map[uuid.UUID]templates.Template
 	vault   map[uuid.UUID][]templates.VaultCredential
 	nextErr error // one-shot error, standing in for a constraint violation
-	// beforeWrite, when set, runs once at the start of the next Update or
-	// UpdateVariables: another writer landing between a read and a write.
+	// beforeWrite, when set, runs once at the start of the next Update,
+	// UpdateVariables or UpdateVarsSource: another writer landing between
+	// a read and a write.
 	beforeWrite func()
+	// playbookRepo maps a repo playbook to its repository, standing in
+	// for the join ListAutomaticForRepo makes.
+	playbookRepo map[uuid.UUID]uuid.UUID
+	// sourceWrites counts UpdateVarsSource calls that wrote.
+	sourceWrites int
 }
 
 func (f *fakeStore) raceOnce() {
@@ -39,7 +45,8 @@ func (f *fakeStore) raceOnce() {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{byID: map[uuid.UUID]templates.Template{}, vault: map[uuid.UUID][]templates.VaultCredential{}}
+	return &fakeStore{byID: map[uuid.UUID]templates.Template{}, vault: map[uuid.UUID][]templates.VaultCredential{},
+		playbookRepo: map[uuid.UUID]uuid.UUID{}}
 }
 
 // ReplaceVaultCredentials and ListVaultCredentials stand in for the real
@@ -156,6 +163,50 @@ func (f *fakeStore) UpdateVariables(_ context.Context, t templates.Template, ifR
 	return cur, nil
 }
 
+// UpdateVarsSource mirrors the real store: the schema and the variables
+// source columns under the guard, never the values.
+func (f *fakeStore) UpdateVarsSource(_ context.Context, t templates.Template, ifRevision *int64) (templates.Template, error) {
+	f.raceOnce()
+	cur, ok := f.byID[t.ID]
+	if !ok || cur.OrgID != t.OrgID {
+		return templates.Template{}, templates.ErrNotFound
+	}
+	if ifRevision != nil && *ifRevision != cur.Revision {
+		return templates.Template{}, templates.ErrRevisionMismatch
+	}
+	cur.ExtraVarsSchema = t.ExtraVarsSchema
+	cur.VarsMode, cur.VarsSourceRev, cur.VarsAppliedAt = t.VarsMode, t.VarsSourceRev, t.VarsAppliedAt
+	cur.Revision++
+	f.byID[t.ID] = cur
+	f.sourceWrites++
+	return cur, nil
+}
+
+// ListAutomaticForRepo and ListAutomaticForPlaybook mirror the real
+// store's queries: the organization's automatic templates of the
+// repository's playbooks, or of one playbook, by name.
+func (f *fakeStore) ListAutomaticForRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]templates.Template, error) {
+	return f.listAutomatic(ctx, orgID, func(t templates.Template) bool {
+		repo, ok := f.playbookRepo[t.PlaybookID]
+		return ok && repo == repoID
+	})
+}
+
+func (f *fakeStore) ListAutomaticForPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]templates.Template, error) {
+	return f.listAutomatic(ctx, orgID, func(t templates.Template) bool { return t.PlaybookID == playbookID })
+}
+
+func (f *fakeStore) listAutomatic(ctx context.Context, orgID uuid.UUID, match func(templates.Template) bool) ([]templates.Template, error) {
+	all, _ := f.List(ctx, orgID)
+	var out []templates.Template
+	for _, t := range all {
+		if t.VarsMode == templates.ModeAutomatic && match(t) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 	t, ok := f.byID[id]
 	if !ok || t.OrgID != orgID {
@@ -167,6 +218,16 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 
 type fakePlaybooks struct {
 	byID map[uuid.UUID]playbooks.Playbook
+	// sources are the playbooks' variable sources; a playbook without an
+	// entry has none read (the zero VarSource).
+	sources map[uuid.UUID]playbooks.VarSource
+}
+
+func (f fakePlaybooks) VarSource(ctx context.Context, orgID, id uuid.UUID) (playbooks.VarSource, error) {
+	if _, err := f.Get(ctx, orgID, id); err != nil {
+		return playbooks.VarSource{}, err
+	}
+	return f.sources[id], nil
 }
 
 func (f fakePlaybooks) Get(_ context.Context, orgID, id uuid.UUID) (playbooks.Playbook, error) {
@@ -209,6 +270,7 @@ func (f fakeCreds) Get(_ context.Context, orgID, id uuid.UUID) (credentials.Cred
 type fixture struct {
 	store     *fakeStore
 	svc       *templates.Service
+	sources   map[uuid.UUID]playbooks.VarSource
 	org       uuid.UUID
 	playbook  uuid.UUID
 	playbook2 uuid.UUID
@@ -231,11 +293,12 @@ func newFixture() fixture {
 	gitCred := uuid.Must(uuid.NewV7())
 	vaultCred := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
+	sources := map[uuid.UUID]playbooks.VarSource{}
 	svc := templates.NewService(store,
 		fakePlaybooks{byID: map[uuid.UUID]playbooks.Playbook{
 			playbook:  {ID: playbook, OrgID: org, Source: playbooks.SourceEditor},
 			playbook2: {ID: playbook2, OrgID: org, Source: playbooks.SourceEditor},
-		}},
+		}, sources: sources},
 		fakeGroups{known: map[uuid.UUID]bool{group: true}},
 		fakeHosts{list: []hosts.Host{
 			{ID: managed, OrgID: org, Managed: true},
@@ -249,7 +312,7 @@ func newFixture() fixture {
 		testBox(),
 	)
 	return fixture{
-		store: store, svc: svc, org: org, playbook: playbook, playbook2: playbook2, group: group,
+		store: store, svc: svc, sources: sources, org: org, playbook: playbook, playbook2: playbook2, group: group,
 		managed: managed, unmanaged: unmanaged, sshCred: sshCred, gitCred: gitCred, vaultCred: vaultCred,
 	}
 }

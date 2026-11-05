@@ -67,8 +67,10 @@ type templateDTO struct {
 	VaultIdentities []vaultIdentityDTO `json:"vault_identities"`
 	Revision        int64              `json:"revision" doc:"The template's revision; send it back as If-Match (quoted, like the ETag) on PUT"`
 	VarsMode        string             `json:"vars_mode" enum:"off,manual,automatic" doc:"Whether the variables follow the playbook's variable sources"`
-	CreatedAt       time.Time          `json:"created_at"`
-	UpdatedAt       time.Time          `json:"updated_at"`
+	// VariablesReview is set by the list for a linked template.
+	VariablesReview *templateVariablesReviewDTO `json:"variables_review,omitempty" doc:"What a linked template's variables leave for a person to review (the list only)"`
+	CreatedAt       time.Time                   `json:"created_at"`
+	UpdatedAt       time.Time                   `json:"updated_at"`
 }
 
 // toTemplateVaultCredentialDTOs converts a template's own added vault
@@ -217,7 +219,7 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		list, err := deps.Templates.List(ctx, scope.OrgID)
+		list, reviews, err := deps.Templates.ListReviewed(ctx, scope.OrgID)
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
 		}
@@ -225,6 +227,9 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		out.Body.Templates = make([]templateDTO, len(list))
 		for i, t := range list {
 			out.Body.Templates[i] = toTemplateDTO(t)
+			if r, ok := reviews[t.ID]; ok {
+				out.Body.Templates[i].VariablesReview = toReviewDTO(r)
+			}
 		}
 		return out, nil
 	})

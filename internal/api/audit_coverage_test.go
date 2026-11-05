@@ -119,6 +119,11 @@ var auditAllowlist = map[string]string{
 	// group is written.
 	"POST /api/v1/orgs/{org}/monitoring-groups/preview": "a read (resolves a selector to the hosts it matches) that uses POST only because the selector is a request body; persists nothing, so there is no object mutation to record",
 
+	// Backlog 7.75: "Sync now" on a template's variables page compares the
+	// template's fields with its playbook's variable sources as last read
+	// and saves nothing; POST …/variables/apply (audited) is the change.
+	"POST /api/v1/orgs/{org}/job-templates/{id}/variables/preview": "a read (what applying the playbook's variable sources would change) that needs templates.write; persists nothing — POST …/variables/apply, which is audited, is the change",
+
 	// Task 7: computes the next occurrences of a cron/simple timetable an
 	// operator is still editing — like /hosts/query above, POST only
 	// because the shape is a request body — and persists nothing.

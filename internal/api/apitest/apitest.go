@@ -554,6 +554,10 @@ func New(t *testing.T, opts ...Option) *Server {
 	jobsQueue.SetVaultResolver(apitestVaultResolver{})
 	playbooksSvc := playbooks.NewService(playbooksStore, reposSvc, s.Shared)
 	templatesSvc := templates.NewService(templateStore, playbooksSvc, inventorySvc, hostsSvc, credsSvc, crypto.NewBox(testMasterKey))
+	// The automatic apply of variable sources, as production wires it
+	// (internal/app.Build, backlog 7.75).
+	jobsQueue.SetSourceApplier(templatesSvc)
+	playbooksSvc.SetInlineApplier(templatesSvc)
 	auditRec := audit.NewRecorder(audit.NewSQLStore(d), time.Now)
 	// The schedules service (Task 7): fires job templates on a timetable
 	// through the same org-scoped jobs.Service every other trigger uses,

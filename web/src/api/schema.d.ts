@@ -1825,6 +1825,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/job-templates/{id}/variables/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post API v1 orgs by org job templates by ID variables apply
+         * @description Applies the preview of the playbook's variable sources: it is computed anew, and a source_rev other than the current read's answers 409. The values are checked like a save; a value that no longer fits its field is entered under values.
+         */
+        post: operations["applyTemplateVariables"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/job-templates/{id}/variables/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org job templates by ID variables mode */
+        put: operations["setTemplateVariablesMode"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/job-templates/{id}/variables/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post API v1 orgs by org job templates by ID variables preview
+         * @description Compares the template's fields with its playbook's variable sources as last read and lists what an apply would change. Saves nothing.
+         */
+        post: operations["post-api-v1-orgs-by-org-job-templates-by-id-variables-preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/jobs": {
         parameters: {
             query?: never;
@@ -2946,6 +3003,9 @@ export interface components {
             items: components["schemas"]["EventDTO"][] | null;
             next_cursor: string;
         };
+        Added: {
+            field: components["schemas"]["Field"];
+        };
         AdhocInputBody: {
             /**
              * Format: uri
@@ -2959,6 +3019,12 @@ export interface components {
             host_ids: string[] | null;
             /** @description Only shell is supported in v0.2b */
             module: string;
+        };
+        Adjusted: {
+            changes: components["schemas"]["Change"][] | null;
+            field: components["schemas"]["Field"];
+            name: string;
+            source_field: components["schemas"]["Field"];
         };
         AdminFactorsDTO: {
             /** Format: int64 */
@@ -3704,6 +3770,11 @@ export interface components {
             /** @description Go duration, 1m to 24h (default 1h) */
             window?: string;
         };
+        Change: {
+            attr: string;
+            new?: unknown;
+            old?: unknown;
+        };
         ChangePasswordInputBody: {
             /**
              * Format: uri
@@ -3713,6 +3784,14 @@ export interface components {
             readonly $schema?: string;
             current_password: string;
             new_password: string;
+        };
+        Changed: {
+            changes: components["schemas"]["Change"][] | null;
+            current_origin: string;
+            field: components["schemas"]["Field"];
+            name: string;
+            needs_review: boolean;
+            reason?: string;
         };
         CheckDTO: {
             detail: string;
@@ -4241,6 +4320,11 @@ export interface components {
              * @example https://example.com/schemas/ForgotPasswordOutputBody.json
              */
             readonly $schema?: string;
+        };
+        Gone: {
+            current_origin: string;
+            field: components["schemas"]["Field"];
+            name: string;
         };
         GroupCreateInputBody: {
             /**
@@ -5322,6 +5406,14 @@ export interface components {
             count: number;
             hosts: components["schemas"]["PreviewHostDTO"][] | null;
         };
+        Note: {
+            code: string;
+            file?: string;
+            level: string;
+            /** Format: int64 */
+            line?: number;
+            message: string;
+        };
         NoticeOutputBody: {
             /**
              * Format: uri
@@ -5917,6 +6009,18 @@ export interface components {
             /** @description Editor playbooks: the replacement YAML document */
             inline: string;
             name?: string;
+        };
+        Preview: {
+            added: components["schemas"]["Added"][] | null;
+            adjusted: components["schemas"]["Adjusted"][] | null;
+            changed: components["schemas"]["Changed"][] | null;
+            gone: components["schemas"]["Gone"][] | null;
+            /** Format: int64 */
+            left_out: number;
+            notes: components["schemas"]["Note"][] | null;
+            source_rev: string;
+            /** Format: int64 */
+            unchanged: number;
         };
         PreviewHostDTO: {
             id: string;
@@ -6588,6 +6692,8 @@ export interface components {
             shared_template_id?: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description What a linked template's variables leave for a person to review (the list only) */
+            variables_review?: components["schemas"]["TemplateVariablesReviewDTO"];
             /**
              * @description Whether the variables follow the playbook's variable sources
              * @enum {string}
@@ -6698,6 +6804,27 @@ export interface components {
             scope?: components["schemas"]["TemplateScopeInput"];
             vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
         };
+        TemplateVariablesApplyInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateVariablesApplyInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description The mode the variables are in afterwards
+             * @enum {string}
+             */
+            mode: "manual" | "automatic";
+            /** @description Also remove the fields gone from the source (their values stay stored) */
+            remove_gone?: boolean;
+            /** @description The preview's source_rev; another revision than the current read answers 409 */
+            source_rev: string;
+            /** @description Values entered over the stored ones: a value that no longer fits its field, a new required field's value; null removes a stored value */
+            values?: {
+                [key: string]: unknown;
+            };
+        };
         TemplateVariablesDTO: {
             /**
              * Format: uri
@@ -6714,11 +6841,88 @@ export interface components {
              * @enum {string}
              */
             mode: "off" | "manual" | "automatic";
+            /** @description What the variables leave for a person to review (the read only) */
+            review?: components["schemas"]["TemplateVariablesReviewDTO"];
             /**
              * Format: int64
-             * @description The template's revision; send it back as If-Match (quoted, like the ETag) on PUT
+             * @description The template's revision; send it back as If-Match (quoted, like the ETag) on a write
              */
             revision: number;
+            /** @description The playbook's variable sources as last read (the read only) */
+            source?: components["schemas"]["TemplateVariablesSourceDTO"];
+        };
+        TemplateVariablesModeInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateVariablesModeInputBody.json
+             */
+            readonly $schema?: string;
+            /**
+             * @description manual and automatic switch a linked template; off unlinks it, every field turning manual. Linking goes through the preview and the apply
+             * @enum {string}
+             */
+            mode: "off" | "manual" | "automatic";
+        };
+        TemplateVariablesPreviewOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateVariablesPreviewOutputBody.json
+             */
+            readonly $schema?: string;
+            preview: components["schemas"]["Preview"];
+            source: components["schemas"]["TemplateVariablesSourceDTO"];
+        };
+        TemplateVariablesReviewDTO: {
+            /**
+             * Format: int64
+             * @description Fields gone from the source; removing them is confirmed in an apply
+             */
+            gone: number;
+            /**
+             * Format: int64
+             * @description Source fields not added because a template holds at most 100 fields
+             */
+            left_out: number;
+            /**
+             * Format: int64
+             * @description Active required fields without a default or a value
+             */
+            missing_required: number;
+            /**
+             * Format: int64
+             * @description Source changes held for a person (a type or secret change, or a stored value that no longer fits)
+             */
+            needs_review: number;
+        };
+        TemplateVariablesSourceDTO: {
+            /** @description The revision the template last applied */
+            applied_rev: string;
+            /** @description The read may change the template; reason says why not */
+            available: boolean;
+            /** @description The revision read: the commit, or text:<hash> for an editor playbook; empty when unknown */
+            commit: string;
+            /** @description A read of this playbook exists */
+            found: boolean;
+            /** @description A limit left playbooks of the repository unread */
+            incomplete: boolean;
+            /** @description repo (read by the repository's last sync) or inline (read from the editor playbook's text); empty without a playbook */
+            kind: string;
+            /** @description The last sync left this playbook out (a limit was reached) */
+            left_out: boolean;
+            /** @description A usable read the template has not applied yet */
+            newer: boolean;
+            path?: string;
+            reason?: string;
+            repo_id?: string;
+            /**
+             * Format: date-time
+             * @description When the repository's sync recorded the read
+             */
+            synced_at?: string;
+            /** @description False when the worker that synced the repository does not read variable sources */
+            worker_reads: boolean;
         };
         TemplateVariablesUpdateInputBody: {
             /**
@@ -12137,6 +12341,118 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TemplateVariablesDTO"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    applyTemplateVariables: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The template's ETag; optional, a stale one answers 412 */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateVariablesApplyInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVariablesDTO"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    setTemplateVariablesMode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The template's ETag; optional, a stale one answers 412 */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateVariablesModeInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVariablesDTO"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "post-api-v1-orgs-by-org-job-templates-by-id-variables-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVariablesPreviewOutputBody"];
                 };
             };
             /** @description Error */

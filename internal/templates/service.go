@@ -28,6 +28,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"time"
 
@@ -146,11 +147,13 @@ type Template struct {
 	UpdatedAt     time.Time
 }
 
-// PlaybookLookup is the slice of playbooks.Service validation needs: the
+// PlaybookLookup is the slice of playbooks.Service the service needs: the
 // referenced playbook must exist in the organization (a cross-org id is as
-// invisible as a missing one).
+// invisible as a missing one), and its variable sources as last read feed
+// the variables link (varsource.go).
 type PlaybookLookup interface {
 	Get(ctx context.Context, orgID, id uuid.UUID) (playbooks.Playbook, error)
+	VarSource(ctx context.Context, orgID, id uuid.UUID) (playbooks.VarSource, error)
 }
 
 // GroupLookup is the slice of inventory.Service scope validation needs: an
@@ -209,6 +212,7 @@ type Store interface {
 	// the organization in one call, keyed by template id (backlog 2.94):
 	// List calls this once instead of once per row.
 	ListOrgVaultCredentials(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultCredential, error)
+	VarsStore
 }
 
 // Sealer is the slice of crypto.Box the service needs: secret-typed extra
@@ -233,12 +237,14 @@ type Service struct {
 	hosts     HostLookup
 	creds     CredentialLookup
 	box       Sealer
+	now       func() time.Time
+	log       *slog.Logger
 }
 
 // NewService wires the store, the four lookups validation needs and the
 // sealing box for secret-typed extra vars.
 func NewService(store Store, playbooks PlaybookLookup, groups GroupLookup, hosts HostLookup, creds CredentialLookup, box Sealer) *Service {
-	return &Service{store: store, playbooks: playbooks, groups: groups, hosts: hosts, creds: creds, box: box}
+	return &Service{store: store, playbooks: playbooks, groups: groups, hosts: hosts, creds: creds, box: box, now: time.Now}
 }
 
 // CreateInput is a new job template. VaultCredentials is this template's own
@@ -386,6 +392,12 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Template, error)
 	if err != nil {
 		return nil, err
 	}
+	return s.listed(ctx, orgID, list)
+}
+
+// listed is list as List returns it: masked, each with its own vault
+// credential set.
+func (s *Service) listed(ctx context.Context, orgID uuid.UUID, list []Template) ([]Template, error) {
 	// One query for the whole organization (backlog 2.94), not one per
 	// row.
 	byTemplate, err := s.store.ListOrgVaultCredentials(ctx, orgID)
