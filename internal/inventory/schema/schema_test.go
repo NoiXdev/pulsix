@@ -200,3 +200,16 @@ func TestCheckStringLengthBoundsReportAtTheirAttribute(t *testing.T) {
 		})
 	}
 }
+
+// TestReservedName: the one rule for names a top-level field may not take,
+// shared with the playbook source parser (internal/varsource).
+func TestReservedName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"ansible_port": true, "pulsix_facts": true, "ansible_": true,
+		"port": false, "my_ansible_port": false, "pulsix": false, "Ansible_port": false,
+	} {
+		if got := schema.ReservedName(name); got != want {
+			t.Errorf("ReservedName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

@@ -166,7 +166,7 @@ func checkFields(p *problems, prefix string, fields []Field, depth int, top bool
 		switch {
 		case !fieldNamePattern.MatchString(f.Name):
 			p.add(path+".name", "must start with a lowercase letter or underscore and contain only lowercase letters, digits and underscores (at most 64)")
-		case top && reserved(f.Name):
+		case top && ReservedName(f.Name):
 			p.add(path+".name", "must not start with ansible_ or pulsix_")
 		case seen[f.Name]:
 			p.add(path+".name", "duplicate field name "+f.Name)
@@ -345,7 +345,11 @@ func isScalar(t Type) bool {
 	return false
 }
 
-func reserved(name string) bool {
+// ReservedName reports whether a top-level field may not take name: it
+// would shadow Ansible's connection variables (ansible_*) or the facts
+// Pulsix renders (pulsix_*). Sub-fields are not bound by it. Exported so
+// the playbook source parser applies the same rule rather than a copy.
+func ReservedName(name string) bool {
 	for _, prefix := range reservedPrefixes {
 		if strings.HasPrefix(name, prefix) {
 			return true
