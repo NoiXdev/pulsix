@@ -111,4 +111,47 @@ describe('RunTemplateDialog', () => {
     expect(await within(dialog).findByText('No templates yet.')).toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Run' })).toBeDisabled();
   });
+
+  it('starts one run however often Run is pressed while navigation is pending', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/job-templates': TEMPLATES,
+      'POST /api/v1/orgs/acme/job-templates/t1/run': () => {
+        posts += 1;
+        return new Response(JSON.stringify({ jobs: [job] }), { status: 202, headers: { 'Content-Type': 'application/json' } });
+      },
+    });
+    // onClose is a no-op, as it is while the route change is still pending:
+    // the dialog stays mounted with an enabled Run button.
+    renderDialog();
+
+    const dialog = await screen.findByRole('dialog', { name: 'Run template on web-01' });
+    await pickOption(within(dialog), 'Template', 'deploy-site');
+    const run = within(dialog).getByRole('button', { name: 'Run' });
+    await user.click(run);
+    await user.click(run);
+    await user.click(run);
+
+    await screen.findByText('RUN VIEW');
+    expect(posts).toBe(1);
+  });
+
+  it('clears an earlier refusal once another template is chosen', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme/job-templates': TEMPLATES,
+      'POST /api/v1/orgs/acme/job-templates/t1/run': () => problem(422, 'host is not among the template targets'),
+    });
+    renderDialog();
+
+    const dialog = await screen.findByRole('dialog', { name: 'Run template on web-01' });
+    await pickOption(within(dialog), 'Template', 'deploy-site');
+    await user.click(within(dialog).getByRole('button', { name: 'Run' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('host is not among the template targets');
+
+    await pickOption(within(dialog), 'Template', 'patch-all');
+
+    expect(within(dialog).queryByRole('alert')).not.toBeInTheDocument();
+  });
 });

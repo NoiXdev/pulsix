@@ -26,14 +26,19 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
   const run = useRunTemplateById(org);
   const [templateId, setTemplateId] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Set from the first press until the run failed or the dialog closed: a
+  // run that succeeded leaves the dialog open while the route changes, and
+  // a second press in that window would start a second run.
+  const [submitting, setSubmitting] = useState(false);
 
   const list = templates.data?.templates ?? [];
   const empty = !!templates.data && list.length === 0;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!templateId) return;
+    if (!templateId || submitting) return;
     setError(null);
+    setSubmitting(true);
     try {
       const { jobs } = await run.mutateAsync({ id: templateId, hostId: host.id });
       toast.show(t.templates.list.started(list.find((x) => x.id === templateId)?.name ?? ''));
@@ -42,6 +47,7 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
       }
       onClose();
     } catch (err) {
+      setSubmitting(false);
       setError(err instanceof Error ? err.message : t.runs.templateRun.failed);
     }
   }
@@ -55,7 +61,10 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
             id="run-template"
             options={list.map((tpl) => ({ value: tpl.id, label: tpl.name }))}
             value={templateId}
-            onChange={setTemplateId}
+            onChange={(id) => {
+              setTemplateId(id);
+              setError(null);
+            }}
             placeholder={t.runs.templateRun.choose}
             disabled={empty}
           />
@@ -70,7 +79,7 @@ export function RunTemplateDialog({ org, host, onClose }: { org: string; host: H
           <Button type="button" onClick={onClose}>
             {t.common.cancel}
           </Button>
-          <Button type="submit" variant="primary" disabled={!templateId || run.isPending}>
+          <Button type="submit" variant="primary" disabled={!templateId || submitting}>
             {t.runs.templateRun.run}
           </Button>
         </div>
