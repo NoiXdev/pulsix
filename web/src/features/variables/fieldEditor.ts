@@ -23,10 +23,14 @@ export function formatValue(v: unknown): string {
 }
 
 /** formatAttribute is formatValue for one attribute of a field, with the
- * structured ones (sub-fields, a list's item) shown by what matters. */
+ * structured ones (sub-fields, a list's item) shown by what matters: the
+ * sub-fields' names, the item's type (with its options for an enum). */
 export function formatAttribute(key: string, v: unknown): string {
   if (key === 'fields' && Array.isArray(v)) return formatValue((v as SchemaField[]).map((f) => f.name));
-  if (key === 'item' && v && typeof v === 'object') return formatValue((v as SchemaField).type);
+  if (key === 'item' && v && typeof v === 'object') {
+    const item = v as SchemaField;
+    return item.type === 'enum' && item.options?.length ? `enum (${item.options.join(', ')})` : formatValue(item.type);
+  }
   return formatValue(v);
 }
 

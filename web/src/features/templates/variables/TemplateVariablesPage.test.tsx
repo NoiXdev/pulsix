@@ -75,6 +75,23 @@ describe('TemplateVariablesPage — the source', () => {
     expect(screen.getByText('1 change needs review')).toBeInTheDocument();
     expect(screen.getByText('1 required field has no value')).toBeInTheDocument();
   });
+
+  it('names the variables a run leaves out, with a badge', async () => {
+    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ review: { gone: 0, needs_review: 0, missing_required: 0, left_out: 0, not_sent: ['token'] } }) }));
+    renderPage();
+    expect(
+      await screen.findByText('Not sent to runs until a value is entered again: token. Each holds a stored secret under a field that is no longer a secret.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('1 not sent to runs')).toBeInTheDocument();
+  });
+
+  it('shows no not-sent notice while a run leaves nothing out', async () => {
+    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ review: { gone: 0, needs_review: 0, missing_required: 0, left_out: 0, not_sent: [] } }) }));
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Variables of deploy-site' })).toBeInTheDocument();
+    expect(screen.queryByText(/^Not sent to runs until/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+ not sent to runs/)).not.toBeInTheDocument();
+  });
 });
 
 describe('TemplateVariablesPage — mode', () => {

@@ -90,6 +90,7 @@ export const enTemplates = {
     needsReview: (n: number) => `${n} ${n === 1 ? 'change needs' : 'changes need'} review`,
     missingRequired: (n: number) => `${n} required ${n === 1 ? 'field has' : 'fields have'} no value`,
     leftOut: (n: number) => `${n} source ${n === 1 ? 'field' : 'fields'} left out (at most 100)`,
+    notSent: (n: number) => `${n} not sent to runs`,
   },
   variables: {
     title: (name: string) => `Variables of ${name}`,
@@ -108,6 +109,8 @@ export const enTemplates = {
     kept: (names: string) => `Stored but not sent: ${names}`,
     keptHint:
       'A value under an inactive or removed field stays stored and is not sent to runs. Switching the field active, or adding a removed field back under its name, brings the value back. To discard it, switch the field active (or add it back), clear its value and save; then switch it inactive or remove it again.',
+    notSent: (names: string) =>
+      `Not sent to runs until a value is entered again: ${names}. Each holds a stored secret under a field that is no longer a secret.`,
     secretUnderType: 'The stored value was a secret and cannot be shown under this type. Make the field a secret to keep it, or enter a new value; saving it as it is clears it.',
     dirty: 'Save or discard your changes before you sync with the playbook.',
   },

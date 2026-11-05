@@ -26,7 +26,7 @@ export const variables = (over: Record<string, unknown> = {}) => ({
   revision: 3,
   mode: 'manual',
   source: source(),
-  review: { gone: 0, needs_review: 0, missing_required: 0, left_out: 0 },
+  review: { gone: 0, needs_review: 0, missing_required: 0, left_out: 0, not_sent: [] },
   ...over,
 });
 export const template = { id: 't1', name: 'deploy-site', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] }, limit: '', extra_vars: {}, revision: 3, vars_mode: 'manual', vault_identities: null, created_at: '', updated_at: '' };

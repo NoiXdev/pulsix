@@ -43,6 +43,13 @@ describe('editLocked', () => {
     expect(next.source_field).toEqual({ name: 'port', type: 'int', default: 80 });
   });
 
+  it('turns an adjusted field whose content is reverted back to source', () => {
+    const adjusted: SchemaField = { ...port, default: 8080, active: false, origin: 'adjusted', set_in_playbook: true, source_field: { name: 'port', type: 'int', default: 80 } };
+    const next = editLocked(adjusted, { ...adjusted, default: 80 });
+    expect(next).toEqual({ name: 'port', type: 'int', default: 80, active: false, origin: 'source', source: src, set_in_playbook: true });
+    expect(next).not.toHaveProperty('source_field');
+  });
+
   it('leaves manual and gone fields as they are', () => {
     const manual: SchemaField = { name: 'm', type: 'string' };
     expect(editLocked(manual, { ...manual, label: 'M' })).toEqual({ name: 'm', type: 'string', label: 'M' });

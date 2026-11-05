@@ -178,6 +178,10 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
   const secretNotes: Problem[] = draft.fields
     .filter((f) => f.type !== 'secret' && (isKeepMarker(values[f.name]) || isSecretSet(values[f.name])))
     .map((f) => ({ path: f.name, message: v.secretUnderType }));
+  // What a run leaves out as stored: a secret under a field that is no
+  // longer a secret, until a person enters its value again (backlog 7.87).
+  // The server always sends a list; the generated type allows null.
+  const notSent = data.review?.not_sent ?? [];
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <div className="flex flex-col gap-2">
@@ -226,6 +230,11 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
       <section aria-label={v.values} className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">{v.values}</h2>
         <span className="text-[11px] text-muted-foreground">{v.valuesHint}</span>
+        {notSent.length > 0 && (
+          <p role="status" className="rounded-md border border-[var(--px-warn)] bg-card px-4 py-3 text-xs text-[var(--px-warn)]">
+            {v.notSent(notSent.join(', '))}
+          </p>
+        )}
         <SchemaForm fields={draft.fields} value={values} onChange={setValues} problems={[...valueProblems, ...secretNotes]} idPrefix="template-vars" disabled={!canWrite} />
         {loaded.kept.length > 0 && (
           <div className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">

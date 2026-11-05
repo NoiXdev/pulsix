@@ -66,5 +66,6 @@ describe('field editor helpers', () => {
     expect(formatValue(true)).toBe('true');
     expect(formatAttribute('fields', [{ name: 'domain', type: 'string' }, { name: 'ssl', type: 'bool' }])).toBe('domain, ssl');
     expect(formatAttribute('item', { name: '', type: 'int' })).toBe('int');
+    expect(formatAttribute('item', { name: '', type: 'enum', options: ['a', 'b'] })).toBe('enum (a, b)');
   });
 });

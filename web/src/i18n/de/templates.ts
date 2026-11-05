@@ -94,6 +94,7 @@ export const deTemplates: Messages['templates'] = {
     needsReview: (n: number) => (n === 1 ? '1 Änderung braucht Prüfung' : `${n} Änderungen brauchen Prüfung`),
     missingRequired: (n: number) => (n === 1 ? '1 Pflichtfeld ohne Wert' : `${n} Pflichtfelder ohne Wert`),
     leftOut: (n: number) => (n === 1 ? '1 Feld der Quelle ausgelassen (höchstens 100)' : `${n} Felder der Quelle ausgelassen (höchstens 100)`),
+    notSent: (n: number) => `${n} nicht an Läufe übergeben`,
   },
   variables: {
     title: (name: string) => `Variablen von ${name}`,
@@ -112,6 +113,8 @@ export const deTemplates: Messages['templates'] = {
     kept: (names: string) => `Gespeichert, aber nicht gesendet: ${names}`,
     keptHint:
       'Ein Wert unter einem inaktiven oder entfernten Feld bleibt gespeichert und wird nicht an Läufe gesendet. Schaltest du das Feld aktiv oder fügst ein entferntes Feld unter seinem Namen wieder hinzu, ist der Wert wieder da. Um ihn zu verwerfen, schalte das Feld aktiv (oder füge es wieder hinzu), leere seinen Wert und speichere; schalte es danach wieder inaktiv oder entferne es erneut.',
+    notSent: (names: string) =>
+      `Wird erst wieder an Läufe übergeben, wenn ein Wert neu eingegeben wird: ${names}. Jede hält ein gespeichertes Geheimnis unter einem Feld, das kein Geheimnis mehr ist.`,
     secretUnderType: 'Der gespeicherte Wert war geheim und kann mit diesem Typ nicht angezeigt werden. Mach das Feld geheim, um ihn zu behalten, oder gib einen neuen Wert ein; so gespeichert wird er gelöscht.',
     dirty: 'Speichere oder verwirf deine Änderungen, bevor du mit dem Playbook abgleichst.',
   },

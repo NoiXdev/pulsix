@@ -39,6 +39,33 @@ describe('VariableEditor — sub-fields inline', () => {
     expect(f.fields).toEqual([{ name: 'domain', type: 'string', required: true }]);
   });
 
+  // Reverting a sub-field edit ends at the source the same way inline and
+  // in the field dialog (backlog 7.87).
+  it('returns a source field to source when a sub-field edit is reverted, inline and in the dialog', async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<EditorHarness variant="template" initial={vhosts('source')} />);
+    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
+    await user.click(within(subField('domain')).getByLabelText('Required'));
+    expect(schemaNow().fields[0].origin).toBe('adjusted');
+    await user.click(within(subField('domain')).getByLabelText('Required'));
+    const inline = schemaNow().fields[0];
+    expect(inline).toEqual(vhosts('source').fields[0]);
+    expect(inline).not.toHaveProperty('source_field');
+    unmount();
+
+    // The sub-field's own dialog, once to change it and once to change it
+    // back: each Done is one edit of the top-level field.
+    render(<EditorHarness variant="template" initial={vhosts('source')} />);
+    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
+    for (const origin of ['adjusted', 'source']) {
+      await user.click(within(subField('domain')).getByRole('button', { name: 'Edit domain' }));
+      await user.click(within(dialog('domain')).getByLabelText('Required'));
+      await done('domain');
+      expect(schemaNow().fields[0].origin).toBe(origin);
+    }
+    expect(schemaNow().fields[0]).toEqual(inline);
+  });
+
   it('offers no new sub-field on a source field until it is adjusted', async () => {
     const user = userEvent.setup();
     const { unmount } = render(<EditorHarness variant="template" initial={vhosts('source')} />);

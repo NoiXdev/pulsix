@@ -425,9 +425,22 @@ describe('TemplatesPage', () => {
     expect(puts[1].body).toMatchObject({ limit: 'web*' });
   });
 
+  it('badges the variables a run leaves out in the template list', async () => {
+    const linked = template({ vars_mode: 'manual', variables_review: { gone: 0, needs_review: 0, missing_required: 0, left_out: 0, not_sent: ['token', 'api_key'] } });
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': { templates: [linked] },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+    });
+    renderPage();
+    expect(await screen.findByText('2 not sent to runs')).toBeInTheDocument();
+  });
+
   it("links a template's variables page from its row and its dialog, with the review badges", async () => {
     const user = userEvent.setup();
-    const linked = template({ vars_mode: 'automatic', variables_review: { gone: 2, needs_review: 1, missing_required: 0, left_out: 0 } });
+    const linked = template({ vars_mode: 'automatic', variables_review: { gone: 2, needs_review: 1, missing_required: 0, left_out: 0, not_sent: null } });
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/job-templates': { templates: [linked] },
@@ -440,6 +453,7 @@ describe('TemplatesPage', () => {
     expect(await screen.findByText('2 fields gone from the source — review')).toBeInTheDocument();
     expect(screen.getByText('1 change needs review')).toBeInTheDocument();
     expect(screen.queryByText(/required/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/not sent to runs/)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Variables of deploy-site' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
     await user.click(screen.getByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
