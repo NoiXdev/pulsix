@@ -16,17 +16,24 @@ interface MailpitMessage {
   Text: string;
 }
 
-/** mailTo returns every message sent to `to`, newest first (mailpit's own
- * ordering), with subject and plaintext body; an empty list when the search
- * itself failed. */
-async function mailTo(to: string): Promise<MailpitMessage[]> {
+/** mailTo returns the messages sent to `to`, newest first (mailpit's own
+ * ordering), with subject and plaintext body. Bodies are fetched one at a
+ * time from the newest and only until `done` accepts one: a caller that
+ * wants the newest message costs one fetch. The list is always a prefix of
+ * the newest-first order: the first failed fetch (or a failed search) ends
+ * it, so an older mail is never returned while a newer one could not be
+ * read. A caller sees what it asked for or polls again. */
+async function mailTo(to: string, done: (m: MailpitMessage) => boolean = () => true): Promise<MailpitMessage[]> {
   const res = await fetch(`${MAILPIT_HTTP_URL}/api/v1/search?query=${encodeURIComponent(`to:"${to}"`)}`);
   if (!res.ok) return [];
   const found = (await res.json()) as MailpitSearchResult;
   const messages: MailpitMessage[] = [];
   for (const { ID } of found.messages) {
     const full = await fetch(`${MAILPIT_HTTP_URL}/api/v1/message/${ID}`);
-    if (full.ok) messages.push((await full.json()) as MailpitMessage);
+    if (!full.ok) break;
+    const message = (await full.json()) as MailpitMessage;
+    messages.push(message);
+    if (done(message)) break;
   }
   return messages;
 }
@@ -60,9 +67,10 @@ export async function waitForMessageMatching(to: string, pattern: RegExp, timeou
   const deadline = Date.now() + timeoutMs;
   let newest = '(no mail)';
   for (;;) {
-    const messages = await mailTo(to);
+    const matches = (m: MailpitMessage) => pattern.test(m.Subject) || pattern.test(m.Text);
+    const messages = await mailTo(to, matches);
     if (messages.length > 0) newest = `${messages[0].Subject}\n${messages[0].Text}`;
-    const hit = messages.find((m) => pattern.test(m.Subject) || pattern.test(m.Text));
+    const hit = messages.find(matches);
     if (hit) return hit.Text;
     if (Date.now() > deadline) {
       throw new Error(`no mail to ${to} matched ${pattern} within ${timeoutMs}ms; the newest was:\n${newest}`);
