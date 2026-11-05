@@ -57,6 +57,9 @@ describe('HostRunsSection', () => {
     expect(row).toHaveTextContent('run · Manual');
     expect(within(row).queryAllByRole('link')).toEqual([]);
     expect(within(row).queryAllByRole('button')).toEqual([]);
+    // The status track is as wide as the runs list's and the run group's, so
+    // the longest pill ("cancelling") is not clipped.
+    expect(row.style.gridTemplateColumns.split(' ')[0]).toBe('110px');
     expect(screen.queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument();
   });
 });

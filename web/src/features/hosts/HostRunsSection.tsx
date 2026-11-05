@@ -12,7 +12,7 @@ import { triggerLabel } from '../runs/trigger.ts';
 /** How many of the host's runs the section shows; the rest are one link away. */
 const RECENT = 5;
 
-const COLUMNS = '90px 80px minmax(0, 1fr) 110px';
+const COLUMNS = '110px 80px minmax(0, 1fr) 110px';
 
 /**
  * HostRunsSection is the host page's "Runs" section: the latest runs that
