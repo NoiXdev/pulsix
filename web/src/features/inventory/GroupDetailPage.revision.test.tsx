@@ -2,22 +2,21 @@ import { describe, expect, it } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { group, routes, renderAt, SCHEMA, stale, typeEnv } from './groupPageTestKit.tsx';
+import { group, refetch, routes, renderAt, SCHEMA, stale, typeEnv } from './groupPageTestKit.tsx';
 
 /** A group with a stored secret, which every read returns masked: a refetch
- * of it brings the same values whatever its revision. */
-const withSecret = (revision: number) =>
+ * of it brings the same values whatever its revision, unless `env` changed. */
+const withSecret = (revision: number, env = 'prod') =>
   group({
     revision,
     schema: { fields: [...SCHEMA.fields, { name: 'db_password', type: 'secret' }] },
-    vars: { env: 'prod', db_password: { $secret: 'set' } },
+    vars: { env, db_password: { $secret: 'set' } },
   });
 
-/** The revision a values save sends as its If-Match (backlog 7.86). The
- * section is keyed by what it edits, so a refetch that only bumps the
- * revision keeps the form: an unedited draft follows it, an edited one stays
- * on the revision it was edited on, and a saved draft is rebuilt from what
- * was stored. */
+/** The revision a values save sends as its If-Match (backlogs 7.86, 7.90).
+ * The form's draft follows useRevisionDraft: an unedited draft follows the
+ * group (its values and its revision), an edited one stays on the revision
+ * it was edited on, and a saved draft is rebuilt from what was stored. */
 describe('GroupDetailPage values revision', () => {
   it('a refetch that only bumps the revision keeps the save on the revision the draft started from', async () => {
     const user = userEvent.setup();
@@ -241,6 +240,102 @@ describe('GroupDetailPage values revision', () => {
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[0].headers.get('If-Match')).toBe('"3"');
+    expect(puts[1].headers.get('If-Match')).toBe('"4"');
+  });
+
+  it('keeps an edit typed while a save that changes the stored values was in flight', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    let release: () => void = () => undefined;
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': async (req: MockRequest) => {
+          puts.push(req);
+          if (puts.length === 1) {
+            await new Promise<void>((resolve) => (release = resolve));
+            current = withSecret(4, 'staging');
+            return current;
+          }
+          return withSecret(6, 'typed meanwhile');
+        },
+      }),
+    );
+    const { qc } = renderAt('/o/acme/groups/g1');
+    await typeEnv(user, 'staging');
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    await typeEnv(user, 'typed meanwhile');
+    release();
+    await screen.findByText('Group values saved');
+    // The save stored other values than the form started from; the edit
+    // typed meanwhile is still the form's.
+    expect(screen.getByLabelText('env')).toHaveValue('typed meanwhile');
+
+    current = withSecret(5, 'staging');
+    await refetch(qc);
+    expect(screen.getByLabelText('env')).toHaveValue('typed meanwhile');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save values' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[1].headers.get('If-Match')).toBe('"4"');
+    expect(puts[1].body).toMatchObject({ vars: { env: 'typed meanwhile' } });
+  });
+
+  it('an unedited values draft follows values someone else saved', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          puts.push(req);
+          return withSecret(5, 'staging');
+        },
+      }),
+    );
+    const { qc } = renderAt('/o/acme/groups/g1');
+    await screen.findByLabelText('env');
+
+    current = withSecret(4, 'staging');
+    await refetch(qc);
+    await waitFor(() => expect(screen.getByLabelText('env')).toHaveValue('staging'));
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await screen.findByText('Group values saved');
+    expect(puts).toHaveLength(1);
+    expect(puts[0].headers.get('If-Match')).toBe('"4"');
+  });
+
+  it('Reload starts the values over when someone else changed them', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          puts.push(req);
+          if (puts.length === 1) {
+            current = withSecret(4, 'staging');
+            return stale();
+          }
+          return withSecret(5, 'staging');
+        },
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    await typeEnv(user, 'mine');
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    const values = screen.getByRole('region', { name: 'Group values' });
+    await user.click(await within(values).findByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(within(values).queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getByLabelText('env')).toHaveValue('staging');
+
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await screen.findByText('Group values saved');
+    expect(puts).toHaveLength(2);
     expect(puts[1].headers.get('If-Match')).toBe('"4"');
   });
 });

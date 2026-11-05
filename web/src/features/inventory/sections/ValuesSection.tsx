@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Button } from '../../../ui/button.tsx';
 import { DisabledHint, Section } from '../../../ui/detail-layout.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
@@ -10,6 +10,7 @@ import { groupFields, problemsFromError } from '../../variables/paths.ts';
 import { declaredOnly, toKeepMarkers } from '../../variables/secrets.ts';
 import type { Problem, Vars } from '../../variables/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
+import { useRevisionDraft } from './useRevisionDraft.ts';
 import { useOwnSteps } from '../ownSteps.ts';
 import { useT } from '../../../i18n/useT.ts';
 
@@ -40,6 +41,10 @@ export function ValuesSection({ org, group, canWrite }: { org: string; group: In
   );
 }
 
+/** ValuesForm edits the group's values. The draft and the revision its save
+ * sends follow useRevisionDraft (backlogs 7.86, 7.90): an unedited draft
+ * follows the group, an edited one saves on the revision it was edited on
+ * (or one the page's own writes moved it to). */
 function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
@@ -48,66 +53,37 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   const own = useOwnSteps();
   // A draft is built from stored values the same way on mount and after a
   // save: secrets as keep markers, never as anything typed.
-  const draftOf = (vars: InventoryGroup['vars']) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
-  const [draft, setDraft] = useState<Vars>(() => draftOf(group.vars));
-  const [problems, setProblems] = useState<Problem[]>(() => (group.problems ?? []).map((p) => ({ path: p.path, message: p.message })));
+  const draftOf = (vars: unknown) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
+  const { draft, revision, generation, edit, startSave, saved, reloaded } = useRevisionDraft(group.vars, group.revision, draftOf, own.steps);
+  const storedProblems = (): Problem[] => (group.problems ?? []).map((p) => ({ path: p.path, message: p.message }));
+  const [problems, setProblems] = useState<Problem[]>(storedProblems);
   const [stale, setStale] = useState(false);
-  // The revision a save sends as its If-Match. While the draft is pristine
-  // (never edited) it follows group.revision: it then equals the stored
-  // values at that revision (the section is keyed by what it edits; secrets
-  // travel as keep markers), so saving on the newest revision overwrites
-  // nothing — the user's own rename, say. The first edit pins it to the
-  // revision the edit was made on, and a background refetch that brings a
-  // newer revision with the same values no longer moves it: saving on that
-  // revision would overwrite a change the user never saw (backlog 7.86). An
-  // edit typed back to the start still counts as one. A successful save
-  // rebuilds the draft from what it stored and makes it pristine again (a
-  // pristine draft never holds a typed secret, which would otherwise ride
-  // along on a later save past someone else's rotation); an edit typed while
-  // that save was in flight is kept instead, pinned to the stored revision.
-  // A Reload pins the draft to the reloaded revision and leaves it edited if
-  // it was, since the kept draft still is not the stored values.
-  const [touched, setTouched] = useState(false);
-  const [pinnedRevision, setPinnedRevision] = useState(group.revision);
-  // Pristine, it is the newer of the group's and the one this form's last
-  // save stored, should the refetch after that save have failed.
-  const revision = touched ? pinnedRevision : Math.max(pinnedRevision, group.revision);
-
-  // Counts edits, so a save can tell whether one was typed while it was in
-  // flight.
-  const edits = useRef(0);
-
-  function onChange(next: Vars) {
-    edits.current += 1;
-    if (!touched) {
-      setPinnedRevision(revision);
-      setTouched(true);
-    }
-    setDraft(next);
+  // A draft replaced wholesale is not the one the problems were found in:
+  // it shows the stored values' problems instead.
+  const [problemsOf, setProblemsOf] = useState(generation);
+  if (problemsOf !== generation) {
+    setProblemsOf(generation);
+    setProblems(storedProblems());
   }
 
   const reload = useReloadInventory(org);
 
-  // A reload that brings other content starts the section over; one that
-  // does not keeps the draft, which then saves on the reloaded revision.
+  // A reload that brings other content starts the draft over; one that
+  // does not keeps it, which then saves on the reloaded revision.
   async function onReload() {
     const fresh = await reload(group.id);
-    setPinnedRevision(fresh.revision);
+    reloaded(fresh.vars, fresh.revision);
     setStale(false);
   }
 
   async function onSave() {
     setProblems([]);
-    const editsAtSave = edits.current;
+    const ticket = startSave();
     try {
       const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
-      // The page's own step, which an edited schema draft may follow.
+      // The page's own step, which an edited draft may follow.
       own.record({ from: revision, to: res.group.revision });
-      setPinnedRevision(res.group.revision);
-      if (edits.current === editsAtSave) {
-        setDraft(draftOf(res.group.vars));
-        setTouched(false);
-      }
+      saved(ticket, res.group.vars, res.group.revision);
       save.reset();
       toast.show(t.inventory.valuesTab.saved);
     } catch (err) {
@@ -128,7 +104,10 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
           {t.inventory.valuesTab.orphanedAfter}
         </p>
       )}
-      <SchemaForm fields={fields} value={draft} onChange={onChange} problems={problems} disabled={!canWrite} idPrefix="values" />
+      {/* Inputs keep state of their own (a secret's stored marker, a
+          repeater's entry keys); a draft replaced wholesale remounts them,
+          as the section's key did before (backlog 7.90). */}
+      <SchemaForm key={generation} fields={fields} value={draft} onChange={edit} problems={problems} disabled={!canWrite} idPrefix="values" />
       {canWrite && (
         <div className="flex justify-end">
           <Button variant="primary" disabled={save.isPending} onClick={() => void onSave()}>
