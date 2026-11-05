@@ -67,8 +67,8 @@ func TestCreateHostWithJumpAndTagsIsAtomic(t *testing.T) {
 	// An unknown bastion id fails the same way.
 	unknown := uuid.Must(uuid.NewV7())
 	_, err = store.CreateHostWith(ctx, h, hosts.HostExtras{Jump: &hosts.Jump{Mode: hosts.JumpModeExplicit, BastionID: &unknown}})
-	if !errors.Is(err, hosts.ErrNotFound) {
-		t.Fatalf("CreateHostWith unknown bastion = %v, want ErrNotFound", err)
+	if !errors.Is(err, hosts.ErrNotFound) || !errors.Is(err, hosts.ErrJumpHostNotFound) {
+		t.Fatalf("CreateHostWith unknown bastion = %v, want ErrJumpHostNotFound", err)
 	}
 
 	// The same write with the org's own bastion lands whole.

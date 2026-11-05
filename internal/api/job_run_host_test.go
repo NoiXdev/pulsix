@@ -126,6 +126,31 @@ func TestRunRouteRejectsAnUnusableHost(t *testing.T) {
 	}
 }
 
+// TestRunRouteRefusesAnotherOrganizationsHost: a host_id naming a managed
+// host of a different organization answers 404, exactly like an unknown id,
+// and starts nothing.
+func TestRunRouteRefusesAnotherOrganizationsHost(t *testing.T) {
+	f := newRunFixture(t, "run-host-tenant-org")
+	otherOwner := f.s.SeedUser("run-host-tenant-other@example.test", "correct horse battery")
+	otherOrg := f.s.SeedOrg("run-host-tenant-other", otherOwner)
+	scoped := db.WithOrgScope(context.Background(), otherOrg)
+	zones, err := f.s.Deps.Hosts.ListZones(scoped, otherOrg)
+	if err != nil || len(zones) == 0 {
+		t.Fatalf("zones of the other org: %v", err)
+	}
+	foreign, err := f.s.Deps.Hosts.CreateHost(scoped, otherOrg,
+		hosts.HostInput{Name: "web-9", Address: "10.9.0.1", ZoneID: zones[0].ID, Managed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := postJSON(t, f.operatorC, f.runURL(), map[string]string{"host_id": foreign.ID.String()})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("another organization's host: status %d, body %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	_ = resp.Body.Close()
+}
+
 // runJobWith posts body to a run URL and returns the created jobs.
 func runJobWith(t *testing.T, c *http.Client, url string, body any) []jobDTO {
 	t.Helper()

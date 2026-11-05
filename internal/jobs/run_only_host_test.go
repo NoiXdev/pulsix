@@ -158,6 +158,34 @@ func TestEnqueueRunWithOnlyHost(t *testing.T) {
 		}
 	})
 
+	t.Run("host in the excluded hosts", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "")
+		actor := uuid.Must(uuid.NewV7())
+		host := f.a
+		_, err := f.svc.EnqueueRunWith(ctx, f.org, f.templateID, jobs.RunRequest{
+			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: &host, ExcludeHosts: []uuid.UUID{f.a},
+		})
+		if !errors.Is(err, jobs.ErrAllHostsExcluded) {
+			t.Fatalf("err = %v, want ErrAllHostsExcluded", err)
+		}
+		if len(f.store.jobs) != 0 {
+			t.Fatalf("stored %d jobs, want none", len(f.store.jobs))
+		}
+	})
+
+	t.Run("excluding another host still runs the narrowed host", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "")
+		actor := uuid.Must(uuid.NewV7())
+		host := f.a
+		created, err := f.svc.EnqueueRunWith(ctx, f.org, f.templateID, jobs.RunRequest{
+			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: &host, ExcludeHosts: []uuid.UUID{f.b},
+		})
+		if err != nil {
+			t.Fatalf("EnqueueRunWith: %v", err)
+		}
+		assertOnlyA(t, f, created, "web-01")
+	})
+
 	t.Run("scope that resolves to nothing", func(t *testing.T) {
 		f := newOnlyHostFixture(t, "")
 		f.res.err = jobs.ErrEmptyScope

@@ -97,6 +97,7 @@ func TestNarrowLimit(t *testing.T) {
 		{"web*", "web-01", "web*:&web-01"},
 		{"web*:!web-03", "web-01", "web*:!web-03:&web-01"},
 		{"web*,db*", "web-01", "web*,db*,&web-01"},
+		{"!web-03", "web-01", "!web-03:&web-01"},
 	}
 	for _, c := range cases {
 		if got := narrowLimit(c.effective, c.host); got != c.want {
