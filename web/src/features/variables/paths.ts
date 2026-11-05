@@ -1,4 +1,4 @@
-import { ApiError } from '../../../api/client.ts';
+import { ApiError } from '../../api/client.ts';
 import type { FieldScope, Problem, SchemaField, VarSchema } from './types.ts';
 
 export function childPath(prefix: string, name: string): string {

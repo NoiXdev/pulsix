@@ -30,6 +30,7 @@ import { enTriggers } from './triggers.ts';
 import { enUsers } from './users.ts';
 import { enUi } from './ui.ts';
 import { enValidation } from './validation.ts';
+import { enVariables } from './variables.ts';
 import { enWorkers } from './workers.ts';
 
 /**
@@ -76,5 +77,6 @@ export const en = {
   users: enUsers,
   ui: enUi,
   validation: enValidation,
+  variables: enVariables,
   workers: enWorkers,
 };

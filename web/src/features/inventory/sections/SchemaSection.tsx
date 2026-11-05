@@ -5,9 +5,9 @@ import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { toVarSchema, useReloadInventory, useSetGroupSchema } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
-import { SchemaBuilder } from '../schema/SchemaBuilder.tsx';
-import { problemsFromError } from '../schema/paths.ts';
-import type { Problem, VarSchema } from '../schema/types.ts';
+import { SchemaBuilder } from '../../variables/SchemaBuilder.tsx';
+import { problemsFromError } from '../../variables/paths.ts';
+import type { Problem, VarSchema } from '../../variables/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../../i18n/useT.ts';
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ApiError } from '../../../api/client.ts';
+import { ApiError } from '../../api/client.ts';
 import { childPath, groupFields, hostFields, indexPath, inputId, membershipFields, problemAt, problemsFromError } from './paths.ts';
 import type { VarSchema } from './types.ts';
 

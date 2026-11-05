@@ -31,6 +31,7 @@ import { deTriggers } from './triggers.ts';
 import { deUsers } from './users.ts';
 import { deUi } from './ui.ts';
 import { deValidation } from './validation.ts';
+import { deVariables } from './variables.ts';
 import { deWorkers } from './workers.ts';
 
 /**
@@ -90,5 +91,6 @@ export const de: Messages = {
   users: deUsers,
   ui: deUi,
   validation: deValidation,
+  variables: deVariables,
   workers: deWorkers,
 };

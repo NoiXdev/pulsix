@@ -1,4 +1,4 @@
-import type { Messages } from '../../../i18n/types.ts';
+import type { Messages } from '../../i18n/types.ts';
 import type { FieldType, Problem, SchemaField } from './types.ts';
 
 export const FIELD_TYPES: readonly FieldType[] = ['string', 'int', 'float', 'bool', 'enum', 'secret', 'list', 'repeater', 'object'];
@@ -6,7 +6,7 @@ export const SCALAR_TYPES: readonly FieldType[] = ['string', 'int', 'float', 'bo
 
 export function typeLabel(f: SchemaField, t: Messages): string {
   if (f.type === 'list') return `list<${f.item?.type ?? 'string'}>`;
-  if (f.type === 'object') return t.inventory.builder.subSchema;
+  if (f.type === 'object') return t.variables.builder.subSchema;
   return f.type;
 }
 

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { pickOption } from '../../../test/pickOption.ts';
+import { pickOption } from '../../test/pickOption.ts';
 import { SchemaBuilder } from './SchemaBuilder.tsx';
 import type { Problem, VarSchema } from './types.ts';
 

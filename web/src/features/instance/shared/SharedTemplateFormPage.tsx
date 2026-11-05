@@ -8,10 +8,10 @@ import { useToast } from '../../../ui/toastContext.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { CreateGate, DefinitionLoader } from './DefinitionLoader.tsx';
-import { SchemaBuilder } from '../../inventory/schema/SchemaBuilder.tsx';
-import { SchemaForm } from '../../inventory/schema/SchemaForm.tsx';
+import { SchemaBuilder } from '../../variables/SchemaBuilder.tsx';
+import { SchemaForm } from '../../variables/SchemaForm.tsx';
 import { toVarSchema } from '../../../api/hooks/useInventory.ts';
-import type { FieldType, VarSchema, Vars } from '../../inventory/schema/types.ts';
+import type { FieldType, VarSchema, Vars } from '../../variables/types.ts';
 import { useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
 import {
   useCreateTemplateDefinition,

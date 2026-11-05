@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toEditableVars, varsForPut } from './vars.ts';
-import type { SchemaField } from '../inventory/schema/types.ts';
+import type { SchemaField } from '../variables/types.ts';
 
 const schema: SchemaField[] = [
   { name: 'token', type: 'secret', required: true },

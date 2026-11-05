@@ -5,10 +5,10 @@ import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { toVarSchema, useReloadInventory, useSetGroupVars } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
-import { SchemaForm } from '../schema/SchemaForm.tsx';
-import { groupFields, problemsFromError } from '../schema/paths.ts';
-import { declaredOnly, toKeepMarkers } from '../schema/secrets.ts';
-import type { Problem, Vars } from '../schema/types.ts';
+import { SchemaForm } from '../../variables/SchemaForm.tsx';
+import { groupFields, problemsFromError } from '../../variables/paths.ts';
+import { declaredOnly, toKeepMarkers } from '../../variables/secrets.ts';
+import type { Problem, Vars } from '../../variables/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../../i18n/useT.ts';
 

@@ -1,6 +1,6 @@
-import { childPath, indexPath } from '../inventory/schema/paths.ts';
-import { declaredOnly, isKeepMarker, isRecord, isSecretSet, type KeepMarker } from '../inventory/schema/secrets.ts';
-import type { SchemaField, Vars } from '../inventory/schema/types.ts';
+import { childPath, indexPath } from '../variables/paths.ts';
+import { declaredOnly, isKeepMarker, isRecord, isSecretSet, type KeepMarker } from '../variables/secrets.ts';
+import type { SchemaField, Vars } from '../variables/types.ts';
 import type { TemplateInput, TemplateUpdateInput } from '../../api/types.ts';
 
 /**

@@ -1,14 +1,14 @@
 import { useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
-import { Button } from '../../../ui/button.tsx';
-import { Input } from '../../../ui/input.tsx';
-import { Label } from '../../../ui/label.tsx';
-import { Switch } from '../../../ui/switch.tsx';
-import { Select } from '../../../ui/Select.tsx';
+import { Button } from '../../ui/button.tsx';
+import { Input } from '../../ui/input.tsx';
+import { Label } from '../../ui/label.tsx';
+import { Switch } from '../../ui/switch.tsx';
+import { Select } from '../../ui/Select.tsx';
 import { childPath, indexPath, inputId, problemAt } from './paths.ts';
 import { isKeepMarker, isRecord, type KeepMarker } from './secrets.ts';
 import type { FieldType, Problem, SchemaField, Vars } from './types.ts';
-import { useT } from '../../../i18n/useT.ts';
+import { useT } from '../../i18n/useT.ts';
 
 export interface SchemaFormProps {
   fields: readonly SchemaField[];
@@ -31,7 +31,7 @@ export interface SchemaFormProps {
  */
 export function SchemaForm({ fields, value, onChange, problems, disabled, idPrefix = 'sf', pathPrefix = '' }: SchemaFormProps) {
   const t = useT();
-  if (fields.length === 0) return <p className="text-xs text-muted-foreground">{t.inventory.form.noFields}</p>;
+  if (fields.length === 0) return <p className="text-xs text-muted-foreground">{t.variables.form.noFields}</p>;
   return (
     <div className="flex flex-col gap-3">
       {fields.map((f) => (
@@ -158,7 +158,7 @@ export function ScalarInput({ id, field, value, onChange, disabled, invalid, ari
           options={(field.options ?? []).map((o) => ({ value: o, label: o }))}
           value={typeof value === 'string' ? value : ''}
           onChange={(v) => onChange(v === '' ? undefined : v)}
-          placeholder={field.default !== undefined ? t.inventory.form.defaultValue(String(field.default)) : '—'}
+          placeholder={field.default !== undefined ? t.variables.form.defaultValue(String(field.default)) : '—'}
         />
       );
     case 'int':
@@ -248,10 +248,10 @@ function SecretInput({ id, value, onChange, disabled, invalid }: { id: string; v
           disabled={disabled}
           aria-invalid={invalid ? true : undefined}
           className="font-mono text-muted-foreground"
-          value={t.inventory.form.stored}
+          value={t.variables.form.stored}
         />
         <Button type="button" variant="ghost" disabled={disabled} onClick={() => onChange(undefined)}>
-          {t.inventory.form.replace}
+          {t.variables.form.replace}
         </Button>
       </div>
     );
@@ -270,7 +270,7 @@ function SecretInput({ id, value, onChange, disabled, invalid }: { id: string; v
       />
       {original && (
         <Button type="button" variant="ghost" disabled={disabled} onClick={() => onChange(original)}>
-          {t.inventory.form.keepStored}
+          {t.variables.form.keepStored}
         </Button>
       )}
     </div>
@@ -305,13 +305,13 @@ function ListInput({ field, path, value, onChange, problems, disabled, idPrefix,
             invalid={!!problemAt(problems, indexPath(path, i))}
             onChange={(v) => set(items.map((x, j) => (j === i ? (v ?? emptyScalar(item.type)) : x)))}
           />
-          <Button type="button" variant="ghost" aria-label={t.inventory.form.removeItem(label, i + 1)} disabled={disabled} onClick={() => set(items.filter((_, j) => j !== i))}>
+          <Button type="button" variant="ghost" aria-label={t.variables.form.removeItem(label, i + 1)} disabled={disabled} onClick={() => set(items.filter((_, j) => j !== i))}>
             <Trash2 size={14} />
           </Button>
         </div>
       ))}
       <Button type="button" variant="ghost" className="self-start" disabled={disabled || full} onClick={() => set([...items, emptyScalar(item.type)])}>
-        <Plus size={14} /> {t.inventory.form.add(label)}
+        <Plus size={14} /> {t.variables.form.add(label)}
       </Button>
       <FieldFooter field={field} error={error} />
     </div>
@@ -352,7 +352,7 @@ function RepeaterInput({ field, path, value, onChange, problems, disabled, idPre
           {field.required && <span aria-hidden="true" className="text-destructive"> *</span>}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          {t.inventory.form.entries(items.length)}
+          {t.variables.form.entries(items.length)}
         </span>
       </div>
       {items.map((it, i) => {
@@ -364,16 +364,16 @@ function RepeaterInput({ field, path, value, onChange, problems, disabled, idPre
                 {label} {i + 1}
               </span>
               <div className="flex gap-1">
-                <Button type="button" variant="ghost" aria-label={t.inventory.form.moveUp(label, i + 1)} disabled={disabled || i === 0} onClick={() => move(i, i - 1)}>
+                <Button type="button" variant="ghost" aria-label={t.variables.form.moveUp(label, i + 1)} disabled={disabled || i === 0} onClick={() => move(i, i - 1)}>
                   <ArrowUp size={14} />
                 </Button>
-                <Button type="button" variant="ghost" aria-label={t.inventory.form.moveDown(label, i + 1)} disabled={disabled || i === items.length - 1} onClick={() => move(i, i + 1)}>
+                <Button type="button" variant="ghost" aria-label={t.variables.form.moveDown(label, i + 1)} disabled={disabled || i === items.length - 1} onClick={() => move(i, i + 1)}>
                   <ArrowDown size={14} />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  aria-label={t.inventory.form.removeItem(label, i + 1)}
+                  aria-label={t.variables.form.removeItem(label, i + 1)}
                   disabled={disabled}
                   onClick={() => set(items.filter((_, j) => j !== i), stable.filter((_, j) => j !== i))}
                 >
@@ -394,7 +394,7 @@ function RepeaterInput({ field, path, value, onChange, problems, disabled, idPre
         );
       })}
       <Button type="button" variant="default" className="self-start" disabled={disabled || full} onClick={() => set([...items, {}], [...stable, newKey()])}>
-        <Plus size={14} /> {t.inventory.form.add(label)}
+        <Plus size={14} /> {t.variables.form.add(label)}
       </Button>
       <FieldFooter field={field} error={error} />
     </div>

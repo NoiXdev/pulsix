@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { paths } from '../schema.d.ts';
-import type { VarSchema, Vars } from '../../features/inventory/schema/types.ts';
+import type { VarSchema, Vars } from '../../features/variables/types.ts';
 
 type SchemaBody = paths['/api/v1/orgs/{org}/inventory/groups/{id}/schema']['put']['requestBody']['content']['application/json'];
 
