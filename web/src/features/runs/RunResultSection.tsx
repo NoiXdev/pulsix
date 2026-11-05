@@ -112,9 +112,9 @@ export function RunResultSection({ job, status, events }: { job: JobDetail; stat
             {cancelRows.map((r) => (
               <li key={r.host} className="flex items-center justify-between gap-2">
                 <span className="min-w-0 font-mono [overflow-wrap:anywhere]">{r.host}</span>
-                <span className="flex shrink-0 items-center gap-2">
-                  {r.state === 'interrupted' && <span className="text-muted-foreground">{r.task}</span>}
-                  <span className="font-semibold" style={{ color: CANCEL_STATE_COLOR[r.state] }}>
+                <span className="flex min-w-0 items-center justify-end gap-2">
+                  {r.state === 'interrupted' && <span className="min-w-0 text-right text-muted-foreground [overflow-wrap:anywhere]">{r.task}</span>}
+                  <span className="shrink-0 font-semibold" style={{ color: CANCEL_STATE_COLOR[r.state] }}>
                     {t.runs.cancelState[r.state]}
                   </span>
                 </span>
