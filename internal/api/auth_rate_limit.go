@@ -81,10 +81,12 @@ func withAuthRateLimitCharging(deps Deps, charged ...int) func(o *huma.Operation
 //     a successful attempt is in flight it does hold a slot, so a burst of
 //     concurrent sign-ins from one address can see a 429.
 //
-// A 429 the handler itself answered is refunded too: it is not a credential
-// failure, and charging it would let a flood keep its window (and so the
-// lockout) alive forever. When charged names statuses
-// (withAuthRateLimitCharging), only those keep their slot.
+// A 429 is never charged. The limiter's own 429 reserved no slot (nothing to
+// refund); a 429 the handler itself answered is refunded like any status not
+// kept by the rule above, because it is not a credential failure and
+// charging it would let a flood keep its window (and so the lockout) alive
+// forever. When charged names statuses (withAuthRateLimitCharging), only
+// those keep their slot and every other status, a 4xx included, is refunded.
 //
 // The address is resolved through the same trusted-proxy rules every other
 // rate limit here keys on (PULSIX_TRUSTED_PROXIES; see clientAddr), so a

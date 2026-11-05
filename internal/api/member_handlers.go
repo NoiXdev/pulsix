@@ -303,6 +303,12 @@ func inviteAcceptor(ctx context.Context) uuid.UUID {
 // count — answers what every other route tells that session: 403
 // password_change_required, which sends the SPA to the change page. The 409
 // would ask it to sign in, which it already is (backlog 7.82).
+//
+// That session also gets the 403 when the invitation is addressed to another
+// existing account, and in the race where the address's account appeared
+// after the first check and the invitation was already used up: both fail
+// closed, because no membership is added and the session has to change its
+// password before it can do anything else anyway.
 func acceptInviteErr(ctx context.Context, err error) error {
 	if errors.Is(err, tenancy.ErrSignInRequired) {
 		if p, ok := auth.FromContext(ctx); ok && p.MFAComplete {

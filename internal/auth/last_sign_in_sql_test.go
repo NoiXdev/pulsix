@@ -110,6 +110,10 @@ func TestMarkMFACompleteStampsOnceUnderConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = txA.Rollback(context.Background()) }()
+	var blockerPID int
+	if err := txA.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := txA.Exec(ctx, `UPDATE sessions SET mfa_complete = true, mfa_at = now() WHERE id = $1`, id); err != nil {
 		t.Fatal(err)
 	}
@@ -119,12 +123,12 @@ func TestMarkMFACompleteStampsOnceUnderConcurrency(t *testing.T) {
 		_, err := s.MarkMFAComplete(ctx, id)
 		done <- err
 	}()
-	waitForLockWait(ctx, t)
+	waitForLockWait(ctx, t, blockerPID)
 
-	// What A's own completion stamped is not what is under test: clear it,
-	// so whatever is there after A commits is the second completion's.
-	if _, err := d.Pool().Exec(ctx, `UPDATE users SET last_sign_in_at = NULL WHERE id = $1`, uid); err != nil {
-		t.Fatal(err)
+	// A touched only the session row, so nothing has stamped the user yet:
+	// whatever is there once A has committed is the waiting completion's.
+	if at := lastSignIn(t, d, uid); at != nil {
+		t.Fatalf("last_sign_in_at = %v before A committed, want NULL", at)
 	}
 	if err := txA.Commit(ctx); err != nil {
 		t.Fatal(err)
@@ -142,12 +146,12 @@ func TestMarkMFACompleteStampsOnceUnderConcurrency(t *testing.T) {
 	}
 }
 
-// waitForLockWait returns once a backend of the test's database waits on a
-// lock — the only statement that can is the MarkMFAComplete under test — and
-// fails the test when ctx ends first. It reads pg_stat_activity as the
-// bootstrap superuser (testdb.URL): the application role sees no other
-// backend's wait event.
-func waitForLockWait(ctx context.Context, t *testing.T) {
+// waitForLockWait returns once a backend of the test's database is blocked
+// by the backend blockerPID (transaction A) — the MarkMFAComplete under
+// test, queued behind A's row lock — and fails the test when ctx ends first.
+// It reads pg_stat_activity as the bootstrap superuser (testdb.URL): the
+// application role sees no other backend's wait event.
+func waitForLockWait(ctx context.Context, t *testing.T, blockerPID int) {
 	t.Helper()
 	conn, err := pgx.Connect(ctx, testdb.URL(t))
 	if err != nil {
@@ -160,7 +164,8 @@ func waitForLockWait(ctx context.Context, t *testing.T) {
 		var waiting bool
 		if err := conn.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity
-			                 WHERE datname = current_database() AND wait_event_type = 'Lock')`).Scan(&waiting); err != nil {
+			                 WHERE datname = current_database() AND wait_event_type = 'Lock'
+			                   AND $1 = ANY(pg_blocking_pids(pid)))`, blockerPID).Scan(&waiting); err != nil {
 			t.Fatalf("read pg_stat_activity: %v", err)
 		}
 		if waiting {
