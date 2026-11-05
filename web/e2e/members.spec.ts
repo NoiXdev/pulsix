@@ -38,7 +38,7 @@ test('invite an operator by e-mail, accept the invite, and confirm the operator 
 
   // Read the real invitation e-mail the manager sent through SMTP to
   // mailpit — see internal/tenancy.Service.Invite for the exact body this
-  // parses ("Accept: <url>/invite/<token>").
+  // parses ("Accept: <url>/invite#token=<token>").
   const body = await waitForMessageTo(OPERATOR.email);
   const { url } = extractInviteLink(body);
 

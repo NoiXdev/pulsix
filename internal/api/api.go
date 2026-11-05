@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -391,7 +392,7 @@ func New(deps Deps) (http.Handler, error) {
 	// headers without a trusted-proxy allowlist (IP spoofing risk). A
 	// later task can add a spoof-safe replacement once the deployment's
 	// reverse-proxy trust boundary is known.
-	r.Use(middleware.RequestID, middleware.Logger, middleware.Recoverer)
+	r.Use(middleware.RequestID, requestLogger(os.Stdout), middleware.Recoverer)
 	// Before anything can answer: the headers belong on every response,
 	// including the ones the middleware below produces (backlog 1.29).
 	r.Use(securityHeaders)

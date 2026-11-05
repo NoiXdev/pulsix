@@ -32,7 +32,7 @@ test('a second organization\'s user cannot see the first organization\'s hosts, 
 
   const body = await waitForMessageTo(SECOND_USER.email);
   const { url } = extractInviteLink(body);
-  expect(url).toContain(`/invite/`);
+  expect(url).toContain(`/invite#token=`);
 
   // storageState must be overridden explicitly (see members.spec.ts's own
   // note on this): this file's own `test.use({storageState:

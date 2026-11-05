@@ -37,11 +37,11 @@ func TestInviteWithoutMailReturnsTheAcceptLink(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
 		t.Fatal(err)
 	}
-	if created.MailSent || !strings.HasPrefix(created.AcceptURL, s.HTTP.URL+"/invite/") {
-		t.Fatalf("invite = %+v, want mail_sent=false and an accept_url under %s/invite/", created, s.HTTP.URL)
+	if created.MailSent || !strings.HasPrefix(created.AcceptURL, s.HTTP.URL+"/invite#token=") {
+		t.Fatalf("invite = %+v, want mail_sent=false and an accept_url under %s/invite#token=", created, s.HTTP.URL)
 	}
 
-	token := strings.TrimPrefix(created.AcceptURL, s.HTTP.URL+"/invite/")
+	token := strings.TrimPrefix(created.AcceptURL, s.HTTP.URL+"/invite#token=")
 	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/invites/accept", map[string]any{
 		"token": token, "display_name": "No Mail", "password": "correct horse battery",
 	})

@@ -139,7 +139,7 @@ describe('MembersPage', () => {
   it('shows the acceptance link with a copy action when no e-mail could be sent', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const link = 'http://localhost:3000/invite/tok_nomail';
+    const link = 'http://localhost:3000/invite#token=tok_nomail';
     mockApi({
       'GET /api/v1/orgs/acme/members': MEMBERS,
       'POST /api/v1/orgs/acme/invites': {

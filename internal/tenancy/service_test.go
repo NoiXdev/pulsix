@@ -449,6 +449,13 @@ func TestInviteCreatesUserSendsMailAndAcceptJoins(t *testing.T) {
 	if len(mail.sent) != 1 || !strings.Contains(mail.sent[0].body, inv.Token) {
 		t.Fatalf("mail %+v", mail.sent)
 	}
+	// The token rides in the fragment, so no request log ever sees it (7.80).
+	if want := "Accept: " + testPublicURL + "/invite#token=" + inv.Token; !strings.Contains(mail.sent[0].body, want) {
+		t.Fatalf("mail body %q does not contain %q", mail.sent[0].body, want)
+	}
+	if strings.Contains(mail.sent[0].body, "/invite/") {
+		t.Fatalf("mail body %q still carries a path-form invitation link", mail.sent[0].body)
+	}
 	uid, gotOrg, newAccount, err := svc.AcceptInvite(ctx, uuid.Nil, inv.Token, "New User", "correct horse battery")
 	if err != nil || gotOrg != org.ID {
 		t.Fatalf("accept: %v", err)
@@ -810,7 +817,7 @@ func TestInviteWithoutMailConfiguredReturnsTheLink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Invite without mail configured: %v", err)
 	}
-	if inv.Mailed || inv.AcceptURL != testPublicURL+"/invite/"+inv.Token {
+	if inv.Mailed || inv.AcceptURL != testPublicURL+"/invite#token="+inv.Token {
 		t.Fatalf("invite = mailed %v, accept url %q; want an unmailed invite carrying its link", inv.Mailed, inv.AcceptURL)
 	}
 	if len(st.invites) != 1 {

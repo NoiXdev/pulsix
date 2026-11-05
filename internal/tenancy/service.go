@@ -362,6 +362,10 @@ func (s *Service) ListMembers(ctx context.Context, orgID uuid.UUID) ([]Member, e
 // When mail is configured but delivery fails, the invitation is deleted
 // again — nobody was told about it, so it must not linger — and the call
 // fails with ErrInviteDelivery wrapping the mailer's own error.
+//
+// The link carries the token in the URL fragment (/invite#token=…), which a
+// browser never sends to the server, so no request log, proxy or referrer
+// ever sees it (backlog 7.80).
 func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email string, role Role) (Invite, error) {
 	if !Valid(role) || role == RoleOwner {
 		return Invite{}, fmt.Errorf("invite role %q: %w", role, ErrForbidden)
@@ -383,7 +387,7 @@ func (s *Service) Invite(ctx context.Context, orgID, byUserID uuid.UUID, email s
 	if err := s.store.InsertInvite(ctx, inv, sum[:]); err != nil {
 		return Invite{}, fmt.Errorf("insert invite: %w", err)
 	}
-	link := s.publicURL + "/invite/" + token
+	link := s.publicURL + "/invite#token=" + token
 	body := fmt.Sprintf("You have been invited to %s on Pulsix as %s.\n\nAccept: %s\n\nThe link expires in 7 days.",
 		org.Name, role, link)
 	// The send is deliberately not governed by the request (backlog 1.25).

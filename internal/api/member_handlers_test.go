@@ -43,7 +43,7 @@ func TestInviteAcceptAppearsInMembers(t *testing.T) {
 	if len(sent) != 1 || sent[0].To != "invitee@example.test" {
 		t.Fatalf("mail sent = %+v", sent)
 	}
-	const marker = "/invite/"
+	const marker = "/invite#token="
 	i := strings.Index(sent[0].Body, marker)
 	if i < 0 {
 		t.Fatalf("invite mail has no token link: %q", sent[0].Body)
@@ -281,7 +281,7 @@ func extractInviteToken(t *testing.T, s *apitest.Server) string {
 		t.Fatal("no invite mail was sent")
 	}
 	body := sent[len(sent)-1].Body
-	const marker = "/invite/"
+	const marker = "/invite#token="
 	i := strings.Index(body, marker)
 	if i < 0 {
 		t.Fatalf("invite mail has no token link: %q", body)

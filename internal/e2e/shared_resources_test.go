@@ -415,7 +415,7 @@ func TestSharedRepositoryEndToEnd(t *testing.T) {
 	if invite.AcceptURL == "" {
 		t.Fatal("invite carries no accept_url — SMTP is not configured in this harness, so it must be handed over directly")
 	}
-	token := strings.TrimPrefix(invite.AcceptURL, base+"/invite/")
+	token := strings.TrimPrefix(invite.AcceptURL, base+"/invite#token=")
 	if token == invite.AcceptURL || token == "" {
 		t.Fatalf("could not extract an invite token from accept_url %q", invite.AcceptURL)
 	}

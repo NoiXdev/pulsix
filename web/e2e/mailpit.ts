@@ -73,7 +73,7 @@ export function extractInviteLink(body: string): { url: string; token: string } 
   const match = body.match(/Accept:\s*(\S+)/);
   if (!match) throw new Error(`invite e-mail did not contain an "Accept:" link:\n${body}`);
   const url = match[1];
-  const token = url.split('/invite/')[1];
+  const token = url.split('/invite#token=')[1];
   if (!token) throw new Error(`could not extract an invite token from ${url}`);
   return { url, token };
 }
