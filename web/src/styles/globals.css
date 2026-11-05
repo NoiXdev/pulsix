@@ -1,5 +1,6 @@
 @import 'tailwindcss';
 @import './tokens.css';
+@import './fonts.css';
 
 /*
  * shadcn-shaped CSS variables, mapped onto the Pulsix brand tokens
