@@ -49,11 +49,17 @@ export function useDeleteChannel(org: string) {
   });
 }
 
+/** testChannelKey is the mutation key of useTestChannel, so a page can read
+ * which channels have a test in flight (useMutationState), one per channel,
+ * rather than the one hook's latest call. */
+export const testChannelKey = (org: string) => ['notification-channel-test', org];
+
 /** useTestChannel sends the sample message through a channel right away;
  * the response's delivery says sent or failed (and why). */
 export function useTestChannel(org: string) {
   const invalidate = useInvalidate(org);
   return useMutation({
+    mutationKey: testChannelKey(org),
     mutationFn: (id: string) => unwrap(api.POST('/api/v1/orgs/{org}/notification-channels/{id}/test', { params: { path: { org, id } } })),
     onSuccess: invalidate,
   });

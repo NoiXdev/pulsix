@@ -1,12 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { group, routes, renderAt } from './groupPageTestKit.tsx';
+import { group, routes, renderAt, SCHEMA } from './groupPageTestKit.tsx';
 
 const stale = () => new Response(JSON.stringify({ status: 412, detail: 'changed' }), { status: 412, headers: { 'Content-Type': 'application/json' } });
 
 type User = ReturnType<typeof userEvent.setup>;
+
+/** A group with a stored secret, which every read returns masked: a refetch
+ * of it brings the same values whatever its revision. */
+const withSecret = (revision: number) =>
+  group({
+    revision,
+    schema: { fields: [...SCHEMA.fields, { name: 'db_password', type: 'secret' }] },
+    vars: { env: 'prod', db_password: { $secret: 'set' } },
+  });
 
 /** The number of fields in the schema editor (its rows past the header;
  * no field is expanded in these tests, so one row is one field). */
@@ -218,5 +227,70 @@ describe('GroupDetailPage drafts', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'web_eu' })).toBeInTheDocument();
     expect(screen.getByLabelText('env')).toHaveValue('prod');
     expect(fieldCount()).toBe(before);
+  });
+
+  it('a refetch that only bumps the revision keeps the save on the revision the draft started from', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          puts.push(req);
+          return puts.length === 1 ? stale() : withSecret(5);
+        },
+      }),
+    );
+    const { qc } = renderAt('/o/acme/groups/g1');
+    await screen.findByLabelText('env');
+
+    // Someone else saved the group; a background refetch brings revision 4
+    // with the same (masked) values, so the form is not started over.
+    current = withSecret(4);
+    await act(async () => {
+      await qc.refetchQueries();
+    });
+
+    await typeEnv(user, 'staging');
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    const values = screen.getByRole('region', { name: 'Group values' });
+    await user.click(await within(values).findByRole('button', { name: 'Reload' }));
+    expect(puts[0].headers.get('If-Match')).toBe('"3"');
+    await waitFor(() => expect(within(values).queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getByLabelText('env')).toHaveValue('staging');
+
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await screen.findByText('Group values saved');
+    expect(puts).toHaveLength(2);
+    expect(puts[1].headers.get('If-Match')).toBe('"4"');
+  });
+
+  it('saves the next values on the revision the previous save stored', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          puts.push(req);
+          current = withSecret(3 + puts.length);
+          return current;
+        },
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    await screen.findByLabelText('env');
+
+    // Saving the values unchanged stores a new revision with the same
+    // values, so the form stays as it is and the next save builds on it.
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await screen.findByText('Group values saved');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save values' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await waitFor(() => expect(puts).toHaveLength(2));
+    expect(puts[0].headers.get('If-Match')).toBe('"3"');
+    expect(puts[1].headers.get('If-Match')).toBe('"4"');
   });
 });

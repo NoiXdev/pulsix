@@ -102,7 +102,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'cpu', 'Edit');
+    await chooseFromMenu(user, 'cpu (Organization)', 'Edit');
     expect(screen.getByLabelText('Key')).toBeDisabled();
     expect(screen.getByLabelText('Plugin')).toBeDisabled();
     expect(screen.getByLabelText('Interval (seconds)')).not.toBeDisabled();
@@ -155,7 +155,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'disk-data', 'Delete…');
+    await chooseFromMenu(user, 'disk-data (Organization)', 'Delete…');
     await waitFor(() => expect(deleted).toBe(1));
     expect(confirmed.mock.calls[0][0]).toContain('disk-data');
     confirmed.mockRestore();
@@ -185,7 +185,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'disk-data', 'Edit');
+    await chooseFromMenu(user, 'disk-data (db-7)', 'Edit');
     const select = (await screen.findByLabelText('Host')) as HTMLInputElement;
     // The binding is stated as the binding, by name: the closed field shows
     // the fallback option's own label, not "h9 (unavailable)".
@@ -214,7 +214,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'disk-data', 'Edit');
+    await chooseFromMenu(user, 'disk-data (group g1)', 'Edit');
     const select = (await screen.findByLabelText('Monitoring group')) as HTMLInputElement;
     expect(select.value).toBe('group g1 (current binding)');
 
@@ -243,7 +243,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'disk-data', 'Edit');
+    await chooseFromMenu(user, 'disk-data (Organization)', 'Edit');
     await user.clear(screen.getByLabelText('Key'));
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -291,7 +291,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'disk-data', 'Edit');
+    await chooseFromMenu(user, 'disk-data (Organization)', 'Edit');
     await user.clear(screen.getByLabelText('Key'));
     await user.type(screen.getByLabelText('Key'), 'disk');
     await user.click(screen.getByRole('button', { name: 'Save' }));
@@ -344,7 +344,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'disk-data', 'Edit');
+    await chooseFromMenu(user, 'disk-data (Organization)', 'Edit');
     expect(screen.getByLabelText('Key')).toBeDisabled();
     expect(screen.getByLabelText('Plugin')).toBeDisabled();
     expect(screen.getByLabelText('Interval (seconds)')).toBeDisabled();
@@ -378,7 +378,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'service', 'Copy');
+    await chooseFromMenu(user, 'service (Organization)', 'Copy');
     // The copy is a create: the key is editable, and the plugin and its
     // parameters come across unchanged.
     expect(screen.getByLabelText('Key')).not.toBeDisabled();
@@ -412,7 +412,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await chooseFromMenu(user, 'disk-data', 'Copy');
+    await chooseFromMenu(user, 'disk-data (Organization)', 'Copy');
     expect(screen.getByLabelText('Key')).not.toBeDisabled();
     expect(screen.getByLabelText('Plugin')).not.toBeDisabled();
     expect(screen.getByLabelText('Interval (seconds)')).not.toBeDisabled();

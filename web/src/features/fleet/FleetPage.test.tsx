@@ -64,11 +64,11 @@ describe('FleetPage', () => {
     });
     renderPage();
 
-    await screen.findByText('db-1');
+    await screen.findByRole('link', { name: 'db-1' });
     // Rendered in the exact server order — this page must not silently
     // re-sort behind the API's own worst-first contract.
-    const names = screen.getAllByRole('link', { name: /db-1|web-1|cache-1|lb-1|new-1|ignored-1/ }).map((el) => el.textContent);
-    expect(names).toEqual(['db-1', 'web-1', 'cache-1', 'lb-1', 'new-1', 'ignored-1']);
+    const links = screen.getAllByRole('link', { name: /db-1|web-1|cache-1|lb-1|new-1|ignored-1/ });
+    expect(links).toEqual(['db-1', 'web-1', 'cache-1', 'lb-1', 'new-1', 'ignored-1'].map((name) => screen.getByRole('link', { name })));
 
     expect(screen.getByText('crit')).toBeInTheDocument();
     expect(screen.getByText('warn')).toBeInTheDocument();
@@ -81,12 +81,29 @@ describe('FleetPage', () => {
     // discovered is ignored reads as its own word, not "no data".
     expect(screen.getByText('all ignored')).toBeInTheDocument();
 
-    // Scoped by DOM structure, not by a CSS class name: FleetRow renders
-    // the Link as GridRow's direct child, so its own parent element is the
-    // row itself — a class-substring selector here would break silently
-    // on an unrelated styling rename.
-    const critRow = within(screen.getByRole('link', { name: 'db-1' }).parentElement as HTMLElement);
+    // The row is the link: its cells are inside it, so the link scopes the
+    // assertion to the one host's row.
+    const critRow = within(screen.getByRole('link', { name: 'db-1' }));
     expect(critRow.getByText('2')).toBeInTheDocument();
+  });
+
+  it('makes each host a list row that opens the host, with its one link', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/zones': ZONES,
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/fleet': {
+        hosts: [host({ host_id: 'h-web', name: 'web-01', state: 'warn', warn: 1 }), host({ host_id: 'h-db', name: 'db-01' })],
+        totals: { crit: 0, warn: 1, unknown: 0, ok: 1, no_data: 0, all_ignored: 0 },
+      },
+    });
+    const { container } = renderPage();
+
+    const link = await screen.findByRole('link', { name: 'web-01' });
+    expect(link).toHaveAttribute('href', '/o/acme/hosts/h-web');
+    const rows = container.querySelectorAll('[data-list-row]');
+    expect(rows).toHaveLength(2);
+    rows.forEach((row) => expect(row.querySelectorAll('a')).toHaveLength(1));
   });
 
   it('states the totals for the filtered set, not the whole organization', async () => {
@@ -135,7 +152,7 @@ describe('FleetPage', () => {
     });
     renderPage();
 
-    await screen.findByText('web-1');
+    await screen.findByRole('link', { name: 'web-1' });
     await pickOption(screen, 'Zone', { value: 'z2' });
 
     await waitFor(() => expect(asked.at(-1)?.zone).toBe('z2'));
@@ -154,7 +171,7 @@ describe('FleetPage', () => {
     });
     renderPage();
 
-    await screen.findByText('web-1');
+    await screen.findByRole('link', { name: 'web-1' });
     await pickOption(screen, 'Monitoring group', { value: 'g1' });
 
     await waitFor(() => expect(asked.at(-1)?.group).toBe('g1'));
@@ -179,7 +196,7 @@ describe('FleetPage', () => {
     });
     renderPage();
 
-    await screen.findByText('web-1');
+    await screen.findByRole('link', { name: 'web-1' });
     const input = screen.getByLabelText('Tag');
     // fireEvent-equivalent single change through user-event's paste, so a
     // component with no internal state of its own (FleetFilters) still

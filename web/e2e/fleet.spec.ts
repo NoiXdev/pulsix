@@ -274,9 +274,9 @@ test('the fleet page shows a host in each state, narrowed by one filter', async 
       for (;;) {
         await page.goto(`${base}/fleet`);
         await page.getByLabel('Tag').fill(TAG);
-        // The fleet page's rows are plain GridRows (no data-list-row): the host
-        // link is a direct child of its row.
-        const row = page.getByRole('link', { name: hostName, exact: true }).locator('xpath=..');
+        // A fleet row is a list row: the `data-list-row` container that holds
+        // the row's link, named by the host.
+        const row = page.locator('[data-list-row]', { has: page.getByRole('link', { name: hostName, exact: true }) });
         try {
           await expect(row.getByText(want, { exact: true })).toBeVisible({ timeout: 5_000 });
           return;

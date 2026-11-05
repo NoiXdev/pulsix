@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Link, useParams } from '@tanstack/react-router';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { useParams } from '@tanstack/react-router';
+import { Card, GridHeader } from '../../ui/table.tsx';
+import { ListRow, ListRowName } from '../../ui/list-row.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -134,26 +135,21 @@ export function FleetPage() {
   );
 }
 
+/** FleetRow is one host; the whole row opens the host page. */
 function FleetRow({ org, host, zoneName }: { org: string; host: FleetHost; zoneName: string | undefined }) {
   const t = useT();
   const st = fleetStateLabel(host.state, host.all_ignored, t);
   return (
-    <GridRow columns={COLUMNS}>
+    <ListRow to="/o/$org/hosts/$id" params={{ org, id: host.host_id }} columns={COLUMNS} label={host.name}>
       <span title={host.since ? t.fleet.sinceTitle(seenLabel(host.since, new Date(), t)) : undefined}>
         <Pill tone={st.tone}>{st.label}</Pill>
       </span>
-      <Link
-        to="/o/$org/hosts/$id"
-        params={{ org, id: host.host_id }}
-        className="truncate font-mono text-[13px] text-foreground hover:text-primary"
-      >
-        {host.name}
-      </Link>
+      <ListRowName className="truncate font-mono text-[13px] text-foreground">{host.name}</ListRowName>
       <span className="truncate text-[13px] text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>
       <span className="text-[13px]">{host.crit}</span>
       <span className="text-[13px]">{host.warn}</span>
       <span className="text-[13px]">{host.unknown}</span>
       <span className="text-[13px] text-muted-foreground">{host.since ? seenLabel(host.since, new Date(), t) : '—'}</span>
-    </GridRow>
+    </ListRow>
   );
 }

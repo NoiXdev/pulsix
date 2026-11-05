@@ -4,12 +4,16 @@ import { RowMenu, RowMenuItem, StaticListRow } from '../../ui/list-row.tsx';
 import { useT } from '../../i18n/useT.ts';
 import type { CheckDefinition, MonitoringGroup } from '../../api/types.ts';
 import { intervalLabel } from './interval.ts';
+import { bindingText } from './binding.ts';
 
 /** CheckRow is one check definition. It opens nothing (there is no check
  * page), so its cells keep the binding link. A writer's ⋯ menu offers Edit,
  * Copy for a seeded or shared definition (its key and plugin are fixed, so
  * customising it means copying) and Delete… for anything but a shared one;
- * `columns` reserves the menu's 40px as its last track, left empty here. */
+ * `columns` reserves the menu's 40px as its last track, left empty here. The
+ * menu is named by the key and the binding: one key may be bound several
+ * times (the organization's definition and a host's override), and each
+ * row's menu must still be told apart. */
 export function CheckRow({
   org, check: c, columns, groups, canWrite, onEdit, onCopy, onDelete,
 }: {
@@ -28,7 +32,7 @@ export function CheckRow({
       columns={columns}
       menu={
         canWrite && (
-          <RowMenu label={t.common.rowActions(c.key)}>
+          <RowMenu label={t.checks.rowActions(c.key, bindingText(c, groups, t))}>
             <RowMenuItem onSelect={() => onEdit(c)}>{t.checks.edit}</RowMenuItem>
             {(c.origin === 'seed' || c.origin === 'shared') && <RowMenuItem onSelect={() => onCopy(c)}>{t.checks.copy}</RowMenuItem>}
             {/* A projection of an installation-owned definition cannot be
@@ -60,35 +64,28 @@ export function CheckRow({
   );
 }
 
-/** Binding renders what a definition is bound to as the thing itself — the
- * organization, a named monitoring group, a named host — never as the raw
- * id the API carries. */
+/** Binding renders bindingText, as a link to the host or to the monitoring
+ * groups for a definition bound to one. */
 function Binding({ org, check, groups }: { org: string; check: CheckDefinition; groups: MonitoringGroup[] }) {
   const t = useT();
+  const text = bindingText(check, groups, t);
   if (check.binding_kind === 'host' && check.host_id) {
-    // host_name comes from the definition itself (internal/api's
-    // checkHostNames, one read for the whole page). This used to be a
-    // useHost call per row, which on an unpaginated GET /checks meant one
-    // request per host-bound definition on every mount — and host binding
-    // IS the per-host override, so that count tracks the fleet size
-    // (review finding 2).
     return (
       <Link
         to="/o/$org/hosts/$id"
         params={{ org, id: check.host_id }}
         className="truncate font-mono text-[13px] text-foreground hover:text-primary"
       >
-        {check.host_name ?? check.host_id.slice(0, 8)}
+        {text}
       </Link>
     );
   }
   if (check.binding_kind === 'group' && check.group_id) {
-    const group = groups.find((g) => g.id === check.group_id);
     return (
       <Link to="/o/$org/checks/monitoring-groups" params={{ org }} className="truncate text-[13px] text-foreground hover:text-primary">
-        {group?.name ?? t.checks.groupFallback(check.group_id.slice(0, 8))}
+        {text}
       </Link>
     );
   }
-  return <span className="truncate text-[13px] text-muted-foreground">{t.checks.organization}</span>;
+  return <span className="truncate text-[13px] text-muted-foreground">{text}</span>;
 }

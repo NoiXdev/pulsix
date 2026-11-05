@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
+import { useMutationState } from '@tanstack/react-query';
 import { Bell } from 'lucide-react';
 import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -8,7 +9,7 @@ import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
-import { useChannels, useDeleteChannel, useTestChannel } from '../../api/hooks/useNotifications.ts';
+import { testChannelKey, useChannels, useDeleteChannel, useTestChannel } from '../../api/hooks/useNotifications.ts';
 import { may } from '../../lib/roles.ts';
 import type { NotifyChannel } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -34,6 +35,13 @@ export function ChannelsPage() {
   const canWrite = may(role, 'channels.write');
   const channels = useChannels(org, !!orgInfo.data && canRead);
   const test = useTestChannel(org);
+  // The channels with a test in flight, each on its own: one hook serves
+  // every row, so its own isPending would hold back Send test on all of
+  // them while one is sending.
+  const testing = useMutationState({
+    filters: { mutationKey: testChannelKey(org), status: 'pending' },
+    select: (m) => m.state.variables as string,
+  });
   const remove = useDeleteChannel(org);
   const [editing, setEditing] = useState<NotifyChannel | 'new' | null>(null);
   const [logOf, setLogOf] = useState<NotifyChannel | null>(null);
@@ -110,7 +118,7 @@ export function ChannelsPage() {
             channel={c}
             columns={COLUMNS}
             canWrite={canWrite}
-            testing={test.isPending}
+            testing={testing.includes(c.id)}
             onLog={setLogOf}
             onTest={(ch) => void onTest(ch)}
             onEdit={setEditing}

@@ -169,6 +169,37 @@ describe('ChannelsPage', () => {
     expect(await screen.findByText('Test through ops hook failed: the endpoint answered 404')).toBeInTheDocument();
   });
 
+  it('holds back Send test only on the channel whose test is in flight', async () => {
+    const user = userEvent.setup();
+    let release: () => void = () => undefined;
+    let posts = 0;
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [hook, mailCh], mail_available: true },
+      'POST /api/v1/orgs/acme/notification-channels/c1/test': async () => {
+        posts++;
+        await new Promise<void>((resolve) => (release = resolve));
+        return { delivery: { id: 'd', event_kind: 'test', status: 'sent', attempts: 1, created_at: '' } };
+      },
+    });
+    renderPage();
+    await pick(user, 'ops hook', 'Send test');
+    await waitFor(() => expect(posts).toBe(1));
+
+    await user.click(screen.getByRole('button', { name: 'Actions for ops hook' }));
+    expect(await screen.findByRole('menuitem', { name: 'Sending test' })).toHaveAttribute('aria-disabled', 'true');
+    await user.keyboard('{Escape}');
+
+    await user.click(screen.getByRole('button', { name: 'Actions for ops mail' }));
+    const other = await screen.findByRole('menuitem', { name: 'Send test' });
+    expect(other).not.toHaveAttribute('aria-disabled');
+    await user.keyboard('{Escape}');
+
+    release();
+    expect(await screen.findByText('Test message sent through ops hook')).toBeInTheDocument();
+  });
+
   it('edits the weekly digest', async () => {
     const user = userEvent.setup();
     let put: unknown;

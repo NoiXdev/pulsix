@@ -46,6 +46,7 @@ export const deChecks: Messages['checks'] = {
   monitoringGroup: 'Überwachungsgruppe',
   chooseGroup: 'Überwachungsgruppe auswählen…',
   groupFallback: (id: string) => `Gruppe ${id}`,
+  rowActions: (key: string, binding: string) => `Aktionen für ${key} (${binding})`,
   groupCurrent: (id: string) => `Gruppe ${id} (aktuelle Bindung)`,
   currentBinding: (name: string) => `${name} (aktuelle Bindung)`,
   hostPicker: {

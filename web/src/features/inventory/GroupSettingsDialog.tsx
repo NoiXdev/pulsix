@@ -63,8 +63,7 @@ export function GroupSettingsDialog({
   }
 
   async function onReload() {
-    const fresh = await reload(group.id);
-    if (fresh) fillFrom(fresh);
+    fillFrom(await reload(group.id));
     setStale(false);
   }
 

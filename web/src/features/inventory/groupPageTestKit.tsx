@@ -97,5 +97,5 @@ export function renderAt(path: string, { browser = false } = {}) {
       </ToastProvider>
     </QueryClientProvider>,
   );
-  return { ...view, router };
+  return { ...view, router, qc };
 }

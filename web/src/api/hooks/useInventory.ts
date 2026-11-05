@@ -41,15 +41,18 @@ export function useGroup(org: string, id: string) {
   });
 }
 
-/** useReloadInventory answers a 412: it refetches what the organization's
- * inventory pages show and resolves, once that is done, to the stored
- * version of the given group, so a form can start over from it. It
- * rejects when a refetch fails. */
+/** useReloadInventory answers a 412: it refreshes what the organization's
+ * inventory pages show and resolves to the stored version of the given
+ * group, read fresh, so a form can start over from it. Only that group's
+ * own read decides: the rest of the inventory is refetched alongside,
+ * without waiting for it, and its failure is not the form's (each of those
+ * queries reports it where it is shown). */
 export function useReloadInventory(org: string) {
   const qc = useQueryClient();
   return async (groupId: string) => {
-    await qc.invalidateQueries({ queryKey: ['inventory', org] }, { throwOnError: true });
-    return qc.getQueryData<Awaited<ReturnType<typeof fetchGroup>>>(groupKey(org, groupId))?.group;
+    void qc.invalidateQueries({ queryKey: ['inventory', org] });
+    const fresh = await qc.fetchQuery({ queryKey: groupKey(org, groupId), queryFn: () => fetchGroup(org, groupId), staleTime: 0 });
+    return fresh.group;
   };
 }
 

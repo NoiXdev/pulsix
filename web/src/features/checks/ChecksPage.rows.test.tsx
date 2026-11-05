@@ -22,10 +22,10 @@ describe('ChecksPage rows', () => {
     renderPage();
 
     // The old inline buttons are gone.
-    await screen.findByRole('button', { name: 'Actions for cpu' });
+    await screen.findByRole('button', { name: 'Actions for cpu (Organization)' });
     expect(screen.queryByRole('button', { name: /^(Edit|Copy|Delete) / })).not.toBeInTheDocument();
     const items = async (name: string) => {
-      await user.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+      await user.click(screen.getByRole('button', { name: `Actions for ${name} (Organization)` }));
       const found = screen.getAllByRole('menuitem').map((el) => el.textContent);
       await user.keyboard('{Escape}');
       return found;
@@ -63,7 +63,7 @@ describe('ChecksPage rows', () => {
       'GET /api/v1/orgs/acme/checks': { checks: [check()] },
     });
     const { container } = renderPage();
-    await screen.findByRole('button', { name: 'Actions for cpu' });
+    await screen.findByRole('button', { name: 'Actions for cpu (Organization)' });
     expect(container.querySelectorAll('[data-list-row]').length).toBeGreaterThan(0);
     expect(container.querySelector('[data-list-row] > a')).toBeNull();
   });
@@ -75,7 +75,7 @@ describe('ChecksPage rows', () => {
       'GET /api/v1/orgs/acme/checks': { checks: [check()] },
     });
     const { container } = renderPage();
-    await screen.findByRole('button', { name: 'Actions for cpu' });
+    await screen.findByRole('button', { name: 'Actions for cpu (Organization)' });
     expect(clippedElements(container)).toEqual([]);
   });
 
@@ -96,7 +96,7 @@ describe('ChecksPage rows', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Actions for disk-data' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for disk-data (Organization)' }));
     expect(screen.getByRole('menuitem', { name: 'Copy' })).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument();
     expect(screen.queryByRole('menuitem', { name: 'Delete…' })).not.toBeInTheDocument();
@@ -112,5 +112,22 @@ describe('ChecksPage rows', () => {
 
     expect(await screen.findAllByText('cpu')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+  });
+
+  it('names the binding in each row menu, so two checks with one key stay apart', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [
+          check(),
+          check({ id: 'c2', origin: 'custom', binding_kind: 'host', host_id: 'h1', host_name: 'web-01' }),
+        ],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByRole('button', { name: 'Actions for cpu (Organization)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for cpu (web-01)' })).toBeInTheDocument();
   });
 });

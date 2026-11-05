@@ -51,6 +51,7 @@ export const enChecks = {
   monitoringGroup: 'Monitoring group',
   chooseGroup: 'Choose a monitoring group…',
   groupFallback: (id: string) => `group ${id}`,
+  rowActions: (key: string, binding: string) => `Actions for ${key} (${binding})`,
   groupCurrent: (id: string) => `group ${id} (current binding)`,
   currentBinding: (name: string) => `${name} (current binding)`,
   hostPicker: {

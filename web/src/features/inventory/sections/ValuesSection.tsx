@@ -47,21 +47,28 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   const [draft, setDraft] = useState<Vars>(() => toKeepMarkers(fields, declaredOnly(fields, (group.vars ?? {}) as Vars)));
   const [problems, setProblems] = useState<Problem[]>(() => (group.problems ?? []).map((p) => ({ path: p.path, message: p.message })));
   const [stale, setStale] = useState(false);
+  // The revision the draft was started from, which a save sends as its
+  // If-Match. A background refetch that brings a newer revision with the
+  // same values (the section is keyed by what it edits, so it is not started
+  // over) does not move it: saving on that revision would overwrite a change
+  // the user never saw. Only this form's own save and a Reload move it.
+  const [baseRevision, setBaseRevision] = useState(group.revision);
 
   const reload = useReloadInventory(org);
 
-  // A section is keyed by what it edits, so a reload that brings other
-  // content starts it over; one that does not keeps the draft, which then
-  // saves on the reloaded revision.
+  // A reload that brings other content starts the section over; one that
+  // does not keeps the draft, which then saves on the reloaded revision.
   async function onReload() {
-    await reload(group.id);
+    const fresh = await reload(group.id);
+    setBaseRevision(fresh.revision);
     setStale(false);
   }
 
   async function onSave() {
     setProblems([]);
     try {
-      await save.mutateAsync({ vars: declaredOnly(fields, draft), revision: group.revision });
+      const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision: baseRevision });
+      setBaseRevision(res.group.revision);
       save.reset();
       toast.show(t.inventory.valuesTab.saved);
     } catch (err) {
