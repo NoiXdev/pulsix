@@ -280,7 +280,10 @@ func (s *Service) HostSSH(ctx context.Context, orgID, hostID uuid.UUID) (HostSSH
 	return h, err
 }
 
-// SetHostSSH validates and replaces a host's SSH settings.
+// SetHostSSH validates and replaces a host's SSH settings. The write bumps
+// the host's revision, so a host edit opened before it answers a stale
+// revision. A non-nil in.IfRevision is checked first: a stale one writes
+// nothing and returns ErrRevisionMismatch; nil writes unconditionally.
 func (s *Service) SetHostSSH(ctx context.Context, orgID, hostID uuid.UUID, in HostSSHInput) (HostSSH, error) {
 	if err := s.hostExists(ctx, orgID, hostID); err != nil {
 		return HostSSH{}, err

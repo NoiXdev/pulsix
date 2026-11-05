@@ -10,6 +10,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/hosts"
 )
 
 // SQLStore implements Store on *db.DB. The composite foreign keys in
@@ -144,22 +145,20 @@ func (s *SQLStore) GetHostSSH(ctx context.Context, orgID, hostID uuid.UUID) (Hos
 // PutHostSSH bumps the host's revision (under ifRevision, when one is given)
 // and upserts its SSH settings in one transaction bound to the organization.
 // The bump goes first, so a stale revision or an unknown host fails before
-// the settings are touched. No row from the bump means the host is gone
-// (ErrNotFound) or the caller's view is stale (ErrRevisionMismatch); only a
-// read can tell them apart, the same way hosts.SQLStore.UpdateHostWith does.
+// the settings are touched: an unknown host is ErrNotFound and a stale
+// revision ErrRevisionMismatch, as hosts.BumpRevision answers them.
 func (s *SQLStore) PutHostSSH(ctx context.Context, h HostSSH, ifRevision *int64) (HostSSH, error) {
 	var out HostSSH
 	err := s.db.WithOrg(ctx, h.OrgID, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
-		rev, err := q.BumpHostRevision(ctx, gen.BumpHostRevisionParams{ID: h.HostID, OrgID: h.OrgID, IfRevision: ifRevision})
-		if errors.Is(err, pgx.ErrNoRows) {
-			if _, getErr := q.GetHost(ctx, gen.GetHostParams{OrgID: h.OrgID, ID: h.HostID}); getErr != nil {
-				return mapErr(getErr)
-			}
+		rev, err := hosts.BumpRevision(ctx, q, h.OrgID, h.HostID, ifRevision)
+		switch {
+		case errors.Is(err, hosts.ErrNotFound):
+			return ErrNotFound
+		case errors.Is(err, hosts.ErrRevisionMismatch):
 			return ErrRevisionMismatch
-		}
-		if err != nil {
-			return mapErr(err)
+		case err != nil:
+			return err
 		}
 		row, err := q.UpsertHostSSH(ctx, gen.UpsertHostSSHParams{
 			HostID: h.HostID, OrgID: h.OrgID, Username: h.Username, Port: int32(h.Port),

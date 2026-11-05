@@ -2,7 +2,6 @@ package hosts
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -37,32 +36,13 @@ func (s *SQLStore) ReplaceManualTags(ctx context.Context, orgID, hostID uuid.UUI
 	err := s.db.WithOrg(ctx, orgID, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
 		var err error
-		if rev, err = bumpRevision(ctx, q, orgID, hostID, ifRevision); err != nil {
+		if rev, err = BumpRevision(ctx, q, orgID, hostID, ifRevision); err != nil {
 			return err
 		}
 		return replaceManualTags(ctx, q, orgID, hostID, tags)
 	})
 	if err != nil {
 		return 0, err
-	}
-	return rev, nil
-}
-
-// bumpRevision moves the host's revision by one, only while ifRevision (when
-// non-nil) is still current, and returns the new value. No row back means
-// either answer UpdateHostWith distinguishes the same way: the host is gone
-// (ErrNotFound) or the caller's view is stale (ErrRevisionMismatch); only a
-// read can tell them apart. q must be bound to the caller's transaction.
-func bumpRevision(ctx context.Context, q *gen.Queries, orgID, hostID uuid.UUID, ifRevision *int64) (int64, error) {
-	rev, err := q.BumpHostRevision(ctx, gen.BumpHostRevisionParams{ID: hostID, OrgID: orgID, IfRevision: ifRevision})
-	if errors.Is(err, pgx.ErrNoRows) {
-		if _, getErr := q.GetHost(ctx, gen.GetHostParams{OrgID: orgID, ID: hostID}); getErr != nil {
-			return 0, mapErr(getErr)
-		}
-		return 0, ErrRevisionMismatch
-	}
-	if err != nil {
-		return 0, mapErr(err)
 	}
 	return rev, nil
 }

@@ -55,13 +55,7 @@ func (s *SQLStore) UpdateHostWith(ctx context.Context, h Host, x HostExtras) (Ho
 			Managed: h.Managed, Monitored: h.Monitored, Revision: h.Revision,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
-			// No row means one of two different answers, and the caller
-			// needs them apart: the host is gone (404), or someone saved
-			// first and this view is stale (412). Only a read can tell.
-			if _, getErr := q.GetHost(ctx, gen.GetHostParams{OrgID: h.OrgID, ID: h.ID}); getErr != nil {
-				return mapErr(getErr)
-			}
-			return ErrRevisionMismatch
+			return missingOrStale(ctx, q, h.OrgID, h.ID)
 		}
 		if err != nil {
 			if isUniqueViolation(err) {
