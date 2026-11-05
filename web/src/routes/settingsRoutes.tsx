@@ -24,7 +24,7 @@ import { RotationsPage } from '../features/notifications/RotationsPage.tsx';
 /**
  * The Settings subtree of the organization routes: the layout route with its
  * tabs, the instance-administration pages filed under it and the redirects
- * from the paths that moved away. Split out of router.tsx (backlog 7.77) so
+ * from the paths that moved away. Split out of router.tsx (backlog 7.82) so
  * the route table stays under the file-size signal; `orgRoute` is the parent.
  */
 export function settingsRouteTree(orgRoute: AnyRoute) {
