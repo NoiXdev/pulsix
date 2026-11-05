@@ -193,3 +193,64 @@ func TestOverridesEmpty(t *testing.T) {
 		t.Fatal("Empty is wrong")
 	}
 }
+
+// TestOverridesIgnoreInactiveFields (spec 7.75 goal 3): an override is
+// checked like a save. A value under an inactive field is accepted and not
+// checked, an inactive required field may stay empty, and a value the
+// template keeps under a removed name does not make the merge "unknown";
+// an active required field without a value is still refused.
+func TestOverridesIgnoreInactiveFields(t *testing.T) {
+	f := newFixture()
+	sc := &schema.Schema{Fields: []schema.Field{
+		{Name: "region", Type: schema.TypeString, Required: true},
+		{Name: "replicas", Type: schema.TypeInt},
+		{Name: "legacy", Type: schema.TypeString},
+	}}
+	tmpl, err := f.svc.Create(ctx, f.org, templates.CreateInput{
+		Name: "deploy", PlaybookID: f.playbook, ExtraVarsSchema: sc,
+		ExtraVars: map[string]any{"region": "eu", "legacy": "kept"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// legacy is removed (its stored value stays), gate is inactive and
+	// required without a value, replicas inactive.
+	if _, err := f.svc.UpdateVariables(ctx, f.org, tmpl.ID, templates.VariablesInput{
+		Schema: &schema.Schema{Fields: []schema.Field{
+			{Name: "region", Type: schema.TypeString, Required: true},
+			{Name: "replicas", Type: schema.TypeInt, Active: inactive()},
+			{Name: "gate", Type: schema.TypeString, Required: true, Active: inactive()},
+		}},
+		ExtraVars: map[string]any{"region": "eu"},
+	}); err != nil {
+		t.Fatalf("UpdateVariables: %v", err)
+	}
+	if f.store.byID[tmpl.ID].ExtraVars["legacy"] != "kept" {
+		t.Fatalf("the removed field's value must stay stored: %#v", f.store.byID[tmpl.ID].ExtraVars)
+	}
+
+	got, err := f.svc.ValidateOverrides(ctx, f.org, tmpl.ID, templates.Overrides{
+		ExtraVars: map[string]any{"replicas": "not-a-number"},
+	}, templates.OverrideOptions{})
+	if err != nil {
+		t.Fatalf("override of an inactive field: %v", err)
+	}
+	if got.ExtraVars["replicas"] != "not-a-number" {
+		t.Fatalf("override = %+v", got)
+	}
+	if _, err := f.svc.ValidateOverrides(ctx, f.org, tmpl.ID, templates.Overrides{
+		ExtraVars: map[string]any{"legacy": "x"},
+	}, templates.OverrideOptions{}); !strings.Contains(strings.Join(problemPaths(err), ","), "legacy") {
+		t.Fatalf("an override naming a removed field = %v, want an unknown field problem", err)
+	}
+
+	stored := f.store.byID[tmpl.ID]
+	delete(stored.ExtraVars, "region")
+	_, err = f.svc.ValidateOverrides(ctx, f.org, tmpl.ID, templates.Overrides{
+		ExtraVars: map[string]any{"replicas": float64(2)},
+	}, templates.OverrideOptions{})
+	var ve *schema.ValidationError
+	if !errors.As(err, &ve) || len(ve.Problems) != 1 || ve.Problems[0].Path != "region" || ve.Problems[0].Message != "is required" {
+		t.Fatalf("active required field without a value = %v, want exactly region: is required", err)
+	}
+}

@@ -167,37 +167,102 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID uuid.UUID) ([]JobTemp
 
 const updateTemplate = `-- name: UpdateTemplate :one
 UPDATE job_templates SET
-  name = $3, playbook_id = $4, scope = $5, "limit" = $6,
-  extra_vars = $7, extra_vars_schema = $8, credential_id = $9, updated_at = now()
-WHERE org_id = $1 AND id = $2
+  name = $1, playbook_id = $2, scope = $3, "limit" = $4,
+  extra_vars = $5, extra_vars_schema = $6, credential_id = $7,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = $8 AND id = $9
+  AND ($10::bigint IS NULL OR revision = $10)
 RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
 `
 
 type UpdateTemplateParams struct {
-	OrgID           uuid.UUID   `json:"org_id"`
-	ID              uuid.UUID   `json:"id"`
 	Name            string      `json:"name"`
 	PlaybookID      pgtype.UUID `json:"playbook_id"`
 	Scope           []byte      `json:"scope"`
-	Limit           string      `json:"limit"`
+	Lim             string      `json:"lim"`
 	ExtraVars       []byte      `json:"extra_vars"`
 	ExtraVarsSchema []byte      `json:"extra_vars_schema"`
 	CredentialID    pgtype.UUID `json:"credential_id"`
+	OrgID           uuid.UUID   `json:"org_id"`
+	ID              uuid.UUID   `json:"id"`
+	IfRevision      *int64      `json:"if_revision"`
 }
 
 // Full replacement of every editable field (PUT semantics); updated_at is
-// set here, the way every other store's UPDATE does.
+// set here, the way every other store's UPDATE does. if_revision is the
+// revision the write is based on, NULL to skip the check (an API client
+// without If-Match); no row back means a stale revision or an unknown
+// template (the store tells the two apart). The variables source columns
+// (vars_mode, vars_source_rev, vars_applied_at) are left as they are.
 func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) (JobTemplate, error) {
 	row := q.db.QueryRow(ctx, updateTemplate,
-		arg.OrgID,
-		arg.ID,
 		arg.Name,
 		arg.PlaybookID,
 		arg.Scope,
-		arg.Limit,
+		arg.Lim,
 		arg.ExtraVars,
 		arg.ExtraVarsSchema,
 		arg.CredentialID,
+		arg.OrgID,
+		arg.ID,
+		arg.IfRevision,
+	)
+	var i JobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PlaybookID,
+		&i.Scope,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
+		&i.CredentialID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SharedTemplateID,
+		&i.Revision,
+		&i.VarsMode,
+		&i.VarsSourceRev,
+		&i.VarsAppliedAt,
+	)
+	return i, err
+}
+
+const updateTemplateVariables = `-- name: UpdateTemplateVariables :one
+UPDATE job_templates SET
+  extra_vars = $1, extra_vars_schema = $2,
+  vars_mode = $3, vars_source_rev = $4, vars_applied_at = $5,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = $6 AND id = $7
+  AND ($8::bigint IS NULL OR revision = $8)
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+`
+
+type UpdateTemplateVariablesParams struct {
+	ExtraVars       []byte             `json:"extra_vars"`
+	ExtraVarsSchema []byte             `json:"extra_vars_schema"`
+	VarsMode        string             `json:"vars_mode"`
+	VarsSourceRev   string             `json:"vars_source_rev"`
+	VarsAppliedAt   pgtype.Timestamptz `json:"vars_applied_at"`
+	OrgID           uuid.UUID          `json:"org_id"`
+	ID              uuid.UUID          `json:"id"`
+	IfRevision      *int64             `json:"if_revision"`
+}
+
+// A template's variables: the schema, the values and where they were last
+// applied from, under UpdateTemplate's revision guard. Nothing else of the
+// template changes.
+func (q *Queries) UpdateTemplateVariables(ctx context.Context, arg UpdateTemplateVariablesParams) (JobTemplate, error) {
+	row := q.db.QueryRow(ctx, updateTemplateVariables,
+		arg.ExtraVars,
+		arg.ExtraVarsSchema,
+		arg.VarsMode,
+		arg.VarsSourceRev,
+		arg.VarsAppliedAt,
+		arg.OrgID,
+		arg.ID,
+		arg.IfRevision,
 	)
 	var i JobTemplate
 	err := row.Scan(

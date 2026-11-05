@@ -386,14 +386,16 @@ SELECT EXISTS (SELECT 1 FROM job_triggers WHERE org_id = @org_id::uuid AND templ
 -- exactly the reason UpdateProjectedRepo's own comment gives: without that
 -- transaction, a failure on one organization would leave every
 -- organization already updated this call on the NEW value and the rest on
--- the old one.
+-- the old one. The revision moves on, so an organization's save based on
+-- the row before this propagation answers 412 (backlog 7.75).
 UPDATE job_templates SET
   name = @name,
   playbook_id = (SELECT pb.id FROM git_repos g JOIN playbooks pb ON pb.org_id = g.org_id AND pb.repo_id = g.id
                    WHERE g.org_id = @org_id::uuid AND g.shared_repo_id = @shared_repo_id::uuid
                      AND pb.path = @playbook_path AND pb.source = 'repo'
                    ORDER BY pb.created_at, pb.id LIMIT 1),
-  "limit" = @lim, extra_vars = @extra_vars, extra_vars_schema = @extra_vars_schema, updated_at = now()
+  "limit" = @lim, extra_vars = @extra_vars, extra_vars_schema = @extra_vars_schema,
+  revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id::uuid AND shared_template_id = @shared_template_id::uuid;
 
 -- name: DeleteProjectedTemplate :execrows
@@ -432,9 +434,10 @@ DELETE FROM job_templates WHERE org_id = @org_id AND shared_template_id = @share
 -- Touches zero rows, harmlessly, when repo_id names an ordinary
 -- (non-shared) repository, or no shared template happens to use this exact
 -- path: both are the common case for most playbook registrations, not an
--- error.
+-- error. The revision moves on with the resolved playbook_id, the way
+-- UpdateProjectedTemplate's does.
 UPDATE job_templates jt
-SET playbook_id = @playbook_id::uuid, updated_at = now()
+SET playbook_id = @playbook_id::uuid, revision = jt.revision + 1, updated_at = now()
 FROM shared_job_templates st, git_repos g
 WHERE jt.shared_template_id = st.id
   AND jt.org_id = @org_id::uuid

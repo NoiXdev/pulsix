@@ -1224,7 +1224,7 @@ func (q *Queries) ListSharedTemplates(ctx context.Context) ([]SharedJobTemplate,
 
 const resolveTemplatePlaybooksForNewPath = `-- name: ResolveTemplatePlaybooksForNewPath :exec
 UPDATE job_templates jt
-SET playbook_id = $1::uuid, updated_at = now()
+SET playbook_id = $1::uuid, revision = jt.revision + 1, updated_at = now()
 FROM shared_job_templates st, git_repos g
 WHERE jt.shared_template_id = st.id
   AND jt.org_id = $2::uuid
@@ -1265,7 +1265,8 @@ type ResolveTemplatePlaybooksForNewPathParams struct {
 // Touches zero rows, harmlessly, when repo_id names an ordinary
 // (non-shared) repository, or no shared template happens to use this exact
 // path: both are the common case for most playbook registrations, not an
-// error.
+// error. The revision moves on with the resolved playbook_id, the way
+// UpdateProjectedTemplate's does.
 func (q *Queries) ResolveTemplatePlaybooksForNewPath(ctx context.Context, arg ResolveTemplatePlaybooksForNewPathParams) error {
 	_, err := q.db.Exec(ctx, resolveTemplatePlaybooksForNewPath,
 		arg.PlaybookID,
@@ -1413,7 +1414,8 @@ UPDATE job_templates SET
                    WHERE g.org_id = $2::uuid AND g.shared_repo_id = $3::uuid
                      AND pb.path = $4 AND pb.source = 'repo'
                    ORDER BY pb.created_at, pb.id LIMIT 1),
-  "limit" = $5, extra_vars = $6, extra_vars_schema = $7, updated_at = now()
+  "limit" = $5, extra_vars = $6, extra_vars_schema = $7,
+  revision = revision + 1, updated_at = now()
 WHERE org_id = $2::uuid AND shared_template_id = $8::uuid
 `
 
@@ -1438,7 +1440,8 @@ type UpdateProjectedTemplateParams struct {
 // exactly the reason UpdateProjectedRepo's own comment gives: without that
 // transaction, a failure on one organization would leave every
 // organization already updated this call on the NEW value and the rest on
-// the old one.
+// the old one. The revision moves on, so an organization's save based on
+// the row before this propagation answers 412 (backlog 7.75).
 func (q *Queries) UpdateProjectedTemplate(ctx context.Context, arg UpdateProjectedTemplateParams) (int64, error) {
 	result, err := q.db.Exec(ctx, updateProjectedTemplate,
 		arg.Name,

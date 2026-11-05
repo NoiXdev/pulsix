@@ -43,15 +43,9 @@ func (s *SQLStore) Create(ctx context.Context, t Template) (Template, error) {
 	if err != nil {
 		return Template{}, fmt.Errorf("encode template scope: %w", err)
 	}
-	vars, err := json.Marshal(t.ExtraVars)
+	vars, schemaRaw, err := encodeVars(t)
 	if err != nil {
-		return Template{}, fmt.Errorf("encode template extra vars: %w", err)
-	}
-	var schemaRaw []byte
-	if t.ExtraVarsSchema != nil {
-		if schemaRaw, err = json.Marshal(*t.ExtraVarsSchema); err != nil {
-			return Template{}, fmt.Errorf("encode template extra vars schema: %w", err)
-		}
+		return Template{}, err
 	}
 	row, err := s.q.InsertTemplate(ctx, gen.InsertTemplateParams{
 		ID: t.ID, OrgID: t.OrgID, Name: t.Name, PlaybookID: nullablePlaybookID(t.PlaybookID),
@@ -89,30 +83,76 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Template, error
 	return out, nil
 }
 
-func (s *SQLStore) Update(ctx context.Context, t Template) (Template, error) {
+// Update implements Store: the template's editable fields, guarded by
+// ifRevision when it is given.
+func (s *SQLStore) Update(ctx context.Context, t Template, ifRevision *int64) (Template, error) {
 	scope, err := json.Marshal(t.Scope)
 	if err != nil {
 		return Template{}, fmt.Errorf("encode template scope: %w", err)
 	}
-	vars, err := json.Marshal(t.ExtraVars)
+	vars, schemaRaw, err := encodeVars(t)
 	if err != nil {
-		return Template{}, fmt.Errorf("encode template extra vars: %w", err)
-	}
-	var schemaRaw []byte
-	if t.ExtraVarsSchema != nil {
-		if schemaRaw, err = json.Marshal(*t.ExtraVarsSchema); err != nil {
-			return Template{}, fmt.Errorf("encode template extra vars schema: %w", err)
-		}
+		return Template{}, err
 	}
 	row, err := s.q.UpdateTemplate(ctx, gen.UpdateTemplateParams{
 		OrgID: t.OrgID, ID: t.ID, Name: t.Name, PlaybookID: nullablePlaybookID(t.PlaybookID),
-		Scope: scope, Limit: t.Limit, ExtraVars: vars,
+		Scope: scope, Lim: t.Limit, ExtraVars: vars,
 		ExtraVarsSchema: schemaRaw, CredentialID: db.NullUUID(t.CredentialID),
+		IfRevision: ifRevision,
 	})
 	if err != nil {
-		return Template{}, mapWriteErr(err, "update template")
+		return Template{}, s.guardedWriteErr(ctx, err, t, "update template")
 	}
 	return toTemplate(row)
+}
+
+// UpdateVariables implements Store: the schema, the values and the
+// variables source columns, guarded by ifRevision when it is given.
+func (s *SQLStore) UpdateVariables(ctx context.Context, t Template, ifRevision *int64) (Template, error) {
+	vars, schemaRaw, err := encodeVars(t)
+	if err != nil {
+		return Template{}, err
+	}
+	mode := t.VarsMode
+	if mode == "" {
+		mode = ModeOff
+	}
+	row, err := s.q.UpdateTemplateVariables(ctx, gen.UpdateTemplateVariablesParams{
+		OrgID: t.OrgID, ID: t.ID, ExtraVars: vars, ExtraVarsSchema: schemaRaw,
+		VarsMode: string(mode), VarsSourceRev: t.VarsSourceRev, VarsAppliedAt: db.NullTime(t.VarsAppliedAt),
+		IfRevision: ifRevision,
+	})
+	if err != nil {
+		return Template{}, s.guardedWriteErr(ctx, err, t, "update template variables")
+	}
+	return toTemplate(row)
+}
+
+// guardedWriteErr maps a revision-guarded write's error: no row back is a
+// stale revision when the template exists (ErrRevisionMismatch) and
+// ErrNotFound when it does not; everything else goes through mapWriteErr.
+func (s *SQLStore) guardedWriteErr(ctx context.Context, err error, t Template, op string) error {
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return mapWriteErr(err, op)
+	}
+	if _, gerr := s.Get(ctx, t.OrgID, t.ID); gerr != nil {
+		return gerr
+	}
+	return ErrRevisionMismatch
+}
+
+// encodeVars encodes a template's extra vars and its schema (nil when the
+// template carries none) for the jsonb columns.
+func encodeVars(t Template) (vars, schemaRaw []byte, err error) {
+	if vars, err = json.Marshal(t.ExtraVars); err != nil {
+		return nil, nil, fmt.Errorf("encode template extra vars: %w", err)
+	}
+	if t.ExtraVarsSchema != nil {
+		if schemaRaw, err = json.Marshal(*t.ExtraVarsSchema); err != nil {
+			return nil, nil, fmt.Errorf("encode template extra vars schema: %w", err)
+		}
+	}
+	return vars, schemaRaw, nil
 }
 
 func (s *SQLStore) Delete(ctx context.Context, orgID, id uuid.UUID) error {
@@ -278,7 +318,9 @@ func toTemplate(row gen.JobTemplate) (Template, error) {
 		ID: row.ID, OrgID: row.OrgID, Name: row.Name, PlaybookID: playbookID,
 		SharedTemplateID: db.UUIDPtr(row.SharedTemplateID),
 		Limit:            row.Limit, CredentialID: db.UUIDPtr(row.CredentialID),
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		Revision: row.Revision, VarsMode: SourceMode(row.VarsMode), VarsSourceRev: row.VarsSourceRev,
+		VarsAppliedAt: db.TimePtr(row.VarsAppliedAt),
+		CreatedAt:     row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 	if len(row.Scope) > 0 {
 		if err := json.Unmarshal(row.Scope, &t.Scope); err != nil {

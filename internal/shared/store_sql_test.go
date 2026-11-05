@@ -950,6 +950,55 @@ func TestResolveTemplatePlaybooksForNewPathResolvesAnOrganizationThatSyncsLate(t
 	}
 }
 
+// templateProjectionRevision reads one organization's projection revision.
+func templateProjectionRevision(t *testing.T, d *db.DB, orgID, defID uuid.UUID) int64 {
+	t.Helper()
+	var rev int64
+	if err := d.Pool().QueryRow(ctx, `SELECT revision FROM job_templates WHERE org_id = $1 AND shared_template_id = $2`, orgID, defID).Scan(&rev); err != nil {
+		t.Fatal(err)
+	}
+	return rev
+}
+
+// TestProjectedTemplateUpdateBumpsRevision: a projection changed by its
+// definition, or resolved by a late playbook sync, gets a new revision, so
+// an organization's save based on the old row answers 412 instead of
+// overwriting the change (backlog 7.75, template revisions).
+func TestProjectedTemplateUpdateBumpsRevision(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := shared.NewSQLStore(d)
+	org := seedOrg(t, q, "shared-tpl-revision")
+	repoDef := seedSharedRepoDef(t, d, "infra-for-tpl-revision")
+
+	def, err := store.CreateTemplateWithProjections(ctx, shared.TemplateDefinition{
+		ID: uuid.Must(uuid.NewV7()), Name: "deploy-rev", SharedRepoID: repoDef.ID, PlaybookPath: "site.yml",
+	})
+	if err != nil {
+		t.Fatalf("seed CreateTemplateWithProjections: %v", err)
+	}
+	if rev := templateProjectionRevision(t, d, org, def.ID); rev != 1 {
+		t.Fatalf("new projection revision = %d, want 1", rev)
+	}
+
+	def.Limit = "web*"
+	if _, err := store.UpdateTemplateAndPropagate(ctx, def); err != nil {
+		t.Fatalf("UpdateTemplateAndPropagate: %v", err)
+	}
+	if rev := templateProjectionRevision(t, d, org, def.ID); rev != 2 {
+		t.Fatalf("revision after a definition update = %d, want 2", rev)
+	}
+
+	projectedRepoID, _, _, _, _ := projectionRow(t, d, org, repoDef.ID)
+	playbookID := seedPlaybook(t, d, org, projectedRepoID)
+	if err := store.ResolveTemplatePlaybooksForNewPath(ctx, org, projectedRepoID, playbookID, "site.yml"); err != nil {
+		t.Fatalf("ResolveTemplatePlaybooksForNewPath: %v", err)
+	}
+	if rev := templateProjectionRevision(t, d, org, def.ID); rev != 3 {
+		t.Fatalf("revision after a late playbook resolution = %d, want 3", rev)
+	}
+}
+
 // TestResolveTemplatePlaybooksForNewPathTouchesNothingForAnUnrelatedPath
 // proves the statement is scoped exactly to (org, repo, path): a playbook
 // registered at a DIFFERENT path, or in a DIFFERENT organization, must not

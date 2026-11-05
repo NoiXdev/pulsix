@@ -88,10 +88,11 @@ func (s *Service) ValidateOverrides(ctx context.Context, orgID, templateID uuid.
 			return Overrides{}, err
 		}
 	}
-	merged := maps.Clone(t.ExtraVars)
-	if merged == nil {
-		merged = map[string]any{}
-	}
+	// Only the stored values of declared fields join the merge: a value a
+	// template keeps under a removed name (carryOver) is not this
+	// override's problem. Inactive fields are declared, and Validate
+	// neither checks nor requires them.
+	merged := declaredValues(fields, t.ExtraVars)
 	maps.Copy(merged, vars)
 	if err := schema.Validate(fields, merged); err != nil {
 		return Overrides{}, err
@@ -126,6 +127,18 @@ func (s *Service) RevealOverrides(ctx context.Context, orgID, templateID uuid.UU
 		}
 	}
 	return s.ValidateOverrides(ctx, orgID, templateID, Overrides{Limit: stored.Limit, ExtraVars: vars}, OverrideOptions{})
+}
+
+// declaredValues returns the values under the top-level names fields
+// declares, inactive fields included.
+func declaredValues(fields []schema.Field, values map[string]any) map[string]any {
+	out := make(map[string]any, len(fields))
+	for _, f := range fields {
+		if v, ok := values[f.Name]; ok {
+			out[f.Name] = v
+		}
+	}
+	return out
 }
 
 // SecretFields returns the top-level field names that are, or contain, a

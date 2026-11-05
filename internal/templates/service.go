@@ -28,14 +28,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"regexp"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory"
@@ -74,6 +71,10 @@ var (
 	// fix by echoing back the current one) and is why it is its own
 	// sentinel rather than reusing ErrInvalidInput.
 	ErrForbidden = errors.New("forbidden")
+	// ErrRevisionMismatch means a write named a revision the template has
+	// moved past (a person's stale save, an automatic sync in between):
+	// 412 at the API, so nothing of either write is lost.
+	ErrRevisionMismatch = errors.New("revision mismatch")
 )
 
 // namePattern is the shared resource-name rule (credentials, repos, ...).
@@ -132,8 +133,17 @@ type Template struct {
 	// (ReplaceVaultCredentials); 4b resolves it against the repository's set
 	// at run time through ToVaultIdentity and repos.ResolveVaultIdentities.
 	VaultCredentials []VaultCredential
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Revision moves on with every write (If-Match / ETag at the API).
+	Revision int64
+	// VarsMode, VarsSourceRev and VarsAppliedAt say whether and how the
+	// variables follow the playbook's sources, and which source revision
+	// was last applied when (backlog 7.75). Only the variables write sets
+	// them; a template save keeps them.
+	VarsMode      SourceMode
+	VarsSourceRev string
+	VarsAppliedAt *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // PlaybookLookup is the slice of playbooks.Service validation needs: the
@@ -179,7 +189,14 @@ type Store interface {
 	Create(ctx context.Context, t Template) (Template, error)
 	Get(ctx context.Context, orgID, id uuid.UUID) (Template, error)
 	List(ctx context.Context, orgID uuid.UUID) ([]Template, error)
-	Update(ctx context.Context, t Template) (Template, error)
+	// Update replaces a template's editable fields and bumps its revision.
+	// A non-nil ifRevision the row has moved past is ErrRevisionMismatch;
+	// nil skips the check.
+	Update(ctx context.Context, t Template, ifRevision *int64) (Template, error)
+	// UpdateVariables writes a template's schema, values and variables
+	// source columns (VarsMode, VarsSourceRev, VarsAppliedAt) under the
+	// same revision guard, and nothing else.
+	UpdateVariables(ctx context.Context, t Template, ifRevision *int64) (Template, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
 	// ReplaceVaultCredentials replaces a template's own labelled vault
 	// password set wholesale (spec decision 1); an empty or nil slice is the
@@ -239,7 +256,9 @@ type CreateInput struct {
 
 // UpdateInput fully replaces a template's fields (PUT semantics).
 // VaultCredentials is a full replacement too: a label present before and
-// absent from this call is dropped.
+// absent from this call is dropped. The values of inactive and removed
+// fields the body omits are carried over (carryOver). IfRevision, when
+// set, is the revision the write is based on.
 type UpdateInput struct {
 	Name             string
 	PlaybookID       uuid.UUID
@@ -249,6 +268,7 @@ type UpdateInput struct {
 	ExtraVarsSchema  *schema.Schema
 	CredentialID     *uuid.UUID
 	VaultCredentials []VaultCredential
+	IfRevision       *int64
 }
 
 // Create validates the input and stores a new template, then its own
@@ -260,7 +280,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	// written directly by internal/shared's store, never through this
 	// service (ProjectedTemplateColumns' own doc comment) — so the
 	// playbook lookup always runs (skipPlaybookCheck=false).
-	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, false, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, nil, in.VaultCredentials)
+	t, err := s.build(ctx, orgID, uuid.Must(uuid.NewV7()), in.Name, in.PlaybookID, false, in.Scope, in.Limit, in.ExtraVars, in.ExtraVarsSchema, in.CredentialID, Template{}, in.VaultCredentials)
 	if err != nil {
 		return Template{}, err
 	}
@@ -318,11 +338,11 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		vars = map[string]any{}
 	}
 	if isProjection {
-		if err := refuseSharedFieldChange(cur, in.Name, in.PlaybookID, in.Limit, vars, in.ExtraVarsSchema); err != nil {
+		if err := refuseSharedFieldChange(cur, in.Name, in.PlaybookID, in.Limit, withCarriedOver(in.ExtraVarsSchema, vars, cur.ExtraVars), in.ExtraVarsSchema); err != nil {
 			return Template{}, err
 		}
 	}
-	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, isProjection, in.Scope, in.Limit, vars, in.ExtraVarsSchema, in.CredentialID, cur.ExtraVars, in.VaultCredentials)
+	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, isProjection, in.Scope, in.Limit, vars, in.ExtraVarsSchema, in.CredentialID, cur, in.VaultCredentials)
 	if err != nil {
 		return Template{}, err
 	}
@@ -330,7 +350,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	var updated Template
 	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
 		var err error
-		if updated, err = s.store.Update(ctx, t); err != nil {
+		if updated, err = s.store.Update(ctx, t, in.IfRevision); err != nil {
 			return err
 		}
 		if err := s.store.ReplaceVaultCredentials(ctx, orgID, id, in.VaultCredentials); err != nil {
@@ -412,8 +432,9 @@ func (s *Service) Delete(ctx context.Context, orgID, id uuid.UUID) error {
 // template's already-pinned playbook_id (Update's own doc comment): by the
 // time it is true, refuseSharedFieldChange has already required playbookID
 // == the stored one, which may be uuid.Nil for an unresolved projection —
-// not a real playbook id a lookup could ever find.
-func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, skipPlaybookCheck bool, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID, stored map[string]any, vaultCredentials []VaultCredential) (Template, error) {
+// not a real playbook id a lookup could ever find. cur is the template as
+// stored before this write, the zero Template on create.
+func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, playbookID uuid.UUID, skipPlaybookCheck bool, scope Scope, limit string, vars map[string]any, sc *schema.Schema, credentialID *uuid.UUID, cur Template, vaultCredentials []VaultCredential) (Template, error) {
 	if err := validateMeta(name, limit); err != nil {
 		return Template{}, err
 	}
@@ -443,44 +464,9 @@ func (s *Service) build(ctx context.Context, orgID, id uuid.UUID, name string, p
 	if err := s.validateVaultCredentials(ctx, orgID, vaultCredentials); err != nil {
 		return Template{}, err
 	}
-	if vars == nil {
-		vars = map[string]any{}
-	}
-	// Extra vars carry Ansible's highest precedence: the variables that
-	// decide whether a pinned host key is checked (and with which SSH
-	// arguments) are reserved for the worker (re-review N1).
-	if names := ansiblevars.ForbiddenIn(vars); len(names) > 0 {
-		return Template{}, forbiddenProblems(names)
-	}
-	// ForbiddenIn only looks at TOP-LEVEL names. A nested object with a
-	// key starting with "__ansible" that is not a well-formed marker is
-	// what makes Ansible's JSON load of the run's extra-vars file fail,
-	// and the worker's YAML guard then stops the run rather than letting
-	// it proceed with every unsafe marker silently dropped. That failure
-	// is unreadable where it lands — a parse error in a document the
-	// operator never wrote — so it belongs here, where the mistake is
-	// made (backlog 2.71). Checked before sealing, which replaces secret
-	// values with markers of its own.
-	for _, name := range slices.Sorted(maps.Keys(vars)) {
-		if err := ansiblevars.CheckMarkers(vars[name]); err != nil {
-			return Template{}, &schema.ValidationError{Problems: []schema.Problem{{
-				Path:    name,
-				Message: fmt.Sprintf("Ansible could not load this: %v", err),
-			}}}
-		}
-	}
-	if sc != nil {
-		if sc.Fields == nil {
-			sc.Fields = []schema.Field{}
-		}
-		if err := sc.Check(); err != nil {
-			return Template{}, fmt.Errorf("%w: %w", ErrBadSchema, err)
-		}
-		sealed, err := s.sealExtraVars(ExtraVarsAAD(orgID, id), sc.Fields, vars, stored)
-		if err != nil {
-			return Template{}, err
-		}
-		vars = sealed
+	vars, err := s.prepareVars(orgID, id, vars, sc, cur)
+	if err != nil {
+		return Template{}, err
 	}
 	return Template{
 		ID: id, OrgID: orgID, PlaybookID: playbookID, Name: name, Scope: scope,

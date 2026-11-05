@@ -982,3 +982,96 @@ func TestBuildPayloadRunRefusesChangedBastion(t *testing.T) {
 		t.Fatalf("a run through a changed bastion must be refused: %v", err)
 	}
 }
+
+// TestClaimSendsActiveFieldsOnly (spec 7.75 goal 3, Review Focus 2): a run
+// receives the values of active fields only. A value stored under an
+// inactive field or under a name the schema no longer declares stays
+// stored and is not sent — not by the template, not by a schedule's or a
+// webhook's override — and a secret that is not sent is not handed to the
+// worker in the redact list either. A field marked gone but still active is
+// sent until a person removes it. A template without a schema sends every
+// stored key, as before.
+func TestClaimSendsActiveFieldsOnly(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	withSchema, withoutSchema := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	schemaRaw := json.RawMessage(`{"fields":[` +
+		`{"name":"a","type":"string"},` +
+		`{"name":"b","type":"secret","active":false},` +
+		`{"name":"c","type":"string","active":true,"origin":"gone","source":{"kind":"vars_prompt","file":"site.yml","line":3}},` +
+		`{"name":"e","type":"secret"}]}`)
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		withSchema: {
+			ID: withSchema, OrgID: org, PlaybookInline: "- hosts: all\n", ExtraVarsSchema: schemaRaw,
+			ExtraVars: json.RawMessage(`{"a":"A","b":"b-stored-secret-71c","c":"C","d":"D"}`),
+		},
+		withoutSchema: {
+			ID: withoutSchema, OrgID: org, PlaybookInline: "- hosts: all\n",
+			ExtraVars: json.RawMessage(`{"a":"A","b":"B","d":"D"}`),
+		},
+	}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+
+	keys := func(m map[string]string) []string {
+		out := make([]string, 0, len(m))
+		for k := range m {
+			out = append(out, k)
+		}
+		sort.Strings(out)
+		return out
+	}
+	cases := []struct {
+		name     string
+		template uuid.UUID
+		ov       *RunOverrides
+		want     []string
+	}{
+		{"template run", withSchema, nil, []string{"a", "c"}},
+		{"schedule override of an inactive field", withSchema, &RunOverrides{ExtraVars: map[string]any{"b": "b-override-secret-3e9"}}, []string{"a", "c"}},
+		{"webhook override of an inactive and an undeclared field", withSchema, &RunOverrides{Untrusted: true, ExtraVars: map[string]any{"b": "b-override-secret-3e9", "d": "x"}}, []string{"a", "c"}},
+		{"override of an active field", withSchema, &RunOverrides{ExtraVars: map[string]any{"a": "A2", "b": "b-override-secret-3e9"}}, []string{"a", "c"}},
+		{"no schema", withoutSchema, nil, []string{"a", "b", "d"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &c.template, HostIDs: testHosts}
+			if c.ov != nil {
+				job.Payload = sealedOverride(t, q, job, *c.ov)
+			}
+			out := &workerpb.Job{}
+			if err := q.buildPayload(context.Background(), job, out); err != nil {
+				t.Fatalf("buildPayload: %v", err)
+			}
+			if got := keys(out.ExtraVars); strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Fatalf("extra var keys = %v, want %v (extra vars %v)", got, c.want, out.ExtraVars)
+			}
+			for _, secret := range []string{"b-stored-secret-71c", "b-override-secret-3e9"} {
+				if strings.Contains(strings.Join(out.Redact, "\n"), secret) {
+					t.Fatalf("a value that is not sent must not reach the worker in the redact list: %v", out.Redact)
+				}
+			}
+		})
+	}
+}
+
+// TestSendableVarsKeepsRawValues: the filter keeps each sent value's JSON
+// as stored (an integer past 2^53 is not rounded through float64), and a
+// template without a schema — absent or JSON null — is passed through.
+func TestSendableVarsKeepsRawValues(t *testing.T) {
+	sc := json.RawMessage(`{"fields":[{"name":"a","type":"int"},{"name":"b","type":"int","active":false}]}`)
+	got, err := sendableVars(sc, json.RawMessage(`{"a":12345678901234567891,"b":1,"z":2}`))
+	if err != nil || string(got) != `{"a":12345678901234567891}` {
+		t.Fatalf("sendableVars = %s, %v", got, err)
+	}
+	if got, err := sendableVars(sc, json.RawMessage(`null`)); err != nil || string(got) != `{}` {
+		t.Fatalf("sendableVars(null vars) = %s, %v", got, err)
+	}
+	for _, none := range []json.RawMessage{nil, json.RawMessage(`null`)} {
+		if got, err := sendableVars(none, json.RawMessage(`{"z":2}`)); err != nil || string(got) != `{"z":2}` {
+			t.Fatalf("sendableVars(no schema %q) = %s, %v", none, got, err)
+		}
+	}
+	if _, err := sendableVars(sc, json.RawMessage(`[1]`)); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("sendableVars(non-object) = %v, want ErrInvalidInput", err)
+	}
+}

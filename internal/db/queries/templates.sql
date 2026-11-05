@@ -18,11 +18,29 @@ SELECT * FROM job_templates WHERE org_id = $1 ORDER BY name;
 
 -- name: UpdateTemplate :one
 -- Full replacement of every editable field (PUT semantics); updated_at is
--- set here, the way every other store's UPDATE does.
+-- set here, the way every other store's UPDATE does. if_revision is the
+-- revision the write is based on, NULL to skip the check (an API client
+-- without If-Match); no row back means a stale revision or an unknown
+-- template (the store tells the two apart). The variables source columns
+-- (vars_mode, vars_source_rev, vars_applied_at) are left as they are.
 UPDATE job_templates SET
-  name = $3, playbook_id = $4, scope = $5, "limit" = $6,
-  extra_vars = $7, extra_vars_schema = $8, credential_id = $9, updated_at = now()
-WHERE org_id = $1 AND id = $2
+  name = @name, playbook_id = @playbook_id, scope = @scope, "limit" = @lim,
+  extra_vars = @extra_vars, extra_vars_schema = @extra_vars_schema, credential_id = @credential_id,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = @org_id AND id = @id
+  AND (sqlc.narg(if_revision)::bigint IS NULL OR revision = sqlc.narg(if_revision))
+RETURNING *;
+
+-- name: UpdateTemplateVariables :one
+-- A template's variables: the schema, the values and where they were last
+-- applied from, under UpdateTemplate's revision guard. Nothing else of the
+-- template changes.
+UPDATE job_templates SET
+  extra_vars = @extra_vars, extra_vars_schema = @extra_vars_schema,
+  vars_mode = @vars_mode, vars_source_rev = @vars_source_rev, vars_applied_at = @vars_applied_at,
+  revision = revision + 1, updated_at = now()
+WHERE org_id = @org_id AND id = @id
+  AND (sqlc.narg(if_revision)::bigint IS NULL OR revision = sqlc.narg(if_revision))
 RETURNING *;
 
 -- name: DeleteTemplate :execrows

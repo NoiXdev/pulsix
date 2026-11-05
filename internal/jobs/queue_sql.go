@@ -548,6 +548,16 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err != nil {
 			return err
 		}
+		// Only the values of active fields are sent (spec 7.75 goal 3): a
+		// value under an inactive or removed field — stored, or named by an
+		// override — never reaches the worker, neither as an extra var nor
+		// in the redact list. Every check below reads the filtered vars.
+		if varsRaw, err = sendableVars(tmpl.ExtraVarsSchema, varsRaw); err != nil {
+			return err
+		}
+		if wireRaw, err = sendableVars(tmpl.ExtraVarsSchema, wireRaw); err != nil {
+			return err
+		}
 		if extraVars, err = stringMap(wireRaw); err != nil {
 			return fmt.Errorf("template extra vars: %w", err)
 		}

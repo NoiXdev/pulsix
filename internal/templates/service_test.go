@@ -78,6 +78,10 @@ func (f *fakeStore) Create(_ context.Context, t templates.Template) (templates.T
 		f.nextErr = nil
 		return templates.Template{}, err
 	}
+	t.Revision = 1
+	if t.VarsMode == "" {
+		t.VarsMode = templates.ModeOff
+	}
 	f.byID[t.ID] = t
 	return t, nil
 }
@@ -101,7 +105,10 @@ func (f *fakeStore) List(_ context.Context, orgID uuid.UUID) ([]templates.Templa
 	return out, nil
 }
 
-func (f *fakeStore) Update(_ context.Context, t templates.Template) (templates.Template, error) {
+// Update mirrors the real store's guard: a stale ifRevision is
+// ErrRevisionMismatch, every write bumps the revision, and the variables
+// source columns are left as they are.
+func (f *fakeStore) Update(_ context.Context, t templates.Template, ifRevision *int64) (templates.Template, error) {
 	cur, ok := f.byID[t.ID]
 	if !ok || cur.OrgID != t.OrgID {
 		return templates.Template{}, templates.ErrNotFound
@@ -111,8 +118,30 @@ func (f *fakeStore) Update(_ context.Context, t templates.Template) (templates.T
 		f.nextErr = nil
 		return templates.Template{}, err
 	}
+	if ifRevision != nil && *ifRevision != cur.Revision {
+		return templates.Template{}, templates.ErrRevisionMismatch
+	}
+	t.Revision = cur.Revision + 1
+	t.VarsMode, t.VarsSourceRev, t.VarsAppliedAt = cur.VarsMode, cur.VarsSourceRev, cur.VarsAppliedAt
 	f.byID[t.ID] = t
 	return t, nil
+}
+
+// UpdateVariables mirrors the real store: only the schema, the values and
+// the variables source columns are written, under the same guard.
+func (f *fakeStore) UpdateVariables(_ context.Context, t templates.Template, ifRevision *int64) (templates.Template, error) {
+	cur, ok := f.byID[t.ID]
+	if !ok || cur.OrgID != t.OrgID {
+		return templates.Template{}, templates.ErrNotFound
+	}
+	if ifRevision != nil && *ifRevision != cur.Revision {
+		return templates.Template{}, templates.ErrRevisionMismatch
+	}
+	cur.ExtraVars, cur.ExtraVarsSchema = t.ExtraVars, t.ExtraVarsSchema
+	cur.VarsMode, cur.VarsSourceRev, cur.VarsAppliedAt = t.VarsMode, t.VarsSourceRev, t.VarsAppliedAt
+	cur.Revision++
+	f.byID[t.ID] = cur
+	return cur, nil
 }
 
 func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {

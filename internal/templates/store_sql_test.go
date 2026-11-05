@@ -116,7 +116,7 @@ func TestSQLStoreRoundTrip(t *testing.T) {
 	updated, err := store.Update(scoped, templates.Template{
 		ID: created.ID, OrgID: org, PlaybookID: playbookID, Name: "deploy-2",
 		ExtraVars: map[string]any{"greeting": "again"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestSQLStoreRoundTrip(t *testing.T) {
 	if updated.ExtraVars["greeting"] != "again" {
 		t.Fatalf("extra vars = %#v", updated.ExtraVars)
 	}
-	if _, err := store.Update(scoped, templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "x"}); !errors.Is(err, templates.ErrNotFound) {
+	if _, err := store.Update(scoped, templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "x"}, nil); !errors.Is(err, templates.ErrNotFound) {
 		t.Fatalf("unknown Update = %v, want ErrNotFound", err)
 	}
 
@@ -200,7 +200,7 @@ func TestSQLStoreNameUniquePerOrg(t *testing.T) {
 	if _, err := store.Create(scoped, templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: org, PlaybookID: playbookID, Name: "deploy"}); !errors.Is(err, templates.ErrNameTaken) {
 		t.Fatalf("same-org clash = %v, want ErrNameTaken", err)
 	}
-	if _, err := store.Update(scoped, templates.Template{ID: first.ID, OrgID: org, PlaybookID: playbookID, Name: "deploy", ExtraVars: map[string]any{}}); err != nil {
+	if _, err := store.Update(scoped, templates.Template{ID: first.ID, OrgID: org, PlaybookID: playbookID, Name: "deploy", ExtraVars: map[string]any{}}, nil); err != nil {
 		t.Fatalf("Update keeping its own name: %v", err)
 	}
 	if _, err := store.Create(db.WithOrgScope(ctx, other), templates.Template{
@@ -282,5 +282,77 @@ func TestATemplateAndItsVaultCredentialsLandTogetherOrNotAtAll(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("%d templates survived a failed vault credential write: the row and its vault passwords must land together or not at all", len(list))
+	}
+}
+
+func revPtr(n int64) *int64 { return &n }
+
+// TestUpdateTemplateHonoursRevision: a template write names the revision
+// it is based on, or nil to skip the check (API clients without If-Match).
+// A stale revision is ErrRevisionMismatch, an unknown id ErrNotFound; each
+// write bumps the revision. UpdateVariables follows the same guard and
+// writes only the variables columns.
+func TestUpdateTemplateHonoursRevision(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	org := seedTemplatesOrg(t, q, "tmpl-revision")
+	scoped := db.WithOrgScope(ctx, org)
+	playbookID := seedEditorPlaybook(t, d, org)
+	store := templates.NewSQLStore(d)
+
+	created, err := store.Create(scoped, templates.Template{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, PlaybookID: playbookID, Name: "deploy", ExtraVars: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.Revision != 1 || created.VarsMode != templates.ModeOff || created.VarsSourceRev != "" || created.VarsAppliedAt != nil {
+		t.Fatalf("created = rev %d mode %q source rev %q applied %v, want 1, off, empty, nil",
+			created.Revision, created.VarsMode, created.VarsSourceRev, created.VarsAppliedAt)
+	}
+
+	next := created
+	next.Name = "deploy-2"
+	got, err := store.Update(scoped, next, revPtr(1))
+	if err != nil || got.Revision != 2 || got.Name != "deploy-2" {
+		t.Fatalf("Update(if 1) = rev %d name %q, %v; want 2, deploy-2", got.Revision, got.Name, err)
+	}
+	if _, err := store.Update(scoped, next, revPtr(1)); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("Update(stale 1) = %v, want ErrRevisionMismatch", err)
+	}
+	if got, err = store.Update(scoped, next, nil); err != nil || got.Revision != 3 {
+		t.Fatalf("Update(nil) = rev %d, %v; want 3", got.Revision, err)
+	}
+	unknown := templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "x", ExtraVars: map[string]any{}}
+	if _, err := store.Update(scoped, unknown, revPtr(1)); !errors.Is(err, templates.ErrNotFound) {
+		t.Fatalf("Update(unknown, if 1) = %v, want ErrNotFound", err)
+	}
+	if _, err := store.Update(scoped, unknown, nil); !errors.Is(err, templates.ErrNotFound) {
+		t.Fatalf("Update(unknown, nil) = %v, want ErrNotFound", err)
+	}
+
+	applied := time.Now().UTC().Truncate(time.Microsecond)
+	vars := got
+	vars.Name = "ignored-by-update-variables"
+	vars.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{{Name: "region", Type: schema.TypeString}}}
+	vars.ExtraVars = map[string]any{"region": "eu"}
+	vars.VarsMode, vars.VarsSourceRev, vars.VarsAppliedAt = templates.ModeManual, "c1", &applied
+	got, err = store.UpdateVariables(scoped, vars, revPtr(3))
+	if err != nil {
+		t.Fatalf("UpdateVariables(if 3): %v", err)
+	}
+	if got.Revision != 4 || got.Name != "deploy-2" || got.ExtraVars["region"] != "eu" || got.ExtraVarsSchema == nil ||
+		got.VarsMode != templates.ModeManual || got.VarsSourceRev != "c1" || got.VarsAppliedAt == nil || !got.VarsAppliedAt.Equal(applied) {
+		t.Fatalf("UpdateVariables = %+v", got)
+	}
+	if _, err := store.UpdateVariables(scoped, vars, revPtr(3)); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("UpdateVariables(stale 3) = %v, want ErrRevisionMismatch", err)
+	}
+	if _, err := store.UpdateVariables(scoped, unknown, nil); !errors.Is(err, templates.ErrNotFound) {
+		t.Fatalf("UpdateVariables(unknown) = %v, want ErrNotFound", err)
+	}
+	read, err := store.Get(scoped, org, created.ID)
+	if err != nil || read.Revision != 4 || read.VarsMode != templates.ModeManual || read.VarsSourceRev != "c1" {
+		t.Fatalf("Get = %+v, %v", read, err)
 	}
 }
