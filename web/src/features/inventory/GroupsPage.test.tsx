@@ -56,9 +56,9 @@ describe('GroupsPage', () => {
     renderPage();
 
     const web = await screen.findByRole('link', { name: 'webserver' });
-    // The cell around the visible name (not the link's visually hidden
-    // accessible name), which carries the indent.
-    const cell = (link: HTMLElement, name: string) => within(link).getByText(name, { ignore: '.sr-only' }).parentElement as HTMLElement;
+    // The visible name (not the link's visually hidden accessible name),
+    // which carries the indent itself.
+    const cell = (link: HTMLElement, name: string) => within(link).getByText(name, { ignore: '.sr-only' });
     expect(cell(web, 'webserver')).toHaveStyle({ paddingLeft: '16px' });
     expect(cell(screen.getByRole('link', { name: 'production' }), 'production')).toHaveStyle({ paddingLeft: '0px' });
     expect(screen.getByText('incomplete')).toBeInTheDocument();
@@ -70,6 +70,19 @@ describe('GroupsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Create group' }));
     expect(await screen.findByText('GROUP DETAIL')).toBeInTheDocument();
     expect(posted).toEqual({ name: 'dbserver', parent_id: 'p' });
+  });
+
+  it("indents a child group's name without wrapping it", async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [summary('p', 'production', null), summary('e', 'web_eu', 'p')] },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+    });
+    renderPage();
+
+    const name = await screen.findByText('web_eu', { ignore: '.sr-only' });
+    expect(name).toHaveAttribute('aria-hidden', 'true');
+    expect(name).toHaveStyle({ paddingLeft: '16px' });
+    expect(name.parentElement).toHaveClass('contents');
   });
 
   it('each group row is a link to its page', async () => {

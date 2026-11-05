@@ -51,7 +51,7 @@ export function useReloadInventory(org: string) {
   const qc = useQueryClient();
   return async (groupId: string) => {
     void qc.invalidateQueries({ queryKey: ['inventory', org] });
-    const fresh = await qc.fetchQuery({ queryKey: groupKey(org, groupId), queryFn: () => fetchGroup(org, groupId), staleTime: 0 });
+    const fresh = await qc.query({ queryKey: groupKey(org, groupId), queryFn: () => fetchGroup(org, groupId), staleTime: 0 });
     return fresh.group;
   };
 }

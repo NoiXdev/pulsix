@@ -5,10 +5,23 @@ import type { SetupCompleteInput } from '../types.ts';
 export const setupStatusQueryKey = ['setup-status'] as const;
 const setupStatusQueryFn = () => unwrap(api.GET('/api/v1/setup/status'));
 
+/**
+ * The one set of options every reader of the setup status shares. The
+ * request is public and the first thing a cold load asks for: on the default
+ * network mode it would pause offline and the app would sit on "Loading…" for
+ * good, so it runs regardless and fails like any other request. Because every
+ * reader uses these options, no reader's fetch can be the paused one.
+ */
+const setupStatusQuery = {
+  queryKey: setupStatusQueryKey,
+  queryFn: setupStatusQueryFn,
+  networkMode: 'always',
+} as const;
+
 /** Polled once on app load (src/routes root logic) to decide whether the
  * SPA redirects into /setup, /login, or straight into an organization. */
 export function useSetupStatus() {
-  return useQuery({ queryKey: setupStatusQueryKey, queryFn: setupStatusQueryFn });
+  return useQuery(setupStatusQuery);
 }
 
 export async function completeSetup(body: SetupCompleteInput) {
@@ -26,5 +39,5 @@ export async function completeSetup(body: SetupCompleteInput) {
  * reads it again.
  */
 export async function refetchSetupStatus(qc: QueryClient) {
-  return qc.fetchQuery({ queryKey: setupStatusQueryKey, queryFn: setupStatusQueryFn });
+  return qc.query({ ...setupStatusQuery, staleTime: 0 });
 }

@@ -288,6 +288,18 @@ describe('AgentsPage', () => {
     expect(posted).toMatchObject({ zone_id: 'z9' });
   });
 
+  it("the host name cell is the row's name cell", async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/agents': { agents: [agent({ host_name: 'web-1', agent_name: 'agent-1' })] },
+    });
+    renderPage();
+
+    const name = await screen.findByText('web-1', { ignore: '.sr-only' });
+    expect(name).toHaveAttribute('aria-hidden', 'true');
+    expect(name.parentElement).toHaveClass('contents');
+  });
+
   it('refuses a host name the server would refuse, before asking it', async () => {
     const user = userEvent.setup();
     let calls = 0;

@@ -43,9 +43,7 @@ export function AgentRow({
         </RowMenu>
       }
     >
-      <span className="truncate text-[13px]" data-row>
-        <ListRowName>{a.host_name}</ListRowName>
-      </span>
+      <ListRowName className="truncate text-[13px]">{a.host_name}</ListRowName>
       <span className="truncate font-mono text-xs">{a.agent_name}</span>
       <span>
         <Pill tone={a.status === 'online' ? 'ok' : 'warn'}>{statusLabel}</Pill>

@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
 } from 'react';
@@ -86,9 +87,9 @@ export function ListRow({
  * from assistive technology: the row's `label` already names the link, and
  * without this the name would be read again as part of the description.
  */
-export function ListRowName({ className, children }: { className?: string; children: ReactNode }) {
+export function ListRowName({ className, style, children }: { className?: string; style?: CSSProperties; children: ReactNode }) {
   return (
-    <span aria-hidden="true" className={className}>
+    <span aria-hidden="true" className={className} style={style}>
       {children}
     </span>
   );

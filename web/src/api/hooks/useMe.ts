@@ -78,13 +78,13 @@ export function useSettledMe(opts: { enabled?: boolean } = {}) {
  * before its own background refetch resolves, bouncing a correctly
  * verified session straight back to the TOTP prompt.
  *
- * `fetchQuery` sidesteps the "is anything observing this key right now"
+ * `query` sidesteps the "is anything observing this key right now"
  * question entirely: it always performs the fetch and only resolves once
  * the cache holds the fresh result, so awaiting it before navigating
  * guarantees RootRedirect's next mount sees the real, current state.
  */
 export async function refetchMe(qc: QueryClient) {
-  return qc.fetchQuery({ queryKey: meQueryKey, queryFn: meQueryFn });
+  return qc.query({ queryKey: meQueryKey, queryFn: meQueryFn });
 }
 
 export function useRefetchMe() {

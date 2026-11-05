@@ -122,7 +122,7 @@ export function useUpdateHost(org: string, id: string) {
 export function useReloadHost(org: string, id: string) {
   const qc = useQueryClient();
   return async () => {
-    const res = await qc.fetchQuery({ ...hostQueryOptions(org, id), staleTime: 0 });
+    const res = await qc.query({ ...hostQueryOptions(org, id), staleTime: 0 });
     await Promise.all([
       qc.refetchQueries({ queryKey: ['host-tags', org, id] }),
       qc.refetchQueries({ queryKey: ['ssh', org, 'host', id] }),

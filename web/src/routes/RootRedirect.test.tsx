@@ -186,6 +186,20 @@ describe('RootRedirect', () => {
     expect(requested).not.toContain('/api/v1/orgs');
   });
 
+  // The setup status is the first thing a cold load asks for. Offline, a
+  // query on the default network mode pauses and the page would stay on
+  // "Loading…" for good, so the setup status fetches regardless and fails.
+  it('offline cold load, shows the failure instead of waiting', async () => {
+    onlineManager.setOnline(false);
+    mockApi({ 'GET /api/v1/setup/status': () => Promise.reject(new TypeError('Failed to fetch')) });
+
+    renderRoot(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(screen.queryByText(/LOGIN/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/SETUP/)).not.toBeInTheDocument();
+  });
+
   // Another reader's fetch, paused offline (the settings pages read /auth/me
   // too), must not hold the redirect: its own fetch would otherwise only
   // resume that paused one.

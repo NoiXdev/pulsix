@@ -49,9 +49,9 @@ export function GroupsPage() {
         </GridHeader>
         {orderTree(list).map(({ group, depth }) => (
           <ListRow key={group.id} to="/o/$org/groups/$id" params={{ org, id: group.id }} search={{ tab: undefined }} columns={COLUMNS} label={group.name}>
-            <span className="truncate font-mono text-[13px] text-foreground" style={{ paddingLeft: depth * 16 }}>
-              <ListRowName>{group.name}</ListRowName>
-            </span>
+            <ListRowName className="truncate font-mono text-[13px] text-foreground" style={{ paddingLeft: depth * 16 }}>
+              {group.name}
+            </ListRowName>
             <span className="text-[13px]">{group.members}</span>
             <span className="text-xs text-muted-foreground">
               {t.inventory.groups.fields(group.group_fields, group.host_fields)}
