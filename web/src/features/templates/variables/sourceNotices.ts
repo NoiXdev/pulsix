@@ -9,8 +9,11 @@ type SourceMessages = Messages['templates']['source'];
  * playbook the last sync left out, or one that was not read. */
 export function unavailableReason(src: TemplateVariablesSource, s: SourceMessages): string | null {
   if (src.available) return null;
+  // A record (it has a sync time) from a worker that reads no sources: that
+  // is why the playbook is missing from it too, and a sync by the same
+  // worker would not help.
+  if (src.kind === 'repo' && src.synced_at && !src.worker_reads) return s.workerReads;
   if (!src.found) return s.notFound;
-  if (src.kind === 'repo' && !src.worker_reads) return s.workerReads;
   if (src.left_out) return s.leftOut;
   return s.notRead;
 }
@@ -21,7 +24,6 @@ export function unavailableReason(src: TemplateVariablesSource, s: SourceMessage
 export function sourceNotices(src: TemplateVariablesSource, s: SourceMessages): string[] {
   const out: string[] = [];
   if (src.kind === 'inline') out.push(s.inlineRoles);
-  if (src.kind === 'repo' && !src.worker_reads && src.available) out.push(s.workerReads);
   if (src.incomplete) out.push(s.incomplete);
   const reason = unavailableReason(src, s);
   if (reason) out.push(reason);

@@ -61,7 +61,7 @@ export const deTemplates: Messages['templates'] = {
     limitHint: 'Freies Ansible-Limit-Muster, leer = kein Limit.',
     variables: 'Variablen',
     variablesHint: 'Die Extra-Variablen und ihr Formular stehen auf der Variablenseite der Vorlage.',
-    stale: 'Jemand anderes hat diese Vorlage seit dem Öffnen gespeichert, oder ein Abgleich hat die Variablen ihres Playbooks übernommen. „Neu laden“ nimmt die aktuelle Vorlage als Grundlage; deine Änderungen hier bleiben und werden darüber gespeichert.',
+    stale: 'Jemand anderes hat diese Vorlage seit dem Öffnen gespeichert, oder ein Abgleich hat die Variablen ihres Playbooks übernommen. „Neu laden“ übernimmt diese Änderungen: Deine Änderungen bleiben, alles andere wird aktualisiert.',
     reload: 'Neu laden',
     pickFailed: 'Das Playbook konnte nicht registriert werden',
     varsProblems: (list: string) => `Die Extra-Variablen brauchen Aufmerksamkeit auf der Variablenseite: ${list}`,
@@ -112,6 +112,7 @@ export const deTemplates: Messages['templates'] = {
     kept: (names: string) => `Gespeichert, aber nicht gesendet: ${names}`,
     keptHint:
       'Ein Wert unter einem inaktiven oder entfernten Feld bleibt gespeichert und wird nicht an Läufe gesendet. Schaltest du das Feld aktiv oder fügst ein entferntes Feld unter seinem Namen wieder hinzu, ist der Wert wieder da. Um ihn zu verwerfen, schalte das Feld aktiv (oder füge es wieder hinzu), leere seinen Wert und speichere; schalte es danach wieder inaktiv oder entferne es erneut.',
+    secretUnderType: 'Der gespeicherte Wert war geheim und kann mit diesem Typ nicht angezeigt werden. Mach das Feld geheim, um ihn zu behalten, oder gib einen neuen Wert ein; so gespeichert wird er gelöscht.',
     dirty: 'Speichere oder verwirf deine Änderungen, bevor du mit dem Playbook abgleichst.',
   },
   source: {

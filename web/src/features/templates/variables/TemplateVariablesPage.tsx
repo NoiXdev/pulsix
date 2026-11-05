@@ -19,6 +19,7 @@ import { VariableEditor } from '../../variables/VariableEditor.tsx';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
 import { problemsFromError } from '../../variables/paths.ts';
 import { sameValue } from '../../variables/origin.ts';
+import { isKeepMarker, isSecretSet } from '../../variables/secrets.ts';
 import { usageByField } from '../../variables/usage.ts';
 import type { Problem, VarSchema, Vars } from '../../variables/types.ts';
 import { TriggersDialog } from '../../triggers/TriggersDialog.tsx';
@@ -172,6 +173,11 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
   }
 
   const problemCount = schemaProblems.length + valueProblems.length;
+  // A removed secret added back under another type: its stored value is
+  // sealed and cannot be shown or kept there (varsForPut leaves it out).
+  const secretNotes: Problem[] = draft.fields
+    .filter((f) => f.type !== 'secret' && (isKeepMarker(values[f.name]) || isSecretSet(values[f.name])))
+    .map((f) => ({ path: f.name, message: v.secretUnderType }));
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <div className="flex flex-col gap-2">
@@ -220,7 +226,7 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
       <section aria-label={v.values} className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold">{v.values}</h2>
         <span className="text-[11px] text-muted-foreground">{v.valuesHint}</span>
-        <SchemaForm fields={draft.fields} value={values} onChange={setValues} problems={valueProblems} idPrefix="template-vars" disabled={!canWrite} />
+        <SchemaForm fields={draft.fields} value={values} onChange={setValues} problems={[...valueProblems, ...secretNotes]} idPrefix="template-vars" disabled={!canWrite} />
         {loaded.kept.length > 0 && (
           <div className="flex flex-col gap-0.5 text-[11px] text-muted-foreground">
             <span>{v.kept(loaded.kept.join(', '))}</span>

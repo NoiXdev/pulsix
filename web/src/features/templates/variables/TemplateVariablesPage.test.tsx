@@ -31,6 +31,20 @@ describe('TemplateVariablesPage — the source', () => {
     expect(await screen.findByText('The worker that synced this repository does not read variable sources.')).toBeInTheDocument();
   });
 
+  it('blames an older worker, not a missing sync, for a playbook its record lacks', async () => {
+    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ source: source({ worker_reads: false, found: false, available: false }) }) }));
+    renderPage();
+    expect(await screen.findByText('The worker that synced this repository does not read variable sources.')).toBeInTheDocument();
+    expect(screen.queryByText(/sync its repository/)).not.toBeInTheDocument();
+  });
+
+  it('asks for a sync when the repository has no record yet', async () => {
+    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ source: source({ worker_reads: false, found: false, available: false, synced_at: undefined, commit: '' }) }) }));
+    renderPage();
+    expect(await screen.findByText('No variable sources were read for this playbook yet — sync its repository.')).toBeInTheDocument();
+    expect(screen.queryByText('The worker that synced this repository does not read variable sources.')).not.toBeInTheDocument();
+  });
+
   it('names an inline playbook and says its roles are not read', async () => {
     mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ source: source({ kind: 'inline', commit: 'text:abc', synced_at: undefined, repo_id: undefined, path: undefined }) }) }));
     renderPage();
@@ -175,6 +189,24 @@ describe('TemplateVariablesPage — fields and values', () => {
       await addField(user, 'old_secret', 'secret');
       expect(within(screen.getByRole('region', { name: 'Values' })).getByLabelText('old_secret')).toHaveAttribute('readonly');
       expect((await saved(user, () => put)).old_secret).toEqual({ $secret: 'keep', from: 'old_secret' });
+    });
+
+    it('says a removed secret added back under another type cannot be shown, and does not send its marker', async () => {
+      const user = userEvent.setup();
+      let put: MockRequest | undefined;
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/job-templates/t1/variables': withRemoved,
+        'PUT /api/v1/orgs/acme/job-templates/t1/variables': (req: MockRequest) => {
+          put = req;
+          return variables();
+        },
+      }));
+      renderPage();
+      const values = await screen.findByRole('region', { name: 'Values' });
+      await addField(user, 'old_secret');
+      expect(within(values).getByLabelText('old_secret')).toHaveValue('');
+      expect(within(values).getByText(/The stored value was a secret and cannot be shown under this type/)).toBeInTheDocument();
+      expect(await saved(user, () => put)).not.toHaveProperty('old_secret');
     });
 
     it('sends the stored value of an inactive field switched active', async () => {

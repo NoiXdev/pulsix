@@ -1,5 +1,5 @@
 import { childPath, indexPath } from '../variables/paths.ts';
-import { declaredOnly, isKeepMarker, isRecord, isSecretSet, keepMarker, toKeepMarkers as keepMarkersOf, type KeepMarker } from '../variables/secrets.ts';
+import { declaredOnly, isKeepMarker, isRecord, isSecretSet, keepMarker, toKeepMarkers, type KeepMarker } from '../variables/secrets.ts';
 import { activeFields } from '../variables/origin.ts';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
 import type { SchemaField, Vars } from '../variables/types.ts';
@@ -39,26 +39,10 @@ export function toEditableVars(fields: readonly SchemaField[], vars: Vars): Vars
  * secret as a keep marker naming its path (a removed field's at the top
  * level). varsForPut then sends the active declared fields only. */
 export function toDraftVars(fields: readonly SchemaField[], vars: Vars): Vars {
-  const out = keepMarkersOf(fields, vars);
+  const out = toKeepMarkers(fields, vars);
   const declared = new Set(fields.map((f) => f.name));
   for (const [k, v] of Object.entries(out)) {
     if (!declared.has(k) && isSecretSet(v)) out[k] = keepMarker(k);
-  }
-  return out;
-}
-
-function toKeepMarkers(fields: readonly SchemaField[], vars: Vars, prefix = ''): Vars {
-  const out: Vars = { ...vars };
-  for (const f of fields) {
-    const v = vars[f.name];
-    const path = childPath(prefix, f.name);
-    if (f.type === 'secret' && isSecretSet(v)) {
-      out[f.name] = { $secret: 'keep', from: path } as KeepMarker;
-    } else if (f.type === 'object' && isRecord(v)) {
-      out[f.name] = toKeepMarkers(f.fields ?? [], v, path);
-    } else if (f.type === 'repeater' && Array.isArray(v)) {
-      out[f.name] = v.map((item, i) => (isRecord(item) ? toKeepMarkers(f.fields ?? [], item, indexPath(path, i)) : item));
-    }
   }
   return out;
 }
@@ -91,11 +75,16 @@ function keepUnchangedSecrets(vars: Vars, fields: readonly SchemaField[], prefix
     const f = fields.find((x) => x.name === k);
     const path = childPath(prefix, k);
     if (isKeepMarker(v)) {
-      out[k] = v; // names the stored value's original path (entries may have moved)
+      // Names the stored value's original path (entries may have moved).
+      // The server resolves a marker under a secret field only: a stored
+      // secret under a field of another type (a removed secret added back,
+      // a field retyped) cannot be kept (the page says so at the field),
+      // so neither marker is sent for it.
+      if (f?.type === 'secret') out[k] = v;
       continue;
     }
     if (isSecretSet(v)) {
-      out[k] = { $secret: 'keep', from: path } as KeepMarker;
+      if (f?.type === 'secret') out[k] = { $secret: 'keep', from: path } as KeepMarker;
       continue;
     }
     if (f?.type === 'object' && isRecord(v)) {

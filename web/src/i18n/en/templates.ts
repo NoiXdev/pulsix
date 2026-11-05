@@ -58,7 +58,7 @@ export const enTemplates = {
     limitHint: 'Free-form ansible limit pattern, empty = no limit.',
     variables: 'Variables',
     variablesHint: "The extra vars and their form are on the template's variables page.",
-    stale: 'Someone else saved this template since it was opened, or a sync applied its playbook\'s variables. Reload takes the current template as the base; your edits here stay and are saved over it.',
+    stale: 'Someone else saved this template since it was opened, or a sync applied its playbook\'s variables. Reload takes their changes in: your changes are kept, everything else is updated.',
     reload: 'Reload',
     pickFailed: 'Registering the playbook failed',
     varsProblems: (list: string) => `The extra vars need attention on the variables page: ${list}`,
@@ -108,6 +108,7 @@ export const enTemplates = {
     kept: (names: string) => `Stored but not sent: ${names}`,
     keptHint:
       'A value under an inactive or removed field stays stored and is not sent to runs. Switching the field active, or adding a removed field back under its name, brings the value back. To discard it, switch the field active (or add it back), clear its value and save; then switch it inactive or remove it again.',
+    secretUnderType: 'The stored value was a secret and cannot be shown under this type. Make the field a secret to keep it, or enter a new value; saving it as it is clears it.',
     dirty: 'Save or discard your changes before you sync with the playbook.',
   },
   source: {

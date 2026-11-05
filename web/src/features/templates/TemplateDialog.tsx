@@ -24,6 +24,7 @@ import { identitiesForBody, vaultIdentityErrors, type VaultIdentityRow } from '.
 import { ScopePicker, type Scope } from './ScopePicker.tsx';
 import { PlaybookPicker, type PlaybookChoice } from './PlaybookPicker.tsx';
 import { echoedVars } from './vars.ts';
+import { sameValue } from '../variables/origin.ts';
 import { existingOf, type Existing } from './existing.ts';
 
 export interface TemplateDialogProps {
@@ -167,6 +168,24 @@ function TemplateForm({
     }
   }
 
+  /** rebase reads the template again after a 412 and merges it in field
+   * by field: a setting this person changed keeps their value, every other
+   * one takes the current value (a three-way merge against the base the
+   * form was loaded from); the save is then based on the new revision. */
+  async function rebase() {
+    const fresh = await onReload?.();
+    if (!fresh || !loaded) return;
+    const merge = <T,>(draft: T, base: T, now: T): T => (sameValue(draft, base) ? now : draft);
+    setName(merge(name, loaded.name, fresh.name));
+    if (playbook.playbookId === loaded.playbookId) setPlaybook({ from: '', playbookId: fresh.playbookId, path: '' });
+    setScope(merge(scope, loaded.scope, fresh.scope));
+    setLimit(merge(limit, loaded.limit, fresh.limit));
+    setCredentialId(merge(credentialId, loaded.credentialId, fresh.credentialId));
+    if (sameValue(identitiesForBody(vaultRows), identitiesForBody(loaded.vaultIdentities))) setVaultRows(fresh.vaultIdentities);
+    setLoaded(fresh);
+    setStale(false);
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -217,12 +236,7 @@ function TemplateForm({
             {onReload && (
               <Button
                 type="button"
-                onClick={async () => {
-                  const fresh = await onReload();
-                  if (!fresh) return;
-                  setLoaded(fresh);
-                  setStale(false);
-                }}
+                onClick={() => void rebase()}
               >
                 {t.templates.dialog.reload}
               </Button>

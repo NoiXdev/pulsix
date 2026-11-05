@@ -67,6 +67,13 @@ describe('varsForPut (masked-secret roundtrip)', () => {
     expect(varsForPut(fields, { token: SET, region: 'eu' })).toEqual({ region: 'eu' });
   });
 
+  // A secret removed from the schema and added back under another type:
+  // the server resolves keep markers for secret fields only.
+  it('sends no keep marker under a field that is not secret', () => {
+    expect(varsForPut([{ name: 'old', type: 'string' }], { old: { $secret: 'keep', from: 'old' } })).toEqual({});
+    expect(varsForPut([{ name: 'old', type: 'string' }], { old: SET })).toEqual({});
+  });
+
   it('sends nothing under a schema whose fields are all inactive', () => {
     expect(varsForPut([{ name: 'region', type: 'string', active: false }], { region: 'eu' })).toEqual({});
     expect(varsForPut([], { region: 'eu' })).toEqual({});
