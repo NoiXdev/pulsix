@@ -36,8 +36,16 @@ func TestPromptFields(t *testing.T) {
 		{"private by default", `{name: pass, prompt: Password}`,
 			&schema.Field{Name: "pass", Label: "Password", Type: schema.TypeSecret, Required: true}, nil},
 		{"secret default dropped", `{name: pin, private: true, default: "1234"}`,
-			&schema.Field{Name: "pin", Type: schema.TypeSecret, Required: true},
+			&schema.Field{Name: "pin", Type: schema.TypeSecret},
 			[]string{"warning secret_default_dropped site.yml:1"}},
+		// Ansible answers a prompt with a default by that default, so the
+		// run does not need a value: not required, though the secret
+		// cannot carry the default.
+		{"prompt with default, private absent", `{name: pin, prompt: PIN, default: "1234"}`,
+			&schema.Field{Name: "pin", Label: "PIN", Type: schema.TypeSecret},
+			[]string{"warning secret_default_dropped site.yml:1"}},
+		{"prompt without default, private absent", `{name: pin, prompt: PIN}`,
+			&schema.Field{Name: "pin", Label: "PIN", Type: schema.TypeSecret, Required: true}, nil},
 		{"public prompt without default", `{name: host, prompt: Host, private: false}`,
 			&schema.Field{Name: "host", Label: "Host", Type: schema.TypeString, Required: true}, nil},
 		{"YAML 1.1 private", `{name: user, private: off}`,

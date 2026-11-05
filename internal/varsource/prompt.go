@@ -8,8 +8,9 @@ import (
 // promptFields maps a play's vars_prompt list onto top-level fields. A
 // prompt has no type, so every field is a string, or a secret when the
 // prompt is private (an absent private means true, as in Ansible). A secret
-// carries no default; a prompt is required when it has no default, and a
-// private prompt always is. At most schema.MaxFields entries are looked
+// carries no default (the dropped default is a warning); a prompt is
+// required when it has no default, private or not, since Ansible answers
+// a prompt with a default by that default. At most schema.MaxFields entries are looked
 // at, kept or not; cut is true when more were left out.
 //
 // y is the playbook file's read state: notes y raises (duplicate_key) stay
@@ -76,7 +77,7 @@ func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note,
 	default:
 		notes = append(notes, warning(codeDefaultInvalid, file, line, "%s: a prompt's default must be a single value; dropped", short(name)))
 	}
-	f.Required = private || isNull(d)
+	f.Required = isNull(d)
 	f.Origin = schema.OriginSource
 	f.Source = &schema.FieldSource{Kind: schema.SourceVarsPrompt, File: file, Line: line}
 	f, n, ok := finishField(f, file, line)
