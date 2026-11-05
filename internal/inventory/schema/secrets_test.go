@@ -295,3 +295,39 @@ func TestStrayTopLevel(t *testing.T) {
 		})
 	}
 }
+
+// TestStrayNames is StrayTopLevel split in two so a caller that needs both
+// the stray values and their top-level names scans once: every case of
+// TestStrayTopLevel gives the same names through StraySealed + StrayNames.
+func TestStrayNames(t *testing.T) {
+	sealed := schema.Sealed([]byte("ct"))
+	cases := []struct {
+		name   string
+		fields []schema.Field
+		values map[string]any
+	}{
+		{"a secret turned string", []schema.Field{{Name: "region", Type: schema.TypeString}, {Name: "token", Type: schema.TypeString}},
+			map[string]any{"region": "eu", "token": sealed}},
+		{"a repeater sub-field turned string", []schema.Field{{Name: "vhosts", Type: schema.TypeRepeater, Fields: []schema.Field{
+			{Name: "domain", Type: schema.TypeString}, {Name: "password", Type: schema.TypeString},
+		}}}, map[string]any{"vhosts": []any{
+			map[string]any{"domain": "a.io", "password": sealed},
+			map[string]any{"domain": "b.io", "password": sealed},
+		}}},
+		{"in field order", []schema.Field{{Name: "b", Type: schema.TypeString}, {Name: "a", Type: schema.TypeInt}},
+			map[string]any{"a": sealed, "b": sealed}},
+		{"a secret field's own envelope", []schema.Field{{Name: "token", Type: schema.TypeSecret}},
+			map[string]any{"token": sealed}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := schema.StrayNames(schema.StraySealed(c.fields, c.values))
+			if want := schema.StrayTopLevel(c.fields, c.values); !slices.Equal(got, want) {
+				t.Fatalf("StrayNames = %v, want %v", got, want)
+			}
+		})
+	}
+	if got := schema.StrayNames(nil); got == nil || len(got) != 0 {
+		t.Fatalf("StrayNames(nil) = %#v, want an empty non-nil list", got)
+	}
+}

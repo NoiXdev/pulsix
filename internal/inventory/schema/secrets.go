@@ -161,8 +161,15 @@ func StraySealed(fields []Field, values map[string]any) []StrayValue {
 // those variables out until a person enters their value again (backlog
 // 7.87). Empty, never nil, when there is none.
 func StrayTopLevel(fields []Field, values map[string]any) []string {
+	return StrayNames(StraySealed(fields, values))
+}
+
+// StrayNames returns the top-level variable names of stray, in order and
+// each once, for a caller that needs both the stray values and their names
+// from one StraySealed scan. Empty, never nil, when stray is empty.
+func StrayNames(stray []StrayValue) []string {
 	out := []string{}
-	for _, s := range StraySealed(fields, values) {
+	for _, s := range stray {
 		if name := topLevel(s.Path); !slices.Contains(out, name) {
 			out = append(out, name)
 		}

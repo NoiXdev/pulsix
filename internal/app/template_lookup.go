@@ -136,7 +136,7 @@ func dropStraySealed(ctx context.Context, t templates.Template) map[string]any {
 		return t.ExtraVars
 	}
 	out := maps.Clone(t.ExtraVars)
-	for _, name := range schema.StrayTopLevel(t.ExtraVarsSchema.Fields, t.ExtraVars) {
+	for _, name := range schema.StrayNames(stray) {
 		delete(out, name)
 	}
 	paths := make([]string, len(stray))
