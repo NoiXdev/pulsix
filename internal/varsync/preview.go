@@ -82,13 +82,16 @@ type Gone struct {
 // Refresh does not travel through JSON, so a preview decoded from JSON
 // applies its items but not the moved source locations.
 type Preview struct {
-	SourceRev string           `json:"source_rev"`
-	Added     []Added          `json:"added"`
-	Changed   []Changed        `json:"changed"`
-	Adjusted  []Adjusted       `json:"adjusted"`
-	Gone      []Gone           `json:"gone"`
-	Unchanged int              `json:"unchanged"`
-	Notes     []varsource.Note `json:"notes"`
+	SourceRev string     `json:"source_rev"`
+	Added     []Added    `json:"added"`
+	Changed   []Changed  `json:"changed"`
+	Adjusted  []Adjusted `json:"adjusted"`
+	Gone      []Gone     `json:"gone"`
+	Unchanged int        `json:"unchanged"`
+	// LeftOut counts the source's fields not added because the template
+	// would hold more than schema.MaxFields (the fields_left_out warning).
+	LeftOut int              `json:"left_out"`
+	Notes   []varsource.Note `json:"notes"`
 
 	// Refresh holds the unchanged fields whose provenance moved (source
 	// location, set_in_playbook, an adjusted field's source version), as
@@ -136,6 +139,7 @@ func Compute(current []schema.Field, src Source, stored map[string]any) Preview 
 			left = append(left, f.Name)
 		}
 	}
+	p.LeftOut = len(left)
 	p.Notes = append(p.Notes, fieldsLeftOut(left, pb.Path)...)
 	p.Notes = append(p.Notes, c.absence.note(pb.Path)...)
 	p.Notes = append(p.Notes, c.taken...)
@@ -252,7 +256,7 @@ func fieldsLeftOut(names []string, file string) []varsource.Note {
 		listed += fmt.Sprintf(" and %d more", len(names)-maxNamesListed)
 	}
 	return []varsource.Note{{Level: varsource.LevelWarning, Code: codeFieldsLeftOut, File: file,
-		Message: fmt.Sprintf("%d fields from the source are not added, because a template holds at most %d fields: %s", len(names), schema.MaxFields, listed)}}
+		Message: fmt.Sprintf("%d fields from the source are not added, because a template holds at most %d fields: %s; remove gone fields and preview again to add the rest", len(names), schema.MaxFields, listed)}}
 }
 
 func originChange(to schema.Origin) Change {

@@ -259,7 +259,7 @@ func TestComputeStaysWithinTheFieldLimit(t *testing.T) {
 		if len(p.Added) != 90 || p.Added[89].Field.Name != "v_89" {
 			t.Errorf("added %d fields", len(p.Added))
 		}
-		checkLeftOut(t, p, "10 fields", "v_90, v_91")
+		checkLeftOut(t, p, 10, "v_90, v_91")
 		for _, opt := range []varsync.ApplyOptions{{Automatic: true}, {}} {
 			if err := (schema.Schema{Fields: varsync.Apply(cur, p, opt)}).Check(); err != nil {
 				t.Errorf("%+v: Check: %v", opt, err)
@@ -276,7 +276,7 @@ func TestComputeStaysWithinTheFieldLimit(t *testing.T) {
 		if len(p.Added) != 40 || len(p.Gone) != 60 {
 			t.Errorf("added %d gone %d", len(p.Added), len(p.Gone))
 		}
-		checkLeftOut(t, p, "20 fields", "new_40, new_41, new_42, new_43, new_44, new_45, new_46, new_47, new_48, new_49 and 10 more")
+		checkLeftOut(t, p, 20, "new_40, new_41, new_42, new_43, new_44, new_45, new_46, new_47, new_48, new_49 and 10 more")
 		out := varsync.Apply(cur, p, varsync.ApplyOptions{Automatic: true})
 		if err := (schema.Schema{Fields: out}).Check(); err != nil {
 			t.Errorf("Check: %v", err)
@@ -284,7 +284,7 @@ func TestComputeStaysWithinTheFieldLimit(t *testing.T) {
 		// Once a person removed the gone fields, the rest fits.
 		removed := varsync.Apply(cur, p, varsync.ApplyOptions{RemoveGone: true})
 		next := varsync.Compute(removed, source(renamed...), nil)
-		if len(next.Added) != 20 || hasCode(next, "fields_left_out") {
+		if len(next.Added) != 20 || hasCode(next, "fields_left_out") || next.LeftOut != 0 {
 			t.Errorf("after removing: added %d, notes %v", len(next.Added), noteCodes(next))
 		}
 	})
@@ -303,12 +303,18 @@ func TestComputeStaysWithinTheFieldLimit(t *testing.T) {
 	})
 }
 
-func checkLeftOut(t *testing.T, p varsync.Preview, count, listed string) {
+func checkLeftOut(t *testing.T, p varsync.Preview, count int, listed string) {
 	t.Helper()
+	if p.LeftOut != count {
+		t.Errorf("LeftOut = %d, want %d", p.LeftOut, count)
+	}
+	want := []string{fmt.Sprintf("%d fields", count), listed, "remove gone fields and preview again"}
 	for _, n := range p.Notes {
 		if n.Code == "fields_left_out" {
-			if n.Level != varsource.LevelWarning || !strings.Contains(n.Message, count) || !strings.Contains(n.Message, listed) {
-				t.Errorf("note = %+v, want %q and %q", n, count, listed)
+			for _, w := range want {
+				if n.Level != varsource.LevelWarning || !strings.Contains(n.Message, w) {
+					t.Errorf("note = %+v, want %q", n, w)
+				}
 			}
 			return
 		}

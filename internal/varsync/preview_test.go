@@ -384,7 +384,7 @@ func TestComputeUnavailableSource(t *testing.T) {
 
 func TestComputeEmptyListsEncodeAsArrays(t *testing.T) {
 	got := jsonOf(t, varsync.Compute(nil, source(), nil))
-	want := `{"source_rev":"c1","added":[],"changed":[],"adjusted":[],"gone":[],"unchanged":0,"notes":[]}`
+	want := `{"source_rev":"c1","added":[],"changed":[],"adjusted":[],"gone":[],"unchanged":0,"left_out":0,"notes":[]}`
 	if got != want {
 		t.Errorf("preview = %s, want %s", got, want)
 	}
