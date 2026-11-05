@@ -131,6 +131,20 @@ func TestCreateEditorParseProblemsNeverFailTheSave(t *testing.T) {
 	if err != nil || !src.Found || len(src.Playbook.Fields) != 1 || src.Playbook.Fields[0].Default != "a\x00b" {
 		t.Fatalf("VarSource(NUL default) = %+v, %v", src, err)
 	}
+
+	// The six characters \u0000 (a backslash, not NUL) store as usual.
+	literal := "- hosts: all\n  vars:\n    x: 'a\\u0000b'  # pulsix: X\n  tasks: []\n"
+	p, err = svc.CreateEditor(ctx, org, playbooks.CreateInput{Inline: literal})
+	if err != nil {
+		t.Fatalf("CreateEditor(literal \\u0000): %v", err)
+	}
+	if store.byID[p.ID].InlineSource == nil {
+		t.Fatal("a literal \\u0000 in the text left the result unstored")
+	}
+	src, err = svc.VarSource(ctx, org, p.ID)
+	if err != nil || len(src.Playbook.Fields) != 1 || src.Playbook.Fields[0].Default != `a\u0000b` {
+		t.Fatalf("VarSource(literal \\u0000) = %+v, %v", src, err)
+	}
 }
 
 func TestUpdateEditorReparsesAndApplies(t *testing.T) {
@@ -260,8 +274,25 @@ func TestVarSourceRepoPlaybook(t *testing.T) {
 
 	// The record does not name the path: not found, the record still told.
 	src, err = svc.VarSource(ctx, org, missing.ID)
-	if err != nil || src.Found || src.Rev != "abc123" || src.SyncedAt == nil || !src.WorkerReads {
+	if err != nil || src.Found || src.LeftOut || src.Rev != "abc123" || src.SyncedAt == nil || !src.WorkerReads {
 		t.Fatalf("VarSource(missing.yml) = %+v, %v", src, err)
+	}
+
+	// The last sync left both paths out: deploy.yml keeps its earlier row,
+	// whose commit is not known, so no revision is claimed for its fields;
+	// missing.yml was never read.
+	rs.sources[repoID] = fakeSources{
+		rec: repos.SourcesRecord{Commit: "def456", SyncedAt: synced, WorkerReads: true, Incomplete: true,
+			LeftOut: []string{"deploy.yml", "missing.yml"}},
+		playbooks: rs.sources[repoID].playbooks,
+	}
+	src, err = svc.VarSource(ctx, org, deploy.ID)
+	if err != nil || !src.Found || !src.LeftOut || src.Rev != "" || len(src.Playbook.Fields) != 1 {
+		t.Fatalf("VarSource(left-out deploy.yml) = %+v, %v; want found, left out, no revision", src, err)
+	}
+	src, err = svc.VarSource(ctx, org, missing.ID)
+	if err != nil || src.Found || !src.LeftOut || src.Rev != "" {
+		t.Fatalf("VarSource(left-out missing.yml) = %+v, %v; want left out, not found, no revision", src, err)
 	}
 }
 
@@ -333,8 +364,10 @@ func TestEnsureRepo(t *testing.T) {
 	if len(resolver.calls) != 1 {
 		t.Fatalf("resolver calls = %d, want 1 (only for the new row)", len(resolver.calls))
 	}
-	if _, _, err := svc.EnsureRepo(ctx, org, repoID, "../x.yml"); !errors.Is(err, playbooks.ErrInvalidInput) {
-		t.Fatalf("../x.yml = %v, want ErrInvalidInput", err)
+	for _, bad := range []string{"../x.yml", "./site.yml", "/site.yml", "a//site.yml", "a/./site.yml", "a/b/../site.yml"} {
+		if _, _, err := svc.EnsureRepo(ctx, org, repoID, bad); !errors.Is(err, playbooks.ErrInvalidInput) {
+			t.Fatalf("%s = %v, want ErrInvalidInput", bad, err)
+		}
 	}
 	if _, _, err := svc.EnsureRepo(ctx, org, uuid.Must(uuid.NewV7()), "site.yml"); !errors.Is(err, playbooks.ErrNotFound) {
 		t.Fatalf("unknown repository = %v, want ErrNotFound", err)

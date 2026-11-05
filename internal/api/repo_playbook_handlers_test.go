@@ -156,12 +156,22 @@ func TestPickRepoPlaybook(t *testing.T) {
 	if resp := postJSON(t, vc, base, map[string]any{"path": "deploy.yml"}); resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("viewer pick: %d", resp.StatusCode)
 	}
-	if resp := postJSON(t, oc, base, map[string]any{"path": "../x.yml"}); resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("../x.yml: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	for _, bad := range []string{"../x.yml", "./deploy.yml", "/deploy.yml", "a//deploy.yml"} {
+		if resp := postJSON(t, oc, base, map[string]any{"path": bad}); resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s: %d %s", bad, resp.StatusCode, mustReadBody(t, resp))
+		}
 	}
 	unknown := s.HTTP.URL + "/api/v1/orgs/rpp-org/repos/" + uuid.Must(uuid.NewV7()).String() + "/playbooks"
 	if resp := postJSON(t, oc, unknown, map[string]any{"path": "deploy.yml"}); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown repo: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	// Another organization's member cannot pick in this repository.
+	outsider := s.SeedUser("rpp-outsider@example.test", "correct horse battery")
+	s.SeedOrg("rpp-other", outsider)
+	otherBase := s.HTTP.URL + "/api/v1/orgs/rpp-other/repos/" + repoID + "/playbooks"
+	if resp := postJSON(t, s.LoginAs(outsider), otherBase, map[string]any{"path": "deploy.yml"}); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("another org's pick: %d %s", resp.StatusCode, mustReadBody(t, resp))
 	}
 
 	resp = requestJSON(t, s.LoginAs(owner), http.MethodGet, s.HTTP.URL+"/api/v1/orgs/rpp-org/activity", nil)

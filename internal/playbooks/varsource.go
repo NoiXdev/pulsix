@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,9 +29,10 @@ const (
 // editor playbook's from its own text.
 type VarSource struct {
 	Kind string // VarSourceRepo or VarSourceInline
-	// Rev names the read: a repo playbook's commit ("" without a record),
-	// an editor playbook's "text:" and the first 12 hex characters of the
-	// SHA-256 of its text.
+	// Rev names the read: a repo playbook's commit ("" without a record,
+	// and "" for a playbook the last sync left out, whose fields are from
+	// an earlier read), an editor playbook's "text:" and the first 12 hex
+	// characters of the SHA-256 of its text.
 	Rev string
 	// SyncedAt is when the repository's record was written; nil for an
 	// editor playbook and without a record.
@@ -40,6 +42,10 @@ type VarSource struct {
 	WorkerReads bool
 	// Incomplete: a cap left playbooks of the repository unread.
 	Incomplete bool
+	// LeftOut: the last sync's caps left this playbook unread. Its fields,
+	// if Found, are from an earlier read whose commit is not known, so Rev
+	// is empty then.
+	LeftOut bool
 	// Found: a parse result exists for this playbook (which may itself be
 	// Failed, i.e. not read).
 	Found    bool
@@ -93,6 +99,12 @@ func (s *Service) VarSource(ctx context.Context, orgID, playbookID uuid.UUID) (V
 	if rec != nil {
 		at := rec.SyncedAt
 		src.Rev, src.SyncedAt, src.WorkerReads, src.Incomplete = rec.Commit, &at, rec.WorkerReads, rec.Incomplete
+		// A left-out playbook keeps its row from an earlier read, whose
+		// commit the record no longer holds: its fields are never labelled
+		// with the new commit.
+		if slices.Contains(rec.LeftOut, *p.Path) {
+			src.LeftOut, src.Rev = true, ""
+		}
 	}
 	if pb != nil {
 		src.Found, src.Playbook = true, *pb
@@ -135,7 +147,7 @@ func inlineRev(text string) string {
 // not stored, and VarSource parses the text on read instead.
 func (s *Service) inlineSource(ctx context.Context, orgID uuid.UUID, text string) json.RawMessage {
 	raw, err := json.Marshal(varsource.ParseInline(text))
-	if err == nil && bytes.Contains(raw, []byte(`\u0000`)) {
+	if err == nil && hasNULEscape(raw) {
 		err = errors.New("the result contains a NUL character")
 	}
 	if err != nil {
@@ -143,6 +155,22 @@ func (s *Service) inlineSource(ctx context.Context, orgID uuid.UUID, text string
 		return nil
 	}
 	return raw
+}
+
+// hasNULEscape reports whether the JSON text raw encodes U+0000: a
+// \u0000 escape whose backslash is not itself escaped. (Outside strings
+// JSON has no backslashes, so every one starts an escape.)
+func hasNULEscape(raw []byte) bool {
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
+		}
+		if bytes.HasPrefix(raw[i+1:], []byte("u0000")) {
+			return true
+		}
+		i++ // the escaped character
+	}
+	return false
 }
 
 // applyInline hands a saved editor playbook to the applier, on a context

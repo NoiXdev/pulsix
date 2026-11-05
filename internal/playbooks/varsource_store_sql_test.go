@@ -2,6 +2,7 @@ package playbooks_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -135,8 +136,8 @@ func TestEnsureRepoReusesTheRow(t *testing.T) {
 
 	// Another organization neither sees nor reuses the row.
 	other := seedOrg(t, q, "pb-ensure-other")
-	if _, _, err := svc.EnsureRepo(db.WithOrgScope(ctx, other), other, repoID, "site.yml"); err == nil {
-		t.Fatal("another organization picked a playbook of a repository it does not have")
+	if _, _, err := svc.EnsureRepo(db.WithOrgScope(ctx, other), other, repoID, "site.yml"); !errors.Is(err, playbooks.ErrNotFound) {
+		t.Fatalf("another organization's pick = %v, want ErrNotFound", err)
 	}
 }
 
@@ -187,5 +188,17 @@ func TestEditorPlaybookVarSourceIsStored(t *testing.T) {
 	}
 	if src, err := svc.VarSource(scoped, org, p.ID); err != nil || len(src.Playbook.Fields) != 1 {
 		t.Fatalf("VarSource(NUL default) = %+v, %v", src, err)
+	}
+
+	// The six characters \u0000 are no NUL: stored, and read back as they are.
+	literal := "- hosts: all\n  vars:\n    x: 'a\\u0000b'  # pulsix: X\n  tasks: []\n"
+	if _, err := svc.UpdateEditor(scoped, org, p.ID, playbooks.CreateInput{Inline: literal}); err != nil {
+		t.Fatalf("UpdateEditor(literal \\u0000): %v", err)
+	}
+	if raw := stored(p.ID); raw == nil {
+		t.Fatal("var_source is NULL for a literal \\u0000")
+	}
+	if src, err := svc.VarSource(scoped, org, p.ID); err != nil || len(src.Playbook.Fields) != 1 || src.Playbook.Fields[0].Default != `a\u0000b` {
+		t.Fatalf("VarSource(literal \\u0000) = %+v, %v", src, err)
 	}
 }

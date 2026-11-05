@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"strings"
 	"time"
 
@@ -186,10 +187,14 @@ func (s *Service) CreateRepo(ctx context.Context, orgID, repoID uuid.UUID, path 
 	return p, nil
 }
 
-// validRepoPath refuses a path no repo playbook may have.
-func validRepoPath(path string) error {
-	if strings.Contains(path, "..") || !RepoPathPattern.MatchString(path) {
-		return fmt.Errorf("%w: invalid path: a relative path ending in .yml or .yaml (letters, digits, dots, slashes and hyphens), no \"..\"", ErrInvalidInput)
+// validRepoPath refuses a path no repo playbook may have: outside
+// RepoPathPattern, with "..", or not in the one canonical spelling a sync
+// discovers it under (no leading "/" or "./", no "//", no "." segment), so
+// one file is never registered under two paths.
+func validRepoPath(p string) error {
+	if strings.Contains(p, "..") || !RepoPathPattern.MatchString(p) ||
+		strings.HasPrefix(p, "/") || path.Clean(p) != p {
+		return fmt.Errorf("%w: invalid path: a relative path ending in .yml or .yaml (letters, digits, dots, slashes and hyphens), no \"..\", \".\" or empty segments, no leading slash", ErrInvalidInput)
 	}
 	return nil
 }
