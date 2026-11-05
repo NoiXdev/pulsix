@@ -41,6 +41,7 @@ type adminUserDetailBody struct {
 		CreatedAt             time.Time  `json:"created_at"`
 		DisabledAt            *time.Time `json:"disabled_at"`
 		MustChangePassword    bool       `json:"must_change_password"`
+		InvitePending         bool       `json:"invite_pending"`
 		TempPasswordExpiresAt *time.Time `json:"temp_password_expires_at"`
 		Memberships           []struct {
 			OrgID         string `json:"org_id"`
@@ -354,12 +355,20 @@ func TestAdminReactivateLeavesTheInvitationPending(t *testing.T) {
 	_ = resp.Body.Close()
 	token := extractInviteToken(t, s)
 
-	for _, action := range []string{"deactivate", "reactivate"} {
-		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(invitee, action), nil)
+	// The account page says the invitation is pending in either state, so
+	// the SPA offers a deactivated invitee nothing but reactivation.
+	for _, step := range []struct{ action, state string }{{"deactivate", "deactivated"}, {"reactivate", "invite_pending"}} {
+		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(invitee, step.action), nil)
 		if resp.StatusCode >= http.StatusBadRequest {
-			t.Fatalf("%s: status %d (%s)", action, resp.StatusCode, mustReadBody(t, resp))
+			t.Fatalf("%s: status %d (%s)", step.action, resp.StatusCode, mustReadBody(t, resp))
 		}
 		_ = resp.Body.Close()
+		resp = requestJSON(t, adminClient, http.MethodGet, s.HTTP.URL+adminUserPath(invitee, ""), nil)
+		var detail adminUserDetailBody
+		decodeInto(t, resp, &detail)
+		if detail.User.State != step.state || !detail.User.InvitePending {
+			t.Fatalf("after %s: state %q, invite_pending %v; want %s, true", step.action, detail.User.State, detail.User.InvitePending, step.state)
+		}
 	}
 
 	resp = requestJSON(t, adminClient, http.MethodGet, s.HTTP.URL+adminUsersPath+"?q=pending-react%40", nil)
@@ -675,7 +684,7 @@ func TestAdminGetUser(t *testing.T) {
 	var body adminUserDetailBody
 	decodeInto(t, resp, &body)
 	u := body.User
-	if u.ID != target.String() || u.Email != "view-target@example.test" || u.State != "active" || u.OrgCount != 2 ||
+	if u.ID != target.String() || u.Email != "view-target@example.test" || u.State != "active" || u.InvitePending || u.OrgCount != 2 ||
 		u.Factors.Passkeys != 1 || u.Factors.TOTP || u.ActiveSessions != 1 || u.CreatedAt.IsZero() || u.LastSignInAt == nil {
 		t.Fatalf("user = %+v", u)
 	}

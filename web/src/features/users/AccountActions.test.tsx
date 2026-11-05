@@ -328,13 +328,22 @@ describe('AccountActions', () => {
   });
 
   it('offers only Deactivate for an account whose invitation is pending', async () => {
-    render(accountDetail({ state: 'invite_pending' }));
+    render(accountDetail({ state: 'invite_pending', invite_pending: true }));
 
     expect(await screen.findByRole('button', { name: 'Deactivate account' })).toBeInTheDocument();
     for (const label of ACTIONS.slice(0, 4)) {
       expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole('button', { name: 'Reactivate account' })).not.toBeInTheDocument();
+  });
+
+  it('offers only Reactivate for a deactivated account whose invitation is pending', async () => {
+    render(accountDetail({ state: 'deactivated', invite_pending: true, disabled_at: '2026-10-01T00:00:00Z' }));
+
+    expect(await screen.findByRole('button', { name: 'Reactivate account' })).toBeInTheDocument();
+    for (const label of ACTIONS) {
+      expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument();
+    }
   });
 
   it('offers Reactivate instead of Deactivate for a deactivated account', async () => {

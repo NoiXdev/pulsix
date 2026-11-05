@@ -14,6 +14,7 @@ export function accountDetail(over: Partial<AdminUserDetail> = {}): AdminUserDet
     created_at: '2026-01-01T00:00:00Z',
     disabled_at: null,
     must_change_password: false,
+    invite_pending: false,
     temp_password_expires_at: null,
     memberships: [{ org_id: 'o1', slug: 'acme', name: 'Acme', role: 'viewer', actor_is_member: true }],
     factors: { totp: true, passkeys: 2, recovery_codes_left: 7 },

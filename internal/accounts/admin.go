@@ -99,6 +99,11 @@ type UserDetail struct {
 	Memberships           []Membership
 	Factors               Factors
 	ActiveSessions        int
+	// InvitePending is an account whose invitation was never accepted, so
+	// it has no password. State shows it only while the account is active;
+	// a deactivated invitee shows as deactivated, and this tells that
+	// reactivation is the one action it accepts.
+	InvitePending bool
 }
 
 // ListUsers returns one page of every account on the instance, ordered by
@@ -156,6 +161,7 @@ func (s *Service) GetUser(ctx context.Context, actorIsAdmin bool, actor, id uuid
 		CreatedAt:             rec.CreatedAt,
 		DisabledAt:            rec.DisabledAt,
 		MustChangePassword:    rec.MustChangePassword,
+		InvitePending:         !rec.HasPassword,
 		TempPasswordExpiresAt: rec.TempPasswordExpiresAt,
 		Memberships:           memberships,
 		Factors:               rec.Factors,

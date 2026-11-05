@@ -2979,6 +2979,7 @@ export interface components {
             factors: components["schemas"]["AdminFactorsDTO"];
             id: string;
             instance_admin: boolean;
+            invite_pending: boolean;
             /** Format: date-time */
             last_sign_in_at: string | null;
             memberships: components["schemas"]["AdminMembershipDTO"][] | null;

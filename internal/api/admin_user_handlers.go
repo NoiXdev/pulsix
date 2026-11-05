@@ -62,6 +62,11 @@ type adminUserDetailDTO struct {
 	// ActiveSessions counts the signed-in sessions: complete, unrevoked
 	// and unexpired.
 	ActiveSessions int `json:"active_sessions"`
+	// InvitePending is true while the invitation that created the account
+	// was never accepted, a deactivated account included (whose state is
+	// deactivated): every action but reactivation answers 409
+	// invite_pending then.
+	InvitePending bool `json:"invite_pending"`
 }
 
 type adminUserListInput struct {
@@ -290,6 +295,7 @@ func adminUserDetailDTOOf(u accounts.UserDetail) adminUserDetailDTO {
 		CreatedAt:             u.CreatedAt,
 		DisabledAt:            u.DisabledAt,
 		MustChangePassword:    u.MustChangePassword,
+		InvitePending:         u.InvitePending,
 		TempPasswordExpiresAt: u.TempPasswordExpiresAt,
 		Memberships:           make([]adminMembershipDTO, len(u.Memberships)),
 		Factors:               adminFactorsDTO{TOTP: u.Factors.TOTP, Passkeys: u.Factors.Passkeys, RecoveryCodesLeft: u.Factors.RecoveryCodesLeft},

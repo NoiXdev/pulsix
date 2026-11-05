@@ -143,11 +143,26 @@ func TestGetUser(t *testing.T) {
 		got.Factors != detail.Factors || got.ActiveSessions != 3 || got.State != accounts.StateMustChangePassword {
 		t.Fatalf("GetUser = %+v", got)
 	}
+	if got.InvitePending {
+		t.Fatalf("InvitePending = true for an account with a password")
+	}
 	if len(got.Memberships) != 1 || got.Memberships[0] != memberships[0] {
 		t.Fatalf("memberships = %+v", got.Memberships)
 	}
 	if len(store.memberCalls) != 1 || store.memberCalls[0] != (memberCall{id, actor}) {
 		t.Fatalf("ListMemberships calls = %+v, want one for the user, seen by the actor", store.memberCalls)
+	}
+
+	// A deactivated invitee shows as deactivated, and still says that its
+	// invitation is pending: only reactivation is open to it.
+	disabled := testNow
+	invitee := accounts.AccountDetailRecord{AccountRecord: accounts.AccountRecord{ID: id, DisabledAt: &disabled}}
+	got, err = newAdminService(&fakeStore{detail: &invitee}, &fakeMailer{}).GetUser(ctx, true, actor, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != accounts.StateDeactivated || !got.InvitePending {
+		t.Fatalf("deactivated invitee: state %q, InvitePending %v; want deactivated, true", got.State, got.InvitePending)
 	}
 
 	if _, err := svc.GetUser(ctx, false, actor, id); !errors.Is(err, accounts.ErrForbidden) {

@@ -24,10 +24,11 @@ export function accountStateLabel(t: Messages, state: AccountState): string {
 
 /** Which actions an account offers. An account whose invitation was never
  * accepted has no password, so nothing may hand it one: Deactivate is its
- * only action. A deactivated account offers Reactivate in Deactivate's
- * place. */
-export function availableActions(state: AccountState): ActionKind[] {
-  if (state === 'invite_pending') return ['deactivate'];
+ * only action, and Reactivate once it is deactivated (its state then reads
+ * deactivated, so `invitePending` says it). A deactivated account offers
+ * Reactivate in Deactivate's place. */
+export function availableActions(state: AccountState, invitePending: boolean): ActionKind[] {
   const toggle: ActionKind = state === 'deactivated' ? 'reactivate' : 'deactivate';
+  if (invitePending || state === 'invite_pending') return [toggle];
   return ['resetLink', 'tempPassword', 'resetFactor', 'endSessions', toggle];
 }

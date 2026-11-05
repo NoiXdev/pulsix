@@ -118,7 +118,7 @@ export const deUsers: Messages['users'] = {
     },
     errors: {
       notOnOwnAccount: 'Diese Aktion ist für das eigene Konto nicht verfügbar.',
-      invitePending: 'Die Einladung dieses Kontos wurde nie angenommen, daher kann es nur deaktiviert werden.',
+      invitePending: 'Die Einladung dieses Kontos wurde nie angenommen, daher kann es nur deaktiviert oder reaktiviert werden.',
       mailNotConfigured: 'Auf dieser Instanz ist kein ausgehender Mailversand eingerichtet.',
       lastInstanceAdmin: 'Der letzte aktive Instanz-Administrator kann nicht deaktiviert werden.',
       instanceAdminRequired: 'Nur Instanz-Administratoren dürfen das.',

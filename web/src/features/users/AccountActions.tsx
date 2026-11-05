@@ -56,7 +56,7 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
   return (
     <>
       <div className="flex flex-col rounded-[10px] border border-border bg-card">
-        {availableActions(user.state).map((kind) => {
+        {availableActions(user.state, user.invite_pending).map((kind) => {
           const blocked = kind === 'resetLink' ? resetLinkBlocked(t, resetAvailable) : null;
           return (
             <div key={kind} className="flex items-center gap-4 border-b border-border px-4 py-3 last:border-b-0">

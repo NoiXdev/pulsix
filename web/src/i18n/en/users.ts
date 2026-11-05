@@ -119,7 +119,7 @@ export const enUsers = {
     },
     errors: {
       notOnOwnAccount: 'This action is not available on your own account.',
-      invitePending: 'The invitation of this account was never accepted, so it can only be deactivated.',
+      invitePending: 'The invitation of this account was never accepted, so it can only be deactivated or reactivated.',
       mailNotConfigured: 'Outgoing mail is not configured on this instance.',
       lastInstanceAdmin: 'The last active instance administrator cannot be deactivated.',
       instanceAdminRequired: 'Only instance administrators can do this.',
