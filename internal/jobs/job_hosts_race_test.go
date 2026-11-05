@@ -48,6 +48,9 @@ func TestCreateJobSkipsAHostDeletedMeanwhile(t *testing.T) {
 		})
 		return err
 	}
+	// Registered right after Begin, so a failing DELETE cannot leave the
+	// transaction open and hang pool.Close.
+	t.Cleanup(func() { _ = release(false) })
 	if _, err := tx.Exec(ctx, `DELETE FROM hosts WHERE id = $1`, hostA); err != nil {
 		t.Fatal(err)
 	}

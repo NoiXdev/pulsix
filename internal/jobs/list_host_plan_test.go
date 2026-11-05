@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -138,24 +139,41 @@ FROM generate_series(1, 50000) AS g`, org, zone, hosts); err != nil {
 	return org, hosts[0], app
 }
 
-// explainGeneric prepares query in a transaction bound to org, forces a
-// generic plan (what a prepared statement settles on after five
-// executions, and what pgx's extended protocol reaches in production) and
-// returns the EXPLAIN JSON of executing it with execArgs. With analyze it
-// also runs the statement and returns the execution time in milliseconds.
+// explainGeneric runs explainGenericOn on a connection acquired from the
+// app pool and fails the test on an error.
 func explainGeneric(t *testing.T, app *db.DB, org uuid.UUID, query, execArgs string, analyze bool) (plan any, millis float64) {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := app.Pool().Begin(ctx)
+	conn, err := app.Pool().Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer conn.Release()
+	plan, millis, err = explainGenericOn(ctx, conn.Conn(), org, query, execArgs, analyze)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan, millis
+}
+
+// explainGenericOn prepares query in a transaction on conn bound to org,
+// forces a generic plan (what a prepared statement settles on after five
+// executions, and what pgx's extended protocol reaches in production) and
+// returns the EXPLAIN JSON of executing it with execArgs. With analyze it
+// also runs the statement and returns the execution time in milliseconds.
+func explainGenericOn(ctx context.Context, conn *pgx.Conn, org uuid.UUID, query, execArgs string, analyze bool) (plan any, millis float64, err error) {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
 	// A prepared statement belongs to the session, not the transaction:
-	// deallocate it before the connection returns to the pool, or the next
-	// call on the same connection fails to prepare it again.
+	// deallocate it after the rollback, outside the transaction (inside a
+	// failed one the DEALLOCATE itself is refused), or the next call on the
+	// same connection fails to prepare it again. The error is ignored: the
+	// PREPARE may never have happened.
 	defer func() {
-		_, _ = tx.Exec(ctx, `DEALLOCATE list_jobs`)
 		_ = tx.Rollback(ctx)
+		_, _ = conn.Exec(ctx, `DEALLOCATE list_jobs`)
 	}()
 	for _, stmt := range []string{
 		`SET LOCAL plan_cache_mode = force_generic_plan`,
@@ -163,7 +181,7 @@ func explainGeneric(t *testing.T, app *db.DB, org uuid.UUID, query, execArgs str
 		`PREPARE list_jobs AS ` + query,
 	} {
 		if _, err := tx.Exec(ctx, stmt); err != nil {
-			t.Fatalf("%.40s: %v", stmt, err)
+			return nil, 0, fmt.Errorf("%.40s: %w", stmt, err)
 		}
 	}
 	opts := "FORMAT JSON"
@@ -172,16 +190,16 @@ func explainGeneric(t *testing.T, app *db.DB, org uuid.UUID, query, execArgs str
 	}
 	var raw []byte
 	if err := tx.QueryRow(ctx, fmt.Sprintf(`EXPLAIN (%s) EXECUTE list_jobs(%s)`, opts, execArgs)).Scan(&raw); err != nil {
-		t.Fatalf("explain: %v", err)
+		return nil, 0, fmt.Errorf("explain: %w", err)
 	}
 	var doc []map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil || len(doc) != 1 {
-		t.Fatalf("explain output %s: %v", raw, err)
+		return nil, 0, fmt.Errorf("explain output %s: %v", raw, err)
 	}
 	if v, ok := doc[0]["Execution Time"].(float64); ok {
 		millis = v
 	}
-	return doc[0]["Plan"], millis
+	return doc[0]["Plan"], millis, nil
 }
 
 // TestListJobsHostFilterUsesTheLinkIndexUnderAGenericPlan pins backlog
@@ -217,4 +235,35 @@ func TestListJobsHostFilterUsesTheLinkIndexUnderAGenericPlan(t *testing.T) {
 	}
 	_, ms := explainGeneric(t, app, org, query, args, true)
 	t.Logf("execution time under the generic plan: %.2f ms", ms)
+}
+
+// TestExplainGenericFreesItsStatementAfterAFailure: a failed call must not
+// leave the prepared statement behind on the connection, or the next call
+// on the same pooled connection dies on "already exists" instead of running.
+func TestExplainGenericFreesItsStatementAfterAFailure(t *testing.T) {
+	ctx := context.Background()
+	app := testdb.Open(t)
+	owner, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(owner.Close)
+	org := uuid.Must(uuid.NewV7())
+	if _, err := gen.New(owner.Pool()).CreateOrganization(ctx, gen.CreateOrganizationParams{ID: org, Slug: "plancleanup", Name: "plancleanup"}); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := app.Pool().Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+
+	query := generatedQuery(t, "listJobsForHost")
+	const tail = `, '` + "00000000-0000-0000-0000-000000000000" + `', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`
+	if _, _, err := explainGenericOn(ctx, conn.Conn(), org, query, `'not-a-uuid'`+tail, false); err == nil {
+		t.Fatal("explain with an invalid organization argument succeeded")
+	}
+	if _, _, err := explainGenericOn(ctx, conn.Conn(), org, query, `'`+org.String()+`'`+tail, false); err != nil {
+		t.Fatalf("second call on the same connection: %v", err)
+	}
 }
