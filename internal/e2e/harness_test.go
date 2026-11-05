@@ -348,13 +348,18 @@ func materializeFixtureRepo(t *testing.T) string {
 
 // pushFixtureChange commits files (path inside the repository → content)
 // on top of the bare repository's main branch, the way a person pushing a
-// change would; the next repo sync fetches it.
+// change would; the next repo sync fetches it. A path that would leave the
+// clone (absolute, or climbing out with "..") fails the test.
 func pushFixtureChange(t *testing.T, bare string, files map[string]string) {
 	t.Helper()
 	work := filepath.Join(t.TempDir(), "work")
 	runGit(t, filepath.Dir(work), "clone", "-q", "-b", "main", bare, work)
 	for rel, content := range files {
-		path := filepath.Join(work, filepath.FromSlash(rel))
+		local := filepath.FromSlash(rel)
+		if !filepath.IsLocal(local) {
+			t.Fatalf("fixture change path %q is not inside the repository", rel)
+		}
+		path := filepath.Join(work, local)
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
