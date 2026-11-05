@@ -51,8 +51,8 @@ func TestRepoRoleWinsOverInstalledRole(t *testing.T) {
 		t.Run(dir, func(t *testing.T) {
 			play := joinDir(dir, "site.yml")
 			repo := mapFS(map[string]string{
-				play:                                   "- hosts: all\n  roles: [common]\n",
-				"roles/common/meta/argument_specs.yml": oneOption("a"),
+				play: "- hosts: all\n  roles: [common]\n",
+				joinDir(dir, "roles/common/meta/argument_specs.yml"): oneOption("a"),
 			})
 			roles := mapFS(map[string]string{"common/meta/argument_specs.yml": oneOption("b")})
 			pb := parseWithRoles(t, repo, roles)
@@ -89,7 +89,7 @@ func TestRoleNotFoundNamesInstalledRoles(t *testing.T) {
 		wantRoles(t, pb.Roles, RoleUse{Name: "nope", EntryPoint: "main", State: RoleNotFound})
 		wantNotes(t, pb.Notes, "warning role_not_found site.yml:2")
 	}
-	if msg := with.Notes[0].Message; !strings.Contains(msg, "at roles/nope or among the roles installed from requirements.yml") {
+	if msg := with.Notes[0].Message; !strings.Contains(msg, "at roles/nope or nope or among the roles installed from requirements.yml") {
 		t.Fatalf("with installed roles: %q", msg)
 	}
 	if msg := without.Notes[0].Message; strings.Contains(msg, "requirements.yml") || !strings.Contains(msg, "at roles/nope") {

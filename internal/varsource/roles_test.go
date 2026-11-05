@@ -15,7 +15,7 @@ func TestRoleResolution(t *testing.T) {
 	if pb.Failed {
 		t.Fatalf("failed (notes %v)", pb.Notes)
 	}
-	if got, want := fieldNames(pb.Fields), []string{"pre_x", "local_sub", "shared_x", "inblock_x", "inrescue_x", "inalways_x", "post_x", "handler_x"}; !reflect.DeepEqual(got, want) {
+	if got, want := fieldNames(pb.Fields), []string{"pre_x", "local_sub", "inblock_x", "inrescue_x", "inalways_x", "post_x", "handler_x"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("fields = %q, want %q", got, want)
 	}
 	if f := pb.Fields[1]; f.Source.File != "sub/roles/local/meta/argument_specs.yml" || f.Source.Role != "local" {
@@ -27,7 +27,7 @@ func TestRoleResolution(t *testing.T) {
 	wantRoles(t, pb.Roles,
 		main("pre", RoleRead),
 		main("local", RoleRead),
-		main("shared", RoleRead),
+		main("shared", RoleNotFound), // roles/ at the root: not searched for sub/play.yml (backlog 7.90)
 		main("missing_role", RoleNotFound),
 		main("community.general.thing", RoleCollection),
 		main("nospecs", RoleNoSpecs),
@@ -38,6 +38,7 @@ func TestRoleResolution(t *testing.T) {
 		main("handler", RoleRead),
 	)
 	wantNotes(t, pb.Notes,
+		"warning role_not_found sub/play.yml:7",
 		"warning role_not_found sub/play.yml:8",
 		"hint role_collection sub/play.yml:9",
 		"hint role_without_specs sub/play.yml:10",
@@ -69,42 +70,42 @@ func TestRoleLookupVariants(t *testing.T) {
 			map[string]string{"etc/meta/argument_specs.yml": oneOption("x_var")},
 			[]RoleUse{{"../../etc", "main", RoleNotFound}}, nil, []string{"warning role_not_found pb/play.yml:2"}},
 		{"key=value form", "  tasks:\n    - include_role: name=x tasks_from=setup.yaml\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": "argument_specs:\n  setup:\n    options:\n      s_var: {type: str}\n"},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": "argument_specs:\n  setup:\n    options:\n      s_var: {type: str}\n"},
 			[]RoleUse{{"x", "setup", RoleRead}}, []string{"s_var"}, nil},
 		{"tasks_from in a directory", "  tasks:\n    - import_role: {name: x, tasks_from: sub/setup.yml}\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": "argument_specs:\n  setup:\n    options:\n      s_var: {type: str}\n"},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": "argument_specs:\n  setup:\n    options:\n      s_var: {type: str}\n"},
 			[]RoleUse{{"x", "setup", RoleRead}}, []string{"s_var"}, nil},
 		{"templated tasks_from", "  tasks:\n    - import_role: {name: x, tasks_from: \"{{ ep }}\"}\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": oneOption("x_var")},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": oneOption("x_var")},
 			[]RoleUse{{"x", "{{ ep }}", RoleDynamic}}, nil, []string{"hint role_dynamic pb/play.yml:3"}},
 		{"argument_specs.yaml", "  roles: [x]\n",
-			map[string]string{"roles/x/meta/argument_specs.yaml": oneOption("x_var")},
+			map[string]string{"pb/roles/x/meta/argument_specs.yaml": oneOption("x_var")},
 			[]RoleUse{{"x", "main", RoleRead}}, []string{"x_var"}, nil},
 		{"argument_specs.json", "  roles: [x]\n",
-			map[string]string{"roles/x/meta/argument_specs.json": `{"argument_specs": {"main": {"options": {"x_var": {"type": "str"}}}}}`},
+			map[string]string{"pb/roles/x/meta/argument_specs.json": `{"argument_specs": {"main": {"options": {"x_var": {"type": "str"}}}}}`},
 			[]RoleUse{{"x", "main", RoleRead}}, []string{"x_var"}, nil},
 		{"specs in meta/main.yml", "  roles: [x]\n",
-			map[string]string{"roles/x/meta/main.yml": "galaxy_info: {author: me}\n" + oneOption("x_var")},
+			map[string]string{"pb/roles/x/meta/main.yml": "galaxy_info: {author: me}\n" + oneOption("x_var")},
 			[]RoleUse{{"x", "main", RoleRead}}, []string{"x_var"}, nil},
 		{"meta/main.yml without specs", "  roles: [x]\n",
-			map[string]string{"roles/x/meta/main.yml": "galaxy_info: {author: me}\ndependencies: []\n"},
+			map[string]string{"pb/roles/x/meta/main.yml": "galaxy_info: {author: me}\ndependencies: []\n"},
 			[]RoleUse{{"x", "main", RoleNoSpecs}}, nil, []string{"hint role_without_specs pb/play.yml:2"}},
 		{"argument_specs.yml wins over meta/main.yml", "  roles: [x]\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": oneOption("a_var"), "roles/x/meta/main.yml": oneOption("m_var")},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": oneOption("a_var"), "pb/roles/x/meta/main.yml": oneOption("m_var")},
 			[]RoleUse{{"x", "main", RoleRead}}, []string{"a_var"}, nil},
 		{"invalid spec file", "  roles: [x]\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": "argument_specs: [\n"},
-			[]RoleUse{{"x", "main", RoleUnreadable}}, nil, []string{"warning invalid_yaml roles/x/meta/argument_specs.yml:1"}},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": "argument_specs: [\n"},
+			[]RoleUse{{"x", "main", RoleUnreadable}}, nil, []string{"warning invalid_yaml pb/roles/x/meta/argument_specs.yml:1"}},
 		{"spec file too large", "  roles: [x]\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": oneOption("x_var") + "#" + strings.Repeat("x", MaxFileBytes)},
-			[]RoleUse{{"x", "main", RoleUnreadable}}, nil, []string{"warning file_too_large roles/x/meta/argument_specs.yml:0"}},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": oneOption("x_var") + "#" + strings.Repeat("x", MaxFileBytes)},
+			[]RoleUse{{"x", "main", RoleUnreadable}}, nil, []string{"warning file_too_large pb/roles/x/meta/argument_specs.yml:0"}},
 		{"entry point missing", "  tasks:\n    - import_role: {name: x, tasks_from: nope}\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": oneOption("x_var")},
-			[]RoleUse{{"x", "nope", RoleRead}}, nil, []string{"hint entry_point_missing roles/x/meta/argument_specs.yml:1"}},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": oneOption("x_var")},
+			[]RoleUse{{"x", "nope", RoleRead}}, nil, []string{"hint entry_point_missing pb/roles/x/meta/argument_specs.yml:1"}},
 		{"entry without a role name", "  roles: [{tags: x}]\n  tasks:\n    - include_role: {tasks_from: y}\n", nil,
 			[]RoleUse{{"", "main", RoleUnreadable}}, nil, []string{"warning role_invalid pb/play.yml:2", "warning role_invalid pb/play.yml:4"}},
 		{"same role and entry point twice", "  roles: [x, {role: x}]\n  tasks:\n    - import_role: {name: x}\n",
-			map[string]string{"roles/x/meta/argument_specs.yml": oneOption("x_var")},
+			map[string]string{"pb/roles/x/meta/argument_specs.yml": oneOption("x_var")},
 			[]RoleUse{{"x", "main", RoleRead}}, []string{"x_var"}, nil},
 	}
 	for _, tc := range cases {

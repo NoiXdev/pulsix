@@ -113,11 +113,13 @@ func (r roleRef) shownEntryPoint() string { return clip(r.entryPoint, maxRefByte
 
 // target finds a role by name from a playbook directory: a template is
 // dynamic; an inline playbook has no repository; a name with a slash is a
-// path relative to the playbook's directory; any other is looked up in
-// <dir>/roles, then in roles/ at the root, then among the roles installed
-// from requirements.yml (Ansible's roles_path), and a name of three or
-// more dotted parts found nowhere is a collection role
-// (namespace.collection.role), as Ansible resolves it.
+// path relative to the playbook's directory; any other is looked up where
+// ansible-playbook looks for it — in <dir>/roles, then among the roles
+// installed from requirements.yml (the run's roles_path), then in <dir>
+// itself — and a name of three or more dotted parts found nowhere is a
+// collection role (namespace.collection.role). roles/ at the repository
+// root is not searched for a playbook in a subdirectory: the run never
+// finds a role there (backlog 7.90).
 func (w *walk) target(name, dir string) roleTarget {
 	switch {
 	case templated(name):
@@ -135,36 +137,38 @@ func (w *walk) target(name, dir string) roleTarget {
 }
 
 func (w *walk) findRole(name, dir string) roleTarget {
-	var candidates []string
 	switch {
 	case strings.Contains(name, "/"):
 		p := path.Join(dir, name)
 		if strings.HasPrefix(name, "/") || p == ".." || strings.HasPrefix(p, "../") {
 			return roleTarget{state: RoleNotFound, where: "inside the repository"}
 		}
-		candidates = []string{p}
+		if isDir(w.p.fsys, p) {
+			return roleTarget{state: RoleRead, dir: p}
+		}
+		return roleTarget{state: RoleNotFound, where: "at " + clip(p, maxRefBytes)}
 	case name == "" || name == "." || name == "..":
 		return roleTarget{state: RoleNotFound, where: "(not a role name)"}
-	default:
-		candidates = []string{path.Join(dir, "roles", name)}
-		if dir != "." {
-			candidates = append(candidates, path.Join("roles", name))
-		}
 	}
-	for _, c := range candidates {
-		if isDir(w.p.fsys, c) {
-			return roleTarget{state: RoleRead, dir: c}
-		}
+	// A plain name, in ansible-playbook's order (ansible-core 2.21:
+	// <dir>/roles, roles_path, <dir>). For a playbook at the root <dir> is
+	// the root itself, so any top-level directory of that name is taken
+	// for the role, as Ansible takes it.
+	inRoles, beside := path.Join(dir, "roles", name), path.Join(dir, name)
+	if isDir(w.p.fsys, inRoles) {
+		return roleTarget{state: RoleRead, dir: inRoles}
 	}
-	plain := !strings.Contains(name, "/")
-	if plain && w.p.roles != nil && isDir(w.p.roles, name) {
+	if w.p.roles != nil && isDir(w.p.roles, name) {
 		return roleTarget{state: RoleRead, dir: name, installed: true}
 	}
-	if plain && strings.Count(name, ".") >= 2 {
+	if isDir(w.p.fsys, beside) {
+		return roleTarget{state: RoleRead, dir: beside}
+	}
+	if strings.Count(name, ".") >= 2 {
 		return roleTarget{state: RoleCollection}
 	}
-	where := "at " + clip(strings.Join(candidates, " or "), maxRefBytes)
-	if plain && w.p.roles != nil {
+	where := "at " + clip(inRoles+" or "+beside, maxRefBytes)
+	if w.p.roles != nil {
 		where += " or among the roles installed from requirements.yml"
 	}
 	return roleTarget{state: RoleNotFound, where: where}

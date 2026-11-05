@@ -114,6 +114,10 @@ flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
   or a non-ASCII letter would split or end a setting in a run's
   `ansible.cfg`, SSH arguments or inventory wrapper); move the data dir
   before upgrading such a worker.
+- **7.90, variable editor:** a role a playbook in a subdirectory uses is no
+  longer read from the repository subpath's root `roles/` — runs never found
+  it there — and shows as not found after the next sync, as the run reports
+  it; a role directory next to the playbook is now read, as the run finds it.
 
 ## Roll order
 
