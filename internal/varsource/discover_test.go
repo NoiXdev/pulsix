@@ -1,7 +1,9 @@
 package varsource
 
 import (
+	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"reflect"
 	"strings"
@@ -18,7 +20,7 @@ func playbookPaths(r Report) []string {
 }
 
 func TestDiscover(t *testing.T) {
-	r := ParseRepo(os.DirFS("testdata/basic"), "abc123")
+	r := ParseRepo(context.Background(), os.DirFS("testdata/basic"), "abc123")
 	if r.Commit != "abc123" || r.Incomplete || len(r.LeftOut) != 0 {
 		t.Fatalf("commit %q, incomplete %v, left out %v", r.Commit, r.Incomplete, r.LeftOut)
 	}
@@ -50,7 +52,7 @@ func TestDiscoverSkipsAndSizes(t *testing.T) {
 		"doc.yml":                      {Data: []byte("%YAML 1.1\n--- # plays\n- hosts: all\n")},
 		"inline.yml":                   {Data: []byte("--- [{hosts: all}]\n")},
 	}
-	r := ParseRepo(fsys, "")
+	r := ParseRepo(context.Background(), fsys, "")
 	if got, want := playbookPaths(r), []string{"a.yaml", "deep/x/p.yml", "doc.yml", "inline.yml"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("playbooks = %q, want %q", got, want)
 	}
@@ -63,7 +65,7 @@ func TestParseRepoCapsPlaybooks(t *testing.T) {
 		fsys[fmt.Sprintf("p%04d.yml", i)] = &fstest.MapFile{Data: []byte("- hosts: all\n")}
 	}
 	fsys["zz.yml"] = &fstest.MapFile{Data: []byte("a: 1\n")} // no playbook: not left out
-	r := ParseRepo(fsys, "c")
+	r := ParseRepo(context.Background(), fsys, "c")
 	if len(r.Playbooks) != MaxPlaybooks || !r.Incomplete {
 		t.Fatalf("%d playbooks, incomplete %v", len(r.Playbooks), r.Incomplete)
 	}
@@ -82,8 +84,100 @@ func TestParseRepoCapsItsNotes(t *testing.T) {
 	for i := range maxNotesPerList + 5 {
 		fsys[fmt.Sprintf("bad%04d.yml", i)] = &fstest.MapFile{Data: []byte("- [\n")}
 	}
-	r := ParseRepo(fsys, "c")
+	r := ParseRepo(context.Background(), fsys, "c")
 	if len(r.Notes) != maxNotesPerList+1 || r.Notes[maxNotesPerList].Code != codeTooManyNotes {
 		t.Fatalf("%d notes, want %d and one too_many_notes", len(r.Notes), maxNotesPerList)
+	}
+}
+
+// cancellingFS cancels its context when a file named stopAt is opened and
+// records every YAML file opened.
+type cancellingFS struct {
+	fstest.MapFS
+	stopAt string
+	cancel context.CancelFunc
+	opened []string
+}
+
+func (c *cancellingFS) Open(name string) (fs.File, error) {
+	if strings.HasSuffix(name, ".yml") {
+		c.opened = append(c.opened, name)
+	}
+	if name == c.stopAt {
+		c.cancel()
+	}
+	return c.MapFS.Open(name)
+}
+
+func TestParseRepoStopsWhenTheContextEnds(t *testing.T) {
+	play := &fstest.MapFile{Data: []byte("- hosts: all\n")}
+	files := fstest.MapFS{
+		"p0.yml":         play,
+		"p1.yml":         play,
+		"p2.yml":         play,
+		"p3.yml":         play,
+		"q.yml":          {Data: []byte("a: 1\n")}, // not looked at once stopped: a name that may be a playbook
+		"with space.yml": play,                     // no playbook path: not listed
+	}
+	t.Run("midway", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		fsys := &cancellingFS{MapFS: files, stopAt: "p1.yml", cancel: cancel}
+		r := ParseRepo(ctx, fsys, "c")
+		// The playbook being read when the time ran out is read to its end.
+		if got, want := playbookPaths(r), []string{"p0.yml", "p1.yml"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("playbooks = %q, want %q", got, want)
+		}
+		if want := []string{"p2.yml", "p3.yml", "q.yml"}; !r.Incomplete || !reflect.DeepEqual(r.LeftOut, want) {
+			t.Fatalf("incomplete %v, left out %q, want %q", r.Incomplete, r.LeftOut, want)
+		}
+		wantNotes(t, r.Notes, "warning time_limit :0")
+		if !strings.Contains(r.Notes[0].Message, "p2.yml") {
+			t.Fatalf("message %q does not name p2.yml", r.Notes[0].Message)
+		}
+		for _, name := range fsys.opened {
+			if strings.HasPrefix(name, "p2") || strings.HasPrefix(name, "p3") || name == "q.yml" {
+				t.Fatalf("%s was opened after the stop; opened %q", name, fsys.opened)
+			}
+		}
+	})
+	t.Run("before the first file", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		fsys := &cancellingFS{MapFS: files, cancel: cancel}
+		r := ParseRepo(ctx, fsys, "c")
+		if len(r.Playbooks) != 0 || len(fsys.opened) != 0 {
+			t.Fatalf("playbooks %q, opened %q", playbookPaths(r), fsys.opened)
+		}
+		if want := []string{"p0.yml", "p1.yml", "p2.yml", "p3.yml", "q.yml"}; !r.Incomplete || !reflect.DeepEqual(r.LeftOut, want) {
+			t.Fatalf("incomplete %v, left out %q", r.Incomplete, r.LeftOut)
+		}
+		wantNotes(t, r.Notes, "warning time_limit :0")
+	})
+}
+
+func TestParseRepoStopsPastTheCapWithoutReading(t *testing.T) {
+	fsys := fstest.MapFS{}
+	for i := range MaxPlaybooks + 2 {
+		fsys[fmt.Sprintf("p%04d.yml", i)] = &fstest.MapFile{Data: []byte("- hosts: all\n")}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := &cancellingFS{MapFS: fsys, stopAt: fmt.Sprintf("p%04d.yml", MaxPlaybooks), cancel: cancel}
+	r := ParseRepo(ctx, stop, "c")
+	capped, stopped := fmt.Sprintf("p%04d.yml", MaxPlaybooks), fmt.Sprintf("p%04d.yml", MaxPlaybooks+1)
+	if len(r.Playbooks) != MaxPlaybooks || !reflect.DeepEqual(r.LeftOut, []string{capped, stopped}) {
+		t.Fatalf("%d playbooks, left out %q", len(r.Playbooks), r.LeftOut)
+	}
+	wantNotes(t, r.Notes, "warning too_many_playbooks :0", "warning time_limit :0")
+	if opened := stop.opened[len(stop.opened)-1]; opened != capped {
+		t.Fatalf("last file opened %s, want %s (the one past the stop is not looked at)", opened, capped)
+	}
+}
+
+func TestReadFailed(t *testing.T) {
+	n := ReadFailed("the commit could not be determined")
+	if n != (Note{Level: LevelWarning, Code: codeReadFailed, Message: "the commit could not be determined"}) {
+		t.Fatalf("note = %+v", n)
 	}
 }

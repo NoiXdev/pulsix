@@ -107,6 +107,27 @@ func TestFetchRepoClonesIntoOrgScopedCache(t *testing.T) {
 	}
 }
 
+func TestHeadCommit(t *testing.T) {
+	source := gitFixture(t)
+	r := &Runner{GitBin: gitOnPATH(t)}
+	out, err := exec.Command(gitOnPATH(t), "-C", source, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.HeadCommit(context.Background(), source)
+	if want := strings.TrimSpace(string(out)); err != nil || got != want {
+		t.Fatalf("HeadCommit = %q, %v; want %q", got, err, want)
+	}
+	// A directory that is no repository has no commit, even below one.
+	notRepo := filepath.Join(source, "playbooks")
+	if got, err := r.HeadCommit(context.Background(), notRepo); err == nil {
+		t.Fatalf("HeadCommit(not a repo) = %q, want an error", got)
+	}
+	if got, err := r.HeadCommit(context.Background(), t.TempDir()); err == nil {
+		t.Fatalf("HeadCommit(empty dir) = %q, want an error", got)
+	}
+}
+
 // orgID and repoID are stable fixtures for the org-scoped cache layout.
 var (
 	orgID  = uuid.Must(uuid.NewV7())

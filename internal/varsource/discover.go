@@ -2,6 +2,7 @@ package varsource
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -21,8 +22,13 @@ var skippedDirs = map[string]bool{"roles": true, "group_vars": true, "host_vars"
 // lexical order and reads each one's variable sources (spec 7.75 section
 // 4). It never fails: problems are notes, in the playbooks or in the
 // report's own list.
-func ParseRepo(fsys fs.FS, commit string) Report {
-	d := &discovery{p: &parser{fsys: fsys}}
+//
+// ctx bounds the whole read: once it ends, no further file is opened, and
+// every remaining file that may be a playbook (judged by its name alone)
+// is left out with one time_limit warning. The playbook being read when
+// it ends is read to its end; one playbook's own work is bounded.
+func ParseRepo(ctx context.Context, fsys fs.FS, commit string) Report {
+	d := &discovery{ctx: ctx, p: &parser{fsys: fsys}}
 	if err := fs.WalkDir(fsys, ".", d.visit); err != nil {
 		d.notes = append(d.notes, warning(codeReadFailed, "", 0, "the repository could not be read; no playbooks discovered"))
 	}
@@ -30,22 +36,44 @@ func ParseRepo(fsys fs.FS, commit string) Report {
 	if r.Playbooks == nil {
 		r.Playbooks = []Playbook{}
 	}
-	if d.leftOut > 0 {
+	if d.capped.n > 0 {
 		r.Incomplete = true
-		r.LeftOut = d.listed
+		r.LeftOut = append(r.LeftOut, d.capped.names...)
 		r.Notes = append(r.Notes, warning(codeTooManyPlaybooks, "", 0, "more than %d playbooks; %d files that may be playbooks are left out: %s",
-			MaxPlaybooks, d.leftOut, nameList(d.listed, d.leftOut)))
+			MaxPlaybooks, d.capped.n, nameList(d.capped.names, d.capped.n)))
+	}
+	if d.stopped.n > 0 {
+		r.Incomplete = true
+		r.LeftOut = append(r.LeftOut, d.stopped.names...)
+		r.Notes = append(r.Notes, warning(codeTimeLimit, "", 0, "reading the variable sources ran out of time; %d files that may be playbooks are left out: %s",
+			d.stopped.n, nameList(d.stopped.names, d.stopped.n)))
 	}
 	r.Notes = capNotes(r.Notes, "", maxNotesPerList)
 	return r
 }
 
 type discovery struct {
+	ctx       context.Context
 	p         *parser
 	playbooks []Playbook
 	notes     []Note
-	listed    []string // left out, up to MaxPlaybooks names
-	leftOut   int
+	capped    leftOut // past MaxPlaybooks
+	stopped   leftOut // after ctx ended
+	stop      bool    // ctx ended: no file is opened any more
+}
+
+// leftOut counts files that may be playbooks and were not read, naming up
+// to MaxPlaybooks of them.
+type leftOut struct {
+	names []string
+	n     int
+}
+
+func (l *leftOut) add(name string) {
+	l.n++
+	if len(l.names) < MaxPlaybooks {
+		l.names = append(l.names, name)
+	}
 }
 
 func (d *discovery) visit(name string, entry fs.DirEntry, err error) error {
@@ -68,11 +96,19 @@ func (d *discovery) visit(name string, entry fs.DirEntry, err error) error {
 	if !candidate(entry.Name()) || (!entry.Type().IsRegular() && entry.Type()&fs.ModeSymlink == 0) {
 		return nil
 	}
-	if len(d.playbooks) == MaxPlaybooks {
-		d.maybeLeftOut(name)
-		return nil
+	if !d.stop && d.ctx.Err() != nil {
+		d.stop = true
 	}
-	d.examine(name)
+	switch {
+	case d.stop:
+		if validPlaybookPath(name) {
+			d.stopped.add(name)
+		}
+	case len(d.playbooks) == MaxPlaybooks:
+		d.maybeLeftOut(name)
+	default:
+		d.examine(name)
+	}
 	return nil
 }
 
@@ -136,10 +172,7 @@ func (d *discovery) maybeLeftOut(name string) {
 	if (err != nil && !errors.Is(err, errTooLarge)) || !mayBePlaybook(head) {
 		return
 	}
-	d.leftOut++
-	if len(d.listed) < MaxPlaybooks {
-		d.listed = append(d.listed, name)
-	}
+	d.capped.add(name)
 }
 
 // mayBePlaybook reports whether data starts like a YAML list: its first

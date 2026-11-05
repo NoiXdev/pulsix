@@ -224,6 +224,10 @@ func TestSyncExecutorFetchesThroughTheRealRunner(t *testing.T) {
 	}
 	run(source, "add", ".")
 	run(source, "commit", "-m", "roles")
+	head, err := exec.Command(git, "-C", source, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// The fake galaxy succeeds and stays observable: an empty requirements
 	// file still exercises the install path.
@@ -253,6 +257,15 @@ func TestSyncExecutorFetchesThroughTheRealRunner(t *testing.T) {
 	}
 	if stats["requirements_installed"] != true {
 		t.Fatalf("stats = %v", stats)
+	}
+	// The variable sources name the commit the clone is at: the fixture's
+	// HEAD.
+	raw, _ := stats[worker.VarSourcesStatsKey].(json.RawMessage)
+	var sources struct {
+		Commit string `json:"commit"`
+	}
+	if err := json.Unmarshal(raw, &sources); err != nil || sources.Commit != strings.TrimSpace(string(head)) {
+		t.Fatalf("var_sources commit = %q (%v), want %q", sources.Commit, err, strings.TrimSpace(string(head)))
 	}
 
 	// The clone landed org-scoped, and the galaxy invocation points at the

@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -288,15 +289,45 @@ func redactURLs(s, url string) string {
 	return urlCredPattern.ReplaceAllString(s, "[redacted]@")
 }
 
+// HeadCommit is the commit the clone at dir is at (git rev-parse HEAD in
+// the clone's own .git: a directory that is no clone has none, even below
+// another repository). Its failure carries the same redacted diagnostic as
+// the fetch's.
+func (r *Runner) HeadCommit(ctx context.Context, dir string) (string, error) {
+	gitBin := r.GitBin
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	env := append(stripPrivateEnv(os.Environ()), "GIT_DIR="+filepath.Join(dir, ".git"))
+	var out bytes.Buffer
+	if err := runGitOut(ctx, gitBin, dir, env, "", &out, "rev-parse", "--verify", "HEAD^{commit}"); err != nil {
+		return "", err
+	}
+	commit := strings.TrimSpace(out.String())
+	if !commitPattern.MatchString(commit) {
+		return "", fmt.Errorf("git rev-parse: not a commit id: %q", truncate(commit, 100))
+	}
+	return commit, nil
+}
+
+// commitPattern is a full commit id, SHA-1 or SHA-256.
+var commitPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
+
 // runGit runs one git command inside dir; its failure names the command and
 // exit code, and a bounded stderr tail with every URL credential redacted —
 // git echoes the repo URL verbatim on access failures, so the tail must
 // never carry it (it can hold an operator's embedded credentials).
 func runGit(ctx context.Context, gitBin, dir string, env []string, redactURL string, args ...string) error {
+	return runGitOut(ctx, gitBin, dir, env, redactURL, nil, args...)
+}
+
+// runGitOut is runGit with git's standard output written to stdout.
+func runGitOut(ctx context.Context, gitBin, dir string, env []string, redactURL string, stdout io.Writer, args ...string) error {
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, gitBin, args...)
 	cmd.Dir = dir
 	cmd.Env = env
+	cmd.Stdout = stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError

@@ -77,6 +77,7 @@ const (
 	codeTooManyNotes           = "too_many_notes"
 	codeTooManyPlaybooks       = "too_many_playbooks"
 	codeReportTooLarge         = "report_too_large"
+	codeTimeLimit              = "time_limit"
 	codeInlineRolesUnresolved  = "inline_roles_unresolved"
 	codeInlineImportUnresolved = "inline_import_unresolved"
 )
@@ -143,6 +144,12 @@ func capNotes(notes []Note, file string, limit int) []Note {
 // building the message costs no more than the cut: a key or tag read once
 // may be reached through aliases many times.
 func short(s string) string { return clip(s, maxQuotedBytes) }
+
+// ReadFailed is a read_failed warning about the repository as a whole,
+// for a reader of the repo that could not run ParseRepo to its end.
+func ReadFailed(message string) Note {
+	return warning(codeReadFailed, "", 0, "%s", message)
+}
 
 // warning and hint build a note; the message is cut to maxMessageBytes.
 // Every string argument taken from a file goes through short first.

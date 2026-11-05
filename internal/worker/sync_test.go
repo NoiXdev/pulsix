@@ -18,19 +18,32 @@ import (
 )
 
 // fakeFetcher is the RepoFetcher fake: it returns a canned directory and
-// observed key or error, recording the spec it received.
+// observed key or error, recording the spec it received, and a canned
+// commit (commitWaits: only once the context it is handed has ended).
 type fakeFetcher struct {
-	dir      string
-	observed *GitHostKey
-	err      error
-	calls    int
-	specs    []RepoSpec
+	dir         string
+	observed    *GitHostKey
+	err         error
+	calls       int
+	specs       []RepoSpec
+	commit      string
+	commitErr   error
+	commitWaits bool
+	commitDirs  []string
 }
 
 func (f *fakeFetcher) FetchRepoDir(_ context.Context, spec RepoSpec, _, _, _ string) (string, *GitHostKey, error) {
 	f.calls++
 	f.specs = append(f.specs, spec)
 	return f.dir, f.observed, f.err
+}
+
+func (f *fakeFetcher) HeadCommit(ctx context.Context, dir string) (string, error) {
+	f.commitDirs = append(f.commitDirs, dir)
+	if f.commitWaits {
+		<-ctx.Done()
+	}
+	return f.commit, f.commitErr
 }
 
 // syncClaim is the claim the manager's enriched sync branch ships.
@@ -205,13 +218,18 @@ func TestSyncExecutorGalaxyFailureFailsTheJob(t *testing.T) {
 
 func TestSyncExecutorFetchFailureFailsTheJob(t *testing.T) {
 	f := &fakeFetcher{err: errors.New("git clone: exit 128: [repo url]")}
-	status, _, err := (&SyncExecutor{Fetcher: f}).Run(context.Background(),
+	status, stats, err := (&SyncExecutor{Fetcher: f}).Run(context.Background(),
 		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", "", ""), RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
 	if err == nil || status != StatusError {
 		t.Fatalf("status = %q err = %v", status, err)
 	}
 	if !strings.Contains(err.Error(), "fetch repository") {
 		t.Errorf("error = %v", err)
+	}
+	// A failed fetch read nothing: no sources, so the manager keeps the
+	// previous record.
+	if _, sent := stats[VarSourcesStatsKey]; sent {
+		t.Errorf("stats = %v, want no %s", stats, VarSourcesStatsKey)
 	}
 }
 

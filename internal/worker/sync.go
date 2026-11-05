@@ -9,8 +9,11 @@
 //
 // Nothing here touches a managed host: a broken claim is an executor
 // error, a failed fetch or a failed requirements install fails the job
-// with the (URL-redacted) reason. Success emits one run event carrying
-// {"repo_id", "requirements_installed"} for the run view.
+// with the (URL-redacted) reason. A fetched repository's playbook variable
+// sources are read next (sync_sources.go); nothing in that read fails the
+// job. Success emits one run event carrying {"repo_id",
+// "requirements_installed", "var_sources"} (the sources only as a summary)
+// for the run view.
 package worker
 
 import (
@@ -19,6 +22,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,13 +67,16 @@ type RepoSpec struct {
 // and returns the clone's local directory plus — when the fetch spoke ssh
 // and the server's key landed in the run's known_hosts — the host key the
 // git server presented (nil without one). The runner executor implements
-// it — its repo-playbook fetch is the same mechanism.
+// it — its repo-playbook fetch is the same mechanism. HeadCommit is the
+// commit a fetched clone's working tree is at.
 type RepoFetcher interface {
 	FetchRepoDir(ctx context.Context, spec RepoSpec, secretJSON, cacheRoot, workDir string) (string, *GitHostKey, error)
+	HeadCommit(ctx context.Context, dir string) (string, error)
 }
 
-// SyncExecutor executes sync_repo jobs: materialize the repository, then
-// install its galaxy requirements when it carries a requirements.yml.
+// SyncExecutor executes sync_repo jobs: materialize the repository,
+// install its galaxy requirements when it carries a requirements.yml, then
+// read its playbook variable sources.
 type SyncExecutor struct {
 	// Fetcher materializes the repository; unwired is a wiring bug the
 	// executor fails closed on.
@@ -79,6 +87,16 @@ type SyncExecutor struct {
 	// InstallTimeout bounds the requirements install;
 	// defaultInstallTimeout when zero.
 	InstallTimeout time.Duration
+	// Log receives what the read of the variable sources could not do;
+	// slog.Default() when nil.
+	Log *slog.Logger
+
+	// sourcesTimeLimit bounds the read of the variable sources;
+	// varSourcesTimeLimit when zero.
+	sourcesTimeLimit time.Duration
+	// parseRepo reads the sources; varsource.ParseRepo when nil (a seam
+	// for the tests).
+	parseRepo parseRepoFunc
 }
 
 // NewSyncExecutor wires the executor.
@@ -100,7 +118,8 @@ type syncPayload struct {
 	} `json:"repo"`
 }
 
-// Run materializes the repository and installs its requirements.
+// Run materializes the repository, installs its requirements and reads
+// its variable sources.
 func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, sink func(*workerpb.RunEvent) error) (Status, map[string]any, error) {
 	if job.GetKind() != kindSyncRepo {
 		return StatusError, nil, fmt.Errorf("job kind %q has no repo-sync executor", job.GetKind())
@@ -143,6 +162,7 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 		}
 		requirementsInstalled = true
 	}
+	sources, summary := e.readVarSources(ctx, dir, payload.Repo.Subpath)
 
 	// The one run event the sync reports; its payload carries no
 	// credential material. The observed git server key (backlog 2.41) is
@@ -155,6 +175,9 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 		report["host_key"] = observed.Fingerprint
 		report["host_public_key"] = observed.PublicKey
 	}
+	if summary != nil {
+		report[VarSourcesStatsKey] = summary
+	}
 	raw, err := json.Marshal(report)
 	if err != nil {
 		return StatusError, nil, fmt.Errorf("encode sync result: %w", err)
@@ -162,7 +185,12 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 	if err := sink(&workerpb.RunEvent{Task: kindSyncRepo, State: evStateOk, Payload: string(raw)}); err != nil {
 		return StatusError, nil, fmt.Errorf("send sync result: %w", err)
 	}
-	return StatusSucceeded, report, nil
+	// The stats carry the whole report in place of the event's summary.
+	stats := maps.Clone(report)
+	if sources != nil {
+		stats[VarSourcesStatsKey] = sources
+	}
+	return StatusSucceeded, stats, nil
 }
 
 // findRequirements locates the repository's requirements.yml: the playbook
