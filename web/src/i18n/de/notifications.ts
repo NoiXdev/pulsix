@@ -79,6 +79,7 @@ export const deNotifications: Messages['notifications'] = {
     webhook: 'Webhook',
     deliveriesItem: 'Zustellungen',
     testItem: 'Test senden',
+    testingItem: 'Test wird gesendet…',
     deleteItem: 'Löschen…',
     empty: 'Noch keine Kanäle.',
     testSent: (name: string) => `Testnachricht über ${name} gesendet`,

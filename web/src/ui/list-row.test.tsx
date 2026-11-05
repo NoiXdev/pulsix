@@ -264,6 +264,52 @@ describe('RowMenu', () => {
   });
 });
 
+describe('RowMenuItem disabled', () => {
+  function renderMenu(onSelect = vi.fn()) {
+    render(
+      <RowMenu label="Actions">
+        <RowMenuItem onSelect={vi.fn()}>First</RowMenuItem>
+        <RowMenuItem onSelect={onSelect} disabled>
+          Busy
+        </RowMenuItem>
+        <RowMenuItem onSelect={vi.fn()}>Last</RowMenuItem>
+      </RowMenu>,
+    );
+  }
+
+  it('is announced as disabled and ignores a click, leaving the menu open', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderMenu(onSelect);
+    await user.click(screen.getByRole('button', { name: 'Actions' }));
+    const busy = screen.getByRole('menuitem', { name: 'Busy' });
+    expect(busy).toHaveAttribute('aria-disabled', 'true');
+    await user.click(busy);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+  });
+
+  it('stays reachable by the arrow keys and ignores Enter', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    renderMenu(onSelect);
+    await user.click(screen.getByRole('button', { name: 'Actions' }));
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Busy' })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onSelect).not.toHaveBeenCalled();
+    await user.keyboard('{ArrowDown}');
+    expect(screen.getByRole('menuitem', { name: 'Last' })).toHaveFocus();
+  });
+
+  it('an enabled item has no aria-disabled', async () => {
+    const user = userEvent.setup();
+    renderMenu();
+    await user.click(screen.getByRole('button', { name: 'Actions' }));
+    expect(screen.getByRole('menuitem', { name: 'First' })).not.toHaveAttribute('aria-disabled');
+  });
+});
+
 describe('StaticListRow', () => {
   function renderStatic() {
     const rootRoute = createRootRoute();

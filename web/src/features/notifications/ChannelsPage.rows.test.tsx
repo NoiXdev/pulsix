@@ -95,6 +95,40 @@ describe('ChannelsPage rows', () => {
     confirm.mockRestore();
   });
 
+  it('shows a test in flight and sends one request for a repeated pick', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    let release: () => void = () => undefined;
+    serve('admin', {
+      'POST /api/v1/orgs/acme/notification-channels/c1/test': async () => {
+        posts++;
+        if (posts === 1) await new Promise<void>((resolve) => (release = resolve));
+        return { delivery: { id: 'd', event_kind: 'test', status: 'sent', attempts: 1, created_at: '' } };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for ops hook' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Send test' }));
+    await waitFor(() => expect(posts).toBe(1));
+
+    // Reopened while the first test is running: the item says so and is disabled.
+    await user.click(screen.getByRole('button', { name: 'Actions for ops hook' }));
+    const busy = await screen.findByRole('menuitem', { name: 'Sending test…' });
+    expect(busy).toHaveAttribute('aria-disabled', 'true');
+    await user.click(busy);
+    expect(posts).toBe(1);
+
+    release();
+    expect(await screen.findByText('Test message sent through ops hook')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+
+    // Once the response is in, the next pick sends another test.
+    await user.click(screen.getByRole('button', { name: 'Actions for ops hook' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Send test' }));
+    await waitFor(() => expect(posts).toBe(2));
+  });
+
   it('gives an operator only Deliveries', async () => {
     const user = userEvent.setup();
     serve('operator');
@@ -132,8 +166,10 @@ describe('ChannelsPage rows', () => {
     for (const row of rows) {
       expect(row.querySelector(':scope > a')).toBeNull();
       expect(within(row).queryAllByRole('link')).toEqual([]);
+      // The ⋯ trigger is the row's only button.
+      expect(within(row).getAllByRole('button')).toHaveLength(1);
     }
-    // Only the ⋯ trigger is a button in a row, and using it never navigates.
+    // Using the ⋯ menu never navigates.
     const before = router.state.location.href;
     await user.click(screen.getByRole('button', { name: 'Actions for ops-mail' }));
     await user.click(screen.getByRole('menuitem', { name: 'Deliveries' }));

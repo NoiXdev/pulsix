@@ -270,14 +270,19 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
   );
 }
 
-/** One action in a RowMenu. `destructive` colours it as a delete-like one. */
+/** One action in a RowMenu. `destructive` colours it as a delete-like one.
+ * `disabled` dims it and ignores a pick, which leaves the menu open. It stays
+ * focusable (aria-disabled, not the attribute), as the menu pattern keeps a
+ * disabled item reachable by the arrow keys so its label can be read. */
 export function RowMenuItem({
   onSelect,
   destructive,
+  disabled,
   children,
 }: {
   onSelect: () => void;
   destructive?: boolean;
+  disabled?: boolean;
   children: ReactNode;
 }) {
   const menu = useContext(MenuContext);
@@ -286,14 +291,17 @@ export function RowMenuItem({
       type="button"
       role="menuitem"
       tabIndex={-1}
+      aria-disabled={disabled ? true : undefined}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (disabled) return;
         menu?.select();
         onSelect();
       }}
       className={cn(
         'rounded px-2.5 py-1.5 text-left text-xs focus-visible:outline-none',
+        disabled && 'cursor-not-allowed opacity-50',
         destructive
           ? 'text-destructive hover:bg-destructive/10 focus-visible:bg-destructive/10'
           : 'text-foreground hover:bg-background focus-visible:bg-background',

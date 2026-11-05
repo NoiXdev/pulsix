@@ -13,8 +13,8 @@ function target(c: NotifyChannel): string {
  * its ⋯ menu carries the actions. Everyone who can read channels may open the
  * delivery log; Send test, Edit and Delete… need `channels.write`. `columns`
  * reserves the menu's 40px as its last track, left empty here. While a test is
- * in flight, choosing Send test again does nothing: a second message to the
- * receiver would be a duplicate. */
+ * in flight, Send test reads "Sending test…" and is disabled: a second message
+ * to the receiver would be a duplicate. */
 export function ChannelRow({
   channel: c, columns, canWrite, testing, onLog, onTest, onEdit, onDelete,
 }: {
@@ -38,7 +38,9 @@ export function ChannelRow({
           <RowMenuItem onSelect={() => onLog(c)}>{c8.deliveriesItem}</RowMenuItem>
           {canWrite && (
             <>
-              <RowMenuItem onSelect={() => !testing && onTest(c)}>{c8.testItem}</RowMenuItem>
+              <RowMenuItem onSelect={() => onTest(c)} disabled={testing}>
+                {testing ? c8.testingItem : c8.testItem}
+              </RowMenuItem>
               <RowMenuItem onSelect={() => onEdit(c)}>{m.edit}</RowMenuItem>
               <RowMenuItem onSelect={() => onDelete(c)} destructive>
                 {c8.deleteItem}

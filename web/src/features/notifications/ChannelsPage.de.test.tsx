@@ -66,6 +66,9 @@ describe('ChannelsPage in German', () => {
     expect(screen.getByRole('region', { name: 'Wochenzusammenfassung' })).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Aktionen für ops hook' }));
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
+      'Zustellungen', 'Test senden', 'Bearbeiten', 'Löschen…',
+    ]);
     await user.click(screen.getByRole('menuitem', { name: 'Zustellungen' }));
     const dialog = await screen.findByRole('dialog', { name: 'Zustellungen · ops hook' });
     expect(await within(dialog).findByText(/3 Versuche · the endpoint answered 503/)).toBeInTheDocument();
