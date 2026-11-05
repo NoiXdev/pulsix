@@ -103,21 +103,40 @@ const (
 const inlinePath = "inline"
 
 // PlaybookPathPattern is a repo playbook's path: letters, digits, dots,
-// slashes and hyphens, ending in .yml or .yaml. A path must also not
-// contain "..".
+// slashes and hyphens, at most maxPlaybookPathStem of them, ending in .yml
+// or .yaml. A path must also not contain "..".
 var PlaybookPathPattern = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}\.ya?ml$`)
+
+// maxPlaybookPathStem is PlaybookPathPattern's bound on a path before its
+// extension. The manager keys the stored sources by path, so the bound
+// also keeps a path well inside what it can index.
+const maxPlaybookPathStem = 200
 
 func validPlaybookPath(p string) bool {
 	return !strings.Contains(p, "..") && PlaybookPathPattern.MatchString(p)
+}
+
+// unsupportedPath is the warning for a path no playbook may have, false
+// for a valid one: path_too_long past maxPlaybookPathStem (the path
+// clipped in the note), path_unsupported otherwise.
+func unsupportedPath(p string) (Note, bool) {
+	if validPlaybookPath(p) {
+		return Note{}, false
+	}
+	if stem := strings.TrimSuffix(strings.TrimSuffix(p, ".yml"), ".yaml"); len(stem) > maxPlaybookPathStem {
+		return warning(codePathTooLong, clip(p, maxRefBytes), 0,
+			"a playbook path is at most %d characters before its extension, this one has %d; not read", maxPlaybookPathStem, len(stem)), true
+	}
+	return warning(codePathUnsupported, p, 0,
+		"a playbook path is letters, digits, dots, slashes and hyphens ending in .yml or .yaml, without \"..\"; not read"), true
 }
 
 // ParsePlaybook reads the playbook at path in fsys (the repo subpath) with
 // its sidecar, imports and roles. It never fails: a problem is a note, and
 // a playbook it cannot read is Failed.
 func ParsePlaybook(fsys fs.FS, path string) Playbook {
-	if !validPlaybookPath(path) {
-		return failedPlaybook(path, FileUnreadable, warning(codePathUnsupported, path, 0,
-			"a playbook path is letters, digits, dots, slashes and hyphens ending in .yml or .yaml, without \"..\"; not read"))
+	if note, bad := unsupportedPath(path); bad {
+		return failedPlaybook(path, FileUnreadable, note)
 	}
 	data, err := readLimited(fsys, path)
 	if err != nil {

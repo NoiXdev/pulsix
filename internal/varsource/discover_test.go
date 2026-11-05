@@ -208,3 +208,26 @@ func TestReadFailed(t *testing.T) {
 		t.Fatalf("note = %+v", n)
 	}
 }
+
+// TestDiscoverSkipsOverLongPaths: a playbook path longer than the manager
+// stores (200 characters before the extension) is not read, with one
+// path_too_long warning; a path exactly at the limit is read.
+func TestDiscoverSkipsOverLongPaths(t *testing.T) {
+	play := &fstest.MapFile{Data: []byte("- hosts: all\n")}
+	atLimit := strings.Repeat("a", 100) + "/" + strings.Repeat("b", 99) + ".yml"
+	tooLong := strings.Repeat("c", 100) + "/" + strings.Repeat("d", 100) + ".yaml"
+	fsys := fstest.MapFS{atLimit: play, tooLong: play, "ok.yml": play}
+	r := ParseRepo(context.Background(), fsys, "c")
+	if got, want := playbookPaths(r), []string{atLimit, "ok.yml"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("playbooks = %q, want %q", got, want)
+	}
+	if len(r.Notes) != 1 || r.Notes[0].Code != "path_too_long" || !strings.HasPrefix(tooLong, strings.TrimSuffix(r.Notes[0].File, ellipsis)) ||
+		len(r.Notes[0].File) > maxRefBytes {
+		t.Fatalf("notes = %+v, want one path_too_long naming the path, clipped", r.Notes)
+	}
+
+	pb := ParsePlaybook(fsys, tooLong)
+	if !pb.Failed || len(pb.Notes) != 1 || pb.Notes[0].Code != "path_too_long" {
+		t.Fatalf("ParsePlaybook(too long) = failed %v, notes %+v", pb.Failed, pb.Notes)
+	}
+}

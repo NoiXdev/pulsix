@@ -71,6 +71,7 @@ const (
 	codeNotAPlaybook           = "not_a_playbook"
 	codeReadFailed             = "read_failed"
 	codePathUnsupported        = "path_unsupported"
+	codePathTooLong            = "path_too_long"
 	codeFileTooLarge           = "file_too_large"
 	codePlaybookTooComplex     = "playbook_too_complex"
 	codeTooManySetNames        = "too_many_set_names"
@@ -150,6 +151,13 @@ func short(s string) string { return clip(s, maxQuotedBytes) }
 // for a reader of the repo that could not run ParseRepo to its end.
 func ReadFailed(message string) Note {
 	return warning(codeReadFailed, "", 0, "%s", message)
+}
+
+// PathTooLong is a path_too_long warning for a reported playbook whose
+// path is longer than limit bytes, for a reader of a report that cannot
+// store it (the path is clipped in the note).
+func PathTooLong(path string, limit int) Note {
+	return warning(codePathTooLong, clip(path, maxRefBytes), 0, "a playbook path is at most %d bytes, this one has %d; not stored", limit, len(path))
 }
 
 // warning and hint build a note; the message is cut to maxMessageBytes.

@@ -207,6 +207,10 @@ type Store interface {
 	// repository of the organization in one call, keyed by repo id
 	// (backlog 2.94): List calls this once instead of once per row.
 	ListOrgRepoVaultIdentities(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultIdentity, error)
+	// LockVarSources locks the repository for a write of its variable
+	// sources until the caller's transaction ends; ErrNotFound when the
+	// repository is gone.
+	LockVarSources(ctx context.Context, orgID, repoID uuid.UUID) error
 	// ReplaceVarSources replaces the repository's variable sources record
 	// and its playbook rows together (sources.go); ErrNotFound when the
 	// repository is gone.

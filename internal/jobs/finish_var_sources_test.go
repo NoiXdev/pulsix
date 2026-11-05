@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -28,21 +29,22 @@ type sourceCall struct {
 	raw           json.RawMessage
 }
 
-// recordingSourceSink records every RecordVarSources call.
+// recordingSourceSink records every RecordVarSources call and reports a
+// sent report as stored.
 type recordingSourceSink struct {
 	mu    sync.Mutex
 	calls []sourceCall
 	err   error
 }
 
-func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw json.RawMessage) error {
+func (s *recordingSourceSink) RecordVarSources(_ context.Context, orgID, repoID uuid.UUID, at time.Time, raw json.RawMessage) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.err != nil {
-		return s.err
+		return false, s.err
 	}
 	s.calls = append(s.calls, sourceCall{orgID, repoID, at, raw})
-	return nil
+	return raw != nil, nil
 }
 
 func (s *recordingSourceSink) all() []sourceCall {
@@ -163,14 +165,35 @@ func testReport() *varsource.Report {
 }
 
 func TestFinishSyncStripsVarSourcesFromStats(t *testing.T) {
-	f := newVarSourcesFixture(t, "jobs-var-sources-strip-org")
-	j := f.runningJob(t, jobs.KindSyncRepo)
-	stats, encoded := workerStats(t, f.repoID, testReport())
+	t.Run("Finish", func(t *testing.T) {
+		f := newVarSourcesFixture(t, "jobs-var-sources-strip-org")
+		j := f.runningJob(t, jobs.KindSyncRepo)
+		stats, encoded := workerStats(t, f.repoID, testReport())
+		if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
+			t.Fatalf("Finish: %v", err)
+		}
+		f.assertStripped(t, j.ID, stats, encoded)
+	})
+	t.Run("FinishFor", func(t *testing.T) {
+		f := newVarSourcesFixture(t, "jobs-var-sources-strip-for-org")
+		j := f.runningJob(t, jobs.KindSyncRepo)
+		w := jobs.WorkerRef{ID: uuid.Must(uuid.NewV7()), OrgID: f.org, ZoneID: f.zone}
+		if _, err := f.d.Exec(ctx, `UPDATE jobs SET worker_id = $2 WHERE id = $1`, j.ID, w.ID); err != nil {
+			t.Fatal(err)
+		}
+		stats, encoded := workerStats(t, f.repoID, testReport())
+		if err := f.queue.FinishFor(ctx, w, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
+			t.Fatalf("FinishFor: %v", err)
+		}
+		f.assertStripped(t, j.ID, stats, encoded)
+	})
+}
 
-	if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
-		t.Fatalf("Finish: %v", err)
-	}
-	stored := f.storedStats(t, j.ID)
+// assertStripped: the job's stored stats lost var_sources and kept the
+// rest, the caller's map kept it, and the sink got the report.
+func (f varSourcesFixture) assertStripped(t *testing.T, jobID uuid.UUID, stats map[string]any, encoded json.RawMessage) {
+	t.Helper()
+	stored := f.storedStats(t, jobID)
 	if _, kept := stored[worker.VarSourcesStatsKey]; kept {
 		t.Fatalf("jobs.stats = %v, want no %s", stored, worker.VarSourcesStatsKey)
 	}
@@ -315,7 +338,8 @@ func TestFinishSyncAppliesSourcesAfterCommit(t *testing.T) {
 		t.Fatalf("apply deadline in %v, want a bound of at most 30s", calls[0].deadline)
 	}
 
-	// No apply when the sync sent no sources, failed, or was retried.
+	// No apply when the sync sent no sources, failed, read nothing, or
+	// was retried.
 	if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +352,56 @@ func TestFinishSyncAppliesSourcesAfterCommit(t *testing.T) {
 	if err := f.queue.Finish(ctx, failed.ID, jobs.StatusFailed, stats, "git fetch: timeout"); err != nil {
 		t.Fatal(err)
 	}
+	// A report that read nothing (Failed) stores no new sources: the sink
+	// says so, and nothing is applied.
+	unread := f.runningJob(t, jobs.KindSyncRepo)
+	unreadStats, _ := workerStats(t, f.repoID, &varsource.Report{Commit: "b", Failed: true, Playbooks: []varsource.Playbook{},
+		Notes: []varsource.Note{varsource.ReadFailed("no playbooks read")}})
+	if err := f.queue.Finish(ctx, unread.ID, jobs.StatusSucceeded, unreadStats, ""); err != nil {
+		t.Fatal(err)
+	}
 	if calls := applier.all(); len(calls) != 1 {
 		t.Fatalf("apply calls = %+v, want only the first", calls)
+	}
+}
+
+// TestFinishSyncWithAnOverLongPlaybookPathSucceeds: nothing in a report
+// may fail the finish. A playbook path too long for the index (random, so
+// it does not compress) is dropped; the job succeeds, last_sync is set and
+// the other playbook is stored.
+func TestFinishSyncWithAnOverLongPlaybookPathSucceeds(t *testing.T) {
+	f := newVarSourcesFixture(t, "jobs-var-sources-long-path-org")
+	f.queue.SetSourceSink(repos.NewService(repos.NewSQLStore(f.d), nil, nil))
+	var long strings.Builder
+	for long.Len() < 3000 {
+		long.WriteString(uuid.NewString())
+	}
+	report := testReport()
+	report.Playbooks = append(report.Playbooks, varsource.Playbook{Path: long.String() + ".yml"})
+	j := f.runningJob(t, jobs.KindSyncRepo)
+	stats, _ := workerStats(t, f.repoID, report)
+	if err := f.queue.Finish(ctx, j.ID, jobs.StatusSucceeded, stats, ""); err != nil {
+		t.Fatalf("Finish = %v, want nil", err)
+	}
+	if got := f.jobStatus(t, j.ID); got != jobs.StatusSucceeded {
+		t.Fatalf("job = %s, want succeeded", got)
+	}
+	var paths []string
+	rows, err := f.d.Pool().Query(ctx, `SELECT path FROM repo_playbook_sources WHERE repo_id = $1`, f.repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 || paths[0] != "site.yml" {
+		t.Fatalf("stored playbooks = %v, want only site.yml", paths)
 	}
 }

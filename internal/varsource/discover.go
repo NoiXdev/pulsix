@@ -163,9 +163,9 @@ func (d *discovery) examine(name string) {
 	case !dec.ok:
 		d.notes = append(d.notes, dec.notes...)
 		return
-	case !validPlaybookPath(name):
-		d.notes = append(d.notes, warning(codePathUnsupported, name, 0,
-			"a playbook path is letters, digits, dots, slashes and hyphens ending in .yml or .yaml, without \"..\"; not read"))
+	}
+	if note, bad := unsupportedPath(name); bad {
+		d.notes = append(d.notes, note)
 		return
 	}
 	d.playbooks = append(d.playbooks, d.p.parse(name, dec, len(data)))

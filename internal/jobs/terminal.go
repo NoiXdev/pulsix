@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,8 +56,8 @@ type terminalTransition struct {
 // error — the job keeps its status and payload, and a retry completes all
 // of it. applied reports whether the status was written. After a commit
 // the job's in-process stream and cancel records are dropped, and a
-// succeeded sync that sent variable sources has them applied
-// (applySources) — outside the transaction, so the applier sees the
+// succeeded sync whose sink stored new variable sources has them applied
+// (applySources, finish_sources.go) — outside the transaction, so the applier sees the
 // committed record and its failure cannot undo the sync.
 //
 // Members of a rotation group — and of a run group when a RunGroupSink is
@@ -185,23 +184,4 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		}
 	}
 	return applied, nil
-}
-
-// sourceApplyTimeout bounds the apply after a sync (plan decision 9).
-const sourceApplyTimeout = 30 * time.Second
-
-// applySources hands a repository whose sync just committed new variable
-// sources to the optional applier, on a context detached from the
-// finish's (a worker that hangs up after its result does not cut the
-// apply short) and bounded to sourceApplyTimeout. A failure is logged; a
-// manager gone in between leaves the apply to the next sync.
-func (q *SQLQueue) applySources(ctx context.Context, orgID, repoID uuid.UUID) {
-	if q.applier == nil {
-		return
-	}
-	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sourceApplyTimeout)
-	defer cancel()
-	if err := q.applier.ApplyRepoSources(actx, orgID, repoID); err != nil {
-		slog.ErrorContext(ctx, "apply repository variable sources", "err", err, "org", orgID, "repo", repoID)
-	}
 }

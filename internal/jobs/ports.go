@@ -61,15 +61,16 @@ type SyncSink interface {
 // inside the finish transaction: the concrete implementation is
 // repos.Service.RecordVarSources. raw is the encoded report the worker
 // sent under the stats key var_sources; nil means the worker sent none (an
-// older worker). It returns an error only for a failure a retried finish
-// can fix; a malformed report or a repository gone meanwhile is its own
-// business to log and skip.
+// older worker). stored reports whether new sources were stored, the one
+// case the SourceApplier runs for. It returns an error only for a failure
+// a retried finish can fix; a malformed report or a repository gone
+// meanwhile is its own business to log and skip.
 type SourceSink interface {
-	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw json.RawMessage) error
+	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw json.RawMessage) (stored bool, err error)
 }
 
-// SourceApplier is the optional port called once a successful sync that
-// sent variable sources has committed (SQLQueue.SetSourceApplier): it
+// SourceApplier is the optional port called once a successful sync whose
+// sink stored new variable sources has committed (SQLQueue.SetSourceApplier): it
 // applies the repository's new sources to the templates in automatic
 // mode. It runs after the commit on its own bounded context, and its
 // failure is logged, never the sync's.

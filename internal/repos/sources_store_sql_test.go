@@ -1,6 +1,7 @@
 package repos_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -240,14 +241,14 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 	read := encodeReport(t, varsource.Report{Commit: commitA, Playbooks: []varsource.Playbook{
 		playbookSource("deploy.yml", "app_version"), playbookSource("site.yml", "env"),
 	}, Notes: []varsource.Note{}})
-	if err := svc.RecordVarSources(scoped, org, repoID, t0, read); err != nil {
-		t.Fatalf("RecordVarSources: %v", err)
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t0, read); err != nil || !stored {
+		t.Fatalf("RecordVarSources = %v, %v", stored, err)
 	}
 	t1 := t0.Add(time.Hour)
 	failed := encodeReport(t, varsource.Report{Commit: commitB, Failed: true, Playbooks: []varsource.Playbook{},
 		Notes: []varsource.Note{varsource.ReadFailed("the repository subpath could not be opened; no playbooks discovered")}})
-	if err := svc.RecordVarSources(scoped, org, repoID, t1, failed); err != nil {
-		t.Fatalf("RecordVarSources(failed): %v", err)
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1, failed); err != nil || stored {
+		t.Fatalf("RecordVarSources(failed) = %v, %v; want false, nil", stored, err)
 	}
 	rec, pbs, found, err := svc.VarSources(scoped, org, repoID)
 	if err != nil || !found {
@@ -258,8 +259,8 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 		t.Fatalf("after a failed read = %+v, %v", rec, playbookPaths(pbs))
 	}
 
-	if err := svc.RecordVarSources(scoped, org, repoID, t1.Add(time.Hour), nil); err != nil {
-		t.Fatalf("RecordVarSources(older worker): %v", err)
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1.Add(time.Hour), nil); err != nil || stored {
+		t.Fatalf("RecordVarSources(older worker) = %v, %v; want false, nil", stored, err)
 	}
 	rec, pb, found, err := svc.PlaybookVarSource(scoped, org, repoID, "deploy.yml")
 	if err != nil || !found || rec.WorkerReads || rec.Commit != commitA || !sameStrings(fieldNames(pb), []string{"app_version"}) {
@@ -277,8 +278,8 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 		t.Fatalf("VarSources after the repo's delete = found %v, %v", found, err)
 	}
 	// A sync of a repository gone meanwhile is skipped, never an error.
-	if err := svc.RecordVarSources(scoped, org, repoID, t1, read); err != nil {
-		t.Fatalf("RecordVarSources(gone repo) = %v, want nil", err)
+	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1, read); err != nil || stored {
+		t.Fatalf("RecordVarSources(gone repo) = %v, %v; want false, nil", stored, err)
 	}
 }
 
@@ -289,4 +290,45 @@ func encodeReport(t *testing.T, r varsource.Report) json.RawMessage {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// TestLockVarSourcesHoldsTheRepositoryUntilTheTransactionEnds: inside a
+// write transaction (the job finish's) the lock keeps a second finish of
+// the same repository from reading its previous record until the first
+// commits; a repository gone meanwhile is ErrNotFound.
+func TestLockVarSourcesHoldsTheRepositoryUntilTheTransactionEnds(t *testing.T) {
+	d := testdb.Open(t)
+	store := repos.NewSQLStore(d)
+	org := seedOrg(t, gen.New(d.Pool()), "var-sources-lock-org")
+	repoID := seedSourcesRepo(t, d, org, "infra")
+
+	if err := store.LockVarSources(db.WithOrgScope(ctx, org), org, uuid.Must(uuid.NewV7())); !errors.Is(err, repos.ErrNotFound) {
+		t.Fatalf("LockVarSources(gone) = %v, want ErrNotFound", err)
+	}
+	locked, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- d.WithWriteTx(ctx, org, func(ctx context.Context) error {
+			if err := store.LockVarSources(ctx, org, repoID); err != nil {
+				return err
+			}
+			close(locked)
+			<-release
+			return nil
+		})
+	}()
+	<-locked
+	waitCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	err := d.WithWriteTx(waitCtx, org, func(ctx context.Context) error { return store.LockVarSources(ctx, org, repoID) })
+	if err == nil {
+		t.Fatal("a second lock while the first transaction is open = nil, want it to wait (cancelled here)")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("first transaction: %v", err)
+	}
+	if err := d.WithWriteTx(ctx, org, func(ctx context.Context) error { return store.LockVarSources(ctx, org, repoID) }); err != nil {
+		t.Fatalf("lock after the first committed: %v", err)
+	}
 }

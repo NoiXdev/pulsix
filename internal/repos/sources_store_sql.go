@@ -14,6 +14,19 @@ import (
 	"github.com/noixdev/pulsix/internal/varsource"
 )
 
+// LockVarSources implements Store: the repository row, locked until the
+// caller's transaction ends (queries/var_sources.sql explains the lock).
+// ErrNotFound when the repository is gone.
+func (s *SQLStore) LockVarSources(ctx context.Context, orgID, repoID uuid.UUID) error {
+	if _, err := s.q.LockRepoForVarSources(ctx, gen.LockRepoForVarSourcesParams{OrgID: orgID, RepoID: repoID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("lock repository for variable sources: %w", err)
+	}
+	return nil
+}
+
 // ReplaceVarSources implements Store: the repository's record and its
 // playbook rows are replaced in one transaction (a savepoint inside the
 // job finish's own). ErrNotFound when the repository is gone; nothing is
