@@ -3,7 +3,7 @@ import { LogOut } from 'lucide-react';
 import { BarePage } from '../../ui/bare-page.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Card } from '../../ui/table.tsx';
-import { QueryLoading } from '../../ui/QueryState.tsx';
+import { QueryError, QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useRefetchMe, useSettledMe } from '../../api/hooks/useMe.ts';
 import { useSignOut } from '../../lib/session.ts';
@@ -31,9 +31,12 @@ export function ChangePasswordPage() {
   const navigate = useNavigate();
   const signOut = useSignOut();
   const refetchMe = useRefetchMe();
-  const { me, settled } = useSettledMe({ enabled: true });
-  const meGuard = useQueryGuard(me);
+  const { me, settled, failed } = useSettledMe({ enabled: true });
+  // While the fetch on mount has failed, `data` is a stale cached answer:
+  // the failure is shown, and the guard does not also toast about it.
+  const meGuard = useQueryGuard(me, { enabled: !failed });
 
+  if (failed) return <QueryError error={me.error} />;
   if (meGuard) return meGuard;
   if (!me.data || !settled) return <QueryLoading />;
   if (sessionState(me.data) !== 'password') return <Navigate to="/" />;

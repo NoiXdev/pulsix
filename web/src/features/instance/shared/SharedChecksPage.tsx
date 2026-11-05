@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
 import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
+import { ListRowName } from '../../../ui/list-row.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useCheckDefinitions, useDeleteCheckDefinition } from '../../../api/hooks/useSharedCheckDefinitions.ts';
 import { useT } from '../../../i18n/useT.ts';
@@ -58,7 +59,7 @@ export function SharedChecksPage() {
           name={d.key}
           onDelete={() => void onDelete(d)}
         >
-          <span className="truncate font-mono text-[13px]">{d.key}</span>
+          <ListRowName className="truncate font-mono text-[13px]">{d.key}</ListRowName>
           <span className="truncate text-xs">{d.plugin}</span>
           <span className="truncate text-xs text-muted-foreground">{d.interval_seconds}s</span>
         </SharedRow>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Card, GridHeader } from '../../ui/table.tsx';
 import { Input } from '../../ui/input.tsx';
-import { ListRow } from '../../ui/list-row.tsx';
+import { ListRow, ListRowName } from '../../ui/list-row.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -73,7 +73,7 @@ export function UsersPage() {
             >
               <div className="flex min-w-0 flex-col">
                 <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-[13px] font-semibold">{u.display_name}</span>
+                  <ListRowName className="truncate text-[13px] font-semibold">{u.display_name}</ListRowName>
                   {u.instance_admin && <Pill tone="accent">{t.users.instanceAdmin}</Pill>}
                 </span>
                 <span className="truncate text-xs text-muted-foreground">{u.email}</span>

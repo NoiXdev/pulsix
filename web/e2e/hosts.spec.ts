@@ -58,6 +58,14 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
   await addHost(page, { name: 'db-02.fra', monitored: true });
   await addHost(page, { name: 'cache-01.fra' });
 
+  // A screen reader reads the row's name once: the link is named by the
+  // host, and its description (the other cells) leaves the visible name
+  // cell out but still carries the zone.
+  const linkA = page.getByRole('link', { name: 'web-04.fra', exact: true });
+  await expect(linkA).toHaveAccessibleName('web-04.fra');
+  await expect(linkA).toHaveAccessibleDescription(new RegExp(ZONE.slug));
+  await expect(linkA).not.toHaveAccessibleDescription(/web-04\.fra/);
+
   const rowA = hostRow(page, 'web-04.fra');
   // The list's capabilities are read-only pills; switching is a row menu action.
   await expect(rowA.getByText('not managed')).toBeVisible();

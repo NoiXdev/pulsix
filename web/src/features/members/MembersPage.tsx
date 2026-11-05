@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Controller, useForm } from 'react-hook-form';
 import { Copy, UserPlus } from 'lucide-react';
 import { Card, GridHeader } from '../../ui/table.tsx';
-import { ListRow, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -124,7 +124,7 @@ export function MembersPage() {
                 .join('')}
             </span>
             <div className="flex min-w-0 flex-col">
-              <span className="truncate text-xs font-semibold">{m.display_name}</span>
+              <ListRowName className="truncate text-xs font-semibold">{m.display_name}</ListRowName>
               <span className="truncate text-[11px] text-muted-foreground">{m.email}</span>
             </div>
             <span>

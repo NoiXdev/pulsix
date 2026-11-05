@@ -1,18 +1,37 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { meQueryKey } from '../../api/hooks/useMe.ts';
+import { useMe } from '../../api/hooks/useMe.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { mockApi } from '../../test/mockApi.ts';
-import { waitForQuery } from '../../test/waitForQuery.ts';
 import { SettingsLayout } from './SettingsLayout.tsx';
+
+/** Shows what the two gates answered, from the same queries the layout
+ * reads, so a test can wait for those answers on screen before it counts
+ * what they leave out. */
+function GatesAnswered() {
+  const me = useMe();
+  const org = useOrg('acme');
+  if (!me.data || !org.data) return null;
+  return <p>{`gates: ${me.data.instance_admin ? 'instance admin' : 'member'}, ${org.data.org.role}`}</p>;
+}
 
 function renderLayout(path = '/o/acme/settings/members') {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const settingsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings', component: SettingsLayout });
   const page = (p: string) =>
-    createRoute({ getParentRoute: () => settingsRoute, path: p, component: () => <div>page {p}</div> });
+    createRoute({
+      getParentRoute: () => settingsRoute,
+      path: p,
+      component: () => (
+        <div>
+          page {p}
+          <GatesAnswered />
+        </div>
+      ),
+    });
   const leaves = ['/general', '/members', '/activity', '/tokens', '/notifications', '/mail', '/shared/repos', '/shared/repos/$id', '/users', '/users/$userId', '/organizations'].map(page);
   const router = createRouter({
     routeTree: rootRoute.addChildren([orgRoute.addChildren([settingsRoute.addChildren(leaves)])]),
@@ -40,14 +59,13 @@ const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', rol
 describe('SettingsLayout', () => {
   it('shows a viewer the Organization group only', async () => {
     mockApi({ 'GET /api/v1/auth/me': me(false), 'GET /api/v1/orgs/acme': org('viewer') });
-    const qc = renderLayout();
+    renderLayout();
     expect(await screen.findByRole('link', { name: 'General' })).toHaveAttribute('href', '/o/acme/settings/general');
     expect(screen.getByRole('link', { name: 'Members' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Activity' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'API tokens' })).toBeInTheDocument();
     // Both gates have answered (a viewer, not an instance admin) before the absences count.
-    await waitForQuery(qc, meQueryKey);
-    await waitForQuery(qc, ['org', 'acme']);
+    expect(await screen.findByText('gates: member, viewer')).toBeInTheDocument();
     expect(screen.queryByText('Alerting')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Notifications' })).not.toBeInTheDocument();
     expect(screen.queryByText('Instance')).not.toBeInTheDocument();

@@ -4,7 +4,6 @@ import { useReloadHost, useZones } from '../../api/hooks/useHosts.ts';
 import { useBastions, useHostSSH } from '../../api/hooks/useSsh.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useHostInventoryPreview } from '../../api/hooks/useInventory.ts';
-import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useHostTags } from '../../api/hooks/useTags.ts';
 import type { Host } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
@@ -14,6 +13,10 @@ import { HostForm, INHERIT } from './HostForm.tsx';
 
 export interface HostDialogProps {
   org: string;
+  /** The caller's role in `org` (undefined while it is still loading): it
+   * decides whether the jump host is offered at all. The caller already
+   * holds the organization, so the dialog does not read it again. */
+  role: string | undefined;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Edit this host; add a new one when unset. */
@@ -30,24 +33,21 @@ export interface HostDialogProps {
  * children mounted), so every opening starts from a fresh form and no query
  * below runs while it is closed.
  */
-export function HostDialog({ org, open, onOpenChange, host }: HostDialogProps) {
+export function HostDialog({ org, role, open, onOpenChange, host }: HostDialogProps) {
   const t = useT();
   const close = () => onOpenChange(false);
   return (
     <Dialog open={open} onClose={close} title={host ? t.hosts.dialog.titleEdit(host.name) : t.hosts.dialog.titleAdd}>
-      {open && <HostDialogLoader org={org} host={host} onClose={close} />}
+      {open && <HostDialogLoader org={org} role={role} host={host} onClose={close} />}
     </Dialog>
   );
 }
 
-/** HostDialogLoader gathers what the form pre-fills from — the caller's role
- * (it decides whether the jump host is offered at all), and, when editing,
+/** HostDialogLoader gathers what the form pre-fills from — when editing,
  * the host's tags and SSH settings — and mounts the form once it has them,
  * so the form's initial values are never a half-loaded guess. */
-function HostDialogLoader({ org, host, onClose }: { org: string; host?: Host; onClose: () => void }) {
+function HostDialogLoader({ org, role, host, onClose }: { org: string; role: string | undefined; host?: Host; onClose: () => void }) {
   const t = useT();
-  const orgQuery = useOrg(org);
-  const role = orgQuery.data?.org.role;
   const canJump = may(role, 'inventory.write');
   const canCreateBastion = may(role, 'credentials.write');
   const hostId = host?.id ?? '';
@@ -71,10 +71,10 @@ function HostDialogLoader({ org, host, onClose }: { org: string; host?: Host; on
     setFormKey((k) => k + 1);
   }
 
-  // orgQuery's failure is not fatal: no role means no jump host field, and
-  // the server still has the last word on every write.
-  const pending =
-    orgQuery.isPending || zones.isPending || (!!host && (tags.isPending || (canJump && ssh.isPending)));
+  // No role (still loading, or the caller's read of the organization
+  // failed) means no jump host field; the server has the last word on every
+  // write either way.
+  const pending = zones.isPending || (!!host && (tags.isPending || (canJump && ssh.isPending)));
   if (pending) return <p className="text-xs text-muted-foreground">{t.common.loading}</p>;
   if (zones.isError || (host && (tags.isError || (canJump && ssh.isError)))) {
     return (

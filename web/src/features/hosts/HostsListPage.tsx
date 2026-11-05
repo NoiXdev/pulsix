@@ -181,7 +181,7 @@ export function HostsListPage() {
 
       {zoneDialogOpen && <ZoneDialog org={org} open onClose={() => setZoneDialogOpen(false)} onCreated={() => {}} />}
 
-      <HostDialog org={org} open={addOpen} onOpenChange={setAddOpen} />
+      <HostDialog org={org} role={role} open={addOpen} onOpenChange={setAddOpen} />
     </>
   );
 }

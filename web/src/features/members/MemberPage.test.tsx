@@ -1,12 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { QueryClient } from '@tanstack/react-query';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest, type MockRoute } from '../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../test/renderRoutes.tsx';
 import { pickOption } from '../../test/pickOption.ts';
-import { waitForQuery } from '../../test/waitForQuery.ts';
-import { meQueryKey } from '../../api/hooks/useMe.ts';
+import { useMe } from '../../api/hooks/useMe.ts';
 import { accountDetail } from '../users/testFixtures.ts';
 import type { Locale } from '../../i18n/types.ts';
 import { MemberPage } from './MemberPage.tsx';
@@ -19,6 +17,13 @@ const MEMBERS = {
 };
 
 const org = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
+
+/** Shows who the session is, from the same query the page reads, so a test
+ * can wait for that answer on screen before it counts what it leaves out. */
+function SessionAnswered() {
+  const me = useMe();
+  return me.data ? <p>{`session: ${me.data.instance_admin ? 'instance admin' : 'member'}`}</p> : null;
+}
 
 function render(opts: { role: string; instanceAdmin: boolean }, routes: Record<string, MockRoute> = {}, locale?: Locale) {
   const adminCalls: string[] = [];
@@ -33,29 +38,36 @@ function render(opts: { role: string; instanceAdmin: boolean }, routes: Record<s
     },
     ...routes,
   });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = renderRoutes(
     [
-      { path: '/settings/members/$userId', component: MemberPage },
+      {
+        path: '/settings/members/$userId',
+        component: () => (
+          <>
+            <MemberPage />
+            <SessionAnswered />
+          </>
+        ),
+      },
       { path: '/settings/members', component: () => <div>members list</div> },
     ],
     '/o/acme/settings/members/u2',
-    qc,
+    undefined,
     locale,
   );
-  return { router, adminCalls, qc };
+  return { router, adminCalls };
 }
 
 describe('MemberPage', () => {
   it('shows an organization admin the role controls and no account sections', async () => {
-    const { adminCalls, qc } = render({ role: 'admin', instanceAdmin: false });
+    const { adminCalls } = render({ role: 'admin', instanceAdmin: false });
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Sara K.' })).toBeInTheDocument();
     expect(await screen.findByLabelText('Role in this organization')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Change role' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove from organization' })).toBeInTheDocument();
     // The session has answered (not an instance admin) before the absences count.
-    await waitForQuery(qc, meQueryKey);
+    expect(await screen.findByText('session: member')).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Sign-in' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Actions' })).not.toBeInTheDocument();
     expect(adminCalls).toEqual([]);

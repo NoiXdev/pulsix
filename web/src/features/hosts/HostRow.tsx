@@ -1,4 +1,4 @@
-import { ListRow, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
 import { Tag } from '../../ui/badge.tsx';
 import { CapabilityCell } from './capabilities.tsx';
 import { useHostActions } from './useHostActions.tsx';
@@ -85,7 +85,7 @@ export function HostRow({
           style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus ? 'var(--px-warn)' : 'var(--px-unknown)' }}
           title={agentStatus ? t.hosts.row.agentTitle(agentStatusLabel) : t.hosts.row.unknown}
         />
-        <span className="truncate font-mono text-xs font-semibold text-foreground">{host.name}</span>
+        <ListRowName className="truncate font-mono text-xs font-semibold text-foreground">{host.name}</ListRowName>
         <span className="truncate font-mono text-xs text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>
         <div className="flex flex-wrap gap-1">
           {(tags.data?.tags ?? []).map((tag) => (

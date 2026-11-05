@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import {
   createRootRoute,
   createRoute,
@@ -50,6 +50,10 @@ function renderRoot(qc = new QueryClient({ defaultOptions: { queries: { retry: f
     </QueryClientProvider>,
   );
 }
+
+afterEach(() => {
+  onlineManager.setOnline(true);
+});
 
 describe('RootRedirect', () => {
   it('redirects to /setup when setup is not completed', async () => {
@@ -143,6 +147,35 @@ describe('RootRedirect', () => {
 
     expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
     expect(visited).toEqual([]);
+  });
+
+  // Offline, /auth/me used to pause rather than fail, leaving the page on
+  // "Loading…" for good. A failure that is not a 401 says nothing about the
+  // session, so it is shown rather than sent to /login. The setup status is
+  // cached: this page was reached from a tab that loaded it earlier.
+  it.each([
+    ['nothing cached', undefined],
+    ['an answer cached from before', { user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' }, mfa_complete: true, totp_confirmed: true, instance_admin: false }],
+  ])('offline, shows the failure instead of waiting (%s)', async (_, cached) => {
+    onlineManager.setOnline(false);
+    const calls = mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': () => Promise.reject(new TypeError('Failed to fetch')),
+      'GET /api/v1/orgs': { orgs: [{ id: 'o1', slug: 'acme', name: 'Acme Hosting', role: 'owner', created_at: '2026-01-01T00:00:00Z' }] },
+    });
+    calls.mockClear();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['setup-status'], { completed: true });
+    if (cached) qc.setQueryData(['me'], cached);
+
+    renderRoot(qc);
+
+    expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
+    expect(screen.queryByText(/LOGIN/)).not.toBeInTheDocument();
+    expect(screen.queryByText('HOSTS PAGE')).not.toBeInTheDocument();
+    const requested = calls.mock.calls.map(([input]) => new URL((input as Request).url).pathname);
+    expect(requested).not.toContain('/api/v1/orgs');
   });
 
   it('redirects to the first organization for a ready session', async () => {

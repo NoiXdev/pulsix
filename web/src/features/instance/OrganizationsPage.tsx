@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Card, GridHeader } from '../../ui/table.tsx';
-import { ListRow, StaticListRow } from '../../ui/list-row.tsx';
+import { ListRow, ListRowName, StaticListRow } from '../../ui/list-row.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -54,11 +54,18 @@ export function OrganizationsPage() {
             <span>{o.columns.created}</span>
           </GridHeader>
           {orgs.data.map((org) => {
+            // A linked row's label already names it, so its name cell is kept
+            // out of the description; a static row has no label to name it.
+            const nameClass = 'truncate text-[13px] font-semibold';
             const cells = (
               <>
                 <div className="flex min-w-0 flex-col">
                   <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-[13px] font-semibold">{org.name}</span>
+                    {org.actor_is_member ? (
+                      <ListRowName className={nameClass}>{org.name}</ListRowName>
+                    ) : (
+                      <span className={nameClass}>{org.name}</span>
+                    )}
                     {!org.actor_is_member && <Pill tone="unknown">{o.notMember}</Pill>}
                   </span>
                   <span className="truncate font-mono text-xs text-muted-foreground">{org.slug}</span>

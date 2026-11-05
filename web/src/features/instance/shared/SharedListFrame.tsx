@@ -66,8 +66,8 @@ export function SharedListFrame({
 /**
  * SharedRow is one row of a shared-resource list: the whole row opens the
  * definition's form page, and the menu offers Open and Delete…. The cells
- * go in as children, in the order of the list's columns; the menu column is
- * added here.
+ * go in as children, in the order of the list's columns, the name cell in
+ * ListRowName; the menu column is added here.
  */
 export function SharedRow({
   to,

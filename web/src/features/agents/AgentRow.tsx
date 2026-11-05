@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router';
 import { Pill } from '../../ui/badge.tsx';
-import { ListRow, RowMenu, RowMenuItem, StaticListRow } from '../../ui/list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem, StaticListRow } from '../../ui/list-row.tsx';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Agent, AgentToken } from '../../api/types.ts';
@@ -44,7 +44,7 @@ export function AgentRow({
       }
     >
       <span className="truncate text-[13px]" data-row>
-        {a.host_name}
+        <ListRowName>{a.host_name}</ListRowName>
       </span>
       <span className="truncate font-mono text-xs">{a.agent_name}</span>
       <span>

@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
 import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
+import { ListRowName } from '../../../ui/list-row.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
 import { useDeleteTemplateDefinition, useTemplateDefinitions } from '../../../api/hooks/useSharedTemplateDefinitions.ts';
@@ -68,7 +69,7 @@ export function SharedTemplatesPage() {
           name={d.name}
           onDelete={() => void onDelete(d)}
         >
-          <span className="truncate font-mono text-[13px]">{d.name}</span>
+          <ListRowName className="truncate font-mono text-[13px]">{d.name}</ListRowName>
           <span className="truncate font-mono text-xs text-muted-foreground">
             {repoName.get(d.shared_repo_id) ?? d.shared_repo_id.slice(0, 8)}
           </span>

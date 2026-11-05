@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router';
 import { Pill } from '../../ui/badge.tsx';
-import { ListRow, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
 import type { Job } from '../../api/types.ts';
 import { isCancellable, kindLabel, shortId, statusLabel, statusTone } from './status.ts';
 import { triggerLabel } from './trigger.ts';
@@ -37,7 +37,7 @@ export function RunRow({ org, job, columns, canRun }: { org: string; job: Job; c
         </RowMenu>
       }
     >
-      <span className="font-mono text-[13px]">{id}</span>
+      <ListRowName className="font-mono text-[13px]">{id}</ListRowName>
       <span className="text-xs">{kindLabel(job.kind, t)}</span>
       <span>
         <Pill tone={statusTone(job.status)}>{statusLabel(job.status, t)}</Pill>

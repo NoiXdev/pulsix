@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { ListRow, RowMenu, RowMenuItem, StaticListRow } from './list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem, StaticListRow } from './list-row.tsx';
 
 function renderRow(onSelect = vi.fn(), onOther = vi.fn()) {
   const rootRoute = createRootRoute();
@@ -70,6 +70,29 @@ describe('ListRow', () => {
     const link = await screen.findByRole('link', { name: 'Open web-01', description: /10\.0\.0\.1/ });
     expect(link).not.toHaveAttribute('aria-label');
     expect(link.querySelector('.sr-only')).toHaveTextContent('Open web-01');
+  });
+
+  // The label already names the link; the visible name cell must not be read
+  // a second time as part of the description.
+  it('leaves the name cell out of the description', async () => {
+    const rootRoute = createRootRoute();
+    const list = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/',
+      component: () => (
+        <ListRow to="/o/$org/hosts/$id" params={{ org: 'acme', id: 'h1' }} columns="1fr 1fr" label="web-01">
+          <ListRowName className="font-medium">web-01</ListRowName>
+          <span>10.0.0.1</span>
+        </ListRow>
+      ),
+    });
+    const detail = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org/hosts/$id', component: () => <div /> });
+    render(<RouterProvider router={createRouter({ routeTree: rootRoute.addChildren([list, detail]), history: createMemoryHistory() })} />);
+
+    const link = await screen.findByRole('link', { name: 'web-01' });
+    expect(link).toHaveAccessibleDescription('10.0.0.1');
+    expect(link).toHaveTextContent('web-01');
+    expect(within(link).getByText('web-01', { selector: 'span.font-medium' })).toHaveAttribute('aria-hidden', 'true');
   });
 
   it('highlights on hover with the page background so it shows inside a Card', async () => {

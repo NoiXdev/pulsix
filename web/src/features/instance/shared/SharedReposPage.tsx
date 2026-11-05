@@ -2,6 +2,7 @@ import { useParams } from '@tanstack/react-router';
 import { SharedListFrame, SharedRow } from './SharedListFrame.tsx';
 import { useDeleteWithConfirm } from './useDeleteWithConfirm.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
+import { ListRowName } from '../../../ui/list-row.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useDeleteRepoDefinition, useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
 import { useT } from '../../../i18n/useT.ts';
@@ -64,7 +65,7 @@ export function SharedReposPage() {
           name={d.name}
           onDelete={() => void onDelete(d)}
         >
-          <span className="truncate font-mono text-[13px]">{d.name}</span>
+          <ListRowName className="truncate font-mono text-[13px]">{d.name}</ListRowName>
           <span className="truncate font-mono text-xs text-muted-foreground">{d.url}</span>
           <span className="truncate font-mono text-xs">{d.branch}</span>
           <span className="truncate font-mono text-xs text-muted-foreground">{d.subpath || '—'}</span>

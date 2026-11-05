@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 
@@ -23,10 +24,29 @@ export function useMe(opts: { enabled?: boolean } = {}) {
  * before the session changed (a password just replaced, a factor just
  * enrolled): acting on it bounced the session through a screen it no
  * longer belongs on, so these screens show loading until `settled`.
+ *
+ * The fetch runs whatever the browser says about the network
+ * (`networkMode: 'always'`): offline it fails instead of pausing, which
+ * left these screens on loading for good. `failed` is true while the
+ * screen has an answer since this mount but no successful one — the fetch
+ * on mount failed, so whatever `data` holds is the stale cached answer and
+ * the screen shows the failure instead. Once a fetch since this mount has
+ * succeeded it stays false: a later background refetch that fails is a
+ * hiccup for useQueryGuard (a toast), not a reason to take the screen away.
  */
 export function useSettledMe(opts: { enabled?: boolean } = {}) {
-  const me = useQuery({ queryKey: meQueryKey, queryFn: meQueryFn, retry: false, enabled: opts.enabled, refetchOnMount: 'always' });
-  return { me, settled: me.isFetchedAfterMount };
+  const me = useQuery({
+    queryKey: meQueryKey,
+    queryFn: meQueryFn,
+    retry: false,
+    enabled: opts.enabled,
+    refetchOnMount: 'always',
+    networkMode: 'always',
+  });
+  const settled = me.isFetchedAfterMount;
+  const [answered, setAnswered] = useState(false);
+  if (!answered && settled && me.isSuccess) setAnswered(true);
+  return { me, settled, failed: settled && me.isError && !answered };
 }
 
 /**

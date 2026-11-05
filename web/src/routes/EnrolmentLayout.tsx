@@ -3,7 +3,7 @@ import { Navigate, useNavigate } from '@tanstack/react-router';
 import { LogOut } from 'lucide-react';
 import { BarePage } from '../ui/bare-page.tsx';
 import { Button } from '../ui/button.tsx';
-import { QueryLoading } from '../ui/QueryState.tsx';
+import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useRefetchMe, useSettledMe } from '../api/hooks/useMe.ts';
 import { useSignOut } from '../lib/session.ts';
@@ -41,16 +41,19 @@ export function EnrolmentLayout() {
   const signOut = useSignOut();
   const t = useT();
   const refetchMe = useRefetchMe();
-  const { me, settled } = useSettledMe({ enabled: true });
-  const meGuard = useQueryGuard(me);
+  const { me, settled, failed } = useSettledMe({ enabled: true });
+  // While the fetch on mount has failed, `data` is a stale cached answer:
+  // the failure is shown, and the guard does not also toast about it.
+  const meGuard = useQueryGuard(me, { enabled: !failed });
 
   // Decided on an answer fetched since this mount (useSettledMe), never on
   // a cached one from before the session changed.
   const [enrolling, setEnrolling] = useState<boolean | null>(null);
-  if (enrolling === null && settled && me.data) {
+  if (enrolling === null && settled && !failed && me.data) {
     setEnrolling(me.data.mfa_enrolment_required);
   }
 
+  if (failed) return <QueryError error={me.error} />;
   if (meGuard) return meGuard;
   if (!me.data || enrolling === null) return <QueryLoading />;
   // Reached by a session with nothing to enrol: the root redirect knows

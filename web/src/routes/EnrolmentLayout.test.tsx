@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
@@ -45,6 +45,12 @@ function renderAt(qc = new QueryClient({ defaultOptions: { queries: { retry: fal
   );
   return qc;
 }
+
+const offline = () => Promise.reject(new TypeError('Failed to fetch'));
+
+afterEach(() => {
+  onlineManager.setOnline(true);
+});
 
 describe('EnrolmentLayout (a second factor is mandatory)', () => {
   it('offers enrolment without the app shell and never asks for organizations', async () => {
@@ -113,6 +119,41 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
     expect(await screen.findByText('ROOT')).toBeInTheDocument();
     observer.disconnect();
     expect(shown).toBe(false);
+  });
+
+  // Offline, /auth/me used to pause rather than fail, leaving the page on
+  // "Loading…" for good; with a cached answer it then decided on that stale one.
+  it.each([
+    ['nothing cached', undefined],
+    ['an answer cached from before', ENROLLING],
+  ])('offline, shows the failure instead of waiting (%s)', async (_, cached) => {
+    onlineManager.setOnline(false);
+    mockApi({ 'GET /api/v1/auth/me': offline, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    if (cached) qc.setQueryData(['me'], cached);
+
+    renderAt(qc);
+
+    expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Set up a second factor' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Could not refresh/)).not.toBeInTheDocument();
+  });
+
+  // Once the page has decided on a fresh answer, a later refetch that fails
+  // (a window focus while the network drops) must not take it away: the
+  // recovery codes may be on screen.
+  it('keeps the enrolment through a failed background refetch', async () => {
+    let down = false;
+    mockApi({ 'GET /api/v1/auth/me': () => (down ? offline() : ENROLLING), 'GET /api/v1/auth/passkeys': { passkeys: [] } });
+    const qc = renderAt();
+    expect(await screen.findByRole('heading', { name: 'Set up a second factor' })).toBeInTheDocument();
+
+    down = true;
+    await act(() => qc.refetchQueries({ queryKey: ['me'] }));
+
+    expect(await screen.findByText(/Could not refresh/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Set up a second factor' })).toBeInTheDocument();
   });
 
   it('signs out to /login and clears the cache', async () => {

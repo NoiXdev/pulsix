@@ -56,8 +56,9 @@ describe('GroupsPage', () => {
     renderPage();
 
     const web = await screen.findByRole('link', { name: 'webserver' });
-    // The name cell, not the link's visually hidden accessible name.
-    const cell = (link: HTMLElement, name: string) => within(link).getByText(name, { ignore: '.sr-only' });
+    // The cell around the visible name (not the link's visually hidden
+    // accessible name), which carries the indent.
+    const cell = (link: HTMLElement, name: string) => within(link).getByText(name, { ignore: '.sr-only' }).parentElement as HTMLElement;
     expect(cell(web, 'webserver')).toHaveStyle({ paddingLeft: '16px' });
     expect(cell(screen.getByRole('link', { name: 'production' }), 'production')).toHaveStyle({ paddingLeft: '0px' });
     expect(screen.getByText('incomplete')).toBeInTheDocument();

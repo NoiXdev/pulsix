@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router';
 import { Pill } from '../../../ui/badge.tsx';
-import { ListRow, RowMenu, RowMenuItem } from '../../../ui/list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem } from '../../../ui/list-row.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { useUnassignHost } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryMember } from '../../../api/types.ts';
@@ -53,7 +53,7 @@ export function MemberRow({
         </RowMenu>
       }
     >
-      <span className="truncate font-mono text-[13px]">{member.host_name}</span>
+      <ListRowName className="truncate font-mono text-[13px]">{member.host_name}</ListRowName>
       <span>{member.complete ? <Pill tone="ok">{m.complete}</Pill> : <Pill tone="warn">{m.toFill((member.problems ?? []).length)}</Pill>}</span>
       <span />
     </ListRow>

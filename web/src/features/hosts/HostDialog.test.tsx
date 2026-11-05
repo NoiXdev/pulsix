@@ -9,7 +9,6 @@ import { pickOption } from '../../test/pickOption.ts';
 import type { Host } from '../../api/types.ts';
 import { HostDialog } from './HostDialog.tsx';
 
-const org = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
 const ZONES = {
   zones: [
     { id: 'z1', slug: 'fra', name: 'Frankfurt', bastion_id: 'b1' },
@@ -32,9 +31,8 @@ const HOST: Host = {
 const SSH = { ssh: { host_id: 'h1', port: 22, username: '', bastion_mode: 'inherit' } };
 const PREVIEW = { vars: {}, warnings: [], connection: { host_id: 'h1', bastion_source: 'zone', bastions: ['b3'] } };
 
-function baseRoutes(role = 'admin') {
+function baseRoutes() {
   return {
-    'GET /api/v1/orgs/acme': org(role),
     'GET /api/v1/orgs/acme/zones': ZONES,
     'GET /api/v1/orgs/acme/bastions': BASTIONS,
     'GET /api/v1/orgs/acme/credentials': { credentials: [] },
@@ -45,13 +43,13 @@ function baseRoutes(role = 'admin') {
   };
 }
 
-function renderDialog(props: { host?: Host } = {}) {
+function renderDialog({ role = 'admin', ...props }: { host?: Host; role?: string } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const onOpenChange = vi.fn();
   render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <HostDialog org="acme" open onOpenChange={onOpenChange} {...props} />
+        <HostDialog org="acme" role={role} open onOpenChange={onOpenChange} {...props} />
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -287,17 +285,34 @@ describe('HostDialog', () => {
     expect(screen.getByLabelText('Jump host')).toHaveValue('Inherited: no jump host');
   });
 
+  // The caller already holds the organization and passes the role down; the
+  // dialog does not read the organization a second time.
+  it.each([
+    ['admin', true],
+    ['viewer', false],
+  ])('asks nothing about the organization (%s)', async (role, offersJump) => {
+    const calls = mockApi(baseRoutes());
+    calls.mockClear();
+    renderDialog({ role });
+
+    await screen.findByLabelText('Name');
+    if (offersJump) expect(screen.getByLabelText('Jump host')).toBeInTheDocument();
+    else expect(screen.queryByLabelText('Jump host')).not.toBeInTheDocument();
+    const requested = calls.mock.calls.map(([input]) => new URL((input as Request).url).pathname);
+    expect(requested).not.toContain('/api/v1/orgs/acme');
+  });
+
   it('no inventory.write hides the jump field', async () => {
     const user = userEvent.setup();
     let body: unknown;
     mockApi({
-      ...baseRoutes('viewer'),
+      ...baseRoutes(),
       'POST /api/v1/orgs/acme/hosts': (req: MockRequest) => {
         body = req.body;
         return { host: HOST };
       },
     });
-    renderDialog();
+    renderDialog({ role: 'viewer' });
 
     await user.type(await screen.findByLabelText('Name'), 'web-09.fra');
     expect(screen.queryByLabelText('Jump host')).not.toBeInTheDocument();
@@ -310,8 +325,8 @@ describe('HostDialog', () => {
 
   it('no credentials.write hides create jump host', async () => {
     const user = userEvent.setup();
-    mockApi(baseRoutes('operator'));
-    renderDialog();
+    mockApi(baseRoutes());
+    renderDialog({ role: 'operator' });
 
     await screen.findByLabelText('Name');
     await user.click(await screen.findByLabelText('Jump host'));

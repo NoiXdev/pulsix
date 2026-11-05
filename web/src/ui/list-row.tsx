@@ -28,7 +28,9 @@ const ROW_GRID = 'grid items-center gap-3 px-4 py-2.5';
  * `label` is the link's accessible name, rendered as a visually hidden span the
  * link points at with `aria-labelledby`; the cells are its accessible
  * description, so a screen reader still reads them without them becoming the
- * name. The hover highlight is `bg-background`, not `bg-card`: a list sits in a
+ * name. The cell that shows the name goes in ListRowName, which keeps it out of
+ * that description, so the name is read once. The hover highlight is
+ * `bg-background`, not `bg-card`: a list sits in a
  * Card, whose own surface is `bg-card`. The optional `menu` is rendered as a sibling of
  * the anchor, positioned over the row's last cell, because a button nested
  * in an <a> is invalid HTML and not reliably operable. Reserve that last
@@ -76,6 +78,19 @@ export function ListRow({
       </Link>
       {menu && <div className="absolute top-1/2 right-3 -translate-y-1/2">{menu}</div>}
     </div>
+  );
+}
+
+/**
+ * ListRowName is the cell of a ListRow that shows the row's name. It is hidden
+ * from assistive technology: the row's `label` already names the link, and
+ * without this the name would be read again as part of the description.
+ */
+export function ListRowName({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <span aria-hidden="true" className={className}>
+      {children}
+    </span>
   );
 }
 

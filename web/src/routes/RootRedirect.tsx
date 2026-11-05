@@ -5,6 +5,7 @@ import { useSettledMe } from '../api/hooks/useMe.ts';
 import { useOrgs } from '../api/hooks/useOrgs.ts';
 import { QueryError, QueryLoading } from '../ui/QueryState.tsx';
 import { useT } from '../i18n/useT.ts';
+import { errorStatus } from '../lib/apiError.ts';
 
 /**
  * RootRedirect resolves the four startup states the task brief names,
@@ -46,9 +47,12 @@ export function RootRedirect() {
   // It redirects only on an answer fetched since this mount (useSettledMe):
   // a cached one can be from before the session changed — a password just
   // replaced still reads must_change_password — and would bounce the
-  // session through a screen it no longer belongs on.
-  const { me, settled } = useSettledMe({ enabled: setupStatus.data?.completed === true });
-  const ready = settled && me.data?.mfa_complete === true && !me.data.must_change_password;
+  // session through a screen it no longer belongs on. Only a 401 means
+  // there is no session; any other failure (offline, a 500) says nothing
+  // about it, so it is shown rather than sent to /login.
+  const { me, settled, failed } = useSettledMe({ enabled: setupStatus.data?.completed === true });
+  const signedOut = settled && me.isError && errorStatus(me.error) === 401;
+  const ready = settled && !failed && me.data?.mfa_complete === true && !me.data.must_change_password;
   const orgs = useOrgs({ enabled: ready });
 
   useEffect(() => {
@@ -58,11 +62,11 @@ export function RootRedirect() {
       return;
     }
     if (!settled) return;
-    if (me.isError) {
+    if (signedOut) {
       void navigate({ to: '/login', search: { step: undefined } });
       return;
     }
-    if (!me.data) return;
+    if (failed || !me.data) return;
     if (!me.data.mfa_complete) {
       if (me.data.mfa_enrolment_required) {
         void navigate({ to: '/account/enrol' });
@@ -80,9 +84,10 @@ export function RootRedirect() {
     if (firstOrg) {
       void navigate({ to: '/o/$org/hosts', params: { org: firstOrg.slug }, search: { q: undefined } });
     }
-  }, [navigate, setupStatus.data, settled, me.data, me.isError, orgs.data]);
+  }, [navigate, setupStatus.data, settled, signedOut, failed, me.data, orgs.data]);
 
   if (setupStatus.isError) return <QueryError error={setupStatus.error} />;
+  if (setupStatus.data?.completed && failed && !signedOut) return <QueryError error={me.error} />;
   if (ready) {
     if (orgs.isError) return <QueryError error={orgs.error} />;
     if (orgs.data && !orgs.data.orgs?.length) {

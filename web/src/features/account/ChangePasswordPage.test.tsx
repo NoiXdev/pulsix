@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRoute } from '../../test/mockApi.ts';
@@ -61,6 +61,12 @@ beforeEach(() => {
   fetchMock.mockClear();
 });
 
+afterEach(() => {
+  onlineManager.setOnline(true);
+});
+
+const offline = () => Promise.reject(new TypeError('Failed to fetch'));
+
 describe('ChangePasswordPage (a temporary password must be replaced)', () => {
   it('renders without the app shell, names the account and offers to sign out', async () => {
     renderPage({ 'GET /api/v1/auth/me': FORCED });
@@ -88,6 +94,39 @@ describe('ChangePasswordPage (a temporary password must be replaced)', () => {
     expect(await screen.findByText('ROOT')).toBeInTheDocument();
     observer.disconnect();
     expect(shown).toBe(false);
+  });
+
+  // Offline, /auth/me used to pause rather than fail, leaving the page on
+  // "Loading…" for good; with a cached answer it then acted on that stale one.
+  it.each([
+    ['nothing cached', undefined],
+    ['an answer cached from before', FORCED],
+  ])('offline, shows the failure instead of waiting (%s)', async (_, cached) => {
+    onlineManager.setOnline(false);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    if (cached) qc.setQueryData(['me'], cached);
+
+    renderPage({ 'GET /api/v1/auth/me': offline }, qc);
+
+    expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Choose a new password' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Could not refresh/)).not.toBeInTheDocument();
+  });
+
+  // Once a fresh answer is on screen, a later refetch that fails (a window
+  // focus while the network drops) must not take the form away.
+  it('keeps the form through a failed background refetch', async () => {
+    let down = false;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage({ 'GET /api/v1/auth/me': () => (down ? offline() : FORCED) }, qc);
+    expect(await screen.findByRole('heading', { name: 'Choose a new password' })).toBeInTheDocument();
+
+    down = true;
+    await act(() => qc.refetchQueries({ queryKey: ['me'] }));
+
+    expect(await screen.findByText(/Could not refresh/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Choose a new password' })).toBeInTheDocument();
   });
 
   it('signs out to /login and clears the cache', async () => {

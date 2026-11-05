@@ -78,7 +78,7 @@ export function useHostActions(org: string, host: Host, role: string | undefined
     remove: () => void remove(),
     dialogs: (
       <>
-        {dialog === 'edit' && <HostDialog org={org} open onOpenChange={() => setDialog(null)} host={host} />}
+        {dialog === 'edit' && <HostDialog org={org} role={role} open onOpenChange={() => setDialog(null)} host={host} />}
         {dialog === 'run' && <AdhocDialog org={org} onClose={() => setDialog(null)} initialHostIds={[host.id]} />}
         {dialog === 'template' && <RunTemplateDialog org={org} host={host} onClose={() => setDialog(null)} />}
       </>

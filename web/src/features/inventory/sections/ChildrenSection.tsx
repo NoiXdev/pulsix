@@ -3,7 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 import { Card } from '../../../ui/table.tsx';
 import { Button } from '../../../ui/button.tsx';
 import { Section } from '../../../ui/detail-layout.tsx';
-import { ListRow } from '../../../ui/list-row.tsx';
+import { ListRow, ListRowName } from '../../../ui/list-row.tsx';
 import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.ts';
 import { CreateGroupDialog } from '../CreateGroupDialog.tsx';
 import { useT } from '../../../i18n/useT.ts';
@@ -40,7 +40,7 @@ export function ChildrenSection({
       <Card>
         {children.map((c) => (
           <ListRow key={c.id} to="/o/$org/groups/$id" params={{ org, id: c.id }} search={{ tab: undefined }} columns={COLUMNS} label={c.name}>
-            <span className="truncate font-mono text-[13px]">{c.name}</span>
+            <ListRowName className="truncate font-mono text-[13px]">{c.name}</ListRowName>
             <span className="text-xs text-muted-foreground">{t.inventory.children.members(c.members)}</span>
           </ListRow>
         ))}

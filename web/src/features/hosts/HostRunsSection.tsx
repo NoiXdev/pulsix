@@ -2,7 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { useJobs } from '../../api/hooks/useJobs.ts';
 import { Pill } from '../../ui/badge.tsx';
 import { Card } from '../../ui/table.tsx';
-import { ListRow } from '../../ui/list-row.tsx';
+import { ListRow, ListRowName } from '../../ui/list-row.tsx';
 import { Section } from '../../ui/detail-layout.tsx';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -54,7 +54,7 @@ export function HostRunsSection({ org, hostId }: { org: string; hostId: string }
             <span>
               <Pill tone={statusTone(j.status)}>{statusLabel(j.status, t)}</Pill>
             </span>
-            <span className="font-mono text-[13px]">{shortId(j.id)}</span>
+            <ListRowName className="font-mono text-[13px]">{shortId(j.id)}</ListRowName>
             <span className="truncate text-xs text-muted-foreground">
               {kindLabel(j.kind, t)} · {triggerLabel(j.trigger, t)}
             </span>
