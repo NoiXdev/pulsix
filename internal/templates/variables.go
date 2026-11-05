@@ -8,6 +8,7 @@ package templates
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -230,8 +231,9 @@ func withCarriedOver(sc *schema.Schema, incoming, stored map[string]any) map[str
 // that save's to fix. An automatic apply may have added one; the variables
 // page and an apply insist on its value. The write is built again with
 // the top-level fields not required (every other check runs as before)
-// and taken only when it stores the same schema and values; otherwise
-// failed, build's error, is returned.
+// and taken only when it stores the same schema and values (keepsValues:
+// a legacy plaintext secret the save reseals counts as the same value);
+// otherwise failed, build's error, is returned.
 func (s *Service) buildKeepingValues(ctx context.Context, in UpdateInput, isProjection bool, vars map[string]any, cur Template, failed error) (Template, error) {
 	var ve *schema.ValidationError
 	if !errors.As(failed, &ve) || in.ExtraVarsSchema == nil || !sameJSON(in.ExtraVarsSchema, cur.ExtraVarsSchema) {
@@ -242,11 +244,60 @@ func (s *Service) buildKeepingValues(ctx context.Context, in UpdateInput, isProj
 		relaxed.Fields[i].Required = false
 	}
 	t, err := s.build(ctx, cur.OrgID, cur.ID, in.Name, in.PlaybookID, isProjection, in.Scope, in.Limit, vars, relaxed, in.CredentialID, cur, in.VaultCredentials)
-	if err != nil || !sameJSON(t.ExtraVars, cur.ExtraVars) {
+	if err != nil || !s.keepsValues(ExtraVarsAAD(cur.OrgID, cur.ID), cur.ExtraVars, t.ExtraVars) {
 		return Template{}, failed
 	}
 	t.ExtraVarsSchema = in.ExtraVarsSchema
 	return t, nil
+}
+
+// keepsValues reports whether next, a save's values as it would store
+// them, keeps cur, the stored ones: the same JSON everywhere, except that
+// where cur holds a plain string and next a sealed envelope the two count
+// as the same when the envelope opens under aad to that string — the
+// legacy plaintext secret (backlog 2.47) a save reseals. The opened value
+// never leaves this function: only the comparison does, and an envelope
+// that does not open is simply not the same value.
+func (s *Service) keepsValues(aad []byte, cur, next map[string]any) bool {
+	return s.sameValue(aad, cur, next)
+}
+
+// sameValue is keepsValues for one value at any depth.
+func (s *Service) sameValue(aad []byte, cur, next any) bool {
+	if plain, isStr := cur.(string); isStr {
+		if ct, sealed := schema.SealedBytes(next); sealed {
+			opened, err := s.box.OpenAAD(ct, aad)
+			same := err == nil && subtle.ConstantTimeCompare(opened, []byte(plain)) == 1
+			clear(opened)
+			return same
+		}
+	}
+	switch c := cur.(type) {
+	case map[string]any:
+		n, ok := next.(map[string]any)
+		if !ok || len(n) != len(c) {
+			return false
+		}
+		for k, v := range c {
+			if nv, found := n[k]; !found || !s.sameValue(aad, v, nv) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		n, ok := next.([]any)
+		if !ok || len(n) != len(c) {
+			return false
+		}
+		for i := range c {
+			if !s.sameValue(aad, c[i], n[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return sameJSON(cur, next)
+	}
 }
 
 // sameJSON reports whether a and b encode to the same JSON, as the

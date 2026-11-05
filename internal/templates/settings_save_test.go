@@ -60,6 +60,50 @@ func TestSettingsSaveKeepsAMissingRequiredValue(t *testing.T) {
 	}
 }
 
+// TestSettingsSaveKeepsAMissingRequiredValueOverALegacySecret is the
+// settings save above over a legacy template whose token is stored in
+// plaintext (backlog 2.47): the save reseals it, which must not count as
+// a changed value (backlog 7.87). A save that does change it is checked in
+// full.
+func TestSettingsSaveKeepsAMissingRequiredValueOverALegacySecret(t *testing.T) {
+	f, repo := repoFixture()
+	port := candidate("port", schema.TypeInt)
+	token := candidate("token", schema.TypeSecret)
+	tm := f.linked(t, "auto", templates.ModeAutomatic, "c1", []schema.Field{asStored(port, true), asStored(token, true)},
+		map[string]any{"port": float64(1), "token": "hunter2"})
+	f.sources[f.playbook] = readSource(repo, "c2", port, token, candidate("release", schema.TypeString, required))
+	if err := f.svc.ApplyRepoSources(ctx, f.org, repo); err != nil {
+		t.Fatal(err)
+	}
+	cur := f.store.byID[tm.ID]
+	legacy := func() { revertToLegacy(t, f, cur, map[string]any{"port": float64(1), "token": "hunter2"}) }
+	keep := map[string]any{"$secret": "keep", "from": "token"}
+	settings := func(name string, vars map[string]any) templates.UpdateInput {
+		sc := *cur.ExtraVarsSchema
+		return templates.UpdateInput{Name: name, PlaybookID: cur.PlaybookID, ExtraVarsSchema: &sc, ExtraVars: vars}
+	}
+
+	legacy()
+	if _, err := f.svc.Update(ctx, f.org, tm.ID, settings("renamed", map[string]any{"port": float64(1), "token": keep})); err != nil {
+		t.Fatalf("rename with the values echoed over a legacy secret: %v", err)
+	}
+	if got := f.store.byID[tm.ID]; got.Name != "renamed" {
+		t.Fatalf("after the rename: name %q", got.Name)
+	}
+	if got := openStored(t, testBox(), f, cur, "token"); got != "hunter2" {
+		t.Fatalf("stored token opens to %q, want the legacy value sealed", got)
+	}
+
+	legacy()
+	_, err := f.svc.Update(ctx, f.org, tm.ID, settings("again", map[string]any{"port": float64(1), "token": "other"}))
+	if got := valueProblems(t, err); !reflect.DeepEqual(got, []string{"release"}) {
+		t.Fatalf("a settings save that changes the legacy secret: problems %v, want release", got)
+	}
+	if got := f.store.byID[tm.ID]; got.Name != "renamed" || got.ExtraVars["token"] != "hunter2" {
+		t.Fatalf("a refused save changed the template: name %q", got.Name)
+	}
+}
+
 // TestPlaybookChangeUnlinksTheAppliedSource: a template whose playbook a
 // person changes follows the new playbook only after a preview: automatic
 // mode turns manual, the applied source revision is forgotten, and the
