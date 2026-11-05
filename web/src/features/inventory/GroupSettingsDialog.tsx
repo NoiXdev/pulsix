@@ -6,7 +6,7 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { errorStatus } from '../../lib/apiError.ts';
-import { useUpdateGroup } from '../../api/hooks/useInventory.ts';
+import { useReloadInventory, useUpdateGroup } from '../../api/hooks/useInventory.ts';
 import { useBastions } from '../../api/hooks/useSsh.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../api/types.ts';
@@ -19,7 +19,10 @@ const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background 
 
 /** GroupSettingsDialog edits a group's name, description, parent and jump
  * host ("Edit group" in the group page's sidebar). It closes on a save; a
- * 412 keeps it open with the stale notice. */
+ * 412 keeps it open with the stale notice, whose Reload starts the form
+ * over from the stored group. The revision sent is the one the form was
+ * filled from, never a newer one: saving old values on a fresh revision
+ * would silently undo the other writer's change. */
 export function GroupSettingsDialog({
   org, group, groups, canCreateCredential, onClose,
 }: {
@@ -38,6 +41,8 @@ export function GroupSettingsDialog({
   const bastions = useBastions(org);
   const credentials = useCredentials(org);
   const update = useUpdateGroup(org, group.id);
+  const reload = useReloadInventory(org);
+  const [revision, setRevision] = useState(group.revision);
   const [name, setName] = useState(group.name);
   const [description, setDescription] = useState(group.description);
   const [parent, setParent] = useState(group.parent_id ?? '');
@@ -49,10 +54,24 @@ export function GroupSettingsDialog({
   const [newBastionName, setNewBastionName] = useState<string | null>(null);
   const excluded = descendantIds(groups, group.id).add(group.id);
 
+  function fillFrom(g: InventoryGroup) {
+    setName(g.name);
+    setDescription(g.description);
+    setParent(g.parent_id ?? '');
+    setBastion(g.bastion_id ?? '');
+    setRevision(g.revision);
+  }
+
+  async function onReload() {
+    const fresh = await reload(group.id);
+    if (fresh) fillFrom(fresh);
+    setStale(false);
+  }
+
   async function save(e: FormEvent) {
     e.preventDefault();
     try {
-      await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision: group.revision });
+      await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision });
       toast.show(t.inventory.settings.saved);
       onClose();
     } catch (err) {
@@ -69,7 +88,7 @@ export function GroupSettingsDialog({
     // form's own onSubmit too.
     <Dialog open onClose={onClose} title={t.inventory.settings.editTitle}>
       <form onSubmit={save} className="flex flex-col gap-4">
-        {stale && <StaleNotice org={org} />}
+        {stale && <StaleNotice onReload={onReload} />}
         <div className="flex flex-col gap-1">
           <Label htmlFor="settings-name">{t.inventory.settings.name}</Label>
           <Input id="settings-name" className="font-mono" required value={name} onChange={(e) => setName(e.target.value)} />

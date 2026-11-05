@@ -57,12 +57,13 @@ function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup;
   return (
     <DetailLayout sidebar={<GroupSidebar org={org} group={group} groups={all} role={role} />} nav={nav}>
       <MembersSection org={org} group={group} canWrite={canWrite} />
-      {/* Keyed by what each form edits, not by the revision: a save in one
-          section bumps the revision, and must not throw away an unsaved
-          draft in the other. A schema change still restarts the values,
-          because their fields changed with it. */}
-      <ValuesSection key={JSON.stringify([group.schema, group.vars])} org={org} group={group} canWrite={canWrite} />
-      <SchemaSection key={JSON.stringify(group.schema)} org={org} group={group} canWrite={canWrite} />
+      {/* Keyed by the group and what each form edits, not by the revision:
+          a save in one section bumps the revision, and must not throw away
+          an unsaved draft in the other. A schema change still restarts the
+          values, because their fields changed with it. The id keeps a draft
+          from following the user to another group with the same content. */}
+      <ValuesSection key={JSON.stringify([group.id, group.schema, group.vars])} org={org} group={group} canWrite={canWrite} />
+      <SchemaSection key={JSON.stringify([group.id, group.schema])} org={org} group={group} canWrite={canWrite} />
       <ChildrenSection org={org} group={group} groups={all} canWrite={canWrite} />
       <PreviewSection org={org} group={group} />
     </DetailLayout>

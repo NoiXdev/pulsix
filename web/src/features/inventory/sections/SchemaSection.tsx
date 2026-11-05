@@ -3,7 +3,7 @@ import { Button } from '../../../ui/button.tsx';
 import { Section } from '../../../ui/detail-layout.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
-import { toVarSchema, useSetGroupSchema } from '../../../api/hooks/useInventory.ts';
+import { toVarSchema, useReloadInventory, useSetGroupSchema } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
 import { SchemaBuilder } from '../schema/SchemaBuilder.tsx';
 import { problemsFromError } from '../schema/paths.ts';
@@ -25,6 +25,16 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
   // wholesale reset of the draft (Discard) must remount it, or an editor
   // could keep showing text from before the reset.
   const [builderKey, setBuilderKey] = useState(0);
+
+  const reload = useReloadInventory(org);
+
+  // A section is keyed by what it edits, so a reload that brings other
+  // content starts it over; one that does not keeps the draft, which then
+  // saves on the reloaded revision.
+  async function onReload() {
+    await reload(group.id);
+    setStale(false);
+  }
 
   async function onSave() {
     setProblems([]);
@@ -62,7 +72,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
         ) : undefined
       }
     >
-      {stale && <StaleNotice org={org} />}
+      {stale && <StaleNotice onReload={onReload} />}
       <span className="text-xs text-muted-foreground">
         {t.inventory.schemaTab.summary(draft.fields.length, draft.fields.filter((f) => f.scope === 'host').length)}
       </span>

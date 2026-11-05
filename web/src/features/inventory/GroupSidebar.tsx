@@ -102,7 +102,13 @@ function GroupFacts({ org, group, groups }: { org: string; group: InventoryGroup
     const toFill = list.filter((m) => !m.complete).length;
     membersValue = toFill > 0 ? `${list.length}, ${t.inventory.members.toFill(toFill)}` : String(list.length);
   }
-  const bastion = group.bastion_id ? (bastions.data?.bastions?.find((b) => b.id === group.bastion_id)?.name ?? NONE) : NONE;
+  // "—" only when the group sets none: a list still loading says so, and a
+  // jump host missing from it shows a piece of its id.
+  let bastion = NONE;
+  if (group.bastion_id) {
+    const name = bastions.data?.bastions?.find((b) => b.id === group.bastion_id)?.name;
+    bastion = name ?? (bastions.isPending ? t.common.loading : group.bastion_id.slice(0, 8));
+  }
 
   return (
     <SidebarFacts

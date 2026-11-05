@@ -27,12 +27,30 @@ export function useGroups(org: string) {
   });
 }
 
+const groupKey = (org: string, id: string) => ['inventory', org, 'group', id];
+
+function fetchGroup(org: string, id: string) {
+  return unwrap(api.GET('/api/v1/orgs/{org}/inventory/groups/{id}', { params: { path: { org, id } } }));
+}
+
 export function useGroup(org: string, id: string) {
   return useQuery({
-    queryKey: ['inventory', org, 'group', id],
-    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/inventory/groups/{id}', { params: { path: { org, id } } })),
+    queryKey: groupKey(org, id),
+    queryFn: () => fetchGroup(org, id),
     enabled: !!org && !!id,
   });
+}
+
+/** useReloadInventory answers a 412: it refetches what the organization's
+ * inventory pages show and resolves, once that is done, to the stored
+ * version of the given group, so a form can start over from it. It
+ * rejects when a refetch fails. */
+export function useReloadInventory(org: string) {
+  const qc = useQueryClient();
+  return async (groupId: string) => {
+    await qc.invalidateQueries({ queryKey: ['inventory', org] }, { throwOnError: true });
+    return qc.getQueryData<Awaited<ReturnType<typeof fetchGroup>>>(groupKey(org, groupId))?.group;
+  };
 }
 
 export function useCreateGroup(org: string) {

@@ -52,6 +52,7 @@ export const enInventory = {
   stale: {
     message: 'This group changed since you loaded it. Reload to see the current version, then apply your change again.',
     reload: 'Reload',
+    reloadFailed: 'Reloading failed. Try again.',
   },
   preview: {
     introBefore: 'The inventory a job targeting ',

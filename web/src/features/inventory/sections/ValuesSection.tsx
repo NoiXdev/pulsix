@@ -3,7 +3,7 @@ import { Button } from '../../../ui/button.tsx';
 import { DisabledHint, Section } from '../../../ui/detail-layout.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
-import { toVarSchema, useSetGroupVars } from '../../../api/hooks/useInventory.ts';
+import { toVarSchema, useReloadInventory, useSetGroupVars } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
 import { SchemaForm } from '../schema/SchemaForm.tsx';
 import { groupFields, problemsFromError } from '../schema/paths.ts';
@@ -48,6 +48,16 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   const [problems, setProblems] = useState<Problem[]>(() => (group.problems ?? []).map((p) => ({ path: p.path, message: p.message })));
   const [stale, setStale] = useState(false);
 
+  const reload = useReloadInventory(org);
+
+  // A section is keyed by what it edits, so a reload that brings other
+  // content starts it over; one that does not keeps the draft, which then
+  // saves on the reloaded revision.
+  async function onReload() {
+    await reload(group.id);
+    setStale(false);
+  }
+
   async function onSave() {
     setProblems([]);
     try {
@@ -64,7 +74,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
 
   return (
     <div className="flex max-w-[640px] flex-col gap-4">
-      {stale && <StaleNotice org={org} />}
+      {stale && <StaleNotice onReload={onReload} />}
       {(group.orphaned ?? []).length > 0 && (
         <p className="rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
           {t.inventory.valuesTab.orphanedBefore}

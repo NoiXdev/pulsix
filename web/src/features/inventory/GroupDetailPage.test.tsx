@@ -74,7 +74,6 @@ async function openSettings(user: ReturnType<typeof userEvent.setup>) {
   return screen.findByRole('dialog', { name: 'Edit group' });
 }
 
-/** Opens a member row's menu and chooses an item. */
 async function memberAction(user: ReturnType<typeof userEvent.setup>, host: string, item: string) {
   await user.click(await screen.findByRole('button', { name: `Actions for ${host}` }));
   await user.click(screen.getByRole('menuitem', { name: item }));

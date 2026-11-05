@@ -56,6 +56,7 @@ export const deInventory: Messages['inventory'] = {
   stale: {
     message: 'Diese Gruppe wurde geändert, seit sie geladen wurde. Neu laden, um die aktuelle Version zu sehen, und die Änderung danach erneut vornehmen.',
     reload: 'Neu laden',
+    reloadFailed: 'Neu laden fehlgeschlagen. Bitte erneut versuchen.',
   },
   preview: {
     introBefore: 'Das Inventar, das ein Job mit dem Ziel ',
