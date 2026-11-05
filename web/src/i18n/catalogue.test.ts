@@ -39,3 +39,12 @@ describe('the German catalogue', () => {
     expect(shape(de)).toEqual(shape(en));
   });
 });
+
+describe('the save-failure messages of the settings pages', () => {
+  // Shown as a toast on their own, so they start like a sentence.
+  const PATHS = ['settings.general.saveFailed', 'language.account.saveFailed', 'language.instance.saveFailed'];
+  it.each([['English', en], ['German', de]])('start with a capital letter in the %s catalogue', (_name, catalogue) => {
+    const all = new Map(leaves(catalogue).map(({ path, value }) => [path, value]));
+    for (const path of PATHS) expect(`${path}: ${String(all.get(path))}`).toMatch(/: [A-ZÄÖÜ]/);
+  });
+});

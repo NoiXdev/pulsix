@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi } from '../../test/mockApi.ts';
 import { renderRoutes } from '../../test/renderRoutes.tsx';
@@ -32,6 +32,16 @@ function render() {
 }
 
 describe('OrganizationsPage', () => {
+  // Verified for backlog 7.82 item 18: the guard returns null while the
+  // query is pending, so the page's own loading branch is the one shown.
+  it('shows the loading state while the list is on its way', async () => {
+    mockApi({ 'GET /api/v1/admin/orgs': () => new Promise(() => {}) });
+    render();
+
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Organizations' })).toBeInTheDocument();
+  });
+
   it('lists every organization with its slug, member count and creation date', async () => {
     mockApi({ 'GET /api/v1/admin/orgs': { orgs: ORGS } });
     render();
@@ -73,6 +83,16 @@ describe('OrganizationsPage', () => {
     expect(screen.queryByRole('link', { name: 'Globex' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('link')).toHaveLength(1);
     expect(screen.getByText('not a member')).toBeInTheDocument();
+  });
+
+  it('keeps the non-member row\'s title and its row layout', async () => {
+    mockApi({ 'GET /api/v1/admin/orgs': { orgs: ORGS } });
+    render();
+
+    const row = (await screen.findByText('Globex')).closest('[title]') as HTMLElement;
+    expect(row).toHaveAttribute('title', 'You are not a member of this organization, so you cannot open it.');
+    expect(row).toHaveStyle({ gridTemplateColumns: 'minmax(0, 1.6fr) 120px 140px' });
+    expect(within(row).queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('opens the create dialog from the page', async () => {

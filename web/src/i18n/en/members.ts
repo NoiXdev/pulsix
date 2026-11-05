@@ -1,8 +1,9 @@
 /**
  * The members page (list, invite dialog, open invitations), the member
  * page (role and removal) and the page an invitation link opens. The page title is
- * `settings.tabs.members`. Role names (viewer, operator, admin, owner)
- * are product terms and stay English in every language.
+ * `settings.tabs.members`. `roles` are the labels of the role pickers; the
+ * role names themselves (viewer, operator, admin, owner) are what the API
+ * speaks.
  */
 export const enMembers = {
   count: (n: number) => `${n} members`,
@@ -13,6 +14,12 @@ export const enMembers = {
     joined: 'Joined',
     status: 'Status',
     actions: 'Actions',
+  },
+  roles: {
+    viewer: 'Viewer',
+    operator: 'Operator',
+    admin: 'Admin',
+    owner: 'Owner',
   },
   disabled: 'disabled',
   active: 'active',

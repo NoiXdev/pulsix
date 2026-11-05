@@ -211,3 +211,37 @@ describe('SharedCheckFormPage — edit', () => {
     expect(await screen.findByText('You do not have access')).toBeInTheDocument();
   });
 });
+
+describe('SharedCheckFormPage — create gate', () => {
+  // The create page needs no definitions list: it only checks that the
+  // account may create one, from /auth/me, so a failing list cannot block it.
+  it('shows the empty form without requesting the definitions list', async () => {
+    let listed = 0;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/checks/definitions': () => {
+        listed += 1;
+        return new Response(JSON.stringify({ detail: 'boom' }), { status: 500 });
+      },
+    });
+    renderPage(`${LIST}/new`);
+    expect(await screen.findByRole('heading', { name: 'New check definition', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create definition' })).toBeInTheDocument();
+    expect(listed).toBe(0);
+  });
+
+  it('shows the access-denied page to a non-admin without requesting the definitions list', async () => {
+    let listed = 0;
+    mockApi({
+      'GET /api/v1/auth/me': { ...ADMIN, instance_admin: false },
+      'GET /api/v1/admin/checks/definitions': () => {
+        listed += 1;
+        return { definitions: [] };
+      },
+    });
+    renderPage(`${LIST}/new`);
+    expect(await screen.findByText('You do not have access')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create definition' })).not.toBeInTheDocument();
+    expect(listed).toBe(0);
+  });
+});

@@ -20,8 +20,12 @@ import { useT } from '../../i18n/useT.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
 import { PendingInvites } from './PendingInvites.tsx';
+import { roleOptions } from './roles.ts';
 
 const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 40px';
+
+/** An invitation cannot grant ownership. */
+const INVITE_ROLES = ['viewer', 'operator', 'admin'] as const;
 
 /**
  * MembersPage follows design/mockups/build.mjs's MEMBERS / ACL artboard's
@@ -143,6 +147,7 @@ export function MembersPage() {
 
       <Dialog open={inviteOpen} onClose={() => setInviteOpen(false)} title={t.members.invite}>
         <form
+          noValidate
           className="flex flex-col gap-4"
           onSubmit={inviteForm.handleSubmit(async (values) => {
             try {
@@ -174,11 +179,7 @@ export function MembersPage() {
               render={({ field }) => (
                 <Select
                   id="invite_role"
-                  options={[
-                    { value: 'viewer', label: 'viewer' },
-                    { value: 'operator', label: 'operator' },
-                    { value: 'admin', label: 'admin' },
-                  ]}
+                  options={roleOptions(t, INVITE_ROLES)}
                   value={field.value}
                   onChange={field.onChange}
                 />

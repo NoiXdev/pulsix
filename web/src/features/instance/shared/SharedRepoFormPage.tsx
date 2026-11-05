@@ -4,7 +4,7 @@ import { FormPage } from '../../../ui/form-page.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
-import { DefinitionLoader } from './DefinitionLoader.tsx';
+import { CreateGate, DefinitionLoader } from './DefinitionLoader.tsx';
 import {
   useCreateRepoDefinition,
   useRepoDefinitions,
@@ -23,6 +23,13 @@ import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx'
  */
 export function SharedRepoFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
+  if (!id) {
+    return (
+      <CreateGate>
+        <RepoForm org={org} />
+      </CreateGate>
+    );
+  }
   return (
     <DefinitionLoader useDefinitions={useRepoDefinitions} id={id}>
       {(definition) => <RepoForm org={org} definition={definition} />}

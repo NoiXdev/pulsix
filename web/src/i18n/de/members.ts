@@ -10,6 +10,12 @@ export const deMembers: Messages['members'] = {
     status: 'Status',
     actions: 'Aktionen',
   },
+  roles: {
+    viewer: 'Betrachter',
+    operator: 'Operator',
+    admin: 'Admin',
+    owner: 'Inhaber',
+  },
   disabled: 'deaktiviert',
   active: 'aktiv',
   remove: 'entfernen',

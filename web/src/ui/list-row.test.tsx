@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { ListRow, RowMenu, RowMenuItem } from './list-row.tsx';
+import { ListRow, RowMenu, RowMenuItem, StaticListRow } from './list-row.tsx';
 
 function renderRow(onSelect = vi.fn(), onOther = vi.fn()) {
   const rootRoute = createRootRoute();
@@ -245,5 +245,51 @@ describe('RowMenu', () => {
     await user.keyboard('{Enter}');
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(router.state.location.pathname).toBe('/hosts');
+  });
+});
+
+describe('StaticListRow', () => {
+  function renderStatic() {
+    const rootRoute = createRootRoute();
+    const list = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/',
+      component: () => (
+        <>
+          <StaticListRow columns="1fr 1fr" title="Not openable">
+            <span>Globex</span>
+            <span>3</span>
+          </StaticListRow>
+          <ListRow to="/o/$org/hosts/$id" params={{ org: 'acme', id: 'h1' }} columns="1fr 1fr" label="Open web-01">
+            <span>web-01</span>
+            <span>online</span>
+          </ListRow>
+        </>
+      ),
+    });
+    const detail = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org/hosts/$id', component: () => <div /> });
+    render(<RouterProvider router={createRouter({ routeTree: rootRoute.addChildren([list, detail]), history: createMemoryHistory() })} />);
+  }
+
+  it('is not a link, carries its title and lays its cells out on the columns', async () => {
+    renderStatic();
+    const row = (await screen.findByText('Globex')).parentElement as HTMLElement;
+    expect(row).toHaveAttribute('title', 'Not openable');
+    expect(row).toHaveStyle({ gridTemplateColumns: '1fr 1fr' });
+    expect(within(row).queryByRole('link')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link')).toHaveLength(1);
+  });
+
+  it('shares the row classes of ListRow, without its hover highlight', async () => {
+    renderStatic();
+    const row = (await screen.findByText('Globex')).parentElement as HTMLElement;
+    const linked = (await screen.findByRole('link', { name: 'Open web-01' })).parentElement as HTMLElement;
+    for (const cls of ['border-b', 'border-border', 'last:border-b-0']) {
+      expect(row.className).toContain(cls);
+      expect(linked.className).toContain(cls);
+    }
+    expect(row.className).toContain('grid');
+    expect(row.className).toContain('px-4');
+    expect(row.className).not.toContain('hover:');
   });
 });

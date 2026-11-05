@@ -27,10 +27,14 @@ export function useUpdateOrg(slug: string) {
   return useMutation({
     mutationFn: (name: string) =>
       unwrap(api.PATCH('/api/v1/orgs/{org}', { params: { path: { org: slug } }, body: { name } })),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['org', slug] });
-      void qc.invalidateQueries({ queryKey: ['orgs'] });
-    },
+    // Returned, so `mutateAsync` resolves only once the fresh name is in the
+    // cache: a form that drops its draft on success would otherwise show the
+    // old name until the refetch lands.
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['org', slug] }),
+        qc.invalidateQueries({ queryKey: ['orgs'] }),
+      ]),
   });
 }
 

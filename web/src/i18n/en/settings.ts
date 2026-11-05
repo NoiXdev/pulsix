@@ -33,6 +33,6 @@ export const enSettings = {
     readOnlyHint: 'Only owners and admins can rename the organization.',
     save: 'Save',
     saved: 'Organization saved',
-    saveFailed: 'failed to save the organization',
+    saveFailed: 'Failed to save the organization',
   },
 };

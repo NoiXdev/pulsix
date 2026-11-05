@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Card, GridHeader } from '../../ui/table.tsx';
-import { ListRow } from '../../ui/list-row.tsx';
+import { ListRow, StaticListRow } from '../../ui/list-row.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -79,14 +79,9 @@ export function OrganizationsPage() {
                 {cells}
               </ListRow>
             ) : (
-              <div
-                key={org.id}
-                title={o.notMemberTitle}
-                className="grid items-center gap-3 border-b border-border px-4 py-2.5 last:border-b-0"
-                style={{ gridTemplateColumns: COLUMNS }}
-              >
+              <StaticListRow key={org.id} columns={COLUMNS} title={o.notMemberTitle}>
                 {cells}
-              </div>
+              </StaticListRow>
             );
           })}
           {orgs.data.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{o.empty}</p>}

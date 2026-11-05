@@ -55,6 +55,43 @@ describe('OrgGeneralPage', () => {
     await waitFor(() => expect(screen.getByLabelText('Organization name')).toHaveValue('Acme Cloud'));
   });
 
+  // The save resolves only once the refetched organization is in the cache:
+  // clearing the draft earlier would show the old name until the refetch
+  // lands.
+  it('never shows the old name again between a save and the refetched name', async () => {
+    const user = userEvent.setup();
+    let name = 'Acme Hosting';
+    mockApi({
+      'GET /api/v1/orgs/acme': async () => {
+        const answer = org('owner', name);
+        if (name !== 'Acme Hosting') await new Promise((r) => setTimeout(r, 150));
+        return answer;
+      },
+      'PATCH /api/v1/orgs/acme': (req: MockRequest) => {
+        name = (req.body as { name: string }).name;
+        return org('owner', name);
+      },
+    });
+    renderPage();
+    const input = await screen.findByLabelText('Organization name');
+    await user.clear(input);
+    await user.type(input, 'Acme Cloud');
+
+    const seen: string[] = [];
+    const observer = new MutationObserver(() => {
+      const field = screen.queryByLabelText<HTMLInputElement>('Organization name');
+      if (field) seen.push(field.value);
+    });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    // The toast is raised right after the save resolves.
+    await screen.findByText('Organization saved');
+    expect((screen.getByLabelText('Organization name') as HTMLInputElement).value).toBe('Acme Cloud');
+    await waitFor(() => expect(screen.getByLabelText('Organization name')).toHaveValue('Acme Cloud'));
+    observer.disconnect();
+    expect(seen).not.toContain('Acme Hosting');
+  });
+
   it('shows the slug read-only', async () => {
     mockApi({ 'GET /api/v1/orgs/acme': org('owner') });
     renderPage();

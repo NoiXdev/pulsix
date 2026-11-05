@@ -62,6 +62,19 @@ describe('MemberPage', () => {
     expect(screen.getByRole('button', { name: 'Change role' })).toBeInTheDocument();
   });
 
+  it('offers all four roles by their names, Owner included', async () => {
+    const user = userEvent.setup();
+    render({ role: 'owner', instanceAdmin: false });
+
+    await user.click(await screen.findByLabelText('Role in this organization'));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-label'))).toEqual([
+      'Viewer',
+      'Operator',
+      'Admin',
+      'Owner',
+    ]);
+  });
+
   it('shows a viewer the role without controls', async () => {
     render({ role: 'viewer', instanceAdmin: false });
 
@@ -84,7 +97,7 @@ describe('MemberPage', () => {
     );
 
     await screen.findByLabelText('Role in this organization');
-    await pickOption(screen, 'Role in this organization', 'operator');
+    await pickOption(screen, 'Role in this organization', 'Operator');
     await user.click(screen.getByRole('button', { name: 'Change role' }));
 
     expect(await screen.findByText('Role updated to operator')).toBeInTheDocument();
@@ -102,7 +115,7 @@ describe('MemberPage', () => {
     );
 
     await screen.findByLabelText('Role in this organization');
-    await pickOption(screen, 'Role in this organization', 'operator');
+    await pickOption(screen, 'Role in this organization', 'Operator');
     await user.click(screen.getByRole('button', { name: 'Change role' }));
 
     expect(await screen.findByText('organization needs at least one owner')).toBeInTheDocument();

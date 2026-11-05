@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { MembersPage } from './MembersPage.tsx';
@@ -17,7 +18,7 @@ const MEMBERS = {
 
 const ORG = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
 
-function renderPage(qc: QueryClient) {
+function renderPage(qc: QueryClient, locale?: 'de') {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const membersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/members', component: MembersPage });
@@ -29,12 +30,13 @@ function renderPage(qc: QueryClient) {
   const routeTree = rootRoute.addChildren([orgRoute.addChildren([membersRoute, memberRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/o/acme/settings/members'] }) });
 
+  const page = (
+    <ToastProvider>
+      <RouterProvider router={router} />
+    </ToastProvider>
+  );
   render(
-    <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
-    </QueryClientProvider>,
+    <QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{page}</I18nProvider> : page}</QueryClientProvider>,
   );
   return router;
 }
@@ -126,11 +128,59 @@ describe('MembersPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Invite member' }));
     await user.type(screen.getByLabelText('E-mail address'), 'view@acme.io');
-    await pickOption(screen, 'Role', 'viewer');
+    await pickOption(screen, 'Role', 'Viewer');
     await user.click(screen.getByRole('button', { name: 'Send invitation' }));
 
     expect(await screen.findByText('Invitation sent to view@acme.io')).toBeInTheDocument();
     expect(invited).toMatchObject({ email: 'view@acme.io', role: 'viewer' });
+  });
+
+  async function roleOptions(user: ReturnType<typeof userEvent.setup>, label: string) {
+    await user.click(screen.getByLabelText(label));
+    return screen.getAllByRole('option').map((o) => o.getAttribute('data-label'));
+  }
+
+  // The invitation cannot grant ownership, so Owner is not offered.
+  it('offers the roles by their names, without Owner', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme/members': MEMBERS });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Invite member' }));
+    expect(await roleOptions(user, 'Role')).toEqual(['Viewer', 'Operator', 'Admin']);
+  });
+
+  it('offers the roles in German', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme/members': MEMBERS });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }), 'de');
+
+    await user.click(await screen.findByRole('button', { name: 'Mitglied einladen' }));
+    expect(await roleOptions(user, 'Rolle')).toEqual(['Betrachter', 'Operator', 'Admin']);
+  });
+
+  // The browser's own e-mail check would block the submit with a native
+  // bubble before the form's own message could show.
+  it('validates the invite form itself, not through the browser', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'POST /api/v1/orgs/acme/invites': () => {
+        posts += 1;
+        return {};
+      },
+    });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Invite member' }));
+    const email = screen.getByLabelText('E-mail address');
+    expect(email.closest('form')).toHaveAttribute('novalidate');
+    await user.type(email, 'not-an-address');
+    await user.click(screen.getByRole('button', { name: 'Send invitation' }));
+
+    expect(await screen.findByText('enter a valid email address')).toBeInTheDocument();
+    expect(posts).toBe(0);
   });
 
   // I4: on an instance without outgoing mail the invitation is still

@@ -7,7 +7,7 @@ import { Select } from '../../../ui/Select.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
-import { DefinitionLoader } from './DefinitionLoader.tsx';
+import { CreateGate, DefinitionLoader } from './DefinitionLoader.tsx';
 import { SchemaBuilder } from '../../inventory/schema/SchemaBuilder.tsx';
 import { SchemaForm } from '../../inventory/schema/SchemaForm.tsx';
 import { toVarSchema } from '../../../api/hooks/useInventory.ts';
@@ -39,6 +39,13 @@ import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx'
  */
 export function SharedTemplateFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
+  if (!id) {
+    return (
+      <CreateGate>
+        <TemplateFormWithRepos org={org} />
+      </CreateGate>
+    );
+  }
   return (
     <DefinitionLoader useDefinitions={useTemplateDefinitions} id={id}>
       {(definition) => <TemplateFormWithRepos org={org} definition={definition} />}

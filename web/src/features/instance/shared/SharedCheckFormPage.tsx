@@ -5,7 +5,7 @@ import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
 import { Select } from '../../../ui/Select.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
-import { DefinitionLoader } from './DefinitionLoader.tsx';
+import { CreateGate, DefinitionLoader } from './DefinitionLoader.tsx';
 import {
   useCheckDefinitions,
   useCreateCheckDefinition,
@@ -29,6 +29,13 @@ import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx'
  */
 export function SharedCheckFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
+  if (!id) {
+    return (
+      <CreateGate>
+        <CheckForm org={org} />
+      </CreateGate>
+    );
+  }
   return (
     <DefinitionLoader useDefinitions={useCheckDefinitions} id={id}>
       {(definition) => <CheckForm org={org} definition={definition} />}

@@ -19,6 +19,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { AccountActions } from '../users/AccountActions.tsx';
 import { AccountSignIn } from '../users/AccountSignIn.tsx';
+import { roleOptions } from './roles.ts';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
 
@@ -154,7 +155,7 @@ function MemberRole({ org, member }: { org: string; member: Member }) {
         <Label htmlFor="member-role">{p.roleLabel}</Label>
         <div className="flex items-center gap-2">
           <div className="w-48">
-            <Select id="member-role" options={ROLES.map((r) => ({ value: r, label: r }))} value={role} onChange={setRole} />
+            <Select id="member-role" options={roleOptions(t, ROLES)} value={role} onChange={setRole} />
           </div>
           <Button
             type="button"
