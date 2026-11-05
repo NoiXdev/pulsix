@@ -6,6 +6,7 @@ import { createRootRoute, createRoute, createRouter, createMemoryHistory, Router
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRoute } from '../../test/mockApi.ts';
 import { fetchMock } from '../../test/fetchMock.ts';
+import { useMe } from '../../api/hooks/useMe.ts';
 import { ChangePasswordPage } from './ChangePasswordPage.tsx';
 
 const USER = { id: 'u1', email: 'sara@acme.io', display_name: 'Sara K.' };
@@ -67,6 +68,13 @@ afterEach(() => {
 
 const offline = () => Promise.reject(new TypeError('Failed to fetch'));
 
+/** A plain /auth/me reader on the default network mode, as the i18n
+ * provider is for the whole session: offline, its fetch pauses. */
+function MeReader() {
+  const me = useMe();
+  return <p>{`reader: ${me.fetchStatus}`}</p>;
+}
+
 describe('ChangePasswordPage (a temporary password must be replaced)', () => {
   it('renders without the app shell, names the account and offers to sign out', async () => {
     renderPage({ 'GET /api/v1/auth/me': FORCED });
@@ -114,8 +122,28 @@ describe('ChangePasswordPage (a temporary password must be replaced)', () => {
     expect(screen.queryByText(/Could not refresh/)).not.toBeInTheDocument();
   });
 
-  // Once a fresh answer is on screen, a later refetch that fails (a window
-  // focus while the network drops) must not take the form away.
+  // Another reader's fetch, paused offline, must not hold the page: the
+  // page's own fetch would otherwise only resume that paused one.
+  it('offline, shows the failure behind another reader\'s paused fetch', async () => {
+    onlineManager.setOnline(false);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({ 'GET /api/v1/auth/me': offline });
+    render(
+      <QueryClientProvider client={qc}>
+        <MeReader />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('reader: paused')).toBeInTheDocument();
+
+    renderPage({ 'GET /api/v1/auth/me': offline }, qc);
+
+    expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
+  });
+
+  // Once a fresh answer is on screen, a later refetch that fails (the one on
+  // reconnect while the network is still flaky, or another reader
+  // invalidating /auth/me) must not take the form away.
   it('keeps the form through a failed background refetch', async () => {
     let down = false;
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

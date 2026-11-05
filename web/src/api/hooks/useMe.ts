@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 
@@ -33,6 +33,14 @@ export function useMe(opts: { enabled?: boolean } = {}) {
  * the screen shows the failure instead. Once a fetch since this mount has
  * succeeded it stays false: a later background refetch that fails is a
  * hiccup for useQueryGuard (a toast), not a reason to take the screen away.
+ *
+ * The other /auth/me readers (useMe: the i18n provider for the whole
+ * session, the settings pages) keep the default network mode, so offline
+ * their fetch pauses — and a fetch this screen starts while one is paused
+ * only resumes that one, which still waits for the network. So until this
+ * screen has its answer, a paused fetch is cancelled (its state reverted)
+ * and fetched again with this screen's options. Its own fetch never
+ * pauses, so a pause is always another reader's.
  */
 export function useSettledMe(opts: { enabled?: boolean } = {}) {
   const me = useQuery({
@@ -44,6 +52,13 @@ export function useSettledMe(opts: { enabled?: boolean } = {}) {
     networkMode: 'always',
   });
   const settled = me.isFetchedAfterMount;
+  const qc = useQueryClient();
+  const { refetch } = me;
+  const heldByPausedFetch = opts.enabled !== false && !settled && me.fetchStatus === 'paused';
+  useEffect(() => {
+    if (!heldByPausedFetch) return;
+    void qc.cancelQueries({ queryKey: meQueryKey, fetchStatus: 'paused' }).then(() => refetch());
+  }, [heldByPausedFetch, qc, refetch]);
   const [answered, setAnswered] = useState(false);
   if (!answered && settled && me.isSuccess) setAnswered(true);
   return { me, settled, failed: settled && me.isError && !answered };

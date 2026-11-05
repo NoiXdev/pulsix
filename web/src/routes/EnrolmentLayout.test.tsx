@@ -6,6 +6,7 @@ import { createRootRoute, createRoute, createRouter, createMemoryHistory, Router
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
 import { fetchMock } from '../test/fetchMock.ts';
+import { useMe } from '../api/hooks/useMe.ts';
 import { registerPasskey } from '../features/auth/passkeys.ts';
 import { EnrolmentLayout } from './EnrolmentLayout.tsx';
 import { RootLayout } from './RootLayout.tsx';
@@ -47,6 +48,13 @@ function renderAt(qc = new QueryClient({ defaultOptions: { queries: { retry: fal
 }
 
 const offline = () => Promise.reject(new TypeError('Failed to fetch'));
+
+/** A plain /auth/me reader on the default network mode, as the i18n
+ * provider is for the whole session: offline, its fetch pauses. */
+function MeReader() {
+  const me = useMe();
+  return <p>{`reader: ${me.fetchStatus}`}</p>;
+}
 
 afterEach(() => {
   onlineManager.setOnline(true);
@@ -140,8 +148,28 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
     expect(screen.queryByText(/Could not refresh/)).not.toBeInTheDocument();
   });
 
+  // Another reader's fetch, paused offline, must not hold the page: the
+  // page's own fetch would otherwise only resume that paused one.
+  it('offline, shows the failure behind another reader\'s paused fetch', async () => {
+    onlineManager.setOnline(false);
+    mockApi({ 'GET /api/v1/auth/me': offline, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <MeReader />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('reader: paused')).toBeInTheDocument();
+
+    renderAt(qc);
+
+    expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(screen.getByText('Failed to fetch')).toBeInTheDocument();
+  });
+
   // Once the page has decided on a fresh answer, a later refetch that fails
-  // (a window focus while the network drops) must not take it away: the
+  // (the one after the invalidation a confirmed TOTP secret triggers, or on
+  // reconnect while the network is still flaky) must not take it away: the
   // recovery codes may be on screen.
   it('keeps the enrolment through a failed background refetch', async () => {
     let down = false;

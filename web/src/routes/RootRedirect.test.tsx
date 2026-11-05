@@ -10,6 +10,7 @@ import {
   useSearch,
 } from '@tanstack/react-router';
 import { mockApi } from '../test/mockApi.ts';
+import { useMe } from '../api/hooks/useMe.ts';
 import { RootRedirect } from './RootRedirect.tsx';
 
 function renderRoot(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }), visited: string[] = []) {
@@ -54,6 +55,13 @@ function renderRoot(qc = new QueryClient({ defaultOptions: { queries: { retry: f
 afterEach(() => {
   onlineManager.setOnline(true);
 });
+
+/** A plain /auth/me reader on the default network mode, as the i18n
+ * provider is for the whole session: offline, its fetch pauses. */
+function MeReader() {
+  const me = useMe();
+  return <p>{`reader: ${me.fetchStatus}`}</p>;
+}
 
 describe('RootRedirect', () => {
   it('redirects to /setup when setup is not completed', async () => {
@@ -176,6 +184,30 @@ describe('RootRedirect', () => {
     expect(screen.queryByText('HOSTS PAGE')).not.toBeInTheDocument();
     const requested = calls.mock.calls.map(([input]) => new URL((input as Request).url).pathname);
     expect(requested).not.toContain('/api/v1/orgs');
+  });
+
+  // Another reader's fetch, paused offline (the settings pages read /auth/me
+  // too), must not hold the redirect: its own fetch would otherwise only
+  // resume that paused one.
+  it('offline, shows the failure behind another reader\'s paused fetch', async () => {
+    onlineManager.setOnline(false);
+    mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': () => Promise.reject(new TypeError('Failed to fetch')),
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['setup-status'], { completed: true });
+    render(
+      <QueryClientProvider client={qc}>
+        <MeReader />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText('reader: paused')).toBeInTheDocument();
+
+    renderRoot(qc);
+
+    expect(await screen.findByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(screen.queryByText(/LOGIN/)).not.toBeInTheDocument();
   });
 
   it('redirects to the first organization for a ready session', async () => {
