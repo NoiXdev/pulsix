@@ -123,13 +123,26 @@ func (b hostInputBody) toInput() (hosts.HostInput, error) {
 		in.Jump = &hosts.Jump{Mode: b.Jump.Mode, BastionID: bastionID}
 	}
 	if b.Tags != nil {
-		tags := make([]hosts.Tag, len(*b.Tags))
-		for i, tg := range *b.Tags {
-			tags[i] = hosts.Tag{Key: tg.Key, Value: tg.Value, Source: hosts.TagSourceManual}
-		}
+		tags := tagsFromBody(*b.Tags)
 		in.Tags = &tags
 	}
 	return in, nil
+}
+
+// hostUpdateSummary is the audit summary of a PATCH: the host's name, and
+// what else the body wrote with it — the jump host, the manual tags, or both
+// — so the activity feed does not read like a plain edit when it was not.
+func hostUpdateSummary(name string, in hosts.HostInput) string {
+	s := "updated host " + name
+	switch {
+	case in.Jump != nil && in.Tags != nil:
+		s += "; set its jump host and tags"
+	case in.Jump != nil:
+		s += "; set its jump host"
+	case in.Tags != nil:
+		s += "; set its tags"
+	}
+	return s
 }
 
 // authorizeHostWrite is requireOrg for POST and PATCH /hosts: hosts.write,
@@ -338,7 +351,7 @@ func registerHostRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}
-		setAuditObject(ctx, h.ID.String(), "updated host "+h.Name)
+		setAuditObject(ctx, h.ID.String(), hostUpdateSummary(h.Name, hostIn))
 		out := &hostGetOutput{ETag: revisionETag(h.Revision)}
 		out.Body.Host = toHostDTO(h)
 		return out, nil
@@ -428,6 +441,10 @@ func mapHostsErr(ctx context.Context, err error) error {
 		// Someone else saved first. 412, not 404 — the host is there, the
 		// caller's view of it is not current (backlog 1.31).
 		return huma.Error412PreconditionFailed("the host changed since you loaded it; reload and try again")
+	case errors.Is(err, hosts.ErrJumpHostNotFound):
+		// Before ErrNotFound, which it wraps: a missing jump host and a
+		// missing host are different mistakes of the caller.
+		return huma.Error404NotFound("jump host not found")
 	case errors.Is(err, hosts.ErrNotFound):
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, hosts.ErrNameTaken):

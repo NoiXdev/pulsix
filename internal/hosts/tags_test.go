@@ -3,6 +3,7 @@ package hosts_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -411,5 +412,29 @@ func TestSetTagsReturnsTheBumpedRevisionAndHonoursIfRevision(t *testing.T) {
 	}
 	if rev, err := svc.SetTags(ctx, org, h.ID, nil, &rev); err != nil || rev != h.Revision+2 {
 		t.Fatalf("SetTags with the current revision = %d, %v", rev, err)
+	}
+}
+
+// TestManualTagsMarksEveryTagManual: the helper every manual-tag write goes
+// through copies key and value, forces the manual source whatever the input
+// said, and leaves the caller's slice alone.
+func TestManualTagsMarksEveryTagManual(t *testing.T) {
+	in := []hosts.Tag{
+		{Key: "role", Value: "web", Source: hosts.TagSourceFact},
+		{Key: "env", Value: "prod"},
+	}
+	got := hosts.ManualTags(in)
+	want := []hosts.Tag{
+		{Key: "role", Value: "web", Source: hosts.TagSourceManual},
+		{Key: "env", Value: "prod", Source: hosts.TagSourceManual},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ManualTags = %+v, want %+v", got, want)
+	}
+	if in[0].Source != hosts.TagSourceFact || in[1].Source != "" {
+		t.Fatalf("input slice was modified: %+v", in)
+	}
+	if got := hosts.ManualTags(nil); got == nil || len(got) != 0 {
+		t.Fatalf("ManualTags(nil) = %#v, want an empty non-nil slice", got)
 	}
 }

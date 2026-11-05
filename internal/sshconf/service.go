@@ -301,11 +301,8 @@ func (s *Service) SetHostSSH(ctx context.Context, orgID, hostID uuid.UUID, in Ho
 	if h.Username != "" && !usernamePattern.MatchString(h.Username) {
 		return HostSSH{}, fmt.Errorf("%w: username may contain letters, digits, dots, underscores, @ and hyphens (at most 64)", ErrInvalidInput)
 	}
-	if !h.BastionMode.Valid() {
-		return HostSSH{}, fmt.Errorf("%w: jump host mode must be inherit, none or explicit", ErrInvalidInput)
-	}
-	if (h.BastionMode == ModeExplicit) != (h.BastionID != nil) {
-		return HostSSH{}, fmt.Errorf("%w: a jump host is named exactly when the mode is explicit", ErrInvalidInput)
+	if err := hosts.ValidateJump(string(h.BastionMode), h.BastionID); err != nil {
+		return HostSSH{}, fmt.Errorf("%w: %s", ErrInvalidInput, err)
 	}
 	if h.BastionID != nil {
 		if err := s.bastionExists(ctx, orgID, *h.BastionID); err != nil {

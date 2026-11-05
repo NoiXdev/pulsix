@@ -119,3 +119,43 @@ func TestHostWritePassesJumpAndManualTagsToTheStore(t *testing.T) {
 		t.Fatalf("an update without jump and tags must pass nil for both, got %+v", got)
 	}
 }
+
+// TestValidateJump is the one set of jump-host rules, shared by the host
+// write and PUT /hosts/{id}/ssh: a known mode, and a jump host named exactly
+// when the mode is explicit. It returns plain errors; each caller wraps them
+// in its own ErrInvalidInput.
+func TestValidateJump(t *testing.T) {
+	id := uuid.Must(uuid.NewV7())
+	cases := []struct {
+		name    string
+		mode    string
+		bastion *uuid.UUID
+		wantErr string
+	}{
+		{"inherit", hosts.JumpModeInherit, nil, ""},
+		{"none", hosts.JumpModeNone, nil, ""},
+		{"explicit with id", hosts.JumpModeExplicit, &id, ""},
+		{"inherit with id", hosts.JumpModeInherit, &id, "a jump host is named exactly when the mode is explicit"},
+		{"none with id", hosts.JumpModeNone, &id, "a jump host is named exactly when the mode is explicit"},
+		{"explicit without id", hosts.JumpModeExplicit, nil, "a jump host is named exactly when the mode is explicit"},
+		{"unknown mode", "sideways", nil, "jump host mode must be inherit, none or explicit"},
+		{"empty mode", "", nil, "jump host mode must be inherit, none or explicit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := hosts.ValidateJump(tc.mode, tc.bastion)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateJump = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("ValidateJump = %v, want %q", err, tc.wantErr)
+			}
+			if errors.Is(err, hosts.ErrInvalidInput) {
+				t.Fatal("ValidateJump must return a plain error; the caller wraps it")
+			}
+		})
+	}
+}

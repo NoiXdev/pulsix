@@ -114,6 +114,19 @@ func joinProblems(problems []string) string {
 	return out
 }
 
+// ManualTags returns tags as the manual tags a write stores: key and value
+// copied, Source forced to TagSourceManual whatever the input said. It is the
+// one conversion every manual-tag write goes through (SetTags, a host write's
+// tags, the API's request bodies). tags itself is not modified, and the
+// result is never nil.
+func ManualTags(tags []Tag) []Tag {
+	manual := make([]Tag, len(tags))
+	for i, t := range tags {
+		manual[i] = Tag{Key: t.Key, Value: t.Value, Source: TagSourceManual}
+	}
+	return manual
+}
+
 // ListTags returns every tag — both TagSourceManual and TagSourceFact —
 // recorded for the host identified by (orgID, hostID), or ErrNotFound if
 // the host does not exist or belongs to a different organization.
@@ -145,11 +158,7 @@ func (s *Service) SetTags(ctx context.Context, orgID, hostID uuid.UUID, tags []T
 	if err := validateTags(tags); err != nil {
 		return 0, err
 	}
-	manual := make([]Tag, len(tags))
-	for i, t := range tags {
-		manual[i] = Tag{Key: t.Key, Value: t.Value, Source: TagSourceManual}
-	}
-	return s.store.ReplaceManualTags(ctx, orgID, hostID, manual, ifRevision)
+	return s.store.ReplaceManualTags(ctx, orgID, hostID, ManualTags(tags), ifRevision)
 }
 
 // ListTagKeys returns, for orgID, every tag key currently in use across its

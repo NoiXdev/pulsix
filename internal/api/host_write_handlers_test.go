@@ -2,7 +2,9 @@ package api_test
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/tenancy"
@@ -215,5 +217,77 @@ func TestHostDTOCarriesRevision(t *testing.T) {
 	decodeInto(t, requestJSON(t, f.c, http.MethodPost, f.org+"/hosts/query", map[string]any{"selector": "role = web"}), &list)
 	if len(list.Hosts) != 1 || list.Hosts[0].Revision != h.Revision+2 {
 		t.Fatalf("queried hosts = %+v, want the current revision", list.Hosts)
+	}
+}
+
+// TestUpdateHostAuditSaysWhatChanged: the audit summary of a PATCH names the
+// host and, when the body also set the jump host or the manual tags, says
+// so; a plain edit is exactly "updated host <name>".
+func TestUpdateHostAuditSaysWhatChanged(t *testing.T) {
+	f := newSSHFixture(t, "hostwrite-audit-org")
+	url := f.org + "/hosts/" + f.hostID
+
+	patch := func(extra map[string]any) {
+		t.Helper()
+		etag := requestJSON(t, f.c, http.MethodGet, url, nil).Header.Get("ETag")
+		body := map[string]any{"name": "web-01", "zone_id": f.zoneID, "managed": true}
+		for k, v := range extra {
+			body[k] = v
+		}
+		resp := requestWithHeaders(t, f.c, http.MethodPatch, url, body, map[string]string{"If-Match": etag})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("patch: %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+	patch(nil)
+	patch(map[string]any{"tags": []map[string]any{{"key": "role", "value": "db"}}})
+	patch(map[string]any{"jump": map[string]any{"mode": "none"}})
+	patch(map[string]any{"jump": map[string]any{"mode": "none"}, "tags": []map[string]any{}})
+
+	var got []string
+	for _, ev := range readActivity(t, f.s, f.c, "hostwrite-audit-org").Items {
+		if ev.Action == "PATCH updateHost" {
+			got = append(got, ev.Summary)
+		}
+	}
+	want := []string{
+		"updated host web-01",
+		"updated host web-01; set its jump host",
+		"updated host web-01; set its jump host and tags",
+		"updated host web-01; set its tags",
+	}
+	sort.Strings(got)
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("PATCH summaries = %q, want %q", got, want)
+	}
+}
+
+// TestUpdateHostWithAnUnknownJumpHostNamesIt: a jump host that does not exist
+// is a 404 that says so, on create and on update, while a host that does not
+// exist keeps the plain "not found".
+func TestUpdateHostWithAnUnknownJumpHostNamesIt(t *testing.T) {
+	f := newSSHFixture(t, "hostwrite-jump404-org")
+	url := f.org + "/hosts/" + f.hostID
+	unknownID := "0190a8f0-0000-7000-8000-000000000000"
+	jump := map[string]any{"mode": "explicit", "bastion_id": unknownID}
+
+	etag := requestJSON(t, f.c, http.MethodGet, url, nil).Header.Get("ETag")
+	resp := requestWithHeaders(t, f.c, http.MethodPatch, url, map[string]any{
+		"name": "web-01", "zone_id": f.zoneID, "managed": true, "jump": jump,
+	}, map[string]string{"If-Match": etag})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusNotFound || !strings.Contains(body, `"detail":"jump host not found"`) {
+		t.Fatalf("patch with unknown jump host: %d %s, want 404 jump host not found", resp.StatusCode, body)
+	}
+
+	resp = postJSON(t, f.c, f.org+"/hosts", map[string]any{"name": "web-09", "zone_id": f.zoneID, "jump": jump})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusNotFound || !strings.Contains(body, `"detail":"jump host not found"`) {
+		t.Fatalf("create with unknown jump host: %d %s, want 404 jump host not found", resp.StatusCode, body)
+	}
+
+	resp = requestWithHeaders(t, f.c, http.MethodPatch, f.org+"/hosts/"+unknownID, map[string]any{
+		"name": "web-01", "zone_id": f.zoneID,
+	}, map[string]string{"If-Match": etag})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusNotFound || !strings.Contains(body, `"detail":"not found"`) {
+		t.Fatalf("patch of an unknown host: %d %s, want 404 not found", resp.StatusCode, body)
 	}
 }

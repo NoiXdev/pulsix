@@ -41,6 +41,11 @@ var (
 	// and "belongs to someone else": a host in another org must be
 	// invisible, not merely forbidden.
 	ErrNotFound = errors.New("not found")
+	// ErrJumpHostNotFound is a host write naming a jump host that does not
+	// exist in the organization. It is an ErrNotFound, so a caller that does
+	// not tell the two apart still answers 404, but the API names which
+	// thing was missing.
+	ErrJumpHostNotFound = fmt.Errorf("%w: jump host", ErrNotFound)
 	// ErrNameTaken means a host name or zone slug already exists within
 	// the organization (the unique (org_id, name) / (org_id, slug)
 	// constraints in the schema) — reported as a conflict, not a generic

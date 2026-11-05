@@ -90,7 +90,7 @@ func writeExtras(ctx context.Context, q *gen.Queries, orgID, hostID uuid.UUID, x
 		// foreign key this statement can miss is the jump host's: one that
 		// does not exist, or (the composite key) belongs to another org.
 		if db.IsForeignKeyViolation(err) {
-			return ErrNotFound
+			return ErrJumpHostNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("set jump host: %w", err)

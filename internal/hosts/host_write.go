@@ -1,6 +1,7 @@
 package hosts
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -40,18 +41,26 @@ type HostExtras struct {
 	Tags *[]Tag
 }
 
-// validateJump reports ErrInvalidInput for a mode the schema does not know
-// or a BastionID that does not agree with the mode. Whether the jump host
-// exists in the organization is the store's answer (ErrNotFound), from the
-// composite foreign key, inside the write's own transaction.
-func validateJump(j Jump) error {
-	switch j.Mode {
+var (
+	errJumpMode   = errors.New("jump host mode must be inherit, none or explicit")
+	errJumpTarget = errors.New("a jump host is named exactly when the mode is explicit")
+)
+
+// ValidateJump is the one set of jump-host rules, shared by a host write and
+// by PUT /hosts/{id}/ssh (package sshconf): the mode is one the schema
+// knows, and bastionID is set exactly when the mode is explicit. It returns
+// plain errors — the caller wraps them in its own ErrInvalidInput. Whether
+// the jump host exists in the organization is the store's answer
+// (ErrJumpHostNotFound), from the composite foreign key, inside the write's
+// own transaction.
+func ValidateJump(mode string, bastionID *uuid.UUID) error {
+	switch mode {
 	case JumpModeInherit, JumpModeNone, JumpModeExplicit:
 	default:
-		return fmt.Errorf("%w: jump host mode must be inherit, none or explicit", ErrInvalidInput)
+		return errJumpMode
 	}
-	if (j.Mode == JumpModeExplicit) != (j.BastionID != nil) {
-		return fmt.Errorf("%w: a jump host is named exactly when the mode is explicit", ErrInvalidInput)
+	if (mode == JumpModeExplicit) != (bastionID != nil) {
+		return errJumpTarget
 	}
 	return nil
 }
@@ -61,8 +70,8 @@ func validateJump(j Jump) error {
 func extrasFrom(in HostInput) (HostExtras, error) {
 	var x HostExtras
 	if in.Jump != nil {
-		if err := validateJump(*in.Jump); err != nil {
-			return HostExtras{}, err
+		if err := ValidateJump(in.Jump.Mode, in.Jump.BastionID); err != nil {
+			return HostExtras{}, fmt.Errorf("%w: %s", ErrInvalidInput, err)
 		}
 		j := *in.Jump
 		x.Jump = &j
@@ -71,10 +80,7 @@ func extrasFrom(in HostInput) (HostExtras, error) {
 		if err := validateTags(*in.Tags); err != nil {
 			return HostExtras{}, err
 		}
-		manual := make([]Tag, len(*in.Tags))
-		for i, t := range *in.Tags {
-			manual[i] = Tag{Key: t.Key, Value: t.Value, Source: TagSourceManual}
-		}
+		manual := ManualTags(*in.Tags)
 		x.Tags = &manual
 	}
 	return x, nil

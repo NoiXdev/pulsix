@@ -47,6 +47,16 @@ type tagInput struct {
 	Value string `json:"value" maxLength:"256"`
 }
 
+// tagsFromBody turns a request's tags into the manual tags the hosts service
+// stores; the wire format has no source, a person always sets manual ones.
+func tagsFromBody(body []tagInput) []hosts.Tag {
+	tags := make([]hosts.Tag, len(body))
+	for i, tg := range body {
+		tags[i] = hosts.Tag{Key: tg.Key, Value: tg.Value}
+	}
+	return hosts.ManualTags(tags)
+}
+
 type hostTagsSetInput struct {
 	Org     string `path:"org"`
 	ID      string `path:"id"`
@@ -149,11 +159,7 @@ func registerTagRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		tags := make([]hosts.Tag, len(in.Body))
-		for i, tg := range in.Body {
-			tags[i] = hosts.Tag{Key: tg.Key, Value: tg.Value, Source: hosts.TagSourceManual}
-		}
-		rev, err := deps.Hosts.SetTags(ctx, scope.OrgID, id, tags, ifRev)
+		rev, err := deps.Hosts.SetTags(ctx, scope.OrgID, id, tagsFromBody(in.Body), ifRev)
 		if err != nil {
 			return nil, mapHostsErr(ctx, err)
 		}

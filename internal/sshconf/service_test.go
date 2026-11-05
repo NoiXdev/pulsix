@@ -398,3 +398,32 @@ func TestUpdateBastionRejectsBreakingAnotherChain(t *testing.T) {
 		t.Fatalf("A's chain stays at 4 hops via D: %v", err)
 	}
 }
+
+// TestSetHostSSHUsesTheSharedJumpRules: PUT /hosts/{id}/ssh refuses the same
+// jump host shapes as a host write (hosts.ValidateJump), wrapped in
+// sshconf.ErrInvalidInput with the same text.
+func TestSetHostSSHUsesTheSharedJumpRules(t *testing.T) {
+	f := newFixture()
+	id := uuid.Must(uuid.NewV7())
+	cases := []struct {
+		name string
+		in   sshconf.HostSSHInput
+		msg  string
+	}{
+		{"unknown mode", sshconf.HostSSHInput{BastionMode: "sideways"}, "jump host mode must be inherit, none or explicit"},
+		{"explicit without id", sshconf.HostSSHInput{BastionMode: sshconf.ModeExplicit}, "a jump host is named exactly when the mode is explicit"},
+		{"none with id", sshconf.HostSSHInput{BastionMode: sshconf.ModeNone, BastionID: &id}, "a jump host is named exactly when the mode is explicit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := f.svc.SetHostSSH(ctx, f.org, f.host, tc.in)
+			if !errors.Is(err, sshconf.ErrInvalidInput) || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("SetHostSSH = %v, want ErrInvalidInput containing %q", err, tc.msg)
+			}
+			want := hosts.ValidateJump(string(tc.in.BastionMode), tc.in.BastionID)
+			if want == nil || !strings.HasSuffix(err.Error(), want.Error()) {
+				t.Fatalf("SetHostSSH = %v, want the text of hosts.ValidateJump %v", err, want)
+			}
+		})
+	}
+}
