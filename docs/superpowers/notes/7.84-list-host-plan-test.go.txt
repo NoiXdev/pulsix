@@ -1,0 +1,190 @@
+package jobs
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/db"
+	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/db/testdb"
+)
+
+const hostFilterIndex = "jobs_host_ids_idx"
+
+// generatedQuery returns the raw SQL of the const constName declared in
+// internal/db/gen/jobs.sql.go, parsed from the source so the plan tests
+// explain exactly the statement the store sends.
+func generatedQuery(t *testing.T, constName string) string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), "../db/gen/jobs.sql.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse generated jobs queries: %v", err)
+	}
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs := spec.(*ast.ValueSpec)
+			for i, name := range vs.Names {
+				if name.Name != constName || i >= len(vs.Values) {
+					continue
+				}
+				lit, ok := vs.Values[i].(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					t.Fatalf("const %s is not a string literal", constName)
+				}
+				sql, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatalf("unquote const %s: %v", constName, err)
+				}
+				return sql
+			}
+		}
+	}
+	t.Fatalf("const %s not found in internal/db/gen/jobs.sql.go", constName)
+	return ""
+}
+
+// planUsesIndex walks an EXPLAIN (FORMAT JSON) document for a node that
+// reads the named index.
+func planUsesIndex(node any, index string) bool {
+	switch n := node.(type) {
+	case map[string]any:
+		if n["Index Name"] == index {
+			return true
+		}
+		for _, v := range n {
+			if planUsesIndex(v, index) {
+				return true
+			}
+		}
+	case []any:
+		for _, v := range n {
+			if planUsesIndex(v, index) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// seedHostFilterJobs fills one organization with 50 000 jobs, each
+// targeting one to three of 200 hosts and spread over 50 000 minutes, and
+// analyzes the table so the planner sees realistic statistics. It returns
+// the organization, one host id and a pool bound to pulsix_app (RLS in
+// force, as in production); the seed and ANALYZE run as the superuser.
+func seedHostFilterJobs(t *testing.T) (org, host uuid.UUID, app *db.DB) {
+	t.Helper()
+	ctx := context.Background()
+	app = testdb.Open(t)
+	owner, err := db.Open(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(owner.Close)
+
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if _, err := gen.New(owner.Pool()).CreateOrganization(ctx, gen.CreateOrganizationParams{ID: org, Slug: "hostplan", Name: "hostplan"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Pool().Exec(ctx, `INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, 'z', 'z')`, zone, org); err != nil {
+		t.Fatal(err)
+	}
+	hosts := make([]uuid.UUID, 200)
+	for i := range hosts {
+		hosts[i] = uuid.Must(uuid.NewV7())
+	}
+	if _, err := owner.Pool().Exec(ctx, `
+INSERT INTO jobs (id, org_id, zone_id, kind, host_ids, run_group_id, created_at)
+SELECT gen_random_uuid(), $1, $2, 'run',
+       ARRAY(SELECT ($3::uuid[])[1 + (random() * 199)::int] FROM generate_series(1, 1 + (g % 3))),
+       gen_random_uuid(), now() - make_interval(mins => g)
+FROM generate_series(1, 50000) AS g`, org, zone, hosts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Pool().Exec(ctx, `ANALYZE jobs`); err != nil {
+		t.Fatal(err)
+	}
+	return org, hosts[0], app
+}
+
+// explainGeneric prepares query in a transaction bound to org, forces a
+// generic plan (what a prepared statement settles on after five
+// executions, and what pgx's extended protocol reaches in production) and
+// returns the EXPLAIN JSON of executing it with execArgs. With analyze it
+// also runs the statement and returns the execution time in milliseconds.
+func explainGeneric(t *testing.T, app *db.DB, org uuid.UUID, query, execArgs string, analyze bool) (plan any, millis float64) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := app.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, stmt := range []string{
+		`SET LOCAL plan_cache_mode = force_generic_plan`,
+		`SELECT set_config('pulsix.org_id', '` + org.String() + `', true)`,
+		`PREPARE list_jobs AS ` + query,
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%.40s: %v", stmt, err)
+		}
+	}
+	opts := "FORMAT JSON"
+	if analyze {
+		opts = "ANALYZE, FORMAT JSON"
+	}
+	var raw []byte
+	if err := tx.QueryRow(ctx, fmt.Sprintf(`EXPLAIN (%s) EXECUTE list_jobs(%s)`, opts, execArgs)).Scan(&raw); err != nil {
+		t.Fatalf("explain: %v", err)
+	}
+	var doc []map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil || len(doc) != 1 {
+		t.Fatalf("explain output %s: %v", raw, err)
+	}
+	if v, ok := doc[0]["Execution Time"].(float64); ok {
+		millis = v
+	}
+	return doc[0]["Plan"], millis
+}
+
+// TestListJobsHostFilterUsesTheGINIndexUnderAGenericPlan pins backlog 7.73:
+// the runs list filters a host with an array containment test that only the
+// GIN index jobs_host_ids_idx (migration 00079) can answer without scanning
+// the organization's whole run history. Every optional filter is written
+// "$n IS NULL OR ...", and a generic plan cannot fold the NULLs away, so
+// whether the planner still picks the index has to be measured on the exact
+// query the store runs, not assumed. SQLStore.ListJobs sends a host filter
+// to ListJobsForHost, whose host condition is unconditional; with it
+// optional (the original ListJobs form) the plan was a parallel sequential
+// scan of every job.
+func TestListJobsHostFilterUsesTheGINIndexUnderAGenericPlan(t *testing.T) {
+	if testing.Short() {
+		t.Skip("seeds 50 000 jobs")
+	}
+	org, host, app := seedHostFilterJobs(t)
+
+	// ListJobsForHostParams order: org, host, zone, status, kind, template,
+	// run group, trigger, trigger ref, cursor at, cursor id, limit.
+	args := fmt.Sprintf(`'%s', '%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`, org, host)
+	query := generatedQuery(t, "listJobsForHost")
+
+	plan, _ := explainGeneric(t, app, org, query, args, false)
+	pretty, _ := json.MarshalIndent(plan, "", " ")
+	t.Logf("generic plan:\n%s", pretty)
+	if !planUsesIndex(plan, hostFilterIndex) {
+		t.Fatalf("generic plan does not use %s", hostFilterIndex)
+	}
+	_, ms := explainGeneric(t, app, org, query, args, true)
+	t.Logf("execution time under the generic plan: %.2f ms", ms)
+}
