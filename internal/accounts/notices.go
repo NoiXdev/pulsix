@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -132,7 +131,7 @@ func (s *Service) notify(ctx context.Context, target uuid.UUID, active bool, kin
 		return NoticeSkipped
 	}
 	log := func(err error) Notice {
-		slog.WarnContext(ctx, "account notice not sent", "notice", string(kind), "user_id", target.String(), "error", err)
+		s.logger().WarnContext(ctx, "account notice not sent", "notice", string(kind), "user_id", target.String(), "error", err)
 		return NoticeFailed
 	}
 	configured, err := s.mailer.Configured(ctx)

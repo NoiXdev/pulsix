@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"testing"
@@ -33,6 +34,33 @@ var temporaryPasswordShape = regexp.MustCompile(`^[a-hj-km-np-z2-9]{5}(-[a-hj-km
 
 func actionService(store *fakeStore, mailer *fakeMailer) *accounts.Service {
 	return accounts.NewService(store, mailer, "https://pulsix.example", func() time.Time { return testNow }, &cyclingReader{})
+}
+
+// TestNoticeFailureLogsThroughTheServiceLogger: the line for a notice that
+// could not be mailed goes to the logger the service was built with, not to
+// the process-wide default.
+func TestNoticeFailureLogsThroughTheServiceLogger(t *testing.T) {
+	actor, target := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		accounts:  map[uuid.UUID]bool{target: true},
+		recipient: accounts.Recipient{Email: "target@example.test"},
+	}
+	mailer := &fakeMailer{sendErr: errors.New("smtp down")}
+	var logs bytes.Buffer
+	svc := accounts.NewService(store, mailer, "https://pulsix.example", func() time.Time { return testNow }, &cyclingReader{},
+		accounts.WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
+
+	_, notice, err := svc.SetTemporaryPassword(context.Background(), true, actor, target)
+	if err != nil || notice != accounts.NoticeFailed {
+		t.Fatalf("notice %q, err %v; want failed", notice, err)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "account notice not sent") || !strings.Contains(out, "smtp down") {
+		t.Fatalf("log %q; want the failed-notice line with the cause", out)
+	}
+	if strings.Contains(out, "target@example.test") {
+		t.Fatalf("log %q names the address", out)
+	}
 }
 
 func TestSetTemporaryPassword(t *testing.T) {

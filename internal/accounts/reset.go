@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -85,13 +84,13 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 			if r := recover(); r != nil {
 				// The kind of the panic, not its value: a value built from
 				// the request could carry the address.
-				slog.ErrorContext(jobCtx, "password reset request panicked", "panic", fmt.Sprintf("%T", r), "stack", string(debug.Stack()))
+				s.logger().ErrorContext(jobCtx, "password reset request panicked", "panic", fmt.Sprintf("%T", r), "stack", string(debug.Stack()))
 			}
 		}()
 		if err := s.requestReset(jobCtx, email); err != nil {
 			// Not the address: the log must not tell which ones were asked
 			// about any more than the answer does.
-			slog.ErrorContext(jobCtx, "password reset request failed", "error", err)
+			s.logger().ErrorContext(jobCtx, "password reset request failed", "error", err)
 		}
 	}()
 	return nil
@@ -226,7 +225,7 @@ func (s *Service) SendResetLink(ctx context.Context, actorIsAdmin bool, actor, t
 	ctx = context.WithoutCancel(ctx)
 	to, err := s.store.NoticeRecipient(ctx, target)
 	if err != nil {
-		slog.WarnContext(ctx, "reset link not sent", "user_id", target.String(), "error", fmt.Errorf("read recipient: %w", err))
+		s.logger().WarnContext(ctx, "reset link not sent", "user_id", target.String(), "error", fmt.Errorf("read recipient: %w", err))
 		return NoticeFailed, nil
 	}
 	switch err := s.mailResetLink(ctx, target, to, token); {
@@ -344,7 +343,7 @@ func (s *Service) mailResetLink(ctx context.Context, userID uuid.UUID, to Recipi
 	sendCtx, cancel := context.WithTimeout(ctx, noticeSendTimeout)
 	defer cancel()
 	if err := s.mailer.Send(sendCtx, to.Email, subject, body); err != nil {
-		slog.WarnContext(ctx, "reset link not sent", "user_id", userID.String(), "error", err)
+		s.logger().WarnContext(ctx, "reset link not sent", "user_id", userID.String(), "error", err)
 		return err
 	}
 	return nil

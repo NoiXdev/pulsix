@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -19,17 +20,6 @@ import (
 // resetLink is the link a reset mail carries; the token is in the fragment.
 var resetLink = regexp.MustCompile(`https://pulsix\.example/reset-password#token=([A-Za-z0-9_-]{43})`)
 
-// captureLog routes the default slog logger into a buffer for the rest of
-// the test.
-func captureLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return &buf
-}
-
 // resetFixture is one account with a password, known by its address.
 type resetFixture struct {
 	store  *fakeStore
@@ -37,6 +27,7 @@ type resetFixture struct {
 	svc    *accounts.Service
 	user   uuid.UUID
 	clock  *time.Time
+	logs   *bytes.Buffer
 }
 
 func newResetFixture() *resetFixture {
@@ -52,8 +43,10 @@ func newResetFixture() *resetFixture {
 		mailer: &fakeMailer{},
 		user:   user,
 		clock:  &now,
+		logs:   &bytes.Buffer{},
 	}
-	f.svc = accounts.NewService(f.store, f.mailer, "https://pulsix.example", func() time.Time { return *f.clock }, &cyclingReader{})
+	f.svc = accounts.NewService(f.store, f.mailer, "https://pulsix.example", func() time.Time { return *f.clock }, &cyclingReader{},
+		accounts.WithLogger(slog.New(slog.NewTextHandler(f.logs, nil))))
 	return f
 }
 
@@ -139,17 +132,14 @@ func TestRequestResetSilentCases(t *testing.T) {
 }
 
 func TestRequestResetLogsADroppedRequest(t *testing.T) {
-	var buf bytes.Buffer
 	f := newResetFixture()
-	f.svc = accounts.NewService(f.store, f.mailer, "https://pulsix.example", func() time.Time { return *f.clock }, &cyclingReader{},
-		accounts.WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
 	if err := f.svc.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
 	if err := f.svc.RequestReset(context.Background(), "drop@example.test"); err != nil {
 		t.Fatalf("RequestReset: %v", err)
 	}
-	out := buf.String()
+	out := f.logs.String()
 	if !strings.Contains(out, "password reset request dropped: shutting down") {
 		t.Fatalf("log = %q, want the dropped line", out)
 	}
@@ -223,7 +213,6 @@ func TestRequestResetReturnsBeforeTheStore(t *testing.T) {
 // warning that names no address, and every call still answers nil.
 func TestRequestResetCapsWorkInFlight(t *testing.T) {
 	f := newResetFixture()
-	logs := captureLog(t)
 	release := make(chan struct{})
 	f.store.release = release
 	for range accounts.MaxResetJobs + 1 {
@@ -244,8 +233,11 @@ func TestRequestResetCapsWorkInFlight(t *testing.T) {
 	if got := f.store.emailLookups.Load(); got != accounts.MaxResetJobs {
 		t.Fatalf("%d jobs started, want the cap %d", got, accounts.MaxResetJobs)
 	}
-	if !strings.Contains(logs.String(), "level=WARN") || strings.Contains(logs.String(), "person@example.test") {
-		t.Fatalf("log %s; want a warning without the address", logs)
+	if out := f.logs.String(); !strings.Contains(out, "level=WARN") ||
+		!strings.Contains(out, "password reset request dropped: too many in flight") ||
+		!strings.Contains(out, fmt.Sprintf("limit=%d", accounts.MaxResetJobs)) ||
+		strings.Contains(out, "person@example.test") {
+		t.Fatalf("log %s; want the too-many-in-flight warning with the limit and without the address", out)
 	}
 	// The slots are free again once the work is done.
 	f.store.release = nil
@@ -283,14 +275,13 @@ func TestRequestResetWorkHasADeadline(t *testing.T) {
 // but not the address.
 func TestRequestResetRecoversFromPanic(t *testing.T) {
 	f := newResetFixture()
-	logs := captureLog(t)
 	f.store.emailPanic = true
 	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
 		t.Fatalf("err %v, want nil", err)
 	}
 	f.svc.Wait()
-	if !strings.Contains(logs.String(), "panicked") || strings.Contains(logs.String(), "person@example.test") {
-		t.Fatalf("log %s; want the panic without the address", logs)
+	if !strings.Contains(f.logs.String(), "panicked") || strings.Contains(f.logs.String(), "person@example.test") {
+		t.Fatalf("log %s; want the panic without the address", f.logs)
 	}
 }
 
@@ -303,29 +294,27 @@ func TestRequestResetStoreFailure(t *testing.T) {
 	if err := accounts.RequestResetNow(f.svc, context.Background(), "person@example.test"); err == nil || !strings.Contains(err.Error(), "db down") {
 		t.Fatalf("background work err %v, want the store failure", err)
 	}
-	logs := captureLog(t)
 	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
 		t.Fatalf("RequestReset err %v, want nil", err)
 	}
 	f.svc.Wait()
-	if !strings.Contains(logs.String(), "db down") || strings.Contains(logs.String(), "person@example.test") {
-		t.Fatalf("log %s; want the failure without the address", logs)
+	if !strings.Contains(f.logs.String(), "db down") || strings.Contains(f.logs.String(), "person@example.test") {
+		t.Fatalf("log %s; want the failure without the address", f.logs)
 	}
 }
 
 func TestRequestResetSendFailureIsSilent(t *testing.T) {
 	f := newResetFixture()
-	logs := captureLog(t)
 	f.mailer.sendErr = errors.New("smtp down")
 	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
 		t.Fatalf("a failed send failed the request: %v", err)
 	}
 	f.svc.Wait()
-	if !strings.Contains(logs.String(), "smtp down") {
-		t.Fatalf("the failure was not logged: %s", logs)
+	if !strings.Contains(f.logs.String(), "smtp down") {
+		t.Fatalf("the failure was not logged: %s", f.logs)
 	}
-	if strings.Contains(logs.String(), "reset-password") || strings.Contains(logs.String(), "token=") {
-		t.Fatalf("the log carries the link: %s", logs)
+	if strings.Contains(f.logs.String(), "reset-password") || strings.Contains(f.logs.String(), "token=") {
+		t.Fatalf("the log carries the link: %s", f.logs)
 	}
 }
 

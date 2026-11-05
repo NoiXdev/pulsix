@@ -192,14 +192,13 @@ func TestSendResetLink(t *testing.T) {
 
 	t.Run("a failed send", func(t *testing.T) {
 		f := newResetFixture()
-		logs := captureLog(t)
 		f.mailer.sendErr = errors.New("smtp down")
 		notice, err := f.svc.SendResetLink(ctx, true, actor, f.user)
 		if err != nil || notice != accounts.NoticeFailed {
 			t.Fatalf("notice %q, err %v; want failed", notice, err)
 		}
-		if len(f.store.tokens) != 1 || !strings.Contains(logs.String(), "smtp down") || strings.Contains(logs.String(), "token=") {
-			t.Fatalf("token rows %d, log %s; want the token issued and the failure logged without the link", len(f.store.tokens), logs)
+		if len(f.store.tokens) != 1 || !strings.Contains(f.logs.String(), "smtp down") || strings.Contains(f.logs.String(), "token=") {
+			t.Fatalf("token rows %d, log %s; want the token issued and the failure logged without the link", len(f.store.tokens), f.logs)
 		}
 	})
 
