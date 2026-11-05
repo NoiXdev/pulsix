@@ -1,0 +1,320 @@
+import { useMemo, useState } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { Controller, useForm, useWatch } from 'react-hook-form';
+import { X } from 'lucide-react';
+import { Button } from '../../ui/button.tsx';
+import { Input } from '../../ui/input.tsx';
+import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
+import { Switch } from '../../ui/switch.tsx';
+import { Tag } from '../../ui/badge.tsx';
+import { useToast } from '../../ui/toastContext.ts';
+import { ApiError } from '../../api/client.ts';
+import { useCreateHost, useUpdateHost } from '../../api/hooks/useHosts.ts';
+import type { Bastion, Credential, Host, HostInput } from '../../api/types.ts';
+import { schemas, type HostFormValues } from '../../lib/schemas.ts';
+import { StaleNotice } from './StaleNotice.tsx';
+import { useT } from '../../i18n/useT.ts';
+import { BastionDialog } from '../credentials/BastionDialog.tsx';
+import { parseTagChip, type ParsedTag } from './selectorInput.ts';
+import { ZoneDialog } from './ZoneDialog.tsx';
+
+/** The two jump choices that are not a jump host. A bastion id is a uuid,
+ * so neither can collide with one. */
+export const INHERIT = 'inherit';
+const DIRECT = 'none';
+
+export interface HostFormProps {
+  org: string;
+  host?: Host;
+  onClose: () => void;
+  onReload: () => Promise<void>;
+  canJump: boolean;
+  canCreateBastion: boolean;
+  zones: readonly { id: string; slug: string; name: string; bastion_id?: string }[];
+  bastions: readonly Bastion[];
+  credentials: readonly Credential[];
+  initialTags: ParsedTag[];
+  initialJump: string;
+  /** The host's resolved jump chain from the inventory preview, when known. */
+  resolvedChain?: string[];
+}
+
+function tagsKey(tags: readonly ParsedTag[]): string {
+  return JSON.stringify([...tags].map((tag) => [tag.key, tag.value]).sort());
+}
+
+export function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zones, bastions, credentials, initialTags, initialJump, resolvedChain }: HostFormProps) {
+  const t = useT();
+  const toast = useToast();
+  const isEdit = !!host;
+  const create = useCreateHost(org);
+  const update = useUpdateHost(org, host?.id ?? '');
+
+  // What the form opened with, kept apart from live query data: "changed"
+  // means changed from what the person saw, not from whatever a background
+  // refetch brought in since. The resolved chain is deliberately not in it:
+  // it only feeds a label, and the inventory preview may well land after the
+  // form has mounted.
+  const [initial] = useState({ tags: initialTags, jump: initialJump, zoneId: host?.zone_id ?? '' });
+
+  const { hostFormSchema } = useMemo(() => schemas(t), [t]);
+  const form = useForm<HostFormValues>({
+    resolver: zodResolver(hostFormSchema),
+    defaultValues: {
+      name: host?.name ?? '',
+      zone_id: host?.zone_id ?? '',
+      address: host?.address ?? '',
+      managed: host?.managed ?? false,
+      monitored: host?.monitored ?? false,
+    },
+  });
+  const zoneId = useWatch({ control: form.control, name: 'zone_id' });
+
+  const [jump, setJump] = useState(initialJump);
+  const [tags, setTags] = useState<ParsedTag[]>(initialTags);
+  const [tagInput, setTagInput] = useState('');
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  // null = closed; a string is the name typed into the picker before it
+  // opened the dialog, as ZoneDialog/BastionDialog's initialName expects.
+  const [newZoneName, setNewZoneName] = useState<string | null>(null);
+  const [newBastionName, setNewBastionName] = useState<string | null>(null);
+
+  const bastionName = (id: string) => bastions.find((b) => b.id === id)?.name ?? id.slice(0, 8);
+  const zone = zones.find((z) => z.id === zoneId);
+  const zoneChanged = isEdit && zoneId !== initial.zoneId;
+
+  // What "inherited" resolves to. While the zone is the host's own, and the
+  // host does inherit today, the inventory preview has already worked it
+  // out (groups included). Otherwise only the zone's default is known, and
+  // an inventory group may still override it.
+  const useResolved = isEdit && !zoneChanged && initial.jump === INHERIT && resolvedChain !== undefined;
+  let inheritedLabel = t.hosts.dialog.jumpInheritedBare;
+  if (useResolved) {
+    inheritedLabel = t.hosts.dialog.jumpInherited(resolvedChain.length > 0 ? resolvedChain.map(bastionName).join(' → ') : t.hosts.dialog.jumpNone);
+  } else if (zone) {
+    inheritedLabel = t.hosts.dialog.jumpInherited(zone.bastion_id ? bastionName(zone.bastion_id) : t.hosts.dialog.jumpNone);
+  }
+  const showInheritHint = jump === INHERIT && !useResolved;
+
+  function addTag(): boolean {
+    const text = tagInput.trim();
+    if (text === '') return true;
+    const parsed = parseTagChip(text, t);
+    if (!parsed.ok) {
+      setTagError(parsed.error);
+      return false;
+    }
+    setTags((current) => [...current.filter((tag) => tag.key !== parsed.tag.key), parsed.tag]);
+    setTagInput('');
+    setTagError(null);
+    return true;
+  }
+
+  const submit = form.handleSubmit(async (values) => {
+    setError(null);
+    // A chip still in the field is part of what was typed, not lost to a
+    // missing Enter.
+    let finalTags = tags;
+    const pendingTag = tagInput.trim();
+    if (pendingTag !== '') {
+      const parsed = parseTagChip(pendingTag, t);
+      if (!parsed.ok) {
+        setTagError(parsed.error);
+        return;
+      }
+      finalTags = [...tags.filter((tag) => tag.key !== parsed.tag.key), parsed.tag];
+    }
+
+    const body: HostInput = { name: values.name, zone_id: values.zone_id, address: values.address, managed: values.managed, monitored: values.monitored };
+    // Sent only when it differs from what the host already has (on create:
+    // from the default), so an untouched field is left alone server-side —
+    // and a role without inventory.write never sends the field at all.
+    if (canJump && jump !== initial.jump) {
+      body.jump = jump === INHERIT || jump === DIRECT ? { mode: jump } : { mode: 'explicit', bastion_id: jump };
+    }
+    if (tagsKey(finalTags) !== tagsKey(initial.tags)) body.tags = finalTags;
+
+    try {
+      if (host) {
+        await update.mutateAsync({ ...body, revision: host.revision });
+        toast.show(t.hosts.dialog.saved(values.name));
+      } else {
+        await create.mutateAsync(body);
+        toast.show(t.hosts.dialog.created(values.name));
+      }
+      onClose();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 412) {
+        setStale(true);
+        return;
+      }
+      setError(err instanceof Error ? err.message : isEdit ? t.hosts.dialog.saveFailed : t.hosts.dialog.createFailed);
+    }
+  });
+
+  const errors = form.formState.errors;
+  const pending = create.isPending || update.isPending;
+
+  return (
+    <>
+      <form className="flex flex-col gap-4" onSubmit={submit}>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="host_name">{t.hosts.dialog.name}</Label>
+          <Input id="host_name" {...form.register('name')} placeholder={t.hosts.dialog.namePlaceholder} />
+          {errors.name && <span className="text-[11px] text-destructive">{errors.name.message}</span>}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="host_address">{t.hosts.dialog.address}</Label>
+          <Input id="host_address" {...form.register('address')} placeholder={t.hosts.dialog.addressPlaceholder} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="host_zone">{t.hosts.dialog.zone}</Label>
+          <Controller
+            control={form.control}
+            name="zone_id"
+            render={({ field }) => (
+              <Select
+                id="host_zone"
+                options={zones.map((z) => ({ value: z.id, label: z.name }))}
+                value={field.value}
+                onChange={field.onChange}
+                placeholder={t.hosts.dialog.selectZone}
+                create={{ label: t.hosts.dialog.newZone, onSelect: setNewZoneName }}
+              />
+            )}
+          />
+          {errors.zone_id && <span className="text-[11px] text-destructive">{errors.zone_id.message}</span>}
+          {zoneChanged && zone && <span className="text-[11px] text-muted-foreground">{t.hosts.dialog.zoneChanged(zone.slug)}</span>}
+        </div>
+        {canJump && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="host_jump">{t.hosts.dialog.jump}</Label>
+            <Select
+              id="host_jump"
+              options={[
+                { value: INHERIT, label: inheritedLabel },
+                { value: DIRECT, label: t.hosts.dialog.jumpDirect },
+                ...bastions.map((b) => ({ value: b.id, label: b.name })),
+              ]}
+              value={jump}
+              onChange={setJump}
+              create={canCreateBastion ? { label: t.hosts.dialog.jumpCreate, onSelect: setNewBastionName } : undefined}
+            />
+            {showInheritHint && <span className="text-[11px] text-muted-foreground">{t.hosts.dialog.jumpInheritedHint}</span>}
+          </div>
+        )}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="host_tags">{t.hosts.dialog.tags}</Label>
+          {tags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {tags.map((tag) => (
+                <Tag key={tag.key}>
+                  {tag.key}={tag.value}
+                  <button
+                    type="button"
+                    className="ml-1 inline-flex items-center"
+                    aria-label={t.hosts.detail.removeTag(tag.key)}
+                    onClick={() => setTags((current) => current.filter((c) => c.key !== tag.key))}
+                  >
+                    <X size={11} />
+                  </button>
+                </Tag>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Input
+              id="host_tags"
+              value={tagInput}
+              placeholder={t.hosts.detail.tagPlaceholder}
+              onChange={(e) => {
+                setTagInput(e.target.value);
+                setTagError(null);
+              }}
+              // Enter adds the chip; it must not submit the whole form.
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                e.preventDefault();
+                addTag();
+              }}
+            />
+            <Button type="button" onClick={() => addTag()}>
+              {t.hosts.detail.addTag}
+            </Button>
+          </div>
+          {tagError && <span className="text-[11px] text-destructive">{tagError}</span>}
+        </div>
+        <Controller
+          control={form.control}
+          name="managed"
+          render={({ field }) => (
+            <CapabilityRow id="host_managed" label={t.hosts.capability.managedLong} hint={t.hosts.dialog.managedHint} checked={field.value} onChange={field.onChange} />
+          )}
+        />
+        <Controller
+          control={form.control}
+          name="monitored"
+          render={({ field }) => (
+            <CapabilityRow id="host_monitored" label={t.hosts.capability.monitored} hint={t.hosts.dialog.monitoredHint} checked={field.value} onChange={field.onChange} />
+          )}
+        />
+        {stale && <StaleNotice onReload={onReload} />}
+        {error && (
+          <p role="alert" className="text-xs text-destructive">
+            {error}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" onClick={onClose}>
+            {t.common.cancel}
+          </Button>
+          <Button type="submit" variant="primary" disabled={pending}>
+            {isEdit ? t.hosts.dialog.save : t.hosts.dialog.create}
+          </Button>
+        </div>
+      </form>
+      {/* Siblings of the <form>, not inside it: ui/dialog.tsx does not
+          portal, so a <dialog> nested in the form would have its own submit
+          bubble up into this form's onSubmit. */}
+      {newZoneName !== null && (
+        <ZoneDialog
+          org={org}
+          open
+          initialName={newZoneName}
+          onClose={() => setNewZoneName(null)}
+          onCreated={(id) => form.setValue('zone_id', id, { shouldValidate: true })}
+        />
+      )}
+      {newBastionName !== null && (
+        <BastionDialog
+          org={org}
+          bastions={bastions}
+          credentials={credentials}
+          canCreateCredential={canCreateBastion}
+          initialName={newBastionName}
+          onClose={() => setNewBastionName(null)}
+          onCreated={setJump}
+        />
+      )}
+    </>
+  );
+}
+
+function CapabilityRow({ id, label, hint, checked, onChange }: { id: string; label: string; hint: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <div className="flex items-start gap-3">
+      <Switch id={id} checked={checked} onCheckedChange={onChange} aria-describedby={`${id}_hint`} />
+      <div className="flex flex-col gap-0.5">
+        <label htmlFor={id} className="text-xs font-medium">
+          {label}
+        </label>
+        <span id={`${id}_hint`} className="text-[11px] text-muted-foreground">
+          {hint}
+        </span>
+      </div>
+    </div>
+  );
+}
