@@ -1,0 +1,8 @@
+argument_specs:
+  main:
+    options:
+      app_port:
+        type: int
+      app_secret:
+        type: str
+        no_log: true

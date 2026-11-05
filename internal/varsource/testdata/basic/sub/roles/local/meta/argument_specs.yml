@@ -1,0 +1,5 @@
+argument_specs:
+  main:
+    options:
+      local_sub:
+        type: str

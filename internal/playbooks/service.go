@@ -10,13 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer.
@@ -38,7 +38,9 @@ const (
 // relative path of letters, digits, dots, slashes and hyphens that ends in
 // .yml or .yaml and never climbs directories (".."). 201 characters plus
 // the extension keep the total within the schema's 200-character intent.
-var RepoPathPattern = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}\.ya?ml$`)
+// It is the pattern the repo sync discovers playbooks by, so every
+// discovered path can be picked.
+var RepoPathPattern = varsource.PlaybookPathPattern
 
 // Playbook is one stored playbook. Exactly one of RepoID/Path (repo source)
 // or Inline (editor source) is set — the database CHECK constraints enforce

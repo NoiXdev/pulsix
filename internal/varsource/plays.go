@@ -1,0 +1,340 @@
+package varsource
+
+import (
+	"path"
+	"strings"
+
+	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"gopkg.in/yaml.v3"
+)
+
+// maxBlockDepth bounds how deep block/rescue/always nest; deeper, the file
+// is given up (file_too_complex).
+const maxBlockDepth = 64
+
+// roleKeywords are the keys of a roles: entry that are not role parameters.
+var roleKeywords = map[string]bool{
+	"role": true, "name": true, "tags": true, "when": true, "vars": true, "become": true,
+	"become_user": true, "become_method": true, "become_flags": true, "delegate_to": true,
+	"delegate_facts": true, "environment": true, "any_errors_fatal": true, "ignore_errors": true,
+	"ignore_unreachable": true, "no_log": true, "run_once": true, "check_mode": true, "diff": true,
+	"collections": true, "connection": true, "debugger": true, "module_defaults": true, "port": true,
+	"remote_user": true, "throttle": true, "timeout": true, "apply": true,
+}
+
+// roleModules are the task keys that use a role.
+var roleModules = []string{
+	"import_role", "include_role",
+	"ansible.builtin.import_role", "ansible.builtin.include_role",
+	"ansible.legacy.import_role", "ansible.legacy.include_role",
+}
+
+// importKeys are the play-list keys that import a playbook.
+var importKeys = []string{"import_playbook", "ansible.builtin.import_playbook", "ansible.legacy.import_playbook"}
+
+// roleRef is a role use as written: its name, entry point ("main" unless
+// tasks_from names another) and line. dynamic: tasks_from is a template.
+type roleRef struct {
+	name, entryPoint string
+	line             int
+	dynamic          bool
+}
+
+// importRef is an import_playbook target as written.
+type importRef struct {
+	target string
+	line   int
+}
+
+// playFile is what one playbook file declares: marker and prompt fields,
+// role uses and imports in order, and the names it sets or marks.
+type playFile struct {
+	y        *yamlFile
+	dir      string
+	markers  []schema.Field
+	prompts  []schema.Field
+	refs     []roleRef
+	imports  []importRef
+	set      *nameSet
+	marked   *nameSet
+	overflow bool                // more role uses or imports than one walk reads
+	seen     map[*yaml.Node]bool // vars mappings and prompt lists read
+	refSeen  map[string]bool
+	impSeen  map[string]bool
+	allowed  map[*yaml.Node]bool // nodes whose line comment was read as a marker
+}
+
+// readPlayFile reads the plays of one playbook file (doc is its parsed
+// document, checked by isPlaybook). Its owner checks y.tooComplex after.
+func readPlayFile(y *yamlFile, doc *yaml.Node, dir string) *playFile {
+	f := &playFile{y: y, dir: dir, set: newNameSet(), marked: newNameSet(),
+		seen: map[*yaml.Node]bool{}, refSeen: map[string]bool{}, impSeen: map[string]bool{}, allowed: map[*yaml.Node]bool{}}
+	for _, item := range y.items(documentRoot(doc)) {
+		a := y.attrs(item)
+		if target, ok := importTarget(a); ok {
+			f.importEntry(target, a["vars"])
+			continue
+		}
+		f.vars(a["vars"])
+		f.varsPrompt(a["vars_prompt"])
+		f.tasks(a["pre_tasks"], 0)
+		f.roleEntries(a["roles"])
+		f.tasks(a["tasks"], 0)
+		f.tasks(a["post_tasks"], 0)
+		f.tasks(a["handlers"], 0)
+	}
+	if !y.exceeded() {
+		f.misplacedMarkers(doc)
+	}
+	return f
+}
+
+func importTarget(a map[string]*yaml.Node) (*yaml.Node, bool) {
+	for _, k := range importKeys {
+		if v, ok := a[k]; ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+// visitPairs is y.pairs charged on every visit: a mapping reached through
+// many aliases costs its size each time it is walked.
+func (y *yamlFile) visitPairs(n *yaml.Node) []pair {
+	ps := y.pairs(n)
+	if !y.spend(len(ps)) {
+		return nil
+	}
+	return ps
+}
+
+// giveUp spends the file's budget: the file counts as not read.
+func (y *yamlFile) giveUp() { y.left, y.over = 0, true }
+
+// vars reads a play's vars: a marked entry is a field, any other is a name
+// set in the playbook. A mapping reached again (an alias) is not read twice.
+func (f *playFile) vars(n *yaml.Node) {
+	ps := f.y.visitPairs(n)
+	if n = resolve(n); n == nil || f.seen[n] {
+		return
+	}
+	f.seen[n] = true
+	for _, p := range ps {
+		field, notes, isMarker, ok := markedVar(f.y, p.key, p.value)
+		f.y.note(notes...)
+		if !isMarker {
+			f.set.add(p.key.Value)
+			continue
+		}
+		f.allowed[commentNode(p.key, p.value)] = true
+		f.marked.add(p.key.Value)
+		if ok {
+			f.markers = append(f.markers, field)
+		}
+	}
+}
+
+func (f *playFile) varsPrompt(n *yaml.Node) {
+	if n = resolve(n); isNull(n) {
+		return
+	}
+	if f.seen[n] {
+		f.y.items(n) // charged, not read again
+		return
+	}
+	f.seen[n] = true
+	fields, notes := promptFields(f.y, n)
+	f.y.note(notes...)
+	f.prompts = append(f.prompts, fields...)
+}
+
+// setKeys records the keys of a vars: mapping as set in the playbook.
+func (f *playFile) setKeys(n *yaml.Node) {
+	for _, p := range f.y.visitPairs(n) {
+		f.set.add(p.key.Value)
+	}
+}
+
+// roleEntries reads a play's roles: list. Keys of an entry other than the
+// role keywords are role parameters, set in the playbook.
+func (f *playFile) roleEntries(n *yaml.Node) {
+	for _, it := range f.y.items(n) {
+		e := resolve(it)
+		if e == nil {
+			continue
+		}
+		if e.Kind == yaml.MappingNode {
+			for _, p := range f.y.visitPairs(e) {
+				switch k := p.key.Value; {
+				case k == "vars":
+					f.setKeys(p.value)
+				case !roleKeywords[k]:
+					f.set.add(k)
+				}
+			}
+			a := f.y.attrs(e)
+			nameNode := a["role"]
+			if nameNode == nil {
+				nameNode = a["name"]
+			}
+			f.roleName(nameNode, nil, e.Line)
+			continue
+		}
+		f.roleName(e, nil, e.Line)
+	}
+}
+
+// tasks reads a task list for role uses, through block, rescue and always.
+func (f *playFile) tasks(n *yaml.Node, depth int) {
+	if depth > maxBlockDepth {
+		f.y.giveUp()
+		return
+	}
+	for _, t := range f.y.items(n) {
+		a := f.y.attrs(t)
+		nested := false
+		for _, k := range []string{"block", "rescue", "always"} {
+			if v, ok := a[k]; ok {
+				nested = true
+				f.tasks(v, depth+1)
+			}
+		}
+		if nested {
+			continue
+		}
+		for _, k := range roleModules {
+			if args, ok := a[k]; ok {
+				f.setKeys(a["vars"])
+				f.roleTask(args)
+				break
+			}
+		}
+	}
+}
+
+// roleTask reads an import_role/include_role task's arguments: a mapping,
+// or the key=value form ("name=db tasks_from=install").
+func (f *playFile) roleTask(args *yaml.Node) {
+	if args == nil {
+		return
+	}
+	if args.Kind != yaml.ScalarNode || isNull(args) {
+		a := f.y.attrs(args)
+		f.roleName(a["name"], a["tasks_from"], args.Line)
+		return
+	}
+	text, _ := f.y.scalarText(args)
+	kv := map[string]string{}
+	for _, field := range strings.Fields(text) {
+		if k, v, ok := strings.Cut(field, "="); ok {
+			kv[k] = v
+		}
+	}
+	name, ok := kv["name"]
+	if !ok {
+		f.invalidRole(args.Line)
+		return
+	}
+	f.ref(name, kv["tasks_from"], args.Line)
+}
+
+// roleName records a role use from a name node and an optional tasks_from
+// node; line is where the entry starts, for a note when the name is
+// missing.
+func (f *playFile) roleName(nameNode, from *yaml.Node, line int) {
+	name, ok := f.y.scalarText(nameNode)
+	if !ok {
+		f.invalidRole(line)
+		return
+	}
+	entry := ""
+	if !isNull(from) {
+		if entry, ok = f.y.scalarText(from); !ok {
+			f.invalidRole(line)
+			return
+		}
+	}
+	f.ref(name, entry, resolve(nameNode).Line)
+}
+
+func (f *playFile) invalidRole(line int) {
+	f.y.note(warning(codeRoleInvalid, f.y.file, line, "a role use needs a role name (and tasks_from, if any, as text); skipped"))
+}
+
+// ref records a role use once per name and entry point. The entry point
+// is tasks_from's file name without .yml/.yaml, as Ansible takes it.
+func (f *playFile) ref(name, tasksFrom string, line int) {
+	r := roleRef{name: name, entryPoint: "main", line: line}
+	if tasksFrom != "" {
+		if templated(tasksFrom) {
+			r.entryPoint, r.dynamic = tasksFrom, true
+		} else if ep := strings.TrimSuffix(strings.TrimSuffix(path.Base(tasksFrom), ".yml"), ".yaml"); ep != "" && ep != "." && ep != "/" {
+			r.entryPoint = ep
+		}
+	}
+	key := r.name + "\x00" + r.entryPoint
+	if f.overflow || f.refSeen[key] {
+		return
+	}
+	if len(f.refs) == maxWalkRoles {
+		f.overflow = true
+		return
+	}
+	f.refSeen[key] = true
+	f.refs = append(f.refs, r)
+}
+
+// importEntry records an import_playbook target; keys of the entry's vars:
+// are set in the playbook.
+func (f *playFile) importEntry(target, vars *yaml.Node) {
+	f.setKeys(vars)
+	text, ok := f.y.scalarText(target)
+	if !ok {
+		f.y.note(warning(codeImportInvalid, f.y.file, target.Line, "import_playbook needs a file name; skipped"))
+		return
+	}
+	if f.overflow || f.impSeen[text] {
+		return
+	}
+	if len(f.imports) == maxWalkFiles {
+		f.overflow = true
+		return
+	}
+	f.impSeen[text] = true
+	f.imports = append(f.imports, importRef{target: text, line: target.Line})
+}
+
+// misplacedMarkers warns about every "# pulsix:" comment line that is not
+// the line comment of a play variable. It walks the document as written
+// (aliases not followed), so its work is bounded by the file's size. The
+// line is that of the node the comment belongs to.
+func (f *playFile) misplacedMarkers(doc *yaml.Node) {
+	stack := []*yaml.Node{doc}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		f.checkComment(n, n.HeadComment)
+		if !f.allowed[n] {
+			f.checkComment(n, n.LineComment)
+		}
+		f.checkComment(n, n.FootComment)
+		if n.Kind == yaml.AliasNode {
+			continue
+		}
+		for i := len(n.Content) - 1; i >= 0; i-- {
+			stack = append(stack, n.Content[i])
+		}
+	}
+}
+
+func (f *playFile) checkComment(n *yaml.Node, comment string) {
+	if !strings.Contains(comment, markerPrefix) {
+		return
+	}
+	for _, line := range strings.Split(comment, "\n") {
+		if _, isMarker, _ := parseMarker(strings.TrimSpace(line)); isMarker {
+			f.y.note(warning(codeMarkerMisplaced, f.y.file, n.Line,
+				`a "# pulsix:" marker counts only as the line comment of a variable in a play's vars:; this one is ignored`))
+		}
+	}
+}

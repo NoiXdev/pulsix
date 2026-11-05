@@ -1,0 +1,5 @@
+- hosts: all
+  vars:
+    ra_var: 2
+    b_marked: x  # pulsix: B
+- import_playbook: a.yml

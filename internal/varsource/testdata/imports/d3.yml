@@ -1,0 +1,4 @@
+- hosts: all
+  vars:
+    d3_var: 1  # pulsix:
+- import_playbook: d4.yml

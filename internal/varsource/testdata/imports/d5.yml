@@ -1,0 +1,3 @@
+- hosts: all
+  vars:
+    d5_var: 1  # pulsix:

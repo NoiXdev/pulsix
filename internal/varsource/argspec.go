@@ -27,18 +27,23 @@ func argumentSpecFields(data []byte, file, role, entryPoint string, kind schema.
 // readArgumentSpec is argumentSpecFields over a given yamlFile, so a test
 // can see the work it took.
 func readArgumentSpec(y *yamlFile, data []byte, role, entryPoint string, kind schema.SourceKind) (fields []schema.Field, notes []Note, readOK, entryFound bool) {
-	if entryPoint == "" {
-		entryPoint = "main"
-	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, []Note{invalidYAML(y.file, err)}, false, false
 	}
-	fields, entryFound = mapEntryPoint(y, documentRoot(&doc), role, entryPoint, kind)
+	return readArgumentSpecRoot(y, documentRoot(&doc), role, entryPoint, kind)
+}
+
+// readArgumentSpecRoot is readArgumentSpec over a parsed document's root.
+func readArgumentSpecRoot(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) (fields []schema.Field, notes []Note, readOK, entryFound bool) {
+	if entryPoint == "" {
+		entryPoint = "main"
+	}
+	fields, entryFound = mapEntryPoint(y, root, role, entryPoint, kind)
 	if n, over := y.tooComplex(); over {
 		return nil, []Note{n}, false, false
 	}
-	return fields, y.notes, true, entryFound
+	return fields, y.takeNotes(), true, entryFound
 }
 
 // mapEntryPoint maps the options of one entry point, noting into y.
@@ -50,7 +55,7 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 		if hasSpecs {
 			line = specs.key.Line
 		}
-		y.notes = append(y.notes, hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint)))
+		y.note(hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint)))
 		return nil, false
 	}
 	m := specMapper{y: y, budget: maxSpecFields}
@@ -80,7 +85,7 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 		f.Origin = schema.OriginSource
 		f.Source = &schema.FieldSource{Kind: kind, Role: role, EntryPoint: entryPoint, File: y.file, Line: p.key.Line}
 		f, n, ok := finishField(f, y.file, p.key.Line)
-		y.notes = append(y.notes, n...)
+		y.note(n...)
 		if ok {
 			fields = append(fields, f)
 		}
@@ -97,7 +102,7 @@ type specMapper struct {
 }
 
 func (m *specMapper) warn(code string, line int, format string, args ...any) {
-	m.y.notes = append(m.y.notes, warning(code, m.y.file, line, format, args...))
+	m.y.note(warning(code, m.y.file, line, format, args...))
 }
 
 // scalarTypes are the argument spec types with a scalar field counterpart.

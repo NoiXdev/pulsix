@@ -1,0 +1,27 @@
+- hosts: all
+  pre_tasks:
+    - import_role:
+        name: pre
+  roles:
+    - local
+    - shared
+    - missing_role
+    - community.general.thing
+    - nospecs
+  tasks:
+    - block:
+        - ansible.builtin.include_role:
+            name: inblock
+      rescue:
+        - ansible.builtin.import_role:
+            name: inrescue
+      always:
+        - include_role:
+            name: inalways
+  post_tasks:
+    - include_role:
+        name: post
+  handlers:
+    - name: restart
+      ansible.builtin.include_role:
+        name: handler

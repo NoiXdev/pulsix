@@ -51,7 +51,8 @@ type yamlFile struct {
 	left      int // steps: mapping entries and sequence items visited
 	bytesLeft int // bytes of scalars read (scalars.go)
 	over      bool
-	notes     []Note
+	notes     []Note // up to maxNotesPerFile (note)
+	dropped   int    // notes past the cap
 }
 
 func newYAMLFile(file string) *yamlFile {
@@ -122,7 +123,7 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 			continue
 		}
 		if j, dup := last[k.Value]; dup {
-			y.notes = append(y.notes, warning(codeDuplicateKey, y.file, k.Line,
+			y.note(warning(codeDuplicateKey, y.file, k.Line,
 				"%q is set twice in one mapping (lines %d and %d); the later one counts", short(k.Value), keys[j].Line, k.Line))
 		}
 		last[k.Value] = i

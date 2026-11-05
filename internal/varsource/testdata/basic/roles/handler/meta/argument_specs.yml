@@ -1,0 +1,5 @@
+argument_specs:
+  main:
+    options:
+      handler_x:
+        type: str

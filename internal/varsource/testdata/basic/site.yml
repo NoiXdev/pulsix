@@ -1,0 +1,20 @@
+- hosts: all
+  vars:
+    http_port: 8080  # pulsix: required HTTP port
+    app_env: prod
+  vars_prompt:
+    - name: admin_user
+      prompt: Admin user
+      private: false
+  roles:
+    - nginx
+    - role: app
+      app_port: 9000
+  tasks:
+    - name: install db
+      import_role:
+        name: db
+        tasks_from: install
+    - name: dynamic
+      include_role:
+        name: "{{ role_name }}"

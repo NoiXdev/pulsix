@@ -1,0 +1,9 @@
+argument_specs:
+  main:
+    options:
+      db_host:
+        type: str
+  install:
+    options:
+      db_path:
+        type: str

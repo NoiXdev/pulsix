@@ -133,11 +133,14 @@ func isBlank(b byte) bool { return b == ' ' || b == '\t' }
 // lineComment is the comment a marker is read from: the value's line
 // comment ("name: value  # …"), else the key's ("name:  # …" before a
 // block value or nothing).
-func lineComment(key, value *yaml.Node) string {
+func lineComment(key, value *yaml.Node) string { return commentNode(key, value).LineComment }
+
+// commentNode is the node whose line comment lineComment reads.
+func commentNode(key, value *yaml.Node) *yaml.Node {
 	if value != nil && value.LineComment != "" {
-		return value.LineComment
+		return value
 	}
-	return key.LineComment
+	return key
 }
 
 // markedVar reads the marker of one top-level entry of a play's vars:.

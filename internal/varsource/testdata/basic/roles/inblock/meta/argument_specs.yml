@@ -1,0 +1,5 @@
+argument_specs:
+  main:
+    options:
+      inblock_x:
+        type: str

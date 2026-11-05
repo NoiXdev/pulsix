@@ -3,6 +3,7 @@ package varsource
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 )
 
@@ -50,6 +51,93 @@ const (
 	codeDuplicateKey         = "duplicate_key"
 	codeFileTooComplex       = "file_too_complex"
 )
+
+// Note codes of the playbook walk (playbook.go, roles.go, imports.go) and
+// of the repo (discover.go, report.go).
+const (
+	codeDuplicateName          = "duplicate_name"
+	codeMarkerMisplaced        = "marker_misplaced"
+	codeRoleDynamic            = "role_dynamic"
+	codeRoleCollection         = "role_collection"
+	codeRoleNotFound           = "role_not_found"
+	codeRoleWithoutSpecs       = "role_without_specs"
+	codeRoleInvalid            = "role_invalid"
+	codeImportCycle            = "import_cycle"
+	codeImportTooDeep          = "import_too_deep"
+	codeImportOutside          = "import_outside"
+	codeImportNotFound         = "import_not_found"
+	codeImportDynamic          = "import_dynamic"
+	codeImportInvalid          = "import_invalid"
+	codeNotAPlaybook           = "not_a_playbook"
+	codeReadFailed             = "read_failed"
+	codePathUnsupported        = "path_unsupported"
+	codeFileTooLarge           = "file_too_large"
+	codePlaybookTooComplex     = "playbook_too_complex"
+	codeTooManySetNames        = "too_many_set_names"
+	codeTooManyNotes           = "too_many_notes"
+	codeTooManyPlaybooks       = "too_many_playbooks"
+	codeReportTooLarge         = "report_too_large"
+	codeInlineRolesUnresolved  = "inline_roles_unresolved"
+	codeInlineImportUnresolved = "inline_import_unresolved"
+)
+
+// Note caps. One file raises at most maxNotesPerFile notes (a file of
+// 512 KiB can otherwise raise tens of thousands, more than a report may
+// hold); a playbook, its imports and roles together, and the repo's own
+// list hold at most maxNotesPerList. Past a cap one too_many_notes warning
+// counts the rest.
+const (
+	maxNotesPerFile = 200
+	maxNotesPerList = 1000
+)
+
+// note records notes about y's file, up to maxNotesPerFile.
+func (y *yamlFile) note(ns ...Note) {
+	for _, n := range ns {
+		if len(y.notes) < maxNotesPerFile {
+			y.notes = append(y.notes, n)
+		} else {
+			y.dropped++
+		}
+	}
+}
+
+// takeNotes is the file's notes, with one too_many_notes warning when
+// some were dropped.
+func (y *yamlFile) takeNotes() []Note {
+	if y.dropped == 0 {
+		return y.notes
+	}
+	return append(slices.Clip(y.notes), tooManyNotes(y.file, y.dropped))
+}
+
+func tooManyNotes(file string, dropped int) Note {
+	return warning(codeTooManyNotes, file, 0, "%d more notes are left out", dropped)
+}
+
+// capNotes drops repeated notes (a file read for two entry points raises
+// its notes twice) and keeps the first limit; one too_many_notes warning on
+// file counts the rest.
+func capNotes(notes []Note, file string, limit int) []Note {
+	seen := make(map[Note]bool, len(notes))
+	out := make([]Note, 0, min(len(notes), limit+1))
+	dropped := 0
+	for _, n := range notes {
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		if len(out) == limit {
+			dropped++
+			continue
+		}
+		out = append(out, n)
+	}
+	if dropped > 0 {
+		out = append(out, tooManyNotes(file, dropped))
+	}
+	return out
+}
 
 // short cuts a string taken from a file before it goes into a message, so
 // building the message costs no more than the cut: a key or tag read once

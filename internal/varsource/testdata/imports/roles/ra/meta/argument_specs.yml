@@ -1,0 +1,5 @@
+argument_specs:
+  main:
+    options:
+      ra_var:
+        type: int

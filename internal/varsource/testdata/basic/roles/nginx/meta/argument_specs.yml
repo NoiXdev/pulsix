@@ -1,0 +1,15 @@
+argument_specs:
+  main:
+    short_description: nginx
+    options:
+      nginx_port:
+        type: int
+        default: 80
+      nginx_mode:
+        choices: [blue, green]
+      app_env:
+        type: str
+        required: true
+      release:
+        type: str
+        description: The release to deploy.

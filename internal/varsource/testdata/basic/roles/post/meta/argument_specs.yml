@@ -1,0 +1,5 @@
+argument_specs:
+  main:
+    options:
+      post_x:
+        type: str

@@ -1,0 +1,9 @@
+- hosts: all
+  vars:
+    a_marked: 1  # pulsix: A
+  roles:
+    - ra
+- import_playbook: b.yml
+- import_playbook: ../x.yml
+- import_playbook: "{{ x }}.yml"
+- import_playbook: nope.yml
