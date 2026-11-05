@@ -2,10 +2,14 @@ package api
 
 import (
 	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 func TestRedactRequestURI(t *testing.T) {
@@ -18,6 +22,15 @@ func TestRedactRequestURI(t *testing.T) {
 		{"/api/v1/orgs/acme/invites/0190b5d2-0000-7000-8000-000000000000", "/api/v1/orgs/acme/invites/0190b5d2-0000-7000-8000-000000000000"},
 		{"/o/acme/hosts", "/o/acme/hosts"},
 		{"/invitex/abc", "/invitex/abc"},
+		{"/invitex/tok", "/invitex/tok"},
+		{"/INVITE/tok", "/invite/[redacted]"},
+		{"//invite/tok", "/invite/[redacted]"},
+		{"/%69nvite/tok", "/invite/[redacted]"},
+		{"/invite/./tok", "/invite/[redacted]"},
+		{"/invite//tok", "/invite/[redacted]"},
+		{"/Invite/tok?x=1", "/invite/[redacted]"},
+		{"http://pulsix.test/invite/tok", "/invite/[redacted]"},
+		{"/invite/", "/invite/"},
 	}
 	for _, tt := range tests {
 		if got := redactRequestURI(tt.in); got != tt.want {
@@ -46,5 +59,26 @@ func TestRequestLoggerNeverRecordsAnInviteToken(t *testing.T) {
 	}
 	if strings.Contains(out, "tok_secret_123") {
 		t.Errorf("log %q leaks the invitation token", out)
+	}
+}
+
+// A request that is not an invitation link is logged exactly as chi's own
+// logger would, apart from the timestamp and the duration.
+func TestRequestLoggerMatchesChiForOtherPaths(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	var ours, chi bytes.Buffer
+	serve := func(h http.Handler) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/orgs/acme/invites/0190b5d2?x=1", nil)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	serve(requestLogger(&ours)(handler))
+	serve(middleware.RequestLogger(&middleware.DefaultLogFormatter{Logger: log.New(&chi, "", 0)})(handler))
+
+	strip := func(s string) string {
+		s = regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} `).ReplaceAllString(s, "")
+		return regexp.MustCompile(` in \S+\n?$`).ReplaceAllString(s, "")
+	}
+	if got, want := strip(ours.String()), strip(chi.String()); got != want || got == "" {
+		t.Errorf("log line = %q, want chi's %q", got, want)
 	}
 }

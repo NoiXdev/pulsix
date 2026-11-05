@@ -4,6 +4,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"path"
 	"strings"
 
 	"github.com/go-chi/chi/v5/middleware"
@@ -14,16 +16,35 @@ import (
 const redactedInviteURI = "/invite/[redacted]"
 
 // redactRequestURI hides the token of an old-style invitation link
-// (/invite/{token}) from the request log. A query string is dropped with it,
-// since a token could ride there too. Every other URI is returned unchanged:
-// the API carries invitation tokens in a body and invitation ids in paths,
-// neither of which is secret.
+// (/invite/{token}) from the request log. The SPA fallback serves its shell
+// for every spelling the client-side router resolves to that route, so the
+// decision is made on the decoded, cleaned path with the first segment
+// compared case-insensitively: /INVITE/x, //invite/x, /%69nvite/x and
+// /invite/./x are as secret as /invite/x. A match replaces the whole URI,
+// query string included, since a token could ride there too. Every other URI
+// is returned byte for byte: the API carries invitation tokens in a body and
+// invitation ids in paths, neither of which is secret.
 func redactRequestURI(uri string) string {
-	rest, ok := strings.CutPrefix(uri, "/invite/")
-	if !ok || rest == "" || rest[0] == '?' {
-		return uri
+	if isInviteTokenPath(requestPath(uri)) {
+		return redactedInviteURI
 	}
-	return redactedInviteURI
+	return uri
+}
+
+// requestPath extracts the decoded path from a request URI (origin form, or
+// absolute form as a proxy sends it). A URI that does not parse is judged on
+// its raw path, so a malformed spelling cannot dodge the redaction.
+func requestPath(uri string) string {
+	if u, err := url.ParseRequestURI(uri); err == nil {
+		return u.Path
+	}
+	raw, _, _ := strings.Cut(uri, "?")
+	return raw
+}
+
+func isInviteTokenPath(p string) bool {
+	seg, rest, ok := strings.Cut(strings.TrimPrefix(path.Clean("/"+p), "/"), "/")
+	return ok && rest != "" && strings.EqualFold(seg, "invite")
 }
 
 // redactingFormatter hands the wrapped formatter a copy of the request whose
@@ -35,12 +56,13 @@ type redactingFormatter struct {
 func (f redactingFormatter) NewLogEntry(r *http.Request) middleware.LogEntry {
 	c := r.Clone(r.Context())
 	c.RequestURI = redactRequestURI(r.RequestURI)
-	u := *c.URL
-	u.Path = redactRequestURI(u.Path)
-	if u.Path == redactedInviteURI {
-		u.RawPath, u.RawQuery = "", ""
+	if r.URL != nil {
+		u := *r.URL
+		if isInviteTokenPath(u.Path) {
+			u.Path, u.RawPath, u.RawQuery = redactedInviteURI, "", ""
+		}
+		c.URL = &u
 	}
-	c.URL = &u
 	return f.inner.NewLogEntry(c)
 }
 
