@@ -143,7 +143,10 @@ func lineComment(key, value *yaml.Node) string {
 // markedVar reads the marker of one top-level entry of a play's vars:.
 // isMarker is false when the entry carries no "# pulsix:" comment; an
 // unreadable marker is a marker_unreadable warning and no field.
-func markedVar(key, value *yaml.Node, file string) (f schema.Field, notes []Note, isMarker, ok bool) {
+// y is the playbook file's read state; its owner checks y.tooComplex when
+// done with the file.
+func markedVar(y *yamlFile, key, value *yaml.Node) (f schema.Field, notes []Note, isMarker, ok bool) {
+	file := y.file
 	m, isMarker, err := parseMarker(lineComment(key, value))
 	if !isMarker {
 		return schema.Field{}, nil, false, false
@@ -151,7 +154,7 @@ func markedVar(key, value *yaml.Node, file string) (f schema.Field, notes []Note
 	if err != nil {
 		return schema.Field{}, []Note{warning(codeMarkerUnreadable, file, key.Line, "%s: unreadable marker (%v); the variable is not a form field", key.Value, err)}, true, false
 	}
-	f, notes, ok = markerField(key, value, m, file)
+	f, notes, ok = markerField(y, key, value, m)
 	return f, notes, true, ok
 }
 
@@ -159,7 +162,8 @@ func markedVar(key, value *yaml.Node, file string) (f schema.Field, notes []Note
 // is the default and its YAML type sets the field type (string, int, float,
 // bool; a list of scalars of one type is a list). enum makes an enum the
 // value must be an option of; secret makes a secret without default.
-func markerField(key, value *yaml.Node, m marker, file string) (schema.Field, []Note, bool) {
+func markerField(y *yamlFile, key, value *yaml.Node, m marker) (schema.Field, []Note, bool) {
+	file := y.file
 	line := key.Line
 	v := resolve(value)
 	if v == nil {
@@ -188,7 +192,7 @@ func markerField(key, value *yaml.Node, m marker, file string) (schema.Field, []
 			f.Default = v.Value
 		}
 	default:
-		typ, item, def, why := inferField(v)
+		typ, item, def, why := inferField(y, v)
 		if why != "" {
 			return valueType("%s", why)
 		}
@@ -201,7 +205,7 @@ func markerField(key, value *yaml.Node, m marker, file string) (schema.Field, []
 
 // inferField derives a field type from a value: a scalar's tag, or a list
 // whose items are scalars of one type. why says what does not fit.
-func inferField(v *yaml.Node) (typ schema.Type, item *schema.Field, def any, why string) {
+func inferField(y *yamlFile, v *yaml.Node) (typ schema.Type, item *schema.Field, def any, why string) {
 	switch v.Kind {
 	case yaml.ScalarNode:
 		t, val, ok := scalarOf(v)
@@ -215,7 +219,7 @@ func inferField(v *yaml.Node) (typ schema.Type, item *schema.Field, def any, why
 	case yaml.SequenceNode:
 		itemType := schema.TypeString
 		items := make([]any, 0, len(v.Content))
-		for i, it := range v.Content {
+		for i, it := range y.items(v) {
 			it = resolve(it)
 			if it.Kind != yaml.ScalarNode || isNull(it) {
 				return "", nil, nil, "a list must hold single values that are not empty"

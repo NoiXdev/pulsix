@@ -9,8 +9,13 @@ import (
 // prompt has no type, so every field is a string, or a secret when the
 // prompt is private (an absent private means true, as in Ansible). A secret
 // carries no default; a prompt is required when it has no default, and a
-// private prompt always is.
-func promptFields(prompts *yaml.Node, file string) ([]schema.Field, []Note) {
+// private prompt always is. At most schema.MaxFields entries are looked
+// at, kept or not.
+//
+// y is the playbook file's read state: notes y raises (duplicate_key) stay
+// in y, and its owner checks y.tooComplex when done with the file.
+func promptFields(y *yamlFile, prompts *yaml.Node) ([]schema.Field, []Note) {
+	file := y.file
 	prompts = resolve(prompts)
 	if isNull(prompts) {
 		return nil, nil
@@ -20,12 +25,12 @@ func promptFields(prompts *yaml.Node, file string) ([]schema.Field, []Note) {
 	}
 	var fields []schema.Field
 	var notes []Note
-	for _, item := range prompts.Content {
-		if len(fields) == schema.MaxFields {
+	for i, item := range y.items(prompts) {
+		if i == schema.MaxFields {
 			notes = append(notes, warning(codeTooManyFields, file, item.Line, "more than %d prompts; the rest are skipped", schema.MaxFields))
 			break
 		}
-		f, n, ok := promptField(resolve(item), file, item.Line)
+		f, n, ok := promptField(y, resolve(item), item.Line)
 		notes = append(notes, n...)
 		if ok {
 			fields = append(fields, f)
@@ -34,11 +39,12 @@ func promptFields(prompts *yaml.Node, file string) ([]schema.Field, []Note) {
 	return fields, notes
 }
 
-func promptField(entry *yaml.Node, file string, line int) (schema.Field, []Note, bool) {
+func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note, bool) {
+	file := y.file
 	if entry.Kind != yaml.MappingNode {
 		return schema.Field{}, []Note{warning(codeFieldInvalid, file, line, "a vars_prompt entry must be a mapping; skipped")}, false
 	}
-	a := attrs(entry)
+	a := y.attrs(entry)
 	name, ok := scalarText(a["name"])
 	if !ok {
 		return schema.Field{}, []Note{warning(codeInvalidName, file, line, "a vars_prompt entry without a name; skipped")}, false

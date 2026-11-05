@@ -9,10 +9,6 @@ import (
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 )
 
-// reservedPrefixes mirror the schema's: a top-level field must not shadow
-// Ansible's connection variables or the facts Pulsix renders.
-var reservedPrefixes = []string{"ansible_", "pulsix_"}
-
 // finishField makes a mapped top-level field fit the schema's rules, or
 // skips it: a name outside the field name rule skips it (invalid_name);
 // sub-fields nested deeper than schema.MaxDepth are cut (too_deep), more
@@ -27,7 +23,7 @@ var reservedPrefixes = []string{"ansible_", "pulsix_"}
 // The caller sets Origin and Source before; finishField keeps them.
 func finishField(f schema.Field, file string, line int) (schema.Field, []Note, bool) {
 	fin := finisher{file: file, line: line}
-	if !schema.ValidFieldName(f.Name) || reservedName(f.Name) {
+	if !schema.ValidFieldName(f.Name) || schema.ReservedName(f.Name) {
 		fin.warn(codeInvalidName, "%q is not a usable variable name (a lowercase letter or underscore, then lowercase letters, digits and underscores, at most 64; not ansible_* or pulsix_*); skipped", f.Name)
 		return schema.Field{}, fin.notes, false
 	}
@@ -199,13 +195,4 @@ func fieldIndex(seg string) (int, bool) {
 	}
 	i, err := strconv.Atoi(inner)
 	return i, err == nil && i >= 0
-}
-
-func reservedName(name string) bool {
-	for _, prefix := range reservedPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
 }

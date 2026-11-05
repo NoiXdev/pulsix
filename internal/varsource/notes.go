@@ -47,6 +47,8 @@ const (
 	codeMarkerEnumValue      = "marker_enum_value"
 	codeTemplatedDefault     = "templated_default"
 	codeFieldInvalid         = "field_invalid"
+	codeDuplicateKey         = "duplicate_key"
+	codeFileTooComplex       = "file_too_complex"
 )
 
 func warning(code, file string, line int, format string, args ...any) Note {

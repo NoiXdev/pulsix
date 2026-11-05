@@ -16,26 +16,55 @@ const maxSpecFields = 10_000
 // argumentSpecFields maps one entry point of an argument spec file (a role's
 // meta/argument_specs.yml, or a playbook's sidecar) onto top-level fields,
 // in the order the file declares them. entryPoint "" means "main". readOK
-// is false when the file is not valid YAML (one invalid_yaml warning);
-// entryFound is false when the file lacks the entry point (one hint).
+// is false when the file was not read: not valid YAML (one invalid_yaml
+// warning), or too complex to read within the budget (one file_too_complex
+// warning). entryFound is false when the file lacks the entry point (one
+// hint).
 func argumentSpecFields(data []byte, file, role, entryPoint string, kind schema.SourceKind) (fields []schema.Field, notes []Note, readOK, entryFound bool) {
+	return readArgumentSpec(newYAMLFile(file), data, role, entryPoint, kind)
+}
+
+// readArgumentSpec is argumentSpecFields over a given yamlFile, so a test
+// can see the work it took.
+func readArgumentSpec(y *yamlFile, data []byte, role, entryPoint string, kind schema.SourceKind) (fields []schema.Field, notes []Note, readOK, entryFound bool) {
 	if entryPoint == "" {
 		entryPoint = "main"
 	}
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, []Note{invalidYAML(file, err)}, false, false
+		return nil, []Note{invalidYAML(y.file, err)}, false, false
 	}
-	entry := lookup(lookup(documentRoot(&doc), "argument_specs"), entryPoint)
-	if entry == nil {
-		return nil, []Note{hint(codeEntryPointMissing, file, 0, "no entry point %q under argument_specs; no fields read from this file", entryPoint)}, true, false
+	fields, entryFound = mapEntryPoint(y, documentRoot(&doc), role, entryPoint, kind)
+	if n, over := y.tooComplex(); over {
+		return nil, []Note{n}, false, false
 	}
-	m := specMapper{file: file, budget: maxSpecFields}
-	options := lookup(entry, "options")
+	return fields, y.notes, true, entryFound
+}
+
+// mapEntryPoint maps the options of one entry point, noting into y.
+func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) ([]schema.Field, bool) {
+	specs, hasSpecs := y.entry(root, "argument_specs")
+	ep, found := y.entry(specs.value, entryPoint)
+	if !found {
+		line := 0
+		if hasSpecs {
+			line = specs.key.Line
+		}
+		y.notes = append(y.notes, hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", entryPoint))
+		return nil, false
+	}
+	m := specMapper{y: y, budget: maxSpecFields}
+	entry := resolve(ep.value)
+	if !isNull(entry) && entry.Kind != yaml.MappingNode {
+		m.warn(codeFieldInvalid, ep.key.Line, "entry point %s is not a mapping; nothing read", entryPoint)
+		return nil, true
+	}
+	options := y.lookup(entry, "options")
 	if !isNull(options) && options.Kind != yaml.MappingNode {
 		m.warn(codeFieldInvalid, options.Line, "the options of entry point %s are not a mapping; nothing read", entryPoint)
 	}
-	for _, p := range pairs(options) {
+	var fields []schema.Field
+	for _, p := range y.pairs(options) {
 		if len(fields) == schema.MaxFields {
 			m.warn(codeTooManyFields, p.key.Line, "entry point %s declares more than %d options; the rest are skipped", entryPoint, schema.MaxFields)
 			break
@@ -49,26 +78,26 @@ func argumentSpecFields(data []byte, file, role, entryPoint string, kind schema.
 			continue
 		}
 		f.Origin = schema.OriginSource
-		f.Source = &schema.FieldSource{Kind: kind, Role: role, EntryPoint: entryPoint, File: file, Line: p.key.Line}
-		f, n, ok := finishField(f, file, p.key.Line)
-		m.notes = append(m.notes, n...)
+		f.Source = &schema.FieldSource{Kind: kind, Role: role, EntryPoint: entryPoint, File: y.file, Line: p.key.Line}
+		f, n, ok := finishField(f, y.file, p.key.Line)
+		y.notes = append(y.notes, n...)
 		if ok {
 			fields = append(fields, f)
 		}
 	}
-	return fields, m.notes, true, true
+	return fields, true
 }
 
-// specMapper maps argument spec options onto fields, recording notes.
+// specMapper maps argument spec options onto fields; its notes go to the
+// file's.
 type specMapper struct {
-	file      string
+	y         *yamlFile
 	budget    int
 	exhausted bool // the budget ran out; the option being mapped is incomplete
-	notes     []Note
 }
 
 func (m *specMapper) warn(code string, line int, format string, args ...any) {
-	m.notes = append(m.notes, warning(code, m.file, line, format, args...))
+	m.y.notes = append(m.y.notes, warning(code, m.y.file, line, format, args...))
 }
 
 // scalarTypes are the argument spec types with a scalar field counterpart.
@@ -94,7 +123,7 @@ func (m *specMapper) option(p pair, path string, depth int) (schema.Field, bool)
 		m.warn(codeFieldInvalid, line, "%s: an option's spec must be a mapping; skipped", path)
 		return schema.Field{}, false
 	}
-	a := attrs(spec)
+	a := m.y.attrs(spec)
 	f := schema.Field{Name: p.key.Value}
 	if !m.mapType(&f, a, path, line) {
 		return schema.Field{}, false
@@ -107,10 +136,10 @@ func (m *specMapper) option(p pair, path string, depth int) (schema.Field, bool)
 		return schema.Field{}, false
 	}
 	f.Required = boolValue(a["required"])
-	f.Label, f.Description = labelAndDescription(a["description"])
+	f.Label, f.Description = m.labelAndDescription(a["description"])
 	m.applyDefault(&f, a["default"], path, line)
 	if (f.Type == schema.TypeRepeater || f.Type == schema.TypeObject) && depth+1 <= schema.MaxDepth {
-		for _, sp := range pairs(a["options"]) {
+		for _, sp := range m.y.pairs(a["options"]) {
 			if sub, ok := m.option(sp, path+"."+sp.key.Value, depth+1); ok {
 				f.Fields = append(f.Fields, sub)
 			}
@@ -126,7 +155,7 @@ func (m *specMapper) mapType(f *schema.Field, a map[string]*yaml.Node, path stri
 	if n := a["type"]; !isNull(n) {
 		typ, _ = scalarText(n)
 	}
-	hasOptions := len(pairs(a["options"])) > 0
+	hasOptions := len(m.y.pairs(a["options"])) > 0
 	if t, ok := scalarTypes[typ]; ok {
 		f.Type = t
 		return true
@@ -176,8 +205,11 @@ func (m *specMapper) applyChoices(f *schema.Field, choices *yaml.Node, path stri
 	if f.Type == schema.TypeList {
 		target = f.Item
 	}
-	if !scalarField(target.Type) {
+	if !choicesApply(target.Type) {
 		return true
+	}
+	if choices.Kind == yaml.SequenceNode && len(choices.Content) == 0 {
+		return true // an empty choices list restricts nothing
 	}
 	if choices.Kind != yaml.SequenceNode {
 		m.warn(codeFieldInvalid, line, "%s: choices must be a list; skipped", path)
@@ -185,13 +217,13 @@ func (m *specMapper) applyChoices(f *schema.Field, choices *yaml.Node, path stri
 	}
 	options := make([]string, 0, len(choices.Content))
 	converted := false
-	for _, c := range choices.Content {
+	for _, c := range m.y.items(choices) {
 		c = resolve(c)
 		if c.Kind != yaml.ScalarNode {
 			m.warn(codeFieldInvalid, line, "%s: choices must be single values; skipped", path)
 			return false
 		}
-		if c.ShortTag() != "!!str" {
+		if t, _, _ := scalarOf(c); t != schema.TypeString {
 			converted = true
 		}
 		options = append(options, c.Value)
@@ -203,18 +235,23 @@ func (m *specMapper) applyChoices(f *schema.Field, choices *yaml.Node, path stri
 	return true
 }
 
-// scalarField reports whether t is a scalar type choices can turn into an
-// enum.
-func scalarField(t schema.Type) bool {
-	switch t {
-	case schema.TypeString, schema.TypeInt, schema.TypeFloat, schema.TypeBool:
-		return true
-	}
-	return false
+// choicesApply reports whether choices turn a field of type t into an
+// enum. A bool already offers exactly its two values, and an enum of
+// strings would send text where the role expects a boolean, so choices on
+// a bool are ignored.
+func choicesApply(t schema.Type) bool {
+	return t == schema.TypeString || t == schema.TypeInt || t == schema.TypeFloat
 }
 
-// applyDefault sets f's default from the spec. Enum defaults are compared
-// as text, like the choices. schema.Check (in finishField) decides whether
+// textual reports whether a field of type t holds text, so a scalar default
+// is taken as written ("8080" for a str option, like Ansible's conversion).
+func textual(t schema.Type) bool {
+	return t == schema.TypeString || t == schema.TypeEnum
+}
+
+// applyDefault sets f's default from the spec. A scalar default of a
+// string or enum field (or of a list of them) is taken as its text: enums
+// compare as text, like the choices. schema.Check (in finishField) decides whether
 // the field accepts the value.
 func (m *specMapper) applyDefault(f *schema.Field, d *yaml.Node, path string, line int) {
 	if isNull(d) {
@@ -227,16 +264,18 @@ func (m *specMapper) applyDefault(f *schema.Field, d *yaml.Node, path string, li
 	case f.Type == schema.TypeRepeater || f.Type == schema.TypeObject:
 		m.warn(codeDefaultDropped, line, "%s: a %s field carries no default; the default is dropped", path, f.Type)
 		return
-	case f.Type == schema.TypeEnum && d.Kind == yaml.ScalarNode:
-		f.Default = d.Value
-		return
-	case f.Type == schema.TypeList && f.Item.Type == schema.TypeEnum && d.Kind == yaml.SequenceNode:
-		if texts, ok := scalarTexts(d); ok {
+	case textual(f.Type) && d.Kind == yaml.ScalarNode:
+		if _, _, ok := scalarOf(d); ok {
+			f.Default = d.Value
+			return
+		}
+	case f.Type == schema.TypeList && textual(f.Item.Type) && d.Kind == yaml.SequenceNode:
+		if texts, ok := m.scalarTexts(d); ok {
 			f.Default = texts
 			return
 		}
 	}
-	v, ok := defaultValue(d)
+	v, ok := m.y.defaultValue(d)
 	if !ok {
 		m.warn(codeDefaultInvalid, line, "%s: the default is not a value this field can hold; dropped", path)
 		return
@@ -245,9 +284,9 @@ func (m *specMapper) applyDefault(f *schema.Field, d *yaml.Node, path string, li
 }
 
 // scalarTexts is the text of each item of a list of scalars.
-func scalarTexts(n *yaml.Node) ([]any, bool) {
+func (m *specMapper) scalarTexts(n *yaml.Node) ([]any, bool) {
 	out := make([]any, 0, len(n.Content))
-	for _, it := range n.Content {
+	for _, it := range m.y.items(n) {
 		s, ok := scalarText(it)
 		if !ok {
 			return nil, false
@@ -259,7 +298,7 @@ func scalarTexts(n *yaml.Node) ([]any, bool) {
 
 // labelAndDescription splits an argument spec description (a string, or a
 // list of lines) into its first line, the label, and the rest.
-func labelAndDescription(n *yaml.Node) (string, string) {
+func (m *specMapper) labelAndDescription(n *yaml.Node) (string, string) {
 	var text string
 	switch n = resolve(n); {
 	case n == nil:
@@ -268,7 +307,7 @@ func labelAndDescription(n *yaml.Node) (string, string) {
 		text = n.Value
 	case n.Kind == yaml.SequenceNode:
 		lines := make([]string, 0, len(n.Content))
-		for _, it := range n.Content {
+		for _, it := range m.y.items(n) {
 			if s, ok := scalarText(it); ok {
 				lines = append(lines, s)
 			}

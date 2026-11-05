@@ -157,6 +157,30 @@ func TestArgumentSpecAttributes(t *testing.T) {
 		{"integer beyond int64", specYAML("x: {type: int, default: 18446744073709551615}"),
 			&schema.Field{Name: "x", Type: schema.TypeInt},
 			[]string{"warning default_invalid " + specFile + ":4"}},
+		{"YAML 1.1 bool default", specYAML("x: {type: bool, default: yes}"),
+			&schema.Field{Name: "x", Type: schema.TypeBool, Default: true}, nil},
+		{"YAML 1.1 bool attributes", specYAML("x: {type: bool, required: yes}"),
+			&schema.Field{Name: "x", Type: schema.TypeBool, Required: true}, nil},
+		{"YAML 1.1 no_log", specYAML("x: {no_log: on}"),
+			&schema.Field{Name: "x", Type: schema.TypeSecret}, nil},
+		{"choices on a bool are ignored", specYAML("x: {type: bool, choices: [yes, no], default: no}"),
+			&schema.Field{Name: "x", Type: schema.TypeBool, Default: false}, nil},
+		{"bool choices on a string are converted", specYAML("x: {choices: [yes, no]}"),
+			&schema.Field{Name: "x", Type: schema.TypeEnum, Options: []string{"yes", "no"}},
+			[]string{"warning choices_converted " + specFile + ":4"}},
+		{"empty choices are ignored", specYAML("x: {choices: []}"),
+			&schema.Field{Name: "x", Type: schema.TypeString}, nil},
+		{"string default from a number", specYAML("x: {type: str, default: 8080}"),
+			&schema.Field{Name: "x", Type: schema.TypeString, Default: "8080"}, nil},
+		{"string default from a bool", specYAML("x: {type: path, default: yes}"),
+			&schema.Field{Name: "x", Type: schema.TypeString, Default: "yes"}, nil},
+		{"string list default from numbers", specYAML("x: {type: list, elements: str, default: [1, b]}"),
+			&schema.Field{Name: "x", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeString}, Default: []any{"1", "b"}}, nil},
+		{"int list default", specYAML("x: {type: list, elements: int, default: [80, 443]}"),
+			&schema.Field{Name: "x", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeInt}, Default: []any{80, 443}}, nil},
+		{"nested list default", specYAML("x: {type: list, elements: int, default: [[80]]}"),
+			&schema.Field{Name: "x", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeInt}},
+			[]string{"warning default_invalid " + specFile + ":4"}},
 		{"spec not a mapping", specYAML("x: 80"), nil,
 			[]string{"warning field_invalid " + specFile + ":4"}},
 	}
@@ -256,7 +280,15 @@ func TestArgumentSpecEntryPoints(t *testing.T) {
 			t.Fatalf("readOK = %v, entryFound = %v, want true, false", readOK, entryFound)
 		}
 		wantFields(t, fields, nil)
-		wantNotes(t, notes, "hint entry_point_missing "+specFile+":0")
+		wantNotes(t, notes, "hint entry_point_missing "+specFile+":1")
+	})
+	t.Run("entry point not a mapping", func(t *testing.T) {
+		fields, notes, readOK, entryFound := argumentSpecFields([]byte("argument_specs:\n  main: 5\n"), specFile, "nginx", "", schema.SourceArgumentSpec)
+		if !readOK || !entryFound {
+			t.Fatalf("readOK = %v, entryFound = %v, want true, true", readOK, entryFound)
+		}
+		wantFields(t, fields, nil)
+		wantNotes(t, notes, "warning field_invalid "+specFile+":2")
 	})
 	t.Run("no argument_specs key", func(t *testing.T) {
 		_, notes, readOK, entryFound := argumentSpecFields([]byte("{}\n"), specFile, "nginx", "", schema.SourceArgumentSpec)
@@ -281,14 +313,12 @@ func TestArgumentSpecEntryPoints(t *testing.T) {
 		wantNotes(t, notes, "warning field_invalid "+specFile+":3")
 	})
 	t.Run("invalid yaml", func(t *testing.T) {
-		fields, notes, readOK, entryFound := argumentSpecFields([]byte("argument_specs:\n  main: [\n  x: y\n"), specFile, "nginx", "", schema.SourceArgumentSpec)
+		fields, notes, readOK, entryFound := argumentSpecFields([]byte("argument_specs:\n  main: x: y\n"), specFile, "nginx", "", schema.SourceArgumentSpec)
 		if readOK || entryFound {
 			t.Fatalf("readOK = %v, entryFound = %v, want false, false", readOK, entryFound)
 		}
 		wantFields(t, fields, nil)
-		if len(notes) != 1 || notes[0].Code != "invalid_yaml" || notes[0].Level != LevelWarning || notes[0].File != specFile || notes[0].Line == 0 {
-			t.Fatalf("notes = %+v, want one invalid_yaml warning with a line", notes)
-		}
+		wantNotes(t, notes, "warning invalid_yaml "+specFile+":2")
 	})
 	t.Run("sidecar", func(t *testing.T) {
 		fields, _, _, _ := argumentSpecFields(data, "deploy.argument_specs.yml", "", "", schema.SourceSidecar)

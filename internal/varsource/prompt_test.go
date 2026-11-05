@@ -40,6 +40,8 @@ func TestPromptFields(t *testing.T) {
 			[]string{"warning secret_default_dropped site.yml:1"}},
 		{"public prompt without default", `{name: host, prompt: Host, private: false}`,
 			&schema.Field{Name: "host", Label: "Host", Type: schema.TypeString, Required: true}, nil},
+		{"YAML 1.1 private", `{name: user, private: off}`,
+			&schema.Field{Name: "user", Type: schema.TypeString, Required: true}, nil},
 		{"non-string default is its text", `{name: count, private: false, default: 5}`,
 			&schema.Field{Name: "count", Type: schema.TypeString, Default: "5"}, nil},
 		{"templated default", `{name: dir, private: false, default: "{{ base }}/x"}`,
@@ -54,7 +56,7 @@ func TestPromptFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fields, notes := promptFields(promptNode(t, "- "+tc.entry+"\n"), "site.yml")
+			fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "- "+tc.entry+"\n"))
 			var want []schema.Field
 			if tc.field != nil {
 				want = []schema.Field{fromPrompt(1, *tc.field)}
@@ -67,7 +69,7 @@ func TestPromptFields(t *testing.T) {
 
 func TestPromptFieldsBlockStyleAndLimits(t *testing.T) {
 	t.Run("block entries keep their lines", func(t *testing.T) {
-		fields, notes := promptFields(promptNode(t, "- name: a\n  private: no\n- name: b\n  prompt: B\n"), "site.yml")
+		fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "- name: a\n  private: no\n- name: b\n  prompt: B\n"))
 		wantFields(t, fields, []schema.Field{
 			fromPrompt(1, schema.Field{Name: "a", Type: schema.TypeString, Required: true}),
 			fromPrompt(3, schema.Field{Name: "b", Label: "B", Type: schema.TypeSecret, Required: true}),
@@ -75,7 +77,7 @@ func TestPromptFieldsBlockStyleAndLimits(t *testing.T) {
 		wantNotes(t, notes)
 	})
 	t.Run("not a list", func(t *testing.T) {
-		fields, notes := promptFields(promptNode(t, "name: a\n"), "site.yml")
+		fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "name: a\n"))
 		wantFields(t, fields, nil)
 		wantNotes(t, notes, "warning field_invalid site.yml:1")
 	})
@@ -84,7 +86,7 @@ func TestPromptFieldsBlockStyleAndLimits(t *testing.T) {
 		for i := range 101 {
 			src += fmt.Sprintf("- {name: p%03d, private: false, default: x}\n", i)
 		}
-		fields, notes := promptFields(promptNode(t, src), "site.yml")
+		fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, src))
 		if len(fields) != 100 || fields[99].Name != "p099" {
 			t.Fatalf("got %d fields, want the first 100", len(fields))
 		}

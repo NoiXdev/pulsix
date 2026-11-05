@@ -124,6 +124,12 @@ func TestMarkerField(t *testing.T) {
 			&schema.Field{Name: "ratio", Type: schema.TypeFloat, Default: 0.5}, nil},
 		{"bool", []string{"debug: false  # pulsix:"}, "debug", 3, true,
 			&schema.Field{Name: "debug", Type: schema.TypeBool, Default: false}, nil},
+		{"YAML 1.1 bool", []string{"debug: yes  # pulsix:"}, "debug", 3, true,
+			&schema.Field{Name: "debug", Type: schema.TypeBool, Default: true}, nil},
+		{"quoted yes is a string", []string{`answer: "yes"  # pulsix:`}, "answer", 3, true,
+			&schema.Field{Name: "answer", Type: schema.TypeString, Default: "yes"}, nil},
+		{"list of YAML 1.1 bools", []string{"flags: [on, off]  # pulsix:"}, "flags", 3, true,
+			&schema.Field{Name: "flags", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeBool}, Default: []any{true, false}}, nil},
 		{"quoted number is a string", []string{`version: "1.2"  # pulsix:`}, "version", 3, true,
 			&schema.Field{Name: "version", Type: schema.TypeString, Default: "1.2"}, nil},
 		{"list of strings", []string{"hosts: [a, b]  # pulsix:"}, "hosts", 3, true, strList([]any{"a", "b"}), nil},
@@ -166,7 +172,7 @@ func TestMarkerField(t *testing.T) {
 			if key == nil {
 				t.Fatalf("no key %s", tc.key)
 			}
-			f, notes, isMarker, ok := markedVar(key, value, "site.yml")
+			f, notes, isMarker, ok := markedVar(newYAMLFile("site.yml"), key, value)
 			if isMarker != tc.isMarker || ok != (tc.field != nil) {
 				t.Fatalf("isMarker, ok = %v, %v; want %v, %v (notes %v)", isMarker, ok, tc.isMarker, tc.field != nil, notes)
 			}
