@@ -140,12 +140,20 @@ func TestTamperTokenAlwaysChangesTheSecret(t *testing.T) {
 	}
 	plains := []string{"pxt_A" + strings.Repeat("x", 42), "pxt_B" + strings.Repeat("x", 42)}
 	tk := auth.NewTokens(newMemTokenStore(), time.Now)
+	var created []string
 	for range 1000 {
 		plain, _, err := tk.Create(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), "ci", "operator", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		plains = append(plains, plain)
+		created = append(created, plain)
+	}
+	plains = append(plains, created...)
+	// A token whose secret was altered resolves to nothing.
+	for _, p := range created {
+		if _, _, err := tk.Resolve(context.Background(), tamperToken(p)); !errors.Is(err, auth.ErrUnauthenticated) {
+			t.Fatalf("Resolve(tamperToken(%q)) err = %v, want ErrUnauthenticated", p, err)
+		}
 	}
 	for _, p := range plains {
 		got := tamperToken(p)
