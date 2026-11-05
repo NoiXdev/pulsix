@@ -62,9 +62,9 @@ export function ListRow({
         <span id={nameId} className="sr-only">
           {label}
         </span>
-        <span id={detailsId} className="contents">
+        <div id={detailsId} className="contents">
           {children}
-        </span>
+        </div>
       </Link>
       {menu && <div className="absolute top-1/2 right-3 -translate-y-1/2">{menu}</div>}
     </div>
