@@ -3,7 +3,7 @@ import { FileCode, Pencil, Terminal } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { Switch } from '../../ui/switch.tsx';
-import { SidebarFacts } from '../../ui/detail-layout.tsx';
+import { SidebarFacts, SidebarHeading } from '../../ui/detail-layout.tsx';
 import { RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
 import { useZones } from '../../api/hooks/useHosts.ts';
 import { useHostAgent } from '../../api/hooks/useAgents.ts';
@@ -82,15 +82,6 @@ export function HostSidebar({ org, host, role, actions }: { org: string; host: H
   );
 }
 
-const DOT: Record<Tone, string> = {
-  ok: 'var(--px-ok)',
-  warn: 'var(--px-warn)',
-  crit: 'var(--px-crit)',
-  unknown: 'var(--px-unknown)',
-  accent: 'var(--px-accent)',
-  maintenance: 'var(--px-maintenance)',
-};
-
 /** The name with a status dot and the state pill. The state is the open
  * alerts' (crit over warn over OK); a host nobody monitors has none, and
  * its pill says so rather than "OK". */
@@ -112,17 +103,12 @@ function HostHeading({ org, host, canRead }: { org: string; host: Host; canRead:
   }
 
   return (
-    <div className="flex flex-col items-start gap-1.5">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <span
-          className="h-2.5 w-2.5 shrink-0 rounded-full"
-          style={{ background: DOT[tone] }}
-          title={label ?? t.hosts.detail.health.unknown}
-        />
-        <h1 className="min-w-0 font-mono text-xl font-bold break-all">{host.name}</h1>
-      </div>
-      {label && <Pill tone={tone}>{label}</Pill>}
-    </div>
+    <SidebarHeading
+      title={host.name}
+      mono
+      dot={{ tone, label: label ?? t.hosts.detail.health.unknown }}
+      pill={label ? <Pill tone={tone}>{label}</Pill> : undefined}
+    />
   );
 }
 

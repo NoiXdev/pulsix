@@ -1,5 +1,6 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../lib/utils.ts';
+import type { Tone } from './badge.tsx';
 
 export interface SectionNavItem {
   id: string;
@@ -26,6 +27,25 @@ const OBSERVER_MARGIN = '-10% 0px -70% 0px';
 function useCurrentSection(ids: string[]): string | undefined {
   const [current, setCurrent] = useState<string | undefined>(ids[0]);
   const key = ids.join('\n');
+  // The hash names a section that may only exist once an async read is done
+  // (`/groups/x#members`), so it is acted on when it enters the nav, once per
+  // hash: the current section is seeded while rendering, the scroll follows
+  // in an effect, and a later nav change never pulls the page back.
+  const hash = typeof window === 'undefined' ? '' : window.location.hash.slice(1);
+  const [seeded, setSeeded] = useState<string | null>(null);
+  if (hash !== '' && hash !== seeded && ids.includes(hash)) {
+    setSeeded(hash);
+    setCurrent(hash);
+  }
+  const scrolled = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (hash === '' || hash === scrolled.current || !key.split('\n').includes(hash)) return;
+    const el = document.getElementById(hash);
+    if (!el) return;
+    scrolled.current = hash;
+    el.scrollIntoView({ block: 'start' });
+  }, [key, hash]);
 
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return;
@@ -140,6 +160,43 @@ export function Section({
       </div>
       {children}
     </section>
+  );
+}
+
+const DOT: Record<Tone, string> = {
+  ok: 'var(--px-ok)',
+  warn: 'var(--px-warn)',
+  crit: 'var(--px-crit)',
+  unknown: 'var(--px-unknown)',
+  accent: 'var(--px-accent)',
+  maintenance: 'var(--px-maintenance)',
+};
+
+/** SidebarHeading is the top of a detail page's sidebar: the page's `h1`
+ * (monospaced for an identifier) with an optional status dot, the state pill
+ * below it and `children` as a muted sub-line. */
+export function SidebarHeading({
+  title,
+  mono,
+  dot,
+  pill,
+  children,
+}: {
+  title: string;
+  mono?: boolean;
+  dot?: { tone: Tone; label: string };
+  pill?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      <div className="flex min-w-0 items-center gap-2.5">
+        {dot && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: DOT[dot.tone] }} title={dot.label} />}
+        <h1 className={cn('min-w-0 text-xl font-bold break-all', mono && 'font-mono')}>{title}</h1>
+      </div>
+      {pill}
+      {children && <div className="text-[13px] text-muted-foreground">{children}</div>}
+    </div>
   );
 }
 

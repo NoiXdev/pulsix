@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { alertBody, check, HOST, hostRoutes, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
+import { clippedElements, isClipped } from '../../test/clipped.ts';
 import { HostDetailPage } from './HostDetailPage.tsx';
 
 const renderPage = (qc?: QueryClient) => renderAt(HostDetailPage, qc);
@@ -24,16 +25,6 @@ const MONITORED_CHECKS = {
   monitored: true,
   checks: [check('cpu', 'cpu', [reading('cpu.used_pct', 23)]), check('memory', 'memory', [reading('mem.used_pct', 61)])],
 };
-
-/** isClipped: a class list that hides vertical overflow (`overflow-hidden`,
- * `overflow-clip` or their `-y-` forms) at a fixed height or max-height, which cuts a card's content off. Responsive and
- * state variants (`md:`, `hover:`) are stripped before matching. */
-function isClipped(classes: string[]): boolean {
-  const base = classes.map((c) => c.replace(/^.*:/, ''));
-  const hides = base.some((c) => /^overflow(-y)?-(hidden|clip)$/.test(c));
-  const fixedHeight = /^(max-)?h-(\d|\[)/;
-  return hides && base.some((c) => fixedHeight.test(c));
-}
 
 describe('HostDetailPage', () => {
   it('renders sidebar facts and section nav', async () => {
@@ -162,8 +153,7 @@ describe('HostDetailPage', () => {
 
     // A card that hides its overflow at a fixed height cuts its content off;
     // every card on this page grows with what it holds instead.
-    const clipped = [...container.querySelectorAll<HTMLElement>('*')].filter((el) => isClipped([...el.classList]));
-    expect(clipped).toEqual([]);
+    expect(clippedElements(container)).toEqual([]);
   });
 
   it.each([

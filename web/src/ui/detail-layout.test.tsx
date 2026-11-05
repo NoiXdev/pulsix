@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
-import { DetailLayout, DisabledHint, Section, SidebarFacts, type SectionNavItem } from './detail-layout.tsx';
+import { DetailLayout, DisabledHint, Section, SidebarFacts, SidebarHeading, type SectionNavItem } from './detail-layout.tsx';
 
 const NAV: SectionNavItem[] = [
   { id: 'overview', label: 'Overview' },
@@ -124,6 +124,64 @@ describe('DetailLayout', () => {
 
     unmount();
     expect(disconnect).toHaveBeenCalled();
+  });
+});
+
+describe('DetailLayout hash scroll', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.history.replaceState(null, '', '/');
+  });
+
+  const item = (id: string): SectionNavItem => ({ id, label: id });
+  const layout = (ids: string[]) => (
+    <DetailLayout sidebar={<div>s</div>} nav={ids.map(item)}>
+      {ids.map((id) => (
+        <Section key={id} id={id} title={id}>
+          {id} body
+        </Section>
+      ))}
+    </DetailLayout>
+  );
+
+  it('scrolls once to the section named by the hash when it appears', () => {
+    vi.stubGlobal('IntersectionObserver', undefined);
+    window.history.replaceState(null, '', '/#b');
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+
+    const { rerender } = render(layout(['a']));
+    expect(scroll).not.toHaveBeenCalled();
+
+    rerender(layout(['a', 'b']));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(scroll.mock.contexts[0]).toBe(document.getElementById('b'));
+    expect(scroll).toHaveBeenCalledWith({ block: 'start' });
+    expect(screen.getByRole('link', { name: 'b' })).toHaveAttribute('aria-current', 'location');
+
+    rerender(layout(['a', 'b', 'c']));
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('SidebarHeading', () => {
+  it('renders the title as the page heading with dot, pill and sub-line', () => {
+    render(
+      <SidebarHeading title="web-04" mono dot={{ tone: 'warn', label: '2 warnings' }} pill={<span>Warnings pill</span>}>
+        deploy · web
+      </SidebarHeading>,
+    );
+    const h1 = screen.getByRole('heading', { level: 1, name: 'web-04' });
+    expect(h1.className).toContain('font-mono');
+    expect(screen.getByTitle('2 warnings')).toHaveStyle({ background: 'var(--px-warn)' });
+    expect(screen.getByText('Warnings pill')).toBeInTheDocument();
+    expect(screen.getByText('deploy · web')).toBeInTheDocument();
+  });
+
+  it('is not monospaced by default and shows no dot without one', () => {
+    render(<SidebarHeading title="Run 1" />);
+    expect(screen.getByRole('heading', { level: 1 }).className).not.toContain('font-mono');
+    expect(document.querySelector('[title]')).toBeNull();
   });
 });
 

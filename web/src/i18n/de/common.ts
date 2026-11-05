@@ -3,6 +3,8 @@ import type { Messages } from '../types.ts';
 export const deCommon: Messages['common'] = {
   save: 'Speichern',
   cancel: 'Abbrechen',
+  rowActions: (name: string) => `Aktionen für ${name}`,
+  open: 'Öffnen',
   close: 'Schließen',
   back: 'Zurück',
   continue: 'Weiter',

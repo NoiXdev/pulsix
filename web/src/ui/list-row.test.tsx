@@ -49,6 +49,22 @@ describe('ListRow', () => {
     expect(link).toHaveStyle({ gridTemplateColumns: '1fr 1fr 40px' });
   });
 
+  it('carries a hash into its href', async () => {
+    const rootRoute = createRootRoute();
+    const list = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/',
+      component: () => (
+        <ListRow to="/o/$org/hosts/$id" params={{ org: 'acme', id: 'h1' }} hash="connection" columns="1fr" label="Open web-01">
+          <span>web-01</span>
+        </ListRow>
+      ),
+    });
+    const detail = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org/hosts/$id', component: () => <div /> });
+    render(<RouterProvider router={createRouter({ routeTree: rootRoute.addChildren([list, detail]), history: createMemoryHistory() })} />);
+    expect((await screen.findByRole('link')).getAttribute('href')).toMatch(/#connection$/);
+  });
+
   it('is named by a visually hidden label and described by its cells', async () => {
     renderRow();
     const link = await screen.findByRole('link', { name: 'Open web-01', description: /10\.0\.0\.1/ });
@@ -273,23 +289,67 @@ describe('StaticListRow', () => {
 
   it('is not a link, carries its title and lays its cells out on the columns', async () => {
     renderStatic();
-    const row = (await screen.findByText('Globex')).parentElement as HTMLElement;
-    expect(row).toHaveAttribute('title', 'Not openable');
-    expect(row).toHaveStyle({ gridTemplateColumns: '1fr 1fr' });
+    const grid = (await screen.findByText('Globex')).parentElement as HTMLElement;
+    const row = grid.closest('[data-list-row]') as HTMLElement;
+    expect(grid).toHaveAttribute('title', 'Not openable');
+    expect(grid).toHaveStyle({ gridTemplateColumns: '1fr 1fr' });
     expect(within(row).queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getAllByRole('link')).toHaveLength(1);
   });
 
   it('shares the row classes of ListRow, without its hover highlight', async () => {
     renderStatic();
-    const row = (await screen.findByText('Globex')).parentElement as HTMLElement;
+    const row = (await screen.findByText('Globex')).closest('[data-list-row]') as HTMLElement;
     const linked = (await screen.findByRole('link', { name: 'Open web-01' })).parentElement as HTMLElement;
     for (const cls of ['border-b', 'border-border', 'last:border-b-0']) {
       expect(row.className).toContain(cls);
       expect(linked.className).toContain(cls);
     }
-    expect(row.className).toContain('grid');
-    expect(row.className).toContain('px-4');
+    const grid = (await screen.findByText('Globex')).parentElement as HTMLElement;
+    expect(grid.className).toContain('grid');
+    expect(grid.className).toContain('px-4');
     expect(row.className).not.toContain('hover:');
+  });
+
+  it('renders a menu outside its cells that does not need a title', async () => {
+    const user = userEvent.setup();
+    const spy = vi.fn();
+    const rootRoute = createRootRoute();
+    const list = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/',
+      component: () => (
+        <StaticListRow
+          columns="1fr 40px"
+          menu={
+            <RowMenu label="Actions for a">
+              <RowMenuItem onSelect={spy}>Go</RowMenuItem>
+            </RowMenu>
+          }
+        >
+          <span>cell a</span>
+          <span />
+        </StaticListRow>
+      ),
+    });
+    render(<RouterProvider router={createRouter({ routeTree: rootRoute.addChildren([list]), history: createMemoryHistory() })} />);
+    const grid = (await screen.findByText('cell a')).parentElement as HTMLElement;
+    const row = grid.closest('[data-list-row]') as HTMLElement;
+    expect(grid).not.toHaveAttribute('title');
+    const trigger = within(row).getByRole('button', { name: 'Actions for a' });
+    expect(grid).not.toContainElement(trigger);
+    expect(row.className).toContain('relative');
+    await user.click(trigger);
+    await user.click(screen.getByRole('menuitem', { name: 'Go' }));
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('both row kinds carry data-list-row', async () => {
+    renderStatic();
+    const linked = (await screen.findByRole('link', { name: 'Open web-01' })).parentElement as HTMLElement;
+    const row = (await screen.findByText('Globex')).closest('[data-list-row]');
+    expect(linked).toHaveAttribute('data-list-row', '');
+    expect(row).not.toBeNull();
+    expect(document.querySelectorAll('[data-list-row]')).toHaveLength(2);
   });
 });

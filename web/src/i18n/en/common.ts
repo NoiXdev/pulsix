@@ -6,6 +6,8 @@
 export const enCommon = {
   save: 'Save',
   cancel: 'Cancel',
+  rowActions: (name: string) => `Actions for ${name}`,
+  open: 'Open',
   close: 'Close',
   back: 'Back',
   continue: 'Continue',

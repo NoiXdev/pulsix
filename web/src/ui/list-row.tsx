@@ -38,6 +38,7 @@ export function ListRow({
   to,
   params,
   search,
+  hash,
   columns,
   label,
   children,
@@ -46,6 +47,7 @@ export function ListRow({
   to: LinkProps['to'];
   params: LinkProps['params'];
   search?: LinkProps['search'];
+  hash?: LinkProps['hash'];
   columns: string;
   label: string;
   children: ReactNode;
@@ -54,11 +56,12 @@ export function ListRow({
   const nameId = useId();
   const detailsId = useId();
   return (
-    <div className={cn('relative', ROW_FRAME, 'hover:bg-background hover:shadow-[inset_2px_0_0_var(--px-accent)] focus-within:bg-background')}>
+    <div data-list-row="" className={cn('relative', ROW_FRAME, 'hover:bg-background hover:shadow-[inset_2px_0_0_var(--px-accent)] focus-within:bg-background')}>
       <Link
         to={to}
         params={params}
         search={search}
+        hash={hash}
         aria-labelledby={nameId}
         aria-describedby={detailsId}
         className={cn(ROW_GRID, 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary')}
@@ -79,13 +82,28 @@ export function ListRow({
 /**
  * StaticListRow is a row of the same list that opens nothing: the same
  * columns and spacing as ListRow, no link, no hover highlight (it would
- * promise a click). `title` is shown on hover, to say why it cannot be
- * opened.
+ * promise a click). `title`, when given, is shown on hover, to say why it
+ * cannot be opened. The optional `menu` sits over the row's last cell exactly
+ * as in ListRow: reserve that last column (about 40px) in `columns` and leave
+ * its cell empty.
  */
-export function StaticListRow({ columns, title, children }: { columns: string; title: string; children: ReactNode }) {
+export function StaticListRow({
+  columns,
+  title,
+  children,
+  menu,
+}: {
+  columns: string;
+  title?: string;
+  children: ReactNode;
+  menu?: ReactNode;
+}) {
   return (
-    <div title={title} className={cn(ROW_FRAME, ROW_GRID)} style={{ gridTemplateColumns: columns }}>
-      {children}
+    <div data-list-row="" className={cn('relative', ROW_FRAME)}>
+      <div title={title} className={ROW_GRID} style={{ gridTemplateColumns: columns }}>
+        {children}
+      </div>
+      {menu && <div className="absolute top-1/2 right-3 -translate-y-1/2">{menu}</div>}
     </div>
   );
 }
