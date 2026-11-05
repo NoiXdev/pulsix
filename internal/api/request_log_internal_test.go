@@ -31,6 +31,12 @@ func TestRedactRequestURI(t *testing.T) {
 		{"/Invite/tok?x=1", "/invite/[redacted]"},
 		{"http://pulsix.test/invite/tok", "/invite/[redacted]"},
 		{"/invite/", "/invite/"},
+		{"/invite/tok/..", "/invite/[redacted]"},
+		{"/invite/tok/../", "/invite/[redacted]"},
+		{"/invite/tok/..?x=1", "/invite/[redacted]"},
+		{"/a/../invite/tok", "/invite/[redacted]"},
+		{"/invite/..", "/invite/[redacted]"},
+		{"/invite/./", "/invite/./"},
 	}
 	for _, tt := range tests {
 		if got := redactRequestURI(tt.in); got != tt.want {
@@ -53,6 +59,9 @@ func TestRequestLoggerNeverRecordsAnInviteToken(t *testing.T) {
 	if seenPath != "/invite/tok_secret_123" {
 		t.Errorf("handler saw path %q, want the original", seenPath)
 	}
+	// A trailing dot-dot segment resolves back to /invite, but the token is
+	// still in the request line.
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/invite/tok_secret_123/..", nil))
 	out := buf.String()
 	if !strings.Contains(out, "/invite/[redacted]") {
 		t.Errorf("log %q does not carry the redacted path", out)
