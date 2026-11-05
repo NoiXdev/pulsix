@@ -32,11 +32,13 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
   const { draft, revision, generation, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.schema, group.revision, toVarSchema, own.steps);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [stale, setStale] = useState(false);
-  // A draft replaced wholesale is not the one the problems were found in.
+  // A draft replaced wholesale is not the one the problems were found in or
+  // a stale notice was about.
   const [problemsOf, setProblemsOf] = useState(generation);
   if (problemsOf !== generation) {
     setProblemsOf(generation);
     setProblems([]);
+    setStale(false);
   }
 
   const reload = useReloadInventory(org);

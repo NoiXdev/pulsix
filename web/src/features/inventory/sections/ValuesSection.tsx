@@ -41,6 +41,8 @@ export function ValuesSection({ org, group, canWrite }: { org: string; group: In
   );
 }
 
+const toProblems = (ps: InventoryGroup['problems']): Problem[] => (ps ?? []).map((p) => ({ path: p.path, message: p.message }));
+
 /** ValuesForm edits the group's values. The draft and the revision its save
  * sends follow useRevisionDraft (backlogs 7.86, 7.90): an unedited draft
  * follows the group, an edited one saves on the revision it was edited on
@@ -55,15 +57,24 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // save: secrets as keep markers, never as anything typed.
   const draftOf = (vars: unknown) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
   const { draft, revision, generation, edit, startSave, saved, reloaded } = useRevisionDraft(group.vars, group.revision, draftOf, own.steps);
-  const storedProblems = (): Problem[] => (group.problems ?? []).map((p) => ({ path: p.path, message: p.message }));
-  const [problems, setProblems] = useState<Problem[]>(storedProblems);
+  const [problems, setProblems] = useState<Problem[]>(() => toProblems(group.problems));
   const [stale, setStale] = useState(false);
-  // A draft replaced wholesale is not the one the problems were found in:
-  // it shows the stored values' problems instead.
-  const [problemsOf, setProblemsOf] = useState(generation);
-  if (problemsOf !== generation) {
-    setProblemsOf(generation);
-    setProblems(storedProblems());
+  // The problems a save's or reload's answer brought along, for the draft it
+  // may replace: that answer, not the group the page read last (which may
+  // land later), is the authority for the content the draft then holds.
+  const [answered, setAnswered] = useState<Problem[] | null>(null);
+  // A draft replaced wholesale is not the one the problems were found in or
+  // a stale notice was about. Replaced by an answer, it shows that answer's
+  // problems; replaced because the group's content changed, the group's.
+  // An answer that kept the draft (an edit typed meanwhile) is dropped.
+  const [seen, setSeen] = useState(generation);
+  if (seen !== generation || answered) {
+    if (seen !== generation) {
+      setProblems(answered ?? toProblems(group.problems));
+      setStale(false);
+    }
+    setSeen(generation);
+    setAnswered(null);
   }
 
   const reload = useReloadInventory(org);
@@ -72,6 +83,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // does not keeps it, which then saves on the reloaded revision.
   async function onReload() {
     const fresh = await reload(group.id);
+    setAnswered(toProblems(fresh.problems));
     reloaded(fresh.vars, fresh.revision);
     setStale(false);
   }
@@ -83,6 +95,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
       const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
       // The page's own step, which an edited draft may follow.
       own.record({ from: revision, to: res.group.revision });
+      setAnswered(toProblems(res.group.problems));
       saved(ticket, res.group.vars, res.group.revision);
       save.reset();
       toast.show(t.inventory.valuesTab.saved);

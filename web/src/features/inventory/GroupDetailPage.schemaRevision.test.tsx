@@ -207,6 +207,25 @@ describe('GroupDetailPage schema revision', () => {
     expect(state.puts[0].headers.get('If-Match')).toBe('"4"');
   });
 
+  it('drops the stale notice when the draft is discarded', async () => {
+    const user = userEvent.setup();
+    const { state, qc } = schemaPage((req, n) => (n === 1 ? stale() : schemaSaved(5, (req.body as { schema: unknown }).schema)));
+    await screen.findByRole('table', { name: 'Fields' });
+    await addField(user);
+    state.current = group({ revision: 4 });
+    await refetch(qc);
+    await saveSchema(user);
+    expect(await within(schemaRegion()).findByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+    // The discarded draft follows the group again: the notice was about the
+    // edit, which is gone.
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(within(schemaRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    await saveSchema(user);
+    await screen.findByText('Schema saved');
+    expect(state.puts[1].headers.get('If-Match')).toBe('"4"');
+  });
+
   it("clears the problems of a refused save when someone else's schema replaces the draft", async () => {
     const user = userEvent.setup();
     const { state, qc } = schemaPage(
