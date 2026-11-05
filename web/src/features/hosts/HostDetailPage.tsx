@@ -86,7 +86,7 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
 
   return (
     <>
-      <DetailLayout sidebar={<HostSidebar org={org} host={host} role={role} actions={actions} />} nav={nav}>
+      <DetailLayout sidebar={<HostSidebar org={org} host={host} role={role} actions={actions} />} nav={nav} navLabel={t.common.sections}>
         {host.monitored ? (
           <>
             <HostStateSection org={org} hostId={host.id} canRead={canReadChecks} />

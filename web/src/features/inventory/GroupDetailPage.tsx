@@ -55,7 +55,7 @@ function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup;
   ];
 
   return (
-    <DetailLayout sidebar={<GroupSidebar org={org} group={group} groups={all} role={role} />} nav={nav}>
+    <DetailLayout sidebar={<GroupSidebar org={org} group={group} groups={all} role={role} />} nav={nav} navLabel={t.common.sections}>
       <MembersSection org={org} group={group} canWrite={canWrite} />
       {/* Keyed by the group and what each form edits, not by the revision:
           a save in one section bumps the revision, and must not throw away

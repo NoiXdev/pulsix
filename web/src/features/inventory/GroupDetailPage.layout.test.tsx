@@ -27,7 +27,7 @@ describe('GroupDetailPage layout', () => {
     expect(fact('Fields')).toHaveTextContent('1 group · 1 host');
     expect(fact('Jump host')).toHaveTextContent('bastion-fra');
 
-    const nav = screen.getByRole('navigation');
+    const nav = screen.getByRole('navigation', { name: 'Sections' });
     for (const [id, name] of [
       ['members', 'Members'],
       ['values', 'Group values'],

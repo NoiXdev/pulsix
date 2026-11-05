@@ -33,6 +33,7 @@ export function AccountPage() {
   return (
     <DetailLayout
       sidebar={<AccountSidebar user={user} />}
+      navLabel={t.common.sections}
       nav={[
         { id: 'organizations', label: t.users.account.organizations, count: (user.memberships ?? []).length },
         { id: 'sign-in', label: t.users.signIn.title },

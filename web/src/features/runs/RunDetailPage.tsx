@@ -58,7 +58,7 @@ export function RunDetailPage() {
   ];
 
   return (
-    <DetailLayout sidebar={<RunSidebar org={org} job={j} status={status} canRun={canRun} />} nav={nav}>
+    <DetailLayout sidebar={<RunSidebar org={org} job={j} status={status} canRun={canRun} />} nav={nav} navLabel={t.common.sections}>
       <RunResultSection job={j} status={status} events={log.events} />
       {siblings.length > 0 && <RunGroupSection org={org} siblings={siblings} />}
       {vaultIdentities.length > 0 && <RunVaultSection identities={vaultIdentities} recorded={j.vault_identities_source === 'recorded'} />}

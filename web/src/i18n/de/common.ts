@@ -4,6 +4,7 @@ export const deCommon: Messages['common'] = {
   save: 'Speichern',
   cancel: 'Abbrechen',
   rowActions: (name: string) => `Aktionen für ${name}`,
+  sections: 'Abschnitte',
   open: 'Öffnen',
   close: 'Schließen',
   back: 'Zurück',

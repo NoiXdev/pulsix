@@ -93,10 +93,13 @@ function useCurrentSection(ids: string[]): { current: string | undefined; markHa
 export function DetailLayout({
   sidebar,
   nav,
+  navLabel,
   children,
 }: {
   sidebar: ReactNode;
   nav: SectionNavItem[];
+  /** Accessible name of the section nav: the shell has a nav of its own. */
+  navLabel: string;
   children: ReactNode;
 }) {
   const { current, markHandled } = useCurrentSection(nav.map((n) => n.id));
@@ -108,7 +111,7 @@ export function DetailLayout({
       <aside className="flex min-w-0 flex-col gap-4 min-[1100px]:sticky min-[1100px]:top-6 min-[1100px]:max-h-[calc(100vh-8rem)] min-[1100px]:overflow-y-auto">
         {sidebar}
         {nav.length > 0 && (
-          <nav className="flex flex-col gap-0.5">
+          <nav aria-label={navLabel} className="flex flex-col gap-0.5">
             {nav.map((item) => {
               const active = item.id === current;
               return (

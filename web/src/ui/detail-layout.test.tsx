@@ -11,7 +11,7 @@ const NAV: SectionNavItem[] = [
 
 function renderLayout() {
   return render(
-    <DetailLayout sidebar={<div>sidebar body</div>} nav={NAV}>
+    <DetailLayout sidebar={<div>sidebar body</div>} nav={NAV} navLabel="Sections">
       <Section id="overview" title="Overview">
         overview body
       </Section>
@@ -33,6 +33,11 @@ describe('DetailLayout', () => {
     expect(screen.getByText('sidebar body')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Alerts' })).toHaveAttribute('id', 'alerts');
     expect(screen.getByRole('button', { name: 'Acknowledge' })).toBeInTheDocument();
+  });
+
+  it('names the section nav so it is not confused with the shell nav', () => {
+    renderLayout();
+    expect(screen.getByRole('navigation', { name: 'Sections' })).toContainElement(screen.getByRole('link', { name: /Alerts/ }));
   });
 
   it('renders nav anchors with their counts', () => {
@@ -64,7 +69,7 @@ describe('DetailLayout', () => {
     const { rerender } = renderLayout();
     expect(screen.getByRole('link', { name: /Overview/ })).toHaveAttribute('aria-current', 'location');
     // Sections drop out (an unmonitored host has no alerts): Overview is gone.
-    rerender(<DetailLayout sidebar={<div>sidebar body</div>} nav={NAV.slice(1)}>{children}</DetailLayout>);
+    rerender(<DetailLayout sidebar={<div>sidebar body</div>} nav={NAV.slice(1)} navLabel="Sections">{children}</DetailLayout>);
     expect(screen.queryByRole('link', { name: /Overview/ })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Alerts/ })).toHaveAttribute('aria-current', 'location');
     expect(screen.getByRole('link', { name: /Runs/ })).not.toHaveAttribute('aria-current');
@@ -86,7 +91,7 @@ describe('DetailLayout', () => {
     act(() => callback([{ target: runs, isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver));
     expect(screen.getByRole('link', { name: /Runs/ })).toHaveAttribute('aria-current', 'location');
     rerender(
-      <DetailLayout sidebar={<div>sidebar body</div>} nav={NAV.slice(0, 2)}>
+      <DetailLayout sidebar={<div>sidebar body</div>} nav={NAV.slice(0, 2)} navLabel="Sections">
         <Section id="overview" title="Overview">o</Section>
         <Section id="alerts" title="Alerts">a</Section>
       </DetailLayout>,
@@ -159,7 +164,7 @@ describe('DetailLayout hash scroll', () => {
 
   const item = (id: string): SectionNavItem => ({ id, label: id });
   const layout = (ids: string[]) => (
-    <DetailLayout sidebar={<div>s</div>} nav={ids.map(item)}>
+    <DetailLayout sidebar={<div>s</div>} nav={ids.map(item)} navLabel="Sections">
       {ids.map((id) => (
         <Section key={id} id={id} title={id}>
           {id} body

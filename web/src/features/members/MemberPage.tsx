@@ -55,7 +55,7 @@ export function MemberPage() {
   }
 
   return (
-    <DetailLayout sidebar={<MemberSidebar member={member} />} nav={nav}>
+    <DetailLayout sidebar={<MemberSidebar member={member} />} nav={nav} navLabel={t.common.sections}>
       <Section id="role" title={t.members.page.roleTitle}>
         <MemberRole org={org} member={member} />
       </Section>

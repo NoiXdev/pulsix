@@ -11,7 +11,7 @@ const renderPage = (qc?: QueryClient) => renderAt(HostDetailPage, qc);
 
 /** The section nav, as label → count ('' for an item without one). */
 function navItems(): Array<[string, string]> {
-  const nav = screen.getByRole('navigation');
+  const nav = screen.getByRole('navigation', { name: 'Sections' });
   return within(nav)
     .getAllByRole('link')
     .map((a) => {
@@ -59,7 +59,7 @@ describe('HostDetailPage', () => {
         ['Facts', ''],
       ]),
     );
-    const alertsLink = within(screen.getByRole('navigation')).getByRole('link', { name: /Alerts/ });
+    const alertsLink = within(screen.getByRole('navigation', { name: 'Sections' })).getByRole('link', { name: /Alerts/ });
     expect(alertsLink).toHaveAttribute('href', '#alerts');
     for (const id of ['state', 'alerts', 'checks', 'runs', 'connection', 'inventory', 'facts']) {
       expect(document.getElementById(id)).not.toBeNull();

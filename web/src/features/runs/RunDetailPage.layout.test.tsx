@@ -55,7 +55,7 @@ afterEach(() => {
 
 const sidebar = () => screen.getByRole('complementary');
 const fact = (label: string) => within(sidebar()).getByText(label, { selector: 'dt' }).nextElementSibling as HTMLElement;
-const navHrefs = () => within(screen.getByRole('navigation')).getAllByRole('link').map((a) => a.getAttribute('href'));
+const navHrefs = () => within(screen.getByRole('navigation', { name: 'Sections' })).getAllByRole('link').map((a) => a.getAttribute('href'));
 
 describe('RunDetailPage layout', () => {
   it('puts the run in the sidebar and its parts in sections', async () => {
@@ -74,7 +74,7 @@ describe('RunDetailPage layout', () => {
     expect(within(sidebar()).getByRole('button', { name: 'Retry failed' })).toBeEnabled();
 
     expect(navHrefs()).toEqual(['#result', '#group', '#vault', '#log']);
-    const nav = screen.getByRole('navigation');
+    const nav = screen.getByRole('navigation', { name: 'Sections' });
     expect(within(nav).getByRole('link', { name: /^Run group/ })).toHaveTextContent('2');
     for (const [id, name] of [
       ['result', 'Result'],
