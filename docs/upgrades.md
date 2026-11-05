@@ -43,8 +43,11 @@ an operator can count on. The operator's steps are in
   and fills it once from the existing runs in the same transaction. Its time
   grows with runs × hosts per run; as with 00079, upgrade outside busy
   automation windows. It then drops `jobs_host_ids_idx` (00079), which nothing
-  reads any more. Dropping an index removes no data: a previous-minor manager
-  still lists a host's runs correctly, only slower.
+  reads any more. An older manager does not start on the new schema (see
+  below), but one that is still running while the new version migrates keeps
+  creating runs without `job_hosts` rows, and nothing fills them in later:
+  those runs never appear in their hosts' run lists. Stop every manager
+  instance before the new version starts.
 
 ## A database newer than the binary is refused
 
