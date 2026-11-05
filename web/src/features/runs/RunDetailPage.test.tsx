@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { RunDetailPage } from './RunDetailPage.tsx';
+import { FakeEventSource } from './runPageTestKit.tsx';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const JOB_ID = '0197c0a2-0000-7000-8000-000000000001';
@@ -25,36 +26,6 @@ const detail = (over: Record<string, unknown> = {}) => ({
     ...over,
   },
 });
-
-/* A minimal EventSource fake: the hook subscribes with addEventListener and
- * the tests drive frames by hand. */
-class FakeEventSource {
-  static instances: FakeEventSource[] = [];
-  static last(): FakeEventSource | undefined {
-    return FakeEventSource.instances[FakeEventSource.instances.length - 1];
-  }
-  static reset(): void {
-    FakeEventSource.instances = [];
-  }
-  url: string;
-  closed = false;
-  private listeners = new Map<string, ((e: { data: string }) => void)[]>();
-  constructor(url: string) {
-    this.url = url;
-    FakeEventSource.instances.push(this);
-  }
-  addEventListener(type: string, fn: (e: { data: string }) => void) {
-    const list = this.listeners.get(type) ?? [];
-    list.push(fn);
-    this.listeners.set(type, list);
-  }
-  emit(type: string, data: unknown) {
-    for (const fn of this.listeners.get(type) ?? []) act(() => fn({ data: JSON.stringify(data) }));
-  }
-  close() {
-    this.closed = true;
-  }
-}
 
 const originalEventSource = globalThis.EventSource;
 
@@ -98,7 +69,7 @@ describe('RunDetailPage', () => {
     renderPage();
 
     expect(await screen.findByText('deploy-site')).toBeInTheDocument();
-    expect(screen.getByText('succeeded')).toBeInTheDocument();
+    expect(within(screen.getByRole('complementary')).getByText('succeeded')).toBeInTheDocument();
     expect(screen.getByText('Ada')).toBeInTheDocument();
     expect(screen.getByText('worker-fra')).toBeInTheDocument();
     const table = screen.getByRole('table', { name: 'Per-host results' });

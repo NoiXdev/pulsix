@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cancelHostRows, hasFailedHosts, hostResultRows, kindLabel, shortId, statusTone } from './status.ts';
+import { cancelHostRows, hasFailedHosts, hostResultRows, isCancellable, kindLabel, shortId, statusTone } from './status.ts';
 import { en } from '../../i18n/en/index.ts';
 
 describe('statusTone', () => {
@@ -12,6 +12,21 @@ describe('statusTone', () => {
     expect(statusTone('queued')).toBe('unknown');
     expect(statusTone('claimed')).toBe('unknown');
     expect(statusTone('cancelled')).toBe('unknown');
+  });
+});
+
+describe('isCancellable', () => {
+  it.each([
+    ['queued', true],
+    ['claimed', true],
+    ['running', true],
+    ['cancelling', false],
+    ['succeeded', false],
+    ['failed', false],
+    ['cancelled', false],
+    ['error', false],
+  ])('%s → %s', (status, want) => {
+    expect(isCancellable(status)).toBe(want);
   });
 });
 

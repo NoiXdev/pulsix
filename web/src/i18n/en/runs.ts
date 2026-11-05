@@ -45,6 +45,7 @@ export const enRuns = {
     runCommand: 'Run command',
     hostFilter: (name: string) => `Host: ${name}`,
     removeHostFilter: 'Remove host filter',
+    cancelItem: 'Cancel run',
     columns: {
       run: 'Run',
       kind: 'Kind',
@@ -88,6 +89,12 @@ export const enRuns = {
     emptyStdout: '(empty stdout)',
   },
   detail: {
+    section: {
+      result: 'Result',
+      group: 'Run group',
+      log: 'Event log',
+    },
+    noResults: 'No per-host results yet.',
     retryStarted: 'Retry started',
     retryFailed: 'Retry failed',
     cancelled: 'Run cancelled',
@@ -136,7 +143,6 @@ export const enRuns = {
     stopped:
       'The run was stopped. On a host marked interrupted, a command had already started there and may still be running on that host — stopping the run does not stop a command already running on a host. Check those hosts before you re-run.',
     cancelledHosts: 'Cancelled run hosts',
-    eventLog: 'Event log',
     polling: '(polling)',
     pollingTitle: 'live stream dropped frames; polling the history',
   },

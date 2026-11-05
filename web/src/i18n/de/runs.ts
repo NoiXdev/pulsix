@@ -48,6 +48,7 @@ export const deRuns: Messages['runs'] = {
     runCommand: 'Befehl ausführen',
     hostFilter: (name: string) => `Host: ${name}`,
     removeHostFilter: 'Host-Filter entfernen',
+    cancelItem: 'Lauf abbrechen',
     columns: {
       run: 'Lauf',
       kind: 'Art',
@@ -91,6 +92,12 @@ export const deRuns: Messages['runs'] = {
     emptyStdout: '(leere Ausgabe)',
   },
   detail: {
+    section: {
+      result: 'Ergebnis',
+      group: 'Laufgruppe',
+      log: 'Ereignisprotokoll',
+    },
+    noResults: 'Noch keine Ergebnisse je Host.',
     retryStarted: 'Wiederholung gestartet',
     retryFailed: 'Wiederholung fehlgeschlagen',
     cancelled: 'Lauf abgebrochen',
@@ -139,7 +146,6 @@ export const deRuns: Messages['runs'] = {
     stopped:
       'Der Lauf wurde gestoppt. Auf einem als „unterbrochen“ markierten Host war bereits ein Befehl gestartet, der dort möglicherweise noch läuft – das Stoppen des Laufs beendet keinen Befehl, der auf einem Host bereits läuft. Diese Hosts vor einem erneuten Lauf prüfen.',
     cancelledHosts: 'Hosts des abgebrochenen Laufs',
-    eventLog: 'Ereignisprotokoll',
     polling: '(Abfrage)',
     pollingTitle: 'Der Live-Stream hat Frames verloren; der Verlauf wird abgefragt',
   },

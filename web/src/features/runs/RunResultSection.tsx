@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Card } from '../../ui/table.tsx';
+import { Section } from '../../ui/detail-layout.tsx';
 import type { JobDetail, JobEvent } from '../../api/types.ts';
 import { cancelHostRows, hostResultRows } from './status.ts';
 import type { CancelHostState } from './status.ts';
@@ -18,21 +19,29 @@ const CANCEL_STATE_COLOR: Record<CancelHostState, string> = {
 };
 
 /**
- * RunResultSection is what the run did to each host: the per-host table
- * folded from the run's recap and, for a cancelled run, what each target
- * host was left doing with the warnings that go with it.
+ * RunResultSection is what the run did: the run's error, the per-host table
+ * folded from its recap and, for a cancelled run, what each target host was
+ * left doing with the warnings that go with it. The table stays a table:
+ * the recap names hosts by their inventory name, not their id, so there is
+ * no host page to link a row to. A run with none of these yet (still
+ * queued, or running before its recap) says so in one line.
  */
 export function RunResultSection({ job, status, events }: { job: JobDetail; status: string; events: readonly JobEvent[] }) {
   const t = useT();
   const rows = hostResultRows(job.stats);
   // A cancelled run gets no Ansible recap (the worker stops before
-  // playbook_on_stats runs), so the per-host table above renders empty;
+  // playbook_on_stats runs), so the per-host table renders empty;
   // this derives what each target host was left doing from the event log
   // itself, which useRunLog seeds in full before anything else happens.
   const cancelRows = status === 'cancelled' ? cancelHostRows(job.hosts ?? [], [...events]) : [];
 
   return (
-    <>
+    <Section id="result" title={t.runs.detail.section.result}>
+      {job.error && (
+        <div role="alert" className="rounded-md border p-3 text-xs" style={{ borderColor: 'color-mix(in srgb, var(--px-crit) 33%, transparent)', background: 'color-mix(in srgb, var(--px-crit) 10%, transparent)', color: 'var(--px-crit)' }}>
+          {job.error}
+        </div>
+      )}
       {rows.length > 0 && (
         <Card>
           <table className="w-full text-xs" aria-label={t.runs.detail.perHost}>
@@ -111,7 +120,8 @@ export function RunResultSection({ job, status, events }: { job: JobDetail; stat
           </ul>
         </Card>
       )}
-    </>
+      {!job.error && rows.length === 0 && cancelRows.length === 0 && <p className="text-xs text-muted-foreground">{t.runs.detail.noResults}</p>}
+    </Section>
   );
 }
 

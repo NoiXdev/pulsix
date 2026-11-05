@@ -1,4 +1,5 @@
 import { Card } from '../../ui/table.tsx';
+import { Section } from '../../ui/detail-layout.tsx';
 import type { JobVaultIdentity } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -13,26 +14,30 @@ import { useT } from '../../i18n/useT.ts';
  * queued, one claimed before that recording existed, or a job cancelled
  * before it was ever claimed — so this is a live read of the repository's
  * and template's configuration right now, which may no longer match what
- * actually ran if either changed since.
+ * actually ran if either changed since. The section header says which.
  */
 export function RunVaultSection({ identities, recorded }: { identities: JobVaultIdentity[]; recorded: boolean }) {
   const t = useT();
   return (
-    <Card>
-      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">{t.credentials.vault.heading}</span>
+    <Section
+      id="vault"
+      title={t.credentials.vault.heading}
+      actions={
         <span className="text-[11px] text-muted-foreground" title={recorded ? t.runs.detail.recordedTitle : t.runs.detail.computedTitle}>
           {recorded ? t.runs.detail.recorded : t.runs.detail.computed}
         </span>
-      </div>
-      <ul className="flex flex-col gap-1 p-4 text-xs" aria-label={t.credentials.vault.heading}>
-        {identities.map((identity) => (
-          <li key={identity.label} className="flex items-center justify-between gap-2">
-            <span className="font-mono">{identity.label}</span>
-            <span className="text-[11px] text-muted-foreground">{identity.from_template ? t.runs.detail.fromTemplate : t.runs.detail.fromRepository}</span>
-          </li>
-        ))}
-      </ul>
-    </Card>
+      }
+    >
+      <Card>
+        <ul className="flex flex-col gap-1 p-4 text-xs" aria-label={t.credentials.vault.heading}>
+          {identities.map((identity) => (
+            <li key={identity.label} className="flex items-center justify-between gap-2">
+              <span className="font-mono">{identity.label}</span>
+              <span className="text-[11px] text-muted-foreground">{identity.from_template ? t.runs.detail.fromTemplate : t.runs.detail.fromRepository}</span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </Section>
   );
 }

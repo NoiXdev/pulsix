@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -34,16 +34,18 @@ function renderPage(initial = '/o/acme/runs') {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, detailRoute])]),
     history: createMemoryHistory({ initialEntries: [initial] }),
   });
-  return render(
+  render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+  return router;
 }
 
 const ORG_OPERATOR = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
+const LIVE_ID = '0190abcd-0000-7000-8000-00000000000e';
 const ORG_VIEWER = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } };
 
 describe('RunsPage', () => {
@@ -96,7 +98,7 @@ describe('RunsPage', () => {
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Load more' }));
-    expect(await screen.findByText('0197ffff')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: '0197ffff' })).toBeInTheDocument();
   });
 
   it('offers Run command to an operator and opens the ad-hoc dialog', async () => {
@@ -175,5 +177,72 @@ describe('RunsPage', () => {
     await screen.findByLabelText('Filter by status');
     await pickOption(screen, 'Filter by status', { value: 'failed' });
     await waitFor(() => expect(seen.some((q) => q.includes('status=failed') && q.includes('host_id=h1'))).toBe(true));
+  });
+
+  it('each run row is a link to its run', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job()], next_cursor: '' },
+    });
+    renderPage();
+    const row = await screen.findByRole('link', { name: '0197c0a2' });
+    expect(row).toHaveAttribute('href', '/o/acme/runs/0197c0a2-0000-7000-8000-000000000001');
+    expect(row).toHaveTextContent('succeeded');
+    expect(within(row).queryAllByRole('link')).toEqual([]);
+    expect(within(row).queryAllByRole('button')).toEqual([]);
+  });
+
+  it('cancels a live run from its row menu without navigating', async () => {
+    const user = userEvent.setup();
+    const cancelled: string[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '' },
+      [`POST /api/v1/orgs/acme/jobs/${LIVE_ID}/cancel`]: (req: MockRequest) => {
+        cancelled.push(req.path);
+        return { job: { id: LIVE_ID, status: 'cancelling' } };
+      },
+    });
+    const router = renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Actions for 0190abcd' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Cancel run' }));
+    expect(await screen.findByText('Cancellation requested')).toBeInTheDocument();
+    expect(cancelled).toEqual([`/api/v1/orgs/acme/jobs/${LIVE_ID}/cancel`]);
+    expect(router.state.location.pathname).toBe('/o/acme/runs');
+    expect(screen.queryByText('RUN DETAIL')).not.toBeInTheDocument();
+  });
+
+  it('opens the run from its row menu', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '' },
+    });
+    const router = renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Actions for 0190abcd' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Open' }));
+    expect(await screen.findByText('RUN DETAIL')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe(`/o/acme/runs/${LIVE_ID}`);
+  });
+
+  it.each([
+    ['a finished run', ORG_OPERATOR, 'succeeded'],
+    ['a viewer', ORG_VIEWER, 'running'],
+  ])('offers no Cancel for %s', async (_label, orgBody, status) => {
+    const user = userEvent.setup();
+    let orgRead = false;
+    mockApi({
+      'GET /api/v1/orgs/acme': () => {
+        orgRead = true;
+        return orgBody;
+      },
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status })], next_cursor: '' },
+    });
+    renderPage();
+    const trigger = await screen.findByRole('button', { name: 'Actions for 0190abcd' });
+    await waitFor(() => expect(orgRead).toBe(true));
+    await user.click(trigger);
+    const items = within(screen.getByRole('menu')).getAllByRole('menuitem');
+    expect(items.map((i) => i.textContent)).toEqual(['Open']);
   });
 });

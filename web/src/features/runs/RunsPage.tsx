@@ -1,9 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { Link } from '@tanstack/react-router';
 import { Terminal } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
-import { Pill } from '../../ui/badge.tsx';
+import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
@@ -15,11 +13,14 @@ import { useSchedules } from '../../api/hooks/useSchedules.ts';
 import { may } from '../../lib/roles.ts';
 import { AdhocDialog } from './AdhocDialog.tsx';
 import { HostFilterChip } from './HostFilterChip.tsx';
-import { kindLabel, shortId, statusLabel, statusTone } from './status.ts';
+import { RunRow } from './RunRow.tsx';
+import { kindLabel, statusLabel } from './status.ts';
 import { TRIGGERS, triggerLabel } from './trigger.ts';
 import { useT } from '../../i18n/useT.ts';
 
 const COLUMNS = '90px 120px 110px 90px minmax(0, 0.7fr) 90px 110px';
+// The last track holds each row's ⋯ menu, which every role gets (Open).
+const ROW_COLUMNS = `${COLUMNS} 40px`;
 
 const STATUSES = ['queued', 'running', 'succeeded', 'failed', 'cancelled', 'error'];
 const KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'revoke_key', 'sync_repo'];
@@ -27,9 +28,9 @@ const KINDS = ['run', 'connection_test', 'bootstrap', 'rotate_key', 'revoke_key'
 /**
  * RunsPage is the org's run list (spec §7, backlog 2.12): keyset-paginated,
  * filterable by status, kind, trigger and schedule (spec 2026-09-18 §8),
- * each row a link into the run view. The filters live in the URL
- * (?status=&kind=&trigger=&schedule=&host=), validated by the route; the
- * host filter (the runs that targeted one host, linked from the host view)
+ * each row a link into the run view with a ⋯ menu (RunRow). The filters
+ * live in the URL (?status=&kind=&trigger=&schedule=&host=), validated by
+ * the route; the host filter (the runs that targeted one host, linked from the host view)
  * shows as a removable chip.
  */
 export function RunsPage() {
@@ -119,7 +120,7 @@ export function RunsPage() {
       </div>
       {search.host && <HostFilterChip org={org} hostId={search.host} onRemove={clearHost} />}
       <Card>
-        <GridHeader columns={COLUMNS}>
+        <GridHeader columns={ROW_COLUMNS}>
           <span>{t.runs.list.columns.run}</span>
           <span>{t.runs.list.columns.kind}</span>
           <span>{t.runs.list.columns.status}</span>
@@ -129,17 +130,7 @@ export function RunsPage() {
           <span>{t.runs.list.columns.started}</span>
         </GridHeader>
         {rows.map((j) => (
-          <GridRow key={j.id} columns={COLUMNS}>
-            <Link to="/o/$org/runs/$id" params={{ org, id: j.id }} className="font-mono text-[13px] hover:text-primary">
-              {shortId(j.id)}
-            </Link>
-            <span className="text-xs">{kindLabel(j.kind, t)}</span>
-            <span><Pill tone={statusTone(j.status)}>{statusLabel(j.status, t)}</Pill></span>
-            <span className="text-xs">{triggerLabel(j.trigger, t)}</span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{j.template_id ? shortId(j.template_id) : '—'}</span>
-            <span className="font-mono text-xs text-muted-foreground">{shortId(j.zone_id)}</span>
-            <span className="text-xs text-muted-foreground">{j.created_at.slice(0, 16).replace('T', ' ')}</span>
-          </GridRow>
+          <RunRow key={j.id} org={org} job={j} columns={ROW_COLUMNS} canRun={canRun} />
         ))}
         {rows.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.runs.list.empty}</p>}
       </Card>

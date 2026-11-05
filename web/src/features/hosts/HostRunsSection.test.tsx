@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { renderAt } from '../../test/hostDetail.tsx';
@@ -45,5 +45,18 @@ describe('HostRunsSection', () => {
     renderAt(() => <HostRunsSection org="acme" hostId="h1" />);
 
     expect(await screen.findByRole('alert')).toHaveTextContent('jobs store down');
+  });
+
+  it('each recent run is a link row', async () => {
+    mockApi({ 'GET /api/v1/orgs/acme/jobs': { jobs: [job('aaaaaaaa-1111', 'succeeded')], next_cursor: '' } });
+    renderAt(() => <HostRunsSection org="acme" hostId="h1" />);
+
+    const row = await screen.findByRole('link', { name: 'aaaaaaaa' });
+    expect(row).toHaveAttribute('href', '/o/acme/runs/aaaaaaaa-1111');
+    expect(row).toHaveTextContent('succeeded');
+    expect(row).toHaveTextContent('run · Manual');
+    expect(within(row).queryAllByRole('link')).toEqual([]);
+    expect(within(row).queryAllByRole('button')).toEqual([]);
+    expect(screen.queryByRole('button', { name: /^Actions for/ })).not.toBeInTheDocument();
   });
 });

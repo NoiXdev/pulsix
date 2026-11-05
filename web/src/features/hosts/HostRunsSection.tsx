@@ -2,6 +2,7 @@ import { Link } from '@tanstack/react-router';
 import { useJobs } from '../../api/hooks/useJobs.ts';
 import { Pill } from '../../ui/badge.tsx';
 import { Card } from '../../ui/table.tsx';
+import { ListRow } from '../../ui/list-row.tsx';
 import { Section } from '../../ui/detail-layout.tsx';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -11,11 +12,13 @@ import { triggerLabel } from '../runs/trigger.ts';
 /** How many of the host's runs the section shows; the rest are one link away. */
 const RECENT = 5;
 
+const COLUMNS = '90px 80px minmax(0, 1fr) 110px';
+
 /**
  * HostRunsSection is the host page's "Runs" section: the latest runs that
  * targeted the host (the jobs list's own `host_id` filter: a run whose
- * target hosts include this one) and, beside the title, a link to the runs
- * page filtered to it.
+ * target hosts include this one), each a row to its run, and, beside the
+ * title, a link to the runs page filtered to it.
  */
 export function HostRunsSection({ org, hostId }: { org: string; hostId: string }) {
   const t = useT();
@@ -46,24 +49,20 @@ export function HostRunsSection({ org, hostId }: { org: string; hostId: string }
         )}
         {!jobs.data && !jobs.isError && <p className="px-4 py-3 text-xs text-muted-foreground">{t.common.loading}</p>}
         {jobs.data && rows.length === 0 && <p className="px-4 py-3 text-xs text-muted-foreground">{t.hosts.detail.runs.none}</p>}
-        {rows.length > 0 && (
-          <ul>
-            {rows.map((j) => (
-              <li key={j.id} className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-2.5 text-xs last:border-b-0">
-                <Pill tone={statusTone(j.status)}>{statusLabel(j.status, t)}</Pill>
-                <Link to="/o/$org/runs/$id" params={{ org, id: j.id }} className="font-mono text-[13px] hover:text-primary">
-                  {shortId(j.id)}
-                </Link>
-                <span className="flex-1 text-muted-foreground">
-                  {kindLabel(j.kind, t)} · {triggerLabel(j.trigger, t)}
-                </span>
-                <span className="text-muted-foreground" title={format.dateTime(j.created_at)}>
-                  {format.relative(j.created_at)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        {rows.map((j) => (
+          <ListRow key={j.id} to="/o/$org/runs/$id" params={{ org, id: j.id }} columns={COLUMNS} label={shortId(j.id)}>
+            <span>
+              <Pill tone={statusTone(j.status)}>{statusLabel(j.status, t)}</Pill>
+            </span>
+            <span className="font-mono text-[13px]">{shortId(j.id)}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {kindLabel(j.kind, t)} · {triggerLabel(j.trigger, t)}
+            </span>
+            <span className="text-xs text-muted-foreground" title={format.dateTime(j.created_at)}>
+              {format.relative(j.created_at)}
+            </span>
+          </ListRow>
+        ))}
       </Card>
     </Section>
   );

@@ -1,37 +1,35 @@
-import { Link } from '@tanstack/react-router';
+import { Pill } from '../../ui/badge.tsx';
+import { Card } from '../../ui/table.tsx';
+import { Section } from '../../ui/detail-layout.tsx';
+import { ListRow } from '../../ui/list-row.tsx';
+import { useZones } from '../../api/hooks/useHosts.ts';
 import type { JobDetail } from '../../api/types.ts';
-import { shortId } from './status.ts';
+import { shortId, statusLabel, statusTone } from './status.ts';
 import { useT } from '../../i18n/useT.ts';
 
+const COLUMNS = '110px 90px minmax(0, 1fr)';
+
 /** RunGroupSection lists the other jobs the same trigger started (one per
- * zone involved), each linked to its run. */
+ * zone involved), each a row to its run with its status and zone. */
 export function RunGroupSection({ org, siblings }: { org: string; siblings: NonNullable<JobDetail['group']> }) {
   const t = useT();
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground" aria-label={t.runs.detail.runGroup}>
-      <span>{t.runs.detail.sameTrigger}</span>
-      {siblings.map((s) => (
-        <Link key={s.id} to="/o/$org/runs/$id" params={{ org, id: s.id }} className="flex items-center gap-1.5 font-mono text-[13px] hover:text-primary">
-          <span className="h-1.5 w-1.5 rounded-full" style={{ background: statusColor(s.status) }} />
-          {shortId(s.id)}
-        </Link>
-      ))}
-    </div>
-  );
-}
+  const zones = useZones(org);
+  const zoneName = (id: string) => zones.data?.zones?.find((z) => z.id === id)?.slug ?? shortId(id);
 
-function statusColor(status: string): string {
-  switch (status) {
-    case 'succeeded':
-      return 'var(--px-ok)';
-    case 'failed':
-    case 'error':
-      return 'var(--px-crit)';
-    case 'running':
-      return 'var(--px-accent)';
-    case 'cancelling':
-      return 'var(--px-warn)';
-    default:
-      return 'var(--px-unknown)';
-  }
+  return (
+    <Section id="group" title={t.runs.detail.section.group}>
+      <span className="text-xs text-muted-foreground">{t.runs.detail.sameTrigger}</span>
+      <Card>
+        {siblings.map((s) => (
+          <ListRow key={s.id} to="/o/$org/runs/$id" params={{ org, id: s.id }} columns={COLUMNS} label={shortId(s.id)}>
+            <span>
+              <Pill tone={statusTone(s.status)}>{statusLabel(s.status, t)}</Pill>
+            </span>
+            <span className="font-mono text-[13px]">{shortId(s.id)}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{zoneName(s.zone_id)}</span>
+          </ListRow>
+        ))}
+      </Card>
+    </Section>
+  );
 }

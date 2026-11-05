@@ -21,6 +21,14 @@ export function statusTone(status: string): Tone {
   }
 }
 
+const CANCELLABLE = new Set(['queued', 'claimed', 'running']);
+
+/** isCancellable says whether a run can still be cancelled: one waiting for
+ * a worker or running. A cancelling run is already asked to stop. */
+export function isCancellable(status: string): boolean {
+  return CANCELLABLE.has(status);
+}
+
 export function kindLabel(kind: string, t: Messages): string {
   return (t.runs.kind as Record<string, string>)[kind] ?? kind;
 }
