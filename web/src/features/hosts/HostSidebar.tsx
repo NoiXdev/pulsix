@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { Pencil, Terminal } from 'lucide-react';
+import { FileCode, Pencil, Terminal } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { Switch } from '../../ui/switch.tsx';
@@ -55,6 +55,11 @@ export function HostSidebar({ org, host, actions }: { org: string; host: Host; a
           {actions.canRun && (
             <Button variant="primary" onClick={actions.runCommand}>
               <Terminal size={14} /> {t.hosts.detail.runCommand}
+            </Button>
+          )}
+          {actions.canRun && (
+            <Button onClick={actions.runTemplate}>
+              <FileCode size={14} /> {t.hosts.detail.runTemplate}
             </Button>
           )}
           {actions.canEdit && (

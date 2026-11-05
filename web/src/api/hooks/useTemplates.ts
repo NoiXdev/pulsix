@@ -51,13 +51,21 @@ export function useDeleteTemplate(org: string) {
   });
 }
 
-/** useRunTemplate starts a template's run (202, { jobs: [...] }, one per
- * involved zone sharing a run group) so the SPA can navigate to the run
- * view. */
+/** useRunTemplateById starts a template's run (202, { jobs: [...] }, one
+ * per involved zone sharing a run group) so the SPA can navigate to the run
+ * view. With `hostId` the run is narrowed to that one host; the field is
+ * left out of the body when unset, because the server refuses an empty
+ * `host_id`. */
 export function useRunTemplateById(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => unwrap(api.POST('/api/v1/orgs/{org}/job-templates/{id}/run', { params: { path: { org, id } } })),
+    mutationFn: ({ id, hostId }: { id: string; hostId?: string }) =>
+      unwrap(
+        api.POST('/api/v1/orgs/{org}/job-templates/{id}/run', {
+          params: { path: { org, id } },
+          body: hostId ? { host_id: hostId } : undefined,
+        }),
+      ),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ['jobs', org] }),
   });
 }

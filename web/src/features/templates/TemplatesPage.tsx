@@ -68,7 +68,7 @@ export function TemplatesPage() {
 
   async function run(tpl: Template) {
     try {
-      const { jobs } = await runTemplate.mutateAsync(tpl.id);
+      const { jobs } = await runTemplate.mutateAsync({ id: tpl.id });
       toast.show(t.templates.list.started(tpl.name));
       if (jobs && jobs.length > 0) await navigate({ to: '/o/$org/runs/$id', params: { org, id: jobs[0].id } });
     } catch (err) {

@@ -286,6 +286,7 @@ describe('HostSidebar', () => {
     renderSidebar({ managed: true });
 
     expect(await screen.findByRole('button', { name: 'Run command' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Run template…' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'More actions for web-04.fra' }));
     const items = await screen.findAllByRole('menuitem');
@@ -293,6 +294,15 @@ describe('HostSidebar', () => {
 
     await user.click(screen.getByRole('menuitem', { name: 'Bootstrap…' }));
     expect(await screen.findByRole('dialog', { name: 'Bootstrap web-04.fra' })).toBeInTheDocument();
+  });
+
+  it('opens the Run template dialog from its button', async () => {
+    const user = userEvent.setup();
+    mockApi(hostRoutes({ host: { managed: true } }, { 'GET /api/v1/orgs/acme/job-templates': { templates: [] } }));
+    renderSidebar({ managed: true });
+
+    await user.click(await screen.findByRole('button', { name: 'Run template…' }));
+    expect(await screen.findByRole('dialog', { name: 'Run template on web-04.fra' })).toBeInTheDocument();
   });
 
   it('offers no Bootstrap and no Run command for a host that is not managed', async () => {
@@ -304,6 +314,7 @@ describe('HostSidebar', () => {
     const items = await screen.findAllByRole('menuitem');
     expect(items.map((i) => i.textContent)).toEqual(['Delete…']);
     expect(screen.queryByRole('button', { name: 'Run command' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run template…' })).not.toBeInTheDocument();
   });
 
   it('gives a viewer read-only switches and no actions', async () => {
@@ -319,6 +330,7 @@ describe('HostSidebar', () => {
     expect(screen.getByRole('switch', { name: 'Monitored' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Run command' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run template…' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /More actions/ })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('role=db')).not.toBeInTheDocument();
   });

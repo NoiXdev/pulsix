@@ -76,6 +76,14 @@ export const deRuns: Messages['runs'] = {
     command: 'Befehl',
     submit: 'Befehl ausführen',
   },
+  templateRun: {
+    title: (host: string) => `Vorlage auf ${host} ausführen`,
+    template: 'Vorlage',
+    choose: 'Vorlage wählen',
+    run: 'Ausführen',
+    none: 'Noch keine Vorlagen.',
+    failed: 'Die Vorlage konnte nicht gestartet werden',
+  },
   events: {
     empty: 'Noch keine Ereignisse.',
     label: 'Lauf-Ereignisse',

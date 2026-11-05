@@ -73,6 +73,14 @@ export const enRuns = {
     command: 'Command',
     submit: 'Run command',
   },
+  templateRun: {
+    title: (host: string) => `Run template on ${host}`,
+    template: 'Template',
+    choose: 'Choose a template',
+    run: 'Run',
+    none: 'No templates yet.',
+    failed: 'Starting the template failed',
+  },
   events: {
     empty: 'No events yet.',
     label: 'Run events',

@@ -7,6 +7,7 @@ import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import { AdhocDialog } from '../runs/AdhocDialog.tsx';
+import { RunTemplateDialog } from '../runs/RunTemplateDialog.tsx';
 import { HostDialog } from './HostDialog.tsx';
 
 export interface HostActions {
@@ -18,6 +19,7 @@ export interface HostActions {
   open: () => void;
   edit: () => void;
   runCommand: () => void;
+  runTemplate: () => void;
   toggleMonitoring: () => void;
   toggleManagement: () => void;
   remove: () => void;
@@ -41,7 +43,7 @@ export function useHostActions(org: string, host: Host, opts: { onDeleted?: () =
   const role = useOrg(org).data?.org.role;
   const setCapabilities = useSetHostCapabilities(org, host.id);
   const deleteHost = useDeleteHost(org);
-  const [dialog, setDialog] = useState<'edit' | 'run' | null>(null);
+  const [dialog, setDialog] = useState<'edit' | 'run' | 'template' | null>(null);
 
   const canWrite = may(role, 'hosts.write');
 
@@ -70,6 +72,7 @@ export function useHostActions(org: string, host: Host, opts: { onDeleted?: () =
     open: () => void navigate({ to: '/o/$org/hosts/$id', params: { org, id: host.id } }),
     edit: () => setDialog('edit'),
     runCommand: () => setDialog('run'),
+    runTemplate: () => setDialog('template'),
     toggleMonitoring: () => patch({ monitored: !host.monitored }),
     toggleManagement: () => patch({ managed: !host.managed }),
     remove: () => void remove(),
@@ -77,6 +80,7 @@ export function useHostActions(org: string, host: Host, opts: { onDeleted?: () =
       <>
         {dialog === 'edit' && <HostDialog org={org} open onOpenChange={() => setDialog(null)} host={host} />}
         {dialog === 'run' && <AdhocDialog org={org} onClose={() => setDialog(null)} initialHostIds={[host.id]} />}
+        {dialog === 'template' && <RunTemplateDialog org={org} host={host} onClose={() => setDialog(null)} />}
       </>
     ),
   };

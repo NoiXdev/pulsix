@@ -345,6 +345,7 @@ describe('host rows', () => {
       'Open',
       'Edit',
       'Run command',
+      'Run template…',
       'Switch monitoring off',
       'Switch management off',
       'Delete…',
@@ -359,6 +360,7 @@ describe('host rows', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await screen.findAllByRole('menuitem');
     expect(screen.queryByRole('menuitem', { name: 'Run command' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Run template…' })).not.toBeInTheDocument();
   });
 
   it('Open navigates to the host page', async () => {
@@ -396,6 +398,17 @@ describe('host rows', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Run command' });
     expect(await within(dialog).findByRole('checkbox', { name: 'web-04.fra' })).toBeChecked();
     expect(within(dialog).getByText('1 host(s) selected')).toBeInTheDocument();
+  });
+
+  it('Run template opens the template dialog for this host', async () => {
+    const user = userEvent.setup();
+    mockApi({ ...rowRoutes('operator'), 'GET /api/v1/orgs/acme/job-templates': { templates: [] } });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Run template…' }));
+
+    expect(await screen.findByRole('dialog', { name: 'Run template on web-04.fra' })).toBeInTheDocument();
   });
 
   it('Delete asks first, then deletes and stays on the list', async () => {
