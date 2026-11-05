@@ -167,35 +167,6 @@ func TestFieldJSONKeepsActiveFalse(t *testing.T) {
 	}
 }
 
-func TestSameContent(t *testing.T) {
-	base := schema.Field{Name: "nginx_port", Label: "Port", Type: schema.TypeInt, Default: 8080}
-	cases := []struct {
-		name string
-		mod  func(*schema.Field)
-		want bool
-	}{
-		{"int default against a decoded float default", func(f *schema.Field) { f.Default = float64(8080) }, true},
-		{"label differs", func(f *schema.Field) { f.Label = "HTTP port" }, false},
-		{"default differs", func(f *schema.Field) { f.Default = 80.0 }, false},
-		{"only provenance differs", func(f *schema.Field) {
-			f.Active, f.Origin, f.SetInPlaybook = ptr(false), schema.OriginSource, true
-			f.Source = roleSource()
-			f.Source.Line = 40
-			f.SourceField = &schema.Field{Name: "nginx_port", Type: schema.TypeString}
-		}, true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			g := base
-			g.Source = roleSource()
-			c.mod(&g)
-			if got := base.SameContent(g); got != c.want {
-				t.Fatalf("SameContent = %v, want %v", got, c.want)
-			}
-		})
-	}
-}
-
 func TestSendable(t *testing.T) {
 	fields := []schema.Field{
 		{Name: "a", Type: schema.TypeString},

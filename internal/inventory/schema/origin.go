@@ -1,8 +1,6 @@
 package schema
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 )
 
@@ -57,16 +55,6 @@ func (f Field) EffectiveOrigin() Origin {
 		return OriginManual
 	}
 	return f.Origin
-}
-
-// SameContent reports whether f and g declare the same field, ignoring
-// provenance (active, origin, source, set_in_playbook, source_field). It
-// compares canonical JSON, so a default of int 8080 equals one decoded as
-// float64 8080.
-func (f Field) SameContent(g Field) bool {
-	a, errA := json.Marshal(withoutProvenance(f))
-	b, errB := json.Marshal(withoutProvenance(g))
-	return errA == nil && errB == nil && bytes.Equal(a, b)
 }
 
 // CheckManualOnly reports every top-level field that came from a playbook,
