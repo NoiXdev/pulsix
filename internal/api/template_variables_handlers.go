@@ -93,6 +93,7 @@ type templateVariablesApplyInput struct {
 	Body    struct {
 		Mode       string         `json:"mode" enum:"manual,automatic" doc:"The mode the variables are in afterwards"`
 		SourceRev  string         `json:"source_rev" doc:"The preview's source_rev; another revision than the current read answers 409"`
+		SyncedAt   *time.Time     `json:"source_synced_at,omitempty" doc:"The preview's source.synced_at, absent when the preview had none; another time than the current read's answers 409"`
 		RemoveGone bool           `json:"remove_gone,omitempty" doc:"Also remove the fields gone from the source (their values stay stored)"`
 		Values     map[string]any `json:"values,omitempty" doc:"Values entered over the stored ones: a value that no longer fits its field, a new required field's value; null removes a stored value"`
 	}
@@ -181,6 +182,41 @@ func registerTemplateVarsRoutes(hapi huma.API, deps Deps) {
 	registerTemplateVarsLinkRoutes(hapi, deps)
 }
 
+type templateListInput struct {
+	Org string `path:"org"`
+}
+
+type templateListOutput struct {
+	Body struct {
+		Templates []templateDTO `json:"templates"`
+	}
+}
+
+// registerTemplateListRoute wires the job-template list (templates.read):
+// each template as the other routes show it, and a linked template with
+// its variables review.
+func registerTemplateListRoute(hapi huma.API, deps Deps) {
+	huma.Get(hapi, "/api/v1/orgs/{org}/job-templates", func(ctx context.Context, in *templateListInput) (*templateListOutput, error) {
+		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTemplatesRead)
+		if err != nil {
+			return nil, err
+		}
+		list, reviews, err := deps.Templates.ListReviewed(ctx, scope.OrgID)
+		if err != nil {
+			return nil, mapTemplatesErr(ctx, err)
+		}
+		out := &templateListOutput{}
+		out.Body.Templates = make([]templateDTO, len(list))
+		for i, t := range list {
+			out.Body.Templates[i] = toTemplateDTO(t)
+			if r, ok := reviews[t.ID]; ok {
+				out.Body.Templates[i].VariablesReview = toReviewDTO(r)
+			}
+		}
+		return out, nil
+	})
+}
+
 // registerTemplateVarsLinkRoutes wires the link of a template's variables
 // to its playbook's variable sources: the mode, the preview ("Sync now")
 // and the apply, all templates.write.
@@ -240,7 +276,7 @@ func registerTemplateVarsLinkRoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		t, err := deps.Templates.ApplyVariables(ctx, scope.OrgID, id, templates.ApplyInput{
-			Mode: templates.SourceMode(in.Body.Mode), SourceRev: in.Body.SourceRev, RemoveGone: in.Body.RemoveGone,
+			Mode: templates.SourceMode(in.Body.Mode), SourceRev: in.Body.SourceRev, SourceSyncedAt: in.Body.SyncedAt, RemoveGone: in.Body.RemoveGone,
 			Values: in.Body.Values, IfRevision: ifRevision,
 		})
 		if err != nil {
@@ -249,7 +285,7 @@ func registerTemplateVarsLinkRoutes(hapi huma.API, deps Deps) {
 		setAuditObject(ctx, t.ID.String(), "applied the playbook's variables to job template "+t.Name)
 		return newTemplateVariablesOutput(t), nil
 	}, withAudit("applyTemplateVariables", "job_template"), func(o *huma.Operation) {
-		o.Description = "Applies the preview of the playbook's variable sources: it is computed anew, and a source_rev other than the current read's answers 409. " +
+		o.Description = "Applies the preview of the playbook's variable sources: it is computed anew, and a source_rev or source_synced_at other than the current read's answers 409. " +
 			"The values are checked like a save; a value that no longer fits its field is entered under values."
 	})
 }

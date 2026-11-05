@@ -21,12 +21,23 @@ import (
 // one it would apply: the person previewed an older read (409 at the API).
 var ErrSourceChanged = errors.New("the source changed since the preview")
 
+// SourceLookup is the slice of playbooks.Service the variables link
+// reads: a playbook's variable sources as last read (PlaybookLookup).
+type SourceLookup interface {
+	VarSource(ctx context.Context, orgID, id uuid.UUID) (playbooks.VarSource, error)
+}
+
 // VarsStore is the part of Store the variables link adds.
 type VarsStore interface {
 	// UpdateVarsSource writes a template's schema and variables source
 	// columns (VarsMode, VarsSourceRev, VarsAppliedAt), never its values,
-	// under Update's revision guard.
-	UpdateVarsSource(ctx context.Context, t Template, ifRevision *int64) (Template, error)
+	// under Update's revision guard; a non-nil ifSourceRev the template's
+	// applied source revision has moved past is ErrRevisionMismatch too.
+	UpdateVarsSource(ctx context.Context, t Template, ifRevision *int64, ifSourceRev *string) (Template, error)
+	// RecordSourceRev writes only VarsSourceRev and VarsAppliedAt, without
+	// moving the revision, when the template is still at ifRevision and
+	// ifSourceRev; ErrRevisionMismatch otherwise.
+	RecordSourceRev(ctx context.Context, t Template, ifRevision int64, ifSourceRev string) (Template, error)
 	// ListAutomaticForRepo lists the organization's templates in automatic
 	// mode whose playbook belongs to the repository, by name.
 	ListAutomaticForRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]Template, error)
@@ -59,29 +70,38 @@ type SourceInfo struct {
 }
 
 // ApplyInput is a person's apply of a preview. Mode is the mode the
-// template is in afterwards (manual or automatic); SourceRev the source
-// revision the person previewed; RemoveGone confirms the removal of the
-// gone fields. Values are entered over the stored ones: a value for a
+// template is in afterwards (manual or automatic); SourceRev and
+// SourceSyncedAt are the source revision and sync time the person
+// previewed (SourceSyncedAt nil for an editor playbook, whose read has
+// none); RemoveGone confirms the removal of the gone fields. Values are entered over the stored ones: a value for a
 // field that no longer fits, a new required field's value; null removes a
 // stored value. IfRevision, when set, is the revision the apply is based on.
 type ApplyInput struct {
-	Mode       SourceMode
-	SourceRev  string
-	RemoveGone bool
-	Values     map[string]any
-	IfRevision *int64
+	Mode           SourceMode
+	SourceRev      string
+	SourceSyncedAt *time.Time
+	RemoveGone     bool
+	Values         map[string]any
+	IfRevision     *int64
 }
 
 // SetVariablesMode switches a linked template between manual and
 // automatic, or unlinks it (off): every field turns manual, keeping its
 // content, its active switch and its values, and the applied revision is
-// forgotten. Linking goes through a preview (ApplyVariables), so off →
-// manual or automatic is ErrInvalidInput; a projection's variables belong
-// to its definition (ErrForbidden).
+// forgotten. The mode the template is in already changes nothing (no
+// write, no new revision). Linking goes through a preview
+// (ApplyVariables), so off → manual or automatic is ErrInvalidInput; a
+// projection's variables belong to its definition (ErrForbidden).
 func (s *Service) SetVariablesMode(ctx context.Context, orgID, id uuid.UUID, mode SourceMode, ifRevision *int64) (Template, error) {
 	cur, err := s.linkable(ctx, orgID, id)
 	if err != nil {
 		return Template{}, err
+	}
+	if mode == cur.VarsMode || (mode == ModeOff && !isLinked(cur)) {
+		if ifRevision != nil && *ifRevision != cur.Revision {
+			return Template{}, ErrRevisionMismatch
+		}
+		return masked(cur), nil
 	}
 	next := cur
 	next.VarsMode = mode
@@ -94,7 +114,7 @@ func (s *Service) SetVariablesMode(ctx context.Context, orgID, id uuid.UUID, mod
 	case !isLinked(cur):
 		return Template{}, fmt.Errorf("%w: the variables are not linked to the playbook yet; link them through the preview", ErrInvalidInput)
 	}
-	updated, err := s.store.UpdateVarsSource(ctx, next, readRevision(ifRevision, cur))
+	updated, err := s.store.UpdateVarsSource(ctx, next, readRevision(ifRevision, cur), &cur.VarsSourceRev)
 	if err != nil {
 		return Template{}, err
 	}
@@ -119,7 +139,7 @@ func (s *Service) PreviewVariables(ctx context.Context, orgID, id uuid.UUID) (va
 
 // ApplyVariables applies a person's preview: it computes the preview anew
 // (a preview the client sends back is never applied), refuses one of
-// another source revision (ErrSourceChanged), and stores the resulting
+// another source revision or sync time (ErrSourceChanged), and stores the resulting
 // fields with the values validated and sealed the way a save does them,
 // in.Values entered over the stored ones. The template is in in.Mode
 // afterwards and records the applied revision.
@@ -139,7 +159,7 @@ func (s *Service) ApplyVariables(ctx context.Context, orgID, id uuid.UUID, in Ap
 	if !src.Available {
 		return Template{}, fmt.Errorf("%w: nothing to apply: %s", ErrInvalidInput, src.Reason)
 	}
-	if in.SourceRev != src.Rev {
+	if in.SourceRev != src.Rev || !sameTime(in.SourceSyncedAt, vs.SyncedAt) {
 		return Template{}, ErrSourceChanged
 	}
 	current := fieldsOf(cur)
@@ -197,6 +217,16 @@ func applyValues(fields []schema.Field, stored, values map[string]any) (map[stri
 		}
 	}
 	return out, nil
+}
+
+// sameTime reports whether a and b are the same instant, or both absent.
+// A sync with a commit the worker could not read keeps the previous
+// commit, so only the sync time tells a read with new content apart.
+func sameTime(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Equal(*b)
 }
 
 // linkable is the template whose variables a mode change, preview or

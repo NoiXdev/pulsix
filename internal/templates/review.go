@@ -45,29 +45,61 @@ func (s *Service) Variables(ctx context.Context, orgID, id uuid.UUID) (Variables
 	return VariablesView{Template: masked(t), Source: newSourceInfo(vs, src, t.VarsSourceRev), Review: review(t, src)}, nil
 }
 
+// List returns every template of the organization, ordered by name, with
+// masked extra vars and each one's own vault credential set attached.
+func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Template, error) {
+	list, err := s.store.List(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	return s.listed(ctx, orgID, list)
+}
+
+// listed is list as List returns it: masked, each with its own vault
+// credential set.
+func (s *Service) listed(ctx context.Context, orgID uuid.UUID, list []Template) ([]Template, error) {
+	// One query for the whole organization (backlog 2.94), not one per
+	// row.
+	byTemplate, err := s.store.ListOrgVaultCredentials(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list template vault credentials: %w", err)
+	}
+	out := make([]Template, len(list))
+	for i, t := range list {
+		t.VaultCredentials = byTemplate[t.ID]
+		out[i] = masked(t)
+	}
+	return out, nil
+}
+
 // ListReviewed is List with the review of every linked template, by
-// template id; the variable sources are read once per playbook.
+// template id; the variable sources are read once per playbook. A
+// template whose sources cannot be read is listed without a review (and
+// logged): the list stays usable.
 func (s *Service) ListReviewed(ctx context.Context, orgID uuid.UUID) ([]Template, map[uuid.UUID]Review, error) {
 	raw, err := s.store.List(ctx, orgID)
 	if err != nil {
 		return nil, nil, err
 	}
 	reviews := map[uuid.UUID]Review{}
-	sources := map[uuid.UUID]varsync.Source{}
+	sources := map[uuid.UUID]*varsync.Source{} // nil: the read failed
 	for _, t := range raw {
 		if !isLinked(t) {
 			continue
 		}
-		src, ok := sources[t.PlaybookID]
-		if !ok {
+		src, read := sources[t.PlaybookID]
+		if !read {
 			vs, err := s.varSource(ctx, orgID, t.PlaybookID)
 			if err != nil {
-				return nil, nil, fmt.Errorf("review template %s: %w", t.ID, err)
+				s.logger().ErrorContext(ctx, "template list: variables review left out", "org", orgID, "playbook", t.PlaybookID, "err", err)
+			} else {
+				src = new(toSource(vs))
 			}
-			src = toSource(vs)
 			sources[t.PlaybookID] = src
 		}
-		reviews[t.ID] = review(t, src)
+		if src != nil {
+			reviews[t.ID] = review(t, *src)
+		}
 	}
 	list, err := s.listed(ctx, orgID, raw)
 	if err != nil {

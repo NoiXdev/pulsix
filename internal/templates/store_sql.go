@@ -129,41 +129,6 @@ func (s *SQLStore) UpdateVariables(ctx context.Context, t Template, ifRevision *
 	return toTemplate(row)
 }
 
-// UpdateVarsSource implements Store: the schema and the variables source
-// columns, never the values, guarded by ifRevision when it is given.
-func (s *SQLStore) UpdateVarsSource(ctx context.Context, t Template, ifRevision *int64) (Template, error) {
-	_, schemaRaw, err := encodeVars(t)
-	if err != nil {
-		return Template{}, err
-	}
-	row, err := s.q.UpdateTemplateVarsSource(ctx, gen.UpdateTemplateVarsSourceParams{
-		OrgID: t.OrgID, ID: t.ID, ExtraVarsSchema: schemaRaw, VarsMode: string(storedMode(t.VarsMode)),
-		VarsSourceRev: t.VarsSourceRev, VarsAppliedAt: db.NullTime(t.VarsAppliedAt), IfRevision: ifRevision,
-	})
-	if err != nil {
-		return Template{}, s.guardedWriteErr(ctx, err, t, "update template variables source")
-	}
-	return toTemplate(row)
-}
-
-// ListAutomaticForRepo implements Store.
-func (s *SQLStore) ListAutomaticForRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]Template, error) {
-	rows, err := s.q.ListAutomaticTemplatesForRepo(ctx, gen.ListAutomaticTemplatesForRepoParams{OrgID: orgID, RepoID: db.NullUUID(&repoID)})
-	if err != nil {
-		return nil, fmt.Errorf("list automatic templates of a repository: %w", err)
-	}
-	return toTemplates(rows)
-}
-
-// ListAutomaticForPlaybook implements Store.
-func (s *SQLStore) ListAutomaticForPlaybook(ctx context.Context, orgID, playbookID uuid.UUID) ([]Template, error) {
-	rows, err := s.q.ListAutomaticTemplatesForPlaybook(ctx, gen.ListAutomaticTemplatesForPlaybookParams{OrgID: orgID, PlaybookID: db.NullUUID(&playbookID)})
-	if err != nil {
-		return nil, fmt.Errorf("list automatic templates of a playbook: %w", err)
-	}
-	return toTemplates(rows)
-}
-
 // storedMode is mode as the vars_mode column holds it: off when unset.
 func storedMode(mode SourceMode) SourceMode {
 	if mode == "" {

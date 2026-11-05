@@ -131,16 +131,6 @@ func toTemplateDTO(t templates.Template) templateDTO {
 	return dto
 }
 
-type templateListInput struct {
-	Org string `path:"org"`
-}
-
-type templateListOutput struct {
-	Body struct {
-		Templates []templateDTO `json:"templates"`
-	}
-}
-
 type templateGetInput struct {
 	Org string `path:"org"`
 	ID  string `path:"id"`
@@ -214,25 +204,7 @@ type templateUpdateInput struct {
 // templates.read (viewer), writes templates.write (operator). Responses
 // carry extra vars with secret values masked; never a plaintext secret.
 func registerTemplateRoutes(hapi huma.API, deps Deps) {
-	huma.Get(hapi, "/api/v1/orgs/{org}/job-templates", func(ctx context.Context, in *templateListInput) (*templateListOutput, error) {
-		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTemplatesRead)
-		if err != nil {
-			return nil, err
-		}
-		list, reviews, err := deps.Templates.ListReviewed(ctx, scope.OrgID)
-		if err != nil {
-			return nil, mapTemplatesErr(ctx, err)
-		}
-		out := &templateListOutput{}
-		out.Body.Templates = make([]templateDTO, len(list))
-		for i, t := range list {
-			out.Body.Templates[i] = toTemplateDTO(t)
-			if r, ok := reviews[t.ID]; ok {
-				out.Body.Templates[i].VariablesReview = toReviewDTO(r)
-			}
-		}
-		return out, nil
-	})
+	registerTemplateListRoute(hapi, deps)
 
 	huma.Post(hapi, "/api/v1/orgs/{org}/job-templates", func(ctx context.Context, in *templateCreateInput) (*templateDetailOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermTemplatesWrite)

@@ -61,7 +61,7 @@ func TestUpdateVarsSourceKeepsTheValues(t *testing.T) {
 	next.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{{Name: "big", Type: schema.TypeInt}}}
 	applied := time.Now().UTC().Truncate(time.Microsecond)
 	next.VarsMode, next.VarsSourceRev, next.VarsAppliedAt = templates.ModeAutomatic, "c1", &applied
-	got, err := store.UpdateVarsSource(scoped, next, revPtr(1))
+	got, err := store.UpdateVarsSource(scoped, next, revPtr(1), ptr(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,11 +76,34 @@ func TestUpdateVarsSourceKeepsTheValues(t *testing.T) {
 	if raw != `{"big": 9007199254740993}` {
 		t.Fatalf("extra_vars = %s, want untouched", raw)
 	}
-	if _, err := store.UpdateVarsSource(scoped, next, revPtr(1)); !errors.Is(err, templates.ErrRevisionMismatch) {
+	if _, err := store.UpdateVarsSource(scoped, next, revPtr(1), nil); !errors.Is(err, templates.ErrRevisionMismatch) {
 		t.Fatalf("stale = %v, want ErrRevisionMismatch", err)
 	}
+	if _, err := store.UpdateVarsSource(scoped, next, revPtr(2), ptr("c0")); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("stale source rev = %v, want ErrRevisionMismatch", err)
+	}
+
+	// A new source revision without a change of fields moves neither the
+	// revision nor updated_at.
+	rec := got
+	recorded := applied.Add(time.Minute)
+	rec.VarsSourceRev, rec.VarsAppliedAt = "c2", &recorded
+	if _, err := store.RecordSourceRev(scoped, rec, 2, "c0"); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("record over another source rev = %v, want ErrRevisionMismatch", err)
+	}
+	if _, err := store.RecordSourceRev(scoped, rec, 1, "c1"); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("record over another revision = %v, want ErrRevisionMismatch", err)
+	}
+	after, err := store.RecordSourceRev(scoped, rec, 2, "c1")
+	if err != nil || after.Revision != 2 || !after.UpdatedAt.Equal(got.UpdatedAt) || after.VarsSourceRev != "c2" || !after.VarsAppliedAt.Equal(recorded) {
+		t.Fatalf("RecordSourceRev = revision %d updated %v (was %v) rev %q, %v", after.Revision, after.UpdatedAt, got.UpdatedAt, after.VarsSourceRev, err)
+	}
+
 	next.ID = uuid.Must(uuid.NewV7())
-	if _, err := store.UpdateVarsSource(scoped, next, nil); !errors.Is(err, templates.ErrNotFound) {
+	if _, err := store.RecordSourceRev(scoped, next, 1, ""); !errors.Is(err, templates.ErrNotFound) {
+		t.Fatalf("record unknown = %v, want ErrNotFound", err)
+	}
+	if _, err := store.UpdateVarsSource(scoped, next, nil, nil); !errors.Is(err, templates.ErrNotFound) {
 		t.Fatalf("unknown = %v, want ErrNotFound", err)
 	}
 }
@@ -113,7 +136,7 @@ func TestApplyRepoSourcesThroughTheStores(t *testing.T) {
 			t.Fatal(err)
 		}
 		tm.VarsMode, tm.VarsSourceRev = mode, "c1"
-		if tm, err = store.UpdateVarsSource(scoped, tm, nil); err != nil {
+		if tm, err = store.UpdateVarsSource(scoped, tm, nil, nil); err != nil {
 			t.Fatal(err)
 		}
 		return tm

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/playbooks"
@@ -50,7 +52,8 @@ type previewBody struct {
 		Notes []varsource.Note `json:"notes"`
 	} `json:"preview"`
 	Source struct {
-		Commit string `json:"commit"`
+		Commit   string     `json:"commit"`
+		SyncedAt *time.Time `json:"synced_at"`
 	} `json:"source"`
 }
 
@@ -104,7 +107,11 @@ func TestTemplateVariablesLinkFlow(t *testing.T) {
 		t.Fatalf("preview = %+v", preview)
 	}
 
-	apply := map[string]any{"mode": "manual", "source_rev": "c1", "remove_gone": false, "values": map[string]any{"release": "1.0"}}
+	if preview.Source.SyncedAt == nil {
+		t.Fatalf("preview source without synced_at: %+v", preview.Source)
+	}
+	apply := map[string]any{"mode": "manual", "source_rev": "c1", "source_synced_at": preview.Source.SyncedAt,
+		"remove_gone": false, "values": map[string]any{"release": "1.0"}}
 	resp = requestWithHeaders(t, f.c, http.MethodPost, url+"/apply", apply, map[string]string{"If-Match": `"1"`})
 	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"2"` {
 		t.Fatalf("apply: %d ETag %q %s", resp.StatusCode, resp.Header.Get("ETag"), mustReadBody(t, resp))
@@ -140,6 +147,28 @@ func TestTemplateVariablesLinkFlow(t *testing.T) {
 	if msg := mustReadBody(t, resp); resp.StatusCode != http.StatusConflict || !strings.Contains(msg, "preview again") {
 		t.Fatalf("stale source_rev: %d %s, want 409", resp.StatusCode, msg)
 	}
+	current := map[string]any{"mode": "automatic", "source_rev": "c2", "source_synced_at": rec.SyncedAt}
+	resp = postJSON(t, f.c, url+"/apply", map[string]any{"mode": "automatic", "source_rev": "c2"})
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("apply without the preview's synced_at: %d %s, want 409", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	// A value entered for an inactive field is stored; null removes it.
+	for _, tc := range []struct {
+		value any
+		want  bool
+	}{{float64(8080), true}, {nil, false}} {
+		current["values"] = map[string]any{"nginx_port": tc.value}
+		resp = postJSON(t, f.c, url+"/apply", current)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("apply nginx_port %v: %d %s", tc.value, resp.StatusCode, mustReadBody(t, resp))
+		}
+		got = linkedVariablesBody{}
+		decodeInto(t, resp, &got)
+		if v, ok := got.ExtraVars["nginx_port"]; ok != tc.want || got.ExtraVars["release"] != "1.0" {
+			t.Fatalf("after nginx_port %v: vars %v (nginx_port %v)", tc.value, got.ExtraVars, v)
+		}
+	}
 
 	// An unlinked template links only through a preview; its apply checks
 	// the values like a save, located under body.values.
@@ -150,7 +179,7 @@ func TestTemplateVariablesLinkFlow(t *testing.T) {
 	if msg := mustReadBody(t, resp); resp.StatusCode != http.StatusBadRequest || !strings.Contains(msg, "preview") {
 		t.Fatalf("mode on an unlinked template: %d %s, want 400", resp.StatusCode, msg)
 	}
-	resp = postJSON(t, f.c, otherURL+"/apply", map[string]any{"mode": "manual", "source_rev": "c2"})
+	resp = postJSON(t, f.c, otherURL+"/apply", map[string]any{"mode": "manual", "source_rev": "c2", "source_synced_at": rec.SyncedAt})
 	if msg := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(msg, "body.values.release") {
 		t.Fatalf("apply without the required value: %d %s, want 422 at body.values.release", resp.StatusCode, msg)
 	}
@@ -215,5 +244,82 @@ func TestInlinePlaybookSaveAppliesAutomaticTemplates(t *testing.T) {
 	if got.ExtraVarsSchema == nil || len(got.ExtraVarsSchema.Fields) != 2 || got.ExtraVarsSchema.Fields[1]["name"] != "size" ||
 		got.Revision != 3 || got.Source == nil || got.Source.Newer || got.Source.Kind != "inline" {
 		t.Fatalf("after the save = %+v source %+v", got, got.Source)
+	}
+}
+
+// TestSourceRevisionOnlySyncKeepsTheETag: a sync whose read changes none
+// of an automatic template's fields records its commit without a new
+// revision, so the template dialog's save based on the earlier ETag
+// still goes through; a read that changes a field moves the ETag.
+func TestSourceRevisionOnlySyncKeepsTheETag(t *testing.T) {
+	f := newTemplateFixture(t, "tmpl-revonly-org")
+	repoID := seedRepoFixture(t, f.s, f.orgID, "infra")
+	rec, pbs := siteRecord("c1")
+	seedVarSources(t, f.s, f.orgID, repoID, rec, pbs)
+	pb, _, err := f.s.Deps.Playbooks.EnsureRepo(db.WithOrgScope(context.Background(), f.orgID), f.orgID, uuid.MustParse(repoID), "site.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := f.body()
+	body["playbook_id"] = pb.ID.String()
+	created := f.create(t, body)
+	url := f.base + "/" + created.Template.ID
+	resp := postJSON(t, f.c, url+"/variables/apply", map[string]any{"mode": "automatic", "source_rev": "c1",
+		"source_synced_at": rec.SyncedAt, "values": map[string]any{"release": "1.0"}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("link: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	type stamped struct {
+		Template struct {
+			UpdatedAt time.Time `json:"updated_at"`
+		} `json:"template"`
+	}
+	read := func() (string, time.Time) {
+		t.Helper()
+		resp := requestJSON(t, f.c, http.MethodGet, url, nil)
+		var s stamped
+		decodeInto(t, resp, &s)
+		return resp.Header.Get("ETag"), s.Template.UpdatedAt
+	}
+	etag, updated := read()
+	if etag != `"2"` {
+		t.Fatalf("ETag after linking = %s", etag)
+	}
+
+	sync := func(commit string, mod func([]varsource.Playbook)) {
+		t.Helper()
+		rec, pbs := siteRecord(commit)
+		mod(pbs)
+		seedVarSources(t, f.s, f.orgID, repoID, rec, pbs)
+		if err := f.s.Deps.Templates.ApplyRepoSources(context.Background(), f.orgID, uuid.MustParse(repoID)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sync("c2", func([]varsource.Playbook) {})
+	if e, u := read(); e != etag || !u.Equal(updated) {
+		t.Fatalf("after a sync without changes: ETag %s updated %v, want %s %v", e, u, etag, updated)
+	}
+	var vars linkedVariablesBody
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, url+"/variables", nil), &vars)
+	if vars.Source == nil || vars.Source.AppliedRev != "c2" || vars.Source.Newer {
+		t.Fatalf("source = %+v, want c2 recorded", vars.Source)
+	}
+	save := f.body()
+	save["playbook_id"] = pb.ID.String()
+	save["extra_vars_schema"] = map[string]any{"fields": vars.ExtraVarsSchema.Fields}
+	save["extra_vars"] = vars.ExtraVars
+	resp = requestWithHeaders(t, f.c, http.MethodPut, url, save, map[string]string{"If-Match": etag})
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"3"` {
+		t.Fatalf("save with the ETag read before the sync: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+
+	sync("c3", func(pbs []varsource.Playbook) { pbs[0].Fields[1].Default = float64(81) })
+	if e, _ := read(); e != `"4"` {
+		t.Fatalf("after a sync that changes a field: ETag %s, want \"4\"", e)
+	}
+	vars = linkedVariablesBody{}
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, url+"/variables", nil), &vars)
+	if fields := vars.ExtraVarsSchema.Fields; len(fields) != 2 || fields[1]["default"] != float64(81) || vars.ExtraVars["release"] != "1.0" {
+		t.Fatalf("after c3: %+v", vars.templateVariablesBody)
 	}
 }

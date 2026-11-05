@@ -47,13 +47,28 @@ RETURNING *;
 -- A template's fields and variables source columns without its values: a
 -- mode change and the automatic apply (backlog 7.75), neither of which
 -- may seal, unseal or drop a stored value. Under UpdateTemplate's
--- revision guard.
+-- revision guard, and if_source_rev, when given, is the applied source
+-- revision the write is based on: RecordTemplateSourceRev moves it
+-- without moving the revision.
 UPDATE job_templates SET
   extra_vars_schema = @extra_vars_schema,
   vars_mode = @vars_mode, vars_source_rev = @vars_source_rev, vars_applied_at = @vars_applied_at,
   revision = revision + 1, updated_at = now()
 WHERE org_id = @org_id AND id = @id
   AND (sqlc.narg(if_revision)::bigint IS NULL OR revision = sqlc.narg(if_revision))
+  AND (sqlc.narg(if_source_rev)::text IS NULL OR vars_source_rev = sqlc.narg(if_source_rev))
+RETURNING *;
+
+-- name: RecordTemplateSourceRev :one
+-- An automatic apply of a read that changes none of a template's fields:
+-- only the applied source revision and its time move, not the revision
+-- or updated_at, so a person editing the template meanwhile is not sent
+-- back to reload by a push that touched no variables. Guarded by the
+-- revision and the applied source revision the apply read.
+UPDATE job_templates SET
+  vars_source_rev = @vars_source_rev, vars_applied_at = @vars_applied_at
+WHERE org_id = @org_id AND id = @id
+  AND revision = @if_revision AND vars_source_rev = @if_source_rev
 RETURNING *;
 
 -- name: ListAutomaticTemplatesForRepo :many

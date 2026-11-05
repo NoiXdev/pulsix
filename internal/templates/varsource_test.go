@@ -4,8 +4,10 @@
 package templates_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -43,10 +45,13 @@ func asStored(c schema.Field, active bool) schema.Field {
 	return c
 }
 
+// syncedAt is when readSource's repository sync recorded its read.
+var syncedAt = time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+
 // readSource is a completely read source of site.yml at rev, from a repo
 // sync by a worker that reads sources.
 func readSource(repo uuid.UUID, rev string, fields ...schema.Field) playbooks.VarSource {
-	at := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	at := syncedAt
 	return playbooks.VarSource{
 		Kind: playbooks.VarSourceRepo, Rev: rev, SyncedAt: &at, WorkerReads: true, Found: true,
 		RepoID: &repo, Path: sitePath,
@@ -143,12 +148,12 @@ func TestLinkThroughPreview(t *testing.T) {
 	}
 
 	// The required field is active and needs a value.
-	_, err = f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1"})
+	_, err = f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: &syncedAt})
 	if got := valueProblems(t, err); !reflect.DeepEqual(got, []string{"release"}) {
 		t.Fatalf("apply without release: problems %v", got)
 	}
 	applied, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{
-		Mode: templates.ModeManual, SourceRev: "c1", Values: map[string]any{"release": "1.0"}, IfRevision: rev(1),
+		Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: &syncedAt, Values: map[string]any{"release": "1.0"}, IfRevision: rev(1),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +180,7 @@ func TestLinkThroughPreview(t *testing.T) {
 	if view.Source.AppliedRev != "c1" || view.Source.Newer || view.Template.Revision != 2 {
 		t.Fatalf("view source = %+v", view.Source)
 	}
-	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeOff, SourceRev: "c1"}); !errors.Is(err, templates.ErrInvalidInput) {
+	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeOff, SourceRev: "c1", SourceSyncedAt: &syncedAt}); !errors.Is(err, templates.ErrInvalidInput) {
 		t.Fatalf("apply with mode off: %v, want ErrInvalidInput", err)
 	}
 }
@@ -189,7 +194,7 @@ func TestApplyRefusesAChangedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1"})
+	_, err = f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: &syncedAt})
 	if !errors.Is(err, templates.ErrSourceChanged) {
 		t.Fatalf("apply of c1 over c2: %v, want ErrSourceChanged", err)
 	}
@@ -213,7 +218,7 @@ func TestApplyUnavailableSourceIsRefused(t *testing.T) {
 	if err != nil || len(p.Added) != 0 || info.Available || info.Reason == "" || p.Notes[0].Code != "source_unavailable" {
 		t.Fatalf("preview = %+v, source %+v, err %v", p, info, err)
 	}
-	_, err = f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1"})
+	_, err = f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: &syncedAt})
 	if !errors.Is(err, templates.ErrInvalidInput) {
 		t.Fatalf("apply of an unavailable source: %v, want ErrInvalidInput", err)
 	}
@@ -229,12 +234,12 @@ func TestApplyRequiresReEnteredValues(t *testing.T) {
 		port := candidate("port", schema.TypeString)
 		tm := f.linked(t, "port", templates.ModeManual, "c1", []schema.Field{asStored(port, true)}, map[string]any{"port": "eighty"})
 		f.sources[f.playbook] = readSource(repo, "c2", candidate("port", schema.TypeInt))
-		_, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2"})
+		_, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2", SourceSyncedAt: &syncedAt})
 		if got := valueProblems(t, err); !reflect.DeepEqual(got, []string{"port"}) {
 			t.Fatalf("problems %v, want port", got)
 		}
 		if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{
-			Mode: templates.ModeManual, SourceRev: "c2", Values: map[string]any{"port": float64(80)},
+			Mode: templates.ModeManual, SourceRev: "c2", SourceSyncedAt: &syncedAt, Values: map[string]any{"port": float64(80)},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -249,12 +254,12 @@ func TestApplyRequiresReEnteredValues(t *testing.T) {
 		tm := f.linked(t, "token", templates.ModeManual, "c1", []schema.Field{asStored(token, true)}, map[string]any{"token": "hunter2"})
 		storedSealed(t, f, tm.ID, "token")
 		f.sources[f.playbook] = readSource(repo, "c2", candidate("token", schema.TypeString))
-		_, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2"})
+		_, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2", SourceSyncedAt: &syncedAt})
 		if got := valueProblems(t, err); !reflect.DeepEqual(got, []string{"token"}) || !strings.Contains(err.Error(), "enter the value again") {
 			t.Fatalf("problems %v (%v), want token to be entered again", got, err)
 		}
 		if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{
-			Mode: templates.ModeManual, SourceRev: "c2", Values: map[string]any{"token": "visible"},
+			Mode: templates.ModeManual, SourceRev: "c2", SourceSyncedAt: &syncedAt, Values: map[string]any{"token": "visible"},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -267,7 +272,7 @@ func TestApplyRequiresReEnteredValues(t *testing.T) {
 		pw := candidate("pw", schema.TypeString)
 		tm := f.linked(t, "pw", templates.ModeManual, "c1", []schema.Field{asStored(pw, true)}, map[string]any{"pw": "abc"})
 		f.sources[f.playbook] = readSource(repo, "c2", candidate("pw", schema.TypeSecret))
-		applied, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2"})
+		applied, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2", SourceSyncedAt: &syncedAt})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -284,7 +289,7 @@ func TestApplyRequiresReEnteredValues(t *testing.T) {
 			map[string]any{"region": "eu", "old": "kept"})
 		f.sources[f.playbook] = readSource(repo, "c1", region, old)
 		if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{
-			Mode: templates.ModeManual, SourceRev: "c1", Values: map[string]any{"old": nil},
+			Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: &syncedAt, Values: map[string]any{"old": nil},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -303,13 +308,13 @@ func TestApplyRemovesGoneFieldsOnlyWhenAsked(t *testing.T) {
 	tm := f.linked(t, "gone", templates.ModeManual, "c1", []schema.Field{asStored(keep, true), asStored(old, true)},
 		map[string]any{"keep": "k", "old": "o"})
 	f.sources[f.playbook] = readSource(uuid.Must(uuid.NewV7()), "c2", keep)
-	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2"}); err != nil {
+	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c2", SourceSyncedAt: &syncedAt}); err != nil {
 		t.Fatal(err)
 	}
 	if fields := f.store.byID[tm.ID].ExtraVarsSchema.Fields; len(fields) != 2 || fields[1].Origin != schema.OriginGone {
 		t.Fatalf("fields = %s, want old marked gone", mustJSON(t, fields))
 	}
-	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeAutomatic, SourceRev: "c2", RemoveGone: true}); err != nil {
+	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeAutomatic, SourceRev: "c2", SourceSyncedAt: &syncedAt, RemoveGone: true}); err != nil {
 		t.Fatal(err)
 	}
 	stored := f.store.byID[tm.ID]
@@ -336,6 +341,12 @@ func TestUnlinkMakesFieldsManual(t *testing.T) {
 	auto, err := f.svc.SetVariablesMode(ctx, f.org, tm.ID, templates.ModeAutomatic, rev(1))
 	if err != nil || auto.VarsMode != templates.ModeAutomatic || auto.Revision != 2 || auto.VarsSourceRev != "c1" {
 		t.Fatalf("to automatic: %+v %v", auto, err)
+	}
+	if same, err := f.svc.SetVariablesMode(ctx, f.org, tm.ID, templates.ModeAutomatic, rev(2)); err != nil || same.Revision != 2 || f.store.byID[tm.ID].Revision != 2 {
+		t.Fatalf("to the current mode: revision %d, %v; want no write", same.Revision, err)
+	}
+	if _, err := f.svc.SetVariablesMode(ctx, f.org, tm.ID, templates.ModeAutomatic, rev(1)); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("to the current mode with a stale revision: %v, want ErrRevisionMismatch", err)
 	}
 	if _, err := f.svc.SetVariablesMode(ctx, f.org, tm.ID, templates.ModeOff, rev(1)); !errors.Is(err, templates.ErrRevisionMismatch) {
 		t.Fatalf("stale mode change: %v, want ErrRevisionMismatch", err)
@@ -365,6 +376,9 @@ func TestUnlinkMakesFieldsManual(t *testing.T) {
 	if _, err := f.svc.SetVariablesMode(ctx, f.org, tm.ID, templates.ModeAutomatic, nil); !errors.Is(err, templates.ErrInvalidInput) {
 		t.Fatalf("relink without a preview: %v, want ErrInvalidInput", err)
 	}
+	if _, err := f.svc.SetVariablesMode(ctx, f.org, tm.ID, templates.ModeOff, nil); err != nil || f.store.byID[tm.ID].Revision != 3 {
+		t.Fatalf("off again: revision %d, %v; want no write", f.store.byID[tm.ID].Revision, err)
+	}
 	if _, err := f.svc.SetVariablesMode(ctx, f.org, tm.ID, "sometimes", nil); !errors.Is(err, templates.ErrInvalidInput) {
 		t.Fatalf("unknown mode: %v, want ErrInvalidInput", err)
 	}
@@ -385,7 +399,7 @@ func TestProjectedTemplateCannotLink(t *testing.T) {
 	if _, _, err := f.svc.PreviewVariables(ctx, f.org, id); !errors.Is(err, templates.ErrForbidden) {
 		t.Fatalf("preview: %v, want ErrForbidden", err)
 	}
-	if _, err := f.svc.ApplyVariables(ctx, f.org, id, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1"}); !errors.Is(err, templates.ErrForbidden) {
+	if _, err := f.svc.ApplyVariables(ctx, f.org, id, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: &syncedAt}); !errors.Is(err, templates.ErrForbidden) {
 		t.Fatalf("apply: %v, want ErrForbidden", err)
 	}
 	if f.store.byID[id].Revision != 1 {
@@ -419,5 +433,64 @@ func TestListReviewsLinkedTemplates(t *testing.T) {
 	// Nothing is marked gone yet: the preview alone does not count.
 	if got, ok := reviews[linked.ID]; !ok || got != (templates.Review{}) {
 		t.Errorf("review = %+v (listed %v), want nothing to review before an apply", got, ok)
+	}
+}
+
+// TestApplyRefusesASourceSyncedAgain: a sync whose commit the worker
+// could not read keeps the previous commit with new content, so the sync
+// time tells the person's preview apart from the current read.
+func TestApplyRefusesASourceSyncedAgain(t *testing.T) {
+	f := newFixture()
+	src := readSource(uuid.Must(uuid.NewV7()), "c1", candidate("region", schema.TypeString))
+	later := syncedAt.Add(time.Hour)
+	src.SyncedAt = &later
+	f.sources[f.playbook] = src
+	tm, err := f.svc.Create(ctx, f.org, f.in())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, at := range []*time.Time{&syncedAt, nil} {
+		_, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: at})
+		if !errors.Is(err, templates.ErrSourceChanged) {
+			t.Fatalf("apply of a preview synced at %v: %v, want ErrSourceChanged", at, err)
+		}
+	}
+	same := later.In(time.FixedZone("x", 3600))
+	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, templates.ApplyInput{Mode: templates.ModeManual, SourceRev: "c1", SourceSyncedAt: &same}); err != nil {
+		t.Fatalf("apply of the current read: %v", err)
+	}
+}
+
+// TestListReviewsWithoutAnUnreadableSource: a playbook whose sources
+// cannot be read costs its templates their review, not the list; each
+// playbook is read once.
+func TestListReviewsWithoutAnUnreadableSource(t *testing.T) {
+	f := newFixture()
+	var logs bytes.Buffer
+	f.svc.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	field := []schema.Field{asStored(candidate("region", schema.TypeString), true)}
+	a := f.linked(t, "a", templates.ModeManual, "c1", field, nil)
+	b := f.linked(t, "b", templates.ModeAutomatic, "c1", field, nil)
+	c := f.linkedTo(t, f.playbook2, "c", templates.ModeManual, "c1", field, nil)
+	f.sources[f.playbook2] = readSource(uuid.Must(uuid.NewV7()), "c1", field[0])
+	f.sourceErrs[f.playbook] = errors.New("database unavailable")
+	list, reviews, err := f.svc.ListReviewed(ctx, f.org)
+	if err != nil || len(list) != 3 {
+		t.Fatalf("list = %d templates, %v", len(list), err)
+	}
+	if _, ok := reviews[a.ID]; ok {
+		t.Errorf("a has a review")
+	}
+	if _, ok := reviews[b.ID]; ok {
+		t.Errorf("b has a review")
+	}
+	if _, ok := reviews[c.ID]; !ok {
+		t.Errorf("c has no review")
+	}
+	if f.sourceReads[f.playbook] != 1 || f.sourceReads[f.playbook2] != 1 {
+		t.Errorf("reads = %v, want one per playbook", f.sourceReads)
+	}
+	if !strings.Contains(logs.String(), "database unavailable") {
+		t.Errorf("logs = %q", logs.String())
 	}
 }

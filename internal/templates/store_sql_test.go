@@ -19,7 +19,6 @@ import (
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
-// testBoxKey builds a 32-byte key from a label, the way the jobs tests do.
 // playbookStoreLookup is the playbooks store as the service's
 // PlaybookLookup, for tests that read no variable sources.
 type playbookStoreLookup struct{ *playbooks.SQLStore }
@@ -28,6 +27,7 @@ func (playbookStoreLookup) VarSource(context.Context, uuid.UUID, uuid.UUID) (pla
 	return playbooks.VarSource{}, nil
 }
 
+// testBoxKey builds a 32-byte key from a label, the way the jobs tests do.
 func testBoxKey(label string) [32]byte {
 	var key [32]byte
 	copy(key[:], label)

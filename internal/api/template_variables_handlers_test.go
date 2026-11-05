@@ -137,4 +137,19 @@ func TestTemplateVariablesRefusedOnAProjection(t *testing.T) {
 	if got := mustReadBody(t, resp); resp.StatusCode != http.StatusBadRequest || !strings.Contains(got, "installation") {
 		t.Fatalf("put a projection's variables: %d %s, want 400", resp.StatusCode, got)
 	}
+
+	// Nor can they be linked to a playbook here.
+	for _, r := range []struct {
+		method, path string
+		body         any
+	}{
+		{http.MethodPost, "/preview", nil},
+		{http.MethodPut, "/mode", map[string]any{"mode": "off"}},
+		{http.MethodPost, "/apply", map[string]any{"mode": "manual", "source_rev": "c1"}},
+	} {
+		resp := requestJSON(t, f.c, r.method, url+r.path, r.body)
+		if got := mustReadBody(t, resp); resp.StatusCode != http.StatusForbidden || !strings.Contains(got, "projection") {
+			t.Errorf("%s %s on a projection: %d %s, want 403", r.method, r.path, resp.StatusCode, got)
+		}
+	}
 }

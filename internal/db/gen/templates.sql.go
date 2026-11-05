@@ -267,6 +267,59 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID uuid.UUID) ([]JobTemp
 	return items, nil
 }
 
+const recordTemplateSourceRev = `-- name: RecordTemplateSourceRev :one
+UPDATE job_templates SET
+  vars_source_rev = $1, vars_applied_at = $2
+WHERE org_id = $3 AND id = $4
+  AND revision = $5 AND vars_source_rev = $6
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+`
+
+type RecordTemplateSourceRevParams struct {
+	VarsSourceRev string             `json:"vars_source_rev"`
+	VarsAppliedAt pgtype.Timestamptz `json:"vars_applied_at"`
+	OrgID         uuid.UUID          `json:"org_id"`
+	ID            uuid.UUID          `json:"id"`
+	IfRevision    int64              `json:"if_revision"`
+	IfSourceRev   string             `json:"if_source_rev"`
+}
+
+// An automatic apply of a read that changes none of a template's fields:
+// only the applied source revision and its time move, not the revision
+// or updated_at, so a person editing the template meanwhile is not sent
+// back to reload by a push that touched no variables. Guarded by the
+// revision and the applied source revision the apply read.
+func (q *Queries) RecordTemplateSourceRev(ctx context.Context, arg RecordTemplateSourceRevParams) (JobTemplate, error) {
+	row := q.db.QueryRow(ctx, recordTemplateSourceRev,
+		arg.VarsSourceRev,
+		arg.VarsAppliedAt,
+		arg.OrgID,
+		arg.ID,
+		arg.IfRevision,
+		arg.IfSourceRev,
+	)
+	var i JobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PlaybookID,
+		&i.Scope,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
+		&i.CredentialID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SharedTemplateID,
+		&i.Revision,
+		&i.VarsMode,
+		&i.VarsSourceRev,
+		&i.VarsAppliedAt,
+	)
+	return i, err
+}
+
 const updateTemplate = `-- name: UpdateTemplate :one
 UPDATE job_templates SET
   name = $1, playbook_id = $2, scope = $3, "limit" = $4,
@@ -395,6 +448,7 @@ UPDATE job_templates SET
   revision = revision + 1, updated_at = now()
 WHERE org_id = $5 AND id = $6
   AND ($7::bigint IS NULL OR revision = $7)
+  AND ($8::text IS NULL OR vars_source_rev = $8)
 RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
 `
 
@@ -406,12 +460,15 @@ type UpdateTemplateVarsSourceParams struct {
 	OrgID           uuid.UUID          `json:"org_id"`
 	ID              uuid.UUID          `json:"id"`
 	IfRevision      *int64             `json:"if_revision"`
+	IfSourceRev     *string            `json:"if_source_rev"`
 }
 
 // A template's fields and variables source columns without its values: a
 // mode change and the automatic apply (backlog 7.75), neither of which
 // may seal, unseal or drop a stored value. Under UpdateTemplate's
-// revision guard.
+// revision guard, and if_source_rev, when given, is the applied source
+// revision the write is based on: RecordTemplateSourceRev moves it
+// without moving the revision.
 func (q *Queries) UpdateTemplateVarsSource(ctx context.Context, arg UpdateTemplateVarsSourceParams) (JobTemplate, error) {
 	row := q.db.QueryRow(ctx, updateTemplateVarsSource,
 		arg.ExtraVarsSchema,
@@ -421,6 +478,7 @@ func (q *Queries) UpdateTemplateVarsSource(ctx context.Context, arg UpdateTempla
 		arg.OrgID,
 		arg.ID,
 		arg.IfRevision,
+		arg.IfSourceRev,
 	)
 	var i JobTemplate
 	err := row.Scan(

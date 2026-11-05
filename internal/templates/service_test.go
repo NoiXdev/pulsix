@@ -33,8 +33,10 @@ type fakeStore struct {
 	// playbookRepo maps a repo playbook to its repository, standing in
 	// for the join ListAutomaticForRepo makes.
 	playbookRepo map[uuid.UUID]uuid.UUID
-	// sourceWrites counts UpdateVarsSource calls that wrote.
+	// sourceWrites counts UpdateVarsSource calls that wrote, revRecords
+	// RecordSourceRev calls.
 	sourceWrites int
+	revRecords   int
 }
 
 func (f *fakeStore) raceOnce() {
@@ -164,14 +166,14 @@ func (f *fakeStore) UpdateVariables(_ context.Context, t templates.Template, ifR
 }
 
 // UpdateVarsSource mirrors the real store: the schema and the variables
-// source columns under the guard, never the values.
-func (f *fakeStore) UpdateVarsSource(_ context.Context, t templates.Template, ifRevision *int64) (templates.Template, error) {
+// source columns under the guards, never the values.
+func (f *fakeStore) UpdateVarsSource(_ context.Context, t templates.Template, ifRevision *int64, ifSourceRev *string) (templates.Template, error) {
 	f.raceOnce()
 	cur, ok := f.byID[t.ID]
 	if !ok || cur.OrgID != t.OrgID {
 		return templates.Template{}, templates.ErrNotFound
 	}
-	if ifRevision != nil && *ifRevision != cur.Revision {
+	if (ifRevision != nil && *ifRevision != cur.Revision) || (ifSourceRev != nil && *ifSourceRev != cur.VarsSourceRev) {
 		return templates.Template{}, templates.ErrRevisionMismatch
 	}
 	cur.ExtraVarsSchema = t.ExtraVarsSchema
@@ -179,6 +181,23 @@ func (f *fakeStore) UpdateVarsSource(_ context.Context, t templates.Template, if
 	cur.Revision++
 	f.byID[t.ID] = cur
 	f.sourceWrites++
+	return cur, nil
+}
+
+// RecordSourceRev mirrors the real store: the applied source revision
+// and its time, the revision left as it is.
+func (f *fakeStore) RecordSourceRev(_ context.Context, t templates.Template, ifRevision int64, ifSourceRev string) (templates.Template, error) {
+	f.raceOnce()
+	cur, ok := f.byID[t.ID]
+	if !ok || cur.OrgID != t.OrgID {
+		return templates.Template{}, templates.ErrNotFound
+	}
+	if ifRevision != cur.Revision || ifSourceRev != cur.VarsSourceRev {
+		return templates.Template{}, templates.ErrRevisionMismatch
+	}
+	cur.VarsSourceRev, cur.VarsAppliedAt = t.VarsSourceRev, t.VarsAppliedAt
+	f.byID[t.ID] = cur
+	f.revRecords++
 	return cur, nil
 }
 
@@ -219,12 +238,19 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 type fakePlaybooks struct {
 	byID map[uuid.UUID]playbooks.Playbook
 	// sources are the playbooks' variable sources; a playbook without an
-	// entry has none read (the zero VarSource).
-	sources map[uuid.UUID]playbooks.VarSource
+	// entry has none read (the zero VarSource). sourceErrs fail a read,
+	// sourceReads counts them.
+	sources     map[uuid.UUID]playbooks.VarSource
+	sourceErrs  map[uuid.UUID]error
+	sourceReads map[uuid.UUID]int
 }
 
 func (f fakePlaybooks) VarSource(ctx context.Context, orgID, id uuid.UUID) (playbooks.VarSource, error) {
 	if _, err := f.Get(ctx, orgID, id); err != nil {
+		return playbooks.VarSource{}, err
+	}
+	f.sourceReads[id]++
+	if err := f.sourceErrs[id]; err != nil {
 		return playbooks.VarSource{}, err
 	}
 	return f.sources[id], nil
@@ -268,18 +294,21 @@ func (f fakeCreds) Get(_ context.Context, orgID, id uuid.UUID) (credentials.Cred
 // --- fixture helpers ---
 
 type fixture struct {
-	store     *fakeStore
-	svc       *templates.Service
-	sources   map[uuid.UUID]playbooks.VarSource
-	org       uuid.UUID
-	playbook  uuid.UUID
-	playbook2 uuid.UUID
-	group     uuid.UUID
-	managed   uuid.UUID
-	unmanaged uuid.UUID
-	sshCred   uuid.UUID
-	gitCred   uuid.UUID
-	vaultCred uuid.UUID
+	store   *fakeStore
+	svc     *templates.Service
+	sources map[uuid.UUID]playbooks.VarSource
+	// sourceErrs fail a playbook's VarSource; sourceReads count them.
+	sourceErrs  map[uuid.UUID]error
+	sourceReads map[uuid.UUID]int
+	org         uuid.UUID
+	playbook    uuid.UUID
+	playbook2   uuid.UUID
+	group       uuid.UUID
+	managed     uuid.UUID
+	unmanaged   uuid.UUID
+	sshCred     uuid.UUID
+	gitCred     uuid.UUID
+	vaultCred   uuid.UUID
 }
 
 func newFixture() fixture {
@@ -294,11 +323,12 @@ func newFixture() fixture {
 	vaultCred := uuid.Must(uuid.NewV7())
 	store := newFakeStore()
 	sources := map[uuid.UUID]playbooks.VarSource{}
+	sourceErrs, sourceReads := map[uuid.UUID]error{}, map[uuid.UUID]int{}
 	svc := templates.NewService(store,
 		fakePlaybooks{byID: map[uuid.UUID]playbooks.Playbook{
 			playbook:  {ID: playbook, OrgID: org, Source: playbooks.SourceEditor},
 			playbook2: {ID: playbook2, OrgID: org, Source: playbooks.SourceEditor},
-		}, sources: sources},
+		}, sources: sources, sourceErrs: sourceErrs, sourceReads: sourceReads},
 		fakeGroups{known: map[uuid.UUID]bool{group: true}},
 		fakeHosts{list: []hosts.Host{
 			{ID: managed, OrgID: org, Managed: true},
@@ -312,7 +342,7 @@ func newFixture() fixture {
 		testBox(),
 	)
 	return fixture{
-		store: store, svc: svc, sources: sources, org: org, playbook: playbook, playbook2: playbook2, group: group,
+		store: store, svc: svc, sources: sources, sourceErrs: sourceErrs, sourceReads: sourceReads, org: org, playbook: playbook, playbook2: playbook2, group: group,
 		managed: managed, unmanaged: unmanaged, sshCred: sshCred, gitCred: gitCred, vaultCred: vaultCred,
 	}
 }

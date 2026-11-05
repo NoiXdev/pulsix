@@ -23,19 +23,35 @@ import (
 	"github.com/noixdev/pulsix/internal/varsync"
 )
 
+// linkDeps is what the variables link adds to the service: the clock an
+// apply's time is read from and where what it does not let fail is
+// logged.
+type linkDeps struct {
+	now func() time.Time
+	log *slog.Logger
+}
+
 // SetLogger sets where the automatic apply reports a template it could
-// not apply to; slog.Default without.
-func (s *Service) SetLogger(l *slog.Logger) { s.log = l }
+// not apply to, and the list a review it could not compute; slog.Default
+// without.
+func (s *Service) SetLogger(l *slog.Logger) { s.link.log = l }
 
 // SetClock sets the clock an apply's time is read from (time.Now by
 // default).
-func (s *Service) SetClock(now func() time.Time) { s.now = now }
+func (s *Service) SetClock(now func() time.Time) { s.link.now = now }
 
 func (s *Service) logger() *slog.Logger {
-	if s.log != nil {
-		return s.log
+	if s.link.log != nil {
+		return s.link.log
 	}
 	return slog.Default()
+}
+
+func (s *Service) now() time.Time {
+	if s.link.now != nil {
+		return s.link.now()
+	}
+	return time.Now()
 }
 
 // ApplyRepoSources applies the repository's new variable sources to the
@@ -78,9 +94,10 @@ func (s *Service) applyAutomatic(ctx context.Context, orgID uuid.UUID, list []Te
 }
 
 // applyTo applies its playbook's sources to the template t as read. The
-// write names the revision read, so a person's save in between is never
-// overwritten: on a lost race the template is read and applied to once
-// more, and a second lost race is left to the next sync.
+// write names the revision and the applied source revision read, so a
+// person's save or another apply in between is never overwritten: on a
+// lost race the template and its playbook's sources are read again and
+// applied once more, and a second lost race is left to the next sync.
 func (s *Service) applyTo(ctx context.Context, orgID uuid.UUID, t Template, sources map[uuid.UUID]varsync.Source) error {
 	for attempt := 0; ; attempt++ {
 		if t.VarsMode != ModeAutomatic || t.SharedTemplateID != nil {
@@ -98,11 +115,7 @@ func (s *Service) applyTo(ctx context.Context, orgID uuid.UUID, t Template, sour
 		if !src.Available {
 			return nil
 		}
-		next, write, err := automatic(t, src, s.now())
-		if err != nil || !write {
-			return err
-		}
-		_, err = s.store.UpdateVarsSource(ctx, next, &t.Revision)
+		err := s.writeAutomatic(ctx, t, src)
 		switch {
 		case errors.Is(err, ErrRevisionMismatch) && attempt == 0:
 		case errors.Is(err, ErrNotFound):
@@ -110,6 +123,8 @@ func (s *Service) applyTo(ctx context.Context, orgID uuid.UUID, t Template, sour
 		default:
 			return err
 		}
+		// What won the race may have applied a newer read: read both again.
+		delete(sources, t.PlaybookID)
 		if t, err = s.store.Get(ctx, orgID, t.ID); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return nil
@@ -119,24 +134,35 @@ func (s *Service) applyTo(ctx context.Context, orgID uuid.UUID, t Template, sour
 	}
 }
 
-// automatic is t with src applied the automatic way, and whether that
-// changes its fields or its applied revision (a new read that changes no
-// field still records its revision, so the page does not offer it as
-// newer). Applying the same read twice changes nothing.
-func automatic(t Template, src varsync.Source, now time.Time) (Template, bool, error) {
+// writeAutomatic writes src applied the automatic way to t, guarded by
+// t's revision and applied source revision: the fields and the revision
+// when the fields change, only the applied source revision (no new
+// revision, so nobody editing the template is sent back to reload) when
+// a new read changes none of them, nothing when the read was applied.
+func (s *Service) writeAutomatic(ctx context.Context, t Template, src varsync.Source) error {
 	current := fieldsOf(t)
 	fields := varsync.Apply(current, varsync.Compute(current, src, t.ExtraVars), varsync.ApplyOptions{Automatic: true})
-	rev := varsync.AppliedRev(t.VarsSourceRev, src)
 	same, err := sameFields(current, fields)
-	if err != nil || (same && rev == t.VarsSourceRev) {
-		return t, false, err
+	if err != nil {
+		return err
 	}
-	sc := &schema.Schema{Fields: fields}
-	if err := sc.Check(); err != nil {
-		return t, false, fmt.Errorf("the applied fields do not check: %w", err)
+	next := t
+	next.VarsSourceRev = varsync.AppliedRev(t.VarsSourceRev, src)
+	at := s.now()
+	next.VarsAppliedAt = &at
+	switch {
+	case same && next.VarsSourceRev == t.VarsSourceRev:
+		return nil
+	case same:
+		_, err = s.store.RecordSourceRev(ctx, next, t.Revision, t.VarsSourceRev)
+		return err
 	}
-	t.ExtraVarsSchema, t.VarsSourceRev, t.VarsAppliedAt = sc, rev, &now
-	return t, true, nil
+	next.ExtraVarsSchema = &schema.Schema{Fields: fields}
+	if err := next.ExtraVarsSchema.Check(); err != nil {
+		return fmt.Errorf("the applied fields do not check: %w", err)
+	}
+	_, err = s.store.UpdateVarsSource(ctx, next, &t.Revision, &t.VarsSourceRev)
+	return err
 }
 
 // sameFields reports whether a and b store the same.

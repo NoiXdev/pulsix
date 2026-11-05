@@ -278,3 +278,85 @@ func TestInlineSaveAppliesAutomaticTemplates(t *testing.T) {
 		t.Errorf("another playbook's template was written")
 	}
 }
+
+// TestAutomaticApplyRetryReadsTheSourceAgain: two applies race (two syncs
+// finishing close together, or a save of an editor playbook during one).
+// The one that loses re-reads the source as well as the template, so it
+// never writes the older read over the newer one.
+func TestAutomaticApplyRetryReadsTheSourceAgain(t *testing.T) {
+	port := asStored(candidate("port", schema.TypeInt, withDefault(float64(80))), true)
+	newer := []schema.Field{candidate("port", schema.TypeInt, withDefault(float64(82))), candidate("x", schema.TypeString)}
+	older := []schema.Field{candidate("port", schema.TypeInt, withDefault(float64(81)))}
+	inline := func(rev string, fields []schema.Field) playbooks.VarSource {
+		return playbooks.VarSource{Kind: playbooks.VarSourceInline, Rev: rev, WorkerReads: true, Found: true,
+			Playbook: varsource.Playbook{Path: sitePath, Fields: fields,
+				Files: []varsource.FileUse{{Path: sitePath, State: varsource.FileRead}}, Notes: []varsource.Note{}}}
+	}
+	cases := []struct {
+		name         string
+		older, newer func(repo uuid.UUID) playbooks.VarSource
+		apply        func(f fixture, repo uuid.UUID) error
+		newerRev     string
+	}{
+		{"repo", func(repo uuid.UUID) playbooks.VarSource { return readSource(repo, "c2", older...) },
+			func(repo uuid.UUID) playbooks.VarSource { return readSource(repo, "c3", newer...) },
+			func(f fixture, repo uuid.UUID) error { return f.svc.ApplyRepoSources(ctx, f.org, repo) }, "c3"},
+		{"inline", func(uuid.UUID) playbooks.VarSource { return inline("text:b", older) },
+			func(uuid.UUID) playbooks.VarSource { return inline("text:c", newer) },
+			func(f fixture, _ uuid.UUID) error { return f.svc.ApplyPlaybookSources(ctx, f.org, f.playbook) }, "text:c"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f, repo := repoFixture()
+			tm := f.linked(t, "auto", templates.ModeAutomatic, "c1", []schema.Field{port}, nil)
+			f.sources[f.playbook] = tc.older(repo)
+			f.store.beforeWrite = func() {
+				f.sources[f.playbook] = tc.newer(repo)
+				if err := tc.apply(f, repo); err != nil {
+					t.Error(err)
+				}
+			}
+			if err := tc.apply(f, repo); err != nil {
+				t.Fatal(err)
+			}
+			got := f.store.byID[tm.ID]
+			if got.VarsSourceRev != tc.newerRev || got.ExtraVarsSchema.Fields[0].Default != float64(82) ||
+				len(got.ExtraVarsSchema.Fields) != 2 || got.ExtraVarsSchema.Fields[1].Origin != schema.OriginSource {
+				t.Fatalf("stored rev %q fields %s, want the newer read kept", got.VarsSourceRev, mustJSON(t, got.ExtraVarsSchema.Fields))
+			}
+		})
+	}
+}
+
+// TestAutomaticApplyRecordsANewRevisionWithoutABump: a read that changes
+// no field records its revision but leaves the template's revision, so a
+// person editing the template meanwhile saves without a reload; a read
+// that changes a field bumps it.
+func TestAutomaticApplyRecordsANewRevisionWithoutABump(t *testing.T) {
+	f, repo := repoFixture()
+	port := candidate("port", schema.TypeInt)
+	tm := f.linked(t, "auto", templates.ModeAutomatic, "c1", []schema.Field{asStored(port, true)}, map[string]any{"port": float64(1)})
+	f.sources[f.playbook] = readSource(repo, "c2", port)
+	if err := f.svc.ApplyRepoSources(ctx, f.org, repo); err != nil {
+		t.Fatal(err)
+	}
+	got := f.store.byID[tm.ID]
+	if got.Revision != tm.Revision || got.VarsSourceRev != "c2" || got.VarsAppliedAt == nil || f.store.revRecords != 1 || f.store.sourceWrites != 0 {
+		t.Fatalf("revision %d (was %d) rev %q, %d records %d writes", got.Revision, tm.Revision, got.VarsSourceRev, f.store.revRecords, f.store.sourceWrites)
+	}
+	// The template dialog's save, based on the revision read before.
+	if _, err := f.svc.Update(ctx, f.org, tm.ID, templates.UpdateInput{
+		Name: tm.Name, PlaybookID: tm.PlaybookID, ExtraVarsSchema: tm.ExtraVarsSchema,
+		ExtraVars: map[string]any{"port": float64(2)}, IfRevision: &tm.Revision,
+	}); err != nil {
+		t.Fatalf("save with the earlier revision: %v", err)
+	}
+	saved := f.store.byID[tm.ID]
+	f.sources[f.playbook] = readSource(repo, "c3", candidate("port", schema.TypeInt, withDefault(float64(5))))
+	if err := f.svc.ApplyRepoSources(ctx, f.org, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.store.byID[tm.ID]; got.Revision != saved.Revision+1 || got.VarsSourceRev != "c3" {
+		t.Fatalf("content change: revision %d (was %d) rev %q, want a bump", got.Revision, saved.Revision, got.VarsSourceRev)
+	}
+}

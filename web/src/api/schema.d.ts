@@ -1836,7 +1836,7 @@ export interface paths {
         put?: never;
         /**
          * Post API v1 orgs by org job templates by ID variables apply
-         * @description Applies the preview of the playbook's variable sources: it is computed anew, and a source_rev other than the current read's answers 409. The values are checked like a save; a value that no longer fits its field is entered under values.
+         * @description Applies the preview of the playbook's variable sources: it is computed anew, and a source_rev or source_synced_at other than the current read's answers 409. The values are checked like a save; a value that no longer fits its field is entered under values.
          */
         post: operations["applyTemplateVariables"];
         delete?: never;
@@ -6820,6 +6820,11 @@ export interface components {
             remove_gone?: boolean;
             /** @description The preview's source_rev; another revision than the current read answers 409 */
             source_rev: string;
+            /**
+             * Format: date-time
+             * @description The preview's source.synced_at, absent when the preview had none; another time than the current read's answers 409
+             */
+            source_synced_at?: string;
             /** @description Values entered over the stored ones: a value that no longer fits its field, a new required field's value; null removes a stored value */
             values?: {
                 [key: string]: unknown;
