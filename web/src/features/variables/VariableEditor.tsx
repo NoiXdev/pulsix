@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
-import { Card } from '../../ui/table.tsx';
 import { FieldRow } from './FieldRow.tsx';
 import { FieldDialog } from './FieldDialog.tsx';
 import { AssignmentPreview } from './AssignmentPreview.tsx';
@@ -122,7 +121,10 @@ export function VariableEditor({ value, onChange, problems, variant, usage, usag
           <Plus size={14} /> {t.variables.builder.addField}
         </Button>
       )}
-      <Card>
+      {/* Not a Card: its overflow-clip cut off the type list of a sub-field
+          opened near the list's bottom (the inline sub-field rows hold
+          selects whose options open below them). */}
+      <div className="flex shrink-0 flex-col rounded-[10px] border border-border bg-card">
         <table ref={table} className="w-full text-xs" aria-label={t.variables.builder.fields}>
           <thead>
             <tr className="text-left text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
@@ -169,7 +171,7 @@ export function VariableEditor({ value, onChange, problems, variant, usage, usag
             )}
           </tbody>
         </table>
-      </Card>
+      </div>
 
       {variant === 'group' && <AssignmentPreview schema={value} />}
 
