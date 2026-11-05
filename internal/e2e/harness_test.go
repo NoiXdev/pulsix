@@ -275,7 +275,8 @@ func (b *bastionServer) handle(conn net.Conn, cfg *ssh.ServerConfig) {
 // gitServer serves the fixture repository over SSH (read-only: the only
 // service is git-upload-pack, the fetch half of git's SSH protocol).
 type gitServer struct {
-	url string // ssh://git@127.0.0.1:<port>/fixture.git
+	url  string // ssh://git@127.0.0.1:<port>/fixture.git
+	bare string // the bare repository it serves (pushFixtureChange commits into it)
 }
 
 // startGitServer materializes the fixture repository as a bare repo and
@@ -322,49 +323,66 @@ func startGitServerAuthorizing(t *testing.T, deployKeys ...ssh.PublicKey) *gitSe
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
 	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
-	return &gitServer{url: "ssh://git@127.0.0.1:" + portStr + "/fixture.git"}
+	return &gitServer{url: "ssh://git@127.0.0.1:" + portStr + "/fixture.git", bare: bare}
 }
 
-// materializeFixtureRepo copies the fixture working tree into a temp dir,
-// commits it and clones it bare — the repository the server serves. No
-// requirements.yml: the galaxy install needs network, and Task 11's sync
-// tests cover that path at the unit level.
+// materializeFixtureRepo copies the fixture working tree (fixtures/git,
+// recursively: the variable sources gate needs a role directory) into a
+// temp dir, commits it and clones it bare — the repository the server
+// serves. No requirements.yml: the galaxy install needs network, and Task
+// 11's sync tests cover that path at the unit level.
 func materializeFixtureRepo(t *testing.T) string {
+	t.Helper()
 	tmp := t.TempDir()
 	seed := filepath.Join(tmp, "seed")
-	if err := os.MkdirAll(seed, 0o755); err != nil {
-		t.Fatal(err)
+	if err := os.CopyFS(seed, os.DirFS(filepath.Join("fixtures", "git"))); err != nil {
+		t.Fatalf("copy the fixture repository: %v", err)
 	}
-	for _, f := range []string{"hello.yml", "fail.yml", "vault.yml", "vault_prod.yml", "vault_staging.yml"} {
-		raw, err := os.ReadFile(filepath.Join("fixtures", "git", f))
-		if err != nil {
-			t.Fatalf("read fixture %s: %v", f, err)
+	runGit(t, seed, "init", "-q", "-b", "main")
+	runGit(t, seed, "add", ".")
+	runGit(t, seed, "commit", "-q", "-m", "fixture playbooks")
+	bare := filepath.Join(tmp, "fixture.git")
+	runGit(t, tmp, "clone", "-q", "--bare", seed, bare)
+	return bare
+}
+
+// pushFixtureChange commits files (path inside the repository → content)
+// on top of the bare repository's main branch, the way a person pushing a
+// change would; the next repo sync fetches it.
+func pushFixtureChange(t *testing.T, bare string, files map[string]string) {
+	t.Helper()
+	work := filepath.Join(t.TempDir(), "work")
+	runGit(t, filepath.Dir(work), "clone", "-q", "-b", "main", bare, work)
+	for rel, content := range files {
+		path := filepath.Join(work, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(seed, f), raw, 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	git := func(dir string, args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=pulsix", "GIT_AUTHOR_EMAIL=pulsix@example.org",
-			"GIT_COMMITTER_NAME=pulsix", "GIT_COMMITTER_EMAIL=pulsix@example.org",
-			"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
-		)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, stderr.String())
-		}
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-q", "-m", "fixture change")
+	runGit(t, work, "push", "-q", "origin", "main")
+}
+
+// runGit runs one git command in dir with a fixed identity and no user or
+// system configuration.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=pulsix", "GIT_AUTHOR_EMAIL=pulsix@example.org",
+		"GIT_COMMITTER_NAME=pulsix", "GIT_COMMITTER_EMAIL=pulsix@example.org",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, stderr.String())
 	}
-	git(seed, "init", "-q", "-b", "main")
-	git(seed, "add", ".")
-	git(seed, "commit", "-q", "-m", "fixture playbooks")
-	bare := filepath.Join(tmp, "fixture.git")
-	git(tmp, "clone", "-q", "--bare", seed, bare)
-	return bare
 }
 
 // runGitUploadPack execs `git upload-pack <bare>` with the session as its

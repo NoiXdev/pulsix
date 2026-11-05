@@ -88,6 +88,7 @@ type scenario struct {
 
 	host     *hostSSHServer
 	bastionS *bastionServer
+	git      *gitServer // the fixture repository's server (variables_test.go pushes to it)
 	greeting string
 
 	runnerLog string // the capture wrapper's log (see captureRunnerOutput)
@@ -282,6 +283,7 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc, 
 	s.host = startHostSSHServer(t, s.hostLoginPub, bindHost)
 	s.bastionS = startBastion(t, s.bastionPub)
 	gitSrv := startGitServer(t, s.deployPub)
+	s.git = gitSrv
 	s.setupHostAndBastion()
 
 	// --- The worker's claim loop, in-process ------------------------------

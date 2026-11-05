@@ -1,0 +1,11 @@
+# The variable sources gate (backlog 7.75): a play variable with an inline
+# marker and a role whose argument specs declare two more fields. The
+# scenario (variables_test.go) reads it through a repository sync and then
+# pushes a change to the specs. Exec-only tasks, like hello.yml.
+- name: Pulsix variables demo
+  hosts: all
+  gather_facts: false
+  vars:
+    greeting_name: World  # pulsix: required Greeting name
+  roles:
+    - greeter

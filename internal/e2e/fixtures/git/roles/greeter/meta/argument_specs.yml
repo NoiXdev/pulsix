@@ -1,0 +1,15 @@
+# The greeter role's argument specs (backlog 7.75 gate): the scenario pushes
+# a change to them (variables_test.go, greeterSpecsChanged).
+argument_specs:
+  main:
+    short_description: Greets someone
+    options:
+      greeter_color:
+        type: str
+        choices: [red, blue]
+        default: red
+        description: The greeting's color
+      greeter_count:
+        type: int
+        default: 1
+        description: How often to greet

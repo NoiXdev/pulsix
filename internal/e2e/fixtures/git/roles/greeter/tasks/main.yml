@@ -1,0 +1,6 @@
+# Exec-only (debug is a controller-side action plugin), so the role also
+# runs against the scenario's exec-only SSH server. Argument spec defaults
+# are not variables in Ansible, so the task reads only the play's value.
+- name: Pulsix greeter
+  ansible.builtin.debug:
+    msg: "Hello {{ greeting_name }}"
