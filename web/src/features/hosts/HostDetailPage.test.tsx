@@ -101,6 +101,29 @@ describe('HostDetailPage', () => {
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(sections);
   });
 
+  it('reads the organization once for the whole page', async () => {
+    let orgGets = 0;
+    mockApi(
+      hostRoutes(
+        { host: { managed: true } },
+        {
+          'GET /api/v1/orgs/acme': () => {
+            orgGets += 1;
+            return orgBody('admin');
+          },
+        },
+      ),
+    );
+    renderPage();
+
+    // The page's own role query is the only one: the sidebar and the host
+    // actions take the role from it rather than asking again.
+    await screen.findByRole('button', { name: 'Run command' });
+    await screen.findByRole('heading', { level: 1, name: 'web-04.fra' });
+    await waitFor(() => expect(screen.getByTestId('host-facts')).toHaveTextContent('fra-1'));
+    expect(orgGets).toBe(1);
+  });
+
   it('offers snooze on the Alerts section to checks.write and nothing to a viewer', async () => {
     const routes = (role: string) =>
       hostRoutes(

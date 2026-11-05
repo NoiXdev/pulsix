@@ -11,6 +11,7 @@ import { useHostQuery } from '../../api/hooks/useTags.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useAgents } from '../../api/hooks/useAgents.ts';
+import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { HostRow } from './HostRow.tsx';
 import { HostDialog } from './HostDialog.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
@@ -47,6 +48,7 @@ export function HostsListPage() {
   const hosts = useHosts(org, filter);
   const zones = useZones(org);
   const agents = useAgents(org);
+  const role = useOrg(org).data?.org.role;
   const hostQuery = useHostQuery(org);
 
   async function runSelector(e: FormEvent) {
@@ -170,7 +172,7 @@ export function HostsListPage() {
           </GridRow>
         )}
         {displayedHosts.map((h) => (
-          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} agentStatus={agentStatusByHost.get(h.id)} />
+          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} agentStatus={agentStatusByHost.get(h.id)} role={role} />
         ))}
       </Card>
       {!selectorActive && hosts.hasNextPage && (

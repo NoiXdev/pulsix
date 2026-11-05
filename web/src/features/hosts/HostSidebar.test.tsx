@@ -3,14 +3,13 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { fetchMock } from '../../test/fetchMock.ts';
-import { QueryClient } from '@tanstack/react-query';
 import { alertBody, HOST, hostRoutes, orgBody, renderAt, type HostFixture } from '../../test/hostDetail.tsx';
 import type { Host } from '../../api/types.ts';
 import { HostSidebar } from './HostSidebar.tsx';
-import { useHostActions, type HostActions } from './useHostActions.tsx';
+import { useHostActions } from './useHostActions.tsx';
 
 function Harness({ host, role = 'admin' }: { host: Host; role?: string }) {
-  const actions = useHostActions('acme', host);
+  const actions = useHostActions('acme', host, role);
   return (
     <>
       <HostSidebar org="acme" host={host} role={role} actions={actions} />
@@ -244,34 +243,37 @@ describe('HostSidebar', () => {
   it('keeps a manual tag and a fact tag of the same key apart', async () => {
     const user = userEvent.setup();
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const puts: unknown[] = [];
-    const fact = { key: 'os', value: 'debian', source: 'fact' };
-    const manual = { key: 'os', value: 'ubuntu', source: 'manual' };
-    mockApi(
-      hostRoutes(
-        {},
-        {
-          'GET /api/v1/orgs/acme/hosts/h1/tags': () => ({ tags: puts.length ? [fact, manual] : [fact] }),
-          'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
-            puts.push(req.body);
-            return { tags: [fact, manual], host_revision: 4 };
+    try {
+      const puts: unknown[] = [];
+      const fact = { key: 'os', value: 'debian', source: 'fact' };
+      const manual = { key: 'os', value: 'ubuntu', source: 'manual' };
+      mockApi(
+        hostRoutes(
+          {},
+          {
+            'GET /api/v1/orgs/acme/hosts/h1/tags': () => ({ tags: puts.length ? [fact, manual] : [fact] }),
+            'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
+              puts.push(req.body);
+              return { tags: [fact, manual], host_revision: 4 };
+            },
           },
-        },
-      ),
-    );
-    renderSidebar();
+        ),
+      );
+      renderSidebar();
 
-    expect(await screen.findByText('os=debian')).toBeInTheDocument();
-    await user.type(screen.getByPlaceholderText('role=db'), 'os=ubuntu');
-    await user.click(screen.getByRole('button', { name: 'Add tag' }));
+      expect(await screen.findByText('os=debian')).toBeInTheDocument();
+      await user.type(screen.getByPlaceholderText('role=db'), 'os=ubuntu');
+      await user.click(screen.getByRole('button', { name: 'Add tag' }));
 
-    await waitFor(() => expect(puts[0]).toEqual([{ key: 'os', value: 'ubuntu' }]));
-    expect(await screen.findByText('os=ubuntu')).toBeInTheDocument();
-    expect(screen.getByText('os=debian')).toBeInTheDocument();
-    // Two chips of one key must not share a React key.
-    const warnings = consoleError.mock.calls.filter((call) => String(call[0]).includes('same key'));
-    consoleError.mockRestore();
-    expect(warnings).toEqual([]);
+      await waitFor(() => expect(puts[0]).toEqual([{ key: 'os', value: 'ubuntu' }]));
+      expect(await screen.findByText('os=ubuntu')).toBeInTheDocument();
+      expect(screen.getByText('os=debian')).toBeInTheDocument();
+      // Two chips of one key must not share a React key.
+      const warnings = consoleError.mock.calls.filter((call) => String(call[0]).includes('same key'));
+      expect(warnings).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it('rejects a malformed tag chip inline without a round trip', async () => {
@@ -324,11 +326,7 @@ describe('HostSidebar', () => {
 
   it('gives a viewer read-only switches and no actions', async () => {
     mockApi(hostRoutes({ role: 'viewer', host: { managed: true } }));
-    // The role is already known, as it is on the page (which waits for it):
-    // otherwise every assertion below would also hold before it landed.
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    qc.setQueryData(['org', 'acme'], orgBody('viewer'));
-    renderAt(() => <Harness host={{ ...HOST, managed: true } as Host} role="viewer" />, qc);
+    renderAt(() => <Harness host={{ ...HOST, managed: true } as Host} role="viewer" />);
 
     expect(await screen.findByText('fra-1')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Managed' })).toBeDisabled();
@@ -340,7 +338,7 @@ describe('HostSidebar', () => {
     expect(screen.queryByPlaceholderText('role=db')).not.toBeInTheDocument();
   });
 
-  it('takes the role from its caller and never reads the organization itself', async () => {
+  it('takes the role from its caller, and so do its actions: no request for the organization', async () => {
     const asked: string[] = [];
     mockApi(
       hostRoutes(
@@ -353,24 +351,7 @@ describe('HostSidebar', () => {
         },
       ),
     );
-    // Actions are built by hand: useHostActions reads the org for the
-    // role too, and this test is about the sidebar's own requests.
-    const noop = () => undefined;
-    const actions: HostActions = {
-      canEdit: false,
-      canRun: false,
-      canSwitch: false,
-      canDelete: false,
-      open: noop,
-      edit: noop,
-      runCommand: noop,
-      runTemplate: noop,
-      toggleMonitoring: noop,
-      toggleManagement: noop,
-      remove: noop,
-      dialogs: null,
-    };
-    renderAt(() => <HostSidebar org="acme" host={{ ...HOST, managed: true } as Host} role="viewer" actions={actions} />);
+    renderAt(() => <Harness host={{ ...HOST, managed: true } as Host} role="viewer" />);
 
     expect(await screen.findByText('fra-1')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Managed' })).toBeDisabled();

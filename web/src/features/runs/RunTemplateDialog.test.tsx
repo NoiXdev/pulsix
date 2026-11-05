@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet, RouterProvider } from '@tanstack/react-router';
@@ -82,12 +82,16 @@ describe('RunTemplateDialog', () => {
     expect(closed).toBe(true);
   });
 
-  it('shows a refusal inline and stays open', async () => {
+  it('shows a refusal inline and stays open, and Run can be pressed again', async () => {
     const user = userEvent.setup();
     let closed = false;
+    let posts = 0;
     mockApi({
       'GET /api/v1/orgs/acme/job-templates': TEMPLATES,
-      'POST /api/v1/orgs/acme/job-templates/t1/run': () => problem(422, 'host is not among the template targets'),
+      'POST /api/v1/orgs/acme/job-templates/t1/run': () => {
+        posts += 1;
+        return problem(422, 'host is not among the template targets');
+      },
     });
     renderDialog(() => {
       closed = true;
@@ -101,6 +105,12 @@ describe('RunTemplateDialog', () => {
     expect(screen.getByRole('dialog', { name: 'Run template on web-01' })).toBeInTheDocument();
     expect(screen.queryByText('RUN VIEW')).not.toBeInTheDocument();
     expect(closed).toBe(false);
+
+    // A refusal ends the attempt: the lock a successful run keeps is lifted.
+    const run = within(dialog).getByRole('button', { name: 'Run' });
+    expect(run).toBeEnabled();
+    await user.click(run);
+    await waitFor(() => expect(posts).toBe(2));
   });
 
   it('says so and disables Run when the organization has no templates', async () => {

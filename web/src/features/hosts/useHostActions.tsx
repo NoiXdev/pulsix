@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { useDeleteHost, useSetHostCapabilities } from '../../api/hooks/useHosts.ts';
-import { useOrg } from '../../api/hooks/useOrgs.ts';
 import type { Host } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -33,14 +32,15 @@ export interface HostActions {
  * useHostActions is the host's action set shared by the list's row menu and
  * the host page's menu: what a role may do, and what each action does. The
  * dialogs are mounted only while open, so a long list does not carry a form
- * per row. `onDeleted` lets a caller that sits on the host's own page leave
+ * per row. The caller passes the caller's `role` (undefined while it is
+ * still loading, which offers nothing): it already holds the org, and a
+ * second read here would repeat that request. `onDeleted` lets a caller that sits on the host's own page leave
  * it once the host is gone.
  */
-export function useHostActions(org: string, host: Host, opts: { onDeleted?: () => void } = {}): HostActions {
+export function useHostActions(org: string, host: Host, role: string | undefined, opts: { onDeleted?: () => void } = {}): HostActions {
   const t = useT();
   const toast = useToast();
   const navigate = useNavigate();
-  const role = useOrg(org).data?.org.role;
   const setCapabilities = useSetHostCapabilities(org, host.id);
   const deleteHost = useDeleteHost(org);
   const [dialog, setDialog] = useState<'edit' | 'run' | 'template' | null>(null);

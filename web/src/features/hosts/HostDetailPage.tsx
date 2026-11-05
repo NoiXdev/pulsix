@@ -59,7 +59,7 @@ export function HostDetailPage() {
 function HostDetail({ org, host, role }: { org: string; host: Host; role: string }) {
   const t = useT();
   const navigate = useNavigate();
-  const actions = useHostActions(org, host, {
+  const actions = useHostActions(org, host, role, {
     onDeleted: () => void navigate({ to: '/o/$org/hosts', params: { org }, search: { q: undefined } }),
   });
   const canReadChecks = may(role, 'checks.read');

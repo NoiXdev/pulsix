@@ -22,6 +22,7 @@ export function HostRow({
   columns,
   zoneName,
   agentStatus,
+  role,
 }: {
   org: string;
   host: Host;
@@ -35,10 +36,13 @@ export function HostRow({
    * — which is what the dot showed for every host before there was any
    * monitoring backend at all. */
   agentStatus?: string;
+  /** The caller's role in the org, read once by the list; undefined
+   * until it is known. */
+  role?: string;
 }) {
   const t = useT();
   const tags = useHostTags(org, host.id);
-  const actions = useHostActions(org, host);
+  const actions = useHostActions(org, host, role);
   const agentStatusLabel = agentStatus && agentStatus in t.agents.status ? t.agents.status[agentStatus as keyof typeof t.agents.status] : (agentStatus ?? '');
 
   return (
