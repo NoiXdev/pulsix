@@ -401,6 +401,9 @@ func runGitUploadPack(sess glssh.Session, bare string) {
 // Task 9 fixture pattern; the outcome reads exactly the extra vars the
 // template set, so the retry path's var flip drives it end to end.
 //
+// The greeting event's result lists the extra var names the run received
+// (extravars_keys), so a test can assert which fields reached the run.
+//
 // An extra var named block_until, when set, names a file the fake polls
 // for right after the first event: the run blocks there until the file
 // appears (or 30s pass, a safety net), which is what the stream-cut gate
@@ -484,7 +487,10 @@ if extravars.get("should_fail") == "true":
     emit("runner_on_failed", {"host": host, "task": "Pulsix deliberate failure"}, "failed: [%s] pulsix e2e deliberate failure" % host)
     emit("playbook_on_stats", {"ok": {host: 1}, "changed": {}, "failures": {host: 1}, "dark": {}, "skipped": {}})
     sys.exit(2)
-emit("runner_on_ok", {"host": host, "task": "Pulsix greeting", "res": {"msg": greeting}}, 'ok: [%s] => {"msg": "%s"}' % (host, greeting))
+# The greeting's result also names every extra var the run received, so a
+# test can tell which fields reached the playbook (variables_test.go).
+emit("runner_on_ok", {"host": host, "task": "Pulsix greeting", "res": {"msg": greeting, "extravars_keys": sorted(extravars)}},
+     'ok: [%s] => {"msg": "%s"}' % (host, greeting))
 emit("runner_on_start", {"host": host, "task": "Pulsix marker", "task_action": "raw"})
 emit("runner_on_ok", {"host": host, "task": "Pulsix marker", "res": {"changed": True}}, "changed: [%s]" % host)
 emit("playbook_on_stats", {"ok": {host: 1}, "changed": {host: 1}, "failures": {}, "dark": {}, "skipped": {}})

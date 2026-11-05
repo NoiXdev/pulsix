@@ -11,7 +11,10 @@ package e2e
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,7 +153,7 @@ func (s *scenario) driveVariableSources() {
 	if f := s.fieldByNameOrFail(withValue, "greeting_name"); !isActive(f) || f.Origin != "source" {
 		s.t.Fatalf("greeting_name after the save = %+v, want active and still from the source", f)
 	}
-	s.runTemplateSucceeds(tid, "before the change")
+	s.assertRunExtraVars(s.runTemplateSucceeds(tid, "before the change"), "before the change")
 
 	// --- Automatic mode; a pushed change; the next sync applies it --------
 	var auto templateVarsOut
@@ -199,7 +202,7 @@ func (s *scenario) driveVariableSources() {
 		s.t.Fatalf("variables source = %+v, want commit %s", read.Source, secondCommit)
 	}
 
-	s.runTemplateSucceeds(tid, "after the change")
+	s.assertRunExtraVars(s.runTemplateSucceeds(tid, "after the change"), "after the change")
 }
 
 // assertDiscovered checks that the repository's last sync read
@@ -241,12 +244,49 @@ func (s *scenario) awaitTemplateVars(path string, timeout time.Duration, done fu
 	}
 }
 
-// runTemplateSucceeds runs the template and requires the run to succeed.
-func (s *scenario) runTemplateSucceeds(tid, when string) {
+// runTemplateSucceeds runs the template, requires the run to succeed and
+// returns its job id.
+func (s *scenario) runTemplateSucceeds(tid, when string) string {
 	s.t.Helper()
-	run := s.awaitJob(s.runTemplate(tid), "run", 90*time.Second)
+	id := s.runTemplate(tid)
+	run := s.awaitJob(id, "run", 90*time.Second)
 	if run.Job.Status != "succeeded" {
 		s.t.Fatalf("run %s = %q (error %q)%s", when, run.Job.Status, run.Job.Error, s.runnerOutput())
+	}
+	return id
+}
+
+// assertRunExtraVars checks which extra vars reached the run: the active
+// greeting_name does, no inactive greeter_* field does. The fake runner
+// reports the keys it received in its greeting event (harness_test.go);
+// the real ansible-runner pass has no such report, so it is skipped there.
+func (s *scenario) assertRunExtraVars(jobID, when string) {
+	s.t.Helper()
+	if os.Getenv("PULSIX_E2E_REAL_ANSIBLE") == "1" {
+		return
+	}
+	e := s.awaitEvents(jobID, 30*time.Second, func(e jobEventsOut) bool { return hasEvent(e, "ok", taskGreeting) })
+	var keys []string
+	for _, ev := range e.Events {
+		if ev.State != "ok" || ev.Task != taskGreeting {
+			continue
+		}
+		data, _ := ev.Payload["event_data"].(map[string]any)
+		res, _ := data["res"].(map[string]any)
+		list, _ := res["extravars_keys"].([]any)
+		for _, k := range list {
+			if name, ok := k.(string); ok {
+				keys = append(keys, name)
+			}
+		}
+	}
+	if !slices.Contains(keys, "greeting_name") {
+		s.t.Fatalf("extra vars of the run %s = %v, want greeting_name among them", when, keys)
+	}
+	for _, k := range keys {
+		if strings.HasPrefix(k, "greeter_") {
+			s.t.Fatalf("extra vars of the run %s = %v, want no inactive greeter_* field", when, keys)
+		}
 	}
 }
 
