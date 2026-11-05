@@ -163,6 +163,9 @@ func Load(env []string) (Config, error) {
 	if cfg.DataDir == "" {
 		cfg.DataDir = defaultDataDir
 	}
+	if strings.ContainsAny(cfg.DataDir, ":\n\r") {
+		return cfg, fmt.Errorf("%s %q must not contain ':' or a line break: the worker writes paths below it into each run's ansible.cfg, where ':' separates roles_path entries and a line break ends a setting", envDataDir, cfg.DataDir)
+	}
 	// The certificate bundle: either all three paths (the bundle `pulsix-manager
 	// worker add` prints) or none, then the identity directory token
 	// enrollment fills.

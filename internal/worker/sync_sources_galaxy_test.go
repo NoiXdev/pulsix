@@ -105,8 +105,8 @@ func TestSyncExecutorWithoutInstalledRoles(t *testing.T) {
 	if err := json.Unmarshal(raw, &want); err != nil {
 		t.Fatal(err)
 	}
-	if len(r.Notes) == 0 && len(want.Notes) == 0 { // the sync's prepend turns [] into null
-		r.Notes, want.Notes = nil, nil
+	if r.Notes == nil { // the sync's prepend must not turn [] into null
+		t.Fatal("report notes are nil, want an empty list")
 	}
 	if got := mustJSON(t, r); !bytes.Equal(got, mustJSON(t, want)) {
 		t.Fatalf("report = %s\nwant %s", got, mustJSON(t, want))

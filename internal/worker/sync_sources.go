@@ -87,7 +87,7 @@ func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath strin
 		if p := recover(); p != nil {
 			e.logger().ErrorContext(ctx, "read variable sources: panic", "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
 			r = unreadReport(commit, "reading the variable sources failed; no playbooks read")
-			r.Notes = append(notes, r.Notes...)
+			r.Notes = prependNotes(notes, r.Notes)
 		}
 	}()
 
@@ -101,7 +101,7 @@ func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath strin
 	if err != nil {
 		e.logger().WarnContext(ctx, "open the repository subpath", "err", err)
 		r = unreadReport(commit, "the repository subpath could not be opened; no playbooks discovered")
-		r.Notes = append(notes, r.Notes...)
+		r.Notes = prependNotes(notes, r.Notes)
 		return r
 	}
 	defer func() { _ = fsys.Close() }()
@@ -122,8 +122,16 @@ func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath strin
 		parse = varsource.ParseRepoWithRoles
 	}
 	r = parse(ctx, fsys, roles, commit)
-	r.Notes = append(notes, r.Notes...)
+	r.Notes = prependNotes(notes, r.Notes)
 	return r
+}
+
+// prependNotes is front followed by rest, never nil: an empty report keeps
+// "notes" a JSON list rather than null.
+func prependNotes(front, rest []varsource.Note) []varsource.Note {
+	out := make([]varsource.Note, 0, len(front)+len(rest))
+	out = append(out, front...)
+	return append(out, rest...)
 }
 
 // unreadReport is a Failed report: the repository was not read, one

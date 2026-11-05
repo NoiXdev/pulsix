@@ -108,6 +108,10 @@ flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
   saving such a definition is refused (422 at `body.extra_vars.<key>`). To
   fix one, declare the field in the definition's schema (or remove the
   value) and save it again; the save propagates to every projection.
+- **7.90, worker data dir:** a worker refuses to start when
+  `PULSIX_WORKER_DATA_DIR` contains `:` or a line break (a run's `roles_path`
+  and `local_tmp` would split there); move the data dir before upgrading such
+  a worker.
 
 ## Roll order
 

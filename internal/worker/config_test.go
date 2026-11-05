@@ -462,3 +462,41 @@ func mustZone(t *testing.T, s string) uuid.UUID {
 	}
 	return id
 }
+
+// TestLoadRefusesADataDirThatWouldSplitAnsibleCfg: the paths below the data
+// dir go into each run's ansible.cfg, where ':' separates roles_path entries
+// and a line break ends a setting.
+func TestLoadRefusesADataDirThatWouldSplitAnsibleCfg(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		dir     string
+		refused bool
+	}{
+		{"colon", "/data/a:b", true},
+		{"newline", "/data/a\nb", true},
+		{"carriage return", "/data/a\rb", true},
+		{"space", "/data/a b", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Load([]string{
+				"PULSIX_MANAGER_ADDR=manager.example.test:8444",
+				"PULSIX_WORKER_CERT=/c.pem",
+				"PULSIX_WORKER_KEY=/k.pem",
+				"PULSIX_CA_CERT=/ca.pem",
+				"PULSIX_WORKER_DATA_DIR=" + tc.dir,
+			})
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				if cfg.DataDir != tc.dir {
+					t.Errorf("DataDir = %q, want %q", cfg.DataDir, tc.dir)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), "PULSIX_WORKER_DATA_DIR") {
+				t.Fatalf("Load error = %v, want one naming PULSIX_WORKER_DATA_DIR", err)
+			}
+		})
+	}
+}
