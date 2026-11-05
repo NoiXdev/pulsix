@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { cn } from '../lib/utils.ts';
 import type { Tone } from './badge.tsx';
 
@@ -24,28 +24,35 @@ const OBSERVER_MARGIN = '-10% 0px -70% 0px';
  * order wins; when none does (a gap between sections) the previous one stays.
  * A current id that has left `ids` falls back to the first one.
  */
-function useCurrentSection(ids: string[]): string | undefined {
+function useCurrentSection(ids: string[]): { current: string | undefined; markHandled: (id: string) => void } {
   const [current, setCurrent] = useState<string | undefined>(ids[0]);
   const key = ids.join('\n');
-  // The hash names a section that may only exist once an async read is done
-  // (`/groups/x#members`), so it is acted on when it enters the nav, once per
-  // hash: the current section is seeded while rendering, the scroll follows
-  // in an effect, and a later nav change never pulls the page back.
+  // The URL hash may name a section that only exists once an async read is
+  // done (`/groups/x#members`), so a hash is acted on when its section enters
+  // the nav, once: the current section is seeded while rendering and the
+  // scroll follows in an effect. A hash the user produced on this page (a nav
+  // click, back/forward) is marked handled instead, because the browser has
+  // already scrolled there; acting on it at the next render would pull the
+  // page back from wherever the user has scrolled since.
   const hash = typeof window === 'undefined' ? '' : window.location.hash.slice(1);
-  const [seeded, setSeeded] = useState<string | null>(null);
-  if (hash !== '' && hash !== seeded && ids.includes(hash)) {
-    setSeeded(hash);
+  const [handled, setHandled] = useState<string[]>([]);
+  const [deepLink, setDeepLink] = useState<string | null>(null);
+  if (hash !== '' && !handled.includes(hash) && ids.includes(hash)) {
+    setHandled([...handled, hash]);
     setCurrent(hash);
+    setDeepLink(hash);
   }
-  const scrolled = useRef<string | null>(null);
+
+  const markHandled = (id: string) => setHandled((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  useEffect(() => {
+    const onHashChange = () => setHandled((prev) => (prev.includes(window.location.hash.slice(1)) ? prev : [...prev, window.location.hash.slice(1)]));
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
-    if (hash === '' || hash === scrolled.current || !key.split('\n').includes(hash)) return;
-    const el = document.getElementById(hash);
-    if (!el) return;
-    scrolled.current = hash;
-    el.scrollIntoView({ block: 'start' });
-  }, [key, hash]);
+    if (deepLink !== null) document.getElementById(deepLink)?.scrollIntoView({ block: 'start' });
+  }, [deepLink]);
 
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return;
@@ -73,7 +80,7 @@ function useCurrentSection(ids: string[]): string | undefined {
   // The nav can change under a live page (sections come and go with what the
   // host has); a seeded or observed id that is no longer in it falls back to
   // the first item instead of leaving nothing highlighted.
-  return current !== undefined && ids.includes(current) ? current : ids[0];
+  return { current: current !== undefined && ids.includes(current) ? current : ids[0], markHandled };
 }
 
 /**
@@ -92,7 +99,7 @@ export function DetailLayout({
   nav: SectionNavItem[];
   children: ReactNode;
 }) {
-  const current = useCurrentSection(nav.map((n) => n.id));
+  const { current, markHandled } = useCurrentSection(nav.map((n) => n.id));
 
   return (
     <div className="grid grid-cols-1 items-start gap-6 min-[1100px]:grid-cols-[300px_minmax(0,1fr)]">
@@ -108,6 +115,7 @@ export function DetailLayout({
                 <a
                   key={item.id}
                   href={`#${item.id}`}
+                  onClick={() => markHandled(item.id)}
                   aria-current={active ? 'location' : undefined}
                   className={cn(
                     'flex h-8 items-center gap-2 rounded-md px-3 text-[13px] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',

@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DetailLayout, DisabledHint, Section, SidebarFacts, SidebarHeading, type SectionNavItem } from './detail-layout.tsx';
 
 const NAV: SectionNavItem[] = [
@@ -128,8 +129,31 @@ describe('DetailLayout', () => {
 });
 
 describe('DetailLayout hash scroll', () => {
+  const original = Element.prototype.scrollIntoView;
+  let scroll: Mock<(arg?: boolean | ScrollIntoViewOptions) => void>;
+  let observe: (id: string) => void;
+
+  beforeEach(() => {
+    scroll = vi.fn<(arg?: boolean | ScrollIntoViewOptions) => void>();
+    Element.prototype.scrollIntoView = scroll;
+    // An observer the test drives: reports a section as the one in view.
+    let callback: IntersectionObserverCallback = () => {};
+    class FakeObserver {
+      constructor(cb: IntersectionObserverCallback) {
+        callback = cb;
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver);
+    observe = (id) =>
+      act(() => callback([{ target: document.getElementById(id), isIntersecting: true } as unknown as IntersectionObserverEntry], {} as IntersectionObserver));
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
+    Element.prototype.scrollIntoView = original;
     window.history.replaceState(null, '', '/');
   });
 
@@ -145,10 +169,7 @@ describe('DetailLayout hash scroll', () => {
   );
 
   it('scrolls once to the section named by the hash when it appears', () => {
-    vi.stubGlobal('IntersectionObserver', undefined);
     window.history.replaceState(null, '', '/#b');
-    const scroll = vi.fn();
-    Element.prototype.scrollIntoView = scroll;
 
     const { rerender } = render(layout(['a']));
     expect(scroll).not.toHaveBeenCalled();
@@ -161,6 +182,41 @@ describe('DetailLayout hash scroll', () => {
 
     rerender(layout(['a', 'b', 'c']));
     expect(scroll).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the observer take over from a deep link without scrolling again', () => {
+    window.history.replaceState(null, '', '/#b');
+    const { rerender } = render(layout(['a', 'b', 'c']));
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    observe('c');
+    expect(screen.getByRole('link', { name: 'c' })).toHaveAttribute('aria-current', 'location');
+    rerender(layout(['a', 'b', 'c']));
+    expect(scroll).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('link', { name: 'c' })).toHaveAttribute('aria-current', 'location');
+  });
+
+  it('does not pull the page back to a section the user clicked in the nav', async () => {
+    const user = userEvent.setup();
+    render(layout(['a', 'b', 'c']));
+    await user.click(screen.getByRole('link', { name: 'c' }));
+    expect(window.location.hash).toBe('#c');
+
+    // Scrolling on reports another section; the clicked hash must not win.
+    observe('b');
+    expect(scroll).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: 'b' })).toHaveAttribute('aria-current', 'location');
+    expect(screen.getByRole('link', { name: 'c' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('does not scroll for a hash change the browser made itself', () => {
+    render(layout(['a', 'b', 'c']));
+    act(() => {
+      window.location.hash = '#c';
+    });
+    observe('a');
+    expect(scroll).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: 'a' })).toHaveAttribute('aria-current', 'location');
   });
 });
 

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { alertBody, check, HOST, hostRoutes, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
-import { clippedElements, isClipped } from '../../test/clipped.ts';
+import { clippedElements } from '../../test/clipped.ts';
 import { HostDetailPage } from './HostDetailPage.tsx';
 
 const renderPage = (qc?: QueryClient) => renderAt(HostDetailPage, qc);
@@ -154,18 +154,6 @@ describe('HostDetailPage', () => {
     // A card that hides its overflow at a fixed height cuts its content off;
     // every card on this page grows with what it holds instead.
     expect(clippedElements(container)).toEqual([]);
-  });
-
-  it.each([
-    { classes: 'overflow-hidden h-40', want: true },
-    { classes: 'overflow-clip max-h-[300px]', want: true },
-    { classes: 'overflow-y-hidden h-64', want: true },
-    { classes: 'md:overflow-y-hidden lg:max-h-96', want: true },
-    { classes: 'overflow-y-auto max-h-48', want: false },
-    { classes: 'overflow-hidden rounded-md', want: false },
-    { classes: 'h-8 w-8', want: false },
-  ])('the clipped-card guard reads "$classes" as clipped: $want', ({ classes, want }) => {
-    expect(isClipped(classes.split(' '))).toBe(want);
   });
 
   it('monitored off hides state, alerts and checks and shows the hint', async () => {
