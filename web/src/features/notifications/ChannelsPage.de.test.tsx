@@ -57,13 +57,16 @@ describe('ChannelsPage in German', () => {
     expect(await screen.findByRole('heading', { name: 'Benachrichtigungen' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Kanal hinzufügen' })).toBeInTheDocument();
     expect(screen.getByText('aktiviert')).toBeInTheDocument();
+    // mail_available is false: the hint is written in German too.
+    expect(screen.getByText('E-Mail ist auf dieser Installation nicht eingerichtet')).toBeInTheDocument();
 
     // The digest's next run is written in the digest's own zone — 08:00 on
     // 7 July in Auckland — in the German format, and names that zone.
     expect(await screen.findByText('nächster Versand: 07.07.2026, 08:00 (Pacific/Auckland)')).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Wochenzusammenfassung' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Zustellungen von ops hook' }));
+    await user.click(screen.getByRole('button', { name: 'Aktionen für ops hook' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Zustellungen' }));
     const dialog = await screen.findByRole('dialog', { name: 'Zustellungen · ops hook' });
     expect(await within(dialog).findByText(/3 Versuche · the endpoint answered 503/)).toBeInTheDocument();
     expect(within(dialog).getByText('ausstehend')).toBeInTheDocument();

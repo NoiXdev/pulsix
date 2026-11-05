@@ -72,6 +72,7 @@ export const enNotifications = {
     noAccess: 'Notification channels are visible to operators and above.',
     subtitle: 'Where schedule results and the weekly digest are sent',
     add: 'Add channel',
+    mailOffTitle: 'E-mail is not set up on this installation',
     mailNote:
       "E-mail channels need the instance's outgoing mail settings, which an instance administrator sets under Settings → Outgoing mail.",
     columns: {
@@ -82,10 +83,9 @@ export const enNotifications = {
     },
     email: 'E-mail',
     webhook: 'Webhook',
-    log: 'Log',
-    logAria: (name: string) => `Deliveries of ${name}`,
-    test: 'Send test',
-    testAria: (name: string) => `Send test through ${name}`,
+    deliveriesItem: 'Deliveries',
+    testItem: 'Send test',
+    deleteItem: 'Delete…',
     empty: 'No channels yet.',
     testSent: (name: string) => `Test message sent through ${name}`,
     testFailed: (name: string, reason: string) => `Test through ${name} failed: ${reason}`,

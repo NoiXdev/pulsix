@@ -34,6 +34,12 @@ function renderPage(qc = new QueryClient({ defaultOptions: { queries: { retry: f
   return qc;
 }
 
+/** Opens a row's ⋯ menu and picks an item. */
+async function pick(user: ReturnType<typeof userEvent.setup>, channel: string, item: string) {
+  await user.click(await screen.findByRole('button', { name: `Actions for ${channel}` }));
+  await user.click(screen.getByRole('menuitem', { name: item }));
+}
+
 describe('ChannelsPage', () => {
   it('lists channels with their target and status, and admins manage them', async () => {
     mockApi({
@@ -48,7 +54,7 @@ describe('ChannelsPage', () => {
     expect(screen.getByText('ops@example.test')).toBeInTheDocument();
     expect(screen.getByText('disabled')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Add channel' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Send test through ops hook' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for ops hook' })).toBeInTheDocument();
   });
 
   it('operators read channels and their log but cannot change them', async () => {
@@ -67,8 +73,7 @@ describe('ChannelsPage', () => {
     renderPage();
     await screen.findByText('ops hook');
     expect(screen.queryByRole('button', { name: 'Add channel' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Send test through ops hook' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Deliveries of ops hook' }));
+    await pick(user, 'ops hook', 'Deliveries');
     const dialog = await screen.findByRole('dialog', { name: 'Deliveries · ops hook' });
     expect(await within(dialog).findByText(/2 attempts · the endpoint answered 503/)).toBeInTheDocument();
     expect(within(dialog).getAllByText(/sent|pending/)).toHaveLength(2);
@@ -93,7 +98,8 @@ describe('ChannelsPage', () => {
       },
     });
     renderPage();
-    expect(await screen.findByRole('note')).toHaveTextContent('outgoing mail settings');
+    expect(await screen.findByText('E-mail is not set up on this installation')).toBeInTheDocument();
+    expect(screen.getByText(/outgoing mail settings/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Add channel' }));
     const dialog = screen.getByRole('dialog', { name: 'Add channel' });
     // Picking the disabled E-mail row must be a no-op (Select.test.tsx's
@@ -140,7 +146,7 @@ describe('ChannelsPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Edit ops hook' }));
+    await pick(user, 'ops hook', 'Edit');
     const dialog = screen.getByRole('dialog', { name: 'Edit ops hook' });
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(put?.ifMatch).toBe('"2"'));
@@ -159,7 +165,7 @@ describe('ChannelsPage', () => {
       'POST /api/v1/orgs/acme/notification-channels/c1/test': { delivery: { id: 'd', event_kind: 'test', status: 'failed', attempts: 1, last_error: 'the endpoint answered 404', created_at: '' } },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Send test through ops hook' }));
+    await pick(user, 'ops hook', 'Send test');
     expect(await screen.findByText('Test through ops hook failed: the endpoint answered 404')).toBeInTheDocument();
   });
 
@@ -257,7 +263,7 @@ describe('the delivery log can show a message and send it again', () => {
     const user = userEvent.setup();
     openLog('operator');
     await screen.findByText('ops hook');
-    await user.click(screen.getByRole('button', { name: 'Deliveries of ops hook' }));
+    await pick(user, 'ops hook', 'Deliveries');
     const dialog = await screen.findByRole('dialog', { name: 'Deliveries · ops hook' });
     const row = (await within(dialog).findByText(/the endpoint answered 503/)).closest('[data-delivery]') as HTMLElement;
     await user.click(within(row).getByRole('button', { name: 'Show message' }));
@@ -277,7 +283,7 @@ describe('the delivery log can show a message and send it again', () => {
       },
     });
     await screen.findByText('ops hook');
-    await user.click(screen.getByRole('button', { name: 'Deliveries of ops hook' }));
+    await pick(user, 'ops hook', 'Deliveries');
     const dialog = await screen.findByRole('dialog', { name: 'Deliveries · ops hook' });
     const failedRow = (await within(dialog).findByText(/the endpoint answered 503/)).closest('[data-delivery]') as HTMLElement;
     const sentRow = within(dialog).getByText('test').closest('[data-delivery]') as HTMLElement;
@@ -293,7 +299,7 @@ describe('the delivery log can show a message and send it again', () => {
     const user = userEvent.setup();
     openLog('operator');
     await screen.findByText('ops hook');
-    await user.click(screen.getByRole('button', { name: 'Deliveries of ops hook' }));
+    await pick(user, 'ops hook', 'Deliveries');
     const dialog = await screen.findByRole('dialog', { name: 'Deliveries · ops hook' });
     await within(dialog).findByText(/the endpoint answered 503/);
     expect(within(dialog).queryByRole('button', { name: 'Send again' })).toBeNull();

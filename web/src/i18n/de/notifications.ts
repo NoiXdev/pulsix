@@ -66,6 +66,7 @@ export const deNotifications: Messages['notifications'] = {
     noAccess: 'Benachrichtigungskanäle sind ab der Rolle Operator sichtbar.',
     subtitle: 'Wohin die Ergebnisse von Zeitplänen und die Wochenzusammenfassung gesendet werden',
     add: 'Kanal hinzufügen',
+    mailOffTitle: 'E-Mail ist auf dieser Installation nicht eingerichtet',
     mailNote:
       'E-Mail-Kanäle benötigen die Einstellungen für ausgehende E-Mails der Instanz, die ein Instanzadministrator unter Einstellungen → E-Mail-Versand festlegt.',
     columns: {
@@ -76,10 +77,9 @@ export const deNotifications: Messages['notifications'] = {
     },
     email: 'E-Mail',
     webhook: 'Webhook',
-    log: 'Protokoll',
-    logAria: (name: string) => `Zustellungen von ${name}`,
-    test: 'Test senden',
-    testAria: (name: string) => `Test über ${name} senden`,
+    deliveriesItem: 'Zustellungen',
+    testItem: 'Test senden',
+    deleteItem: 'Löschen…',
     empty: 'Noch keine Kanäle.',
     testSent: (name: string) => `Testnachricht über ${name} gesendet`,
     testFailed: (name: string, reason: string) => `Test über ${name} fehlgeschlagen: ${reason}`,

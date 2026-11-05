@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Bell } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Pill } from '../../ui/badge.tsx';
+import { DisabledHint } from '../../ui/detail-layout.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -13,15 +13,11 @@ import { may } from '../../lib/roles.ts';
 import type { NotifyChannel } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
 import { ChannelDialog } from './ChannelDialog.tsx';
+import { ChannelRow } from './ChannelRow.tsx';
 import { DeliveryLog } from './DeliveryLog.tsx';
 import { DigestCard } from './DigestCard.tsx';
 
-const COLUMNS = 'minmax(0, 0.8fr) 90px minmax(0, 1.2fr) 90px 260px';
-
-function target(c: NotifyChannel): string {
-  if (c.email) return (c.email.recipients ?? []).join(', ');
-  return c.webhook ? `${c.webhook.method} ${c.webhook.url}` : '';
-}
+const COLUMNS = 'minmax(0, 0.8fr) 90px minmax(0, 1.2fr) 90px 40px';
 
 /** ChannelsPage is Settings → Notifications (spec 2026-09-18 §5): the
  * organization's e-mail and webhook channels with Send test and each
@@ -98,9 +94,7 @@ export function ChannelsPage() {
         )}
       </div>
       {!mailAvailable && (
-        <p className="text-xs text-muted-foreground" role="note">
-          {c8.mailNote}
-        </p>
+        <DisabledHint title={c8.mailOffTitle} body={c8.mailNote} />
       )}
       <Card>
         <GridHeader columns={COLUMNS}>
@@ -111,32 +105,17 @@ export function ChannelsPage() {
           <span />
         </GridHeader>
         {list.map((c) => (
-          <GridRow key={c.id} columns={COLUMNS}>
-            <span className="truncate text-[13px] font-medium" data-row>
-              {c.name}
-            </span>
-            <span className="text-xs">{c.kind === 'email' ? c8.email : c8.webhook}</span>
-            <span className="truncate font-mono text-xs text-muted-foreground">{target(c)}</span>
-            <span>{c.enabled ? <Pill tone="ok">{m.enabled}</Pill> : <Pill tone="unknown">{m.disabled}</Pill>}</span>
-            <span className="flex justify-end gap-1">
-              <Button type="button" variant="ghost" aria-label={c8.logAria(c.name)} onClick={() => setLogOf(c)}>
-                {c8.log}
-              </Button>
-              {canWrite && (
-                <>
-                  <Button type="button" variant="ghost" aria-label={c8.testAria(c.name)} onClick={() => void onTest(c)} disabled={test.isPending}>
-                    {c8.test}
-                  </Button>
-                  <Button type="button" variant="ghost" aria-label={m.editAria(c.name)} onClick={() => setEditing(c)}>
-                    {m.edit}
-                  </Button>
-                  <Button type="button" variant="destructive" aria-label={m.deleteAria(c.name)} onClick={() => void onDelete(c)}>
-                    {t.common.delete}
-                  </Button>
-                </>
-              )}
-            </span>
-          </GridRow>
+          <ChannelRow
+            key={c.id}
+            channel={c}
+            columns={COLUMNS}
+            canWrite={canWrite}
+            testing={test.isPending}
+            onLog={setLogOf}
+            onTest={(ch) => void onTest(ch)}
+            onEdit={setEditing}
+            onDelete={(ch) => void onDelete(ch)}
+          />
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{c8.empty}</p>}
       </Card>
