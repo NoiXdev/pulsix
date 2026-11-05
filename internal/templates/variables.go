@@ -6,7 +6,10 @@
 package templates
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -218,4 +221,38 @@ func withCarriedOver(sc *schema.Schema, incoming, stored map[string]any) map[str
 		return incoming
 	}
 	return carryOver(sc.Fields, incoming, stored)
+}
+
+// buildKeepingValues is build for a template save (Update) whose values
+// failed validation: when the write keeps the schema and every stored value
+// as it is — the template dialog echoes them while a person changes the
+// template's other settings — a required field without a value is not
+// that save's to fix. An automatic apply may have added one; the variables
+// page and an apply insist on its value. The write is built again with
+// the top-level fields not required (every other check runs as before)
+// and taken only when it stores the same schema and values; otherwise
+// failed, build's error, is returned.
+func (s *Service) buildKeepingValues(ctx context.Context, in UpdateInput, isProjection bool, vars map[string]any, cur Template, failed error) (Template, error) {
+	var ve *schema.ValidationError
+	if !errors.As(failed, &ve) || in.ExtraVarsSchema == nil || !sameJSON(in.ExtraVarsSchema, cur.ExtraVarsSchema) {
+		return Template{}, failed
+	}
+	relaxed := &schema.Schema{Fields: slices.Clone(in.ExtraVarsSchema.Fields)}
+	for i := range relaxed.Fields {
+		relaxed.Fields[i].Required = false
+	}
+	t, err := s.build(ctx, cur.OrgID, cur.ID, in.Name, in.PlaybookID, isProjection, in.Scope, in.Limit, vars, relaxed, in.CredentialID, cur, in.VaultCredentials)
+	if err != nil || !sameJSON(t.ExtraVars, cur.ExtraVars) {
+		return Template{}, failed
+	}
+	t.ExtraVarsSchema = in.ExtraVarsSchema
+	return t, nil
+}
+
+// sameJSON reports whether a and b encode to the same JSON, as the
+// database stores them.
+func sameJSON(a, b any) bool {
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && bytes.Equal(ja, jb)
 }

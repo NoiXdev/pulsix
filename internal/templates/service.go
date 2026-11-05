@@ -308,7 +308,9 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 }
 
 // Update validates the input and replaces an existing template's fields,
-// including its own labelled vault credential set.
+// including its own labelled vault credential set. A save that keeps the
+// schema and the stored values as they are does not insist on a required
+// field's value (buildKeepingValues).
 //
 // A projected template (SharedTemplateID set) refuses any attempt to
 // change name, playbook_id, limit, extra vars or their schema — spec
@@ -347,7 +349,9 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	}
 	t, err := s.build(ctx, orgID, id, in.Name, in.PlaybookID, isProjection, in.Scope, in.Limit, vars, in.ExtraVarsSchema, in.CredentialID, cur, in.VaultCredentials)
 	if err != nil {
-		return Template{}, err
+		if t, err = s.buildKeepingValues(ctx, in, isProjection, vars, cur, err); err != nil {
+			return Template{}, err
+		}
 	}
 	t.SharedTemplateID = cur.SharedTemplateID
 	var updated Template
