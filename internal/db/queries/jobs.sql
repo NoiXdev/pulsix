@@ -1,8 +1,22 @@
 -- name: CreateJob :one
-INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
-                  depends_on, rotation_credential_id, trigger_ref, hosts_excluded)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-RETURNING *;
+-- Every insert path of a job goes through this one statement, which also
+-- links the job to the hosts it targets in job_hosts (migration 00082,
+-- backlog 7.84), so no caller can forget the links. The join on hosts
+-- links a host named twice once and skips an id that names no host of the
+-- job's organization; jobs.host_ids keeps the targets as given.
+WITH j AS (
+  INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
+                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+  RETURNING *
+), linked AS (
+  INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
+  SELECT DISTINCT j.org_id, j.id, h.id, j.created_at
+  FROM j
+  CROSS JOIN LATERAL unnest(j.host_ids) AS t(host_id)
+  JOIN hosts h ON h.org_id = j.org_id AND h.id = t.host_id
+)
+SELECT * FROM j;
 
 -- name: ReserveRunGroup :one
 -- The idempotency claim (migration 00067): the first caller for (org, key)
@@ -39,17 +53,13 @@ LEFT JOIN job_templates AS jt ON jt.id = j.template_id
 WHERE j.org_id = $1 AND j.id = $2;
 
 -- name: ListJobs :many
--- Every optional filter (zone, status, kind, template, run group, and the
--- cursor's own (created_at, id) keyset pair) is expressed as "param IS
--- NULL OR <condition>", the same one-query-serves-every-combination shape
--- ListHosts uses. Ordering is descending on (created_at, id) — newest runs
--- first, id as the tiebreaker — so the cursor condition resumes strictly
--- before the last row of the previous page.
---
--- host_id keeps the runs that TARGETED the host (jobs.host_ids contains
--- it). It is written as array containment (@>) rather than "= ANY(...)"
--- because only the containment operator can use the GIN index of
--- migration 00079.
+-- Every optional filter (zone, status, kind, template, run group, trigger,
+-- trigger ref, and the cursor's own (created_at, id) keyset pair) is
+-- expressed as "param IS NULL OR <condition>", the same
+-- one-query-serves-every-combination shape ListHosts uses. Ordering is
+-- descending on (created_at, id) — newest runs first, id as the tiebreaker
+-- — so the cursor condition resumes strictly before the last row of the
+-- previous page. The runs of one host are ListJobsForHost.
 SELECT * FROM jobs
 WHERE org_id = sqlc.arg(org_id)
   AND (sqlc.narg(zone_id)::uuid IS NULL OR zone_id = sqlc.narg(zone_id)::uuid)
@@ -59,12 +69,41 @@ WHERE org_id = sqlc.arg(org_id)
   AND (sqlc.narg(run_group_id)::uuid IS NULL OR run_group_id = sqlc.narg(run_group_id)::uuid)
   AND (sqlc.narg(trigger)::text IS NULL OR trigger = sqlc.narg(trigger)::text)
   AND (sqlc.narg(trigger_ref)::uuid IS NULL OR trigger_ref = sqlc.narg(trigger_ref)::uuid)
-  AND (sqlc.narg(host_id)::uuid IS NULL OR host_ids @> ARRAY[sqlc.narg(host_id)::uuid])
   AND (
     sqlc.narg(cursor_at)::timestamptz IS NULL
     OR (created_at, id) < (sqlc.narg(cursor_at)::timestamptz, sqlc.narg(cursor_id)::uuid)
   )
 ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(row_limit);
+
+-- name: ListJobsForHost :many
+-- ListJobs for the runs that targeted one host, read through job_hosts
+-- (migration 00082, backlog 7.84). It is its own query because row-level
+-- security keeps a non-leakproof operator out of an index scan: the
+-- former "host_ids @> ARRAY[$host]" condition could not use its GIN index
+-- as the app role and scanned the organization's whole run history, while
+-- uuid equality on job_hosts.host_id is leakproof, and an optional
+-- "$host IS NULL OR ..." condition would not be an index condition under a
+-- generic plan either. The link carries its job's created_at, so the order
+-- and the (created_at, id) cursor read job_hosts_host_idx in index order.
+-- The remaining optional filters match ListJobs, on the joined job.
+SELECT sqlc.embed(j)
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = sqlc.arg(org_id)
+  AND jh.host_id = sqlc.arg(host_id)
+  AND (sqlc.narg(zone_id)::uuid IS NULL OR j.zone_id = sqlc.narg(zone_id)::uuid)
+  AND (sqlc.narg(status)::text IS NULL OR j.status = sqlc.narg(status)::text)
+  AND (sqlc.narg(kind)::text IS NULL OR j.kind = sqlc.narg(kind)::text)
+  AND (sqlc.narg(template_id)::uuid IS NULL OR j.template_id = sqlc.narg(template_id)::uuid)
+  AND (sqlc.narg(run_group_id)::uuid IS NULL OR j.run_group_id = sqlc.narg(run_group_id)::uuid)
+  AND (sqlc.narg(trigger)::text IS NULL OR j.trigger = sqlc.narg(trigger)::text)
+  AND (sqlc.narg(trigger_ref)::uuid IS NULL OR j.trigger_ref = sqlc.narg(trigger_ref)::uuid)
+  AND (
+    sqlc.narg(cursor_at)::timestamptz IS NULL
+    OR (jh.created_at, jh.job_id) < (sqlc.narg(cursor_at)::timestamptz, sqlc.narg(cursor_id)::uuid)
+  )
+ORDER BY jh.created_at DESC, jh.job_id DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: CancelJob :one

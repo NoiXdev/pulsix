@@ -38,6 +38,13 @@ an operator can count on. The operator's steps are in
   history expect the manager's first start after the upgrade, which runs the
   migration, to take correspondingly longer,
   and upgrade outside busy automation windows.
+- **Migration 00082 fills a table from the run history.** It adds `job_hosts`,
+  which links every run to the hosts it targeted and serves a host's run list,
+  and fills it once from the existing runs in the same transaction. Its time
+  grows with runs × hosts per run; as with 00079, upgrade outside busy
+  automation windows. It then drops `jobs_host_ids_idx` (00079), which nothing
+  reads any more. Dropping an index removes no data: a previous-minor manager
+  still lists a host's runs correctly, only slower.
 
 ## A database newer than the binary is refused
 

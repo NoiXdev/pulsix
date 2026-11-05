@@ -100,8 +100,10 @@ func (emptyPins) PinnedKeys(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.U
 	return map[uuid.UUID]string{}, nil
 }
 
-// TestSQLStoreListJobsByHost: the host filter returns exactly the runs whose
-// host_ids contain the host, newest first, and nothing else.
+// TestSQLStoreListJobsByHost: the host filter returns exactly the runs that
+// targeted the host, newest first, nothing else, and pages through them
+// with the same cursor as the unfiltered list (backlog 7.84: the filter
+// reads job_hosts).
 func TestSQLStoreListJobsByHost(t *testing.T) {
 	d := testdb.Open(t)
 	q := gen.New(d.Pool())
@@ -110,20 +112,18 @@ func TestSQLStoreListJobsByHost(t *testing.T) {
 	scoped := db.WithOrgScope(ctx, org)
 	zone := seedZone(t, d, org)
 
-	hostA, hostB := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	base := time.Now().Add(-time.Hour)
-	mk := func(age time.Duration, hosts ...uuid.UUID) jobs.Job {
+	hostA, hostB := seedHost(t, d, org, zone, "a"), seedHost(t, d, org, zone, "b")
+	mk := func(hosts ...uuid.UUID) jobs.Job {
 		j := newJob(org, zone, jobs.KindRun, jobs.StatusQueued)
 		j.HostIDs = hosts
-		j.CreatedAt = base.Add(age)
 		if err := store.CreateJob(scoped, j, nil); err != nil {
 			t.Fatal(err)
 		}
 		return j
 	}
-	oldest := mk(0, hostA)
-	mk(time.Minute, hostB)
-	newest := mk(2*time.Minute, hostB, hostA)
+	oldest := mk(hostA)
+	mk(hostB)
+	newest := mk(hostB, hostA)
 
 	got, next, err := store.ListJobs(scoped, org, jobs.Filter{HostID: &hostA}, "", 10)
 	if err != nil || next != "" {
@@ -138,6 +138,15 @@ func TestSQLStoreListJobsByHost(t *testing.T) {
 	unknown := uuid.Must(uuid.NewV7())
 	if none, _, err := store.ListJobs(scoped, org, jobs.Filter{HostID: &unknown}, "", 10); err != nil || len(none) != 0 {
 		t.Fatalf("unknown host = %d, %v", len(none), err)
+	}
+
+	first, cursor, err := store.ListJobs(scoped, org, jobs.Filter{HostID: &hostA}, "", 1)
+	if err != nil || len(first) != 1 || first[0].ID != newest.ID || cursor == "" {
+		t.Fatalf("first page by host A = %v, next %q, %v; want [%s] and a cursor", first, cursor, err, newest.ID)
+	}
+	second, end, err := store.ListJobs(scoped, org, jobs.Filter{HostID: &hostA}, cursor, 1)
+	if err != nil || len(second) != 1 || second[0].ID != oldest.ID || end != "" {
+		t.Fatalf("second page by host A = %v, next %q, %v; want [%s] and no cursor", second, end, err, oldest.ID)
 	}
 }
 
@@ -407,6 +416,18 @@ func seedZone(t *testing.T, d *db.DB, org uuid.UUID) uuid.UUID {
 	id := uuid.Must(uuid.NewV7())
 	if _, err := d.Pool().Exec(context.Background(),
 		`INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, $3, 'test zone')`, id, org, "z-"+id.String()[24:]); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// seedHost inserts one host of org in zone and returns its id: the runs
+// list of a host reads job_hosts, which links only hosts that exist.
+func seedHost(t *testing.T, d *db.DB, org, zone uuid.UUID, name string) uuid.UUID {
+	t.Helper()
+	id := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(context.Background(),
+		`INSERT INTO hosts (id, org_id, zone_id, name, address) VALUES ($1, $2, $3, $4, '10.0.0.1')`, id, org, zone, name); err != nil {
 		t.Fatal(err)
 	}
 	return id

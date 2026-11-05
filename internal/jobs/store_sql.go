@@ -176,41 +176,6 @@ func (s *SQLStore) GetJob(ctx context.Context, orgID, id uuid.UUID) (Job, error)
 	return toJobDetail(row), nil
 }
 
-func (s *SQLStore) ListJobs(ctx context.Context, orgID uuid.UUID, f Filter, cursor string, limit int) ([]Job, string, error) {
-	cursorAt, cursorID, err := DecodeCursor(cursor)
-	if err != nil {
-		return nil, "", err
-	}
-	rows, err := s.q.ListJobs(ctx, gen.ListJobsParams{
-		OrgID:      orgID,
-		ZoneID:     uuidToPg(f.ZoneID),
-		Status:     textToPg(statusPtr(f.Status)),
-		Kind:       textToPg(kindPtr(f.Kind)),
-		TemplateID: uuidToPg(f.TemplateID),
-		RunGroupID: uuidToPg(f.RunGroupID),
-		Trigger:    textToPg(f.Trigger),
-		TriggerRef: uuidToPg(f.TriggerRef),
-		HostID:     uuidToPg(f.HostID),
-		CursorAt:   timeToPg(cursor, cursorAt),
-		CursorID:   uuidToPg(cursorIDPtr(cursor, cursorID)),
-		RowLimit:   int32(limit + 1), //nolint:gosec // limit is clamped to MaxListLimit by Service.List before it ever reaches here
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("list jobs: %w", err)
-	}
-	out := make([]Job, len(rows))
-	for i, r := range rows {
-		out[i] = toJob(r)
-	}
-	next := ""
-	if len(out) > limit {
-		last := out[limit-1]
-		next = EncodeCursor(last.CreatedAt, last.ID)
-		out = out[:limit]
-	}
-	return out, next, nil
-}
-
 func (s *SQLStore) CancelJob(ctx context.Context, orgID, id uuid.UUID) (Status, error) {
 	status, err := s.q.CancelJob(ctx, gen.CancelJobParams{OrgID: orgID, ID: id})
 	if err != nil {
@@ -403,50 +368,4 @@ func (s *SQLStore) GroupSummaries(ctx context.Context, orgID uuid.UUID, groupIDs
 		return nil, fmt.Errorf("summarise run groups: %w", err)
 	}
 	return out, nil
-}
-
-// pgtype helpers for the optional ListJobs filters and cursor, mirroring
-// hosts.SQLStore's cursorToPg shape.
-func uuidToPg(id *uuid.UUID) pgtype.UUID {
-	if id == nil {
-		return pgtype.UUID{}
-	}
-	return pgtype.UUID{Bytes: *id, Valid: true}
-}
-
-func textToPg(s *string) *string {
-	if s == nil || *s == "" {
-		return nil
-	}
-	return s
-}
-
-func timeToPg(cursor string, at time.Time) pgtype.Timestamptz {
-	if cursor == "" {
-		return pgtype.Timestamptz{}
-	}
-	return pgtype.Timestamptz{Time: at, Valid: true}
-}
-
-func cursorIDPtr(cursor string, id uuid.UUID) *uuid.UUID {
-	if cursor == "" {
-		return nil
-	}
-	return &id
-}
-
-func statusPtr(s *Status) *string {
-	if s == nil {
-		return nil
-	}
-	v := string(*s)
-	return &v
-}
-
-func kindPtr(k *Kind) *string {
-	if k == nil {
-		return nil
-	}
-	v := string(*k)
-	return &v
 }

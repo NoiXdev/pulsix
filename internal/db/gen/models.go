@@ -569,6 +569,13 @@ type JobEvent struct {
 	Attempt int32     `json:"attempt"`
 }
 
+type JobHost struct {
+	OrgID     uuid.UUID `json:"org_id"`
+	JobID     uuid.UUID `json:"job_id"`
+	HostID    uuid.UUID `json:"host_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type JobIdempotencyKey struct {
 	OrgID          uuid.UUID `json:"org_id"`
 	IdempotencyKey string    `json:"idempotency_key"`

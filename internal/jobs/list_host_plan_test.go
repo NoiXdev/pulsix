@@ -17,7 +17,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/testdb"
 )
 
-const hostFilterIndex = "jobs_host_ids_idx"
+const hostFilterIndex = "job_hosts_host_idx"
 
 // generatedQuery returns the raw SQL of the const constName declared in
 // internal/db/gen/jobs.sql.go, parsed from the source so the plan tests
@@ -78,9 +78,20 @@ func planUsesIndex(node any, index string) bool {
 	return false
 }
 
-// seedHostFilterJobs fills one organization with 50 000 jobs, each
-// targeting one to three of 200 hosts and spread over 50 000 minutes, and
-// analyzes the table so the planner sees realistic statistics. It returns
+// jobHostsBackfill is the statement migration 00082 fills job_hosts with
+// from the run history: one link per distinct (job, host) pair whose host
+// still exists in the job's organization, carrying the job's created_at.
+const jobHostsBackfill = `
+INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
+SELECT DISTINCT j.org_id, j.id, h.id, j.created_at
+FROM jobs j
+CROSS JOIN LATERAL unnest(j.host_ids) AS t(host_id)
+JOIN hosts h ON h.org_id = j.org_id AND h.id = t.host_id`
+
+// seedHostFilterJobs fills one organization with 200 hosts and 50 000
+// jobs, each targeting one to three of them and spread over 50 000
+// minutes, links them through jobHostsBackfill and analyzes both tables
+// so the planner sees realistic statistics. It returns
 // the organization, one host id and a pool bound to pulsix_app (RLS in
 // force, as in production); the seed and ANALYZE run as the superuser.
 func seedHostFilterJobs(t *testing.T) (org, host uuid.UUID, app *db.DB) {
@@ -105,6 +116,12 @@ func seedHostFilterJobs(t *testing.T) (org, host uuid.UUID, app *db.DB) {
 		hosts[i] = uuid.Must(uuid.NewV7())
 	}
 	if _, err := owner.Pool().Exec(ctx, `
+INSERT INTO hosts (id, org_id, zone_id, name)
+SELECT h.id, $1, $2, 'h-' || h.n
+FROM unnest($3::uuid[]) WITH ORDINALITY AS h(id, n)`, org, zone, hosts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Pool().Exec(ctx, `
 INSERT INTO jobs (id, org_id, zone_id, kind, host_ids, run_group_id, created_at)
 SELECT gen_random_uuid(), $1, $2, 'run',
        ARRAY(SELECT ($3::uuid[])[1 + (random() * 199)::int] FROM generate_series(1, 1 + (g % 3))),
@@ -112,7 +129,10 @@ SELECT gen_random_uuid(), $1, $2, 'run',
 FROM generate_series(1, 50000) AS g`, org, zone, hosts); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := owner.Pool().Exec(ctx, `ANALYZE jobs`); err != nil {
+	if _, err := owner.Pool().Exec(ctx, jobHostsBackfill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.Pool().Exec(ctx, `ANALYZE jobs, job_hosts`); err != nil {
 		t.Fatal(err)
 	}
 	return org, hosts[0], app
@@ -130,7 +150,13 @@ func explainGeneric(t *testing.T, app *db.DB, org uuid.UUID, query, execArgs str
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	// A prepared statement belongs to the session, not the transaction:
+	// deallocate it before the connection returns to the pool, or the next
+	// call on the same connection fails to prepare it again.
+	defer func() {
+		_, _ = tx.Exec(ctx, `DEALLOCATE list_jobs`)
+		_ = tx.Rollback(ctx)
+	}()
 	for _, stmt := range []string{
 		`SET LOCAL plan_cache_mode = force_generic_plan`,
 		`SELECT set_config('pulsix.org_id', '` + org.String() + `', true)`,
@@ -158,26 +184,30 @@ func explainGeneric(t *testing.T, app *db.DB, org uuid.UUID, query, execArgs str
 	return doc[0]["Plan"], millis
 }
 
-// TestListJobsHostFilterUsesTheGINIndexUnderAGenericPlan pins backlog 7.73:
-// the runs list filters a host with an array containment test that only the
-// GIN index jobs_host_ids_idx (migration 00079) can answer without scanning
-// the organization's whole run history. Every optional filter is written
-// "$n IS NULL OR ...", and a generic plan cannot fold the NULLs away, so
-// whether the planner still picks the index has to be measured on the exact
-// query the store runs, not assumed. SQLStore.ListJobs sends a host filter
-// to ListJobsForHost, whose host condition is unconditional; with it
-// optional (the original ListJobs form) the plan was a parallel sequential
-// scan of every job.
-func TestListJobsHostFilterUsesTheGINIndexUnderAGenericPlan(t *testing.T) {
+// TestListJobsHostFilterUsesTheLinkIndexUnderAGenericPlan pins backlog
+// 7.84: the runs list of one host reads the newest links of that host from
+// job_hosts_host_idx (migration 00082) instead of the organization's whole
+// run history. The GIN index jobs_host_ids_idx of 00079 (backlog 7.73)
+// never served the app role: row-level security only lets a user condition
+// into an index scan ahead of the policy's own when its operator is
+// leakproof, and array containment (@>) is not, so as pulsix_app the
+// planner scanned every job of the organization and filtered afterwards.
+// uuid equality is leakproof, so the link table's host_id = $2 is an index
+// condition under RLS, and the index's (created_at, job_id) order serves
+// the list's ORDER BY and keyset cursor without a sort. Every optional
+// filter is written "$n IS NULL OR ...", which a generic plan cannot fold
+// away, so the plan is measured on the exact query the store runs, as
+// pulsix_app under force_generic_plan, not assumed.
+func TestListJobsHostFilterUsesTheLinkIndexUnderAGenericPlan(t *testing.T) {
 	if testing.Short() {
 		t.Skip("seeds 50 000 jobs")
 	}
+	query := generatedQuery(t, "listJobsForHost")
 	org, host, app := seedHostFilterJobs(t)
 
-	// ListJobsForHostParams order: org, host, zone, status, kind, template,
-	// run group, trigger, trigger ref, cursor at, cursor id, limit.
+	// gen.ListJobsForHostParams order: org, host, zone, status, kind,
+	// template, run group, trigger, trigger ref, cursor at, cursor id, limit.
 	args := fmt.Sprintf(`'%s', '%s', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`, org, host)
-	query := generatedQuery(t, "listJobsForHost")
 
 	plan, _ := explainGeneric(t, app, org, query, args, false)
 	pretty, _ := json.MarshalIndent(plan, "", " ")

@@ -180,10 +180,19 @@ func (q *Queries) CountActiveRotationJobs(ctx context.Context, arg CountActiveRo
 }
 
 const createJob = `-- name: CreateJob :one
-INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
-                  depends_on, rotation_credential_id, trigger_ref, hosts_excluded)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play
+WITH j AS (
+  INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
+                    depends_on, rotation_credential_id, trigger_ref, hosts_excluded)
+  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+  RETURNING id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play
+), linked AS (
+  INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
+  SELECT DISTINCT j.org_id, j.id, h.id, j.created_at
+  FROM j
+  CROSS JOIN LATERAL unnest(j.host_ids) AS t(host_id)
+  JOIN hosts h ON h.org_id = j.org_id AND h.id = t.host_id
+)
+SELECT id, org_id, zone_id, kind, template_id, host_ids, status, worker_id, claimed_at, started_at, finished_at, stats, error, run_group_id, trigger, actor_id, payload, created_at, attempts, depends_on, rotation_credential_id, trigger_ref, run_group_reported, resolved_vault_identities, hosts_excluded, cancel_stops_play FROM j
 `
 
 type CreateJobParams struct {
@@ -204,7 +213,41 @@ type CreateJobParams struct {
 	HostsExcluded        int32       `json:"hosts_excluded"`
 }
 
-func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, error) {
+type CreateJobRow struct {
+	ID                      uuid.UUID          `json:"id"`
+	OrgID                   uuid.UUID          `json:"org_id"`
+	ZoneID                  uuid.UUID          `json:"zone_id"`
+	Kind                    string             `json:"kind"`
+	TemplateID              pgtype.UUID        `json:"template_id"`
+	HostIds                 []uuid.UUID        `json:"host_ids"`
+	Status                  string             `json:"status"`
+	WorkerID                pgtype.UUID        `json:"worker_id"`
+	ClaimedAt               pgtype.Timestamptz `json:"claimed_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	FinishedAt              pgtype.Timestamptz `json:"finished_at"`
+	Stats                   []byte             `json:"stats"`
+	Error                   string             `json:"error"`
+	RunGroupID              uuid.UUID          `json:"run_group_id"`
+	Trigger                 string             `json:"trigger"`
+	ActorID                 pgtype.UUID        `json:"actor_id"`
+	Payload                 []byte             `json:"payload"`
+	CreatedAt               time.Time          `json:"created_at"`
+	Attempts                int32              `json:"attempts"`
+	DependsOn               pgtype.UUID        `json:"depends_on"`
+	RotationCredentialID    pgtype.UUID        `json:"rotation_credential_id"`
+	TriggerRef              pgtype.UUID        `json:"trigger_ref"`
+	RunGroupReported        bool               `json:"run_group_reported"`
+	ResolvedVaultIdentities []byte             `json:"resolved_vault_identities"`
+	HostsExcluded           int32              `json:"hosts_excluded"`
+	CancelStopsPlay         *bool              `json:"cancel_stops_play"`
+}
+
+// Every insert path of a job goes through this one statement, which also
+// links the job to the hosts it targets in job_hosts (migration 00082,
+// backlog 7.84), so no caller can forget the links. The join on hosts
+// links a host named twice once and skips an id that names no host of the
+// job's organization; jobs.host_ids keeps the targets as given.
+func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (CreateJobRow, error) {
 	row := q.db.QueryRow(ctx, createJob,
 		arg.ID,
 		arg.OrgID,
@@ -222,7 +265,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		arg.TriggerRef,
 		arg.HostsExcluded,
 	)
-	var i Job
+	var i CreateJobRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -620,13 +663,12 @@ WHERE org_id = $1
   AND ($6::uuid IS NULL OR run_group_id = $6::uuid)
   AND ($7::text IS NULL OR trigger = $7::text)
   AND ($8::uuid IS NULL OR trigger_ref = $8::uuid)
-  AND ($9::uuid IS NULL OR host_ids @> ARRAY[$9::uuid])
   AND (
-    $10::timestamptz IS NULL
-    OR (created_at, id) < ($10::timestamptz, $11::uuid)
+    $9::timestamptz IS NULL
+    OR (created_at, id) < ($9::timestamptz, $10::uuid)
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $12
+LIMIT $11
 `
 
 type ListJobsParams struct {
@@ -638,23 +680,18 @@ type ListJobsParams struct {
 	RunGroupID pgtype.UUID        `json:"run_group_id"`
 	Trigger    *string            `json:"trigger"`
 	TriggerRef pgtype.UUID        `json:"trigger_ref"`
-	HostID     pgtype.UUID        `json:"host_id"`
 	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
 	CursorID   pgtype.UUID        `json:"cursor_id"`
 	RowLimit   int32              `json:"row_limit"`
 }
 
-// Every optional filter (zone, status, kind, template, run group, and the
-// cursor's own (created_at, id) keyset pair) is expressed as "param IS
-// NULL OR <condition>", the same one-query-serves-every-combination shape
-// ListHosts uses. Ordering is descending on (created_at, id) — newest runs
-// first, id as the tiebreaker — so the cursor condition resumes strictly
-// before the last row of the previous page.
-//
-// host_id keeps the runs that TARGETED the host (jobs.host_ids contains
-// it). It is written as array containment (@>) rather than "= ANY(...)"
-// because only the containment operator can use the GIN index of
-// migration 00079.
+// Every optional filter (zone, status, kind, template, run group, trigger,
+// trigger ref, and the cursor's own (created_at, id) keyset pair) is
+// expressed as "param IS NULL OR <condition>", the same
+// one-query-serves-every-combination shape ListHosts uses. Ordering is
+// descending on (created_at, id) — newest runs first, id as the tiebreaker
+// — so the cursor condition resumes strictly before the last row of the
+// previous page. The runs of one host are ListJobsForHost.
 func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, error) {
 	rows, err := q.db.Query(ctx, listJobs,
 		arg.OrgID,
@@ -665,7 +702,6 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 		arg.RunGroupID,
 		arg.Trigger,
 		arg.TriggerRef,
-		arg.HostID,
 		arg.CursorAt,
 		arg.CursorID,
 		arg.RowLimit,
@@ -704,6 +740,116 @@ func (q *Queries) ListJobs(ctx context.Context, arg ListJobsParams) ([]Job, erro
 			&i.ResolvedVaultIdentities,
 			&i.HostsExcluded,
 			&i.CancelStopsPlay,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listJobsForHost = `-- name: ListJobsForHost :many
+SELECT j.id, j.org_id, j.zone_id, j.kind, j.template_id, j.host_ids, j.status, j.worker_id, j.claimed_at, j.started_at, j.finished_at, j.stats, j.error, j.run_group_id, j.trigger, j.actor_id, j.payload, j.created_at, j.attempts, j.depends_on, j.rotation_credential_id, j.trigger_ref, j.run_group_reported, j.resolved_vault_identities, j.hosts_excluded, j.cancel_stops_play
+FROM job_hosts jh
+JOIN jobs j ON j.org_id = jh.org_id AND j.id = jh.job_id
+WHERE jh.org_id = $1
+  AND jh.host_id = $2
+  AND ($3::uuid IS NULL OR j.zone_id = $3::uuid)
+  AND ($4::text IS NULL OR j.status = $4::text)
+  AND ($5::text IS NULL OR j.kind = $5::text)
+  AND ($6::uuid IS NULL OR j.template_id = $6::uuid)
+  AND ($7::uuid IS NULL OR j.run_group_id = $7::uuid)
+  AND ($8::text IS NULL OR j.trigger = $8::text)
+  AND ($9::uuid IS NULL OR j.trigger_ref = $9::uuid)
+  AND (
+    $10::timestamptz IS NULL
+    OR (jh.created_at, jh.job_id) < ($10::timestamptz, $11::uuid)
+  )
+ORDER BY jh.created_at DESC, jh.job_id DESC
+LIMIT $12
+`
+
+type ListJobsForHostParams struct {
+	OrgID      uuid.UUID          `json:"org_id"`
+	HostID     uuid.UUID          `json:"host_id"`
+	ZoneID     pgtype.UUID        `json:"zone_id"`
+	Status     *string            `json:"status"`
+	Kind       *string            `json:"kind"`
+	TemplateID pgtype.UUID        `json:"template_id"`
+	RunGroupID pgtype.UUID        `json:"run_group_id"`
+	Trigger    *string            `json:"trigger"`
+	TriggerRef pgtype.UUID        `json:"trigger_ref"`
+	CursorAt   pgtype.Timestamptz `json:"cursor_at"`
+	CursorID   pgtype.UUID        `json:"cursor_id"`
+	RowLimit   int32              `json:"row_limit"`
+}
+
+type ListJobsForHostRow struct {
+	Job Job `json:"job"`
+}
+
+// ListJobs for the runs that targeted one host, read through job_hosts
+// (migration 00082, backlog 7.84). It is its own query because row-level
+// security keeps a non-leakproof operator out of an index scan: the
+// former "host_ids @> ARRAY[$host]" condition could not use its GIN index
+// as the app role and scanned the organization's whole run history, while
+// uuid equality on job_hosts.host_id is leakproof, and an optional
+// "$host IS NULL OR ..." condition would not be an index condition under a
+// generic plan either. The link carries its job's created_at, so the order
+// and the (created_at, id) cursor read job_hosts_host_idx in index order.
+// The remaining optional filters match ListJobs, on the joined job.
+func (q *Queries) ListJobsForHost(ctx context.Context, arg ListJobsForHostParams) ([]ListJobsForHostRow, error) {
+	rows, err := q.db.Query(ctx, listJobsForHost,
+		arg.OrgID,
+		arg.HostID,
+		arg.ZoneID,
+		arg.Status,
+		arg.Kind,
+		arg.TemplateID,
+		arg.RunGroupID,
+		arg.Trigger,
+		arg.TriggerRef,
+		arg.CursorAt,
+		arg.CursorID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListJobsForHostRow
+	for rows.Next() {
+		var i ListJobsForHostRow
+		if err := rows.Scan(
+			&i.Job.ID,
+			&i.Job.OrgID,
+			&i.Job.ZoneID,
+			&i.Job.Kind,
+			&i.Job.TemplateID,
+			&i.Job.HostIds,
+			&i.Job.Status,
+			&i.Job.WorkerID,
+			&i.Job.ClaimedAt,
+			&i.Job.StartedAt,
+			&i.Job.FinishedAt,
+			&i.Job.Stats,
+			&i.Job.Error,
+			&i.Job.RunGroupID,
+			&i.Job.Trigger,
+			&i.Job.ActorID,
+			&i.Job.Payload,
+			&i.Job.CreatedAt,
+			&i.Job.Attempts,
+			&i.Job.DependsOn,
+			&i.Job.RotationCredentialID,
+			&i.Job.TriggerRef,
+			&i.Job.RunGroupReported,
+			&i.Job.ResolvedVaultIdentities,
+			&i.Job.HostsExcluded,
+			&i.Job.CancelStopsPlay,
 		); err != nil {
 			return nil, err
 		}
