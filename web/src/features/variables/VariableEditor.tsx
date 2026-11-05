@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
 import { Card } from '../../ui/table.tsx';
@@ -84,6 +85,17 @@ export function VariableEditor({ value, onChange, problems, variant, usage, usag
       return next;
     });
 
+  // The webhooks open in a dialog of the page: the field dialog closes
+  // first (its unsaved draft dropped, as Cancel would), committed before the
+  // other opens, so the two never stack and the focus returned to the field
+  // row cannot land after the webhooks dialog took it.
+  const links = usageLinks && {
+    ...usageLinks,
+    onOpenWebhooks: () => {
+      flushSync(() => setEditing(null));
+      usageLinks.onOpenWebhooks();
+    },
+  };
   const columns = variant === 'template' ? 7 : 6;
   const listProblems = (problems ?? []).filter((p) => p.path === '');
   const editIndex = editing && editing !== 'new' ? stable.indexOf(editing.key) : -1;
@@ -180,7 +192,7 @@ export function VariableEditor({ value, onChange, problems, variant, usage, usag
           variant={variant}
           problems={problems}
           usage={usage ? (Object.hasOwn(usage, fields[editIndex].name) ? usage[fields[editIndex].name] : []) : undefined}
-          usageLinks={usageLinks}
+          usageLinks={links}
           readOnly={readOnly}
           subFieldsLocked={fields[editIndex].origin === 'source'}
           onSave={(f) => {

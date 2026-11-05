@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from '@tanstack/react-router';
-import { CalendarClock, ListPlus, Play, Webhook } from 'lucide-react';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Braces, CalendarClock, ListPlus, Play, Webhook } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { buttonClass } from '../../ui/buttonStyles.ts';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -15,11 +16,12 @@ import { useRunTemplateById, useTemplates } from '../../api/hooks/useTemplates.t
 import { may } from '../../lib/roles.ts';
 import { TemplateDialog } from './TemplateDialog.tsx';
 import { TriggersDialog } from '../triggers/TriggersDialog.tsx';
+import { ReviewBadges } from './variables/ReviewBadges.tsx';
 import type { Template } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
 
-const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) 110px';
+const COLUMNS = 'minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.8fr) 150px';
 
 /** TemplatesPage lists the job templates (spec §7, backlog 2.10): a
  * playbook plus scope, limit, extra vars and the default SSH credential —
@@ -101,7 +103,7 @@ export function TemplatesPage() {
         </GridHeader>
         {list.map((tpl) => (
           <GridRow key={tpl.id} columns={COLUMNS}>
-            <span className="flex min-w-0 items-center gap-1.5">
+            <span className="flex min-w-0 flex-wrap items-center gap-1.5">
               {canWrite ? (
                 <button type="button" className="truncate text-left font-mono text-[13px] hover:text-primary" onClick={() => setDialog(tpl)}>
                   {tpl.name}
@@ -114,11 +116,23 @@ export function TemplatesPage() {
                   disables its name/playbook/limit/extra-vars fields, so the
                   row needs to say why before the dialog ever opens. */}
               {tpl.shared_template_id && <Pill tone="accent">{t.templates.list.managed}</Pill>}
+              {/* What a linked template's variables leave for a person
+                  (backlog 7.75); the variables page resolves it. */}
+              <ReviewBadges review={tpl.variables_review} />
             </span>
             <span className="truncate font-mono text-xs text-muted-foreground">{playbookLabel(tpl.playbook_id)}</span>
             <span>{scopeChip(tpl, groupName, t)}</span>
             <span className="truncate text-xs text-muted-foreground">{tpl.credential_id ? (credentialName(tpl.credential_id) ?? tpl.credential_id.slice(0, 8)) : '—'}</span>
             <span className="flex gap-1">
+              <Link
+                to="/o/$org/templates/$id/variables"
+                params={{ org, id: tpl.id }}
+                aria-label={t.templates.list.variablesLabel(tpl.name)}
+                title={t.templates.list.variables}
+                className={buttonClass('ghost', 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary')}
+              >
+                <Braces size={13} />
+              </Link>
               <Button type="button" variant="ghost" aria-label={t.templates.list.triggersLabel(tpl.name)} onClick={() => setTriggers(tpl)}>
                 <Webhook size={13} />
               </Button>

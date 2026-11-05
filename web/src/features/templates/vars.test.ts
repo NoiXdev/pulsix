@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toEditableVars, varsForPut } from './vars.ts';
+import { echoedVars, toEditableVars, varsForPut } from './vars.ts';
 import type { SchemaField } from '../variables/types.ts';
 
 const schema: SchemaField[] = [
@@ -59,11 +59,37 @@ describe('varsForPut (masked-secret roundtrip)', () => {
     const vars = varsForPut(schema, { token: 'x', orphan: 1 });
     expect(vars).toEqual({ token: 'x' });
   });
+
+  // Plan decision 10: the server keeps the stored value of an inactive
+  // field the body omits; the SPA sends the active fields' values only.
+  it('sends the values of active fields only', () => {
+    const fields: SchemaField[] = [{ ...schema[0], active: false }, schema[1]];
+    expect(varsForPut(fields, { token: SET, region: 'eu' })).toEqual({ region: 'eu' });
+  });
+
+  it('sends nothing under a schema whose fields are all inactive', () => {
+    expect(varsForPut([{ name: 'region', type: 'string', active: false }], { region: 'eu' })).toEqual({});
+    expect(varsForPut([], { region: 'eu' })).toEqual({});
+  });
 });
 
 describe('toEditableVars', () => {
   it('turns set-markers into keep markers and drops undeclared keys', () => {
     const editable = toEditableVars(schema, { token: SET, orphan: 1 });
     expect(editable).toEqual({ token: { $secret: 'keep', from: 'token' } });
+  });
+});
+
+describe('echoedVars', () => {
+  it('sends the loaded active values back, each stored secret as a keep marker', () => {
+    const fields: SchemaField[] = [...schema.slice(0, 2), { name: 'debug', type: 'bool', active: false }];
+    expect(echoedVars({ fields }, { token: SET, region: 'eu', debug: true, orphan: 1 })).toEqual({
+      token: { $secret: 'keep', from: 'token' },
+      region: 'eu',
+    });
+  });
+
+  it('sends every value of a template without a schema', () => {
+    expect(echoedVars(undefined, { region: 'eu' })).toEqual({ region: 'eu' });
   });
 });

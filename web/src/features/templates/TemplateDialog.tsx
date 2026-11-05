@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { Link } from '@tanstack/react-router';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -9,21 +10,21 @@ import { useToast } from '../../ui/toastContext.ts';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
+import { usePickRepoPlaybook } from '../../api/hooks/useRepos.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useCreateTemplate, useDeleteTemplate, useTemplate, useUpdateTemplate } from '../../api/hooks/useTemplates.ts';
-import { SchemaForm } from '../variables/SchemaForm.tsx';
-import { VariableEditor } from '../variables/VariableEditor.tsx';
 import { problemsFromError } from '../variables/paths.ts';
-import type { Problem, VarSchema, Vars } from '../variables/types.ts';
-import { toVarSchema } from '../../api/hooks/useInventory.ts';
+import type { Vars } from '../variables/types.ts';
+import { errorStatus } from '../../lib/apiError.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { kindName } from '../credentials/labels.ts';
 import { useT } from '../../i18n/useT.ts';
 import { VaultIdentitiesField } from '../credentials/VaultIdentitiesField.tsx';
-import type { Credential } from '../../api/types.ts';
+import type { Credential, Playbook, Template } from '../../api/types.ts';
 import { identitiesForBody, rowsFromIdentities, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
 import { ScopePicker, type Scope } from './ScopePicker.tsx';
-import { toEditableVars, varsForPut } from './vars.ts';
+import { PlaybookPicker, type PlaybookChoice } from './PlaybookPicker.tsx';
+import { echoedVars } from './vars.ts';
 
 export interface TemplateDialogProps {
   org: string;
@@ -38,19 +39,25 @@ export interface TemplateDialogProps {
 }
 
 /**
- * TemplateDialog creates or edits a job template: name, playbook, scope
- * (the inventory scope picker), a free-form limit, the optional typed
- * extra-vars schema with the values form built from it, and the default
- * SSH credential. Secret-typed extra vars follow Task 7's roundtrip
- * contract: a value the server has ("value set on server, not shown") is
- * display-only and rides the PUT as a keep marker (the server keeps the
- * sealed value); replacing it sends the new plaintext (templates/vars.ts).
+ * TemplateDialog creates or edits a job template's settings: name,
+ * playbook (PlaybookPicker), scope (the inventory scope picker), a
+ * free-form limit, the default SSH credential and the vault identities.
+ * The extra vars and their schema live on the template's variables page
+ * (backlog 7.75), which an edit links to; the PUT replaces them too, so it
+ * echoes them as loaded — the schema unchanged and each stored secret as a
+ * keep marker (templates/vars.ts) — under If-Match, and a stale revision
+ * (someone saved, or a sync applied the playbook's variables) answers 412.
  */
 export function TemplateDialog({ org, template, canReadCredentials, canCreateCredential, onClose }: TemplateDialogProps) {
   const detail = useTemplate(org, template?.id ?? '');
   const playbooks = usePlaybooks(org);
   const credentials = useCredentials(org, { enabled: canReadCredentials });
   const guard = useQueryGuard(detail);
+  // Bumped by the stale notice's Reload once the template is read again:
+  // the form takes the template as loaded when it mounts (its draft and
+  // the revision that draft is based on), so a background refetch never
+  // moves the base under it — only a Reload does, by remounting.
+  const [generation, setGeneration] = useState(0);
 
   if (template) {
     if (guard) {
@@ -71,18 +78,12 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
     const allCredentials = credentials.data?.credentials ?? [];
     return (
       <TemplateForm
+        key={generation}
         org={org}
-        existing={{
-          id: tpl.id,
-          name: tpl.name,
-          playbookId: tpl.playbook_id,
-          scope: { group_id: tpl.scope.group_id ?? '', host_ids: tpl.scope.host_ids ?? [] },
-          limit: tpl.limit,
-          schema: tpl.extra_vars_schema ? toVarSchema(tpl.extra_vars_schema) : null,
-          vars: tpl.extra_vars ?? {},
-          credentialId: tpl.credential_id ?? '',
-          vaultIdentities: rowsFromIdentities(tpl.vault_identities),
-          sharedTemplateId: tpl.shared_template_id,
+        existing={existingOf(tpl)}
+        onReload={async () => {
+          await detail.refetch();
+          setGeneration((g) => g + 1);
         }}
         playbooks={playbooks.data?.playbooks ?? []}
         credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
@@ -105,13 +106,32 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
   );
 }
 
+function existingOf(tpl: Template): Existing {
+  return {
+    id: tpl.id,
+    name: tpl.name,
+    revision: tpl.revision,
+    playbookId: tpl.playbook_id,
+    scope: { group_id: tpl.scope.group_id ?? '', host_ids: tpl.scope.host_ids ?? [] },
+    limit: tpl.limit,
+    schema: tpl.extra_vars_schema,
+    vars: tpl.extra_vars ?? {},
+    credentialId: tpl.credential_id ?? '',
+    vaultIdentities: rowsFromIdentities(tpl.vault_identities),
+    sharedTemplateId: tpl.shared_template_id,
+  };
+}
+
 interface Existing {
   id: string;
   name: string;
+  /** The revision this form's draft is based on (If-Match). */
+  revision: number;
   playbookId: string;
   scope: Scope;
   limit: string;
-  schema: VarSchema | null;
+  /** The extra-vars schema exactly as loaded; the PUT sends it back. */
+  schema: Template['extra_vars_schema'];
   vars: Vars;
   credentialId: string;
   vaultIdentities: VaultIdentityRow[];
@@ -128,11 +148,13 @@ interface Existing {
 }
 
 function TemplateForm({
-  org, existing, playbooks, credentials, vaultCredentials, canCreateCredential, onClose,
+  org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, onClose,
 }: {
   org: string;
   existing?: Existing;
-  playbooks: readonly { id: string; source: string; summary: string; path?: string }[];
+  /** Reads the template again and starts the form over (after a 412). */
+  onReload?: () => Promise<void>;
+  playbooks: readonly Playbook[];
   credentials: readonly { id: string; name: string; kind: string }[];
   /** The org's full credential list, unfiltered — `credentials` above is
    * already narrowed to ssh_key/ssh_password for the Default SSH
@@ -155,25 +177,15 @@ function TemplateForm({
   // merely validated client-side — RepoDialog's own `projected` flag, same
   // reasoning.
   const projected = Boolean(existing?.sharedTemplateId);
+  // The template as this form loaded it: a background refetch must not
+  // move the revision (or the variables echoed) under the draft.
+  const [loaded] = useState(existing);
 
   const [name, setName] = useState(existing?.name ?? '');
-  const [playbookId, setPlaybookId] = useState(existing?.playbookId ?? '');
+  const [playbook, setPlaybook] = useState<PlaybookChoice>({ from: '', playbookId: existing?.playbookId ?? '', path: '' });
+  const pick = usePickRepoPlaybook(org, playbook.from === 'inline' ? '' : playbook.from);
   const [scope, setScope] = useState<Scope>(existing?.scope ?? { group_id: '', host_ids: [] });
   const [limit, setLimit] = useState(existing?.limit ?? '');
-  const [schema, setSchema] = useState<VarSchema | null>(existing?.schema ?? null);
-  // The extra-vars form follows the LIVE schema state: a schema built in
-  // this dialog — a create, or an edit that adds one — must produce its
-  // fields immediately, not only after the template round-trips (the
-  // stored-schema derivation left the form hidden and a strict-validation
-  // 422 nowhere to be shown).
-  const fields = schema?.fields ?? [];
-  // With a schema the loaded vars go through the keep-marker conversion
-  // (declared secret fields display-only); without one they pass through
-  // unchanged — varsForPut strips any set-marker either way.
-  const [vars, setVars] = useState<Vars>(() => {
-    const loaded = existing?.schema?.fields ?? [];
-    return existing ? (loaded.length > 0 ? toEditableVars(loaded, existing.vars) : existing.vars) : {};
-  });
   const [credentialId, setCredentialId] = useState(existing?.credentialId ?? '');
   const [vaultRows, setVaultRows] = useState<VaultIdentityRow[]>(existing?.vaultIdentities ?? []);
   const [vaultErrors, setVaultErrors] = useState<Record<string, string>>({});
@@ -182,38 +194,52 @@ function TemplateForm({
   // can be open at a time (the same division RepoDialog's own
   // `addingCredential` keeps).
   const [addingCredential, setAddingCredential] = useState<{ field: 'ssh'; name: string } | { field: 'vault-identity'; rowKey: string; name: string } | null>(null);
-  const [varProblems, setVarProblems] = useState<Problem[]>([]);
-  const [schemaProblems, setSchemaProblems] = useState<Problem[]>([]);
+  const [stale, setStale] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /** playbookIdFor is the chosen playbook's id: a repository path nobody
+   * picked before is registered first (null when that failed). */
+  async function playbookIdFor(): Promise<string | null> {
+    if (playbook.playbookId || !playbook.path) return playbook.playbookId;
+    try {
+      const { playbook: picked } = await pick.mutateAsync(playbook.path);
+      setPlaybook((c) => ({ ...c, playbookId: picked.id }));
+      return picked.id;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t.templates.dialog.pickFailed);
+      return null;
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setVarProblems([]);
-    setSchemaProblems([]);
     const identityErrors = vaultIdentityErrors(vaultRows, t);
     setVaultErrors(identityErrors);
     if (Object.keys(identityErrors).length > 0) return;
+    const playbookId = await playbookIdFor();
+    if (playbookId === null) return;
     const body = {
       name,
       playbook_id: playbookId,
       scope: scope.group_id || scope.host_ids.length > 0 ? { group_id: scope.group_id || undefined, host_ids: scope.host_ids.length > 0 ? scope.host_ids : undefined } : undefined,
       limit: limit || undefined,
-      extra_vars: varsForPut(schema?.fields, vars),
-      extra_vars_schema: schema && schema.fields.length > 0 ? schema : undefined,
+      extra_vars: loaded ? echoedVars(loaded.schema, loaded.vars) : {},
+      extra_vars_schema: loaded?.schema,
       credential_id: credentialId || undefined,
       vault_identities: identitiesForBody(vaultRows),
     };
     try {
-      if (existing) await update.mutateAsync(body);
+      if (loaded) await update.mutateAsync({ body, revision: loaded.revision });
       else await create.mutateAsync(body);
       toast.show(existing ? t.templates.dialog.saved(body.name) : t.templates.dialog.created(body.name));
       onClose();
     } catch (err) {
-      const varPs = problemsFromError(err, 'body.extra_vars');
-      if (varPs.length > 0) return setVarProblems(varPs);
-      const schemaPs = problemsFromError(err, 'body.extra_vars_schema');
-      if (schemaPs.length > 0) return setSchemaProblems(schemaPs);
+      if (errorStatus(err) === 412) return setStale(true);
+      // The extra vars are not edited here: a value the server refuses is
+      // fixed on the variables page, so its problems are named here.
+      const varPs = [...problemsFromError(err, 'body.extra_vars'), ...problemsFromError(err, 'body.extra_vars_schema')];
+      if (varPs.length > 0) return setError(t.templates.dialog.varsProblems(varPs.map((p) => (p.path ? `${p.path}: ${p.message}` : p.message)).join('; ')));
       setError(err instanceof Error ? err.message : t.templates.dialog.saveFailed);
     }
   }
@@ -229,23 +255,22 @@ function TemplateForm({
             </span>
           </div>
         )}
-        <fieldset disabled={projected} className="grid grid-cols-2 gap-3">
+        {stale && (
+          <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2 text-xs">
+            <span>{t.templates.dialog.stale}</span>
+            {onReload && (
+              <Button type="button" onClick={() => void onReload()}>
+                {t.templates.dialog.reload}
+              </Button>
+            )}
+          </div>
+        )}
+        <fieldset disabled={projected} className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="template-name">{t.templates.dialog.name}</Label>
             <Input id="template-name" className="font-mono" value={name} onChange={(e) => setName(e.target.value)} placeholder={t.templates.dialog.namePlaceholder} autoFocus={!existing} />
           </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="template-playbook">{t.templates.dialog.playbook}</Label>
-            <Select
-              id="template-playbook"
-              required
-              disabled={projected}
-              options={playbooks.map((p) => ({ value: p.id, label: p.source === 'repo' ? t.templates.playbook.repo(p.path ?? '') : p.summary || t.templates.playbook.editor }))}
-              value={playbookId}
-              onChange={setPlaybookId}
-              placeholder={t.templates.dialog.choosePlaybook}
-            />
-          </div>
+          <PlaybookPicker org={org} playbooks={playbooks} value={playbook} onChange={setPlaybook} disabled={projected} />
         </fieldset>
         <ScopePicker org={org} value={scope} onChange={setScope} />
         <fieldset disabled={projected} className="flex flex-col gap-1">
@@ -253,18 +278,16 @@ function TemplateForm({
           <Input id="template-limit" className="font-mono" value={limit} onChange={(e) => setLimit(e.target.value)} placeholder={t.templates.dialog.limitPlaceholder} />
           <span className="text-[11px] text-muted-foreground">{t.templates.dialog.limitHint}</span>
         </fieldset>
-        <fieldset disabled={projected}>
-          <details className="rounded-md border border-border p-3" open={!!existing?.schema}>
-            <summary className="cursor-pointer text-xs font-semibold">{t.templates.dialog.schemaSummary}</summary>
-            <div className="pt-3">
-              <VariableEditor variant="template" value={schema ?? { fields: [] }} onChange={setSchema} problems={schemaProblems} readOnly={projected} />
-            </div>
-          </details>
-        </fieldset>
-        {fields.length > 0 && (
-          <div className="flex flex-col gap-2">
-            <span className="text-xs font-semibold">{t.templates.dialog.extraVars}</span>
-            <SchemaForm fields={fields} value={vars} onChange={setVars} problems={varProblems} idPrefix="template-vars" disabled={projected} />
+        {existing && (
+          <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2">
+            <span className="text-[11px] text-muted-foreground">{t.templates.dialog.variablesHint}</span>
+            <Link
+              to="/o/$org/templates/$id/variables"
+              params={{ org, id: existing.id }}
+              className="shrink-0 text-xs font-medium text-primary hover:underline"
+            >
+              {t.templates.dialog.variables}
+            </Link>
           </div>
         )}
         <div className="flex flex-col gap-1">
@@ -338,7 +361,7 @@ function TemplateForm({
               // scope, the default SSH credential, the vault identity set —
               // which decision 2 gives them and decision 4 says they must be
               // able to fill in before any sync happens at all.
-              disabled={(!playbookId && !projected) || create.isPending || update.isPending}
+              disabled={(!playbook.playbookId && !playbook.path && !projected) || create.isPending || update.isPending || pick.isPending}
             >
               {existing ? t.templates.dialog.save : t.templates.dialog.create}
             </Button>

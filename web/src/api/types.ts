@@ -72,6 +72,16 @@ export type TemplateDefinitionInput = components['schemas']['TemplateDefinitionB
 export type RepoUpdateInput = components['schemas']['RepoUpdateInputBody'];
 export type TemplateUpdateInput = components['schemas']['TemplateUpdateInputBody'];
 
+// A template's variables page (backlog 7.75): what the read says about the
+// playbook's variable sources, what is left to review, and a preview of
+// what an apply would change.
+export type TemplateVariables = components['schemas']['TemplateVariablesDTO'];
+export type TemplateVariablesSource = components['schemas']['TemplateVariablesSourceDTO'];
+export type TemplateVariablesReview = components['schemas']['TemplateVariablesReviewDTO'];
+export type VariablesPreview = components['schemas']['Preview'];
+export type VariablesChange = components['schemas']['Change'];
+export type VariablesNote = components['schemas']['Note'];
+
 // VaultIdentity is one labelled vault password as a repository or template
 // carries it on the wire (v0.2e design, repos.VaultIdentity /
 // templates.VaultCredential): a vault_password credential plus the label

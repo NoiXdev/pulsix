@@ -99,7 +99,9 @@ export function SubFieldList({ field, path, variant, problems, locked, lock = nu
               <Button type="button" variant="ghost" aria-label={t.variables.builder.moveFieldDown(f.name)} disabled={readOnly || i === fields.length - 1} onClick={() => set(moveField(fields, i, i + 1), moveItem(stable, i, i + 1))}>
                 <ArrowDown size={14} />
               </Button>
-              <Button type="button" variant="ghost" aria-label={t.variables.builder.removeSubField(f.name)} disabled={readOnly} onClick={() => set(removeField(fields, i), removeItem(stable, i))}>
+              {/* A sub-field the source declares is part of the role's
+                  contract: deleting it is refused like renaming it. */}
+              <Button type="button" variant="ghost" aria-label={t.variables.builder.removeSubField(f.name)} disabled={readOnly || subNameLocked(lock, f)} onClick={() => set(removeField(fields, i), removeItem(stable, i))}>
                 <Trash2 size={14} />
               </Button>
             </div>
@@ -126,10 +128,14 @@ export function SubFieldList({ field, path, variant, problems, locked, lock = nu
             set(replaceField(fields, editing, next), stable);
             setEditing(null);
           }}
-          onRemove={() => {
-            set(removeField(fields, editing), removeItem(stable, editing));
-            setEditing(null);
-          }}
+          onRemove={
+            subNameLocked(lock, fields[editing])
+              ? undefined
+              : () => {
+                  set(removeField(fields, editing), removeItem(stable, editing));
+                  setEditing(null);
+                }
+          }
           onClose={() => setEditing(null)}
         />
       )}

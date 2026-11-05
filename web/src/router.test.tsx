@@ -79,6 +79,13 @@ describe('the password pages (backlog 7.74)', () => {
   });
 });
 
+describe('the job template pages (backlog 7.75)', () => {
+  it("has a variables page for a template, beside the list", async () => {
+    expect(await settledAt('/o/acme/templates/t1/variables')).toBe('/o/acme/templates/t1/variables');
+    expect(router.state.matches.some((m) => m.routeId === '/o/$org/templates/$id/variables')).toBe(true);
+  });
+});
+
 describe('an invitation link mailed before the token moved into the fragment (backlog 7.80)', () => {
   it('rewrites /invite/{token} to /invite#token={token}', async () => {
     await router.navigate({ to: '/invite/$token', params: { token: 'tok_old' } });

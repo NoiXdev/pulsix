@@ -34,11 +34,14 @@ export function useCreateTemplate(org: string) {
   });
 }
 
+/** useUpdateTemplate saves a template's settings under If-Match (its
+ * revision, quoted like the ETag): a stale one answers 412, an ApiError
+ * with that status — an automatic variables sync moves the revision too. */
 export function useUpdateTemplate(org: string, id: string) {
   const invalidate = useInvalidate(org);
   return useMutation({
-    mutationFn: (body: TemplateInput) =>
-      unwrap(api.PUT('/api/v1/orgs/{org}/job-templates/{id}', { params: { path: { org, id } }, body })),
+    mutationFn: ({ body, revision }: { body: TemplateInput; revision: number }) =>
+      unwrap(api.PUT('/api/v1/orgs/{org}/job-templates/{id}', { params: { path: { org, id }, header: { 'If-Match': `"${revision}"` } }, body })),
     onSuccess: invalidate,
   });
 }

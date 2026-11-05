@@ -164,13 +164,11 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await dialog.getByLabel('Name').fill('ansible-e2e-hello');
   await pickOption(dialog, 'Playbook', 'Pulsix greeting');
   await dialog.getByRole('checkbox', { name: `Include ${HOST_NAME}` }).check();
-  // The typed extra var: a schema field makes the value form appear.
-  await dialog.getByRole('button', { name: 'Add field' }).click();
-  let editor = page.getByRole('group', { name: 'Field field_1' });
-  await editor.getByLabel('Name').fill('greeting');
-  await dialog.getByLabel('greeting').fill(GREETING);
   await dialog.getByRole('button', { name: 'Create template' }).click();
   await toast(page, 'Template ansible-e2e-hello created');
+  // The typed extra var lives on the template's variables page (backlog
+  // 7.75): a schema field makes the value form appear.
+  await setVariable(page, 'ansible-e2e-hello', 'greeting', GREETING);
 
   // --- The run: live log, per-host ok, stats ---------------------------
   await page.getByRole('button', { name: 'Run ansible-e2e-hello' }).click();
@@ -199,12 +197,9 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await dialog.getByLabel('Name').fill('ansible-e2e-fail');
   await pickOption(dialog, 'Playbook', 'Pulsix deliberate failure');
   await dialog.getByRole('checkbox', { name: `Include ${HOST_NAME}` }).check();
-  await dialog.getByRole('button', { name: 'Add field' }).click();
-  editor = page.getByRole('group', { name: 'Field field_1' });
-  await editor.getByLabel('Name').fill('should_fail');
-  await dialog.getByLabel('should_fail').fill('true');
   await dialog.getByRole('button', { name: 'Create template' }).click();
   await toast(page, 'Template ansible-e2e-fail created');
+  await setVariable(page, 'ansible-e2e-fail', 'should_fail', 'true');
 
   await page.getByRole('button', { name: 'Run ansible-e2e-fail' }).click();
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
@@ -219,11 +214,10 @@ test('run a playbook against a managed host through the bastion, then retry the 
   // operator would use, then the run view's retry action re-runs only
   // what failed.
   await page.goto(`${base}/templates`);
-  await page.getByRole('button', { name: /^ansible-e2e-fail/ }).click();
-  dialog = page.getByRole('dialog', { name: 'ansible-e2e-fail' });
-  await dialog.getByLabel('should_fail').fill('false');
-  await dialog.getByRole('button', { name: 'Save template' }).click();
-  await toast(page, 'Template ansible-e2e-fail saved');
+  await page.getByRole('link', { name: 'Variables of ansible-e2e-fail' }).click();
+  await page.getByRole('region', { name: 'Values' }).getByLabel('should_fail').fill('false');
+  await page.getByRole('button', { name: 'Save variables' }).click();
+  await toast(page, 'Variables saved');
 
   await page.goto(failedUrl);
   await page.getByRole('button', { name: 'Retry failed' }).click();
@@ -232,3 +226,18 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await expect(page.getByText('succeeded', { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole('table', { name: 'Per-host results' }).getByText('ok', { exact: true })).toBeVisible();
 });
+
+/** setVariable opens a template's variables page from the template list,
+ * adds a string field `name`, fills its value and saves, then returns to
+ * the list. */
+async function setVariable(page: Page, template: string, name: string, value: string) {
+  await page.getByRole('link', { name: `Variables of ${template}` }).click();
+  await page.getByRole('button', { name: 'Add field' }).click();
+  const field = page.getByRole('dialog', { name: 'Field field_1' });
+  await field.getByLabel('Name').fill(name);
+  await field.getByRole('button', { name: 'Done' }).click();
+  await page.getByRole('region', { name: 'Values' }).getByLabel(name).fill(value);
+  await page.getByRole('button', { name: 'Save variables' }).click();
+  await toast(page, 'Variables saved');
+  await page.getByRole('link', { name: 'Job templates' }).click();
+}

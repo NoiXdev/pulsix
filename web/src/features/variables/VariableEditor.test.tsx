@@ -1,35 +1,15 @@
-import { useState } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { pickOption } from '../../test/pickOption.ts';
 import { VariableEditor } from './VariableEditor.tsx';
-import type { FieldUsage } from './usage.ts';
-import type { EditorVariant, FieldSource, Problem, VarSchema } from './types.ts';
-
-function Harness({ initial = { fields: [] }, problems, variant = 'group', usage }: { initial?: VarSchema; problems?: Problem[]; variant?: EditorVariant; usage?: FieldUsage }) {
-  const [value, setValue] = useState<VarSchema>(initial);
-  return (
-    <>
-      <VariableEditor value={value} onChange={setValue} problems={problems} variant={variant} usage={usage} />
-      <pre data-testid="schema">{JSON.stringify(value)}</pre>
-    </>
-  );
-}
-
-const schemaNow = () => JSON.parse(screen.getByTestId('schema').textContent ?? '{}') as VarSchema;
-const dialog = (name: string) => screen.getByRole('dialog', { name: `Field ${name}` });
-const subField = (name: string) => screen.getByRole('group', { name: `Sub-field ${name}` });
-const dataRows = () => within(screen.getByRole('table', { name: 'Fields' })).getAllByRole('row').slice(1);
-const openField = (name: string) => userEvent.setup().click(screen.getByRole('button', { name: new RegExp(`^${name}\\b`) }));
-const done = (name: string) => userEvent.setup().click(within(dialog(name)).getByRole('button', { name: 'Done' }));
-
-const src: FieldSource = { kind: 'argument_spec', role: 'web', file: 'roles/web/meta/argument_specs.yml', line: 3 };
+import { EditorHarness } from './EditorHarness.tsx';
+import { schemaNow, dialog, subField, dataRows, openField, done, src } from './editorTestKit.ts';
 
 describe('VariableEditor — the field list', () => {
   it('shows one row per top-level field with the six columns', () => {
     render(
-      <Harness
+      <EditorHarness
         variant="template"
         initial={{
           fields: [
@@ -55,14 +35,14 @@ describe('VariableEditor — the field list', () => {
   });
 
   it('has no origin column outside job templates', () => {
-    render(<Harness variant="group" initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
+    render(<EditorHarness variant="group" initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
     expect(screen.queryByRole('columnheader', { name: 'Origin' })).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Active' })).toBeInTheDocument();
   });
 
   it('switches a field inactive and active again', async () => {
     const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
+    render(<EditorHarness initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
     await user.click(screen.getByRole('switch', { name: 'env active' }));
     expect(schemaNow().fields[0]).toEqual({ name: 'env', type: 'string', active: false });
     await user.click(screen.getByRole('switch', { name: 'env active' }));
@@ -71,14 +51,14 @@ describe('VariableEditor — the field list', () => {
 
   it('keeps a source field locked when it is only switched inactive', async () => {
     const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [{ name: 'port', type: 'int', origin: 'source', source: src }] }} />);
+    render(<EditorHarness variant="template" initial={{ fields: [{ name: 'port', type: 'int', origin: 'source', source: src }] }} />);
     await user.click(screen.getByRole('switch', { name: 'port active' }));
     expect(schemaNow().fields[0]).toEqual({ name: 'port', type: 'int', origin: 'source', source: src, active: false });
   });
 
   it('shows the four origins on a job template', () => {
     render(
-      <Harness
+      <EditorHarness
         variant="template"
         initial={{
           fields: [
@@ -95,7 +75,7 @@ describe('VariableEditor — the field list', () => {
 
   it('adds a manual field through the field dialog', async () => {
     const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [{ name: 'port', type: 'int', origin: 'source', source: src }] }} />);
+    render(<EditorHarness variant="template" initial={{ fields: [{ name: 'port', type: 'int', origin: 'source', source: src }] }} />);
     await user.click(screen.getByRole('button', { name: 'Add field' }));
     const name = within(dialog('field_2')).getByLabelText('Name');
     expect(name).not.toHaveAttribute('readonly');
@@ -111,7 +91,7 @@ describe('VariableEditor — the field list', () => {
 
   it('adds nothing when the new field dialog is cancelled', async () => {
     const user = userEvent.setup();
-    render(<Harness />);
+    render(<EditorHarness />);
     await user.click(screen.getByRole('button', { name: 'Add field' }));
     await user.click(within(dialog('field_1')).getByRole('button', { name: 'Cancel' }));
     expect(schemaNow().fields).toEqual([]);
@@ -119,7 +99,7 @@ describe('VariableEditor — the field list', () => {
 
   it('makes a source field adjusted when its dialog changes it', async () => {
     const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [{ name: 'port', type: 'int', default: 80, origin: 'source', source: src }] }} />);
+    render(<EditorHarness variant="template" initial={{ fields: [{ name: 'port', type: 'int', default: 80, origin: 'source', source: src }] }} />);
     await openField('port');
     await user.type(within(dialog('port')).getByLabelText('Label'), 'HTTP port');
     await done('port');
@@ -130,82 +110,11 @@ describe('VariableEditor — the field list', () => {
   });
 });
 
-describe('VariableEditor — sub-fields inline', () => {
-  const vhosts = (origin?: 'source' | 'adjusted'): VarSchema => ({
-    fields: [
-      {
-        name: 'vhosts', type: 'repeater', fields: [{ name: 'domain', type: 'string' }],
-        ...(origin ? { origin, source: src } : {}),
-        ...(origin === 'adjusted' ? { source_field: { name: 'vhosts', type: 'repeater', fields: [{ name: 'domain', type: 'string' }] } } : {}),
-      },
-    ],
-  });
-
-  it('expands a repeater and edits its sub-fields in the row', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={vhosts()} />);
-    expect(screen.queryByRole('group', { name: 'Sub-field domain' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    await user.click(within(subField('domain')).getByLabelText('Required'));
-    await user.click(screen.getByRole('button', { name: 'Add sub-field' }));
-    await pickOption(within(subField('field_2')), 'Type', { value: 'secret' });
-    expect(schemaNow().fields[0].fields).toEqual([{ name: 'domain', type: 'string', required: true }, { name: 'field_2', type: 'secret' }]);
-  });
-
-  it('makes a source field adjusted when one of its sub-fields is edited', async () => {
-    const user = userEvent.setup();
-    render(<Harness variant="template" initial={vhosts('source')} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    await user.click(within(subField('domain')).getByLabelText('Required'));
-    const f = schemaNow().fields[0];
-    expect(f.origin).toBe('adjusted');
-    expect(f.source_field).toEqual({ name: 'vhosts', type: 'repeater', fields: [{ name: 'domain', type: 'string' }] });
-    expect(f.fields).toEqual([{ name: 'domain', type: 'string', required: true }]);
-  });
-
-  it('offers no new sub-field on a source field until it is adjusted', async () => {
-    const user = userEvent.setup();
-    const { unmount } = render(<Harness variant="template" initial={vhosts('source')} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    expect(screen.getByRole('button', { name: 'Add sub-field' })).toBeDisabled();
-    unmount();
-    render(<Harness variant="template" initial={vhosts('adjusted')} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    expect(screen.getByRole('button', { name: 'Add sub-field' })).toBeEnabled();
-  });
-
-  it('edits the attributes of a sub-field in its own dialog', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'auth', type: 'object', fields: [{ name: 'mode', type: 'enum', options: ['a'] }] }] }} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of auth' }));
-    await user.click(within(subField('mode')).getByRole('button', { name: 'Edit mode' }));
-    const options = within(dialog('mode')).getByLabelText('Options (one per line)');
-    await user.clear(options);
-    await user.type(options, 'a{enter}b');
-    // A sub-field has no scope and no activation of its own.
-    expect(within(dialog('mode')).queryByText('Scope')).not.toBeInTheDocument();
-    await done('mode');
-    expect(schemaNow().fields[0].fields).toEqual([{ name: 'mode', type: 'enum', options: ['a', 'b'] }]);
-  });
-
-  it('shows a repeater/object .fields problem with its sub-fields', async () => {
-    const user = userEvent.setup();
-    render(
-      <Harness
-        initial={vhosts()}
-        problems={[{ path: 'fields[0].fields', message: 'schemas nest at most 4 levels deep' }]}
-      />,
-    );
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    expect(screen.getByText('schemas nest at most 4 levels deep')).toBeInTheDocument();
-  });
-});
-
 describe('VariableEditor — variants', () => {
   it('asks for scope on a group and previews the assignment form', async () => {
     const user = userEvent.setup();
     render(
-      <Harness
+      <EditorHarness
         variant="group"
         initial={{
           fields: [
@@ -229,7 +138,7 @@ describe('VariableEditor — variants', () => {
   });
 
   it('asks for no scope and shows no preview on a job template', async () => {
-    render(<Harness variant="template" initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
+    render(<EditorHarness variant="template" initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
     expect(screen.queryByRole('region', { name: 'Assignment form preview' })).not.toBeInTheDocument();
     await openField('env');
     expect(within(dialog('env')).queryByText('Scope')).not.toBeInTheDocument();
@@ -237,7 +146,7 @@ describe('VariableEditor — variants', () => {
 
   it('offers no secret type on a shared definition', async () => {
     const user = userEvent.setup();
-    render(<Harness variant="shared" initial={{ fields: [{ name: 'region', type: 'string' }] }} />);
+    render(<EditorHarness variant="shared" initial={{ fields: [{ name: 'region', type: 'string' }] }} />);
     await openField('region');
     await user.click(within(dialog('region')).getByLabelText('Type'));
     expect(within(dialog('region')).queryByRole('option', { name: 'secret' })).toBeNull();
@@ -255,7 +164,7 @@ describe('VariableEditor — variants', () => {
 describe('VariableEditor — migrated builder behaviour', () => {
   it('edits name, type and required of a field', async () => {
     const user = userEvent.setup();
-    render(<Harness />);
+    render(<EditorHarness />);
     await user.click(screen.getByRole('button', { name: 'Add field' }));
     const name = within(dialog('field_1')).getByLabelText('Name');
     await user.clear(name);
@@ -268,7 +177,7 @@ describe('VariableEditor — migrated builder behaviour', () => {
 
   it('edits enum options, bounds, pattern and default', async () => {
     const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'php', type: 'enum', options: ['8.3'] }, { name: 'domain', type: 'string' }] }} />);
+    render(<EditorHarness initial={{ fields: [{ name: 'php', type: 'enum', options: ['8.3'] }, { name: 'domain', type: 'string' }] }} />);
     await openField('php');
     const options = within(dialog('php')).getByLabelText('Options (one per line)');
     await user.clear(options);
@@ -288,7 +197,7 @@ describe('VariableEditor — migrated builder behaviour', () => {
 
   it('sets the item type of a list', async () => {
     const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'ports', type: 'list', item: { name: '', type: 'string' } }] }} />);
+    render(<EditorHarness initial={{ fields: [{ name: 'ports', type: 'list', item: { name: '', type: 'string' } }] }} />);
     expect(within(dataRows()[0]).getAllByRole('cell')[1]).toHaveTextContent('list<string>');
     await openField('ports');
     await pickOption(within(dialog('ports')), 'Item type', { value: 'int' });
@@ -299,7 +208,7 @@ describe('VariableEditor — migrated builder behaviour', () => {
 
   it('moves and deletes fields', async () => {
     const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'a', type: 'string' }, { name: 'b', type: 'string' }] }} />);
+    render(<EditorHarness initial={{ fields: [{ name: 'a', type: 'string' }, { name: 'b', type: 'string' }] }} />);
     await user.click(screen.getByRole('button', { name: 'Move a down' }));
     expect(schemaNow().fields.map((f) => f.name)).toEqual(['b', 'a']);
     await openField('a');
@@ -310,7 +219,7 @@ describe('VariableEditor — migrated builder behaviour', () => {
 
   it('keeps focus on the moved row', async () => {
     const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'a', type: 'string' }, { name: 'b', type: 'string' }, { name: 'c', type: 'string' }] }} />);
+    render(<EditorHarness initial={{ fields: [{ name: 'a', type: 'string' }, { name: 'b', type: 'string' }, { name: 'c', type: 'string' }] }} />);
     await user.click(screen.getByRole('button', { name: 'Move a down' }));
     expect(schemaNow().fields.map((f) => f.name)).toEqual(['b', 'a', 'c']);
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Move a down' }));
@@ -323,7 +232,7 @@ describe('VariableEditor — migrated builder behaviour', () => {
   it('marks fields with server problems and shows the message at the attribute', async () => {
     const user = userEvent.setup();
     render(
-      <Harness
+      <EditorHarness
         initial={{ fields: [{ name: 'vhosts', type: 'repeater', fields: [{ name: 'Bad', type: 'string' }] }, { name: 'ok', type: 'string' }] }}
         problems={[{ path: 'fields[0].fields[0].name', message: 'must start with a lowercase letter' }]}
       />,
@@ -336,7 +245,7 @@ describe('VariableEditor — migrated builder behaviour', () => {
 
   it('shows a top-level field problem in its dialog', async () => {
     render(
-      <Harness
+      <EditorHarness
         initial={{ fields: [{ name: 'Weird', type: 'string' }] }}
         problems={[
           { path: 'fields[0].name', message: 'must start with a lowercase letter' },
@@ -350,168 +259,14 @@ describe('VariableEditor — migrated builder behaviour', () => {
   });
 
   it('shows a top-level schema problem above the field list', () => {
-    render(<Harness initial={{ fields: [{ name: 'a', type: 'string' }] }} problems={[{ path: '', message: 'at most 100 fields are allowed' }]} />);
+    render(<EditorHarness initial={{ fields: [{ name: 'a', type: 'string' }] }} problems={[{ path: '', message: 'at most 100 fields are allowed' }]} />);
     expect(screen.getByText('at most 100 fields are allowed')).toBeInTheDocument();
   });
 
   it('marks the "has problems" dot with the destructive token, not a monitoring-state colour', () => {
-    render(<Harness initial={{ fields: [{ name: 'a', type: 'string' }] }} problems={[{ path: 'fields[0].name', message: 'bad' }]} />);
+    render(<EditorHarness initial={{ fields: [{ name: 'a', type: 'string' }] }} problems={[{ path: 'fields[0].name', message: 'bad' }]} />);
     const dot = screen.getByLabelText('has problems');
     expect(dot).toHaveClass('bg-destructive');
     expect(dot.getAttribute('style') ?? '').not.toContain('--px-crit');
-  });
-});
-
-describe('VariableEditor — focus after a dialog', () => {
-  const fields: VarSchema = { fields: [{ name: 'a', type: 'string' }, { name: 'b', type: 'string' }] };
-  const rowButton = (name: string) => screen.getByRole('button', { name: new RegExp(`^${name}\\b`) });
-
-  it('returns to the field that was opened after Done', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={fields} />);
-    await user.click(rowButton('b'));
-    await user.click(within(dialog('b')).getByRole('button', { name: 'Done' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(document.activeElement).toBe(rowButton('b'));
-  });
-
-  it('returns to the field that was opened after Cancel', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={fields} />);
-    await user.click(rowButton('a'));
-    await user.click(within(dialog('a')).getByRole('button', { name: 'Cancel' }));
-    expect(document.activeElement).toBe(rowButton('a'));
-  });
-
-  it('falls back to "Add field" when the field it was opened from is gone', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={fields} />);
-    await user.click(rowButton('a'));
-    await user.click(within(dialog('a')).getByRole('button', { name: 'Delete field' }));
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add field' }));
-  });
-
-  it('returns to "Add field" after a new field is added', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={fields} />);
-    await user.click(screen.getByRole('button', { name: 'Add field' }));
-    await user.click(within(dialog('field_3')).getByRole('button', { name: 'Done' }));
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add field' }));
-  });
-
-  it('returns to the sub-field that was opened after Done and Cancel, and to "Add sub-field" after a delete', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'auth', type: 'object', fields: [{ name: 'mode', type: 'string' }, { name: 'user', type: 'string' }] }] }} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of auth' }));
-    const edit = (name: string) => within(subField(name)).getByRole('button', { name: `Edit ${name}` });
-    await user.click(edit('user'));
-    await user.click(within(dialog('user')).getByRole('button', { name: 'Done' }));
-    expect(document.activeElement).toBe(edit('user'));
-    await user.click(edit('mode'));
-    await user.click(within(dialog('mode')).getByRole('button', { name: 'Cancel' }));
-    expect(document.activeElement).toBe(edit('mode'));
-    await user.click(edit('mode'));
-    await user.click(within(dialog('mode')).getByRole('button', { name: 'Delete field' }));
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add sub-field' }));
-  });
-});
-
-describe('VariableEditor — expand control', () => {
-  it('points aria-controls at the sub-field row only while it exists', async () => {
-    const user = userEvent.setup();
-    render(<Harness initial={{ fields: [{ name: 'vhosts', type: 'repeater', fields: [{ name: 'domain', type: 'string' }] }] }} />);
-    const toggle = screen.getByRole('button', { name: 'Sub-fields of vhosts' });
-    expect(toggle).not.toHaveAttribute('aria-controls');
-    await user.click(toggle);
-    const id = toggle.getAttribute('aria-controls');
-    expect(id).toBeTruthy();
-    expect(document.getElementById(id as string)).toContainElement(subField('domain'));
-    await user.click(toggle);
-    expect(toggle).not.toHaveAttribute('aria-controls');
-  });
-});
-
-describe('VariableEditor — source sub-field names', () => {
-  const spec = (): VarSchema['fields'][number] => ({
-    name: 'vhosts', type: 'repeater', origin: 'source', source: src,
-    fields: [{ name: 'domain', type: 'string' }, { name: 'ssl', type: 'object', fields: [{ name: 'cert', type: 'string' }] }],
-  });
-  const adjusted = (): VarSchema => {
-    const source = spec();
-    return {
-      fields: [
-        {
-          ...source, origin: 'adjusted', source_field: { name: 'vhosts', type: 'repeater', fields: source.fields },
-          fields: [...(source.fields ?? []), { name: 'extra', type: 'string' }],
-        },
-      ],
-    };
-  };
-  const nameOf = (name: string) => within(subField(name)).getByLabelText('Name');
-
-  it('locks the sub-field names of a source field', async () => {
-    const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [spec()] }} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    expect(nameOf('domain')).toHaveAttribute('readonly');
-    expect(nameOf('ssl')).toHaveAttribute('readonly');
-  });
-
-  it('locks them in the sub-field dialog, and the names below it', async () => {
-    const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [spec()] }} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    await user.click(within(subField('ssl')).getByRole('button', { name: 'Edit ssl' }));
-    const names = within(dialog('ssl')).getAllByLabelText('Name');
-    // The dialog's own name, then the one of its sub-field.
-    expect(names).toHaveLength(2);
-    for (const name of names) expect(name).toHaveAttribute('readonly');
-  });
-
-  it('keeps source sub-field names locked after the field turned adjusted, but not a manual one', async () => {
-    const user = userEvent.setup();
-    render(<Harness variant="template" initial={adjusted()} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    expect(nameOf('domain')).toHaveAttribute('readonly');
-    expect(nameOf('ssl')).toHaveAttribute('readonly');
-    expect(nameOf('extra')).not.toHaveAttribute('readonly');
-    await user.click(within(subField('extra')).getByRole('button', { name: 'Edit extra' }));
-    expect(within(dialog('extra')).getByLabelText('Name')).not.toHaveAttribute('readonly');
-  });
-
-  it('keeps them locked when a sub-field of a source field is edited', async () => {
-    const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [spec()] }} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of vhosts' }));
-    await user.click(within(subField('domain')).getByLabelText('Required'));
-    expect(schemaNow().fields[0].origin).toBe('adjusted');
-    expect(nameOf('domain')).toHaveAttribute('readonly');
-  });
-
-  it('leaves the sub-field names of a manual field free', async () => {
-    const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [{ name: 'hosts', type: 'repeater', fields: [{ name: 'fqdn', type: 'string' }] }] }} />);
-    await user.click(screen.getByRole('button', { name: 'Sub-fields of hosts' }));
-    expect(nameOf('fqdn')).not.toHaveAttribute('readonly');
-  });
-});
-
-describe('VariableEditor — used in', () => {
-  it('shows where the opened variable is overridden', async () => {
-    const user = userEvent.setup();
-    const usage: FieldUsage = { region: [{ kind: 'schedule', id: 's1', name: 'nightly' }] };
-    render(<Harness variant="template" usage={usage} initial={{ fields: [{ name: 'region', type: 'string' }, { name: 'port', type: 'int' }] }} />);
-    await user.click(screen.getByRole('button', { name: /^region\b/ }));
-    expect(within(dialog('region')).getByRole('region', { name: 'Used in' })).toHaveTextContent('Schedule nightly');
-    await user.click(within(dialog('region')).getByRole('button', { name: 'Cancel' }));
-    await user.click(screen.getByRole('button', { name: /^port\b/ }));
-    expect(within(dialog('port')).getByText('Not overridden anywhere')).toBeInTheDocument();
-  });
-
-  it('shows nothing without usage', async () => {
-    const user = userEvent.setup();
-    render(<Harness variant="template" initial={{ fields: [{ name: 'region', type: 'string' }] }} />);
-    await user.click(screen.getByRole('button', { name: /^region\b/ }));
-    expect(within(dialog('region')).queryByText('Used in')).not.toBeInTheDocument();
   });
 });

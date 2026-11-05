@@ -71,3 +71,29 @@ export function useSyncRepo(org: string) {
     onSuccess: invalidate,
   });
 }
+
+/** useRepoPlaybooks lists the playbooks a repository's last sync
+ * discovered, each with the registered playbook's id when its path has one,
+ * and what the sync recorded (absent until a sync read the repository).
+ * An entry can be failed (not read) or left out by a limit: neither is an
+ * ordinary playbook. */
+export function useRepoPlaybooks(org: string, repoId: string) {
+  return useQuery({
+    queryKey: ['repos', org, repoId, 'playbooks'],
+    queryFn: () => unwrap(api.GET('/api/v1/orgs/{org}/repos/{id}/playbooks', { params: { path: { org, id: repoId } } })),
+    enabled: !!org && !!repoId,
+  });
+}
+
+/** usePickRepoPlaybook registers a discovered path as a playbook (or finds
+ * the one registered) and returns it, so a template can name its id. */
+export function usePickRepoPlaybook(org: string, repoId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => unwrap(api.POST('/api/v1/orgs/{org}/repos/{id}/playbooks', { params: { path: { org, id: repoId } }, body: { path } })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['playbooks', org] });
+      void qc.invalidateQueries({ queryKey: ['repos', org, repoId, 'playbooks'] });
+    },
+  });
+}

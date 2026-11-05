@@ -1,5 +1,7 @@
 import { childPath, indexPath } from '../variables/paths.ts';
 import { declaredOnly, isKeepMarker, isRecord, isSecretSet, type KeepMarker } from '../variables/secrets.ts';
+import { activeFields } from '../variables/origin.ts';
+import { toVarSchema } from '../../api/hooks/useInventory.ts';
 import type { SchemaField, Vars } from '../variables/types.ts';
 import type { TemplateInput, TemplateUpdateInput } from '../../api/types.ts';
 
@@ -46,13 +48,26 @@ function toKeepMarkers(fields: readonly SchemaField[], vars: Vars, prefix = ''):
   return out;
 }
 
-/** varsForPut is the PUT's extra_vars: the form's values with every
- * unchanged declared secret sent as a keep marker naming its own path (a
- * raw set-marker included), everything else passed through; without a
- * schema, set-markers are stripped (no field is secret). */
+/** varsForPut is the PUT's extra_vars: the values of the ACTIVE fields,
+ * with every unchanged declared secret sent as a keep marker naming its own
+ * path (a raw set-marker included). The server keeps the stored value of an
+ * inactive or removed field the body omits (plan 7.75 decision 10), so
+ * those are left out. Without a schema (undefined) every value passes,
+ * set-markers stripped (no field is secret). */
 export function varsForPut(fields: readonly SchemaField[] | undefined, vars: Vars): Vars {
-  if (!fields || fields.length === 0) return stripSetMarkers(vars);
-  return keepUnchangedSecrets(declaredOnly(fields, vars), fields);
+  if (!fields) return stripSetMarkers(vars);
+  const active = activeFields(fields);
+  return keepUnchangedSecrets(declaredOnly(active, vars), active);
+}
+
+/** echoedVars is what a template save that does not edit the extra vars
+ * (the template dialog) sends back for them: the values as loaded, each
+ * stored secret as a keep marker and only the active fields' (the server
+ * keeps the rest), or every value of a template without a schema. */
+export function echoedVars(schema: unknown, vars: Vars): Vars {
+  if (!schema) return varsForPut(undefined, vars);
+  const fields = toVarSchema(schema).fields;
+  return varsForPut(fields, toEditableVars(fields, vars));
 }
 
 function keepUnchangedSecrets(vars: Vars, fields: readonly SchemaField[], prefix = ''): Vars {

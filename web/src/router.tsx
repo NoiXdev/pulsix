@@ -21,6 +21,7 @@ import { JumpHostsPage } from './features/credentials/JumpHostsPage.tsx';
 import { ReposPage } from './features/repos/ReposPage.tsx';
 import { PlaybooksPage } from './features/playbooks/PlaybooksPage.tsx';
 import { TemplatesPage } from './features/templates/TemplatesPage.tsx';
+import { TemplateVariablesPage } from './features/templates/variables/TemplateVariablesPage.tsx';
 import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
@@ -189,6 +190,7 @@ const groupDetailRoute = createRoute({
 const reposRoute = createRoute({ getParentRoute: () => orgRoute, path: '/repos', component: ReposPage });
 const playbooksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/playbooks', component: PlaybooksPage });
 const templatesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
+const templateVariablesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates/$id/variables', component: TemplateVariablesPage });
 const schedulesRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/schedules',
@@ -273,6 +275,7 @@ const routeTree = rootRoute.addChildren([
     reposRoute,
     playbooksRoute,
     templatesRoute,
+    templateVariablesRoute,
     schedulesRoute,
     runsRoute,
     runDetailRoute,

@@ -21,7 +21,7 @@ const groupRow = { id: 'g1', name: 'webserver', description: '', parent_id: null
 
 const template = (over: Record<string, unknown> = {}) => ({
   id: 't1', name: 'deploy-site', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] },
-  limit: '', extra_vars: {}, created_at: '', updated_at: '', ...over,
+  limit: '', extra_vars: {}, revision: 1, vars_mode: 'off', created_at: '', updated_at: '', ...over,
 });
 
 const withSchema = {
@@ -40,8 +40,9 @@ function renderPage() {
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const listRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates', component: TemplatesPage });
   const jobRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: () => <div>RUN VIEW</div> });
+  const variablesRoute = createRoute({ getParentRoute: () => orgRoute, path: '/templates/$id/variables', component: () => <div>VARIABLES</div> });
   const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, jobRoute])]),
+    routeTree: rootRoute.addChildren([orgRoute.addChildren([listRoute, jobRoute, variablesRoute])]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/templates'] }),
   });
   return render(
@@ -272,163 +273,79 @@ describe('TemplatesPage', () => {
     expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
   });
 
-  it('shows an unchanged secret display-only and keeps it with a keep marker on the PUT', async () => {
+  // The extra vars moved to the variables page (backlog 7.75); the dialog's
+  // PUT still replaces them, so it echoes them as loaded under If-Match.
+  it('saves the settings with If-Match, echoing the loaded schema and the secret as a keep marker', async () => {
     const user = userEvent.setup();
-    let put: unknown;
+    let put: MockRequest | undefined;
+    const schema = { fields: [...withSchema.extra_vars_schema.fields, { name: 'debug', type: 'bool', active: false }] };
+    const loaded = template({ extra_vars_schema: schema, extra_vars: { ...withSchema.extra_vars, debug: true }, credential_id: 'c1', revision: 7 });
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withSchema })] },
-      'GET /api/v1/orgs/acme/job-templates/t1': { template: template({ ...withSchema, credential_id: 'c1' }) },
+      'GET /api/v1/orgs/acme/job-templates': { templates: [loaded] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: loaded },
       'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
       'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
       'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
       'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
-        put = req.body;
-        return { template: template({ ...withSchema, credential_id: 'c1' }) };
+        put = req;
+        return { template: loaded };
       },
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
-    const tokenField = await within(dialog).findByLabelText('token');
-    expect(tokenField).toHaveAttribute('readonly');
-    expect(within(dialog).getByDisplayValue('•••••••• stored')).toBeInTheDocument();
-
+    expect(within(dialog).queryByRole('table', { name: 'Fields' })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
-    expect(put).toEqual({
+    await screen.findByText('Template deploy-site saved');
+    expect(put?.headers.get('If-Match')).toBe('"7"');
+    expect(put?.body).toEqual({
       name: 'deploy-site',
       playbook_id: 'pb1',
-      scope: undefined,
       extra_vars: { region: 'eu', token: { $secret: 'keep', from: 'token' } },
-      extra_vars_schema: withSchema.extra_vars_schema,
+      extra_vars_schema: schema,
       credential_id: 'c1',
     });
   });
 
-  it('sends a replaced secret as plaintext and shows the 422 problems at their fields', async () => {
+  it('offers a reload when the template changed since the dialog opened (412)', async () => {
     const user = userEvent.setup();
-    let put: unknown;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withSchema })] },
-      'GET /api/v1/orgs/acme/job-templates/t1': { template: template({ ...withSchema, credential_id: 'c1' }) },
+      'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: template() },
       'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
       'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
       'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
-      'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
-        put = req.body;
-        return { template: template({ ...withSchema, credential_id: 'c1' }) };
-      },
-    });
-    renderPage();
-    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
-    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
-    await user.click(within(dialog).getByRole('button', { name: 'Replace' }));
-    const token = await within(dialog).findByLabelText('token');
-    expect(token).toBeEnabled();
-    await user.type(token, 'hunter2');
-    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
-    const body = put as { extra_vars?: Record<string, unknown>; scope?: unknown };
-    expect(body.extra_vars).toEqual({ region: 'eu', token: 'hunter2' });
-    expect(body.scope).toBeUndefined();
-  });
-
-  it('surfaces a 422 problem at the extra var field it names', async () => {    const user = userEvent.setup();
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/job-templates': { templates: [template({ ...withSchema })] },
-      'GET /api/v1/orgs/acme/job-templates/t1': { template: template({ ...withSchema, extra_vars: { region: '' } }) },
-      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
-      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
-      'PUT /api/v1/orgs/acme/job-templates/t1': () =>
-        new Response(
-          JSON.stringify({ status: 422, title: 'validation failed', errors: [{ location: 'body.extra_vars.region', message: 'is required' }] }),
-          { status: 422, headers: { 'Content-Type': 'application/json' } },
-        ),
+      'PUT /api/v1/orgs/acme/job-templates/t1': () => new Response(JSON.stringify({ detail: 'stale' }), { status: 412 }),
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
-    expect(await within(dialog).findByText('is required')).toBeInTheDocument();
+    expect(await within(dialog).findByText(/Someone else saved this template since it was opened/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Reload' })).toBeInTheDocument();
   });
 
-  it('builds the extra-vars form from a schema created in the dialog (live state)', async () => {
+  it("links a template's variables page from its row and its dialog, with the review badges", async () => {
     const user = userEvent.setup();
-    let posted: unknown;
-    const templates: Record<string, unknown>[] = [];
+    const linked = template({ vars_mode: 'automatic', variables_review: { gone: 2, needs_review: 1, missing_required: 0, left_out: 0 } });
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/job-templates': () => ({ templates }),
+      'GET /api/v1/orgs/acme/job-templates': { templates: [linked] },
+      'GET /api/v1/orgs/acme/job-templates/t1': { template: linked },
       'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
       'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
       'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
-      'POST /api/v1/orgs/acme/job-templates': (req: MockRequest) => {
-        posted = req.body;
-        const created = template({ name: 'deploy-site' });
-        templates.push(created);
-        return { template: created };
-      },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Add template' }));
-    await user.type(screen.getByLabelText('Name'), 'deploy-site');
-    await pickOption(screen, 'Playbook', { value: 'pb1' });
-
-    // Build a schema in the dialog itself: expand it, add a field in the
-    // field dialog, rename it, mark it required.
-    await user.click(screen.getByText('Extra vars schema'));
-    await user.click(screen.getByRole('button', { name: 'Add field' }));
-    const fieldDialog = screen.getByRole('dialog', { name: 'Field field_1' });
-    const nameInput = within(fieldDialog).getByLabelText('Name');
-    await user.clear(nameInput);
-    await user.type(nameInput, 'region');
-    await user.click(within(fieldDialog).getByLabelText('Required'));
-    await user.click(within(fieldDialog).getByRole('button', { name: 'Done' }));
-
-    // The vars form appeared from the LIVE schema — the field is fillable.
-    const dialog = screen.getByRole('dialog', { name: 'New job template' });
-    const region = await within(dialog).findByLabelText('region');
-    await user.type(region, 'eu');
-    await user.click(within(dialog).getByRole('button', { name: 'Create template' }));
-    const body = posted as { extra_vars?: Record<string, unknown>; extra_vars_schema?: { fields: unknown[] } };
-    expect(body.extra_vars).toEqual({ region: 'eu' });
-    expect(body.extra_vars_schema).toEqual({ fields: [{ name: 'region', type: 'string', required: true }] });
-  });
-
-  it('renders a strict-validation 422 at the field when a built schema is left unfilled', async () => {
-    const user = userEvent.setup();
-    mockApi({
-      'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/job-templates': { templates: [] },
-      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
-      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
-      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
-      'POST /api/v1/orgs/acme/job-templates': () =>
-        new Response(
-          JSON.stringify({ status: 422, title: 'validation failed', errors: [{ location: 'body.extra_vars.region', message: 'is required' }] }),
-          { status: 422, headers: { 'Content-Type': 'application/json' } },
-        ),
-    });
-    renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Add template' }));
-    await user.type(screen.getByLabelText('Name'), 'deploy-site');
-    await pickOption(screen, 'Playbook', { value: 'pb1' });
-    await user.click(screen.getByText('Extra vars schema'));
-    await user.click(screen.getByRole('button', { name: 'Add field' }));
-    const fieldDialog = screen.getByRole('dialog', { name: 'Field field_1' });
-    const nameInput = within(fieldDialog).getByLabelText('Name');
-    await user.clear(nameInput);
-    await user.type(nameInput, 'region');
-    await user.click(within(fieldDialog).getByLabelText('Required'));
-    await user.click(within(fieldDialog).getByRole('button', { name: 'Done' }));
-
-    // The required field stays empty: the 422's problem must be VISIBLE at
-    // its field, not swallowed by a vars section that never rendered.
-    const dialog = screen.getByRole('dialog', { name: 'New job template' });
-    await user.click(within(dialog).getByRole('button', { name: 'Create template' }));
-    expect(await within(dialog).findByText('is required')).toBeInTheDocument();
+    expect(await screen.findByText('2 fields gone from the source — review')).toBeInTheDocument();
+    expect(screen.getByText('1 change needs review')).toBeInTheDocument();
+    expect(screen.queryByText(/required/)).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Variables of deploy-site' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
+    await user.click(screen.getByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    expect(within(dialog).getByRole('link', { name: 'Variables' })).toHaveAttribute('href', '/o/acme/templates/t1/variables');
   });
 
   // v0.2e Task 5: a template's own labelled vault password set, added on
