@@ -49,7 +49,7 @@ type templateVariablesSourceDTO struct {
 // person (templates.Review).
 type templateVariablesReviewDTO struct {
 	Gone            int `json:"gone" doc:"Fields gone from the source; removing them is confirmed in an apply"`
-	NeedsReview     int `json:"needs_review" doc:"Source changes held for a person (a type or secret change, or a stored value that no longer fits)"`
+	NeedsReview     int `json:"needs_review" doc:"Source changes and additions held for a person (a type or secret change, or a stored value that no longer fits)"`
 	MissingRequired int `json:"missing_required" doc:"Active required fields without a default or a value"`
 	LeftOut         int `json:"left_out" doc:"Source fields not added because a template holds at most 100 fields"`
 }

@@ -79,6 +79,7 @@ export type TemplateVariables = components['schemas']['TemplateVariablesDTO'];
 export type TemplateVariablesSource = components['schemas']['TemplateVariablesSourceDTO'];
 export type TemplateVariablesReview = components['schemas']['TemplateVariablesReviewDTO'];
 export type VariablesPreview = components['schemas']['Preview'];
+export type VariablesAdded = components['schemas']['Added'];
 export type VariablesChange = components['schemas']['Change'];
 export type VariablesNote = components['schemas']['Note'];
 

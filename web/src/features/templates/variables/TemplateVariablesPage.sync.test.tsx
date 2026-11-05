@@ -127,6 +127,22 @@ describe('TemplateVariablesPage — sync now', () => {
     expect(applied[1].body).toMatchObject({ values: { admin_user: 'root' } });
   });
 
+  it('marks an added field held for review and asks for its value', async () => {
+    const { dialog } = await openPreview({
+      'POST /api/v1/orgs/acme/job-templates/t1/variables/preview': {
+        ...preview,
+        preview: {
+          ...preview.preview,
+          added: [{ field: { name: 'token', label: 'Token', type: 'string', required: true, origin: 'source', active: true }, needs_review: true, reason: 'secret' }],
+        },
+      },
+    });
+    const added = within(dialog).getByRole('region', { name: 'Added' });
+    expect(within(added).getByText('Needs review')).toBeInTheDocument();
+    expect(within(added).getByText('The field turns secret or stops being one: enter its value again.')).toBeInTheDocument();
+    expect(within(added).getByLabelText('Token')).toBeInTheDocument();
+  });
+
   it('says in the page language why nothing can be applied', async () => {
     const { dialog } = await openPreview({
       'POST /api/v1/orgs/acme/job-templates/t1/variables/preview': {

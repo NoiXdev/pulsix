@@ -360,3 +360,56 @@ func TestAutomaticApplyRecordsANewRevisionWithoutABump(t *testing.T) {
 		t.Fatalf("content change: revision %d (was %d) rev %q, want a bump", got.Revision, saved.Revision, got.VarsSourceRev)
 	}
 }
+
+// TestAutomaticApplyHoldsAReaddOverAKeptSecret: a person removes secret
+// field token, whose sealed value stays stored (spec 7.75 owner decision
+// 4); the source later declares token again as a required plain string.
+// The automatic apply does not add it over the kept sealed value — a run
+// would otherwise receive the secret as a plain, unredacted value — but
+// holds it for a person, whose apply asks for the value again.
+func TestAutomaticApplyHoldsAReaddOverAKeptSecret(t *testing.T) {
+	f, repo := repoFixture()
+	token := candidate("token", schema.TypeSecret, required)
+	other := candidate("other", schema.TypeString)
+	tm := f.linked(t, "auto", templates.ModeAutomatic, "c1",
+		[]schema.Field{asStored(token, true), asStored(other, true)},
+		map[string]any{"token": "s3cret", "other": "x"})
+	if _, err := f.svc.UpdateVariables(ctx, f.org, tm.ID, templates.VariablesInput{
+		Schema: &schema.Schema{Fields: []schema.Field{asStored(other, true)}}, ExtraVars: map[string]any{"other": "x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sealed := storedSealed(t, f, tm.ID, "token")
+	f.sources[f.playbook] = readSource(repo, "c2", other, candidate("token", schema.TypeString, required))
+
+	if err := f.svc.ApplyRepoSources(ctx, f.org, repo); err != nil {
+		t.Fatal(err)
+	}
+	stored := f.store.byID[tm.ID]
+	if got := fieldNames(stored.ExtraVarsSchema.Fields); !reflect.DeepEqual(got, []string{"other"}) {
+		t.Fatalf("fields = %v, want token held", got)
+	}
+	if sendable := schema.Sendable(stored.ExtraVarsSchema.Fields, stored.ExtraVars); sendable["token"] != nil {
+		t.Fatalf("sendable = %v, want no token", sendable)
+	}
+	if !bytes.Equal(storedSealed(t, f, tm.ID, "token"), sealed) {
+		t.Fatal("the kept sealed value changed")
+	}
+	view, err := f.svc.Variables(ctx, f.org, tm.ID)
+	if err != nil || view.Review.NeedsReview != 1 {
+		t.Fatalf("review = %+v, %v, want the held addition counted", view.Review, err)
+	}
+
+	in := templates.ApplyInput{Mode: templates.ModeAutomatic, SourceRev: "c2", SourceSyncedAt: &syncedAt}
+	_, err = f.svc.ApplyVariables(ctx, f.org, tm.ID, in)
+	if got := valueProblems(t, err); !reflect.DeepEqual(got, []string{"token"}) || !strings.Contains(err.Error(), "enter the value again") {
+		t.Fatalf("problems %v (%v), want token to be entered again", got, err)
+	}
+	in.Values = map[string]any{"token": "visible"}
+	if _, err := f.svc.ApplyVariables(ctx, f.org, tm.ID, in); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.store.byID[tm.ID].ExtraVars["token"]; got != "visible" {
+		t.Fatalf("token = %#v", got)
+	}
+}

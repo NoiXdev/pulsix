@@ -3,7 +3,7 @@ package varsync
 import "github.com/noixdev/pulsix/internal/inventory/schema"
 
 // ApplyOptions says who applies a preview. Automatic (after a sync) holds
-// changes that need review and never removes; a person applies everything
+// changes and additions that need review and never removes; a person applies everything
 // and removes gone fields only with RemoveGone.
 type ApplyOptions struct {
 	Automatic  bool
@@ -63,6 +63,9 @@ func Apply(current []schema.Field, p Preview, opt ApplyOptions) []schema.Field {
 		}
 	}
 	for _, a := range p.Added {
+		if opt.Automatic && a.NeedsReview {
+			continue
+		}
 		if !have[a.Field.Name] && len(out) < schema.MaxFields {
 			have[a.Field.Name] = true
 			out = append(out, a.Field)

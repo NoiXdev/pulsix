@@ -39,8 +39,16 @@ const (
 
 // Added is a field the source declares and the template does not have,
 // as it will be stored (origin source, its default activation).
+// NeedsReview holds it for a person when the template kept a value under
+// its name (a field a person removed, spec 7.75 owner decision 4) that
+// the field cannot take as it is: a sealed secret under a field that is
+// not a secret (Reason secret), or a value that does not fit it (Reason
+// value). Automatic mode does not add it; a person's apply does, and asks
+// for the value again.
 type Added struct {
-	Field schema.Field `json:"field"`
+	Field       schema.Field `json:"field"`
+	NeedsReview bool         `json:"needs_review"`
+	Reason      ReviewReason `json:"reason,omitempty"`
 }
 
 // Changed is a template field that takes the source's new content: a
@@ -100,7 +108,8 @@ type Preview struct {
 }
 
 // Compute compares current, a template's fields, with src. stored are the
-// template's stored values, which decide whether a change needs review.
+// template's stored values, which decide whether a change or an addition
+// needs review.
 // A source that is not available yields no items, only why; manual fields
 // are never touched. Added stops where the template would hold more than
 // schema.MaxFields fields (gone ones count until removed), with a
@@ -134,7 +143,7 @@ func Compute(current []schema.Field, src Source, stored map[string]any) Preview 
 		switch {
 		case have[f.Name]:
 		case len(p.Added) < room:
-			p.Added = append(p.Added, Added{Field: added(f)})
+			p.Added = append(p.Added, addition(added(f), stored))
 		default:
 			left = append(left, f.Name)
 		}
@@ -270,6 +279,13 @@ func manualNameTaken(cand schema.Field) varsource.Note {
 		n.File, n.Line = cand.Source.File, cand.Source.Line
 	}
 	return n
+}
+
+// addition is the new field f, held for review when the template kept a
+// value under its name that f cannot take as it is (see Added).
+func addition(f schema.Field, stored map[string]any) Added {
+	needs, why := reviewKept(f, stored)
+	return Added{Field: f, NeedsReview: needs, Reason: why}
 }
 
 // added is a new field from the source as stored: origin source, active

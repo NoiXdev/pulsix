@@ -127,6 +127,24 @@ func review(from, to schema.Field, stored map[string]any, capped bool, changes [
 	return false, ""
 }
 
+// reviewKept says whether automatic mode must hold the addition of field
+// to, because the template kept a value under its name (a field a person
+// removed) that to cannot take: a sealed secret where to is not a secret,
+// at any depth (only a person unseals a stored value), or a value that
+// does not fit to.
+func reviewKept(to schema.Field, stored map[string]any) (bool, ReviewReason) {
+	v, ok := stored[to.Name]
+	switch {
+	case !ok || v == nil:
+		return false, ""
+	case len(schema.StraySealed([]schema.Field{content(to)}, map[string]any{to.Name: v})) > 0:
+		return true, ReasonSecret
+	case !fits(to, v):
+		return true, ReasonValue
+	}
+	return false, ""
+}
+
 // fits reports whether v is a valid stored value of f, checked as if f
 // were active: an inactive field's value is validated once a person
 // switches it on.

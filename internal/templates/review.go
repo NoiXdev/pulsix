@@ -14,7 +14,7 @@ import (
 
 // Review counts what a template's variables leave for a person: fields
 // marked gone from the source (removing them is confirmed), source
-// changes held for review, active required fields without a default or
+// changes and additions held for review, active required fields without a default or
 // a value, and source fields not added because of the field limit.
 type Review struct {
 	Gone            int
@@ -126,6 +126,11 @@ func review(t Template, src varsync.Source) Review {
 		p := varsync.Compute(fields, src, t.ExtraVars)
 		for _, c := range p.Changed {
 			if c.NeedsReview {
+				r.NeedsReview++
+			}
+		}
+		for _, a := range p.Added {
+			if a.NeedsReview {
 				r.NeedsReview++
 			}
 		}

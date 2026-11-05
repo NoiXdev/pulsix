@@ -3005,6 +3005,8 @@ export interface components {
         };
         Added: {
             field: components["schemas"]["Field"];
+            needs_review: boolean;
+            reason?: string;
         };
         AdhocInputBody: {
             /**
@@ -6897,7 +6899,7 @@ export interface components {
             missing_required: number;
             /**
              * Format: int64
-             * @description Source changes held for a person (a type or secret change, or a stored value that no longer fits)
+             * @description Source changes and additions held for a person (a type or secret change, or a stored value that no longer fits)
              */
             needs_review: number;
         };

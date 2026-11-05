@@ -5,7 +5,7 @@ import { Pill, Tag } from '../../../ui/badge.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { useApplyTemplateVariables, usePreviewTemplateVariables } from '../../../api/hooks/useTemplateVariables.ts';
-import type { VariablesChange, VariablesNote, VariablesPreview } from '../../../api/types.ts';
+import type { VariablesAdded, VariablesChange, VariablesNote, VariablesPreview } from '../../../api/types.ts';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
 import { formatAttribute } from '../../variables/fieldEditor.ts';
 import { isActive } from '../../variables/origin.ts';
@@ -36,6 +36,24 @@ const REENTER = new Set(['type', 'value', 'secret']);
  * default to fall back to, so the person enters its value here. */
 function wantsValue(f: SchemaField): boolean {
   return isActive(f) && Boolean(f.required) && f.default === undefined;
+}
+
+/** asksAdded: an added field this dialog asks a value for — a new
+ * required one (wantsValue), or an active one held because the value the
+ * template kept under its name no longer fits or was a secret. */
+function asksAdded(a: VariablesAdded): boolean {
+  const f = a.field as SchemaField;
+  return wantsValue(f) || (isActive(f) && Boolean(a.reason && REENTER.has(a.reason)));
+}
+
+/** Held is the "needs review" mark of a held change or addition, with why. */
+function Held({ needsReview, reason, t }: { needsReview: boolean; reason?: string; t: Messages['templates']['preview'] }) {
+  return (
+    <>
+      {needsReview && <Pill tone="warn">{t.needsReview}</Pill>}
+      {reason && reason in t.reasons && <span className="text-[11px] text-muted-foreground">{t.reasons[reason as keyof typeof t.reasons]}</span>}
+    </>
+  );
 }
 
 /** The top-level name a problem path (port, vhosts[0].domain) is under. */
@@ -82,7 +100,8 @@ function entered(values: Vars): Vars {
  * SyncPreviewDialog is "Sync now" and the first link of a template's
  * variables (spec 7.75 goal 5): it asks the server what applying the
  * playbook's variable sources would change — added fields with the
- * activation they get, changed fields attribute by attribute (a change held
+ * activation they get (one held for review over a value the template kept
+ * says why, and asks for the value again), changed fields attribute by attribute (a change held
  * for review says why, and asks again for a value that may no longer
  * fit; a new required field without a default asks for its value),
  * adjusted fields with the source's new version, gone fields (removed only
@@ -156,7 +175,7 @@ export function SyncPreviewDialog({ org, templateId, revision, mode, onClose, on
   // Problems at a field with no input here (the server refused a value
   // this dialog did not ask for) are listed, never dropped.
   const asked = new Set([
-    ...added.filter(({ field }) => wantsValue(field as SchemaField)).map(({ field }) => field.name),
+    ...added.filter(asksAdded).map(({ field }) => field.name),
     ...changed.filter((c) => c.reason && REENTER.has(c.reason)).map((c) => c.name),
   ]);
   const unplaced = problems.filter((x) => !asked.has(rootOf(x.path)));
@@ -180,14 +199,15 @@ export function SyncPreviewDialog({ org, templateId, revision, mode, onClose, on
             {added.length > 0 && (
               <Section title={p.added}>
                 <ul className="flex flex-col gap-1 text-xs">
-                  {added.map(({ field }) => (
-                    <li key={field.name} className="flex flex-col gap-1">
-                      <span className="flex items-center gap-2">
-                        <span className="font-mono">{field.name}</span>
-                        <span className="text-muted-foreground">{field.type}</span>
-                        <Tag>{isActive(field as SchemaField) ? p.active : p.inactive}</Tag>
+                  {added.map((a) => (
+                    <li key={a.field.name} className="flex flex-col gap-1">
+                      <span className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono">{a.field.name}</span>
+                        <span className="text-muted-foreground">{a.field.type}</span>
+                        <Tag>{isActive(a.field as SchemaField) ? p.active : p.inactive}</Tag>
+                        <Held needsReview={a.needs_review} reason={a.reason} t={p} />
                       </span>
-                      {wantsValue(field as SchemaField) && valueFor(field as SchemaField)}
+                      {asksAdded(a) && valueFor(a.field as SchemaField)}
                     </li>
                   ))}
                 </ul>
@@ -200,8 +220,7 @@ export function SyncPreviewDialog({ org, templateId, revision, mode, onClose, on
                     <li key={c.name} className="flex flex-col gap-1">
                       <span className="flex flex-wrap items-center gap-2">
                         <span className="font-mono">{c.name}</span>
-                        {c.needs_review && <Pill tone="warn">{p.needsReview}</Pill>}
-                        {c.reason && c.reason in p.reasons && <span className="text-[11px] text-muted-foreground">{p.reasons[c.reason as keyof typeof p.reasons]}</span>}
+                        <Held needsReview={c.needs_review} reason={c.reason} t={p} />
                       </span>
                       <ChangeList changes={c.changes} />
                       {c.reason && REENTER.has(c.reason) && valueFor(c.field as SchemaField)}
