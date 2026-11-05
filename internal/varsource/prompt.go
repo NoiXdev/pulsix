@@ -21,7 +21,7 @@ func promptFields(y *yamlFile, prompts *yaml.Node) (fields []schema.Field, notes
 		return nil, nil, false
 	}
 	if prompts.Kind != yaml.SequenceNode {
-		return nil, []Note{warning(codeFieldInvalid, file, prompts.Line, "vars_prompt is not a list of prompts; nothing read from it")}, false
+		return nil, []Note{warning(codeFieldInvalid, file, prompts.Line, "vars_prompt is not a list of prompts; nothing read from it")}, true
 	}
 	for i, item := range y.items(prompts) {
 		if i == schema.MaxFields {
@@ -29,8 +29,9 @@ func promptFields(y *yamlFile, prompts *yaml.Node) (fields []schema.Field, notes
 			cut = true
 			break
 		}
-		f, n, ok := promptField(y, resolve(item), item.Line)
+		f, n, ok, shape := promptField(y, resolve(item), item.Line)
 		notes = append(notes, n...)
+		cut = cut || shape
 		if ok {
 			fields = append(fields, f)
 		}
@@ -38,15 +39,18 @@ func promptFields(y *yamlFile, prompts *yaml.Node) (fields []schema.Field, notes
 	return fields, notes, cut
 }
 
-func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note, bool) {
+// promptField maps one vars_prompt entry. shape is true when the entry is
+// no mapping or its name no text: a prompt was declared that cannot be
+// named, so the list counts as cut.
+func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note, bool, bool) {
 	file := y.file
 	if entry.Kind != yaml.MappingNode {
-		return schema.Field{}, []Note{warning(codeFieldInvalid, file, line, "a vars_prompt entry must be a mapping; skipped")}, false
+		return schema.Field{}, []Note{warning(codeFieldInvalid, file, line, "a vars_prompt entry must be a mapping; skipped")}, false, true
 	}
 	a := y.attrs(entry)
 	name, ok := y.scalarText(a["name"])
 	if !ok {
-		return schema.Field{}, []Note{warning(codeInvalidName, file, line, "a vars_prompt entry without a name; skipped")}, false
+		return schema.Field{}, []Note{warning(codeInvalidName, file, line, "a vars_prompt entry without a name; skipped")}, false, true
 	}
 	private := true
 	if p := a["private"]; !isNull(p) {
@@ -76,5 +80,5 @@ func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note,
 	f.Origin = schema.OriginSource
 	f.Source = &schema.FieldSource{Kind: schema.SourceVarsPrompt, File: file, Line: line}
 	f, n, ok := finishField(f, file, line)
-	return f, append(notes, n...), ok
+	return f, append(notes, n...), ok, false
 }

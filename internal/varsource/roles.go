@@ -199,14 +199,15 @@ func (w *walk) readRole(dir string, r roleRef) RoleState {
 }
 
 // readRoleSpec maps r's entry point of a parsed spec file. A meta/main
-// file without an argument_specs key declares no specs. An entry point
-// that is no mapping, or a file that runs out of budget, is unreadable.
+// file without an argument_specs key declares no specs. A file, an
+// argument_specs value or an entry point of the wrong shape, or a file
+// that runs out of budget, is unreadable.
 func (w *walk) readRoleSpec(s *roleSpec, r roleRef, metaMain bool) RoleState {
 	y := s.y
 	if y.exceeded() {
 		return RoleUnreadable
 	}
-	if metaMain && isNull(y.lookup(s.root, "argument_specs")) {
+	if metaMain && (isNull(s.root) || s.root.Kind == yaml.MappingNode) && isNull(y.lookup(s.root, "argument_specs")) {
 		w.account(y)
 		if y.exceeded() {
 			return RoleUnreadable

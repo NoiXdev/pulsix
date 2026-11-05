@@ -178,7 +178,7 @@ func (f *playFile) setKeys(n *yaml.Node) {
 // roleEntries reads a play's roles: list. Keys of an entry other than the
 // role keywords are role parameters, set in the playbook.
 func (f *playFile) roleEntries(n *yaml.Node) {
-	for _, it := range f.y.items(n) {
+	for _, it := range f.list(n, "roles") {
 		e := resolve(it)
 		if e == nil {
 			continue
@@ -210,7 +210,7 @@ func (f *playFile) tasks(n *yaml.Node, depth int) {
 		f.y.giveUp()
 		return
 	}
-	for _, t := range f.y.items(n) {
+	for _, t := range f.list(n, "a task list") {
 		a := f.y.attrs(t)
 		nested := false
 		for _, k := range []string{"block", "rescue", "always"} {
@@ -252,7 +252,7 @@ func (f *playFile) roleTask(args *yaml.Node) {
 	}
 	name, ok := kv["name"]
 	if !ok {
-		f.invalidRole(text, args.Line)
+		f.invalidRole(text, args.Line, roleUseUnreadable)
 		return
 	}
 	f.ref(name, kv["tasks_from"], args.Line)
@@ -264,28 +264,46 @@ func (f *playFile) roleTask(args *yaml.Node) {
 func (f *playFile) roleName(nameNode, from *yaml.Node, line int) {
 	name, ok := f.y.scalarText(nameNode)
 	if !ok {
-		f.invalidRole("", line)
+		f.invalidRole("", line, roleUseUnreadable)
 		return
 	}
 	entry := ""
 	if !isNull(from) {
 		if entry, ok = f.y.scalarText(from); !ok {
-			f.invalidRole(name, line)
+			f.invalidRole(name, line, roleUseUnreadable)
 			return
 		}
 	}
 	f.ref(name, entry, resolve(nameNode).Line)
 }
 
+const roleUseUnreadable = "a role use needs a role name (and tasks_from, if any, as text); not read"
+
+// list is the items of a roles: or task list (tasks, pre_tasks,
+// post_tasks, handlers, block, rescue, always). A value that is neither
+// empty nor a list hides the role uses it may hold: it counts as one role
+// use that cannot be read.
+func (f *playFile) list(n *yaml.Node, what string) []*yaml.Node {
+	r := resolve(n)
+	if isNull(r) {
+		return nil
+	}
+	if r.Kind != yaml.SequenceNode {
+		f.invalidRole("", r.Line, what+" must be a list; nothing in it is read, and the roles it uses are unknown")
+		return nil
+	}
+	return f.y.items(r)
+}
+
 // invalidRole records a role use that cannot be read, so the walk lists it
 // as unreadable and its role's fields are not taken as gone. name is what
 // text it had.
-func (f *playFile) invalidRole(name string, line int) {
+func (f *playFile) invalidRole(name string, line int, why string) {
 	key := fmt.Sprintf("\x01%d\x00%s", line, name)
 	if f.overflow || f.refSeen[key] {
 		return
 	}
-	f.y.note(warning(codeRoleInvalid, f.y.file, line, "a role use needs a role name (and tasks_from, if any, as text); not read"))
+	f.y.note(warning(codeRoleInvalid, f.y.file, line, "%s", why))
 	f.addRef(key, roleRef{name: name, entryPoint: "main", line: line, invalid: true})
 }
 

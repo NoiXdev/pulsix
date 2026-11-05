@@ -65,7 +65,15 @@ func readSpecRoot(y *yamlFile, root *yaml.Node, role, entryPoint string, kind sc
 
 // mapEntryPoint maps the options of one entry point, noting into y.
 func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) specResult {
+	if !isNull(root) && root.Kind != yaml.MappingNode {
+		y.note(warning(codeFieldInvalid, y.file, root.Line, "the file is not a mapping; nothing read"))
+		return specResult{broken: true}
+	}
 	specs, hasSpecs := y.entry(root, "argument_specs")
+	if v := resolve(specs.value); hasSpecs && !isNull(v) && v.Kind != yaml.MappingNode {
+		y.note(warning(codeFieldInvalid, y.file, specs.key.Line, "argument_specs is not a mapping of entry points; nothing read"))
+		return specResult{broken: true}
+	}
 	ep, found := y.entry(specs.value, entryPoint)
 	if !found {
 		line := 0
