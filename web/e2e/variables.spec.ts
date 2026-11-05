@@ -125,7 +125,7 @@ test('a template takes its variables from the playbook, and a group keeps manual
   dialog = page.getByRole('dialog', { name: 'Add group' });
   await dialog.getByLabel('Name').fill(GROUP);
   await dialog.getByRole('button', { name: 'Create group' }).click();
-  await page.getByRole('tab', { name: 'Variable schema' }).click();
+  // The group page has no tabs: the schema is its own section.
   await page.getByRole('button', { name: 'Add field' }).click();
   field = page.getByRole('dialog', { name: 'Field field_1' });
   await field.getByLabel('Name').fill('region');
