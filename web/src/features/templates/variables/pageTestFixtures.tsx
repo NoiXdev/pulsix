@@ -1,5 +1,6 @@
 import type { MockRoute } from '../../../test/mockApi.ts';
 import { renderRoutes } from '../../../test/renderRoutes.tsx';
+import type { Locale } from '../../../i18n/types.ts';
 import { TemplateVariablesPage } from './TemplateVariablesPage.tsx';
 
 /** Fixtures of the variables page tests (TemplateVariablesPage*.test.tsx):
@@ -61,13 +62,15 @@ export function routes(extra: Record<string, MockRoute> = {}): Record<string, Mo
   };
 }
 
-export function renderPage() {
+export function renderPage(locale?: Locale) {
   return renderRoutes(
     [
       { path: '/templates/$id/variables', component: TemplateVariablesPage },
       { path: '/templates', component: () => <div>TEMPLATE LIST</div> },
     ],
     '/o/acme/templates/t1/variables',
+    undefined,
+    locale,
   );
 }
 

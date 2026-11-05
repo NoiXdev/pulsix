@@ -53,7 +53,7 @@ export function SourcePanel({ org, source, mode, canWrite, canSyncRepo, lockedRe
         {kind === 'repo' && source?.path && <span className="font-mono text-xs">{source.path}</span>}
         {kind === 'repo' && source?.commit && <span className="font-mono text-xs text-muted-foreground">{s.commit(source.commit.slice(0, 7))}</span>}
         {source?.synced_at && <span className="text-xs text-muted-foreground">{s.syncedAt(fmt.dateTime(source.synced_at))}</span>}
-        {source?.newer && <Pill tone="accent">{s.newer}</Pill>}
+        {source?.newer && <Pill tone="accent">{kind === 'inline' ? s.newerInline : s.newer}</Pill>}
       </div>
       {source && sourceNotices(source, s).length > 0 && (
         <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">

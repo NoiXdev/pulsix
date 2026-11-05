@@ -25,6 +25,22 @@ describe('TemplateVariablesPage — the source', () => {
     expect(await screen.findByText('Newer commit available')).toBeInTheDocument();
   });
 
+  it('says an inline playbook was saved since, not that a newer commit waits', async () => {
+    const inline = source({ kind: 'inline', commit: 'text:abc', synced_at: undefined, repo_id: undefined, path: undefined, newer: true });
+    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ source: inline }) }));
+    renderPage();
+    expect(await screen.findByText('Playbook saved since the last sync')).toBeInTheDocument();
+    expect(screen.queryByText('Newer commit available')).not.toBeInTheDocument();
+  });
+
+  it('says so in German too', async () => {
+    const inline = source({ kind: 'inline', commit: 'text:abc', synced_at: undefined, repo_id: undefined, path: undefined, newer: true });
+    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ source: inline }) }));
+    renderPage('de');
+    expect(await screen.findByText('Playbook seit dem letzten Abgleich gespeichert')).toBeInTheDocument();
+    expect(screen.queryByText('Neuerer Commit verfügbar')).not.toBeInTheDocument();
+  });
+
   it('says when the worker that synced the repository does not read variable sources', async () => {
     mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ source: source({ worker_reads: false, available: false }) }) }));
     renderPage();

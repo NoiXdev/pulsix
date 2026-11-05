@@ -118,6 +118,8 @@ export const enTemplates = {
     commit: (sha: string) => `Commit ${sha}`,
     syncedAt: (time: string) => `synced ${time}`,
     newer: 'Newer commit available',
+    /** An inline playbook has no commits: it was saved again since. */
+    newerInline: 'Playbook saved since the last sync',
     mode: 'Sync mode',
     modes: { off: 'Off', manual: 'Manual', automatic: 'Automatic' },
     modeHint: {

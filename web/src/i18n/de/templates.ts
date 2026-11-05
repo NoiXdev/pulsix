@@ -122,6 +122,7 @@ export const deTemplates: Messages['templates'] = {
     commit: (sha: string) => `Commit ${sha}`,
     syncedAt: (time: string) => `abgeglichen ${time}`,
     newer: 'Neuerer Commit verfügbar',
+    newerInline: 'Playbook seit dem letzten Abgleich gespeichert',
     mode: 'Abgleich',
     modes: { off: 'Aus', manual: 'Manuell', automatic: 'Automatisch' },
     modeHint: {
