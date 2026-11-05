@@ -81,7 +81,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
           {t.inventory.schemaTab.problems(problems.length)}
         </p>
       )}
-      <fieldset disabled={!canWrite} className="min-w-0">
+      <fieldset disabled={!canWrite} className="@container min-w-0">
         <SchemaBuilder key={builderKey} value={draft} onChange={setDraft} problems={problems} />
       </fieldset>
     </Section>

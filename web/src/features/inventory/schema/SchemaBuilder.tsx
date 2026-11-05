@@ -82,7 +82,7 @@ export function SchemaBuilder({ value, onChange, problems, pathPrefix = '', nest
   const listProblems = (problems ?? []).filter((p) => p.path === pathPrefix);
 
   return (
-    <div className={nested ? 'flex flex-col gap-3' : 'grid grid-cols-[240px_minmax(0,1fr)_300px] items-start gap-4'}>
+    <div className={nested ? 'flex flex-col gap-3' : 'grid grid-cols-[minmax(0,200px)_minmax(0,1fr)] items-start gap-4 @min-[52rem]:grid-cols-[240px_minmax(0,1fr)_300px]'}>
       <div className="flex flex-col gap-1">
         {listProblems.length > 0 && (
           <ul role="alert" className="flex flex-col gap-0.5 text-[11px] text-destructive">
@@ -423,7 +423,7 @@ function AssignmentPreview({ schema }: { schema: VarSchema }) {
   const t = useT();
   const [vars, setVars] = useState<Vars>({});
   return (
-    <section aria-label={t.inventory.builder.previewLabel} className="flex flex-col gap-3 rounded-[10px] border border-border bg-card p-4">
+    <section aria-label={t.inventory.builder.previewLabel} className="col-span-full flex min-w-0 flex-col gap-3 rounded-[10px] border border-border bg-card p-4 @min-[52rem]:col-span-1">
       <h3 className="text-[13px] font-semibold">{t.inventory.builder.previewHeading}</h3>
       <p className="text-[11px] text-muted-foreground">{t.inventory.builder.previewHint}</p>
       <SchemaForm fields={membershipFields(schema)} value={vars} onChange={setVars} idPrefix="preview" />

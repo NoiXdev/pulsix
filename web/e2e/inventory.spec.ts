@@ -2,12 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
 
-// The wide viewport is a stopgap, not a preference: SchemaBuilder's fixed
-// 240px/1fr/300px grid needs about 840px, and the group page's content column
-// is about 680px at Playwright's default 1280px, which crushes the field editor
-// (its Type select cannot even be clicked). Drop it once the builder collapses
-// on a narrow column.
-test.use({ storageState: ADMIN_STORAGE_STATE, viewport: { width: 1900, height: 1000 } });
+test.use({ storageState: ADMIN_STORAGE_STATE });
 
 const base = `/o/${ORG.slug}`;
 
