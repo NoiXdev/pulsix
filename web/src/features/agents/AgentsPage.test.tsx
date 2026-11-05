@@ -130,6 +130,7 @@ describe('AgentsPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for web-1' }));
     await user.click(screen.getByRole('menuitem', { name: 'Open host' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/hosts/h1'));
+    expect(router.state.location.hash).toBe('connection');
   });
 
   it('withdraws a pending token from its row menu', async () => {

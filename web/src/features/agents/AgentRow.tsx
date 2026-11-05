@@ -34,7 +34,7 @@ export function AgentRow({
       label={a.host_name}
       menu={
         <RowMenu label={t.common.rowActions(a.host_name)}>
-          <RowMenuItem onSelect={() => void navigate({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id } })}>{t.agents.openHost}</RowMenuItem>
+          <RowMenuItem onSelect={() => void navigate({ to: '/o/$org/hosts/$id', params: { org, id: a.host_id }, hash: 'connection' })}>{t.agents.openHost}</RowMenuItem>
           {canWrite && (
             <RowMenuItem onSelect={() => onRevoke(a)} destructive>
               {t.agents.revokeItem}
