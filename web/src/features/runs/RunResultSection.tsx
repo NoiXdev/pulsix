@@ -4,6 +4,7 @@ import { Section } from '../../ui/detail-layout.tsx';
 import type { JobDetail, JobEvent } from '../../api/types.ts';
 import { cancelHostRows, hostResultRows } from './status.ts';
 import type { CancelHostState } from './status.ts';
+import { isTerminal } from '../../api/hooks/useJobs.ts';
 import { useT } from '../../i18n/useT.ts';
 
 // cancelHostRows answers a question about the host's STEP, not about the
@@ -38,36 +39,38 @@ export function RunResultSection({ job, status, events }: { job: JobDetail; stat
   return (
     <Section id="result" title={t.runs.detail.section.result}>
       {job.error && (
-        <div role="alert" className="rounded-md border p-3 text-xs" style={{ borderColor: 'color-mix(in srgb, var(--px-crit) 33%, transparent)', background: 'color-mix(in srgb, var(--px-crit) 10%, transparent)', color: 'var(--px-crit)' }}>
+        <div role="alert" className="rounded-md border p-3 text-xs [overflow-wrap:anywhere]" style={{ borderColor: 'color-mix(in srgb, var(--px-crit) 33%, transparent)', background: 'color-mix(in srgb, var(--px-crit) 10%, transparent)', color: 'var(--px-crit)' }}>
           {job.error}
         </div>
       )}
       {rows.length > 0 && (
         <Card>
-          <table className="w-full text-xs" aria-label={t.runs.detail.perHost}>
-            <thead>
-              <tr className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-                <th className="px-4 py-2 text-left">{t.runs.detail.hostColumn}</th>
-                <th className="px-2 py-2">{t.runs.detail.columns.ok}</th>
-                <th className="px-2 py-2">{t.runs.detail.columns.changed}</th>
-                <th className="px-2 py-2">{t.runs.detail.columns.failed}</th>
-                <th className="px-2 py-2">{t.runs.detail.columns.unreachable}</th>
-                <th className="px-2 py-2">{t.runs.detail.columns.skipped}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.host} className="border-t border-border">
-                  <td className="px-4 py-1.5 font-mono text-[13px]">{r.host}</td>
-                  <StateCell on={r.ok} color="var(--px-ok)" label={t.runs.detail.hostState.ok} />
-                  <StateCell on={r.changed} color="var(--px-accent)" label={t.runs.detail.hostState.changed} />
-                  <StateCell on={r.failed} color="var(--px-crit)" label={t.runs.detail.hostState.failed} />
-                  <StateCell on={r.unreachable} color="var(--px-crit)" label={t.runs.detail.hostState.unreachable} />
-                  <StateCell on={r.skipped} color="var(--px-unknown)" label={t.runs.detail.hostState.skipped} />
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs" aria-label={t.runs.detail.perHost}>
+              <thead>
+                <tr className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+                  <th className="px-4 py-2 text-left">{t.runs.detail.hostColumn}</th>
+                  <th className="px-2 py-2">{t.runs.detail.columns.ok}</th>
+                  <th className="px-2 py-2">{t.runs.detail.columns.changed}</th>
+                  <th className="px-2 py-2">{t.runs.detail.columns.failed}</th>
+                  <th className="px-2 py-2">{t.runs.detail.columns.unreachable}</th>
+                  <th className="px-2 py-2">{t.runs.detail.columns.skipped}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.host} className="border-t border-border">
+                    <td className="px-4 py-1.5 font-mono text-[13px] [overflow-wrap:anywhere]">{r.host}</td>
+                    <StateCell on={r.ok} color="var(--px-ok)" label={t.runs.detail.hostState.ok} />
+                    <StateCell on={r.changed} color="var(--px-accent)" label={t.runs.detail.hostState.changed} />
+                    <StateCell on={r.failed} color="var(--px-crit)" label={t.runs.detail.hostState.failed} />
+                    <StateCell on={r.unreachable} color="var(--px-crit)" label={t.runs.detail.hostState.unreachable} />
+                    <StateCell on={r.skipped} color="var(--px-unknown)" label={t.runs.detail.hostState.skipped} />
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
       {cancelRows.length > 0 && (
@@ -108,8 +111,8 @@ export function RunResultSection({ job, status, events }: { job: JobDetail; stat
           <ul className="flex flex-col gap-1 p-4 text-xs" aria-label={t.runs.detail.cancelledHosts}>
             {cancelRows.map((r) => (
               <li key={r.host} className="flex items-center justify-between gap-2">
-                <span className="font-mono">{r.host}</span>
-                <span className="flex items-center gap-2">
+                <span className="min-w-0 font-mono [overflow-wrap:anywhere]">{r.host}</span>
+                <span className="flex shrink-0 items-center gap-2">
                   {r.state === 'interrupted' && <span className="text-muted-foreground">{r.task}</span>}
                   <span className="font-semibold" style={{ color: CANCEL_STATE_COLOR[r.state] }}>
                     {t.runs.cancelState[r.state]}
@@ -120,7 +123,11 @@ export function RunResultSection({ job, status, events }: { job: JobDetail; stat
           </ul>
         </Card>
       )}
-      {!job.error && rows.length === 0 && cancelRows.length === 0 && <p className="text-xs text-muted-foreground">{t.runs.detail.noResults}</p>}
+      {!job.error && rows.length === 0 && cancelRows.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          {isTerminal(status) ? t.runs.detail.noResultsFinal : t.runs.detail.noResults}
+        </p>
+      )}
     </Section>
   );
 }

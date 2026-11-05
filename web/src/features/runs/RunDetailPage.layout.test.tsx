@@ -107,8 +107,19 @@ describe('RunDetailPage layout', () => {
     expect(navHrefs()).toEqual(['#result', '#log']);
     expect(screen.queryByRole('region', { name: 'Run group' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Vault identities' })).not.toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Result' })).getByText('No per-host results yet.')).toBeInTheDocument();
+    // A finished run without a recap has nothing more coming: no "yet".
+    expect(within(screen.getByRole('region', { name: 'Result' })).getByText('No per-host results were recorded.')).toBeInTheDocument();
     expect(fact('Run group')).toHaveTextContent('1 job');
+  });
+
+  it('says results are still to come only while the run is live', async () => {
+    mockApi(routes({ [`GET ${JOB_PATH}`]: job({ status: 'running', finished_at: undefined }) }));
+    renderRunPage(JOB_ID);
+
+    await screen.findByRole('heading', { level: 1, name: shortId(JOB_ID) });
+    const result = screen.getByRole('region', { name: 'Result' });
+    expect(within(result).getByText('No per-host results yet.')).toBeInTheDocument();
+    expect(within(result).queryByText('No per-host results were recorded.')).not.toBeInTheDocument();
   });
 
   it('falls back to the short zone id when the zone is not listed', async () => {

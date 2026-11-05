@@ -98,6 +98,7 @@ export const deRuns: Messages['runs'] = {
       log: 'Ereignisprotokoll',
     },
     noResults: 'Noch keine Ergebnisse je Host.',
+    noResultsFinal: 'Es wurden keine Ergebnisse je Host aufgezeichnet.',
     retryStarted: 'Wiederholung gestartet',
     retryFailed: 'Wiederholung fehlgeschlagen',
     cancelled: 'Lauf abgebrochen',

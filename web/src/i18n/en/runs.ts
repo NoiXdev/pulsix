@@ -95,6 +95,7 @@ export const enRuns = {
       log: 'Event log',
     },
     noResults: 'No per-host results yet.',
+    noResultsFinal: 'No per-host results were recorded.',
     retryStarted: 'Retry started',
     retryFailed: 'Retry failed',
     cancelled: 'Run cancelled',
