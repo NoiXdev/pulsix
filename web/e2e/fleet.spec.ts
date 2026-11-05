@@ -55,7 +55,7 @@ async function enrolAndStart(page: Page, hostName: string): Promise<RunningAgent
  * in its own <span> (AgentsPage.tsx), so the row is two xpath steps above
  * the link rather than one. */
 function agentRow(page: Page, hostName: string) {
-  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=../..');
+  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=..');
 }
 
 async function waitOnline(page: Page, hostName: string): Promise<void> {

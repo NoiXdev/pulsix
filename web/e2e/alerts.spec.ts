@@ -56,7 +56,7 @@ async function enrolAndStart(page: Page, hostName: string): Promise<RunningAgent
 }
 
 function agentRow(page: Page, hostName: string) {
-  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=../..');
+  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=..');
 }
 
 async function waitOnline(page: Page, hostName: string): Promise<void> {
@@ -117,8 +117,9 @@ async function createCritRule(page: Page, hostName: string): Promise<void> {
 async function deleteCritRule(page: Page): Promise<void> {
   await page.goto(`${base}/checks/rules`);
   page.once('dialog', (d) => void d.accept());
-  await page.getByRole('button', { name: `Delete ${RULE_NAME}` }).click();
-  await expect(page.getByRole('button', { name: `Delete ${RULE_NAME}` })).toHaveCount(0);
+  await page.getByRole('button', { name: `Actions for ${RULE_NAME}` }).click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  await expect(page.getByRole('button', { name: `Actions for ${RULE_NAME}` })).toHaveCount(0);
 }
 
 /** disableSeedCheck turns off one of the seed "Linux base" checks for one

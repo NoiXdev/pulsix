@@ -77,7 +77,7 @@ async function enrolAndStart(page: Page, hostName: string): Promise<RunningAgent
 }
 
 function agentRow(page: Page, hostName: string) {
-  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=../..');
+  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=..');
 }
 
 async function waitOnline(page: Page, hostName: string): Promise<void> {
@@ -224,14 +224,13 @@ test('an operator ignores a mount from the host page, and separately creates, pr
     await expect(dialog).toHaveCount(0);
 
     // --- See it listed ---------------------------------------------------
-    // "Edit …"/"Delete …" name the decision's own pattern, so — the same
-    // shape rules.spec.ts's own listing check uses — they double as proof
+    // "Actions for decision …" names the decision's own pattern, so — the same
+    // shape rules.spec.ts's own listing check uses — it doubles as proof
     // the row exists without a brittle row-by-CSS-class lookup. Unique on
     // the page: ITEMS_TAB_MOUNT names only the decision this act just
     // created, never the host page's own "/" one from above or anything
     // another spec's own host-scoped decision could name.
-    await expect(page.getByRole('button', { name: `Edit decision for ${ITEMS_TAB_MOUNT}` })).toBeVisible();
-    await expect(page.getByRole('button', { name: `Delete decision for ${ITEMS_TAB_MOUNT}` })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Actions for decision ${ITEMS_TAB_MOUNT}` })).toBeVisible();
   } finally {
     await agent?.stop();
   }

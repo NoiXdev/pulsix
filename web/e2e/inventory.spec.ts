@@ -2,7 +2,12 @@ import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
 
-test.use({ storageState: ADMIN_STORAGE_STATE });
+// The wide viewport is a stopgap, not a preference: SchemaBuilder's fixed
+// 240px/1fr/300px grid needs about 840px, and the group page's content column
+// is about 680px at Playwright's default 1280px, which crushes the field editor
+// (its Type select cannot even be clicked). Drop it once the builder collapses
+// on a narrow column.
+test.use({ storageState: ADMIN_STORAGE_STATE, viewport: { width: 1900, height: 1000 } });
 
 const base = `/o/${ORG.slug}`;
 
@@ -75,17 +80,21 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await editor.getByLabel('Required').first().check();
   await page.getByRole('button', { name: 'Save schema' }).click();
   await toast(page, 'Schema saved');
-  await page.getByRole('tab', { name: 'Group values' }).click();
-  await page.getByLabel('env').fill('prod');
+  // The group page is one scrolling detail page: its sections sit under the
+  // sidebar's section nav, Members among them exactly once.
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Members' })).toHaveCount(1);
+  // The schema builder is on the same page now, and its group is labelled
+  // "Field env": the values form's own input is the textbox.
+  await page.getByRole('textbox', { name: 'env', exact: true }).fill('prod');
   await page.getByRole('button', { name: 'Save values' }).click();
   await toast(page, 'Group values saved');
-  await page.getByRole('tab', { name: 'Settings' }).click();
-  await pickOption(page, 'Jump host', 'inv-bastion');
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Edit group' });
+  await pickOption(dialog, 'Jump host', 'inv-bastion');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).click();
   await toast(page, 'Group saved');
 
   // Child group with a host-scoped repeater holding a secret.
-  await page.getByRole('tab', { name: 'Children' }).click();
   await page.getByRole('button', { name: 'Add child group' }).click();
   dialog = page.getByRole('dialog', { name: 'Add child group' });
   await dialog.getByLabel('Name').fill('inv_web');
@@ -112,7 +121,6 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await toast(page, 'Schema saved');
 
   // Assign the host: a missing required value is rejected at its field.
-  await page.getByRole('tab', { name: 'Members' }).click();
   await page.getByRole('button', { name: 'Assign host' }).click();
   dialog = page.getByRole('dialog', { name: 'Assign host to inv_web' });
   // pickOption's getByLabel is always exact, same reason this call used to
@@ -126,10 +134,10 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await dialog.getByLabel('password').fill('e2e-hunter2');
   await dialog.getByRole('button', { name: 'Assign to inv_web' }).click();
   await toast(page, 'Host assigned to inv_web');
-  await expect(page.getByText('complete')).toBeVisible();
+  // Scoped to the member's own row: the sidebar's group pill reads "Complete" too.
+  await expect(page.locator('[data-list-row]', { hasText: 'inv-web-01' }).getByText('complete', { exact: true })).toBeVisible();
 
   // The preview renders the jump host chain and masks the secret.
-  await page.getByRole('tab', { name: 'Preview inventory' }).click();
   const json = page.getByLabel('Inventory JSON');
   await expect(json).toContainText('-o ProxyJump=ops@bastion.inv.example:2222');
   await expect(json).toContainText('"password": "********"');

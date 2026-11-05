@@ -43,16 +43,15 @@ test('an operator creates a form rule, sees it listed, edits its threshold, and 
   // --- See it listed ---------------------------------------------------
   // The list shows name, severity, scope and duration, never the
   // threshold itself (backlog: RuleDTO's own row has no value column) —
-  // "Edit …" and "Delete …" name the rule, so they double as the listing's
-  // own proof without a brittle row-by-CSS-class lookup.
+  // The row menu's "Actions for …" names the rule, so it doubles as the
+  // listing's own proof without a brittle row-by-CSS-class lookup.
   await expect(page.getByText(RULE_NAME)).toBeVisible();
-  const editButton = page.getByRole('button', { name: `Edit ${RULE_NAME}` });
-  const deleteButton = page.getByRole('button', { name: `Delete ${RULE_NAME}` });
-  await expect(editButton).toBeVisible();
-  await expect(deleteButton).toBeVisible();
+  const rowActions = page.getByRole('button', { name: `Actions for ${RULE_NAME}` });
+  await expect(rowActions).toBeVisible();
 
   // --- Edit its threshold ------------------------------------------------
-  await editButton.click();
+  await rowActions.click();
+  await page.getByRole('menuitem', { name: 'Edit' }).click();
   const editDialog = page.getByRole('dialog');
   await expect(editDialog.getByLabel('Value')).toHaveValue('50');
   await editDialog.getByLabel('Value').fill('75');
@@ -61,15 +60,16 @@ test('an operator creates a form rule, sees it listed, edits its threshold, and 
 
   // The list itself renders no threshold column, so the edit is verified
   // the only way the GUI ever shows it back: reopening the same rule.
-  await page.getByRole('button', { name: `Edit ${RULE_NAME}` }).click();
+  await rowActions.click();
+  await page.getByRole('menuitem', { name: 'Edit' }).click();
   await expect(page.getByRole('dialog').getByLabel('Value')).toHaveValue('75');
   await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // --- Delete --------------------------------------------------------
   page.once('dialog', (d) => void d.accept());
-  await page.getByRole('button', { name: `Delete ${RULE_NAME}` }).click();
-  await expect(page.getByRole('button', { name: `Edit ${RULE_NAME}` })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: `Delete ${RULE_NAME}` })).toHaveCount(0);
+  await rowActions.click();
+  await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  await expect(rowActions).toHaveCount(0);
   await expect(page.getByText(RULE_NAME)).toHaveCount(0);
 });

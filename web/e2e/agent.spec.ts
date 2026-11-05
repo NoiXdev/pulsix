@@ -79,7 +79,8 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
     // --- Revoking ends it ----------------------------------------------
     await page.goto(`${base}/agents`);
     page.once('dialog', (d) => void d.accept());
-    await page.getByRole('button', { name: `Revoke agent on ${AGENT_HOST}` }).click();
+    await page.getByRole('button', { name: `Actions for ${AGENT_HOST}` }).click();
+    await page.getByRole('menuitem', { name: 'Revoke…' }).click();
     await expect(page.getByText('No agents enrolled yet.')).toBeVisible({ timeout: 30_000 });
   } finally {
     await agent?.stop();
