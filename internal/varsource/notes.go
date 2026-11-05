@@ -51,12 +51,13 @@ const (
 	codeFileTooComplex       = "file_too_complex"
 )
 
+// warning and hint build a note; the message is cut to maxMessageBytes.
 func warning(code, file string, line int, format string, args ...any) Note {
-	return Note{Level: LevelWarning, Code: code, File: file, Line: line, Message: fmt.Sprintf(format, args...)}
+	return Note{Level: LevelWarning, Code: code, File: file, Line: line, Message: clip(fmt.Sprintf(format, args...), maxMessageBytes)}
 }
 
 func hint(code, file string, line int, format string, args ...any) Note {
-	return Note{Level: LevelHint, Code: code, File: file, Line: line, Message: fmt.Sprintf(format, args...)}
+	return Note{Level: LevelHint, Code: code, File: file, Line: line, Message: clip(fmt.Sprintf(format, args...), maxMessageBytes)}
 }
 
 var yamlErrorLine = regexp.MustCompile(`line (\d+)`)

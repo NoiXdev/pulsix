@@ -69,7 +69,7 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 			m.warn(codeTooManyFields, p.key.Line, "entry point %s declares more than %d options; the rest are skipped", entryPoint, schema.MaxFields)
 			break
 		}
-		f, ok := m.option(p, p.key.Value, 0)
+		f, ok := m.option(p, "", 0)
 		if m.exhausted {
 			m.warn(codeTooManyFields, p.key.Line, "%s: this file declares more than %d options in all (aliases expanded); this option and the rest are skipped", p.key.Value, maxSpecFields)
 			break
@@ -109,15 +109,24 @@ var scalarTypes = map[string]schema.Type{
 	"bool":  schema.TypeBool,
 }
 
-// option maps one option; path is its dotted name, depth 0 the top level.
-// Sub-options are mapped down to schema.MaxDepth; finishField cuts there.
-func (m *specMapper) option(p pair, path string, depth int) (schema.Field, bool) {
+// option maps one option; parent is the dotted name of the option it sits
+// in ("" at the top level, depth 0). Sub-options are mapped down to
+// schema.MaxDepth; finishField cuts there.
+func (m *specMapper) option(p pair, parent string, depth int) (schema.Field, bool) {
 	line := p.key.Line
 	if m.budget <= 0 {
 		m.exhausted = true
 		return schema.Field{}, false
 	}
 	m.budget--
+	if len(p.key.Value) > maxNameBytes {
+		m.warn(codeInvalidName, line, "%q is longer than %d characters, not a usable variable name; skipped", p.key.Value, maxNameBytes)
+		return schema.Field{}, false
+	}
+	path := p.key.Value
+	if parent != "" {
+		path = parent + "." + path
+	}
 	spec := resolve(p.value)
 	if spec == nil || spec.Kind != yaml.MappingNode {
 		m.warn(codeFieldInvalid, line, "%s: an option's spec must be a mapping; skipped", path)
@@ -128,19 +137,19 @@ func (m *specMapper) option(p pair, path string, depth int) (schema.Field, bool)
 	if !m.mapType(&f, a, path, line) {
 		return schema.Field{}, false
 	}
-	if boolValue(a["no_log"]) {
+	if m.y.boolValue(a["no_log"]) {
 		if !m.makeSecret(&f, path, line) {
 			return schema.Field{}, false
 		}
 	} else if !m.applyChoices(&f, a["choices"], path, line) {
 		return schema.Field{}, false
 	}
-	f.Required = boolValue(a["required"])
+	f.Required = m.y.boolValue(a["required"])
 	f.Label, f.Description = m.labelAndDescription(a["description"])
 	m.applyDefault(&f, a["default"], path, line)
 	if (f.Type == schema.TypeRepeater || f.Type == schema.TypeObject) && depth+1 <= schema.MaxDepth {
 		for _, sp := range m.y.pairs(a["options"]) {
-			if sub, ok := m.option(sp, path+"."+sp.key.Value, depth+1); ok {
+			if sub, ok := m.option(sp, path, depth+1); ok {
 				f.Fields = append(f.Fields, sub)
 			}
 		}
@@ -153,7 +162,7 @@ func (m *specMapper) option(p pair, path string, depth int) (schema.Field, bool)
 func (m *specMapper) mapType(f *schema.Field, a map[string]*yaml.Node, path string, line int) bool {
 	typ := "str"
 	if n := a["type"]; !isNull(n) {
-		typ, _ = scalarText(n)
+		typ, _ = m.y.scalarText(n)
 	}
 	hasOptions := len(m.y.pairs(a["options"])) > 0
 	if t, ok := scalarTypes[typ]; ok {
@@ -162,7 +171,7 @@ func (m *specMapper) mapType(f *schema.Field, a map[string]*yaml.Node, path stri
 	}
 	switch typ {
 	case "list":
-		elements, _ := scalarText(a["elements"])
+		elements, _ := m.y.scalarText(a["elements"])
 		if t, ok := scalarTypes[elements]; ok {
 			f.Type, f.Item = schema.TypeList, &schema.Field{Type: t}
 			return true
@@ -215,6 +224,10 @@ func (m *specMapper) applyChoices(f *schema.Field, choices *yaml.Node, path stri
 		m.warn(codeFieldInvalid, line, "%s: choices must be a list; skipped", path)
 		return false
 	}
+	if len(choices.Content) > schema.MaxOptions {
+		m.warn(codeTooManyOptions, line, "%s: more than %d choices; skipped", path, schema.MaxOptions)
+		return false
+	}
 	options := make([]string, 0, len(choices.Content))
 	converted := false
 	for _, c := range m.y.items(choices) {
@@ -223,13 +236,14 @@ func (m *specMapper) applyChoices(f *schema.Field, choices *yaml.Node, path stri
 			m.warn(codeFieldInvalid, line, "%s: choices must be single values; skipped", path)
 			return false
 		}
+		text, _ := m.y.scalarText(c)
 		if t, _, _ := scalarOf(c); t != schema.TypeString {
-			converted = true
+			converted = true // a long number is not decoded; it stays its text
 		}
-		options = append(options, c.Value)
+		options = append(options, text)
 	}
 	if converted {
-		m.warn(codeChoicesConverted, line, "%s: choices that are not strings become the strings %s", path, strings.Join(options, ", "))
+		m.warn(codeChoicesConverted, line, "%s: choices that are not strings become strings as written", path)
 	}
 	target.Type, target.Options = schema.TypeEnum, options
 	return true
@@ -257,63 +271,56 @@ func (m *specMapper) applyDefault(f *schema.Field, d *yaml.Node, path string, li
 	if isNull(d) {
 		return
 	}
-	switch {
-	case f.Type == schema.TypeSecret:
+	switch f.Type {
+	case schema.TypeSecret:
 		m.warn(codeSecretDefaultDropped, line, "%s: a secret carries no default; the default is dropped", path)
 		return
-	case f.Type == schema.TypeRepeater || f.Type == schema.TypeObject:
+	case schema.TypeRepeater, schema.TypeObject:
 		m.warn(codeDefaultDropped, line, "%s: a %s field carries no default; the default is dropped", path, f.Type)
 		return
-	case textual(f.Type) && d.Kind == yaml.ScalarNode:
-		if _, _, ok := scalarOf(d); ok {
-			f.Default = d.Value
-			return
-		}
-	case f.Type == schema.TypeList && textual(f.Item.Type) && d.Kind == yaml.SequenceNode:
-		if texts, ok := m.scalarTexts(d); ok {
-			f.Default = texts
-			return
-		}
 	}
-	v, ok := m.y.defaultValue(d)
-	if !ok {
-		m.warn(codeDefaultInvalid, line, "%s: the default is not a value this field can hold; dropped", path)
+	target := f.Type
+	if f.Type == schema.TypeList {
+		target = f.Item.Type
+	}
+	v, why := m.y.defaultValue(d, textual(target))
+	if why != "" {
+		m.warn(codeDefaultInvalid, line, "%s: the default %s; dropped", path, why)
 		return
 	}
 	f.Default = v
 }
 
-// scalarTexts is the text of each item of a list of scalars.
-func (m *specMapper) scalarTexts(n *yaml.Node) ([]any, bool) {
-	out := make([]any, 0, len(n.Content))
-	for _, it := range m.y.items(n) {
-		s, ok := scalarText(it)
-		if !ok {
-			return nil, false
-		}
-		out = append(out, s)
-	}
-	return out, true
-}
-
 // labelAndDescription splits an argument spec description (a string, or a
-// list of lines) into its first line, the label, and the rest.
+// list of lines) into its first line, the label, and the rest, each cut
+// to its cap. A list is read only until both caps are reached.
 func (m *specMapper) labelAndDescription(n *yaml.Node) (string, string) {
-	var text string
-	switch n = resolve(n); {
-	case n == nil:
+	n = resolve(n)
+	if n == nil {
 		return "", ""
-	case n.Kind == yaml.ScalarNode && !isNull(n):
-		text = n.Value
-	case n.Kind == yaml.SequenceNode:
-		lines := make([]string, 0, len(n.Content))
-		for _, it := range m.y.items(n) {
-			if s, ok := scalarText(it); ok {
-				lines = append(lines, s)
-			}
-		}
-		text = strings.Join(lines, "\n")
 	}
-	label, rest, _ := strings.Cut(strings.TrimSpace(text), "\n")
-	return strings.TrimSpace(label), strings.TrimSpace(rest)
+	parts := []*yaml.Node{n}
+	if n.Kind == yaml.SequenceNode {
+		parts = m.y.items(n)
+	}
+	var b strings.Builder
+	firstNL := -1 // where the description starts
+	for _, it := range parts {
+		if firstNL >= 0 && b.Len()-firstNL > maxDescriptionBytes+1 {
+			break // the description's cap is reached: the rest would be cut anyway
+		}
+		text, ok := m.y.scalarText(it)
+		if !ok {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(text)
+		if firstNL < 0 {
+			firstNL = strings.IndexByte(b.String(), '\n')
+		}
+	}
+	label, rest, _ := strings.Cut(strings.TrimSpace(b.String()), "\n")
+	return clip(strings.TrimSpace(label), maxLabelBytes), clip(strings.TrimSpace(rest), maxDescriptionBytes)
 }

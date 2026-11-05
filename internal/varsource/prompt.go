@@ -45,15 +45,15 @@ func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note,
 		return schema.Field{}, []Note{warning(codeFieldInvalid, file, line, "a vars_prompt entry must be a mapping; skipped")}, false
 	}
 	a := y.attrs(entry)
-	name, ok := scalarText(a["name"])
+	name, ok := y.scalarText(a["name"])
 	if !ok {
 		return schema.Field{}, []Note{warning(codeInvalidName, file, line, "a vars_prompt entry without a name; skipped")}, false
 	}
 	private := true
 	if p := a["private"]; !isNull(p) {
-		private = boolValue(p)
+		private = y.boolValue(p)
 	}
-	label, _ := scalarText(a["prompt"])
+	label, _ := y.scalarText(a["prompt"])
 	f := schema.Field{Name: name, Label: label, Type: schema.TypeString}
 	if private {
 		f.Type = schema.TypeSecret
@@ -65,7 +65,11 @@ func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note,
 	case private:
 		notes = append(notes, warning(codeSecretDefaultDropped, file, line, "%s: a private prompt becomes a secret, which carries no default; the default is dropped", name))
 	case d.Kind == yaml.ScalarNode:
-		f.Default = d.Value
+		v, why := y.defaultValue(d, true) // a prompt answers with text
+		if why != "" {
+			notes = append(notes, warning(codeDefaultInvalid, file, line, "%s: the default %s; dropped", name, why))
+		}
+		f.Default = v
 	default:
 		notes = append(notes, warning(codeDefaultInvalid, file, line, "%s: a prompt's default must be a single value; dropped", name))
 	}

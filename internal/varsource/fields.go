@@ -58,6 +58,7 @@ func (fin *finisher) prune(f schema.Field, path string, depth int) (schema.Field
 		fin.warn(codeTooManyOptions, "%s: more than %d choices; skipped", path, schema.MaxOptions)
 		return f, false
 	}
+	f.Label, f.Description = clip(f.Label, maxLabelBytes), clip(f.Description, maxDescriptionBytes)
 	f.Default = fin.literalDefault(f.Default, path)
 	if f.Type != schema.TypeRepeater && f.Type != schema.TypeObject {
 		return f, true

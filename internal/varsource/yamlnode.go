@@ -1,7 +1,6 @@
 package varsource
 
 import (
-	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"gopkg.in/yaml.v3"
 )
 
@@ -46,20 +45,22 @@ const maxVisits = 1_000_000
 // file: when done, it checks tooComplex (the file then counts as not read)
 // and takes the notes.
 type yamlFile struct {
-	file    string
-	entries map[*yaml.Node][]pair
-	byKey   map[*yaml.Node]map[string]*yaml.Node
-	left    int
-	over    bool
-	notes   []Note
+	file      string
+	entries   map[*yaml.Node][]pair
+	byKey     map[*yaml.Node]map[string]*yaml.Node
+	left      int // steps: mapping entries and sequence items visited
+	bytesLeft int // bytes of scalars read (scalars.go)
+	over      bool
+	notes     []Note
 }
 
 func newYAMLFile(file string) *yamlFile {
 	return &yamlFile{
-		file:    file,
-		entries: map[*yaml.Node][]pair{},
-		byKey:   map[*yaml.Node]map[string]*yaml.Node{},
-		left:    maxVisits,
+		file:      file,
+		entries:   map[*yaml.Node][]pair{},
+		byKey:     map[*yaml.Node]map[string]*yaml.Node{},
+		left:      maxVisits,
+		bytesLeft: maxReadBytes,
 	}
 }
 
@@ -86,7 +87,7 @@ func (y *yamlFile) tooComplex() (Note, bool) {
 	if !y.over {
 		return Note{}, false
 	}
-	return warning(codeFileTooComplex, y.file, 0, "reading this file took more than %d steps (anchors, aliases and merge keys expanded); nothing read from it", maxVisits), true
+	return warning(codeFileTooComplex, y.file, 0, "reading this file took more than %d steps or %d bytes (anchors, aliases and merge keys expanded); nothing read from it", maxVisits, maxReadBytes), true
 }
 
 // pairs returns the entries of a mapping in order, nil for anything else.
@@ -106,32 +107,39 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 	if !y.spend(len(n.Content) / 2) {
 		return nil
 	}
-	last := make(map[string]int, len(n.Content)/2) // key → index of its last entry
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		k := n.Content[i]
+	keys := make([]*yaml.Node, len(n.Content)/2)
+	size := 0
+	for i := range keys {
+		keys[i] = keyNode(n.Content[2*i])
+		size += len(keys[i].Value)
+	}
+	if !y.spendBytes(size) {
+		return nil
+	}
+	last := make(map[string]int, len(keys)) // key → index of its last entry
+	for i, k := range keys {
 		if isMergeKey(k) {
 			continue
 		}
 		if j, dup := last[k.Value]; dup {
 			y.notes = append(y.notes, warning(codeDuplicateKey, y.file, k.Line,
-				"%q is set twice in one mapping (lines %d and %d); the later one counts", k.Value, n.Content[j].Line, k.Line))
+				"%q is set twice in one mapping (lines %d and %d); the later one counts", k.Value, keys[j].Line, k.Line))
 		}
 		last[k.Value] = i
 	}
 	out := make([]pair, 0, len(last))
 	placed := make(map[string]bool, len(last))
 	sources := 0
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		k := n.Content[i]
+	for i, k := range keys {
 		if !isMergeKey(k) {
 			if !placed[k.Value] {
 				placed[k.Value] = true
 				j := last[k.Value]
-				out = append(out, pair{n.Content[j], n.Content[j+1]})
+				out = append(out, pair{keys[j], n.Content[2*j+1]})
 			}
 			continue
 		}
-		for _, src := range mergeSources(n.Content[i+1]) {
+		for _, src := range mergeSources(n.Content[2*i+1]) {
 			if sources == maxMergeSources {
 				break
 			}
@@ -151,6 +159,21 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 	}
 	y.entries[n] = out
 	return out
+}
+
+// keyNode is a mapping key as read: an alias key reads as the scalar its
+// anchor names, at the alias's own line.
+func keyNode(k *yaml.Node) *yaml.Node {
+	if k.Kind != yaml.AliasNode {
+		return k
+	}
+	r := resolve(k)
+	if r == nil || r.Kind != yaml.ScalarNode {
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Line: k.Line, Column: k.Column}
+	}
+	c := *r
+	c.Line, c.Column, c.Anchor = k.Line, k.Column, ""
+	return &c
 }
 
 func isMergeKey(k *yaml.Node) bool {
@@ -210,104 +233,4 @@ func (y *yamlFile) items(n *yaml.Node) []*yaml.Node {
 		return nil
 	}
 	return n.Content
-}
-
-// scalarText is the text of a scalar, ok false for a missing, null or
-// non-scalar node.
-func scalarText(n *yaml.Node) (string, bool) {
-	n = resolve(n)
-	if n == nil || n.Kind != yaml.ScalarNode || isNull(n) {
-		return "", false
-	}
-	return n.Value, true
-}
-
-// boolValue reads a boolean attribute (YAML 1.1 spellings such as "yes"
-// included, see scalarOf); anything else is false.
-func boolValue(n *yaml.Node) bool {
-	if n = resolve(n); n == nil || n.Kind != yaml.ScalarNode {
-		return false
-	}
-	_, v, _ := scalarOf(n)
-	b, _ := v.(bool)
-	return b
-}
-
-// yaml11Bools are the plain scalars PyYAML (and so Ansible) reads as
-// booleans beyond YAML 1.2's true/false, which yaml.v3 reads as strings.
-var yaml11Bools = map[string]bool{
-	"yes": true, "Yes": true, "YES": true, "on": true, "On": true, "ON": true,
-	"no": false, "No": false, "NO": false, "off": false, "Off": false, "OFF": false,
-}
-
-// scalarOf maps a scalar to the field type its YAML tag implies and its
-// value, reading plain yes/no/on/off as booleans the way Ansible does. A null has no type and no value; ok is false for a tag with no
-// field counterpart (a custom tag such as !vault, or !!binary).
-func scalarOf(n *yaml.Node) (schema.Type, any, bool) {
-	switch n.ShortTag() {
-	case "!!null":
-		return "", nil, true
-	case "!!str":
-		// Plain and untagged only: a quoted or !!str-tagged "yes" is text.
-		if b, ok := yaml11Bools[n.Value]; ok && n.Style == 0 {
-			return schema.TypeBool, b, true
-		}
-		return schema.TypeString, n.Value, true
-	case "!!timestamp", "!unsafe":
-		return schema.TypeString, n.Value, true
-	case "!!int":
-		return numberOf(n, schema.TypeInt)
-	case "!!float":
-		return numberOf(n, schema.TypeFloat)
-	case "!!bool":
-		var b bool
-		if err := n.Decode(&b); err != nil {
-			return "", nil, false
-		}
-		return schema.TypeBool, b, true
-	}
-	return "", nil, false
-}
-
-// numberOf decodes an !!int or !!float scalar. An integer too large for
-// int64 becomes a float64, which Check then refuses as a whole number.
-func numberOf(n *yaml.Node, typ schema.Type) (schema.Type, any, bool) {
-	var v any
-	if err := n.Decode(&v); err != nil {
-		return "", nil, false
-	}
-	switch x := v.(type) {
-	case int, int64, float64:
-	case uint64:
-		v = float64(x)
-	default:
-		return "", nil, false
-	}
-	return typ, v, true
-}
-
-// defaultValue decodes a default: a scalar, or a list of scalars. ok is
-// false for anything a field default cannot hold.
-func (y *yamlFile) defaultValue(n *yaml.Node) (any, bool) {
-	n = resolve(n)
-	switch n.Kind {
-	case yaml.ScalarNode:
-		_, v, ok := scalarOf(n)
-		return v, ok
-	case yaml.SequenceNode:
-		items := make([]any, 0, len(n.Content))
-		for _, it := range y.items(n) {
-			it = resolve(it)
-			if it.Kind != yaml.ScalarNode {
-				return nil, false
-			}
-			_, v, ok := scalarOf(it)
-			if !ok {
-				return nil, false
-			}
-			items = append(items, v)
-		}
-		return items, true
-	}
-	return nil, false
 }

@@ -186,6 +186,10 @@ func markerField(y *yamlFile, key, value *yaml.Node, m marker) (schema.Field, []
 		}
 		f.Type, f.Options = schema.TypeEnum, m.Enum
 		if !isNull(v) {
+			size := 0
+			if _, _, why := y.readScalar(v, &size); why != "" && !longNumber(v) {
+				return valueType("the value %s", why)
+			}
 			if !slices.Contains(m.Enum, v.Value) {
 				return schema.Field{}, []Note{warning(codeMarkerEnumValue, file, line, "%s: the value %q is not one of %s; the variable is not a form field", key.Value, v.Value, strings.Join(m.Enum, ", "))}, false
 			}
@@ -204,13 +208,15 @@ func markerField(y *yamlFile, key, value *yaml.Node, m marker) (schema.Field, []
 }
 
 // inferField derives a field type from a value: a scalar's tag, or a list
-// whose items are scalars of one type. why says what does not fit.
+// whose items are scalars of one type. Its bytes count against the file's
+// budget and against maxDefaultBytes. why says what does not fit.
 func inferField(y *yamlFile, v *yaml.Node) (typ schema.Type, item *schema.Field, def any, why string) {
+	size := 0
 	switch v.Kind {
 	case yaml.ScalarNode:
-		t, val, ok := scalarOf(v)
-		if !ok {
-			return "", nil, nil, fmt.Sprintf("a value tagged %s has no form field", v.ShortTag())
+		t, val, why := y.readScalar(v, &size)
+		if why != "" {
+			return "", nil, nil, "the value " + why
 		}
 		if t == "" {
 			t = schema.TypeString
@@ -224,8 +230,11 @@ func inferField(y *yamlFile, v *yaml.Node) (typ schema.Type, item *schema.Field,
 			if it.Kind != yaml.ScalarNode || isNull(it) {
 				return "", nil, nil, "a list must hold single values that are not empty"
 			}
-			t, val, ok := scalarOf(it)
-			if !ok || (i > 0 && t != itemType) {
+			t, val, why := y.readScalar(it, &size)
+			if why != "" {
+				return "", nil, nil, "the list " + why
+			}
+			if i > 0 && t != itemType {
 				return "", nil, nil, "a list must hold values of one type"
 			}
 			itemType = t
