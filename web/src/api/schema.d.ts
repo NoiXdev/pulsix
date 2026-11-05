@@ -1804,6 +1804,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/job-templates/{id}/variables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org job templates by ID variables */
+        get: operations["get-api-v1-orgs-by-org-job-templates-by-id-variables"];
+        /** Put API v1 orgs by org job templates by ID variables */
+        put: operations["updateTemplateVariables"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/jobs": {
         parameters: {
             query?: never;
@@ -6558,10 +6576,20 @@ export interface components {
             limit: string;
             name: string;
             playbook_id: string;
+            /**
+             * Format: int64
+             * @description The template's revision; send it back as If-Match (quoted, like the ETag) on PUT
+             */
+            revision: number;
             scope: components["schemas"]["TemplateScopeDTO"];
             shared_template_id?: string;
             /** Format: date-time */
             updated_at: string;
+            /**
+             * @description Whether the variables follow the playbook's variable sources
+             * @enum {string}
+             */
+            vars_mode: "off" | "manual" | "automatic";
             vault_identities: components["schemas"]["VaultIdentityDTO"][] | null;
         };
         TemplateDefinitionBody: {
@@ -6666,6 +6694,42 @@ export interface components {
             playbook_id: string;
             scope?: components["schemas"]["TemplateScopeInput"];
             vault_identities?: components["schemas"]["VaultIdentityDTO"][] | null;
+        };
+        TemplateVariablesDTO: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateVariablesDTO.json
+             */
+            readonly $schema?: string;
+            extra_vars: {
+                [key: string]: unknown;
+            };
+            extra_vars_schema?: components["schemas"]["Schema"];
+            /**
+             * @description Whether the variables follow the playbook's variable sources
+             * @enum {string}
+             */
+            mode: "off" | "manual" | "automatic";
+            /**
+             * Format: int64
+             * @description The template's revision; send it back as If-Match (quoted, like the ETag) on PUT
+             */
+            revision: number;
+        };
+        TemplateVariablesUpdateInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateVariablesUpdateInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The values of the active fields. Values of inactive and removed fields the body omits stay stored. Secrets: a string sets a new value, the {"$secret": "set"} a read returned keeps the stored one */
+            extra_vars?: {
+                [key: string]: unknown;
+            };
+            /** @description The schema; omit to remove it */
+            extra_vars_schema?: components["schemas"]["Schema"];
         };
         TemporaryPasswordOutputBody: {
             /**
@@ -11851,6 +11915,7 @@ export interface operations {
             /** @description Created */
             201: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -11883,6 +11948,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -11903,7 +11969,10 @@ export interface operations {
     updateTemplate: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The template's ETag; optional, a stale one answers 412 */
+                "If-Match"?: string;
+            };
             path: {
                 org: string;
                 id: string;
@@ -11919,6 +11988,7 @@ export interface operations {
             /** @description OK */
             200: {
                 headers: {
+                    ETag?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -11991,6 +12061,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JobStartOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-job-templates-by-id-variables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVariablesDTO"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateTemplateVariables: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The template's ETag; optional, a stale one answers 412 */
+                "If-Match"?: string;
+            };
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TemplateVariablesUpdateInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    ETag?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateVariablesDTO"];
                 };
             };
             /** @description Error */

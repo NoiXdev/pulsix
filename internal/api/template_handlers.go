@@ -65,6 +65,8 @@ type templateDTO struct {
 	// repository's base set, never the repository's own. 4b resolves the
 	// two against each other on a run.
 	VaultIdentities []vaultIdentityDTO `json:"vault_identities"`
+	Revision        int64              `json:"revision" doc:"The template's revision; send it back as If-Match (quoted, like the ETag) on PUT"`
+	VarsMode        string             `json:"vars_mode" enum:"off,manual,automatic" doc:"Whether the variables follow the playbook's variable sources"`
 	CreatedAt       time.Time          `json:"created_at"`
 	UpdatedAt       time.Time          `json:"updated_at"`
 }
@@ -112,7 +114,8 @@ func toTemplateDTO(t templates.Template) templateDTO {
 		Scope: toScopeDTO(t.Scope), Limit: t.Limit,
 		ExtraVars: t.ExtraVars, ExtraVarsSchema: t.ExtraVarsSchema,
 		VaultIdentities: toTemplateVaultCredentialDTOs(t.VaultCredentials),
-		CreatedAt:       t.CreatedAt, UpdatedAt: t.UpdatedAt,
+		Revision:        t.Revision, VarsMode: string(t.VarsMode),
+		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 	}
 	if t.ExtraVars == nil {
 		dto.ExtraVars = map[string]any{}
@@ -142,6 +145,7 @@ type templateGetInput struct {
 }
 
 type templateDetailOutput struct {
+	ETag string `header:"ETag"`
 	Body struct {
 		Template templateDTO `json:"template"`
 	}
@@ -186,9 +190,10 @@ type templateCreateInput struct {
 }
 
 type templateUpdateInput struct {
-	Org  string `path:"org"`
-	ID   string `path:"id"`
-	Body struct {
+	Org     string `path:"org"`
+	ID      string `path:"id"`
+	IfMatch string `header:"If-Match" doc:"The template's ETag; optional, a stale one answers 412"`
+	Body    struct {
 		Name       string `json:"name" minLength:"1" maxLength:"63"`
 		PlaybookID string `json:"playbook_id"`
 		TemplateBody
@@ -308,10 +313,14 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		ifRevision, err := optionalIfMatch(in.IfMatch)
+		if err != nil {
+			return nil, err
+		}
 		t, err := deps.Templates.Update(ctx, scope.OrgID, id, templates.UpdateInput{
 			Name: in.Body.Name, PlaybookID: playbookID, Scope: sc, Limit: in.Body.Limit,
 			ExtraVars: in.Body.ExtraVars, ExtraVarsSchema: in.Body.ExtraVarsSchema, CredentialID: credentialID,
-			VaultCredentials: vaultCredentials,
+			VaultCredentials: vaultCredentials, IfRevision: ifRevision,
 		})
 		if err != nil {
 			return nil, mapTemplatesErr(ctx, err)
@@ -338,7 +347,7 @@ func registerTemplateRoutes(hapi huma.API, deps Deps) {
 }
 
 func templateDetail(t templates.Template) *templateDetailOutput {
-	out := &templateDetailOutput{}
+	out := &templateDetailOutput{ETag: revisionETag(t.Revision)}
 	out.Body.Template = toTemplateDTO(t)
 	return out
 }
@@ -376,6 +385,8 @@ func mapTemplatesErr(ctx context.Context, err error) error {
 		return huma.Error404NotFound("not found")
 	case errors.Is(err, templates.ErrNameTaken):
 		return huma.Error409Conflict(err.Error())
+	case errors.Is(err, templates.ErrRevisionMismatch):
+		return huma.Error412PreconditionFailed("this changed since you loaded it; reload and apply your change again")
 	case errors.Is(err, templates.ErrForbidden):
 		// spec v0.2f decision 6: a projected template cannot be deleted
 		// from inside an organization. repos' own mapReposErr gives

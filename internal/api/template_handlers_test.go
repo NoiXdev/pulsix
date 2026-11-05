@@ -489,3 +489,42 @@ func TestTemplateVaultIdentityLabelValidationOnUpdate(t *testing.T) {
 		t.Fatalf("update: %d, want 400 naming newline: %s", resp.StatusCode, body)
 	}
 }
+
+// TestTemplateIfMatch: a template read carries its revision as the ETag,
+// a write may send it back as If-Match and answers 412 once the template
+// has moved on; a write without If-Match keeps working (API clients that
+// predate revisions). Reads list the revision and the variables mode.
+func TestTemplateIfMatch(t *testing.T) {
+	f := newTemplateFixture(t, "tmpl-ifmatch-org")
+	created := f.create(t, f.body())
+	url := f.base + "/" + created.Template.ID
+
+	resp := requestJSON(t, f.c, http.MethodGet, url, nil)
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"1"` {
+		t.Fatalf("get: %d ETag %q, want 200 \"1\"", resp.StatusCode, resp.Header.Get("ETag"))
+	}
+	var read struct {
+		Template struct {
+			Revision int64  `json:"revision"`
+			VarsMode string `json:"vars_mode"`
+		} `json:"template"`
+	}
+	decodeInto(t, resp, &read)
+	if read.Template.Revision != 1 || read.Template.VarsMode != "off" {
+		t.Fatalf("read = %+v, want revision 1 and vars_mode off", read.Template)
+	}
+
+	body := map[string]any{"name": "renamed", "playbook_id": f.playbook}
+	resp = requestWithHeaders(t, f.c, http.MethodPut, url, body, map[string]string{"If-Match": `"1"`})
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"2"` {
+		t.Fatalf("put If-Match 1: %d ETag %q %s, want 200 \"2\"", resp.StatusCode, resp.Header.Get("ETag"), mustReadBody(t, resp))
+	}
+	resp = requestWithHeaders(t, f.c, http.MethodPut, url, body, map[string]string{"If-Match": `"1"`})
+	if got := mustReadBody(t, resp); resp.StatusCode != http.StatusPreconditionFailed || !strings.Contains(got, "reload") {
+		t.Fatalf("put stale If-Match: %d %s, want 412 asking for a reload", resp.StatusCode, got)
+	}
+	resp = requestJSON(t, f.c, http.MethodPut, url, body)
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"3"` {
+		t.Fatalf("put without If-Match: %d ETag %q, want 200 \"3\"", resp.StatusCode, resp.Header.Get("ETag"))
+	}
+}
