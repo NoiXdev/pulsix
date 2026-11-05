@@ -12,6 +12,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/playbooks"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer (Task 4),
@@ -53,6 +54,10 @@ var (
 	// this package ever sees them before they are written straight into
 	// every organization's own job_templates row.
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrInvalidPlaybookPath is the invalid-input class for a template
+	// definition's playbook_path that no repo playbook can have
+	// (playbooks.CanonicalRepoPath): the API answers it with 422.
+	ErrInvalidPlaybookPath = fmt.Errorf("%w: invalid playbook path", ErrInvalidInput)
 )
 
 // Store persists repository, job template and check definitions and their
@@ -445,8 +450,14 @@ func (s *Service) ResolveTemplatePlaybooks(ctx context.Context, orgID, repoID, p
 // vars, reused here because a shared definition's extra vars reach every
 // organization's own job_templates row WITHOUT ever passing through that
 // service (store_sql.go writes them directly, exactly like a repository
-// projection's name/url/branch/subpath).
+// projection's name/url/branch/subpath). The playbook_path must be a
+// canonical repo playbook path (playbooks.CanonicalRepoPath): it resolves
+// against each organization's playbooks rows by exact path, so any other
+// spelling would never resolve.
 func validateTemplateDefinitionInput(in TemplateDefinitionInput) error {
+	if !playbooks.CanonicalRepoPath(in.PlaybookPath) {
+		return fmt.Errorf("%w: playbook_path must be %s", ErrInvalidPlaybookPath, playbooks.RepoPathRule)
+	}
 	if in.ExtraVarsSchema != nil && schemaHasSecretField(in.ExtraVarsSchema.Fields) {
 		return fmt.Errorf("%w: a shared template's extra vars schema may not declare a secret field — a shared definition carries no secret by construction", ErrInvalidInput)
 	}

@@ -243,10 +243,11 @@ type templateDefinitionDetailOutput struct {
 
 // templateDefinitionBody is the editable shape both create and update take
 // — repoDefinitionBody's own doc comment, same convention: shared.
-// TemplateDefinitionInput itself enforces no format rules on name,
-// shared_repo_id or playbook_path, by design (format validation belongs at
-// this schema layer). ExtraVars and ExtraVarsSchema are the one part of
-// this body shared.Service DOES validate itself (shared.ErrInvalidInput):
+// TemplateDefinitionInput itself enforces no format rules on name or
+// shared_repo_id, by design (format validation belongs at this schema
+// layer). playbook_path is checked by shared.Service against the canonical
+// repo playbook path rule (shared.ErrInvalidPlaybookPath, 422), and
+// ExtraVars and ExtraVarsSchema are validated there too (shared.ErrInvalidInput):
 // a well-formed schema with no secret-typed field and no field taken from
 // a playbook, and no forbidden connection-security variable — checks this
 // package cannot push down to a schema tag.
@@ -616,6 +617,8 @@ func mapSharedErr(ctx context.Context, deps Deps, err error) error {
 	// forbidden connection-security variable — shared.
 	// validateTemplateDefinitionInput's own doc comment). Never carries an
 	// organization either.
+	case errors.Is(err, shared.ErrInvalidPlaybookPath):
+		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, shared.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
 	default:

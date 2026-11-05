@@ -230,6 +230,36 @@ func TestTemplateDefinitionRoutesRequireInstanceAdmin(t *testing.T) {
 	}
 }
 
+// TestTemplateDefinitionRefusesANonCanonicalPlaybookPath: create and
+// update answer 422 for a playbook_path no repo playbook can have.
+func TestTemplateDefinitionRefusesANonCanonicalPlaybookPath(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("tpl-def-path-admin@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, admin)
+	adminClient := s.LoginAs(admin)
+	repoDefID := seedRepoDefinition(t, adminClient, s, "infra-for-tpl-path")
+	base := s.HTTP.URL + "/api/v1/admin/templates/definitions"
+
+	resp := postJSON(t, adminClient, base, map[string]any{"name": "deploy-site", "shared_repo_id": repoDefID, "playbook_path": "site.yml"})
+	var created templateDefinitionDetailBody
+	decodeInto(t, resp, &created)
+	if created.Definition.ID == "" {
+		t.Fatal("seed definition: no id")
+	}
+
+	for _, p := range []string{"./site.yml", "/site.yml", "a//b.yml"} {
+		body := map[string]any{"name": "deploy-other", "shared_repo_id": repoDefID, "playbook_path": p}
+		resp := postJSON(t, adminClient, base, body)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("create with %q: status %d, want 422; body %s", p, resp.StatusCode, mustReadBody(t, resp))
+		}
+		resp = requestJSON(t, adminClient, http.MethodPut, base+"/"+created.Definition.ID, body)
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("update with %q: status %d, want 422; body %s", p, resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+}
+
 // TestTemplateDefinitionCollisionNamesOrganizationToInstanceAdmin is
 // TestRepoDefinitionCollisionNamesOrganizationToInstanceAdmin's own test for
 // job templates: spec decision 7's collision message must name the

@@ -702,6 +702,30 @@ func TestTemplateDefinitionChecksItsSchema(t *testing.T) {
 	}
 }
 
+// TestTemplateDefinitionRefusesANonCanonicalPlaybookPath: a definition's
+// playbook_path resolves against every organization's playbooks row at that
+// path, so it follows the same canonical spelling a repo playbook must have
+// (playbooks.CanonicalRepoPath); "./site.yml" would never match the
+// "site.yml" a sync discovers.
+func TestTemplateDefinitionRefusesANonCanonicalPlaybookPath(t *testing.T) {
+	for _, p := range []string{"./site.yml", "/site.yml", "a//b.yml", "a/./b.yml", "../site.yml", "site.txt", ""} {
+		t.Run(p, func(t *testing.T) {
+			store := newFakeStore()
+			svc := shared.NewService(store)
+			in := shared.TemplateDefinitionInput{Name: "deploy-site", SharedRepoID: uuid.Must(uuid.NewV7()), PlaybookPath: p}
+			if _, err := svc.CreateTemplate(ctx, in); !errors.Is(err, shared.ErrInvalidPlaybookPath) || !errors.Is(err, shared.ErrInvalidInput) {
+				t.Fatalf("CreateTemplate(%q) error = %v, want ErrInvalidPlaybookPath", p, err)
+			}
+			if _, err := svc.UpdateTemplate(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, shared.ErrInvalidPlaybookPath) {
+				t.Fatalf("UpdateTemplate(%q) error = %v, want ErrInvalidPlaybookPath", p, err)
+			}
+			if len(store.createTemplateCalls)+len(store.updateTemplateCalls) != 0 {
+				t.Fatal("nothing may be written for a non-canonical playbook path")
+			}
+		})
+	}
+}
+
 func TestCreateTemplateRefusesAForbiddenExtraVarName(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)

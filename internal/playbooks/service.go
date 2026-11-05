@@ -187,14 +187,24 @@ func (s *Service) CreateRepo(ctx context.Context, orgID, repoID uuid.UUID, path 
 	return p, nil
 }
 
-// validRepoPath refuses a path no repo playbook may have: outside
-// RepoPathPattern, with "..", or not in the one canonical spelling a sync
-// discovers it under (no leading "/" or "./", no "//", no "." segment), so
-// one file is never registered under two paths.
+// RepoPathRule says in words what CanonicalRepoPath accepts.
+const RepoPathRule = `a relative path ending in .yml or .yaml (letters, digits, dots, slashes and hyphens), no "..", "." or empty segments, no leading slash`
+
+// CanonicalRepoPath reports whether p is a path a repo playbook may have:
+// within RepoPathPattern, without "..", and in the one canonical spelling a
+// sync discovers it under (no leading "/" or "./", no "//", no "."
+// segment), so one file is never known under two paths. A shared template
+// definition's playbook_path follows the same rule, since it resolves
+// against the playbooks rows by exact path.
+func CanonicalRepoPath(p string) bool {
+	return !strings.Contains(p, "..") && RepoPathPattern.MatchString(p) &&
+		!strings.HasPrefix(p, "/") && path.Clean(p) == p
+}
+
+// validRepoPath refuses a path CanonicalRepoPath does not accept.
 func validRepoPath(p string) error {
-	if strings.Contains(p, "..") || !RepoPathPattern.MatchString(p) ||
-		strings.HasPrefix(p, "/") || path.Clean(p) != p {
-		return fmt.Errorf("%w: invalid path: a relative path ending in .yml or .yaml (letters, digits, dots, slashes and hyphens), no \"..\", \".\" or empty segments, no leading slash", ErrInvalidInput)
+	if !CanonicalRepoPath(p) {
+		return fmt.Errorf("%w: invalid path: %s", ErrInvalidInput, RepoPathRule)
 	}
 	return nil
 }
