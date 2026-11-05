@@ -7,6 +7,11 @@
  */
 export const MIN_PASSWORD_LENGTH = 12;
 
+/** PASSWORD_TOO_SHORT is the detail of the server's 422 for a new password
+ * under the floor (POST /auth/password and the reset by link). Only it
+ * means the length rule: any other 422 carries its own message. */
+export const PASSWORD_TOO_SHORT = 'password_too_short';
+
 /** NewPasswordProblem names what is wrong with a new password typed twice. */
 export type NewPasswordProblem = 'tooShort' | 'mismatch';
 

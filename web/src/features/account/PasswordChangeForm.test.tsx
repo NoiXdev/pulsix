@@ -51,4 +51,25 @@ describe('PasswordChangeForm', () => {
       'Confirming your identity did not work. Try again.',
     );
   });
+
+  // Only the server's own code means the length rule (Task 12): any other
+  // 422 says something else, and the form shows that instead.
+  it.each([
+    ['password_too_short', 'at least 12 characters'],
+    ['the password is on a list of breached passwords', 'the password is on a list of breached passwords'],
+  ])('reads a 422 %s for what it says', async (detail, want) => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /api/v1/auth/password': () =>
+        new Response(JSON.stringify({ title: 'Unprocessable Entity', status: 422, detail }), { status: 422 }),
+    });
+    renderForm('own');
+
+    await user.type(screen.getByLabelText('Current password'), 'my-old-long-password');
+    await user.type(screen.getByLabelText('New password'), 'my-new-long-password');
+    await user.type(screen.getByLabelText('Repeat the new password'), 'my-new-long-password');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+
+    expect(await screen.findByText(want)).toBeInTheDocument();
+  });
 });

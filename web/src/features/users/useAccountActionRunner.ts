@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useBlocker } from '@tanstack/react-router';
 import { useToast } from '../../ui/toastContext.ts';
 import type { AccountNotice, AdminUserDetail } from '../../api/types.ts';
 import { isStepUpRequired, STEP_UP_REQUIRED, useStepUp } from '../account/stepUp.tsx';
@@ -26,7 +27,10 @@ export interface Revealed {
  * - a temporary password opens the reveal from this state either way;
  * - a refusal shows in the dialog when it is still open, and as a toast
  *   when it is not;
- * - while a request runs no other action starts.
+ * - while a request runs no other action starts, and leaving the page
+ *   asks first (the router's blocker, and the browser's prompt for a
+ *   closing tab): the answer lands in this component's state, so an
+ *   unmount would lose it, and a temporary password cannot be shown again.
  *
  * The password lives in this component state only — never in a query or
  * mutation cache — and is dropped when the reveal closes.
@@ -40,9 +44,22 @@ export function useAccountActionRunner(user: AdminUserDetail) {
   // The open dialog as the async action sees it after its await, when the
   // state captured at the start is stale.
   const openRef = useRef<ActionKind | null>(null);
-  const [running, setRunning] = useState<ActionKind | null>(null);
+  const [running, setRunningState] = useState<ActionKind | null>(null);
+  // The running action as the blocker sees it: set synchronously, so a
+  // navigation right after the confirm is already asked about.
+  const runningRef = useRef<ActionKind | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Revealed | null>(null);
+
+  useBlocker({
+    shouldBlockFn: () => runningRef.current !== null && !window.confirm(t.users.actions.leaveWhileRunning),
+    enableBeforeUnload: () => runningRef.current !== null,
+  });
+
+  function setRunning(kind: ActionKind | null) {
+    runningRef.current = kind;
+    setRunningState(kind);
+  }
 
   function setOpen(kind: ActionKind | null) {
     openRef.current = kind;

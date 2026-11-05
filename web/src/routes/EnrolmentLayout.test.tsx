@@ -95,6 +95,26 @@ describe('EnrolmentLayout (a second factor is mandatory)', () => {
     expect(await screen.findByText('ROOT')).toBeInTheDocument();
   });
 
+  // A cached /auth/me from before the enrolment still says a factor is
+  // missing; the page waits for the refetch on mount instead of deciding
+  // on it, so it never shows the enrolment to a complete session.
+  it('decides on a fresh /auth/me, not on a stale cached one', async () => {
+    mockApi({ 'GET /api/v1/auth/me': COMPLETE, 'GET /api/v1/auth/passkeys': { passkeys: [] } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['me'], ENROLLING);
+    let shown = false;
+    const observer = new MutationObserver(() => {
+      if (document.body.textContent?.includes('Set up a second factor')) shown = true;
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    renderAt(qc);
+
+    expect(await screen.findByText('ROOT')).toBeInTheDocument();
+    observer.disconnect();
+    expect(shown).toBe(false);
+  });
+
   it('signs out to /login and clears the cache', async () => {
     const user = userEvent.setup();
     mockApi({

@@ -15,6 +15,21 @@ export function useMe(opts: { enabled?: boolean } = {}) {
 }
 
 /**
+ * useSettledMe is useMe for a screen that redirects on what /auth/me says
+ * (RootRedirect, EnrolmentLayout, ChangePasswordPage). It fetches on every
+ * mount, and `settled` turns true once an answer has landed since this
+ * mount; it never turns back, so a later background refetch does not
+ * take the screen away. Until then `data` may be a cached answer from
+ * before the session changed (a password just replaced, a factor just
+ * enrolled): acting on it bounced the session through a screen it no
+ * longer belongs on, so these screens show loading until `settled`.
+ */
+export function useSettledMe(opts: { enabled?: boolean } = {}) {
+  const me = useQuery({ queryKey: meQueryKey, queryFn: meQueryFn, retry: false, enabled: opts.enabled, refetchOnMount: 'always' });
+  return { me, settled: me.isFetchedAfterMount };
+}
+
+/**
  * refetchMe forces a fresh /auth/me fetch and waits for it, leaving the
  * shared query cache updated before the caller navigates — finding
  * "Important 3" (task-15a-report.md fix round 1): a pending session

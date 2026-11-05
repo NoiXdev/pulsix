@@ -129,18 +129,20 @@ describe('ResetPasswordPage', () => {
     expect(screen.queryByLabelText('New password')).not.toBeInTheDocument();
   });
 
-  it('shows the password rule when the server refuses the password', async () => {
+  // Only the server's own code means the length rule (Task 12): any other
+  // 422 says something else, and the page shows that instead.
+  it.each([
+    ['password_too_short', 'at least 12 characters'],
+    ['the password is on a list of breached passwords', 'the password is on a list of breached passwords'],
+  ])('reads a 422 %s for what it says', async (detail, want) => {
     const user = userEvent.setup();
     renderPage({
       'POST /api/v1/auth/password/reset': () =>
-        new Response(
-          JSON.stringify({ title: 'Unprocessable Entity', status: 422, detail: 'invalid input: the password must be at least 12 characters' }),
-          { status: 422 },
-        ),
+        new Response(JSON.stringify({ title: 'Unprocessable Entity', status: 422, detail }), { status: 422 }),
     });
 
     await submit(user, PASSWORD);
 
-    expect(await screen.findByText('at least 12 characters')).toBeInTheDocument();
+    expect(await screen.findByText(want)).toBeInTheDocument();
   });
 });

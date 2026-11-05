@@ -5,9 +5,8 @@ import { BarePage } from '../ui/bare-page.tsx';
 import { Button } from '../ui/button.tsx';
 import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
-import { useMe, useRefetchMe } from '../api/hooks/useMe.ts';
-import { logout } from '../api/hooks/useAuth.ts';
-import { useResetSession } from '../lib/session.ts';
+import { useRefetchMe, useSettledMe } from '../api/hooks/useMe.ts';
+import { useSignOut } from '../lib/session.ts';
 import { useT } from '../i18n/useT.ts';
 import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx';
 
@@ -21,12 +20,13 @@ import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx
  * and offers exactly the two ways to enrol, plus signing out.
  *
  * Confirming a TOTP secret or registering a passkey completes the session
- * on the server with no fresh login. The page decides once, on its first
- * /auth/me, whether it is serving an enrolment at all, and keeps that
- * decision: the /auth/me refetch that follows a confirmed TOTP secret
- * reports the session complete, but the recovery codes are still on
- * screen and must stay there until the user has saved them — only then
- * (AccountSecurityPage's onEnrolled) does it continue into the app.
+ * on the server with no fresh login. The page decides once, on the first
+ * /auth/me fetched since it mounted (not a cached one), whether it is
+ * serving an enrolment at all, and keeps that decision: the /auth/me
+ * refetch that follows a confirmed TOTP secret reports the session
+ * complete, but the recovery codes are still on screen and must stay
+ * there until the user has saved them — only then (AccountSecurityPage's
+ * onEnrolled) does it continue into the app.
  *
  * An account that must also change its password (an administrator reset
  * its second factor and set a temporary password) is refused everything
@@ -38,14 +38,16 @@ import { AccountSecurityPage } from '../features/account/AccountSecurityPage.tsx
  */
 export function EnrolmentLayout() {
   const navigate = useNavigate();
-  const resetSession = useResetSession();
+  const signOut = useSignOut();
   const t = useT();
   const refetchMe = useRefetchMe();
-  const me = useMe({ enabled: true });
+  const { me, settled } = useSettledMe({ enabled: true });
   const meGuard = useQueryGuard(me);
 
+  // Decided on an answer fetched since this mount (useSettledMe), never on
+  // a cached one from before the session changed.
   const [enrolling, setEnrolling] = useState<boolean | null>(null);
-  if (enrolling === null && me.data) {
+  if (enrolling === null && settled && me.data) {
     setEnrolling(me.data.mfa_enrolment_required);
   }
 
@@ -58,14 +60,7 @@ export function EnrolmentLayout() {
   return (
     <BarePage
       action={
-        <Button
-          type="button"
-          onClick={async () => {
-            await logout();
-            await navigate({ to: '/login', search: { step: undefined } });
-            resetSession();
-          }}
-        >
+        <Button type="button" onClick={() => void signOut()}>
           <LogOut size={14} /> {t.routes.enrolment.signOut}
         </Button>
       }

@@ -5,9 +5,8 @@ import { Button } from '../../ui/button.tsx';
 import { Card } from '../../ui/table.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
-import { useMe, useRefetchMe } from '../../api/hooks/useMe.ts';
-import { logout } from '../../api/hooks/useAuth.ts';
-import { useResetSession } from '../../lib/session.ts';
+import { useRefetchMe, useSettledMe } from '../../api/hooks/useMe.ts';
+import { useSignOut } from '../../lib/session.ts';
 import { sessionState } from '../../lib/sessionState.ts';
 import { useT } from '../../i18n/useT.ts';
 import { PasswordChangeForm } from './PasswordChangeForm.tsx';
@@ -30,26 +29,19 @@ import { PasswordChangeForm } from './PasswordChangeForm.tsx';
 export function ChangePasswordPage() {
   const t = useT();
   const navigate = useNavigate();
-  const resetSession = useResetSession();
+  const signOut = useSignOut();
   const refetchMe = useRefetchMe();
-  const me = useMe({ enabled: true });
+  const { me, settled } = useSettledMe({ enabled: true });
   const meGuard = useQueryGuard(me);
 
   if (meGuard) return meGuard;
-  if (!me.data) return <QueryLoading />;
+  if (!me.data || !settled) return <QueryLoading />;
   if (sessionState(me.data) !== 'password') return <Navigate to="/" />;
 
   return (
     <BarePage
       action={
-        <Button
-          type="button"
-          onClick={async () => {
-            await logout();
-            await navigate({ to: '/login', search: { step: undefined } });
-            resetSession();
-          }}
-        >
+        <Button type="button" onClick={() => void signOut()}>
           <LogOut size={14} /> {t.account.forced.signOut}
         </Button>
       }

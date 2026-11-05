@@ -12,7 +12,7 @@ import {
 import { mockApi } from '../test/mockApi.ts';
 import { RootRedirect } from './RootRedirect.tsx';
 
-function renderRoot() {
+function renderRoot(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }), visited: string[] = []) {
   const rootRoute = createRootRoute();
   const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: RootRedirect });
   const setupRoute = createRoute({ getParentRoute: () => rootRoute, path: '/setup', component: () => <div>SETUP</div> });
@@ -29,7 +29,10 @@ function renderRoot() {
   const passwordRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/account/password',
-    component: () => <div>CHANGE PASSWORD</div>,
+    component: function PasswordStub() {
+      visited.push('/account/password');
+      return <div>CHANGE PASSWORD</div>;
+    },
   });
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
   const hostsRoute = createRoute({
@@ -40,7 +43,6 @@ function renderRoot() {
   });
   const routeTree = rootRoute.addChildren([indexRoute, setupRoute, loginRoute, enrolRoute, passwordRoute, orgRoute.addChildren([hostsRoute])]);
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/'] }) });
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
   render(
     <QueryClientProvider client={qc}>
@@ -112,6 +114,35 @@ describe('RootRedirect', () => {
     expect(await screen.findByText('CHANGE PASSWORD')).toBeInTheDocument();
     const requested = calls.mock.calls.map(([input]) => new URL((input as Request).url).pathname);
     expect(requested).not.toContain('/api/v1/orgs');
+  });
+
+  // A cached /auth/me from before the password change still says the
+  // account must change it; the refetch on mount says it no longer must.
+  // The redirect waits for that answer instead of bouncing through
+  // /account/password first.
+  it('redirects on a fresh /auth/me, not on a stale cached one', async () => {
+    const me = {
+      user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+      mfa_complete: true,
+      mfa_enrolment_required: false,
+      totp_confirmed: true,
+      instance_admin: false,
+    };
+    mockApi({
+      'GET /api/v1/setup/status': { completed: true },
+      'GET /api/v1/auth/me': { ...me, must_change_password: false },
+      'GET /api/v1/orgs': {
+        orgs: [{ id: 'o1', slug: 'acme', name: 'Acme Hosting', role: 'owner', created_at: '2026-01-01T00:00:00Z' }],
+      },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['me'], { ...me, must_change_password: true });
+    const visited: string[] = [];
+
+    renderRoot(qc, visited);
+
+    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
+    expect(visited).toEqual([]);
   });
 
   it('redirects to the first organization for a ready session', async () => {

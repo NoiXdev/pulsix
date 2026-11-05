@@ -26,7 +26,8 @@ const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(['resetFactor', 'deactivate
  *
  * The request and its answer belong to this component
  * (useAccountActionRunner), not to the confirm dialog, so a dialog the
- * browser closed mid-request loses nothing.
+ * browser closed mid-request loses nothing; a status line then says what
+ * still runs.
  *
  * Callers key it by the account (`key={user.id}`): the router keeps a page
  * mounted when only the account in its address changes, and a temporary
@@ -76,6 +77,11 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
           );
         })}
       </div>
+      {runner.running && !openKind && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {a.running(a[runner.running].label)}
+        </p>
+      )}
       {openKind && (
         <ConfirmDialog
           key={openKind}

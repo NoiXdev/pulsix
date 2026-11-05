@@ -4,13 +4,14 @@ import { Input } from '../../ui/input.tsx';
 import { Field } from '../../ui/field.tsx';
 import { useChangePassword } from '../../api/hooks/usePassword.ts';
 import { ApiError } from '../../api/client.ts';
-import { MIN_PASSWORD_LENGTH, newPasswordProblem } from '../../lib/password.ts';
+import { MIN_PASSWORD_LENGTH, newPasswordProblem, PASSWORD_TOO_SHORT } from '../../lib/password.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { isStepUpRequired, STEP_UP_REQUIRED, useStepUp } from './stepUp.tsx';
 
 /** The refusals of POST /auth/password the form explains in words
- * (internal/api/password_handlers.go). A policy refusal is any other 422. */
+ * (internal/api/password_handlers.go); PASSWORD_TOO_SHORT is beside the
+ * floor in lib/password.ts. Any other 422 shows the server's message. */
 const INVALID_CURRENT_PASSWORD = 'invalid_current_password';
 const TEMPORARY_PASSWORD_EXPIRED = 'temporary_password_expired';
 const SAME_PASSWORD = 'same_password';
@@ -74,7 +75,7 @@ export function PasswordChangeForm({
   function refused(err: unknown) {
     if (err instanceof ApiError && err.message === SAME_PASSWORD) {
       setProblem('same');
-    } else if (err instanceof ApiError && err.status === 422) {
+    } else if (err instanceof ApiError && err.status === 422 && err.message === PASSWORD_TOO_SHORT) {
       setProblem('tooShort');
     } else {
       setError(describeError(t, err, temporary));

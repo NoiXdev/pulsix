@@ -47,6 +47,8 @@ export const enUsers = {
   actions: {
     title: 'Actions',
     working: 'Working…',
+    running: (action: string) => `Running: ${action}…`,
+    leaveWhileRunning: 'Leave this page? An account action is still running, and its answer, such as a temporary password, would be lost.',
     cancel: 'Cancel',
     ownTitle: 'This is your own account',
     ownBody: 'Account actions are not available on your own account. Manage your password and second factor on Account security.',

@@ -8,7 +8,7 @@ import { mockApi } from '../test/mockApi.ts';
 import { OrgLayout } from '../routes/OrgLayout.tsx';
 import { HostsListPage } from '../features/hosts/HostsListPage.tsx';
 import { LoginPage } from '../features/auth/LoginPage.tsx';
-import { resetSessionCache } from './session.ts';
+import { resetSessionCache, useSignOut } from './session.ts';
 
 describe('resetSessionCache', () => {
   it('drops every cached query and every cached mutation', async () => {
@@ -27,6 +27,52 @@ describe('resetSessionCache', () => {
 
     expect(qc.getQueryCache().getAll()).toHaveLength(0);
     expect(qc.getMutationCache().getAll()).toHaveLength(0);
+  });
+});
+
+describe('useSignOut', () => {
+  it('ends the session on the server, lands on /login and drops the cache', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['me'], { user: { id: 'u1' } });
+    const calls = mockApi({ 'POST /api/v1/auth/logout': {} });
+    calls.mockClear();
+
+    function SignOutButton() {
+      const signOut = useSignOut();
+      return (
+        <button type="button" onClick={() => void signOut()}>
+          Sign out
+        </button>
+      );
+    }
+    const rootRoute = createRootRoute();
+    const pageRoute = createRoute({ getParentRoute: () => rootRoute, path: '/page', component: SignOutButton });
+    const loginRoute = createRoute({
+      getParentRoute: () => rootRoute,
+      path: '/login',
+      validateSearch: (s: Record<string, unknown>) => ({ step: typeof s.step === 'string' ? s.step : undefined }),
+      component: () => <div>LOGIN PAGE</div>,
+    });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([pageRoute, loginRoute]),
+      history: createMemoryHistory({ initialEntries: ['/page'] }),
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Sign out' }));
+
+    expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
+    const requested = calls.mock.calls.map(([input]) => {
+      const req = input as Request;
+      return `${req.method} ${new URL(req.url).pathname}`;
+    });
+    expect(requested).toContain('POST /api/v1/auth/logout');
+    await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
   });
 });
 

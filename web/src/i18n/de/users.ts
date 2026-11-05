@@ -44,6 +44,8 @@ export const deUsers: Messages['users'] = {
   actions: {
     title: 'Aktionen',
     working: 'Wird ausgeführt…',
+    running: (action: string) => `Läuft: ${action}…`,
+    leaveWhileRunning: 'Diese Seite verlassen? Eine Kontoaktion läuft noch, und ihre Antwort, etwa ein temporäres Passwort, ginge verloren.',
     cancel: 'Abbrechen',
     ownTitle: 'Das ist das eigene Konto',
     ownBody:

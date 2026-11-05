@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
@@ -16,11 +16,16 @@ const stepUpRequired = () =>
 function render(user: AdminUserDetail, routes: Record<string, MockRoute> = {}, selfId = 'u1', qc?: QueryClient) {
   mockApi({ 'GET /api/v1/auth/password/reset-available': { available: true }, ...routes });
   return renderRoutes(
-    [{ path: '/settings/users/$userId', component: () => <AccountActions user={user} selfId={selfId} /> }],
+    [
+      { path: '/settings/users/$userId', component: () => <AccountActions user={user} selfId={selfId} /> },
+      { path: '/settings/users', component: () => <div>USERS</div> },
+    ],
     `/o/acme/settings/users/${user.id}`,
     qc,
   );
 }
+
+afterEach(() => vi.restoreAllMocks());
 
 const ACTIONS = [
   'Send password reset link',
@@ -160,6 +165,49 @@ describe('AccountActions', () => {
     expect(screen.getByRole('button', { name: 'End all sessions' })).toBeEnabled();
   });
 
+  // Once the dialog is gone the page still says what runs, and leaving it
+  // asks first: a temporary password lost to an unmount cannot be shown
+  // again.
+  it('says what runs after the confirm dialog closed, and asks before leaving so the answer is not lost', async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    let answer: (body: unknown) => void = () => {};
+    const router = render(accountDetail(), {
+      'POST /api/v1/admin/users/u2/temporary-password': () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'Set temporary password' }));
+    const confirmDialog = await screen.findByRole('dialog', { name: 'Set temporary password' });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    await user.click(within(confirmDialog).getByRole('button', { name: 'Set temporary password' }));
+    await within(confirmDialog).findByText(/This can take a moment/);
+    // Not while the dialog itself says it.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+    act(() => (confirmDialog as HTMLDialogElement).close());
+    expect(await screen.findByRole('status')).toHaveTextContent('Running: Set temporary password…');
+
+    act(() => void router.navigate({ to: '/o/$org/settings/users', params: { org: 'acme' } }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(confirm).toHaveBeenCalledWith(
+      'Leave this page? An account action is still running, and its answer, such as a temporary password, would be lost.',
+    );
+    expect(router.state.location.pathname).toBe('/o/acme/settings/users/u2');
+
+    answer({ password: SECRET, expires_at: '2026-11-05T10:00:00Z', notice: 'sent' });
+    const reveal = await screen.findByRole('dialog', { name: 'Temporary password' });
+    expect(within(reveal).getByLabelText('Temporary password')).toHaveTextContent(SECRET);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+
+    // Nothing runs any more: leaving does not ask.
+    act(() => void router.navigate({ to: '/o/$org/settings/users', params: { org: 'acme' } }));
+    expect(await screen.findByText('USERS')).toBeInTheDocument();
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
   it('reports a refusal as a toast when the confirm dialog was closed while the request ran', async () => {
     const user = userEvent.setup();
     let answer: (res: Response) => void = () => {};
@@ -182,8 +230,8 @@ describe('AccountActions', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Deactivate account' })).not.toBeInTheDocument());
 
     answer(new Response(JSON.stringify({ detail: 'last_instance_admin' }), { status: 409 }));
-    const toast = await screen.findByRole('status');
-    expect(toast).toHaveTextContent('The last active instance administrator cannot be deactivated.');
+    const toast = await screen.findByText('The last active instance administrator cannot be deactivated.');
+    expect(toast).toHaveAttribute('role', 'status');
     expect(toast).toHaveAttribute('data-tone', 'destructive');
   });
 

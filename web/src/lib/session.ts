@@ -1,12 +1,16 @@
 import { useCallback } from 'react';
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
+import { logout } from '../api/hooks/useAuth.ts';
 
 /**
  * This lives in src/lib, beside sessionState.ts, and not in src/api: it
  * fetches nothing, declares no query key and calls no endpoint — it clears
  * a cache. Filed under src/api it was the one thing pulling ui/QueryState
  * across the layer boundary CLAUDE.md draws (backlog 3.23), for a
- * dependency that was never data fetching in the first place.
+ * dependency that was never data fetching in the first place. (useSignOut
+ * at the bottom calls the logout endpoint, through src/api like any page
+ * does; it declares nothing there either.)
  *
  * resetSessionCache drops everything the SPA has cached on behalf of the
  * signed-in principal. Query keys are not scoped by user (['hosts', org],
@@ -42,4 +46,18 @@ export function resetSessionCache(qc: QueryClient): void {
 export function useResetSession(): () => void {
   const qc = useQueryClient();
   return useCallback(() => resetSessionCache(qc), [qc]);
+}
+
+/** useSignOut signs the session out from a page that is still mounted: it
+ * ends the session on the server, goes to /login and only then drops the
+ * cache (navigate first, reset after, as above). The bare pages a session
+ * is held on (enrolment, the forced password change) use it. */
+export function useSignOut(): () => Promise<void> {
+  const navigate = useNavigate();
+  const resetSession = useResetSession();
+  return useCallback(async () => {
+    await logout();
+    await navigate({ to: '/login', search: { step: undefined } });
+    resetSession();
+  }, [navigate, resetSession]);
 }

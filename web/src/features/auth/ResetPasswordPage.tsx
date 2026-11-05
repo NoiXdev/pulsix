@@ -7,7 +7,7 @@ import { Field } from '../../ui/field.tsx';
 import { useResetPassword } from '../../api/hooks/usePassword.ts';
 import { ApiError } from '../../api/client.ts';
 import { tokenFromFragment } from '../../lib/fragment.ts';
-import { MIN_PASSWORD_LENGTH, newPasswordProblem, type NewPasswordProblem } from '../../lib/password.ts';
+import { MIN_PASSWORD_LENGTH, newPasswordProblem, PASSWORD_TOO_SHORT, type NewPasswordProblem } from '../../lib/password.ts';
 import { useT } from '../../i18n/useT.ts';
 
 /** INVALID_OR_EXPIRED_LINK is the server's refusal of a token that is
@@ -58,8 +58,10 @@ export function ResetPasswordPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status === 400 && err.message === INVALID_OR_EXPIRED_LINK) {
         setOutcome('invalid');
-      } else if (err instanceof ApiError && err.status === 422) {
+      } else if (err instanceof ApiError && err.status === 422 && err.message === PASSWORD_TOO_SHORT) {
         setProblem('tooShort');
+      } else if (err instanceof ApiError && err.status === 422) {
+        setError(err.message || t.auth.reset.failed);
       } else if (err instanceof ApiError && err.status === 429) {
         setError(t.auth.errors.tooManyAttempts);
       } else {

@@ -20,7 +20,7 @@ const FORCED = {
 const TEMPORARY = 'Tmp-pass-9f3k2L-x7Q';
 const CHOSEN = 'my-own-long-password';
 
-function renderPage(routes: Record<string, MockRoute>) {
+function renderPage(routes: Record<string, MockRoute>, qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   mockApi(routes);
   const rootRoute = createRootRoute();
   const passwordRoute = createRoute({ getParentRoute: () => rootRoute, path: '/account/password', component: ChangePasswordPage });
@@ -36,7 +36,7 @@ function renderPage(routes: Record<string, MockRoute>) {
     history: createMemoryHistory({ initialEntries: ['/account/password'] }),
   });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
@@ -69,6 +69,36 @@ describe('ChangePasswordPage (a temporary password must be replaced)', () => {
     expect(screen.getByText(/sara@acme\.io/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Sign out/ })).toBeInTheDocument();
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
+  });
+
+  // A cached /auth/me from before the change still says the account must
+  // change its password; the page waits for the refetch on mount instead
+  // of showing the form on it.
+  it('decides on a fresh /auth/me, not on a stale cached one', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['me'], FORCED);
+    let shown = false;
+    const observer = new MutationObserver(() => {
+      if (document.body.textContent?.includes('Choose a new password')) shown = true;
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    renderPage({ 'GET /api/v1/auth/me': { ...FORCED, must_change_password: false } }, qc);
+
+    expect(await screen.findByText('ROOT')).toBeInTheDocument();
+    observer.disconnect();
+    expect(shown).toBe(false);
+  });
+
+  it('signs out to /login and clears the cache', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderPage({ 'GET /api/v1/auth/me': FORCED, 'POST /api/v1/auth/logout': {} }, qc);
+
+    await user.click(await screen.findByRole('button', { name: /Sign out/ }));
+
+    expect(await screen.findByText('LOGIN')).toBeInTheDocument();
+    await waitFor(() => expect(qc.getQueryCache().getAll()).toHaveLength(0));
   });
 
   it('posts the temporary and the new password, then continues into the app', async () => {
@@ -120,7 +150,7 @@ describe('ChangePasswordPage (a temporary password must be replaced)', () => {
     [400, 'invalid_current_password', /The temporary password is not correct/],
     [400, 'temporary_password_expired', /Ask an instance administrator for a new one/],
     [422, 'same_password', /must differ from the temporary one/],
-    [422, 'invalid input: the password must be at least 12 characters', /at least 12 characters/],
+    [422, 'password_too_short', /^at least 12 characters$/],
   ])('explains a %i %s refusal in words', async (status, detail, want) => {
     const user = userEvent.setup();
     renderPage({
