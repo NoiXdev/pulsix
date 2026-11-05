@@ -20,8 +20,11 @@ import { cn } from '../lib/utils.ts';
  * real <a> (so middle-click, copy-link and screen readers work) laid out on
  * the given grid columns, with a hover highlight and a left accent bar.
  *
- * `label` is the link's accessible name; without it the name would be every
- * cell's text run together. The optional `menu` is rendered as a sibling of
+ * `label` is the link's accessible name, rendered as a visually hidden span the
+ * link points at with `aria-labelledby`; the cells are its accessible
+ * description, so a screen reader still reads them without them becoming the
+ * name. The hover highlight is `bg-background`, not `bg-card`: a list sits in a
+ * Card, whose own surface is `bg-card`. The optional `menu` is rendered as a sibling of
  * the anchor, positioned over the row's last cell, because a button nested
  * in an <a> is invalid HTML and not reliably operable. Reserve that last
  * column (about 40px) in `columns` and leave its cell empty.
@@ -43,17 +46,25 @@ export function ListRow({
   children: ReactNode;
   menu?: ReactNode;
 }) {
+  const nameId = useId();
+  const detailsId = useId();
   return (
-    <div className="relative border-b border-border last:border-b-0 hover:bg-card hover:shadow-[inset_2px_0_0_var(--px-accent)] focus-within:bg-card">
+    <div className="relative border-b border-border last:border-b-0 hover:bg-background hover:shadow-[inset_2px_0_0_var(--px-accent)] focus-within:bg-background">
       <Link
         to={to}
         params={params}
         search={search}
-        aria-label={label}
+        aria-labelledby={nameId}
+        aria-describedby={detailsId}
         className="grid items-center gap-3 px-4 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
         style={{ gridTemplateColumns: columns }}
       >
-        {children}
+        <span id={nameId} className="sr-only">
+          {label}
+        </span>
+        <span id={detailsId} className="contents">
+          {children}
+        </span>
       </Link>
       {menu && <div className="absolute top-1/2 right-3 -translate-y-1/2">{menu}</div>}
     </div>

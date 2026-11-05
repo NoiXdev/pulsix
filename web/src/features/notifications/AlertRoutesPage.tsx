@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { CalendarClock, Route as RouteIcon } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { Switch } from '../../ui/switch.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -185,16 +186,11 @@ export function AlertRoutesPage() {
             )}
             <span>
               {canWrite ? (
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={r.enabled}
+                <Switch
+                  checked={r.enabled}
                   aria-label={r.enabled ? a.disableAria(r.name) : a.enableAria(r.name)}
-                  onClick={() => void onToggle(r)}
-                  className={r.enabled ? 'flex h-[18px] w-8 items-center rounded-full bg-primary px-0.5 justify-end' : 'flex h-[18px] w-8 items-center rounded-full bg-border px-0.5 justify-start'}
-                >
-                  <span className="h-3.5 w-3.5 rounded-full bg-background" />
-                </button>
+                  onCheckedChange={() => void onToggle(r)}
+                />
               ) : r.enabled ? (
                 <Pill tone="ok">{m.enabled}</Pill>
               ) : (

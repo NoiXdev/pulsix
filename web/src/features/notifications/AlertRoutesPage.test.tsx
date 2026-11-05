@@ -87,7 +87,11 @@ describe('AlertRoutesPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('switch', { name: 'Disable Critical to ops' }));
+    const toggle = await screen.findByRole('switch', { name: 'Disable Critical to ops' });
+    expect(toggle).toHaveAttribute('aria-checked', 'true');
+    // The shared ui/switch size, not a hand-built toggle.
+    expect(toggle.className).toContain('h-[19px]');
+    await user.click(toggle);
     await waitFor(() => expect(patched?.ifMatch).toBe('"1"'));
     expect(patched?.body).toEqual({
       name: 'Critical to ops', enabled: false, scope: 'org', severities: ['crit'], events: ['opened', 'severity_raised'], channels: ['c1'],

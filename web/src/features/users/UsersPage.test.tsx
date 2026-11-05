@@ -40,7 +40,7 @@ describe('UsersPage', () => {
     mockApi({ 'GET /api/v1/admin/users': { users: USERS, next_cursor: '' } });
     render();
 
-    expect(await screen.findByText('Ada')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Ada' })).toBeInTheDocument();
     for (const label of ['Active', 'Deactivated', 'Invite pending', 'Must change password', 'No second factor']) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
@@ -61,11 +61,11 @@ describe('UsersPage', () => {
     });
     render();
 
-    await screen.findByText('Ada');
+    await screen.findByRole('link', { name: 'Ada' });
     await u.type(screen.getByRole('searchbox', { name: 'Search users' }), 'eve');
 
-    await waitFor(() => expect(screen.queryByText('Ada')).not.toBeInTheDocument());
-    expect(screen.getByText('Eve')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'Ada' })).not.toBeInTheDocument());
+    expect(screen.getByRole('link', { name: 'Eve' })).toBeInTheDocument();
     // Debounced: the term goes out once typing pauses, not per keystroke.
     expect(terms).toEqual([null, 'eve']);
   });
@@ -93,7 +93,7 @@ describe('UsersPage', () => {
     render();
 
     await u.click(await screen.findByRole('button', { name: 'Load more' }));
-    expect(await screen.findByText('Zoe')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Zoe' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   });
 

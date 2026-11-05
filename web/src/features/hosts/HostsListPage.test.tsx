@@ -72,7 +72,7 @@ describe('HostsListPage', () => {
 
     renderPage(qc, '/o/acme/hosts?q=web-04');
 
-    await screen.findByText('web-04.fra');
+    await screen.findByRole('link', { name: 'web-04.fra' });
     expect(lastQ).toBe('web-04');
     expect(screen.getByPlaceholderText('Filter hosts…')).toHaveValue('web-04');
   });
@@ -129,7 +129,7 @@ describe('HostsListPage', () => {
     await user.type(screen.getByPlaceholderText('selector, e.g. role = db'), 'role = db');
     await user.click(screen.getByRole('button', { name: 'Run' }));
 
-    expect(await screen.findByText('web-04.fra')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'web-04.fra' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'clear' })).toBeInTheDocument();
   });
 
@@ -149,15 +149,15 @@ describe('HostsListPage', () => {
 
     renderPage(qc);
 
-    await screen.findByText('web-04.fra');
+    await screen.findByRole('link', { name: 'web-04.fra' });
     // A partial list is not presented as the total.
     expect(screen.getByText('1 hosts loaded, more available')).toBeInTheDocument();
     expect(requests).toEqual([{ cursor: null, limit: '50' }]);
 
     await user.click(screen.getByRole('button', { name: 'Load more' }));
 
-    expect(await screen.findByText('db-01.fra')).toBeInTheDocument();
-    expect(screen.getByText('web-04.fra')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'db-01.fra' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'web-04.fra' })).toBeInTheDocument();
     expect(requests[1]).toEqual({ cursor: 'page-2', limit: '50' });
     expect(screen.getByText('2 hosts')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
@@ -182,12 +182,12 @@ describe('HostsListPage', () => {
     renderPage(qc);
 
     await user.click(await screen.findByRole('button', { name: 'Load more' }));
-    await screen.findByText('db-01.fra');
+    await screen.findByRole('link', { name: 'db-01.fra' });
 
     await user.click(screen.getByRole('button', { name: 'Managed' }));
 
-    await waitFor(() => expect(screen.queryByText('db-01.fra')).not.toBeInTheDocument());
-    expect(screen.getByText('web-04.fra')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('link', { name: 'db-01.fra' })).not.toBeInTheDocument());
+    expect(screen.getByRole('link', { name: 'web-04.fra' })).toBeInTheDocument();
     expect(requests.at(-1)).toEqual({ cursor: null, managed: 'true' });
     expect(screen.getByText('1 host')).toBeInTheDocument();
   });
@@ -207,8 +207,8 @@ describe('HostsListPage', () => {
     await user.type(screen.getByPlaceholderText('selector, e.g. role = db'), 'role = db');
     await user.click(screen.getByRole('button', { name: 'Run' }));
 
-    expect(await screen.findByText('db-01.fra')).toBeInTheDocument();
-    expect(screen.queryByText('web-04.fra')).not.toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'db-01.fra' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'web-04.fra' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument();
   });
 });

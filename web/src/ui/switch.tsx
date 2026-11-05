@@ -7,7 +7,6 @@ export interface SwitchProps {
   id?: string;
   'aria-label'?: string;
   'aria-describedby'?: string;
-  name?: string;
 }
 
 /** Switch — the control for a boolean setting (use a checkbox only to pick

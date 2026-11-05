@@ -99,7 +99,7 @@ describe('signing out, then signing in as someone else on the same tab (I3)', ()
     });
 
     const router = renderApp(qc);
-    await screen.findByText('alice-secret.fra');
+    await screen.findByRole('link', { name: 'alice-secret.fra' });
 
     await user.click(screen.getByRole('button', { name: 'Account menu' }));
     await user.click(screen.getByRole('button', { name: 'Log out' }));
@@ -141,6 +141,6 @@ describe('signing out, then signing in as someone else on the same tab (I3)', ()
     expect(await screen.findByText('You do not have access')).toBeInTheDocument();
     observer.disconnect();
     expect(leaked).toBe(false);
-    expect(screen.queryByText('alice-secret.fra')).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'alice-secret.fra' })).not.toBeInTheDocument();
   });
 });

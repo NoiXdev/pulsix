@@ -31,7 +31,7 @@ describe('SharedChecksPage', () => {
     });
     renderPage();
     expect(await screen.findByRole('heading', { name: 'Shared check definitions', level: 1 })).toBeInTheDocument();
-    expect(await screen.findByText('disk-data')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'disk-data' })).toBeInTheDocument();
     expect(screen.getByText('disk')).toBeInTheDocument();
     expect(screen.getByText('300s')).toBeInTheDocument();
   });

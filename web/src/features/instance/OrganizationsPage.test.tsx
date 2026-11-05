@@ -36,7 +36,7 @@ describe('OrganizationsPage', () => {
     mockApi({ 'GET /api/v1/admin/orgs': { orgs: ORGS } });
     render();
 
-    expect(await screen.findByText('Acme Hosting')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Acme Hosting' })).toBeInTheDocument();
     expect(screen.getByText('acme')).toBeInTheDocument();
     expect(screen.getByText('Globex')).toBeInTheDocument();
     expect(screen.getByText('globex')).toBeInTheDocument();
@@ -79,7 +79,7 @@ describe('OrganizationsPage', () => {
     mockApi({ 'GET /api/v1/admin/orgs': { orgs: ORGS } });
     render();
 
-    await screen.findByText('Acme Hosting');
+    await screen.findByRole('link', { name: 'Acme Hosting' });
     await user.click(screen.getByRole('button', { name: 'New organization' }));
 
     expect(await screen.findByRole('dialog', { name: 'New organization' })).toBeInTheDocument();

@@ -73,4 +73,10 @@ describe('Switch', () => {
     await user.click(screen.getByText('Managed'));
     expect(onCheckedChange).toHaveBeenCalledWith(true);
   });
+
+  it('is not a form control: it takes no name prop', () => {
+    // @ts-expect-error name is not a Switch prop
+    render(<Switch name="x" aria-label="Managed" checked={false} onCheckedChange={() => {}} />);
+    expect(screen.getByRole('switch', { name: 'Managed' })).toBeInTheDocument();
+  });
 });

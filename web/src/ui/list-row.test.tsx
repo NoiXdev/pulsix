@@ -25,7 +25,7 @@ function renderRow(onSelect = vi.fn(), onOther = vi.fn()) {
         }
       >
         <span>web-01</span>
-        <span>online</span>
+        <span>10.0.0.1 online</span>
         <span />
       </ListRow>
     ),
@@ -47,6 +47,22 @@ describe('ListRow', () => {
     expect(link).toHaveTextContent('web-01');
     expect(link).toHaveTextContent('online');
     expect(link).toHaveStyle({ gridTemplateColumns: '1fr 1fr 40px' });
+  });
+
+  it('is named by a visually hidden label and described by its cells', async () => {
+    renderRow();
+    const link = await screen.findByRole('link', { name: 'Open web-01', description: /10\.0\.0\.1/ });
+    expect(link).not.toHaveAttribute('aria-label');
+    expect(link.querySelector('.sr-only')).toHaveTextContent('Open web-01');
+  });
+
+  it('highlights on hover with the page background so it shows inside a Card', async () => {
+    renderRow();
+    const row = (await screen.findByRole('link', { name: 'Open web-01' })).parentElement as HTMLElement;
+    expect(row.className).toContain('hover:bg-background');
+    expect(row.className).toContain('focus-within:bg-background');
+    expect(row.className).not.toContain('hover:bg-card');
+    expect(row.className).not.toContain('focus-within:bg-card');
   });
 
   it('keeps the menu outside the anchor', async () => {

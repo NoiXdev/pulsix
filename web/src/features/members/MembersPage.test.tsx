@@ -95,8 +95,8 @@ describe('MembersPage', () => {
 
     renderPage(qc);
 
-    expect(await screen.findByText('Tim R.')).toBeInTheDocument();
-    expect(screen.getByText('Sara K.')).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'Tim R.' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sara K.' })).toBeInTheDocument();
     expect(screen.getByText('2 members')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Invite member' }));
