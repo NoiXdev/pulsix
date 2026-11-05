@@ -1,7 +1,9 @@
 package auth_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -114,6 +116,45 @@ func (m *memTokenStore) TouchLastUsed(_ context.Context, id uuid.UUID, _ time.Ti
 	return m.touchErr
 }
 
+// tamperToken returns plain with the first character after "pxt_" changed
+// ("A", or "B" when it already is "A"). Every bit of that character is
+// significant, unlike the 43rd base64url character of 32 bytes, whose two
+// low bits the decoder ignores: a change there can decode to the same secret.
+func tamperToken(plain string) string {
+	const prefix = "pxt_"
+	repl := "A"
+	if plain[len(prefix)] == 'A' {
+		repl = "B"
+	}
+	return prefix + repl + plain[len(prefix)+1:]
+}
+
+func TestTamperTokenAlwaysChangesTheSecret(t *testing.T) {
+	secret := func(p string) []byte {
+		t.Helper()
+		b, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(p, "pxt_"))
+		if err != nil {
+			t.Fatalf("decode %q: %v", p, err)
+		}
+		return b
+	}
+	plains := []string{"pxt_A" + strings.Repeat("x", 42), "pxt_B" + strings.Repeat("x", 42)}
+	tk := auth.NewTokens(newMemTokenStore(), time.Now)
+	for range 1000 {
+		plain, _, err := tk.Create(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), "ci", "operator", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plains = append(plains, plain)
+	}
+	for _, p := range plains {
+		got := tamperToken(p)
+		if got == p || bytes.Equal(secret(got), secret(p)) {
+			t.Fatalf("tamperToken(%q) = %q decodes to the same secret", p, got)
+		}
+	}
+}
+
 func TestTokenCreateResolveRevoke(t *testing.T) {
 	store := newMemTokenStore()
 	tk := auth.NewTokens(store, time.Now)
@@ -134,7 +175,7 @@ func TestTokenCreateResolveRevoke(t *testing.T) {
 	if len(store.touched) != 1 || store.touched[0] != tok.ID {
 		t.Fatalf("TouchLastUsed calls = %+v, want one call for %v", store.touched, tok.ID)
 	}
-	if _, _, err := tk.Resolve(context.Background(), plain[:len(plain)-2]+"zz"); err == nil {
+	if _, _, err := tk.Resolve(context.Background(), tamperToken(plain)); err == nil {
 		t.Fatal("tampered token accepted")
 	}
 	if err := tk.Revoke(context.Background(), org, tok.ID); err != nil {

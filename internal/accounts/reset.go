@@ -66,14 +66,14 @@ func (s *Service) RequestReset(ctx context.Context, email string) error {
 	// The caller hears 202 whatever happens below: a drop must not be
 	// observable. The logs carry no address.
 	if !s.startBackground() {
-		slog.WarnContext(ctx, "password reset request dropped: shutting down")
+		s.logger().WarnContext(ctx, "password reset request dropped: shutting down")
 		return nil
 	}
 	select {
 	case s.resetSlots <- struct{}{}:
 	default:
 		s.background.Done()
-		slog.WarnContext(ctx, "password reset request dropped: too many in flight", "limit", maxResetJobs)
+		s.logger().WarnContext(ctx, "password reset request dropped: too many in flight", "limit", maxResetJobs)
 		return nil
 	}
 	go func() {

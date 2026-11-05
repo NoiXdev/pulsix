@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -186,14 +187,43 @@ type Service struct {
 	closed     bool
 	// resetSlots bounds the reset requests in flight (maxResetJobs).
 	resetSlots chan struct{}
+	// log carries the service's own log lines; slog.Default() unless
+	// WithLogger says otherwise.
+	log *slog.Logger
+}
+
+// Option configures a Service beyond its required dependencies.
+type Option func(*Service)
+
+// WithLogger sets the logger the service writes its log lines to, in place
+// of slog.Default().
+func WithLogger(l *slog.Logger) Option {
+	return func(s *Service) {
+		if l != nil {
+			s.log = l
+		}
+	}
 }
 
 // NewService wires the dependencies. publicURL is the instance's public
 // address, for links in mails; now and rnd are the clock and the source of
-// randomness for expiries and generated secrets.
-func NewService(store Store, mailer Mailer, publicURL string, now func() time.Time, rnd io.Reader) *Service {
-	return &Service{
+// randomness for expiries and generated secrets. Options adjust the rest.
+func NewService(store Store, mailer Mailer, publicURL string, now func() time.Time, rnd io.Reader, opts ...Option) *Service {
+	s := &Service{
 		store: store, mailer: mailer, publicURL: publicURL, now: now, rnd: rnd,
 		resetSlots: make(chan struct{}, maxResetJobs),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// logger is the service's logger, resolved at call time so a replaced
+// slog.Default() is honoured when no WithLogger was given.
+func (s *Service) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return slog.Default()
 }

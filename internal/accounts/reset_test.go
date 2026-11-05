@@ -138,6 +138,26 @@ func TestRequestResetSilentCases(t *testing.T) {
 	})
 }
 
+func TestRequestResetLogsADroppedRequest(t *testing.T) {
+	var buf bytes.Buffer
+	f := newResetFixture()
+	f.svc = accounts.NewService(f.store, f.mailer, "https://pulsix.example", func() time.Time { return *f.clock }, &cyclingReader{},
+		accounts.WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+	if err := f.svc.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if err := f.svc.RequestReset(context.Background(), "drop@example.test"); err != nil {
+		t.Fatalf("RequestReset: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "password reset request dropped: shutting down") {
+		t.Fatalf("log = %q, want the dropped line", out)
+	}
+	if strings.Contains(out, "drop@example.test") {
+		t.Fatalf("log = %q names the address", out)
+	}
+}
+
 func TestRequestResetMailsFragmentLink(t *testing.T) {
 	f := newResetFixture()
 	earlier := &fakeToken{ResetToken: accounts.ResetToken{
