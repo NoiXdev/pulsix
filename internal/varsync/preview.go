@@ -6,6 +6,7 @@ package varsync
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/varsource"
@@ -46,11 +47,14 @@ type Added struct {
 // source field the source changed, or a gone field the source declares
 // again. Field is the field as it will be stored.
 type Changed struct {
-	Name        string       `json:"name"`
-	Field       schema.Field `json:"field"`
-	Changes     []Change     `json:"changes"`
-	NeedsReview bool         `json:"needs_review"`
-	Reason      ReviewReason `json:"reason,omitempty"`
+	Name  string       `json:"name"`
+	Field schema.Field `json:"field"`
+	// CurrentOrigin is the field's origin Compute saw; Apply skips the
+	// item when the field's origin changed since.
+	CurrentOrigin schema.Origin `json:"current_origin"`
+	Changes       []Change      `json:"changes"`
+	NeedsReview   bool          `json:"needs_review"`
+	Reason        ReviewReason  `json:"reason,omitempty"`
 }
 
 // Adjusted is a field a person adjusted whose source changed: the
@@ -68,9 +72,15 @@ type Adjusted struct {
 type Gone struct {
 	Name  string       `json:"name"`
 	Field schema.Field `json:"field"`
+	// CurrentOrigin is the field's origin Compute saw; Apply skips the
+	// item when the field's origin changed since.
+	CurrentOrigin schema.Origin `json:"current_origin"`
 }
 
 // Preview is what applying a source would change in a template's fields.
+// Apply takes the Preview Compute returned for the same current fields:
+// Refresh does not travel through JSON, so a preview decoded from JSON
+// applies its items but not the moved source locations.
 type Preview struct {
 	SourceRev string           `json:"source_rev"`
 	Added     []Added          `json:"added"`
@@ -80,20 +90,22 @@ type Preview struct {
 	Unchanged int              `json:"unchanged"`
 	Notes     []varsource.Note `json:"notes"`
 
-	available bool
-	// refresh holds unchanged fields whose provenance moved (source
-	// location, set_in_playbook), as Apply stores them.
-	refresh map[string]schema.Field
+	// Refresh holds the unchanged fields whose provenance moved (source
+	// location, set_in_playbook, an adjusted field's source version), as
+	// Compute saw them with the new provenance.
+	Refresh map[string]schema.Field `json:"-"`
 }
 
 // Compute compares current, a template's fields, with src. stored are the
 // template's stored values, which decide whether a change needs review.
 // A source that is not available yields no items, only why; manual fields
-// are never touched.
+// are never touched. Added stops where the template would hold more than
+// schema.MaxFields fields (gone ones count until removed), with a
+// fields_left_out warning naming the rest.
 func Compute(current []schema.Field, src Source, stored map[string]any) Preview {
 	pb := src.Playbook
 	p := Preview{SourceRev: src.Rev, Added: []Added{}, Changed: []Changed{}, Adjusted: []Adjusted{}, Gone: []Gone{},
-		Notes: []varsource.Note{}, available: src.Available, refresh: map[string]schema.Field{}}
+		Notes: []varsource.Note{}, Refresh: map[string]schema.Field{}}
 	if !src.Available {
 		reason := src.Reason
 		if reason == "" {
@@ -113,11 +125,18 @@ func Compute(current []schema.Field, src Source, stored map[string]any) Preview 
 		have[f.Name] = true
 		c.compare(f)
 	}
+	room := max(schema.MaxFields-len(current), 0)
+	var left []string
 	for _, f := range pb.Fields {
-		if !have[f.Name] {
+		switch {
+		case have[f.Name]:
+		case len(p.Added) < room:
 			p.Added = append(p.Added, Added{Field: added(f)})
+		default:
+			left = append(left, f.Name)
 		}
 	}
+	p.Notes = append(p.Notes, fieldsLeftOut(left, pb.Path)...)
 	p.Notes = append(p.Notes, c.absence.note(pb.Path)...)
 	p.Notes = append(p.Notes, c.taken...)
 	p.Notes = append(p.Notes, pb.Notes...)
@@ -146,7 +165,7 @@ func (c *comparison) compare(cur schema.Field) {
 		// An unknown origin is not the sync's to touch.
 	case !declared:
 		if c.absence.gone(cur.Name) {
-			c.p.Gone = append(c.p.Gone, Gone{Name: cur.Name, Field: markGone(cur)})
+			c.p.Gone = append(c.p.Gone, Gone{Name: cur.Name, Field: markGone(cur), CurrentOrigin: cur.EffectiveOrigin()})
 		}
 	case cur.Origin == schema.OriginGone:
 		c.returning(cur, cand)
@@ -159,7 +178,7 @@ func (c *comparison) compare(cur schema.Field) {
 
 // source compares a field that follows the source.
 func (c *comparison) source(cur, cand schema.Field) {
-	if cur.SameContent(cand) {
+	if sameContent(cur, cand) {
 		c.unchanged(cur, withProvenance(cur, cand))
 		return
 	}
@@ -174,7 +193,7 @@ func (c *comparison) adjusted(cur, cand schema.Field) {
 	next := withProvenance(cur, cand)
 	sf := content(cand)
 	next.SourceField = &sf
-	if cur.SourceField != nil && cur.SourceField.SameContent(cand) {
+	if cur.SourceField != nil && sameContent(*cur.SourceField, cand) {
 		c.unchanged(cur, next)
 		return
 	}
@@ -194,7 +213,8 @@ func (c *comparison) returning(cur, cand schema.Field) {
 		next.Origin = schema.OriginAdjusted
 		sf := content(cand)
 		next.SourceField = &sf
-		c.p.Changed = append(c.p.Changed, Changed{Name: cur.Name, Field: next, Changes: []Change{originChange(schema.OriginAdjusted)}})
+		c.p.Changed = append(c.p.Changed, Changed{Name: cur.Name, Field: next, CurrentOrigin: schema.OriginGone,
+			Changes: []Change{originChange(schema.OriginAdjusted)}})
 		return
 	}
 	next := fromSource(cand, cur.Active)
@@ -204,7 +224,8 @@ func (c *comparison) returning(cur, cand schema.Field) {
 
 func (c *comparison) changed(cur, next schema.Field, changes []Change) {
 	needs, why := review(content(cur), content(next), c.stored, c.capped, changes)
-	c.p.Changed = append(c.p.Changed, Changed{Name: cur.Name, Field: next, Changes: changes, NeedsReview: needs, Reason: why})
+	c.p.Changed = append(c.p.Changed, Changed{Name: cur.Name, Field: next, CurrentOrigin: cur.EffectiveOrigin(),
+		Changes: changes, NeedsReview: needs, Reason: why})
 }
 
 // unchanged counts a field whose content the source did not change and
@@ -212,8 +233,26 @@ func (c *comparison) changed(cur, next schema.Field, changes []Change) {
 func (c *comparison) unchanged(cur, next schema.Field) {
 	c.p.Unchanged++
 	if !sameJSON(cur, next) {
-		c.p.refresh[cur.Name] = next
+		c.p.Refresh[cur.Name] = next
 	}
+}
+
+// maxNamesListed bounds the names a fields_left_out warning lists.
+const maxNamesListed = 10
+
+// fieldsLeftOut is the warning about source fields not added because the
+// template would hold more than schema.MaxFields fields (counting gone
+// fields, which stay until a person removes them).
+func fieldsLeftOut(names []string, file string) []varsource.Note {
+	if len(names) == 0 {
+		return nil
+	}
+	listed := strings.Join(names[:min(len(names), maxNamesListed)], ", ")
+	if len(names) > maxNamesListed {
+		listed += fmt.Sprintf(" and %d more", len(names)-maxNamesListed)
+	}
+	return []varsource.Note{{Level: varsource.LevelWarning, Code: codeFieldsLeftOut, File: file,
+		Message: fmt.Sprintf("%d fields from the source are not added, because a template holds at most %d fields: %s", len(names), schema.MaxFields, listed)}}
 }
 
 func originChange(to schema.Origin) Change {

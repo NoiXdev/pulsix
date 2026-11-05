@@ -82,6 +82,21 @@ func TestComputeComparesCanonicalJSON(t *testing.T) {
 	}
 }
 
+// An integer beyond 2^53 reads back from the database as the nearest
+// float; that alone is no change.
+func TestComputeBigIntegerDefaultSurvivesTheDatabase(t *testing.T) {
+	cand := marker("big", schema.TypeInt, 3, func(f *schema.Field) { f.Default = int64(9007199254740993) })
+	p := varsync.Compute(nil, source(cand), nil)
+	stored := roundTrip(t, varsync.Apply(nil, p, varsync.ApplyOptions{Automatic: true}))
+	if got := jsonOf(t, stored[0].Default); got != "9007199254740992" {
+		t.Fatalf("stored default = %s, want the float it reads back as", got)
+	}
+	again := varsync.Compute(stored, source(cand), nil)
+	if again.Unchanged != 1 || len(again.Changed) != 0 {
+		t.Errorf("preview after the database = %s", jsonOf(t, again))
+	}
+}
+
 func TestReviewReasons(t *testing.T) {
 	str := func(name string, mod ...func(*schema.Field)) schema.Field {
 		return marker(name, schema.TypeString, 5, mod...)
@@ -361,6 +376,9 @@ func TestComputeUnavailableSource(t *testing.T) {
 	}
 	if got := jsonOf(t, varsync.Apply([]schema.Field{cur}, p, varsync.ApplyOptions{RemoveGone: true})); got != jsonOf(t, []schema.Field{cur}) {
 		t.Errorf("applied = %s", got)
+	}
+	if n := varsync.Compute([]schema.Field{cur}, varsync.Source{}, nil).Notes; len(n) != 1 || !strings.Contains(n[0].Message, "not available") {
+		t.Errorf("notes without a reason = %+v", n)
 	}
 }
 

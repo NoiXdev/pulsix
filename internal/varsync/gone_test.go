@@ -48,7 +48,6 @@ func TestComputeGoneOnlyFromReadSources(t *testing.T) {
 		{"role not found", []func(*varsync.Source){roles(role("nginx", varsource.RoleNotFound))}, nil, "not_checked"},
 		{"role unreadable", []func(*varsync.Source){roles(role("nginx", varsource.RoleUnreadable))}, nil, "not_checked"},
 		{"an unreadable role use without a name", []func(*varsync.Source){roles(role("nginx", varsource.RoleRead), role("", varsource.RoleUnreadable))}, nil, "not_checked"},
-		{"role became dynamic", []func(*varsync.Source){roles(role("{{ r }}", varsource.RoleDynamic))}, nil, "not_checked"},
 		{"role no longer used, a dynamic role present", []func(*varsync.Source){roles(role("{{ r }}", varsource.RoleDynamic))}, nil, "not_checked"},
 		{"a collection role", []func(*varsync.Source){roles(role("nginx", varsource.RoleRead), role("ns.col.r", varsource.RoleCollection))}, nil, "not_checked"},
 		{"an inline playbook's role", []func(*varsync.Source){roles(role("nginx", varsource.RoleInline))}, nil, "not_checked"},

@@ -49,13 +49,14 @@ func Newer(applied string, src Source) bool {
 	return src.Available && src.Rev != "" && src.Rev != applied
 }
 
-// AppliedRev is the source revision a template records after applying p
-// over a template that recorded previous: p's revision, or previous when
-// p's source was not available or names no revision, so an unusable read
-// never becomes the applied one.
-func (p Preview) AppliedRev(previous string) string {
-	if !p.available || p.SourceRev == "" {
+// AppliedRev is the source revision a template records after applying a
+// preview of src over a template that recorded previous: src's revision,
+// or previous when src is not available or names no revision, so an
+// unusable read never becomes the applied one and a recorded revision is
+// never emptied.
+func AppliedRev(previous string, src Source) string {
+	if !src.Available || src.Rev == "" {
 		return previous
 	}
-	return p.SourceRev
+	return src.Rev
 }

@@ -119,6 +119,16 @@ func jsonOf(t *testing.T, v any) string {
 	return string(b)
 }
 
+// roundTrip is fields as the database returns them: through JSON.
+func roundTrip(t *testing.T, fields []schema.Field) []schema.Field {
+	t.Helper()
+	var out []schema.Field
+	if err := json.Unmarshal([]byte(jsonOf(t, fields)), &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func field(t *testing.T, fields []schema.Field, name string) schema.Field {
 	t.Helper()
 	for _, f := range fields {

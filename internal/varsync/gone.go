@@ -14,6 +14,7 @@ const (
 	codeSourceUnavailable = "source_unavailable"
 	codeNotChecked        = "not_checked"
 	codeManualNameTaken   = "manual_name_taken"
+	codeFieldsLeftOut     = "fields_left_out"
 )
 
 // unreadReason is why pb does not vouch for the absence of a name, or ""

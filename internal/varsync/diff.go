@@ -1,8 +1,8 @@
 package varsync
 
 import (
-	"bytes"
 	"encoding/json"
+	"reflect"
 	"slices"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
@@ -60,7 +60,7 @@ func nonEmpty[T any](s []T) any {
 }
 
 // diff lists the content attributes in which from and to differ, compared
-// as canonical JSON (an int default equals the same number as a float).
+// as their values decoded from JSON (see sameJSON).
 func diff(from, to schema.Field) []Change {
 	out := []Change{}
 	for _, a := range attributes {
@@ -72,11 +72,32 @@ func diff(from, to schema.Field) []Change {
 	return out
 }
 
+// sameJSON reports whether a and b are equal once each went through JSON
+// as the database stores and returns them: an int default equals the same
+// number as a float, and an integer beyond 2^53 equals the float it reads
+// back as, so a stored field never differs from its source only by that
+// round trip.
 func sameJSON(a, b any) bool {
-	x, errX := json.Marshal(a)
-	y, errY := json.Marshal(b)
-	return errX == nil && errY == nil && bytes.Equal(x, y)
+	x, okX := decoded(a)
+	y, okY := decoded(b)
+	return okX && okY && reflect.DeepEqual(x, y)
 }
+
+func decoded(v any) (any, bool) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, false
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+// sameContent reports whether f and g declare the same field, provenance
+// left out, compared like sameJSON.
+func sameContent(f, g schema.Field) bool { return sameJSON(content(f), content(g)) }
 
 // content is f without provenance: what the source declares.
 func content(f schema.Field) schema.Field {
@@ -87,7 +108,9 @@ func content(f schema.Field) schema.Field {
 // review says whether automatic mode must hold the change from field from
 // to field to for a person, and why: a secret flag that changes anywhere
 // in the field, a type change, a stored value that fits from but not to,
-// or sub-fields that change while capped says a limit cut fields.
+// or sub-fields that change while capped says a limit cut fields. A type
+// change of a sub-field or a list's item is held only when a stored value
+// no longer fits: with nothing stored it changes nothing a run receives.
 func review(from, to schema.Field, stored map[string]any, capped bool, changes []Change) (bool, ReviewReason) {
 	switch {
 	case !slices.Equal(secretPaths(from, ""), secretPaths(to, "")):
