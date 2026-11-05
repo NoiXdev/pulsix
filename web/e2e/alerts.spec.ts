@@ -56,7 +56,7 @@ async function enrolAndStart(page: Page, hostName: string): Promise<RunningAgent
 }
 
 function agentRow(page: Page, hostName: string) {
-  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=..');
+  return page.locator('[data-list-row]', { has: page.getByRole('link', { name: hostName, exact: true }) });
 }
 
 async function waitOnline(page: Page, hostName: string): Promise<void> {

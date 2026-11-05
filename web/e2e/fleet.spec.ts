@@ -50,12 +50,10 @@ async function enrolAndStart(page: Page, hostName: string): Promise<RunningAgent
   return startAgent(token, hostName);
 }
 
-/** agentRow scopes an assertion to one Agents page row. Unlike FleetPage's
- * own rows (hosts.spec.ts's hostRow), the host name Link here is wrapped
- * in its own <span> (AgentsPage.tsx), so the row is two xpath steps above
- * the link rather than one. */
+/** agentRow scopes an assertion to one Agents page row: the `data-list-row`
+ * container that holds the row's link (named by the host) and its menu. */
 function agentRow(page: Page, hostName: string) {
-  return page.getByRole('link', { name: hostName, exact: true }).locator('xpath=..');
+  return page.locator('[data-list-row]', { has: page.getByRole('link', { name: hostName, exact: true }) });
 }
 
 async function waitOnline(page: Page, hostName: string): Promise<void> {
@@ -276,7 +274,7 @@ test('the fleet page shows a host in each state, narrowed by one filter', async 
       for (;;) {
         await page.goto(`${base}/fleet`);
         await page.getByLabel('Tag').fill(TAG);
-        const row = page.getByRole('link', { name: hostName, exact: true }).locator('xpath=..');
+        const row = page.locator('[data-list-row]', { has: page.getByRole('link', { name: hostName, exact: true }) });
         try {
           await expect(row.getByText(want, { exact: true })).toBeVisible({ timeout: 5_000 });
           return;

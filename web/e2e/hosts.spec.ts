@@ -33,11 +33,10 @@ async function addHost(
 }
 
 /** The row for one host, scoped so capability/tag assertions never
- * accidentally match another host's cells — HostRow renders the whole row as
- * a Link (named by the host) that is a direct child of the row container,
- * which also holds the row menu. */
+ * accidentally match another host's cells — the `data-list-row` container
+ * holds HostRow's Link (named by the host) and its row menu. */
 function hostRow(page: Page, name: string): Locator {
-  return page.getByRole('link', { name, exact: true }).locator('xpath=..');
+  return page.locator('[data-list-row]', { has: page.getByRole('link', { name, exact: true }) });
 }
 
 test('create a zone and hosts, toggle capabilities independently, tag one, then filter and query for it', async ({
