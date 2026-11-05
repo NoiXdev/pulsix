@@ -44,8 +44,9 @@ CREATE INDEX job_hosts_host_idx ON job_hosts (org_id, host_id, created_at DESC, 
 
 -- Nothing reads jobs.host_ids with @> any more (ListHostsDueForTest uses
 -- = ANY, which a GIN index cannot serve), and the index cost every job
--- insert a GIN update. A previous-minor manager still answers its own @>
--- query correctly without it, only by a scan (docs/upgrades.md).
+-- insert a GIN update. An older manager refuses this schema
+-- (CheckSchemaNotNewer), so nothing needs the index after this migration;
+-- docs/upgrades.md says to stop every manager first.
 DROP INDEX jobs_host_ids_idx;
 
 -- +goose Down
