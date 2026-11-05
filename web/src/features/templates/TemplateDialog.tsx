@@ -12,7 +12,7 @@ import { usePlaybooks } from '../../api/hooks/usePlaybooks.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useCreateTemplate, useDeleteTemplate, useTemplate, useUpdateTemplate } from '../../api/hooks/useTemplates.ts';
 import { SchemaForm } from '../variables/SchemaForm.tsx';
-import { SchemaBuilder } from '../variables/SchemaBuilder.tsx';
+import { VariableEditor } from '../variables/VariableEditor.tsx';
 import { problemsFromError } from '../variables/paths.ts';
 import type { Problem, VarSchema, Vars } from '../variables/types.ts';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
@@ -257,7 +257,7 @@ function TemplateForm({
           <details className="rounded-md border border-border p-3" open={!!existing?.schema}>
             <summary className="cursor-pointer text-xs font-semibold">{t.templates.dialog.schemaSummary}</summary>
             <div className="pt-3">
-              <SchemaBuilder value={schema ?? { fields: [] }} onChange={setSchema} problems={schemaProblems} nested />
+              <VariableEditor variant="template" value={schema ?? { fields: [] }} onChange={setSchema} problems={schemaProblems} readOnly={projected} />
             </div>
           </details>
         </fieldset>

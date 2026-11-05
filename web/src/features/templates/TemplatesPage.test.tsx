@@ -290,7 +290,7 @@ describe('TemplatesPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
-    const tokenField = await within(dialog).findByLabelText(/token/i);
+    const tokenField = await within(dialog).findByLabelText('token');
     expect(tokenField).toHaveAttribute('readonly');
     expect(within(dialog).getByDisplayValue('•••••••• stored')).toBeInTheDocument();
 
@@ -324,7 +324,7 @@ describe('TemplatesPage', () => {
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Replace' }));
-    const token = await within(dialog).findByLabelText(/token/i);
+    const token = await within(dialog).findByLabelText('token');
     expect(token).toBeEnabled();
     await user.type(token, 'hunter2');
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
@@ -376,15 +376,16 @@ describe('TemplatesPage', () => {
     await user.type(screen.getByLabelText('Name'), 'deploy-site');
     await pickOption(screen, 'Playbook', { value: 'pb1' });
 
-    // Build a schema in the dialog itself: expand it, add a field, rename
-    // it, mark it required.
+    // Build a schema in the dialog itself: expand it, add a field in the
+    // field dialog, rename it, mark it required.
     await user.click(screen.getByText('Extra vars schema'));
-    await user.click(screen.getByRole('button', { name: 'Add sub-field' }));
-    const fieldGroup = screen.getByRole('group', { name: 'Field field_1' });
-    const nameInput = within(fieldGroup).getByLabelText('Name');
+    await user.click(screen.getByRole('button', { name: 'Add field' }));
+    const fieldDialog = screen.getByRole('dialog', { name: 'Field field_1' });
+    const nameInput = within(fieldDialog).getByLabelText('Name');
     await user.clear(nameInput);
     await user.type(nameInput, 'region');
-    await user.click(within(fieldGroup).getByLabelText('Required'));
+    await user.click(within(fieldDialog).getByLabelText('Required'));
+    await user.click(within(fieldDialog).getByRole('button', { name: 'Done' }));
 
     // The vars form appeared from the LIVE schema — the field is fillable.
     const dialog = screen.getByRole('dialog', { name: 'New job template' });
@@ -415,12 +416,13 @@ describe('TemplatesPage', () => {
     await user.type(screen.getByLabelText('Name'), 'deploy-site');
     await pickOption(screen, 'Playbook', { value: 'pb1' });
     await user.click(screen.getByText('Extra vars schema'));
-    await user.click(screen.getByRole('button', { name: 'Add sub-field' }));
-    const fieldGroup = screen.getByRole('group', { name: 'Field field_1' });
-    const nameInput = within(fieldGroup).getByLabelText('Name');
+    await user.click(screen.getByRole('button', { name: 'Add field' }));
+    const fieldDialog = screen.getByRole('dialog', { name: 'Field field_1' });
+    const nameInput = within(fieldDialog).getByLabelText('Name');
     await user.clear(nameInput);
     await user.type(nameInput, 'region');
-    await user.click(within(fieldGroup).getByLabelText('Required'));
+    await user.click(within(fieldDialog).getByLabelText('Required'));
+    await user.click(within(fieldDialog).getByRole('button', { name: 'Done' }));
 
     // The required field stays empty: the 422's problem must be VISIBLE at
     // its field, not swallowed by a vars section that never rendered.

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -58,5 +58,29 @@ describe('a dialog opened from inside a dialog', () => {
     expect(inner).not.toBeVisible();
     expect(outer).toHaveAttribute('open');
     expect(outer).toBeVisible();
+  });
+
+  // React hands a dialog's `close` to every onClose up the component tree,
+  // not only to the dialog that closed: an inner dialog closed by Escape (or
+  // close()) used to close the dialog it was opened from as well.
+  it('does not close the outer dialog when the inner one closes', async () => {
+    const user = userEvent.setup();
+    const outerClosed = vi.fn();
+    function Pair() {
+      const [inner, setInner] = useState(true);
+      return (
+        <Dialog open onClose={outerClosed} title="Outer">
+          <Dialog open={inner} onClose={() => setInner(false)} title="Inner">
+            <button type="button" onClick={() => (screen.getByRole('dialog', { name: 'Inner' }) as HTMLDialogElement).close()}>
+              Close natively
+            </button>
+          </Dialog>
+        </Dialog>
+      );
+    }
+    render(<Pair />);
+    await user.click(screen.getByRole('button', { name: 'Close natively' }));
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toHaveAttribute('open');
+    expect(outerClosed).not.toHaveBeenCalled();
   });
 });

@@ -155,14 +155,22 @@ describe('GroupDetailPage layout', () => {
     mockApi(routes('viewer'));
     renderAt('/o/acme/groups/g1');
     await screen.findByRole('link', { name: 'web-01' });
-    for (const name of ['Edit', 'Assign host', 'Add child group', 'Save schema', 'Save values', 'Discard', 'More actions for web']) {
+    for (const name of ['Edit', 'Assign host', 'Add child group', 'Save schema', 'Save values', 'Discard', 'Add field', 'More actions for web']) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
     await user.click(screen.getByRole('button', { name: 'Actions for web-01' }));
     expect(screen.getAllByRole('menuitem').map((m) => m.textContent)).toEqual(['Open host']);
     await user.keyboard('{Escape}');
 
-    expect(screen.getByRole('button', { name: 'Add field' })).toBeDisabled();
+    // The schema editor is read-only: no field can be added, switched or
+    // moved, but a field still opens, in a dialog that saves nothing.
+    expect(screen.getByRole('switch', { name: 'env active' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: /^env\b/ }));
+    const field = await screen.findByRole('dialog', { name: 'Field env' });
+    expect(within(field).getByLabelText('Name')).toBeDisabled();
+    expect(within(field).queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getByLabelText('env')).toBeDisabled();
   });
 

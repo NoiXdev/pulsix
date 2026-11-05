@@ -8,10 +8,10 @@ import { useToast } from '../../../ui/toastContext.ts';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { CreateGate, DefinitionLoader } from './DefinitionLoader.tsx';
-import { SchemaBuilder } from '../../variables/SchemaBuilder.tsx';
+import { VariableEditor } from '../../variables/VariableEditor.tsx';
 import { SchemaForm } from '../../variables/SchemaForm.tsx';
 import { toVarSchema } from '../../../api/hooks/useInventory.ts';
-import type { FieldType, VarSchema, Vars } from '../../variables/types.ts';
+import type { VarSchema, Vars } from '../../variables/types.ts';
 import { useRepoDefinitions } from '../../../api/hooks/useSharedRepoDefinitions.ts';
 import {
   useCreateTemplateDefinition,
@@ -90,14 +90,6 @@ function validateTemplateDefinitionInput(
   if (values.limit.length > 500) errors.limit = t.validation.maxChars(500);
   return errors;
 }
-
-// SHARED_FIELD_TYPES is FIELD_TYPES without "secret": a shared
-// definition's extra vars are written straight into every organization's
-// own job_templates.extra_vars column, never sealed, so the server
-// refuses a secret-typed field outright (internal/shared's
-// schemaHasSecretField). Offering a type that is always refused is worse
-// than not offering it (backlog 2.101).
-const SHARED_FIELD_TYPES: readonly FieldType[] = ['string', 'int', 'float', 'bool', 'enum', 'list', 'repeater', 'object'];
 
 type TextKey = Exclude<keyof TemplateDefinitionFormValues, 'sharedRepoId'>;
 
@@ -211,12 +203,13 @@ function TemplateForm({
           {field('limit', t.instance.shared.templates.limitPlaceholder)}
         </div>
       </FormSection>
-      {/* The extra vars editor is SchemaBuilder (and SchemaForm for the
-          values), kept as it is until backlog 7.75 replaces it; it lives in
-          this one bounded section so that swap touches nothing else. No
-          secret type: the server refuses one on a shared definition by
-          construction, because these extra vars are written into every
-          organization's own column without ever being sealed. */}
+      {/* The extra vars editor is the shared VariableEditor (and
+          SchemaForm for the values). Its "shared" variant offers no secret
+          type: the server refuses one on a shared definition by
+          construction (internal/shared's schemaHasSecretField), because
+          these extra vars are written into every organization's own column
+          without ever being sealed. Manual fields only: a shared definition
+          takes no fields from a playbook (spec 7.75 owner decision 1). */}
       <FormSection
         title={t.instance.shared.templates.extraVarsSection}
         titleId="tpl-def-extra-vars"
@@ -224,7 +217,7 @@ function TemplateForm({
       >
         <div className="flex flex-col gap-2">
           <span className="text-xs font-semibold">{t.instance.shared.templates.extraVarsSchema}</span>
-          <SchemaBuilder nested types={SHARED_FIELD_TYPES} value={schema} onChange={setSchema} />
+          <VariableEditor variant="shared" value={schema} onChange={setSchema} />
         </div>
         {schema.fields.length > 0 && (
           <div className="flex flex-col gap-2">

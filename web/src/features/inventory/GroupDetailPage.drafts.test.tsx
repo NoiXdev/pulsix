@@ -8,8 +8,17 @@ const stale = () => new Response(JSON.stringify({ status: 412, detail: 'changed'
 
 type User = ReturnType<typeof userEvent.setup>;
 
-/** The number of field editors in the schema builder. */
-const fieldCount = () => within(screen.getByRole('list', { name: 'Fields' })).getAllByRole('listitem').length;
+/** The number of fields in the schema editor (its rows past the header;
+ * no field is expanded in these tests, so one row is one field). */
+const fieldCount = () => within(screen.getByRole('table', { name: 'Fields' })).getAllByRole('row').length - 1;
+
+/** addField adds a new field to the schema draft through its dialog. */
+async function addField(user: User) {
+  await user.click(screen.getByRole('button', { name: 'Add field' }));
+  const dialog = await screen.findByRole('dialog', { name: /^Field / });
+  await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+}
 
 async function typeEnv(user: User, text: string) {
   const env = await screen.findByLabelText('env');
@@ -38,9 +47,9 @@ describe('GroupDetailPage drafts', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await screen.findByRole('list', { name: 'Fields' });
+    await screen.findByRole('table', { name: 'Fields' });
     const before = fieldCount();
-    await user.click(screen.getByRole('button', { name: 'Add field' }));
+    await addField(user);
     expect(fieldCount()).toBe(before + 1);
 
     await typeEnv(user, 'staging');
@@ -91,9 +100,9 @@ describe('GroupDetailPage drafts', () => {
       }),
     );
     renderAt('/o/acme/groups/g1');
-    await screen.findByRole('list', { name: 'Fields' });
+    await screen.findByRole('table', { name: 'Fields' });
     const before = fieldCount();
-    await user.click(screen.getByRole('button', { name: 'Add field' }));
+    await addField(user);
     await typeEnv(user, 'mine');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
 
@@ -200,9 +209,9 @@ describe('GroupDetailPage drafts', () => {
     expect(await screen.findByRole('heading', { level: 1, name: 'web_eu' })).toBeInTheDocument();
     await user.click(await screen.findByRole('link', { name: 'web' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'web' })).toBeInTheDocument();
-    await screen.findByRole('list', { name: 'Fields' });
+    await screen.findByRole('table', { name: 'Fields' });
     const before = fieldCount();
-    await user.click(screen.getByRole('button', { name: 'Add field' }));
+    await addField(user);
     await typeEnv(user, 'only for web');
 
     await user.click(screen.getByRole('link', { name: 'web_eu' }));

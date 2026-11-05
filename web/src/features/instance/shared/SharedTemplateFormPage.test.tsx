@@ -113,8 +113,8 @@ describe('SharedTemplateFormPage — new', () => {
     });
     await renderAndWait(`${LIST}/new`);
     const section = screen.getByRole('region', { name: 'Extra vars' });
-    expect(within(section).getByRole('button', { name: 'Add sub-field' })).toBeInTheDocument();
-    // The editor is the schema builder, not part of the plain fields.
+    expect(within(section).getByRole('button', { name: 'Add field' })).toBeInTheDocument();
+    // The editor is the variable editor, not part of the plain fields.
     expect(within(section).queryByLabelText('Name')).not.toBeInTheDocument();
   });
 });
@@ -245,7 +245,8 @@ describe('SharedTemplateFormPage — edit', () => {
       },
     });
     renderPage(`${LIST}/t1`);
-    await user.click(await screen.findByLabelText('Type'));
+    await user.click(await screen.findByRole('button', { name: 'region' }));
+    await user.click(within(screen.getByRole('dialog', { name: 'Field region' })).getByLabelText('Type'));
     // A shared definition's extra vars are written into every
     // organization's own column unsealed, so offering a secret-typed field
     // would be offering a save that cannot succeed.
@@ -253,7 +254,7 @@ describe('SharedTemplateFormPage — edit', () => {
     expect(screen.getByRole('option', { name: 'string' })).toBeInTheDocument();
   });
 
-  // Backlog 7.74 fix round 1: SchemaBuilder and SchemaForm must not make an
+  // Backlog 7.74 fix round 1: the schema editor and SchemaForm must not make an
   // untouched form look changed (by normalizing the schema or the values on
   // mount), or every visit to a template with extra vars would end in an
   // unsaved-changes question.

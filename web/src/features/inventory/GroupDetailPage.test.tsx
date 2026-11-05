@@ -83,7 +83,7 @@ describe('GroupDetailPage', () => {
   it('renders the schema builder and the group values together', async () => {
     mockApi(base);
     renderAt('/o/acme/groups/g1');
-    expect(await screen.findByRole('list', { name: 'Fields' })).toBeInTheDocument();
+    expect(await screen.findByRole('table', { name: 'Fields' })).toBeInTheDocument();
     expect(screen.getByLabelText('env')).toBeInTheDocument();
     expect(screen.getByText(/Values of removed fields are still stored/)).toBeInTheDocument();
   });

@@ -55,11 +55,18 @@ export function Dialog({ open, onClose, title, children, size = 'default', dismi
       // one with a real side effect would have double-fired silently.
       // `close` is the one to keep: it also fires for the programmatic
       // el.close() below, which `cancel` does not.
-      onClose={onClose}
+      //
+      // Both handlers act only on this dialog's own events: React passes a
+      // `close` or `cancel` up the component tree like a bubbling event, so
+      // a dialog opened from inside this one would otherwise close this one
+      // too when it closes (or be kept open by this one's `dismissible`).
+      onClose={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
       // Escape sends `cancel` first; preventing it is the one way to keep
       // the dialog open (the `close` above then never fires).
       onCancel={(e) => {
-        if (!dismissible) e.preventDefault();
+        if (e.target === e.currentTarget && !dismissible) e.preventDefault();
       }}
       aria-labelledby={titleId}
       // m-auto is not decoration: a native <dialog> centres itself in the

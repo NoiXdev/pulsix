@@ -137,6 +137,27 @@ describe('SchemaForm', () => {
     expect(screen.getByRole('button', { name: 'Add Virtual hosts' })).toBeDisabled();
   });
 
+  it('leaves an inactive field out and keeps its value when another field is edited', async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        fields={[
+          { name: 'env', type: 'string' },
+          { name: 'token', type: 'secret', active: false },
+        ]}
+        initial={{ token: keepMarker('token') }}
+      />,
+    );
+    expect(screen.queryByLabelText('token')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('env'), 'prod');
+    expect(current()).toEqual({ env: 'prod', token: keepMarker('token') });
+  });
+
+  it('says so when no field is active', () => {
+    render(<Harness fields={[{ name: 'env', type: 'string', active: false }]} />);
+    expect(screen.getByText('No fields.')).toBeInTheDocument();
+  });
+
   it('says so when a schema has no fields', () => {
     render(<Harness fields={[]} />);
     expect(screen.getByText('No fields.')).toBeInTheDocument();

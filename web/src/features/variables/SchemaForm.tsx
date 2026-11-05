@@ -7,6 +7,7 @@ import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { childPath, indexPath, inputId, problemAt } from './paths.ts';
 import { isKeepMarker, isRecord, type KeepMarker } from './secrets.ts';
+import { activeFields } from './origin.ts';
 import type { FieldType, Problem, SchemaField, Vars } from './types.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -27,14 +28,16 @@ export interface SchemaFormProps {
  * SchemaForm renders a form for any variable schema (spec §6) as a
  * controlled component over a plain value tree. It never validates: the
  * server does, and its problems come back through `problems` at the same
- * paths this component uses for its inputs.
+ * paths this component uses for its inputs. Only active fields are shown;
+ * an edit replaces one key, so an inactive field's value is kept as it is.
  */
 export function SchemaForm({ fields, value, onChange, problems, disabled, idPrefix = 'sf', pathPrefix = '' }: SchemaFormProps) {
   const t = useT();
-  if (fields.length === 0) return <p className="text-xs text-muted-foreground">{t.variables.form.noFields}</p>;
+  const shown = activeFields(fields);
+  if (shown.length === 0) return <p className="text-xs text-muted-foreground">{t.variables.form.noFields}</p>;
   return (
     <div className="flex flex-col gap-3">
-      {fields.map((f) => (
+      {shown.map((f) => (
         <FieldInput
           key={f.name}
           field={f}

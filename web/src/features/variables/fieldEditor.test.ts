@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changeType, fieldPath, hasProblemUnder, moveField, newField, removeField, replaceField, typeLabel } from './fieldEditor.ts';
+import { changeType, fieldPath, formatAttribute, formatValue, hasProblemUnder, moveField, newField, removeField, replaceField, typeLabel, typesFor } from './fieldEditor.ts';
 import { en } from '../../i18n/en/index.ts';
 import type { SchemaField } from './types.ts';
 
@@ -45,5 +45,26 @@ describe('field editor helpers', () => {
     expect(hasProblemUnder(problems, 'fields[10]')).toBe(false);
     expect(hasProblemUnder([{ path: 'fields[1]', message: 'x' }], 'fields[1]')).toBe(true);
     expect(hasProblemUnder(undefined, 'fields[0]')).toBe(false);
+  });
+
+  it('keeps a field\'s provenance when its type changes', () => {
+    const src = { kind: 'marker' as const, file: 'site.yml', line: 2 };
+    const f: SchemaField = { name: 'n', type: 'int', min: 1, active: false, origin: 'source', source: src, set_in_playbook: true };
+    expect(changeType(f, 'string')).toEqual({ name: 'n', type: 'string', active: false, origin: 'source', source: src, set_in_playbook: true });
+  });
+
+  it('withholds the secret type from shared definitions only', () => {
+    expect(typesFor('shared')).not.toContain('secret');
+    expect(typesFor('group')).toContain('secret');
+    expect(typesFor('template')).toContain('secret');
+  });
+
+  it('formats attribute values in one line', () => {
+    expect(formatValue(undefined)).toBe('—');
+    expect(formatValue(80)).toBe('80');
+    expect(formatValue(['a', 'b'])).toBe('a, b');
+    expect(formatValue(true)).toBe('true');
+    expect(formatAttribute('fields', [{ name: 'domain', type: 'string' }, { name: 'ssl', type: 'bool' }])).toBe('domain, ssl');
+    expect(formatAttribute('item', { name: '', type: 'int' })).toBe('int');
   });
 });

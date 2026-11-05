@@ -5,15 +5,16 @@ import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { toVarSchema, useReloadInventory, useSetGroupSchema } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
-import { SchemaBuilder } from '../../variables/SchemaBuilder.tsx';
+import { VariableEditor } from '../../variables/VariableEditor.tsx';
 import { problemsFromError } from '../../variables/paths.ts';
 import type { Problem, VarSchema } from '../../variables/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-/** SchemaSection holds the group's variable schema builder. Discard and Save
- * sit in the section header for a writer; a reader sees the builder inside a
- * disabled fieldset. */
+/** SchemaSection holds the group's variable schema editor (the full-width
+ * VariableEditor, group variant: manual fields only). Discard and Save sit
+ * in the section header for a writer; a reader gets the editor read-only,
+ * so the fields still open, but in a dialog that saves nothing. */
 export function SchemaSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
@@ -21,9 +22,9 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
   const [draft, setDraft] = useState<VarSchema>(() => toVarSchema(group.schema));
   const [problems, setProblems] = useState<Problem[]>([]);
   const [stale, setStale] = useState(false);
-  // The builder keeps per-field editor state keyed by field identity; a
-  // wholesale reset of the draft (Discard) must remount it, or an editor
-  // could keep showing text from before the reset.
+  // The editor keeps per-field state keyed by field identity (expanded
+  // rows, sub-field lists); a wholesale reset of the draft (Discard) must
+  // remount it, or it could keep showing state from before the reset.
   const [builderKey, setBuilderKey] = useState(0);
 
   const reload = useReloadInventory(org);
@@ -81,9 +82,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
           {t.inventory.schemaTab.problems(problems.length)}
         </p>
       )}
-      <fieldset disabled={!canWrite} className="@container min-w-0">
-        <SchemaBuilder key={builderKey} value={draft} onChange={setDraft} problems={problems} />
-      </fieldset>
+      <VariableEditor key={builderKey} variant="group" value={draft} onChange={setDraft} problems={problems} readOnly={!canWrite} />
     </Section>
   );
 }

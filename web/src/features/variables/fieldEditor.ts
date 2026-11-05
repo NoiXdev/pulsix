@@ -1,8 +1,34 @@
 import type { Messages } from '../../i18n/types.ts';
-import type { FieldType, Problem, SchemaField } from './types.ts';
+import type { EditorVariant, FieldType, Problem, SchemaField } from './types.ts';
 
 export const FIELD_TYPES: readonly FieldType[] = ['string', 'int', 'float', 'bool', 'enum', 'secret', 'list', 'repeater', 'object'];
 export const SCALAR_TYPES: readonly FieldType[] = ['string', 'int', 'float', 'bool', 'enum'];
+
+/** typesFor is the field types a schema may use. A shared job-template
+ * definition withholds "secret": the server refuses a secret-typed field
+ * there by construction (a shared definition's extra vars are written into
+ * every organization's own column unsealed), and offering a type that is
+ * always refused is worse than not offering it (backlog 2.101). */
+export function typesFor(variant: EditorVariant): readonly FieldType[] {
+  return variant === 'shared' ? FIELD_TYPES.filter((t) => t !== 'secret') : FIELD_TYPES;
+}
+
+/** formatValue shows a schema attribute's value in one line: a default in
+ * the field list, or what the source says in the field dialog. */
+export function formatValue(v: unknown): string {
+  if (v === undefined || v === null || v === '') return '—';
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v) && v.every((x) => typeof x === 'string')) return v.join(', ');
+  return JSON.stringify(v);
+}
+
+/** formatAttribute is formatValue for one attribute of a field, with the
+ * structured ones (sub-fields, a list's item) shown by what matters. */
+export function formatAttribute(key: string, v: unknown): string {
+  if (key === 'fields' && Array.isArray(v)) return formatValue((v as SchemaField[]).map((f) => f.name));
+  if (key === 'item' && v && typeof v === 'object') return formatValue((v as SchemaField).type);
+  return formatValue(v);
+}
 
 export function typeLabel(f: SchemaField, t: Messages): string {
   if (f.type === 'list') return `list<${f.item?.type ?? 'string'}>`;
@@ -22,8 +48,9 @@ const WITH_SUBFIELDS = new Set<FieldType>(['repeater', 'object']);
 
 /** changeType switches a field's type, keeping what still means the same
  * thing (name, label, description, scope, required, overridable, item
- * counts between collections, sub-fields between repeater and object) and
- * giving the new type the structure the server requires. */
+ * counts between collections, sub-fields between repeater and object, and
+ * its provenance) and giving the new type the structure the server
+ * requires. */
 export function changeType(f: SchemaField, type: FieldType): SchemaField {
   const next: SchemaField = { name: f.name, type };
   if (f.label) next.label = f.label;
@@ -38,6 +65,13 @@ export function changeType(f: SchemaField, type: FieldType): SchemaField {
     if (f.min_items !== undefined) next.min_items = f.min_items;
     if (f.max_items !== undefined) next.max_items = f.max_items;
   }
+  // Provenance is about the field, not its type: it stays as it is (a type
+  // change of a source field makes it adjusted when it is saved).
+  if (f.active !== undefined) next.active = f.active;
+  if (f.origin) next.origin = f.origin;
+  if (f.source) next.source = f.source;
+  if (f.set_in_playbook) next.set_in_playbook = true;
+  if (f.source_field) next.source_field = f.source_field;
   return next;
 }
 
