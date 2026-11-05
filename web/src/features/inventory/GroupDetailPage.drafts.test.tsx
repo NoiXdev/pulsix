@@ -243,16 +243,16 @@ describe('GroupDetailPage drafts', () => {
       }),
     );
     const { qc } = renderAt('/o/acme/groups/g1');
-    await screen.findByLabelText('env');
+    await typeEnv(user, 'staging');
 
-    // Someone else saved the group; a background refetch brings revision 4
-    // with the same (masked) values, so the form is not started over.
+    // Someone else saved the group while this draft was being edited; a
+    // background refetch brings revision 4 with the same (masked) values, so
+    // the form is not started over.
     current = withSecret(4);
     await act(async () => {
       await qc.refetchQueries();
     });
 
-    await typeEnv(user, 'staging');
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     const values = screen.getByRole('region', { name: 'Group values' });
     await user.click(await within(values).findByRole('button', { name: 'Reload' }));
@@ -263,6 +263,93 @@ describe('GroupDetailPage drafts', () => {
     await user.click(screen.getByRole('button', { name: 'Save values' }));
     await screen.findByText('Group values saved');
     expect(puts).toHaveLength(2);
+    expect(puts[1].headers.get('If-Match')).toBe('"4"');
+  });
+
+  it('lets an unedited draft follow a refetched revision, as after the user renamed the group', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          puts.push(req);
+          return withSecret(5);
+        },
+      }),
+    );
+    const { qc } = renderAt('/o/acme/groups/g1');
+    await screen.findByLabelText('env');
+
+    // Nothing typed yet: the draft still is the stored values, so a refetch
+    // that brings revision 4 (a rename, say) is what it builds on.
+    current = withSecret(4);
+    await act(async () => {
+      await qc.refetchQueries();
+    });
+    await typeEnv(user, 'staging');
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await screen.findByText('Group values saved');
+    expect(puts).toHaveLength(1);
+    expect(puts[0].headers.get('If-Match')).toBe('"4"');
+  });
+
+  it('keeps an edit that was typed back to the start on the revision it started from', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          puts.push(req);
+          return stale();
+        },
+      }),
+    );
+    const { qc } = renderAt('/o/acme/groups/g1');
+    await typeEnv(user, 'staging');
+    await typeEnv(user, 'prod');
+
+    current = withSecret(4);
+    await act(async () => {
+      await qc.refetchQueries();
+    });
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0].headers.get('If-Match')).toBe('"3"');
+  });
+
+  it('keeps a reloaded draft on the reloaded revision through a later refetch', async () => {
+    const user = userEvent.setup();
+    let current = withSecret(3);
+    const puts: MockRequest[] = [];
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          puts.push(req);
+          return stale();
+        },
+      }),
+    );
+    const { qc } = renderAt('/o/acme/groups/g1');
+    await typeEnv(user, 'staging');
+    current = withSecret(4);
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    const values = screen.getByRole('region', { name: 'Group values' });
+    await user.click(await within(values).findByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(within(values).queryByRole('alert')).not.toBeInTheDocument());
+
+    // The kept draft is still not the stored values: a later change by
+    // someone else (revision 5, same mask) must not become its base.
+    current = withSecret(5);
+    await act(async () => {
+      await qc.refetchQueries();
+    });
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await waitFor(() => expect(puts).toHaveLength(2));
     expect(puts[1].headers.get('If-Match')).toBe('"4"');
   });
 

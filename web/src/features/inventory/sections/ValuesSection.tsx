@@ -47,12 +47,31 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   const [draft, setDraft] = useState<Vars>(() => toKeepMarkers(fields, declaredOnly(fields, (group.vars ?? {}) as Vars)));
   const [problems, setProblems] = useState<Problem[]>(() => (group.problems ?? []).map((p) => ({ path: p.path, message: p.message })));
   const [stale, setStale] = useState(false);
-  // The revision the draft was started from, which a save sends as its
-  // If-Match. A background refetch that brings a newer revision with the
-  // same values (the section is keyed by what it edits, so it is not started
-  // over) does not move it: saving on that revision would overwrite a change
-  // the user never saw. Only this form's own save and a Reload move it.
-  const [baseRevision, setBaseRevision] = useState(group.revision);
+  // The revision a save sends as its If-Match. While the draft is pristine
+  // (never edited) it follows group.revision: it then equals the stored
+  // values at that revision (the section is keyed by what it edits; secrets
+  // travel as keep markers), so saving on the newest revision overwrites
+  // nothing — the user's own rename, say. The first edit pins it to the
+  // revision the edit was made on, and a background refetch that brings a
+  // newer revision with the same values no longer moves it: saving on that
+  // revision would overwrite a change the user never saw (backlog 7.86). An
+  // edit typed back to the start still counts as one. A successful save
+  // makes the draft pristine again; a Reload pins it to the reloaded
+  // revision and leaves it edited if it was, since the kept draft still is
+  // not the stored values.
+  const [touched, setTouched] = useState(false);
+  const [pinnedRevision, setPinnedRevision] = useState(group.revision);
+  // Pristine, it is the newer of the group's and the one this form's last
+  // save stored, should the refetch after that save have failed.
+  const revision = touched ? pinnedRevision : Math.max(pinnedRevision, group.revision);
+
+  function onChange(next: Vars) {
+    if (!touched) {
+      setPinnedRevision(revision);
+      setTouched(true);
+    }
+    setDraft(next);
+  }
 
   const reload = useReloadInventory(org);
 
@@ -60,15 +79,16 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // does not keeps the draft, which then saves on the reloaded revision.
   async function onReload() {
     const fresh = await reload(group.id);
-    setBaseRevision(fresh.revision);
+    setPinnedRevision(fresh.revision);
     setStale(false);
   }
 
   async function onSave() {
     setProblems([]);
     try {
-      const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision: baseRevision });
-      setBaseRevision(res.group.revision);
+      const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
+      setPinnedRevision(res.group.revision);
+      setTouched(false);
       save.reset();
       toast.show(t.inventory.valuesTab.saved);
     } catch (err) {
@@ -89,7 +109,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
           {t.inventory.valuesTab.orphanedAfter}
         </p>
       )}
-      <SchemaForm fields={fields} value={draft} onChange={setDraft} problems={problems} disabled={!canWrite} idPrefix="values" />
+      <SchemaForm fields={fields} value={draft} onChange={onChange} problems={problems} disabled={!canWrite} idPrefix="values" />
       {canWrite && (
         <div className="flex justify-end">
           <Button variant="primary" disabled={save.isPending} onClick={() => void onSave()}>

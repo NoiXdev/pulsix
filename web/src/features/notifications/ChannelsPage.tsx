@@ -40,7 +40,7 @@ export function ChannelsPage() {
   // them while one is sending.
   const testing = useMutationState({
     filters: { mutationKey: testChannelKey(org), status: 'pending' },
-    select: (m) => m.state.variables as string,
+    select: (mutation) => mutation.state.variables as string,
   });
   const remove = useDeleteChannel(org);
   const [editing, setEditing] = useState<NotifyChannel | 'new' | null>(null);
