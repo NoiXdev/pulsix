@@ -8,6 +8,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { WorkersPage } from './WorkersPage.tsx';
 import { expiryLabel, seenLabel } from './expiry.ts';
 import { en } from '../../i18n/en/index.ts';
+import { clippedElements } from '../../test/clipped.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -99,8 +100,8 @@ describe('WorkersPage', () => {
     expect(document.querySelector('[data-expiring]')?.textContent).toMatch(/in [45] d/);
     expect(screen.getByRole('link', { name: '0197c0a2' })).toBeInTheDocument();
     expect(screen.getByText('hel-2')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Revoke hel-1' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Delete old' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for hel-1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for old' })).toBeInTheDocument();
   });
 
   it('adds a worker and shows the token and snippets once', async () => {
@@ -234,10 +235,12 @@ describe('WorkersPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Revoke hel-1' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for hel-1' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Revoke…' }));
     expect(await screen.findByText('Worker hel-1 revoked')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Withdraw hel-2' }));
-    expect(calls).toEqual(['revoke', 'withdraw']);
+    await user.click(screen.getByRole('button', { name: 'Actions for hel-2' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
+    await waitFor(() => expect(calls).toEqual(['revoke', 'withdraw']));
   });
 
   it('deletes a revoked worker after confirmation', async () => {
@@ -254,8 +257,10 @@ describe('WorkersPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Delete old' }));
-    expect(calls).toEqual(['delete']);
+    await user.click(await screen.findByRole('button', { name: 'Actions for old' }));
+    expect(screen.queryByRole('menuitem', { name: 'Revoke…' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await waitFor(() => expect(calls).toEqual(['delete']));
   });
 
   it('shows an error toast when revoke fails', async () => {
@@ -268,7 +273,8 @@ describe('WorkersPage', () => {
       'POST /api/v1/orgs/acme/workers/w1/revoke': () => new Response(JSON.stringify({ detail: 'worker not found' }), { status: 404 }),
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Revoke hel-1' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for hel-1' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Revoke…' }));
     expect(await screen.findByText('worker not found')).toBeInTheDocument();
   });
 
@@ -282,7 +288,8 @@ describe('WorkersPage', () => {
       'DELETE /api/v1/orgs/acme/workers/w3': () => new Response(JSON.stringify({ detail: 'delete refused' }), { status: 409 }),
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Delete old' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for old' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
     expect(await screen.findByText('delete refused')).toBeInTheDocument();
   });
 
@@ -295,7 +302,8 @@ describe('WorkersPage', () => {
       'DELETE /api/v1/orgs/acme/worker-enrollments/e1': () => new Response(JSON.stringify({ detail: 'token already used' }), { status: 409 }),
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Withdraw hel-2' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for hel-2' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
     expect(await screen.findByText('token already used')).toBeInTheDocument();
   });
 
@@ -303,6 +311,47 @@ describe('WorkersPage', () => {
     mockApi({ 'GET /api/v1/orgs/acme': org('operator') });
     renderPage();
     expect(await screen.findByText(/owners and admins/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+  });
+
+  // workers.read and workers.write are both admin, so there is no read-only
+  // role: every row a user can see has its menu.
+  it('gives an admin a menu on every row', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [worker(), worker({ id: 'w2', name: 'fra-1' }), worker({ id: 'w3', name: 'old', status: 'revoked', cert_expires_at: null })] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [{ id: 'e1', name: 'hel-2', zone_id: 'z1', expires_at: inDays(0.02), created_at: '' }] },
+    });
+    renderPage();
+    await screen.findByText('hel-1');
+    expect(screen.getAllByRole('button', { name: /^Actions for / })).toHaveLength(4);
+    for (const name of ['hel-1', 'fra-1', 'old', 'hel-2']) {
+      expect(screen.getByRole('button', { name: `Actions for ${name}` })).toBeInTheDocument();
+    }
+  });
+
+  it('rows are not links and keep the current-job link', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [worker({ current_job_id: 'abcd1234-0000-7000-8000-000000000001' })] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [] },
+    });
+    const { container } = renderPage();
+    const link = await screen.findByRole('link', { name: 'abcd1234' });
+    expect(link).toHaveAttribute('href', '/o/acme/runs/abcd1234-0000-7000-8000-000000000001');
+    expect(container.querySelector('[data-list-row] a[aria-labelledby]')).toBeNull();
+    expect(container.querySelectorAll('[data-list-row]').length).toBeGreaterThan(0);
+  });
+
+  it('no clipped cards', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [worker()] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [{ id: 'e1', name: 'hel-2', zone_id: 'z1', expires_at: inDays(0.02), created_at: '' }] },
+    });
+    const { container } = renderPage();
+    await screen.findByText('hel-1');
+    expect(clippedElements(container)).toEqual([]);
   });
 });
 
