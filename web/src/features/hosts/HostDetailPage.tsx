@@ -107,7 +107,7 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
           <HostAgentCard org={org} hostId={host.id} canWrite={may(role, 'agents.write')} />
           {host.managed ? (
             <>
-              <HostSshCard org={org} hostId={host.id} managed canWrite={canWrite} canCreateCredential={may(role, 'credentials.write')} />
+              <HostSshCard org={org} hostId={host.id} revision={host.revision} managed canWrite={canWrite} canCreateCredential={may(role, 'credentials.write')} />
               <ConnectionTestCard org={org} hostId={host.id} canWrite={canWrite} />
             </>
           ) : (

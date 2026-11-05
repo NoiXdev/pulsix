@@ -134,7 +134,7 @@ describe('HostSidebar', () => {
           'GET /api/v1/orgs/acme/hosts/h1/tags': { tags: [{ key: 'env', value: 'prod', source: 'manual' }] },
           'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
             puts.push(req.body);
-            return { tags: [] };
+            return { tags: [], host_revision: 4 };
           },
         },
       ),
@@ -164,7 +164,7 @@ describe('HostSidebar', () => {
           },
           'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
             puts.push(req.body);
-            return { tags: [] };
+            return { tags: [], host_revision: 4 };
           },
         },
       ),
@@ -177,6 +177,96 @@ describe('HostSidebar', () => {
 
     await user.click(screen.getByRole('button', { name: 'remove env' }));
     await waitFor(() => expect(puts[1]).toEqual([]));
+  });
+
+  it("sends the host's revision as If-Match with a tag change", async () => {
+    const user = userEvent.setup();
+    let ifMatch: string | null = null;
+    mockApi(
+      hostRoutes(
+        {},
+        {
+          'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
+            ifMatch = req.headers.get('If-Match');
+            return { tags: [{ key: 'role', value: 'db', source: 'manual' }], host_revision: 4 };
+          },
+        },
+      ),
+    );
+    renderSidebar();
+
+    await user.type(await screen.findByPlaceholderText('role=db'), 'role=db');
+    await user.click(screen.getByRole('button', { name: 'Add tag' }));
+    await waitFor(() => expect(ifMatch).toBe('"3"'));
+  });
+
+  it('a 412 on a tag change offers Reload, which refetches the host and its tags', async () => {
+    const user = userEvent.setup();
+    let hostGets = 0;
+    let tagGets = 0;
+    mockApi(
+      hostRoutes(
+        {},
+        {
+          'GET /api/v1/orgs/acme/hosts/h1': () => {
+            hostGets += 1;
+            return { host: { ...HOST, revision: 9 } };
+          },
+          'GET /api/v1/orgs/acme/hosts/h1/tags': () => {
+            tagGets += 1;
+            return { tags: [] };
+          },
+          'PUT /api/v1/orgs/acme/hosts/h1/tags': () =>
+            new Response(JSON.stringify({ title: 'x', status: 412, detail: 'the host changed since you loaded it; reload and try again' }), {
+              status: 412,
+              headers: { 'Content-Type': 'application/problem+json' },
+            }),
+        },
+      ),
+    );
+    renderSidebar();
+
+    const field = await screen.findByPlaceholderText('role=db');
+    await user.type(field, 'role=db');
+    await user.click(screen.getByRole('button', { name: 'Add tag' }));
+    expect(await screen.findByText('This host was changed meanwhile — reload it and apply your change again')).toBeInTheDocument();
+    expect(field).toHaveValue('role=db');
+    const hostsBefore = hostGets;
+    const tagsBefore = tagGets;
+
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    await waitFor(() => expect(screen.queryByText(/changed meanwhile/)).not.toBeInTheDocument());
+    expect(hostGets).toBeGreaterThan(hostsBefore);
+    expect(tagGets).toBeGreaterThan(tagsBefore);
+  });
+
+  it('keeps a manual tag and a fact tag of the same key apart', async () => {
+    const user = userEvent.setup();
+    const puts: unknown[] = [];
+    const fact = { key: 'os', value: 'debian', source: 'fact' };
+    const manual = { key: 'os', value: 'ubuntu', source: 'manual' };
+    mockApi(
+      hostRoutes(
+        {},
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/tags': () => ({ tags: puts.length ? [fact, manual] : [fact] }),
+          'PUT /api/v1/orgs/acme/hosts/h1/tags': (req: MockRequest) => {
+            puts.push(req.body);
+            return { tags: [fact, manual], host_revision: 4 };
+          },
+        },
+      ),
+    );
+    renderSidebar();
+
+    expect(await screen.findByText('os=debian')).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText('role=db'), 'os=ubuntu');
+    await user.click(screen.getByRole('button', { name: 'Add tag' }));
+
+    await waitFor(() => expect(puts[0]).toEqual([{ key: 'os', value: 'ubuntu' }]));
+    expect(await screen.findByText('os=ubuntu')).toBeInTheDocument();
+    expect(screen.getByText('os=debian')).toBeInTheDocument();
   });
 
   it('rejects a malformed tag chip inline without a round trip', async () => {

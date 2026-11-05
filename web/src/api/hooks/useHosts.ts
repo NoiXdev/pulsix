@@ -61,7 +61,7 @@ export function useHost(org: string, id: string) {
   return useQuery({ ...hostQueryOptions(org, id), enabled: !!org && !!id });
 }
 
-const ifMatch = (revision: number) => ({ 'If-Match': `"${revision}"` });
+export const ifMatch = (revision: number) => ({ 'If-Match': `"${revision}"` });
 
 /** A host write also moves what the detail page and the SSH card show: the
  * manual tags, the host's SSH settings (its jump host) and the inventory

@@ -47,7 +47,7 @@ export function HostSidebar({ org, host, actions }: { org: string; host: Host; a
       </Group>
 
       <Group label={t.hosts.detail.tags}>
-        <HostTagsEditor org={org} hostId={host.id} canWrite={may(role, 'hosts.write')} />
+        <HostTagsEditor org={org} hostId={host.id} revision={host.revision} canWrite={may(role, 'hosts.write')} />
       </Group>
 
       {(actions.canRun || actions.canEdit || canBootstrap || actions.canDelete) && (

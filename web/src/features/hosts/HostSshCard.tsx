@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react';
+import { ApiError } from '../../api/client.ts';
 import { Card } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { useReloadHost } from '../../api/hooks/useHosts.ts';
 import { useBastions, useHostSSH, useSetHostSSH } from '../../api/hooks/useSsh.ts';
 import { useCredential, useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useHostInventoryPreview } from '../../api/hooks/useInventory.ts';
@@ -14,6 +16,7 @@ import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { PublicKeyPanel } from '../credentials/PublicKeyPanel.tsx';
 import { kindName, routeLabel } from '../credentials/labels.ts';
 import { PinStateBadge } from './PinStateBadge.tsx';
+import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 /** HostSshCard is the SSH access step of the enrollment mockup for a
@@ -27,10 +30,12 @@ import { useT } from '../../i18n/useT.ts';
  * mirrors the role→permission matrix client-side rather than reading a
  * permission list that does not exist. */
 export function HostSshCard({
-  org, hostId, managed, canWrite, canCreateCredential,
+  org, hostId, revision, managed, canWrite, canCreateCredential,
 }: {
   org: string;
   hostId: string;
+  /** The host's revision, sent as If-Match with a save (a 412 offers a reload). */
+  revision: number;
   managed: boolean;
   canWrite: boolean;
   /** Gates this card's own Credential create row, its Jump host create row
@@ -51,6 +56,7 @@ export function HostSshCard({
       key={JSON.stringify(ssh.data.ssh)}
       org={org}
       hostId={hostId}
+      revision={revision}
       current={ssh.data.ssh}
       bastions={bastions.data?.bastions ?? []}
       credentials={(credentials.data?.credentials ?? []).filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
@@ -61,10 +67,11 @@ export function HostSshCard({
 }
 
 function HostSshForm({
-  org, hostId, current, bastions, credentials, canWrite, canCreateCredential,
+  org, hostId, revision, current, bastions, credentials, canWrite, canCreateCredential,
 }: {
   org: string;
   hostId: string;
+  revision: number;
   current: HostSSH;
   bastions: readonly Bastion[];
   credentials: readonly Credential[];
@@ -74,6 +81,8 @@ function HostSshForm({
   const t = useT();
   const toast = useToast();
   const save = useSetHostSSH(org, hostId);
+  const reloadHost = useReloadHost(org, hostId);
+  const [stale, setStale] = useState(false);
   const preview = useHostInventoryPreview(org, hostId);
   const [username, setUsername] = useState(current.username);
   const [port, setPort] = useState(String(current.port));
@@ -94,13 +103,26 @@ function HostSshForm({
     if (!canWrite) return;
     try {
       await save.mutateAsync({
-        username: username || undefined, port: Number(port) || 22, credential_id: credentialId || undefined,
-        bastion_mode: mode, bastion_id: mode === 'explicit' ? bastionId || undefined : undefined,
+        body: {
+          username: username || undefined, port: Number(port) || 22, credential_id: credentialId || undefined,
+          bastion_mode: mode, bastion_id: mode === 'explicit' ? bastionId || undefined : undefined,
+        },
+        revision,
       });
+      setStale(false);
       toast.show(t.hosts.ssh.saved);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 412) {
+        setStale(true);
+        return;
+      }
       toast.show(err instanceof Error ? err.message : t.hosts.ssh.saveFailed, 'destructive');
     }
+  }
+
+  async function reload() {
+    await reloadHost();
+    setStale(false);
   }
 
   return (
@@ -161,6 +183,7 @@ function HostSshForm({
             {names.length > 0 && <span className="font-mono">{t.hosts.ssh.routeVia(names.join(' → '))}</span>}
           </p>
         )}
+        {stale && <StaleNotice onReload={reload} />}
         {canWrite && (
           <div className="flex justify-end">
             <Button type="submit" variant="primary" disabled={save.isPending}>

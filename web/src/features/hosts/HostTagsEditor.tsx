@@ -1,9 +1,12 @@
 import { useState, type FormEvent } from 'react';
+import { ApiError } from '../../api/client.ts';
 import { Button } from '../../ui/button.tsx';
 import { useHostTags, useSetHostTags } from '../../api/hooks/useTags.ts';
+import { useReloadHost } from '../../api/hooks/useHosts.ts';
 import { useT } from '../../i18n/useT.ts';
 import { parseTagChip } from './selectorInput.ts';
 import { manualTagPairs } from './tags.ts';
+import { StaleNotice } from './StaleNotice.tsx';
 
 /**
  * HostTagsEditor is the sidebar's tag list: every tag the host carries,
@@ -12,14 +15,18 @@ import { manualTagPairs } from './tags.ts';
  * operator's to remove). A malformed chip is refused inline, without a
  * request. A write sends the manual tags only: the server stores whatever
  * it is sent as manual, so an automatic tag follows the facts only while it
- * stays out of the body.
+ * stays out of the body. Each write carries the host's `revision` as
+ * If-Match: a 412 means the host changed since this page loaded it, so the
+ * edit is not applied and the notice offers a reload.
  */
-export function HostTagsEditor({ org, hostId, canWrite }: { org: string; hostId: string; canWrite: boolean }) {
+export function HostTagsEditor({ org, hostId, revision, canWrite }: { org: string; hostId: string; revision: number; canWrite: boolean }) {
   const t = useT();
   const tags = useHostTags(org, hostId);
   const setTags = useSetHostTags(org, hostId);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const reloadHost = useReloadHost(org, hostId);
   const current = () => manualTagPairs(tags.data?.tags);
 
   async function add(e: FormEvent) {
@@ -30,12 +37,32 @@ export function HostTagsEditor({ org, hostId, canWrite }: { org: string; hostId:
       return;
     }
     setError(null);
-    await setTags.mutateAsync([...current().filter((tag) => tag.key !== result.tag.key), result.tag]);
-    setInput('');
+    if (await write([...current().filter((tag) => tag.key !== result.tag.key), result.tag])) setInput('');
   }
 
   async function remove(key: string) {
-    await setTags.mutateAsync(current().filter((tag) => tag.key !== key));
+    await write(current().filter((tag) => tag.key !== key));
+  }
+
+  /** write resolves true when the server took the tags. A 412 is shown, not
+   * thrown: the typed chip stays in the field; any other error propagates. */
+  async function write(tagPairs: ReturnType<typeof manualTagPairs>): Promise<boolean> {
+    try {
+      await setTags.mutateAsync({ tags: tagPairs, revision });
+      setStale(false);
+      return true;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 412) {
+        setStale(true);
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  async function reload() {
+    await reloadHost();
+    setStale(false);
   }
 
   return (
@@ -43,7 +70,7 @@ export function HostTagsEditor({ org, hostId, canWrite }: { org: string; hostId:
       <div className="flex flex-wrap gap-1.5">
         {(tags.data?.tags ?? []).map((tag) => (
           <span
-            key={tag.key}
+            key={`${tag.source}:${tag.key}`}
             className="inline-flex items-center gap-1.5 rounded border border-border bg-background px-2 py-0.5 font-mono text-[11px]"
           >
             {tag.key}={tag.value}
@@ -73,6 +100,7 @@ export function HostTagsEditor({ org, hostId, canWrite }: { org: string; hostId:
           </Button>
         </form>
       )}
+      {stale && <StaleNotice onReload={reload} />}
       {error && <span className="text-[11px] text-destructive">{error}</span>}
     </div>
   );

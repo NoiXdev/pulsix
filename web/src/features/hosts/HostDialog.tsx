@@ -20,6 +20,7 @@ import { useHostTags } from '../../api/hooks/useTags.ts';
 import type { Bastion, Credential, Host, HostInput } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { schemas, type HostFormValues } from '../../lib/schemas.ts';
+import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { parseTagChip, type ParsedTag } from './selectorInput.ts';
@@ -180,7 +181,6 @@ function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zon
   const [tagError, setTagError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
-  const [reloading, setReloading] = useState(false);
   // null = closed; a string is the name typed into the picker before it
   // opened the dialog, as ZoneDialog/BastionDialog's initialName expects.
   const [newZoneName, setNewZoneName] = useState<string | null>(null);
@@ -258,16 +258,6 @@ function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zon
       setError(err instanceof Error ? err.message : isEdit ? t.hosts.dialog.saveFailed : t.hosts.dialog.createFailed);
     }
   });
-
-  async function reload() {
-    setReloading(true);
-    try {
-      await onReload();
-    } catch {
-      setReloading(false);
-      setError(t.hosts.dialog.reloadFailed);
-    }
-  }
 
   const errors = form.formState.errors;
   const pending = create.isPending || update.isPending;
@@ -375,14 +365,7 @@ function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zon
             <CapabilityRow id="host_monitored" label={t.hosts.capability.monitored} hint={t.hosts.dialog.monitoredHint} checked={field.value} onChange={field.onChange} />
           )}
         />
-        {stale && (
-          <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-border bg-background p-3 text-xs text-destructive">
-            <span>{t.hosts.dialog.stale}</span>
-            <Button type="button" onClick={() => void reload()} disabled={reloading}>
-              {t.hosts.dialog.reload}
-            </Button>
-          </div>
-        )}
+        {stale && <StaleNotice onReload={onReload} />}
         {error && (
           <p role="alert" className="text-xs text-destructive">
             {error}

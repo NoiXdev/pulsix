@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
@@ -14,7 +14,7 @@ function renderCard(managed: boolean, canWrite = true, canCreateCredential = tru
   return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <HostSshCard org="acme" hostId="h1" managed={managed} canWrite={canWrite} canCreateCredential={canCreateCredential} />
+        <HostSshCard org="acme" hostId="h1" revision={3} managed={managed} canWrite={canWrite} canCreateCredential={canCreateCredential} />
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -51,7 +51,7 @@ describe('HostSshCard', () => {
       ...base,
       'PUT /api/v1/orgs/acme/hosts/h1/ssh': (req: MockRequest) => {
         put = req.body;
-        return { ssh: { host_id: 'h1', username: '', port: 22, credential_id: 'c1', bastion_mode: 'explicit', bastion_id: 'b1' } };
+        return { ssh: { host_id: 'h1', username: '', port: 22, credential_id: 'c1', bastion_mode: 'explicit', bastion_id: 'b1' }, host_revision: 4 };
       },
     });
     renderCard(true);
@@ -66,6 +66,58 @@ describe('HostSshCard', () => {
     await user.click(screen.getByRole('button', { name: 'Save SSH settings' }));
     expect(await screen.findByText('SSH settings saved')).toBeInTheDocument();
     expect(put).toEqual({ port: 22, credential_id: 'c1', bastion_mode: 'explicit', bastion_id: 'b1' });
+  });
+
+  it("sends the host's revision as If-Match with a save", async () => {
+    const user = userEvent.setup();
+    let ifMatch: string | null = null;
+    mockApi({
+      ...base,
+      'PUT /api/v1/orgs/acme/hosts/h1/ssh': (req: MockRequest) => {
+        ifMatch = req.headers.get('If-Match');
+        return { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' }, host_revision: 4 };
+      },
+    });
+    renderCard(true);
+
+    await user.click(await screen.findByRole('button', { name: 'Save SSH settings' }));
+    expect(await screen.findByText('SSH settings saved')).toBeInTheDocument();
+    expect(ifMatch).toBe('"3"');
+  });
+
+  it('a 412 on save offers Reload, which refetches the host and its SSH settings', async () => {
+    const user = userEvent.setup();
+    let hostGets = 0;
+    let sshGets = 0;
+    mockApi({
+      ...base,
+      'GET /api/v1/orgs/acme/hosts/h1': () => {
+        hostGets += 1;
+        return { host: { id: 'h1', name: 'web-01', revision: 9 } };
+      },
+      'GET /api/v1/orgs/acme/hosts/h1/ssh': () => {
+        sshGets += 1;
+        return { ssh: { host_id: 'h1', username: '', port: 22, bastion_mode: 'inherit' } };
+      },
+      'PUT /api/v1/orgs/acme/hosts/h1/ssh': () =>
+        new Response(JSON.stringify({ title: 'x', status: 412, detail: 'the host changed since you loaded it; reload and try again' }), {
+          status: 412,
+          headers: { 'Content-Type': 'application/problem+json' },
+        }),
+    });
+    renderCard(true);
+
+    await user.click(await screen.findByRole('button', { name: 'Save SSH settings' }));
+    expect(await screen.findByText('This host was changed meanwhile — reload it and apply your change again')).toBeInTheDocument();
+    expect(screen.queryByText('SSH settings saved')).not.toBeInTheDocument();
+    const hostsBefore = hostGets;
+    const sshBefore = sshGets;
+
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    await waitFor(() => expect(screen.queryByText(/changed meanwhile/)).not.toBeInTheDocument());
+    expect(hostGets).toBeGreaterThan(hostsBefore);
+    expect(sshGets).toBeGreaterThan(sshBefore);
   });
 
   it('is read-only for a viewer: no save button, every field disabled', async () => {

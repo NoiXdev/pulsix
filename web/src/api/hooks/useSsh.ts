@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import type { Host } from '../types.ts';
+import { ifMatch } from './useHosts.ts';
 
 export function useBastions(org: string) {
   return useQuery({
@@ -98,10 +100,21 @@ export function useHostSSH(org: string, hostId: string) {
   });
 }
 
+/** useSetHostSSH replaces the host's SSH settings under If-Match (a stale
+ * revision answers 412) and caches the host's new revision, like
+ * useSetHostTags. */
 export function useSetHostSSH(org: string, hostId: string) {
+  const qc = useQueryClient();
   const invalidate = useInvalidateSsh(org);
   return useMutation({
-    mutationFn: (body: HostSSHInput) => unwrap(api.PUT('/api/v1/orgs/{org}/hosts/{id}/ssh', { params: { path: { org, id: hostId } }, body })),
-    onSuccess: invalidate,
+    mutationFn: ({ body, revision }: { body: HostSSHInput; revision: number }) =>
+      unwrap(api.PUT('/api/v1/orgs/{org}/hosts/{id}/ssh', { params: { path: { org, id: hostId }, header: ifMatch(revision) }, body })),
+    onSuccess: (res) => {
+      qc.setQueryData<{ host: Host }>(['host', org, hostId], (cached) =>
+        cached ? { ...cached, host: { ...cached.host, revision: res.host_revision } } : cached,
+      );
+      void qc.invalidateQueries({ queryKey: ['host', org, hostId] });
+      invalidate();
+    },
   });
 }
