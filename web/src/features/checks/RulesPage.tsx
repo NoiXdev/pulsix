@@ -1,9 +1,9 @@
-import { useState } from 'react';
-import { Link, useParams } from '@tanstack/react-router';
+import { useId, useState } from 'react';
+import { useParams } from '@tanstack/react-router';
 import { SlidersHorizontal } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Pill, Tag } from '../../ui/badge.tsx';
+import { DisabledHint } from '../../ui/detail-layout.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -12,12 +12,13 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useMonitoringGroups } from '../../api/hooks/useChecks.ts';
 import { useDeleteRule, useRuleMetrics, useRules } from '../../api/hooks/useRules.ts';
 import { may } from '../../lib/roles.ts';
-import type { MonitoringGroup, Rule } from '../../api/types.ts';
+import type { Rule } from '../../api/types.ts';
 import { RuleDialog } from './RuleDialog.tsx';
-import { intervalLabel } from './interval.ts';
+import { RuleRow } from './RuleRow.tsx';
 import { ChecksTabs } from './ChecksTabs.tsx';
 
-const COLUMNS = 'minmax(0, 1fr) 90px minmax(0, 1.2fr) 90px 100px 190px';
+const COLUMNS_BASE = 'minmax(0, 1fr) 90px minmax(0, 1.2fr) 90px 100px';
+const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
 
 /** groupByMetric buckets rules by the metric they watch, preserving each
  * metric's first-seen order — the same shape ActivityPage's groupByDay
@@ -55,6 +56,7 @@ export function RulesPage() {
   const metrics = useRuleMetrics(org, !!orgInfo.data && canRead);
   const remove = useDeleteRule(org);
   const [editing, setEditing] = useState<{ rule?: Rule } | null>(null);
+  const hintId = useId();
 
   // Built before any early return, and carried by every one of them: a
   // failed list must not take ChecksTabs with it and leave no link to the
@@ -105,6 +107,10 @@ export function RulesPage() {
   const groupList = groups.data?.groups ?? [];
   const metricList = metrics.data?.metrics ?? [];
   const grouped = groupByMetric(list);
+  const columns = canWrite ? COLUMNS_WITH_MENU : COLUMNS_BASE;
+  // Nothing reports a metric yet: say why New rule is disabled (a viewer has
+  // no button, so nothing to explain).
+  const noMetrics = canWrite && metrics.isSuccess && metricList.length === 0;
 
   async function onDelete(r: Rule) {
     const seeded = r.origin === 'seed' ? t.checks.rules.deleteSeeded : '';
@@ -124,19 +130,24 @@ export function RulesPage() {
           {t.checks.rules.summary(list.length)}
         </span>
         {canWrite && (
-          <Button variant="primary" onClick={() => setEditing({})} disabled={metricList.length === 0}>
+          <Button variant="primary" onClick={() => setEditing({})} disabled={metricList.length === 0} aria-describedby={noMetrics ? hintId : undefined}>
             <SlidersHorizontal size={15} /> {t.checks.rules.newRule}
           </Button>
         )}
       </div>
+      {noMetrics && (
+        <div id={hintId}>
+          <DisabledHint title={t.checks.rules.noMetricsTitle} body={t.checks.rules.noMetricsBody} />
+        </div>
+      )}
       <Card>
-        <GridHeader columns={COLUMNS}>
+        <GridHeader columns={columns}>
           <span>{t.checks.rules.columns.rule}</span>
           <span>{t.checks.rules.columns.severity}</span>
           <span>{t.checks.rules.columns.appliesTo}</span>
           <span>{t.checks.rules.columns.for}</span>
           <span>{t.checks.rules.columns.state}</span>
-          <span />
+          {canWrite && <span />}
         </GridHeader>
         {grouped.map(([metric, rulesForMetric]) => (
           <div key={metric} className="flex flex-col">
@@ -144,30 +155,16 @@ export function RulesPage() {
               {metric}
             </div>
             {rulesForMetric.map((r) => (
-              <GridRow key={r.id} columns={COLUMNS}>
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-[13px] text-foreground">{r.name}</span>
-                  <Tag>{t.checks.rules.origin[r.origin]}</Tag>
-                </span>
-                <span>
-                  <Pill tone={r.severity === 'crit' ? 'crit' : 'warn'}>{t.checks.severity[r.severity]}</Pill>
-                </span>
-                <RuleTarget org={org} rule={r} groups={groupList} />
-                <span className="text-[13px]">{intervalLabel(r.for_seconds, t)}</span>
-                <span>{r.enabled ? <Pill tone="ok">{t.checks.enabled}</Pill> : <Pill tone="unknown">{t.checks.disabled}</Pill>}</span>
-                <span className="flex justify-end gap-1">
-                  {canWrite && (
-                    <>
-                      <Button type="button" variant="ghost" aria-label={t.checks.editAria(r.name)} onClick={() => setEditing({ rule: r })}>
-                        {t.checks.edit}
-                      </Button>
-                      <Button type="button" variant="destructive" aria-label={t.checks.deleteAria(r.name)} onClick={() => void onDelete(r)}>
-                        {t.common.delete}
-                      </Button>
-                    </>
-                  )}
-                </span>
-              </GridRow>
+              <RuleRow
+                key={r.id}
+                org={org}
+                rule={r}
+                columns={columns}
+                groups={groupList}
+                canWrite={canWrite}
+                onEdit={(x) => setEditing({ rule: x })}
+                onDelete={(x) => void onDelete(x)}
+              />
             ))}
           </div>
         ))}
@@ -176,41 +173,4 @@ export function RulesPage() {
       {editing && <RuleDialog org={org} rule={editing.rule} metrics={metricList} groups={groupList} onClose={() => setEditing(null)} />}
     </>
   );
-}
-
-/** RuleTarget renders a rule's scope as what it applies to — the
- * organization, a named monitoring group, a named host — never as the raw
- * id the API carries, mirroring ChecksPage's own Binding component.
- * RuleDTO now carries host_name and group_name directly (backlog 3.30),
- * the same enrichment checkDefinitionDTO already had; a rule whose host or
- * group was deleted falls back to the shortened id exactly as it did
- * before this field existed, so a name that was never resolved reads no
- * differently from one that no longer resolves. The group list is still
- * consulted as the fallback source for a group name: group_name is absent
- * exactly when the group cannot be read, and the organization's own,
- * separately loaded monitoring-group list may still know it in the narrow
- * window between the two reads. */
-function RuleTarget({ org, rule, groups }: { org: string; rule: Rule; groups: MonitoringGroup[] }) {
-  const t = useT();
-  if (rule.scope === 'group' && rule.group_id) {
-    const group = groups.find((g) => g.id === rule.group_id);
-    return (
-      <Link to="/o/$org/checks/monitoring-groups" params={{ org }} className="truncate text-[13px] text-foreground hover:text-primary">
-        {rule.group_name ?? group?.name ?? t.checks.groupFallback(rule.group_id.slice(0, 8))}
-      </Link>
-    );
-  }
-  if ((rule.scope === 'host' || rule.scope === 'item') && rule.host_id) {
-    return (
-      <Link
-        to="/o/$org/hosts/$id"
-        params={{ org, id: rule.host_id }}
-        className="truncate font-mono text-[13px] text-foreground hover:text-primary"
-      >
-        {rule.host_name ?? rule.host_id.slice(0, 8)}
-        {rule.scope === 'item' && rule.item ? ` / ${rule.item}` : ''}
-      </Link>
-    );
-  }
-  return <span className="truncate text-[13px] text-muted-foreground">{t.checks.organization}</span>;
 }

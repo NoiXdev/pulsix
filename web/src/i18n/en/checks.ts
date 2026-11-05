@@ -24,9 +24,7 @@ export const enChecks = {
   organization: 'Organization',
   edit: 'Edit',
   copy: 'Copy',
-  editAria: (name: string) => `Edit ${name}`,
-  copyAria: (name: string) => `Copy ${name}`,
-  deleteAria: (name: string) => `Delete ${name}`,
+  deleteItem: 'Delete…',
   deleteFailed: 'Deleting failed',
   saveFailed: 'Saving failed',
   name: 'Name',
@@ -128,6 +126,8 @@ export const enChecks = {
     deleteSeeded: ' It ships with every organization and will not come back on its own.',
     summary: (n: number) => `${n} rules · a narrower scope overrides a wider one on the same metric`,
     newRule: 'New rule',
+    noMetricsTitle: 'No metrics to write a rule on yet',
+    noMetricsBody: 'A rule judges a measured value, so New rule stays unavailable until an agent reports its first metric.',
     columns: {
       rule: 'Rule',
       severity: 'Severity',
@@ -180,6 +180,8 @@ export const enChecks = {
       `Delete this ${decision} decision for pattern "${pattern}"? The item(s) it names go back to being judged normally.`,
     summary: (n: number) => `${n} decisions · a host decision overrules an organization one on the same check`,
     newDecision: 'New decision',
+    noMetricsTitle: 'No checks to decide on yet',
+    noMetricsBody: 'A decision names an item of a check, so New decision stays unavailable until an agent reports its first metric.',
     columns: {
       target: 'Target',
       check: 'Check',
@@ -197,7 +199,7 @@ export const enChecks = {
       glob: 'glob',
     },
     editDecision: (pattern: string) => `Edit decision for ${pattern}`,
-    deleteDecision: (pattern: string) => `Delete decision for ${pattern}`,
+    decisionActions: (pattern: string) => `Actions for decision ${pattern}`,
     empty: 'No item decisions yet.',
   },
   itemDialog: {

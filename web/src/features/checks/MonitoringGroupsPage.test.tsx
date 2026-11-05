@@ -6,6 +6,7 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { MonitoringGroupsPage } from './MonitoringGroupsPage.tsx';
+import { clippedElements } from '../../test/clipped.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -55,8 +56,39 @@ describe('MonitoringGroupsPage', () => {
 
     expect(await screen.findByText('Web tier')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New group' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit Web tier' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Delete Web tier' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+  });
+
+  it('offers a viewer no row menu', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [group(), group({ id: 'g2', name: 'Databases' })] },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Databases')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+  });
+
+  it('rows are not links', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [group()] },
+    });
+    const { container } = renderPage();
+    await screen.findByRole('button', { name: 'Actions for Web tier' });
+    expect(container.querySelectorAll('[data-list-row]')).toHaveLength(1);
+    expect(container.querySelector('[data-list-row] > a')).toBeNull();
+  });
+
+  it('no clipped cards', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [group()] },
+    });
+    const { container } = renderPage();
+    await screen.findByRole('button', { name: 'Actions for Web tier' });
+    expect(clippedElements(container)).toEqual([]);
   });
 
   it('previews the match count once the typing settles, and never for an empty selector', async () => {
@@ -131,6 +163,33 @@ describe('MonitoringGroupsPage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('invalid input: selector: term 2: expected key=value, got "=="');
   });
 
+  it('edits and deletes from the row menu', async () => {
+    const user = userEvent.setup();
+    const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    let deleted = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [group()] },
+      'POST /api/v1/orgs/acme/monitoring-groups/preview': { count: 1, hosts: [{ id: 'h1', name: 'web-1', monitored: true }] },
+      'DELETE /api/v1/orgs/acme/monitoring-groups/g1': () => {
+        deleted += 1;
+        return {};
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for Web tier' }));
+    expect(screen.getAllByRole('menuitem').map((el) => el.textContent)).toEqual(['Edit', 'Delete…']);
+    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    expect(await screen.findByRole('dialog', { name: 'Edit Web tier' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: 'Actions for Web tier' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await waitFor(() => expect(deleted).toBe(1));
+    confirmed.mockRestore();
+  });
+
   it('edits a group, previewing the selector it already has', async () => {
     const user = userEvent.setup();
     let put: unknown;
@@ -145,7 +204,8 @@ describe('MonitoringGroupsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit Web tier' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for Web tier' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
     // A saved selector is worth resolving straight away: the operator is
     // about to change it and needs to see what it matches now.
     expect(await screen.findByText('Matches 1 host')).toBeInTheDocument();
@@ -170,7 +230,8 @@ describe('MonitoringGroupsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete Web tier' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for Web tier' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
     await waitFor(() => expect(deleted).toBe(1));
     // The operator is told what else goes with it.
     expect(confirmed.mock.calls[0][0]).toContain('check definitions bound to it are deleted');

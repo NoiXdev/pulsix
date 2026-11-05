@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Tag } from '../../ui/badge.tsx';
 import { Dialog } from '../../ui/dialog.tsx';
@@ -22,8 +22,10 @@ import {
 import { may } from '../../lib/roles.ts';
 import type { MonitoringGroup } from '../../api/types.ts';
 import { ChecksTabs } from './ChecksTabs.tsx';
+import { MonitoringGroupRow } from './MonitoringGroupRow.tsx';
 
-const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 1.4fr) 90px 190px';
+const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 1.4fr) 90px';
+const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
 
 /** How long the selector field stays quiet before the preview asks. The
  * route expands the expression across the organization's whole host
@@ -96,6 +98,7 @@ export function MonitoringGroupsPage() {
     );
   }
   const list = groups.data.groups ?? [];
+  const columns = canWrite ? COLUMNS_WITH_MENU : COLUMNS_BASE;
 
   async function onDelete(g: MonitoringGroup) {
     if (!confirm(t.checks.groups.deleteConfirm(g.name))) return;
@@ -120,32 +123,14 @@ export function MonitoringGroupsPage() {
         )}
       </div>
       <Card>
-        <GridHeader columns={COLUMNS}>
+        <GridHeader columns={columns}>
           <span>{t.checks.groups.columns.group}</span>
           <span>{t.checks.groups.columns.selector}</span>
           <span>{t.checks.groups.columns.priority}</span>
-          <span />
+          {canWrite && <span />}
         </GridHeader>
         {list.map((g) => (
-          <GridRow key={g.id} columns={COLUMNS}>
-            <span className="truncate text-[13px] font-medium">{g.name}</span>
-            <span className="min-w-0">
-              <Tag className="truncate">{g.selector}</Tag>
-            </span>
-            <span className="text-[13px]">{g.priority}</span>
-            <span className="flex justify-end gap-1">
-              {canWrite && (
-                <>
-                  <Button type="button" variant="ghost" aria-label={t.checks.editAria(g.name)} onClick={() => setEditing(g)}>
-                    {t.checks.edit}
-                  </Button>
-                  <Button type="button" variant="destructive" aria-label={t.checks.deleteAria(g.name)} onClick={() => void onDelete(g)}>
-                    {t.common.delete}
-                  </Button>
-                </>
-              )}
-            </span>
-          </GridRow>
+          <MonitoringGroupRow key={g.id} group={g} columns={columns} canWrite={canWrite} onEdit={setEditing} onDelete={(x) => void onDelete(x)} />
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.checks.groups.empty}</p>}
       </Card>

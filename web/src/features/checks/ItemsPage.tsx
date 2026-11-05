@@ -1,14 +1,13 @@
-import { useState } from 'react';
-import { Link, useParams } from '@tanstack/react-router';
+import { useId, useState } from 'react';
+import { useParams } from '@tanstack/react-router';
 import { ShieldOff } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Pill, Tag } from '../../ui/badge.tsx';
+import { DisabledHint } from '../../ui/detail-layout.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useT } from '../../i18n/useT.ts';
-import { useFormat } from '../../i18n/format.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useRuleMetrics } from '../../api/hooks/useRules.ts';
 import { useDeleteItemDecision, useItemDecisions } from '../../api/hooks/useItems.ts';
@@ -16,8 +15,10 @@ import { may } from '../../lib/roles.ts';
 import type { ItemDecision, RuleMetric } from '../../api/types.ts';
 import { ItemDecisionDialog } from './ItemDecisionDialog.tsx';
 import { ChecksTabs } from './ChecksTabs.tsx';
+import { DecisionRow } from './DecisionRow.tsx';
 
-const COLUMNS = 'minmax(0, 1fr) 80px minmax(0, 1.3fr) 90px minmax(0, 1.5fr) 110px 170px';
+const COLUMNS_BASE = 'minmax(0, 1fr) 80px minmax(0, 1.3fr) 90px minmax(0, 1.5fr) 110px';
+const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
 
 /** checkKeysFrom collapses the rule metric catalogue — the only honest
  * source for which check keys this organization resolves (GET
@@ -62,7 +63,6 @@ function groupByCheck(decisions: ItemDecision[]): Array<[string, ItemDecision[]]
  */
 export function ItemsPage() {
   const t = useT();
-  const fmt = useFormat();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
   const orgInfo = useOrg(org);
@@ -73,6 +73,7 @@ export function ItemsPage() {
   const metrics = useRuleMetrics(org, !!orgInfo.data && canRead);
   const remove = useDeleteItemDecision(org);
   const [editing, setEditing] = useState<{ decision?: ItemDecision } | null>(null);
+  const hintId = useId();
 
   // Built before any early return, and carried by every one of them: a
   // failed list must not take ChecksTabs with it and leave no link to the
@@ -122,6 +123,10 @@ export function ItemsPage() {
   const list = decisions.data.decisions ?? [];
   const checkKeys = checkKeysFrom(metrics.data?.metrics ?? []);
   const grouped = groupByCheck(list);
+  const columns = canWrite ? COLUMNS_WITH_MENU : COLUMNS_BASE;
+  // Nothing reports a metric yet: say why New decision is disabled (a viewer
+  // has no button, so nothing to explain).
+  const noMetrics = canWrite && metrics.isSuccess && checkKeys.length === 0;
 
   async function onDelete(d: ItemDecision) {
     if (!confirm(t.checks.items.deleteConfirm(t.checks.items.verdict[d.decision], d.pattern))) {
@@ -142,20 +147,25 @@ export function ItemsPage() {
           {t.checks.items.summary(list.length)}
         </span>
         {canWrite && (
-          <Button variant="primary" onClick={() => setEditing({})} disabled={checkKeys.length === 0}>
+          <Button variant="primary" onClick={() => setEditing({})} disabled={checkKeys.length === 0} aria-describedby={noMetrics ? hintId : undefined}>
             <ShieldOff size={15} /> {t.checks.items.newDecision}
           </Button>
         )}
       </div>
+      {noMetrics && (
+        <div id={hintId}>
+          <DisabledHint title={t.checks.items.noMetricsTitle} body={t.checks.items.noMetricsBody} />
+        </div>
+      )}
       <Card>
-        <GridHeader columns={COLUMNS}>
+        <GridHeader columns={columns}>
           <span>{t.checks.items.columns.target}</span>
           <span>{t.checks.items.columns.check}</span>
           <span>{t.checks.items.columns.pattern}</span>
           <span>{t.checks.items.columns.verdict}</span>
           <span>{t.checks.items.columns.note}</span>
           <span>{t.checks.items.columns.created}</span>
-          <span />
+          {canWrite && <span />}
         </GridHeader>
         {grouped.map(([checkKey, decisionsForCheck]) => (
           <div key={checkKey} className="flex flex-col">
@@ -163,48 +173,15 @@ export function ItemsPage() {
               {checkKey}
             </div>
             {decisionsForCheck.map((d) => (
-              <GridRow key={d.id} columns={COLUMNS}>
-                <DecisionTarget org={org} decision={d} />
-                <span>
-                  <Tag>{d.check_key}</Tag>
-                </span>
-                <span className="truncate font-mono text-[13px]" title={d.pattern}>
-                  {d.pattern} <span className="text-muted-foreground">({t.checks.items.matchKind[d.match_kind]})</span>
-                </span>
-                <span>
-                  {/* unknown/ok, not warn/ok: warn is reserved for a degraded
-                      monitoring state (ui/badge.tsx's own doc comment), and a
-                      verdict is not one — the same reasoning RulesPage's own
-                      enabled/disabled Pill already follows for a rule's state. */}
-                  <Pill tone={d.decision === 'watch' ? 'ok' : 'unknown'}>{t.checks.items.verdict[d.decision]}</Pill>
-                </span>
-                <span className="truncate text-[13px] text-muted-foreground" title={d.note}>
-                  {d.note || '—'}
-                </span>
-                <span className="text-[13px] text-muted-foreground">{fmt.date(d.created_at)}</span>
-                <span className="flex justify-end gap-1">
-                  {canWrite && (
-                    <>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        aria-label={t.checks.items.editDecision(d.pattern)}
-                        onClick={() => setEditing({ decision: d })}
-                      >
-                        {t.checks.edit}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="destructive"
-                        aria-label={t.checks.items.deleteDecision(d.pattern)}
-                        onClick={() => void onDelete(d)}
-                      >
-                        {t.common.delete}
-                      </Button>
-                    </>
-                  )}
-                </span>
-              </GridRow>
+              <DecisionRow
+                key={d.id}
+                org={org}
+                decision={d}
+                columns={columns}
+                canWrite={canWrite}
+                onEdit={(x) => setEditing({ decision: x })}
+                onDelete={(x) => void onDelete(x)}
+              />
             ))}
           </div>
         ))}
@@ -213,25 +190,4 @@ export function ItemsPage() {
       {editing && <ItemDecisionDialog org={org} decision={editing.decision} checkKeys={checkKeys} onClose={() => setEditing(null)} />}
     </>
   );
-}
-
-/** DecisionTarget renders a decision's scope as what it applies to — the
- * organization, or a host — mirroring RulesPage's own RuleTarget.
- * ItemDecisionDTO carries no host_name (unlike RuleDTO's backlog-3.30
- * enrichment), so a host-scoped decision shows its shortened id, exactly
- * the fallback RuleTarget itself used before that enrichment existed. */
-function DecisionTarget({ org, decision }: { org: string; decision: ItemDecision }) {
-  const t = useT();
-  if (decision.scope === 'host' && decision.host_id) {
-    return (
-      <Link
-        to="/o/$org/hosts/$id"
-        params={{ org, id: decision.host_id }}
-        className="truncate font-mono text-[13px] text-foreground hover:text-primary"
-      >
-        {decision.host_id.slice(0, 8)}
-      </Link>
-    );
-  }
-  return <span className="truncate text-[13px] text-muted-foreground">{t.checks.organization}</span>;
 }

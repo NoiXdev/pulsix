@@ -7,6 +7,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { ChecksPage } from './ChecksPage.tsx';
+import { clippedElements } from '../../test/clipped.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -36,6 +37,11 @@ function renderPage() {
       </ToastProvider>
     </QueryClientProvider>,
   );
+}
+
+async function chooseFromMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
+  await user.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
+  await user.click(await screen.findByRole('menuitem', { name: item }));
 }
 
 describe('ChecksPage', () => {
@@ -73,9 +79,79 @@ describe('ChecksPage', () => {
     expect(screen.getByText('5 min')).toBeInTheDocument();
     expect(screen.getByText('30 s')).toBeInTheDocument();
     expect(screen.getByText('disabled')).toBeInTheDocument();
-    // A seeded row offers the copy that customising its key or plugin needs.
-    expect(screen.getByRole('button', { name: 'Copy cpu' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Copy disk-data' })).not.toBeInTheDocument();
+  });
+
+  it('moves edit, copy and delete into the row menu', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [
+          check(),
+          check({ id: 'c8', key: 'disk-shared', plugin: 'disk', origin: 'shared', shared_definition_id: 'sd1' }),
+          check({ id: 'c2', key: 'disk-data', plugin: 'disk', origin: 'custom' }),
+        ],
+      },
+    });
+    renderPage();
+
+    // The old inline buttons are gone.
+    await screen.findByRole('button', { name: 'Actions for cpu' });
+    expect(screen.queryByRole('button', { name: /^(Edit|Copy|Delete) / })).not.toBeInTheDocument();
+    const items = async (name: string) => {
+      await user.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+      const found = screen.getAllByRole('menuitem').map((el) => el.textContent);
+      await user.keyboard('{Escape}');
+      return found;
+    };
+    // A seeded definition can be edited, copied and deleted, a shared one
+    // (installation-managed) only edited and copied, a custom one edited and
+    // deleted.
+    expect(await items('cpu')).toEqual(['Edit', 'Copy', 'Delete…']);
+    expect(await items('disk-shared')).toEqual(['Edit', 'Copy']);
+    expect(await items('disk-data')).toEqual(['Edit', 'Delete…']);
+  });
+
+  it('the binding link still opens the host, inside the static row', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [check({ id: 'c3', key: 'nginx', plugin: 'service', origin: 'custom', binding_kind: 'host', host_id: 'h1', host_name: 'web-1' })],
+      },
+    });
+    const { container } = renderPage();
+
+    const link = await screen.findByRole('link', { name: 'web-1' });
+    expect(link.closest('[data-list-row]')).not.toBeNull();
+    await user.click(link);
+    expect(await screen.findByText('HOST VIEW')).toBeInTheDocument();
+    expect(container.querySelector('[data-list-row] > a')).toBeNull();
+  });
+
+  it('rows are not links', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': { checks: [check()] },
+    });
+    const { container } = renderPage();
+    await screen.findByRole('button', { name: 'Actions for cpu' });
+    expect(container.querySelectorAll('[data-list-row]').length).toBeGreaterThan(0);
+    expect(container.querySelector('[data-list-row] > a')).toBeNull();
+  });
+
+  it('no clipped cards', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': { checks: [check()] },
+    });
+    const { container } = renderPage();
+    await screen.findByRole('button', { name: 'Actions for cpu' });
+    expect(clippedElements(container)).toEqual([]);
   });
 
   // Task 7 (v0.2f): a projection of an installation-owned definition
@@ -85,6 +161,7 @@ describe('ChecksPage', () => {
   // organization outright, and offering a button that always 403s is
   // exactly the mistake RepoDialog.tsx's own projected-repo guard avoids.
   it('offers Copy but never Delete on a shared (installation-managed) definition', async () => {
+    const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
       'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
@@ -94,9 +171,10 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    expect(await screen.findByRole('button', { name: 'Copy disk-data' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Edit disk-data' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Delete disk-data' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Actions for disk-data' }));
+    expect(screen.getByRole('menuitem', { name: 'Copy' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Delete…' })).not.toBeInTheDocument();
   });
 
   it('shows a viewer the definitions but no write affordances', async () => {
@@ -109,9 +187,18 @@ describe('ChecksPage', () => {
 
     expect(await screen.findAllByText('cpu')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'New check' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit cpu' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Copy cpu' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Delete disk-data' })).not.toBeInTheDocument();
+  });
+
+  it('offers a viewer no row menu', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/checks': { checks: [check(), check({ id: 'c2', key: 'disk-data', plugin: 'disk', origin: 'custom' })] },
+    });
+    renderPage();
+
+    expect(await screen.findAllByText('cpu')).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
   });
 
   it('creates a definition with the body the API documents', async () => {
@@ -162,7 +249,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit cpu' }));
+    await chooseFromMenu(user, 'cpu', 'Edit');
     expect(screen.getByLabelText('Key')).toBeDisabled();
     expect(screen.getByLabelText('Plugin')).toBeDisabled();
     expect(screen.getByLabelText('Interval (seconds)')).not.toBeDisabled();
@@ -215,7 +302,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete disk-data' }));
+    await chooseFromMenu(user, 'disk-data', 'Delete…');
     await waitFor(() => expect(deleted).toBe(1));
     expect(confirmed.mock.calls[0][0]).toContain('disk-data');
     confirmed.mockRestore();
@@ -245,7 +332,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    await chooseFromMenu(user, 'disk-data', 'Edit');
     const select = (await screen.findByLabelText('Host')) as HTMLInputElement;
     // The binding is stated as the binding, by name: the closed field shows
     // the fallback option's own label, not "h9 (unavailable)".
@@ -274,7 +361,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    await chooseFromMenu(user, 'disk-data', 'Edit');
     const select = (await screen.findByLabelText('Monitoring group')) as HTMLInputElement;
     expect(select.value).toBe('group g1 (current binding)');
 
@@ -303,7 +390,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    await chooseFromMenu(user, 'disk-data', 'Edit');
     await user.clear(screen.getByLabelText('Key'));
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
@@ -351,7 +438,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    await chooseFromMenu(user, 'disk-data', 'Edit');
     await user.clear(screen.getByLabelText('Key'));
     await user.type(screen.getByLabelText('Key'), 'disk');
     await user.click(screen.getByRole('button', { name: 'Save' }));
@@ -404,7 +491,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Edit disk-data' }));
+    await chooseFromMenu(user, 'disk-data', 'Edit');
     expect(screen.getByLabelText('Key')).toBeDisabled();
     expect(screen.getByLabelText('Plugin')).toBeDisabled();
     expect(screen.getByLabelText('Interval (seconds)')).toBeDisabled();
@@ -438,7 +525,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Copy service' }));
+    await chooseFromMenu(user, 'service', 'Copy');
     // The copy is a create: the key is editable, and the plugin and its
     // parameters come across unchanged.
     expect(screen.getByLabelText('Key')).not.toBeDisabled();
@@ -472,7 +559,7 @@ describe('ChecksPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Copy disk-data' }));
+    await chooseFromMenu(user, 'disk-data', 'Copy');
     expect(screen.getByLabelText('Key')).not.toBeDisabled();
     expect(screen.getByLabelText('Plugin')).not.toBeDisabled();
     expect(screen.getByLabelText('Interval (seconds)')).not.toBeDisabled();

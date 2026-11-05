@@ -7,6 +7,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { ItemsPage } from './ItemsPage.tsx';
+import { clippedElements } from '../../test/clipped.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -96,6 +97,56 @@ describe('ItemsPage', () => {
 
     expect(await screen.findByText('/mnt/backup*')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New decision' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+  });
+
+  it('offers a viewer no row menu and no no-metrics hint', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/rules/metrics': { metrics: [] },
+      'GET /api/v1/orgs/acme/item-decisions': { decisions: [decision()] },
+    });
+    renderPage();
+
+    expect(await screen.findByText('/mnt/backup*')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+    expect(screen.queryByText('No checks to decide on yet')).not.toBeInTheDocument();
+  });
+
+  it('explains a disabled New decision when nothing reports a metric', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/rules/metrics': { metrics: [] },
+      'GET /api/v1/orgs/acme/item-decisions': { decisions: [] },
+    });
+    renderPage();
+
+    expect(await screen.findByText('No checks to decide on yet')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New decision' })).toBeDisabled();
+  });
+
+  it('rows are not links', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/rules/metrics': METRICS,
+      'GET /api/v1/orgs/acme/item-decisions': { decisions: [decision(), decision({ id: 'd2', scope: 'host', host_id: 'h1', pattern: '/srv' })] },
+    });
+    const { container } = renderPage();
+    await screen.findByText('/mnt/backup*');
+    expect(container.querySelectorAll('[data-list-row]')).toHaveLength(2);
+    expect(container.querySelector('[data-list-row] > a')).toBeNull();
+    expect(screen.getByRole('link', { name: 'h1' }).closest('[data-list-row]')).not.toBeNull();
+  });
+
+  it('no clipped cards', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/rules/metrics': { metrics: [] },
+      'GET /api/v1/orgs/acme/item-decisions': { decisions: [decision()] },
+    });
+    const { container } = renderPage();
+    await screen.findByText('No checks to decide on yet');
+    expect(clippedElements(container)).toEqual([]);
   });
 
   it('creates an item decision with the body the API documents', async () => {
@@ -136,7 +187,7 @@ describe('ItemsPage', () => {
     );
   });
 
-  it('deletes a decision once the operator has confirmed it', async () => {
+  it('edits and deletes a decision from its row menu', async () => {
     const user = userEvent.setup();
     const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
@@ -151,7 +202,14 @@ describe('ItemsPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete decision for /mnt/backup*' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for decision /mnt/backup*' }));
+    expect(screen.getAllByRole('menuitem').map((el) => el.textContent)).toEqual(['Edit', 'Delete…']);
+    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    expect(await screen.findByRole('dialog', { name: 'Edit decision for /mnt/backup*' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await user.click(screen.getByRole('button', { name: 'Actions for decision /mnt/backup*' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
     await waitFor(() => expect(deleted).toBe(1));
     confirmed.mockRestore();
   });

@@ -19,9 +19,7 @@ export const deChecks: Messages['checks'] = {
   organization: 'Organisation',
   edit: 'Bearbeiten',
   copy: 'Kopieren',
-  editAria: (name: string) => `${name} bearbeiten`,
-  copyAria: (name: string) => `${name} kopieren`,
-  deleteAria: (name: string) => `${name} löschen`,
+  deleteItem: 'Löschen…',
   deleteFailed: 'Löschen fehlgeschlagen',
   saveFailed: 'Speichern fehlgeschlagen',
   name: 'Name',
@@ -127,6 +125,8 @@ export const deChecks: Messages['checks'] = {
     summary: (n: number) =>
       `${n === 1 ? '1 Regel' : `${n} Regeln`} · ein engerer Geltungsbereich überschreibt einen weiteren für dieselbe Metrik`,
     newRule: 'Neue Regel',
+    noMetricsTitle: 'Noch keine Metriken für eine Regel',
+    noMetricsBody: 'Eine Regel bewertet einen gemessenen Wert, daher bleibt „Neue Regel“ nicht verfügbar, bis ein Agent seine erste Metrik meldet.',
     columns: {
       rule: 'Regel',
       severity: 'Schweregrad',
@@ -180,6 +180,8 @@ export const deChecks: Messages['checks'] = {
     summary: (n: number) =>
       `${n === 1 ? '1 Entscheidung' : `${n} Entscheidungen`} · eine Host-Entscheidung hat Vorrang vor einer Organisationsentscheidung für denselben Check`,
     newDecision: 'Neue Entscheidung',
+    noMetricsTitle: 'Noch keine Checks für eine Entscheidung',
+    noMetricsBody: 'Eine Entscheidung nennt ein Element eines Checks, daher bleibt „Neue Entscheidung“ nicht verfügbar, bis ein Agent seine erste Metrik meldet.',
     columns: {
       target: 'Ziel',
       check: 'Check',
@@ -197,7 +199,7 @@ export const deChecks: Messages['checks'] = {
       glob: 'Glob',
     },
     editDecision: (pattern: string) => `Entscheidung für ${pattern} bearbeiten`,
-    deleteDecision: (pattern: string) => `Entscheidung für ${pattern} löschen`,
+    decisionActions: (pattern: string) => `Aktionen für Entscheidung ${pattern}`,
     empty: 'Noch keine Element-Entscheidungen.',
   },
   itemDialog: {

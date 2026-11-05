@@ -7,6 +7,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { RulesPage } from './RulesPage.tsx';
+import { clippedElements } from '../../test/clipped.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -149,7 +150,81 @@ describe('RulesPage', () => {
 
     expect(await screen.findByText('CPU usage warning')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New rule' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit CPU usage warning' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+  });
+
+  it('offers a viewer no row menu', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/rules/metrics': METRICS,
+      'GET /api/v1/orgs/acme/rules': { rules: [rule(), rule({ id: 'r2', name: 'Memory', origin: 'user' })] },
+    });
+    renderPage();
+
+    expect(await screen.findByText('CPU usage warning')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
+  });
+
+  it('edits from the row menu', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/rules/metrics': METRICS,
+      'GET /api/v1/orgs/acme/rules': { rules: [rule()] },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: 'Actions for CPU usage warning' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    expect(await screen.findByRole('dialog', { name: 'Edit CPU usage warning' })).toBeInTheDocument();
+  });
+
+  it('explains a disabled New rule when nothing reports a metric', async () => {
+    const mocks = {
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/rules/metrics': { metrics: [] },
+      'GET /api/v1/orgs/acme/rules': { rules: [] },
+    };
+    mockApi({ ...mocks, 'GET /api/v1/orgs/acme': org('operator') });
+    const { unmount } = renderPage();
+
+    expect(await screen.findByText('No metrics to write a rule on yet')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New rule' })).toBeDisabled();
+    unmount();
+
+    // A viewer has no New rule button, so there is nothing to explain.
+    mockApi({ ...mocks, 'GET /api/v1/orgs/acme': org('viewer') });
+    renderPage();
+    await screen.findByText('0 rules', { exact: false });
+    expect(screen.queryByText('No metrics to write a rule on yet')).not.toBeInTheDocument();
+  });
+
+  it('rows are not links', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/rules/metrics': METRICS,
+      'GET /api/v1/orgs/acme/rules': { rules: [rule(), rule({ id: 'r3', name: 'Web tier memory', scope: 'group', group_id: 'g1', metric: 'mem.used_pct' })] },
+    });
+    const { container } = renderPage();
+    await screen.findByText('Web tier memory');
+    expect(container.querySelectorAll('[data-list-row]')).toHaveLength(2);
+    expect(container.querySelector('[data-list-row] > a')).toBeNull();
+    expect(screen.getByRole('link', { name: 'Web tier' }).closest('[data-list-row]')).not.toBeNull();
+  });
+
+  it('no clipped cards', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/rules/metrics': { metrics: [] },
+      'GET /api/v1/orgs/acme/rules': { rules: [rule()] },
+    });
+    const { container } = renderPage();
+    await screen.findByText('No metrics to write a rule on yet');
+    expect(clippedElements(container)).toEqual([]);
   });
 
   it('creates a form rule with the body the API documents', async () => {
@@ -274,7 +349,7 @@ describe('RulesPage', () => {
     expect(posted).not.toHaveProperty('group_id');
   });
 
-  it('deletes a rule once the operator has confirmed it', async () => {
+  it('deletes from the row menu after confirmation', async () => {
     const user = userEvent.setup();
     const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
@@ -290,7 +365,8 @@ describe('RulesPage', () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: 'Delete CPU usage warning' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for CPU usage warning' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
     await waitFor(() => expect(deleted).toBe(1));
     expect(confirmed.mock.calls[0][0]).toContain('CPU usage warning');
     confirmed.mockRestore();
