@@ -93,7 +93,8 @@ type Org struct {
 }
 
 // OrgOverview is one organization as the instance admin's list shows it:
-// whatever its members, with how many it has and whether the admin is one.
+// whatever its members, with how many active (not deactivated) accounts it
+// has and whether the admin is one.
 type OrgOverview struct {
 	ID            uuid.UUID
 	Slug          string

@@ -216,7 +216,8 @@ func (q *Queries) ListMembershipsForUser(ctx context.Context, userID uuid.UUID) 
 
 const listOrganizationOverviews = `-- name: ListOrganizationOverviews :many
 SELECT o.id, o.slug, o.name, o.created_at,
-       (SELECT count(*) FROM org_memberships m WHERE m.org_id = o.id)::int AS member_count,
+       (SELECT count(*) FROM org_memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.org_id = o.id AND u.disabled_at IS NULL)::int AS member_count,
        EXISTS (SELECT 1 FROM org_memberships m WHERE m.org_id = o.id AND m.user_id = $1::uuid) AS actor_is_member
 FROM organizations o
 ORDER BY o.name, o.id
@@ -233,6 +234,8 @@ type ListOrganizationOverviewsRow struct {
 
 // Every organization with its member count and whether @actor_id belongs to
 // it. Run outside an org scope: org_memberships is readable across orgs then.
+// The count is of active accounts: a deactivated member is not counted
+// (backlog 7.82).
 func (q *Queries) ListOrganizationOverviews(ctx context.Context, actorID uuid.UUID) ([]ListOrganizationOverviewsRow, error) {
 	rows, err := q.db.Query(ctx, listOrganizationOverviews, actorID)
 	if err != nil {

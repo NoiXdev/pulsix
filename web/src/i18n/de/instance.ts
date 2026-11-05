@@ -2,7 +2,7 @@ import type { Messages } from '../types.ts';
 
 export const deInstance: Messages['instance'] = {
   orgs: {
-    hint: 'Alle Organisationen dieser Instanz. Die Mitgliederzahlen enthalten deaktivierte Konten.',
+    hint: 'Alle Organisationen dieser Instanz.',
     columns: { organization: 'Organisation', members: 'Mitglieder', created: 'Erstellt' },
     notMember: 'kein Mitglied',
     notMemberTitle: 'Du bist kein Mitglied dieser Organisation und kannst sie deshalb nicht öffnen.',

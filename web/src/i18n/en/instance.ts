@@ -9,7 +9,7 @@
  */
 export const enInstance = {
   orgs: {
-    hint: 'Every organization on this instance. Member counts include deactivated accounts.',
+    hint: 'Every organization on this instance.',
     columns: { organization: 'Organization', members: 'Members', created: 'Created' },
     notMember: 'not a member',
     notMemberTitle: 'You are not a member of this organization, so you cannot open it.',

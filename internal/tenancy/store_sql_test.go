@@ -835,7 +835,8 @@ func TestSQLStorePendingInvitesListAndRevoke(t *testing.T) {
 
 // TestSQLStoreListAllOrgs: every organization comes back, ordered by name,
 // with its member count across the memberships RLS would hide from an org
-// scope, and whether the actor belongs to it.
+// scope, and whether the actor belongs to it. A member whose account is
+// deactivated is not counted (backlog 7.82).
 func TestSQLStoreListAllOrgs(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
@@ -844,6 +845,10 @@ func TestSQLStoreListAllOrgs(t *testing.T) {
 
 	actor := seedUser(t, q, "all-orgs-actor@example.test")
 	other := seedUser(t, q, "all-orgs-other@example.test")
+	gone := seedUser(t, q, "all-orgs-deactivated@example.test")
+	if _, err := d.Pool().Exec(ctx, `UPDATE users SET disabled_at = now() WHERE id = $1`, gone); err != nil {
+		t.Fatal(err)
+	}
 	orgB := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "b-org", Name: "Bravo"}
 	orgA := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "a-org", Name: "Alpha"}
 	empty := tenancy.Org{ID: uuid.Must(uuid.NewV7()), Slug: "c-org", Name: "Charlie"}
@@ -855,7 +860,7 @@ func TestSQLStoreListAllOrgs(t *testing.T) {
 	for _, m := range []struct {
 		org  uuid.UUID
 		user uuid.UUID
-	}{{orgA.ID, actor}, {orgA.ID, other}, {orgB.ID, other}} {
+	}{{orgA.ID, actor}, {orgA.ID, other}, {orgA.ID, gone}, {orgB.ID, other}, {orgB.ID, gone}} {
 		if err := store.AddMembership(ctx, m.org, m.user, tenancy.RoleViewer); err != nil {
 			t.Fatal(err)
 		}

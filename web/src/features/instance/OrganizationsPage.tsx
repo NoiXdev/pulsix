@@ -23,7 +23,7 @@ const COLUMNS = 'minmax(0, 1.6fr) 120px 140px';
  * An organization the admin belongs to opens its hosts page. Any other is
  * listed but cannot be opened: an instance admin is not made a member by
  * looking at an organization (backlog 7.74 adds no "join as admin").
- * The count includes deactivated accounts, which the hint says.
+ * The count is of active accounts: deactivated members are not counted.
  */
 export function OrganizationsPage() {
   const t = useT();

@@ -45,11 +45,12 @@ describe('OrganizationsPage', () => {
     expect(screen.getAllByText(new Date('2026-03-02T09:00:00Z').toLocaleDateString('en'))).toHaveLength(2);
   });
 
-  it('says that the count includes deactivated accounts', async () => {
+  it('no longer says the count includes deactivated accounts, which it does not', async () => {
     mockApi({ 'GET /api/v1/admin/orgs': { orgs: ORGS } });
     render();
 
-    expect(await screen.findByText(/member counts include deactivated accounts/i)).toBeInTheDocument();
+    expect(await screen.findByText('Every organization on this instance.')).toBeInTheDocument();
+    expect(screen.queryByText(/deactivated/i)).not.toBeInTheDocument();
   });
 
   it('links an organization the admin is a member of to its hosts page', async () => {

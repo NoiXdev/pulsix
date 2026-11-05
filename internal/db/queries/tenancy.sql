@@ -38,8 +38,11 @@ SELECT m.*, o.slug, o.name FROM org_memberships m JOIN organizations o ON o.id =
 -- name: ListOrganizationOverviews :many
 -- Every organization with its member count and whether @actor_id belongs to
 -- it. Run outside an org scope: org_memberships is readable across orgs then.
+-- The count is of active accounts: a deactivated member is not counted
+-- (backlog 7.82).
 SELECT o.id, o.slug, o.name, o.created_at,
-       (SELECT count(*) FROM org_memberships m WHERE m.org_id = o.id)::int AS member_count,
+       (SELECT count(*) FROM org_memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.org_id = o.id AND u.disabled_at IS NULL)::int AS member_count,
        EXISTS (SELECT 1 FROM org_memberships m WHERE m.org_id = o.id AND m.user_id = @actor_id::uuid) AS actor_is_member
 FROM organizations o
 ORDER BY o.name, o.id;
