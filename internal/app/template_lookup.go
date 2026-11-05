@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"maps"
 	"slices"
-	"strings"
 
 	"github.com/google/uuid"
 
@@ -137,23 +136,16 @@ func dropStraySealed(ctx context.Context, t templates.Template) map[string]any {
 		return t.ExtraVars
 	}
 	out := maps.Clone(t.ExtraVars)
+	for _, name := range schema.StrayTopLevel(t.ExtraVarsSchema.Fields, t.ExtraVars) {
+		delete(out, name)
+	}
 	paths := make([]string, len(stray))
 	for i, s := range stray {
 		paths[i] = s.Path
-		delete(out, topLevel(s.Path))
 	}
 	slog.WarnContext(ctx, "template run: a stored secret sits under a field that is not a secret; that variable is not sent until a person enters its value again",
 		"org", t.OrgID, "template", t.ID, "paths", paths)
 	return out
-}
-
-// topLevel is the top-level variable name of a value path
-// ("vhosts[1].password" is under vhosts).
-func topLevel(path string) string {
-	if i := strings.IndexAny(path, ".["); i >= 0 {
-		return path[:i]
-	}
-	return path
 }
 
 // openExtraVars reveals the template's sealed extra vars (secret-typed

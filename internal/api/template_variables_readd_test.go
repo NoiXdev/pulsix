@@ -2,6 +2,8 @@ package api_test
 
 import (
 	"context"
+	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +114,55 @@ func TestRemovedSecretDeclaredAgainAsPlainIsNeverSentInTheClear(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(redact, "\n"), secret) {
 		t.Fatalf("redact = %v names a value that is not sent", redact)
+	}
+}
+
+// TestTemplateVariablesShowNotSentValues (backlog 7.87): the variables
+// read names the variables a run leaves out — a stored secret under a
+// field that is no longer a secret — in review.not_sent, always an array.
+func TestTemplateVariablesShowNotSentValues(t *testing.T) {
+	f := newTemplateFixture(t, "tmpl-not-sent-org")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	create := func(name string) string {
+		t.Helper()
+		body := f.body()
+		body["name"] = name
+		body["extra_vars_schema"] = map[string]any{"fields": []any{
+			map[string]any{"name": "region", "type": "string"},
+			map[string]any{"name": "token", "type": "secret"},
+		}}
+		body["extra_vars"] = map[string]any{"region": "eu", "token": "not-sent-s3cret"}
+		return f.create(t, body).Template.ID
+	}
+	notSent := func(id string) any {
+		t.Helper()
+		resp := requestJSON(t, f.c, http.MethodGet, f.base+"/"+id+"/variables", nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("get variables: %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		var got struct {
+			Review map[string]any `json:"review"`
+		}
+		decodeInto(t, resp, &got)
+		return got.Review["not_sent"]
+	}
+
+	clean := create("deploy-clean")
+	if got := notSent(clean); !reflect.DeepEqual(got, []any{}) {
+		t.Fatalf("not_sent without strays = %#v, want []", got)
+	}
+
+	stray := create("deploy-stray")
+	store := templates.NewSQLStore(f.s.DB)
+	cur, err := store.Get(scoped, f.orgID, uuid.MustParse(stray))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur.ExtraVarsSchema.Fields[1].Type = schema.TypeString
+	if _, err := store.UpdateVarsSource(scoped, cur, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := notSent(stray); !reflect.DeepEqual(got, []any{"token"}) {
+		t.Fatalf("not_sent over a stray sealed token = %#v, want [token]", got)
 	}
 }

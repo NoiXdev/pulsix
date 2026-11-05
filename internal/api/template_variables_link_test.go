@@ -188,7 +188,7 @@ func TestTemplateVariablesLinkFlow(t *testing.T) {
 	var list struct {
 		Templates []struct {
 			ID     string          `json:"id"`
-			Review *map[string]int `json:"variables_review"`
+			Review *map[string]any `json:"variables_review"`
 		} `json:"templates"`
 	}
 	decodeInto(t, requestJSON(t, f.c, http.MethodGet, f.base, nil), &list)

@@ -431,7 +431,7 @@ func TestListReviewsLinkedTemplates(t *testing.T) {
 		t.Errorf("an unlinked template has a review: %+v", reviews)
 	}
 	// Nothing is marked gone yet: the preview alone does not count.
-	if got, ok := reviews[linked.ID]; !ok || got != (templates.Review{}) {
+	if got, ok := reviews[linked.ID]; !ok || !reflect.DeepEqual(got, templates.Review{NotSent: []string{}}) {
 		t.Errorf("review = %+v (listed %v), want nothing to review before an apply", got, ok)
 	}
 }

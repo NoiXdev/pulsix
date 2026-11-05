@@ -459,3 +459,43 @@ func TestReadModifyWriteIsGuardedWithoutIfMatch(t *testing.T) {
 		})
 	}
 }
+
+// TestVariablesReviewNamesValuesNotSent (backlog 7.87): a stored secret
+// under a field that is no longer a secret is left out of a run until a
+// person enters its value again; the variables page names it.
+func TestVariablesReviewNamesValuesNotSent(t *testing.T) {
+	f := newFixture()
+	in := f.in()
+	in.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{
+		{Name: "region", Type: schema.TypeString},
+		{Name: "token", Type: schema.TypeSecret},
+	}}
+	in.ExtraVars = map[string]any{"region": "eu", "token": "s3cret-token"}
+	created, err := f.svc.Create(ctx, f.org, in)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	view, err := f.svc.Variables(ctx, f.org, created.ID)
+	if err != nil {
+		t.Fatalf("Variables: %v", err)
+	}
+	if len(view.Review.NotSent) != 0 {
+		t.Fatalf("NotSent = %v with token a secret field, want none", view.Review.NotSent)
+	}
+
+	// The field retyped to a plain string over its sealed value, as an
+	// automatic apply before the hold for that change left it.
+	stored := f.store.byID[created.ID]
+	stored.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{
+		{Name: "region", Type: schema.TypeString},
+		{Name: "token", Type: schema.TypeString},
+	}}
+	f.store.byID[created.ID] = stored
+	view, err = f.svc.Variables(ctx, f.org, created.ID)
+	if err != nil {
+		t.Fatalf("Variables: %v", err)
+	}
+	if !reflect.DeepEqual(view.Review.NotSent, []string{"token"}) {
+		t.Fatalf("NotSent = %v, want [token]", view.Review.NotSent)
+	}
+}

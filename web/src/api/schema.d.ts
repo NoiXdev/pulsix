@@ -6902,6 +6902,8 @@ export interface components {
              * @description Source changes and additions held for a person (a type or secret change, or a stored value that no longer fits)
              */
             needs_review: number;
+            /** @description Variables a run leaves out until a person enters their value again: each holds a stored secret under a field that is no longer a secret */
+            not_sent: string[] | null;
         };
         TemplateVariablesSourceDTO: {
             /** @description The revision the template last applied */

@@ -262,3 +262,36 @@ func TestStraySealed(t *testing.T) {
 		})
 	}
 }
+
+// TestStrayTopLevel names the top-level variables under which StraySealed
+// finds a value, in field order and each once: a run leaves those out
+// until a person enters their value again (backlog 7.87).
+func TestStrayTopLevel(t *testing.T) {
+	sealed := schema.Sealed([]byte("ct"))
+	cases := []struct {
+		name   string
+		fields []schema.Field
+		values map[string]any
+		want   []string
+	}{
+		{"a secret turned string", []schema.Field{{Name: "region", Type: schema.TypeString}, {Name: "token", Type: schema.TypeString}},
+			map[string]any{"region": "eu", "token": sealed}, []string{"token"}},
+		{"a repeater sub-field turned string", []schema.Field{{Name: "vhosts", Type: schema.TypeRepeater, Fields: []schema.Field{
+			{Name: "domain", Type: schema.TypeString}, {Name: "password", Type: schema.TypeString},
+		}}}, map[string]any{"vhosts": []any{
+			map[string]any{"domain": "a.io", "password": sealed},
+			map[string]any{"domain": "b.io", "password": sealed},
+		}}, []string{"vhosts"}},
+		{"in field order", []schema.Field{{Name: "b", Type: schema.TypeString}, {Name: "a", Type: schema.TypeInt}},
+			map[string]any{"a": sealed, "b": sealed}, []string{"b", "a"}},
+		{"a secret field's own envelope", []schema.Field{{Name: "token", Type: schema.TypeSecret}},
+			map[string]any{"token": sealed}, []string{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := schema.StrayTopLevel(c.fields, c.values); !slices.Equal(got, c.want) {
+				t.Fatalf("StrayTopLevel = %v, want %v", got, c.want)
+			}
+		})
+	}
+}

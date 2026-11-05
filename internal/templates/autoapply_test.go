@@ -88,7 +88,7 @@ func TestAutomaticApplyAfterSync(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (templates.Review{Gone: 1, NeedsReview: 1, MissingRequired: 1}); view.Review != want {
+	if want := (templates.Review{Gone: 1, NeedsReview: 1, MissingRequired: 1, NotSent: []string{}}); !reflect.DeepEqual(view.Review, want) {
 		t.Errorf("review = %+v, want %+v", view.Review, want)
 	}
 	if view.Source.AppliedRev != "c2" || view.Source.Newer {

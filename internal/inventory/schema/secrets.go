@@ -156,6 +156,29 @@ func StraySealed(fields []Field, values map[string]any) []StrayValue {
 	return out
 }
 
+// StrayTopLevel returns the top-level variable names under which
+// StraySealed finds a value, in field order and each once: a run leaves
+// those variables out until a person enters their value again (backlog
+// 7.87). Empty, never nil, when there is none.
+func StrayTopLevel(fields []Field, values map[string]any) []string {
+	out := []string{}
+	for _, s := range StraySealed(fields, values) {
+		if name := topLevel(s.Path); !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// topLevel is the top-level variable name of a value path
+// ("vhosts[1].password" is under vhosts).
+func topLevel(path string) string {
+	if i := strings.IndexAny(path, ".["); i >= 0 {
+		return path[:i]
+	}
+	return path
+}
+
 func strayObject(out *[]StrayValue, prefix string, fields []Field, values map[string]any) {
 	for _, f := range fields {
 		if v, ok := values[f.Name]; ok && v != nil {

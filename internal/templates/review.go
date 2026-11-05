@@ -15,12 +15,16 @@ import (
 // Review counts what a template's variables leave for a person: fields
 // marked gone from the source (removing them is confirmed), source
 // changes and additions held for review, active required fields without a default or
-// a value, and source fields not added because of the field limit.
+// a value, and source fields not added because of the field limit. NotSent
+// names the variables a run leaves out until a person enters their value
+// again: each holds a stored secret under a field that is no longer a
+// secret (backlog 7.87).
 type Review struct {
 	Gone            int
 	NeedsReview     int
 	MissingRequired int
 	LeftOut         int
+	NotSent         []string
 }
 
 // VariablesView is a template's variables page: the template (values
@@ -108,12 +112,15 @@ func (s *Service) ListReviewed(ctx context.Context, orgID uuid.UUID) ([]Template
 	return list, reviews, nil
 }
 
-// review counts what t leaves to review. Gone fields and missing values
-// are counted from the stored fields; held changes and left-out fields
+// review counts what t leaves to review. Gone fields, missing values and
+// the variables not sent are counted from the stored fields; held changes and left-out fields
 // from a preview of a linked template's available source.
 func review(t Template, src varsync.Source) Review {
 	fields := fieldsOf(t)
-	var r Review
+	// What the claim drops (app.dropStraySealed) from what it sends
+	// (schema.Sendable): a value under an inactive field is not sent
+	// either way.
+	r := Review{NotSent: schema.StrayTopLevel(fields, schema.Sendable(fields, t.ExtraVars))}
 	for _, f := range fields {
 		if f.Origin == schema.OriginGone {
 			r.Gone++

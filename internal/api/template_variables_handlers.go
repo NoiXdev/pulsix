@@ -48,10 +48,11 @@ type templateVariablesSourceDTO struct {
 // templateVariablesReviewDTO is what a template's variables leave for a
 // person (templates.Review).
 type templateVariablesReviewDTO struct {
-	Gone            int `json:"gone" doc:"Fields gone from the source; removing them is confirmed in an apply"`
-	NeedsReview     int `json:"needs_review" doc:"Source changes and additions held for a person (a type or secret change, or a stored value that no longer fits)"`
-	MissingRequired int `json:"missing_required" doc:"Active required fields without a default or a value"`
-	LeftOut         int `json:"left_out" doc:"Source fields not added because a template holds at most 100 fields"`
+	Gone            int      `json:"gone" doc:"Fields gone from the source; removing them is confirmed in an apply"`
+	NeedsReview     int      `json:"needs_review" doc:"Source changes and additions held for a person (a type or secret change, or a stored value that no longer fits)"`
+	MissingRequired int      `json:"missing_required" doc:"Active required fields without a default or a value"`
+	LeftOut         int      `json:"left_out" doc:"Source fields not added because a template holds at most 100 fields"`
+	NotSent         []string `json:"not_sent" doc:"Variables a run leaves out until a person enters their value again: each holds a stored secret under a field that is no longer a secret"`
 }
 
 func toSourceDTO(si templates.SourceInfo) *templateVariablesSourceDTO {
@@ -67,7 +68,11 @@ func toSourceDTO(si templates.SourceInfo) *templateVariablesSourceDTO {
 }
 
 func toReviewDTO(r templates.Review) *templateVariablesReviewDTO {
-	return &templateVariablesReviewDTO{Gone: r.Gone, NeedsReview: r.NeedsReview, MissingRequired: r.MissingRequired, LeftOut: r.LeftOut}
+	notSent := r.NotSent
+	if notSent == nil {
+		notSent = []string{}
+	}
+	return &templateVariablesReviewDTO{Gone: r.Gone, NeedsReview: r.NeedsReview, MissingRequired: r.MissingRequired, LeftOut: r.LeftOut, NotSent: notSent}
 }
 
 type templateVariablesModeInput struct {
