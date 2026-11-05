@@ -12,7 +12,6 @@ export const deAgents: Messages['agents'] = {
     lastSeen: 'Zuletzt gesehen',
     version: 'Version',
     certificate: 'Zertifikat',
-    actions: 'Aktionen',
     pendingToken: 'Ausstehendes Registrierungs-Token',
     uses: 'Verwendungen',
     bound: 'Gebunden',
@@ -26,13 +25,14 @@ export const deAgents: Messages['agents'] = {
   boundNewHost: 'neuer Host',
   empty: 'Noch keine Agents registriert.',
   revoke: 'Widerrufen',
+  revokeItem: 'Widerrufen…',
+  openHost: 'Host öffnen',
   revokeLabel: (host: string) => `Agent auf ${host} widerrufen`,
   revokeConfirm: (host: string) =>
     `Agent auf ${host} widerrufen? Sein Zertifikat wird sofort abgelehnt und der Host wird nicht mehr überwacht.`,
   revoked: (host: string) => `Agent auf ${host} widerrufen`,
   revokeFailed: 'Widerrufen fehlgeschlagen',
   withdraw: 'Zurückziehen',
-  withdrawLabel: (name: string) => `Token ${name} zurückziehen`,
   withdrawFailed: 'Zurückziehen fehlgeschlagen',
   dialog: {
     title: 'Agent registrieren',
