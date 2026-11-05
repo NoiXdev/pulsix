@@ -155,9 +155,11 @@ func failedPlaybook(p string, state FileState, notes ...Note) Playbook {
 }
 
 // parser reads playbooks from one fsys; fsys is nil for an inline playbook,
-// which has no repository to find roles, sidecars or imports in.
+// which has no repository to find roles, sidecars or imports in. roles,
+// when not nil, holds the roles installed from requirements.yml.
 type parser struct {
-	fsys fs.FS
+	fsys  fs.FS
+	roles fs.FS
 }
 
 func (p *parser) inline() bool { return p.fsys == nil }
@@ -175,7 +177,7 @@ func (p *parser) parse(file string, d decoded, size int) Playbook {
 		fileSeen: map[FileUse]bool{},
 		roleSeen: map[roleKey]bool{},
 		unread:   newNameSet(),
-		specs:    map[string]*roleSpec{},
+		specs:    map[specKey]*roleSpec{},
 		charged:  map[*yamlFile][2]int{},
 		targets:  map[[2]string]roleTarget{},
 		rawBytes: size,
@@ -206,7 +208,7 @@ type walk struct {
 	marked                                *nameSet
 	unread                                *nameSet // declared names mapped onto no field
 	fieldsCut                             bool     // a source's own cap cut top-level fields
-	specs                                 map[string]*roleSpec
+	specs                                 map[specKey]*roleSpec
 	charged                               map[*yamlFile][2]int // work of each file already accounted
 	visited                               map[string]bool      // playbook files loaded
 	onStack                               map[string]bool      // playbook files on the current import path
@@ -290,7 +292,7 @@ func (w *walk) readSidecar(file string) {
 	base := strings.TrimSuffix(file, path.Ext(file))
 	for _, ext := range []string{".yml", ".yaml"} {
 		name := base + ".argument_specs" + ext
-		data, err := w.read(name)
+		data, err := w.read(w.p.fsys, name)
 		switch {
 		case isNotExist(err):
 			continue

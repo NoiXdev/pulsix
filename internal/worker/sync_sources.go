@@ -14,6 +14,13 @@
 // The read never leaves the clone's subpath and never enters git's own
 // files (clonefs.go): a role's meta/argument_specs.yml linked to /etc/… or
 // to .git/config is reported unreadable.
+//
+// The roles installed from requirements.yml (GalaxyDir, next to the
+// clone) are read through a second root of their own under the same
+// rules: a role name not found in the repository is looked up there, and
+// a link inside them may not leave them. A sync without them reads as
+// before; a galaxy path that cannot be opened (or is a symlink) adds one
+// read_failed note and the read goes on without it.
 package worker
 
 import (
@@ -40,8 +47,9 @@ const VarSourcesStatsKey = "var_sources"
 // the playbooks not read yet are left out.
 const varSourcesTimeLimit = 60 * time.Second
 
-// parseRepoFunc reads the sources of a repository subpath.
-type parseRepoFunc func(ctx context.Context, fsys fs.FS, commit string) varsource.Report
+// parseRepoFunc reads the sources of a repository subpath, with the roles
+// installed from requirements.yml when roles is not nil.
+type parseRepoFunc func(ctx context.Context, fsys, roles fs.FS, commit string) varsource.Report
 
 // readVarSources reads the clone's variable sources under subpath and
 // returns the encoded report and the ok event's summary of it. Without a
@@ -69,8 +77,9 @@ func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string) 
 }
 
 // collectVarSources is the report of the clone's sources: the commit and
-// the parse of the subpath. A panic of the parser leaves a report with no
-// playbooks and one read_failed note.
+// the parse of the subpath, with the roles installed from requirements.yml.
+// A panic of the parser leaves a report with no playbooks and one
+// read_failed note.
 func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath string) (r varsource.Report) {
 	var commit string
 	var notes []varsource.Note
@@ -97,11 +106,22 @@ func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath strin
 	}
 	defer func() { _ = fsys.Close() }()
 
+	var roles fs.FS // nil unless installed roles were opened: no typed nil
+	installed, err := openInstalledRolesFS(dir)
+	switch {
+	case err != nil:
+		e.logger().WarnContext(ctx, "open the installed roles", "err", err)
+		notes = append(notes, varsource.ReadFailed("the roles installed from requirements.yml could not be opened; roles found only there are reported as not found"))
+	case installed != nil:
+		defer func() { _ = installed.Close() }()
+		roles = installed
+	}
+
 	parse := e.parseRepo
 	if parse == nil {
-		parse = varsource.ParseRepo
+		parse = varsource.ParseRepoWithRoles
 	}
-	r = parse(ctx, fsys, commit)
+	r = parse(ctx, fsys, roles, commit)
 	r.Notes = append(notes, r.Notes...)
 	return r
 }

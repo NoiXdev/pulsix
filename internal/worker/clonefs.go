@@ -11,6 +11,9 @@
 //   - only regular files and directories are opened: a FIFO or a device
 //     would block the open or never end the read.
 //
+// The roles installed from requirements.yml (the galaxy directory next to
+// the clone) are a second read root of their own, under the same rules.
+//
 // The os.Root underneath refuses an escape again on its own.
 package worker
 
@@ -63,6 +66,33 @@ func openCloneFS(dir, subpath string) (*cloneFS, error) {
 		return nil, fmt.Errorf("open subpath: %w", err)
 	}
 	return &cloneFS{root: inner}, nil
+}
+
+// errNotGalaxyDir: the galaxy path is not a directory of its own (a
+// symlink, a file, …).
+var errNotGalaxyDir = errors.New("not a directory")
+
+// openInstalledRolesFS opens the roles installed from requirements.yml,
+// GalaxyDir(cloneDir), as a read root of its own with the clone's rules: a
+// link inside it may not leave it. (nil, nil) when there is none. A
+// galaxy path that is a symlink or no directory is an error: the run does
+// not put it on its roles path either.
+func openInstalledRolesFS(cloneDir string) (*cloneFS, error) {
+	dir := GalaxyDir(cloneDir)
+	info, err := os.Lstat(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("open installed roles: %w", err)
+	case !info.IsDir():
+		return nil, fmt.Errorf("open installed roles: %w", errNotGalaxyDir)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open installed roles: %w", err)
+	}
+	return &cloneFS{root: root}, nil
 }
 
 func (c *cloneFS) Close() error { return c.root.Close() }

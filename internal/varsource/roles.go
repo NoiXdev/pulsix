@@ -11,17 +11,35 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// InstalledRolesPrefix starts the path of a file read from the roles
+// installed from requirements.yml, as notes and field sources show it:
+// "(requirements)/<role>/meta/argument_specs.yml".
+const InstalledRolesPrefix = "(requirements)/"
+
 // roleTarget is where a role name leads from a playbook's directory: a
 // state, and the role's directory when found.
 type roleTarget struct {
-	state RoleState // RoleRead stands for "found"; reading decides the rest
-	dir   string
-	where string // where a role not found was looked for
+	state     RoleState // RoleRead stands for "found"; reading decides the rest
+	dir       string
+	installed bool   // dir is in the installed roles, not the repository
+	where     string // where a role not found was looked for
 }
 
 // roleKey identifies a role use within a walk: the role's directory when
 // found (two names may lead to one role), else its state and name.
-type roleKey struct{ id, entryPoint string }
+// installed keeps a directory of the installed roles apart from a
+// repository directory of the same name.
+type roleKey struct {
+	id, entryPoint string
+	installed      bool
+}
+
+// specKey identifies a spec file within a walk: its path in the
+// repository, or in the installed roles.
+type specKey struct {
+	file      string
+	installed bool
+}
 
 // specNames are the files Ansible reads a role's argument specs from, in
 // its order: meta/argument_specs.*, else the argument_specs key of
@@ -52,7 +70,7 @@ func (w *walk) useRole(f *playFile, r roleRef) {
 	default:
 		t = w.target(r.name, f.dir)
 	}
-	key := roleKey{id: t.dir, entryPoint: r.entryPoint}
+	key := roleKey{id: t.dir, entryPoint: r.entryPoint, installed: t.installed}
 	if t.dir == "" {
 		key.id = string(t.state) + "\x00" + r.name
 	}
@@ -80,7 +98,7 @@ func (w *walk) useRole(f *playFile, r roleRef) {
 	case RoleNotFound:
 		y.note(warning(codeRoleNotFound, y.file, r.line, "role %q not found %s; its variables are not read", name, t.where))
 	default:
-		t.state = w.readRole(t.dir, r)
+		t.state = w.readRole(t, r)
 		if t.state == RoleNoSpecs {
 			y.note(hint(codeRoleWithoutSpecs, y.file, r.line, "role %q declares no argument specs (meta/argument_specs.yml); it adds no fields", name))
 		}
@@ -96,9 +114,10 @@ func (r roleRef) shownEntryPoint() string { return clip(r.entryPoint, maxRefByte
 // target finds a role by name from a playbook directory: a template is
 // dynamic; an inline playbook has no repository; a name with a slash is a
 // path relative to the playbook's directory; any other is looked up in
-// <dir>/roles, then in roles/ at the root, and a name of three or more
-// dotted parts found in neither is a collection role (namespace.collection.role),
-// as Ansible resolves it.
+// <dir>/roles, then in roles/ at the root, then among the roles installed
+// from requirements.yml (Ansible's roles_path), and a name of three or
+// more dotted parts found nowhere is a collection role
+// (namespace.collection.role), as Ansible resolves it.
 func (w *walk) target(name, dir string) roleTarget {
 	switch {
 	case templated(name):
@@ -133,14 +152,27 @@ func (w *walk) findRole(name, dir string) roleTarget {
 		}
 	}
 	for _, c := range candidates {
-		if info, err := fs.Stat(w.p.fsys, c); err == nil && info.IsDir() {
+		if isDir(w.p.fsys, c) {
 			return roleTarget{state: RoleRead, dir: c}
 		}
 	}
-	if !strings.Contains(name, "/") && strings.Count(name, ".") >= 2 {
+	plain := !strings.Contains(name, "/")
+	if plain && w.p.roles != nil && isDir(w.p.roles, name) {
+		return roleTarget{state: RoleRead, dir: name, installed: true}
+	}
+	if plain && strings.Count(name, ".") >= 2 {
 		return roleTarget{state: RoleCollection}
 	}
-	return roleTarget{state: RoleNotFound, where: "at " + clip(strings.Join(candidates, " or "), maxRefBytes)}
+	where := "at " + clip(strings.Join(candidates, " or "), maxRefBytes)
+	if plain && w.p.roles != nil {
+		where += " or among the roles installed from requirements.yml"
+	}
+	return roleTarget{state: RoleNotFound, where: where}
+}
+
+func isDir(fsys fs.FS, name string) bool {
+	info, err := fs.Stat(fsys, name)
+	return err == nil && info.IsDir()
 }
 
 // roleSpec is a role's spec file as read once per walk: many entry points
@@ -152,14 +184,21 @@ type roleSpec struct {
 	root    *yaml.Node
 }
 
-// spec reads and parses a role spec file once per walk. Its notes join the
-// playbook's where it was first read.
-func (w *walk) spec(file string) *roleSpec {
-	if s, ok := w.specs[file]; ok {
+// spec reads and parses the spec file name (a path in the repository, or
+// in the installed roles) once per walk. Its notes join the playbook's
+// where it was first read; they and its fields name the file as shown
+// (InstalledRolesPrefix before a path in the installed roles).
+func (w *walk) spec(name string, installed bool) *roleSpec {
+	key := specKey{file: name, installed: installed}
+	if s, ok := w.specs[key]; ok {
 		return s
 	}
+	fsys, file := w.p.fsys, name
+	if installed {
+		fsys, file = w.p.roles, InstalledRolesPrefix+name
+	}
 	s := &roleSpec{}
-	data, err := w.read(file)
+	data, err := w.read(fsys, name)
 	switch {
 	case isNotExist(err):
 		s.missing = true
@@ -178,15 +217,15 @@ func (w *walk) spec(file string) *roleSpec {
 		s.y, s.root = newYAMLFile(file), documentRoot(&doc)
 		w.sources = append(w.sources, noteSource{y: s.y})
 	}
-	w.specs[file] = s
+	w.specs[key] = s
 	return s
 }
 
 // readRole reads the argument specs of a found role for r's entry point:
 // read, no_specs, or unreadable (a note says why).
-func (w *walk) readRole(dir string, r roleRef) RoleState {
+func (w *walk) readRole(t roleTarget, r roleRef) RoleState {
 	for _, name := range specNames {
-		s := w.spec(path.Join(dir, "meta", name))
+		s := w.spec(path.Join(t.dir, "meta", name), t.installed)
 		switch {
 		case s.missing:
 			continue

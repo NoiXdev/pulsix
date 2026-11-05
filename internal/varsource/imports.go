@@ -78,7 +78,7 @@ func (w *walk) follow(f *playFile, imp importRef, depth int) {
 		return
 	}
 	w.visited[target] = true
-	data, err := w.read(target)
+	data, err := w.read(w.p.fsys, target)
 	switch {
 	case errors.Is(err, errGivenUp):
 		return

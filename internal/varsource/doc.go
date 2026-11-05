@@ -8,4 +8,11 @@
 // (and, for whole playbooks, the fs.FS it is given), with no database, no
 // network and no other I/O. The worker runs it during a repo sync, the
 // manager for inline playbooks.
+//
+// A repo sync may also hand it the roles installed from requirements.yml
+// as a second fs.FS of their own (ParseRepoWithRoles): a plain role name
+// not found in the repository is looked up there, its files are named
+// "(requirements)/<role>/…" (InstalledRolesPrefix) and kept apart from any
+// repository path of that name, and its reads count against the same
+// limits as the repository's.
 package varsource

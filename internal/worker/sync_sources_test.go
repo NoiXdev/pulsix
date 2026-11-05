@@ -162,7 +162,7 @@ func TestSyncExecutorSourcesNeverFailTheSync(t *testing.T) {
 		writeTree(t, clone, map[string]string{"site.yml": "- hosts: all\n"})
 		var logged bytes.Buffer
 		e := &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}, Log: slog.New(slog.NewTextHandler(&logged, nil)),
-			parseRepo: func(context.Context, fs.FS, string) varsource.Report { panic("boom") }}
+			parseRepo: func(context.Context, fs.FS, fs.FS, string) varsource.Report { panic("boom") }}
 		r, summary, _ := syncSources(t, e, "")
 		if !strings.Contains(logged.String(), "panic=boom") {
 			t.Fatalf("the panic is not logged: %s", logged.String())
@@ -177,7 +177,7 @@ func TestSyncExecutorSourcesNeverFailTheSync(t *testing.T) {
 	t.Run("the report does not fit", func(t *testing.T) {
 		huge := varsource.Note{Level: varsource.LevelWarning, Code: "x", Message: strings.Repeat("x", varsource.MaxReportBytes)}
 		e := &SyncExecutor{Fetcher: &fakeFetcher{dir: t.TempDir(), commit: testCommit},
-			parseRepo: func(_ context.Context, _ fs.FS, commit string) varsource.Report {
+			parseRepo: func(_ context.Context, _, _ fs.FS, commit string) varsource.Report {
 				return varsource.Report{Commit: commit, Playbooks: []varsource.Playbook{}, Notes: []varsource.Note{huge}}
 			}}
 		r, summary, _ := syncSources(t, e, "")

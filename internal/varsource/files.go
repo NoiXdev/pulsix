@@ -78,13 +78,14 @@ func readNote(file string, err error) Note {
 	return warning(codeReadFailed, file, 0, "could not be read")
 }
 
-// read reads a file for the walk, counting its bytes against the walk's
-// limit. errGivenUp once the walk is over.
-func (w *walk) read(name string) ([]byte, error) {
+// read reads a file of fsys (the repository's, or the installed roles')
+// for the walk, counting its bytes against the walk's limit. errGivenUp
+// once the walk is over.
+func (w *walk) read(fsys fs.FS, name string) ([]byte, error) {
 	if w.over != "" {
 		return nil, errGivenUp
 	}
-	data, err := readLimited(w.p.fsys, name)
+	data, err := readLimited(fsys, name)
 	w.rawBytes += len(data)
 	if w.rawBytes > maxWalkBytes {
 		w.giveUp(fmt.Sprintf("its imports and roles add up to more than %d MiB", maxWalkBytes>>20))

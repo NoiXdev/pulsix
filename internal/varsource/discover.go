@@ -31,7 +31,16 @@ var skippedDirs = map[string]bool{"roles": true, "group_vars": true, "host_vars"
 // end; one playbook's own work is bounded. A repository whose root cannot
 // be listed is Failed.
 func ParseRepo(ctx context.Context, fsys fs.FS, commit string) Report {
-	d := &discovery{ctx: ctx, p: &parser{fsys: fsys}}
+	return ParseRepoWithRoles(ctx, fsys, nil, commit)
+}
+
+// ParseRepoWithRoles is ParseRepo that also finds roles in roles, the
+// roles installed from requirements.yml (one directory per role), when it
+// is not nil. A plain role name not found in the repository is looked up
+// there; files read from it are named InstalledRolesPrefix + their path in
+// roles, and count against the same limits as the repository's.
+func ParseRepoWithRoles(ctx context.Context, fsys, roles fs.FS, commit string) Report {
+	d := &discovery{ctx: ctx, p: &parser{fsys: fsys, roles: roles}}
 	r := Report{Commit: commit}
 	if err := fs.WalkDir(fsys, ".", d.visit); err != nil {
 		r.Failed = true
