@@ -581,6 +581,9 @@ func (q *SQLQueue) buildPayload(ctx context.Context, job Job, out *workerpb.Job)
 		if err := redact.addExtraVarSecrets(tmpl.ExtraVarsSchema, varsRaw); err != nil {
 			return err
 		}
+		// What the lookup opened was sealed, so it is a secret whatever
+		// field it sits under (spec 7.75 owner decision 4).
+		redact.add(tmpl.OpenedSecrets...)
 		if tmpl.CredentialID != nil {
 			defaultCred = tmpl.CredentialID
 			c, err := q.creds.Get(ctx, job.OrgID, *tmpl.CredentialID)

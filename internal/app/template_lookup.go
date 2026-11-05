@@ -11,6 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -78,8 +82,9 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 	// own filter (jobs.sendableVars) stays as the second line.
 	if t.ExtraVarsSchema != nil {
 		t.ExtraVars = schema.Sendable(t.ExtraVarsSchema.Fields, t.ExtraVars)
+		t.ExtraVars = dropStraySealed(ctx, t)
 	}
-	opened, err := a.openExtraVars(t)
+	opened, secrets, err := a.openExtraVars(t)
 	if err != nil {
 		return jobs.TemplateRow{}, err
 	}
@@ -114,17 +119,53 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 		PlaybookRepo: p.RepoID, PlaybookPath: playbookText(p.Path), PlaybookInline: playbookText(p.Inline),
 		Scope: scope, Limit: t.Limit,
 		ExtraVars: vars, ExtraVarsSchema: schemaRaw, CredentialID: t.CredentialID,
-		VaultIdentities: vaultIdentities,
+		VaultIdentities: vaultIdentities, OpenedSecrets: secrets,
 	}, nil
+}
+
+// dropStraySealed is t's sendable values without every top-level value
+// that holds a sealed secret under a field that is not secret-typed (spec
+// 7.75 owner decision 4: a secret field a person removed keeps its sealed
+// value, and a source may declare the name again as a plain field). The
+// variables apply holds such a field for a person; this is the second
+// line, so a stray sealed value is never opened into a plain var whose
+// value the claim does not know to redact. A dropped value is logged
+// once per lookup.
+func dropStraySealed(ctx context.Context, t templates.Template) map[string]any {
+	stray := schema.StraySealed(t.ExtraVarsSchema.Fields, t.ExtraVars)
+	if len(stray) == 0 {
+		return t.ExtraVars
+	}
+	out := maps.Clone(t.ExtraVars)
+	paths := make([]string, len(stray))
+	for i, s := range stray {
+		paths[i] = s.Path
+		delete(out, topLevel(s.Path))
+	}
+	slog.WarnContext(ctx, "template run: a stored secret sits under a field that is not a secret; that variable is not sent until a person enters its value again",
+		"org", t.OrgID, "template", t.ID, "paths", paths)
+	return out
+}
+
+// topLevel is the top-level variable name of a value path
+// ("vhosts[1].password" is under vhosts).
+func topLevel(path string) string {
+	if i := strings.IndexAny(path, ".["); i >= 0 {
+		return path[:i]
+	}
+	return path
 }
 
 // openExtraVars reveals the template's sealed extra vars (secret-typed
 // values are sealed at rest under templates.ExtraVarsAAD) for the claim
 // payload — the one place they travel in the clear, inside the mTLS claim.
 // A value that does not open under this template's AAD fails the lookup,
-// and with it the claim, closed.
-func (a templateLookup) openExtraVars(t templates.Template) (map[string]any, error) {
+// and with it the claim, closed. It also returns every plaintext it
+// opened for the claim's redact list, sorted so the list comes out the
+// same for the same template.
+func (a templateLookup) openExtraVars(t templates.Template) (map[string]any, []string, error) {
 	aad := templates.ExtraVarsAAD(t.OrgID, t.ID)
+	var secrets []string
 	var open func(v any) (any, error)
 	open = func(v any) (any, error) {
 		if ct, ok := schema.SealedBytes(v); ok {
@@ -132,6 +173,7 @@ func (a templateLookup) openExtraVars(t templates.Template) (map[string]any, err
 			if err != nil {
 				return nil, fmt.Errorf("open template extra var: %w", err)
 			}
+			secrets = append(secrets, string(plain))
 			return string(plain), nil
 		}
 		switch x := v.(type) {
@@ -161,10 +203,11 @@ func (a templateLookup) openExtraVars(t templates.Template) (map[string]any, err
 	}
 	out, err := open(t.ExtraVars)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	m, _ := out.(map[string]any)
-	return m, nil
+	slices.Sort(secrets)
+	return m, secrets, nil
 }
 
 // playbookText dereferences an optional playbook column; the playbooks CHECK

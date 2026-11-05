@@ -418,7 +418,7 @@ func TestOpenExtraVarsOpensNestedSecrets(t *testing.T) {
 	}
 	lookup := templateLookup{box: box}
 
-	got, err := lookup.openExtraVars(templates.Template{ID: tmplID, OrgID: orgID, ExtraVars: map[string]any{
+	got, secrets, err := lookup.openExtraVars(templates.Template{ID: tmplID, OrgID: orgID, ExtraVars: map[string]any{
 		"plain": "eu",
 		"db":    map[string]any{"password": seal("nested-pw", aad), "port": float64(5432)},
 		"keys":  []any{seal("list-secret", aad), "literal"},
@@ -432,12 +432,15 @@ func TestOpenExtraVarsOpensNestedSecrets(t *testing.T) {
 		len(keys) != 2 || keys[0] != "list-secret" || keys[1] != "literal" {
 		t.Fatalf("opened vars = %#v", got)
 	}
+	if !slices.Equal(secrets, []string{"list-secret", "nested-pw"}) {
+		t.Fatalf("opened secrets = %v, want every opened value, sorted", secrets)
+	}
 
 	for name, vars := range map[string]map[string]any{
 		"nested map": {"db": map[string]any{"password": seal("x", []byte("other-aad"))}},
 		"list":       {"keys": []any{seal("x", []byte("other-aad"))}},
 	} {
-		if _, err := lookup.openExtraVars(templates.Template{ID: tmplID, OrgID: orgID, ExtraVars: vars}); err == nil {
+		if _, _, err := lookup.openExtraVars(templates.Template{ID: tmplID, OrgID: orgID, ExtraVars: vars}); err == nil {
 			t.Fatalf("%s: a ciphertext sealed for another template must not open", name)
 		}
 	}

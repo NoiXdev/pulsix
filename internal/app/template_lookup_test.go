@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -221,5 +223,86 @@ func TestTemplateLookupOpensActiveFieldsOnly(t *testing.T) {
 	}
 	if len(vars) != 2 || vars["db_pass"] != "active-secret" || vars["region"] != "eu" {
 		t.Fatalf("claim extra vars = %v, want exactly the active values, opened", vars)
+	}
+}
+
+// TestTemplateLookupNeverOpensAStraySealedValue (spec 7.75 owner decision
+// 4, defence in depth): a sealed value under a field that is not a secret
+// — left behind when a secret field was removed and declared again as a
+// plain one — is left out before anything is opened, so it never reaches
+// a run as a plain var; the rest of the template's values are sent. Every
+// value the lookup does open is named in OpenedSecrets, whatever the
+// schema says, so the claim redacts it.
+func TestTemplateLookupNeverOpensAStraySealedValue(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	org, err := gen.New(d.Pool()).CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: "app-template-lookup-stray", Name: "lookup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := db.WithOrgScope(ctx, org.ID)
+	box := crypto.NewBox([32]byte{7, 7, 7})
+	inline := "- hosts: all\n  tasks: []"
+	pb, err := playbooks.NewSQLStore(d).Create(scoped, playbooks.Playbook{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Inline: &inline, Source: playbooks.SourceEditor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := templates.NewSQLStore(d)
+	lookup := NewTemplateLookup(store, playbooks.NewSQLStore(d), box)
+	create := func(name string, sc *schema.Schema, vars func(id uuid.UUID) map[string]any) uuid.UUID {
+		t.Helper()
+		id := uuid.Must(uuid.NewV7())
+		if _, err := store.Create(scoped, templates.Template{ID: id, OrgID: org.ID, PlaybookID: pb.ID, Name: name, ExtraVars: vars(id), ExtraVarsSchema: sc}); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	seal := func(id uuid.UUID, plain string) map[string]any {
+		t.Helper()
+		ct, err := box.SealAAD([]byte(plain), templates.ExtraVarsAAD(org.ID, id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return schema.Sealed(ct)
+	}
+
+	stray := create("stray", &schema.Schema{Fields: []schema.Field{
+		{Name: "token", Type: schema.TypeString, Required: true},
+		{Name: "db", Type: schema.TypeObject, Fields: []schema.Field{{Name: "user", Type: schema.TypeString}}},
+		{Name: "db_pass", Type: schema.TypeSecret},
+		{Name: "region", Type: schema.TypeString},
+	}}, func(id uuid.UUID) map[string]any {
+		return map[string]any{"token": seal(id, "stray-token-9c2"), "db": map[string]any{"user": seal(id, "stray-user-4b8")},
+			"db_pass": seal(id, "kept-pass-1a5"), "region": "eu"}
+	})
+	row, err := lookup.TemplateLookup(scoped, org.ID, stray)
+	if err != nil {
+		t.Fatalf("TemplateLookup: %v", err)
+	}
+	if strings.Contains(string(row.ExtraVars), "stray-") {
+		t.Fatalf("claim extra vars = %s, a stray sealed value was opened", row.ExtraVars)
+	}
+	var vars map[string]any
+	if err := json.Unmarshal(row.ExtraVars, &vars); err != nil {
+		t.Fatal(err)
+	}
+	if len(vars) != 2 || vars["db_pass"] != "kept-pass-1a5" || vars["region"] != "eu" {
+		t.Fatalf("claim extra vars = %v, want the stray values left out and the rest sent", vars)
+	}
+	if !reflect.DeepEqual(row.OpenedSecrets, []string{"kept-pass-1a5"}) {
+		t.Fatalf("opened secrets = %v", row.OpenedSecrets)
+	}
+
+	// Without a schema nothing is typed secret, but what was sealed is
+	// still a secret to the claim's redact list.
+	bare := create("bare", nil, func(id uuid.UUID) map[string]any {
+		return map[string]any{"legacy": seal(id, "bare-secret-6d0"), "region": "eu"}
+	})
+	row, err = lookup.TemplateLookup(scoped, org.ID, bare)
+	if err != nil {
+		t.Fatalf("TemplateLookup without a schema: %v", err)
+	}
+	if !reflect.DeepEqual(row.OpenedSecrets, []string{"bare-secret-6d0"}) {
+		t.Fatalf("opened secrets without a schema = %v", row.OpenedSecrets)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -1051,6 +1052,40 @@ func TestClaimSendsActiveFieldsOnly(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestClaimRedactsEveryOpenedSecret: every value the template lookup
+// opened from a sealed envelope is in the claim's redact list, whatever
+// the schema says about its field (here a plain string) and without a
+// schema at all.
+func TestClaimRedactsEveryOpenedSecret(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	withSchema, withoutSchema := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		withSchema: {
+			ID: withSchema, OrgID: org, PlaybookInline: "- hosts: all\n",
+			ExtraVarsSchema: json.RawMessage(`{"fields":[{"name":"token","type":"string"}]}`),
+			ExtraVars:       json.RawMessage(`{"token":"opened-under-a-string-5e1"}`),
+			OpenedSecrets:   []string{"opened-under-a-string-5e1"},
+		},
+		withoutSchema: {
+			ID: withoutSchema, OrgID: org, PlaybookInline: "- hosts: all\n",
+			ExtraVars:     json.RawMessage(`{"legacy":"opened-without-a-schema-8a4"}`),
+			OpenedSecrets: []string{"opened-without-a-schema-8a4"},
+		},
+	}}
+	q := newTestQueue(fakeRenderer{inv: render.Inventory{Doc: map[string]any{}}}, fakeCreds{}, templates, fakeBastions{})
+	q.SetKeyPins(fakePins{})
+	for id, secret := range map[uuid.UUID]string{withSchema: "opened-under-a-string-5e1", withoutSchema: "opened-without-a-schema-8a4"} {
+		job := Job{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &id, HostIDs: testHosts}
+		out := &workerpb.Job{}
+		if err := q.buildPayload(context.Background(), job, out); err != nil {
+			t.Fatalf("buildPayload: %v", err)
+		}
+		if !slices.Contains(out.Redact, secret) {
+			t.Errorf("redact = %v, want %s", out.Redact, secret)
+		}
 	}
 }
 

@@ -448,6 +448,11 @@ type TemplateRow struct {
 	// template whose playbook is not a repo playbook — nothing reads it in
 	// that case, there is no repository to decrypt.
 	VaultIdentities []VaultIdentity
+	// OpenedSecrets are the plaintexts the lookup opened from sealed
+	// values in ExtraVars. The claim names every one in its redact list,
+	// whatever the schema says about the field it sits under: what was
+	// sealed is a secret.
+	OpenedSecrets []string
 }
 
 // TemplateSource looks one template up, ErrNotFound when it does not exist
