@@ -37,6 +37,10 @@ func TestRedactRequestURI(t *testing.T) {
 		{"/a/../invite/tok", "/invite/[redacted]"},
 		{"/invite/..", "/invite/[redacted]"},
 		{"/invite/./", "/invite/./"},
+		{"/a/../invite/tok/..", "/invite/[redacted]"},
+		{"/../invite/tok/..", "/invite/[redacted]"},
+		{"/x/y/../../invite/tok/..", "/invite/[redacted]"},
+		{"/api/v1/orgs/acme/invites/x", "/api/v1/orgs/acme/invites/x"},
 	}
 	for _, tt := range tests {
 		if got := redactRequestURI(tt.in); got != tt.want {

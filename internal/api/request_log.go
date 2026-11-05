@@ -43,10 +43,11 @@ func requestPath(uri string) string {
 }
 
 // isInviteTokenPath reports whether p is an invitation link: its cleaned form
-// is /invite/{something}, or its own segments (empty and "." dropped, ".."
-// kept, nothing resolved) are "invite" followed by at least one more. The
-// second test covers /invite/{token}/.. which cleans to /invite yet still
-// carries the token in the request line.
+// is /invite/{something}, or any of its own segments (empty and "." dropped,
+// ".." kept, nothing resolved) is "invite" followed by at least one more. The
+// second test covers /invite/{token}/.. and /a/../invite/{token}/.., which
+// clean to /invite yet still carry the token in the request line. No API
+// route has a segment that is exactly "invite" (they are "invites").
 func isInviteTokenPath(p string) bool {
 	seg, rest, ok := strings.Cut(strings.TrimPrefix(path.Clean("/"+p), "/"), "/")
 	if ok && rest != "" && strings.EqualFold(seg, "invite") {
@@ -58,7 +59,12 @@ func isInviteTokenPath(p string) bool {
 			segs = append(segs, s)
 		}
 	}
-	return len(segs) > 1 && strings.EqualFold(segs[0], "invite")
+	for i := 0; i+1 < len(segs); i++ {
+		if strings.EqualFold(segs[i], "invite") {
+			return true
+		}
+	}
+	return false
 }
 
 // redactingFormatter hands the wrapped formatter a copy of the request whose
