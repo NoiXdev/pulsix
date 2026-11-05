@@ -93,7 +93,7 @@ func TestSQLStoreRoundTrip(t *testing.T) {
 		t.Fatalf("List = %v, %v", list, err)
 	}
 
-	updated, err := store.UpdateInline(scoped, org, editor.ID, "- hosts: db\n")
+	updated, err := store.UpdateInline(scoped, org, editor.ID, "- hosts: db\n", nil)
 	if err != nil || updated.Inline == nil || *updated.Inline != "- hosts: db\n" {
 		t.Fatalf("UpdateInline = %+v, %v", updated, err)
 	}
@@ -166,7 +166,7 @@ func TestSQLStoreUpdateInlineRefusesRepoPlaybook(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpdateInline(scoped, org, repoPb.ID, "- hosts: db\n"); !errors.Is(err, playbooks.ErrNotFound) {
+	if _, err := store.UpdateInline(scoped, org, repoPb.ID, "- hosts: db\n", nil); !errors.Is(err, playbooks.ErrNotFound) {
 		t.Fatalf("UpdateInline on a repo playbook = %v, want ErrNotFound", err)
 	}
 }

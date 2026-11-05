@@ -1,9 +1,12 @@
 package repos_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,12 +265,13 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1.Add(time.Hour), nil); err != nil || stored {
 		t.Fatalf("RecordVarSources(older worker) = %v, %v; want false, nil", stored, err)
 	}
-	rec, pb, found, err := svc.PlaybookVarSource(scoped, org, repoID, "deploy.yml")
-	if err != nil || !found || rec.WorkerReads || rec.Commit != commitA || !sameStrings(fieldNames(pb), []string{"app_version"}) {
-		t.Fatalf("PlaybookVarSource(deploy.yml) = %+v, %+v, %v, %v", rec, pb, found, err)
+	recp, pb, err := svc.PlaybookVarSource(scoped, org, repoID, "deploy.yml")
+	if err != nil || recp == nil || pb == nil || recp.WorkerReads || recp.Commit != commitA || !sameStrings(fieldNames(*pb), []string{"app_version"}) {
+		t.Fatalf("PlaybookVarSource(deploy.yml) = %+v, %+v, %v", recp, pb, err)
 	}
-	if _, _, found, err := svc.PlaybookVarSource(scoped, org, repoID, "missing.yml"); err != nil || found {
-		t.Fatalf("PlaybookVarSource(missing.yml) = found %v, %v", found, err)
+	// A path the record has no row for: the record, no playbook.
+	if recp, pb, err := svc.PlaybookVarSource(scoped, org, repoID, "missing.yml"); err != nil || recp == nil || recp.Commit != commitA || pb != nil {
+		t.Fatalf("PlaybookVarSource(missing.yml) = %+v, %+v, %v; want the record and no playbook", recp, pb, err)
 	}
 
 	// The repository deleted: its sources go with it.
@@ -276,6 +280,9 @@ func TestRecordVarSourcesThroughTheSQLStore(t *testing.T) {
 	}
 	if _, _, found, err := svc.VarSources(scoped, org, repoID); err != nil || found {
 		t.Fatalf("VarSources after the repo's delete = found %v, %v", found, err)
+	}
+	if recp, pb, err := svc.PlaybookVarSource(scoped, org, repoID, "deploy.yml"); err != nil || recp != nil || pb != nil {
+		t.Fatalf("PlaybookVarSource without a record = %+v, %+v, %v; want neither", recp, pb, err)
 	}
 	// A sync of a repository gone meanwhile is skipped, never an error.
 	if stored, err := svc.RecordVarSources(scoped, org, repoID, t1, read); err != nil || stored {
@@ -330,5 +337,65 @@ func TestLockVarSourcesHoldsTheRepositoryUntilTheTransactionEnds(t *testing.T) {
 	}
 	if err := d.WithWriteTx(ctx, org, func(ctx context.Context) error { return store.LockVarSources(ctx, org, repoID) }); err != nil {
 		t.Fatalf("lock after the first committed: %v", err)
+	}
+}
+
+// TestUndecodablePlaybookRowCountsAsMissing: a stored playbook row that no
+// longer decodes (written by another version) is treated as missing, with
+// one log line each time it is met, and never fails a later finish.
+func TestUndecodablePlaybookRowCountsAsMissing(t *testing.T) {
+	d := testdb.Open(t)
+	store := repos.NewSQLStore(d)
+	var logs bytes.Buffer
+	store.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	svc := repos.NewService(store, nil, nil)
+	org := seedOrg(t, gen.New(d.Pool()), "var-sources-undecodable-org")
+	scoped := db.WithOrgScope(ctx, org)
+	repoID := seedSourcesRepo(t, d, org, "infra")
+	t0 := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+
+	if err := store.ReplaceVarSources(scoped, org, repoID, repos.SourcesRecord{Commit: commitA, SyncedAt: t0, WorkerReads: true},
+		[]varsource.Playbook{playbookSource("site.yml", "env"), playbookSource("old.yml", "x")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(scoped, `UPDATE repo_playbook_sources SET result = '{"fields": "not a list"}' WHERE repo_id = $1 AND path = 'old.yml'`, repoID); err != nil {
+		t.Fatal(err)
+	}
+	lines := func() int { return strings.Count(logs.String(), "old.yml") }
+
+	pbs, err := store.ListPlaybookSources(scoped, org, repoID)
+	if err != nil || !sameStrings(playbookPaths(pbs), []string{"site.yml"}) {
+		t.Fatalf("ListPlaybookSources = %v, %v; want site.yml only", playbookPaths(pbs), err)
+	}
+	if n := lines(); n != 1 {
+		t.Fatalf("log lines naming old.yml after the list = %d, want 1:\n%s", n, logs.String())
+	}
+	if _, err := store.GetPlaybookSource(scoped, org, repoID, "old.yml"); !errors.Is(err, repos.ErrNotFound) {
+		t.Fatalf("GetPlaybookSource(old.yml) = %v, want ErrNotFound", err)
+	}
+	if n := lines(); n != 2 {
+		t.Fatalf("log lines naming old.yml after the get = %d, want 2", n)
+	}
+
+	// A later finish that keeps the previous rows (a left-out name, then a
+	// Failed read) still succeeds; the undecodable row is gone with it.
+	leftOut := encodeReport(t, varsource.Report{Commit: commitB, Incomplete: true, LeftOut: []string{"old.yml"},
+		Playbooks: []varsource.Playbook{playbookSource("site.yml", "env")}, Notes: []varsource.Note{}})
+	if err := d.WithWriteTx(ctx, org, func(ctx context.Context) error {
+		_, err := svc.RecordVarSources(ctx, org, repoID, t0.Add(time.Hour), leftOut)
+		return err
+	}); err != nil {
+		t.Fatalf("RecordVarSources(left out) = %v, want the finish to succeed", err)
+	}
+	failed := encodeReport(t, varsource.Report{Commit: commitB, Failed: true, Playbooks: []varsource.Playbook{},
+		Notes: []varsource.Note{varsource.ReadFailed("unreadable")}})
+	if err := d.WithWriteTx(ctx, org, func(ctx context.Context) error {
+		_, err := svc.RecordVarSources(ctx, org, repoID, t0.Add(2*time.Hour), failed)
+		return err
+	}); err != nil {
+		t.Fatalf("RecordVarSources(failed) = %v, want the finish to succeed", err)
+	}
+	if pbs, err := store.ListPlaybookSources(scoped, org, repoID); err != nil || !sameStrings(playbookPaths(pbs), []string{"site.yml"}) {
+		t.Fatalf("playbooks after the finishes = %v, %v", playbookPaths(pbs), err)
 	}
 }

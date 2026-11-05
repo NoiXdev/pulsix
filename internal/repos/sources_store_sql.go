@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,17 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/varsource"
 )
+
+// SetLogger sets where the store reports a stored playbook row it skips
+// because it no longer decodes; slog.Default without.
+func (s *SQLStore) SetLogger(l *slog.Logger) { s.log = l }
+
+func (s *SQLStore) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return slog.Default()
+}
 
 // LockVarSources implements Store: the repository row, locked until the
 // caller's transaction ends (queries/var_sources.sql explains the lock).
@@ -110,22 +122,24 @@ func (s *SQLStore) GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (
 	return rec, nil
 }
 
-// ListPlaybookSources implements Store: every playbook row, by path.
+// ListPlaybookSources implements Store: every playbook row, by path. A row
+// that no longer decodes is left out (decodePlaybookSource).
 func (s *SQLStore) ListPlaybookSources(ctx context.Context, orgID, repoID uuid.UUID) ([]varsource.Playbook, error) {
 	rows, err := s.q.ListRepoPlaybookSources(ctx, gen.ListRepoPlaybookSourcesParams{OrgID: orgID, RepoID: repoID})
 	if err != nil {
 		return nil, fmt.Errorf("list repo playbook sources: %w", err)
 	}
-	out := make([]varsource.Playbook, len(rows))
-	for i, r := range rows {
-		if out[i], err = decodePlaybookSource(r.Path, r.Result); err != nil {
-			return nil, err
+	out := make([]varsource.Playbook, 0, len(rows))
+	for _, r := range rows {
+		if pb, ok := s.decodePlaybookSource(ctx, orgID, repoID, r.Path, r.Result); ok {
+			out = append(out, pb)
 		}
 	}
 	return out, nil
 }
 
-// GetPlaybookSource implements Store; ErrNotFound when the path has no row.
+// GetPlaybookSource implements Store; ErrNotFound when the path has no row
+// or its row no longer decodes.
 func (s *SQLStore) GetPlaybookSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (varsource.Playbook, error) {
 	row, err := s.q.GetRepoPlaybookSource(ctx, gen.GetRepoPlaybookSourceParams{OrgID: orgID, RepoID: repoID, Path: path})
 	if err != nil {
@@ -134,18 +148,26 @@ func (s *SQLStore) GetPlaybookSource(ctx context.Context, orgID, repoID uuid.UUI
 		}
 		return varsource.Playbook{}, fmt.Errorf("get repo playbook source: %w", err)
 	}
-	return decodePlaybookSource(row.Path, row.Result)
+	pb, ok := s.decodePlaybookSource(ctx, orgID, repoID, row.Path, row.Result)
+	if !ok {
+		return varsource.Playbook{}, ErrNotFound
+	}
+	return pb, nil
 }
 
 // decodePlaybookSource is one stored parse result; the row's path is the
-// playbook's.
-func decodePlaybookSource(path string, result []byte) (varsource.Playbook, error) {
+// playbook's. A row that no longer decodes (written by another version) is
+// treated as missing, with a log line: failing instead would fail every
+// later sync finish of the repository, which reads the previous rows.
+func (s *SQLStore) decodePlaybookSource(ctx context.Context, orgID, repoID uuid.UUID, path string, result []byte) (varsource.Playbook, bool) {
 	var pb varsource.Playbook
 	if err := json.Unmarshal(result, &pb); err != nil {
-		return varsource.Playbook{}, fmt.Errorf("decode playbook source %q: %w", path, err)
+		s.logger().WarnContext(ctx, "stored playbook variable sources do not decode; treated as missing",
+			"org", orgID, "repo", repoID, "path", path, "err", err)
+		return varsource.Playbook{}, false
 	}
 	pb.Path = path
-	return pb, nil
+	return pb, true
 }
 
 // nonNil stores an absent list as [] rather than null.

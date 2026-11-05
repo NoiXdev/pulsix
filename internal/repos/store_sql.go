@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -18,8 +19,9 @@ import (
 // transaction — every other method here is a single statement and has no
 // need of one.
 type SQLStore struct {
-	q *gen.Queries
-	d *db.DB
+	q   *gen.Queries
+	d   *db.DB
+	log *slog.Logger
 }
 
 // NewSQLStore builds the store.

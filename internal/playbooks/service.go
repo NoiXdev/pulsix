@@ -8,8 +8,10 @@ package playbooks
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -46,14 +48,20 @@ var RepoPathPattern = varsource.PlaybookPathPattern
 // or Inline (editor source) is set — the database CHECK constraints enforce
 // the pairing, and Create* enforce it before anything reaches the store.
 type Playbook struct {
-	ID        uuid.UUID
-	OrgID     uuid.UUID
-	RepoID    *uuid.UUID
-	Path      *string
-	Inline    *string
-	Source    string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID     uuid.UUID
+	OrgID  uuid.UUID
+	RepoID *uuid.UUID
+	Path   *string
+	Inline *string
+	Source string
+	// InlineSource is an editor playbook's stored variable sources, the
+	// encoded varsource.ParseInline result of Inline (backlog 7.75). It is
+	// nil for a repo playbook, for an editor playbook saved before it
+	// existed, and when the result could not be stored; VarSource then
+	// parses the text.
+	InlineSource json.RawMessage
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // CreateInput is a new editor playbook. Name is not a stored column — the
@@ -65,9 +73,13 @@ type CreateInput struct {
 }
 
 // RepoSource is the slice of repos.Service a repo playbook needs: the
-// referenced repository must exist in the organization.
+// referenced repository must exist in the organization, and its last
+// sync's variable sources are read for the discovered playbooks and a
+// repo playbook's VarSource.
 type RepoSource interface {
 	Get(ctx context.Context, orgID, id uuid.UUID) (repos.Repo, error)
+	VarSources(ctx context.Context, orgID, repoID uuid.UUID) (repos.SourcesRecord, []varsource.Playbook, bool, error)
+	PlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (*repos.SourcesRecord, *varsource.Playbook, error)
 }
 
 // TemplateResolver is the slice of shared.Service a new repo playbook
@@ -95,11 +107,20 @@ type Store interface {
 	Create(ctx context.Context, p Playbook) (Playbook, error)
 	Get(ctx context.Context, orgID, id uuid.UUID) (Playbook, error)
 	List(ctx context.Context, orgID uuid.UUID) ([]Playbook, error)
-	// UpdateInline replaces the inline text of an editor playbook. A repo
-	// playbook's stored text lives in its git repository and has no inline
-	// column to update.
-	UpdateInline(ctx context.Context, orgID, id uuid.UUID, inline string) (Playbook, error)
+	// UpdateInline replaces the inline text of an editor playbook and its
+	// stored variable sources (nil stores none). A repo playbook's stored
+	// text lives in its git repository and has no inline column to update.
+	UpdateInline(ctx context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage) (Playbook, error)
 	Delete(ctx context.Context, orgID, id uuid.UUID) error
+	// FindRepo is the oldest playbook registered for the repository path.
+	FindRepo(ctx context.Context, orgID, repoID uuid.UUID, path string) (Playbook, error)
+	// ListByRepo is every playbook registered for the repository, oldest
+	// first; only ID, OrgID, RepoID, Path and Source are set.
+	ListByRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]Playbook, error)
+	// WithRepoPathLock runs fn in one write transaction that holds a lock
+	// on the repository path; every store call made with the context fn
+	// receives joins it.
+	WithRepoPathLock(ctx context.Context, orgID, repoID uuid.UUID, path string, fn func(context.Context) error) error
 }
 
 // Service implements the playbook registry.
@@ -107,6 +128,8 @@ type Service struct {
 	store    Store
 	repos    RepoSource
 	resolver TemplateResolver
+	applier  InlineApplier
+	log      *slog.Logger
 }
 
 // NewService wires the store, the repo source and the template resolver
@@ -126,6 +149,7 @@ func (s *Service) CreateEditor(ctx context.Context, orgID uuid.UUID, in CreateIn
 	return s.store.Create(ctx, Playbook{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
 		Source: SourceEditor, Inline: &in.Inline,
+		InlineSource: s.inlineSource(ctx, orgID, in.Inline),
 	})
 }
 
@@ -143,14 +167,11 @@ func (s *Service) CreateEditor(ctx context.Context, orgID uuid.UUID, in CreateIn
 // failed to light up a template waiting on it would be a harder bug to
 // find than one that surfaces here, at the one call site that can.
 func (s *Service) CreateRepo(ctx context.Context, orgID, repoID uuid.UUID, path string) (Playbook, error) {
-	if strings.Contains(path, "..") || !RepoPathPattern.MatchString(path) {
-		return Playbook{}, fmt.Errorf("%w: invalid path: a relative path ending in .yml or .yaml (letters, digits, dots, slashes and hyphens), no \"..\"", ErrInvalidInput)
+	if err := validRepoPath(path); err != nil {
+		return Playbook{}, err
 	}
-	if _, err := s.repos.Get(ctx, orgID, repoID); err != nil {
-		if errors.Is(err, repos.ErrNotFound) {
-			return Playbook{}, ErrNotFound
-		}
-		return Playbook{}, fmt.Errorf("look up repository: %w", err)
+	if err := s.repoExists(ctx, orgID, repoID); err != nil {
+		return Playbook{}, err
 	}
 	p, err := s.store.Create(ctx, Playbook{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
@@ -165,6 +186,14 @@ func (s *Service) CreateRepo(ctx context.Context, orgID, repoID uuid.UUID, path 
 	return p, nil
 }
 
+// validRepoPath refuses a path no repo playbook may have.
+func validRepoPath(path string) error {
+	if strings.Contains(path, "..") || !RepoPathPattern.MatchString(path) {
+		return fmt.Errorf("%w: invalid path: a relative path ending in .yml or .yaml (letters, digits, dots, slashes and hyphens), no \"..\"", ErrInvalidInput)
+	}
+	return nil
+}
+
 // Get returns one playbook, ErrNotFound when it does not exist in the org.
 func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Playbook, error) {
 	return s.store.Get(ctx, orgID, id)
@@ -175,8 +204,11 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Playbook, error)
 	return s.store.List(ctx, orgID)
 }
 
-// UpdateEditor replaces an editor playbook's inline document. A repo
-// playbook is edited in its repository, not here — ErrInvalidInput.
+// UpdateEditor replaces an editor playbook's inline document and its
+// stored variable sources. A repo playbook is edited in its repository,
+// not here — ErrInvalidInput. Once saved, the InlineApplier (if set)
+// brings the new sources to the templates that use the playbook; its
+// failure is logged and never fails the save.
 func (s *Service) UpdateEditor(ctx context.Context, orgID, id uuid.UUID, in CreateInput) (Playbook, error) {
 	cur, err := s.store.Get(ctx, orgID, id)
 	if err != nil {
@@ -188,7 +220,12 @@ func (s *Service) UpdateEditor(ctx context.Context, orgID, id uuid.UUID, in Crea
 	if err := ValidateYAML(in.Inline); err != nil {
 		return Playbook{}, err
 	}
-	return s.store.UpdateInline(ctx, orgID, id, in.Inline)
+	p, err := s.store.UpdateInline(ctx, orgID, id, in.Inline, s.inlineSource(ctx, orgID, in.Inline))
+	if err != nil {
+		return Playbook{}, err
+	}
+	s.applyInline(ctx, orgID, id)
+	return p, nil
 }
 
 // Delete removes a playbook no job template references; the foreign key is

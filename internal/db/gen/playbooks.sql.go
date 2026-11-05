@@ -13,24 +13,26 @@ import (
 )
 
 const createPlaybook = `-- name: CreatePlaybook :one
-INSERT INTO playbooks (id, org_id, repo_id, path, inline, source)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO playbooks (id, org_id, repo_id, path, inline, source, var_source)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source
 `
 
 type CreatePlaybookParams struct {
-	ID     uuid.UUID   `json:"id"`
-	OrgID  uuid.UUID   `json:"org_id"`
-	RepoID pgtype.UUID `json:"repo_id"`
-	Path   *string     `json:"path"`
-	Inline *string     `json:"inline"`
-	Source string      `json:"source"`
+	ID        uuid.UUID   `json:"id"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	RepoID    pgtype.UUID `json:"repo_id"`
+	Path      *string     `json:"path"`
+	Inline    *string     `json:"inline"`
+	Source    string      `json:"source"`
+	VarSource []byte      `json:"var_source"`
 }
 
 // The source/repo_id/path/inline pairing is guarded twice: once here by the
 // service (which sets exactly the fields its source needs) and once by the
 // playbooks table's CHECK constraints — a mismatched insert must fail at
-// the database, not silently store a hybrid row.
+// the database, not silently store a hybrid row. var_source is an editor
+// playbook's parse result (backlog 7.75), NULL for a repo playbook.
 func (q *Queries) CreatePlaybook(ctx context.Context, arg CreatePlaybookParams) (Playbook, error) {
 	row := q.db.QueryRow(ctx, createPlaybook,
 		arg.ID,
@@ -39,6 +41,7 @@ func (q *Queries) CreatePlaybook(ctx context.Context, arg CreatePlaybookParams) 
 		arg.Path,
 		arg.Inline,
 		arg.Source,
+		arg.VarSource,
 	)
 	var i Playbook
 	err := row.Scan(
@@ -72,6 +75,39 @@ func (q *Queries) DeletePlaybook(ctx context.Context, arg DeletePlaybookParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const findRepoPlaybook = `-- name: FindRepoPlaybook :one
+SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source FROM playbooks
+WHERE org_id = $1 AND repo_id = $2 AND path = $3
+ORDER BY created_at, id
+LIMIT 1
+`
+
+type FindRepoPlaybookParams struct {
+	OrgID  uuid.UUID   `json:"org_id"`
+	RepoID pgtype.UUID `json:"repo_id"`
+	Path   *string     `json:"path"`
+}
+
+// The playbook registered for a repository path. Nothing keeps a path
+// unique (no index exists and none can be added additively over rows that
+// may already repeat one), so the oldest row is the one reused.
+func (q *Queries) FindRepoPlaybook(ctx context.Context, arg FindRepoPlaybookParams) (Playbook, error) {
+	row := q.db.QueryRow(ctx, findRepoPlaybook, arg.OrgID, arg.RepoID, arg.Path)
+	var i Playbook
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.RepoID,
+		&i.Path,
+		&i.Inline,
+		&i.Source,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.VarSource,
+	)
+	return i, err
 }
 
 const getPlaybook = `-- name: GetPlaybook :one
@@ -137,23 +173,68 @@ func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]Playboo
 	return items, nil
 }
 
+const listRepoPlaybookPaths = `-- name: ListRepoPlaybookPaths :many
+SELECT id, path FROM playbooks
+WHERE org_id = $1 AND repo_id = $2
+ORDER BY created_at, id
+`
+
+type ListRepoPlaybookPathsParams struct {
+	OrgID  uuid.UUID   `json:"org_id"`
+	RepoID pgtype.UUID `json:"repo_id"`
+}
+
+type ListRepoPlaybookPathsRow struct {
+	ID   uuid.UUID `json:"id"`
+	Path *string   `json:"path"`
+}
+
+// The playbooks registered for a repository, oldest first, without their
+// contents: the discovered-playbook list marks the paths they name.
+func (q *Queries) ListRepoPlaybookPaths(ctx context.Context, arg ListRepoPlaybookPathsParams) ([]ListRepoPlaybookPathsRow, error) {
+	rows, err := q.db.Query(ctx, listRepoPlaybookPaths, arg.OrgID, arg.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRepoPlaybookPathsRow
+	for rows.Next() {
+		var i ListRepoPlaybookPathsRow
+		if err := rows.Scan(&i.ID, &i.Path); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updatePlaybookInline = `-- name: UpdatePlaybookInline :one
-UPDATE playbooks SET inline = $1, updated_at = now()
-WHERE org_id = $2 AND id = $3 AND source = 'editor'
+UPDATE playbooks SET inline = $1, var_source = $2, updated_at = now()
+WHERE org_id = $3 AND id = $4 AND source = 'editor'
 RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source
 `
 
 type UpdatePlaybookInlineParams struct {
-	Inline *string   `json:"inline"`
-	OrgID  uuid.UUID `json:"org_id"`
-	ID     uuid.UUID `json:"id"`
+	Inline    *string   `json:"inline"`
+	VarSource []byte    `json:"var_source"`
+	OrgID     uuid.UUID `json:"org_id"`
+	ID        uuid.UUID `json:"id"`
 }
 
-// An editor playbook's inline text is its only editable field. The source
-// guard in the WHERE clause refuses a repo playbook even if a caller
-// skipped the service's own check.
+// An editor playbook's inline text is its only editable field; its parse
+// result (var_source) is replaced with it. The source guard in the WHERE
+// clause refuses a repo playbook even if a caller skipped the service's
+// own check.
 func (q *Queries) UpdatePlaybookInline(ctx context.Context, arg UpdatePlaybookInlineParams) (Playbook, error) {
-	row := q.db.QueryRow(ctx, updatePlaybookInline, arg.Inline, arg.OrgID, arg.ID)
+	row := q.db.QueryRow(ctx, updatePlaybookInline,
+		arg.Inline,
+		arg.VarSource,
+		arg.OrgID,
+		arg.ID,
+	)
 	var i Playbook
 	err := row.Scan(
 		&i.ID,

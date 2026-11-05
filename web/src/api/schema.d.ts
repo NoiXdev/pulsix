@@ -2335,6 +2335,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/repos/{id}/playbooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org repos by ID playbooks */
+        get: operations["get-api-v1-orgs-by-org-repos-by-id-playbooks"];
+        put?: never;
+        /** Post API v1 orgs by org repos by ID playbooks */
+        post: operations["pickRepoPlaybook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/repos/{id}/sync": {
         parameters: {
             query?: never;
@@ -3951,6 +3969,19 @@ export interface components {
             repos: number;
             /** Format: int64 */
             templates: number;
+        };
+        DiscoveredPlaybookDTO: {
+            /** @description The playbook was not read */
+            failed: boolean;
+            /** Format: int64 */
+            fields: number;
+            /** @description The last sync left it unread; the counts are from the read before */
+            left_out: boolean;
+            path: string;
+            /** Format: uuid */
+            playbook_id?: string;
+            /** Format: int64 */
+            warnings: number;
         };
         EffectiveRuleDTO: {
             check_key: string;
@@ -5996,6 +6027,51 @@ export interface components {
             readonly $schema?: string;
             repos: components["schemas"]["RepoDTO"][] | null;
         };
+        RepoPlaybookPickInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoPlaybookPickInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The playbook's path inside the repository */
+            path: string;
+        };
+        RepoPlaybookPickOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoPlaybookPickOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description False when the path was already registered; that playbook is returned */
+            created: boolean;
+            playbook: components["schemas"]["PlaybookDTO"];
+        };
+        RepoPlaybooksOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/RepoPlaybooksOutputBody.json
+             */
+            readonly $schema?: string;
+            playbooks: components["schemas"]["DiscoveredPlaybookDTO"][] | null;
+            /** @description Absent until a sync recorded what it read */
+            sources?: components["schemas"]["RepoSourcesDTO"];
+        };
+        RepoSourcesDTO: {
+            /** @description The commit the read saw; empty when no commit was ever read */
+            commit: string;
+            /** @description A limit left playbooks unread */
+            incomplete: boolean;
+            /** @description Names the limits left unread; they keep their previous read, if any */
+            left_out: string[] | null;
+            notes: components["schemas"]["VarSourceNoteDTO"][] | null;
+            /** Format: date-time */
+            synced_at: string;
+            /** @description False when the last sync came from a worker that reads no variable sources; the record is the read before */
+            worker_reads: boolean;
+        };
         RepoSyncOutputBody: {
             /**
              * Format: uri
@@ -6771,6 +6847,15 @@ export interface components {
             /** Format: int64 */
             count: number;
             value: string;
+        };
+        VarSourceNoteDTO: {
+            code: string;
+            file?: string;
+            /** @enum {string} */
+            level: "warning" | "hint";
+            /** Format: int64 */
+            line?: number;
+            message: string;
         };
         VaultIdentityDTO: {
             credential_id: string;
@@ -13630,6 +13715,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-repos-by-id-playbooks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoPlaybooksOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    pickRepoPlaybook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepoPlaybookPickInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepoPlaybookPickOutputBody"];
                 };
             };
             /** @description Error */

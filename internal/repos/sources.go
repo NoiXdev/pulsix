@@ -260,22 +260,22 @@ func (s *Service) VarSources(ctx context.Context, orgID, repoID uuid.UUID) (Sour
 }
 
 // PlaybookVarSource is the repository's record and the row of one
-// playbook path; found is false when there is no record or no row for the
-// path.
-func (s *Service) PlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (SourcesRecord, varsource.Playbook, bool, error) {
-	rec, err := s.store.GetVarSources(ctx, orgID, repoID)
+// playbook path: rec is nil when no sync recorded any, pb nil when the
+// record has no row for the path.
+func (s *Service) PlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (rec *SourcesRecord, pb *varsource.Playbook, err error) {
+	r, err := s.store.GetVarSources(ctx, orgID, repoID)
 	if errors.Is(err, ErrNotFound) {
-		return SourcesRecord{}, varsource.Playbook{}, false, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return SourcesRecord{}, varsource.Playbook{}, false, err
+		return nil, nil, err
 	}
-	pb, err := s.store.GetPlaybookSource(ctx, orgID, repoID, path)
+	row, err := s.store.GetPlaybookSource(ctx, orgID, repoID, path)
 	if errors.Is(err, ErrNotFound) {
-		return SourcesRecord{}, varsource.Playbook{}, false, nil
+		return &r, nil, nil
 	}
 	if err != nil {
-		return SourcesRecord{}, varsource.Playbook{}, false, err
+		return nil, nil, err
 	}
-	return rec, pb, true, nil
+	return &r, &row, nil
 }

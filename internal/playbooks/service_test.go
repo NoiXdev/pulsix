@@ -2,7 +2,9 @@ package playbooks_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 var ctx = context.Background()
@@ -18,6 +21,8 @@ var ctx = context.Background()
 // --- fakes ---
 
 type fakeStore struct {
+	// lockMu stands in for WithRepoPathLock's advisory lock.
+	lockMu  sync.Mutex
 	mu      sync.Mutex
 	byID    map[uuid.UUID]playbooks.Playbook
 	nextErr error
@@ -62,7 +67,7 @@ func (f *fakeStore) List(_ context.Context, orgID uuid.UUID) ([]playbooks.Playbo
 	return out, nil
 }
 
-func (f *fakeStore) UpdateInline(_ context.Context, orgID, id uuid.UUID, inline string) (playbooks.Playbook, error) {
+func (f *fakeStore) UpdateInline(_ context.Context, orgID, id uuid.UUID, inline string, source json.RawMessage) (playbooks.Playbook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p, ok := f.byID[id]
@@ -70,8 +75,40 @@ func (f *fakeStore) UpdateInline(_ context.Context, orgID, id uuid.UUID, inline 
 		return playbooks.Playbook{}, playbooks.ErrNotFound
 	}
 	p.Inline = &inline
+	p.InlineSource = source
 	f.byID[id] = p
 	return p, nil
+}
+
+// ListByRepo returns the repo playbooks of repoID, oldest first (ids are
+// version 7, so their order is creation order).
+func (f *fakeStore) ListByRepo(_ context.Context, orgID, repoID uuid.UUID) ([]playbooks.Playbook, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []playbooks.Playbook
+	for _, p := range f.byID {
+		if p.OrgID == orgID && p.RepoID != nil && *p.RepoID == repoID {
+			out = append(out, p)
+		}
+	}
+	slices.SortFunc(out, func(a, b playbooks.Playbook) int { return strings.Compare(a.ID.String(), b.ID.String()) })
+	return out, nil
+}
+
+func (f *fakeStore) FindRepo(ctx context.Context, orgID, repoID uuid.UUID, path string) (playbooks.Playbook, error) {
+	list, _ := f.ListByRepo(ctx, orgID, repoID)
+	for _, p := range list {
+		if *p.Path == path {
+			return p, nil
+		}
+	}
+	return playbooks.Playbook{}, playbooks.ErrNotFound
+}
+
+func (f *fakeStore) WithRepoPathLock(ctx context.Context, _, _ uuid.UUID, _ string, fn func(context.Context) error) error {
+	f.lockMu.Lock()
+	defer f.lockMu.Unlock()
+	return fn(ctx)
 }
 
 func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
@@ -90,13 +127,43 @@ func (f *fakeStore) Delete(_ context.Context, orgID, id uuid.UUID) error {
 
 type fakeRepos struct {
 	byID map[uuid.UUID]repos.Repo
+	// sources is each repository's stored variable sources record and
+	// playbook rows; a repository without an entry has none.
+	sources map[uuid.UUID]fakeSources
+}
+
+type fakeSources struct {
+	rec       repos.SourcesRecord
+	playbooks []varsource.Playbook
 }
 
 func newFakeRepos(byID map[uuid.UUID]repos.Repo) *fakeRepos {
 	if byID == nil {
 		byID = map[uuid.UUID]repos.Repo{}
 	}
-	return &fakeRepos{byID: byID}
+	return &fakeRepos{byID: byID, sources: map[uuid.UUID]fakeSources{}}
+}
+
+func (f *fakeRepos) VarSources(_ context.Context, orgID, repoID uuid.UUID) (repos.SourcesRecord, []varsource.Playbook, bool, error) {
+	src, ok := f.sources[repoID]
+	if !ok || f.byID[repoID].OrgID != orgID {
+		return repos.SourcesRecord{}, nil, false, nil
+	}
+	return src.rec, src.playbooks, true, nil
+}
+
+func (f *fakeRepos) PlaybookVarSource(_ context.Context, orgID, repoID uuid.UUID, path string) (*repos.SourcesRecord, *varsource.Playbook, error) {
+	src, ok := f.sources[repoID]
+	if !ok || f.byID[repoID].OrgID != orgID {
+		return nil, nil, nil
+	}
+	rec := src.rec
+	for _, pb := range src.playbooks {
+		if pb.Path == path {
+			return &rec, &pb, nil
+		}
+	}
+	return &rec, nil, nil
 }
 
 func (f *fakeRepos) Get(_ context.Context, orgID, id uuid.UUID) (repos.Repo, error) {
