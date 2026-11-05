@@ -26,26 +26,48 @@ func (q *Queries) DeleteRepoPlaybookSources(ctx context.Context, arg DeleteRepoP
 	return err
 }
 
-const getRepoPlaybookSource = `-- name: GetRepoPlaybookSource :one
-SELECT path, result FROM repo_playbook_sources
-WHERE org_id = $1 AND repo_id = $2 AND path = $3
+const getPlaybookVarSource = `-- name: GetPlaybookVarSource :one
+SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes,
+       p.path, p.result
+FROM repo_var_sources r
+LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = $1
+WHERE r.org_id = $2 AND r.repo_id = $3
 `
 
-type GetRepoPlaybookSourceParams struct {
+type GetPlaybookVarSourceParams struct {
+	Path   string    `json:"path"`
 	OrgID  uuid.UUID `json:"org_id"`
 	RepoID uuid.UUID `json:"repo_id"`
-	Path   string    `json:"path"`
 }
 
-type GetRepoPlaybookSourceRow struct {
-	Path   string `json:"path"`
-	Result []byte `json:"result"`
+type GetPlaybookVarSourceRow struct {
+	CommitSha   string    `json:"commit_sha"`
+	SyncedAt    time.Time `json:"synced_at"`
+	WorkerReads bool      `json:"worker_reads"`
+	Incomplete  bool      `json:"incomplete"`
+	LeftOut     []byte    `json:"left_out"`
+	Notes       []byte    `json:"notes"`
+	Path        *string   `json:"path"`
+	Result      []byte    `json:"result"`
 }
 
-func (q *Queries) GetRepoPlaybookSource(ctx context.Context, arg GetRepoPlaybookSourceParams) (GetRepoPlaybookSourceRow, error) {
-	row := q.db.QueryRow(ctx, getRepoPlaybookSource, arg.OrgID, arg.RepoID, arg.Path)
-	var i GetRepoPlaybookSourceRow
-	err := row.Scan(&i.Path, &i.Result)
+// The repository's record and the row of one playbook path in one
+// statement (backlog 7.87), so the two come from the same snapshot: no
+// record answers no row, a record without a row for the path answers its
+// columns with a null path and result.
+func (q *Queries) GetPlaybookVarSource(ctx context.Context, arg GetPlaybookVarSourceParams) (GetPlaybookVarSourceRow, error) {
+	row := q.db.QueryRow(ctx, getPlaybookVarSource, arg.Path, arg.OrgID, arg.RepoID)
+	var i GetPlaybookVarSourceRow
+	err := row.Scan(
+		&i.CommitSha,
+		&i.SyncedAt,
+		&i.WorkerReads,
+		&i.Incomplete,
+		&i.LeftOut,
+		&i.Notes,
+		&i.Path,
+		&i.Result,
+	)
 	return i, err
 }
 

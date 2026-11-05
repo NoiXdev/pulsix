@@ -39,8 +39,8 @@ func (f *fakeStore) ListPlaybookSources(context.Context, uuid.UUID, uuid.UUID) (
 	return nil, nil
 }
 
-func (f *fakeStore) GetPlaybookSource(context.Context, uuid.UUID, uuid.UUID, string) (varsource.Playbook, error) {
-	return varsource.Playbook{}, repos.ErrNotFound
+func (f *fakeStore) GetPlaybookVarSource(context.Context, uuid.UUID, uuid.UUID, string) (repos.SourcesRecord, *varsource.Playbook, error) {
+	return repos.SourcesRecord{}, nil, repos.ErrNotFound
 }
 
 // sourcesStore is one repository's variable sources in memory; ops is
@@ -334,4 +334,46 @@ func manyPlaybooks(n int) []varsource.Playbook {
 		out[i] = varsource.Playbook{Path: uuid.NewString() + ".yml"}
 	}
 	return out
+}
+
+func (s *sourcesStore) GetPlaybookVarSource(_ context.Context, _, _ uuid.UUID, path string) (repos.SourcesRecord, *varsource.Playbook, error) {
+	s.ops = append(s.ops, "get playbook")
+	if s.record == nil {
+		return repos.SourcesRecord{}, nil, repos.ErrNotFound
+	}
+	for _, pb := range s.playbooks {
+		if pb.Path == path {
+			return *s.record, &pb, nil
+		}
+	}
+	return *s.record, nil, nil
+}
+
+// TestPlaybookVarSourceReadsOnce: the record and the playbook's row come
+// from one store read (backlog 7.87), whatever it finds.
+func TestPlaybookVarSourceReadsOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		store    *sourcesStore
+		path     string
+		rec, row bool
+	}{
+		{"record and row", previousRead(), "b.yml", true, true},
+		{"record without the row", previousRead(), "z.yml", true, false},
+		{"no record", &sourcesStore{fakeStore: newFakeStore()}, "b.yml", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var log bytes.Buffer
+			rec, pb, err := sourcesService(tc.store, &log).PlaybookVarSource(ctx, uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), tc.path)
+			if err != nil || (rec != nil) != tc.rec || (pb != nil) != tc.row {
+				t.Fatalf("PlaybookVarSource = %+v, %+v, %v; want record %v, row %v", rec, pb, err, tc.rec, tc.row)
+			}
+			if tc.row && pb.Path != tc.path {
+				t.Fatalf("row %s, want %s", pb.Path, tc.path)
+			}
+			if !sameStrings(tc.store.ops, []string{"get playbook"}) {
+				t.Fatalf("store calls = %v, want one GetPlaybookVarSource", tc.store.ops)
+			}
+		})
+	}
 }

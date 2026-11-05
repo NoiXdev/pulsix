@@ -128,12 +128,12 @@ func TestReplaceVarSourcesReplacesThePreviousRecord(t *testing.T) {
 	if len(pbs) != 1 || pbs[0].Path != "site.yml" || !sameStrings(fieldNames(pbs[0]), []string{"env", "region"}) {
 		t.Fatalf("playbooks after B = %+v", pbs)
 	}
-	if _, err := store.GetPlaybookSource(scoped, org, repoID, "deploy.yml"); !errors.Is(err, repos.ErrNotFound) {
-		t.Fatalf("A's deploy.yml after B = %v, want ErrNotFound", err)
+	if _, pb, err := store.GetPlaybookVarSource(scoped, org, repoID, "deploy.yml"); err != nil || pb != nil {
+		t.Fatalf("A's deploy.yml after B = %+v, %v; want no row", pb, err)
 	}
-	pb, err := store.GetPlaybookSource(scoped, org, repoID, "site.yml")
-	if err != nil || !sameStrings(fieldNames(pb), []string{"env", "region"}) {
-		t.Fatalf("GetPlaybookSource(site.yml) = %+v, %v", pb, err)
+	_, pb, err := store.GetPlaybookVarSource(scoped, org, repoID, "site.yml")
+	if err != nil || pb == nil || !sameStrings(fieldNames(*pb), []string{"env", "region"}) {
+		t.Fatalf("GetPlaybookVarSource(site.yml) = %+v, %v", pb, err)
 	}
 
 	// Another organization reads nothing of it, neither under its own id
@@ -146,8 +146,8 @@ func TestReplaceVarSourcesReplacesThePreviousRecord(t *testing.T) {
 		if pbs, err := store.ListPlaybookSources(otherScoped, asOrg, repoID); err != nil || len(pbs) != 0 {
 			t.Fatalf("ListPlaybookSources from another org = %+v, %v", pbs, err)
 		}
-		if _, err := store.GetPlaybookSource(otherScoped, asOrg, repoID, "site.yml"); !errors.Is(err, repos.ErrNotFound) {
-			t.Fatalf("GetPlaybookSource from another org = %v, want ErrNotFound", err)
+		if _, _, err := store.GetPlaybookVarSource(otherScoped, asOrg, repoID, "site.yml"); !errors.Is(err, repos.ErrNotFound) {
+			t.Fatalf("GetPlaybookVarSource from another org = %v, want ErrNotFound", err)
 		}
 	}
 
@@ -370,8 +370,8 @@ func TestUndecodablePlaybookRowCountsAsMissing(t *testing.T) {
 	if n := lines(); n != 1 {
 		t.Fatalf("log lines naming old.yml after the list = %d, want 1:\n%s", n, logs.String())
 	}
-	if _, err := store.GetPlaybookSource(scoped, org, repoID, "old.yml"); !errors.Is(err, repos.ErrNotFound) {
-		t.Fatalf("GetPlaybookSource(old.yml) = %v, want ErrNotFound", err)
+	if rec, pb, err := store.GetPlaybookVarSource(scoped, org, repoID, "old.yml"); err != nil || pb != nil || rec.Commit != commitA {
+		t.Fatalf("GetPlaybookVarSource(old.yml) = %+v, %+v, %v; want the record and no row", rec, pb, err)
 	}
 	if n := lines(); n != 2 {
 		t.Fatalf("log lines naming old.yml after the get = %d, want 2", n)
@@ -397,5 +397,49 @@ func TestUndecodablePlaybookRowCountsAsMissing(t *testing.T) {
 	}
 	if pbs, err := store.ListPlaybookSources(scoped, org, repoID); err != nil || !sameStrings(playbookPaths(pbs), []string{"site.yml"}) {
 		t.Fatalf("playbooks after the finishes = %v, %v", playbookPaths(pbs), err)
+	}
+}
+
+// TestGetPlaybookVarSource: the record and one playbook row in one read —
+// both when the row exists, the record and no playbook without one, and
+// ErrNotFound without a record. Another organization reads nothing.
+func TestGetPlaybookVarSource(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := repos.NewSQLStore(d)
+	org := seedOrg(t, q, "playbook-var-source-org")
+	other := seedOrg(t, q, "playbook-var-source-other")
+	scoped := db.WithOrgScope(ctx, org)
+	repoID := seedSourcesRepo(t, d, org, "infra")
+
+	if _, _, err := store.GetPlaybookVarSource(scoped, org, repoID, "site.yml"); !errors.Is(err, repos.ErrNotFound) {
+		t.Fatalf("without a record = %v, want ErrNotFound", err)
+	}
+	t0 := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	if err := store.ReplaceVarSources(scoped, org, repoID, repos.SourcesRecord{
+		Commit: commitA, SyncedAt: t0, WorkerReads: true, Incomplete: true, LeftOut: []string{"huge.yml"},
+		Notes: []varsource.Note{varsource.ReadFailed("one file could not be read")},
+	}, []varsource.Playbook{playbookSource("site.yml", "env"), playbookSource("deploy.yml", "app_version")}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, pb, err := store.GetPlaybookVarSource(scoped, org, repoID, "site.yml")
+	if err != nil || pb == nil || pb.Path != "site.yml" || !sameStrings(fieldNames(*pb), []string{"env"}) {
+		t.Fatalf("site.yml = %+v, %+v, %v; want the record and the row", rec, pb, err)
+	}
+	if rec.Commit != commitA || !rec.SyncedAt.Equal(t0) || !rec.WorkerReads || !rec.Incomplete ||
+		!sameStrings(rec.LeftOut, []string{"huge.yml"}) || len(rec.Notes) != 1 {
+		t.Fatalf("record = %+v", rec)
+	}
+	rec, pb, err = store.GetPlaybookVarSource(scoped, org, repoID, "missing.yml")
+	if err != nil || pb != nil || rec.Commit != commitA {
+		t.Fatalf("missing.yml = %+v, %+v, %v; want the record and no playbook", rec, pb, err)
+	}
+
+	otherScoped := db.WithOrgScope(ctx, other)
+	for _, asOrg := range []uuid.UUID{other, org} {
+		if _, _, err := store.GetPlaybookVarSource(otherScoped, asOrg, repoID, "site.yml"); !errors.Is(err, repos.ErrNotFound) {
+			t.Fatalf("from another org (as %s) = %v, want ErrNotFound", asOrg, err)
+		}
 	}
 }

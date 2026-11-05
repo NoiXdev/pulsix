@@ -223,8 +223,10 @@ type Store interface {
 	GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (SourcesRecord, error)
 	// ListPlaybookSources is every playbook row of the repository, by path.
 	ListPlaybookSources(ctx context.Context, orgID, repoID uuid.UUID) ([]varsource.Playbook, error)
-	// GetPlaybookSource is one playbook row; ErrNotFound without one.
-	GetPlaybookSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (varsource.Playbook, error)
+	// GetPlaybookVarSource is the repository's record and the row of one
+	// playbook path, read together: ErrNotFound without a record, a nil
+	// playbook when the record has no row for the path.
+	GetPlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (SourcesRecord, *varsource.Playbook, error)
 }
 
 // Service implements the repository registry.

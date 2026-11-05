@@ -50,6 +50,13 @@ SELECT path, result FROM repo_playbook_sources
 WHERE org_id = @org_id AND repo_id = @repo_id
 ORDER BY path COLLATE "C";
 
--- name: GetRepoPlaybookSource :one
-SELECT path, result FROM repo_playbook_sources
-WHERE org_id = @org_id AND repo_id = @repo_id AND path = @path;
+-- name: GetPlaybookVarSource :one
+-- The repository's record and the row of one playbook path in one
+-- statement (backlog 7.87), so the two come from the same snapshot: no
+-- record answers no row, a record without a row for the path answers its
+-- columns with a null path and result.
+SELECT r.commit_sha, r.synced_at, r.worker_reads, r.incomplete, r.left_out, r.notes,
+       p.path, p.result
+FROM repo_var_sources r
+LEFT JOIN repo_playbook_sources p ON p.org_id = r.org_id AND p.repo_id = r.repo_id AND p.path = sqlc.arg(path)
+WHERE r.org_id = sqlc.arg(org_id) AND r.repo_id = sqlc.arg(repo_id);

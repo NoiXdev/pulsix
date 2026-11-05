@@ -260,22 +260,16 @@ func (s *Service) VarSources(ctx context.Context, orgID, repoID uuid.UUID) (Sour
 }
 
 // PlaybookVarSource is the repository's record and the row of one
-// playbook path: rec is nil when no sync recorded any, pb nil when the
-// record has no row for the path.
+// playbook path, from one store read so the two belong together: rec is
+// nil when no sync recorded any, pb nil when the record has no row for the
+// path.
 func (s *Service) PlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (rec *SourcesRecord, pb *varsource.Playbook, err error) {
-	r, err := s.store.GetVarSources(ctx, orgID, repoID)
+	r, row, err := s.store.GetPlaybookVarSource(ctx, orgID, repoID, path)
 	if errors.Is(err, ErrNotFound) {
 		return nil, nil, nil
 	}
 	if err != nil {
 		return nil, nil, err
 	}
-	row, err := s.store.GetPlaybookSource(ctx, orgID, repoID, path)
-	if errors.Is(err, ErrNotFound) {
-		return &r, nil, nil
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	return &r, &row, nil
+	return &r, row, nil
 }

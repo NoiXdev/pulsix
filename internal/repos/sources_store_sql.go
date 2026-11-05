@@ -110,13 +110,42 @@ func (s *SQLStore) GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (
 		}
 		return SourcesRecord{}, fmt.Errorf("get repo variable sources: %w", err)
 	}
-	rec := SourcesRecord{
-		Commit: row.CommitSha, SyncedAt: row.SyncedAt, WorkerReads: row.WorkerReads, Incomplete: row.Incomplete,
+	return decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes)
+}
+
+// GetPlaybookVarSource implements Store: the record and the row of one
+// playbook path, read in one statement. ErrNotFound when no sync recorded
+// any; a nil playbook when the record has no row for the path, or its row
+// no longer decodes (decodePlaybookSource).
+func (s *SQLStore) GetPlaybookVarSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (SourcesRecord, *varsource.Playbook, error) {
+	row, err := s.q.GetPlaybookVarSource(ctx, gen.GetPlaybookVarSourceParams{Path: path, OrgID: orgID, RepoID: repoID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return SourcesRecord{}, nil, ErrNotFound
+		}
+		return SourcesRecord{}, nil, fmt.Errorf("get playbook variable source: %w", err)
 	}
-	if err := json.Unmarshal(row.LeftOut, &rec.LeftOut); err != nil {
+	rec, err := decodeSourcesRecord(row.CommitSha, row.SyncedAt, row.WorkerReads, row.Incomplete, row.LeftOut, row.Notes)
+	if err != nil {
+		return SourcesRecord{}, nil, err
+	}
+	if row.Path == nil {
+		return rec, nil, nil
+	}
+	pb, ok := s.decodePlaybookSource(ctx, orgID, repoID, *row.Path, row.Result)
+	if !ok {
+		return rec, nil, nil
+	}
+	return rec, &pb, nil
+}
+
+// decodeSourcesRecord is a stored record's columns as a SourcesRecord.
+func decodeSourcesRecord(commit string, syncedAt time.Time, workerReads, incomplete bool, leftOut, notes []byte) (SourcesRecord, error) {
+	rec := SourcesRecord{Commit: commit, SyncedAt: syncedAt, WorkerReads: workerReads, Incomplete: incomplete}
+	if err := json.Unmarshal(leftOut, &rec.LeftOut); err != nil {
 		return SourcesRecord{}, fmt.Errorf("decode left-out playbooks: %w", err)
 	}
-	if err := json.Unmarshal(row.Notes, &rec.Notes); err != nil {
+	if err := json.Unmarshal(notes, &rec.Notes); err != nil {
 		return SourcesRecord{}, fmt.Errorf("decode variable source notes: %w", err)
 	}
 	return rec, nil
@@ -136,23 +165,6 @@ func (s *SQLStore) ListPlaybookSources(ctx context.Context, orgID, repoID uuid.U
 		}
 	}
 	return out, nil
-}
-
-// GetPlaybookSource implements Store; ErrNotFound when the path has no row
-// or its row no longer decodes.
-func (s *SQLStore) GetPlaybookSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (varsource.Playbook, error) {
-	row, err := s.q.GetRepoPlaybookSource(ctx, gen.GetRepoPlaybookSourceParams{OrgID: orgID, RepoID: repoID, Path: path})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return varsource.Playbook{}, ErrNotFound
-		}
-		return varsource.Playbook{}, fmt.Errorf("get repo playbook source: %w", err)
-	}
-	pb, ok := s.decodePlaybookSource(ctx, orgID, repoID, row.Path, row.Result)
-	if !ok {
-		return varsource.Playbook{}, ErrNotFound
-	}
-	return pb, nil
 }
 
 // decodePlaybookSource is one stored parse result; the row's path is the
