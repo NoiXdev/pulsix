@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { QueryClient } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { addField, fieldCount, group, routes, renderAt, SCHEMA, schemaSaved, stale, typeEnv } from './groupPageTestKit.tsx';
+import { addField, fieldCount, group, refetch, routes, renderAt, SCHEMA, schemaSaved, stale, typeEnv } from './groupPageTestKit.tsx';
 
 /** A schema someone else saved: one more group field. */
 const OTHER = { fields: [...SCHEMA.fields, { name: 'region', type: 'string' }] };
@@ -35,15 +34,6 @@ function schemaPage(
   );
   const { qc } = renderAt('/o/acme/groups/g1');
   return { state, qc };
-}
-
-/** refetch refetches every query and lets the page render the result
- * (the query client hands results to the page on a later tick). */
-async function refetch(qc: QueryClient) {
-  await act(async () => {
-    await qc.refetchQueries();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
 }
 
 const schemaRegion = () => screen.getByRole('region', { name: 'Variable schema' });
@@ -215,6 +205,27 @@ describe('GroupDetailPage schema revision', () => {
     await saveSchema(user);
     await screen.findByText('Schema saved');
     expect(state.puts[0].headers.get('If-Match')).toBe('"4"');
+  });
+
+  it("clears the problems of a refused save when someone else's schema replaces the draft", async () => {
+    const user = userEvent.setup();
+    const { state, qc } = schemaPage(
+      () =>
+        new Response(JSON.stringify({ status: 422, errors: [{ location: 'body.schema.fields[0].name', message: 'is taken' }] }), {
+          status: 422,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    await screen.findByRole('table', { name: 'Fields' });
+    await saveSchema(user);
+    expect(await within(schemaRegion()).findByText(/The schema has 1 problem/)).toBeInTheDocument();
+
+    // The draft is unedited, so someone else's schema replaces it, and the
+    // problems of the draft that is gone go with it.
+    state.current = group({ revision: 4, schema: OTHER });
+    await refetch(qc);
+    expect(await within(schemaRegion()).findByText('region')).toBeInTheDocument();
+    expect(within(schemaRegion()).queryByText(/The schema has/)).not.toBeInTheDocument();
   });
 
   // Ruling 3: a write made from this page that sent If-Match "r" and got

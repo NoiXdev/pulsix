@@ -1,5 +1,5 @@
 import { expect } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import type userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
@@ -129,4 +129,13 @@ export async function addField(user: User) {
   const dialog = await screen.findByRole('dialog', { name: /^Field / });
   await user.click(within(dialog).getByRole('button', { name: 'Done' }));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+}
+
+/** refetch refetches every query and lets the page render the result
+ * (the query client hands results to the page on a later tick). */
+export async function refetch(qc: QueryClient) {
+  await act(async () => {
+    await qc.refetchQueries();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }

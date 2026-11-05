@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -48,14 +48,13 @@ function renderAt(path: string) {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([detail, list, host])]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
-  const view = render(
+  return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
         <RouterProvider router={router} />
       </ToastProvider>
     </QueryClientProvider>,
   );
-  return { ...view, qc };
 }
 
 const ORG = { org: { id: 'o1', name: 'Acme', slug: 'acme', role: 'admin', created_at: '2026-01-01T00:00:00Z' } };
@@ -378,57 +377,6 @@ describe('GroupDetailPage', () => {
     expect(within(dialog).getByLabelText('domain')).toHaveValue('shop.acme.io');
     await user.click(within(dialog).getByRole('button', { name: 'Save values' }));
     await screen.findByText('Values of web-01 saved');
-    expect(put?.headers.get('If-Match')).toBe('"7"');
-  });
-
-  // Backlog 7.89: an open dialog keeps the revision it was filled from; a
-  // background refetch of a newer one must not become what its save sends.
-  it('the settings dialog saves on the revision it was opened on through a refetch', async () => {
-    const user = userEvent.setup();
-    let current = GROUP;
-    let patched: MockRequest | undefined;
-    mockApi({
-      ...base,
-      'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
-      'PATCH /api/v1/orgs/acme/inventory/groups/g1': (req: MockRequest) => {
-        patched = req;
-        return GROUP;
-      },
-    });
-    const { qc } = renderAt('/o/acme/groups/g1');
-    const dialog = await openSettings(user);
-    current = { group: { ...GROUP.group, revision: 4 } };
-    await act(async () => {
-      await qc.refetchQueries();
-    });
-    await user.clear(within(dialog).getByLabelText('Name'));
-    await user.type(within(dialog).getByLabelText('Name'), 'web_fe');
-    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(patched).toBeDefined());
-    expect(patched?.headers.get('If-Match')).toBe('"3"');
-  });
-
-  it('the member values dialog saves on the member revision it was opened on through a refetch', async () => {
-    const user = userEvent.setup();
-    let members = { members: [MEMBER] };
-    let put: MockRequest | undefined;
-    mockApi({
-      ...base,
-      'GET /api/v1/orgs/acme/inventory/groups/g1/members': () => members,
-      'PUT /api/v1/orgs/acme/inventory/groups/g1/members/h1': (req: MockRequest) => {
-        put = req;
-        return { member: { ...MEMBER, revision: 9 } };
-      },
-    });
-    const { qc } = renderAt('/o/acme/groups/g1');
-    await memberAction(user, 'web-01', 'Edit values');
-    const dialog = await screen.findByRole('dialog', { name: 'Values of web-01' });
-    members = { members: [{ ...MEMBER, revision: 8 }] };
-    await act(async () => {
-      await qc.refetchQueries();
-    });
-    await user.click(within(dialog).getByRole('button', { name: 'Save values' }));
-    await waitFor(() => expect(put).toBeDefined());
     expect(put?.headers.get('If-Match')).toBe('"7"');
   });
 

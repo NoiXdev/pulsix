@@ -82,6 +82,33 @@ describe('useRevisionDraft', () => {
     expect(result.current.revision).toBe(5);
   });
 
+  it('rebuilds a saved draft from content someone else stored while the save was in flight', () => {
+    const D: Content = { v: 'd' };
+    const { result, rerender } = setup({ stored: A, revision: 3 });
+    act(() => result.current.edit({ built: 'mine' }));
+    const ticket = result.current.startSave();
+    // The group moves past the save before its answer lands: D at 5.
+    rerender({ stored: D, revision: 5 });
+    act(() => result.current.saved(ticket, C, 4));
+    rerender({ stored: D, revision: 5 });
+    expect(result.current.draft).toEqual({ built: 'd' });
+    expect(result.current.revision).toBe(5);
+  });
+
+  it('rebuilds a saved draft when someone else stores the earlier content again', () => {
+    const { result, rerender } = setup({ stored: A, revision: 3 });
+    act(() => result.current.edit({ built: 'mine' }));
+    const ticket = result.current.startSave();
+    act(() => result.current.saved(ticket, C, 5));
+    // The refetch after the save failed: the group still shows A at 3 ...
+    rerender({ stored: A, revision: 3 });
+    expect(result.current.draft).toEqual({ built: 'c' });
+    // ... until someone else stores A again, at 6.
+    rerender({ stored: A, revision: 6 });
+    expect(result.current.draft).toEqual({ built: 'a' });
+    expect(result.current.revision).toBe(6);
+  });
+
   it('an edit typed during the save stays, pinned to the response revision', () => {
     const { result, rerender } = setup({ stored: A, revision: 3 });
     act(() => result.current.edit({ built: 'first' }));

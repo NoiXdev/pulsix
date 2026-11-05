@@ -33,8 +33,6 @@ interface State<D> {
   draft: D;
   /** The content (JSON) the draft was built from. */
   base: string;
-  /** The stored content (JSON) the last render was given. */
-  seen: string;
   touched: boolean;
   pinned: number;
   generation: number;
@@ -62,9 +60,12 @@ function follow(pinned: number, steps: readonly RevisionStep[]): number {
  * group.revision — the draft then equals the stored content at that
  * revision, so saving on the newest revision overwrites nothing. It is the
  * newer of the group's revision and the one this form's last save stored,
- * should the refetch after that save not have landed (or failed); for the
- * same reason the content a save stored is not replaced by the older
- * content the group still shows, only by content that changes after it.
+ * should the refetch after that save not have landed (or failed). For the
+ * same reason other content rebuilds an untouched draft only when it comes
+ * with a newer revision than the draft's: the older content the group still
+ * shows after a save is not taken for a change, but anything stored after
+ * the draft's revision is — even the earlier content stored again, or a
+ * change someone else made while the draft's own save was in flight.
  *
  * The first edit pins the revision it was made on, and a background
  * refetch that brings a newer revision — with the same content or other —
@@ -97,7 +98,6 @@ export function useRevisionDraft<D>(
   const [state, setState] = useState<State<D>>(() => ({
     draft: build(stored),
     base: key,
-    seen: key,
     touched: false,
     pinned: revision,
     generation: 0,
@@ -106,11 +106,11 @@ export function useRevisionDraft<D>(
   // flight.
   const edits = useRef(0);
 
-  // New stored content: an untouched draft is rebuilt from it, unless it is
-  // what the draft already holds (the content its own save stored).
+  // Other content stored after the draft's revision: an untouched draft is
+  // rebuilt from it and follows its revision.
   let s = state;
-  if (key !== s.seen) {
-    s = !s.touched && key !== s.base ? { ...s, seen: key, draft: build(stored), base: key, generation: s.generation + 1 } : { ...s, seen: key };
+  if (!s.touched && key !== s.base && revision > s.pinned) {
+    s = { ...s, draft: build(stored), base: key, pinned: revision, generation: s.generation + 1 };
     setState(s);
   }
 
