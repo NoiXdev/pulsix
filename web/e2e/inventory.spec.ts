@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { expectNoClippedCards } from './layout.ts';
 import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
@@ -131,6 +132,9 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await toast(page, 'Host assigned to inv_web');
   // Scoped to the member's own row: the sidebar's group pill reads "Complete" too.
   await expect(page.locator('[data-list-row]', { hasText: 'inv-web-01' }).getByText('complete', { exact: true })).toBeVisible();
+  // The whole group page (schema builder, values, members) fits its column at
+  // the default 1280px viewport.
+  await expectNoClippedCards(page);
 
   // The preview renders the jump host chain and masks the secret.
   const json = page.getByLabel('Inventory JSON');

@@ -23,6 +23,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { SSH_FIXTURE_HOST, BASTION_FIXTURE_HOST, GIT_FIXTURE_URL, FIXTURE_REPO_BRANCH } from './ansible-env.ts';
 import { workerServiceAvailable } from './worker.ts';
+import { expectNoClippedCards } from './layout.ts';
 import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
@@ -210,6 +211,9 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await expect(page.getByText('failed', { exact: true })).toBeVisible({ timeout: 60_000 });
   await expect(page.getByRole('table', { name: 'Per-host results' }).getByText('failed', { exact: true })).toBeVisible();
   const failedUrl = page.url();
+  // The failed run's page (error banner, per-host table, event log) fits its
+  // column at the default viewport.
+  await expectNoClippedCards(page);
 
   // The fix: the template's extra var flips through the same UI the
   // operator would use, then the run view's retry action re-runs only

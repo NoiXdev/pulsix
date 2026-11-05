@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { expectNoClippedCards } from './layout.ts';
 import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
@@ -93,6 +94,8 @@ test('create a zone and hosts, toggle capabilities independently, tag one, then 
   await page.getByPlaceholder('role=db').fill('env=prod');
   await page.getByRole('button', { name: 'Add tag' }).click();
   await expect(page.getByText('env=prod')).toBeVisible();
+  // The host page's cards and sections fit their column at the default viewport.
+  await expectNoClippedCards(page);
 
   // Exact: the sidebar's Infrastructure group also holds "Jump hosts".
   await page.getByRole('link', { name: 'Hosts', exact: true }).click();

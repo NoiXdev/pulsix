@@ -15,7 +15,7 @@ import { cn } from '../lib/utils.ts';
  * the belt for any parent that sets its own `min-h-0`. */
 export function Card({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn('flex shrink-0 flex-col overflow-clip rounded-[10px] border border-border bg-card', className)}>
+    <div data-card="" className={cn('flex shrink-0 flex-col overflow-clip rounded-[10px] border border-border bg-card', className)}>
       {children}
     </div>
   );
