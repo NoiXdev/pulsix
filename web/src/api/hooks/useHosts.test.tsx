@@ -29,6 +29,21 @@ describe('useUpdateHost', () => {
     expect(cached()?.revision).toBe(4);
     expect(cached()?.name).toBe('web-02');
   });
+
+  it.each([
+    ['tags', { tags: [{ key: 'env', value: 'prod' }] }],
+    ['the jump host', { jump: { mode: 'none' as const } }],
+  ])('keeps the old revision cached when the save also wrote %s, so a sidebar write built from not yet refetched data answers 412 instead of undoing it', async (_what, extra) => {
+    mockApi({ 'PATCH /api/v1/orgs/acme/hosts/h1': { host: { ...HOST, revision: 4 } } });
+    const { wrapper, cached } = setup();
+    const { result } = renderHook(() => useUpdateHost('acme', 'h1'), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({ name: 'web-01', zone_id: 'z', address: '', revision: 3, ...extra });
+    });
+
+    expect(cached()?.revision).toBe(3);
+  });
 });
 
 describe('useSetHostCapabilities', () => {

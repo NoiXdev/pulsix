@@ -101,11 +101,16 @@ export function useUpdateHost(org: string, id: string) {
   return useMutation({
     mutationFn: ({ revision, ...body }: HostInput & { revision: number }) =>
       unwrap(api.PATCH('/api/v1/orgs/{org}/hosts/{id}', { params: { path: { org, id }, header: ifMatch(revision) }, body })),
-    onSuccess: (res) => {
+    onSuccess: (res, body) => {
       // The write bumped the revision: cache the response's host so a
       // following tag or SSH write sends the current one while the refetch
-      // is still in flight.
-      qc.setQueryData(['host', org, id], res);
+      // is still in flight. Not when the save also wrote tags or the jump
+      // host: the response carries neither, so the tag and SSH caches are
+      // stale until their refetch lands, and a sidebar write built from them
+      // must answer 412 rather than pass If-Match and undo this save.
+      if (body.tags === undefined && body.jump === undefined) {
+        qc.setQueryData(['host', org, id], res);
+      }
       invalidate(id);
     },
   });
