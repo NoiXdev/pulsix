@@ -33,6 +33,15 @@ export const group = (extra = {}) => ({
   },
 });
 
+/** A group with a stored secret, which every read returns masked: a refetch
+ * of it brings the same values whatever its revision, unless `env` changed. */
+export const withSecret = (revision: number, env = 'prod') =>
+  group({
+    revision,
+    schema: { fields: [...SCHEMA.fields, { name: 'db_password', type: 'secret' }] },
+    vars: { env, db_password: { $secret: 'set' } },
+  });
+
 export const summary = (id: string, name: string, parent_id: string | null, extra = {}) => ({
   id, name, description: '', parent_id, members: 0, group_fields: 1, host_fields: 0, complete: true, revision: 1, ...extra,
 });
