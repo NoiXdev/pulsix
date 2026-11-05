@@ -83,6 +83,18 @@ export const OPERATOR = {
   resetPassword: 'operator-reset-password',
 };
 
+/** The person accounts.spec's factor-reset journey invites into ORG with a
+ * fresh account of their own, so the operator's password and factor stay as
+ * the specs after it expect them. They enrol a first authenticator on
+ * accepting, an administrator resets it, and they enrol a second one
+ * (`FACTOR_PERSON_TOTP_STATE_PATH` holds whichever is current). */
+export const FACTOR_PERSON = {
+  email: 'reset-person@example.test',
+  name: 'Rita Reset',
+  password: 'reset-person-password',
+  changedPassword: 'reset-person-own-password',
+};
+
 // SMTP delivered straight to the mailpit container started above — no
 // STARTTLS, no auth, matching what internal/mail.deliver does when
 // Username/StartTLS are left unset.
@@ -123,3 +135,5 @@ export const OPERATOR_TOTP_STEP_STATE_PATH = path.join(stateDir, 'operator-totp-
 /** tenancy.spec's second-organization user, enrolled the same way. */
 export const TENANT_TOTP_STATE_PATH = path.join(stateDir, 'tenant-totp-secret.json');
 export const TENANT_TOTP_STEP_STATE_PATH = path.join(stateDir, 'tenant-totp-step.json');
+export const FACTOR_PERSON_TOTP_STATE_PATH = path.join(stateDir, 'factor-person-totp-secret.json');
+export const FACTOR_PERSON_TOTP_STEP_STATE_PATH = path.join(stateDir, 'factor-person-totp-step.json');

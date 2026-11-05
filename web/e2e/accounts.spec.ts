@@ -1,7 +1,10 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import {
   ADMIN_STORAGE_STATE,
+  FACTOR_PERSON,
+  FACTOR_PERSON_TOTP_STATE_PATH,
+  FACTOR_PERSON_TOTP_STEP_STATE_PATH,
   OPERATOR,
   OPERATOR_TOTP_STATE_PATH,
   OPERATOR_TOTP_STEP_STATE_PATH,
@@ -10,7 +13,8 @@ import {
   TOTP_STEP_STATE_PATH,
 } from './env.ts';
 import { nextTotpCode } from './otp.ts';
-import { waitForMessageMatching } from './mailpit.ts';
+import { extractInviteLink, waitForMessageMatching, waitForMessageTo } from './mailpit.ts';
+import { enrolTotp } from './enrol.ts';
 
 // Account administration end to end: the instance administrator sets a
 // temporary password for the operator members.spec created, and that
@@ -29,7 +33,7 @@ function secretOf(path: string): string {
  * whether the administrator's session still counts as fresh depends on how
  * long the specs before this one took, so the dialog may or may not come.
  * `done` is what shows when the action went through without it. */
-async function proveSecondFactorIfAsked(page: Page, done: ReturnType<Page['getByRole']>): Promise<void> {
+async function proveSecondFactorIfAsked(page: Page, done: Locator): Promise<void> {
   const stepUp = page.getByRole('dialog', { name: 'Confirm it is you', exact: true });
   await expect(stepUp.or(done)).toBeVisible({ timeout: 30_000 });
   if (await stepUp.isVisible()) {
@@ -37,6 +41,11 @@ async function proveSecondFactorIfAsked(page: Page, done: ReturnType<Page['getBy
       .getByLabel('Authenticator or recovery code')
       .fill(await nextTotpCode(secretOf(TOTP_STATE_PATH), TOTP_STEP_STATE_PATH));
     await stepUp.getByRole('button', { name: 'Confirm' }).click();
+    // Proving the factor replaces the session's secret, so the cookie the
+    // storage state file holds no longer authenticates: re-save it for the
+    // specs that load it after this one.
+    await expect(stepUp).toBeHidden();
+    await page.context().storageState({ path: ADMIN_STORAGE_STATE });
   }
 }
 
@@ -161,6 +170,131 @@ test('a person resets a forgotten password through the mailed link and still sig
 
     await expect(page).toHaveURL(/\/o\/[^/]+\/hosts$/);
     await expect(page.getByRole('heading', { name: 'Hosts' })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+// The notice mails name the sign-in page and carry no secret.
+const SIGN_IN_LINK = /Sign in: http:\/\/localhost:\d+\/?\s/;
+
+// Factor reset end to end, with a fresh account (the operator's password and
+// factor stay as later specs expect them): an invited person enrols an
+// authenticator, an administrator resets the second factor and sets a
+// temporary password, and the person signs in with it, is held on the
+// enrolment page until a new factor is set up, and then on the password page
+// until the temporary password is replaced. Both administrator actions mail
+// a notice that says what happened, links to the sign-in page and carries no
+// password.
+test('a person whose second factor was reset enrols a new one, then replaces the temporary password', async ({
+  page,
+  browser,
+}) => {
+  // --- The person is invited, accepts and enrols a first factor -----------
+  const invite = await page.request.post(`/api/v1/orgs/${ORG.slug}/invites`, {
+    data: { email: FACTOR_PERSON.email, role: 'viewer' },
+  });
+  expect(invite.ok(), await invite.text()).toBeTruthy();
+  const { url } = extractInviteLink(await waitForMessageTo(FACTOR_PERSON.email));
+
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const personPage = await context.newPage();
+  try {
+    await personPage.goto(url);
+    await personPage.getByLabel('Your name').fill(FACTOR_PERSON.name);
+    await personPage.getByLabel('Choose a password').fill(FACTOR_PERSON.password);
+    await personPage.getByRole('button', { name: 'Accept invitation' }).click();
+    await enrolTotp(personPage, FACTOR_PERSON_TOTP_STATE_PATH, FACTOR_PERSON_TOTP_STEP_STATE_PATH);
+    await expect(personPage).toHaveURL(new RegExp(`/o/${ORG.slug}/hosts$`));
+
+    // --- The administrator resets the second factor ------------------------
+    await page.goto(`/o/${ORG.slug}/settings/users`);
+    await page.getByLabel('Search users').fill(FACTOR_PERSON.email);
+    await page.getByRole('link', { name: FACTOR_PERSON.name }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${ORG.slug}/settings/users/[^/]+$`));
+    await expect(page.getByText(FACTOR_PERSON.email).first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Reset second factor' }).click();
+    const resetDialog = page.getByRole('dialog', { name: 'Reset second factor', exact: true });
+    await resetDialog.getByRole('button', { name: 'Reset second factor' }).click();
+    const resetDone = page.getByText('Second factor reset.', { exact: false }).first();
+    await proveSecondFactorIfAsked(page, resetDone);
+    await expect(resetDone).toBeVisible({ timeout: 60_000 });
+
+    // The notice names the sign-in page; there is no secret to carry.
+    const resetMail = await waitForMessageMatching(FACTOR_PERSON.email, /second factor was reset/);
+    expect(resetMail).toMatch(SIGN_IN_LINK);
+    expect(resetMail).not.toContain(FACTOR_PERSON.password);
+
+    // --- ... and sets a temporary password ---------------------------------
+    await page.getByRole('button', { name: 'Set temporary password' }).click();
+    await page
+      .getByRole('dialog', { name: 'Set temporary password', exact: true })
+      .getByRole('button', { name: 'Set temporary password' })
+      .click();
+    const reveal = page.getByRole('dialog', { name: 'Temporary password', exact: true });
+    await proveSecondFactorIfAsked(page, reveal);
+    await expect(reveal).toBeVisible({ timeout: 60_000 });
+    const temporary = (await reveal.locator('code').textContent())?.trim();
+    if (!temporary) throw new Error('the temporary password was not shown');
+    await reveal.getByRole('button', { name: 'Done' }).click();
+
+    const passwordMail = await waitForMessageMatching(FACTOR_PERSON.email, /password was reset/);
+    expect(passwordMail).toMatch(SIGN_IN_LINK);
+    expect(passwordMail).not.toContain(temporary);
+    expect(passwordMail).not.toContain(FACTOR_PERSON.password);
+
+    // --- The person signs in: a new factor first, then a new password -------
+    await personPage.goto('/login');
+    await personPage.getByLabel('Email address').fill(FACTOR_PERSON.email);
+    await personPage.getByLabel('Password').fill(temporary);
+    await personPage.getByRole('button', { name: 'Sign in' }).click();
+
+    // No factor is left to ask for: the person is held on the enrolment page.
+    await enrolTotp(personPage, FACTOR_PERSON_TOTP_STATE_PATH, FACTOR_PERSON_TOTP_STEP_STATE_PATH);
+    await expect(personPage).toHaveURL(/\/account\/password$/);
+    await expect(personPage.getByRole('heading', { name: 'Choose a new password' })).toBeVisible();
+
+    await personPage.getByLabel('Temporary password').fill(temporary);
+    await personPage.getByLabel('New password', { exact: true }).fill(FACTOR_PERSON.changedPassword);
+    await personPage.getByLabel('Repeat the new password').fill(FACTOR_PERSON.changedPassword);
+    await personPage.getByRole('button', { name: 'Change password' }).click();
+
+    await expect(personPage).toHaveURL(/\/o\/[^/]+\/hosts$/);
+    await expect(personPage.getByRole('heading', { name: 'Hosts' })).toBeVisible();
+  } finally {
+    await context.close();
+  }
+});
+
+// Creating an organization is an instance administrator's act. The org
+// switcher offers no "New organization" to anyone else, and the API refuses
+// the call all the same. Signs in as the operator with the password the
+// reset-link journey left behind, and creates nothing.
+test('someone who is not an instance administrator cannot create an organization', async ({ browser }) => {
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+  const page = await context.newPage();
+  try {
+    await page.goto('/login');
+    await page.getByLabel('Email address').fill(OPERATOR.email);
+    await page.getByLabel('Password').fill(OPERATOR.resetPassword);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(page.getByRole('heading', { name: 'Enter your second-factor code' })).toBeVisible();
+    await page
+      .getByLabel('6-digit code')
+      .fill(await nextTotpCode(secretOf(OPERATOR_TOTP_STATE_PATH), OPERATOR_TOTP_STEP_STATE_PATH));
+    await page.getByRole('button', { name: 'Verify' }).click();
+    await expect(page).toHaveURL(/\/o\/[^/]+\/hosts$/);
+
+    // The picker is open and lists the operator's organizations, so the
+    // missing entry is not an empty list. Exact: the toggle button beside it
+    // carries aria-label="Open Organization".
+    await page.getByLabel('Organization', { exact: true }).click();
+    await expect(page.getByRole('option', { name: ORG.name })).toHaveCount(1);
+    await expect(page.getByRole('option', { name: 'New organization' })).toHaveCount(0);
+
+    const created = await page.request.post('/api/v1/orgs', { data: { slug: 'operator-org', name: 'Operator Org' } });
+    expect(created.status()).toBe(403);
   } finally {
     await context.close();
   }

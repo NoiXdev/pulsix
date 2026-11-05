@@ -12,7 +12,23 @@ interface MailpitSearchResult {
 }
 
 interface MailpitMessage {
+  Subject: string;
   Text: string;
+}
+
+/** mailTo returns every message sent to `to`, newest first (mailpit's own
+ * ordering), with subject and plaintext body; an empty list when the search
+ * itself failed. */
+async function mailTo(to: string): Promise<MailpitMessage[]> {
+  const res = await fetch(`${MAILPIT_HTTP_URL}/api/v1/search?query=${encodeURIComponent(`to:"${to}"`)}`);
+  if (!res.ok) return [];
+  const found = (await res.json()) as MailpitSearchResult;
+  const messages: MailpitMessage[] = [];
+  for (const { ID } of found.messages) {
+    const full = await fetch(`${MAILPIT_HTTP_URL}/api/v1/message/${ID}`);
+    if (full.ok) messages.push((await full.json()) as MailpitMessage);
+  }
+  return messages;
 }
 
 /**
@@ -24,43 +40,32 @@ interface MailpitMessage {
  */
 export async function waitForMessageTo(to: string, timeoutMs = 15_000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
-  let lastCount = -1;
   for (;;) {
-    const res = await fetch(`${MAILPIT_HTTP_URL}/api/v1/search?query=${encodeURIComponent(`to:"${to}"`)}`);
-    if (res.ok) {
-      const body = (await res.json()) as MailpitSearchResult;
-      lastCount = body.messages.length;
-      if (body.messages.length > 0) {
-        // Newest first per mailpit's own ordering; take the most recent in
-        // case an earlier test already sent this address mail.
-        const newest = body.messages[0];
-        const full = await fetch(`${MAILPIT_HTTP_URL}/api/v1/message/${newest.ID}`);
-        if (full.ok) {
-          const msg = (await full.json()) as MailpitMessage;
-          return msg.Text;
-        }
-      }
-    }
+    const messages = await mailTo(to);
+    if (messages.length > 0) return messages[0].Text;
     if (Date.now() > deadline) {
-      throw new Error(`no mail arrived for ${to} within ${timeoutMs}ms (last search found ${lastCount} messages)`);
+      throw new Error(`no mail arrived for ${to} within ${timeoutMs}ms`);
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }
 
 /**
- * waitForMessageMatching polls like waitForMessageTo, but returns only once
- * the newest message to `to` matches `pattern`: for an address that was
- * already sent other mail (a notice, an earlier link) before the one the
- * test is waiting for.
+ * waitForMessageMatching polls like waitForMessageTo, but returns the
+ * plaintext body of the newest message to `to` whose subject or body
+ * matches `pattern`: for an address that was already sent other mail (a
+ * notice, an earlier link) before the one the test is waiting for.
  */
 export async function waitForMessageMatching(to: string, pattern: RegExp, timeoutMs = 15_000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
+  let newest = '(no mail)';
   for (;;) {
-    const last = await waitForMessageTo(to, Math.max(0, deadline - Date.now()));
-    if (pattern.test(last)) return last;
+    const messages = await mailTo(to);
+    if (messages.length > 0) newest = `${messages[0].Subject}\n${messages[0].Text}`;
+    const hit = messages.find((m) => pattern.test(m.Subject) || pattern.test(m.Text));
+    if (hit) return hit.Text;
     if (Date.now() > deadline) {
-      throw new Error(`no mail to ${to} matched ${pattern} within ${timeoutMs}ms; the newest was:\n${last}`);
+      throw new Error(`no mail to ${to} matched ${pattern} within ${timeoutMs}ms; the newest was:\n${newest}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
