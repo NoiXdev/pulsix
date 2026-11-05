@@ -32,6 +32,7 @@ function useInvalidateSsh(org: string) {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: ['ssh', org] });
+    void qc.invalidateQueries({ queryKey: ['hosts', org] });
     void qc.invalidateQueries({ queryKey: ['zones', org] });
     void qc.invalidateQueries({ queryKey: ['inventory', org] });
     void qc.invalidateQueries({ queryKey: ['credentials', org] });
@@ -113,6 +114,9 @@ export function useSetHostSSH(org: string, hostId: string) {
       qc.setQueryData<{ host: Host }>(['host', org, hostId], (cached) =>
         cached ? { ...cached, host: { ...cached.host, revision: res.host_revision } } : cached,
       );
+      // The Edit dialog pre-fills the jump host from this cache: a refetch
+      // still in flight must not leave it holding the pre-write settings.
+      qc.setQueryData(['ssh', org, 'host', hostId], { ssh: res.ssh });
       void qc.invalidateQueries({ queryKey: ['host', org, hostId] });
       invalidate();
     },

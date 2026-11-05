@@ -96,11 +96,18 @@ export function useCreateHost(org: string) {
  * revision answers 412 (an ApiError with that status). `jump` and `tags`
  * left out of the body stay as they are. */
 export function useUpdateHost(org: string, id: string) {
+  const qc = useQueryClient();
   const invalidate = useInvalidateHost(org);
   return useMutation({
     mutationFn: ({ revision, ...body }: HostInput & { revision: number }) =>
       unwrap(api.PATCH('/api/v1/orgs/{org}/hosts/{id}', { params: { path: { org, id }, header: ifMatch(revision) }, body })),
-    onSuccess: () => invalidate(id),
+    onSuccess: (res) => {
+      // The write bumped the revision: cache the response's host so a
+      // following tag or SSH write sends the current one while the refetch
+      // is still in flight.
+      qc.setQueryData(['host', org, id], res);
+      invalidate(id);
+    },
   });
 }
 
@@ -125,7 +132,8 @@ export function useSetHostCapabilities(org: string, id: string) {
   return useMutation({
     mutationFn: (patch: { managed?: boolean; monitored?: boolean }) =>
       unwrap(api.PATCH('/api/v1/orgs/{org}/hosts/{id}/capabilities', { params: { path: { org, id } }, body: patch })),
-    onSuccess: () => {
+    onSuccess: (res) => {
+      qc.setQueryData(['host', org, id], res);
       void qc.invalidateQueries({ queryKey: ['hosts', org] });
       void qc.invalidateQueries({ queryKey: ['host', org, id] });
     },

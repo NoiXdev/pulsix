@@ -36,4 +36,22 @@ describe('useSetHostTags', () => {
     expect(sent).toEqual(['"3"', '"4"']);
     expect(cachedRevision()).toBe(5);
   });
+
+  it('pins the PUT response tags into the host-tags cache, so an Edit opened during the refetch pre-fills the written state', async () => {
+    mockApi({
+      'PUT /api/v1/orgs/acme/hosts/h1/tags': { tags: [{ key: 'env', value: 'prod', source: 'manual' }], host_revision: 4 },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['host', 'acme', 'h1'], { host: HOST });
+    qc.setQueryData(['host-tags', 'acme', 'h1'], { tags: [] });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
+    const { result } = renderHook(() => useSetHostTags('acme', 'h1'), { wrapper });
+
+    await act(async () => {
+      await result.current.mutateAsync({ tags: [{ key: 'env', value: 'prod' }], revision: 3 });
+    });
+
+    expect(qc.getQueryData<{ host: Host }>(['host', 'acme', 'h1'])?.host.revision).toBe(4);
+    expect(qc.getQueryData<{ tags: unknown }>(['host-tags', 'acme', 'h1'])?.tags).toEqual([{ key: 'env', value: 'prod', source: 'manual' }]);
+  });
 });

@@ -25,6 +25,9 @@ export function useSetHostTags(org: string, hostId: string) {
       qc.setQueryData<{ host: Host }>(['host', org, hostId], (cached) =>
         cached ? { ...cached, host: { ...cached.host, revision: res.host_revision } } : cached,
       );
+      // The Edit dialog pre-fills from this cache: a refetch still in
+      // flight must not leave it holding the pre-write tags.
+      qc.setQueryData(['host-tags', org, hostId], { tags: res.tags });
       void qc.invalidateQueries({ queryKey: ['host-tags', org, hostId] });
       void qc.invalidateQueries({ queryKey: ['hosts', org] });
       void qc.invalidateQueries({ queryKey: ['host', org, hostId] });
