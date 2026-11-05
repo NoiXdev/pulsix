@@ -13,7 +13,7 @@ import { useT } from '../../../i18n/useT.ts';
 
 const COLUMNS = 'minmax(0, 1fr) 200px 150px';
 
-export function MembersTab({ org, group }: { org: string; group: InventoryGroup }) {
+export function MembersSection({ org, group }: { org: string; group: InventoryGroup }) {
   const t = useT();
   const toast = useToast();
   const members = useGroupMembers(org, group.id);

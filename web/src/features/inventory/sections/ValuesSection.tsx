@@ -11,7 +11,7 @@ import type { Problem, Vars } from '../schema/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-export function ValuesTab({ org, group }: { org: string; group: InventoryGroup }) {
+export function ValuesSection({ org, group }: { org: string; group: InventoryGroup }) {
   const t = useT();
   const toast = useToast();
   const fields = groupFields(toVarSchema(group.schema));

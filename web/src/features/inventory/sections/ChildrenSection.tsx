@@ -6,7 +6,7 @@ import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.t
 import { CreateGroupDialog } from '../CreateGroupDialog.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-export function ChildrenTab({ org, group, groups }: { org: string; group: InventoryGroup; groups: readonly InventoryGroupSummary[] }) {
+export function ChildrenSection({ org, group, groups }: { org: string; group: InventoryGroup; groups: readonly InventoryGroupSummary[] }) {
   const t = useT();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);

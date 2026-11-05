@@ -5,12 +5,12 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useGroup, useGroups } from '../../api/hooks/useInventory.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
-import { SchemaTab } from './tabs/SchemaTab.tsx';
-import { ValuesTab } from './tabs/ValuesTab.tsx';
-import { MembersTab } from './tabs/MembersTab.tsx';
-import { ChildrenTab } from './tabs/ChildrenTab.tsx';
-import { PreviewTab } from './tabs/PreviewTab.tsx';
-import { SettingsTab } from './tabs/SettingsTab.tsx';
+import { SchemaSection } from './sections/SchemaSection.tsx';
+import { ValuesSection } from './sections/ValuesSection.tsx';
+import { MembersSection } from './sections/MembersSection.tsx';
+import { ChildrenSection } from './sections/ChildrenSection.tsx';
+import { PreviewSection } from './sections/PreviewSection.tsx';
+import { GroupSettingsDialog } from './GroupSettingsDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 const TAB_KEYS = ['schema', 'values', 'members', 'children', 'preview', 'settings'] as const;
@@ -33,7 +33,7 @@ export function GroupDetailPage() {
   const group = useGroup(org, id);
   const groups = useGroups(org);
   const orgInfo = useOrg(org);
-  // Gates SettingsTab's own Jump host create row (POST /bastions is
+  // Gates GroupSettingsDialog's own Jump host create row (POST /bastions is
   // credentials.write too, see sshconf_handlers.go) and, forwarded, its
   // nested Credential create row inside BastionDialog — credentials.write
   // is admin, stricter than the inventory.write this page's own writes
@@ -76,13 +76,13 @@ export function GroupDetailPage() {
         ))}
       </div>
       <div role="tabpanel">
-        {tab === 'schema' && <SchemaTab key={`schema-${g.revision}`} org={org} group={g} />}
-        {tab === 'values' && <ValuesTab key={`values-${g.revision}`} org={org} group={g} />}
-        {tab === 'members' && <MembersTab org={org} group={g} />}
-        {tab === 'children' && <ChildrenTab org={org} group={g} groups={all} />}
-        {tab === 'preview' && <PreviewTab org={org} group={g} />}
+        {tab === 'schema' && <SchemaSection key={`schema-${g.revision}`} org={org} group={g} />}
+        {tab === 'values' && <ValuesSection key={`values-${g.revision}`} org={org} group={g} />}
+        {tab === 'members' && <MembersSection org={org} group={g} />}
+        {tab === 'children' && <ChildrenSection org={org} group={g} groups={all} />}
+        {tab === 'preview' && <PreviewSection org={org} group={g} />}
         {tab === 'settings' && (
-          <SettingsTab key={`settings-${g.revision}`} org={org} group={g} groups={all} canCreateCredential={canCreateCredential} />
+          <GroupSettingsDialog key={`settings-${g.revision}`} org={org} group={g} groups={all} canCreateCredential={canCreateCredential} />
         )}
       </div>
     </>

@@ -1,23 +1,23 @@
 import { useState, type FormEvent } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Button } from '../../../ui/button.tsx';
-import { Input } from '../../../ui/input.tsx';
-import { Label } from '../../../ui/label.tsx';
-import { Select } from '../../../ui/Select.tsx';
-import { useToast } from '../../../ui/toastContext.ts';
-import { errorStatus } from '../../../lib/apiError.ts';
-import { useDeleteGroup, useUpdateGroup } from '../../../api/hooks/useInventory.ts';
-import { useBastions } from '../../../api/hooks/useSsh.ts';
-import { useCredentials } from '../../../api/hooks/useCredentials.ts';
-import type { InventoryGroup, InventoryGroupSummary } from '../../../api/types.ts';
-import { descendantIds, orderTree } from '../tree.ts';
-import { StaleNotice } from './StaleNotice.tsx';
-import { BastionDialog } from '../../credentials/BastionDialog.tsx';
-import { useT } from '../../../i18n/useT.ts';
+import { Button } from '../../ui/button.tsx';
+import { Input } from '../../ui/input.tsx';
+import { Label } from '../../ui/label.tsx';
+import { Select } from '../../ui/Select.tsx';
+import { useToast } from '../../ui/toastContext.ts';
+import { errorStatus } from '../../lib/apiError.ts';
+import { useDeleteGroup, useUpdateGroup } from '../../api/hooks/useInventory.ts';
+import { useBastions } from '../../api/hooks/useSsh.ts';
+import { useCredentials } from '../../api/hooks/useCredentials.ts';
+import type { InventoryGroup, InventoryGroupSummary } from '../../api/types.ts';
+import { descendantIds, orderTree } from './tree.ts';
+import { StaleNotice } from './sections/StaleNotice.tsx';
+import { BastionDialog } from '../credentials/BastionDialog.tsx';
+import { useT } from '../../i18n/useT.ts';
 
 const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
-export function SettingsTab({
+export function GroupSettingsDialog({
   org, group, groups, canCreateCredential,
 }: {
   org: string;

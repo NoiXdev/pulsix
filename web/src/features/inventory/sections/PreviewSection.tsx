@@ -6,7 +6,7 @@ import { useInventoryPreview } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
 import { useT } from '../../../i18n/useT.ts';
 
-export function PreviewTab({ org, group }: { org: string; group: InventoryGroup }) {
+export function PreviewSection({ org, group }: { org: string; group: InventoryGroup }) {
   const t = useT();
   const preview = useInventoryPreview(org, group.id);
   const guard = useQueryGuard(preview);

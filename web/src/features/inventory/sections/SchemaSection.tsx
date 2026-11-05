@@ -10,7 +10,7 @@ import type { Problem, VarSchema } from '../schema/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-export function SchemaTab({ org, group }: { org: string; group: InventoryGroup }) {
+export function SchemaSection({ org, group }: { org: string; group: InventoryGroup }) {
   const t = useT();
   const toast = useToast();
   const save = useSetGroupSchema(org, group.id);
