@@ -383,6 +383,48 @@ describe('TemplatesPage', () => {
     expect(puts[1].body).toMatchObject({ name: 'deploy-site-2', limit: 'db*' });
   });
 
+  it('keeps what the person types while Reload reads the template again', async () => {
+    const user = userEvent.setup();
+    const puts: MockRequest[] = [];
+    let current = template({ revision: 1 });
+    // Set while the reload's read is held back.
+    let release: (() => void) | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG,
+      'GET /api/v1/orgs/acme/job-templates': () => ({ templates: [current] }),
+      'GET /api/v1/orgs/acme/job-templates/t1': async () => {
+        const answer = { template: current };
+        if (current.revision === 2) await new Promise<void>((resolve) => (release = resolve));
+        return answer;
+      },
+      'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
+      'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
+      'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+        puts.push(req);
+        if (puts.length === 1) {
+          current = template({ revision: 2 });
+          return new Response(JSON.stringify({ detail: 'stale' }), { status: 412 });
+        }
+        return { template: current };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
+    const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.type(within(dialog).getByLabelText('Limit pattern'), 'web');
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await user.click(await within(dialog).findByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(release).toBeDefined());
+    await user.type(within(dialog).getByLabelText('Limit pattern'), '*');
+    release?.();
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument());
+    expect(within(dialog).getByLabelText('Limit pattern')).toHaveValue('web*');
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await screen.findByText('Template deploy-site saved');
+    expect(puts[1].body).toMatchObject({ limit: 'web*' });
+  });
+
   it("links a template's variables page from its row and its dialog, with the review badges", async () => {
     const user = userEvent.setup();
     const linked = template({ vars_mode: 'automatic', variables_review: { gone: 2, needs_review: 1, missing_required: 0, left_out: 0 } });

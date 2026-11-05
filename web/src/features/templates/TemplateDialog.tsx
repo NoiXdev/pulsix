@@ -24,7 +24,7 @@ import { identitiesForBody, vaultIdentityErrors, type VaultIdentityRow } from '.
 import { ScopePicker, type Scope } from './ScopePicker.tsx';
 import { PlaybookPicker, type PlaybookChoice } from './PlaybookPicker.tsx';
 import { echoedVars } from './vars.ts';
-import { sameValue } from '../variables/origin.ts';
+import { mergeScope, mergeSetting, mergeVaultRows } from './rebase.ts';
 import { existingOf, type Existing } from './existing.ts';
 
 export interface TemplateDialogProps {
@@ -171,17 +171,19 @@ function TemplateForm({
   /** rebase reads the template again after a 412 and merges it in field
    * by field: a setting this person changed keeps their value, every other
    * one takes the current value (a three-way merge against the base the
-   * form was loaded from); the save is then based on the new revision. */
+   * form was loaded from, rebase.ts); the save is then based on the new
+   * revision. The merge reads the drafts as they are when the read
+   * returns, so what the person typed meanwhile is kept. */
   async function rebase() {
+    const base = loaded;
     const fresh = await onReload?.();
-    if (!fresh || !loaded) return;
-    const merge = <T,>(draft: T, base: T, now: T): T => (sameValue(draft, base) ? now : draft);
-    setName(merge(name, loaded.name, fresh.name));
-    if (playbook.playbookId === loaded.playbookId) setPlaybook({ from: '', playbookId: fresh.playbookId, path: '' });
-    setScope(merge(scope, loaded.scope, fresh.scope));
-    setLimit(merge(limit, loaded.limit, fresh.limit));
-    setCredentialId(merge(credentialId, loaded.credentialId, fresh.credentialId));
-    if (sameValue(identitiesForBody(vaultRows), identitiesForBody(loaded.vaultIdentities))) setVaultRows(fresh.vaultIdentities);
+    if (!fresh || !base) return;
+    setName((d) => mergeSetting(d, base.name, fresh.name));
+    setPlaybook((d) => (d.playbookId === base.playbookId ? { from: '', playbookId: fresh.playbookId, path: '' } : d));
+    setScope((d) => mergeScope(d, base.scope, fresh.scope));
+    setLimit((d) => mergeSetting(d, base.limit, fresh.limit));
+    setCredentialId((d) => mergeSetting(d, base.credentialId, fresh.credentialId));
+    setVaultRows((d) => mergeVaultRows(d, base.vaultIdentities, fresh.vaultIdentities));
     setLoaded(fresh);
     setStale(false);
   }
