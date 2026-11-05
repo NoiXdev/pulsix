@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest, type MockRoute } from '../../../test/mockApi.ts';
-import { SYNCED_AT, preview, renderPage, routes, status, variables } from './pageTestFixtures.tsx';
+import { SYNCED_AT, preview, renderPage, routes, source, status, variables } from './pageTestFixtures.tsx';
 
 describe('TemplateVariablesPage — sync now', () => {
   async function openPreview(extra: Record<string, MockRoute> = {}) {
@@ -125,6 +125,21 @@ describe('TemplateVariablesPage — sync now', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Apply' }));
     await waitFor(() => expect(applied).toHaveLength(2));
     expect(applied[1].body).toMatchObject({ values: { admin_user: 'root' } });
+  });
+
+  it('says in the page language why nothing can be applied', async () => {
+    const { dialog } = await openPreview({
+      'POST /api/v1/orgs/acme/job-templates/t1/variables/preview': {
+        source: source({ worker_reads: false, available: false, reason: 'the worker that synced this repository does not read variable sources' }),
+        preview: {
+          ...preview.preview, added: [], changed: [], gone: [], unchanged: 0,
+          notes: [{ level: 'warning', code: 'source_unavailable', file: 'site.yml', message: 'the worker that synced this repository does not read variable sources; the fields stay as they are' }],
+        },
+      },
+    });
+    expect(within(dialog).getByText('The worker that synced this repository does not read variable sources.')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/the fields stay as they are/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 
   it('says how many source fields were left out', async () => {

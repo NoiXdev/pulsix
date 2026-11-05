@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { Link, useBlocker, useParams } from '@tanstack/react-router';
+import { useState } from 'react';
+import { Link, useParams } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '../../../ui/button.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
+import { useUnsavedGuard } from '../../../ui/useUnsavedGuard.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { may } from '../../../lib/roles.ts';
 import { useOrg } from '../../../api/hooks/useOrgs.ts';
@@ -21,7 +22,7 @@ import { sameValue } from '../../variables/origin.ts';
 import { usageByField } from '../../variables/usage.ts';
 import type { Problem, VarSchema, Vars } from '../../variables/types.ts';
 import { TriggersDialog } from '../../triggers/TriggersDialog.tsx';
-import { toEditableVars, varsForPut } from '../vars.ts';
+import { toDraftVars, varsForPut } from '../vars.ts';
 import { keptNames } from './kept.ts';
 import { ReviewBadges } from './ReviewBadges.tsx';
 import { SourcePanel, type VarsMode } from './SourcePanel.tsx';
@@ -92,7 +93,7 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
       revision: data.revision,
       hasSchema,
       schema,
-      vars: hasSchema ? toEditableVars(schema.fields, data.extra_vars) : data.extra_vars,
+      vars: hasSchema ? toDraftVars(schema.fields, data.extra_vars) : data.extra_vars,
       kept: hasSchema ? keptNames(schema.fields, data.extra_vars) : [],
     };
   });
@@ -102,6 +103,10 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
   const [schemaProblems, setSchemaProblems] = useState<Problem[]>([]);
   const [valueProblems, setValueProblems] = useState<Problem[]>([]);
   const [stale, setStale] = useState(false);
+  // Set once a save went through: the body is about to be read again and
+  // remounted on the new revision, and a second save before that would be
+  // based on the old one (412).
+  const [saved, setSaved] = useState(false);
   const [syncing, setSyncing] = useState<'manual' | 'automatic' | null>(null);
   const [webhooks, setWebhooks] = useState(false);
   const save = useUpdateTemplateVariables(org, template.id);
@@ -111,7 +116,9 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
   const triggers = useTriggers(org, target);
   const usage = usageByField(schedules.data?.schedules ?? [], triggers.data?.triggers ?? []);
   const dirty = !sameValue(draft, loaded.schema) || !sameValue(values, loaded.vars);
-  useUnsavedGuard(dirty, t.ui.formPage.unsaved);
+  // A link (the back link, a schedule under "Used in") asks first; not
+  // after a save, whose draft the reload is about to replace.
+  useUnsavedGuard(dirty && !saved);
 
   async function onSave() {
     setSchemaProblems([]);
@@ -126,6 +133,7 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
         vars: varsForPut(withSchema ? draft.fields : undefined, values),
         revision: loaded.revision,
       });
+      setSaved(true);
       toast.show(v.saved);
       await onReload();
     } catch (err) {
@@ -227,10 +235,10 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
               {v.problems(problemCount)}
             </p>
           )}
-          <Button type="button" disabled={!dirty} onClick={discard}>
+          <Button type="button" disabled={!dirty || saved} onClick={discard}>
             {v.discard}
           </Button>
-          <Button type="button" variant="primary" disabled={save.isPending} onClick={() => void onSave()}>
+          <Button type="button" variant="primary" disabled={save.isPending || saved} onClick={() => void onSave()}>
             {v.save}
           </Button>
         </div>
@@ -258,19 +266,4 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
       )}
     </div>
   );
-}
-
-/** useUnsavedGuard asks before the page is left with unsaved changes — a
- * link (the back link, a schedule under "Used in"), a nav item, the
- * browser's back button — and lets a closing tab prompt (FormPage's own
- * guard, for a page that is not a single form). */
-function useUnsavedGuard(dirty: boolean, question: string) {
-  const dirtyRef = useRef(dirty);
-  useEffect(() => {
-    dirtyRef.current = dirty;
-  }, [dirty]);
-  useBlocker({
-    shouldBlockFn: () => dirtyRef.current && !window.confirm(question),
-    enableBeforeUnload: () => dirtyRef.current,
-  });
 }

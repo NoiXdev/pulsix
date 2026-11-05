@@ -13,6 +13,7 @@ import { problemsFromError } from '../../variables/paths.ts';
 import type { Problem, SchemaField, Vars } from '../../variables/types.ts';
 import type { Messages } from '../../../i18n/types.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { unavailableReason } from './sourceNotices.ts';
 
 export interface SyncPreviewDialogProps {
   org: string;
@@ -142,7 +143,10 @@ export function SyncPreviewDialog({ org, templateId, revision, mode, onClose, on
   const changed = pv?.changed ?? [];
   const adjusted = pv?.adjusted ?? [];
   const gone = pv?.gone ?? [];
-  const notes = pv?.notes ?? [];
+  // Why nothing can be applied, in the page's language; it stands in for
+  // the server's source_unavailable note (English text).
+  const unavailable = data ? unavailableReason(data.source, t.templates.source) : null;
+  const notes = (pv?.notes ?? []).filter((n) => !(unavailable && n.code === 'source_unavailable'));
   const nothing = added.length + changed.length + adjusted.length + gone.length === 0;
   const valueFor = (f: SchemaField) => (
     <div className="pl-3">
@@ -164,6 +168,11 @@ export function SyncPreviewDialog({ org, templateId, revision, mode, onClose, on
         {preview.isError && (
           <p role="alert" className="text-xs text-destructive">
             {preview.error instanceof Error ? preview.error.message : p.failed}
+          </p>
+        )}
+        {unavailable && (
+          <p role="status" className="rounded-md border border-border px-3 py-2 text-xs">
+            {unavailable}
           </p>
         )}
         {pv && data && (
@@ -230,7 +239,7 @@ export function SyncPreviewDialog({ org, templateId, revision, mode, onClose, on
                 <span className="text-[11px] text-muted-foreground">{p.removeGoneHint}</span>
               </Section>
             )}
-            {nothing && <p className="text-xs text-muted-foreground">{p.nothing}</p>}
+            {nothing && !unavailable && <p className="text-xs text-muted-foreground">{p.nothing}</p>}
             <p className="text-xs text-muted-foreground">{p.unchanged(pv.unchanged)}</p>
             {pv.left_out > 0 && !notes.some((n) => n.code === 'fields_left_out') && <p className="text-xs">{p.leftOut(pv.left_out)}</p>}
             {notes.length > 0 && (

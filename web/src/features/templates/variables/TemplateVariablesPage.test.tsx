@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
+import { pickOption } from '../../../test/pickOption.ts';
 import { SYNCED_AT, fields, preview, renderPage, routes, source, status, template, variables } from './pageTestFixtures.tsx';
 
 afterEach(() => vi.restoreAllMocks());
@@ -123,6 +124,75 @@ describe('TemplateVariablesPage — fields and values', () => {
     expect(screen.getByText(/To discard it, switch the field active/)).toBeInTheDocument();
   });
 
+  // Owner decision 4: a removed field keeps its stored value, and adding it
+  // back under its name brings the value back.
+  describe('values of removed and inactive fields', () => {
+    const withRemoved = variables({ extra_vars: { region: 'eu', token: { $secret: 'set' }, debug: true, old_plain: 'kept', old_secret: { $secret: 'set' } } });
+    const saved = async (user: ReturnType<typeof userEvent.setup>, put: () => MockRequest | undefined) => {
+      await user.click(screen.getByRole('button', { name: 'Save variables' }));
+      await waitFor(() => expect(put()).toBeDefined());
+      return (put()?.body as { extra_vars: Record<string, unknown> }).extra_vars;
+    };
+    const addField = async (user: ReturnType<typeof userEvent.setup>, name: string, type?: string) => {
+      await user.click(screen.getByRole('button', { name: 'Add field' }));
+      const dialog = screen.getByRole('dialog', { name: /^Field field_/ });
+      const input = within(dialog).getByLabelText('Name');
+      await user.clear(input);
+      await user.type(input, name);
+      if (type) await pickOption(within(dialog), 'Type', { value: type });
+      await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+    };
+
+    it('shows and sends the stored value of a removed field that is added back', async () => {
+      const user = userEvent.setup();
+      let put: MockRequest | undefined;
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/job-templates/t1/variables': withRemoved,
+        'PUT /api/v1/orgs/acme/job-templates/t1/variables': (req: MockRequest) => {
+          put = req;
+          return variables();
+        },
+      }));
+      renderPage();
+      expect(await screen.findByText('Stored but not sent: debug, old_plain, old_secret')).toBeInTheDocument();
+      await addField(user, 'old_plain');
+      expect(within(screen.getByRole('region', { name: 'Values' })).getByLabelText('old_plain')).toHaveValue('kept');
+      expect(await saved(user, () => put)).toEqual({ region: 'eu', token: { $secret: 'keep', from: 'token' }, old_plain: 'kept' });
+    });
+
+    it('keeps the stored secret of a removed secret field that is added back', async () => {
+      const user = userEvent.setup();
+      let put: MockRequest | undefined;
+      mockApi(routes({
+        'GET /api/v1/orgs/acme/job-templates/t1/variables': withRemoved,
+        'PUT /api/v1/orgs/acme/job-templates/t1/variables': (req: MockRequest) => {
+          put = req;
+          return variables();
+        },
+      }));
+      renderPage();
+      await screen.findByRole('region', { name: 'Values' });
+      await addField(user, 'old_secret', 'secret');
+      expect(within(screen.getByRole('region', { name: 'Values' })).getByLabelText('old_secret')).toHaveAttribute('readonly');
+      expect((await saved(user, () => put)).old_secret).toEqual({ $secret: 'keep', from: 'old_secret' });
+    });
+
+    it('sends the stored value of an inactive field switched active', async () => {
+      const user = userEvent.setup();
+      let put: MockRequest | undefined;
+      mockApi(routes({
+        'PUT /api/v1/orgs/acme/job-templates/t1/variables': (req: MockRequest) => {
+          put = req;
+          return variables();
+        },
+      }));
+      renderPage();
+      await user.click(await screen.findByRole('switch', { name: 'debug active' }));
+      expect(within(screen.getByRole('region', { name: 'Values' })).getByLabelText('debug')).toBeChecked();
+      expect((await saved(user, () => put)).debug).toBe(true);
+    });
+  });
+
   it('saves the schema unchanged, the active values, and the secret as a keep marker, with If-Match', async () => {
     const user = userEvent.setup();
     let put: MockRequest | undefined;
@@ -142,6 +212,21 @@ describe('TemplateVariablesPage — fields and values', () => {
       extra_vars: { region: 'eu-west', token: { $secret: 'keep', from: 'token' } },
     });
     expect(await screen.findByText('Variables saved')).toBeInTheDocument();
+  });
+
+  it('offers no second save while the saved variables are read again', async () => {
+    const user = userEvent.setup();
+    let reads = 0;
+    mockApi(routes({
+      // The read after the save never answers: the page stays on the saved draft.
+      'GET /api/v1/orgs/acme/job-templates/t1/variables': () => (++reads === 1 ? variables() : new Promise(() => {})),
+      'PUT /api/v1/orgs/acme/job-templates/t1/variables': () => variables({ revision: 4 }),
+    }));
+    renderPage();
+    await user.type(await screen.findByLabelText('region'), '-west');
+    await user.click(screen.getByRole('button', { name: 'Save variables' }));
+    expect(await screen.findByText('Variables saved')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save variables' })).toBeDisabled();
   });
 
   it('sends a replaced secret as plaintext and shows a 422 at its field', async () => {

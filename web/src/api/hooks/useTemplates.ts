@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import { ifMatch } from '../ifMatch.ts';
 import type { TemplateInput } from '../types.ts';
 
 function useInvalidate(org: string) {
@@ -41,7 +42,7 @@ export function useUpdateTemplate(org: string, id: string) {
   const invalidate = useInvalidate(org);
   return useMutation({
     mutationFn: ({ body, revision }: { body: TemplateInput; revision: number }) =>
-      unwrap(api.PUT('/api/v1/orgs/{org}/job-templates/{id}', { params: { path: { org, id }, header: { 'If-Match': `"${revision}"` } }, body })),
+      unwrap(api.PUT('/api/v1/orgs/{org}/job-templates/{id}', { params: { path: { org, id }, header: ifMatch(revision) }, body })),
     onSuccess: invalidate,
   });
 }

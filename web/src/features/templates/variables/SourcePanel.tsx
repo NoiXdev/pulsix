@@ -6,9 +6,9 @@ import { Pill } from '../../../ui/badge.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { useSyncRepo } from '../../../api/hooks/useRepos.ts';
 import type { TemplateVariablesSource } from '../../../api/types.ts';
-import type { Messages } from '../../../i18n/types.ts';
 import { useFormat } from '../../../i18n/format.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { sourceNotices } from './sourceNotices.ts';
 
 export type VarsMode = 'off' | 'manual' | 'automatic';
 
@@ -27,19 +27,6 @@ export interface SourcePanelProps {
   lockedReason?: string;
   onMode: (mode: VarsMode) => void;
   onSyncNow: () => void;
-}
-
-/** notices are what the read cannot be used for, in the order a person
- * fixes them: the worker, the repository's record, this playbook's read. */
-function notices(src: TemplateVariablesSource, s: Messages['templates']['source']): string[] {
-  const out: string[] = [];
-  if (src.kind === 'inline') out.push(s.inlineRoles);
-  if (src.kind === 'repo' && !src.worker_reads) out.push(s.workerReads);
-  if (src.incomplete) out.push(s.incomplete);
-  if (src.left_out) out.push(s.leftOut);
-  if (!src.found) out.push(s.notFound);
-  else if (!src.available && src.worker_reads && !src.left_out) out.push(s.notRead);
-  return out;
 }
 
 /**
@@ -68,9 +55,9 @@ export function SourcePanel({ org, source, mode, canWrite, canSyncRepo, lockedRe
         {source?.synced_at && <span className="text-xs text-muted-foreground">{s.syncedAt(fmt.dateTime(source.synced_at))}</span>}
         {source?.newer && <Pill tone="accent">{s.newer}</Pill>}
       </div>
-      {source && notices(source, s).length > 0 && (
+      {source && sourceNotices(source, s).length > 0 && (
         <ul className="flex flex-col gap-0.5 text-xs text-muted-foreground">
-          {notices(source, s).map((n) => (
+          {sourceNotices(source, s).map((n) => (
             <li key={n}>{n}</li>
           ))}
         </ul>

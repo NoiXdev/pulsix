@@ -14,17 +14,17 @@ import { usePickRepoPlaybook } from '../../api/hooks/useRepos.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useCreateTemplate, useDeleteTemplate, useTemplate, useUpdateTemplate } from '../../api/hooks/useTemplates.ts';
 import { problemsFromError } from '../variables/paths.ts';
-import type { Vars } from '../variables/types.ts';
 import { errorStatus } from '../../lib/apiError.ts';
 import { AddCredentialDialog } from '../credentials/AddCredentialDialog.tsx';
 import { kindName } from '../credentials/labels.ts';
 import { useT } from '../../i18n/useT.ts';
 import { VaultIdentitiesField } from '../credentials/VaultIdentitiesField.tsx';
-import type { Credential, Playbook, Template } from '../../api/types.ts';
-import { identitiesForBody, rowsFromIdentities, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
+import type { Credential, Playbook } from '../../api/types.ts';
+import { identitiesForBody, vaultIdentityErrors, type VaultIdentityRow } from '../../lib/vaultIdentity.ts';
 import { ScopePicker, type Scope } from './ScopePicker.tsx';
 import { PlaybookPicker, type PlaybookChoice } from './PlaybookPicker.tsx';
 import { echoedVars } from './vars.ts';
+import { existingOf, type Existing } from './existing.ts';
 
 export interface TemplateDialogProps {
   org: string;
@@ -53,11 +53,6 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
   const playbooks = usePlaybooks(org);
   const credentials = useCredentials(org, { enabled: canReadCredentials });
   const guard = useQueryGuard(detail);
-  // Bumped by the stale notice's Reload once the template is read again:
-  // the form takes the template as loaded when it mounts (its draft and
-  // the revision that draft is based on), so a background refetch never
-  // moves the base under it — only a Reload does, by remounting.
-  const [generation, setGeneration] = useState(0);
 
   if (template) {
     if (guard) {
@@ -78,12 +73,11 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
     const allCredentials = credentials.data?.credentials ?? [];
     return (
       <TemplateForm
-        key={generation}
         org={org}
         existing={existingOf(tpl)}
         onReload={async () => {
-          await detail.refetch();
-          setGeneration((g) => g + 1);
+          const fresh = (await detail.refetch()).data?.template;
+          return fresh ? existingOf(fresh) : undefined;
         }}
         playbooks={playbooks.data?.playbooks ?? []}
         credentials={allCredentials.filter((c) => c.kind === 'ssh_key' || c.kind === 'ssh_password')}
@@ -106,54 +100,13 @@ export function TemplateDialog({ org, template, canReadCredentials, canCreateCre
   );
 }
 
-function existingOf(tpl: Template): Existing {
-  return {
-    id: tpl.id,
-    name: tpl.name,
-    revision: tpl.revision,
-    playbookId: tpl.playbook_id,
-    scope: { group_id: tpl.scope.group_id ?? '', host_ids: tpl.scope.host_ids ?? [] },
-    limit: tpl.limit,
-    schema: tpl.extra_vars_schema,
-    vars: tpl.extra_vars ?? {},
-    credentialId: tpl.credential_id ?? '',
-    vaultIdentities: rowsFromIdentities(tpl.vault_identities),
-    sharedTemplateId: tpl.shared_template_id,
-  };
-}
-
-interface Existing {
-  id: string;
-  name: string;
-  /** The revision this form's draft is based on (If-Match). */
-  revision: number;
-  playbookId: string;
-  scope: Scope;
-  limit: string;
-  /** The extra-vars schema exactly as loaded; the PUT sends it back. */
-  schema: Template['extra_vars_schema'];
-  vars: Vars;
-  credentialId: string;
-  vaultIdentities: VaultIdentityRow[];
-  /** Set when this template is a projection of an installation-owned
-   * definition (spec v0.2f decisions 1, 2). Its presence, not its value, is
-   * what the form acts on: name, playbook, limit and the extra-vars schema
-   * (and the vars themselves) become read-only — templates.Service already
-   * refuses to change them on a projection (refuseSharedFieldChange,
-   * internal/templates/service.go) regardless of what this dialog sends,
-   * the same reasoning RepoDialog's own `projected` flag documents. Scope,
-   * the default SSH credential and the vault identity set stay editable:
-   * they are the projection's own. */
-  sharedTemplateId?: string;
-}
-
 function TemplateForm({
   org, existing, onReload, playbooks, credentials, vaultCredentials, canCreateCredential, onClose,
 }: {
   org: string;
   existing?: Existing;
-  /** Reads the template again and starts the form over (after a 412). */
-  onReload?: () => Promise<void>;
+  /** Reads the template again (after a 412); the form re-bases on it. */
+  onReload?: () => Promise<Existing | undefined>;
   playbooks: readonly Playbook[];
   credentials: readonly { id: string; name: string; kind: string }[];
   /** The org's full credential list, unfiltered — `credentials` above is
@@ -177,9 +130,12 @@ function TemplateForm({
   // merely validated client-side — RepoDialog's own `projected` flag, same
   // reasoning.
   const projected = Boolean(existing?.sharedTemplateId);
-  // The template as this form loaded it: a background refetch must not
-  // move the revision (or the variables echoed) under the draft.
-  const [loaded] = useState(existing);
+  // The template this form's save is based on: its revision (If-Match)
+  // and the variables it echoes. A background refetch must not move it;
+  // the stale notice's Reload re-bases it on the template as it is now and
+  // keeps the person's edits to the settings (this dialog edits no
+  // variables, so the variables echoed are the current ones).
+  const [loaded, setLoaded] = useState(existing);
 
   const [name, setName] = useState(existing?.name ?? '');
   const [playbook, setPlaybook] = useState<PlaybookChoice>({ from: '', playbookId: existing?.playbookId ?? '', path: '' });
@@ -259,7 +215,15 @@ function TemplateForm({
           <div role="alert" className="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2 text-xs">
             <span>{t.templates.dialog.stale}</span>
             {onReload && (
-              <Button type="button" onClick={() => void onReload()}>
+              <Button
+                type="button"
+                onClick={async () => {
+                  const fresh = await onReload();
+                  if (!fresh) return;
+                  setLoaded(fresh);
+                  setStale(false);
+                }}
+              >
                 {t.templates.dialog.reload}
               </Button>
             )}

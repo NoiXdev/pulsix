@@ -1,5 +1,5 @@
 import { childPath, indexPath } from '../variables/paths.ts';
-import { declaredOnly, isKeepMarker, isRecord, isSecretSet, type KeepMarker } from '../variables/secrets.ts';
+import { declaredOnly, isKeepMarker, isRecord, isSecretSet, keepMarker, toKeepMarkers as keepMarkersOf, type KeepMarker } from '../variables/secrets.ts';
 import { activeFields } from '../variables/origin.ts';
 import { toVarSchema } from '../../api/hooks/useInventory.ts';
 import type { SchemaField, Vars } from '../variables/types.ts';
@@ -30,6 +30,21 @@ export function secretFields(schema: readonly SchemaField[] | undefined): string
  * keys survive (the server validates strictly at every depth). */
 export function toEditableVars(fields: readonly SchemaField[], vars: Vars): Vars {
   return toKeepMarkers(fields, declaredOnly(fields, vars));
+}
+
+/** toDraftVars prepares loaded values for the variables page: EVERY stored
+ * value stays in the draft — those of inactive and removed fields too, so
+ * switching a field active or adding a removed one back under its name
+ * shows its value again (spec 7.75 owner decision 4) — with each masked
+ * secret as a keep marker naming its path (a removed field's at the top
+ * level). varsForPut then sends the active declared fields only. */
+export function toDraftVars(fields: readonly SchemaField[], vars: Vars): Vars {
+  const out = keepMarkersOf(fields, vars);
+  const declared = new Set(fields.map((f) => f.name));
+  for (const [k, v] of Object.entries(out)) {
+    if (!declared.has(k) && isSecretSet(v)) out[k] = keepMarker(k);
+  }
+  return out;
 }
 
 function toKeepMarkers(fields: readonly SchemaField[], vars: Vars, prefix = ''): Vars {

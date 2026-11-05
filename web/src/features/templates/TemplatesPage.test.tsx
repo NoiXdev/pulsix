@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -308,23 +308,44 @@ describe('TemplatesPage', () => {
     });
   });
 
-  it('offers a reload when the template changed since the dialog opened (412)', async () => {
+  it('re-bases on the current template after a 412, keeping the edits to its settings', async () => {
     const user = userEvent.setup();
+    const puts: MockRequest[] = [];
+    let current = template({ revision: 1 });
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
-      'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
-      'GET /api/v1/orgs/acme/job-templates/t1': { template: template() },
+      'GET /api/v1/orgs/acme/job-templates': () => ({ templates: [current] }),
+      'GET /api/v1/orgs/acme/job-templates/t1': () => ({ template: current }),
       'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbookRow] },
       'GET /api/v1/orgs/acme/inventory/groups': { groups: [] },
       'GET /api/v1/orgs/acme/credentials': { credentials: [sshKey] },
-      'PUT /api/v1/orgs/acme/job-templates/t1': () => new Response(JSON.stringify({ detail: 'stale' }), { status: 412 }),
+      'PUT /api/v1/orgs/acme/job-templates/t1': (req: MockRequest) => {
+        puts.push(req);
+        if (puts.length === 1) {
+          // Meanwhile a sync applied the playbook's variables.
+          current = template({ revision: 2, ...withSchema });
+          return new Response(JSON.stringify({ detail: 'stale' }), { status: 412 });
+        }
+        return { template: current };
+      },
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
+    await user.type(within(dialog).getByLabelText('Limit pattern'), 'web*');
     await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
     expect(await within(dialog).findByText(/Someone else saved this template since it was opened/)).toBeInTheDocument();
-    expect(within(dialog).getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Reload' }));
+    await waitFor(() => expect(within(dialog).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument());
+    expect(within(dialog).getByLabelText('Limit pattern')).toHaveValue('web*');
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    await screen.findByText('Template deploy-site saved');
+    expect(puts[1].headers.get('If-Match')).toBe('"2"');
+    expect(puts[1].body).toMatchObject({
+      limit: 'web*',
+      extra_vars: { region: 'eu', token: { $secret: 'keep', from: 'token' } },
+      extra_vars_schema: withSchema.extra_vars_schema,
+    });
   });
 
   it("links a template's variables page from its row and its dialog, with the review badges", async () => {

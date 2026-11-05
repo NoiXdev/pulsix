@@ -1,9 +1,10 @@
-import { useEffect, useRef, type FormEvent, type ReactNode } from 'react';
-import { Link, useBlocker, useNavigate, type LinkProps } from '@tanstack/react-router';
+import { type FormEvent, type ReactNode } from 'react';
+import { Link, useNavigate, type LinkProps } from '@tanstack/react-router';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from './button.tsx';
 import { buttonClass } from './buttonStyles.ts';
 import { useT } from '../i18n/useT.ts';
+import { useUnsavedGuard } from './useUnsavedGuard.ts';
 
 export interface FormPageProps {
   title: string;
@@ -37,27 +38,12 @@ export interface FormPageProps {
 export function FormPage({ title, backTo, children, onSubmit, submitting, dirty, submitLabel }: FormPageProps) {
   const t = useT();
   const navigate = useNavigate();
-  // Refs, so the blocker always sees the latest state without
-  // re-registering and the save's own navigation can switch it off
-  // synchronously, before React has rendered the page as clean.
-  const dirtyRef = useRef(dirty);
-  useEffect(() => {
-    dirtyRef.current = dirty;
-  }, [dirty]);
-  const leaving = useRef(false);
-
-  useBlocker({
-    shouldBlockFn: () => {
-      if (leaving.current || !dirtyRef.current) return false;
-      return !window.confirm(t.ui.formPage.unsaved);
-    },
-    enableBeforeUnload: () => dirtyRef.current && !leaving.current,
-  });
+  const release = useUnsavedGuard(dirty);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!(await onSubmit())) return;
-    leaving.current = true;
+    release();
     void navigate({ to: backTo.to, params: backTo.params });
   }
 

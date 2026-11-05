@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { echoedVars, toEditableVars, varsForPut } from './vars.ts';
+import { echoedVars, toDraftVars, toEditableVars, varsForPut } from './vars.ts';
 import type { SchemaField } from '../variables/types.ts';
 
 const schema: SchemaField[] = [
@@ -91,5 +91,16 @@ describe('echoedVars', () => {
 
   it('sends every value of a template without a schema', () => {
     expect(echoedVars(undefined, { region: 'eu' })).toEqual({ region: 'eu' });
+  });
+});
+
+describe('toDraftVars', () => {
+  it('keeps the values of removed fields, each stored secret as a keep marker', () => {
+    expect(toDraftVars(schema, { token: SET, region: 'eu', old: 'kept', old_secret: SET })).toEqual({
+      token: { $secret: 'keep', from: 'token' },
+      region: 'eu',
+      old: 'kept',
+      old_secret: { $secret: 'keep', from: 'old_secret' },
+    });
   });
 });

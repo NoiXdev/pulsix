@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import { ifMatch } from '../ifMatch.ts';
 import type { paths } from '../schema.d.ts';
 import type { VarSchema, Vars } from '../../features/variables/types.ts';
 
@@ -7,14 +8,12 @@ type VariablesPath = paths['/api/v1/orgs/{org}/job-templates/{id}/variables'];
 type UpdateBody = VariablesPath['put']['requestBody']['content']['application/json'];
 type ApplyBody = paths['/api/v1/orgs/{org}/job-templates/{id}/variables/apply']['post']['requestBody']['content']['application/json'];
 
-/** The template's revision as If-Match, quoted like its ETag. */
-const ifMatch = (revision: number) => ({ 'If-Match': `"${revision}"` });
 
 /** A write of a template's variables moves its revision and what the list
  * shows about it (review badges), so every template query is refreshed. */
 function useInvalidate(org: string) {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: ['templates', org] });
+  return () => void qc.invalidateQueries({ queryKey: ['templates', org] });
 }
 
 /** useTemplateVariables reads a template's variables page: schema, masked
