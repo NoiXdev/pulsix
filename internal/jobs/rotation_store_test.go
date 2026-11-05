@@ -691,7 +691,8 @@ func TestCreateJobGroupIsAtomic(t *testing.T) {
 
 	zone := seedZone(t, d, org)
 	first := jobs.Job{ID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerManual, OrgID: org, ZoneID: zone, Kind: jobs.KindRotateKey,
-		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now()}
+		Status: jobs.StatusQueued, RunGroupID: uuid.Must(uuid.NewV7()), CreatedAt: time.Now(),
+		HostIDs: []uuid.UUID{seedHost(t, d, org, zone, "atomic-01")}}
 	second := first
 	second.ID = tripID // violates jobs_pkey on the second insert
 	err := store.CreateJobGroup(ctx, org, []jobs.Job{first, second},
@@ -706,6 +707,10 @@ func TestCreateJobGroupIsAtomic(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("the first insert survived a failed group insert: %d rows", count)
+	}
+	// ... and so did its host links (7.90: they are written by the same statement).
+	if links := jobHostLinks(t, d.Pool(), org); len(links) != 0 {
+		t.Fatalf("the first job's host links survived a failed group insert: %v", links)
 	}
 	var total int
 	if err := d.Pool().QueryRow(ctx,

@@ -1,9 +1,18 @@
 -- name: CreateJob :one
 -- Every insert path of a job goes through this one statement, which also
 -- links the job to the hosts it targets in job_hosts (migration 00082,
--- backlog 7.84), so no caller can forget the links. The join on hosts
--- links a host named twice once and skips an id that names no host of the
--- job's organization; jobs.host_ids keeps the targets as given.
+-- backlog 7.84), so no caller can forget the links. The hosts subquery
+-- links a host named twice once (hosts has one row per id) and skips an id
+-- that names no host of the job's organization; jobs.host_ids keeps the
+-- targets as given.
+--
+-- FOR KEY SHARE (backlog 7.90): the subquery locks the host rows it links,
+-- so a host whose DELETE is still open makes this statement wait for it and
+-- then skip the host, exactly like a host deleted just before. Without the
+-- lock the statement read the host, then failed on job_hosts' foreign key
+-- (SQLSTATE 23503) when the delete committed. A host deleted just after
+-- cascades its link away. It blocks only deletes and key changes, which the
+-- foreign key check blocks anyway; a host edit is not held up.
 WITH j AS (
   INSERT INTO jobs (id, org_id, zone_id, kind, template_id, host_ids, status, run_group_id, trigger, actor_id, payload,
                     depends_on, rotation_credential_id, trigger_ref, hosts_excluded)
@@ -11,10 +20,8 @@ WITH j AS (
   RETURNING *
 ), linked AS (
   INSERT INTO job_hosts (org_id, job_id, host_id, created_at)
-  SELECT DISTINCT j.org_id, j.id, h.id, j.created_at
-  FROM j
-  CROSS JOIN LATERAL unnest(j.host_ids) AS t(host_id)
-  JOIN hosts h ON h.org_id = j.org_id AND h.id = t.host_id
+  SELECT j.org_id, j.id, h.id, j.created_at
+  FROM j, (SELECT id FROM hosts WHERE org_id = $2 AND id = ANY ($6::uuid[]) FOR KEY SHARE) AS h
 )
 SELECT * FROM j;
 
