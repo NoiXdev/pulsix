@@ -135,7 +135,7 @@ export function useRevisionDraft<D>(
       // keeping it would show the content from before the save as unedited.
       setState((st) =>
         untouched || !st.touched
-          ?{ ...st, draft: build(savedContent), base: savedKey, touched: false, pinned: savedRevision, generation: st.generation + 1 }
+          ? { ...st, draft: build(savedContent), base: savedKey, touched: false, pinned: savedRevision, generation: st.generation + 1 }
           : { ...st, base: savedKey, pinned: savedRevision },
       );
     },
