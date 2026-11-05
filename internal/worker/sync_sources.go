@@ -6,13 +6,14 @@
 //
 // Nothing in the read fails the sync: a commit that cannot be read, a
 // subpath that cannot be opened, a parser panic or the time limit each
-// leave a report that says what was not read, never a failed job.
+// leave a report that says what was not read, never a failed job. A report
+// that read nothing of the repository is Failed, so the manager keeps the
+// previous record. Only a cancellation of the job itself ends it, as
+// cancelled.
 //
-// The read never leaves the clone: the files are opened through an
-// os.Root at the repo subpath, so a symlink whose target lies outside that
-// root (a role's meta/argument_specs.yml linked to /etc/…, say) fails to
-// open and is reported unreadable; a symlink that stays inside the root is
-// followed.
+// The read never leaves the clone's subpath and never enters git's own
+// files (clonefs.go): a role's meta/argument_specs.yml linked to /etc/… or
+// to .git/config is reported unreadable.
 package worker
 
 import (
@@ -21,7 +22,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"runtime/debug"
 	"time"
 
@@ -34,8 +34,10 @@ import (
 const VarSourcesStatsKey = "var_sources"
 
 // varSourcesTimeLimit bounds the whole read of a repository's sources, the
-// commit, discovery and every playbook together. Past it the playbooks not
-// read yet are left out (each playbook's own work is bounded by the parser).
+// commit, discovery and every playbook together. It is checked between
+// files, before each candidate playbook: the playbook being read when it
+// passes is read to its end (its own work is bounded by the parser), and
+// the playbooks not read yet are left out.
 const varSourcesTimeLimit = 60 * time.Second
 
 // parseRepoFunc reads the sources of a repository subpath.
@@ -86,46 +88,28 @@ func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath strin
 		commit = ""
 		notes = append(notes, varsource.ReadFailed("the commit of the repository could not be determined"))
 	}
-	root, err := openSourceRoot(dir, subpath)
+	fsys, err := openCloneFS(dir, subpath)
 	if err != nil {
 		e.logger().WarnContext(ctx, "open the repository subpath", "err", err)
 		r = unreadReport(commit, "the repository subpath could not be opened; no playbooks discovered")
 		r.Notes = append(notes, r.Notes...)
 		return r
 	}
-	defer func() { _ = root.Close() }()
+	defer func() { _ = fsys.Close() }()
 
 	parse := e.parseRepo
 	if parse == nil {
 		parse = varsource.ParseRepo
 	}
-	r = parse(ctx, root.FS(), commit)
+	r = parse(ctx, fsys, commit)
 	r.Notes = append(notes, r.Notes...)
 	return r
 }
 
-// openSourceRoot opens the clone's subpath as the root of the read: no
-// path through it, symlinks included, reaches outside it.
-func openSourceRoot(dir, subpath string) (*os.Root, error) {
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, fmt.Errorf("open clone: %w", err)
-	}
-	if subpath == "" {
-		return root, nil
-	}
-	defer func() { _ = root.Close() }()
-	sub, err := root.OpenRoot(subpath)
-	if err != nil {
-		return nil, fmt.Errorf("open subpath: %w", err)
-	}
-	return sub, nil
-}
-
-// unreadReport is a report that read no playbook, with one read_failed
-// note saying why.
+// unreadReport is a Failed report: the repository was not read, one
+// read_failed note says why.
 func unreadReport(commit, why string) varsource.Report {
-	return varsource.Report{Commit: commit, Playbooks: []varsource.Playbook{}, Notes: []varsource.Note{varsource.ReadFailed(why)}}
+	return varsource.Report{Commit: commit, Failed: true, Playbooks: []varsource.Playbook{}, Notes: []varsource.Note{varsource.ReadFailed(why)}}
 }
 
 // warningCount counts the report's warnings, its own and its playbooks'.

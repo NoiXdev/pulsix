@@ -9,8 +9,12 @@ import (
 // Report is what a repo sync read: the commit, every discovered playbook's
 // sources, and the notes about the repo itself. Incomplete: a cap left
 // playbooks out (LeftOut names them); they are neither read nor gone.
+// Failed: the repository as a whole could not be read (a note says why);
+// the report's empty playbook list says nothing about the repository, and
+// the previous record stands.
 type Report struct {
 	Commit     string     `json:"commit"`
+	Failed     bool       `json:"failed,omitempty"`
 	Playbooks  []Playbook `json:"playbooks"`
 	Incomplete bool       `json:"incomplete"`
 	LeftOut    []string   `json:"left_out,omitempty"`

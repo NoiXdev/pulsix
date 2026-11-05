@@ -29,6 +29,7 @@ type fakeFetcher struct {
 	commit      string
 	commitErr   error
 	commitWaits bool
+	onCommit    func()
 	commitDirs  []string
 }
 
@@ -40,6 +41,9 @@ func (f *fakeFetcher) FetchRepoDir(_ context.Context, spec RepoSpec, _, _, _ str
 
 func (f *fakeFetcher) HeadCommit(ctx context.Context, dir string) (string, error) {
 	f.commitDirs = append(f.commitDirs, dir)
+	if f.onCommit != nil {
+		f.onCommit()
+	}
 	if f.commitWaits {
 		<-ctx.Done()
 	}

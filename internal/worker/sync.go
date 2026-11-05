@@ -163,6 +163,10 @@ func (e *SyncExecutor) Run(ctx context.Context, job *workerpb.Job, env RunEnv, s
 		requirementsInstalled = true
 	}
 	sources, summary := e.readVarSources(ctx, dir, payload.Repo.Subpath)
+	if err := ctx.Err(); err != nil {
+		// The job was cancelled during the read: its report is partial.
+		return StatusError, nil, fmt.Errorf("read variable sources: %w", err)
+	}
 
 	// The one run event the sync reports; its payload carries no
 	// credential material. The observed git server key (backlog 2.41) is

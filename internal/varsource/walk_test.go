@@ -19,6 +19,9 @@ func (c *countingFS) Open(name string) (fs.File, error) {
 	return c.FS.Open(name)
 }
 
+// Stat looks without opening, as a real file system does.
+func (c *countingFS) Stat(name string) (fs.FileInfo, error) { return fs.Stat(c.FS, name) }
+
 func codes(notes []Note) map[string]int {
 	out := map[string]int{}
 	for _, n := range notes {

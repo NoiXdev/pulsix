@@ -23,16 +23,21 @@ var skippedDirs = map[string]bool{"roles": true, "group_vars": true, "host_vars"
 // 4). It never fails: problems are notes, in the playbooks or in the
 // report's own list.
 //
-// ctx bounds the whole read: once it ends, no further file is opened, and
-// every remaining file that may be a playbook (judged by its name alone)
-// is left out with one time_limit warning. The playbook being read when
-// it ends is read to its end; one playbook's own work is bounded.
+// ctx bounds the whole read: it is checked before each candidate file, and
+// once it has ended no further file is opened; every remaining file that
+// may be a playbook (judged by its name alone) is left out with one
+// time_limit warning (read_cancelled when ctx was cancelled rather than
+// past its deadline). The playbook being read when it ends is read to its
+// end; one playbook's own work is bounded. A repository whose root cannot
+// be listed is Failed.
 func ParseRepo(ctx context.Context, fsys fs.FS, commit string) Report {
 	d := &discovery{ctx: ctx, p: &parser{fsys: fsys}}
+	r := Report{Commit: commit}
 	if err := fs.WalkDir(fsys, ".", d.visit); err != nil {
+		r.Failed = true
 		d.notes = append(d.notes, warning(codeReadFailed, "", 0, "the repository could not be read; no playbooks discovered"))
 	}
-	r := Report{Commit: commit, Playbooks: d.playbooks, Notes: d.notes}
+	r.Playbooks, r.Notes = d.playbooks, d.notes
 	if r.Playbooks == nil {
 		r.Playbooks = []Playbook{}
 	}
@@ -45,8 +50,12 @@ func ParseRepo(ctx context.Context, fsys fs.FS, commit string) Report {
 	if d.stopped.n > 0 {
 		r.Incomplete = true
 		r.LeftOut = append(r.LeftOut, d.stopped.names...)
-		r.Notes = append(r.Notes, warning(codeTimeLimit, "", 0, "reading the variable sources ran out of time; %d files that may be playbooks are left out: %s",
-			d.stopped.n, nameList(d.stopped.names, d.stopped.n)))
+		code, why := codeReadCancelled, "was cancelled"
+		if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+			code, why = codeTimeLimit, "ran out of time"
+		}
+		r.Notes = append(r.Notes, warning(code, "", 0, "reading the variable sources %s; %d files that may be playbooks are left out: %s",
+			why, d.stopped.n, nameList(d.stopped.names, d.stopped.n)))
 	}
 	r.Notes = capNotes(r.Notes, "", maxNotesPerList)
 	return r

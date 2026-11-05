@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -152,7 +153,7 @@ func TestSyncExecutorSourcesNeverFailTheSync(t *testing.T) {
 		writeTree(t, clone, map[string]string{"site.yml": "- hosts: all\n"})
 		f := &fakeFetcher{dir: clone, commitErr: os.ErrPermission}
 		r, _, _ := syncSources(t, &SyncExecutor{Fetcher: f}, "")
-		if r.Commit != "" || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) || len(r.Playbooks) != 1 {
+		if r.Commit != "" || r.Failed || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) || len(r.Playbooks) != 1 {
 			t.Fatalf("report = %+v", r)
 		}
 	})
@@ -166,7 +167,7 @@ func TestSyncExecutorSourcesNeverFailTheSync(t *testing.T) {
 		if !strings.Contains(logged.String(), "panic=boom") {
 			t.Fatalf("the panic is not logged: %s", logged.String())
 		}
-		if r.Commit != testCommit || len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
+		if r.Commit != testCommit || !r.Failed || len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
 			t.Fatalf("report = %+v", r)
 		}
 		if summary["playbooks"] != float64(0) || summary["warnings"] != float64(1) {
@@ -180,16 +181,27 @@ func TestSyncExecutorSourcesNeverFailTheSync(t *testing.T) {
 				return varsource.Report{Commit: commit, Playbooks: []varsource.Playbook{}, Notes: []varsource.Note{huge}}
 			}}
 		r, summary, _ := syncSources(t, e, "")
-		if r.Commit != testCommit || len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
+		if r.Commit != testCommit || !r.Failed || len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
 			t.Fatalf("report = %+v", r)
 		}
 		if summary["warnings"] != float64(1) {
 			t.Fatalf("summary = %v", summary)
 		}
 	})
-	t.Run("the subpath does not exist", func(t *testing.T) {
-		r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: t.TempDir(), commit: testCommit}}, "nope")
-		if len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
+	for _, sub := range []string{"nope", ".git", "gitlink"} {
+		t.Run("the subpath cannot be opened: "+sub, func(t *testing.T) {
+			clone := t.TempDir()
+			writeTree(t, clone, map[string]string{".git/x.yml": "- hosts: all\n"})
+			symlinks(t, clone, map[string]string{"gitlink": ".git"})
+			r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, sub)
+			if !r.Failed || len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
+				t.Fatalf("report = %+v", r)
+			}
+		})
+	}
+	t.Run("a whole read is not failed", func(t *testing.T) {
+		r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: t.TempDir(), commit: testCommit}}, "")
+		if r.Failed || r.Incomplete || len(r.Notes) != 0 {
 			t.Fatalf("report = %+v", r)
 		}
 	})
@@ -214,6 +226,25 @@ func TestSyncExecutorStopsReadingSourcesAtTheTimeLimit(t *testing.T) {
 	}
 }
 
+// TestSyncExecutorCancelledDuringTheRead: a job cancelled while the
+// sources are read ends cancelled, not succeeded with a partial report.
+func TestSyncExecutorCancelledDuringTheRead(t *testing.T) {
+	clone := t.TempDir()
+	writeTree(t, clone, map[string]string{"a.yml": "- hosts: all\n"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f := &fakeFetcher{dir: clone, commit: testCommit, onCommit: cancel}
+	c := &evCollector{}
+	status, stats, err := (&SyncExecutor{Fetcher: f, Log: slog.New(slog.DiscardHandler)}).Run(ctx,
+		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", "", ""), RunEnv{WorkDir: t.TempDir()}, c.sink)
+	if status != StatusError || !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run = %q, %v; want the cancellation", status, err)
+	}
+	if stats != nil || len(c.events) != 0 {
+		t.Fatalf("stats = %v, events = %d", stats, len(c.events))
+	}
+}
+
 // TestSyncExecutorDoesNotFollowSymlinksOutOfTheClone is Review Focus 5: a
 // file of the clone that links outside the read root is never read. A link
 // that stays inside the root is followed.
@@ -223,26 +254,23 @@ func TestSyncExecutorDoesNotFollowSymlinksOutOfTheClone(t *testing.T) {
 		"spec.yml":   "argument_specs:\n  main:\n    options:\n      stolen:\n        type: str\n",
 		"theirs.yml": "- hosts: all\n  vars:\n    leaked: 1 # pulsix: string\n",
 	})
+	writeTree(t, outside, map[string]string{"roles/w/meta/argument_specs.yml": "argument_specs:\n  main:\n    options:\n      foreign:\n        type: str\n"})
 	clone := t.TempDir()
 	writeTree(t, clone, map[string]string{
-		"site.yml":     "- hosts: all\n  roles:\n    - x\n    - y\n",
-		"shared/y.yml": webSpec,
+		".git/config":          "argument_specs:\n  main:\n    options:\n      gitconfig:\n        type: str\n", // a spec, so only the refusal keeps it out
+		"ansible/site.yml":     "- hosts: all\n  roles:\n    - x\n    - y\n    - g\n    - w\n    - s\n",
+		"ansible/shared/y.yml": webSpec,
+		"shared/s.yml":         "argument_specs:\n  main:\n    options:\n      sibling:\n        type: str\n",
 	})
-	links := map[string]string{
-		"roles/x/meta/argument_specs.yml": filepath.Join(outside, "spec.yml"),
-		"roles/y/meta/argument_specs.yml": "../../../shared/y.yml",
-		"theirs.yml":                      filepath.Join(outside, "theirs.yml"),
-	}
-	for name, target := range links {
-		p := filepath.Join(clone, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(target, p); err != nil {
-			t.Fatal(err)
-		}
-	}
-	r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, "")
+	symlinks(t, clone, map[string]string{
+		"ansible/roles/x/meta/argument_specs.yml": filepath.Join(outside, "spec.yml"),   // absolute, outside
+		"ansible/roles/y/meta/argument_specs.yml": "../../../shared/y.yml",              // inside the subpath: followed
+		"ansible/roles/g/meta/argument_specs.yml": "../../../../.git/config",            // git's own files
+		"ansible/roles/w":                         filepath.Join(outside, "roles", "w"), // a role directory outside
+		"ansible/roles/s/meta/argument_specs.yml": "../../../../shared/s.yml",           // the clone, outside the subpath
+		"ansible/theirs.yml":                      filepath.Join(outside, "theirs.yml"),
+	})
+	r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, "ansible")
 	if got := reportPaths(r); !reflect.DeepEqual(got, []string{"site.yml"}) {
 		t.Fatalf("playbooks = %q, want site.yml only (theirs.yml links outside)", got)
 	}
@@ -250,6 +278,9 @@ func TestSyncExecutorDoesNotFollowSymlinksOutOfTheClone(t *testing.T) {
 	want := []varsource.RoleUse{
 		{Name: "x", EntryPoint: "main", State: varsource.RoleUnreadable},
 		{Name: "y", EntryPoint: "main", State: varsource.RoleRead},
+		{Name: "g", EntryPoint: "main", State: varsource.RoleUnreadable},
+		{Name: "w", EntryPoint: "main", State: varsource.RoleNotFound},
+		{Name: "s", EntryPoint: "main", State: varsource.RoleUnreadable},
 	}
 	if !reflect.DeepEqual(pb.Roles, want) {
 		t.Fatalf("roles = %+v, want %+v", pb.Roles, want)
@@ -257,9 +288,24 @@ func TestSyncExecutorDoesNotFollowSymlinksOutOfTheClone(t *testing.T) {
 	if len(pb.Fields) != 1 || pb.Fields[0].Name != "web_port" {
 		t.Fatalf("fields = %+v, want web_port only", pb.Fields)
 	}
-	for _, s := range []string{"stolen", "leaked"} {
+	for _, s := range []string{"stolen", "leaked", "foreign", "sibling", "gitconfig"} {
 		if raw, _ := json.Marshal(r); strings.Contains(string(raw), s) {
 			t.Fatalf("the report carries %q from outside the clone: %s", s, raw)
 		}
+	}
+
+	// Without a subpath the read root holds git's own directory: a link
+	// into it is refused like a link out of the clone.
+	writeTree(t, clone, map[string]string{"root.yml": "- hosts: all\n  roles:\n    - g\n"})
+	symlinks(t, clone, map[string]string{"roles/g/meta/argument_specs.yml": "../../../.git/config"})
+	r, _, _ = syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, "")
+	var root *varsource.Playbook
+	for i := range r.Playbooks {
+		if r.Playbooks[i].Path == "root.yml" {
+			root = &r.Playbooks[i]
+		}
+	}
+	if root == nil || !reflect.DeepEqual(root.Roles, []varsource.RoleUse{{Name: "g", EntryPoint: "main", State: varsource.RoleUnreadable}}) || len(root.Fields) != 0 {
+		t.Fatalf("root.yml = %+v", root)
 	}
 }

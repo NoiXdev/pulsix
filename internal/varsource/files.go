@@ -22,7 +22,14 @@ func readLimited(fsys fs.FS, name string) ([]byte, error) {
 	return readUpTo(fsys, name, MaxFileBytes)
 }
 
+// readUpTo checks that name is a regular file before it opens it: opening
+// a FIFO or a device (one a symlink leads to, say) can block forever.
 func readUpTo(fsys fs.FS, name string, limit int) ([]byte, error) {
+	if info, err := fs.Stat(fsys, name); err != nil {
+		return nil, err
+	} else if !info.Mode().IsRegular() {
+		return nil, errNotRegular
+	}
 	f, err := fsys.Open(name)
 	if err != nil {
 		return nil, err

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func playbookPaths(r Report) []string {
@@ -95,7 +96,7 @@ func TestParseRepoCapsItsNotes(t *testing.T) {
 type cancellingFS struct {
 	fstest.MapFS
 	stopAt string
-	cancel context.CancelFunc
+	cancel func()
 	opened []string
 }
 
@@ -120,9 +121,9 @@ func TestParseRepoStopsWhenTheContextEnds(t *testing.T) {
 		"with space.yml": play,                     // no playbook path: not listed
 	}
 	t.Run("midway", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		fsys := &cancellingFS{MapFS: files, stopAt: "p1.yml", cancel: cancel}
+		ctx, cancel := context.WithCancelCause(context.Background())
+		defer cancel(nil)
+		fsys := &cancellingFS{MapFS: files, stopAt: "p1.yml", cancel: func() { cancel(context.DeadlineExceeded) }}
 		r := ParseRepo(ctx, fsys, "c")
 		// The playbook being read when the time ran out is read to its end.
 		if got, want := playbookPaths(r), []string{"p0.yml", "p1.yml"}; !reflect.DeepEqual(got, want) {
@@ -142,8 +143,8 @@ func TestParseRepoStopsWhenTheContextEnds(t *testing.T) {
 		}
 	})
 	t.Run("before the first file", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
+		defer cancel()
 		fsys := &cancellingFS{MapFS: files, cancel: cancel}
 		r := ParseRepo(ctx, fsys, "c")
 		if len(r.Playbooks) != 0 || len(fsys.opened) != 0 {
@@ -154,6 +155,32 @@ func TestParseRepoStopsWhenTheContextEnds(t *testing.T) {
 		}
 		wantNotes(t, r.Notes, "warning time_limit :0")
 	})
+	t.Run("cancelled", func(t *testing.T) {
+		// A read cancelled by its caller says so; it claims no time limit.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r := ParseRepo(ctx, &cancellingFS{MapFS: files, cancel: cancel}, "c")
+		if len(r.Playbooks) != 0 || !r.Incomplete || len(r.LeftOut) != 5 {
+			t.Fatalf("report = %+v", r)
+		}
+		wantNotes(t, r.Notes, "warning read_cancelled :0")
+	})
+}
+
+// failingRootFS cannot list its root.
+type failingRootFS struct{}
+
+func (failingRootFS) Open(string) (fs.File, error) { return nil, fs.ErrPermission }
+
+func TestParseRepoMarksAnUnreadRepoFailed(t *testing.T) {
+	r := ParseRepo(context.Background(), failingRootFS{}, "c")
+	if !r.Failed || len(r.Playbooks) != 0 || r.Commit != "c" {
+		t.Fatalf("report = %+v", r)
+	}
+	wantNotes(t, r.Notes, "warning read_failed :0")
+	if r := ParseRepo(context.Background(), fstest.MapFS{}, "c"); r.Failed {
+		t.Fatal("an empty repository is read, not failed")
+	}
 }
 
 func TestParseRepoStopsPastTheCapWithoutReading(t *testing.T) {
@@ -161,9 +188,9 @@ func TestParseRepoStopsPastTheCapWithoutReading(t *testing.T) {
 	for i := range MaxPlaybooks + 2 {
 		fsys[fmt.Sprintf("p%04d.yml", i)] = &fstest.MapFile{Data: []byte("- hosts: all\n")}
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	stop := &cancellingFS{MapFS: fsys, stopAt: fmt.Sprintf("p%04d.yml", MaxPlaybooks), cancel: cancel}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	stop := &cancellingFS{MapFS: fsys, stopAt: fmt.Sprintf("p%04d.yml", MaxPlaybooks), cancel: func() { cancel(context.DeadlineExceeded) }}
 	r := ParseRepo(ctx, stop, "c")
 	capped, stopped := fmt.Sprintf("p%04d.yml", MaxPlaybooks), fmt.Sprintf("p%04d.yml", MaxPlaybooks+1)
 	if len(r.Playbooks) != MaxPlaybooks || !reflect.DeepEqual(r.LeftOut, []string{capped, stopped}) {

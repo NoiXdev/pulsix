@@ -78,6 +78,7 @@ const (
 	codeTooManyPlaybooks       = "too_many_playbooks"
 	codeReportTooLarge         = "report_too_large"
 	codeTimeLimit              = "time_limit"
+	codeReadCancelled          = "read_cancelled"
 	codeInlineRolesUnresolved  = "inline_roles_unresolved"
 	codeInlineImportUnresolved = "inline_import_unresolved"
 )
