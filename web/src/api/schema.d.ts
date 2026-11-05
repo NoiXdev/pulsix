@@ -1813,7 +1813,10 @@ export interface paths {
         };
         /** Get API v1 orgs by org job templates by ID variables */
         get: operations["get-api-v1-orgs-by-org-job-templates-by-id-variables"];
-        /** Put API v1 orgs by org job templates by ID variables */
+        /**
+         * Put API v1 orgs by org job templates by ID variables
+         * @description Replaces the template's extra vars schema and values. The value of a field that is inactive, or that the schema no longer declares, is kept when the body omits it, and is not sent to runs. To discard such a value, declare the field active and omit its value; remove the field again in a later write if wanted. A body without extra_vars_schema removes the schema and with it every kept value: the values are then exactly the body's.
+         */
         put: operations["updateTemplateVariables"];
         post?: never;
         delete?: never;
@@ -6728,7 +6731,7 @@ export interface components {
             extra_vars?: {
                 [key: string]: unknown;
             };
-            /** @description The schema; omit to remove it */
+            /** @description The schema; omit to remove it, which also drops every value kept for an inactive or removed field */
             extra_vars_schema?: components["schemas"]["Schema"];
         };
         TemporaryPasswordOutputBody: {

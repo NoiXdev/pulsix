@@ -30,7 +30,7 @@ type templateVariablesUpdateInput struct {
 	ID      string `path:"id"`
 	IfMatch string `header:"If-Match" doc:"The template's ETag; optional, a stale one answers 412"`
 	Body    struct {
-		ExtraVarsSchema *schema.Schema `json:"extra_vars_schema,omitempty" doc:"The schema; omit to remove it"`
+		ExtraVarsSchema *schema.Schema `json:"extra_vars_schema,omitempty" doc:"The schema; omit to remove it, which also drops every value kept for an inactive or removed field"`
 		ExtraVars       map[string]any `json:"extra_vars,omitempty" doc:"The values of the active fields. Values of inactive and removed fields the body omits stay stored. Secrets: a string sets a new value, the {\"$secret\": \"set\"} a read returned keeps the stored one"`
 	}
 }
@@ -46,6 +46,12 @@ func newTemplateVariablesOutput(t templates.Template) *templateVariablesOutput {
 	}
 	return out
 }
+
+// templateVariablesPutDoc describes the variables write for API clients.
+const templateVariablesPutDoc = "Replaces the template's extra vars schema and values. " +
+	"The value of a field that is inactive, or that the schema no longer declares, is kept when the body omits it, and is not sent to runs. " +
+	"To discard such a value, declare the field active and omit its value; remove the field again in a later write if wanted. " +
+	"A body without extra_vars_schema removes the schema and with it every kept value: the values are then exactly the body's."
 
 // registerTemplateVarsRoutes wires a template's variables page (backlog
 // 7.75): reading them needs templates.read, writing them templates.write.
@@ -88,5 +94,7 @@ func registerTemplateVarsRoutes(hapi huma.API, deps Deps) {
 		}
 		setAuditObject(ctx, t.ID.String(), "updated the variables of job template "+t.Name)
 		return newTemplateVariablesOutput(t), nil
-	}, withAudit("updateTemplateVariables", "job_template"))
+	}, withAudit("updateTemplateVariables", "job_template"), func(o *huma.Operation) {
+		o.Description = templateVariablesPutDoc
+	})
 }

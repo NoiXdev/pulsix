@@ -26,6 +26,16 @@ type fakeStore struct {
 	byID    map[uuid.UUID]templates.Template
 	vault   map[uuid.UUID][]templates.VaultCredential
 	nextErr error // one-shot error, standing in for a constraint violation
+	// beforeWrite, when set, runs once at the start of the next Update or
+	// UpdateVariables: another writer landing between a read and a write.
+	beforeWrite func()
+}
+
+func (f *fakeStore) raceOnce() {
+	if hook := f.beforeWrite; hook != nil {
+		f.beforeWrite = nil
+		hook()
+	}
 }
 
 func newFakeStore() *fakeStore {
@@ -109,6 +119,7 @@ func (f *fakeStore) List(_ context.Context, orgID uuid.UUID) ([]templates.Templa
 // ErrRevisionMismatch, every write bumps the revision, and the variables
 // source columns are left as they are.
 func (f *fakeStore) Update(_ context.Context, t templates.Template, ifRevision *int64) (templates.Template, error) {
+	f.raceOnce()
 	cur, ok := f.byID[t.ID]
 	if !ok || cur.OrgID != t.OrgID {
 		return templates.Template{}, templates.ErrNotFound
@@ -130,6 +141,7 @@ func (f *fakeStore) Update(_ context.Context, t templates.Template, ifRevision *
 // UpdateVariables mirrors the real store: only the schema, the values and
 // the variables source columns are written, under the same guard.
 func (f *fakeStore) UpdateVariables(_ context.Context, t templates.Template, ifRevision *int64) (templates.Template, error) {
+	f.raceOnce()
 	cur, ok := f.byID[t.ID]
 	if !ok || cur.OrgID != t.OrgID {
 		return templates.Template{}, templates.ErrNotFound

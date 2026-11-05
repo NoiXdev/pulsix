@@ -350,7 +350,7 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	var updated Template
 	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
 		var err error
-		if updated, err = s.store.Update(ctx, t, in.IfRevision); err != nil {
+		if updated, err = s.store.Update(ctx, t, readRevision(in.IfRevision, cur)); err != nil {
 			return err
 		}
 		if err := s.store.ReplaceVaultCredentials(ctx, orgID, id, in.VaultCredentials); err != nil {

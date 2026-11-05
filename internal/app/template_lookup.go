@@ -71,6 +71,14 @@ func (a templateLookup) TemplateLookup(ctx context.Context, orgID, id uuid.UUID)
 	if err != nil {
 		return jobs.TemplateRow{}, fmt.Errorf("encode template scope: %w", err)
 	}
+	// Only the values a run receives are opened (spec 7.75 goal 3): a
+	// value under an inactive or undeclared field is left out before
+	// anything is decrypted, so it never enters memory in the clear here
+	// and an envelope that would not open cannot fail the run. The queue's
+	// own filter (jobs.sendableVars) stays as the second line.
+	if t.ExtraVarsSchema != nil {
+		t.ExtraVars = schema.Sendable(t.ExtraVarsSchema.Fields, t.ExtraVars)
+	}
 	opened, err := a.openExtraVars(t)
 	if err != nil {
 		return jobs.TemplateRow{}, err

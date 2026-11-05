@@ -62,7 +62,7 @@ func (s *Service) UpdateVariables(ctx context.Context, orgID, id uuid.UUID, in V
 	}
 	next := cur
 	next.ExtraVars, next.ExtraVarsSchema = vars, in.Schema
-	updated, err := s.store.UpdateVariables(ctx, next, in.IfRevision)
+	updated, err := s.store.UpdateVariables(ctx, next, readRevision(in.IfRevision, cur))
 	if err != nil {
 		return Template{}, err
 	}
@@ -72,6 +72,18 @@ func (s *Service) UpdateVariables(ctx context.Context, orgID, id uuid.UUID, in V
 	}
 	updated.VaultCredentials = items
 	return masked(updated), nil
+}
+
+// readRevision is the revision a read-modify-write is guarded by: the one
+// the caller named (If-Match), or else the one the service read, so a write
+// landing between this read and this write answers ErrRevisionMismatch
+// instead of being undone by a body built on the older row.
+func readRevision(ifRevision *int64, cur Template) *int64 {
+	if ifRevision != nil {
+		return ifRevision
+	}
+	rev := cur.Revision
+	return &rev
 }
 
 // prepareVars checks a write's extra vars and returns them as stored:
@@ -133,7 +145,10 @@ func (s *Service) prepareVars(orgID, id uuid.UUID, vars map[string]any, sc *sche
 // fits its field is neither checked nor dropped. A person brings such a
 // value back by switching the field active, or adding it again, with the
 // value a read returned. An active field incoming omits is cleared, as
-// before. incoming has been validated already; carried values are not
+// before — which is also how a person discards a kept value, in two steps
+// for a removed field: declare the field (active) again and omit its
+// value, then remove the field in a later save if wanted. A write without
+// a schema keeps nothing (prepareVars only carries over under a schema). incoming has been validated already; carried values are not
 // validated, which is what lets them stay. (prepareVars then seals a
 // legacy plaintext secret among them, sealCarried.)
 func carryOver(fields []schema.Field, incoming, stored map[string]any) map[string]any {
@@ -159,11 +174,12 @@ func carryOver(fields []schema.Field, incoming, stored map[string]any) map[strin
 // sealCarried seals a legacy plaintext secret among the values carryOver
 // added to incoming — one stored before sealing existed (backlog 2.47)
 // under a field that is secret-typed in this write's schema (an inactive
-// field) or was secret-typed before it (a removed field) — the same seal a
-// save gives a legacy secret it keeps. Without it a removed field's
-// plaintext would read in the clear, since a read only masks what the
-// current schema declares secret. Every other carried value, a sealed
-// secret included, stays verbatim.
+// field) or was secret-typed before it (a removed field, or one retyped
+// away from secret and switched inactive), at any depth — the same seal a
+// save gives a legacy secret it keeps. Without it such a plaintext would
+// read in the clear, since a read only masks what the current schema
+// declares secret. Both passes leave a sealed value as it is, so every
+// other carried value, a sealed secret included, stays verbatim.
 func (s *Service) sealCarried(aad []byte, fields, prev []schema.Field, incoming, out map[string]any) (map[string]any, error) {
 	carried := map[string]any{}
 	for k, v := range out {
@@ -173,16 +189,6 @@ func (s *Service) sealCarried(aad []byte, fields, prev []schema.Field, incoming,
 	}
 	if len(carried) == 0 {
 		return out, nil
-	}
-	declared := make(map[string]bool, len(fields))
-	for _, f := range fields {
-		declared[f.Name] = true
-	}
-	removed := make([]schema.Field, 0, len(prev))
-	for _, f := range prev {
-		if !declared[f.Name] {
-			removed = append(removed, f)
-		}
 	}
 	seal := func(path string, v any) (any, error) {
 		plain, ok := v.(string)
@@ -195,7 +201,7 @@ func (s *Service) sealCarried(aad []byte, fields, prev []schema.Field, incoming,
 		}
 		return schema.Sealed(ct), nil
 	}
-	for _, fs := range [][]schema.Field{fields, removed} {
+	for _, fs := range [][]schema.Field{fields, prev} {
 		var err error
 		if carried, err = schema.MapSecrets(fs, carried, seal); err != nil {
 			return nil, err

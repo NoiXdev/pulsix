@@ -7,8 +7,10 @@ package templates_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -341,44 +343,118 @@ func TestProjectionSaveCarriesInactiveValuesOver(t *testing.T) {
 
 // TestCarriedLegacyPlaintextSecretIsSealed: a secret stored as plaintext
 // before sealing existed (backlog 2.47) is sealed by the save that carries
-// it over — under a field switched inactive, or under one removed from the
-// schema — so it never stays readable once its field no longer says
-// "secret". A sealed value is still carried verbatim.
+// it over — under a field switched inactive, under one removed from the
+// schema, or under one retyped away from secret and switched inactive, at
+// the top level or nested — so it never reads in the clear, neither in the
+// write's own response nor on a later read. A sealed value is still
+// carried verbatim.
 func TestCarriedLegacyPlaintextSecretIsSealed(t *testing.T) {
+	flat := &schema.Schema{Fields: []schema.Field{
+		{Name: "token", Type: schema.TypeSecret},
+		{Name: "region", Type: schema.TypeString},
+	}}
+	nested := &schema.Schema{Fields: []schema.Field{
+		{Name: "db", Type: schema.TypeObject, Fields: []schema.Field{{Name: "password", Type: schema.TypeSecret}}},
+		{Name: "region", Type: schema.TypeString},
+	}}
+	const plain = "legacy-plain-5d1"
 	cases := []struct {
-		name string
-		next *schema.Schema
+		name   string
+		base   *schema.Schema
+		legacy map[string]any
+		next   *schema.Schema
 	}{
-		{"inactive", &schema.Schema{Fields: []schema.Field{
+		{"inactive", flat, map[string]any{"token": plain, "region": "eu"}, &schema.Schema{Fields: []schema.Field{
 			{Name: "token", Type: schema.TypeSecret, Active: inactive()},
 			{Name: "region", Type: schema.TypeString},
 		}}},
-		{"removed", &schema.Schema{Fields: []schema.Field{{Name: "region", Type: schema.TypeString}}}},
+		{"removed", flat, map[string]any{"token": plain, "region": "eu"}, &schema.Schema{Fields: []schema.Field{
+			{Name: "region", Type: schema.TypeString},
+		}}},
+		{"retyped and inactive", flat, map[string]any{"token": plain, "region": "eu"}, &schema.Schema{Fields: []schema.Field{
+			{Name: "token", Type: schema.TypeString, Active: inactive()},
+			{Name: "region", Type: schema.TypeString},
+		}}},
+		{"nested, retyped and inactive", nested, map[string]any{"db": map[string]any{"password": plain}, "region": "eu"}, &schema.Schema{Fields: []schema.Field{
+			{Name: "db", Type: schema.TypeObject, Active: inactive(), Fields: []schema.Field{{Name: "password", Type: schema.TypeString}}},
+			{Name: "region", Type: schema.TypeString},
+		}}},
+		{"nested and removed", nested, map[string]any{"db": map[string]any{"password": plain}, "region": "eu"}, &schema.Schema{Fields: []schema.Field{
+			{Name: "region", Type: schema.TypeString},
+		}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			f := newFixture()
 			in := f.in()
-			in.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{
-				{Name: "token", Type: schema.TypeSecret},
-				{Name: "region", Type: schema.TypeString},
-			}}
-			in.ExtraVars = map[string]any{"token": "x", "region": "eu"}
+			in.ExtraVarsSchema = c.base
+			in.ExtraVars = map[string]any{"region": "eu"}
 			created, err := f.svc.Create(ctx, f.org, in)
 			if err != nil {
 				t.Fatalf("Create: %v", err)
 			}
-			revertToLegacy(t, f, created, map[string]any{"token": "legacy-plain-5d1", "region": "eu"})
+			revertToLegacy(t, f, created, c.legacy)
 
-			if _, err := f.svc.UpdateVariables(ctx, f.org, created.ID, templates.VariablesInput{Schema: c.next, ExtraVars: map[string]any{"region": "eu"}}); err != nil {
+			put, err := f.svc.UpdateVariables(ctx, f.org, created.ID, templates.VariablesInput{Schema: c.next, ExtraVars: map[string]any{"region": "eu"}})
+			if err != nil {
 				t.Fatalf("UpdateVariables: %v", err)
 			}
-			if got := openStored(t, testBox(), f, created, "token"); got != "legacy-plain-5d1" {
-				t.Fatalf("carried legacy secret opens to %q", got)
-			}
 			read, err := f.svc.Get(ctx, f.org, created.ID)
-			if err != nil || !reflect.DeepEqual(read.ExtraVars["token"], schema.Mask()) {
-				t.Fatalf("read token = %#v, %v; want the mask", read.ExtraVars["token"], err)
+			if err != nil {
+				t.Fatalf("Get: %v", err)
+			}
+			for what, vars := range map[string]map[string]any{
+				"stored": f.store.byID[created.ID].ExtraVars, "PUT response": put.ExtraVars, "GET": read.ExtraVars,
+			} {
+				b, err := json.Marshal(vars)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(string(b), plain) {
+					t.Fatalf("%s holds the legacy plaintext: %s", what, b)
+				}
+			}
+			if _, top := c.legacy["token"]; top {
+				if got := openStored(t, testBox(), f, created, "token"); got != plain {
+					t.Fatalf("carried legacy secret opens to %q", got)
+				}
+			}
+		})
+	}
+}
+
+// TestReadModifyWriteIsGuardedWithoutIfMatch: a write without If-Match is
+// still based on the row it read, so another write landing between that
+// read and this write answers ErrRevisionMismatch (412) instead of being
+// undone.
+func TestReadModifyWriteIsGuardedWithoutIfMatch(t *testing.T) {
+	writes := map[string]func(f fixture, id uuid.UUID) error{
+		"template": func(f fixture, id uuid.UUID) error {
+			_, err := f.svc.Update(ctx, f.org, id, templates.UpdateInput{Name: "renamed", PlaybookID: f.playbook})
+			return err
+		},
+		"variables": func(f fixture, id uuid.UUID) error {
+			_, err := f.svc.UpdateVariables(ctx, f.org, id, templates.VariablesInput{ExtraVars: map[string]any{"a": "b"}})
+			return err
+		},
+	}
+	for name, write := range writes {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture()
+			created, err := f.svc.Create(ctx, f.org, f.in())
+			if err != nil {
+				t.Fatalf("Create: %v", err)
+			}
+			f.store.beforeWrite = func() {
+				other := f.store.byID[created.ID]
+				other.Revision++
+				f.store.byID[created.ID] = other
+			}
+			if err := write(f, created.ID); !errors.Is(err, templates.ErrRevisionMismatch) {
+				t.Fatalf("write racing another = %v, want ErrRevisionMismatch", err)
+			}
+			if err := write(f, created.ID); err != nil {
+				t.Fatalf("write without a race = %v, want nil", err)
 			}
 		})
 	}

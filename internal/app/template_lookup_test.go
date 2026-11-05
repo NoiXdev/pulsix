@@ -167,3 +167,59 @@ func TestTemplateLookupRefusesAnUnresolvedSharedTemplateDistinctly(t *testing.T)
 		t.Fatalf("TemplateLookup() error = %v, must not also be jobs.ErrNotFound — indistinguishable from a deleted template", err)
 	}
 }
+
+// TestTemplateLookupOpensActiveFieldsOnly (spec 7.75 goal 3): the lookup
+// leaves out a value under an inactive or undeclared field before it opens
+// anything, so such a value is never decrypted at claim time and an
+// envelope that would not open there (here: sealed for another template)
+// does not fail the run. Active values are opened as before.
+func TestTemplateLookupOpensActiveFieldsOnly(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	org, err := gen.New(d.Pool()).CreateOrganization(ctx, gen.CreateOrganizationParams{ID: uuid.Must(uuid.NewV7()), Slug: "app-template-lookup-active", Name: "lookup"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped := db.WithOrgScope(ctx, org.ID)
+	box := crypto.NewBox([32]byte{7, 7, 7})
+	inline := "- hosts: all\n  tasks: []"
+	pb, err := playbooks.NewSQLStore(d).Create(scoped, playbooks.Playbook{ID: uuid.Must(uuid.NewV7()), OrgID: org.ID, Inline: &inline, Source: playbooks.SourceEditor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmplID := uuid.Must(uuid.NewV7())
+	own, err := box.SealAAD([]byte("active-secret"), templates.ExtraVarsAAD(org.ID, tmplID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := box.SealAAD([]byte("x"), templates.ExtraVarsAAD(org.ID, uuid.Must(uuid.NewV7())))
+	if err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	store := templates.NewSQLStore(d)
+	if _, err := store.Create(scoped, templates.Template{
+		ID: tmplID, OrgID: org.ID, PlaybookID: pb.ID, Name: "inactive",
+		ExtraVars: map[string]any{
+			"db_pass": schema.Sealed(own), "old_pass": schema.Sealed(foreign), "gone_pass": schema.Sealed(foreign), "region": "eu",
+		},
+		ExtraVarsSchema: &schema.Schema{Fields: []schema.Field{
+			{Name: "db_pass", Type: schema.TypeSecret},
+			{Name: "old_pass", Type: schema.TypeSecret, Active: &off},
+			{Name: "region", Type: schema.TypeString},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := NewTemplateLookup(store, playbooks.NewSQLStore(d), box).TemplateLookup(scoped, org.ID, tmplID)
+	if err != nil {
+		t.Fatalf("TemplateLookup with an unopenable value under an inactive and an undeclared field: %v", err)
+	}
+	var vars map[string]any
+	if err := json.Unmarshal(row.ExtraVars, &vars); err != nil {
+		t.Fatal(err)
+	}
+	if len(vars) != 2 || vars["db_pass"] != "active-secret" || vars["region"] != "eu" {
+		t.Fatalf("claim extra vars = %v, want exactly the active values, opened", vars)
+	}
+}
