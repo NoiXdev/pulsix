@@ -1311,3 +1311,58 @@ func TestTemplateDefinitionRefusesAMalformedAnsibleMarker(t *testing.T) {
 		})
 	}
 }
+
+// TestTemplateDefinitionValuesFitTheirSchema (backlog 7.75): a run receives
+// only the values of declared fields, so a definition's extra vars under a
+// key its schema does not declare would be stored and never sent. Create
+// and update refuse them, and a value that does not fit its field, with
+// the problems located; a required field may stay without a value (a
+// run's overrides may give one), and a definition without a schema takes
+// any keys.
+func TestTemplateDefinitionValuesFitTheirSchema(t *testing.T) {
+	sc := &schema.Schema{Fields: []schema.Field{
+		{Name: "region", Type: schema.TypeString},
+		{Name: "port", Type: schema.TypeInt, Required: true},
+	}}
+	for _, tc := range []struct {
+		name string
+		sc   *schema.Schema
+		vars map[string]any
+		want []string // problem paths; nil: saved
+	}{
+		{"declared values", sc, map[string]any{"region": "eu", "port": float64(80)}, nil},
+		{"a required field without a value", sc, map[string]any{"region": "eu"}, nil},
+		{"an undeclared key", sc, map[string]any{"region": "eu", "extra": "x"}, []string{"extra"}},
+		{"a value that does not fit", sc, map[string]any{"port": "eighty"}, []string{"port"}},
+		{"no schema", nil, map[string]any{"anything": "x"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := shared.NewService(newFakeStore())
+			in := shared.TemplateDefinitionInput{Name: "deploy-site", SharedRepoID: uuid.Must(uuid.NewV7()), PlaybookPath: "site.yml",
+				ExtraVars: tc.vars, ExtraVarsSchema: tc.sc}
+			_, err := svc.CreateTemplate(ctx, in)
+			if tc.want == nil {
+				if err != nil {
+					t.Fatalf("CreateTemplate = %v, want it saved", err)
+				}
+				return
+			}
+			for op, err := range map[string]error{"create": err, "update": func() error {
+				_, err := svc.UpdateTemplate(ctx, uuid.Must(uuid.NewV7()), in)
+				return err
+			}()} {
+				var ve *schema.ValidationError
+				if !errors.Is(err, shared.ErrInvalidExtraVars) || !errors.Is(err, shared.ErrInvalidInput) || !errors.As(err, &ve) {
+					t.Fatalf("%s = %v, want ErrInvalidExtraVars with the problems", op, err)
+				}
+				var paths []string
+				for _, p := range ve.Problems {
+					paths = append(paths, p.Path)
+				}
+				if !reflect.DeepEqual(paths, tc.want) {
+					t.Errorf("%s problems %v, want %v", op, paths, tc.want)
+				}
+			}
+		})
+	}
+}

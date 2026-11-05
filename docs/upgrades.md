@@ -90,6 +90,15 @@ A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
 
+## Behaviour changes to check after an upgrade
+
+- **7.75, shared job template definitions:** a run receives only the values
+  of fields the extra-vars schema declares. A value a shared definition held
+  under a key its schema does not declare is no longer sent since 7.75, and
+  saving such a definition is refused (422 at `body.extra_vars.<key>`). To
+  fix one, declare the field in the definition's schema (or remove the
+  value) and save it again; the save propagates to every projection.
+
 ## Roll order
 
 1. **Manager** (with the database): back up, then start the new version. It

@@ -260,6 +260,36 @@ func TestTemplateDefinitionRefusesANonCanonicalPlaybookPath(t *testing.T) {
 	}
 }
 
+// TestTemplateDefinitionRefusesUndeclaredExtraVars: create and update
+// answer 422 for extra vars under a key the definition's schema does not
+// declare, located at the key.
+func TestTemplateDefinitionRefusesUndeclaredExtraVars(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("tpl-def-vars-admin@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, admin)
+	adminClient := s.LoginAs(admin)
+	repoDefID := seedRepoDefinition(t, adminClient, s, "infra-for-tpl-vars")
+	base := s.HTTP.URL + "/api/v1/admin/templates/definitions"
+	body := map[string]any{"name": "deploy-site", "shared_repo_id": repoDefID, "playbook_path": "site.yml",
+		"extra_vars_schema": map[string]any{"fields": []any{map[string]any{"name": "region", "type": "string"}}},
+		"extra_vars":        map[string]any{"region": "eu"}}
+	var created templateDefinitionDetailBody
+	decodeInto(t, postJSON(t, adminClient, base, body), &created)
+	if created.Definition.ID == "" {
+		t.Fatal("seed definition: no id")
+	}
+	body["extra_vars"] = map[string]any{"region": "eu", "stray": "x"}
+	for _, resp := range []*http.Response{
+		postJSON(t, adminClient, base, map[string]any{"name": "deploy-other", "shared_repo_id": repoDefID, "playbook_path": "site.yml",
+			"extra_vars_schema": body["extra_vars_schema"], "extra_vars": body["extra_vars"]}),
+		requestJSON(t, adminClient, http.MethodPut, base+"/"+created.Definition.ID, body),
+	} {
+		if msg := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(msg, "body.extra_vars.stray") {
+			t.Fatalf("undeclared extra var: %d %s, want 422 at body.extra_vars.stray", resp.StatusCode, msg)
+		}
+	}
+}
+
 // TestTemplateDefinitionCollisionNamesOrganizationToInstanceAdmin is
 // TestRepoDefinitionCollisionNamesOrganizationToInstanceAdmin's own test for
 // job templates: spec decision 7's collision message must name the

@@ -600,6 +600,10 @@ func mapSharedErr(ctx context.Context, deps Deps, err error) error {
 			"organization %s: %s still reference this definition's projection", label, strings.Join(inUse.Reasons, ", "),
 		))
 	}
+	var ve *schema.ValidationError
+	if errors.Is(err, shared.ErrInvalidExtraVars) && errors.As(err, &ve) {
+		return schemaProblems(ve, "body.extra_vars")
+	}
 	switch {
 	case errors.Is(err, shared.ErrNotFound):
 		return huma.Error404NotFound("not found")

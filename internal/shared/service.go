@@ -12,6 +12,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/ansiblevars"
 	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/playbooks"
 )
 
@@ -58,6 +59,10 @@ var (
 	// definition's playbook_path that no repo playbook can have
 	// (playbooks.CanonicalRepoPath): the API answers it with 422.
 	ErrInvalidPlaybookPath = fmt.Errorf("%w: invalid playbook path", ErrInvalidInput)
+	// ErrInvalidExtraVars is the invalid-input class for a template
+	// definition's extra vars that do not fit its schema; it wraps the
+	// *schema.ValidationError, which the API answers with 422.
+	ErrInvalidExtraVars = fmt.Errorf("%w: extra vars do not fit their schema", ErrInvalidInput)
 )
 
 // Store persists repository, job template and check definitions and their
@@ -476,6 +481,9 @@ func validateTemplateDefinitionInput(in TemplateDefinitionInput) error {
 		}
 	}
 	vars := extraVarsOrEmpty(in.ExtraVars)
+	if err := checkValues(in.ExtraVarsSchema, vars); err != nil {
+		return err
+	}
 	if names := ansiblevars.ForbiddenIn(vars); len(names) > 0 {
 		return fmt.Errorf("%w: extra vars name a reserved variable: %s", ErrInvalidInput, strings.Join(names, ", "))
 	}
@@ -492,6 +500,26 @@ func validateTemplateDefinitionInput(in TemplateDefinitionInput) error {
 		if err := ansiblevars.CheckMarkers(vars[name]); err != nil {
 			return fmt.Errorf("%w: extra var %s cannot be loaded by Ansible: %w", ErrInvalidInput, name, err)
 		}
+	}
+	return nil
+}
+
+// checkValues checks a definition's extra vars against its schema: a run
+// receives only the values of declared fields (backlog 7.75), so a value
+// under a key the schema does not declare is refused rather than stored
+// and never sent, and so is a value that does not fit its field. A
+// required field may stay without a value here — a run's overrides may
+// give it one. Without a schema any key is taken.
+func checkValues(sc *schema.Schema, vars map[string]any) error {
+	if sc == nil {
+		return nil
+	}
+	fields := slices.Clone(sc.Fields)
+	for i := range fields {
+		fields[i].Required = false
+	}
+	if err := schema.Validate(fields, vars); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidExtraVars, err)
 	}
 	return nil
 }
