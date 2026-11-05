@@ -112,7 +112,6 @@ func TestChangePasswordRefusals(t *testing.T) {
 	logs := captureLog(t)
 	uid := s.SeedUser("change-refused@example.test", password)
 	s.SeedPasskey(uid, "key")
-	_, tok := s.OrgWithToken(t)
 
 	for _, tc := range []struct {
 		name       string
@@ -123,7 +122,7 @@ func TestChangePasswordRefusals(t *testing.T) {
 		wantDetail string
 	}{
 		{"wrong current password", s.LoginAs(uid), "not the password", "a brand new password", http.StatusBadRequest, "invalid_current_password"},
-		{"too short", s.LoginAs(uid), password, "elevenchars", http.StatusUnprocessableEntity, ""},
+		{"too short", s.LoginAs(uid), password, "elevenchars", http.StatusUnprocessableEntity, "password_too_short"},
 		{"same as the current one", s.LoginAs(uid), password, password, http.StatusUnprocessableEntity, "same_password"},
 		{"second factor pending", s.LoginAsPending(uid), password, "a brand new password", http.StatusForbidden, ""},
 		{"signed out", s.Client(), password, "a brand new password", http.StatusUnauthorized, ""},
@@ -141,17 +140,10 @@ func TestChangePasswordRefusals(t *testing.T) {
 		})
 	}
 
-	// The bearer credential is resolved only on the org-scoped routes, so
-	// on this one a token is no principal at all; the gate refuses a token
-	// principal regardless (requirePasswordChangeSession).
-	t.Run("an API token", func(t *testing.T) {
-		resp := s.Post(t, tok, changePasswordPath, map[string]string{
-			"current_password": "correct horse battery", "new_password": "a brand new password",
-		})
-		if resp.Code != http.StatusUnauthorized {
-			t.Fatalf("status %d (%s), want 401", resp.Code, resp.Body)
-		}
-	})
+	// An API token is refused by requirePasswordChangeSession, not here:
+	// this route resolves no bearer credential at all, so a request with a
+	// token would be a plain 401 whatever the gate did. The token principal
+	// is covered in must_change_gate_internal_test.go.
 
 	t.Run("a stale factor", func(t *testing.T) {
 		c := s.LoginAs(uid)

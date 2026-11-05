@@ -114,6 +114,8 @@ func mapResetErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, accounts.ErrInvalidResetToken):
 		return huma.Error400BadRequest(invalidOrExpiredLink)
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		return huma.Error422UnprocessableEntity(passwordTooShort)
 	case errors.Is(err, auth.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
 	default:

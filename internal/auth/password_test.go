@@ -101,27 +101,30 @@ func TestVerifyPasswordMalformedHash(t *testing.T) {
 }
 
 func TestCheckPasswordPolicy(t *testing.T) {
-	for name, tc := range map[string]struct {
+	for _, tc := range []struct {
+		name    string
 		pw      string
 		wantErr bool
 	}{
-		"empty":                  {"", true},
-		"eleven characters":      {"elevenchars", true},
-		"twelve characters":      {"twelve chars", false},
-		"long":                   {"correct horse battery staple", false},
-		"eleven multibyte runes": {string([]rune("äääääääääääää")[:11]), true},
-		"twelve multibyte runes": {string([]rune("äääääääääääää")[:12]), false},
+		{"empty", "", true},
+		{"eleven characters", "elevenchars", true},
+		{"twelve characters", "twelve chars", false},
+		{"long", "correct horse battery staple", false},
+		{"eleven multibyte runes", string([]rune("äääääääääääää")[:11]), true},
+		{"twelve multibyte runes", string([]rune("äääääääääääää")[:12]), false},
 	} {
-		err := auth.CheckPasswordPolicy(tc.pw)
-		if tc.wantErr {
-			if !errors.Is(err, auth.ErrPasswordTooShort) || !errors.Is(err, auth.ErrInvalidInput) {
-				t.Errorf("%s: err = %v, want ErrPasswordTooShort wrapping ErrInvalidInput", name, err)
+		t.Run(tc.name, func(t *testing.T) {
+			err := auth.CheckPasswordPolicy(tc.pw)
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("err = %v, want nil", err)
+				}
+				return
 			}
-			continue
-		}
-		if err != nil {
-			t.Errorf("%s: err = %v, want nil", name, err)
-		}
+			if !errors.Is(err, auth.ErrPasswordTooShort) || !errors.Is(err, auth.ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrPasswordTooShort wrapping ErrInvalidInput", err)
+			}
+		})
 	}
 	if auth.MinPasswordLength != 12 {
 		t.Errorf("MinPasswordLength = %d, want 12", auth.MinPasswordLength)

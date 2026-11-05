@@ -45,11 +45,12 @@ type fakeStore struct {
 	release  chan struct{}
 	emailErr error
 	// emailLookups counts the AccountByEmail calls that started;
-	// emailPanic makes it panic; emailDeadline records whether the
-	// context it got carried a deadline.
-	emailLookups  atomic.Int32
-	emailPanic    bool
-	emailDeadline atomic.Bool
+	// emailPanic makes it panic; emailDeadlineAt holds the deadline of the
+	// context it got last (nil when that context had none). It is a pointer
+	// because several background jobs may store it at once.
+	emailLookups    atomic.Int32
+	emailPanic      bool
+	emailDeadlineAt atomic.Pointer[time.Time]
 	// beforeTokenLock, when set, runs between ResetTokenOwner and
 	// LockResetToken: what a concurrent request does in between.
 	beforeTokenLock func()
@@ -195,8 +196,8 @@ func (f *fakeStore) Reactivate(_ context.Context, _ uuid.UUID) error {
 
 func (f *fakeStore) AccountByEmail(ctx context.Context, email string) (uuid.UUID, error) {
 	f.emailLookups.Add(1)
-	if _, ok := ctx.Deadline(); ok {
-		f.emailDeadline.Store(true)
+	if d, ok := ctx.Deadline(); ok {
+		f.emailDeadlineAt.Store(&d)
 	}
 	if f.emailPanic {
 		panic("store exploded for " + email)

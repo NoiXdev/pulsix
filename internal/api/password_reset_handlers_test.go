@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"regexp"
@@ -112,6 +113,33 @@ func TestForgotPasswordConstantShape(t *testing.T) {
 	}
 }
 
+// TestForgotPasswordStillAnswers202WhenTheRequestIsDropped: once the
+// accounts service has shut down it starts no more background work, and a
+// forgot request is still answered exactly like any other; no mail goes out.
+func TestForgotPasswordStillAnswers202WhenTheRequestIsDropped(t *testing.T) {
+	s := apitest.New(t)
+	s.SeedUser("forgot-dropped@example.test", "correct horse battery")
+	if err := s.Deps.Accounts.Shutdown(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": "forgot-dropped@example.test"})
+	body := mustReadBody(t, resp)
+	// The usual body: an empty object, carrying only huma's $schema link.
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(body), &fields); err != nil {
+		t.Fatalf("body %q is not a JSON object: %v", body, err)
+	}
+	delete(fields, "$schema")
+	if resp.StatusCode != http.StatusAccepted || len(fields) != 0 {
+		t.Fatalf("status %d body %q, want 202 and an empty object", resp.StatusCode, body)
+	}
+	s.Deps.Accounts.Wait()
+	if sent := s.Mail.Sent(); len(sent) != 0 {
+		t.Fatalf("mails %+v, want none: the request was dropped", sent)
+	}
+}
+
 // TestForgotPasswordRateLimit: every request counts, whatever it asked
 // for; the 11th from one address within 15 minutes is refused, another
 // address keeps its own budget.
@@ -167,8 +195,8 @@ func TestResetDoesNotSignIn(t *testing.T) {
 	}
 	token := waitForResetMail(t, s, email)
 
-	if resp := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": token, "new_password": "short"}); resp.StatusCode != http.StatusUnprocessableEntity {
-		t.Fatalf("a short password: status %d, want 422", resp.StatusCode)
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": token, "new_password": "short"}); resp.StatusCode != http.StatusUnprocessableEntity || problemDetail(t, resp) != "password_too_short" {
+		t.Fatalf("a short password: status %d, want 422 password_too_short", resp.StatusCode)
 	}
 
 	resp := postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": token, "new_password": "the new password 22"})

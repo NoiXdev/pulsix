@@ -17,6 +17,7 @@ const (
 	invalidCurrentPassword   = "invalid_current_password"
 	temporaryPasswordExpired = "temporary_password_expired"
 	samePassword             = "same_password"
+	passwordTooShort         = "password_too_short"
 )
 
 type changePasswordInput struct {
@@ -78,6 +79,8 @@ func mapAccountsErr(ctx context.Context, err error) error {
 		return huma.Error400BadRequest(temporaryPasswordExpired)
 	case errors.Is(err, accounts.ErrSamePassword):
 		return huma.Error422UnprocessableEntity(samePassword)
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		return huma.Error422UnprocessableEntity(passwordTooShort)
 	case errors.Is(err, auth.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, accounts.ErrNotFound):

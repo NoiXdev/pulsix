@@ -241,15 +241,21 @@ func TestRequestResetCapsWorkInFlight(t *testing.T) {
 }
 
 // TestRequestResetWorkHasADeadline: the detached context carries a
-// deadline, so a hung store cannot pin the goroutine forever.
+// deadline of ResetJobTimeout, so a hung store cannot pin the goroutine
+// forever (and a stray constant cannot stretch it unnoticed).
 func TestRequestResetWorkHasADeadline(t *testing.T) {
 	f := newResetFixture()
+	start := time.Now()
 	if err := f.svc.RequestReset(context.Background(), "person@example.test"); err != nil {
 		t.Fatal(err)
 	}
 	f.svc.Wait()
-	if !f.store.emailDeadline.Load() {
+	at := f.store.emailDeadlineAt.Load()
+	if at == nil {
 		t.Fatalf("the background context has no deadline (want %v)", accounts.ResetJobTimeout)
+	}
+	if lo, hi := start.Add(accounts.ResetJobTimeout-5*time.Second), start.Add(accounts.ResetJobTimeout+time.Second); at.Before(lo) || at.After(hi) {
+		t.Fatalf("deadline %v, want within [%v, %v] (start + %v)", at, lo, hi, accounts.ResetJobTimeout)
 	}
 }
 
