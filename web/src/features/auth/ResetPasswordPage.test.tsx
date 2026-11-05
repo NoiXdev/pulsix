@@ -129,6 +129,23 @@ describe('ResetPasswordPage', () => {
     expect(screen.queryByLabelText('New password')).not.toBeInTheDocument();
   });
 
+  it('asks the person to wait when they are rate limited, and keeps the form', async () => {
+    const user = userEvent.setup();
+    renderPage({
+      'POST /api/v1/auth/password/reset': () =>
+        new Response(JSON.stringify({ title: 'Too Many Requests', status: 429 }), {
+          status: 429,
+          headers: { 'Retry-After': '60' },
+        }),
+    });
+
+    await submit(user, PASSWORD);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('too many attempts; wait a few minutes and try again');
+    expect(screen.getByLabelText('New password')).toBeInTheDocument();
+    expect(screen.queryByText(/This link is invalid or has expired/)).not.toBeInTheDocument();
+  });
+
   // Only the server's own code means the length rule (Task 12): any other
   // 422 says something else, and the page shows that instead.
   it.each([

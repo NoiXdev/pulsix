@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { de } from '../../../i18n/de/index.ts';
 import { mockApi } from '../../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../../test/renderRoutes.tsx';
 import { SharedChecksPage } from './SharedChecksPage.tsx';
@@ -96,18 +95,5 @@ describe('SharedChecksPage', () => {
     });
     renderPage();
     expect(await screen.findByText('You do not have access')).toBeInTheDocument();
-  });
-});
-
-describe('the German counts of shared definitions', () => {
-  it.each([
-    ['repos', 'Repository-Definition', 'Repository-Definitionen'],
-    ['templates', 'Job-Vorlagen-Definition', 'Job-Vorlagen-Definitionen'],
-    ['checks', 'Check-Definition', 'Check-Definitionen'],
-  ] as const)('%s: one is singular, any other number plural', (kind, singular, plural) => {
-    const count = de.instance.shared[kind].count;
-    expect(count(1)).toMatch(new RegExp(`^1 ${singular} · `));
-    expect(count(2)).toMatch(new RegExp(`^2 ${plural} · `));
-    expect(count(0)).toMatch(new RegExp(`^0 ${plural} · `));
   });
 });

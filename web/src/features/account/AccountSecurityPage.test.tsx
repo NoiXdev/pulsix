@@ -258,6 +258,39 @@ describe('step-up (backlog 1.28)', () => {
   });
 });
 
+describe('step-up refused again', () => {
+  const ME = {
+    user: { id: 'u1', email: 'tim@acme.io', display_name: 'Tim R.' },
+    mfa_complete: true,
+    mfa_enrolment_required: false,
+    totp_confirmed: true,
+    instance_admin: false,
+    must_change_password: false,
+  };
+
+  it('shows that confirming the identity did not work when the retry after the proof is refused again', async () => {
+    const user = userEvent.setup();
+    const stale = () =>
+      new Response(JSON.stringify({ title: 'Forbidden', status: 403, detail: 'step_up_required' }), { status: 403 });
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/auth/passkeys': NO_PASSKEYS,
+      'POST /api/v1/auth/totp/verify': { ok: true },
+      'POST /api/v1/auth/password': stale,
+    });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+
+    await user.type(await screen.findByLabelText('Current password'), 'my-old-long-password');
+    await user.type(screen.getByLabelText('New password'), 'my-new-long-password');
+    await user.type(screen.getByLabelText('Repeat the new password'), 'my-new-long-password');
+    await user.click(screen.getByRole('button', { name: 'Change password' }));
+    await user.type(await screen.findByLabelText('Authenticator or recovery code'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText('Confirming your identity did not work. Try again.')).toBeInTheDocument();
+  });
+});
+
 // Backlog 1.34 and the count beside it. The set is shown once, at
 // enrolment; after that nothing told the operator how many were left, and
 // nothing let them get more. The two belong on screen together: the number

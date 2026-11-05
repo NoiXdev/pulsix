@@ -21,10 +21,10 @@ function renderPage() {
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-              <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
-          </QueryClientProvider>,
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
+    </QueryClientProvider>,
   );
 }
 

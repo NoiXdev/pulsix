@@ -5,17 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { ADMIN } from '../../test/renderRoutes.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { LanguageSettingsPage } from './LanguageSettingsPage.tsx';
-
-const ADMIN = {
-  user: { id: 'u1', email: 'admin@acme.io', display_name: 'Ada' },
-  mfa_complete: true,
-  totp_confirmed: true,
-  instance_admin: true,
-  locale: null,
-};
 
 function renderPage() {
   const rootRoute = createRootRoute();

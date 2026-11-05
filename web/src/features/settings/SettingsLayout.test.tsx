@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { meQueryKey } from '../../api/hooks/useMe.ts';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { mockApi } from '../../test/mockApi.ts';
+import { waitForQuery } from '../../test/waitForQuery.ts';
 import { SettingsLayout } from './SettingsLayout.tsx';
 
 function renderLayout(path = '/o/acme/settings/members') {
@@ -16,11 +18,13 @@ function renderLayout(path = '/o/acme/settings/members') {
     routeTree: rootRoute.addChildren([orgRoute.addChildren([settingsRoute.addChildren(leaves)])]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-              <RouterProvider router={router} />
-          </QueryClientProvider>,
+    <QueryClientProvider client={qc}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
   );
+  return qc;
 }
 
 const me = (instanceAdmin: boolean) => ({
@@ -36,12 +40,14 @@ const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', rol
 describe('SettingsLayout', () => {
   it('shows a viewer the Organization group only', async () => {
     mockApi({ 'GET /api/v1/auth/me': me(false), 'GET /api/v1/orgs/acme': org('viewer') });
-    renderLayout();
+    const qc = renderLayout();
     expect(await screen.findByRole('link', { name: 'General' })).toHaveAttribute('href', '/o/acme/settings/general');
     expect(screen.getByRole('link', { name: 'Members' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Activity' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'API tokens' })).toBeInTheDocument();
-    await new Promise((r) => setTimeout(r, 50));
+    // Both gates have answered (a viewer, not an instance admin) before the absences count.
+    await waitForQuery(qc, meQueryKey);
+    await waitForQuery(qc, ['org', 'acme']);
     expect(screen.queryByText('Alerting')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Notifications' })).not.toBeInTheDocument();
     expect(screen.queryByText('Instance')).not.toBeInTheDocument();

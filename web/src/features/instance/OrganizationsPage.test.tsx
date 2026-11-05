@@ -42,6 +42,17 @@ describe('OrganizationsPage', () => {
     expect(screen.getByRole('heading', { name: 'Organizations' })).toBeInTheDocument();
   });
 
+  it('shows the access-denied page when the list is refused', async () => {
+    mockApi({
+      'GET /api/v1/admin/orgs': () =>
+        new Response(JSON.stringify({ detail: 'instance admin required' }), { status: 403 }),
+    });
+    render();
+
+    expect(await screen.findByText('You do not have access')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Acme Hosting' })).not.toBeInTheDocument();
+  });
+
   it('lists every organization with its slug, member count and creation date', async () => {
     mockApi({ 'GET /api/v1/admin/orgs': { orgs: ORGS } });
     render();

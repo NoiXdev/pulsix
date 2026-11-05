@@ -5,16 +5,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { ADMIN } from '../../test/renderRoutes.tsx';
 import { BackupsPage } from './BackupsPage.tsx';
 import { backupsRefetchInterval } from '../../api/hooks/useBackups.ts';
-
-const ADMIN = {
-  user: { id: 'u1', email: 'admin@acme.io', display_name: 'Ada' },
-  mfa_complete: true,
-  mfa_enrolment_required: false,
-  totp_confirmed: true,
-  instance_admin: true,
-};
 
 const FOLDER_SETTINGS = {
   destination: 'folder',

@@ -76,6 +76,22 @@ describe('ForgotPasswordPage', () => {
     expect(screen.queryByText(new RegExp(SENT))).not.toBeInTheDocument();
   });
 
+  it('says the request could not be sent, and keeps the form, when the server fails', async () => {
+    const user = userEvent.setup();
+    renderPage({
+      'GET /api/v1/auth/password/reset-available': { available: true },
+      'POST /api/v1/auth/password/forgot': () =>
+        new Response(JSON.stringify({ title: 'Internal Server Error', status: 500 }), { status: 500 }),
+    });
+
+    await user.type(await screen.findByLabelText('Email address'), 'ada@acme.io');
+    await user.click(screen.getByRole('button', { name: 'Send link' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('The request could not be sent. Try again.');
+    expect(screen.queryByText(new RegExp(SENT))).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Email address')).toHaveValue('ada@acme.io');
+  });
+
   it('says so when it cannot tell whether a link can be sent', async () => {
     renderPage({
       'GET /api/v1/auth/password/reset-available': () =>
