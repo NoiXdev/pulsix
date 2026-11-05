@@ -50,6 +50,18 @@ describe('editLocked', () => {
     expect(next).not.toHaveProperty('source_field');
   });
 
+  // The field dialog's draft after "Reset to source" is a source field
+  // without a source version; editing it again is still an edit of the
+  // adjusted field the dialog opened on.
+  it('keeps an adjusted field adjusted when a reset draft is edited again', () => {
+    const adjusted: SchemaField = { ...port, default: 8080, origin: 'adjusted', set_in_playbook: true, source_field: { name: 'port', type: 'int', default: 80 } };
+    const next = editLocked(adjusted, { ...resetToSource(adjusted), label: 'HTTP port' });
+    expect(next).toEqual({
+      name: 'port', type: 'int', default: 80, label: 'HTTP port', origin: 'adjusted', source: src, set_in_playbook: true,
+      source_field: { name: 'port', type: 'int', default: 80 },
+    });
+  });
+
   it('leaves manual and gone fields as they are', () => {
     const manual: SchemaField = { name: 'm', type: 'string' };
     expect(editLocked(manual, { ...manual, label: 'M' })).toEqual({ name: 'm', type: 'string', label: 'M' });

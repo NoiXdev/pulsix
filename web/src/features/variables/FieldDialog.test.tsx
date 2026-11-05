@@ -51,6 +51,26 @@ describe('FieldDialog', () => {
     expect(onSave).toHaveBeenCalledWith({ name: 'port', type: 'int', default: 80, label: 'Port', origin: 'source', source: src, active: false });
   });
 
+  it('keeps a field adjusted to its source when it is edited after a reset', async () => {
+    const user = userEvent.setup();
+    const { dialog, onSave } = open({
+      name: 'port', type: 'int', default: 8080, origin: 'adjusted', source: src,
+      source_field: { name: 'port', type: 'int', default: 80 },
+    });
+    await user.click(within(dialog).getByRole('button', { name: 'Reset to source' }));
+    expect(within(dialog).getByText('From playbook')).toBeInTheDocument();
+    const dflt = within(dialog).getByLabelText('Default');
+    await user.clear(dflt);
+    await user.type(dflt, '9090');
+    expect(within(dialog).getByText('Adjusted')).toBeInTheDocument();
+    expect(within(dialog).getByText('Source says: 80')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Read from the playbook/)).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+    expect(onSave).toHaveBeenCalledWith({
+      name: 'port', type: 'int', default: 9090, origin: 'adjusted', source: src, source_field: { name: 'port', type: 'int', default: 80 },
+    });
+  });
+
   it('shows an edit of a source field as adjusted right away', async () => {
     const user = userEvent.setup();
     const { dialog, onSave } = open({ name: 'port', type: 'int', default: 80, origin: 'source', source: src });

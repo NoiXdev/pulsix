@@ -60,11 +60,15 @@ export function sameContent(a: SchemaField, b: SchemaField): boolean {
  * An adjusted field edited back to its source version is the source's
  * again, so a reverted edit ends at source whether it was made inline (one
  * step at a time) or in the field dialog (against the field it opened on).
+ * Any other edit of an adjusted field keeps it adjusted against its source
+ * version, also one that starts from the dialog's "Reset to source" draft
+ * (which says source and carries no source version).
  * Every other origin stays what it was. */
 export function editLocked(prev: SchemaField, next: SchemaField): SchemaField {
   const src = prev.source_field;
-  if (originOf(prev) === 'adjusted' && src && sameContent(next, { ...content(src), name: next.name })) {
-    return resetToSource({ ...next, source_field: src });
+  if (originOf(prev) === 'adjusted' && src) {
+    if (sameContent(next, { ...content(src), name: next.name })) return resetToSource({ ...next, source_field: src });
+    return { ...next, origin: 'adjusted', source_field: src };
   }
   if (originOf(prev) !== 'source' || sameContent(prev, next)) return next;
   return { ...next, origin: 'adjusted', source_field: content(prev) };
