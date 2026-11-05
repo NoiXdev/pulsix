@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { cn } from '../lib/utils.ts';
 import type { Tone } from './badge.tsx';
 
@@ -15,6 +15,19 @@ const TONE_VAR = { warn: 'var(--px-warn)', crit: 'var(--px-crit)' } as const;
  * current one while it overlaps it, so the highlight changes as a heading
  * scrolls up under the top bar rather than when the whole section enters. */
 const OBSERVER_MARGIN = '-10% 0px -70% 0px';
+
+/** The ids acted on or navigated to, kept with the pathname they belong to. */
+interface HandledHashes {
+  path: string;
+  ids: string[];
+}
+
+/** `prev` with `id` added, started afresh when the page has changed since. */
+function withHandled(prev: HandledHashes, id: string): HandledHashes {
+  const path = window.location.pathname;
+  if (prev.path === path) return prev.ids.includes(id) ? prev : { path, ids: [...prev.ids, id] };
+  return { path, ids: [id] };
+}
 
 /**
  * useCurrentSection reports which section id is current. Without an
@@ -33,25 +46,31 @@ function useCurrentSection(ids: string[]): { current: string | undefined; markHa
   // scroll follows in an effect. A hash the user produced on this page (a nav
   // click, back/forward) is marked handled instead, because the browser has
   // already scrolled there; acting on it at the next render would pull the
-  // page back from wherever the user has scrolled since.
+  // page back from wherever the user has scrolled since. The handled list
+  // belongs to the pathname it was made on: the router reuses this component
+  // for the next page of the same kind (`/groups/a#members` to
+  // `/groups/b#members`), and the same hash there has not been acted on yet.
   const hash = typeof window === 'undefined' ? '' : window.location.hash.slice(1);
-  const [handled, setHandled] = useState<string[]>([]);
-  const [deepLink, setDeepLink] = useState<string | null>(null);
+  const path = typeof window === 'undefined' ? '' : window.location.pathname;
+  const [handledState, setHandled] = useState<HandledHashes>({ path, ids: [] });
+  // A new object per deep link, so the same id on another page runs the effect again.
+  const [deepLink, setDeepLink] = useState<{ id: string } | null>(null);
+  const handled = handledState.path === path ? handledState.ids : [];
   if (hash !== '' && !handled.includes(hash) && ids.includes(hash)) {
-    setHandled([...handled, hash]);
+    setHandled({ path, ids: [...handled, hash] });
     setCurrent(hash);
-    setDeepLink(hash);
+    setDeepLink({ id: hash });
   }
 
-  const markHandled = (id: string) => setHandled((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  const markHandled = (id: string) => setHandled((prev) => withHandled(prev, id));
   useEffect(() => {
-    const onHashChange = () => setHandled((prev) => (prev.includes(window.location.hash.slice(1)) ? prev : [...prev, window.location.hash.slice(1)]));
+    const onHashChange = () => setHandled((prev) => withHandled(prev, window.location.hash.slice(1)));
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
   useEffect(() => {
-    if (deepLink !== null) document.getElementById(deepLink)?.scrollIntoView({ block: 'start' });
+    if (deepLink !== null) document.getElementById(deepLink.id)?.scrollIntoView({ block: 'start' });
   }, [deepLink]);
 
   useEffect(() => {
@@ -229,9 +248,16 @@ export function SidebarFacts({ items }: { items: { label: string; value: ReactNo
 /** DisabledHint stands in for a section whose feature is unavailable, and
  * says why and, when there is one, what to do about it. */
 export function DisabledHint({ title, body, action }: { title: string; body: ReactNode; action?: ReactNode }) {
+  const titleId = useId();
   return (
-    <div className="flex shrink-0 flex-col items-start gap-1.5 rounded-[10px] border border-dashed border-border bg-card px-4 py-3.5">
-      <span className="text-[13px] font-semibold">{title}</span>
+    <div
+      role="note"
+      aria-labelledby={titleId}
+      className="flex shrink-0 flex-col items-start gap-1.5 rounded-[10px] border border-dashed border-border bg-card px-4 py-3.5"
+    >
+      <span id={titleId} className="text-[13px] font-semibold">
+        {title}
+      </span>
       <span className="text-[13px] text-muted-foreground">{body}</span>
       {action && <div className="mt-1">{action}</div>}
     </div>

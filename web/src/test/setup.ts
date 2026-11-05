@@ -209,3 +209,10 @@ class StubPath2D {
   roundRect() {}
 }
 (globalThis as unknown as { Path2D: unknown }).Path2D = StubPath2D;
+
+// jsdom's window.scrollTo (and Element.prototype.scrollTo) log "Not
+// implemented" and do nothing. TanStack Router's scroll restoration calls
+// window.scrollTo on every navigation, so every test that navigates printed
+// it; no test asserts on scrolling through these, so a no-op is the whole stub.
+window.scrollTo = (() => {}) as typeof window.scrollTo;
+if (!Element.prototype.scrollTo) Element.prototype.scrollTo = (() => {}) as Element['scrollTo'];

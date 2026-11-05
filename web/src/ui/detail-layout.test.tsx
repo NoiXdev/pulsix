@@ -223,6 +223,21 @@ describe('DetailLayout hash scroll', () => {
     expect(scroll).not.toHaveBeenCalled();
     expect(screen.getByRole('link', { name: 'a' })).toHaveAttribute('aria-current', 'location');
   });
+
+  it('acts on the same hash again on another page', () => {
+    window.history.replaceState(null, '', '/groups/a#members');
+    const { rerender } = render(layout(['a', 'members']));
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    // The router reuses this component for the next page: same hash, new path.
+    window.history.replaceState(null, '', '/groups/b#members');
+    rerender(layout(['a', 'members']));
+    expect(scroll).toHaveBeenCalledTimes(2);
+    expect(scroll.mock.contexts[1]).toBe(document.getElementById('members'));
+
+    rerender(layout(['a', 'members']));
+    expect(scroll).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('SidebarHeading', () => {
@@ -261,6 +276,11 @@ describe('DisabledHint', () => {
     expect(screen.getByText('No agent')).toBeInTheDocument();
     expect(screen.getByText('Install one first.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Install' })).toBeInTheDocument();
+  });
+
+  it('is a note named by its title', () => {
+    render(<DisabledHint title="No agent" body="Install one first." />);
+    expect(screen.getByRole('note', { name: 'No agent' })).toBeInTheDocument();
   });
 
   it('works without an action', () => {

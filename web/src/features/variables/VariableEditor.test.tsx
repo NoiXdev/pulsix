@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { pickOption } from '../../test/pickOption.ts';
@@ -164,6 +164,22 @@ describe('VariableEditor — variants', () => {
     expect(screen.queryByRole('button', { name: 'Add field' })).not.toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'env active' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Move env down' })).toBeDisabled();
+  });
+
+  it('a viewer opens a field and sees its attributes without editing them', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<VariableEditor readOnly variant="group" value={{ fields: [{ name: 'env', type: 'string', required: true }] }} onChange={onChange} />);
+    await openField('env');
+    const field = dialog('env');
+    expect(within(field).getByLabelText('Name')).toHaveValue('env');
+    expect(within(field).getByLabelText('Name')).toBeDisabled();
+    expect(within(field).getByLabelText('Required')).toBeChecked();
+    expect(within(field).queryByRole('button', { name: 'Done' })).not.toBeInTheDocument();
+    expect(within(field).queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
+    await user.click(within(field).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 
