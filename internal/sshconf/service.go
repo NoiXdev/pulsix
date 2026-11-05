@@ -42,9 +42,6 @@ const (
 	ModeExplicit BastionMode = "explicit"
 )
 
-// Valid reports whether m is a known mode.
-func (m BastionMode) Valid() bool { return m == ModeInherit || m == ModeNone || m == ModeExplicit }
-
 // Defaults and limits.
 const (
 	DefaultPort = 22
