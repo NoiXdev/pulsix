@@ -1,4 +1,4 @@
-/** Inventory groups: the list, the group page and its tabs, and the
+/** Inventory groups: the list, the group page and its sections, and the
  * variable schema builder and form shared with job templates. */
 export const enInventory = {
   groups: {
@@ -30,17 +30,24 @@ export const enInventory = {
     submit: 'Create group',
   },
   detail: {
-    tabs: {
-      schema: 'Variable schema',
-      values: 'Group values',
+    section: {
       members: 'Members',
-      children: 'Children',
+      values: 'Group values',
+      schema: 'Variable schema',
+      children: 'Child groups',
       preview: 'Preview inventory',
-      settings: 'Settings',
     },
-    tag: 'inventory group',
-    noParent: 'none',
-    header: (parent: string, members: number, children: number) => `parent: ${parent} · ${members} members · ${children} children`,
+    fact: {
+      parent: 'Parent',
+      members: 'Members',
+      children: 'Child groups',
+      fields: 'Fields',
+      jumpHost: 'Jump host',
+    },
+    complete: 'Complete',
+    incomplete: 'Incomplete',
+    edit: 'Edit',
+    more: (name: string) => `More actions for ${name}`,
   },
   stale: {
     message: 'This group changed since you loaded it. Reload to see the current version, then apply your change again.',
@@ -72,20 +79,21 @@ export const enInventory = {
   valuesTab: {
     saved: 'Group values saved',
     saveFailed: 'Saving the values failed',
-    noFields: "This group's schema has no group-scoped fields yet. Add them on the Variable schema tab.",
+    noFieldsTitle: 'No group fields',
+    noFieldsBody: 'The schema declares none, so there is nothing to set on the group itself.',
+    toSchema: 'Go to schema',
     orphanedBefore: 'Values of removed fields are still stored: ',
     orphanedAfter: '. Saving this form drops them.',
     save: 'Save values',
   },
   members: {
-    summary: (direct: number, incomplete: number) => `${direct} direct members · ${incomplete} need values`,
     assign: 'Assign host',
     columns: { host: 'Host', values: 'Values' },
     complete: 'complete',
     toFill: (n: number) => `${n} to fill in`,
-    editLabel: (host: string) => `Edit values of ${host}`,
-    edit: 'Edit',
-    removeLabel: (host: string) => `Remove ${host}`,
+    openHost: 'Open host',
+    editValues: 'Edit values',
+    removeItem: 'Remove from group…',
     confirmRemove: (host: string, group: string) => `Remove ${host} from ${group}? Its values for this group are deleted.`,
     removed: (host: string, group: string) => `${host} removed from ${group}`,
     removeFailed: 'Removing the host failed',
@@ -114,6 +122,7 @@ export const enInventory = {
     allMembers: 'Every managed host is already a member.',
   },
   settings: {
+    editTitle: 'Edit group',
     name: 'Name',
     description: 'Description',
     parent: 'Parent',
@@ -122,7 +131,7 @@ export const enInventory = {
     jumpHostNone: '— none (inherit from parent groups or the zone) —',
     newJumpHost: 'New jump host…',
     resolution: 'Resolution: host → inventory group → zone default. Chains are rendered as ProxyJump.',
-    delete: 'Delete group',
+    delete: 'Delete group…',
     saved: 'Group saved',
     saveFailed: 'Saving failed',
     confirmDelete: (name: string) => `Delete group ${name}? Its members lose the values they have for this group.`,

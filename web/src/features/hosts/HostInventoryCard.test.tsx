@@ -34,7 +34,7 @@ describe('HostInventoryCard', () => {
     expect(await screen.findByText('Not in any inventory group yet.')).toBeInTheDocument();
   });
 
-  it('links each group to its members tab and flags missing values', async () => {
+  it('links each group to its members section and flags missing values', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/inventory/groups': {
         groups: [{ group_id: 'g1', group_name: 'webserver', host_id: 'h1', host_name: 'web-01', vars: {}, complete: false, problems: [{ path: 'domain', message: 'is required' }], orphaned: [], revision: 1 }],
@@ -42,7 +42,7 @@ describe('HostInventoryCard', () => {
     });
     renderCard(true);
     const link = await screen.findByRole('link', { name: 'webserver' });
-    expect(link.getAttribute('href')).toBe('/o/acme/groups/g1?tab=members');
+    expect(link.getAttribute('href')).toBe('/o/acme/groups/g1#members');
     expect(screen.getByText('1 to fill in')).toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '../../../ui/button.tsx';
+import { Section } from '../../../ui/detail-layout.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { toVarSchema, useSetGroupSchema } from '../../../api/hooks/useInventory.ts';
@@ -10,7 +11,10 @@ import type { Problem, VarSchema } from '../schema/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-export function SchemaSection({ org, group }: { org: string; group: InventoryGroup }) {
+/** SchemaSection holds the group's variable schema builder. Discard and Save
+ * sit in the section header for a writer; a reader sees the builder inside a
+ * disabled fieldset. */
+export function SchemaSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
   const save = useSetGroupSchema(org, group.id);
@@ -36,33 +40,40 @@ export function SchemaSection({ org, group }: { org: string; group: InventoryGro
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <Section
+      id="schema"
+      title={t.inventory.detail.section.schema}
+      actions={
+        canWrite ? (
+          <div className="flex gap-2">
+            <Button
+              onClick={() => {
+                setDraft(toVarSchema(group.schema));
+                setProblems([]);
+                setBuilderKey((k) => k + 1);
+              }}
+            >
+              {t.inventory.schemaTab.discard}
+            </Button>
+            <Button variant="primary" disabled={save.isPending} onClick={() => void onSave()}>
+              {t.inventory.schemaTab.save}
+            </Button>
+          </div>
+        ) : undefined
+      }
+    >
       {stale && <StaleNotice org={org} />}
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
-          {t.inventory.schemaTab.summary(draft.fields.length, draft.fields.filter((f) => f.scope === 'host').length)}
-        </span>
-        <div className="flex gap-2">
-          <Button
-            onClick={() => {
-              setDraft(toVarSchema(group.schema));
-              setProblems([]);
-              setBuilderKey((k) => k + 1);
-            }}
-          >
-            {t.inventory.schemaTab.discard}
-          </Button>
-          <Button variant="primary" disabled={save.isPending} onClick={() => void onSave()}>
-            {t.inventory.schemaTab.save}
-          </Button>
-        </div>
-      </div>
+      <span className="text-xs text-muted-foreground">
+        {t.inventory.schemaTab.summary(draft.fields.length, draft.fields.filter((f) => f.scope === 'host').length)}
+      </span>
       {problems.length > 0 && (
         <p role="alert" className="text-xs text-destructive">
           {t.inventory.schemaTab.problems(problems.length)}
         </p>
       )}
-      <SchemaBuilder key={builderKey} value={draft} onChange={setDraft} problems={problems} />
-    </div>
+      <fieldset disabled={!canWrite} className="min-w-0">
+        <SchemaBuilder key={builderKey} value={draft} onChange={setDraft} problems={problems} />
+      </fieldset>
+    </Section>
   );
 }

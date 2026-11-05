@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -56,8 +56,10 @@ describe('GroupsPage', () => {
     renderPage();
 
     const web = await screen.findByRole('link', { name: 'webserver' });
-    expect(web).toHaveStyle({ paddingLeft: '16px' });
-    expect(screen.getByRole('link', { name: 'production' })).toHaveStyle({ paddingLeft: '0px' });
+    // The name cell, not the link's visually hidden accessible name.
+    const cell = (link: HTMLElement, name: string) => within(link).getByText(name, { ignore: '.sr-only' });
+    expect(cell(web, 'webserver')).toHaveStyle({ paddingLeft: '16px' });
+    expect(cell(screen.getByRole('link', { name: 'production' }), 'production')).toHaveStyle({ paddingLeft: '0px' });
     expect(screen.getByText('incomplete')).toBeInTheDocument();
     expect(screen.getByText('bastion-fra')).toBeInTheDocument();
 
@@ -67,5 +69,19 @@ describe('GroupsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Create group' }));
     expect(await screen.findByText('GROUP DETAIL')).toBeInTheDocument();
     expect(posted).toEqual({ name: 'dbserver', parent_id: 'p' });
+  });
+
+  it('each group row is a link to its page', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/inventory/groups': { groups: [summary('g1', 'web', null)] },
+      'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+    });
+    renderPage();
+    const row = await screen.findByRole('link', { name: 'web' });
+    expect(row).toHaveAttribute('href', '/o/acme/groups/g1');
+    // The whole row opens the group, not only its name.
+    expect(within(row).getByText('1 group · 0 host')).toBeInTheDocument();
+    expect(within(row).queryAllByRole('button')).toEqual([]);
+    expect(within(row).queryAllByRole('link')).toEqual([]);
   });
 });

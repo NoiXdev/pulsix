@@ -18,7 +18,7 @@ export function HostInventoryCard({ org, hostId, managed }: { org: string; hostI
         <ul className="flex flex-col gap-2">
           {(groups.data?.groups ?? []).map((m) => (
             <li key={m.group_id} className="flex items-center justify-between gap-2">
-              <Link to="/o/$org/groups/$id" params={{ org, id: m.group_id }} search={{ tab: 'members' }} className="font-mono text-xs hover:text-primary">
+              <Link to="/o/$org/groups/$id" params={{ org, id: m.group_id }} search={{ tab: undefined }} hash="members" className="font-mono text-xs hover:text-primary">
                 {m.group_name}
               </Link>
               {m.complete ? <Pill tone="ok">{t.hosts.inventory.complete}</Pill> : <Pill tone="warn">{t.hosts.inventory.toFill((m.problems ?? []).length)}</Pill>}

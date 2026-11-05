@@ -1,12 +1,12 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
+import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { errorStatus } from '../../lib/apiError.ts';
-import { useDeleteGroup, useUpdateGroup } from '../../api/hooks/useInventory.ts';
+import { useUpdateGroup } from '../../api/hooks/useInventory.ts';
 import { useBastions } from '../../api/hooks/useSsh.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../api/types.ts';
@@ -17,25 +17,27 @@ import { useT } from '../../i18n/useT.ts';
 
 const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground';
 
+/** GroupSettingsDialog edits a group's name, description, parent and jump
+ * host ("Edit group" in the group page's sidebar). It closes on a save; a
+ * 412 keeps it open with the stale notice. */
 export function GroupSettingsDialog({
-  org, group, groups, canCreateCredential,
+  org, group, groups, canCreateCredential, onClose,
 }: {
   org: string;
   group: InventoryGroup;
   groups: readonly InventoryGroupSummary[];
-  /** Gates this tab's own Jump host create row (POST /bastions is
-   * credentials.write, not the inventory.write this tab's own save needs —
+  /** Gates this dialog's own Jump host create row (POST /bastions is
+   * credentials.write, not the inventory.write this dialog's own save needs —
    * see sshconf_handlers.go) and, forwarded, BastionDialog's own nested
    * Credential create row (v0.4g Task 7 and 10 fix rounds). */
   canCreateCredential: boolean;
+  onClose: () => void;
 }) {
   const t = useT();
   const toast = useToast();
-  const navigate = useNavigate();
   const bastions = useBastions(org);
   const credentials = useCredentials(org);
   const update = useUpdateGroup(org, group.id);
-  const remove = useDeleteGroup(org);
   const [name, setName] = useState(group.name);
   const [description, setDescription] = useState(group.description);
   const [parent, setParent] = useState(group.parent_id ?? '');
@@ -52,20 +54,10 @@ export function GroupSettingsDialog({
     try {
       await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision: group.revision });
       toast.show(t.inventory.settings.saved);
+      onClose();
     } catch (err) {
       if (errorStatus(err) === 412) return setStale(true);
       toast.show(err instanceof Error ? err.message : t.inventory.settings.saveFailed, 'destructive');
-    }
-  }
-
-  async function onDelete() {
-    if (!confirm(t.inventory.settings.confirmDelete(group.name))) return;
-    try {
-      await remove.mutateAsync(group.id);
-      toast.show(t.inventory.settings.deleted(group.name));
-      await navigate({ to: '/o/$org/groups', params: { org } });
-    } catch (err) {
-      toast.show(err instanceof Error ? err.message : t.inventory.settings.deleteFailed, 'destructive');
     }
   }
 
@@ -75,8 +67,8 @@ export function GroupSettingsDialog({
     // this one, and a native "submit" event bubbles through <dialog> just
     // like anything else — clicking "Create jump host" would fire this
     // form's own onSubmit too.
-    <>
-      <form onSubmit={save} className="flex max-w-[560px] flex-col gap-4">
+    <Dialog open onClose={onClose} title={t.inventory.settings.editTitle}>
+      <form onSubmit={save} className="flex flex-col gap-4">
         {stale && <StaleNotice org={org} />}
         <div className="flex flex-col gap-1">
           <Label htmlFor="settings-name">{t.inventory.settings.name}</Label>
@@ -125,9 +117,9 @@ export function GroupSettingsDialog({
           )}
           <span className="text-[11px] text-muted-foreground">{t.inventory.settings.resolution}</span>
         </div>
-        <div className="flex justify-between">
-          <Button type="button" variant="destructive" onClick={() => void onDelete()}>
-            {t.inventory.settings.delete}
+        <div className="flex justify-end gap-2">
+          <Button type="button" onClick={onClose}>
+            {t.common.cancel}
           </Button>
           <Button type="submit" variant="primary" disabled={update.isPending}>
             {t.common.save}
@@ -148,6 +140,6 @@ export function GroupSettingsDialog({
           }}
         />
       )}
-    </>
+    </Dialog>
   );
 }

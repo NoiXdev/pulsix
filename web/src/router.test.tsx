@@ -88,3 +88,27 @@ describe('an invitation link mailed before the token moved into the fragment (ba
     expect(router.state.location.hash).toBe('token=tok_old');
   });
 });
+
+describe('a group link from before the group page had sections (backlog 7.67)', () => {
+  it('an old group link with ?tab= lands on that section', async () => {
+    await router.navigate({ to: '/o/$org/groups/$id', params: { org: 'acme', id: 'g1' }, search: { tab: 'members' } });
+    await router.load();
+
+    expect(router.state.location.pathname).toBe('/o/acme/groups/g1');
+    expect(router.state.location.hash).toBe('members');
+    expect((router.state.location.search as { tab?: string }).tab).toBeUndefined();
+  });
+
+  it.each([
+    ['settings', ''],
+    ['constructor', ''],
+    ['preview', 'preview'],
+  ])('maps ?tab=%s to the hash %j', async (tab, hash) => {
+    await router.navigate({ to: '/o/$org/groups/$id', params: { org: 'acme', id: 'g1' }, search: { tab } });
+    await router.load();
+
+    expect(router.state.location.pathname).toBe('/o/acme/groups/g1');
+    expect(router.state.location.hash).toBe(hash);
+    expect((router.state.location.search as { tab?: string }).tab).toBeUndefined();
+  });
+});

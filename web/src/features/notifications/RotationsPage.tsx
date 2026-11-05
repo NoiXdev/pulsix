@@ -206,7 +206,7 @@ function StandIns({
   // Non-null while the "New channel…" row's dialog is open; its value is
   // whatever had been typed into the picker, so ChannelDialog can prefill
   // the Name field with it (null, not '', is "closed") — same pattern as
-  // SettingsTab's own newBastionName (v0.4g Task 5).
+  // GroupSettingsDialog's own newBastionName (v0.4g Task 5).
   const [newChannelName, setNewChannelName] = useState<string | null>(null);
 
   async function onAdd() {
@@ -239,7 +239,7 @@ function StandIns({
     // sibling, not nested inside: a submit inside it is a native "submit"
     // event, and ui/dialog.tsx does not portal, so nesting it inside any
     // ancestor <form> would let that submit bubble into the wrong handler
-    // (the same reasoning SettingsTab.tsx already documents for
+    // (the same reasoning GroupSettingsDialog.tsx already documents for
     // BastionDialog). StandIns' own "Add" button isn't a form submit, so
     // this isn't that bug today — but keeping the same shape as every
     // other quick-create call site means it stays correct if that ever

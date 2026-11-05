@@ -34,18 +34,24 @@ export const deInventory: Messages['inventory'] = {
     submit: 'Gruppe anlegen',
   },
   detail: {
-    tabs: {
-      schema: 'Variablenschema',
-      values: 'Gruppenwerte',
+    section: {
       members: 'Mitglieder',
+      values: 'Gruppenwerte',
+      schema: 'Variablenschema',
       children: 'Untergruppen',
       preview: 'Inventarvorschau',
-      settings: 'Einstellungen',
     },
-    tag: 'Inventargruppe',
-    noParent: 'keine',
-    header: (parent: string, members: number, children: number) =>
-      `Übergeordnet: ${parent} · ${members === 1 ? '1 Mitglied' : `${members} Mitglieder`} · ${children === 1 ? '1 Untergruppe' : `${children} Untergruppen`}`,
+    fact: {
+      parent: 'Übergeordnete Gruppe',
+      members: 'Mitglieder',
+      children: 'Untergruppen',
+      fields: 'Felder',
+      jumpHost: 'Sprunghost',
+    },
+    complete: 'Vollständig',
+    incomplete: 'Unvollständig',
+    edit: 'Bearbeiten',
+    more: (name: string) => `Weitere Aktionen für ${name}`,
   },
   stale: {
     message: 'Diese Gruppe wurde geändert, seit sie geladen wurde. Neu laden, um die aktuelle Version zu sehen, und die Änderung danach erneut vornehmen.',
@@ -82,21 +88,21 @@ export const deInventory: Messages['inventory'] = {
   valuesTab: {
     saved: 'Gruppenwerte gespeichert',
     saveFailed: 'Die Werte konnten nicht gespeichert werden',
-    noFields: 'Das Schema dieser Gruppe hat noch keine Felder mit Gruppen-Geltungsbereich. Felder lassen sich im Tab „Variablenschema“ hinzufügen.',
+    noFieldsTitle: 'Keine Gruppenfelder',
+    noFieldsBody: 'Das Schema deklariert keines, an der Gruppe selbst ist also nichts zu setzen.',
+    toSchema: 'Zum Schema',
     orphanedBefore: 'Werte entfernter Felder sind noch gespeichert: ',
     orphanedAfter: '. Beim Speichern dieses Formulars werden sie verworfen.',
     save: 'Werte speichern',
   },
   members: {
-    summary: (direct: number, incomplete: number) =>
-      `${direct === 1 ? '1 direktes Mitglied' : `${direct} direkte Mitglieder`} · ${incomplete} mit fehlenden Werten`,
     assign: 'Host zuweisen',
     columns: { host: 'Host', values: 'Werte' },
     complete: 'vollständig',
     toFill: (n: number) => `${n} auszufüllen`,
-    editLabel: (host: string) => `Werte von ${host} bearbeiten`,
-    edit: 'Bearbeiten',
-    removeLabel: (host: string) => `${host} entfernen`,
+    openHost: 'Host öffnen',
+    editValues: 'Werte bearbeiten',
+    removeItem: 'Aus Gruppe entfernen…',
     confirmRemove: (host: string, group: string) =>
       `${host} aus ${group} entfernen? Die Werte des Hosts für diese Gruppe werden gelöscht.`,
     removed: (host: string, group: string) => `${host} aus ${group} entfernt`,
@@ -126,6 +132,7 @@ export const deInventory: Messages['inventory'] = {
     allMembers: 'Jeder verwaltete Host ist bereits Mitglied.',
   },
   settings: {
+    editTitle: 'Gruppe bearbeiten',
     name: 'Name',
     description: 'Beschreibung',
     parent: 'Übergeordnete Gruppe',
@@ -134,7 +141,7 @@ export const deInventory: Messages['inventory'] = {
     jumpHostNone: '— keiner (von übergeordneten Gruppen oder der Zone erben) —',
     newJumpHost: 'Neuer Sprunghost…',
     resolution: 'Auflösung: Host → Inventargruppe → Zonenstandard. Ketten werden als ProxyJump ausgegeben.',
-    delete: 'Gruppe löschen',
+    delete: 'Gruppe löschen…',
     saved: 'Gruppe gespeichert',
     saveFailed: 'Speichern fehlgeschlagen',
     confirmDelete: (name: string) =>

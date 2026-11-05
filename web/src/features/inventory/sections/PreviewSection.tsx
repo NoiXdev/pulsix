@@ -1,12 +1,24 @@
 import { Button } from '../../../ui/button.tsx';
 import { Pill } from '../../../ui/badge.tsx';
+import { Section } from '../../../ui/detail-layout.tsx';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
 import { useInventoryPreview } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup } from '../../../api/types.ts';
 import { useT } from '../../../i18n/useT.ts';
 
+/** PreviewSection shows the inventory a job targeting the group receives,
+ * secrets masked. The JSON scrolls inside its box rather than being cut. */
 export function PreviewSection({ org, group }: { org: string; group: InventoryGroup }) {
+  const t = useT();
+  return (
+    <Section id="preview" title={t.inventory.detail.section.preview}>
+      <PreviewBody org={org} group={group} />
+    </Section>
+  );
+}
+
+function PreviewBody({ org, group }: { org: string; group: InventoryGroup }) {
   const t = useT();
   const preview = useInventoryPreview(org, group.id);
   const guard = useQueryGuard(preview);

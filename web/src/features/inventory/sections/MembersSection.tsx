@@ -1,79 +1,69 @@
-import { useState } from 'react';
-import { Link } from '@tanstack/react-router';
-import { Card, GridHeader, GridRow } from '../../../ui/table.tsx';
+import { useState, type ReactNode } from 'react';
+import { Card, GridHeader } from '../../../ui/table.tsx';
 import { Button } from '../../../ui/button.tsx';
-import { Pill } from '../../../ui/badge.tsx';
-import { useToast } from '../../../ui/toastContext.ts';
+import { Section } from '../../../ui/detail-layout.tsx';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
 import { QueryLoading } from '../../../ui/QueryState.tsx';
-import { useGroupMembers, useUnassignHost } from '../../../api/hooks/useInventory.ts';
+import { useGroupMembers } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryMember } from '../../../api/types.ts';
 import { AssignHostDialog } from './AssignHostDialog.tsx';
+import { MemberRow } from './MemberRow.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-const COLUMNS = 'minmax(0, 1fr) 200px 150px';
+/** Host name, completeness, and the 40px the row menu sits over: every
+ * member row has a menu (Open host is there for every role). */
+const COLUMNS = 'minmax(0, 1fr) 200px 40px';
 
-export function MembersSection({ org, group }: { org: string; group: InventoryGroup }) {
+/** MembersSection lists the group's direct members, each a row to its host
+ * page; Assign host sits in the section header for a writer. */
+export function MembersSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
-  const toast = useToast();
   const members = useGroupMembers(org, group.id);
-  const unassign = useUnassignHost(org, group.id);
   const [dialog, setDialog] = useState<{ member?: InventoryMember } | null>(null);
-
-  const guard = useQueryGuard(members);
-  if (guard) return guard;
-  if (!members.data) return <QueryLoading />;
-  const list = members.data.members ?? [];
+  const list = members.data?.members ?? [];
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">
-          {t.inventory.members.summary(list.length, list.filter((m) => !m.complete).length)}
-        </span>
-        <Button variant="primary" onClick={() => setDialog({})}>
-          {t.inventory.members.assign}
-        </Button>
-      </div>
-      <Card>
-        <GridHeader columns={COLUMNS}>
-          <span>{t.inventory.members.columns.host}</span>
-          <span>{t.inventory.members.columns.values}</span>
-          <span />
-        </GridHeader>
+    <Section
+      id="members"
+      title={t.inventory.detail.section.members}
+      actions={
+        canWrite ? (
+          // Disabled until the members are known: the picker leaves them out.
+          <Button variant="primary" disabled={!members.data} onClick={() => setDialog({})}>
+            {t.inventory.members.assign}
+          </Button>
+        ) : undefined
+      }
+    >
+      <MembersList members={members} columns={COLUMNS}>
         {list.map((m) => (
-          <GridRow key={m.host_id} columns={COLUMNS}>
-            <Link to="/o/$org/hosts/$id" params={{ org, id: m.host_id }} className="truncate font-mono text-[13px] hover:text-primary">
-              {m.host_name}
-            </Link>
-            <span>{m.complete ? <Pill tone="ok">{t.inventory.members.complete}</Pill> : <Pill tone="warn">{t.inventory.members.toFill((m.problems ?? []).length)}</Pill>}</span>
-            <span className="flex justify-end gap-1">
-              <Button variant="ghost" onClick={() => setDialog({ member: m })} aria-label={t.inventory.members.editLabel(m.host_name)}>
-                {t.inventory.members.edit}
-              </Button>
-              <Button
-                variant="ghost"
-                aria-label={t.inventory.members.removeLabel(m.host_name)}
-                onClick={async () => {
-                  if (!confirm(t.inventory.members.confirmRemove(m.host_name, group.name))) return;
-                  try {
-                    await unassign.mutateAsync(m.host_id);
-                    toast.show(t.inventory.members.removed(m.host_name, group.name));
-                  } catch (err) {
-                    toast.show(err instanceof Error ? err.message : t.inventory.members.removeFailed, 'destructive');
-                  }
-                }}
-              >
-                {t.common.remove}
-              </Button>
-            </span>
-          </GridRow>
+          <MemberRow key={m.host_id} org={org} group={group} member={m} columns={COLUMNS} canWrite={canWrite} onEdit={(member) => setDialog({ member })} />
         ))}
-        {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.inventory.members.empty}</p>}
-      </Card>
+      </MembersList>
       {dialog && (
         <AssignHostDialog org={org} group={group} member={dialog.member} existing={list.map((m) => m.host_id)} onClose={() => setDialog(null)} />
       )}
-    </div>
+    </Section>
+  );
+}
+
+/** The card around the rows, with the query's loading and error states in
+ * its place while there are no rows to show. */
+function MembersList({ members, columns, children }: { members: ReturnType<typeof useGroupMembers>; columns: string; children: ReactNode }) {
+  const t = useT();
+  const guard = useQueryGuard(members);
+  if (guard) return guard;
+  if (!members.data) return <QueryLoading />;
+  const empty = (members.data.members ?? []).length === 0;
+  return (
+    <Card>
+      <GridHeader columns={columns}>
+        <span>{t.inventory.members.columns.host}</span>
+        <span>{t.inventory.members.columns.values}</span>
+        <span />
+      </GridHeader>
+      {children}
+      {empty && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.inventory.members.empty}</p>}
+    </Card>
   );
 }

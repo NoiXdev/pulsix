@@ -165,12 +165,24 @@ const alertsRoute = createRoute({
 });
 
 const groupsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/groups', component: GroupsPage });
+/** The section each tab of the former tabbed group page became; Settings
+ * became the Edit dialog, so it (like an unknown tab) maps to no hash. */
+const GROUP_TAB_SECTION: Record<string, string> = { schema: 'schema', values: 'values', members: 'members', children: 'children', preview: 'preview' };
+
 const groupDetailRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: '/groups/$id',
+  // `?tab=` is kept only to read links from before the page had sections
+  // (bookmarks, older docs): they are sent on to the section's hash.
   validateSearch: (search: Record<string, unknown>) => ({
     tab: typeof search.tab === 'string' ? search.tab : undefined,
   }),
+  beforeLoad: ({ search, params }) => {
+    if (search.tab) {
+      const hash = Object.hasOwn(GROUP_TAB_SECTION, search.tab) ? GROUP_TAB_SECTION[search.tab] : undefined;
+      throw redirect({ to: '/o/$org/groups/$id', params, search: { tab: undefined }, hash, replace: true });
+    }
+  },
   component: GroupDetailPage,
 });
 

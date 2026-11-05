@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { useNavigate, useParams } from '@tanstack/react-router';
 import { Layers } from 'lucide-react';
-import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
+import { Card, GridHeader } from '../../ui/table.tsx';
+import { ListRow } from '../../ui/list-row.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
@@ -47,23 +48,17 @@ export function GroupsPage() {
           <span>{t.inventory.groups.columns.jumpHost}</span>
         </GridHeader>
         {orderTree(list).map(({ group, depth }) => (
-          <GridRow key={group.id} columns={COLUMNS}>
-            <Link
-              to="/o/$org/groups/$id"
-              params={{ org, id: group.id }}
-              search={{ tab: undefined }}
-              className="truncate font-mono text-[13px] text-foreground hover:text-primary"
-              style={{ paddingLeft: depth * 16 }}
-            >
+          <ListRow key={group.id} to="/o/$org/groups/$id" params={{ org, id: group.id }} search={{ tab: undefined }} columns={COLUMNS} label={group.name}>
+            <span className="truncate font-mono text-[13px] text-foreground" style={{ paddingLeft: depth * 16 }}>
               {group.name}
-            </Link>
+            </span>
             <span className="text-[13px]">{group.members}</span>
             <span className="text-xs text-muted-foreground">
               {t.inventory.groups.fields(group.group_fields, group.host_fields)}
             </span>
             <span>{group.complete ? <Pill tone="ok">{t.inventory.groups.complete}</Pill> : <Pill tone="warn">{t.inventory.groups.incomplete}</Pill>}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{bastionName(group.bastion_id)}</span>
-          </GridRow>
+          </ListRow>
         ))}
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{t.inventory.groups.empty}</p>}
       </Card>
@@ -74,7 +69,7 @@ export function GroupsPage() {
         groups={list}
         onCreated={(id) => {
           setCreateOpen(false);
-          void navigate({ to: '/o/$org/groups/$id', params: { org, id }, search: { tab: 'schema' } });
+          void navigate({ to: '/o/$org/groups/$id', params: { org, id }, search: { tab: undefined }, hash: 'schema' });
         }}
       />
     </>

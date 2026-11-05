@@ -64,16 +64,28 @@ const base = {
   'GET /api/v1/orgs/acme/inventory/groups/g1': GROUP,
   'GET /api/v1/orgs/acme/inventory/groups': GROUPS,
   'GET /api/v1/orgs/acme/bastions': { bastions: [] },
+  'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [] },
+  'GET /api/v1/orgs/acme/inventory/preview': { inventory: {}, connections: {}, warnings: [] },
 };
 
+/** Opens the sidebar's Edit dialog, which holds the former Settings tab. */
+async function openSettings(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: 'Edit' }));
+  return screen.findByRole('dialog', { name: 'Edit group' });
+}
+
+/** Opens a member row's menu and chooses an item. */
+async function memberAction(user: ReturnType<typeof userEvent.setup>, host: string, item: string) {
+  await user.click(await screen.findByRole('button', { name: `Actions for ${host}` }));
+  await user.click(screen.getByRole('menuitem', { name: item }));
+}
+
 describe('GroupDetailPage', () => {
-  it('opens on the schema tab and switches tabs', async () => {
-    const user = userEvent.setup();
+  it('renders the schema builder and the group values together', async () => {
     mockApi(base);
     renderAt('/o/acme/groups/g1');
     expect(await screen.findByRole('list', { name: 'Fields' })).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: 'Group values' }));
-    expect(await screen.findByLabelText('env')).toBeInTheDocument();
+    expect(screen.getByLabelText('env')).toBeInTheDocument();
     expect(screen.getByText(/Values of removed fields are still stored/)).toBeInTheDocument();
   });
 
@@ -87,7 +99,7 @@ describe('GroupDetailPage', () => {
         return GROUP;
       },
     });
-    renderAt('/o/acme/groups/g1?tab=values');
+    renderAt('/o/acme/groups/g1');
     await screen.findByLabelText('env');
     await pickOption(screen, 'env', { value: 'staging' });
     await user.click(screen.getByRole('button', { name: 'Save values' }));
@@ -105,7 +117,7 @@ describe('GroupDetailPage', () => {
           status: 422, headers: { 'Content-Type': 'application/json' },
         }),
     });
-    renderAt('/o/acme/groups/g1?tab=values');
+    renderAt('/o/acme/groups/g1');
     await user.click(await screen.findByRole('button', { name: 'Save values' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('must be one of prod, staging');
   });
@@ -143,7 +155,7 @@ describe('GroupDetailPage', () => {
         return { member: { group_id: 'g1', group_name: 'webserver', host_id: 'h2', host_name: 'web-02', vars: {}, complete: true, problems: [], orphaned: [], revision: 1 } };
       },
     });
-    renderAt('/o/acme/groups/g1?tab=members');
+    renderAt('/o/acme/groups/g1');
     expect(await screen.findByText('1 to fill in')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Assign host' }));
     const dialog = screen.getByRole('dialog');
@@ -188,7 +200,7 @@ describe('GroupDetailPage', () => {
         return { member: { ...MEMBER, host_id: 'h77', host_name: 'web-77' } };
       },
     });
-    renderAt('/o/acme/groups/g1?tab=members');
+    renderAt('/o/acme/groups/g1');
     await user.click(await screen.findByRole('button', { name: 'Assign host' }));
     const dialog = screen.getByRole('dialog');
     await user.click(within(dialog).getByLabelText('Host'));
@@ -223,7 +235,7 @@ describe('GroupDetailPage', () => {
       'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [MEMBER] },
       'GET /api/v1/orgs/acme/hosts': (req: MockRequest) => pages[req.search.get('cursor') ?? ''],
     });
-    const { unmount } = renderAt('/o/acme/groups/g1?tab=members');
+    const { unmount } = renderAt('/o/acme/groups/g1');
     await user.click(await screen.findByRole('button', { name: 'Assign host' }));
     let dialog = screen.getByRole('dialog');
     await user.click(within(dialog).getByLabelText('Host'));
@@ -233,7 +245,7 @@ describe('GroupDetailPage', () => {
     unmount();
 
     pages = { '': { hosts: [host('h1', 'web-01')], next_cursor: '' } };
-    renderAt('/o/acme/groups/g1?tab=members');
+    renderAt('/o/acme/groups/g1');
     await user.click(await screen.findByRole('button', { name: 'Assign host' }));
     dialog = screen.getByRole('dialog');
     expect(await within(dialog).findByText('Every managed host is already a member.')).toBeInTheDocument();
@@ -249,14 +261,14 @@ describe('GroupDetailPage', () => {
         warnings: [{ host: 'web-03', message: 'groups dmz and edge set different jump hosts; dmz wins' }],
       },
     });
-    renderAt('/o/acme/groups/g1?tab=preview');
+    renderAt('/o/acme/groups/g1');
     expect(await screen.findByLabelText('Inventory JSON')).toHaveTextContent('"db_password": "********"');
     expect(screen.getByText(/dmz wins/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Copy' }));
     expect(await navigator.clipboard.readText()).toContain('"webserver"');
   });
 
-  it('saves settings with the jump host and reports a refused delete', async () => {
+  it('saves the settings dialog with the jump host and reports a refused delete', async () => {
     const user = userEvent.setup();
     let patched: MockRequest | undefined;
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -272,20 +284,22 @@ describe('GroupDetailPage', () => {
           status: 409, headers: { 'Content-Type': 'application/json' },
         }),
     });
-    renderAt('/o/acme/groups/g1?tab=settings');
-    await screen.findByLabelText('Jump host');
-    await pickOption(screen, 'Jump host', { value: 'b1' });
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    renderAt('/o/acme/groups/g1');
+    const dialog = await openSettings(user);
+    await within(dialog).findByLabelText('Jump host');
+    await pickOption(within(dialog), 'Jump host', { value: 'b1' });
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await screen.findByText('Group saved');
     expect(patched?.headers.get('If-Match')).toBe('"3"');
     expect(patched?.body).toEqual({ name: 'webserver', bastion_id: 'b1' });
-    await user.click(screen.getByRole('button', { name: 'Delete group' }));
+    await user.click(screen.getByRole('button', { name: 'More actions for webserver' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Delete group…' }));
     expect(await screen.findByText(/still has child groups/)).toBeInTheDocument();
   });
 
   // v0.4g final fix round: POST /orgs/{org}/bastions is credentials.write
   // (admin, internal/api/sshconf_handlers.go), stricter than the
-  // inventory.write this tab's own save needs — an operator who could reach
+  // inventory.write this dialog's own save needs — an operator who could reach
   // this form would otherwise fill in BastionDialog only to have the server
   // refuse the create with a 403.
   it('offers no jump-host create row for an operator, only an admin', async () => {
@@ -294,23 +308,25 @@ describe('GroupDetailPage', () => {
       ...base,
       'GET /api/v1/orgs/acme': { org: { ...ORG.org, role: 'operator' } },
     });
-    renderAt('/o/acme/groups/g1?tab=settings');
-    await user.click(await screen.findByLabelText('Jump host'));
+    renderAt('/o/acme/groups/g1');
+    const dialog = await openSettings(user);
+    await user.click(await within(dialog).findByLabelText('Jump host'));
     expect(screen.queryByRole('option', { name: /New jump host/ })).not.toBeInTheDocument();
   });
 
   it('offers the jump-host create row for an admin', async () => {
     const user = userEvent.setup();
     mockApi(base);
-    renderAt('/o/acme/groups/g1?tab=settings');
-    await user.click(await screen.findByLabelText('Jump host'));
+    renderAt('/o/acme/groups/g1');
+    const dialog = await openSettings(user);
+    await user.click(await within(dialog).findByLabelText('Jump host'));
     expect(screen.getByRole('option', { name: /New jump host/ })).toBeInTheDocument();
   });
 
   // v0.4g Task 5: the Jump host picker's quick-create row. This belongs
-  // with the rest of SettingsTab's own coverage above (there is no
-  // separate SettingsTab.test.tsx — the component is exercised entirely
-  // through GroupDetailPage's settings tab).
+  // with the rest of GroupSettingsDialog's own coverage above (there is no
+  // separate GroupSettingsDialog.test.tsx — the component is exercised
+  // entirely through GroupDetailPage's Edit dialog).
   it('creates a jump host from the picker and selects it, without losing the rest of the form', async () => {
     const user = userEvent.setup();
     // The new bastion has to come back from a refetch of the list too, not
@@ -328,8 +344,9 @@ describe('GroupDetailPage', () => {
         return { bastion };
       },
     });
-    renderAt('/o/acme/groups/g1?tab=settings');
-    await user.click(await screen.findByLabelText('Jump host'));
+    renderAt('/o/acme/groups/g1');
+    const settings = await openSettings(user);
+    await user.click(await within(settings).findByLabelText('Jump host'));
     // Typed before taking the create row: the point of the row is arriving
     // at the dialog with this already filled in, not retyping it.
     await user.keyboard('edge-01');
@@ -339,9 +356,9 @@ describe('GroupDetailPage', () => {
     await user.type(within(dialog).getByLabelText('Address'), 'edge.example');
     await user.type(within(dialog).getByLabelText('Username'), 'ops');
     await user.click(within(dialog).getByRole('button', { name: 'Create jump host' }));
-    expect(await screen.findByLabelText('Jump host')).toHaveValue('edge-01');
+    expect(await within(settings).findByLabelText('Jump host')).toHaveValue('edge-01');
     // The rest of the settings form (still unsaved) kept what was already there.
-    expect(screen.getByLabelText('Name')).toHaveValue('webserver');
+    expect(within(settings).getByLabelText('Name')).toHaveValue('webserver');
   });
 
   it('opens the edit dialog prefilled and sends If-Match with the member revision on save', async () => {
@@ -355,8 +372,8 @@ describe('GroupDetailPage', () => {
         return { member: { ...MEMBER, revision: 8 } };
       },
     });
-    renderAt('/o/acme/groups/g1?tab=members');
-    await user.click(await screen.findByRole('button', { name: 'Edit values of web-01' }));
+    renderAt('/o/acme/groups/g1');
+    await memberAction(user, 'web-01', 'Edit values');
     const dialog = await screen.findByRole('dialog', { name: 'Values of web-01' });
     expect(within(dialog).getByLabelText('domain')).toHaveValue('shop.acme.io');
     await user.click(within(dialog).getByRole('button', { name: 'Save values' }));
@@ -374,8 +391,8 @@ describe('GroupDetailPage', () => {
       'DELETE /api/v1/orgs/acme/inventory/groups/g1/members/h1': () =>
         new Response(JSON.stringify({ detail: 'host no longer exists' }), { status: 404 }),
     });
-    renderAt('/o/acme/groups/g1?tab=members');
-    await user.click(await screen.findByRole('button', { name: 'Remove web-01' }));
+    renderAt('/o/acme/groups/g1');
+    await memberAction(user, 'web-01', 'Remove from group…');
 
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('host no longer exists');

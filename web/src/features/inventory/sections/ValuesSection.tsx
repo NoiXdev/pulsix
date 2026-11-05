@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '../../../ui/button.tsx';
+import { DisabledHint, Section } from '../../../ui/detail-layout.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
 import { errorStatus } from '../../../lib/apiError.ts';
 import { toVarSchema, useSetGroupVars } from '../../../api/hooks/useInventory.ts';
@@ -11,7 +12,34 @@ import type { Problem, Vars } from '../schema/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
 import { useT } from '../../../i18n/useT.ts';
 
-export function ValuesSection({ org, group }: { org: string; group: InventoryGroup }) {
+/** ValuesSection is the form for the group's own (group-scoped) values. A
+ * reader sees it disabled and without its save button; a schema without any
+ * group field gets a hint in its place. */
+export function ValuesSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
+  const t = useT();
+  const v = t.inventory.valuesTab;
+  return (
+    <Section id="values" title={t.inventory.detail.section.values}>
+      {groupFields(toVarSchema(group.schema)).length === 0 ? (
+        <DisabledHint
+          title={v.noFieldsTitle}
+          body={v.noFieldsBody}
+          action={
+            canWrite ? (
+              <a href="#schema" className="text-[13px] text-primary hover:underline">
+                {v.toSchema}
+              </a>
+            ) : undefined
+          }
+        />
+      ) : (
+        <ValuesForm org={org} group={group} canWrite={canWrite} />
+      )}
+    </Section>
+  );
+}
+
+function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
   const fields = groupFields(toVarSchema(group.schema));
@@ -34,9 +62,6 @@ export function ValuesSection({ org, group }: { org: string; group: InventoryGro
     }
   }
 
-  if (fields.length === 0) {
-    return <p className="text-xs text-muted-foreground">{t.inventory.valuesTab.noFields}</p>;
-  }
   return (
     <div className="flex max-w-[640px] flex-col gap-4">
       {stale && <StaleNotice org={org} />}
@@ -47,12 +72,14 @@ export function ValuesSection({ org, group }: { org: string; group: InventoryGro
           {t.inventory.valuesTab.orphanedAfter}
         </p>
       )}
-      <SchemaForm fields={fields} value={draft} onChange={setDraft} problems={problems} idPrefix="values" />
-      <div className="flex justify-end">
-        <Button variant="primary" disabled={save.isPending} onClick={() => void onSave()}>
-          {t.inventory.valuesTab.save}
-        </Button>
-      </div>
+      <SchemaForm fields={fields} value={draft} onChange={setDraft} problems={problems} disabled={!canWrite} idPrefix="values" />
+      {canWrite && (
+        <div className="flex justify-end">
+          <Button variant="primary" disabled={save.isPending} onClick={() => void onSave()}>
+            {t.inventory.valuesTab.save}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
