@@ -71,6 +71,17 @@ WHERE org_id = @org_id AND id = @id
   AND revision = @if_revision AND vars_source_rev = @if_source_rev
 RETURNING *;
 
+-- name: SetTemplateVarsLink :one
+-- The variables source columns alone (vars_mode, vars_source_rev,
+-- vars_applied_at), at the revision a write in the same transaction just
+-- stored: the revision and updated_at stay, that write moved them. A
+-- template save that changes the playbook uses it to forget the applied
+-- source.
+UPDATE job_templates SET
+  vars_mode = @vars_mode, vars_source_rev = @vars_source_rev, vars_applied_at = @vars_applied_at
+WHERE org_id = @org_id AND id = @id AND revision = @if_revision
+RETURNING *;
+
 -- name: ListAutomaticTemplatesForRepo :many
 -- The templates a repository's sync applies its new variable sources to:
 -- those in automatic mode whose playbook belongs to the repository.

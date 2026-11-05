@@ -38,6 +38,11 @@ type VarsStore interface {
 	// moving the revision, when the template is still at ifRevision and
 	// ifSourceRev; ErrRevisionMismatch otherwise.
 	RecordSourceRev(ctx context.Context, t Template, ifRevision int64, ifSourceRev string) (Template, error)
+	// SetVarsLink writes only VarsMode, VarsSourceRev and VarsAppliedAt,
+	// when the template is still at t.Revision (ErrRevisionMismatch
+	// otherwise), without moving the revision: a write in the same
+	// transaction just moved it.
+	SetVarsLink(ctx context.Context, t Template) (Template, error)
 	// ListAutomaticForRepo lists the organization's templates in automatic
 	// mode whose playbook belongs to the repository, by name.
 	ListAutomaticForRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]Template, error)
@@ -272,6 +277,23 @@ func newSourceInfo(vs playbooks.VarSource, src varsync.Source, applied string) S
 		WorkerReads: vs.WorkerReads, Incomplete: vs.Incomplete, Found: vs.Found, LeftOut: vs.LeftOut,
 		Available: src.Available, Reason: src.Reason, RepoID: vs.RepoID, Path: vs.Path,
 	}
+}
+
+// unlinkedFromPlaybook is updated, just saved by a person with another
+// playbook than before, with its variables no longer following the
+// previous playbook's source: automatic mode turns manual and the applied
+// source revision is forgotten, so the new playbook's source changes the
+// fields only once a person previews it. ok is false when there is
+// nothing to forget.
+func unlinkedFromPlaybook(updated Template) (Template, bool) {
+	if updated.VarsMode != ModeAutomatic && updated.VarsSourceRev == "" && updated.VarsAppliedAt == nil {
+		return updated, false
+	}
+	if updated.VarsMode == ModeAutomatic {
+		updated.VarsMode = ModeManual
+	}
+	updated.VarsSourceRev, updated.VarsAppliedAt = "", nil
+	return updated, true
 }
 
 // isLinked reports whether t's variables follow its playbook's sources.

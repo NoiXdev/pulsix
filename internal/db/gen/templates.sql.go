@@ -320,6 +320,58 @@ func (q *Queries) RecordTemplateSourceRev(ctx context.Context, arg RecordTemplat
 	return i, err
 }
 
+const setTemplateVarsLink = `-- name: SetTemplateVarsLink :one
+UPDATE job_templates SET
+  vars_mode = $1, vars_source_rev = $2, vars_applied_at = $3
+WHERE org_id = $4 AND id = $5 AND revision = $6
+RETURNING id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at
+`
+
+type SetTemplateVarsLinkParams struct {
+	VarsMode      string             `json:"vars_mode"`
+	VarsSourceRev string             `json:"vars_source_rev"`
+	VarsAppliedAt pgtype.Timestamptz `json:"vars_applied_at"`
+	OrgID         uuid.UUID          `json:"org_id"`
+	ID            uuid.UUID          `json:"id"`
+	IfRevision    int64              `json:"if_revision"`
+}
+
+// The variables source columns alone (vars_mode, vars_source_rev,
+// vars_applied_at), at the revision a write in the same transaction just
+// stored: the revision and updated_at stay, that write moved them. A
+// template save that changes the playbook uses it to forget the applied
+// source.
+func (q *Queries) SetTemplateVarsLink(ctx context.Context, arg SetTemplateVarsLinkParams) (JobTemplate, error) {
+	row := q.db.QueryRow(ctx, setTemplateVarsLink,
+		arg.VarsMode,
+		arg.VarsSourceRev,
+		arg.VarsAppliedAt,
+		arg.OrgID,
+		arg.ID,
+		arg.IfRevision,
+	)
+	var i JobTemplate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.Name,
+		&i.PlaybookID,
+		&i.Scope,
+		&i.Limit,
+		&i.ExtraVars,
+		&i.ExtraVarsSchema,
+		&i.CredentialID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SharedTemplateID,
+		&i.Revision,
+		&i.VarsMode,
+		&i.VarsSourceRev,
+		&i.VarsAppliedAt,
+	)
+	return i, err
+}
+
 const updateTemplate = `-- name: UpdateTemplate :one
 UPDATE job_templates SET
   name = $1, playbook_id = $2, scope = $3, "limit" = $4,

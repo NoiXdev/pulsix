@@ -44,6 +44,19 @@ func (s *SQLStore) RecordSourceRev(ctx context.Context, t Template, ifRevision i
 	return toTemplate(row)
 }
 
+// SetVarsLink implements Store: the variables source columns alone, at
+// t's revision.
+func (s *SQLStore) SetVarsLink(ctx context.Context, t Template) (Template, error) {
+	row, err := s.q.SetTemplateVarsLink(ctx, gen.SetTemplateVarsLinkParams{
+		OrgID: t.OrgID, ID: t.ID, VarsMode: string(storedMode(t.VarsMode)), VarsSourceRev: t.VarsSourceRev,
+		VarsAppliedAt: db.NullTime(t.VarsAppliedAt), IfRevision: t.Revision,
+	})
+	if err != nil {
+		return Template{}, s.guardedWriteErr(ctx, err, t, "set template variables link")
+	}
+	return toTemplate(row)
+}
+
 // ListAutomaticForRepo implements Store.
 func (s *SQLStore) ListAutomaticForRepo(ctx context.Context, orgID, repoID uuid.UUID) ([]Template, error) {
 	rows, err := s.q.ListAutomaticTemplatesForRepo(ctx, gen.ListAutomaticTemplatesForRepoParams{OrgID: orgID, RepoID: db.NullUUID(&repoID)})

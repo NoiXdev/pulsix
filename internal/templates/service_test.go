@@ -201,6 +201,21 @@ func (f *fakeStore) RecordSourceRev(_ context.Context, t templates.Template, ifR
 	return cur, nil
 }
 
+// SetVarsLink mirrors the real store: the variables source columns
+// alone, at t's revision, the revision left as it is.
+func (f *fakeStore) SetVarsLink(_ context.Context, t templates.Template) (templates.Template, error) {
+	cur, ok := f.byID[t.ID]
+	if !ok || cur.OrgID != t.OrgID {
+		return templates.Template{}, templates.ErrNotFound
+	}
+	if t.Revision != cur.Revision {
+		return templates.Template{}, templates.ErrRevisionMismatch
+	}
+	cur.VarsMode, cur.VarsSourceRev, cur.VarsAppliedAt = t.VarsMode, t.VarsSourceRev, t.VarsAppliedAt
+	f.byID[t.ID] = cur
+	return cur, nil
+}
+
 // ListAutomaticForRepo and ListAutomaticForPlaybook mirror the real
 // store's queries: the organization's automatic templates of the
 // repository's playbooks, or of one playbook, by name.

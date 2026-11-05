@@ -59,3 +59,62 @@ func TestSettingsSaveKeepsAMissingRequiredValue(t *testing.T) {
 		t.Fatalf("the variables page's save with the value: %v", err)
 	}
 }
+
+// TestPlaybookChangeUnlinksTheAppliedSource: a template whose playbook a
+// person changes follows the new playbook only after a preview: automatic
+// mode turns manual, the applied source revision is forgotten, and the
+// next sync leaves the template alone. Manual stays manual, off stays off,
+// and a save that keeps the playbook keeps the link.
+func TestPlaybookChangeUnlinksTheAppliedSource(t *testing.T) {
+	port := candidate("port", schema.TypeInt)
+	for _, tc := range []struct {
+		name   string
+		mode   templates.SourceMode
+		change bool
+		want   templates.SourceMode
+		rev    string
+	}{
+		{"automatic, playbook changed", templates.ModeAutomatic, true, templates.ModeManual, ""},
+		{"manual, playbook changed", templates.ModeManual, true, templates.ModeManual, ""},
+		{"off, playbook changed", templates.ModeOff, true, templates.ModeOff, ""},
+		{"automatic, playbook kept", templates.ModeAutomatic, false, templates.ModeAutomatic, "c1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, repo := repoFixture()
+			rev := "c1"
+			if tc.mode == templates.ModeOff {
+				rev = ""
+			}
+			tm := f.linked(t, "tpl", tc.mode, rev, []schema.Field{asStored(port, true)}, map[string]any{"port": float64(1)})
+			at := syncedAt
+			stored := f.store.byID[tm.ID]
+			stored.VarsAppliedAt = &at
+			f.store.byID[tm.ID] = stored
+			playbook := tm.PlaybookID
+			if tc.change {
+				playbook = f.playbook2
+			}
+			updated, err := f.svc.Update(ctx, f.org, tm.ID, templates.UpdateInput{Name: "tpl", PlaybookID: playbook,
+				ExtraVarsSchema: tm.ExtraVarsSchema, ExtraVars: map[string]any{"port": float64(1)}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := f.store.byID[tm.ID]
+			if updated.VarsMode != tc.want || got.VarsMode != tc.want || got.VarsSourceRev != tc.rev || (got.VarsAppliedAt == nil) != (tc.rev == "") {
+				t.Fatalf("mode %q (returned %q) rev %q applied %v, want %q %q", got.VarsMode, updated.VarsMode, got.VarsSourceRev, got.VarsAppliedAt, tc.want, tc.rev)
+			}
+			if got.Revision != tm.Revision+1 {
+				t.Errorf("revision %d, want %d: the save moves it once", got.Revision, tm.Revision+1)
+			}
+			f.sources[f.playbook2] = readSource(repo, "c9", candidate("other", schema.TypeString))
+			if err := f.svc.ApplyRepoSources(ctx, f.org, repo); err != nil {
+				t.Fatal(err)
+			}
+			if tc.change {
+				if fields := fieldNames(f.store.byID[tm.ID].ExtraVarsSchema.Fields); !reflect.DeepEqual(fields, []string{"port"}) {
+					t.Errorf("fields after a sync = %v, want the new playbook left to a preview", fields)
+				}
+			}
+		})
+	}
+}

@@ -99,7 +99,25 @@ func TestUpdateVarsSourceKeepsTheValues(t *testing.T) {
 		t.Fatalf("RecordSourceRev = revision %d updated %v (was %v) rev %q, %v", after.Revision, after.UpdatedAt, got.UpdatedAt, after.VarsSourceRev, err)
 	}
 
+	// The link alone, at the revision: neither the revision nor
+	// updated_at moves.
+	link := after
+	link.VarsMode, link.VarsSourceRev, link.VarsAppliedAt = templates.ModeManual, "", nil
+	link.Revision = 1
+	if _, err := store.SetVarsLink(scoped, link); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("set link at another revision = %v, want ErrRevisionMismatch", err)
+	}
+	link.Revision = 2
+	unlinked, err := store.SetVarsLink(scoped, link)
+	if err != nil || unlinked.Revision != 2 || !unlinked.UpdatedAt.Equal(got.UpdatedAt) || unlinked.VarsMode != templates.ModeManual ||
+		unlinked.VarsSourceRev != "" || unlinked.VarsAppliedAt != nil || len(unlinked.ExtraVarsSchema.Fields) != 1 {
+		t.Fatalf("SetVarsLink = %+v, %v", unlinked, err)
+	}
+
 	next.ID = uuid.Must(uuid.NewV7())
+	if _, err := store.SetVarsLink(scoped, next); !errors.Is(err, templates.ErrNotFound) {
+		t.Fatalf("set link of an unknown template = %v, want ErrNotFound", err)
+	}
 	if _, err := store.RecordSourceRev(scoped, next, 1, ""); !errors.Is(err, templates.ErrNotFound) {
 		t.Fatalf("record unknown = %v, want ErrNotFound", err)
 	}

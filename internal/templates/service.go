@@ -310,7 +310,8 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 // Update validates the input and replaces an existing template's fields,
 // including its own labelled vault credential set. A save that keeps the
 // schema and the stored values as they are does not insist on a required
-// field's value (buildKeepingValues).
+// field's value (buildKeepingValues). A save that changes the playbook
+// leaves the variables to a preview of the new one (unlinkedFromPlaybook).
 //
 // A projected template (SharedTemplateID set) refuses any attempt to
 // change name, playbook_id, limit, extra vars or their schema — spec
@@ -359,6 +360,13 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		var err error
 		if updated, err = s.store.Update(ctx, t, readRevision(in.IfRevision, cur)); err != nil {
 			return err
+		}
+		if in.PlaybookID != cur.PlaybookID {
+			if next, ok := unlinkedFromPlaybook(updated); ok {
+				if updated, err = s.store.SetVarsLink(ctx, next); err != nil {
+					return fmt.Errorf("unlink the previous playbook's variable sources: %w", err)
+				}
+			}
 		}
 		if err := s.store.ReplaceVaultCredentials(ctx, orgID, id, in.VaultCredentials); err != nil {
 			return fmt.Errorf("store template vault credentials: %w", err)

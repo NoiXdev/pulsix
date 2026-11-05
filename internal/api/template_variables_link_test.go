@@ -323,3 +323,41 @@ func TestSourceRevisionOnlySyncKeepsTheETag(t *testing.T) {
 		t.Fatalf("after c3: %+v", vars.templateVariablesBody)
 	}
 }
+
+// TestPlaybookChangeLeavesTheVariablesToAPreview: the template dialog's
+// save with another playbook turns an automatic template manual and
+// forgets the applied source, in the save's own revision.
+func TestPlaybookChangeLeavesTheVariablesToAPreview(t *testing.T) {
+	f := newTemplateFixture(t, "tmpl-repoint-org")
+	repoID := seedRepoFixture(t, f.s, f.orgID, "infra")
+	rec, pbs := siteRecord("c1")
+	seedVarSources(t, f.s, f.orgID, repoID, rec, pbs)
+	pb, _, err := f.s.Deps.Playbooks.EnsureRepo(db.WithOrgScope(context.Background(), f.orgID), f.orgID, uuid.MustParse(repoID), "site.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := f.body()
+	body["playbook_id"] = pb.ID.String()
+	created := f.create(t, body)
+	url := f.base + "/" + created.Template.ID
+	resp := postJSON(t, f.c, url+"/variables/apply", map[string]any{"mode": "automatic", "source_rev": "c1",
+		"source_synced_at": rec.SyncedAt, "values": map[string]any{"release": "1.0"}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("link: %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var vars linkedVariablesBody
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, url+"/variables", nil), &vars)
+
+	save := f.body()
+	save["extra_vars_schema"] = map[string]any{"fields": vars.ExtraVarsSchema.Fields}
+	save["extra_vars"] = vars.ExtraVars
+	resp = requestWithHeaders(t, f.c, http.MethodPut, url, save, map[string]string{"If-Match": `"2"`})
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("ETag") != `"3"` {
+		t.Fatalf("save with another playbook: %d ETag %q %s", resp.StatusCode, resp.Header.Get("ETag"), mustReadBody(t, resp))
+	}
+	vars = linkedVariablesBody{}
+	decodeInto(t, requestJSON(t, f.c, http.MethodGet, url+"/variables", nil), &vars)
+	if vars.Mode != "manual" || vars.Source == nil || vars.Source.AppliedRev != "" || vars.Revision != 3 {
+		t.Fatalf("after the playbook change: mode %q revision %d source %+v, want manual with nothing applied", vars.Mode, vars.Revision, vars.Source)
+	}
+}
