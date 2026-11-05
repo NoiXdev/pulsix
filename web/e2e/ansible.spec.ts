@@ -59,6 +59,14 @@ async function toast(page: Page, text: string | RegExp): Promise<void> {
   await expect(page.getByText(text).first()).toBeVisible();
 }
 
+/** expectRunStatus waits for the run page's status pill. It is scoped to the
+ * page's own sidebar (the shell has an `aside` of its own, outside `main`)
+ * because the same word is also a per-host table cell and an event-log row
+ * (`failed`), and a bare getByText would match all of them. */
+async function expectRunStatus(page: Page, status: string, timeout?: number): Promise<void> {
+  await expect(page.locator('main aside').getByText(status, { exact: true })).toBeVisible({ timeout });
+}
+
 /** addGeneratedCredential creates a key credential in generate mode and
  * dismisses the one-time public-key panel; the private key never shows. */
 async function addGeneratedCredential(page: Page, name: string, kindLabel: string, username: string): Promise<void> {
@@ -127,9 +135,14 @@ test('run a playbook against a managed host through the bastion, then retry the 
   // observed host key is pinned (trust on first use).
   await page.getByRole('button', { name: 'Run connection test' }).click();
   await toast(page, 'Connection test started');
-  await expect(page.getByRole('table', { name: 'Per-host results' })).toBeVisible();
-  await expect(page.getByText('connected (via', { exact: false })).toBeVisible();
+  // The click lands on the test's own run page. A connection test records no
+  // per-host recap (its result is one event, the probe's checks), so that
+  // page has no "Per-host results" table; the checks are on the host's
+  // Connection test card, which reads them once the job has finished.
+  await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
+  await expectRunStatus(page, 'succeeded', 60_000);
   await page.goBack();
+  await expect(page.getByText('connected (via', { exact: false })).toBeVisible({ timeout: 30_000 });
 
   await expect(page.getByRole('button', { name: 'Pin host key' })).toBeEnabled({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Pin host key' }).click();
@@ -138,7 +151,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   // --- The fixture git repository and its sync -------------------------
   await page.goto(`${base}/repos`);
   await page.getByRole('button', { name: 'Add repository' }).click();
-  dialog = page.getByRole('dialog', { name: 'Add repository' });
+  dialog = page.getByRole('dialog', { name: 'New repository' });
   await dialog.getByLabel('Name', { exact: true }).fill('ansible-e2e-repo');
   await dialog.getByLabel('URL').fill(GIT_FIXTURE_URL);
   await dialog.getByLabel('Branch').fill(FIXTURE_REPO_BRANCH);
@@ -148,7 +161,13 @@ test('run a playbook against a managed host through the bastion, then retry the 
 
   await page.getByRole('button', { name: 'Sync ansible-e2e-repo' }).click();
   await toast(page, 'Sync of ansible-e2e-repo started');
-  await expect(page.getByText('synced', { exact: false })).toBeVisible({ timeout: 60_000 });
+  // The sync button lands on the sync's own run page; the repository list
+  // shows the outcome. "never synced" contains "synced", so the dated pill
+  // is matched whole.
+  await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
+  await expectRunStatus(page, 'succeeded', 60_000);
+  await page.goto(`${base}/repos`);
+  await expect(page.getByText(/^synced \d{4}-\d{2}-\d{2}$/)).toBeVisible({ timeout: 30_000 });
 
   // --- The editor playbook and the job template ------------------------
   await page.goto(`${base}/playbooks`);
@@ -156,7 +175,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   dialog = page.getByRole('dialog', { name: 'New editor playbook' });
   await dialog.getByLabel('Playbook YAML', { exact: false }).fill(HELLO_PLAYBOOK);
   await dialog.getByRole('button', { name: 'Save playbook' }).click();
-  await toast(page, /playbook saved/i);
+  await toast(page, 'Playbook created');
 
   await page.goto(`${base}/templates`);
   await page.getByRole('button', { name: 'Add template' }).click();
@@ -181,7 +200,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   ).toContainText('hello', { timeout: 60_000 });
   await expect(page.getByRole('cell', { name: HOST_NAME })).toBeVisible();
   await expect(page.getByRole('table', { name: 'Per-host results' }).getByText('ok', { exact: true })).toBeVisible();
-  await expect(page.getByText('succeeded', { exact: true })).toBeVisible();
+  await expectRunStatus(page, 'succeeded');
 
   // --- The failure path and the retry ----------------------------------
   await page.goto(`${base}/playbooks`);
@@ -189,7 +208,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   dialog = page.getByRole('dialog', { name: 'New editor playbook' });
   await dialog.getByLabel('Playbook YAML', { exact: false }).fill(FAIL_PLAYBOOK);
   await dialog.getByRole('button', { name: 'Save playbook' }).click();
-  await toast(page, /playbook saved/i);
+  await toast(page, 'Playbook created');
 
   await page.goto(`${base}/templates`);
   await page.getByRole('button', { name: 'Add template' }).click();
@@ -203,7 +222,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
 
   await page.getByRole('button', { name: 'Run ansible-e2e-fail' }).click();
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
-  await expect(page.getByText('failed', { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expectRunStatus(page, 'failed', 60_000);
   await expect(page.getByRole('table', { name: 'Per-host results' }).getByText('failed', { exact: true })).toBeVisible();
   const failedUrl = page.url();
   // The failed run's page (error banner, per-host table, event log) fits its
@@ -223,7 +242,7 @@ test('run a playbook against a managed host through the bastion, then retry the 
   await page.getByRole('button', { name: 'Retry failed' }).click();
   await toast(page, 'Retry started');
   await expect(page).toHaveURL(/\/runs\/[0-9a-f-]+$/);
-  await expect(page.getByText('succeeded', { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expectRunStatus(page, 'succeeded', 60_000);
   await expect(page.getByRole('table', { name: 'Per-host results' }).getByText('ok', { exact: true })).toBeVisible();
 });
 
@@ -233,8 +252,10 @@ test('run a playbook against a managed host through the bastion, then retry the 
 async function setVariable(page: Page, template: string, name: string, value: string) {
   await page.getByRole('link', { name: `Variables of ${template}` }).click();
   await page.getByRole('button', { name: 'Add field' }).click();
-  const field = page.getByRole('dialog', { name: 'Field field_1' });
-  await field.getByLabel('Name').fill(name);
+  // The dialog is titled after the field's name as it is typed ("Field
+  // field_1" until the rename), so it is matched by its prefix.
+  const field = page.getByRole('dialog', { name: /^Field / });
+  await field.getByLabel('Name', { exact: true }).fill(name);
   await field.getByRole('button', { name: 'Done' }).click();
   await page.getByRole('region', { name: 'Values' }).getByLabel(name).fill(value);
   await page.getByRole('button', { name: 'Save variables' }).click();
