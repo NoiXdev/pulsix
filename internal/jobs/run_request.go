@@ -11,6 +11,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/hosts"
 )
 
 // Trigger kinds beyond manual and system.
@@ -50,6 +52,12 @@ type RunRequest struct {
 	// exclude_hosts maintenance guard). When none is left the enqueue
 	// fails with ErrAllHostsExcluded.
 	ExcludeHosts []uuid.UUID
+	// OnlyHost narrows the run to this host (backlog 7.76): it must be
+	// managed (else ErrNotFound) and among the template's resolved targets
+	// under the effective limit (else ErrHostNotInScope). The run gets one
+	// job targeting only this host, and its sealed limit intersects the
+	// effective limit with the host name (narrowLimit).
+	OnlyHost *uuid.UUID
 	// IdempotencyKey, when not empty, makes this enqueue a no-op replay of
 	// whatever run group an earlier call with the same (org, key) already
 	// created (migration 00067, backlog 2.60): the schedule ticker sets one
@@ -150,7 +158,45 @@ func (s *Service) EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, effectiveLimit(tmpl.Limit, req.Overrides), req, group, alreadyDone)
+	gate := effectiveLimit(tmpl.Limit, req.Overrides)
+	if req.OnlyHost != nil {
+		if req, err = s.narrowToHost(ctx, orgID, gate, req); err != nil {
+			return nil, err
+		}
+	}
+	return s.enqueueRunScope(ctx, orgID, tmpl.ID, scope, gate, req, group, alreadyDone)
+}
+
+// narrowToHost checks req.OnlyHost before anything is enqueued and returns
+// the request with a copy of its overrides whose limit is narrowed to the
+// host (narrowLimit). The host must exist and be managed — an unmanaged
+// host cannot run anything, so like the ad-hoc route it is ErrNotFound —
+// and a limit the matcher can decide must match its name. Whether the
+// scope selects it is resolveRunTargets' check (onlyHost). The scope
+// resolution keeps gating on gate itself: the narrowed limit carries
+// Ansible's '&', which the matcher cannot decide.
+func (s *Service) narrowToHost(ctx context.Context, orgID uuid.UUID, gate string, req RunRequest) (RunRequest, error) {
+	h, err := s.hosts.GetHost(ctx, orgID, *req.OnlyHost)
+	if err != nil {
+		if errors.Is(err, hosts.ErrNotFound) {
+			err = ErrNotFound
+		}
+		return req, fmt.Errorf("host %s: %w", *req.OnlyHost, err)
+	}
+	if !h.Managed {
+		return req, fmt.Errorf("%w: host %s is not managed", ErrNotFound, h.ID)
+	}
+	if matched, decided := parseLimit(gate).matches(h.Name); decided && !matched {
+		return req, ErrHostNotInScope
+	}
+	var ov RunOverrides
+	if req.Overrides != nil {
+		ov = *req.Overrides
+	}
+	limit := narrowLimit(gate, h.Name)
+	ov.Limit = &limit
+	req.Overrides = &ov
+	return req, nil
 }
 
 // effectiveLimit is the limit the scope resolution gates zones on: the run

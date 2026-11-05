@@ -6537,6 +6537,16 @@ export interface components {
             readonly $schema?: string;
             templates: components["schemas"]["TemplateDTO"][] | null;
         };
+        TemplateRunInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/TemplateRunInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Run on this one host only; it must be among the template's targets */
+            host_id?: string;
+        } | null;
         TemplateScopeDTO: {
             group_id: string | null;
             host_ids: string[] | null;
@@ -11869,7 +11879,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TemplateRunInputBody"];
+            };
+        };
         responses: {
             /** @description Accepted */
             202: {

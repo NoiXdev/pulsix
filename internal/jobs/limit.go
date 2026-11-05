@@ -128,3 +128,23 @@ func validGlob(pat string) bool {
 func classChar(c byte) bool {
 	return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-'
 }
+
+// narrowLimit is the limit a run narrowed to one host ships (backlog
+// 7.76): the host name alone when there is no effective limit, else
+// Ansible's intersection of the effective limit with the host name, so the
+// run touches the host only when the template's own limit would have.
+// Ansible splits a pattern that holds a comma on commas only (its ':'s
+// then stay inside the terms), so the intersection joins a comma list with
+// ",&" — ":&" would glue it onto the list's last term instead. The host
+// name is a literal pattern: hosts.Service only accepts [a-z0-9.-] names,
+// none of which is an Ansible pattern operator.
+func narrowLimit(effective, hostName string) string {
+	if effective == "" {
+		return hostName
+	}
+	sep := ":&"
+	if strings.Contains(effective, ",") {
+		sep = ",&"
+	}
+	return effective + sep + hostName
+}

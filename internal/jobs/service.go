@@ -38,6 +38,9 @@ var (
 	ErrNotFound     = errors.New("not found")
 	// ErrEmptyScope means a template's scope resolves to no managed host.
 	ErrEmptyScope = errors.New("scope resolves to no host")
+	// ErrHostNotInScope means a run narrowed to one host (RunRequest.OnlyHost)
+	// names a host the template's scope and effective limit do not target.
+	ErrHostNotInScope = errors.New("the host is not among the template's targets")
 	// ErrNotRunning means the job is not in a state the operation applies
 	// to: cancelling a terminal job, or finishing one that never ran.
 	ErrNotRunning = errors.New("job is not running")
@@ -666,19 +669,29 @@ func (s *Service) enqueueRunScope(ctx context.Context, orgID, templateID uuid.UU
 
 // resolveRunTargets resolves the scope and applies every guard
 // enqueueRunScope itself used to apply inline, in order: the scope itself
-// (ErrEmptyScope), the changed-host-key block (spec §5, ErrHostKeyChanged),
-// the maintenance exclusion (ErrAllHostsExcluded — after the key-changed
-// guard, so a key change and an exclusion together emptying the scope still
-// reports ErrAllHostsExcluded even though some dropped hosts were actually
-// excluded for a changed key, not maintenance), and the unpinned-hosts
-// refusal (backlog 2.44).
+// (ErrEmptyScope), the narrowing to req.OnlyHost (ErrHostNotInScope, also
+// for a scope that selects nothing), the changed-host-key block (spec §5,
+// ErrHostKeyChanged), the maintenance exclusion (ErrAllHostsExcluded —
+// after the key-changed guard, so a key change and an exclusion together
+// emptying the scope still reports ErrAllHostsExcluded even though some
+// dropped hosts were actually excluded for a changed key, not
+// maintenance), and the unpinned-hosts refusal (backlog 2.44).
 func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope render.Scope, limit string, req RunRequest) ([]ZoneTargets, int, error) {
 	targets, err := s.resolver.Resolve(ctx, orgID, scope, limit)
+	if err == nil && len(targets) == 0 {
+		err = ErrEmptyScope
+	}
 	if err != nil {
+		if req.OnlyHost != nil && errors.Is(err, ErrEmptyScope) {
+			// A scope that selects nothing does not select the one host either.
+			return nil, 0, ErrHostNotInScope
+		}
 		return nil, 0, err
 	}
-	if len(targets) == 0 {
-		return nil, 0, ErrEmptyScope
+	if req.OnlyHost != nil {
+		if targets = onlyHost(targets, *req.OnlyHost); len(targets) == 0 {
+			return nil, 0, ErrHostNotInScope
+		}
 	}
 	if s.keyGuard != nil {
 		targets, err = s.excludeKeyChanged(ctx, orgID, targets)
@@ -707,6 +720,17 @@ func (s *Service) resolveRunTargets(ctx context.Context, orgID uuid.UUID, scope 
 		return nil, 0, err
 	}
 	return targets, excluded, nil
+}
+
+// onlyHost keeps just the given host of the per-zone targets: at most one
+// zone holding that one host, none when the scope does not select it.
+func onlyHost(targets []ZoneTargets, id uuid.UUID) []ZoneTargets {
+	for _, t := range targets {
+		if slices.Contains(t.HostIDs, id) {
+			return []ZoneTargets{{ZoneID: t.ZoneID, HostIDs: []uuid.UUID{id}}}
+		}
+	}
+	return nil
 }
 
 // zoneTargetIDs collects the deduplicated host ids across the per-zone

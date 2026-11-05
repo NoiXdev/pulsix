@@ -84,3 +84,23 @@ func TestLimitPatternMatches(t *testing.T) {
 		}
 	}
 }
+
+// TestNarrowLimit pins the limit a run narrowed to one host ships (backlog
+// 7.76): the host name alone without an effective limit, else Ansible's
+// intersection of the effective limit with the host name, joined with the
+// separator the effective limit itself uses — Ansible splits a pattern
+// holding a comma on commas only, so ":&" after a comma list would glue
+// the intersection onto its last term.
+func TestNarrowLimit(t *testing.T) {
+	cases := []struct{ effective, host, want string }{
+		{"", "web-01", "web-01"},
+		{"web*", "web-01", "web*:&web-01"},
+		{"web*:!web-03", "web-01", "web*:!web-03:&web-01"},
+		{"web*,db*", "web-01", "web*,db*,&web-01"},
+	}
+	for _, c := range cases {
+		if got := narrowLimit(c.effective, c.host); got != c.want {
+			t.Errorf("narrowLimit(%q, %q) = %q, want %q", c.effective, c.host, got, c.want)
+		}
+	}
+}

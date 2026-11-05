@@ -288,6 +288,21 @@ type jobGetInput struct {
 	ID  string `path:"id"`
 }
 
+// templateRunInput is POST .../job-templates/{id}/run: no body runs the
+// template on its whole scope; host_id narrows the run to that one host
+// (backlog 7.76). The body is optional and nullable: before host_id existed
+// the route took no body at all and ignored whatever was sent, so a client
+// posting a JSON null keeps working. An empty host_id is refused (422)
+// rather than read as "no narrowing", which would run every target.
+type templateRunInput struct {
+	Org  string `path:"org"`
+	ID   string `path:"id"`
+	Body *struct {
+		_      struct{} `nullable:"true"`
+		HostID string   `json:"host_id,omitempty" minLength:"1" doc:"Run on this one host only; it must be among the template's targets"`
+	}
+}
+
 type jobDetailOutput struct {
 	Body struct {
 		Job jobDetailDTO `json:"job"`
@@ -369,7 +384,7 @@ type jobStreamInput struct {
 // sibling jobs of its run group), its streamed events, the SSE live
 // stream, and the run/cancel/retry actions on job templates and jobs.
 func registerJobRoutes(hapi huma.API, deps Deps) {
-	huma.Post(hapi, "/api/v1/orgs/{org}/job-templates/{id}/run", func(ctx context.Context, in *jobGetInput) (*jobStartOutput, error) {
+	huma.Post(hapi, "/api/v1/orgs/{org}/job-templates/{id}/run", func(ctx context.Context, in *templateRunInput) (*jobStartOutput, error) {
 		scope, err := requireOrg(ctx, deps, in.Org, tenancy.PermJobsRun)
 		if err != nil {
 			return nil, err
@@ -378,12 +393,26 @@ func registerJobRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		var onlyHost *uuid.UUID
+		if in.Body != nil && in.Body.HostID != "" {
+			hostID, err := parseUUID(in.Body.HostID, "host_id")
+			if err != nil {
+				return nil, err
+			}
+			onlyHost = &hostID
+		}
 		actor := scope.UserID
-		created, err := deps.Jobs.EnqueueRun(ctx, scope.OrgID, id, &actor)
+		created, err := deps.Jobs.EnqueueRunWith(ctx, scope.OrgID, id, jobs.RunRequest{
+			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: onlyHost,
+		})
 		if err != nil {
 			return nil, mapJobsErr(ctx, err)
 		}
-		setAuditObject(ctx, id.String(), fmt.Sprintf("started run of job template %s (%d job(s))", id, len(created)))
+		summary := fmt.Sprintf("started run of job template %s (%d job(s))", id, len(created))
+		if onlyHost != nil {
+			summary = fmt.Sprintf("started run of job template %s on host %s (%d job(s))", id, *onlyHost, len(created))
+		}
+		setAuditObject(ctx, id.String(), summary)
 		return jobStart(created), nil
 	}, func(o *huma.Operation) { o.DefaultStatus = http.StatusAccepted }, withAudit("runJobTemplate", "job_template"))
 
@@ -612,6 +641,8 @@ func mapJobsErr(ctx context.Context, err error) error {
 		return huma.Error422UnprocessableEntity("nothing to retry")
 	case errors.Is(err, jobs.ErrEmptyScope):
 		return huma.Error422UnprocessableEntity("the template's scope matches no managed host")
+	case errors.Is(err, jobs.ErrHostNotInScope):
+		return huma.Error422UnprocessableEntity(jobs.ErrHostNotInScope.Error())
 	case errors.Is(err, jobs.ErrTemplateNotReady):
 		// A projection of an installation-owned definition (spec v0.2f)
 		// whose playbook has not been registered in this organization yet
