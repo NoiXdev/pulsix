@@ -238,6 +238,24 @@ describe('DetailLayout hash scroll', () => {
     rerender(layout(['a', 'members']));
     expect(scroll).toHaveBeenCalledTimes(2);
   });
+
+  it('a nav click on another page is kept for that page', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, '', '/groups/a#members');
+    const { rerender } = render(layout(['a', 'members']));
+    expect(scroll).toHaveBeenCalledTimes(1);
+
+    // The router moves on to the next page without a hash, then the user clicks
+    // the nav link: that hash was marked handled for /groups/b, not /groups/a.
+    window.history.replaceState(null, '', '/groups/b');
+    rerender(layout(['a', 'members']));
+    await user.click(screen.getByRole('link', { name: 'a' }));
+    expect(window.location.pathname).toBe('/groups/b');
+    expect(window.location.hash).toBe('#a');
+
+    rerender(layout(['a', 'members']));
+    expect(scroll).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('SidebarHeading', () => {

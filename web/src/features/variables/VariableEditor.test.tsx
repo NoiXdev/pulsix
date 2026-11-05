@@ -181,6 +181,40 @@ describe('VariableEditor — variants', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("a viewer can change none of an opened field's inputs", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const fields = [
+      { name: 'port', type: 'int' as const, required: true, min: 1, max: 65535, default: 8080, description: 'Listen port' },
+      { name: 'level', type: 'enum' as const, options: ['a', 'b'] },
+      { name: 'hosts', type: 'repeater' as const, fields: [{ name: 'addr', type: 'string' as const }] },
+    ];
+    render(<VariableEditor readOnly variant="group" value={{ fields }} onChange={onChange} />);
+    const inputs = ['textbox', 'combobox', 'checkbox', 'switch', 'spinbutton'] as const;
+    const enabledButtons: string[] = [];
+    for (const { name } of fields) {
+      await openField(name);
+      const field = dialog(name);
+      for (const role of inputs) {
+        for (const input of within(field).queryAllByRole(role)) {
+          // A disabled fieldset disables an input without an attribute of its own.
+          expect(input.hasAttribute('readonly') || input.matches(':disabled'), `${name}: ${role} ${input.id}`).toBe(true);
+        }
+      }
+      for (const button of within(field).queryAllByRole('button')) {
+        if (!button.matches(':disabled')) enabledButtons.push(`${name}: ${button.textContent}`);
+      }
+      // Typing into the name changes nothing, whether the browser or the library refuses it.
+      const nameInput = within(field).getByLabelText('Name');
+      await user.type(nameInput, 'x');
+      expect(nameInput).toHaveValue(name);
+      await user.click(within(field).getByRole('button', { name: 'Cancel' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    }
+    expect(enabledButtons).toEqual(['port: Cancel', 'level: Cancel', 'hosts: Cancel']);
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 
 describe('VariableEditor — migrated builder behaviour', () => {
