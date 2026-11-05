@@ -639,6 +639,30 @@ func TestCreateTemplateRefusesASecretFieldNestedInAnObject(t *testing.T) {
 	}
 }
 
+// TestTemplateDefinitionRefusesSourceFields: a shared definition only ever
+// stores manual fields (spec goal 2), on create and on update alike.
+func TestTemplateDefinitionRefusesSourceFields(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+	in := shared.TemplateDefinitionInput{
+		Name: "deploy-site", SharedRepoID: uuid.Must(uuid.NewV7()), PlaybookPath: "site.yml",
+		ExtraVarsSchema: &schema.Schema{Fields: []schema.Field{{
+			Name: "release", Type: schema.TypeString, Origin: schema.OriginAdjusted,
+			Source: &schema.FieldSource{Kind: schema.SourceVarsPrompt, File: "site.yml", Line: 4},
+		}}},
+	}
+	_, err := svc.CreateTemplate(ctx, in)
+	if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "fields[0].origin") {
+		t.Fatalf("CreateTemplate() with a source field error = %v, want ErrInvalidInput naming fields[0].origin", err)
+	}
+	if _, err := svc.UpdateTemplate(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("UpdateTemplate() with a source field error = %v, want ErrInvalidInput", err)
+	}
+	if len(store.createTemplateCalls)+len(store.updateTemplateCalls) != 0 {
+		t.Fatal("nothing may be written for a definition with a source field")
+	}
+}
+
 func TestCreateTemplateRefusesAForbiddenExtraVarName(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)

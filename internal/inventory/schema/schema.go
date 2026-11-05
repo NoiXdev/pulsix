@@ -83,6 +83,15 @@ type Field struct {
 	MaxItems    *int     `json:"max_items,omitempty"`
 	Item        *Field   `json:"item,omitempty"`
 	Fields      []Field  `json:"fields,omitempty"`
+
+	// Provenance (origin.go): top-level fields only. An absent active means
+	// active and an absent origin means manual, so a schema stored before
+	// these attributes existed keeps its behaviour.
+	Active        *bool        `json:"active,omitempty"`
+	Origin        Origin       `json:"origin,omitempty"`
+	Source        *FieldSource `json:"source,omitempty"`
+	SetInPlaybook bool         `json:"set_in_playbook,omitempty"`
+	SourceField   *Field       `json:"source_field,omitempty"`
 }
 
 // Schema is the ordered field list a group owns.
@@ -174,6 +183,7 @@ func checkField(p *problems, path string, f Field, depth int, top bool) {
 	}
 	checkScope(p, path, f, top)
 	checkAttributes(p, path, f)
+	checkProvenance(p, path, f, depth, top)
 	switch f.Type {
 	case TypeEnum:
 		checkOptions(p, path, f.Options)
@@ -296,6 +306,7 @@ func checkItem(p *problems, path string, item *Field) {
 	if item.Scope != "" || item.Overridable || item.Required || item.Default != nil {
 		p.add(ip, "list items carry only type and validation attributes")
 	}
+	checkProvenance(p, ip, *item, 0, false)
 	checkAttributes(p, ip, *item)
 	if item.Type == TypeEnum {
 		checkOptions(p, ip, item.Options)

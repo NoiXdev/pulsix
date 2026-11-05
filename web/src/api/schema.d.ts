@@ -4068,6 +4068,7 @@ export interface components {
             summary: string;
         };
         Field: {
+            active?: boolean;
             default?: unknown;
             description?: string;
             fields?: components["schemas"]["Field"][] | null;
@@ -4083,11 +4084,23 @@ export interface components {
             min_items?: number;
             name: string;
             options?: string[] | null;
+            origin?: string;
             overridable?: boolean;
             pattern?: string;
             required?: boolean;
             scope?: string;
+            set_in_playbook?: boolean;
+            source?: components["schemas"]["FieldSource"];
+            source_field?: components["schemas"]["Field"];
             type: string;
+        };
+        FieldSource: {
+            entry_point?: string;
+            file: string;
+            kind: string;
+            /** Format: int64 */
+            line?: number;
+            role?: string;
         };
         FleetHostDTO: {
             /** @description True when state is null because every item this host has discovered currently resolves to ignored, rather than because nothing has ever been measured */

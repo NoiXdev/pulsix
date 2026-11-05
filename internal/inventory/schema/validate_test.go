@@ -106,3 +106,56 @@ func TestValidationErrorMessage(t *testing.T) {
 		t.Fatalf("Error() = %q", got)
 	}
 }
+
+// TestValidateIgnoresInactiveFields is spec goal 3: a value under an
+// inactive field is neither type-checked nor reported as undeclared, and
+// "required" applies to active fields only.
+func TestValidateIgnoresInactiveFields(t *testing.T) {
+	fields := []schema.Field{
+		{Name: "port", Type: schema.TypeInt, Required: true, Active: ptr(false)},
+		{Name: "release", Type: schema.TypeString, Required: true},
+	}
+	cases := []struct {
+		name     string
+		values   map[string]any
+		problems map[string]string // path -> message substring; nil means valid
+		strict   bool              // the case applies to Validate only
+	}{
+		{"wrong type under an inactive field", map[string]any{"port": "x", "release": "v1"}, nil, false},
+		{"inactive required field missing", map[string]any{"release": "v1"}, nil, false},
+		{"active required field missing", map[string]any{"port": "x"}, map[string]string{"release": "is required"}, false},
+		{"undeclared key", map[string]any{"release": "v1", "nope": 1.0}, map[string]string{"nope": "unknown field"}, true},
+	}
+	validators := []struct {
+		name string
+		fn   func([]schema.Field, map[string]any) error
+	}{{"Validate", schema.Validate}, {"ValidateStored", schema.ValidateStored}}
+	for _, v := range validators {
+		for _, c := range cases {
+			if c.strict && v.name != "Validate" {
+				continue
+			}
+			t.Run(v.name+"/"+c.name, func(t *testing.T) {
+				err := v.fn(fields, c.values)
+				if c.problems == nil {
+					if err != nil {
+						t.Fatalf("%s: %v", v.name, err)
+					}
+					return
+				}
+				ps := problemsOf(t, err)
+				if len(ps) != len(c.problems) {
+					t.Fatalf("problems = %+v, want %d", ps, len(c.problems))
+				}
+				for path, msg := range c.problems {
+					if !hasProblem(ps, path, msg) {
+						t.Errorf("missing %q at %q in %+v", msg, path, ps)
+					}
+				}
+			})
+		}
+	}
+	if err := schema.ValidateStored(fields, map[string]any{"release": "v1", "nope": 1.0}); err != nil {
+		t.Fatalf("ValidateStored still ignores undeclared keys: %v", err)
+	}
+}

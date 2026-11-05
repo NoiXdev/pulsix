@@ -9,10 +9,14 @@ import "slices"
 // behind by a schema type change — is treated as absent, so the schema
 // default applies; list and repeater entries of the wrong shape are left
 // out. Nothing of the wrong shape, a sealed value least of all, is ever
-// passed through.
+// passed through. An inactive field is left out, its value and its default
+// alike.
 func Resolve(fields []Field, values map[string]any) map[string]any {
 	out := make(map[string]any, len(fields))
 	for _, f := range fields {
+		if !f.IsActive() {
+			continue
+		}
 		v, ok := values[f.Name]
 		if ok && v != nil {
 			if rv, fits := resolveValue(f, v); fits {

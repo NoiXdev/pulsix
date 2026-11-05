@@ -85,3 +85,18 @@ func TestResolveDropsShapeMismatches(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveSkipsInactiveFields is plan decision 7: an inactive group
+// field is left out of the rendered inventory, its stored value and its
+// default alike.
+func TestResolveSkipsInactiveFields(t *testing.T) {
+	fields := []schema.Field{
+		{Name: "port", Type: schema.TypeInt, Default: 80.0, Active: ptr(false)},
+		{Name: "proxy", Type: schema.TypeString, Default: "none", Active: ptr(false)},
+		{Name: "env", Type: schema.TypeString, Default: "prod"},
+	}
+	got := schema.Resolve(fields, map[string]any{"port": 8080.0})
+	if want := map[string]any{"env": "prod"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Resolve = %#v, want %#v", got, want)
+	}
+}

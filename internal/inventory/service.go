@@ -345,12 +345,15 @@ func (s *Service) DeleteGroup(ctx context.Context, orgID, id uuid.UUID) error {
 
 // SetSchema replaces a group's schema. Stored values are never rewritten;
 // the second result counts the members whose values no longer satisfy the
-// new schema.
+// new schema. A group holds manual fields only.
 func (s *Service) SetSchema(ctx context.Context, orgID, id uuid.UUID, revision int64, sc schema.Schema) (GroupView, int, error) {
 	if sc.Fields == nil {
 		sc.Fields = []schema.Field{}
 	}
 	if err := sc.Check(); err != nil {
+		return GroupView{}, 0, err
+	}
+	if err := sc.CheckManualOnly(); err != nil {
 		return GroupView{}, 0, err
 	}
 	cur, err := s.store.GetGroup(ctx, orgID, id)

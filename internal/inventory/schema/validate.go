@@ -54,7 +54,8 @@ func (p *problems) err() error {
 // problem, a missing or null value is a problem for a required field without
 // a default, and every present value must satisfy its field. Secret fields
 // accept a non-empty plaintext string or a sealed value; keep markers must be
-// resolved before Validate runs.
+// resolved before Validate runs. A value under an inactive field is kept but
+// not checked, and an inactive field is never required.
 func Validate(fields []Field, values map[string]any) error {
 	var p problems
 	validateObject(&p, "", fields, values, true)
@@ -88,6 +89,9 @@ func validateObject(p *problems, prefix string, fields []Field, values map[strin
 		}
 	}
 	for _, f := range fields {
+		if !f.IsActive() {
+			continue
+		}
 		v, ok := values[f.Name]
 		if !ok || v == nil {
 			if f.Required && f.Default == nil {

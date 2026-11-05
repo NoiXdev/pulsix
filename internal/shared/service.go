@@ -438,16 +438,24 @@ func (s *Service) ResolveTemplatePlaybooks(ctx context.Context, orgID, repoID, p
 // package rather than the API schema layer (ErrInvalidInput's own doc
 // comment explains why a template's extra vars are different from a
 // repository definition's plain string fields): no secret-typed schema
-// field, and none of the connection-security variables
-// internal/ansiblevars reserves — the same denylist
-// internal/templates.Service.build applies to an ordinary template's extra
-// vars, reused here because a shared definition's extra vars reach every
-// organization's own job_templates row WITHOUT ever passing through that
-// service (store_sql.go writes them directly, exactly like a repository
-// projection's name/url/branch/subpath).
+// field, no field taken from a playbook, and none of the
+// connection-security variables internal/ansiblevars reserves — the same
+// denylist internal/templates.Service.build applies to an ordinary
+// template's extra vars, reused here because a shared definition's extra
+// vars reach every organization's own job_templates row WITHOUT ever
+// passing through that service (store_sql.go writes them directly, exactly
+// like a repository projection's name/url/branch/subpath).
 func validateTemplateDefinitionInput(in TemplateDefinitionInput) error {
 	if in.ExtraVarsSchema != nil && schemaHasSecretField(in.ExtraVarsSchema.Fields) {
 		return fmt.Errorf("%w: a shared template's extra vars schema may not declare a secret field — a shared definition carries no secret by construction", ErrInvalidInput)
+	}
+	// A shared definition holds manual fields only (backlog 7.75): the
+	// playbook source sync applies to an organization's own job
+	// templates, never to a definition projected into every organization.
+	if in.ExtraVarsSchema != nil {
+		if err := in.ExtraVarsSchema.CheckManualOnly(); err != nil {
+			return fmt.Errorf("%w: extra vars schema: %w", ErrInvalidInput, err)
+		}
 	}
 	vars := extraVarsOrEmpty(in.ExtraVars)
 	if names := ansiblevars.ForbiddenIn(vars); len(names) > 0 {

@@ -237,6 +237,28 @@ func TestSetSchema(t *testing.T) {
 	}
 }
 
+// TestSetSchemaRefusesSourceFields: a group only ever stores manual fields
+// (spec goal 2); a field taken from a playbook belongs to job templates.
+func TestSetSchemaRefusesSourceFields(t *testing.T) {
+	f := newFixture()
+	g := f.group(t, "webserver", nil)
+	sc := schema.Schema{Fields: []schema.Field{{
+		Name: "nginx_port", Type: schema.TypeInt, Origin: schema.OriginSource,
+		Source: &schema.FieldSource{Kind: schema.SourceArgumentSpec, Role: "nginx", File: "roles/nginx/meta/argument_specs.yml"},
+	}}}
+	_, _, err := f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, sc)
+	problemAt(t, err, "fields[0].origin", "only job templates take fields from a playbook")
+
+	sc.Fields[0].Origin, sc.Fields[0].Source, sc.Fields[0].Active = "", nil, new(bool)
+	view, _, err := f.svc.SetSchema(ctx, f.org, g.ID, g.Revision, sc)
+	if err != nil {
+		t.Fatalf("an inactive manual field: %v", err)
+	}
+	if view.Schema.Fields[0].IsActive() {
+		t.Fatal("the stored field must stay inactive")
+	}
+}
+
 // TestGroupReadMasksLeftoverPlainValueAfterSchemaChangeToSecret is
 // backlog 2.21's string→secret case: SetSchema never rewrites stored
 // values, so a value set while a field was still a plain string sits
