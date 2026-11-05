@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { check, NOW, reading, renderAt } from '../../test/hostDetail.tsx';
 import { HostStateSection } from './HostStateSection.tsx';
@@ -90,5 +90,38 @@ describe('HostStateSection', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('store down');
     expect(screen.queryByText('No readings yet')).not.toBeInTheDocument();
+  });
+
+  describe('polling', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('asks for a tile again after 60 s, not after 30 s', async () => {
+      // The clock keeps running on its own so the page can render; the
+      // advances below are what move it across the poll interval.
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      let served = 0;
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/checks': checksRoute([check('memory', 'memory', [reading('mem.used_pct', 61)])]),
+        'GET /api/v1/orgs/acme/hosts/h1/metrics': () => {
+          served += 1;
+          return { points: [{ at: NOW, value: 61 }] };
+        },
+      });
+      renderSection();
+      await screen.findByText('61 %');
+      await waitFor(() => expect(served).toBe(1));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31_000);
+      });
+      expect(served).toBe(1);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      expect(served).toBe(2);
+    });
   });
 });

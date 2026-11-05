@@ -35,7 +35,7 @@ export function HostAgentCard({ org, hostId, canWrite }: { org: string; hostId: 
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold">{t.hosts.agent.title}</h2>
+        <h3 className="text-[13px] font-semibold">{t.hosts.agent.title}</h3>
         {agent && <Pill tone={agent.status === 'online' ? 'ok' : 'warn'}>{agent.status in t.agents.status ? t.agents.status[agent.status as keyof typeof t.agents.status] : agent.status}</Pill>}
       </div>
       {!agent && (

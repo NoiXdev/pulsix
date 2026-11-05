@@ -8,8 +8,9 @@ function useInvalidate(org: string) {
     void qc.invalidateQueries({ queryKey: ['agent-tokens', org] });
     void qc.invalidateQueries({ queryKey: ['host-agent', org] });
     // Revoking an agent clears the host's monitored capability, so the
-    // host views the page links to are stale too.
+    // list and the host page's own query are stale too.
     void qc.invalidateQueries({ queryKey: ['hosts', org] });
+    void qc.invalidateQueries({ queryKey: ['host', org] });
   };
 }
 

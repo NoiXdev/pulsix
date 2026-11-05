@@ -85,7 +85,7 @@ export function HostAlertRoutesCard({ org, hostId, canRead }: HostAlertRoutesCar
   return (
     <Card className="p-4">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-[13px] font-semibold">{t.hosts.alertRoutes.title}</h2>
+        <h3 className="text-[13px] font-semibold">{t.hosts.alertRoutes.title}</h3>
         {canRead && (
           <Link to="/o/$org/settings/alert-routes" params={{ org }} className="text-xs text-muted-foreground hover:text-primary">
             {t.hosts.alertRoutes.link}

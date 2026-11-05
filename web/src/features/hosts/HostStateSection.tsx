@@ -5,6 +5,10 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { stateTiles, type StateTile, type TileTone } from './hostOverview.ts';
 
+// The sparklines cover 24 h: a point more every 30 s changes nothing a
+// reader can see, and a host page with four tiles asks four series each time.
+const SPARKLINE_REFETCH_MS = 60_000;
+
 const TONE: Record<TileTone, string> = {
   ok: 'var(--px-accent)',
   warn: 'var(--px-warn)',
@@ -58,7 +62,7 @@ function StateTiles({ org, hostId, canRead }: { org: string; hostId: string; can
 function Tile({ org, hostId, tile }: { org: string; hostId: string; tile: StateTile }) {
   const t = useT();
   const format = useFormat();
-  const series = useHostMetric(org, hostId, { check: tile.check, item: tile.item, metric: tile.metric, range: '24h' });
+  const series = useHostMetric(org, hostId, { check: tile.check, item: tile.item, metric: tile.metric, range: '24h' }, { refetchMs: SPARKLINE_REFETCH_MS });
   const percent = tile.kind !== 'load';
   const label =
     tile.kind === 'disk' ? t.hosts.detail.tile.disk(tile.item) : tile.kind === 'cpu' ? t.hosts.detail.tile.cpu : tile.kind === 'ram' ? t.hosts.detail.tile.ram : t.hosts.detail.tile.load;

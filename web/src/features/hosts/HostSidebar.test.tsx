@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
@@ -7,13 +7,13 @@ import { QueryClient } from '@tanstack/react-query';
 import { alertBody, HOST, hostRoutes, orgBody, renderAt, type HostFixture } from '../../test/hostDetail.tsx';
 import type { Host } from '../../api/types.ts';
 import { HostSidebar } from './HostSidebar.tsx';
-import { useHostActions } from './useHostActions.tsx';
+import { useHostActions, type HostActions } from './useHostActions.tsx';
 
-function Harness({ host }: { host: Host }) {
+function Harness({ host, role = 'admin' }: { host: Host; role?: string }) {
   const actions = useHostActions('acme', host);
   return (
     <>
-      <HostSidebar org="acme" host={host} actions={actions} />
+      <HostSidebar org="acme" host={host} role={role} actions={actions} />
       {actions.dialogs}
     </>
   );
@@ -243,6 +243,7 @@ describe('HostSidebar', () => {
 
   it('keeps a manual tag and a fact tag of the same key apart', async () => {
     const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const puts: unknown[] = [];
     const fact = { key: 'os', value: 'debian', source: 'fact' };
     const manual = { key: 'os', value: 'ubuntu', source: 'manual' };
@@ -267,6 +268,10 @@ describe('HostSidebar', () => {
     await waitFor(() => expect(puts[0]).toEqual([{ key: 'os', value: 'ubuntu' }]));
     expect(await screen.findByText('os=ubuntu')).toBeInTheDocument();
     expect(screen.getByText('os=debian')).toBeInTheDocument();
+    // Two chips of one key must not share a React key.
+    const warnings = consoleError.mock.calls.filter((call) => String(call[0]).includes('same key'));
+    consoleError.mockRestore();
+    expect(warnings).toEqual([]);
   });
 
   it('rejects a malformed tag chip inline without a round trip', async () => {
@@ -323,7 +328,7 @@ describe('HostSidebar', () => {
     // otherwise every assertion below would also hold before it landed.
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     qc.setQueryData(['org', 'acme'], orgBody('viewer'));
-    renderAt(() => <Harness host={{ ...HOST, managed: true } as Host} />, qc);
+    renderAt(() => <Harness host={{ ...HOST, managed: true } as Host} role="viewer" />, qc);
 
     expect(await screen.findByText('fra-1')).toBeInTheDocument();
     expect(screen.getByRole('switch', { name: 'Managed' })).toBeDisabled();
@@ -333,5 +338,44 @@ describe('HostSidebar', () => {
     expect(screen.queryByRole('button', { name: 'Run template…' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /More actions/ })).not.toBeInTheDocument();
     expect(screen.queryByPlaceholderText('role=db')).not.toBeInTheDocument();
+  });
+
+  it('takes the role from its caller and never reads the organization itself', async () => {
+    const asked: string[] = [];
+    mockApi(
+      hostRoutes(
+        { role: 'viewer', host: { managed: true } },
+        {
+          'GET /api/v1/orgs/acme': (req: MockRequest) => {
+            asked.push(req.path);
+            return orgBody('viewer');
+          },
+        },
+      ),
+    );
+    // Actions are built by hand: useHostActions reads the org for the
+    // role too, and this test is about the sidebar's own requests.
+    const noop = () => undefined;
+    const actions: HostActions = {
+      canEdit: false,
+      canRun: false,
+      canSwitch: false,
+      canDelete: false,
+      open: noop,
+      edit: noop,
+      runCommand: noop,
+      runTemplate: noop,
+      toggleMonitoring: noop,
+      toggleManagement: noop,
+      remove: noop,
+      dialogs: null,
+    };
+    renderAt(() => <HostSidebar org="acme" host={{ ...HOST, managed: true } as Host} role="viewer" actions={actions} />);
+
+    expect(await screen.findByText('fra-1')).toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Managed' })).toBeDisabled();
+    expect(screen.getByRole('switch', { name: 'Monitored' })).toBeDisabled();
+    expect(screen.queryByPlaceholderText('role=db')).not.toBeInTheDocument();
+    expect(asked).toEqual([]);
   });
 });

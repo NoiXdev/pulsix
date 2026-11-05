@@ -28,7 +28,7 @@ export function ConnectionTestCard({ org, hostId, canWrite }: { org: string; hos
     <Card>
       <div className="flex flex-col gap-3 p-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-[13px] font-semibold">{t.hosts.connection.title}</h2>
+          <h3 className="text-[13px] font-semibold">{t.hosts.connection.title}</h3>
           {canWrite && <RunTestButton org={org} hostId={hostId} />}
         </div>
         {test.isPending && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}

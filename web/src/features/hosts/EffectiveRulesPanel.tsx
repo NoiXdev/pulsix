@@ -58,7 +58,7 @@ export function EffectiveRulesPanel({ org, hostId, canRead }: EffectiveRulesPane
 
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-[13px] font-semibold">{t.hosts.rules.title}</h2>
+      <h3 className="mb-3 text-[13px] font-semibold">{t.hosts.rules.title}</h3>
 
       {!canRead && <p className="text-xs text-muted-foreground">{t.hosts.rules.noAccess}</p>}
       {canRead && query.isError && (
@@ -169,7 +169,7 @@ function EffectiveRuleRow({
   return (
     <li className="rounded-md border border-border p-3">
       <div className="flex flex-wrap items-center gap-2">
-        {showTuple && <h3 className="font-mono text-[13px] text-foreground">{tupleLabel(entry)}</h3>}
+        {showTuple && <h4 className="font-mono text-[13px] text-foreground">{tupleLabel(entry)}</h4>}
         <Pill tone={entry.severity === 'crit' ? 'crit' : 'warn'}>{entry.severity === 'crit' ? t.hosts.state.crit : t.hosts.state.warn}</Pill>
         <Tag>{originChip(entry.winner, groups, t)}</Tag>
         <span className="text-[13px] text-foreground">{entry.winner.name}</span>

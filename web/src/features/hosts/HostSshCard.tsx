@@ -127,7 +127,7 @@ function HostSshForm({
 
   return (
     <Card className="p-4">
-      <h2 className="mb-3 text-[13px] font-semibold">{t.hosts.ssh.title}</h2>
+      <h3 className="mb-3 text-[13px] font-semibold">{t.hosts.ssh.title}</h3>
       <form onSubmit={submit} className="flex flex-col gap-3">
         <div className="flex items-center gap-2" aria-label={t.hosts.ssh.pinState}>
           <PinStateBadge state={current.pin_state} />
@@ -194,7 +194,7 @@ function HostSshForm({
       </form>
       {keyDetail.data?.credential.public_key && (
         <div className="mt-4 border-t border-border pt-4">
-          <h3 className="mb-2 text-xs font-semibold">{t.hosts.ssh.installKey}</h3>
+          <h4 className="mb-2 text-xs font-semibold">{t.hosts.ssh.installKey}</h4>
           <PublicKeyPanel publicKey={keyDetail.data.credential.public_key} snippets={keyDetail.data.snippets} />
         </div>
       )}

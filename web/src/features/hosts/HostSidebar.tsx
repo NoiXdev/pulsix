@@ -5,7 +5,6 @@ import { Pill, type Tone } from '../../ui/badge.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { SidebarFacts } from '../../ui/detail-layout.tsx';
 import { RowMenu, RowMenuItem } from '../../ui/list-row.tsx';
-import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useZones } from '../../api/hooks/useHosts.ts';
 import { useHostAgent } from '../../api/hooks/useAgents.ts';
 import { useHostInventoryPreview } from '../../api/hooks/useInventory.ts';
@@ -28,9 +27,8 @@ const NONE = '—';
  * its two capabilities as switches, its tags, and the actions. The section
  * nav below it is DetailLayout's.
  */
-export function HostSidebar({ org, host, actions }: { org: string; host: Host; actions: HostActions }) {
+export function HostSidebar({ org, host, role, actions }: { org: string; host: Host; role: string; actions: HostActions }) {
   const t = useT();
-  const role = useOrg(org).data?.org.role;
   const [bootstrapOpen, setBootstrapOpen] = useState(false);
   const canBootstrap = host.managed && may(role, 'inventory.write');
 

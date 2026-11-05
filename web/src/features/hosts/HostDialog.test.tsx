@@ -192,6 +192,44 @@ describe('HostDialog', () => {
     expect(screen.queryByText(/changed meanwhile/)).not.toBeInTheDocument();
   });
 
+  it("a non-412 save failure shows the server's message and keeps the dialog open", async () => {
+    const user = userEvent.setup();
+    mockApi({
+      ...baseRoutes(),
+      'PATCH /api/v1/orgs/acme/hosts/h1': () => problem(500, 'the store is unavailable'),
+    });
+    const { onOpenChange } = renderDialog({ host: HOST });
+
+    await screen.findByLabelText('Name');
+    await user.click(screen.getByRole('button', { name: 'Save host' }));
+
+    expect(await screen.findByText('the store is unavailable')).toBeInTheDocument();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.queryByText(/changed meanwhile/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+  });
+
+  it('a failed reload after a 412 says the reload failed', async () => {
+    const user = userEvent.setup();
+    let reloading = false;
+    mockApi({
+      ...baseRoutes(),
+      'GET /api/v1/orgs/acme/hosts/h1': () => (reloading ? problem(500, 'reload broke') : { host: HOST }),
+      'PATCH /api/v1/orgs/acme/hosts/h1': () => problem(412, 'the host changed since you loaded it; reload and try again'),
+    });
+    renderDialog({ host: HOST });
+
+    await screen.findByLabelText('Name');
+    await user.click(screen.getByRole('button', { name: 'Save host' }));
+    expect(await screen.findByText(/changed meanwhile/)).toBeInTheDocument();
+
+    reloading = true;
+    await user.click(screen.getByRole('button', { name: 'Reload' }));
+
+    expect(await screen.findByText('Reloading failed')).toBeInTheDocument();
+    expect(screen.getByText(/changed meanwhile/)).toBeInTheDocument();
+  });
+
   it('inherit shows the resolved jump host when editing', async () => {
     mockApi(baseRoutes());
     renderDialog({ host: HOST });

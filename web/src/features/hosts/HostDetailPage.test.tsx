@@ -79,6 +79,28 @@ describe('HostDetailPage', () => {
     expect(screen.getByRole('link', { name: /Full history/ })).toHaveAttribute('href', '/o/acme/alerts?host=h1');
   });
 
+  it('titles the sections at level 2 and the cards inside them at level 3', async () => {
+    mockApi(
+      hostRoutes(
+        { host: { managed: true, monitored: true } },
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/checks': MONITORED_CHECKS,
+          'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+        },
+      ),
+    );
+    renderPage();
+
+    const connection = within(await screen.findByRole('region', { name: 'Connection & SSH' }));
+    expect(await connection.findByRole('heading', { level: 3, name: 'SSH access' })).toBeInTheDocument();
+    expect(connection.getByRole('heading', { level: 3, name: 'Agent' })).toBeInTheDocument();
+    expect(connection.queryByRole('heading', { level: 2, name: 'SSH access' })).not.toBeInTheDocument();
+    await screen.findByText('23 %');
+
+    const sections = ['State', 'Alerts', 'Checks', 'Runs', 'Connection & SSH', 'Inventory', 'Facts'];
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(sections);
+  });
+
   it('offers snooze on the Alerts section to checks.write and nothing to a viewer', async () => {
     const routes = (role: string) =>
       hostRoutes(

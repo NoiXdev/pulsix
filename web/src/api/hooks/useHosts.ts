@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
 import type { HostInput } from '../types.ts';
 
@@ -24,8 +24,12 @@ export const HOSTS_PAGE_SIZE = 50;
  * The filter is part of the query key, so changing it starts over from
  * the first page. The key keeps the ['hosts', org] prefix every host
  * mutation below invalidates, which refetches all loaded pages.
+ *
+ * `keepPrevious` keeps the last filter's rows on screen while the next
+ * filter's first page loads, for a picker whose list would otherwise
+ * empty on every keystroke of its search.
  */
-export function useHosts(org: string, filter: HostListFilter = {}) {
+export function useHosts(org: string, filter: HostListFilter = {}, opts: { keepPrevious?: boolean } = {}) {
   return useInfiniteQuery({
     queryKey: ['hosts', org, filter],
     initialPageParam: '',
@@ -47,6 +51,7 @@ export function useHosts(org: string, filter: HostListFilter = {}) {
       ),
     getNextPageParam: (lastPage) => lastPage.next_cursor || undefined,
     enabled: !!org,
+    placeholderData: opts.keepPrevious ? keepPreviousData : undefined,
   });
 }
 

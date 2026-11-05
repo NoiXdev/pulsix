@@ -200,8 +200,11 @@ export function useHostEffectiveRules(org: string, hostId: string, enabled = tru
  * the operator closed and reopened the panel. A 5xx or a network failure
  * (errorStatus null) is a hiccup and keeps polling; a 4xx is the server
  * telling us the question is wrong.
+ *
+ * `opts.refetchMs` sets the cadence (30 s by default): the host page's
+ * 24 h sparklines poll more slowly than an open graph does.
  */
-export function useHostMetric(org: string, hostId: string, selection: MetricSelection | null) {
+export function useHostMetric(org: string, hostId: string, selection: MetricSelection | null, opts: { refetchMs?: number } = {}) {
   return useQuery({
     queryKey: ['host-metric', org, hostId, selection],
     queryFn: () => {
@@ -219,7 +222,7 @@ export function useHostMetric(org: string, hostId: string, selection: MetricSele
     retry: false,
     refetchInterval: (query) => {
       const status = errorStatus(query.state.error);
-      return status !== null && status >= 400 && status < 500 ? false : 30_000;
+      return status !== null && status >= 400 && status < 500 ? false : (opts.refetchMs ?? 30_000);
     },
   });
 }

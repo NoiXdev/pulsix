@@ -49,7 +49,7 @@ export function AdhocDialog({
   const [argv, setArgv] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const hosts = useHosts(org, { managed: true, q });
+  const hosts = useHosts(org, { managed: true, q }, { keepPrevious: true });
   const page = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
   // Only once the page is known: before that every selection would be
   // pinned and then jump into the list as the page arrives.

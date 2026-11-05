@@ -181,4 +181,36 @@ describe('AdhocDialog', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Run command' }));
     expect(await within(dialog).findByText(/not supported/i)).toBeInTheDocument();
   });
+
+  it('keeps the previous host rows on screen while a new search is pending', async () => {
+    const user = userEvent.setup();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': async (req: MockRequest) => {
+        if (req.search.get('q') === 'db') {
+          await held;
+          return { hosts: [host('h3', 'db-01')], next_cursor: '' };
+        }
+        return { hosts: [host('h1', 'web-01'), host('h2', 'web-02')], next_cursor: '' };
+      },
+    });
+    renderDialog();
+    const dialog = await screen.findByRole('dialog', { name: 'Run command' });
+    expect(await within(dialog).findByRole('checkbox', { name: 'web-01' })).toBeInTheDocument();
+
+    await user.type(within(dialog).getByRole('searchbox'), 'db');
+
+    // The answer is still outstanding: the list neither empties nor says
+    // "no hosts" in the meantime.
+    expect(within(dialog).getByRole('checkbox', { name: 'web-01' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('checkbox', { name: 'web-02' })).toBeInTheDocument();
+    expect(within(dialog).queryByText(/no managed host/i)).not.toBeInTheDocument();
+
+    release();
+    expect(await within(dialog).findByRole('checkbox', { name: 'db-01' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('checkbox', { name: 'web-01' })).not.toBeInTheDocument();
+  });
 });
