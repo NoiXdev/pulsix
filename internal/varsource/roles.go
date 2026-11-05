@@ -43,8 +43,13 @@ func (w *walk) useRoles(f *playFile) {
 }
 
 func (w *walk) useRole(f *playFile, r roleRef) {
-	t := roleTarget{state: RoleDynamic}
-	if !r.dynamic {
+	var t roleTarget
+	switch {
+	case r.invalid:
+		t = roleTarget{state: RoleUnreadable} // noted where it was read
+	case r.dynamic:
+		t = roleTarget{state: RoleDynamic}
+	default:
 		t = w.target(r.name, f.dir)
 	}
 	key := roleKey{id: t.dir, entryPoint: r.entryPoint}
@@ -61,6 +66,7 @@ func (w *walk) useRole(f *playFile, r roleRef) {
 	w.roleSeen[key] = true
 	y, name := f.y, short(r.name)
 	switch t.state {
+	case RoleUnreadable: // an invalid use, noted where it was read
 	case RoleDynamic:
 		what := "the role name"
 		if r.dynamic {
@@ -89,8 +95,10 @@ func (r roleRef) shownEntryPoint() string { return clip(r.entryPoint, maxRefByte
 
 // target finds a role by name from a playbook directory: a template is
 // dynamic; an inline playbook has no repository; a name with a slash is a
-// path relative to the playbook's directory; a dotted name is a collection
-// role; any other is looked up in <dir>/roles, then in roles/ at the root.
+// path relative to the playbook's directory; any other is looked up in
+// <dir>/roles, then in roles/ at the root, and a name of three or more
+// dotted parts found in neither is a collection role (namespace.collection.role),
+// as Ansible resolves it.
 func (w *walk) target(name, dir string) roleTarget {
 	switch {
 	case templated(name):
@@ -116,8 +124,8 @@ func (w *walk) findRole(name, dir string) roleTarget {
 			return roleTarget{state: RoleNotFound, where: "inside the repository"}
 		}
 		candidates = []string{p}
-	case strings.Contains(name, "."):
-		return roleTarget{state: RoleCollection}
+	case name == "" || name == "." || name == "..":
+		return roleTarget{state: RoleNotFound, where: "(not a role name)"}
 	default:
 		candidates = []string{path.Join(dir, "roles", name)}
 		if dir != "." {
@@ -129,51 +137,90 @@ func (w *walk) findRole(name, dir string) roleTarget {
 			return roleTarget{state: RoleRead, dir: c}
 		}
 	}
+	if !strings.Contains(name, "/") && strings.Count(name, ".") >= 2 {
+		return roleTarget{state: RoleCollection}
+	}
 	return roleTarget{state: RoleNotFound, where: "at " + clip(strings.Join(candidates, " or "), maxRefBytes)}
+}
+
+// roleSpec is a role's spec file as read once per walk: many entry points
+// of one file (tasks_from) share one parse and one budget.
+type roleSpec struct {
+	missing bool // no such file
+	failed  bool // not read: too large, not valid YAML, … (noted once)
+	y       *yamlFile
+	root    *yaml.Node
+}
+
+// spec reads and parses a role spec file once per walk. Its notes join the
+// playbook's where it was first read.
+func (w *walk) spec(file string) *roleSpec {
+	if s, ok := w.specs[file]; ok {
+		return s
+	}
+	s := &roleSpec{}
+	data, err := w.read(file)
+	switch {
+	case isNotExist(err):
+		s.missing = true
+	case errors.Is(err, errGivenUp):
+		s.failed = true
+	case err != nil:
+		s.failed = true
+		w.addNotes(readNote(file, err))
+	default:
+		var doc yaml.Node
+		if err := yaml.Unmarshal(data, &doc); err != nil {
+			s.failed = true
+			w.addNotes(invalidYAML(file, err))
+			break
+		}
+		s.y, s.root = newYAMLFile(file), documentRoot(&doc)
+		w.sources = append(w.sources, noteSource{y: s.y})
+	}
+	w.specs[file] = s
+	return s
 }
 
 // readRole reads the argument specs of a found role for r's entry point:
 // read, no_specs, or unreadable (a note says why).
 func (w *walk) readRole(dir string, r roleRef) RoleState {
 	for _, name := range specNames {
-		file := path.Join(dir, "meta", name)
-		data, err := w.read(file)
+		s := w.spec(path.Join(dir, "meta", name))
 		switch {
-		case isNotExist(err):
+		case s.missing:
 			continue
-		case errors.Is(err, errGivenUp):
-			return RoleUnreadable
-		case err != nil:
-			w.addNotes(readNote(file, err))
+		case s.failed:
 			return RoleUnreadable
 		}
-		y := newYAMLFile(file)
-		fields, notes, state := readRoleSpec(y, data, r.shownName(), r.shownEntryPoint(), strings.HasPrefix(name, "main."))
-		w.account(y)
-		w.addNotes(notes...)
-		w.merge(fields)
-		return state
+		return w.readRoleSpec(s, r, strings.HasPrefix(name, "main."))
 	}
 	return RoleNoSpecs
 }
 
-// readRoleSpec reads one role spec file. A meta/main file without an
-// argument_specs key declares no specs.
-func readRoleSpec(y *yamlFile, data []byte, role, entryPoint string, metaMain bool) ([]schema.Field, []Note, RoleState) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, []Note{invalidYAML(y.file, err)}, RoleUnreadable
+// readRoleSpec maps r's entry point of a parsed spec file. A meta/main
+// file without an argument_specs key declares no specs. An entry point
+// that is no mapping, or a file that runs out of budget, is unreadable.
+func (w *walk) readRoleSpec(s *roleSpec, r roleRef, metaMain bool) RoleState {
+	y := s.y
+	if y.exceeded() {
+		return RoleUnreadable
 	}
-	root := documentRoot(&doc)
-	if metaMain && isNull(y.lookup(root, "argument_specs")) {
-		if n, over := y.tooComplex(); over {
-			return nil, []Note{n}, RoleUnreadable
+	if metaMain && isNull(y.lookup(s.root, "argument_specs")) {
+		w.account(y)
+		if y.exceeded() {
+			return RoleUnreadable
 		}
-		return nil, nil, RoleNoSpecs
+		return RoleNoSpecs
 	}
-	fields, notes, ok, _ := readArgumentSpecRoot(y, root, role, entryPoint, schema.SourceArgumentSpec)
-	if !ok {
-		return nil, notes, RoleUnreadable
+	res := mapEntryPoint(y, s.root, r.shownName(), r.shownEntryPoint(), schema.SourceArgumentSpec)
+	w.account(y)
+	if y.exceeded() {
+		return RoleUnreadable
 	}
-	return fields, notes, RoleRead
+	w.addSpecResult(res)
+	if res.broken {
+		return RoleUnreadable
+	}
+	return RoleRead
 }

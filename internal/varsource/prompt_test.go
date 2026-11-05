@@ -56,7 +56,7 @@ func TestPromptFields(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "- "+tc.entry+"\n"))
+			fields, notes, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, "- "+tc.entry+"\n"))
 			var want []schema.Field
 			if tc.field != nil {
 				want = []schema.Field{fromPrompt(1, *tc.field)}
@@ -69,7 +69,7 @@ func TestPromptFields(t *testing.T) {
 
 func TestPromptFieldsBlockStyleAndLimits(t *testing.T) {
 	t.Run("block entries keep their lines", func(t *testing.T) {
-		fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "- name: a\n  private: no\n- name: b\n  prompt: B\n"))
+		fields, notes, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, "- name: a\n  private: no\n- name: b\n  prompt: B\n"))
 		wantFields(t, fields, []schema.Field{
 			fromPrompt(1, schema.Field{Name: "a", Type: schema.TypeString, Required: true}),
 			fromPrompt(3, schema.Field{Name: "b", Label: "B", Type: schema.TypeSecret, Required: true}),
@@ -77,7 +77,7 @@ func TestPromptFieldsBlockStyleAndLimits(t *testing.T) {
 		wantNotes(t, notes)
 	})
 	t.Run("not a list", func(t *testing.T) {
-		fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "name: a\n"))
+		fields, notes, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, "name: a\n"))
 		wantFields(t, fields, nil)
 		wantNotes(t, notes, "warning field_invalid site.yml:1")
 	})
@@ -86,7 +86,7 @@ func TestPromptFieldsBlockStyleAndLimits(t *testing.T) {
 		for i := range 101 {
 			src += fmt.Sprintf("- {name: p%03d, private: false, default: x}\n", i)
 		}
-		fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, src))
+		fields, notes, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, src))
 		if len(fields) != 100 || fields[99].Name != "p099" {
 			t.Fatalf("got %d fields, want the first 100", len(fields))
 		}

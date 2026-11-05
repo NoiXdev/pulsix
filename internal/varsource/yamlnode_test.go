@@ -74,7 +74,7 @@ func TestPromptWorkIsBounded(t *testing.T) {
 		for range 5_000 {
 			src += "- {prompt: no name}\n"
 		}
-		fields, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, src))
+		fields, notes, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, src))
 		if len(fields) != 0 || len(notes) != schema.MaxFields+1 {
 			t.Fatalf("%d fields, %d notes; want none and %d invalid_name + one too_many_fields", len(fields), len(notes), schema.MaxFields)
 		}

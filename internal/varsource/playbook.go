@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"path"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
@@ -60,13 +59,22 @@ type FileUse struct {
 // Playbook is the parsed variable sources of one playbook with its imports
 // and roles (spec 7.75 section 6).
 type Playbook struct {
-	Path          string         `json:"path"`
-	Failed        bool           `json:"failed"` // the playbook was not read; nothing from it counts
-	Fields        []schema.Field `json:"fields"` // precedence order, first wins
-	SetInPlaybook []string       `json:"set_in_playbook"`
-	Roles         []RoleUse      `json:"roles"`
-	Files         []FileUse      `json:"files"`
-	Notes         []Note         `json:"notes"`
+	Path   string         `json:"path"`
+	Failed bool           `json:"failed"` // the playbook was not read; nothing from it counts
+	Fields []schema.Field `json:"fields"` // precedence order, first wins
+	// FieldsCut: a cap left declared top-level fields out (more than 100
+	// options in an entry point or in all, more than 100 prompts), so a
+	// name missing from Fields may still be declared.
+	FieldsCut bool `json:"fields_cut"`
+	// Unreadable names variables a read source declares but that map onto
+	// no field (an unreadable marker, an option of an unsupported type…):
+	// declared, not removed. Sorted; names outside the field name rule are
+	// left out.
+	Unreadable    []string  `json:"unreadable,omitempty"`
+	SetInPlaybook []string  `json:"set_in_playbook"`
+	Roles         []RoleUse `json:"roles"`
+	Files         []FileUse `json:"files"`
+	Notes         []Note    `json:"notes"`
 }
 
 // Limits of the repo read (spec 7.75 constraints).
@@ -147,6 +155,9 @@ func (p *parser) parse(file string, d decoded, size int) Playbook {
 		onStack:  map[string]bool{},
 		fileSeen: map[FileUse]bool{},
 		roleSeen: map[roleKey]bool{},
+		unread:   newNameSet(),
+		specs:    map[string]*roleSpec{},
+		charged:  map[*yamlFile][2]int{},
 		targets:  map[[2]string]roleTarget{},
 		rawBytes: size,
 	}
@@ -174,8 +185,12 @@ type walk struct {
 	firstCut                              string
 	set                                   *nameSet
 	marked                                *nameSet
-	visited                               map[string]bool // playbook files loaded
-	onStack                               map[string]bool // playbook files on the current import path
+	unread                                *nameSet // declared names mapped onto no field
+	fieldsCut                             bool     // a source's own cap cut top-level fields
+	specs                                 map[string]*roleSpec
+	charged                               map[*yamlFile][2]int // work of each file already accounted
+	visited                               map[string]bool      // playbook files loaded
+	onStack                               map[string]bool      // playbook files on the current import path
 	fileSeen                              map[FileUse]bool
 	roleSeen                              map[roleKey]bool
 	targets                               map[[2]string]roleTarget // (dir, name) → where the role is
@@ -199,6 +214,8 @@ func (w *walk) visit(file string, d decoded, depth int) bool {
 	w.sources = append(w.sources, noteSource{y: d.y})
 	w.set.addAll(f.set)
 	w.marked.addAll(f.marked)
+	w.unread.addAll(f.unread)
+	w.fieldsCut = w.fieldsCut || f.cut
 	if f.overflow {
 		w.giveUp(fmt.Sprintf("%s uses more than %d roles or imports", file, maxWalkRoles))
 		return true
@@ -227,11 +244,13 @@ func (w *walk) addNotes(notes ...Note) {
 	}
 }
 
-// account adds a read file's work to the walk's and gives the walk up past
-// its limits.
+// account adds a read file's work since its last account to the walk's
+// and gives the walk up past its limits.
 func (w *walk) account(y *yamlFile) {
-	w.steps += y.visits()
-	w.readBytes += y.bytesRead()
+	last := w.charged[y]
+	w.steps += y.visits() - last[0]
+	w.readBytes += y.bytesRead() - last[1]
+	w.charged[y] = [2]int{y.visits(), y.bytesRead()}
 	if w.steps > maxWalkSteps || w.readBytes > maxWalkReadBytes {
 		w.giveUp(fmt.Sprintf("reading it with its imports and roles took more than %d steps or %d bytes", maxWalkSteps, maxWalkReadBytes))
 	}
@@ -264,17 +283,27 @@ func (w *walk) readSidecar(file string) {
 			return
 		}
 		y := newYAMLFile(name)
-		fields, notes, ok, _ := readArgumentSpec(y, data, "", "main", schema.SourceSidecar)
+		res := readSpecData(y, data, "", "main", schema.SourceSidecar)
 		w.account(y)
-		w.addNotes(notes...)
-		if !ok {
+		w.addNotes(res.notes...)
+		if !res.readOK || res.broken {
 			w.useFile(name, FileUnreadable)
 			return
 		}
 		w.useFile(name, FileRead)
-		w.merge(fields)
+		w.addSpecResult(res)
 		return
 	}
+}
+
+// addSpecResult merges an entry point's fields and records what it could
+// not map or cut.
+func (w *walk) addSpecResult(res specResult) {
+	w.fieldsCut = w.fieldsCut || res.cut
+	for _, n := range res.unreadable {
+		w.unread.add(n)
+	}
+	w.merge(res.fields)
 }
 
 // merge adds fields in precedence order: a name declared before keeps its
@@ -319,11 +348,16 @@ func (w *walk) finish(read bool) Playbook {
 			f.SetInPlaybook = w.set.has(f.Name) && !w.marked.has(f.Name)
 			pb.Fields = append(pb.Fields, f)
 		}
+		pb.Unreadable, pb.FieldsCut = w.unreadable()
 	}
 	var notes []Note
 	for _, s := range w.sources {
 		if s.y != nil {
-			notes = append(notes, s.y.takeNotes()...)
+			if n, over := s.y.tooComplex(); over {
+				notes = append(notes, n) // a spec file that ran out of budget on a later entry point
+			} else {
+				notes = append(notes, s.y.takeNotes()...)
+			}
 		} else {
 			notes = append(notes, s.notes...)
 		}
@@ -334,52 +368,3 @@ func (w *walk) finish(read bool) Playbook {
 	}
 	return pb
 }
-
-// setInPlaybook lists the names set in the playbook that carry no marker
-// anywhere, sorted, up to maxListedSetNames.
-func (w *walk) setInPlaybook() []string {
-	names := []string{}
-	for _, n := range w.set.order {
-		if !w.marked.has(n) {
-			names = append(names, n)
-		}
-	}
-	slices.Sort(names)
-	if len(names) > maxListedSetNames || w.set.cut || w.marked.cut {
-		w.addNotes(hint(codeTooManySetNames, w.path, 0, "more than %d variables are set in this playbook; the first %d (sorted) are listed, past %d none are recorded",
-			maxListedSetNames, maxListedSetNames, maxSetNames))
-		names = names[:min(len(names), maxListedSetNames)]
-	}
-	return names
-}
-
-// nameSet is a set of variable names in first-seen order, up to
-// maxSetNames. Only names a field could have are kept.
-type nameSet struct {
-	seen  map[string]bool
-	order []string
-	cut   bool
-}
-
-func newNameSet() *nameSet { return &nameSet{seen: map[string]bool{}} }
-
-func (s *nameSet) add(name string) {
-	if s.seen[name] || !schema.ValidFieldName(name) {
-		return
-	}
-	if len(s.order) == maxSetNames {
-		s.cut = true
-		return
-	}
-	s.seen[name] = true
-	s.order = append(s.order, name)
-}
-
-func (s *nameSet) addAll(o *nameSet) {
-	for _, n := range o.order {
-		s.add(n)
-	}
-	s.cut = s.cut || o.cut
-}
-
-func (s *nameSet) has(name string) bool { return s.seen[name] }

@@ -148,7 +148,7 @@ func TestDefaultSizeCap(t *testing.T) {
 // ellipsis, before the message quoting it is built.
 func TestNoteMessagesAreCapped(t *testing.T) {
 	name := strings.Repeat("ä", 5_000)
-	_, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "- {name: "+name+", private: false}\n"))
+	_, notes, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, "- {name: "+name+", private: false}\n"))
 	wantNotes(t, notes, "warning invalid_name site.yml:1")
 	if len(notes) == 0 {
 		return
@@ -285,7 +285,7 @@ func TestLongFirstLines(t *testing.T) {
 		check(t, fields[0])
 	})
 	t.Run("prompt", func(t *testing.T) {
-		fields, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, "- {name: x, prompt: \""+text+"\", private: false}\n"))
+		fields, _, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, "- {name: x, prompt: \""+text+"\", private: false}\n"))
 		check(t, fields[0])
 	})
 }

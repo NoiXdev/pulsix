@@ -1,6 +1,7 @@
 package varsource
 
 import (
+	"fmt"
 	"path"
 	"strings"
 
@@ -33,17 +34,21 @@ var roleModules = []string{
 var importKeys = []string{"import_playbook", "ansible.builtin.import_playbook", "ansible.legacy.import_playbook"}
 
 // roleRef is a role use as written: its name, entry point ("main" unless
-// tasks_from names another) and line. dynamic: tasks_from is a template.
+// tasks_from names another) and line. dynamic: tasks_from is a template;
+// invalid: the use could not be read (no usable name or tasks_from), name
+// is then whatever text it had.
 type roleRef struct {
 	name, entryPoint string
 	line             int
-	dynamic          bool
+	dynamic, invalid bool
 }
 
-// importRef is an import_playbook target as written.
+// importRef is an import_playbook target as written; invalid: the target
+// is no text, and target stands in for it ("import_playbook@<line>").
 type importRef struct {
-	target string
-	line   int
+	target  string
+	line    int
+	invalid bool
 }
 
 // playFile is what one playbook file declares: marker and prompt fields,
@@ -57,6 +62,8 @@ type playFile struct {
 	imports  []importRef
 	set      *nameSet
 	marked   *nameSet
+	unread   *nameSet            // marked variables that are no field (an unreadable marker, a value of no field type)
+	cut      bool                // vars_prompt entries were left out by a cap
 	overflow bool                // more role uses or imports than one walk reads
 	seen     map[*yaml.Node]bool // vars mappings and prompt lists read
 	refSeen  map[string]bool
@@ -67,7 +74,7 @@ type playFile struct {
 // readPlayFile reads the plays of one playbook file (doc is its parsed
 // document, checked by isPlaybook). Its owner checks y.tooComplex after.
 func readPlayFile(y *yamlFile, doc *yaml.Node, dir string) *playFile {
-	f := &playFile{y: y, dir: dir, set: newNameSet(), marked: newNameSet(),
+	f := &playFile{y: y, dir: dir, set: newNameSet(), marked: newNameSet(), unread: newNameSet(),
 		seen: map[*yaml.Node]bool{}, refSeen: map[string]bool{}, impSeen: map[string]bool{}, allowed: map[*yaml.Node]bool{}}
 	for _, item := range y.items(documentRoot(doc)) {
 		a := y.attrs(item)
@@ -113,7 +120,17 @@ func (y *yamlFile) giveUp() { y.left, y.over = 0, true }
 
 // vars reads a play's vars: a marked entry is a field, any other is a name
 // set in the playbook. A mapping reached again (an alias) is not read twice.
+// A list of mappings (an older form Ansible still reads) is read item by
+// item.
 func (f *playFile) vars(n *yaml.Node) {
+	if l := resolve(n); l != nil && l.Kind == yaml.SequenceNode {
+		for _, it := range f.y.items(l) {
+			if m := resolve(it); m != nil && m.Kind == yaml.MappingNode {
+				f.vars(m)
+			}
+		}
+		return
+	}
 	ps := f.y.visitPairs(n)
 	if n = resolve(n); n == nil || f.seen[n] {
 		return
@@ -130,6 +147,8 @@ func (f *playFile) vars(n *yaml.Node) {
 		f.marked.add(p.key.Value)
 		if ok {
 			f.markers = append(f.markers, field)
+		} else {
+			f.unread.add(p.key.Value)
 		}
 	}
 }
@@ -143,8 +162,9 @@ func (f *playFile) varsPrompt(n *yaml.Node) {
 		return
 	}
 	f.seen[n] = true
-	fields, notes := promptFields(f.y, n)
+	fields, notes, cut := promptFields(f.y, n)
 	f.y.note(notes...)
+	f.cut = f.cut || cut
 	f.prompts = append(f.prompts, fields...)
 }
 
@@ -232,7 +252,7 @@ func (f *playFile) roleTask(args *yaml.Node) {
 	}
 	name, ok := kv["name"]
 	if !ok {
-		f.invalidRole(args.Line)
+		f.invalidRole(text, args.Line)
 		return
 	}
 	f.ref(name, kv["tasks_from"], args.Line)
@@ -244,21 +264,29 @@ func (f *playFile) roleTask(args *yaml.Node) {
 func (f *playFile) roleName(nameNode, from *yaml.Node, line int) {
 	name, ok := f.y.scalarText(nameNode)
 	if !ok {
-		f.invalidRole(line)
+		f.invalidRole("", line)
 		return
 	}
 	entry := ""
 	if !isNull(from) {
 		if entry, ok = f.y.scalarText(from); !ok {
-			f.invalidRole(line)
+			f.invalidRole(name, line)
 			return
 		}
 	}
 	f.ref(name, entry, resolve(nameNode).Line)
 }
 
-func (f *playFile) invalidRole(line int) {
-	f.y.note(warning(codeRoleInvalid, f.y.file, line, "a role use needs a role name (and tasks_from, if any, as text); skipped"))
+// invalidRole records a role use that cannot be read, so the walk lists it
+// as unreadable and its role's fields are not taken as gone. name is what
+// text it had.
+func (f *playFile) invalidRole(name string, line int) {
+	key := fmt.Sprintf("\x01%d\x00%s", line, name)
+	if f.overflow || f.refSeen[key] {
+		return
+	}
+	f.y.note(warning(codeRoleInvalid, f.y.file, line, "a role use needs a role name (and tasks_from, if any, as text); not read"))
+	f.addRef(key, roleRef{name: name, entryPoint: "main", line: line, invalid: true})
 }
 
 // ref records a role use once per name and entry point. The entry point
@@ -276,6 +304,10 @@ func (f *playFile) ref(name, tasksFrom string, line int) {
 	if f.overflow || f.refSeen[key] {
 		return
 	}
+	f.addRef(key, r)
+}
+
+func (f *playFile) addRef(key string, r roleRef) {
 	if len(f.refs) == maxWalkRoles {
 		f.overflow = true
 		return
@@ -288,20 +320,25 @@ func (f *playFile) ref(name, tasksFrom string, line int) {
 // are set in the playbook.
 func (f *playFile) importEntry(target, vars *yaml.Node) {
 	f.setKeys(vars)
+	ref := importRef{line: target.Line}
 	text, ok := f.y.scalarText(target)
-	if !ok {
-		f.y.note(warning(codeImportInvalid, f.y.file, target.Line, "import_playbook needs a file name; skipped"))
-		return
+	if ok {
+		ref.target = text
+	} else {
+		ref.target, ref.invalid = fmt.Sprintf("import_playbook@%d", target.Line), true
 	}
-	if f.overflow || f.impSeen[text] {
+	if f.overflow || f.impSeen[ref.target] {
 		return
 	}
 	if len(f.imports) == maxWalkFiles {
 		f.overflow = true
 		return
 	}
-	f.impSeen[text] = true
-	f.imports = append(f.imports, importRef{target: text, line: target.Line})
+	if ref.invalid {
+		f.y.note(warning(codeImportInvalid, f.y.file, target.Line, "import_playbook needs a file name; not read"))
+	}
+	f.impSeen[ref.target] = true
+	f.imports = append(f.imports, ref)
 }
 
 // misplacedMarkers warns about every "# pulsix:" comment line that is not

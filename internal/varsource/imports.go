@@ -30,6 +30,10 @@ func (w *walk) followImports(f *playFile, depth int) {
 // before adds nothing.
 func (w *walk) follow(f *playFile, imp importRef, depth int) {
 	y, raw := f.y, imp.target
+	if imp.invalid {
+		w.useFile(raw, FileUnreadable) // noted where it was read
+		return
+	}
 	if w.p.inline() {
 		w.useFile(raw, FileDynamic)
 		y.note(hint(codeInlineImportUnresolved, y.file, imp.line, "an inline playbook has no repository to find %q in; its variables are not read", short(raw)))
@@ -42,7 +46,11 @@ func (w *walk) follow(f *playFile, imp importRef, depth int) {
 	}
 	target := path.Join(f.dir, raw)
 	switch {
-	case strings.HasPrefix(raw, "/") || target == ".." || strings.HasPrefix(target, "../"):
+	case strings.HasPrefix(raw, "/"):
+		w.useFile(raw, FileOutside)
+		y.note(warning(codeImportOutside, y.file, imp.line, "%q is an absolute path, outside the repository; its variables are not read", short(raw)))
+		return
+	case target == ".." || strings.HasPrefix(target, "../"):
 		w.useFile(target, FileOutside)
 		y.note(warning(codeImportOutside, y.file, imp.line, "%q is outside the repository; its variables are not read", short(raw)))
 		return

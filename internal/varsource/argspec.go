@@ -27,27 +27,44 @@ func argumentSpecFields(data []byte, file, role, entryPoint string, kind schema.
 // readArgumentSpec is argumentSpecFields over a given yamlFile, so a test
 // can see the work it took.
 func readArgumentSpec(y *yamlFile, data []byte, role, entryPoint string, kind schema.SourceKind) (fields []schema.Field, notes []Note, readOK, entryFound bool) {
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, []Note{invalidYAML(y.file, err)}, false, false
-	}
-	return readArgumentSpecRoot(y, documentRoot(&doc), role, entryPoint, kind)
+	r := readSpecData(y, data, role, entryPoint, kind)
+	return r.fields, r.notes, r.readOK, r.entryFound
 }
 
-// readArgumentSpecRoot is readArgumentSpec over a parsed document's root.
-func readArgumentSpecRoot(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) (fields []schema.Field, notes []Note, readOK, entryFound bool) {
+// specResult is one entry point read from an argument spec file.
+type specResult struct {
+	fields     []schema.Field
+	notes      []Note
+	readOK     bool // false: not valid YAML, or too complex (one note says which)
+	entryFound bool
+	broken     bool     // the entry point or its options are not a mapping: none of it could be read
+	cut        bool     // top-level options were left out by a cap
+	unreadable []string // top-level options declared but mapped onto no field
+}
+
+func readSpecData(y *yamlFile, data []byte, role, entryPoint string, kind schema.SourceKind) specResult {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return specResult{notes: []Note{invalidYAML(y.file, err)}}
+	}
+	return readSpecRoot(y, documentRoot(&doc), role, entryPoint, kind)
+}
+
+// readSpecRoot is readSpec over a parsed document's root.
+func readSpecRoot(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) specResult {
 	if entryPoint == "" {
 		entryPoint = "main"
 	}
-	fields, entryFound = mapEntryPoint(y, root, role, entryPoint, kind)
+	r := mapEntryPoint(y, root, role, entryPoint, kind)
 	if n, over := y.tooComplex(); over {
-		return nil, []Note{n}, false, false
+		return specResult{notes: []Note{n}}
 	}
-	return fields, y.takeNotes(), true, entryFound
+	r.notes, r.readOK = y.takeNotes(), true
+	return r
 }
 
 // mapEntryPoint maps the options of one entry point, noting into y.
-func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) ([]schema.Field, bool) {
+func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) specResult {
 	specs, hasSpecs := y.entry(root, "argument_specs")
 	ep, found := y.entry(specs.value, entryPoint)
 	if !found {
@@ -56,41 +73,47 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 			line = specs.key.Line
 		}
 		y.note(hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint)))
-		return nil, false
+		return specResult{}
 	}
+	r := specResult{entryFound: true}
 	m := specMapper{y: y, budget: maxSpecFields}
 	entry := resolve(ep.value)
 	if !isNull(entry) && entry.Kind != yaml.MappingNode {
 		m.warn(codeFieldInvalid, ep.key.Line, "entry point %s is not a mapping; nothing read", short(entryPoint))
-		return nil, true
+		r.broken = true
+		return r
 	}
 	options := y.lookup(entry, "options")
 	if !isNull(options) && options.Kind != yaml.MappingNode {
 		m.warn(codeFieldInvalid, options.Line, "the options of entry point %s are not a mapping; nothing read", short(entryPoint))
+		r.broken = true
 	}
-	var fields []schema.Field
 	for _, p := range y.pairs(options) {
-		if len(fields) == schema.MaxFields {
+		if len(r.fields) == schema.MaxFields {
 			m.warn(codeTooManyFields, p.key.Line, "entry point %s declares more than %d options; the rest are skipped", short(entryPoint), schema.MaxFields)
+			r.cut = true
 			break
 		}
 		f, ok := m.option(p, "", 0)
 		if m.exhausted {
 			m.warn(codeTooManyFields, p.key.Line, "%s: this file declares more than %d options in all (aliases expanded); this option and the rest are skipped", short(p.key.Value), maxSpecFields)
+			r.cut = true
 			break
 		}
+		if ok {
+			f.Origin = schema.OriginSource
+			f.Source = &schema.FieldSource{Kind: kind, Role: role, EntryPoint: entryPoint, File: y.file, Line: p.key.Line}
+			var n []Note
+			f, n, ok = finishField(f, y.file, p.key.Line)
+			y.note(n...)
+		}
 		if !ok {
+			r.unreadable = append(r.unreadable, p.key.Value)
 			continue
 		}
-		f.Origin = schema.OriginSource
-		f.Source = &schema.FieldSource{Kind: kind, Role: role, EntryPoint: entryPoint, File: y.file, Line: p.key.Line}
-		f, n, ok := finishField(f, y.file, p.key.Line)
-		y.note(n...)
-		if ok {
-			fields = append(fields, f)
-		}
+		r.fields = append(r.fields, f)
 	}
-	return fields, true
+	return r
 }
 
 // specMapper maps argument spec options onto fields; its notes go to the

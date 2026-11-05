@@ -10,24 +10,23 @@ import (
 // prompt is private (an absent private means true, as in Ansible). A secret
 // carries no default; a prompt is required when it has no default, and a
 // private prompt always is. At most schema.MaxFields entries are looked
-// at, kept or not.
+// at, kept or not; cut is true when more were left out.
 //
 // y is the playbook file's read state: notes y raises (duplicate_key) stay
 // in y, and its owner checks y.tooComplex when done with the file.
-func promptFields(y *yamlFile, prompts *yaml.Node) ([]schema.Field, []Note) {
+func promptFields(y *yamlFile, prompts *yaml.Node) (fields []schema.Field, notes []Note, cut bool) {
 	file := y.file
 	prompts = resolve(prompts)
 	if isNull(prompts) {
-		return nil, nil
+		return nil, nil, false
 	}
 	if prompts.Kind != yaml.SequenceNode {
-		return nil, []Note{warning(codeFieldInvalid, file, prompts.Line, "vars_prompt is not a list of prompts; nothing read from it")}
+		return nil, []Note{warning(codeFieldInvalid, file, prompts.Line, "vars_prompt is not a list of prompts; nothing read from it")}, false
 	}
-	var fields []schema.Field
-	var notes []Note
 	for i, item := range y.items(prompts) {
 		if i == schema.MaxFields {
 			notes = append(notes, warning(codeTooManyFields, file, item.Line, "more than %d prompts; the rest are skipped", schema.MaxFields))
+			cut = true
 			break
 		}
 		f, n, ok := promptField(y, resolve(item), item.Line)
@@ -36,7 +35,7 @@ func promptFields(y *yamlFile, prompts *yaml.Node) ([]schema.Field, []Note) {
 			fields = append(fields, f)
 		}
 	}
-	return fields, notes
+	return fields, notes, cut
 }
 
 func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note, bool) {
