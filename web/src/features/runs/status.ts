@@ -39,6 +39,12 @@ export function statusLabel(status: string, t: Messages): string {
   return (t.runs.status as Record<string, string>)[status] ?? status;
 }
 
+/** zoneSlug names a run's zone by its slug, or by its short id while the zones
+ * are not loaded or when the zone is not in the list. */
+export function zoneSlug(zones: readonly { id: string; slug: string }[] | null | undefined, id: string): string {
+  return zones?.find((z) => z.id === id)?.slug ?? shortId(id);
+}
+
 /** shortId renders a UUID the way the run list and detail do: the first
  * block, monospace. */
 export function shortId(id: string): string {

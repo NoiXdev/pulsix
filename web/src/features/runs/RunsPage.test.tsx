@@ -212,6 +212,36 @@ describe('RunsPage', () => {
     expect(screen.queryByText('RUN DETAIL')).not.toBeInTheDocument();
   });
 
+  it('disables Cancel run while its cancellation is pending', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    let release: () => void = () => undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OPERATOR,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [job({ id: LIVE_ID, status: 'running' })], next_cursor: '' },
+      [`POST /api/v1/orgs/acme/jobs/${LIVE_ID}/cancel`]: async () => {
+        posts++;
+        await new Promise<void>((resolve) => (release = resolve));
+        return { job: { id: LIVE_ID, status: 'cancelling' } };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Actions for 0190abcd' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Cancel run' }));
+    await waitFor(() => expect(posts).toBe(1));
+
+    // Reopened while the request is in flight: the item is disabled, a repeated
+    // pick sends nothing.
+    await user.click(screen.getByRole('button', { name: 'Actions for 0190abcd' }));
+    const item = await screen.findByRole('menuitem', { name: 'Cancel run' });
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    await user.click(item);
+    expect(posts).toBe(1);
+
+    release();
+    expect(await screen.findByText('Cancellation requested')).toBeInTheDocument();
+  });
+
   it('opens the run from its row menu', async () => {
     const user = userEvent.setup();
     mockApi({

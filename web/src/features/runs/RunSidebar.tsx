@@ -6,7 +6,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useRetryFailedJobs, isTerminal } from '../../api/hooks/useJobs.ts';
 import { useZones } from '../../api/hooks/useHosts.ts';
 import type { JobDetail } from '../../api/types.ts';
-import { hasFailedHosts, isCancellable, kindLabel, shortId, statusLabel, statusTone } from './status.ts';
+import { hasFailedHosts, isCancellable, kindLabel, shortId, statusLabel, statusTone, zoneSlug } from './status.ts';
 import { triggerLabel } from './trigger.ts';
 import { useCancelRun } from './useCancelRun.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -103,7 +103,7 @@ function RunFacts({ org, job }: { org: string; job: JobDetail }) {
   const siblings = job.group ?? [];
   // While the zones load the fact says so; a zone missing from the list (or
   // a list that cannot be read) falls back to a piece of its id.
-  const zone = zones.data?.zones?.find((z) => z.id === job.zone_id)?.slug ?? (zones.isPending ? t.common.loading : shortId(job.zone_id));
+  const zone = zones.isPending ? t.common.loading : zoneSlug(zones.data?.zones, job.zone_id);
 
   return (
     <SidebarFacts

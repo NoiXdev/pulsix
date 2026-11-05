@@ -29,7 +29,11 @@ export function RunRow({ org, job, columns, canRun }: { org: string; job: Job; c
       menu={
         <RowMenu label={t.common.rowActions(id)}>
           <RowMenuItem onSelect={() => void navigate({ to: '/o/$org/runs/$id', params: { org, id: job.id } })}>{t.common.open}</RowMenuItem>
-          {canRun && isCancellable(job.status) && <RowMenuItem onSelect={() => void cancel.cancel()}>{t.runs.list.cancelItem}</RowMenuItem>}
+          {canRun && isCancellable(job.status) && (
+            <RowMenuItem onSelect={() => void cancel.cancel()} disabled={cancel.isPending}>
+              {t.runs.list.cancelItem}
+            </RowMenuItem>
+          )}
         </RowMenu>
       }
     >

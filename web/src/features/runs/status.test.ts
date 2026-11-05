@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cancelHostRows, hasFailedHosts, hostResultRows, isCancellable, kindLabel, shortId, statusTone } from './status.ts';
+import { cancelHostRows, hasFailedHosts, hostResultRows, isCancellable, kindLabel, shortId, statusTone, zoneSlug } from './status.ts';
 import { en } from '../../i18n/en/index.ts';
 
 describe('statusTone', () => {
@@ -42,6 +42,19 @@ describe('kindLabel', () => {
 describe('shortId', () => {
   it('keeps the first block of a uuid', () => {
     expect(shortId('0197c0a2-1b2c-7abc-def0-1234567890ab')).toBe('0197c0a2');
+  });
+});
+
+describe('zoneSlug', () => {
+  const zones = [{ id: '0197c0b1-0000-7000-8000-000000000002', slug: 'prod' }];
+
+  it('names the zone by its slug', () => {
+    expect(zoneSlug(zones, '0197c0b1-0000-7000-8000-000000000002')).toBe('prod');
+  });
+
+  it('falls back to the short id for a zone that is not listed or not loaded', () => {
+    expect(zoneSlug(zones, '0197c0b9-0000-7000-8000-000000000003')).toBe('0197c0b9');
+    expect(zoneSlug(undefined, '0197c0b9-0000-7000-8000-000000000003')).toBe('0197c0b9');
   });
 });
 
