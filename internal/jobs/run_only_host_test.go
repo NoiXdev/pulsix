@@ -173,6 +173,33 @@ func TestEnqueueRunWithOnlyHost(t *testing.T) {
 		}
 	})
 
+	// The matcher decides on host names, so a group the host is in is
+	// Ansible's to decide at run time (limit.go's fail-open contract): an
+	// exclusion-only group limit never removes the narrowed host here.
+	t.Run("host in the excluded hosts under an exclusion-only group limit", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "!dbservers")
+		actor := uuid.Must(uuid.NewV7())
+		host := f.a
+		_, err := f.svc.EnqueueRunWith(ctx, f.org, f.templateID, jobs.RunRequest{
+			Trigger: jobs.TriggerManual, Actor: &actor, OnlyHost: &host, ExcludeHosts: []uuid.UUID{f.a},
+		})
+		if !errors.Is(err, jobs.ErrAllHostsExcluded) {
+			t.Fatalf("err = %v, want ErrAllHostsExcluded", err)
+		}
+		if len(f.store.jobs) != 0 {
+			t.Fatalf("stored %d jobs, want none", len(f.store.jobs))
+		}
+	})
+
+	t.Run("exclusion-only group limit the host is not in", func(t *testing.T) {
+		f := newOnlyHostFixture(t, "!dbservers")
+		created, err := f.run(f.a, nil)
+		if err != nil {
+			t.Fatalf("EnqueueRunWith: %v", err)
+		}
+		assertOnlyA(t, f, created, "!dbservers:&web-01")
+	})
+
 	t.Run("excluding another host still runs the narrowed host", func(t *testing.T) {
 		f := newOnlyHostFixture(t, "")
 		actor := uuid.Must(uuid.NewV7())
