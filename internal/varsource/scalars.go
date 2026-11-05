@@ -2,6 +2,7 @@ package varsource
 
 import (
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
@@ -26,6 +27,8 @@ const (
 	maxDescriptionBytes = 4096
 	// maxMessageBytes cuts a note's message, with an ellipsis.
 	maxMessageBytes = 512
+	// maxQuotedBytes cuts each string from a file a message quotes.
+	maxQuotedBytes = 64
 	// maxNameBytes is the longest name a field may have (the schema's name
 	// rule); a longer key is refused before it is used in any path.
 	maxNameBytes = 64
@@ -44,6 +47,20 @@ func clip(s string, limit int) string {
 		cut--
 	}
 	return s[:cut] + ellipsis
+}
+
+// clipWords cuts s like clip, but at the last space before the cut when
+// there is one in the second half, so a label does not end in half a word.
+func clipWords(s string, limit int) string {
+	c := clip(s, limit)
+	if c == s {
+		return s
+	}
+	body := strings.TrimSuffix(c, ellipsis)
+	if i := strings.LastIndexAny(body, " \t"); i > len(body)/2 {
+		body = strings.TrimRight(body[:i], " \t")
+	}
+	return body + ellipsis
 }
 
 // spendBytes charges n bytes read against the file's byte budget; false
@@ -66,7 +83,7 @@ func (y *yamlFile) bytesRead() int { return maxReadBytes - y.bytesLeft }
 // missing, null or non-scalar node.
 func (y *yamlFile) scalarText(n *yaml.Node) (string, bool) {
 	n = resolve(n)
-	if n == nil || n.Kind != yaml.ScalarNode || isNull(n) || !y.spendBytes(len(n.Value)) {
+	if n == nil || n.Kind != yaml.ScalarNode || isNull(n) || !y.spendBytes(scalarCost(n)) {
 		return "", false
 	}
 	return n.Value, true
@@ -75,7 +92,7 @@ func (y *yamlFile) scalarText(n *yaml.Node) (string, bool) {
 // boolValue reads a boolean attribute (YAML 1.1 spellings such as "yes"
 // included, see scalarOf); anything else is false.
 func (y *yamlFile) boolValue(n *yaml.Node) bool {
-	if n = resolve(n); n == nil || n.Kind != yaml.ScalarNode || !y.spendBytes(len(n.Value)) {
+	if n = resolve(n); n == nil || n.Kind != yaml.ScalarNode || !y.spendBytes(scalarCost(n)) {
 		return false
 	}
 	_, v, _ := scalarOf(n)
@@ -83,16 +100,24 @@ func (y *yamlFile) boolValue(n *yaml.Node) bool {
 	return b
 }
 
+// scalarCost is what reading a scalar charges: its text and its tag (a
+// verbatim tag may be long).
+func scalarCost(n *yaml.Node) int { return len(n.Value) + len(n.Tag) }
+
 // readScalar reads one scalar of a default (or of a marked value), charging
-// its bytes and adding them to *size. why says what keeps it from being a
-// default: the default cap passed, a number too long to decode, or a tag
-// with no field counterpart.
-func (y *yamlFile) readScalar(s *yaml.Node, size *int) (typ schema.Type, v any, why string) {
-	if !y.spendBytes(len(s.Value)) {
+// its bytes and adding them to *size. asText takes a number as its text
+// (a long one included) for a field that holds text. why says what keeps it
+// from being a default: the default cap passed, a number too long to
+// decode, or a tag with no field counterpart.
+func (y *yamlFile) readScalar(s *yaml.Node, size *int, asText bool) (typ schema.Type, v any, why string) {
+	if !y.spendBytes(scalarCost(s)) {
 		return "", nil, "could not be read within the file's budget"
 	}
 	if *size += len(s.Value); *size > maxDefaultBytes {
 		return "", nil, fmt.Sprintf("is larger than %d bytes", maxDefaultBytes)
+	}
+	if asText && longNumber(s) {
+		return schema.TypeString, s.Value, ""
 	}
 	t, v, ok := scalarOf(s)
 	switch {
@@ -101,7 +126,7 @@ func (y *yamlFile) readScalar(s *yaml.Node, size *int) (typ schema.Type, v any, 
 	case longNumber(s):
 		return "", nil, fmt.Sprintf("holds a number longer than %d characters", maxNumberLen)
 	}
-	return "", nil, fmt.Sprintf("holds a value tagged %s, which has no form field", s.ShortTag())
+	return "", nil, fmt.Sprintf("holds a value tagged %s, which has no form field", short(s.ShortTag()))
 }
 
 // defaultValue reads a default: a scalar, or a list of scalars. asText
@@ -116,7 +141,7 @@ func (y *yamlFile) defaultValue(n *yaml.Node, asText bool) (any, string) {
 		if s.Kind != yaml.ScalarNode {
 			return nil, "is not a single value or a list of single values"
 		}
-		t, v, why := y.readScalar(s, &size)
+		t, v, why := y.readScalar(s, &size, asText)
 		if why == "" && asText && t != "" {
 			v = s.Value
 		}

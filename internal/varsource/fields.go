@@ -2,6 +2,7 @@ package varsource
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ import (
 func finishField(f schema.Field, file string, line int) (schema.Field, []Note, bool) {
 	fin := finisher{file: file, line: line}
 	if !schema.ValidFieldName(f.Name) || schema.ReservedName(f.Name) {
-		fin.warn(codeInvalidName, "%q is not a usable variable name (a lowercase letter or underscore, then lowercase letters, digits and underscores, at most 64; not ansible_* or pulsix_*); skipped", f.Name)
+		fin.warn(codeInvalidName, "%q is not a usable variable name (a lowercase letter or underscore, then lowercase letters, digits and underscores, at most 64; not ansible_* or pulsix_*); skipped", short(f.Name))
 		return schema.Field{}, fin.notes, false
 	}
 	f, ok := fin.prune(f, f.Name, 0)
@@ -51,14 +52,17 @@ func (fin *finisher) warn(code, format string, args ...any) {
 // prune applies the limits to f and its sub-fields; path is f's dotted name.
 func (fin *finisher) prune(f schema.Field, path string, depth int) (schema.Field, bool) {
 	if depth > 0 && !schema.ValidFieldName(f.Name) {
-		fin.warn(codeInvalidName, "%s: %q is not a usable field name; skipped", path, f.Name)
+		fin.warn(codeInvalidName, "%s: %q is not a usable field name; skipped", short(path), short(f.Name))
 		return f, false
 	}
 	if len(f.Options) > schema.MaxOptions || (f.Item != nil && len(f.Item.Options) > schema.MaxOptions) {
 		fin.warn(codeTooManyOptions, "%s: more than %d choices; skipped", path, schema.MaxOptions)
 		return f, false
 	}
-	f.Label, f.Description = clip(f.Label, maxLabelBytes), clip(f.Description, maxDescriptionBytes)
+	if len(f.Label) > maxLabelBytes && f.Description == "" {
+		f.Description = f.Label // the whole text stays readable
+	}
+	f.Label, f.Description = clipWords(f.Label, maxLabelBytes), clip(f.Description, maxDescriptionBytes)
 	f.Default = fin.literalDefault(f.Default, path)
 	if f.Type != schema.TypeRepeater && f.Type != schema.TypeObject {
 		return f, true
@@ -139,22 +143,22 @@ func (fin *finisher) check(f schema.Field) (schema.Field, bool) {
 	}
 	var ve *schema.ValidationError
 	if !errors.As(err, &ve) {
-		fin.warn(codeFieldInvalid, "%s: %v; skipped", f.Name, err)
+		fin.warn(codeFieldInvalid, "%s: %s; skipped", f.Name, short(err.Error()))
 		return f, false
 	}
 	for _, p := range ve.Problems {
 		if owner, _ := defaultOwner(&f, p.Path); owner == nil || owner.Default == nil {
-			fin.warn(codeFieldInvalid, "%s: %s; skipped", f.Name, p.Message)
+			fin.warn(codeFieldInvalid, "%s: %s; skipped", f.Name, short(p.Message))
 			return f, false
 		}
 	}
 	for _, p := range ve.Problems {
 		owner, path := defaultOwner(&f, p.Path)
-		fin.warn(codeDefaultInvalid, "%s: the default %v %s; dropped", path, owner.Default, p.Message)
+		fin.warn(codeDefaultInvalid, "%s: the default %s %s; dropped", path, short(fmt.Sprint(owner.Default)), short(p.Message))
 		owner.Default = nil
 	}
 	if err := (schema.Schema{Fields: []schema.Field{f}}).Check(); err != nil {
-		fin.warn(codeFieldInvalid, "%s: %v; skipped", f.Name, err)
+		fin.warn(codeFieldInvalid, "%s: %s; skipped", f.Name, short(err.Error()))
 		return f, false
 	}
 	return f, true

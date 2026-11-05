@@ -51,7 +51,13 @@ const (
 	codeFileTooComplex       = "file_too_complex"
 )
 
+// short cuts a string taken from a file before it goes into a message, so
+// building the message costs no more than the cut: a key or tag read once
+// may be reached through aliases many times.
+func short(s string) string { return clip(s, maxQuotedBytes) }
+
 // warning and hint build a note; the message is cut to maxMessageBytes.
+// Every string argument taken from a file goes through short first.
 func warning(code, file string, line int, format string, args ...any) Note {
 	return Note{Level: LevelWarning, Code: code, File: file, Line: line, Message: clip(fmt.Sprintf(format, args...), maxMessageBytes)}
 }

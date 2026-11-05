@@ -123,7 +123,7 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 		}
 		if j, dup := last[k.Value]; dup {
 			y.notes = append(y.notes, warning(codeDuplicateKey, y.file, k.Line,
-				"%q is set twice in one mapping (lines %d and %d); the later one counts", k.Value, keys[j].Line, k.Line))
+				"%q is set twice in one mapping (lines %d and %d); the later one counts", short(k.Value), keys[j].Line, k.Line))
 		}
 		last[k.Value] = i
 	}

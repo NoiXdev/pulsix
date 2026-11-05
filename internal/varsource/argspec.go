@@ -50,28 +50,28 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 		if hasSpecs {
 			line = specs.key.Line
 		}
-		y.notes = append(y.notes, hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", entryPoint))
+		y.notes = append(y.notes, hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint)))
 		return nil, false
 	}
 	m := specMapper{y: y, budget: maxSpecFields}
 	entry := resolve(ep.value)
 	if !isNull(entry) && entry.Kind != yaml.MappingNode {
-		m.warn(codeFieldInvalid, ep.key.Line, "entry point %s is not a mapping; nothing read", entryPoint)
+		m.warn(codeFieldInvalid, ep.key.Line, "entry point %s is not a mapping; nothing read", short(entryPoint))
 		return nil, true
 	}
 	options := y.lookup(entry, "options")
 	if !isNull(options) && options.Kind != yaml.MappingNode {
-		m.warn(codeFieldInvalid, options.Line, "the options of entry point %s are not a mapping; nothing read", entryPoint)
+		m.warn(codeFieldInvalid, options.Line, "the options of entry point %s are not a mapping; nothing read", short(entryPoint))
 	}
 	var fields []schema.Field
 	for _, p := range y.pairs(options) {
 		if len(fields) == schema.MaxFields {
-			m.warn(codeTooManyFields, p.key.Line, "entry point %s declares more than %d options; the rest are skipped", entryPoint, schema.MaxFields)
+			m.warn(codeTooManyFields, p.key.Line, "entry point %s declares more than %d options; the rest are skipped", short(entryPoint), schema.MaxFields)
 			break
 		}
 		f, ok := m.option(p, "", 0)
 		if m.exhausted {
-			m.warn(codeTooManyFields, p.key.Line, "%s: this file declares more than %d options in all (aliases expanded); this option and the rest are skipped", p.key.Value, maxSpecFields)
+			m.warn(codeTooManyFields, p.key.Line, "%s: this file declares more than %d options in all (aliases expanded); this option and the rest are skipped", short(p.key.Value), maxSpecFields)
 			break
 		}
 		if !ok {
@@ -120,7 +120,7 @@ func (m *specMapper) option(p pair, parent string, depth int) (schema.Field, boo
 	}
 	m.budget--
 	if len(p.key.Value) > maxNameBytes {
-		m.warn(codeInvalidName, line, "%q is longer than %d characters, not a usable variable name; skipped", p.key.Value, maxNameBytes)
+		m.warn(codeInvalidName, line, "%q is longer than %d characters, not a usable variable name; skipped", short(p.key.Value), maxNameBytes)
 		return schema.Field{}, false
 	}
 	path := p.key.Value
@@ -180,7 +180,7 @@ func (m *specMapper) mapType(f *schema.Field, a map[string]*yaml.Node, path stri
 			f.Type = schema.TypeRepeater
 			return true
 		}
-		m.warn(codeUnsupportedType, line, "%s: a list needs scalar elements, or elements: dict with options (elements %q); skipped", path, elements)
+		m.warn(codeUnsupportedType, line, "%s: a list needs scalar elements, or elements: dict with options (elements %q); skipped", path, short(elements))
 	case "dict":
 		if hasOptions {
 			f.Type = schema.TypeObject
@@ -188,7 +188,7 @@ func (m *specMapper) mapType(f *schema.Field, a map[string]*yaml.Node, path stri
 		}
 		m.warn(codeUnsupportedType, line, "%s: a dict without options has no form field; skipped", path)
 	default:
-		m.warn(codeUnsupportedType, line, "%s: type %q has no form field; skipped", path, typ)
+		m.warn(codeUnsupportedType, line, "%s: type %q has no form field; skipped", path, short(typ))
 	}
 	return false
 }
@@ -292,8 +292,10 @@ func (m *specMapper) applyDefault(f *schema.Field, d *yaml.Node, path string, li
 }
 
 // labelAndDescription splits an argument spec description (a string, or a
-// list of lines) into its first line, the label, and the rest, each cut
-// to its cap. A list is read only until both caps are reached.
+// list of lines) into its first line, the label, and the rest. A first
+// line too long for a label is kept whole in the description (finishField
+// then cuts the label at a word). A list is read only until the
+// description passes its cap.
 func (m *specMapper) labelAndDescription(n *yaml.Node) (string, string) {
 	n = resolve(n)
 	if n == nil {
@@ -304,9 +306,13 @@ func (m *specMapper) labelAndDescription(n *yaml.Node) (string, string) {
 		parts = m.y.items(n)
 	}
 	var b strings.Builder
-	firstNL := -1 // where the description starts
+	firstNL := -1 // where the first line ends
 	for _, it := range parts {
-		if firstNL >= 0 && b.Len()-firstNL > maxDescriptionBytes+1 {
+		descStart := 0 // the first line counts toward the description when it is too long for a label
+		if firstNL >= 0 && firstNL <= maxLabelBytes {
+			descStart = firstNL
+		}
+		if (firstNL >= 0 || b.Len() > maxLabelBytes) && b.Len()-descStart > maxDescriptionBytes+1 {
 			break // the description's cap is reached: the rest would be cut anyway
 		}
 		text, ok := m.y.scalarText(it)
@@ -321,6 +327,10 @@ func (m *specMapper) labelAndDescription(n *yaml.Node) (string, string) {
 			firstNL = strings.IndexByte(b.String(), '\n')
 		}
 	}
-	label, rest, _ := strings.Cut(strings.TrimSpace(b.String()), "\n")
-	return clip(strings.TrimSpace(label), maxLabelBytes), clip(strings.TrimSpace(rest), maxDescriptionBytes)
+	text := strings.TrimSpace(b.String())
+	label, rest, _ := strings.Cut(text, "\n")
+	if label = strings.TrimSpace(label); len(label) > maxLabelBytes {
+		return label, text
+	}
+	return label, strings.TrimSpace(rest)
 }

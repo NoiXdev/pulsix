@@ -2,6 +2,7 @@ package varsource
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -143,8 +144,8 @@ func TestDefaultSizeCap(t *testing.T) {
 	})
 }
 
-// TestNoteMessagesAreCapped: a message quoting a long name is cut with an
-// ellipsis at a rune boundary.
+// TestNoteMessagesAreCapped: a long name is cut, at a rune boundary with an
+// ellipsis, before the message quoting it is built.
 func TestNoteMessagesAreCapped(t *testing.T) {
 	name := strings.Repeat("ä", 5_000)
 	_, notes := promptFields(newYAMLFile("site.yml"), promptNode(t, "- {name: "+name+", private: false}\n"))
@@ -153,8 +154,8 @@ func TestNoteMessagesAreCapped(t *testing.T) {
 		return
 	}
 	m := notes[0].Message
-	if len(m) > maxMessageBytes || !strings.HasSuffix(m, "…") || !utf8.ValidString(m) {
-		t.Fatalf("message is %d bytes, valid UTF-8 %v, want at most %d ending in an ellipsis", len(m), utf8.ValidString(m), maxMessageBytes)
+	if len(m) > maxMessageBytes || !strings.Contains(m, strings.Repeat("ä", 10)+"…") || !utf8.ValidString(m) {
+		t.Fatalf("message %q: %d bytes, valid UTF-8 %v; want at most %d, quoting the name cut with an ellipsis", m, len(m), utf8.ValidString(m), maxMessageBytes)
 	}
 }
 
@@ -165,4 +166,126 @@ func TestAliasKeysReadByTheirValue(t *testing.T) {
 	fields, notes := readSpec(t, data)
 	wantFields(t, fields, []schema.Field{fromSpec(5, schema.Field{Name: "http_port", Type: schema.TypeInt})})
 	wantNotes(t, notes)
+}
+
+// allocated runs fn and returns the bytes it allocated.
+func allocated(fn func()) uint64 {
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	fn()
+	runtime.ReadMemStats(&after)
+	return after.TotalAlloc - before.TotalAlloc
+}
+
+// nested100x99 is an argument spec whose 100 top-level options are each a
+// dict of 99 sub-options aliasing anchor; head defines the anchor.
+func nested100x99(head, anchor string) []byte {
+	var b strings.Builder
+	b.WriteString(head)
+	b.WriteString("nest: &nest {type: dict, options: {")
+	for i := range 99 {
+		fmt.Fprintf(&b, "s%d: *%s, ", i, anchor)
+	}
+	b.WriteString("}}\nargument_specs:\n  main:\n    options:\n")
+	for i := range 100 {
+		fmt.Fprintf(&b, "      o%d: *nest\n", i)
+	}
+	return []byte(b.String())
+}
+
+// TestMessagesQuoteShortStrings (review Q1): a long key reached through
+// aliases thousands of times is charged once and quoted cut, so building
+// its notes allocates little.
+func TestMessagesQuoteShortStrings(t *testing.T) {
+	head := "kk: &k k" + strings.Repeat("x", 100_000) + "\nl1: &l1 {type: dict, options: {*k : {type: str}, ok: {type: str}}}\n"
+	data := nested100x99(head, "l1")
+	y := newYAMLFile(specFile)
+	var notes []Note
+	alloc := allocated(func() { _, notes, _, _ = readArgumentSpec(y, data, "nginx", "", schema.SourceArgumentSpec) })
+	invalid := 0
+	for _, n := range notes {
+		if n.Code == codeInvalidName {
+			invalid++
+		}
+		if len(n.Message) > maxMessageBytes {
+			t.Fatalf("message of %d bytes", len(n.Message))
+		}
+	}
+	if invalid == 0 {
+		t.Fatal("no invalid_name note for the long key")
+	}
+	if alloc > 128<<20 || y.bytesRead() > 300_000 {
+		t.Fatalf("allocated %d MiB, read %d bytes; want the key read once and quoted cut", alloc>>20, y.bytesRead())
+	}
+}
+
+// TestTagBytesAreCharged (review Q2): a long verbatim tag is charged with
+// its scalar on every read, so aliasing it exhausts the budget.
+func TestTagBytesAreCharged(t *testing.T) {
+	head := "v: &v !<tag:" + strings.Repeat("x", 100_000) + "> x\nspec: &spec {type: int, default: *v}\n"
+	y := newYAMLFile(specFile)
+	fields, notes, readOK, _ := readArgumentSpec(y, nested100x99(head, "spec"), "nginx", "", schema.SourceArgumentSpec)
+	if readOK || fields != nil {
+		t.Fatalf("readOK = %v, %d fields; want the file given up", readOK, len(fields))
+	}
+	wantNotes(t, notes, "warning file_too_complex "+specFile+":0")
+	if y.bytesRead() > maxReadBytes {
+		t.Fatalf("read %d bytes, over the budget", y.bytesRead())
+	}
+}
+
+// TestMarkerCommentsAreCharged (review Q3): each marker comment read is
+// charged, so one long comment read again and again exhausts the budget.
+func TestMarkerCommentsAreCharged(t *testing.T) {
+	for name, comment := range map[string]string{
+		"readable":   "# pulsix: required " + strings.Repeat("L", 100_000),
+		"unreadable": "# pulsix: enum[" + strings.Repeat("a", 100_000) + ",b] secret",
+	} {
+		t.Run(name, func(t *testing.T) {
+			vars := playVars(t, "v: 1  "+comment)
+			y := newYAMLFile("site.yml")
+			calls := 0
+			for !y.exceeded() && calls < 1_000 {
+				calls++
+				_, notes, _, _ := markedVar(y, vars.Content[0], vars.Content[1])
+				for _, n := range notes {
+					if len(n.Message) > maxMessageBytes {
+						t.Fatalf("message of %d bytes", len(n.Message))
+					}
+				}
+			}
+			if want := maxReadBytes/100_000 + 1; calls > want {
+				t.Fatalf("%d reads before the budget ran out, want at most %d", calls, want)
+			}
+		})
+	}
+}
+
+// TestLongFirstLines: a first line too long for a label is cut at a word
+// boundary for the label and kept whole in the description.
+func TestLongFirstLines(t *testing.T) {
+	text := strings.TrimSpace(strings.Repeat("Port to listen on for requests ", 12)) // 371 bytes, one line
+	check := func(t *testing.T, f schema.Field) {
+		t.Helper()
+		body, cut := strings.CutSuffix(f.Label, "…")
+		if !cut || len(f.Label) > maxLabelBytes || !strings.HasPrefix(text, body) || text[len(body)] != ' ' {
+			t.Fatalf("label %q: want a word-boundary prefix of the text ending in an ellipsis, at most %d bytes", f.Label, maxLabelBytes)
+		}
+		if f.Description != text {
+			t.Fatalf("description = %q, want the whole text", f.Description)
+		}
+	}
+	t.Run("argument spec", func(t *testing.T) {
+		fields, _ := readSpec(t, specYAML("x: {type: str, description: \""+text+"\"}"))
+		check(t, fields[0])
+	})
+	t.Run("argument spec list", func(t *testing.T) {
+		fields, _ := readSpec(t, specYAML("x: {type: str, description: [\""+text+"\"]}"))
+		check(t, fields[0])
+	})
+	t.Run("prompt", func(t *testing.T) {
+		fields, _ := promptFields(newYAMLFile("site.yml"), promptNode(t, "- {name: x, prompt: \""+text+"\", private: false}\n"))
+		check(t, fields[0])
+	})
 }

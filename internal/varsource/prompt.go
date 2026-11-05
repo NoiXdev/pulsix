@@ -63,15 +63,15 @@ func promptField(y *yamlFile, entry *yaml.Node, line int) (schema.Field, []Note,
 	switch {
 	case isNull(d):
 	case private:
-		notes = append(notes, warning(codeSecretDefaultDropped, file, line, "%s: a private prompt becomes a secret, which carries no default; the default is dropped", name))
+		notes = append(notes, warning(codeSecretDefaultDropped, file, line, "%s: a private prompt becomes a secret, which carries no default; the default is dropped", short(name)))
 	case d.Kind == yaml.ScalarNode:
 		v, why := y.defaultValue(d, true) // a prompt answers with text
 		if why != "" {
-			notes = append(notes, warning(codeDefaultInvalid, file, line, "%s: the default %s; dropped", name, why))
+			notes = append(notes, warning(codeDefaultInvalid, file, line, "%s: the default %s; dropped", short(name), why))
 		}
 		f.Default = v
 	default:
-		notes = append(notes, warning(codeDefaultInvalid, file, line, "%s: a prompt's default must be a single value; dropped", name))
+		notes = append(notes, warning(codeDefaultInvalid, file, line, "%s: a prompt's default must be a single value; dropped", short(name)))
 	}
 	f.Required = private || isNull(d)
 	f.Origin = schema.OriginSource

@@ -113,7 +113,7 @@ func parseEnumOptions(list string) ([]string, error) {
 		case o == "":
 			return nil, errors.New("an empty enum option")
 		case slices.Contains(options, o):
-			return nil, fmt.Errorf("the enum option %q appears twice", o)
+			return nil, fmt.Errorf("the enum option %q appears twice", short(o))
 		}
 		options = append(options, o)
 	}
@@ -147,12 +147,16 @@ func lineComment(key, value *yaml.Node) string {
 // done with the file.
 func markedVar(y *yamlFile, key, value *yaml.Node) (f schema.Field, notes []Note, isMarker, ok bool) {
 	file := y.file
-	m, isMarker, err := parseMarker(lineComment(key, value))
+	comment := lineComment(key, value)
+	if !y.spendBytes(len(comment)) {
+		return schema.Field{}, nil, false, false // the file is given up
+	}
+	m, isMarker, err := parseMarker(comment)
 	if !isMarker {
 		return schema.Field{}, nil, false, false
 	}
 	if err != nil {
-		return schema.Field{}, []Note{warning(codeMarkerUnreadable, file, key.Line, "%s: unreadable marker (%v); the variable is not a form field", key.Value, err)}, true, false
+		return schema.Field{}, []Note{warning(codeMarkerUnreadable, file, key.Line, "%s: unreadable marker (%v); the variable is not a form field", short(key.Value), err)}, true, false
 	}
 	f, notes, ok = markerField(y, key, value, m)
 	return f, notes, true, ok
@@ -171,7 +175,7 @@ func markerField(y *yamlFile, key, value *yaml.Node, m marker) (schema.Field, []
 	}
 	valueType := func(format string, args ...any) (schema.Field, []Note, bool) {
 		msg := fmt.Sprintf(format, args...)
-		return schema.Field{}, []Note{warning(codeMarkerValueType, file, line, "%s: %s; the variable is not a form field", key.Value, msg)}, false
+		return schema.Field{}, []Note{warning(codeMarkerValueType, file, line, "%s: %s; the variable is not a form field", short(key.Value), msg)}, false
 	}
 	f := schema.Field{Name: key.Value, Label: m.Label, Required: m.Required}
 	switch {
@@ -187,11 +191,11 @@ func markerField(y *yamlFile, key, value *yaml.Node, m marker) (schema.Field, []
 		f.Type, f.Options = schema.TypeEnum, m.Enum
 		if !isNull(v) {
 			size := 0
-			if _, _, why := y.readScalar(v, &size); why != "" && !longNumber(v) {
+			if _, _, why := y.readScalar(v, &size, true); why != "" {
 				return valueType("the value %s", why)
 			}
 			if !slices.Contains(m.Enum, v.Value) {
-				return schema.Field{}, []Note{warning(codeMarkerEnumValue, file, line, "%s: the value %q is not one of %s; the variable is not a form field", key.Value, v.Value, strings.Join(m.Enum, ", "))}, false
+				return schema.Field{}, []Note{warning(codeMarkerEnumValue, file, line, "%s: the value %q is not one of %s; the variable is not a form field", short(key.Value), short(v.Value), short(strings.Join(m.Enum, ", ")))}, false
 			}
 			f.Default = v.Value
 		}
@@ -214,7 +218,7 @@ func inferField(y *yamlFile, v *yaml.Node) (typ schema.Type, item *schema.Field,
 	size := 0
 	switch v.Kind {
 	case yaml.ScalarNode:
-		t, val, why := y.readScalar(v, &size)
+		t, val, why := y.readScalar(v, &size, false)
 		if why != "" {
 			return "", nil, nil, "the value " + why
 		}
@@ -230,7 +234,7 @@ func inferField(y *yamlFile, v *yaml.Node) (typ schema.Type, item *schema.Field,
 			if it.Kind != yaml.ScalarNode || isNull(it) {
 				return "", nil, nil, "a list must hold single values that are not empty"
 			}
-			t, val, why := y.readScalar(it, &size)
+			t, val, why := y.readScalar(it, &size, false)
 			if why != "" {
 				return "", nil, nil, "the list " + why
 			}

@@ -85,6 +85,9 @@ func TestArgumentSpecTypeMapping(t *testing.T) {
 	}
 }
 
+// longDigits is a 70-digit number: too long to decode as one.
+var longDigits = "1" + strings.Repeat("2", 69)
+
 func TestArgumentSpecAttributes(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -180,6 +183,16 @@ func TestArgumentSpecAttributes(t *testing.T) {
 			&schema.Field{Name: "x", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeInt}, Default: []any{80, 443}}, nil},
 		{"nested list default", specYAML("x: {type: list, elements: int, default: [[80]]}"),
 			&schema.Field{Name: "x", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeInt}},
+			[]string{"warning default_invalid " + specFile + ":4"}},
+		{"long number default of a str", specYAML("x: {type: str, default: " + longDigits + "}"),
+			&schema.Field{Name: "x", Type: schema.TypeString, Default: longDigits}, nil},
+		{"long number default of a str list", specYAML("x: {type: list, elements: path, default: [" + longDigits + "]}"),
+			&schema.Field{Name: "x", Type: schema.TypeList, Item: &schema.Field{Type: schema.TypeString}, Default: []any{longDigits}}, nil},
+		{"long number default of an enum", specYAML("x: {choices: [" + longDigits + ", b], default: " + longDigits + "}"),
+			&schema.Field{Name: "x", Type: schema.TypeEnum, Options: []string{longDigits, "b"}, Default: longDigits},
+			[]string{"warning choices_converted " + specFile + ":4"}},
+		{"long number default of an int", specYAML("x: {type: int, default: " + longDigits + "}"),
+			&schema.Field{Name: "x", Type: schema.TypeInt},
 			[]string{"warning default_invalid " + specFile + ":4"}},
 		{"spec not a mapping", specYAML("x: 80"), nil,
 			[]string{"warning field_invalid " + specFile + ":4"}},
