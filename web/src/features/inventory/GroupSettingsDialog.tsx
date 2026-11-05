@@ -12,6 +12,7 @@ import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../api/types.ts';
 import { descendantIds, orderTree } from './tree.ts';
 import { StaleNotice } from './sections/StaleNotice.tsx';
+import { useOwnSteps } from './ownSteps.ts';
 import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 
@@ -42,6 +43,7 @@ export function GroupSettingsDialog({
   const credentials = useCredentials(org);
   const update = useUpdateGroup(org, group.id);
   const reload = useReloadInventory(org);
+  const own = useOwnSteps();
   const [revision, setRevision] = useState(group.revision);
   const [name, setName] = useState(group.name);
   const [description, setDescription] = useState(group.description);
@@ -70,7 +72,9 @@ export function GroupSettingsDialog({
   async function save(e: FormEvent) {
     e.preventDefault();
     try {
-      await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision });
+      const res = await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision });
+      // The page's own step, which an edited draft may follow.
+      own.record({ from: revision, to: res.group.revision });
       toast.show(t.inventory.settings.saved);
       onClose();
     } catch (err) {

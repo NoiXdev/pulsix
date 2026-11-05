@@ -2,29 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { group, routes, renderAt } from './groupPageTestKit.tsx';
-
-const stale = () => new Response(JSON.stringify({ status: 412, detail: 'changed' }), { status: 412, headers: { 'Content-Type': 'application/json' } });
-
-type User = ReturnType<typeof userEvent.setup>;
-
-/** The number of fields in the schema editor (its rows past the header;
- * no field is expanded in these tests, so one row is one field). */
-const fieldCount = () => within(screen.getByRole('table', { name: 'Fields' })).getAllByRole('row').length - 1;
-
-/** addField adds a new field to the schema draft through its dialog. */
-async function addField(user: User) {
-  await user.click(screen.getByRole('button', { name: 'Add field' }));
-  const dialog = await screen.findByRole('dialog', { name: /^Field / });
-  await user.click(within(dialog).getByRole('button', { name: 'Done' }));
-  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-}
-
-async function typeEnv(user: User, text: string) {
-  const env = await screen.findByLabelText('env');
-  await user.clear(env);
-  await user.type(env, text);
-}
+import { addField, fieldCount, group, routes, renderAt, stale, typeEnv } from './groupPageTestKit.tsx';
 
 afterEach(() => {
   vi.restoreAllMocks();

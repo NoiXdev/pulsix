@@ -7,40 +7,49 @@ import { toVarSchema, useReloadInventory, useSetGroupSchema } from '../../../api
 import type { InventoryGroup } from '../../../api/types.ts';
 import { VariableEditor } from '../../variables/VariableEditor.tsx';
 import { problemsFromError } from '../../variables/paths.ts';
-import type { Problem, VarSchema } from '../../variables/types.ts';
+import type { Problem } from '../../variables/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
+import { useRevisionDraft } from './useRevisionDraft.ts';
+import { useOwnSteps } from '../ownSteps.ts';
 import { useT } from '../../../i18n/useT.ts';
 
 /** SchemaSection holds the group's variable schema editor (the full-width
  * VariableEditor, group variant: manual fields only). Discard and Save sit
  * in the section header for a writer; a reader gets the editor read-only,
- * so the fields still open, but in a dialog that saves nothing. */
+ * so the fields still open, but in a dialog that saves nothing. The draft
+ * and the revision its save sends follow useRevisionDraft (backlog 7.89):
+ * an unedited draft follows the group, an edited one saves on the revision
+ * it was edited on (or one the page's own writes moved it to). */
 export function SchemaSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
   const save = useSetGroupSchema(org, group.id);
-  const [draft, setDraft] = useState<VarSchema>(() => toVarSchema(group.schema));
+  const own = useOwnSteps();
+  // The editor keeps per-field state keyed by field identity (expanded
+  // rows, sub-field lists); a wholesale replacement of the draft bumps
+  // `generation`, which remounts it, or it could keep showing state from
+  // before.
+  const { draft, revision, generation, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.schema, group.revision, toVarSchema, own.steps);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [stale, setStale] = useState(false);
-  // The editor keeps per-field state keyed by field identity (expanded
-  // rows, sub-field lists); a wholesale reset of the draft (Discard) must
-  // remount it, or it could keep showing state from before the reset.
-  const [builderKey, setBuilderKey] = useState(0);
 
   const reload = useReloadInventory(org);
 
-  // A section is keyed by what it edits, so a reload that brings other
-  // content starts it over; one that does not keeps the draft, which then
-  // saves on the reloaded revision.
+  // A reload that brings other content starts the draft over; one that
+  // does not keeps it, which then saves on the reloaded revision.
   async function onReload() {
-    await reload(group.id);
+    const fresh = await reload(group.id);
+    reloaded(fresh.schema, fresh.revision);
     setStale(false);
   }
 
   async function onSave() {
     setProblems([]);
+    const ticket = startSave();
     try {
-      const res = await save.mutateAsync({ schema: draft, revision: group.revision });
+      const res = await save.mutateAsync({ schema: draft, revision });
+      own.record({ from: revision, to: res.group.revision });
+      saved(ticket, res.group.schema, res.group.revision);
       toast.show(res.incomplete_members > 0 ? t.inventory.schemaTab.savedIncomplete(res.incomplete_members) : t.inventory.schemaTab.saved);
     } catch (err) {
       if (errorStatus(err) === 412) return setStale(true);
@@ -59,9 +68,8 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
           <div className="flex gap-2">
             <Button
               onClick={() => {
-                setDraft(toVarSchema(group.schema));
+                discard();
                 setProblems([]);
-                setBuilderKey((k) => k + 1);
               }}
             >
               {t.inventory.schemaTab.discard}
@@ -82,7 +90,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
           {t.inventory.schemaTab.problems(problems.length)}
         </p>
       )}
-      <VariableEditor key={builderKey} variant="group" value={draft} onChange={setDraft} problems={problems} readOnly={!canWrite} />
+      <VariableEditor key={generation} variant="group" value={draft} onChange={edit} problems={problems} readOnly={!canWrite} />
     </Section>
   );
 }

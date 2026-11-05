@@ -2,17 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { group, routes, renderAt, SCHEMA } from './groupPageTestKit.tsx';
-
-const stale = () => new Response(JSON.stringify({ status: 412, detail: 'changed' }), { status: 412, headers: { 'Content-Type': 'application/json' } });
-
-type User = ReturnType<typeof userEvent.setup>;
-
-async function typeEnv(user: User, text: string) {
-  const env = await screen.findByLabelText('env');
-  await user.clear(env);
-  await user.type(env, text);
-}
+import { group, routes, renderAt, SCHEMA, stale, typeEnv } from './groupPageTestKit.tsx';
 
 /** A group with a stored secret, which every read returns masked: a refetch
  * of it brings the same values whatever its revision. */

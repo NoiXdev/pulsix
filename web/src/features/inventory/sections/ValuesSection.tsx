@@ -10,6 +10,7 @@ import { groupFields, problemsFromError } from '../../variables/paths.ts';
 import { declaredOnly, toKeepMarkers } from '../../variables/secrets.ts';
 import type { Problem, Vars } from '../../variables/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
+import { useOwnSteps } from '../ownSteps.ts';
 import { useT } from '../../../i18n/useT.ts';
 
 /** ValuesSection is the form for the group's own (group-scoped) values. A
@@ -44,6 +45,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   const toast = useToast();
   const fields = groupFields(toVarSchema(group.schema));
   const save = useSetGroupVars(org, group.id);
+  const own = useOwnSteps();
   // A draft is built from stored values the same way on mount and after a
   // save: secrets as keep markers, never as anything typed.
   const draftOf = (vars: InventoryGroup['vars']) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
@@ -99,6 +101,8 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
     const editsAtSave = edits.current;
     try {
       const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
+      // The page's own step, which an edited schema draft may follow.
+      own.record({ from: revision, to: res.group.revision });
       setPinnedRevision(res.group.revision);
       if (edits.current === editsAtSave) {
         setDraft(draftOf(res.group.vars));

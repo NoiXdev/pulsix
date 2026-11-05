@@ -1,4 +1,6 @@
-import { render } from '@testing-library/react';
+import { expect } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import type userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createBrowserHistory,
@@ -12,10 +14,10 @@ import {
 import { ToastProvider } from '../../ui/toast.tsx';
 import { GroupDetailPage } from './GroupDetailPage.tsx';
 
-/* The group page's test harness, shared by GroupDetailPage.layout.test.tsx
- * and GroupDetailPage.drafts.test.tsx: one group `web` (g1) below `prod`,
- * with a child group, two members and a jump host, and a router that
- * redirects old `?tab=` links the way the app's does. */
+/* The group page's test harness, shared by the GroupDetailPage.*.test.tsx
+ * files: one group `web` (g1) below `prod`, with a child group, two members
+ * and a jump host, a router that redirects old `?tab=` links the way the
+ * app's does, and the steps the draft and revision tests share. */
 
 export const SCHEMA = {
   fields: [
@@ -98,4 +100,33 @@ export function renderAt(path: string, { browser = false } = {}) {
     </QueryClientProvider>,
   );
   return { ...view, router, qc };
+}
+
+type User = ReturnType<typeof userEvent.setup>;
+
+/** stale is the API's answer to a write on a revision that is no longer
+ * current. */
+export const stale = () => new Response(JSON.stringify({ status: 412, detail: 'changed' }), { status: 412, headers: { 'Content-Type': 'application/json' } });
+
+/** schemaSaved is the answer to a schema save that stored `schema` as
+ * `revision`. */
+export const schemaSaved = (revision: number, schema: unknown) => ({ ...group({ revision, schema }), incomplete_members: 0 });
+
+/** typeEnv replaces the group value `env` with `text`. */
+export async function typeEnv(user: User, text: string) {
+  const env = await screen.findByLabelText('env');
+  await user.clear(env);
+  await user.type(env, text);
+}
+
+/** The number of fields in the schema editor (its rows past the header;
+ * no field is expanded in these tests, so one row is one field). */
+export const fieldCount = () => within(screen.getByRole('table', { name: 'Fields' })).getAllByRole('row').length - 1;
+
+/** addField adds a new field to the schema draft through its dialog. */
+export async function addField(user: User) {
+  await user.click(screen.getByRole('button', { name: 'Add field' }));
+  const dialog = await screen.findByRole('dialog', { name: /^Field / });
+  await user.click(within(dialog).getByRole('button', { name: 'Done' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 }
