@@ -16,12 +16,15 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useCreateToken, useRevokeToken, useTokens } from '../../api/hooks/useTokens.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
+
+const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
 
 const tokenFormSchema = (t: Messages) =>
   z.object({
     name: z.string().min(1, t.validation.required),
-    role: z.enum(['viewer', 'operator', 'admin', 'owner']),
+    role: z.enum(ROLES),
   });
 type TokenFormValues = z.infer<ReturnType<typeof tokenFormSchema>>;
 
@@ -162,12 +165,7 @@ export function TokensPage() {
                 render={({ field }) => (
                   <Select
                     id="token_role"
-                    options={[
-                      { value: 'viewer', label: 'viewer' },
-                      { value: 'operator', label: 'operator' },
-                      { value: 'admin', label: 'admin' },
-                      { value: 'owner', label: 'owner' },
-                    ]}
+                    options={roleOptions(t, ROLES)}
                     value={field.value}
                     onChange={field.onChange}
                   />

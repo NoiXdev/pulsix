@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
@@ -46,5 +47,36 @@ describe('TokensPage in German', () => {
     expect(screen.getByRole('heading', { name: 'API-Tokens' })).toBeInTheDocument();
     expect(await screen.findByText('4.3.2026')).toBeInTheDocument();
     expect(screen.getByText('nie')).toBeInTheDocument();
+  });
+
+  it('offers the roles of the token form in German', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+    const rootRoute = createRootRoute();
+    const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
+    const tokensRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/tokens', component: TokensPage });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([orgRoute.addChildren([tokensRoute])]),
+      history: createMemoryHistory({ initialEntries: ['/o/acme/settings/tokens'] }),
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nProvider locale="de">
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Token erstellen' }));
+    await user.click(screen.getByLabelText('Rolle'));
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-label'))).toEqual([
+      'Betrachter',
+      'Operator',
+      'Admin',
+      'Inhaber',
+    ]);
   });
 });

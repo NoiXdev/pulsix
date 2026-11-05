@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
+import { I18nProvider } from '../i18n/I18nProvider.tsx';
 import { ToastProvider } from '../ui/toast.tsx';
 import { mockApi } from '../test/mockApi.ts';
 import { OrgLayout } from './OrgLayout.tsx';
@@ -16,7 +17,7 @@ const ME_OK = {
 const ORGS_OK = { orgs: [{ id: 'o1', slug: 'acme', name: 'Acme Hosting', role: 'owner', created_at: '2026-01-01T00:00:00Z' }] };
 const ORG_OK = { org: { id: 'o1', slug: 'acme', name: 'Acme Hosting', role: 'owner', created_at: '2026-01-01T00:00:00Z' } };
 
-function renderAt(initialPath: string) {
+function renderAt(initialPath: string, locale?: 'de') {
   const rootRoute = createRootRoute();
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -43,9 +44,11 @@ function renderAt(initialPath: string) {
 
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <I18nProvider locale={locale ?? 'en'}>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </I18nProvider>
     </QueryClientProvider>,
   );
 }
@@ -154,5 +157,20 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     await user.click(screen.getByRole('option', { name: 'New organization' }));
 
     expect(await screen.findByRole('dialog', { name: 'New organization' })).toBeInTheDocument();
+  });
+
+  it.each([
+    [undefined, 'Owner'],
+    ['de' as const, 'Inhaber'],
+  ])('labels the user\'s role in the active language (%s)', async (locale, label) => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+    });
+    renderAt('/o/acme/hosts', locale);
+
+    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
+    expect(screen.getByText('Tim R.').parentElement).toHaveTextContent(label);
   });
 });

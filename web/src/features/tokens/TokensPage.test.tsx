@@ -99,7 +99,7 @@ describe('TokensPage role picker', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Create token' }));
     await user.type(screen.getByLabelText('Name'), 'ci-deploy');
-    await pickOption(screen, 'Role', 'admin');
+    await pickOption(screen, 'Role', 'Admin');
     const submitButtons = screen.getAllByRole('button', { name: 'Create token' });
     await user.click(submitButtons[submitButtons.length - 1]);
 

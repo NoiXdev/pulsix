@@ -9,6 +9,7 @@ import { useMe } from '../api/hooks/useMe.ts';
 import { useSignOut } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { useT } from '../i18n/useT.ts';
+import { roleLabel } from '../i18n/roleLabel.ts';
 import { sessionState } from '../lib/sessionState.ts';
 import { PendingSessionRedirect } from './PendingSessionRedirect.tsx';
 import { CreateOrgDialog } from '../features/orgs/CreateOrgDialog.tsx';
@@ -77,7 +78,7 @@ export function OrgLayout() {
       }
       user={{
         displayName: me.data.user.display_name,
-        subtitle: `${org.data.org.role.charAt(0).toUpperCase()}${org.data.org.role.slice(1)}`,
+        subtitle: roleLabel(t, org.data.org.role),
       }}
       onLogout={signOut}
     >
