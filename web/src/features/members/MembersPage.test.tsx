@@ -74,6 +74,7 @@ describe('MembersPage', () => {
 
     const section = await screen.findByRole('region', { name: 'Open invitations' });
     expect(within(section).getByText('wrong@acme.io')).toBeInTheDocument();
+    expect(within(section).getByText('Admin')).toBeInTheDocument();
     expect(within(section).getByText(/Tim R\./)).toBeInTheDocument();
     await user.click(within(section).getByRole('button', { name: 'Revoke invitation to wrong@acme.io' }));
 
@@ -235,6 +236,33 @@ describe('MembersPage', () => {
     expect(await screen.findByText('the invitation e-mail could not be delivered')).toBeInTheDocument();
   });
 
+  it('names the roles of the member rows and open invitations in German', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme/invites': {
+        invites: [
+          {
+            id: 'i1',
+            email: 'new@acme.io',
+            role: 'admin',
+            invited_by: 'u1',
+            invited_by_name: 'Tim R.',
+            expires_at: '2026-01-08T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    });
+    renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }), 'de');
+
+    expect(within(await screen.findByRole('link', { name: 'Sara K.' })).getByText('Betrachter')).toBeInTheDocument();
+    expect(within(screen.getByRole('link', { name: 'Tim R.' })).getByText('Inhaber')).toBeInTheDocument();
+    const invites = await screen.findByRole('region', { name: 'Offene Einladungen' });
+    expect(within(invites).getByText('Admin')).toBeInTheDocument();
+    expect(screen.queryByText('viewer')).not.toBeInTheDocument();
+    expect(screen.queryByText('owner')).not.toBeInTheDocument();
+  });
+
   // Backlog 7.74: a row opens the member page, where the role is changed;
   // the role dialog is gone.
   it('links each row to the member page and has no role dialog', async () => {
@@ -245,7 +273,8 @@ describe('MembersPage', () => {
 
     const row = await screen.findByRole('link', { name: 'Sara K.' });
     expect(row).toHaveAttribute('href', '/o/acme/settings/members/u2');
-    expect(within(row).getByText('viewer')).toBeInTheDocument();
+    expect(within(row).getByText('Viewer')).toBeInTheDocument();
+    expect(within(row).queryByText('viewer')).not.toBeInTheDocument();
     expect(within(row).queryByRole('button')).not.toBeInTheDocument();
     expect(screen.queryByText(/Change role/)).not.toBeInTheDocument();
 

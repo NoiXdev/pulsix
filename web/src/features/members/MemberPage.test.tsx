@@ -5,6 +5,7 @@ import { mockApi, type MockRequest, type MockRoute } from '../../test/mockApi.ts
 import { ADMIN, renderRoutes } from '../../test/renderRoutes.tsx';
 import { pickOption } from '../../test/pickOption.ts';
 import { accountDetail } from '../users/testFixtures.ts';
+import type { Locale } from '../../i18n/types.ts';
 import { MemberPage } from './MemberPage.tsx';
 
 const MEMBERS = {
@@ -16,7 +17,7 @@ const MEMBERS = {
 
 const org = (role: string) => ({ org: { id: 'o1', name: 'Acme', slug: 'acme', role, created_at: '2026-01-01T00:00:00Z' } });
 
-function render(opts: { role: string; instanceAdmin: boolean }, routes: Record<string, MockRoute> = {}) {
+function render(opts: { role: string; instanceAdmin: boolean }, routes: Record<string, MockRoute> = {}, locale?: Locale) {
   const adminCalls: string[] = [];
   mockApi({
     'GET /api/v1/auth/me': { ...ADMIN, instance_admin: opts.instanceAdmin },
@@ -35,6 +36,8 @@ function render(opts: { role: string; instanceAdmin: boolean }, routes: Record<s
       { path: '/settings/members', component: () => <div>members list</div> },
     ],
     '/o/acme/settings/members/u2',
+    undefined,
+    locale,
   );
   return { router, adminCalls };
 }
@@ -100,8 +103,26 @@ describe('MemberPage', () => {
     await pickOption(screen, 'Role in this organization', 'Operator');
     await user.click(screen.getByRole('button', { name: 'Change role' }));
 
-    expect(await screen.findByText('Role updated to operator')).toBeInTheDocument();
+    expect(await screen.findByText('Role updated to Operator')).toBeInTheDocument();
     expect(changedTo).toBe('operator');
+  });
+
+  it('names the role in German on the badge of a read-only view', async () => {
+    render({ role: 'viewer', instanceAdmin: false }, {}, 'de');
+    expect(await screen.findByText('Betrachter')).toBeInTheDocument();
+    expect(screen.queryByText('viewer')).not.toBeInTheDocument();
+    expect(screen.getByText('Nur Inhaber und Admins können Rollen ändern oder Mitglieder entfernen.')).toBeInTheDocument();
+  });
+
+  it('confirms a role change by the role\'s German name', async () => {
+    const user = userEvent.setup();
+    render({ role: 'admin', instanceAdmin: false }, { 'PATCH /api/v1/orgs/acme/members/u2': {} }, 'de');
+
+    await screen.findByLabelText('Rolle in dieser Organisation');
+    await pickOption(screen, 'Rolle in dieser Organisation', 'Inhaber');
+    await user.click(screen.getByRole('button', { name: 'Rolle ändern' }));
+
+    expect(await screen.findByText('Rolle auf Inhaber geändert')).toBeInTheDocument();
   });
 
   it('shows the server\'s reason when a role change is refused', async () => {

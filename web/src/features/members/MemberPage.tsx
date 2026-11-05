@@ -17,6 +17,7 @@ import type { Member } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { roleLabel } from '../../i18n/roleLabel.ts';
 import { AccountActions } from '../users/AccountActions.tsx';
 import { AccountSignIn } from '../users/AccountSignIn.tsx';
 import { roleOptions } from './roles.ts';
@@ -132,7 +133,7 @@ function MemberRole({ org, member }: { org: string; member: Member }) {
   async function saveRole() {
     try {
       await changeRole.mutateAsync({ userId: member.user_id, role });
-      toast.show(p.updated(role));
+      toast.show(p.updated(roleLabel(t, role)));
     } catch (err) {
       toast.show(err instanceof Error ? err.message : p.failed, 'destructive');
     }

@@ -9,6 +9,8 @@ import {
   type AnyRoute,
 } from '@tanstack/react-router';
 import { ToastProvider } from '../ui/toast.tsx';
+import { I18nProvider } from '../i18n/I18nProvider.tsx';
+import type { Locale } from '../i18n/types.ts';
 
 /** One page of a test: a path under /o/$org and what it renders. */
 export interface TestRoute {
@@ -20,12 +22,13 @@ export interface TestRoute {
  * Renders the given pages under /o/$org in a memory router with a query
  * client and toasts, starting at `initial`. Returns the router, so a test
  * can read where navigation ended up. A test that inspects the cache passes
- * its own query client.
+ * its own query client; one that reads German passes `locale`.
  */
 export function renderRoutes(
   routes: TestRoute[],
   initial: string,
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  locale?: Locale,
 ) {
   const rootRoute = createRootRoute();
   const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
@@ -36,13 +39,12 @@ export function renderRoutes(
     routeTree: rootRoute.addChildren([orgRoute.addChildren(children)]),
     history: createMemoryHistory({ initialEntries: [initial] }),
   });
-  render(
-    <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
-    </QueryClientProvider>,
+  const page = (
+    <ToastProvider>
+      <RouterProvider router={router} />
+    </ToastProvider>
   );
+  render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{page}</I18nProvider> : page}</QueryClientProvider>);
   return router;
 }
 

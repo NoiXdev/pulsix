@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '../lib/utils.ts';
+import { useT } from '../i18n/useT.ts';
+import { roleLabel } from '../i18n/roleLabel.ts';
 
 export type Tone = 'ok' | 'warn' | 'crit' | 'unknown' | 'accent' | 'maintenance';
 
@@ -44,13 +46,14 @@ const ROLE_COLOR: Record<string, string> = {
  * but keyed by role name (owner/admin/operator/viewer) instead of a
  * monitoring tone, since a role is not a state. */
 export function RoleBadge({ role }: { role: string }) {
+  const t = useT();
   const color = ROLE_COLOR[role] ?? 'var(--px-unknown)';
   return (
     <span
       className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-semibold capitalize"
       style={{ color, backgroundColor: `color-mix(in srgb, ${color} 10%, transparent)`, borderColor: `color-mix(in srgb, ${color} 33%, transparent)` }}
     >
-      {role}
+      {roleLabel(t, role)}
     </span>
   );
 }

@@ -27,7 +27,7 @@ export const deMembers: Messages['members'] = {
     emailPlaceholder: 'neue.kollegin@acme.io',
     roleLabel: 'Rolle',
     ownerNote:
-      'Die Rolle owner kann nicht per Einladung vergeben werden; eine Ernennung ist erst nach dem Beitritt möglich. Die eingeladene Person legt ein Passwort fest und muss einen zweiten Faktor einrichten, bevor sie die Organisation betreten kann.',
+      'Die Rolle Inhaber kann nicht per Einladung vergeben werden; eine Ernennung ist erst nach dem Beitritt möglich. Die eingeladene Person legt ein Passwort fest und muss einen zweiten Faktor einrichten, bevor sie die Organisation betreten kann.',
     send: 'Einladung senden',
     sent: (email: string) => `Einladung an ${email} gesendet`,
     failed: 'Einladung konnte nicht gesendet werden',
@@ -57,7 +57,7 @@ export const deMembers: Messages['members'] = {
     failed: 'Rolle konnte nicht geändert werden',
     removeHint: 'Das Entfernen beendet den Zugang zu dieser Organisation. Das Konto selbst bleibt bestehen.',
     removeButton: 'Aus der Organisation entfernen',
-    readOnly: 'Nur owner und admin können Rollen ändern oder Mitglieder entfernen.',
+    readOnly: 'Nur Inhaber und Admins können Rollen ändern oder Mitglieder entfernen.',
   },
   pending: {
     title: 'Offene Einladungen',

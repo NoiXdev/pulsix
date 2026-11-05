@@ -12,7 +12,7 @@ export const deUi: Messages['ui'] = {
     signingOutTitle: 'Abmeldung',
     signingOutDetail: 'Die Sitzung ist abgelaufen. Weiterleitung zur Anmeldung…',
     forbiddenTitle: 'Kein Zugriff',
-    forbiddenDetail: 'Jemand mit der Rolle owner oder admin in der Organisation kann den Zugriff auf diese Seite freigeben.',
+    forbiddenDetail: 'Jemand mit der Rolle Inhaber oder Admin in der Organisation kann den Zugriff auf diese Seite freigeben.',
     notFoundTitle: 'Nicht gefunden',
     notFoundDetail: 'Diese Seite existiert nicht, oder es besteht kein Zugriff darauf.',
     failedTitle: 'Etwas ist schiefgelaufen',

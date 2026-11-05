@@ -63,7 +63,7 @@ export const deNotifications: Messages['notifications'] = {
     hoursMinutes: (h: number, m: number) => `nach ${h} h ${m} min`,
   },
   channels: {
-    noAccess: 'Benachrichtigungskanäle sind ab der Rolle operator sichtbar.',
+    noAccess: 'Benachrichtigungskanäle sind ab der Rolle Operator sichtbar.',
     subtitle: 'Wohin die Ergebnisse von Zeitplänen und die Wochenzusammenfassung gesendet werden',
     add: 'Kanal hinzufügen',
     mailNote:
@@ -138,7 +138,7 @@ export const deNotifications: Messages['notifications'] = {
     saveFailed: 'Die Zusammenfassung konnte nicht gespeichert werden',
   },
   alertRoutes: {
-    noAccess: 'Alarmrouten sind ab der Rolle operator sichtbar.',
+    noAccess: 'Alarmrouten sind ab der Rolle Operator sichtbar.',
     subtitle: 'Welche Schweregrade und Alarmereignisse welche Benachrichtigungskanäle erreichen',
     newRoute: 'Neue Route',
     columns: {
@@ -203,7 +203,7 @@ export const deNotifications: Messages['notifications'] = {
     add: 'Stufe hinzufügen',
   },
   rotations: {
-    noAccess: 'Bereitschaftsrotationen sind ab der Rolle operator sichtbar.',
+    noAccess: 'Bereitschaftsrotationen sind ab der Rolle Operator sichtbar.',
     subtitle: 'Wer Bereitschaft hat und wann der Zyklus übergeben wird',
     newRotation: 'Neue Rotation',
     columns: {

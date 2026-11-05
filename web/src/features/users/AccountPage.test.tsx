@@ -41,7 +41,7 @@ describe('AccountPage', () => {
     );
     expect(within(orgs).getByText('Globex')).toBeInTheDocument();
     expect(within(orgs).queryByRole('link', { name: 'Open the member page in Globex' })).not.toBeInTheDocument();
-    expect(within(orgs).getByText('owner')).toBeInTheDocument();
+    expect(within(orgs).getByText('Owner')).toBeInTheDocument();
 
     const signIn = screen.getByRole('region', { name: 'Sign-in' });
     expect(within(signIn).getByText('Not set up')).toBeInTheDocument();
