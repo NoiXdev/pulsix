@@ -1,48 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
-import { ChecksPage } from './ChecksPage.tsx';
-import { clippedElements } from '../../test/clipped.ts';
-
-const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
-
-const check = (over: Record<string, unknown> = {}) => ({
-  id: 'c1', key: 'cpu', plugin: 'cpu', params: {}, interval_seconds: 60, enabled: true,
-  origin: 'seed', binding_kind: 'org', created_at: '', updated_at: '', ...over,
-});
-
-const GROUPS = { groups: [{ id: 'g1', name: 'Web tier', selector: 'role=web', priority: 10, created_at: '', updated_at: '' }] };
-
-function renderPage() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const rootRoute = createRootRoute();
-  const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
-  const checksRoute = createRoute({ getParentRoute: () => orgRoute, path: '/checks' });
-  const indexRoute = createRoute({ getParentRoute: () => checksRoute, path: '/', component: ChecksPage });
-  const groupsRoute = createRoute({ getParentRoute: () => checksRoute, path: '/monitoring-groups', component: () => <div>GROUPS VIEW</div> });
-  const hostRoute = createRoute({ getParentRoute: () => orgRoute, path: '/hosts/$id', component: () => <div>HOST VIEW</div> });
-  const router = createRouter({
-    routeTree: rootRoute.addChildren([orgRoute.addChildren([checksRoute.addChildren([indexRoute, groupsRoute]), hostRoute])]),
-    history: createMemoryHistory({ initialEntries: ['/o/acme/checks'] }),
-  });
-  return render(
-    <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
-    </QueryClientProvider>,
-  );
-}
-
-async function chooseFromMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
-  await user.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
-  await user.click(await screen.findByRole('menuitem', { name: item }));
-}
+import { check, chooseFromMenu, GROUPS, org, renderPage } from './checksPageTestKit.tsx';
 
 describe('ChecksPage', () => {
   it('lists definitions with their binding, interval, state and origin', async () => {
@@ -81,102 +42,6 @@ describe('ChecksPage', () => {
     expect(screen.getByText('disabled')).toBeInTheDocument();
   });
 
-  it('moves edit, copy and delete into the row menu', async () => {
-    const user = userEvent.setup();
-    mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
-      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/checks': {
-        checks: [
-          check(),
-          check({ id: 'c8', key: 'disk-shared', plugin: 'disk', origin: 'shared', shared_definition_id: 'sd1' }),
-          check({ id: 'c2', key: 'disk-data', plugin: 'disk', origin: 'custom' }),
-        ],
-      },
-    });
-    renderPage();
-
-    // The old inline buttons are gone.
-    await screen.findByRole('button', { name: 'Actions for cpu' });
-    expect(screen.queryByRole('button', { name: /^(Edit|Copy|Delete) / })).not.toBeInTheDocument();
-    const items = async (name: string) => {
-      await user.click(screen.getByRole('button', { name: `Actions for ${name}` }));
-      const found = screen.getAllByRole('menuitem').map((el) => el.textContent);
-      await user.keyboard('{Escape}');
-      return found;
-    };
-    // A seeded definition can be edited, copied and deleted, a shared one
-    // (installation-managed) only edited and copied, a custom one edited and
-    // deleted.
-    expect(await items('cpu')).toEqual(['Edit', 'Copy', 'Delete…']);
-    expect(await items('disk-shared')).toEqual(['Edit', 'Copy']);
-    expect(await items('disk-data')).toEqual(['Edit', 'Delete…']);
-  });
-
-  it('the binding link still opens the host, inside the static row', async () => {
-    const user = userEvent.setup();
-    mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
-      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/checks': {
-        checks: [check({ id: 'c3', key: 'nginx', plugin: 'service', origin: 'custom', binding_kind: 'host', host_id: 'h1', host_name: 'web-1' })],
-      },
-    });
-    const { container } = renderPage();
-
-    const link = await screen.findByRole('link', { name: 'web-1' });
-    expect(link.closest('[data-list-row]')).not.toBeNull();
-    await user.click(link);
-    expect(await screen.findByText('HOST VIEW')).toBeInTheDocument();
-    expect(container.querySelector('[data-list-row] > a')).toBeNull();
-  });
-
-  it('rows are not links', async () => {
-    mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
-      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/checks': { checks: [check()] },
-    });
-    const { container } = renderPage();
-    await screen.findByRole('button', { name: 'Actions for cpu' });
-    expect(container.querySelectorAll('[data-list-row]').length).toBeGreaterThan(0);
-    expect(container.querySelector('[data-list-row] > a')).toBeNull();
-  });
-
-  it('no clipped cards', async () => {
-    mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
-      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/checks': { checks: [check()] },
-    });
-    const { container } = renderPage();
-    await screen.findByRole('button', { name: 'Actions for cpu' });
-    expect(clippedElements(container)).toEqual([]);
-  });
-
-  // Task 7 (v0.2f): a projection of an installation-owned definition
-  // (origin "shared") offers Copy — the same reason a seeded row does,
-  // since key/plugin/params/interval are fixed here — but, UNLIKE a seeded
-  // row, never Delete: spec decision 6 refuses that from inside an
-  // organization outright, and offering a button that always 403s is
-  // exactly the mistake RepoDialog.tsx's own projected-repo guard avoids.
-  it('offers Copy but never Delete on a shared (installation-managed) definition', async () => {
-    const user = userEvent.setup();
-    mockApi({
-      'GET /api/v1/orgs/acme': org('operator'),
-      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/checks': {
-        checks: [check({ id: 'c8', key: 'disk-data', plugin: 'disk', origin: 'shared', shared_definition_id: 'sd1' })],
-      },
-    });
-    renderPage();
-
-    await user.click(await screen.findByRole('button', { name: 'Actions for disk-data' }));
-    expect(screen.getByRole('menuitem', { name: 'Copy' })).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Edit' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: 'Delete…' })).not.toBeInTheDocument();
-  });
-
   it('shows a viewer the definitions but no write affordances', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
@@ -187,18 +52,6 @@ describe('ChecksPage', () => {
 
     expect(await screen.findAllByText('cpu')).toHaveLength(2);
     expect(screen.queryByRole('button', { name: 'New check' })).not.toBeInTheDocument();
-  });
-
-  it('offers a viewer no row menu', async () => {
-    mockApi({
-      'GET /api/v1/orgs/acme': org('viewer'),
-      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
-      'GET /api/v1/orgs/acme/checks': { checks: [check(), check({ id: 'c2', key: 'disk-data', plugin: 'disk', origin: 'custom' })] },
-    });
-    renderPage();
-
-    expect(await screen.findAllByText('cpu')).toHaveLength(2);
-    expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
   });
 
   it('creates a definition with the body the API documents', async () => {

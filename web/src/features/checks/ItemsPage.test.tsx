@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -8,6 +8,14 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { ItemsPage } from './ItemsPage.tsx';
 import { clippedElements } from '../../test/clipped.ts';
+
+/** Lets a response that has already been served reach the component: the
+ * absence of a hint only means something once the metrics read has landed. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -101,14 +109,20 @@ describe('ItemsPage', () => {
   });
 
   it('offers a viewer no row menu and no no-metrics hint', async () => {
+    let metricsServed = false;
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
-      'GET /api/v1/orgs/acme/rules/metrics': { metrics: [] },
+      'GET /api/v1/orgs/acme/rules/metrics': () => {
+        metricsServed = true;
+        return { metrics: [] };
+      },
       'GET /api/v1/orgs/acme/item-decisions': { decisions: [decision()] },
     });
     renderPage();
 
     expect(await screen.findByText('/mnt/backup*')).toBeInTheDocument();
+    await waitFor(() => expect(metricsServed).toBe(true));
+    await settle();
     expect(screen.queryByRole('button', { name: /^Actions for / })).not.toBeInTheDocument();
     expect(screen.queryByText('No checks to decide on yet')).not.toBeInTheDocument();
   });
@@ -122,7 +136,10 @@ describe('ItemsPage', () => {
     renderPage();
 
     expect(await screen.findByText('No checks to decide on yet')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New decision' })).toBeDisabled();
+    const button = screen.getByRole('button', { name: 'New decision' });
+    expect(button).toBeDisabled();
+    // The hint is the button's description, not just text near it.
+    expect(button).toHaveAccessibleDescription(/No checks to decide on yet/);
   });
 
   it('rows are not links', async () => {

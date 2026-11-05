@@ -77,7 +77,7 @@ test('build an inventory with a schema, a jump host and a generated key, assign 
   await toast(page, 'Schema saved');
   // The group page is one scrolling detail page: its sections sit under the
   // sidebar's section nav, Members among them exactly once.
-  await expect(page.getByRole('navigation').getByRole('link', { name: 'Members' })).toHaveCount(1);
+  await expect(page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Members' })).toHaveCount(1);
   // The schema builder is on the same page now, and its group is labelled
   // "Field env": the values form's own input is the textbox.
   await page.getByRole('textbox', { name: 'env', exact: true }).fill('prod');

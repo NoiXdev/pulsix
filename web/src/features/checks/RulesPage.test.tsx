@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
@@ -8,6 +8,14 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { RulesPage } from './RulesPage.tsx';
 import { clippedElements } from '../../test/clipped.ts';
+
+/** Lets a response that has already been served reach the component: the
+ * absence of a hint only means something once the metrics read has landed. */
+async function settle() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -191,13 +199,26 @@ describe('RulesPage', () => {
     const { unmount } = renderPage();
 
     expect(await screen.findByText('No metrics to write a rule on yet')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New rule' })).toBeDisabled();
+    const button = screen.getByRole('button', { name: 'New rule' });
+    expect(button).toBeDisabled();
+    // The hint is the button's description, not just text near it.
+    expect(button).toHaveAccessibleDescription(/No metrics to write a rule on yet/);
     unmount();
 
     // A viewer has no New rule button, so there is nothing to explain.
-    mockApi({ ...mocks, 'GET /api/v1/orgs/acme': org('viewer') });
+    let metricsServed = false;
+    mockApi({
+      ...mocks,
+      'GET /api/v1/orgs/acme/rules/metrics': () => {
+        metricsServed = true;
+        return { metrics: [] };
+      },
+      'GET /api/v1/orgs/acme': org('viewer'),
+    });
     renderPage();
     await screen.findByText('0 rules', { exact: false });
+    await waitFor(() => expect(metricsServed).toBe(true));
+    await settle();
     expect(screen.queryByText('No metrics to write a rule on yet')).not.toBeInTheDocument();
   });
 
