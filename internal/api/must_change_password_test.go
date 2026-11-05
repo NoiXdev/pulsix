@@ -299,8 +299,9 @@ func TestMustChangePasswordTokenUnaffected(t *testing.T) {
 
 // TestMustChangePasswordInviteAcceptNeedsTheChange: accepting an invitation
 // joins the signed-in account to an organization, so a must-change session
-// does not count as signed in there either; the existing account is told
-// to sign in instead.
+// does not count as signed in there either. It is told to change its
+// password (403 password_change_required, which sends the SPA to the change
+// page) rather than to sign in (409), which it already is (backlog 7.82).
 func TestMustChangePasswordInviteAcceptNeedsTheChange(t *testing.T) {
 	s := apitest.New(t)
 	owner := s.SeedUser("invite-owner@example.test", "correct horse battery")
@@ -317,10 +318,9 @@ func TestMustChangePasswordInviteAcceptNeedsTheChange(t *testing.T) {
 
 	markMustChange(t, s, invitee)
 	resp = postJSON(t, s.LoginAs(invitee), s.HTTP.URL+"/api/v1/invites/accept", map[string]any{"token": token})
-	if resp.StatusCode != http.StatusConflict {
-		t.Fatalf("accept with a must-change session: status %d (%s), want 409", resp.StatusCode, mustReadBody(t, resp))
+	if resp.StatusCode != http.StatusForbidden || problemDetail(t, resp) != passwordChangeRequired {
+		t.Fatalf("accept with a must-change session: status %d, want 403 %s", resp.StatusCode, passwordChangeRequired)
 	}
-	_ = resp.Body.Close()
 	var n int
 	if err := s.DB.Pool().QueryRow(t.Context(),
 		`SELECT count(*) FROM org_memberships WHERE user_id = $1`, invitee).Scan(&n); err != nil {

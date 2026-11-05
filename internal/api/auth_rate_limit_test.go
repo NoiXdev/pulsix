@@ -431,3 +431,69 @@ func TestAuthRateLimitTripsOnWrongSetupToken(t *testing.T) {
 	}
 	expectTrips(t, s, hit)
 }
+
+// TestPasswordChangeLimiterChargesOnlyWrongPasswords is backlog 7.82 (1):
+// the password change is on the auth limiter so that a session cannot
+// guess the current password at speed, which only a wrong (or expired)
+// current password is — a 400. A new password the policy refuses (422)
+// and a stale second factor (403 step_up_required) are not guesses, so
+// they leave the budget alone: at a limit of 1 both come and go, then
+// one wrong password spends it and the next attempt answers 429.
+func TestPasswordChangeLimiterChargesOnlyWrongPasswords(t *testing.T) {
+	const password = "the current password"
+	s := apitest.New(t, apitest.WithAuthRateLimit(1))
+	uid := s.SeedUser("change-limited@example.test", password)
+	s.SeedPasskey(uid, "key")
+	c := s.LoginAs(uid)
+	change := func(c *http.Client, current, next string) *http.Response {
+		t.Helper()
+		return postJSON(t, c, s.HTTP.URL+changePasswordPath, map[string]string{
+			"current_password": current, "new_password": next,
+		})
+	}
+
+	if resp := change(c, password, "elevenchars"); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("too short: status %d (%s), want 422", resp.StatusCode, mustReadBody(t, resp))
+	}
+	stale(t, s, uid)
+	if resp := change(c, password, "a brand new password"); resp.StatusCode != http.StatusForbidden || problemDetail(t, resp) != "step_up_required" {
+		t.Fatalf("stale factor: status %d, want 403 step_up_required", resp.StatusCode)
+	}
+
+	fresh := s.LoginAs(uid)
+	if resp := change(fresh, "not the password", "a brand new password"); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("wrong current password: status %d (%s), want 400", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp := change(fresh, password, "a brand new password")
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("the attempt after a wrong password: status %d (%s), want 429", resp.StatusCode, mustReadBody(t, resp))
+	}
+	retryAfterOf(t, resp)
+	_ = resp.Body.Close()
+}
+
+// TestAuthRateLimitSharesTheBudgetOfAnIPv6Slash64 is backlog 7.82 (6): an
+// IPv6 client usually holds a whole /64, so the budget keys on the /64 —
+// two addresses of one /64 share it, an address of another /64 has its
+// own.
+func TestAuthRateLimitSharesTheBudgetOfAnIPv6Slash64(t *testing.T) {
+	s := apitest.New(t, apitest.WithAuthRateLimit(1), apitest.WithTrustedProxies(loopbackTrusted()))
+	s.SeedUser("v6@example.test", "correct horse battery")
+	fail := func(xff string) int {
+		resp, err := postFrom(s.HTTP.URL+"/api/v1/auth/login", xff, map[string]string{"email": "v6@example.test", "password": "wrong"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if got := fail("2001:db8:1:2::1"); got != http.StatusUnauthorized {
+		t.Fatalf("first failure = %d, want 401", got)
+	}
+	if got := fail("2001:db8:1:2:ffff::7"); got != http.StatusTooManyRequests {
+		t.Fatalf("another address of the same /64 = %d, want 429", got)
+	}
+	if got := fail("2001:db8:1:3::1"); got != http.StatusUnauthorized {
+		t.Fatalf("an address of another /64 = %d, want 401", got)
+	}
+}

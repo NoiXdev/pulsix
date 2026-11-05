@@ -128,13 +128,16 @@ func (s *Service) EndSessions(ctx context.Context, actorIsAdmin bool, actor, tar
 // and revokes its sessions in two steps, not one transaction, so a session
 // could have outlived it, and must not come back to life now. For the same
 // reason every unused reset link of target is voided: one issued before
-// the deactivation must not work again after it. The common checks
-// (checkActor, withAccount) apply.
+// the deactivation must not work again after it. checkActor applies, and
+// an unknown account is ErrNotFound (withLockedAccount), but an account
+// whose invitation is pending is not refused (backlog 7.82): reactivation
+// sets no password, so a deactivated invitee is reactivated with the
+// invitation still pending, and accepting it still sets their own.
 func (s *Service) Reactivate(ctx context.Context, actorIsAdmin bool, actor, target uuid.UUID) error {
 	if err := checkActor(actorIsAdmin, actor, target); err != nil {
 		return err
 	}
-	return s.withAccount(ctx, target, func(ctx context.Context, _ LockedAccount) error {
+	return s.withLockedAccount(ctx, target, func(ctx context.Context, _ LockedAccount) error {
 		if err := s.store.Reactivate(ctx, target); err != nil {
 			return fmt.Errorf("reactivate: %w", err)
 		}
@@ -166,17 +169,27 @@ func checkActor(actorIsAdmin bool, actor, target uuid.UUID) error {
 // the rest of the common checks: an unknown account is ErrNotFound, and an
 // account whose invitation is still pending (no password) is
 // ErrInvitePending — no action may hand a password, or a way to one, to an
-// account its owner never claimed. Deactivation is the one action allowed
-// there, and it lives in tenancy. fn gets what the lock read, so an action
-// can tell a deactivated account from an active one.
+// account its owner never claimed. Deactivation (in tenancy) and
+// reactivation (withLockedAccount) are the actions allowed there. fn gets
+// what the lock read, so an action can tell a deactivated account from an
+// active one.
 func (s *Service) withAccount(ctx context.Context, target uuid.UUID, fn func(ctx context.Context, acct LockedAccount) error) error {
+	return s.withLockedAccount(ctx, target, func(ctx context.Context, acct LockedAccount) error {
+		if !acct.HasPassword {
+			return ErrInvitePending
+		}
+		return fn(ctx, acct)
+	})
+}
+
+// withLockedAccount runs fn in one transaction with target's row locked; an
+// unknown account is ErrNotFound. It makes no other check: withAccount adds
+// the pending-invitation one, which only Reactivate goes without.
+func (s *Service) withLockedAccount(ctx context.Context, target uuid.UUID, fn func(ctx context.Context, acct LockedAccount) error) error {
 	return s.store.InTx(ctx, func(ctx context.Context) error {
 		acct, err := s.store.LockAccount(ctx, target)
 		if err != nil {
 			return fmt.Errorf("lock account: %w", err)
-		}
-		if !acct.HasPassword {
-			return ErrInvitePending
 		}
 		return fn(ctx, acct)
 	})

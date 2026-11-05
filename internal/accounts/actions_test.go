@@ -204,6 +204,30 @@ func TestReactivate(t *testing.T) {
 	}
 }
 
+// TestReactivateAnAccountWhoseInvitationIsPending is backlog 7.82 (5): an
+// invitee deactivated before accepting can be reactivated. Nothing hands
+// the account a password or a way to one — reactivation sets none — so the
+// pending check other actions make does not apply; the invitation stays
+// pending, and the account keeps no session and no reset link.
+func TestReactivateAnAccountWhoseInvitationIsPending(t *testing.T) {
+	ctx := context.Background()
+	actor, target := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	store := &fakeStore{
+		accounts:    map[uuid.UUID]bool{target: false},
+		deactivated: map[uuid.UUID]bool{target: true},
+	}
+	mailer := &fakeMailer{}
+	if err := actionService(store, mailer).Reactivate(ctx, true, actor, target); err != nil {
+		t.Fatalf("reactivating a deactivated invitee: %v", err)
+	}
+	if strings.Join(store.actions, ", ") != "reactivate, revoke sessions, void reset tokens" || store.writesOutside != 0 || len(mailer.sent) != 0 {
+		t.Fatalf("writes %v (%d outside), mails %d", store.actions, store.writesOutside, len(mailer.sent))
+	}
+	if len(store.setCalls) != 0 || len(store.tempCalls) != 0 {
+		t.Fatalf("reactivation set a password: %v, %v", store.setCalls, store.tempCalls)
+	}
+}
+
 // TestNoticesSkipDeactivatedAccounts: an action on a deactivated account
 // still happens, but the person is not mailed about it (NoticeSkipped).
 func TestNoticesSkipDeactivatedAccounts(t *testing.T) {
@@ -275,6 +299,10 @@ func TestAdminActionsRefuseOwnAccount(t *testing.T) {
 
 func TestAdminActionsRefuseInvitePending(t *testing.T) {
 	for name, act := range adminActions() {
+		if name == "reactivate" {
+			// Allowed: TestReactivateAnAccountWhoseInvitationIsPending.
+			continue
+		}
 		t.Run(name, func(t *testing.T) {
 			actor, target := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 			store, mailer := &fakeStore{accounts: map[uuid.UUID]bool{target: false}}, &fakeMailer{}

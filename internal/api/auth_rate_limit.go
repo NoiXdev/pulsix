@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -31,16 +32,32 @@ func newAuthRateLimiter(deps Deps) *clientip.Limiter {
 }
 
 // withAuthRateLimit is an operation modifier that attaches the per-address
-// authentication rate limiter to exactly one mutating auth endpoint (login,
-// TOTP verify, passkey login finish, invite accept — backlog 1.20 — and
-// setup completion, backlog 7.27). It
-// mirrors withAudit's shape: an operation modifier setting operation
-// middleware, so the limiting sits at the route registration, runs before
-// the handler, and shows up on exactly the operations named here.
+// authentication rate limiter to exactly one mutating auth endpoint. It is
+// on login, TOTP verify, passkey login finish and invite accept (backlog
+// 1.20), setup completion (backlog 7.27) and the password reset (backlog
+// 7.74); every 4xx those answer is a failed attempt and keeps its slot.
+// The password change uses withAuthRateLimitCharging instead, which charges
+// only a wrong current password. It mirrors withAudit's shape: an operation
+// modifier setting operation middleware, so the limiting sits at the route
+// registration, runs before the handler, and shows up on exactly the
+// operations named here.
 func withAuthRateLimit(deps Deps) func(o *huma.Operation) {
+	return withAuthRateLimitCharging(deps)
+}
+
+// withAuthRateLimitCharging is withAuthRateLimit for a route where only some
+// refusals are guesses (backlog 7.82): when charged names statuses, only a
+// response with one of them keeps its slot, and every other one is refunded.
+// POST /auth/password charges only its 400 (a wrong current password, or an
+// expired temporary one): a new password the policy refuses (422) or a stale
+// second factor (403 step_up_required) tells the caller nothing about the
+// current password, and charging those would lock someone typing a too-short
+// password out of the guess the limit is there to bound. With no statuses it
+// is withAuthRateLimit.
+func withAuthRateLimitCharging(deps Deps, charged ...int) func(o *huma.Operation) {
 	lim := newAuthRateLimiter(deps)
 	return func(o *huma.Operation) {
-		o.Middlewares = append(o.Middlewares, authRateLimitMiddleware(deps, lim))
+		o.Middlewares = append(o.Middlewares, authRateLimitMiddleware(deps, lim, charged))
 	}
 }
 
@@ -66,13 +83,14 @@ func withAuthRateLimit(deps Deps) func(o *huma.Operation) {
 //
 // A 429 the handler itself answered is refunded too: it is not a credential
 // failure, and charging it would let a flood keep its window (and so the
-// lockout) alive forever.
+// lockout) alive forever. When charged names statuses
+// (withAuthRateLimitCharging), only those keep their slot.
 //
 // The address is resolved through the same trusted-proxy rules every other
 // rate limit here keys on (PULSIX_TRUSTED_PROXIES; see clientAddr), so a
 // caller cannot rotate its apparent address through an untrusted proxy and
 // callers behind a configured proxy are counted separately.
-func authRateLimitMiddleware(deps Deps, lim *clientip.Limiter) func(huma.Context, func(huma.Context)) {
+func authRateLimitMiddleware(deps Deps, lim *clientip.Limiter, charged []int) func(huma.Context, func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
 		if lim == nil {
 			next(ctx)
@@ -85,11 +103,20 @@ func authRateLimitMiddleware(deps Deps, lim *clientip.Limiter) func(huma.Context
 			return
 		}
 		next(ctx)
-		if s := ctx.Status(); s < http.StatusBadRequest || s >= http.StatusInternalServerError ||
-			s == http.StatusTooManyRequests {
+		if !isCharged(ctx.Status(), charged) {
 			lim.Refund(r)
 		}
 	}
+}
+
+// isCharged reports whether a response with status s is a failed attempt
+// that keeps its slot: one of charged when that names any, otherwise any 4xx
+// but a 429.
+func isCharged(s int, charged []int) bool {
+	if len(charged) > 0 {
+		return slices.Contains(charged, s)
+	}
+	return s >= http.StatusBadRequest && s < http.StatusInternalServerError && s != http.StatusTooManyRequests
 }
 
 // writeRateLimited answers a refused attempt: 429 with Retry-After naming

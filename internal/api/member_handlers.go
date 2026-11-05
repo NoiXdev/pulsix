@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -223,10 +224,11 @@ func registerMemberRoutes(hapi huma.API, deps Deps) {
 // password can only be accepted from that account's own interactive,
 // MFA-complete session (inviteAcceptor); anonymously it answers 409
 // (tenancy.ErrSignInRequired) and the SPA asks the invitee to sign in and
-// open the link again. Before backlog 7.10 the token alone added the
-// membership, so whoever first redeemed an address's invitation — on an
-// instance without outgoing mail the inviting administrator holds the link
-// — decided that address's later memberships too.
+// open the link again. A session that must change its password first is
+// told so instead (acceptInviteErr). Before backlog 7.10 the token alone
+// added the membership, so whoever first redeemed an address's invitation
+// — on an instance without outgoing mail the inviting administrator holds
+// the link — decided that address's later memberships too.
 //
 // Whether acceptance also opens a session depends on which of
 // tenancy.Service.AcceptInvite's two cases just happened, per the fix that
@@ -248,7 +250,7 @@ func registerInviteAcceptRoute(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/invites/accept", func(ctx context.Context, in *inviteAcceptInput) (*inviteAcceptOutput, error) {
 		uid, orgID, newAccount, err := deps.Tenancy.AcceptInvite(ctx, inviteAcceptor(ctx), in.Body.Token, in.Body.DisplayName, in.Body.Password)
 		if err != nil {
-			return nil, mapTenancyErr(ctx, err)
+			return nil, acceptInviteErr(ctx, err)
 		}
 		// This route never calls requireOrg (there is no principal to
 		// authorize in the first place — it's how an invitee proves
@@ -293,6 +295,23 @@ func inviteAcceptor(ctx context.Context) uuid.UUID {
 		return uuid.Nil
 	}
 	return p.UserID
+}
+
+// acceptInviteErr maps an AcceptInvite failure. A tenancy.ErrSignInRequired
+// for a caller that is signed in — an MFA-complete cookie session whose
+// account must change its password first, which inviteAcceptor does not
+// count — answers what every other route tells that session: 403
+// password_change_required, which sends the SPA to the change page. The 409
+// would ask it to sign in, which it already is (backlog 7.82).
+func acceptInviteErr(ctx context.Context, err error) error {
+	if errors.Is(err, tenancy.ErrSignInRequired) {
+		if p, ok := auth.FromContext(ctx); ok && p.MFAComplete {
+			if refusal := refuseUntilPasswordChanged(p); refusal != nil {
+				return refusal
+			}
+		}
+	}
+	return mapTenancyErr(ctx, err)
 }
 
 // registerAdminRoutes wires deactivating a user, the first instance-level

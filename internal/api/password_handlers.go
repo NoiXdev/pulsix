@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -38,8 +39,11 @@ type changePasswordInput struct {
 // like every other account-security action. Every other session of the
 // account ends; the one making the change stays.
 //
-// It is on the auth rate limiter, which charges only refused attempts, so a
-// session cannot be used to guess the current password at speed.
+// It is on the auth rate limiter so a session cannot be used to guess the
+// current password at speed. Only a wrong current password (or an expired
+// temporary one) is such a guess, so only its 400 is charged
+// (withAuthRateLimitCharging, backlog 7.82): a refused new password (422)
+// and a stale second factor (403 step_up_required) are refunded.
 func registerPasswordRoutes(hapi huma.API, deps Deps) {
 	huma.Post(hapi, "/api/v1/auth/password", func(ctx context.Context, in *changePasswordInput) (*noContentOutput, error) {
 		p, err := requirePasswordChangeSession(ctx)
@@ -55,7 +59,7 @@ func registerPasswordRoutes(hapi huma.API, deps Deps) {
 		setAuditScope(ctx, nil, p.UserID)
 		setAuditObject(ctx, p.UserID.String(), "changed their password")
 		return &noContentOutput{}, nil
-	}, withAudit("changePassword", "user"), withAuthRateLimit(deps))
+	}, withAudit("changePassword", "user"), withAuthRateLimitCharging(deps, http.StatusBadRequest))
 }
 
 // mapAccountsErr translates accounts.Service sentinels to HTTP errors.

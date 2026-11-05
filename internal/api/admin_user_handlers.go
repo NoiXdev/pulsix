@@ -117,9 +117,9 @@ type noticeOutput struct {
 // bearer token never reaches them, and so are a pending session and one
 // that must change its password (requireMFAComplete). The actions also need
 // a fresh second factor (requireFreshFactor), refuse the admin's own
-// account (409 not_on_own_account) and an account whose invitation is
-// still pending (409 invite_pending), and are audited with no
-// organization, the admin as actor and the account as object.
+// account (409 not_on_own_account) and, all but reactivation, an account
+// whose invitation is still pending (409 invite_pending), and are audited
+// with no organization, the admin as actor and the account as object.
 func registerAdminUserRoutes(hapi huma.API, deps Deps) {
 	huma.Get(hapi, "/api/v1/admin/users", func(ctx context.Context, in *adminUserListInput) (*adminUserListOutput, error) {
 		p, err := requireInstanceAdmin(ctx)

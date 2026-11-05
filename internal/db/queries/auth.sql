@@ -39,15 +39,20 @@ WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled
 -- last_sign_in_at is stamped only when the session was not yet complete
 -- (backlog 7.74): a step-up re-proves the factor on a session that already
 -- signed in and must not read as a new sign-in. The CTE reads the row as it
--- was before this statement's own update.
+-- was before this statement's own update, and locks it (backlog 7.82): a
+-- concurrent completion of the same session makes this one wait, then read
+-- the session as complete and stamp nothing. The update names the row
+-- through the CTE so the lock is taken first; left to itself the update ran
+-- first, and the CTE's FOR UPDATE then skipped a row this statement had
+-- already changed and read nothing at all.
 WITH previous AS (
-    SELECT user_id, mfa_complete FROM sessions WHERE id = sqlc.arg(id)
+    SELECT s.id, s.user_id, s.mfa_complete FROM sessions s WHERE s.id = sqlc.arg(id) FOR UPDATE
 ), stamp AS (
     UPDATE users SET last_sign_in_at = now()
     WHERE users.id IN (SELECT user_id FROM previous WHERE NOT mfa_complete)
 )
 UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = sqlc.arg(secret_hash)
-WHERE sessions.id = sqlc.arg(id);
+WHERE sessions.id = (SELECT previous.id FROM previous);
 
 -- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1;

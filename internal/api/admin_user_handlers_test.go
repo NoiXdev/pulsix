@@ -334,6 +334,55 @@ func TestAdminDeactivateAndReactivate(t *testing.T) {
 	}
 }
 
+// TestAdminReactivateLeavesTheInvitationPending is backlog 7.82 (5): an
+// invitee deactivated before accepting can be reactivated, and that gives
+// the account no password — the Users list shows it invite-pending again —
+// so the invitation still works: accepting it sets the invitee's own
+// password.
+func TestAdminReactivateLeavesTheInvitationPending(t *testing.T) {
+	s := apitest.New(t)
+	_, adminClient := adminWithFactor(t, s, "pending-react-admin@example.test")
+	owner := s.SeedUser("pending-react-owner@example.test", "correct horse battery")
+	s.SeedOrg("pending-react-org", owner)
+	const email = "pending-react@example.test"
+	invitee := seedInvitePending(t, s, email)
+	resp := postJSON(t, s.LoginAs(owner), s.HTTP.URL+"/api/v1/orgs/pending-react-org/invites",
+		map[string]any{"email": email, "role": "viewer"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("invite: status %d (%s)", resp.StatusCode, mustReadBody(t, resp))
+	}
+	_ = resp.Body.Close()
+	token := extractInviteToken(t, s)
+
+	for _, action := range []string{"deactivate", "reactivate"} {
+		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(invitee, action), nil)
+		if resp.StatusCode >= http.StatusBadRequest {
+			t.Fatalf("%s: status %d (%s)", action, resp.StatusCode, mustReadBody(t, resp))
+		}
+		_ = resp.Body.Close()
+	}
+
+	resp = requestJSON(t, adminClient, http.MethodGet, s.HTTP.URL+adminUsersPath+"?q=pending-react%40", nil)
+	var list adminUserListBody
+	decodeInto(t, resp, &list)
+	if len(list.Users) != 1 || list.Users[0].ID != invitee.String() || list.Users[0].State != "invite_pending" {
+		t.Fatalf("the reactivated invitee in the list = %+v, want one invite_pending row", list.Users)
+	}
+
+	resp = postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/invites/accept", map[string]any{
+		"token": token, "display_name": "Invitee", "password": "the invitee's own password",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("accepting after the reactivation: status %d (%s), want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	_ = resp.Body.Close()
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+"/api/v1/auth/login", map[string]string{
+		"email": email, "password": "the invitee's own password",
+	}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("login with the password set by accepting: status %d, want 200", resp.StatusCode)
+	}
+}
+
 // TestAdminActionOnDeactivatedAccountSkipsNotice: an action on a
 // deactivated account happens, but its person is not mailed about it.
 func TestAdminActionOnDeactivatedAccountSkipsNotice(t *testing.T) {
@@ -491,7 +540,8 @@ func TestAdminActionsRefuseOwnAccountAndInvitePending(t *testing.T) {
 		t.Fatalf("the admin's session after the refusals: status %d, want 200", resp.StatusCode)
 	}
 
-	for _, a := range actions[:5] {
+	// Reactivation is allowed there: TestAdminReactivateLeavesTheInvitationPending.
+	for _, a := range []string{"temporary-password", "second-factor/reset", "sessions/revoke", "password-reset-link"} {
 		resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(pending, a), nil)
 		if d := problemDetail(t, resp); resp.StatusCode != http.StatusConflict || d != "invite_pending" {
 			t.Errorf("%s on an invite-pending account: status %d detail %q, want 409 invite_pending", a, resp.StatusCode, d)
