@@ -81,7 +81,8 @@ function follow(pinned: number, steps: readonly RevisionStep[]): number {
  * the draft's base; with no edit typed while it was in flight the draft is
  * rebuilt from it, untouched again (a rebuilt draft never holds a typed
  * secret, which would otherwise ride along on a later save past someone
- * else's rotation); an edit typed meanwhile is kept, still edited.
+ * else's rotation); an edit typed meanwhile is kept, still edited — unless
+ * it was discarded before the answer, which rebuilds the draft as well.
  *
  * A Reload pins the reloaded revision. Content other than the base starts
  * the draft over; the same content keeps it, edited if it was, since the
@@ -130,9 +131,11 @@ export function useRevisionDraft<D>(
     saved(ticket, savedContent, savedRevision) {
       const untouched = edits.current === ticket.edits;
       const savedKey = contentKey(savedContent);
+      // A draft discarded while the save was in flight is untouched too:
+      // keeping it would show the content from before the save as unedited.
       setState((st) =>
-        untouched
-          ? { ...st, draft: build(savedContent), base: savedKey, touched: false, pinned: savedRevision, generation: st.generation + 1 }
+        untouched || !st.touched
+          ?{ ...st, draft: build(savedContent), base: savedKey, touched: false, pinned: savedRevision, generation: st.generation + 1 }
           : { ...st, base: savedKey, pinned: savedRevision },
       );
     },

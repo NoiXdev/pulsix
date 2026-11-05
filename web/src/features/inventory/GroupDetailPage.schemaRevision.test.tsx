@@ -180,6 +180,34 @@ describe('GroupDetailPage schema revision', () => {
     expect(fieldNames(state.puts[1])).toHaveLength(before + 2);
   });
 
+  it('rebuilds a draft discarded while its save was in flight from what that save stored', async () => {
+    const user = userEvent.setup();
+    let release: (v: unknown) => void = () => undefined;
+    const { state } = schemaPage((req, n) =>
+      n === 1 ? new Promise((resolve) => (release = resolve)) : schemaSaved(5, (req.body as { schema: unknown }).schema),
+    );
+    await screen.findByRole('table', { name: 'Fields' });
+    const before = fieldCount();
+    await addField(user);
+    await saveSchema(user);
+    await waitFor(() => expect(state.puts).toHaveLength(1));
+    await addField(user);
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+    expect(fieldCount()).toBe(before);
+
+    const stored = (state.puts[0].body as { schema: unknown }).schema;
+    state.current = group({ revision: 4, schema: stored });
+    release(schemaSaved(4, stored));
+    await screen.findByText('Schema saved');
+    // The page shows what the save stored, not the schema from before it.
+    await waitFor(() => expect(fieldCount()).toBe(before + 1));
+
+    await saveSchema(user);
+    await waitFor(() => expect(state.puts).toHaveLength(2));
+    expect(state.puts[1].headers.get('If-Match')).toBe('"4"');
+    expect(fieldNames(state.puts[1])).toHaveLength(before + 1);
+  });
+
   it('saves the next schema on the revision the previous save stored', async () => {
     const user = userEvent.setup();
     const { state } = schemaPage((req, n) => schemaSaved(3 + n, (req.body as { schema: unknown }).schema));

@@ -121,6 +121,20 @@ describe('useRevisionDraft', () => {
     expect(result.current.generation).toBe(0);
   });
 
+  it('a draft discarded during the save is rebuilt from the response', () => {
+    const { result, rerender } = setup({ stored: B, revision: 3 });
+    act(() => result.current.edit({ built: 'first' }));
+    const ticket = result.current.startSave();
+    act(() => result.current.edit({ built: 'second' }));
+    // Discard while the save is in flight: rebuilt from B, untouched, on 3.
+    act(() => result.current.discard());
+    act(() => result.current.saved(ticket, C, 4));
+    // The refetch brings what the save stored: the draft must not stay B.
+    rerender({ stored: C, revision: 4 });
+    expect(result.current.draft).toEqual({ built: 'c' });
+    expect(result.current.revision).toBe(4);
+  });
+
   it('reload with the same content keeps an edited draft on the reloaded revision', () => {
     const { result, rerender } = setup({ stored: A, revision: 3 });
     act(() => result.current.edit({ built: 'mine' }));
