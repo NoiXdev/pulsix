@@ -32,6 +32,11 @@ an operator can count on. The operator's steps are in
   The previous minor stays supported (below), so the contract step cannot land
   in the same release as the expand step. Backlog 2.93
   (`git_repos.vault_credential_id`) is an example.
+- **A migration can block writes while it builds an index.** Migration 00079
+  builds `jobs_host_ids_idx` with a plain `CREATE INDEX`, which blocks writes
+  to `jobs` (new runs, job status updates) until it finishes. On a large run
+  history expect the upgrade's migration step to take correspondingly longer,
+  and upgrade outside busy automation windows.
 
 ## A database newer than the binary is refused
 
