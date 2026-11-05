@@ -71,6 +71,10 @@ export const enVariables = {
     keepAsManual: 'Keep as manual field',
     remove: 'Remove',
     setInPlaybook: 'Set in playbook',
+    usedIn: 'Used in',
+    notOverridden: 'Not overridden anywhere',
+    usedBySchedule: (name: string) => `Schedule ${name}`,
+    usedByWebhook: (name: string) => `Webhook ${name}`,
   },
   origins: {
     source: 'From playbook',

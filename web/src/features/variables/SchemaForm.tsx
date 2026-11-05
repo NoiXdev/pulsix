@@ -8,6 +8,7 @@ import { Select } from '../../ui/Select.tsx';
 import { childPath, indexPath, inputId, problemAt } from './paths.ts';
 import { isKeepMarker, isRecord, type KeepMarker } from './secrets.ts';
 import { activeFields } from './origin.ts';
+import { newKey } from './keys.ts';
 import type { FieldType, Problem, SchemaField, Vars } from './types.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -319,10 +320,6 @@ function ListInput({ field, path, value, onChange, problems, disabled, idPrefix,
       <FieldFooter field={field} error={error} />
     </div>
   );
-}
-
-function newKey(): string {
-  return Math.random().toString(36).slice(2);
 }
 
 function RepeaterInput({ field, path, value, onChange, problems, disabled, idPrefix, label, error }: FieldInputProps & { label: string; error?: string }) {

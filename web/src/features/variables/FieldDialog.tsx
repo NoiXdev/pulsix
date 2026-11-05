@@ -1,12 +1,14 @@
 import { useState, type FormEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from '@tanstack/react-router';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Tag } from '../../ui/badge.tsx';
 import { FieldAttributes } from './FieldAttributes.tsx';
 import { OriginPill } from './OriginPill.tsx';
-import { editLocked, keepAsManual, originOf, resetToSource, sourceDifferences } from './origin.ts';
+import { editLocked, keepAsManual, originOf, resetToSource, sourceDifferences, type SubLock } from './origin.ts';
 import { formatAttribute } from './fieldEditor.ts';
+import type { UsageEntry } from './usage.ts';
 import type { EditorVariant, FieldSource, Problem, SchemaField } from './types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -21,7 +23,19 @@ export interface FieldDialogProps {
   nested?: boolean;
   /** No new sub-fields (the top-level field is locked to its source). */
   subFieldsLocked?: boolean;
+  /** A sub-field: its name is the source's (the top-level field decides it
+   * from its own origin). */
+  nameLocked?: boolean;
+  /** A sub-field: which names of its own sub-fields the source fixes. */
+  subLock?: SubLock;
   problems?: readonly Problem[];
+  /** Where a template variable is overridden; absent where that is not
+   * known (inventory groups, shared definitions) and for a sub-field. */
+  usage?: readonly UsageEntry[];
+  /** Where an entry of `usage` leads: schedules are a page of the org, the
+   * webhooks a dialog of the template that the caller opens. Without it the
+   * entries are plain text. */
+  usageLinks?: { org: string; onOpenWebhooks: () => void };
   readOnly?: boolean;
   onSave: (field: SchemaField) => void;
   /** Absent for a field that is not in the schema yet. */
@@ -35,6 +49,41 @@ function sourceLine(src: FieldSource, t: Messages): string {
   return t.variables.field.fromSource(kind, src.line ? `${src.file}:${src.line}` : src.file);
 }
 
+/** UsedIn lists the schedules and webhooks that override the field. */
+function UsedIn({ usage, links }: { usage: readonly UsageEntry[]; links?: FieldDialogProps['usageLinks'] }) {
+  const t = useT();
+  const f = t.variables.field;
+  return (
+    <section aria-label={f.usedIn} className="flex flex-col gap-1 border-t border-border pt-3">
+      <h3 className="text-[11px] font-semibold">{f.usedIn}</h3>
+      {usage.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground">{f.notOverridden}</p>
+      ) : (
+        <ul className="flex flex-col gap-0.5 text-xs">
+          {usage.map((u) => {
+            const label = u.kind === 'schedule' ? f.usedBySchedule(u.name) : f.usedByWebhook(u.name);
+            return (
+              <li key={`${u.kind}:${u.id}`}>
+                {!links ? (
+                  label
+                ) : u.kind === 'schedule' ? (
+                  <Link to="/o/$org/schedules" params={{ org: links.org }} search={{ id: u.id, template: undefined }} className="text-primary hover:underline">
+                    {label}
+                  </Link>
+                ) : (
+                  <button type="button" className="text-primary hover:underline" onClick={links.onOpenWebhooks}>
+                    {label}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 /**
  * FieldDialog edits one field on a draft: nothing reaches the schema until
  * Done. A top-level field shows where it came from; an edit of a field
@@ -46,7 +95,7 @@ function sourceLine(src: FieldSource, t: Messages): string {
  * to the outer one. React still passes the submit up the component tree,
  * so the handler stops it here.
  */
-export function FieldDialog({ field, path, variant, nested = false, subFieldsLocked = false, problems, readOnly, onSave, onRemove, onClose }: FieldDialogProps) {
+export function FieldDialog({ field, path, variant, nested = false, subFieldsLocked = false, nameLocked = false, subLock = null, problems, usage, usageLinks, readOnly, onSave, onRemove, onClose }: FieldDialogProps) {
   const t = useT();
   const [draft, setDraft] = useState(field);
   const shown = nested ? draft : editLocked(field, draft);
@@ -82,12 +131,14 @@ export function FieldDialog({ field, path, variant, nested = false, subFieldsLoc
             nested={nested}
             variant={variant}
             problems={problems}
-            nameLocked={!nested && origin !== 'manual'}
+            nameLocked={nested ? nameLocked : origin !== 'manual'}
             subFieldsLocked={subFieldsLocked}
+            subLock={subLock}
             says={says}
             onChange={setDraft}
           />
         </fieldset>
+        {!nested && usage && <UsedIn usage={usage} links={usageLinks} />}
         <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
           {!readOnly && onRemove && origin === 'manual' && (
             <Button type="button" variant="destructive" onClick={onRemove}>

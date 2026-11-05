@@ -5,6 +5,7 @@ import { problemAt, scopeOf } from './paths.ts';
 import { SCALAR_TYPES, changeType, typesFor } from './fieldEditor.ts';
 import { FieldMessages, NumberField, OptionsField, SwitchField, TextField } from './inputs.tsx';
 import { SubFieldList } from './SubFieldList.tsx';
+import type { SubLock } from './origin.ts';
 import type { EditorVariant, FieldType, Problem, SchemaField } from './types.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -22,6 +23,8 @@ export interface FieldAttributesProps {
   nameLocked: boolean;
   /** No new sub-fields: the top-level field is locked to its source. */
   subFieldsLocked: boolean;
+  /** Which names of the sub-fields the source fixes. */
+  subLock: SubLock;
   /** "Source says: …" per attribute that differs from the source. */
   says: Readonly<Record<string, string>>;
   onChange: (f: SchemaField) => void;
@@ -33,7 +36,7 @@ export interface FieldAttributesProps {
  * about; whatever has no input of its own is listed at the end, so nothing
  * stays invisible.
  */
-export function FieldAttributes({ field, path, idBase, nested, variant, problems, nameLocked, subFieldsLocked, says, onChange }: FieldAttributesProps) {
+export function FieldAttributes({ field, path, idBase, nested, variant, problems, nameLocked, subFieldsLocked, subLock, says, onChange }: FieldAttributesProps) {
   const t = useT();
   const id = (k: string) => `${idBase}-${k}`;
   const problem = (k: string) => problemAt(problems, `${path}.${k}`);
@@ -162,6 +165,7 @@ export function FieldAttributes({ field, path, idBase, nested, variant, problems
             variant={variant}
             problems={problems}
             locked={subFieldsLocked}
+            lock={subLock}
             onChange={(fields) => set({ fields })}
           />
         </div>

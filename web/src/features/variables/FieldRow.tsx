@@ -6,7 +6,7 @@ import { OriginPill } from './OriginPill.tsx';
 import { SubFieldList } from './SubFieldList.tsx';
 import { scopeOf } from './paths.ts';
 import { formatValue, hasProblemUnder, typeLabel } from './fieldEditor.ts';
-import { isActive, originOf } from './origin.ts';
+import { isActive, originOf, subLockOf } from './origin.ts';
 import type { EditorVariant, Problem, SchemaField } from './types.ts';
 import { useT } from '../../i18n/useT.ts';
 
@@ -25,7 +25,8 @@ export interface FieldRowProps {
   canMoveDown: boolean;
   expanded: boolean;
   onToggle: () => void;
-  onOpen: () => void;
+  /** Gets the button that was pressed, to give it the focus back. */
+  onOpen: (opener: HTMLElement) => void;
   onChange: (next: SchemaField) => void;
   onMove: (dir: -1 | 1) => void;
 }
@@ -53,7 +54,7 @@ export function FieldRow(props: FieldRowProps) {
         <td className="px-4 py-1.5">
           <div className="flex items-center gap-1">
             {hasSubFields ? (
-              <Button type="button" variant="ghost" className="h-7 px-1" aria-expanded={expanded} aria-controls={subListId} aria-label={t.variables.builder.showSubFields(field.name)} onClick={onToggle}>
+              <Button type="button" variant="ghost" className="h-7 px-1" aria-expanded={expanded} aria-controls={expanded ? subListId : undefined} aria-label={t.variables.builder.showSubFields(field.name)} onClick={onToggle}>
                 {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </Button>
             ) : (
@@ -61,7 +62,7 @@ export function FieldRow(props: FieldRowProps) {
             )}
             {/* The spaces between the parts keep them apart in the button's
                 accessible name; a flex container does not render them. */}
-            <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 text-left hover:bg-accent">
+            <button type="button" onClick={(e) => onOpen(e.currentTarget)} className="flex min-w-0 flex-1 items-center gap-2 rounded px-1 py-1 text-left hover:bg-accent">
               <span className="truncate font-mono text-[13px]">{field.name}</span>{' '}
               {field.label && <span className="truncate text-[11px] text-muted-foreground">{field.label}</span>}{' '}
               {variant === 'group' && scopeOf(field) === 'host' && <Tag>{t.variables.builder.hostTag}</Tag>}{' '}
@@ -107,6 +108,7 @@ export function FieldRow(props: FieldRowProps) {
               variant={variant}
               problems={problems}
               locked={originOf(field) === 'source'}
+              lock={subLockOf(field)}
               readOnly={readOnly}
               onChange={(fields) => onChange({ ...field, fields })}
             />

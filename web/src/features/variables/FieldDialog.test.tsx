@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { FieldDialog } from './FieldDialog.tsx';
+import { FieldDialog, type FieldDialogProps } from './FieldDialog.tsx';
+import { I18nProvider } from '../../i18n/I18nProvider.tsx';
+import { renderRoutes } from '../../test/renderRoutes.tsx';
+import type { UsageEntry } from './usage.ts';
 import type { EditorVariant, FieldSource, SchemaField } from './types.ts';
 
 const src: FieldSource = { kind: 'argument_spec', role: 'web', file: 'roles/web/meta/argument_specs.yml', line: 4 };
@@ -103,5 +106,66 @@ describe('FieldDialog', () => {
     await user.type(screen.getByLabelText('Label'), 'Environment{enter}');
     expect(onSave).toHaveBeenCalledWith({ name: 'env', type: 'string', label: 'Environment' });
     expect(outer).not.toHaveBeenCalled();
+  });
+});
+
+describe('FieldDialog — used in', () => {
+  const usage: UsageEntry[] = [
+    { kind: 'schedule', id: 's1', name: 'nightly' },
+    { kind: 'webhook', id: 't1', name: 'deploy-hook' },
+  ];
+
+  function openUsed(props: Partial<FieldDialogProps>, locale?: 'de') {
+    const onOpenWebhooks = vi.fn();
+    const dialog = (
+      <FieldDialog field={{ name: 'region', type: 'string' }} path="fields[0]" variant="template" usageLinks={{ org: 'acme', onOpenWebhooks }} onSave={() => {}} onClose={() => {}} {...props} />
+    );
+    renderRoutes([{ path: '/schedules', component: () => (locale ? <I18nProvider locale={locale}>{dialog}</I18nProvider> : dialog) }], '/o/acme/schedules');
+    return { onOpenWebhooks };
+  }
+
+  it('lists the schedules and webhooks that override the variable, with links', async () => {
+    const user = userEvent.setup();
+    const { onOpenWebhooks } = openUsed({ usage });
+    const dialog = await screen.findByRole('dialog', { name: 'Field region' });
+    const used = within(within(dialog).getByRole('region', { name: 'Used in' }));
+    const items = used.getAllByRole('listitem');
+    expect(items.map((li) => li.textContent)).toEqual(['Schedule nightly', 'Webhook deploy-hook']);
+    expect(used.getByRole('link', { name: 'Schedule nightly' })).toHaveAttribute('href', '/o/acme/schedules?id=s1');
+    await user.click(used.getByRole('button', { name: 'Webhook deploy-hook' }));
+    expect(onOpenWebhooks).toHaveBeenCalledTimes(1);
+  });
+
+  it('says so when nothing overrides it', async () => {
+    openUsed({ usage: [] });
+    const dialog = await screen.findByRole('dialog', { name: 'Field region' });
+    expect(within(dialog).getByText('Not overridden anywhere')).toBeInTheDocument();
+    expect(within(dialog).queryByRole('list', { name: 'Used in' })).not.toBeInTheDocument();
+  });
+
+  it('shows nothing where usage is not known', async () => {
+    openUsed({});
+    const dialog = await screen.findByRole('dialog', { name: 'Field region' });
+    expect(within(dialog).queryByText('Used in')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Not overridden anywhere')).not.toBeInTheDocument();
+  });
+
+  it('is not shown for a sub-field', async () => {
+    openUsed({ usage, nested: true });
+    const dialog = await screen.findByRole('dialog', { name: 'Field region' });
+    expect(within(dialog).queryByText('Used in')).not.toBeInTheDocument();
+  });
+
+  it('is written in German', async () => {
+    openUsed({ usage }, 'de');
+    const dialog = await screen.findByRole('dialog', { name: 'Feld region' });
+    const used = within(within(dialog).getByRole('region', { name: 'Verwendet in' }));
+    expect(used.getAllByRole('listitem').map((li) => li.textContent)).toEqual(['Zeitplan nightly', 'Webhook deploy-hook']);
+  });
+
+  it('says so in German when nothing overrides it', async () => {
+    openUsed({ usage: [] }, 'de');
+    const dialog = await screen.findByRole('dialog', { name: 'Feld region' });
+    expect(within(dialog).getByText('Nirgends überschrieben')).toBeInTheDocument();
   });
 });

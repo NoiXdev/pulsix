@@ -7,6 +7,7 @@ import { FieldDialog } from './FieldDialog.tsx';
 import { AssignmentPreview } from './AssignmentPreview.tsx';
 import { fieldPath, moveField, newField, removeField, replaceField } from './fieldEditor.ts';
 import { editLocked } from './origin.ts';
+import { useFocusReturn } from './focusReturn.ts';
 import { moveItem, newKey, removeItem } from './keys.ts';
 import type { FieldUsage } from './usage.ts';
 import type { EditorVariant, Problem, SchemaField, VarSchema } from './types.ts';
@@ -20,6 +21,8 @@ export interface VariableEditorProps {
   variant: EditorVariant;
   /** Where each template variable is overridden (shown in its dialog). */
   usage?: FieldUsage;
+  /** Where the entries of a field's "Used in" lead. */
+  usageLinks?: { org: string; onOpenWebhooks: () => void };
   readOnly?: boolean;
 }
 
@@ -37,7 +40,7 @@ type Editing = null | 'new' | { key: string };
  * locked to the playbook turns adjusted whatever part of it was edited
  * (dialog, sub-field, type) and only the active switch leaves it locked.
  */
-export function VariableEditor({ value, onChange, problems, variant, readOnly }: VariableEditorProps) {
+export function VariableEditor({ value, onChange, problems, variant, usage, usageLinks, readOnly }: VariableEditorProps) {
   const t = useT();
   const fields = value.fields;
   // Stable per-field keys, parallel to `fields` (keys.ts). A length change
@@ -48,6 +51,8 @@ export function VariableEditor({ value, onChange, problems, variant, readOnly }:
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
   const [editing, setEditing] = useState<Editing>(null);
   const table = useRef<HTMLTableElement>(null);
+  const addButton = useRef<HTMLButtonElement>(null);
+  const rememberOpener = useFocusReturn(editing !== null, () => addButton.current);
   // A moved row's <tr> is re-inserted into the table, which drops the focus
   // of the move button just pressed; it is put back after the render.
   const refocus = useRef<{ key: string; dir: 'up' | 'down' } | null>(null);
@@ -93,7 +98,15 @@ export function VariableEditor({ value, onChange, problems, variant, readOnly }:
         </ul>
       )}
       {!readOnly && (
-        <Button type="button" className="self-start" onClick={() => setEditing('new')}>
+        <Button
+          ref={addButton}
+          type="button"
+          className="self-start"
+          onClick={(e) => {
+            rememberOpener(e.currentTarget);
+            setEditing('new');
+          }}
+        >
           <Plus size={14} /> {t.variables.builder.addField}
         </Button>
       )}
@@ -127,7 +140,10 @@ export function VariableEditor({ value, onChange, problems, variant, readOnly }:
                 canMoveDown={i < fields.length - 1}
                 expanded={expanded.has(stable[i])}
                 onToggle={() => toggle(stable[i])}
-                onOpen={() => setEditing({ key: stable[i] })}
+                onOpen={(opener) => {
+                  rememberOpener(opener);
+                  setEditing({ key: stable[i] });
+                }}
                 onChange={(next) => update(i, next)}
                 onMove={(dir) => move(i, dir)}
               />
@@ -163,6 +179,8 @@ export function VariableEditor({ value, onChange, problems, variant, readOnly }:
           path={fieldPath('', editIndex)}
           variant={variant}
           problems={problems}
+          usage={usage ? (Object.hasOwn(usage, fields[editIndex].name) ? usage[fields[editIndex].name] : []) : undefined}
+          usageLinks={usageLinks}
           readOnly={readOnly}
           subFieldsLocked={fields[editIndex].origin === 'source'}
           onSave={(f) => {

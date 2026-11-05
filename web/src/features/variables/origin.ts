@@ -95,3 +95,31 @@ export function sourceDifferences(f: SchemaField): [string, unknown][] {
   const keys = [...new Set([...mine.keys(), ...theirs.keys()])].filter((k) => k !== 'name').sort();
   return keys.filter((k) => !sameValue(mine.get(k), theirs.get(k))).map((k) => [k, theirs.get(k)]);
 }
+
+/**
+ * What a field's source fixes below it, for the names of its sub-fields:
+ * every one of them ('all': a field that is still the source's), only the
+ * sub-fields the source declared (a list: an adjusted field, whose
+ * sub-fields added by a person stay free), or none (null). Renaming a
+ * sub-key of a role's argument spec breaks the playbook's contract.
+ */
+export type SubLock = 'all' | readonly SchemaField[] | null;
+
+export function subLockOf(f: SchemaField): SubLock {
+  const origin = originOf(f);
+  if (origin === 'source') return 'all';
+  if (origin === 'adjusted') return f.source_field ? (f.source_field.fields ?? []) : 'all';
+  return null;
+}
+
+/** subNameLocked says whether the name of `sub` is the source's. */
+export function subNameLocked(lock: SubLock, sub: SchemaField): boolean {
+  return lock === 'all' || (lock !== null && lock.some((s) => s.name === sub.name));
+}
+
+/** subLockBelow is the lock for the sub-fields of `sub`, one level down. */
+export function subLockBelow(lock: SubLock, sub: SchemaField): SubLock {
+  if (lock === 'all') return 'all';
+  const declared = lock?.find((s) => s.name === sub.name);
+  return declared ? (declared.fields ?? []) : null;
+}

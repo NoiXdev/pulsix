@@ -70,6 +70,10 @@ export const deVariables: Messages['variables'] = {
     keepAsManual: 'Als manuelles Feld behalten',
     remove: 'Entfernen',
     setInPlaybook: 'Im Playbook gesetzt',
+    usedIn: 'Verwendet in',
+    notOverridden: 'Nirgends überschrieben',
+    usedBySchedule: (name: string) => `Zeitplan ${name}`,
+    usedByWebhook: (name: string) => `Webhook ${name}`,
   },
   origins: {
     source: 'Aus Playbook',

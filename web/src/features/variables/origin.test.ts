@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { activeFields, editLocked, isActive, keepAsManual, originOf, resetToSource, sourceDifferences } from './origin.ts';
+import { activeFields, editLocked, isActive, keepAsManual, originOf, resetToSource, sourceDifferences, subLockBelow, subLockOf, subNameLocked } from './origin.ts';
 import type { FieldSource, SchemaField } from './types.ts';
 
 const src: FieldSource = { kind: 'argument_spec', role: 'web', entry_point: 'main', file: 'roles/web/meta/argument_specs.yml', line: 4 };
@@ -77,5 +77,36 @@ describe('sourceDifferences', () => {
     const adjusted: SchemaField = { ...port, default: 8080, label: 'Port', origin: 'adjusted', source_field: { name: 'port', type: 'int', default: 80, required: true } };
     expect(sourceDifferences(adjusted)).toEqual([['default', 80], ['label', undefined], ['required', true]]);
     expect(sourceDifferences(port)).toEqual([]);
+  });
+});
+
+describe('sub-field name locks', () => {
+  const cert: SchemaField = { name: 'cert', type: 'string' };
+  const ssl: SchemaField = { name: 'ssl', type: 'object', fields: [cert] };
+  const domain: SchemaField = { name: 'domain', type: 'string' };
+  const repeater: SchemaField = { name: 'vhosts', type: 'repeater', fields: [domain, ssl], origin: 'source', source: src };
+
+  it('locks every name of a source field, at every level', () => {
+    const lock = subLockOf(repeater);
+    expect(lock).toBe('all');
+    expect(subNameLocked(lock, domain)).toBe(true);
+    expect(subLockBelow(lock, ssl)).toBe('all');
+  });
+
+  it('locks only what the source declared on an adjusted field', () => {
+    const extra: SchemaField = { name: 'extra', type: 'object', fields: [{ name: 'x', type: 'string' }] };
+    const adjusted: SchemaField = { ...repeater, origin: 'adjusted', source_field: { name: 'vhosts', type: 'repeater', fields: [domain, ssl] }, fields: [domain, ssl, extra] };
+    const lock = subLockOf(adjusted);
+    expect(subNameLocked(lock, domain)).toBe(true);
+    expect(subNameLocked(lock, extra)).toBe(false);
+    expect(subLockBelow(lock, ssl)).toEqual([cert]);
+    expect(subNameLocked(subLockBelow(lock, ssl), cert)).toBe(true);
+    expect(subLockBelow(lock, extra)).toBeNull();
+  });
+
+  it('locks nothing on a manual or gone field', () => {
+    expect(subLockOf({ name: 'a', type: 'repeater' })).toBeNull();
+    expect(subLockOf({ ...repeater, origin: 'gone' })).toBeNull();
+    expect(subNameLocked(null, domain)).toBe(false);
   });
 });
