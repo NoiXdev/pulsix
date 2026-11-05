@@ -6903,7 +6903,7 @@ export interface components {
              */
             needs_review: number;
             /** @description Variables a run leaves out until a person enters their value again: each holds a stored secret under a field that is no longer a secret */
-            not_sent: string[] | null;
+            not_sent: string[];
         };
         TemplateVariablesSourceDTO: {
             /** @description The revision the template last applied */

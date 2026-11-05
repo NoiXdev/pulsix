@@ -180,8 +180,8 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
     .map((f) => ({ path: f.name, message: v.secretUnderType }));
   // What a run leaves out as stored: a secret under a field that is no
   // longer a secret, until a person enters its value again (backlog 7.87).
-  // The server always sends a list; the generated type allows null.
-  const notSent = data.review?.not_sent ?? [];
+  // The review is absent on a write's answer; its list is never null.
+  const notSent = data.review ? data.review.not_sent : [];
   return (
     <div className="flex min-w-0 flex-col gap-5">
       <div className="flex flex-col gap-2">

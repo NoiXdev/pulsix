@@ -52,7 +52,7 @@ type templateVariablesReviewDTO struct {
 	NeedsReview     int      `json:"needs_review" doc:"Source changes and additions held for a person (a type or secret change, or a stored value that no longer fits)"`
 	MissingRequired int      `json:"missing_required" doc:"Active required fields without a default or a value"`
 	LeftOut         int      `json:"left_out" doc:"Source fields not added because a template holds at most 100 fields"`
-	NotSent         []string `json:"not_sent" doc:"Variables a run leaves out until a person enters their value again: each holds a stored secret under a field that is no longer a secret"`
+	NotSent         []string `json:"not_sent" nullable:"false" doc:"Variables a run leaves out until a person enters their value again: each holds a stored secret under a field that is no longer a secret"`
 }
 
 func toSourceDTO(si templates.SourceInfo) *templateVariablesSourceDTO {

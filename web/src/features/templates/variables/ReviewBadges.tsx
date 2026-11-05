@@ -14,8 +14,7 @@ export function ReviewBadges({ review }: { review?: TemplateVariablesReview }) {
   const t = useT();
   const r = t.templates.review;
   if (!review) return null;
-  // The server always sends a list; the generated type allows null.
-  const notSent = review.not_sent?.length ?? 0;
+  const notSent = review.not_sent.length;
   const badges = [
     review.gone > 0 && <Pill key="gone" tone="warn">{r.gone(review.gone)}</Pill>,
     review.needs_review > 0 && <Pill key="review" tone="warn">{r.needsReview(review.needs_review)}</Pill>,

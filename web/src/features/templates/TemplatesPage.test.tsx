@@ -440,7 +440,7 @@ describe('TemplatesPage', () => {
 
   it("links a template's variables page from its row and its dialog, with the review badges", async () => {
     const user = userEvent.setup();
-    const linked = template({ vars_mode: 'automatic', variables_review: { gone: 2, needs_review: 1, missing_required: 0, left_out: 0, not_sent: null } });
+    const linked = template({ vars_mode: 'automatic', variables_review: { gone: 2, needs_review: 1, missing_required: 0, left_out: 0, not_sent: [] } });
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/job-templates': { templates: [linked] },

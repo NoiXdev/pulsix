@@ -69,7 +69,7 @@ describe('TemplateVariablesPage — the source', () => {
   });
 
   it('shows the review badges', async () => {
-    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ review: { gone: 1, needs_review: 1, missing_required: 1, left_out: 0 } }) }));
+    mockApi(routes({ 'GET /api/v1/orgs/acme/job-templates/t1/variables': variables({ review: { gone: 1, needs_review: 1, missing_required: 1, left_out: 0, not_sent: [] } }) }));
     renderPage();
     expect(await screen.findByText('1 field gone from the source — review')).toBeInTheDocument();
     expect(screen.getByText('1 change needs review')).toBeInTheDocument();
