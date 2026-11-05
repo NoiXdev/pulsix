@@ -15,6 +15,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
+import { expectNoClippedCards } from './layout.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -114,6 +115,9 @@ test('a template takes its variables from the playbook, and a group keeps manual
   await expect(fieldRow(page, 'http_port')).toContainText('From playbook');
   await expect(page.getByRole('switch', { name: 'admin_user active' })).not.toBeChecked();
   await expect(page.getByRole('switch', { name: 'http_port active' })).toBeChecked();
+  // The variables page (field list, values) fits its column at the default
+  // 1280px viewport.
+  await expectNoClippedCards(page);
 
   // --- A group's schema: manual fields through "Add field" --------------
   await page.goto(`${base}/groups`);
