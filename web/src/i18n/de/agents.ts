@@ -33,6 +33,7 @@ export const deAgents: Messages['agents'] = {
   revoked: (host: string) => `Agent auf ${host} widerrufen`,
   revokeFailed: 'Widerrufen fehlgeschlagen',
   withdraw: 'Zurückziehen',
+  tokenActions: (name: string) => `Aktionen für Token ${name}`,
   withdrawFailed: 'Zurückziehen fehlgeschlagen',
   dialog: {
     title: 'Agent registrieren',

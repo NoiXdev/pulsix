@@ -45,6 +45,7 @@ export const deWorkers: Messages['workers'] = {
   deleteConfirm: (name: string) => `Worker ${name} löschen? Sein Verlauf bleibt im Aktivitätsprotokoll erhalten.`,
   deleteFailed: 'Löschen fehlgeschlagen',
   withdraw: 'Zurückziehen',
+  enrollmentActions: (name: string) => `Aktionen für Registrierung ${name}`,
   withdrawFailed: 'Zurückziehen fehlgeschlagen',
   dialog: {
     title: 'Worker hinzufügen',

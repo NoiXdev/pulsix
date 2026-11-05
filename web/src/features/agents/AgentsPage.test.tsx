@@ -81,7 +81,28 @@ describe('AgentsPage', () => {
     expect(screen.getByText('edge-1')).toBeInTheDocument();
     expect(screen.getByText('1 / 3')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Actions for web-1' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Actions for edge-1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions for token edge-1' })).toBeInTheDocument();
+  });
+
+  it('keeps a pending token menu apart from an agent of the same name', async () => {
+    const user = userEvent.setup();
+    let withdrawn = false;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/agents': { agents: [agent()] },
+      'GET /api/v1/orgs/acme/agents/tokens': {
+        tokens: [{ id: 't1', zone_id: 'z1', name_hint: 'web-1', max_uses: 3, uses: 1, expires_at: inDays(0.02), created_at: '' }],
+      },
+      'DELETE /api/v1/orgs/acme/agents/tokens/t1': () => {
+        withdrawn = true;
+        return {};
+      },
+    });
+    renderPage();
+    await screen.findByRole('button', { name: 'Actions for web-1' });
+    await user.click(screen.getByRole('button', { name: 'Actions for token web-1' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
+    await waitFor(() => expect(withdrawn).toBe(true));
   });
 
   it("each agent row opens its host's connection section", async () => {
@@ -148,7 +169,7 @@ describe('AgentsPage', () => {
       },
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Actions for edge-1' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for token edge-1' }));
     await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
     await waitFor(() => expect(withdrawn).toBe(true));
   });

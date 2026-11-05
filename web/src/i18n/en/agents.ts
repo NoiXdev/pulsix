@@ -32,6 +32,7 @@ export const enAgents = {
   revoked: (host: string) => `Agent on ${host} revoked`,
   revokeFailed: 'Revoking failed',
   withdraw: 'Withdraw',
+  tokenActions: (name: string) => `Actions for token ${name}`,
   withdrawFailed: 'Withdrawing failed',
   dialog: {
     title: 'Enrol an agent',

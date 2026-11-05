@@ -238,7 +238,7 @@ describe('WorkersPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for hel-1' }));
     await user.click(screen.getByRole('menuitem', { name: 'Revoke…' }));
     expect(await screen.findByText('Worker hel-1 revoked')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Actions for hel-2' }));
+    await user.click(screen.getByRole('button', { name: 'Actions for enrollment hel-2' }));
     await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
     await waitFor(() => expect(calls).toEqual(['revoke', 'withdraw']));
   });
@@ -302,7 +302,7 @@ describe('WorkersPage', () => {
       'DELETE /api/v1/orgs/acme/worker-enrollments/e1': () => new Response(JSON.stringify({ detail: 'token already used' }), { status: 409 }),
     });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Actions for hel-2' }));
+    await user.click(await screen.findByRole('button', { name: 'Actions for enrollment hel-2' }));
     await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
     expect(await screen.findByText('token already used')).toBeInTheDocument();
   });
@@ -325,9 +325,29 @@ describe('WorkersPage', () => {
     renderPage();
     await screen.findByText('hel-1');
     expect(screen.getAllByRole('button', { name: /^Actions for / })).toHaveLength(4);
-    for (const name of ['hel-1', 'fra-1', 'old', 'hel-2']) {
-      expect(screen.getByRole('button', { name: `Actions for ${name}` })).toBeInTheDocument();
+    for (const name of ['Actions for hel-1', 'Actions for fra-1', 'Actions for old', 'Actions for enrollment hel-2']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
     }
+  });
+
+  it('keeps a pending enrolment menu apart from a worker of the same name', async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/workers': { workers: [worker()] },
+      'GET /api/v1/orgs/acme/worker-enrollments': { enrollments: [{ id: 'e1', name: 'hel-1', zone_id: 'z1', expires_at: inDays(0.02), created_at: '' }] },
+      'DELETE /api/v1/orgs/acme/worker-enrollments/e1': () => {
+        calls.push('withdraw');
+        return {};
+      },
+    });
+    renderPage();
+    await screen.findByRole('button', { name: 'Actions for hel-1' });
+    // One button each, so neither query throws on a duplicate.
+    await user.click(screen.getByRole('button', { name: 'Actions for enrollment hel-1' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
+    await waitFor(() => expect(calls).toEqual(['withdraw']));
   });
 
   it('rows are not links and keep the current-job link', async () => {

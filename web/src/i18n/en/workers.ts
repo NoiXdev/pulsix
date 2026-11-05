@@ -48,6 +48,7 @@ export const enWorkers = {
   deleteConfirm: (name: string) => `Delete worker ${name}? Its history stays in the activity log.`,
   deleteFailed: 'Deleting failed',
   withdraw: 'Withdraw',
+  enrollmentActions: (name: string) => `Actions for enrollment ${name}`,
   withdrawFailed: 'Withdrawing failed',
   dialog: {
     title: 'Add worker',

@@ -81,7 +81,7 @@ export function AgentTokenRow({
       columns={columns}
       menu={
         canWrite && (
-          <RowMenu label={t.common.rowActions(name)}>
+          <RowMenu label={t.agents.tokenActions(name)}>
             <RowMenuItem onSelect={() => onWithdraw(tok)}>{t.agents.withdraw}</RowMenuItem>
           </RowMenu>
         )

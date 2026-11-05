@@ -93,7 +93,7 @@ export function EnrollmentRow({
       columns={columns}
       menu={
         canWrite && (
-          <RowMenu label={t.common.rowActions(e.name)}>
+          <RowMenu label={t.workers.enrollmentActions(e.name)}>
             <RowMenuItem onSelect={() => onWithdraw(e)}>{t.workers.withdraw}</RowMenuItem>
           </RowMenu>
         )
