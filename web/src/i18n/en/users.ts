@@ -102,14 +102,18 @@ export const enUsers = {
     deactivate: {
       label: 'Deactivate account',
       description: 'The person can no longer sign in.',
+      inviteDescription: 'The invitation can no longer be accepted.',
       body: 'The person can no longer sign in. Every session ends and every API token of the account is revoked. You can reactivate the account later, but revoked tokens stay revoked.',
+      inviteBody: 'The invitation can no longer be accepted. You can reactivate the account later; the invitation then stays open.',
       confirm: 'Deactivate account',
       done: 'Account deactivated.',
     },
     reactivate: {
       label: 'Reactivate account',
       description: 'The person can sign in again.',
+      inviteDescription: 'The invitation can be accepted again.',
       body: 'The person can sign in again. API tokens that were revoked at deactivation stay revoked.',
+      inviteBody: 'The invitation can be accepted again. The account still has no password until the person accepts it.',
       confirm: 'Reactivate account',
       done: 'Account reactivated.',
     },

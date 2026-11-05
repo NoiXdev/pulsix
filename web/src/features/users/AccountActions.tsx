@@ -62,7 +62,7 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
           return (
             <div key={kind} className="flex items-center gap-4 border-b border-border px-4 py-3 last:border-b-0">
               <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-                {blocked ?? a[kind].description}
+                {blocked ?? describeAction(a, kind, user.invite_pending)}
               </span>
               <Button
                 type="button"
@@ -87,6 +87,7 @@ export function AccountActions({ user, selfId }: { user: AdminUserDetail; selfId
           key={openKind}
           kind={openKind}
           email={user.email}
+          invitePending={user.invite_pending}
           busy={runner.running === openKind}
           error={runner.error}
           onConfirm={() => runner.confirm(openKind)}
@@ -108,11 +109,27 @@ function resetLinkBlocked(t: Messages, available: { data?: { available: boolean 
   return available.isError ? a.checkFailed : a.checking;
 }
 
+/** An account whose invitation is still pending has never signed in, so what
+ * Deactivate and Reactivate do to it is that the invitation can no longer be
+ * accepted, or can be again, not that the person can sign in. */
+function usesInviteText(kind: ActionKind, invitePending: boolean): kind is 'deactivate' | 'reactivate' {
+  return invitePending && (kind === 'deactivate' || kind === 'reactivate');
+}
+
+function describeAction(a: Messages['users']['actions'], kind: ActionKind, invitePending: boolean): string {
+  return usesInviteText(kind, invitePending) ? a[kind].inviteDescription : a[kind].description;
+}
+
+function actionBody(a: Messages['users']['actions'], kind: Exclude<ActionKind, 'resetLink'>, invitePending: boolean): string {
+  return usesInviteText(kind, invitePending) ? a[kind].inviteBody : a[kind].body;
+}
+
 /** ConfirmDialog says what an action will do and starts it. It holds no
  * state of the request: closing it mid-request loses nothing. */
 function ConfirmDialog({
   kind,
   email,
+  invitePending,
   busy,
   error,
   onConfirm,
@@ -120,6 +137,7 @@ function ConfirmDialog({
 }: {
   kind: ActionKind;
   email: string;
+  invitePending: boolean;
   busy: boolean;
   error: string | null;
   onConfirm: () => void;
@@ -131,7 +149,7 @@ function ConfirmDialog({
   return (
     <Dialog open onClose={onClose} title={text.label} dismissible={!busy}>
       <div className="flex flex-col gap-4">
-        <p className="text-xs text-muted-foreground">{kind === 'resetLink' ? a.resetLink.body(email) : a[kind].body}</p>
+        <p className="text-xs text-muted-foreground">{kind === 'resetLink' ? a.resetLink.body(email) : actionBody(a, kind, invitePending)}</p>
         {kind === 'resetFactor' && (
           <p className="rounded-md border border-[var(--px-warn)] p-3 text-xs text-[var(--px-warn)]">{a.resetFactor.warning}</p>
         )}

@@ -101,14 +101,18 @@ export const deUsers: Messages['users'] = {
     deactivate: {
       label: 'Konto deaktivieren',
       description: 'Die Person kann sich nicht mehr anmelden.',
+      inviteDescription: 'Die Einladung kann nicht mehr angenommen werden.',
       body: 'Die Person kann sich nicht mehr anmelden. Alle Sitzungen enden und alle API-Tokens des Kontos werden widerrufen. Das Konto lässt sich später reaktivieren, widerrufene Tokens bleiben aber widerrufen.',
+      inviteBody: 'Die Einladung kann nicht mehr angenommen werden. Das Konto lässt sich später reaktivieren, die Einladung bleibt dann offen.',
       confirm: 'Konto deaktivieren',
       done: 'Konto deaktiviert.',
     },
     reactivate: {
       label: 'Konto reaktivieren',
       description: 'Die Person kann sich wieder anmelden.',
+      inviteDescription: 'Die Einladung kann wieder angenommen werden.',
       body: 'Die Person kann sich wieder anmelden. API-Tokens, die bei der Deaktivierung widerrufen wurden, bleiben widerrufen.',
+      inviteBody: 'Die Einladung kann wieder angenommen werden. Das Konto hat bis zur Annahme weiterhin kein Passwort.',
       confirm: 'Konto reaktivieren',
       done: 'Konto reaktiviert.',
     },

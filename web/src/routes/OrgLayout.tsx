@@ -6,8 +6,7 @@ import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
 import { useMe } from '../api/hooks/useMe.ts';
-import { logout } from '../api/hooks/useAuth.ts';
-import { useResetSession } from '../lib/session.ts';
+import { useSignOut } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { useT } from '../i18n/useT.ts';
 import { sessionState } from '../lib/sessionState.ts';
@@ -32,7 +31,7 @@ export function OrgLayout() {
   const { org: orgSlug } = useParams({ strict: false }) as { org: string };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const navigate = useNavigate();
-  const resetSession = useResetSession();
+  const signOut = useSignOut();
   const t = useT();
   const [creatingOrg, setCreatingOrg] = useState(false);
 
@@ -80,16 +79,7 @@ export function OrgLayout() {
         displayName: me.data.user.display_name,
         subtitle: `${org.data.org.role.charAt(0).toUpperCase()}${org.data.org.role.slice(1)}`,
       }}
-      onLogout={async () => {
-        await logout();
-        // Navigate first, then drop every cached query and mutation
-        // (lib/session.ts): whoever signs in next on this tab must not
-        // be served this user's data, and resetting while this layout
-        // is still mounted would only make it re-fetch everything with
-        // the now-dead session.
-        await navigate({ to: '/login', search: { step: undefined } });
-        resetSession();
-      }}
+      onLogout={signOut}
     >
       <Outlet />
       <CreateOrgDialog open={creatingOrg} onClose={() => setCreatingOrg(false)} />

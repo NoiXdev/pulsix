@@ -394,6 +394,34 @@ describe('AccountActions', () => {
     }
   });
 
+  it('says the invitation, not the sign-in, is what Deactivate and Reactivate change for an invitee', async () => {
+    const user = userEvent.setup();
+    render(accountDetail({ state: 'invite_pending', invite_pending: true }));
+    expect(await screen.findByText('The invitation can no longer be accepted.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Deactivate account' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Deactivate account' });
+    expect(dialog).toHaveTextContent('The invitation can no longer be accepted.');
+    expect(dialog).not.toHaveTextContent(/sign in/);
+  });
+
+  it('says the invitation can be accepted again when an invitee is reactivated', async () => {
+    const user = userEvent.setup();
+    render(accountDetail({ state: 'deactivated', invite_pending: true, disabled_at: '2026-10-01T00:00:00Z' }));
+    expect(await screen.findByText('The invitation can be accepted again.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Reactivate account' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Reactivate account' });
+    expect(dialog).toHaveTextContent('The invitation can be accepted again.');
+    expect(dialog).not.toHaveTextContent(/sign in/);
+  });
+
+  it('keeps the sign-in wording for an account that has signed in', async () => {
+    const user = userEvent.setup();
+    render(accountDetail());
+    await user.click(await screen.findByRole('button', { name: 'Deactivate account' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Deactivate account' });
+    expect(dialog).toHaveTextContent('The person can no longer sign in.');
+  });
+
   it('offers Reactivate instead of Deactivate for a deactivated account', async () => {
     const user = userEvent.setup();
     let reactivated = false;
