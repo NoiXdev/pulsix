@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '../../../ui/button.tsx';
 import { DisabledHint, Section } from '../../../ui/detail-layout.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
@@ -44,7 +44,10 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   const toast = useToast();
   const fields = groupFields(toVarSchema(group.schema));
   const save = useSetGroupVars(org, group.id);
-  const [draft, setDraft] = useState<Vars>(() => toKeepMarkers(fields, declaredOnly(fields, (group.vars ?? {}) as Vars)));
+  // A draft is built from stored values the same way on mount and after a
+  // save: secrets as keep markers, never as anything typed.
+  const draftOf = (vars: InventoryGroup['vars']) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
+  const [draft, setDraft] = useState<Vars>(() => draftOf(group.vars));
   const [problems, setProblems] = useState<Problem[]>(() => (group.problems ?? []).map((p) => ({ path: p.path, message: p.message })));
   const [stale, setStale] = useState(false);
   // The revision a save sends as its If-Match. While the draft is pristine
@@ -56,16 +59,24 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // newer revision with the same values no longer moves it: saving on that
   // revision would overwrite a change the user never saw (backlog 7.86). An
   // edit typed back to the start still counts as one. A successful save
-  // makes the draft pristine again; a Reload pins it to the reloaded
-  // revision and leaves it edited if it was, since the kept draft still is
-  // not the stored values.
+  // rebuilds the draft from what it stored and makes it pristine again (a
+  // pristine draft never holds a typed secret, which would otherwise ride
+  // along on a later save past someone else's rotation); an edit typed while
+  // that save was in flight is kept instead, pinned to the stored revision.
+  // A Reload pins the draft to the reloaded revision and leaves it edited if
+  // it was, since the kept draft still is not the stored values.
   const [touched, setTouched] = useState(false);
   const [pinnedRevision, setPinnedRevision] = useState(group.revision);
   // Pristine, it is the newer of the group's and the one this form's last
   // save stored, should the refetch after that save have failed.
   const revision = touched ? pinnedRevision : Math.max(pinnedRevision, group.revision);
 
+  // Counts edits, so a save can tell whether one was typed while it was in
+  // flight.
+  const edits = useRef(0);
+
   function onChange(next: Vars) {
+    edits.current += 1;
     if (!touched) {
       setPinnedRevision(revision);
       setTouched(true);
@@ -85,10 +96,14 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
 
   async function onSave() {
     setProblems([]);
+    const editsAtSave = edits.current;
     try {
       const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
       setPinnedRevision(res.group.revision);
-      setTouched(false);
+      if (edits.current === editsAtSave) {
+        setDraft(draftOf(res.group.vars));
+        setTouched(false);
+      }
       save.reset();
       toast.show(t.inventory.valuesTab.saved);
     } catch (err) {
