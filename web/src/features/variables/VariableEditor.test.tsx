@@ -34,6 +34,12 @@ describe('VariableEditor — the field list', () => {
     expect(within(rows[1]).getByRole('switch', { name: 'debug active' })).not.toBeChecked();
   });
 
+  it('marks the field list as a card, so the layout check covers it', () => {
+    render(<EditorHarness variant="group" initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
+    // web/e2e/layout.ts expectNoClippedCards checks every [data-card].
+    expect(screen.getByRole('table', { name: 'Fields' }).closest('[data-card]')).not.toBeNull();
+  });
+
   it('has no origin column outside job templates', () => {
     render(<EditorHarness variant="group" initial={{ fields: [{ name: 'env', type: 'string' }] }} />);
     expect(screen.queryByRole('columnheader', { name: 'Origin' })).not.toBeInTheDocument();

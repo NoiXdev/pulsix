@@ -123,8 +123,10 @@ export function VariableEditor({ value, onChange, problems, variant, usage, usag
       )}
       {/* Not a Card: its overflow-clip cut off the type list of a sub-field
           opened near the list's bottom (the inline sub-field rows hold
-          selects whose options open below them). */}
-      <div className="flex shrink-0 flex-col rounded-[10px] border border-border bg-card">
+          selects whose options open below them). It still carries
+          data-card, so the E2E layout check (expectNoClippedCards) catches
+          a field list wider than its column. */}
+      <div data-card="" className="flex shrink-0 flex-col rounded-[10px] border border-border bg-card">
         <table ref={table} className="w-full text-xs" aria-label={t.variables.builder.fields}>
           <thead>
             <tr className="text-left text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
