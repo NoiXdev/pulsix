@@ -437,22 +437,29 @@ func (s *Service) ResolveTemplatePlaybooks(ctx context.Context, orgID, repoID, p
 // validateTemplateDefinitionInput runs the checks that belong to THIS
 // package rather than the API schema layer (ErrInvalidInput's own doc
 // comment explains why a template's extra vars are different from a
-// repository definition's plain string fields): no secret-typed schema
-// field, no field taken from a playbook, and none of the
-// connection-security variables internal/ansiblevars reserves — the same
-// denylist internal/templates.Service.build applies to an ordinary
-// template's extra vars, reused here because a shared definition's extra
-// vars reach every organization's own job_templates row WITHOUT ever
-// passing through that service (store_sql.go writes them directly, exactly
-// like a repository projection's name/url/branch/subpath).
+// repository definition's plain string fields): a well-formed schema
+// (schema.Check) with no secret-typed field and no field taken from a
+// playbook, and none of the connection-security variables
+// internal/ansiblevars reserves — the same denylist
+// internal/templates.Service.build applies to an ordinary template's extra
+// vars, reused here because a shared definition's extra vars reach every
+// organization's own job_templates row WITHOUT ever passing through that
+// service (store_sql.go writes them directly, exactly like a repository
+// projection's name/url/branch/subpath).
 func validateTemplateDefinitionInput(in TemplateDefinitionInput) error {
 	if in.ExtraVarsSchema != nil && schemaHasSecretField(in.ExtraVarsSchema.Fields) {
 		return fmt.Errorf("%w: a shared template's extra vars schema may not declare a secret field — a shared definition carries no secret by construction", ErrInvalidInput)
 	}
-	// A shared definition holds manual fields only (backlog 7.75): the
-	// playbook source sync applies to an organization's own job
-	// templates, never to a definition projected into every organization.
+	// The schema reaches every organization's job_templates row without
+	// passing through internal/templates, whose build runs schema.Check,
+	// so it is checked here (backlog 7.75). A shared definition holds
+	// manual fields only: the playbook source sync applies to an
+	// organization's own job templates, never to a definition projected
+	// into every organization.
 	if in.ExtraVarsSchema != nil {
+		if err := in.ExtraVarsSchema.Check(); err != nil {
+			return fmt.Errorf("%w: extra vars schema: %w", ErrInvalidInput, err)
+		}
 		if err := in.ExtraVarsSchema.CheckManualOnly(); err != nil {
 			return fmt.Errorf("%w: extra vars schema: %w", ErrInvalidInput, err)
 		}

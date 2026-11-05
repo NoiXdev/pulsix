@@ -663,6 +663,45 @@ func TestTemplateDefinitionRefusesSourceFields(t *testing.T) {
 	}
 }
 
+// TestTemplateDefinitionChecksItsSchema: a shared definition's schema is
+// written into every organization's job_templates row unchecked by any
+// other service, so it gets the full schema.Check here — a manual field
+// carrying a source is refused on create and update alike, and a
+// well-formed legacy schema still passes.
+func TestTemplateDefinitionChecksItsSchema(t *testing.T) {
+	store := newFakeStore()
+	svc := shared.NewService(store)
+	in := shared.TemplateDefinitionInput{
+		Name: "deploy-site", SharedRepoID: uuid.Must(uuid.NewV7()), PlaybookPath: "site.yml",
+		ExtraVarsSchema: &schema.Schema{Fields: []schema.Field{{
+			Name: "release", Type: schema.TypeString,
+			Source: &schema.FieldSource{Kind: schema.SourceVarsPrompt, File: "site.yml", Line: 4},
+		}}},
+	}
+	_, err := svc.CreateTemplate(ctx, in)
+	if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "fields[0].source") {
+		t.Fatalf("CreateTemplate() with a manual field carrying a source error = %v, want ErrInvalidInput naming fields[0].source", err)
+	}
+	if _, err := svc.UpdateTemplate(ctx, uuid.Must(uuid.NewV7()), in); !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "fields[0].source") {
+		t.Fatalf("UpdateTemplate() with a manual field carrying a source error = %v, want ErrInvalidInput naming fields[0].source", err)
+	}
+	if len(store.createTemplateCalls)+len(store.updateTemplateCalls) != 0 {
+		t.Fatal("nothing may be written for a definition whose schema fails its check")
+	}
+
+	in.ExtraVarsSchema = &schema.Schema{Fields: []schema.Field{
+		{Name: "release", Type: schema.TypeString, Required: true},
+		{Name: "env", Type: schema.TypeEnum, Options: []string{"prod", "staging"}, Default: "prod"},
+	}}
+	def, err := svc.CreateTemplate(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateTemplate() with a well-formed legacy schema: %v", err)
+	}
+	if _, err := svc.UpdateTemplate(ctx, def.ID, in); err != nil {
+		t.Fatalf("UpdateTemplate() with a well-formed legacy schema: %v", err)
+	}
+}
+
 func TestCreateTemplateRefusesAForbiddenExtraVarName(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)

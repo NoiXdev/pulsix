@@ -247,8 +247,9 @@ type templateDefinitionDetailOutput struct {
 // shared_repo_id or playbook_path, by design (format validation belongs at
 // this schema layer). ExtraVars and ExtraVarsSchema are the one part of
 // this body shared.Service DOES validate itself (shared.ErrInvalidInput):
-// no secret-typed field, and no forbidden connection-security variable —
-// checks this package cannot push down to a schema tag.
+// a well-formed schema with no secret-typed field and no field taken from
+// a playbook, and no forbidden connection-security variable — checks this
+// package cannot push down to a schema tag.
 type templateDefinitionBody struct {
 	Name            string         `json:"name" minLength:"1" maxLength:"63"`
 	SharedRepoID    string         `json:"shared_repo_id"`
