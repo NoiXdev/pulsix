@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,6 +26,10 @@ type terminalTransition struct {
 	status  Status
 	stats   json.RawMessage // nil keeps the row's stats
 	errText string
+	// varSources is the variable sources report a sync_repo result carried
+	// (finish takes it out of the stats); nil: none was sent. Only a
+	// succeeded sync records it (recordSync).
+	varSources json.RawMessage
 	// from is the set of current statuses the transition applies to; a job
 	// in any other status is left untouched and onMiss decides the answer.
 	from []Status
@@ -51,7 +56,10 @@ type terminalTransition struct {
 // the sealed payload. A sink failure rolls everything back and returns the
 // error — the job keeps its status and payload, and a retry completes all
 // of it. applied reports whether the status was written. After a commit
-// the job's in-process stream and cancel records are dropped.
+// the job's in-process stream and cancel records are dropped, and a
+// succeeded sync that sent variable sources has them applied
+// (applySources) — outside the transaction, so the applier sees the
+// committed record and its failure cannot undo the sync.
 //
 // Members of a rotation group — and of a run group when a RunGroupSink is
 // wired (run_group.go) — serialize on a per-group advisory transaction
@@ -84,6 +92,7 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		stats = t.stats
 	}
 	applied := false
+	var applyRepo uuid.UUID
 	err := q.db.WithWriteTx(ctx, orgID, func(ctx context.Context) error {
 		if Kind(kind) == KindRotateKey || Kind(kind) == KindConnectionTest || (Kind(kind) == KindRun && q.runGroups != nil) {
 			if _, err := q.db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`,
@@ -140,9 +149,11 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 		if err := q.cancelDependents(ctx, t.jobID, t.status); err != nil {
 			return err
 		}
-		if err := q.recordSync(ctx, t.jobID, t.status, t.errText); err != nil {
+		repoID, err := q.recordSync(ctx, t.jobID, t.status, t.errText, t.varSources)
+		if err != nil {
 			return err
 		}
+		applyRepo = repoID
 		if err := q.recordTest(ctx, t.jobID, t.status); err != nil {
 			return err
 		}
@@ -169,6 +180,28 @@ func (q *SQLQueue) terminate(ctx context.Context, t terminalTransition) (bool, e
 	if applied {
 		q.streams.removeAll(t.jobID)
 		q.cancels.remove(t.jobID)
+		if applyRepo != uuid.Nil {
+			q.applySources(ctx, orgID, applyRepo)
+		}
 	}
 	return applied, nil
+}
+
+// sourceApplyTimeout bounds the apply after a sync (plan decision 9).
+const sourceApplyTimeout = 30 * time.Second
+
+// applySources hands a repository whose sync just committed new variable
+// sources to the optional applier, on a context detached from the
+// finish's (a worker that hangs up after its result does not cut the
+// apply short) and bounded to sourceApplyTimeout. A failure is logged; a
+// manager gone in between leaves the apply to the next sync.
+func (q *SQLQueue) applySources(ctx context.Context, orgID, repoID uuid.UUID) {
+	if q.applier == nil {
+		return
+	}
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sourceApplyTimeout)
+	defer cancel()
+	if err := q.applier.ApplyRepoSources(actx, orgID, repoID); err != nil {
+		slog.ErrorContext(ctx, "apply repository variable sources", "err", err, "org", orgID, "repo", repoID)
+	}
 }

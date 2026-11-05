@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer.
@@ -205,6 +207,20 @@ type Store interface {
 	// repository of the organization in one call, keyed by repo id
 	// (backlog 2.94): List calls this once instead of once per row.
 	ListOrgRepoVaultIdentities(ctx context.Context, orgID uuid.UUID) (map[uuid.UUID][]VaultIdentity, error)
+	// ReplaceVarSources replaces the repository's variable sources record
+	// and its playbook rows together (sources.go); ErrNotFound when the
+	// repository is gone.
+	ReplaceVarSources(ctx context.Context, orgID, repoID uuid.UUID, rec SourcesRecord, playbooks []varsource.Playbook) error
+	// MarkVarSourcesUnread flags the record as not read by the last sync's
+	// worker, creating an empty one when there is none; a repository gone
+	// meanwhile is a no-op.
+	MarkVarSourcesUnread(ctx context.Context, orgID, repoID uuid.UUID, at time.Time) error
+	// GetVarSources is the repository's record; ErrNotFound without one.
+	GetVarSources(ctx context.Context, orgID, repoID uuid.UUID) (SourcesRecord, error)
+	// ListPlaybookSources is every playbook row of the repository, by path.
+	ListPlaybookSources(ctx context.Context, orgID, repoID uuid.UUID) ([]varsource.Playbook, error)
+	// GetPlaybookSource is one playbook row; ErrNotFound without one.
+	GetPlaybookSource(ctx context.Context, orgID, repoID uuid.UUID, path string) (varsource.Playbook, error)
 }
 
 // Service implements the repository registry.
@@ -212,6 +228,7 @@ type Service struct {
 	store Store
 	creds CredentialSource
 	jobs  JobEnqueuer
+	log   *slog.Logger
 }
 
 // NewService wires the store, the credential source and the sync enqueuer.

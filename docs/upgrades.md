@@ -86,6 +86,10 @@ per heartbeat or claim. `newer` normally means the manager was rolled back or
 has not been updated yet; `update_required` means the component was skipped
 in an upgrade.
 
+A worker one minor older reports no playbook variable sources with a repo
+sync (backlog 7.75): the manager keeps the repository's previous record and
+flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
+
 ## Roll order
 
 1. **Manager** (with the database): back up, then start the new version. It

@@ -6,6 +6,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,6 +54,27 @@ type DefaultZoneSource interface {
 // queue half never imports the service half.
 type SyncSink interface {
 	RecordSyncResult(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, errText, hostKey, hostPublicKey string) error
+}
+
+// SourceSink is the optional port the variable sources a successful
+// sync_repo job read flow through (SQLQueue.SetSourceSink, backlog 7.75),
+// inside the finish transaction: the concrete implementation is
+// repos.Service.RecordVarSources. raw is the encoded report the worker
+// sent under the stats key var_sources; nil means the worker sent none (an
+// older worker). It returns an error only for a failure a retried finish
+// can fix; a malformed report or a repository gone meanwhile is its own
+// business to log and skip.
+type SourceSink interface {
+	RecordVarSources(ctx context.Context, orgID, repoID uuid.UUID, at time.Time, raw json.RawMessage) error
+}
+
+// SourceApplier is the optional port called once a successful sync that
+// sent variable sources has committed (SQLQueue.SetSourceApplier): it
+// applies the repository's new sources to the templates in automatic
+// mode. It runs after the commit on its own bounded context, and its
+// failure is logged, never the sync's.
+type SourceApplier interface {
+	ApplyRepoSources(ctx context.Context, orgID, repoID uuid.UUID) error
 }
 
 // TestSink is the optional port a finished connection_test job's outcome

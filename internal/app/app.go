@@ -450,6 +450,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Now: time.Now, Rand: rand.Reader, Log: slog.Default(),
 	})
 	jobsQueue.SetSyncSink(jobsSvc)
+	// The variable sources a successful sync read (backlog 7.75) are
+	// stored by the repository registry, inside the finish transaction.
+	jobsQueue.SetSourceSink(reposSvc)
 	// Repo playbooks claim their repository through the same service: the
 	// adapter narrows repos.Service to the queue's RepoSource port.
 	jobsQueue.SetRepoSource(repoRefSource{reposSvc})

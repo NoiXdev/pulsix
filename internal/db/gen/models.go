@@ -577,18 +577,22 @@ type JobIdempotencyKey struct {
 }
 
 type JobTemplate struct {
-	ID               uuid.UUID   `json:"id"`
-	OrgID            uuid.UUID   `json:"org_id"`
-	Name             string      `json:"name"`
-	PlaybookID       pgtype.UUID `json:"playbook_id"`
-	Scope            []byte      `json:"scope"`
-	Limit            string      `json:"limit"`
-	ExtraVars        []byte      `json:"extra_vars"`
-	ExtraVarsSchema  []byte      `json:"extra_vars_schema"`
-	CredentialID     pgtype.UUID `json:"credential_id"`
-	CreatedAt        time.Time   `json:"created_at"`
-	UpdatedAt        time.Time   `json:"updated_at"`
-	SharedTemplateID pgtype.UUID `json:"shared_template_id"`
+	ID               uuid.UUID          `json:"id"`
+	OrgID            uuid.UUID          `json:"org_id"`
+	Name             string             `json:"name"`
+	PlaybookID       pgtype.UUID        `json:"playbook_id"`
+	Scope            []byte             `json:"scope"`
+	Limit            string             `json:"limit"`
+	ExtraVars        []byte             `json:"extra_vars"`
+	ExtraVarsSchema  []byte             `json:"extra_vars_schema"`
+	CredentialID     pgtype.UUID        `json:"credential_id"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+	SharedTemplateID pgtype.UUID        `json:"shared_template_id"`
+	Revision         int64              `json:"revision"`
+	VarsMode         string             `json:"vars_mode"`
+	VarsSourceRev    string             `json:"vars_source_rev"`
+	VarsAppliedAt    pgtype.Timestamptz `json:"vars_applied_at"`
 }
 
 type JobTemplateVaultCredential struct {
@@ -782,12 +786,31 @@ type Playbook struct {
 	Source    string      `json:"source"`
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
+	VarSource []byte      `json:"var_source"`
 }
 
 type RecoveryCode struct {
 	UserID   uuid.UUID          `json:"user_id"`
 	CodeHash []byte             `json:"code_hash"`
 	UsedAt   pgtype.Timestamptz `json:"used_at"`
+}
+
+type RepoPlaybookSource struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	RepoID uuid.UUID `json:"repo_id"`
+	Path   string    `json:"path"`
+	Result []byte    `json:"result"`
+}
+
+type RepoVarSource struct {
+	RepoID      uuid.UUID `json:"repo_id"`
+	OrgID       uuid.UUID `json:"org_id"`
+	CommitSha   string    `json:"commit_sha"`
+	SyncedAt    time.Time `json:"synced_at"`
+	WorkerReads bool      `json:"worker_reads"`
+	Incomplete  bool      `json:"incomplete"`
+	LeftOut     []byte    `json:"left_out"`
+	Notes       []byte    `json:"notes"`
 }
 
 type RotationGroup struct {

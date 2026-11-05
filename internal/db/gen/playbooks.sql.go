@@ -15,7 +15,7 @@ import (
 const createPlaybook = `-- name: CreatePlaybook :one
 INSERT INTO playbooks (id, org_id, repo_id, path, inline, source)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at
+RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source
 `
 
 type CreatePlaybookParams struct {
@@ -50,6 +50,7 @@ func (q *Queries) CreatePlaybook(ctx context.Context, arg CreatePlaybookParams) 
 		&i.Source,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VarSource,
 	)
 	return i, err
 }
@@ -74,7 +75,7 @@ func (q *Queries) DeletePlaybook(ctx context.Context, arg DeletePlaybookParams) 
 }
 
 const getPlaybook = `-- name: GetPlaybook :one
-SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at FROM playbooks WHERE org_id = $1 AND id = $2
+SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source FROM playbooks WHERE org_id = $1 AND id = $2
 `
 
 type GetPlaybookParams struct {
@@ -97,12 +98,13 @@ func (q *Queries) GetPlaybook(ctx context.Context, arg GetPlaybookParams) (Playb
 		&i.Source,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VarSource,
 	)
 	return i, err
 }
 
 const listPlaybooks = `-- name: ListPlaybooks :many
-SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at FROM playbooks WHERE org_id = $1 ORDER BY created_at, id
+SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source FROM playbooks WHERE org_id = $1 ORDER BY created_at, id
 `
 
 func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]Playbook, error) {
@@ -123,6 +125,7 @@ func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]Playboo
 			&i.Source,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.VarSource,
 		); err != nil {
 			return nil, err
 		}
@@ -137,7 +140,7 @@ func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]Playboo
 const updatePlaybookInline = `-- name: UpdatePlaybookInline :one
 UPDATE playbooks SET inline = $1, updated_at = now()
 WHERE org_id = $2 AND id = $3 AND source = 'editor'
-RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at
+RETURNING id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source
 `
 
 type UpdatePlaybookInlineParams struct {
@@ -161,6 +164,7 @@ func (q *Queries) UpdatePlaybookInline(ctx context.Context, arg UpdatePlaybookIn
 		&i.Source,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VarSource,
 	)
 	return i, err
 }
