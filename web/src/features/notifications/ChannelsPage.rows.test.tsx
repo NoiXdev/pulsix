@@ -114,7 +114,7 @@ describe('ChannelsPage rows', () => {
 
     // Reopened while the first test is running: the item says so and is disabled.
     await user.click(screen.getByRole('button', { name: 'Actions for ops hook' }));
-    const busy = await screen.findByRole('menuitem', { name: 'Sending test…' });
+    const busy = await screen.findByRole('menuitem', { name: 'Sending test' });
     expect(busy).toHaveAttribute('aria-disabled', 'true');
     await user.click(busy);
     expect(posts).toBe(1);

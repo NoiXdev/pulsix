@@ -85,7 +85,7 @@ export const enNotifications = {
     webhook: 'Webhook',
     deliveriesItem: 'Deliveries',
     testItem: 'Send test',
-    testingItem: 'Sending test…',
+    testingItem: 'Sending test',
     deleteItem: 'Delete…',
     empty: 'No channels yet.',
     testSent: (name: string) => `Test message sent through ${name}`,
