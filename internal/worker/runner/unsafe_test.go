@@ -26,7 +26,7 @@ func TestMaterializeRunnerConfigKeepsTheUnsafeMarker(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.ExtraVars = map[string]string{"branch": unsafeClaimValue, "plain": plainClaimValue}
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	var vars map[string]any
@@ -83,7 +83,7 @@ func TestNestedUntrustedLookupStaysLiteralInRealAnsible(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.ExtraVars = map[string]string{"event": claimValue(payload)}
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	generated := mustRead(t, filepath.Join(env.WorkDir, "env", "extravars"))
@@ -97,7 +97,7 @@ func TestNestedUntrustedLookupStaysLiteralInRealAnsible(t *testing.T) {
 	// instead of letting the YAML re-read drop the markers and run the
 	// lookup — which is what ansible-core 2.21.4 did before the guard.
 	job.ExtraVars["other"] = claimValue(map[string]any{"obj": bypass})
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	control, err := runPlaybookWithExtraVars(t, ansible, mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), "event.commits[0].meta.message")
@@ -186,7 +186,7 @@ func TestDeepUntrustedValueCannotDropTheMarkersInRealAnsible(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.ExtraVars = map[string]string{"branch": claimValue(lookup), "deep": claimValue(deep)}
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	out, err := runPlaybookWithExtraVars(t, ansible, mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), "branch")
@@ -204,7 +204,7 @@ func TestMaterializeRunnerConfigWritesTheYAMLGuard(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.ExtraVars = map[string]string{extraVarsGuardVar: `"off"`}
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	var vars map[string]any
@@ -231,7 +231,7 @@ func TestExtraVarsGuardIsTheFirstKey(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.ExtraVars = map[string]string{"": `"e"`, "!a": `"x"`, "0": "1", "A": `"y"`, "a_token": `"secret"`, extraVarsGuardVar: `"off"`}
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	raw := mustRead(t, filepath.Join(env.WorkDir, "env", "extravars"))
@@ -251,7 +251,7 @@ func TestExtraVarsGuardIsTheFirstKey(t *testing.T) {
 	}
 	// An empty claim still yields a valid document.
 	job.ExtraVars = nil
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), &vars); err != nil {
@@ -273,7 +273,7 @@ func TestUnloadableExtraVarsErrorShowsNoSecretPrefix(t *testing.T) {
 		"a_token": `"` + secret + `"`,
 		"cfg":     `{"o":{"__ansible_unsafe":5}}`, // a malformed marker: the JSON load fails
 	}
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	out, err := runPlaybookWithExtraVars(t, ansible, mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")), "cfg")

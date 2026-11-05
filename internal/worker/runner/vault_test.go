@@ -52,7 +52,7 @@ func TestVaultIdentitiesAreWrittenAndNamedInTheConfig(t *testing.T) {
 	}
 	env := worker.RunEnv{WorkDir: t.TempDir()}
 
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 
@@ -105,7 +105,7 @@ func TestNoVaultIdentitiesWritesNoFilesAndNoSetting(t *testing.T) {
 	// loudly; the dangerous alternative this guards against is the
 	// runner inventing something that makes that failure silent instead.
 	env := worker.RunEnv{WorkDir: t.TempDir()}
-	if err := (&Runner{}).materializeRunnerConfig(&workerpb.Job{}, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(&workerpb.Job{}, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(env.WorkDir, vaultDirName)); !os.IsNotExist(err) {
@@ -128,7 +128,7 @@ func TestAVaultIdentityMissingFromTheMapFailsTheRun(t *testing.T) {
 	const missingID = "33333333-3333-3333-3333-333333333333"
 	env := worker.RunEnv{WorkDir: t.TempDir()}
 	job := &workerpb.Job{VaultIdentities: []*workerpb.VaultIdentity{{CredentialId: missingID, Label: "prod"}}}
-	err := (&Runner{}).materializeRunnerConfig(job, env)
+	err := (&Runner{}).materializeRunnerConfig(job, env, "")
 	if err == nil {
 		t.Fatal("a named-but-absent vault credential must fail the run")
 	}
@@ -167,7 +167,7 @@ func TestDuplicateVaultLabelFailsTheRun(t *testing.T) {
 		},
 	}
 	env := worker.RunEnv{WorkDir: t.TempDir()}
-	err := (&Runner{}).materializeRunnerConfig(job, env)
+	err := (&Runner{}).materializeRunnerConfig(job, env, "")
 	if err == nil {
 		t.Fatal("two vault identities sharing a label must fail the run")
 	}
@@ -213,7 +213,7 @@ func TestUnsafeVaultLabelFailsTheRun(t *testing.T) {
 				Credentials:     map[string]string{credID: secretJSON(t, credentials.Secret{Password: "the-passphrase"})},
 			}
 			env := worker.RunEnv{WorkDir: t.TempDir()}
-			err := (&Runner{}).materializeRunnerConfig(job, env)
+			err := (&Runner{}).materializeRunnerConfig(job, env, "")
 			if err == nil {
 				t.Fatalf("label %q must fail the run", label)
 			}

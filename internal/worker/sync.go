@@ -43,6 +43,14 @@ const kindSyncRepo = "sync_repo"
 // never trip over installed roles.
 const galaxyDirSuffix = ".galaxy"
 
+// GalaxyDir is the per-repo galaxy installation path of the clone at
+// cloneDir: <parent>/<base>.galaxy. The sync installs requirements.yml
+// there; a run puts it on its roles path and the variable parser reads the
+// installed roles from it.
+func GalaxyDir(cloneDir string) string {
+	return filepath.Join(cloneDir, "..", filepath.Base(cloneDir)+galaxyDirSuffix)
+}
+
 // defaultInstallTimeout bounds the requirements install.
 const defaultInstallTimeout = 10 * time.Minute
 
@@ -235,7 +243,7 @@ func (e *SyncExecutor) installRequirements(ctx context.Context, requirements, cl
 	defer cancel()
 
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(cctx, galaxy, "install", "-r", requirements, "-p", filepath.Join(cloneDir, "..", filepath.Base(cloneDir)+galaxyDirSuffix))
+	cmd := exec.CommandContext(cctx, galaxy, "install", "-r", requirements, "-p", GalaxyDir(cloneDir))
 	cmd.Dir = cloneDir
 	knownHosts, err := RunGitKnownHosts(workDir)
 	if err != nil {

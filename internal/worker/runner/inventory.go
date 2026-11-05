@@ -258,16 +258,17 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 	)
 }
 
-// materializeRunnerConfig writes the run's ansible.cfg (0600), the extra
+// materializeRunnerConfig writes the run's ansible.cfg (0600; rolesDir,
+// from materializePlaybook, goes on its roles path when not ""), the extra
 // vars document (env/extravars, 0600 — ansible-runner feeds it as
 // -e @env/extravars, so the values never pass through the command line)
 // and the scratch directories.
-func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv) error {
+func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv, rolesDir string) error {
 	vaultFiles, err := r.materializeVaultPassword(job, env)
 	if err != nil {
 		return err
 	}
-	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFiles), 0o600); err != nil {
+	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFiles, rolesDir), 0o600); err != nil {
 		return err
 	}
 	// The run's HOME has to exist, owner-only like the rest of the work dir

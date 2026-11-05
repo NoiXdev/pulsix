@@ -162,14 +162,14 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	if ansibleBin == "" {
 		ansibleBin = env.Config.AnsibleBin
 	}
-	playbook, err := r.materializePlaybook(ctx, job, env)
+	playbook, rolesDir, err := r.materializePlaybook(ctx, job, env)
 	if err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize playbook: %w", err)
 	}
 	if err := r.materializeInventory(job, env); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize inventory: %w", err)
 	}
-	if err := r.materializeRunnerConfig(job, env); err != nil {
+	if err := r.materializeRunnerConfig(job, env, rolesDir); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize runner config: %w", err)
 	}
 	if env.Config.PlayUID != 0 {

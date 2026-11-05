@@ -327,7 +327,7 @@ func TestMaterializeRunnerConfigWritesExtravars(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.ExtraVars = map[string]string{"count": "2", "msg": `"hi"`}
-	if err := (&Runner{}).materializeRunnerConfig(job, env); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	text := string(mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")))
@@ -385,7 +385,7 @@ func TestMaterializePlaybookInlineWritesFile(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.Playbook = "- hosts: all\n"
-	path, err := (&Runner{}).materializePlaybook(context.Background(), job, env)
+	path, _, err := (&Runner{}).materializePlaybook(context.Background(), job, env)
 	if err != nil {
 		t.Fatalf("materializePlaybook: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestMaterializePlaybookInlineWritesFile(t *testing.T) {
 func TestMaterializePlaybookFailsClosed(t *testing.T) {
 	job := runJob(t)
 	job.Playbook = "   "
-	if _, err := (&Runner{}).materializePlaybook(context.Background(), job, runEnv(t)); err == nil {
+	if _, _, err := (&Runner{}).materializePlaybook(context.Background(), job, runEnv(t)); err == nil {
 		t.Error("a blank playbook must fail")
 	}
 }

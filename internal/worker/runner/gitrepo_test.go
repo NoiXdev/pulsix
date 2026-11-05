@@ -468,7 +468,7 @@ func TestRepoPlaybookIsReadableByThePlayUID(t *testing.T) {
 
 	env := runEnv(t)
 	env.Config.PlayUID = 12345
-	playbook, err := r.materializePlaybook(context.Background(), job, env)
+	playbook, _, err := r.materializePlaybook(context.Background(), job, env)
 	if err != nil {
 		t.Fatalf("materializePlaybook: %v", err)
 	}

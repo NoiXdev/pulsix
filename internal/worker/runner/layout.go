@@ -102,8 +102,16 @@ type vaultFile struct {
 	Path  string
 }
 
-// ansibleCfgText renders the run's ansible.cfg.
-func ansibleCfgText(workDir string, vaultFiles []vaultFile) string {
+// systemRolesPath is Ansible's default roles_path without its home entry
+// (the run's HOME is an empty private directory): a generated roles_path
+// replaces the default, so it carries these two along.
+const systemRolesPath = "/usr/share/ansible/roles:/etc/ansible/roles"
+
+// ansibleCfgText renders the run's ansible.cfg. rolesDir is the repo's
+// galaxy directory (materializePlaybook) or "" — with one, roles_path names
+// it ahead of the system defaults; Ansible searches the playbook's own
+// roles/ before roles_path either way.
+func ansibleCfgText(workDir string, vaultFiles []vaultFile, rolesDir string) string {
 	// vault_identity_list is written only when there is at least one
 	// identity, and vault_password_file is never written at all: Ansible
 	// accepts either key, and a run carrying one stale and one fresh
@@ -119,14 +127,18 @@ func ansibleCfgText(workDir string, vaultFiles []vaultFile) string {
 		}
 		vault = "vault_identity_list = " + strings.Join(pairs, ", ") + "\n"
 	}
+	roles := ""
+	if rolesDir != "" {
+		roles = "roles_path = " + rolesDir + ":" + systemRolesPath + "\n"
+	}
 	return fmt.Sprintf(`[defaults]
 host_key_checking = True
 retry_files_enabled = False
 local_tmp = %s
-%s
+%s%s
 [ssh_connection]
 ssh_args = %s
-`, filepath.Join(workDir, localTmpName), vault, sshArgs(workDir))
+`, filepath.Join(workDir, localTmpName), vault, roles, sshArgs(workDir))
 }
 
 // inventoryWrapperText renders the executable dynamic-inventory wrapper:
