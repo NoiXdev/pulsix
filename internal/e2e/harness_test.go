@@ -329,8 +329,8 @@ func startGitServerAuthorizing(t *testing.T, deployKeys ...ssh.PublicKey) *gitSe
 // materializeFixtureRepo copies the fixture working tree (fixtures/git,
 // recursively: the variable sources gate needs a role directory) into a
 // temp dir, commits it and clones it bare — the repository the server
-// serves. No requirements.yml: the galaxy install needs network, and Task
-// 11's sync tests cover that path at the unit level.
+// serves. No requirements.yml: the base fixture installs nothing;
+// TestRequirementsEndToEnd pushes vendored requirements on top of it.
 func materializeFixtureRepo(t *testing.T) string {
 	t.Helper()
 	tmp := t.TempDir()

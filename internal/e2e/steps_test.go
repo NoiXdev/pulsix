@@ -255,8 +255,8 @@ func (s *scenario) setupRepo(gitSrv *gitServer) {
 		s.t.Fatalf("repo sync job %s = %q (error %q)", syncOut.Job.ID, job.Job.Status, job.Job.Error)
 	}
 	// The fixture repository carries no requirements.yml: the sync
-	// materializes the clone and installs nothing (galaxy needs network;
-	// Task 11's sync tests cover the install path at the unit level).
+	// materializes the clone and installs nothing (TestRequirementsEndToEnd
+	// pushes vendored requirements and covers the install path).
 	if got, _ := job.Job.Stats["requirements_installed"]; got != false {
 		s.t.Fatalf("sync stats requirements_installed = %v, want false", got)
 	}
