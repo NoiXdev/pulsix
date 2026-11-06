@@ -3,10 +3,15 @@ package requirements
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"syscall"
 )
+
+// maxFileBytes caps a requirements file, as varsource caps a playbook
+// (varsource.MaxFileBytes): a larger one is refused, not read.
+const maxFileBytes = 512 << 10
 
 // Files are the counted requirements files of a commit (spec goal 3).
 type Files struct {
@@ -77,4 +82,22 @@ func isRegularFile(clone fs.StatFS, p string) (bool, error) {
 		return false, err
 	}
 	return fi.Mode().IsRegular(), nil
+}
+
+// readFile reads the counted file p (name in messages) from the clone,
+// refusing it when it holds more than maxFileBytes.
+func readFile(clone fs.FS, p, name string) ([]byte, error) {
+	f, err := clone.Open(p)
+	if err != nil {
+		return nil, fmt.Errorf("read requirements file: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read requirements file %s: %w", p, err)
+	}
+	if len(data) > maxFileBytes {
+		return nil, notRequirements(name, "larger than 512 KiB")
+	}
+	return data, nil
 }

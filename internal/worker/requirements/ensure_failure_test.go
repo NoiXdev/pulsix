@@ -113,6 +113,8 @@ func TestEnsureRefusesBadFilesBeforeTheCache(t *testing.T) {
 			`requirements.yml: the source "../../x.tar.gz" is outside the repository`},
 		{"not a requirements file", "just text\n", commitA,
 			"requirements.yml is not a requirements file: the top level must be a list of roles or a mapping of roles and collections"},
+		{"larger than 512 KiB", padTo(rolesOnly, 512<<10+1), commitA,
+			"requirements.yml is not a requirements file: larger than 512 KiB"},
 		{"short commit", rolesOnly, "abc", `commit "abc" is not a full commit id`},
 		{"upper-case commit", rolesOnly, strings.ToUpper(commitA), `commit "` + strings.ToUpper(commitA) + `" is not a full commit id`},
 	}
@@ -127,6 +129,31 @@ func TestEnsureRefusesBadFilesBeforeTheCache(t *testing.T) {
 			}
 			c.assertNoCache()
 		})
+	}
+}
+
+// padTo is content followed by comment lines up to exactly n bytes.
+func padTo(content string, n int) string {
+	var b strings.Builder
+	b.WriteString(content)
+	for b.Len() < n {
+		line := "# " + strings.Repeat("x", min(77, n-b.Len()-3)) + "\n"
+		if n-b.Len() < 3 {
+			line = strings.Repeat("\n", n-b.Len())
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
+func TestEnsureAcceptsAFileOf512KiB(t *testing.T) {
+	content := padTo(rolesOnly, 512<<10)
+	if len(content) != 512<<10 {
+		t.Fatalf("padTo made %d bytes", len(content))
+	}
+	c := newClone(t, map[string]string{"requirements.yml": content})
+	if _, _, err := c.ensure(newService(newGalaxy()), commitA); err != nil {
+		t.Fatalf("Ensure: %v", err)
 	}
 }
 

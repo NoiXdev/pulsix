@@ -155,11 +155,12 @@ func (s *Service) markUsed(root *os.Root, name string) error {
 func readFiles(ctx context.Context, req Request) ([]counted, error) {
 	files := make([]counted, 0, len(req.Files.Paths))
 	for i, p := range req.Files.Paths {
-		data, err := fs.ReadFile(req.Clone, p)
+		name := relToRoot(req.Files.Root, p)
+		data, err := readFile(req.Clone, p, name)
 		if err != nil {
-			return nil, fmt.Errorf("read requirements file: %w", err)
+			return nil, err
 		}
-		pl, err := parseFile(relToRoot(req.Files.Root, p), data)
+		pl, err := parseFile(name, data)
 		if err != nil {
 			return nil, err
 		}
