@@ -30,13 +30,15 @@ func (p *plan) addCollections(list *yaml.Node) error {
 		case isString(e):
 			// galaxy reads a string as {name: <string>} (cli/galaxy.py:838-841).
 			p.sources = append(p.sources, e.Value)
+			p.gitSources = append(p.gitSources, e.Value)
 			err = p.checkUntypedName(e.Value)
 		case e.Kind == yaml.MappingNode:
 			fields := mappingFields(e)
-			p.addValues(e, map[string]string{"name": "name", "version": "version", "type": "type"})
+			p.addValues(e, map[string]string{"name": "name", "version": "version", "type": "type", "source": "source"})
 			for _, field := range []string{"name", "source"} {
 				if v, ok := fields[field]; ok && isString(v) {
 					p.sources = append(p.sources, v.Value)
+					p.gitSources = append(p.gitSources, v.Value)
 				}
 			}
 			err = p.checkCollection(fields)

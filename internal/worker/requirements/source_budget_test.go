@@ -75,7 +75,7 @@ func TestParseFileCollectsCommandValues(t *testing.T) {
 	want := []value{
 		{"version", "1.0"}, {"name", "web"},
 		{"scm", "git"}, {"version", "v2"}, {"name", "x"},
-		{"name", "ns.two"}, {"version", "1.2.3"}, {"type", "galaxy"},
+		{"name", "ns.two"}, {"version", "1.2.3"}, {"type", "galaxy"}, {"source", "https://hub.example.org"},
 	}
 	if !reflect.DeepEqual(p.values, want) {
 		t.Errorf("values = %v, want %v", p.values, want)

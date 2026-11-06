@@ -20,6 +20,7 @@ type plan struct {
 	roles, collections bool     // which install runs
 	sources            []string // source strings for checkSources (Task 3), in file order
 	values             []value  // other values galaxy may put on a command line, in file order
+	gitSources         []string // collection names and sources galaxy may clone with git, in file order
 }
 
 // value is a role's or a collection's value other than its source that

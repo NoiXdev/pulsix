@@ -31,6 +31,11 @@ func checkSources(ctx context.Context, clone fs.StatFS, cloneDir, fileDir string
 			return fmt.Errorf("%s: the %s %q starts with \"-\"", p.name, v.field, v.text)
 		}
 	}
+	for _, src := range p.gitSources {
+		if frag, ok := gitSubdirectory(src); ok && !insideCheckout(frag) {
+			return fmt.Errorf("%s: the source %q names the subdirectory %q, which leads outside the checkout", p.name, src, frag)
+		}
+	}
 	root := requirementsRoot(fileDir, p.name)
 	c := newSourceCheck(ctx, clone, defaultLimits())
 	for _, src := range p.sources {
@@ -42,6 +47,41 @@ func checkSources(ctx context.Context, clone fs.StatFS, cloneDir, fileDir string
 		}
 	}
 	return nil
+}
+
+// gitSubdirectory is the fragment galaxy's parse_scm takes from a
+// collection git source (collection/concrete_artifact_manager.py:397-421):
+// the part before the first comma (the rest is the version), the URL
+// fragment as urldefrag finds it (urlparse drops tab, CR and LF first and
+// cuts at the first "#"), not percent-decoded. galaxy installs from
+// os.path.join(<checkout>, fragment) (:475-477). ok is false without a
+// fragment. Only collections use one: a role's git source goes to
+// git clone whole (utils/galaxy.py:75).
+func gitSubdirectory(src string) (string, bool) {
+	s, _, _ := strings.Cut(src, ",")
+	s = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(s)
+	_, frag, ok := strings.Cut(s, "#")
+	return frag, ok
+}
+
+// insideCheckout reports a fragment that is a plain relative path inside
+// the checkout: not absolute, no backslash, and after galaxy's strip of
+// "/" at both ends (parse_scm) no empty and no ".." segment. galaxy would
+// make /abs relative by that strip; it is refused all the same.
+func insideCheckout(frag string) bool {
+	if strings.HasPrefix(frag, "/") || strings.Contains(frag, "\\") {
+		return false
+	}
+	f := strings.Trim(frag, "/")
+	if f == "" {
+		return true
+	}
+	for _, seg := range strings.Split(f, "/") {
+		if seg == "" || seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // checkSource checks one source on its own, with the default bounds and
