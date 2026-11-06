@@ -133,7 +133,7 @@ func TestCancellingARequirementsInstallStopsGalaxyAndGit(t *testing.T) {
 // galaxy creates itself is owner-only to the play uid. The worker, which
 // only shares the group, cannot open it, and the take-over refuses the
 // install by name — the first path it meets, the role's directory. This is
-// the evidence for the backlog item, not the wanted behaviour: once the
+// the evidence for backlog 7.92, not the wanted behaviour: once the
 // install sets its own umask the run succeeds and this test must flip to
 // TestRequirementsInstallUnderThePlayUID's assertions.
 func TestRequirementsUnderAWorkerUmaskOf077(t *testing.T) {
