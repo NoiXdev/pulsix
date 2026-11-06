@@ -100,6 +100,16 @@ A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
 
+7.88 adds `repo.repo_subpath` to a repo run's claim (in its JSON kind
+payload; no proto change). The field is additive: a worker one minor older
+ignores it and keeps 7.83's behaviour (a run finds only the roles its own
+worker's last sync installed). A 7.88 worker under an older manager finds
+no `repo_subpath` and derives it from the claim's `subpath` by removing the
+`/<playbook path>` suffix (exact for every manager released so far); that
+fallback is dropped one minor later. A worker downgraded below 7.88 ignores
+`<repo>.requirements/` next to each clone (it stays on disk until removed by
+hand) and installs into `<repo>.galaxy` again on its next sync.
+
 ## Behaviour changes to check after an upgrade
 
 - **7.75, shared job template definitions:** a run receives only the values
@@ -137,6 +147,35 @@ flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
   (those that need review wait for a person), a manual template shows them
   in its sync review. To keep a role found, move it to `<playbook
   dir>/roles/` or install it from `requirements.yml`.
+- **7.88, requirements:** runs install the roles and collections of
+  `requirements.yml`, `roles/requirements.yml` and
+  `collections/requirements.yml` per commit, into `<repo>.requirements/` next
+  to the clone, and a sync installs into the same cache. The first run (or
+  sync) of each commit on a worker installs, which takes longer and needs
+  outbound access from the worker to the galaxy source (galaxy.ansible.com or
+  the git and http hosts the files name); later runs of that commit on that
+  worker reuse the install. A repository's `ansible.cfg` no longer steers the
+  install (private galaxy servers are not supported). A `requirements.yml`
+  holding only comments no longer fails a sync. A requirements file is now
+  refused, failing the sync and every run of that commit with the file and the
+  reason, when it uses YAML anchors, aliases, merge keys or tags, or holds
+  more than one YAML document; is not UTF-8 or holds invisible characters;
+  uses `include:`; names a role whose name is not a plain directory name (a
+  local `src` such as `./r.tar.gz` is its own name, so such a role needs a
+  `name:`); names a collection that is not `namespace.name`; has a local
+  source outside the repository (`../`, an absolute path, a link leading out);
+  has a source (or a comma part of one) starting with `-`; or names a git
+  source whose subdirectory leads out of its checkout. A repository subpath
+  into git's own files (`.git`, or a link to it) now fails the sync as it
+  fails the runs. With `PULSIX_WORKER_PLAY_UID` set, `ansible-galaxy` runs as
+  the play uid and can write only into its temporary install directory: a role
+  or collection that tries to write elsewhere, or whose files the worker
+  cannot read, fails the install by name; the sync opens the clone read-only
+  to the play group, as runs already do. Without a play uid the install is not
+  isolated, and the worker log warns so for every `ansible-galaxy` command. A
+  leftover `<repo>.galaxy` is removed by the first install of that repository;
+  it stays for a repository that no longer has requirements and may be removed
+  by hand.
 
 ## Roll order
 

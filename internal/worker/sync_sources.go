@@ -1,5 +1,5 @@
 // The repo sync's read of the playbook variable sources (backlog 7.75):
-// after the fetch and the requirements install, the executor reads every
+// after the fetch and the requirements step, the executor reads every
 // playbook's declared variables from the clone (internal/varsource) and
 // ships the encoded report under the result's stats key var_sources; the
 // ok event carries only a summary of it.
@@ -15,11 +15,12 @@
 // files (clonefs.go): a role's meta/argument_specs.yml linked to /etc/… or
 // to .git/config is reported unreadable.
 //
-// The roles installed from requirements.yml (GalaxyDir, next to the
-// clone) are read through a second root of their own under the same
-// rules: a role name not found in the repository is looked up there, and
-// a link inside them may not leave them. A sync without them reads as
-// before; a galaxy path that cannot be opened (or is a symlink) adds one
+// The roles installed from the requirements files (the roles/ of the
+// commit's entry in the requirements cache, the one the sync's requirements
+// step returned) are read through a second root of their own under the
+// same rules: a role name is looked up there in ansible-playbook's order,
+// and a link inside them may not leave them. A sync without them reads as
+// before; an entry that cannot be opened (a symlink, a file, gone) adds one
 // read_failed note and the read goes on without it.
 package worker
 
@@ -33,6 +34,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/varsource"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // VarSourcesStatsKey is the sync result's stats key that carries the
@@ -48,14 +50,14 @@ const VarSourcesStatsKey = "var_sources"
 const varSourcesTimeLimit = 60 * time.Second
 
 // parseRepoFunc reads the sources of a repository subpath, with the roles
-// installed from requirements.yml when roles is not nil.
+// installed from the requirements files when roles is not nil.
 type parseRepoFunc func(ctx context.Context, fsys, roles fs.FS, commit string) varsource.Report
 
 // readVarSources reads the clone's variable sources under subpath and
 // returns the encoded report and the ok event's summary of it. Without a
 // report that encodes, both are nil (the manager then treats the sync as
 // one that sent no sources and keeps the previous record).
-func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string) (json.RawMessage, map[string]any) {
+func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string, installed requirements.Entry) (json.RawMessage, map[string]any) {
 	limit := e.sourcesTimeLimit
 	if limit <= 0 {
 		limit = varSourcesTimeLimit
@@ -63,7 +65,7 @@ func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string) 
 	rctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 
-	r := e.collectVarSources(rctx, dir, subpath)
+	r := e.collectVarSources(rctx, dir, subpath, installed)
 	data, sent, err := varsource.Encode(r, varsource.MaxReportBytes)
 	if err != nil {
 		e.logger().WarnContext(ctx, "encode variable sources", "err", err)
@@ -77,10 +79,11 @@ func (e *SyncExecutor) readVarSources(ctx context.Context, dir, subpath string) 
 }
 
 // collectVarSources is the report of the clone's sources: the commit and
-// the parse of the subpath, with the roles installed from requirements.yml.
+// the parse of the subpath, with the roles of the installed entry (none
+// for the zero Entry).
 // A panic of the parser leaves a report with no playbooks and one
 // read_failed note.
-func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath string) (r varsource.Report) {
+func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath string, installed requirements.Entry) (r varsource.Report) {
 	var commit string
 	var notes []varsource.Note
 	defer func() {
@@ -107,14 +110,14 @@ func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath strin
 	defer func() { _ = fsys.Close() }()
 
 	var roles fs.FS // nil unless installed roles were opened: no typed nil
-	installed, err := openInstalledRolesFS(dir)
+	installedRoles, err := openInstalledRolesFS(installed)
 	switch {
 	case err != nil:
 		e.logger().WarnContext(ctx, "open the installed roles", "err", err)
 		notes = append(notes, varsource.ReadFailed("the roles installed from requirements.yml could not be opened; roles found only there are reported as not found"))
-	case installed != nil:
-		defer func() { _ = installed.Close() }()
-		roles = installed
+	case installedRoles != nil:
+		defer func() { _ = installedRoles.Close() }()
+		roles = installedRoles
 	}
 
 	parse := e.parseRepo

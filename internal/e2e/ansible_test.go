@@ -311,7 +311,8 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc, 
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	runExec := runner.NewRunner(runnerBin, ansibleBin, "git", 0, testLogger(t))
-	runExec.Requirements = runner.NewRequirements(runExec, workerCfg)
+	reqs := runner.NewRequirements(runExec, workerCfg)
+	runExec.Requirements = reqs
 	loop := worker.NewLoop(workerCfg, workerpb.NewWorkerServiceClient(conn),
 		worker.NewCompositeExecutor(map[string]worker.Executor{
 			"run":             runExec,
@@ -320,7 +321,7 @@ func wireScenario(t *testing.T, ctx context.Context, cancel context.CancelFunc, 
 			"rotate_key":      worker.NewRotateExecutor(runExec),
 			"revoke_key":      worker.NewRevokeExecutor(runExec),
 			"connection_test": worker.NewSSHProbeExecutor(&sshprobe.Probe{}, testLogger(t)),
-			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
+			"sync_repo":       worker.NewSyncExecutor(runExec, reqs),
 		}),
 		worker.WithLogger(testLogger(t)),
 	)

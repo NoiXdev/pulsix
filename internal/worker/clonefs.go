@@ -11,8 +11,9 @@
 //   - only regular files and directories are opened: a FIFO or a device
 //     would block the open or never end the read.
 //
-// The roles installed from requirements.yml (the galaxy directory next to
-// the clone) are a second read root of their own, under the same rules.
+// The roles installed from the requirements files (the roles/ of the
+// commit's entry in the requirements cache next to the clone) are a second
+// read root of their own, under the same rules.
 //
 // The os.Root underneath refuses an escape again on its own.
 package worker
@@ -25,6 +26,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // maxLinkHops bounds the links one path resolves through (a loop ends
@@ -86,31 +89,27 @@ func OpenCloneFS(cloneDir string) (ReadRoot, error) {
 	return c, nil
 }
 
-// errNotGalaxyDir: the galaxy path is not a directory of its own (a
-// symlink, a file, …).
-var errNotGalaxyDir = errors.New("not a directory")
-
-// openInstalledRolesFS opens the roles installed from requirements.yml,
-// GalaxyDir(cloneDir), as a read root of its own with the clone's rules: a
-// link inside it may not leave it. (nil, nil) when there is none. A
-// galaxy path that is a symlink or no directory is an error: the run does
-// not put it on its roles path either.
-func openInstalledRolesFS(cloneDir string) (*cloneFS, error) {
-	dir := GalaxyDir(cloneDir)
-	info, err := os.Lstat(dir)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
+// openInstalledRolesFS opens the roles/ of the installed requirements
+// entry as a read root of its own with the clone's rules: a link inside it
+// may not leave it. (nil, nil) for the zero Entry: the commit installs
+// nothing. The entry is opened through requirements.OpenDir, the one
+// verified open of the cache (spec goal 1a): an entry that is a symlink,
+// no directory or gone is an error naming the path and the reason, as it
+// is for a run.
+func openInstalledRolesFS(installed requirements.Entry) (*cloneFS, error) {
+	if installed.IsZero() {
 		return nil, nil
-	case err != nil:
-		return nil, fmt.Errorf("open installed roles: %w", err)
-	case !info.IsDir():
-		return nil, fmt.Errorf("open installed roles: %w", errNotGalaxyDir)
 	}
-	root, err := os.OpenRoot(dir)
+	entry, err := requirements.OpenDir(installed.Dir)
 	if err != nil {
 		return nil, fmt.Errorf("open installed roles: %w", err)
 	}
-	return &cloneFS{root: root}, nil
+	defer func() { _ = entry.Close() }()
+	roles, err := entry.OpenRoot("roles")
+	if err != nil {
+		return nil, fmt.Errorf("open installed roles: %w", err)
+	}
+	return &cloneFS{root: roles}, nil
 }
 
 func (c *cloneFS) Close() error { return c.root.Close() }

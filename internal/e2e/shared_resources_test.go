@@ -192,11 +192,12 @@ func setupSharedTenant(t *testing.T, ctx context.Context, cancel context.CancelF
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	runExec := runner.NewRunner(runnerBin, ansibleBin, "git", 0, testLogger(t))
-	runExec.Requirements = runner.NewRequirements(runExec, workerCfg)
+	reqs := runner.NewRequirements(runExec, workerCfg)
+	runExec.Requirements = reqs
 	loop := worker.NewLoop(workerCfg, workerpb.NewWorkerServiceClient(conn),
 		worker.NewCompositeExecutor(map[string]worker.Executor{
 			"run":       runExec,
-			"sync_repo": worker.NewSyncExecutor(runExec, "ansible-galaxy"),
+			"sync_repo": worker.NewSyncExecutor(runExec, reqs),
 		}),
 		worker.WithLogger(testLogger(t)),
 	)

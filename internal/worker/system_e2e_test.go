@@ -8,6 +8,8 @@ package worker_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,11 +231,12 @@ func TestSyncExecutorFetchesThroughTheRealRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The fake galaxy succeeds and stays observable: an empty requirements
-	// file still exercises the install path.
-	galaxy := t.TempDir() + "/ansible-galaxy"
+	// The recording galaxy sits next to the configured ansible-playbook,
+	// where the runner's requirements service looks for it; a
+	// requirements file holding only a comment must never start it.
+	bin := t.TempDir()
 	galaxyArgs := t.TempDir() + "/galaxy-args"
-	if err := os.WriteFile(galaxy, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+galaxyArgs+"\"\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(bin+"/ansible-galaxy", []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \""+galaxyArgs+"\"\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
@@ -247,7 +250,7 @@ func TestSyncExecutorFetchesThroughTheRealRunner(t *testing.T) {
 	}
 	env := worker.RunEnv{WorkDir: t.TempDir(), RepoCacheDir: t.TempDir()}
 	events := &eventCollector{}
-	exec := worker.NewSyncExecutor(runExec, galaxy)
+	exec := worker.NewSyncExecutor(runExec, runner.NewRequirements(runExec, worker.Config{AnsibleBin: bin + "/ansible-playbook"}))
 	status, stats, err := exec.Run(context.Background(), &workerpb.Job{
 		Id: "01900000-0000-7000-8000-000000000abc", Kind: "sync_repo",
 		OrgId: orgID.String(), KindPayload: string(payload),
@@ -255,7 +258,7 @@ func TestSyncExecutorFetchesThroughTheRealRunner(t *testing.T) {
 	if err != nil || status != worker.StatusSucceeded {
 		t.Fatalf("Run = %q, %v", status, err)
 	}
-	if stats["requirements_installed"] != true {
+	if stats["requirements_installed"] != false {
 		t.Fatalf("stats = %v", stats)
 	}
 	// The variable sources name the commit the clone is at: the fixture's
@@ -268,21 +271,24 @@ func TestSyncExecutorFetchesThroughTheRealRunner(t *testing.T) {
 		t.Fatalf("var_sources commit = %q (%v), want %q", sources.Commit, err, strings.TrimSpace(string(head)))
 	}
 
-	// The clone landed org-scoped, and the galaxy invocation points at the
-	// clone's sibling path (the real ansible-galaxy creates -p; the fake
-	// only records its argv).
+	// The clone landed org-scoped; galaxy never ran and no requirements
+	// cache was made for a file that lists nothing.
 	clone := filepath.Join(env.RepoCacheDir, orgID.String(), repoID.String())
 	if _, err := os.Stat(filepath.Join(clone, ".git")); err != nil {
 		t.Fatalf("clone: %v", err)
 	}
-	if args := mustRead(t, galaxyArgs); !strings.Contains(args, clone+".galaxy") {
-		t.Errorf("galaxy args = %q", args)
+	if _, err := os.Stat(galaxyArgs); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("galaxy ran: %v", err)
 	}
-	// The result event carries the repo id for the run view.
-	if len(events.events) != 1 || events.events[0].GetState() != "ok" {
+	// The step's one line, then the result event, which carries the repo
+	// id for the run view.
+	if len(events.events) != 2 || events.events[0].GetState() != "stdout" || events.events[1].GetState() != "ok" {
 		t.Fatalf("events = %+v", events.events)
 	}
-	if !strings.Contains(events.events[0].GetPayload(), repoID.String()) {
-		t.Errorf("result event = %q", events.events[0].GetPayload())
+	if got := events.events[0].GetPayload(); got != `{"text":"Requirements: requirements.yml lists nothing to install"}` {
+		t.Errorf("line = %s", got)
+	}
+	if !strings.Contains(events.events[1].GetPayload(), repoID.String()) {
+		t.Errorf("result event = %q", events.events[1].GetPayload())
 	}
 }

@@ -245,7 +245,8 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 	})).Run(ctx)
 
 	runExec := runner.NewRunner(wcfg.AnsibleRunnerBin, wcfg.AnsibleBin, "git", 0, log)
-	runExec.Requirements = runner.NewRequirements(runExec, wcfg)
+	reqs := runner.NewRequirements(runExec, wcfg)
+	runExec.Requirements = reqs
 	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, log)
 	loop := worker.NewLoop(
 		wcfg, client,
@@ -255,7 +256,7 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 			"rotate_key":      worker.NewRotateExecutor(runExec),
 			"revoke_key":      worker.NewRevokeExecutor(runExec),
 			"connection_test": probeExec,
-			"sync_repo":       worker.NewSyncExecutor(runExec, "ansible-galaxy"),
+			"sync_repo":       worker.NewSyncExecutor(runExec, reqs),
 		}),
 		worker.WithLogger(log),
 		worker.WithIdentity(id),

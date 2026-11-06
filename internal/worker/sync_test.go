@@ -1,7 +1,7 @@
 // The sync_repo executor's tests: a fake fetcher for the executor's own
-// contract (requirements discovery, the galaxy invocation, the result
-// event). The real runner fetch against a local git fixture lives in
-// system_e2e_test.go.
+// contract (the claim, the fetch, the result event). Its requirements step
+// is in sync_requirements_test.go; the real runner fetch against a local
+// git fixture lives in system_e2e_test.go.
 package worker
 
 import (
@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -84,139 +82,6 @@ func TestSyncExecutorWithoutRequirementsSucceeds(t *testing.T) {
 	}
 	if payload["repo_id"] != stats["repo_id"] || payload["requirements_installed"] != false {
 		t.Fatalf("event payload = %v", payload)
-	}
-}
-
-func TestSyncExecutorInstallsRequirementsWhenPresent(t *testing.T) {
-	clone := t.TempDir()
-	// requirements.yml in the repo's subpath, and the root's absent: the
-	// subpath's file wins.
-	if err := os.MkdirAll(clone+"/ansible", 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(clone+"/ansible/requirements.yml", []byte("- src: community.general\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	f := &fakeFetcher{dir: clone}
-	c := &evCollector{}
-	status, stats, err := (&SyncExecutor{Fetcher: f, GalaxyBin: fakeGalaxyOK(t)}).Run(context.Background(),
-		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", "ansible", ""), RunEnv{WorkDir: t.TempDir()}, c.sink)
-	if err != nil || status != StatusSucceeded {
-		t.Fatalf("Run = %q, %v", status, err)
-	}
-	if stats["requirements_installed"] != true {
-		t.Fatalf("stats = %v", stats)
-	}
-}
-
-// fakeGalaxyOK writes a galaxy binary that exits 0 without network.
-func fakeGalaxyOK(t *testing.T) string {
-	t.Helper()
-	path := t.TempDir() + "/ansible-galaxy"
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
-func TestSyncExecutorGalaxyInvocationIsPinned(t *testing.T) {
-	clone := t.TempDir()
-	if err := os.WriteFile(clone+"/requirements.yml", []byte("- src: community.general\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	f := &fakeFetcher{dir: clone}
-	// The fake galaxy dumps its argv next to itself (the temp dir trick
-	// above writes into its own TempDir; record via a fixed file here).
-	argsPath := t.TempDir() + "/galaxy-args"
-	galaxy := t.TempDir() + "/ansible-galaxy"
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"" + argsPath + "\"\nexit 0\n"
-	if err := os.WriteFile(galaxy, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	c := &evCollector{}
-	if _, _, err := (&SyncExecutor{Fetcher: f, GalaxyBin: galaxy}).Run(context.Background(),
-		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", "", ""), RunEnv{WorkDir: t.TempDir()}, c.sink); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"install", "-r", clone + "/requirements.yml", "-p", clone + ".galaxy"}
-	var got []string
-	for _, l := range strings.Split(string(raw), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			got = append(got, l)
-		}
-	}
-	if len(got) != len(want) {
-		t.Fatalf("galaxy args = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("galaxy arg %d = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-// TestSyncExecutorGalaxyKeepsSSHStateInTheRunDir is v0.2c final re-review
-// out-of-scope 2 for galaxy's git sources: ssh ignores $HOME, so the git
-// galaxy starts gets a GIT_SSH_COMMAND naming the run's own known_hosts,
-// and galaxy's HOME is the run's too.
-func TestSyncExecutorGalaxyKeepsSSHStateInTheRunDir(t *testing.T) {
-	clone := t.TempDir()
-	if err := os.WriteFile(clone+"/requirements.yml", []byte("- src: git+ssh://git@git.example.org/r.git\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	envPath := t.TempDir() + "/galaxy-env"
-	galaxy := t.TempDir() + "/ansible-galaxy"
-	if err := os.WriteFile(galaxy, []byte("#!/bin/sh\nenv > \""+envPath+"\"\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	workDir := t.TempDir()
-	if _, _, err := (&SyncExecutor{Fetcher: &fakeFetcher{dir: clone}, GalaxyBin: galaxy}).Run(context.Background(),
-		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", "", ""), RunEnv{WorkDir: workDir}, (&evCollector{}).sink); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := map[string]string{}
-	for _, l := range strings.Split(string(raw), "\n") {
-		if k, v, ok := strings.Cut(l, "="); ok {
-			env[k] = v
-		}
-	}
-	knownHosts := filepath.Join(workDir, "home", ".ssh", "known_hosts")
-	if !strings.Contains(env["GIT_SSH_COMMAND"], "UserKnownHostsFile='"+knownHosts+"'") {
-		t.Errorf("GIT_SSH_COMMAND = %q, want the run's known_hosts %s", env["GIT_SSH_COMMAND"], knownHosts)
-	}
-	if env["HOME"] != filepath.Join(workDir, "home") {
-		t.Errorf("HOME = %q, want the run's home", env["HOME"])
-	}
-	if fi, err := os.Stat(filepath.Dir(knownHosts)); err != nil || !fi.IsDir() {
-		t.Errorf("the run's ssh dir must exist for ssh to remember a key: %v", err)
-	}
-}
-
-func TestSyncExecutorGalaxyFailureFailsTheJob(t *testing.T) {
-	clone := t.TempDir()
-	if err := os.WriteFile(clone+"/requirements.yml", []byte("- src: nope\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	f := &fakeFetcher{dir: clone}
-	galaxy := t.TempDir() + "/ansible-galaxy"
-	if err := os.WriteFile(galaxy, []byte("#!/bin/sh\necho 'cannot resolve' >&2\nexit 3\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	status, _, err := (&SyncExecutor{Fetcher: f, GalaxyBin: galaxy}).Run(context.Background(),
-		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", "", ""), RunEnv{WorkDir: t.TempDir()}, (&evCollector{}).sink)
-	if err == nil || status != StatusError {
-		t.Fatalf("status = %q err = %v", status, err)
-	}
-	if !strings.Contains(err.Error(), "galaxy") {
-		t.Errorf("error names the galaxy failure: %v", err)
 	}
 }
 

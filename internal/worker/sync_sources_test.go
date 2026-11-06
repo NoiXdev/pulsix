@@ -48,7 +48,7 @@ func syncSources(t *testing.T, e *SyncExecutor, subpath string) (varsource.Repor
 	}
 	c := &evCollector{}
 	status, stats, err := e.Run(context.Background(),
-		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", subpath, ""), RunEnv{WorkDir: t.TempDir()}, c.sink)
+		syncClaim(t, "01900000-0000-7000-8000-000000000123", "https://git.example.org/x.git", "main", subpath, ""), RunEnv{WorkDir: t.TempDir(), RepoCacheDir: t.TempDir()}, c.sink)
 	if err != nil || status != StatusSucceeded {
 		t.Fatalf("Run = %q, %v", status, err)
 	}
@@ -60,11 +60,13 @@ func syncSources(t *testing.T, e *SyncExecutor, subpath string) (varsource.Repor
 	if err := json.Unmarshal(raw, &r); err != nil {
 		t.Fatalf("decode the report: %v", err)
 	}
-	if len(c.events) != 1 {
+	// The requirements step's lines, if any, come first; the ok event is
+	// the last one.
+	if len(c.events) == 0 || c.events[len(c.events)-1].GetState() != "ok" {
 		t.Fatalf("events = %+v", c.events)
 	}
 	var payload map[string]any
-	if err := json.Unmarshal([]byte(c.events[0].GetPayload()), &payload); err != nil {
+	if err := json.Unmarshal([]byte(c.events[len(c.events)-1].GetPayload()), &payload); err != nil {
 		t.Fatal(err)
 	}
 	summary, _ := payload[VarSourcesStatsKey].(map[string]any)
@@ -188,17 +190,17 @@ func TestSyncExecutorSourcesNeverFailTheSync(t *testing.T) {
 			t.Fatalf("summary = %v", summary)
 		}
 	})
-	for _, sub := range []string{"nope", ".git", "gitlink"} {
-		t.Run("the subpath cannot be opened: "+sub, func(t *testing.T) {
-			clone := t.TempDir()
-			writeTree(t, clone, map[string]string{".git/x.yml": "- hosts: all\n"})
-			symlinks(t, clone, map[string]string{"gitlink": ".git"})
-			r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, sub)
-			if !r.Failed || len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
-				t.Fatalf("report = %+v", r)
-			}
-		})
-	}
+	// A subpath into git's own files (".git", or a link to it) never
+	// reaches the read: the requirements step refuses it first, as a run's
+	// does (TestSyncExecutorFailsOnASubpathIntoGitsFiles).
+	t.Run("the subpath cannot be opened", func(t *testing.T) {
+		clone := t.TempDir()
+		writeTree(t, clone, map[string]string{"site.yml": "- hosts: all\n"})
+		r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}}, "nope")
+		if !r.Failed || len(r.Playbooks) != 0 || !reflect.DeepEqual(noteCodes(r.Notes), []string{"read_failed"}) {
+			t.Fatalf("report = %+v", r)
+		}
+	})
 	t.Run("a whole read is not failed", func(t *testing.T) {
 		r, _, _ := syncSources(t, &SyncExecutor{Fetcher: &fakeFetcher{dir: t.TempDir(), commit: testCommit}}, "")
 		if r.Failed || r.Incomplete || len(r.Notes) != 0 {
