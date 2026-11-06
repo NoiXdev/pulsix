@@ -30,7 +30,9 @@ type plan struct {
 // each a list or null. Refused before galaxy runs: anything else, include:
 // in a role list (it would read any file on the worker), and a role name,
 // given or taken from the source, that is not a plain directory name
-// (plainRoleName; galaxy extracts the role to <roles>/<name>). The file must
+// (plainRoleName; galaxy extracts the role to <roles>/<name>), and a
+// collection name galaxy installs under that is not namespace.name
+// (checkCollection). The file must
 // never read one way here and another way in galaxy, so YAML that the two
 // loaders read differently is refused as well: text other than UTF-8 with \n
 // or \r\n breaks, invisible characters in the text or in a decoded value, a
@@ -174,28 +176,6 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 			s = after
 		}
 		return p.checkTakenName(roleNameFromSource(s))
-	}
-	return nil
-}
-
-// addCollections reads a collection list: each entry a name or a mapping
-// whose name and source are sources.
-func (p *plan) addCollections(list *yaml.Node) error {
-	for i, e := range list.Content {
-		switch {
-		case isString(e):
-			p.sources = append(p.sources, e.Value)
-		case e.Kind == yaml.MappingNode:
-			fields := mappingFields(e)
-			for _, field := range []string{"name", "source"} {
-				if v, ok := fields[field]; ok && isString(v) {
-					p.sources = append(p.sources, v.Value)
-				}
-			}
-		default:
-			return notRequirements(p.name, "collections entry %d is neither a name nor a mapping", i+1)
-		}
-		p.collections = true
 	}
 	return nil
 }
