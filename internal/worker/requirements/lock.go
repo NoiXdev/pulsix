@@ -61,7 +61,8 @@ func lock(ctx context.Context, root *os.Root) (unlock func(), err error) {
 // darwin, concurrent O_CREATE opens of one new file fail with ENOENT now and
 // then, which the exclusive create does not. An os.Root resolves a symlink
 // inside the root, so the opened file is checked against an Lstat of the name:
-// it must be a regular file and the very file opened.
+// it must be a regular file and the very file opened. A mode other than 0600
+// is set back to 0600 on the opened file (the worker owns the directory).
 func openLockFile(root *os.Root) (*os.File, error) {
 	f, err := root.OpenFile(lockFile, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, fs.ErrExist) {
@@ -76,6 +77,9 @@ func openLockFile(root *os.Root) (*os.File, error) {
 		opened, err = f.Stat()
 		if err == nil && (!named.Mode().IsRegular() || !os.SameFile(named, opened)) {
 			err = errLockNotFile
+		}
+		if err == nil && named.Mode().Perm() != 0o600 {
+			err = f.Chmod(0o600)
 		}
 	}
 	if err != nil {

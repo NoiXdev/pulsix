@@ -73,8 +73,9 @@ func TestLockWaitingIsCancellable(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	waiter := openTestRoot(t, dir)
 	go func() {
-		_, err := lock(ctx, openTestRoot(t, dir))
+		_, err := lock(ctx, waiter)
 		done <- err
 	}()
 	time.Sleep(50 * time.Millisecond)
@@ -141,6 +142,26 @@ func TestLockGivesOneHolderAtATime(t *testing.T) {
 	}
 	if got := most.Load(); got != 1 {
 		t.Fatalf("at most %d holders at once, want 1", got)
+	}
+}
+
+func TestLockRestoresTheLockFileMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".lock")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lock(context.Background(), openTestRoot(t, dir))
+	if err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	unlock()
+	fi, err := os.Lstat(path)
+	if err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf(".lock mode = %v (%v), want 0600", fi.Mode(), err)
 	}
 }
 

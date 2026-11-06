@@ -43,24 +43,34 @@ func mkTemp(root *os.Root) (string, error) {
 	return mkTempWith(root, rand.Reader)
 }
 
-// mkTempWith is mkTemp drawing its names from random. A name that already
-// exists is drawn again, up to mkTempAttempts times.
+// mkTempWith is mkTemp drawing its names from random.
 func mkTempWith(root *os.Root, random io.Reader) (string, error) {
+	name, err := withTempName(random, func(name string) error { return root.Mkdir(name, 0o700) })
+	if err != nil {
+		return "", fmt.Errorf("make temporary requirements directory: %w", err)
+	}
+	return name, nil
+}
+
+// withTempName draws a name ".tmp-<16 hex>" from random and calls try with
+// it. A name try reports as existing (fs.ErrExist) is drawn again, up to
+// mkTempAttempts times.
+func withTempName(random io.Reader, try func(name string) error) (string, error) {
 	buf := make([]byte, 8)
 	for range mkTempAttempts {
 		if _, err := io.ReadFull(random, buf); err != nil {
-			return "", fmt.Errorf("make temporary requirements directory: %w", err)
+			return "", err
 		}
 		name := tempPrefix + hex.EncodeToString(buf)
-		err := root.Mkdir(name, 0o700)
+		err := try(name)
 		if err == nil {
 			return name, nil
 		}
 		if !errors.Is(err, fs.ErrExist) {
-			return "", fmt.Errorf("make temporary requirements directory: %w", err)
+			return "", err
 		}
 	}
-	return "", fmt.Errorf("make temporary requirements directory: %d names were taken", mkTempAttempts)
+	return "", fmt.Errorf("%d temporary names were taken", mkTempAttempts)
 }
 
 // sweepTemp removes every ".tmp-*" name in the cache directory that root is
@@ -108,32 +118,37 @@ func removeTemp(root *os.Root, name string, fallback func(name string) error) er
 
 // evict removes the published entries of the cache directory that root is
 // opened on beyond the keep most recently used: real directories named like
-// entryName, newest mtime first, ties broken by name. Nothing else is looked
-// at; an entry-named symlink or file stays (spec goal 1a).
-func evict(root *os.Root, keep int) error {
+// entryName, newest mtime first, ties broken by name. The entry named inUse,
+// the one the caller is about to return, counts as the most recent whatever
+// its mtime says, and is never removed. Nothing else is looked at; an
+// entry-named symlink or file stays (spec goal 1a).
+//
+// A victim is first renamed to a fresh ".tmp-*" name (atomic) and only then
+// removed, so a removal that fails part-way or a worker killed during it never
+// leaves a half-removed directory under an entry name, where it would be used
+// as a valid entry. The leftover is a ".tmp-*" that the next sweepTemp removes.
+func evict(root *os.Root, keep int, inUse string) error {
 	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return fmt.Errorf("evict requirements entries: %w", err)
 	}
-	type used struct {
-		name  string
-		mtime time.Time
-	}
-	var found []used
+	var candidates []string
 	for _, e := range entries {
-		if !entryName.MatchString(e.Name()) {
-			continue
+		if entryName.MatchString(e.Name()) {
+			candidates = append(candidates, e.Name())
 		}
-		fi, err := root.Lstat(e.Name())
-		if err != nil {
-			return fmt.Errorf("evict requirements entries: %w", err)
-		}
-		if !fi.IsDir() {
-			continue
-		}
-		found = append(found, used{e.Name(), fi.ModTime()})
 	}
-	slices.SortFunc(found, func(a, b used) int {
+	found, err := usedEntries(root, candidates)
+	if err != nil {
+		return fmt.Errorf("evict requirements entries: %w", err)
+	}
+	slices.SortFunc(found, func(a, b usedEntry) int {
+		switch {
+		case a.name == inUse:
+			return -1
+		case b.name == inUse:
+			return 1
+		}
 		if c := b.mtime.Compare(a.mtime); c != 0 {
 			return c
 		}
@@ -141,11 +156,57 @@ func evict(root *os.Root, keep int) error {
 	})
 	var errs []error
 	for _, u := range found[min(max(keep, 0), len(found)):] {
-		if err := root.RemoveAll(u.name); err != nil {
+		if u.name == inUse {
+			continue
+		}
+		if err := removeEntry(root, u.name); err != nil {
 			errs = append(errs, fmt.Errorf("evict %s: %w", u.name, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// removeEntry renames the entry name to a fresh temporary name, then removes
+// that.
+func removeEntry(root *os.Root, name string) error {
+	tmp, err := withTempName(rand.Reader, func(tmp string) error {
+		if _, err := root.Lstat(tmp); err == nil {
+			return fs.ErrExist
+		}
+		return root.Rename(name, tmp)
+	})
+	if err != nil {
+		return fmt.Errorf("rename to a temporary name: %w", err)
+	}
+	if err := root.RemoveAll(tmp); err != nil {
+		return fmt.Errorf("remove %s: %w", tmp, err)
+	}
+	return nil
+}
+
+// usedEntry is a published entry and when it was last used.
+type usedEntry struct {
+	name  string
+	mtime time.Time
+}
+
+// usedEntries returns the names that are real directories, with their
+// mtimes. A name that is gone by the time it is looked at is skipped.
+func usedEntries(root *os.Root, names []string) ([]usedEntry, error) {
+	var found []usedEntry
+	for _, name := range names {
+		fi, err := root.Lstat(name)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if fi.IsDir() {
+			found = append(found, usedEntry{name, fi.ModTime()})
+		}
+	}
+	return found, nil
 }
 
 // removeLegacy removes <clone>.galaxy, the galaxy directory of workers before
