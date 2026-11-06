@@ -75,7 +75,7 @@ func (l *Loop) sweepPlayUID(ctx context.Context) error {
 	}
 	var alive []int
 	for range sweepAttempts {
-		// Detached from ctx, like removeAsPlayUID: the loop's own shutdown
+		// Detached from ctx, like removeWorkDir's: the loop's own shutdown
 		// is a common reason a job ends, and the sweep must still run.
 		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeGrace)
 		cmd := exec.CommandContext(sctx, helper, strconv.FormatUint(uint64(l.cfg.PlayUID), 10), l.cfg.PlaySupervisor, supervisor.SweepArg)
@@ -124,7 +124,12 @@ func (l *Loop) sweepPlayUID(ctx context.Context) error {
 func (l *Loop) removeWorkDir(workDir string) {
 	err := os.RemoveAll(workDir)
 	if err != nil && l.cfg.PlayUID != 0 {
-		if playErr := l.removeAsPlayUID(workDir); playErr != nil {
+		// A detached context on purpose: the usual reason a run ends is
+		// the loop's own shutdown, and the cleanup must still get to run.
+		ctx, cancel := context.WithTimeout(context.Background(), removeGrace)
+		playErr := RemoveAsPlayUID(ctx, l.cfg, workDir)
+		cancel()
+		if playErr != nil {
 			l.log.WarnContext(context.Background(), "could not clear the play uid's leftovers from the work dir",
 				"dir", workDir, "err", playErr)
 		}
@@ -136,38 +141,54 @@ func (l *Loop) removeWorkDir(workDir string) {
 	}
 }
 
-// removeAsPlayUID clears the work dir's contents as the play uid. The
-// entries are enumerated by the worker and passed explicitly — no glob, so
-// nothing depends on a shell, and the one path the play could not delete
-// anyway (the work dir itself) is never handed to it. rm is resolved to an
-// absolute path because the helper execs it: there is no PATH search on
-// the other side of the drop.
-func (l *Loop) removeAsPlayUID(workDir string) error {
-	entries, err := os.ReadDir(workDir)
+// RemoveAsPlayUID clears dir's contents as the play uid (cfg.PlayUID,
+// through cfg.SetuidHelper): first `chmod -R u+rwX` on them, so that a
+// directory the play uid created without write permission (a role
+// tarball's own mode) can be emptied, then `rm -rf`. The chmod's own
+// failure is not one: it also meets the worker's entries, which the play
+// uid may not chmod, and the rm decides. dir itself is never handed over.
+//
+// The entries are enumerated by the worker and passed explicitly — no
+// glob, so nothing depends on a shell. chmod and rm are resolved to
+// absolute paths because the helper execs them: there is no PATH search
+// on the other side of the drop. ctx bounds both calls.
+//
+// Removing as the play uid is safe only while nothing above dir is
+// writable by the play's group: rm runs with the play uid's own rights, so
+// it can only remove what that uid could remove anyway.
+func RemoveAsPlayUID(ctx context.Context, cfg Config, dir string) error {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("list %s: %w", workDir, err)
+		return fmt.Errorf("list %s: %w", dir, err)
 	}
 	if len(entries) == 0 {
 		return nil
+	}
+	chmod, err := exec.LookPath("chmod")
+	if err != nil {
+		return fmt.Errorf("find chmod to clear the play uid's leftovers: %w", err)
 	}
 	rm, err := exec.LookPath("rm")
 	if err != nil {
 		return fmt.Errorf("find rm to clear the play uid's leftovers: %w", err)
 	}
-	argv := []string{strconv.FormatUint(uint64(l.cfg.PlayUID), 10), rm, "-rf", "--"}
-	for _, e := range entries {
-		argv = append(argv, filepath.Join(workDir, e.Name()))
+	paths := make([]string, len(entries))
+	for i, e := range entries {
+		paths[i] = filepath.Join(dir, e.Name())
 	}
-	helper := l.cfg.SetuidHelper
+	uid := strconv.FormatUint(uint64(cfg.PlayUID), 10)
+	_ = asPlayUID(ctx, cfg, append([]string{uid, chmod, "-R", "u+rwX", "--"}, paths...))
+	return asPlayUID(ctx, cfg, append([]string{uid, rm, "-rf", "--"}, paths...))
+}
+
+// asPlayUID runs the setuid helper with argv; an error carries its output.
+func asPlayUID(ctx context.Context, cfg Config, argv []string) error {
+	helper := cfg.SetuidHelper
 	if helper == "" {
 		// Load always fills this; a Config assembled by hand (tests, the
 		// embedded worker) may not.
 		helper = defaultSetuidHelper
 	}
-	// A detached context on purpose: the usual reason a run ends is the
-	// loop's own shutdown, and the cleanup must still get to run.
-	ctx, cancel := context.WithTimeout(context.Background(), removeGrace)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, helper, argv...)
 	// The helper's final execv is a plain binary with unchanged
 	// credentials, so this child is dumpable and its /proc/<pid>/environ

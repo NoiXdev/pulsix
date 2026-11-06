@@ -323,7 +323,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	return status, statsMap, nil
 }
 
-// newRunnerCmd builds the ansible-runner subprocess's *exec.Cmd.
+// newRunnerCmd builds the ansible-runner subprocess's *exec.Cmd (newPlayCmd, shared with ansible-galaxy).
 //
 // With Config.PlaySupervisor set (worker.Load sets it on Linux), the
 // command runs the runner under the play supervisor (backlog 2.107):
@@ -375,47 +375,25 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 // runner in that same group, so the worker's TERM still reaches the runner
 // exactly as before.
 func newRunnerCmd(bin string, args []string, env worker.RunEnv, subprocessEnv []string, grace time.Duration) (*exec.Cmd, error) {
-	name, argv := bin, args
-	if sup := env.Config.PlaySupervisor; sup != "" || env.Config.PlayUID != 0 {
-		abs, err := resolveRunnerBin(bin)
-		if err != nil {
-			return nil, err
-		}
-		name, argv = abs, args
-		if sup != "" {
-			name, argv = sup, supervisor.Command(grace, abs, args)
-		}
-	}
-	if uid := env.Config.PlayUID; uid != 0 {
-		helper := env.Config.SetuidHelper
-		if helper == "" {
-			helper = defaultSetuidHelper
-		}
-		name, argv = helper, append([]string{strconv.FormatUint(uint64(uid), 10), name}, argv...)
-	}
-	cmd := exec.Command(name, argv...)
-	cmd.Dir = env.WorkDir
-	cmd.Env = subprocessEnv
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	return cmd, nil
+	return newPlayCmd(bin, envRunnerBin, args, env.Config, env.WorkDir, subprocessEnv, grace)
 }
 
-// resolveRunnerBin turns the configured ansible-runner binary into an
-// absolute path for the setuid helper's execv. LookPath covers the bare
+// resolveRunnerBin turns the configured binary (binVar names its variable)
+// into an absolute path for the setuid helper's execv. LookPath covers the bare
 // name (the default) against the worker's own PATH; Abs covers a relative
 // one, which execv would otherwise resolve against the subprocess's
 // working directory — the run's work dir, where no binary of the
 // operator's lives. A binary that cannot be found fails the job by name,
 // naming the variable that chose it: ENOENT from inside a setuid helper is
 // otherwise indistinguishable from the helper itself being absent.
-func resolveRunnerBin(bin string) (string, error) {
+func resolveRunnerBin(bin, binVar string) (string, error) {
 	path, err := exec.LookPath(bin)
 	if err != nil {
-		return "", fmt.Errorf("find the ansible-runner binary %q (%s): %w", bin, envRunnerBin, err)
+		return "", fmt.Errorf("find the binary %q (%s): %w", bin, binVar, err)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("resolve the ansible-runner binary %q (%s) to an absolute path: %w", bin, envRunnerBin, err)
+		return "", fmt.Errorf("resolve the binary %q (%s) to an absolute path: %w", bin, binVar, err)
 	}
 	return abs, nil
 }

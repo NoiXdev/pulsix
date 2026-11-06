@@ -119,6 +119,25 @@ func ShareWorkDir(dir string) error {
 // the first repo-backed job — which is what makes "the cache is 0700" a
 // true statement about a new worker and a false one about a used one.
 func ShareRepoRead(root, dir string) error {
+	if err := shareAncestors(root, dir); err != nil {
+		return err
+	}
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return nil
+		}
+		return chmodReadShared(path)
+	})
+}
+
+// shareAncestors is ShareRepoRead's walk down to dir: root and every
+// directory between root and dir (not dir itself, unless it is root) get
+// group read and traverse and never group write; a symlink on that path is
+// refused, naming it.
+func shareAncestors(root, dir string) error {
 	rel, err := filepath.Rel(root, dir)
 	if err != nil {
 		return fmt.Errorf("locate %s inside the repo cache %s: %w", dir, root, err)
@@ -163,15 +182,7 @@ func ShareRepoRead(root, dir string) error {
 		}
 		path = filepath.Join(path, part)
 	}
-	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			return nil
-		}
-		return chmodReadShared(path)
-	})
+	return nil
 }
 
 // chmodReadShared gives path's group whatever read and execute access its
