@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
@@ -21,22 +22,36 @@ var errNotPlainYAML = errors.New("anchors, aliases, merge keys and tags are not 
 // yaml.v3 would read the first one only.
 var errSecondDocument = errors.New("only one YAML document is allowed")
 
-// errOddText: the file is not UTF-8 text whose lines break at \n or \r\n.
-// yaml.v3 also reads UTF-16 and breaks lines at a lone \r, U+0085, U+2028 and
-// U+2029; the tag check (startsWithTag) finds a node's text by yaml.v3's line
-// and column, so the lines it splits must be the lines yaml.v3 counts.
-var errOddText = errors.New("only UTF-8 text with ordinary line breaks is supported")
+// errOddText: the file is not plain UTF-8 text. The tag check
+// (startsWithTag) finds a node's text by yaml.v3's line and column, and the
+// loaders must see the same characters, so anything they treat differently
+// is refused:
+//   - UTF-16 and UTF-32 (yaml.v3 decodes them) and invalid UTF-8;
+//   - line breaks other than \n and \r\n (yaml.v3 also breaks at a lone \r,
+//     U+0085, U+2028 and U+2029);
+//   - a U+FEFF after the first character: galaxy's loader (libyaml) skips
+//     one at the start of any line, yaml.v3 only at the start of the file,
+//     so a name: or include: key behind one reads differently;
+//   - every other invisible character: control characters except tab, LF and
+//     the CR of a CRLF (C0, DEL, C1) and format characters (Unicode category
+//     Cf: zero-width characters, bidi controls, the soft hyphen, …).
+var errOddText = errors.New("only UTF-8 text with ordinary line breaks and no invisible characters is supported")
 
-// checkText refuses data that is not valid UTF-8 (UTF-16 and UTF-32 among
-// it: invalid bytes or NULs), holds a NUL, a \r not followed by \n, U+0085,
-// U+2028 or U+2029. A leading UTF-8 byte order mark is fine.
+// checkText refuses data that is not plain UTF-8 text (errOddText). One
+// leading UTF-8 byte order mark is fine.
 func checkText(data []byte) error {
-	if !utf8.Valid(data) || bytes.IndexByte(data, 0) >= 0 ||
-		bytes.ContainsAny(data, "\u0085\u2028\u2029") {
+	text := bytes.TrimPrefix(data, []byte("\uFEFF"))
+	if !utf8.Valid(text) {
 		return errOddText
 	}
-	for i, b := range data {
-		if b == '\r' && (i+1 == len(data) || data[i+1] != '\n') {
+	for i, r := range string(text) {
+		switch {
+		case r == '\t', r == '\n':
+		case r == '\r':
+			if i+1 == len(text) || text[i+1] != '\n' {
+				return errOddText
+			}
+		case r == '\u2028', r == '\u2029', unicode.IsControl(r), unicode.Is(unicode.Cf, r):
 			return errOddText
 		}
 	}

@@ -60,6 +60,7 @@ func TestParseFile(t *testing.T) {
 		{name: "invalid YAML in a second document", data: "- a.b\n---\n[\n", err: notReq + "invalid YAML: "},
 		{name: "a document start marker", data: "---\n- a.b\n...\n", roles: true},
 		{name: "a byte order mark", data: "\ufeff- {name: a, src: ./r.tar.gz}\n", roles: true},
+		{name: "tabs and wide characters", data: "- {name: a,\tsrc: ./r\u00fc\u4e2d.tar.gz}\t# \u00e9\n", roles: true},
 		{name: "a non-specific tag after a byte order mark", data: "\ufeff- ! a.b\n", err: plainYAML, exact: true},
 		{name: "a non-specific tag on a key", data: "- src: ./r.tar.gz\n  ! name: web\n", err: plainYAML, exact: true},
 		{name: "exclamation and ampersand inside strings", data: "- src: 'a!b&c'\n  name: \"w!&\"\n- x!y&z\n", roles: true},
@@ -163,7 +164,7 @@ func utf16Bytes(s string, bigEndian, bom bool) []byte {
 // must be the lines yaml.v3 counts: only UTF-8 with \n or \r\n breaks.
 func TestParseFileRefusesTextYAMLCountsDifferently(t *testing.T) {
 	const name = "requirements.yml"
-	const refused = name + " is not a requirements file: only UTF-8 text with ordinary line breaks is supported"
+	const refused = name + " is not a requirements file: only UTF-8 text with ordinary line breaks and no invisible characters is supported"
 	const tagged = "- src: ./r.tar.gz\n  name: ! \"~\"\n"
 	cases := []struct {
 		name string
@@ -181,6 +182,21 @@ func TestParseFileRefusesTextYAMLCountsDifferently(t *testing.T) {
 		{"UTF-16BE without a BOM", utf16Bytes(tagged, true, false)},
 		{"invalid UTF-8", []byte("- name: \xff\xfe\n")},
 		{"a NUL", []byte("- a.b\x00\n")},
+		// galaxy's loader (libyaml) skips a U+FEFF at the start of any line,
+		// yaml.v3 only at the start of the file.
+		{"a BOM before a name key", []byte("- {src: ./r.tar.gz,\n\ufeffname: ../../evil}\n")},
+		{"a BOM before an include key", []byte("- {name: web,\n\ufeffinclude: /etc/passwd}\n")},
+		{"a BOM before a name key in roles", []byte("roles: [ {src: ./r.tar.gz,\n\ufeffname: ../../evil} ]\n")},
+		{"a BOM before a tag", []byte("- {src: ./r.tar.gz, name:\n\ufeff! \"~\"}\n")},
+		{"two leading BOMs", []byte("\ufeff\ufeff- {src: ./r.tar.gz,\nname: ../../evil}\n")},
+		{"a BOM inside a string", []byte("- name: \"a\ufeffb\"\n")},
+		{"a zero-width space in a name", []byte("- src: ./r.tar.gz\n  name: we\u200bb\n")},
+		{"a zero-width joiner", []byte("- acme\u200d.web\n")},
+		{"a bidi override", []byte("- src: ./r.tar.gz\n  name: \u202eweb\n")},
+		{"a soft hyphen", []byte("- acme.w\u00adeb\n")},
+		{"DEL", []byte("- acme.web\x7f\n")},
+		{"a C0 control", []byte("- acme.web\x1b\n")},
+		{"a C1 control", []byte("- acme.web\u009b\n")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -193,7 +209,7 @@ func TestParseFileRefusesTextYAMLCountsDifferently(t *testing.T) {
 }
 
 func TestParseFileAcceptsCRLF(t *testing.T) {
-	got, err := parseFile("requirements.yml", []byte("roles:\r\n  - src: ./r.tar.gz\r\n    name: web\r\ncollections:\r\n  - ns.col\r\n"))
+	got, err := parseFile("requirements.yml", []byte("\ufeffroles:\r\n  - src: ./r.tar.gz\r\n    name: web\r\ncollections:\r\n  - ns.col\r\n"))
 	if err != nil || !got.roles || !got.collections || !reflect.DeepEqual(got.sources, []string{"./r.tar.gz", "ns.col"}) {
 		t.Fatalf("parseFile = %+v, %v", got, err)
 	}
