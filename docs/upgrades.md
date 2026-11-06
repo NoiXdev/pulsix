@@ -170,13 +170,16 @@ hand) and installs into `<repo>.galaxy` again on its next sync.
   source outside the repository (`../`, an absolute path, `.git`, a link
   leading out) or with a glob character (`*`, `?`, `[`); has a directory
   source holding a link that leads out of the repository, more than 50000
-  files and directories, or nesting deeper than 64; has a version, scm, name,
+  files and directories, or nesting deeper than 64, or needs more than
+  1000000 lookups to check; has a version, scm, name,
   type or source (or a comma part of a role string) starting with `-`; or
   names a git source whose `#subdirectory` leads out of its checkout. The
   worker refuses to take over an install, failing it by the path, when it
   holds a hard link, an absolute symlink or one leading out of the install, a
   FIFO, device or socket, more than 500000 files and directories, more than
-  2 GiB of files, or nesting deeper than 64. A repository subpath
+  2 GiB of files, nesting deeper than 64, a chain of more than 40 symlinks,
+  more names than it holds in memory (64 MiB), or a file that changed while it
+  was copied. A repository subpath
   into git's own files (`.git`, or a link to it) now fails the sync as it
   fails the runs. With `PULSIX_WORKER_PLAY_UID` set, `ansible-galaxy` runs as
   the play uid and can write only into its temporary install directory: a role
