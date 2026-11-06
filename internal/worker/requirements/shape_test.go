@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf16"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestParseFile(t *testing.T) {
@@ -136,6 +139,80 @@ func TestParseFile(t *testing.T) {
 				t.Fatalf("parseFile = %+v, want name %q roles %v collections %v", got, name, tc.roles, tc.collections)
 			}
 		})
+	}
+}
+
+// utf16Bytes encodes s as UTF-16, big or little endian, with or without a BOM.
+func utf16Bytes(s string, bigEndian, bom bool) []byte {
+	units := utf16.Encode([]rune(s))
+	if bom {
+		units = append([]uint16{0xFEFF}, units...)
+	}
+	out := make([]byte, 0, 2*len(units))
+	for _, u := range units {
+		if bigEndian {
+			out = append(out, byte(u>>8), byte(u))
+		} else {
+			out = append(out, byte(u), byte(u>>8))
+		}
+	}
+	return out
+}
+
+// The tag check reads the source text at each node's position, so the lines
+// must be the lines yaml.v3 counts: only UTF-8 with \n or \r\n breaks.
+func TestParseFileRefusesTextYAMLCountsDifferently(t *testing.T) {
+	const name = "requirements.yml"
+	const refused = name + " is not a requirements file: only UTF-8 text with ordinary line breaks is supported"
+	const tagged = "- src: ./r.tar.gz\n  name: ! \"~\"\n"
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{"CR breaks", []byte(strings.ReplaceAll(tagged, "\n", "\r"))},
+		{"a lone CR", []byte("- a.b\r- c.d\n")},
+		{"NEL breaks", []byte(strings.ReplaceAll(tagged, "\n", "\u0085"))},
+		{"LS breaks", []byte(strings.ReplaceAll(tagged, "\n", "\u2028"))},
+		{"PS breaks", []byte(strings.ReplaceAll(tagged, "\n", "\u2029"))},
+		{"NEL inside a string", []byte("- name: \"a\u0085b\"\n")},
+		{"UTF-16LE with a BOM", utf16Bytes(tagged, false, true)},
+		{"UTF-16BE with a BOM", utf16Bytes(tagged, true, true)},
+		{"UTF-16LE without a BOM", utf16Bytes(tagged, false, false)},
+		{"UTF-16BE without a BOM", utf16Bytes(tagged, true, false)},
+		{"invalid UTF-8", []byte("- name: \xff\xfe\n")},
+		{"a NUL", []byte("- a.b\x00\n")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseFile(name, tc.data)
+			if err == nil || err.Error() != refused {
+				t.Fatalf("parseFile = %+v, %v; want %q", got, err, refused)
+			}
+		})
+	}
+}
+
+func TestParseFileAcceptsCRLF(t *testing.T) {
+	got, err := parseFile("requirements.yml", []byte("roles:\r\n  - src: ./r.tar.gz\r\n    name: web\r\ncollections:\r\n  - ns.col\r\n"))
+	if err != nil || !got.roles || !got.collections || !reflect.DeepEqual(got.sources, []string{"./r.tar.gz", "ns.col"}) {
+		t.Fatalf("parseFile = %+v, %v", got, err)
+	}
+	if _, err := parseFile("requirements.yml", []byte("- src: ./r.tar.gz\r\n  name: ! web\r\n")); err == nil ||
+		!strings.HasSuffix(err.Error(), "anchors, aliases, merge keys and tags are not supported") {
+		t.Fatalf("a tag in a CRLF file: err = %v", err)
+	}
+}
+
+// The TaggedStyle guard on its own: a tagged node whose position the source
+// text cannot confirm is still refused.
+func TestIsPlainRefusesATaggedStyleNodeWithoutAPosition(t *testing.T) {
+	n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "web", Style: yaml.TaggedStyle}
+	if isPlain(n, nil) {
+		t.Fatal("isPlain accepted a TaggedStyle node")
+	}
+	n.Style = 0
+	if !isPlain(n, nil) {
+		t.Fatal("isPlain refused an untagged node")
 	}
 }
 

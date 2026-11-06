@@ -27,13 +27,13 @@ type plan struct {
 // would put the role outside the roles directory (galaxy extracts the role to
 // <roles>/<name>). The file must never read one way here and another way in
 // galaxy, so YAML that the two loaders read differently is refused as well:
-// a second document, anchors, aliases, merge keys, explicit tags (decodePlain)
+// text other than UTF-8 with \n or \r\n breaks, a second document, anchors, aliases, merge keys, explicit tags (decodePlain)
 // and duplicate keys (galaxy keeps the last).
 func parseFile(name string, data []byte) (plan, error) {
 	p := plan{name: name}
 	doc, err := decodePlain(data)
 	switch {
-	case errors.Is(err, errSecondDocument), errors.Is(err, errNotPlainYAML):
+	case errors.Is(err, errOddText), errors.Is(err, errSecondDocument), errors.Is(err, errNotPlainYAML):
 		return plan{}, notRequirements(name, "%v", err)
 	case err != nil:
 		return plan{}, notRequirements(name, "invalid YAML: %v", err)
