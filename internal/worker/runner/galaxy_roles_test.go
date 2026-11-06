@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // rolesPathLine returns the roles_path line of an ansible.cfg text, or "".
@@ -30,28 +31,50 @@ func rolesPathLine(t *testing.T, cfg string) string {
 	return ""
 }
 
-func TestAnsibleCfgRolesPath(t *testing.T) {
+func TestAnsibleCfgNamesTheInstalledRequirements(t *testing.T) {
+	// keyLine returns the line of cfg that sets key, or "".
+	keyLine := func(cfg, key string) string {
+		for _, line := range strings.Split(cfg, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), key+" ") {
+				return line
+			}
+		}
+		return ""
+	}
 	cases := []struct {
-		name     string
-		rolesDir string
-		want     string
+		name            string
+		installed       requirements.Entry
+		wantRoles       string
+		wantCollections string
 	}{
-		{"galaxy dir", "/c/o/r.galaxy", "roles_path = /c/o/r.galaxy:/usr/share/ansible/roles:/etc/ansible/roles"},
-		{"no galaxy dir", "", ""},
+		{"no install", requirements.Entry{}, "", ""},
+		{
+			"installed entry",
+			requirements.Entry{
+				Dir:            "/c/o/r.requirements/k",
+				RolesDir:       "/c/o/r.requirements/k/roles",
+				CollectionsDir: "/c/o/r.requirements/k/collections",
+			},
+			"roles_path = /c/o/r.requirements/k/roles:/usr/share/ansible/roles:/etc/ansible/roles",
+			"collections_path = /c/o/r.requirements/k/collections:/usr/share/ansible/collections",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := ansibleCfgText("/work", nil, tc.rolesDir)
-			if got := rolesPathLine(t, cfg); got != tc.want {
-				t.Fatalf("roles_path line = %q, want %q\n%s", got, tc.want, cfg)
+			cfg := ansibleCfgText("/work", nil, tc.installed)
+			if got := keyLine(cfg, "roles_path"); got != tc.wantRoles {
+				t.Errorf("roles_path line = %q, want %q\n%s", got, tc.wantRoles, cfg)
 			}
-			if tc.want == "" {
-				return
+			if got := keyLine(cfg, "collections_path"); got != tc.wantCollections {
+				t.Errorf("collections_path line = %q, want %q\n%s", got, tc.wantCollections, cfg)
 			}
-			// roles_path is a [defaults] key: it must sit before the
+			// Both are [defaults] keys: they must sit before the
 			// [ssh_connection] section starts.
-			if strings.Index(cfg, tc.want) > strings.Index(cfg, "[ssh_connection]") {
-				t.Fatalf("roles_path is outside [defaults]:\n%s", cfg)
+			ssh := strings.Index(cfg, "[ssh_connection]")
+			for _, want := range []string{tc.wantRoles, tc.wantCollections} {
+				if want != "" && strings.Index(cfg, want) > ssh {
+					t.Errorf("%q is outside [defaults]:\n%s", want, cfg)
+				}
 			}
 		})
 	}
@@ -100,7 +123,7 @@ func TestRepoRunNamesTheGalaxyDirInItsConfig(t *testing.T) {
 		if err != nil {
 			t.Fatalf("materializePlaybook: %v", err)
 		}
-		if err := r.materializeRunnerConfig(job, env, rolesDir); err != nil {
+		if err := r.materializeRunnerConfig(job, env, requirements.Entry{RolesDir: rolesDir}); err != nil {
 			t.Fatalf("materializeRunnerConfig: %v", err)
 		}
 		return rolesDir, string(mustRead(t, filepath.Join(env.WorkDir, "ansible.cfg")))
@@ -256,7 +279,7 @@ func TestGalaxyRoleResolvesInRealAnsible(t *testing.T) {
 	}
 	run := func() (string, error) {
 		t.Helper()
-		if err := r.materializeRunnerConfig(job, env, rolesDir); err != nil {
+		if err := r.materializeRunnerConfig(job, env, requirements.Entry{RolesDir: rolesDir}); err != nil {
 			t.Fatalf("materializeRunnerConfig: %v", err)
 		}
 		cmd := exec.Command(ansible, "-i", "localhost,", "-c", "local", playbook)

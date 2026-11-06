@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // File and directory names of the run's layout.
@@ -102,16 +103,21 @@ type vaultFile struct {
 	Path  string
 }
 
-// systemRolesPath is Ansible's default roles_path without its home entry
-// (the run's HOME is an empty private directory): a generated roles_path
-// replaces the default, so it carries these two along.
-const systemRolesPath = "/usr/share/ansible/roles:/etc/ansible/roles"
+// systemRolesPath and systemCollectionsPath are Ansible's default roles_path
+// and collections_path without their home entries (the run's HOME is an
+// empty private directory): a generated key replaces the default, so it
+// carries these along.
+const (
+	systemRolesPath       = "/usr/share/ansible/roles:/etc/ansible/roles"
+	systemCollectionsPath = "/usr/share/ansible/collections"
+)
 
-// ansibleCfgText renders the run's ansible.cfg. rolesDir is the repo's
-// galaxy directory (materializePlaybook) or "" — with one, roles_path names
-// it ahead of the system defaults; Ansible searches the playbook's own
-// roles/ before roles_path either way.
-func ansibleCfgText(workDir string, vaultFiles []vaultFile, rolesDir string) string {
+// ansibleCfgText renders the run's ansible.cfg. installed is the run's
+// requirements entry, or the zero Entry: roles_path names its roles
+// directory and collections_path its collections directory, each ahead of
+// the system defaults and each only when set. Ansible searches the
+// playbook's own roles/ and collections/ before either key.
+func ansibleCfgText(workDir string, vaultFiles []vaultFile, installed requirements.Entry) string {
 	// vault_identity_list is written only when there is at least one
 	// identity, and vault_password_file is never written at all: Ansible
 	// accepts either key, and a run carrying one stale and one fresh
@@ -128,17 +134,21 @@ func ansibleCfgText(workDir string, vaultFiles []vaultFile, rolesDir string) str
 		vault = "vault_identity_list = " + strings.Join(pairs, ", ") + "\n"
 	}
 	roles := ""
-	if rolesDir != "" {
-		roles = "roles_path = " + rolesDir + ":" + systemRolesPath + "\n"
+	if installed.RolesDir != "" {
+		roles = "roles_path = " + installed.RolesDir + ":" + systemRolesPath + "\n"
+	}
+	collections := ""
+	if installed.CollectionsDir != "" {
+		collections = "collections_path = " + installed.CollectionsDir + ":" + systemCollectionsPath + "\n"
 	}
 	return fmt.Sprintf(`[defaults]
 host_key_checking = True
 retry_files_enabled = False
 local_tmp = %s
-%s%s
+%s%s%s
 [ssh_connection]
 ssh_args = %s
-`, filepath.Join(workDir, localTmpName), vault, roles, sshArgs(workDir))
+`, filepath.Join(workDir, localTmpName), vault, roles, collections, sshArgs(workDir))
 }
 
 // inventoryWrapperText renders the executable dynamic-inventory wrapper:

@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/credentials"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 	"gopkg.in/yaml.v3"
 )
 
@@ -296,17 +297,17 @@ func TestSafeSubpathRejectsAbsoluteAndBackslash(t *testing.T) {
 func TestRepoSpecFailsClosed(t *testing.T) {
 	job := runJob(t)
 	job.OrgId = "not-a-uuid"
-	if _, _, err := repoSpec(job, uuid.Must(uuid.NewV7())); err == nil {
+	if _, _, err := repoSpec(job, uuid.Must(uuid.NewV7()), "site.yml"); err == nil {
 		t.Error("a malformed org id must fail")
 	}
 	job = runJob(t)
 	job.KindPayload = `{oops`
-	if _, _, err := repoSpec(job, uuid.Must(uuid.NewV7())); err == nil {
+	if _, _, err := repoSpec(job, uuid.Must(uuid.NewV7()), "site.yml"); err == nil {
 		t.Error("a broken kind payload must fail")
 	}
 	job = runJob(t)
 	job.KindPayload = `{"repo":{"id":"mismatched"}}`
-	if _, _, err := repoSpec(job, uuid.Must(uuid.NewV7())); err == nil {
+	if _, _, err := repoSpec(job, uuid.Must(uuid.NewV7()), "site.yml"); err == nil {
 		t.Error("a payload naming another repo must fail")
 	}
 }
@@ -327,7 +328,7 @@ func TestMaterializeRunnerConfigWritesExtravars(t *testing.T) {
 	env := runEnv(t)
 	job := runJob(t)
 	job.ExtraVars = map[string]string{"count": "2", "msg": `"hi"`}
-	if err := (&Runner{}).materializeRunnerConfig(job, env, ""); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(job, env, requirements.Entry{}); err != nil {
 		t.Fatalf("materializeRunnerConfig: %v", err)
 	}
 	text := string(mustRead(t, filepath.Join(env.WorkDir, "env", "extravars")))

@@ -11,6 +11,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // TestMalformedRunnerLineIsNamedRedacted is backlog 2.115's first step: a
@@ -47,7 +48,7 @@ func TestMalformedRunnerLineIsNamedRedacted(t *testing.T) {
 // ShareWorkDir opens it to the play's group.
 func TestRunnerConfigCreatesTheRunsHome(t *testing.T) {
 	env := worker.RunEnv{WorkDir: t.TempDir()}
-	if err := (&Runner{}).materializeRunnerConfig(&workerpb.Job{Id: "j1"}, env, ""); err != nil {
+	if err := (&Runner{}).materializeRunnerConfig(&workerpb.Job{Id: "j1"}, env, requirements.Entry{}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(env.WorkDir, homeDirName))

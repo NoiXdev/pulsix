@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // TestRoleSearchFromASubdirectoryInRealAnsible pins where a real
@@ -37,7 +39,7 @@ func TestRoleSearchFromASubdirectoryInRealAnsible(t *testing.T) {
 		if err != nil {
 			t.Fatalf("materializePlaybook: %v", err)
 		}
-		if err := r.materializeRunnerConfig(job, env, rolesDir); err != nil {
+		if err := r.materializeRunnerConfig(job, env, requirements.Entry{RolesDir: rolesDir}); err != nil {
 			t.Fatalf("materializeRunnerConfig: %v", err)
 		}
 		cmd := exec.Command(ansible, "-i", "localhost,", "-c", "local", playbook)

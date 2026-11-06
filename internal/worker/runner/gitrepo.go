@@ -41,14 +41,18 @@ import (
 )
 
 // gitRepoSpec is one repository the run must materialize, straight from the
-// claim's kind payload. HostKey/HostPublicKey are the repository's git
-// server key pin (backlog 2.41) — empty while unpinned.
+// claim's kind payload. Subpath is the playbook's path inside the clone;
+// RepoSubpath is the repository's own subpath, normalised ("" for none),
+// where the requirements root is looked for (repoSubpath). HostKey/
+// HostPublicKey are the repository's git server key pin (backlog 2.41) —
+// empty while unpinned.
 type gitRepoSpec struct {
 	OrgID         uuid.UUID
 	RepoID        uuid.UUID
 	URL           string
 	Branch        string
 	Subpath       string
+	RepoSubpath   string
 	HostKey       string
 	HostPublicKey string
 }

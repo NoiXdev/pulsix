@@ -14,6 +14,7 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/vaultlabel"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // connection is the claim's per-host connection JSON: the rendered
@@ -258,17 +259,17 @@ func (r *Runner) materializeInventory(job *workerpb.Job, env worker.RunEnv) erro
 	)
 }
 
-// materializeRunnerConfig writes the run's ansible.cfg (0600; rolesDir,
-// from materializePlaybook, goes on its roles path when not ""), the extra
+// materializeRunnerConfig writes the run's ansible.cfg (0600; installed,
+// the run's requirements entry, names the roles and collections paths), the extra
 // vars document (env/extravars, 0600 — ansible-runner feeds it as
 // -e @env/extravars, so the values never pass through the command line)
 // and the scratch directories.
-func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv, rolesDir string) error {
+func (r *Runner) materializeRunnerConfig(job *workerpb.Job, env worker.RunEnv, installed requirements.Entry) error {
 	vaultFiles, err := r.materializeVaultPassword(job, env)
 	if err != nil {
 		return err
 	}
-	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFiles, rolesDir), 0o600); err != nil {
+	if err := writeTextFile(filepath.Join(env.WorkDir, ansibleCfgName), ansibleCfgText(env.WorkDir, vaultFiles, installed), 0o600); err != nil {
 		return err
 	}
 	// The run's HOME has to exist, owner-only like the rest of the work dir

@@ -69,7 +69,7 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 	}
 
 	ref := job.GetPlaybook()
-	repoID, _, isRepo, err := parsePlaybookRef(ref)
+	repoID, playbookPath, isRepo, err := parsePlaybookRef(ref)
 	if err != nil {
 		return "", "", err
 	}
@@ -84,7 +84,7 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 		return path, "", nil
 	}
 
-	spec, secret, err := repoSpec(job, repoID)
+	spec, secret, err := repoSpec(job, repoID, playbookPath)
 	if err != nil {
 		return "", "", err
 	}
@@ -131,23 +131,25 @@ func galaxyRolesDir(clone string) string {
 }
 
 // repoSpec reads the repository out of the claim: the kind payload carries
-// {"repo": {"id","url","branch","subpath"}} (the claim-time enrichment,
-// plus the git server key pin, backlog 2.41), the repo's git credential
-// rides in the credentials map as `git:<repo-id>` (empty when the repo
-// fetches without one).
-func repoSpec(job *workerpb.Job, repoID uuid.UUID) (gitRepoSpec, string, error) {
+// {"repo": {"id","url","branch","subpath","repo_subpath"}} (the claim-time
+// enrichment, plus the git server key pin, backlog 2.41), the repo's git
+// credential rides in the credentials map as `git:<repo-id>` (empty when
+// the repo fetches without one). playbookPath is the reference's own path;
+// repoSubpath checks the claim's subpath against it.
+func repoSpec(job *workerpb.Job, repoID uuid.UUID, playbookPath string) (gitRepoSpec, string, error) {
 	orgID, err := uuid.Parse(job.GetOrgId())
 	if err != nil {
 		return gitRepoSpec{}, "", fmt.Errorf("claim org id: %w", err)
 	}
 	var payload struct {
 		Repo *struct {
-			ID            string `json:"id"`
-			URL           string `json:"url"`
-			Branch        string `json:"branch"`
-			Subpath       string `json:"subpath"`
-			HostKey       string `json:"host_key"`
-			HostPublicKey string `json:"host_public_key"`
+			ID            string  `json:"id"`
+			URL           string  `json:"url"`
+			Branch        string  `json:"branch"`
+			Subpath       string  `json:"subpath"`
+			RepoSubpath   *string `json:"repo_subpath"`
+			HostKey       string  `json:"host_key"`
+			HostPublicKey string  `json:"host_public_key"`
 		} `json:"repo"`
 	}
 	if err := json.Unmarshal([]byte(job.GetKindPayload()), &payload); err != nil {
@@ -159,12 +161,17 @@ func repoSpec(job *workerpb.Job, repoID uuid.UUID) (gitRepoSpec, string, error) 
 	if payload.Repo.ID != "" && payload.Repo.ID != repoID.String() {
 		return gitRepoSpec{}, "", fmt.Errorf("kind payload names repo %s, the playbook references %s", payload.Repo.ID, repoID)
 	}
+	repoSub, err := repoSubpath(payload.Repo.RepoSubpath, payload.Repo.Subpath, playbookPath)
+	if err != nil {
+		return gitRepoSpec{}, "", err
+	}
 	spec := gitRepoSpec{
 		OrgID:         orgID,
 		RepoID:        repoID,
 		URL:           payload.Repo.URL,
 		Branch:        payload.Repo.Branch,
 		Subpath:       payload.Repo.Subpath,
+		RepoSubpath:   repoSub,
 		HostKey:       payload.Repo.HostKey,
 		HostPublicKey: payload.Repo.HostPublicKey,
 	}

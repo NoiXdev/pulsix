@@ -43,6 +43,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
@@ -169,7 +170,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	if err := r.materializeInventory(job, env); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize inventory: %w", err)
 	}
-	if err := r.materializeRunnerConfig(job, env, rolesDir); err != nil {
+	if err := r.materializeRunnerConfig(job, env, requirements.Entry{RolesDir: rolesDir}); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize runner config: %w", err)
 	}
 	if env.Config.PlayUID != 0 {
