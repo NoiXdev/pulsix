@@ -1153,6 +1153,11 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve repo %s: %w", repoID, err)
 	}
+	// The claim carries both: "subpath" (the repository's subpath joined
+	// with the playbook path, what the run executes) and "repo_subpath" (the
+	// repository's own, "" without one, always present), from which the
+	// worker derives the requirements root. An older manager sends only
+	// "subpath"; the worker then derives the repository's part from it.
 	sub := repo.Subpath
 	if sub == "" {
 		sub = path
@@ -1176,6 +1181,7 @@ func (q *SQLQueue) repoKindPayload(ctx context.Context, job Job, repoID uuid.UUI
 	}
 	payload := map[string]any{"repo": map[string]any{
 		"id": repoID.String(), "url": repo.URL, "branch": repo.Branch, "subpath": sub,
+		"repo_subpath": repo.Subpath,
 	}}
 	// The repository's git server key pin (backlog 2.41): a run job's repo
 	// fetch enforces the pin exactly like a sync job's (the same git

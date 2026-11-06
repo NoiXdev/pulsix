@@ -1110,3 +1110,67 @@ func TestSendableVarsKeepsRawValues(t *testing.T) {
 		t.Fatalf("sendableVars(non-object) = %v, want ErrInvalidInput", err)
 	}
 }
+
+// TestBuildPayloadRepoRunShipsTheRepoSubpath proves a repo run's claim
+// carries the repository's own subpath as `repo.repo_subpath`, always
+// present (empty without one), next to `subpath` (repo subpath joined with
+// the playbook path). The worker derives the requirements root from it
+// (backlog 7.88).
+func TestBuildPayloadRepoRunShipsTheRepoSubpath(t *testing.T) {
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
+	templateID := uuid.Must(uuid.NewV7())
+	repoID := uuid.Must(uuid.NewV7())
+	templates := fakeTemplates{byID: map[uuid.UUID]TemplateRow{
+		templateID: {
+			ID: templateID, OrgID: org, PlaybookID: uuid.Must(uuid.NewV7()),
+			PlaybookRepo: &repoID, PlaybookPath: "site.yml",
+			Scope: json.RawMessage(`{"host_ids":["` + hostID.String() + `"]}`),
+		},
+	}}
+
+	tests := []struct {
+		name        string
+		repoSubpath string
+		wantRepoSub string
+		wantSubpath string
+	}{
+		{name: "no repo subpath", repoSubpath: "", wantRepoSub: "", wantSubpath: "site.yml"},
+		{name: "repo subpath", repoSubpath: "ansible", wantRepoSub: "ansible", wantSubpath: "ansible/site.yml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repos := fakeRepos{byID: map[uuid.UUID]RepoRef{
+				repoID: {ID: repoID, URL: "https://git.example.org/ansible.git", Branch: "main", Subpath: tt.repoSubpath},
+			}}
+			q := newTestQueue(fakeRenderer{inv: render.Inventory{
+				Doc:         map[string]any{"all": map[string]any{}},
+				Connections: map[string]render.Connection{"web1": {HostID: hostID}},
+			}}, fakeCreds{}, templates, fakeBastions{})
+			q.SetRepoSource(repos)
+			q.SetKeyPins(fakePins{})
+
+			out := &workerpb.Job{}
+			if err := q.buildPayload(db.WithOrgScope(context.Background(), org), Job{
+				ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone, Kind: KindRun, TemplateID: &templateID, HostIDs: testHosts,
+			}, out); err != nil {
+				t.Fatalf("buildPayload: %v", err)
+			}
+			var payload map[string]map[string]any
+			if err := json.Unmarshal([]byte(out.KindPayload), &payload); err != nil {
+				t.Fatal(err)
+			}
+			repo := payload["repo"]
+			got, present := repo["repo_subpath"]
+			if !present {
+				t.Fatalf("repo.repo_subpath absent: %v", repo)
+			}
+			if got != tt.wantRepoSub {
+				t.Errorf("repo_subpath = %q, want %q", got, tt.wantRepoSub)
+			}
+			if repo["subpath"] != tt.wantSubpath {
+				t.Errorf("subpath = %q, want %q", repo["subpath"], tt.wantSubpath)
+			}
+		})
+	}
+}
