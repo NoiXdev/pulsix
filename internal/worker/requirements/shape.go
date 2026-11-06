@@ -19,7 +19,12 @@ type plan struct {
 	name               string   // the file relative to the requirements root (log lines, errors)
 	roles, collections bool     // which install runs
 	sources            []string // source strings for checkSources (Task 3), in file order
+	values             []value  // other values galaxy may put on a command line, in file order
 }
+
+// value is a role's or a collection's value other than its source that
+// galaxy may hand to git (checkSources): field is its name in messages.
+type value struct{ field, text string }
 
 // parseFile checks the shape of one requirements file the way ansible-galaxy
 // reads it and says which installs run: galaxy fails on an empty document and
@@ -132,10 +137,13 @@ func (p *plan) addRoleString(role string) error {
 	case 0:
 		src = role
 	case 1:
-		src, _, _ = strings.Cut(pyStrip(role), ",")
+		var version string
+		src, version, _ = strings.Cut(pyStrip(role), ",")
+		p.values = append(p.values, value{"version", version})
 	case 2:
 		parts := strings.SplitN(pyStrip(role), ",", 3)
 		p.sources = append(p.sources, parts[0])
+		p.values = append(p.values, value{"version", parts[1]}, value{"name", parts[2]})
 		return p.checkName(parts[2])
 	default:
 		return nil
@@ -152,6 +160,7 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 	if _, ok := fields["include"]; ok {
 		return fmt.Errorf("%s: include: is not supported; list the roles in this file", p.name)
 	}
+	p.addValues(e, map[string]string{"scm": "scm", "version": "version", "name": "name", "role": "name"})
 	src, hasSrc := fields["src"]
 	nameNode, hasName := fields["role"]
 	if !hasName {
@@ -178,6 +187,19 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 		return p.checkTakenName(roleNameFromSource(s))
 	}
 	return nil
+}
+
+// addValues records a mapping's scalar values under the keys in fields
+// (key → the field's name in messages), in file order: galaxy may hand
+// them to git (checkSources). A number is recorded as written: galaxy
+// passes its text on.
+func (p *plan) addValues(m *yaml.Node, fields map[string]string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		field, ok := fields[m.Content[i].Value]
+		if text := scalarText(m.Content[i+1]); ok && text != "" {
+			p.values = append(p.values, value{field, text})
+		}
+	}
 }
 
 // checkName refuses a role name given in the file (name:, role: or a role

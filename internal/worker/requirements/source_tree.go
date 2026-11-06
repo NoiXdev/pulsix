@@ -9,19 +9,30 @@ import (
 	"strings"
 )
 
-// The bounds of the walk over a directory source (walkTree). A vendored
-// collection holds a few thousand files; community.general about 4 000.
+// The bounds of a file's source check. A vendored collection holds a few
+// thousand files (community.general about 4 000), so 50 000 entries per
+// directory source leave room. Lookups (every path part, link hop and
+// directory entry the check visits, across all sources of the file) are
+// bounded so that a crafted tree of links cannot make the check slow: 50 000
+// entries at a typical depth below 20 parts stay under 1 000 000, and a
+// million lookups take about a second or two on a local disk.
 const (
 	maxTreeEntries = 50000
 	maxTreeDepth   = 64
+	maxLookups     = 1000000
 )
 
 var (
 	errTooManyEntries = errors.New("has more than 50000 files and directories to check")
 	errTooDeep        = errors.New("is nested deeper than 64 directories")
+	errTooManyLookups = errors.New("needs more than 1000000 lookups to check")
 )
 
-type treeLimits struct{ entries, depth int }
+type treeLimits struct{ entries, depth, lookups int }
+
+func defaultLimits() treeLimits {
+	return treeLimits{entries: maxTreeEntries, depth: maxTreeDepth, lookups: maxLookups}
+}
 
 // linkOutsideError: a link inside a directory source leads outside the
 // clone (or into .git). link is clone-relative.
@@ -44,8 +55,8 @@ func (e *linkOutsideError) Unwrap() error { return errOutside }
 // walked as well, once per link target (seen), so a loop ends. A .git
 // directory is not walked: galaxy skips it (collection/__init__.py:1203)
 // and the clone's own .git is refused by resolve. The walk is bounded by
-// lim.
-func walkTree(clone fs.StatFS, root string, lim treeLimits) error {
+// lim, its entries spent from the budget.
+func (c *sourceCheck) walkTree(root string) error {
 	type dir struct {
 		path  string
 		depth int
@@ -56,24 +67,33 @@ func walkTree(clone fs.StatFS, root string, lim treeLimits) error {
 	for len(stack) > 0 {
 		d := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if d.depth > lim.depth {
+		if d.depth > c.lim.depth {
 			return errTooDeep
 		}
-		list, err := fs.ReadDir(clone, orDot(d.path))
+		if err := c.spend(); err != nil {
+			return err
+		}
+		list, err := fs.ReadDir(c.clone, orDot(d.path))
 		if err != nil {
 			return fmt.Errorf("read %s: %w", orDot(d.path), err)
 		}
 		for _, e := range list {
-			if entries++; entries > lim.entries {
+			if entries++; entries > c.lim.entries {
 				return errTooManyEntries
+			}
+			if err := c.spend(); err != nil {
+				return err
 			}
 			child := path.Join(d.path, e.Name())
 			switch {
 			case strings.EqualFold(e.Name(), ".git"):
 			case e.Type()&fs.ModeSymlink != 0:
-				r, err := resolve(clone, nil, parts(child, false))
-				if err != nil {
+				r, err := c.resolve(nil, parts(child, false))
+				switch {
+				case errors.Is(err, errOutside):
 					return &linkOutsideError{link: child}
+				case err != nil:
+					return err
 				}
 				if r.dir && !seen[r.path] {
 					seen[r.path] = true
@@ -126,7 +146,7 @@ func sourceError(name, root, src string, err error) error {
 			msg: fmt.Sprintf("%s: the source %q holds the link %q, which leads outside the repository", name, src, relTo(root, link.link)),
 			err: errOutside,
 		}
-	case errors.Is(err, errOutside), errors.Is(err, errTooManyEntries), errors.Is(err, errTooDeep):
+	case errors.Is(err, errOutside), errors.Is(err, errTooManyEntries), errors.Is(err, errTooDeep), errors.Is(err, errTooManyLookups):
 		return fmt.Errorf("%s: the source %q %w", name, src, err)
 	}
 	return fmt.Errorf("%s: the source %q: %w", name, src, err)

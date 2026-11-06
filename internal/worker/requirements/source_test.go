@@ -330,7 +330,7 @@ func TestCheckSourceOnARealClone(t *testing.T) {
 
 func TestCheckSourcesNamesTheFileAndTheSource(t *testing.T) {
 	p := plan{name: "collections/requirements.yml", sources: []string{"ns.col", "../../c"}}
-	err := checkSources(briefClone(), testCloneDir, "collections", p)
+	err := checkSources(t.Context(), briefClone(), testCloneDir, "collections", p)
 	const want = `collections/requirements.yml: the source "../../c" is outside the repository`
 	if err == nil || err.Error() != want {
 		t.Fatalf("checkSources = %v, want %q", err, want)
@@ -342,10 +342,10 @@ func TestCheckSourcesNamesTheFileAndTheSource(t *testing.T) {
 
 func TestCheckSourcesAcceptsSourcesInside(t *testing.T) {
 	p := plan{name: "requirements.yml", sources: []string{"ns.col", "vendor/r.tar.gz", "https://example.org/c.tar.gz"}}
-	if err := checkSources(briefClone(), testCloneDir, "", p); err != nil {
+	if err := checkSources(t.Context(), briefClone(), testCloneDir, "", p); err != nil {
 		t.Fatalf("checkSources = %v, want nil", err)
 	}
-	if err := checkSources(briefClone(), testCloneDir, "", plan{name: "requirements.yml"}); err != nil {
+	if err := checkSources(t.Context(), briefClone(), testCloneDir, "", plan{name: "requirements.yml"}); err != nil {
 		t.Fatalf("checkSources without sources = %v, want nil", err)
 	}
 }

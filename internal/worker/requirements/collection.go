@@ -33,6 +33,7 @@ func (p *plan) addCollections(list *yaml.Node) error {
 			err = p.checkUntypedName(e.Value)
 		case e.Kind == yaml.MappingNode:
 			fields := mappingFields(e)
+			p.addValues(e, map[string]string{"name": "name", "version": "version", "type": "type"})
 			for _, field := range []string{"name", "source"} {
 				if v, ok := fields[field]; ok && isString(v) {
 					p.sources = append(p.sources, v.Value)

@@ -1,6 +1,7 @@
 package requirements
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,30 +15,70 @@ import (
 // owner answer 2).
 var errOutside = errors.New("is outside the repository")
 
-// maxLinkHops bounds the links one source resolves through, as the kernel's
+// maxLinkHops bounds the links one path resolves through, as the kernel's
 // own limit does; a loop ends there.
 const maxLinkHops = 40
 
-// checkSources checks every source a requirements file names and names
-// the first one that is refused: one galaxy would hand to git as an option
-// (optionLike), or one checkSource refuses (sourceError).
-func checkSources(clone fs.StatFS, cloneDir, fileDir string, p plan) error {
+// checkSources checks the values a requirements file hands to galaxy and
+// names the first one that is refused: a value galaxy may put on a git
+// command line that git could read as an option (optionLike), or a source
+// galaxy would read from outside the clone (sourceCheck.source,
+// sourceError). The whole check shares one lookup budget (treeLimits) and
+// ends when ctx does.
+func checkSources(ctx context.Context, clone fs.StatFS, cloneDir, fileDir string, p plan) error {
+	for _, v := range p.values {
+		if optionLike(v.text) {
+			return fmt.Errorf("%s: the %s %q starts with \"-\"", p.name, v.field, v.text)
+		}
+	}
 	root := requirementsRoot(fileDir, p.name)
+	c := newSourceCheck(ctx, clone, defaultLimits())
 	for _, src := range p.sources {
 		if optionLike(src) {
 			return fmt.Errorf("%s: the source %q starts with \"-\"", p.name, src)
 		}
-		if err := checkSource(clone, cloneDir, fileDir, src); err != nil {
+		if err := c.source(cloneDir, fileDir, src); err != nil {
 			return sourceError(p.name, root, src, err)
 		}
 	}
 	return nil
 }
 
-// checkSource refuses a source that ansible-galaxy (ansible-core 2.21.5)
-// would read from outside the clone at cloneDir. Galaxy runs in the
-// requirements file's own directory, fileDir (clone-relative), and opens a
-// source in two ways, both checked here:
+// checkSource checks one source on its own, with the default bounds and
+// no deadline (sourceCheck.source).
+func checkSource(clone fs.StatFS, cloneDir, fileDir, src string) error {
+	return newSourceCheck(context.Background(), clone, defaultLimits()).source(cloneDir, fileDir, src)
+}
+
+// sourceCheck is one check of a file's sources: the clone, the context
+// that ends it, and the bounds with the lookups spent so far.
+type sourceCheck struct {
+	ctx     context.Context
+	clone   fs.StatFS
+	lim     treeLimits
+	lookups int
+}
+
+func newSourceCheck(ctx context.Context, clone fs.StatFS, lim treeLimits) *sourceCheck {
+	return &sourceCheck{ctx: ctx, clone: clone, lim: lim}
+}
+
+// spend counts one lookup (a path part, a link hop, a directory entry)
+// against the budget and ends the check when its context has ended.
+func (c *sourceCheck) spend() error {
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	if c.lookups++; c.lookups > c.lim.lookups {
+		return errTooManyLookups
+	}
+	return nil
+}
+
+// source refuses a source that ansible-galaxy (ansible-core 2.21.5) would
+// read from outside the clone at cloneDir. Galaxy runs in the requirements
+// file's own directory, fileDir (clone-relative), and opens a source in two
+// ways, both checked here:
 //
 //   - As a path, as written (galaxy/role.py:249 os.path.isfile(src) for a
 //     role; a collection's file, dir or subdirs source,
@@ -56,26 +97,22 @@ func checkSources(clone fs.StatFS, cloneDir, fileDir string, p plan) error {
 // that does not exist is left to galaxy: it then is a name, or galaxy
 // fails. Other URLs (git+file:// included) are left to galaxy and git.
 // A path that is a directory is walked (walkTree): galaxy reads its files.
-func checkSource(clone fs.StatFS, cloneDir, fileDir, src string) error {
-	return checkSourceWithin(clone, cloneDir, fileDir, src, treeLimits{entries: maxTreeEntries, depth: maxTreeDepth})
-}
-
-// checkSourceWithin is checkSource with the walk's bounds as a parameter.
-func checkSourceWithin(clone fs.StatFS, cloneDir, fileDir, src string, lim treeLimits) error {
-	if err := checkPath(clone, cloneDir, fileDir, src, true, lim); err != nil {
+// The error is errOutside, a bound's sentinel, or the context's error.
+func (c *sourceCheck) source(cloneDir, fileDir, src string) error {
+	if err := c.path(cloneDir, fileDir, src, true); err != nil {
 		return err
 	}
 	if p, ok := fileURLPath(src); ok {
-		return checkPath(clone, cloneDir, fileDir, p, false, lim)
+		return c.path(cloneDir, fileDir, p, false)
 	}
 	return nil
 }
 
-// checkPath checks p, relative to fileDir or absolute, as a path into the
+// path checks p, relative to fileDir or absolute, as a path into the
 // clone. asPath says whether p is the source as galaxy opens it as a path:
 // then its own parts are a pattern to galaxy, and a directory it names is
 // read (urllib opens no directory).
-func checkPath(clone fs.StatFS, cloneDir, fileDir, p string, asPath bool, lim treeLimits) error {
+func (c *sourceCheck) path(cloneDir, fileDir, p string, asPath bool) error {
 	dir := parts(fileDir, false)
 	if strings.HasPrefix(p, "/") {
 		rel, ok := belowDir(cloneDir, p)
@@ -84,12 +121,12 @@ func checkPath(clone fs.StatFS, cloneDir, fileDir, p string, asPath bool, lim tr
 		}
 		dir, p = nil, rel
 	}
-	r, err := resolve(clone, dir, parts(p, asPath))
+	r, err := c.resolve(dir, parts(p, asPath))
 	if err != nil {
 		return err
 	}
 	if asPath && r.dir {
-		return walkTree(clone, r.path, lim)
+		return c.walkTree(r.path)
 	}
 	return nil
 }
@@ -127,20 +164,24 @@ func parts(p string, glob bool) []part {
 // its target before a later ".." takes the link's parent away. Links are
 // read through fs.ReadLinkFS; a clone that cannot read them cannot tell
 // whether ".." undoes a link, so there any ".." over an existing part is
-// refused. Once a part does not exist, the kernel opens nothing below it;
-// the rest is still followed by name and refused if it climbs out of the
-// clone. The path reached (the existing one, or its first missing part) is
-// last confirmed with the clone's own Stat, which refuses what its
-// confined root refuses. resolve says what it reached: the path without
-// links, and whether that exists as a directory.
-func resolve(clone fs.StatFS, dir, src []part) (reach, error) {
-	links, canLink := clone.(fs.ReadLinkFS)
+// refused, as is a link it reports. Once a part does not exist, the kernel
+// opens nothing below it; the rest is still followed by name and refused
+// if it climbs out of the clone. The path reached (the existing one, or its
+// first missing part) is last confirmed with the clone's own Stat, which
+// refuses what its confined root refuses. Every part and hop is spent
+// from the budget. resolve says what it reached: the path without links,
+// and whether that exists as a directory.
+func (c *sourceCheck) resolve(dir, src []part) (reach, error) {
+	links, canLink := c.clone.(fs.ReadLinkFS)
 	todo := slices.Concat(dir, src)
 	var done []string
 	missing := "" // the first part that does not exist
 	isDir := true // the last part reached; the clone's root is one
 	hops := 0
 	for len(todo) > 0 {
+		if err := c.spend(); err != nil {
+			return reach{}, err
+		}
 		p := todo[0]
 		todo = todo[1:]
 		switch {
@@ -163,7 +204,7 @@ func resolve(clone fs.StatFS, dir, src []part) (reach, error) {
 		if canLink {
 			info, err = links.Lstat(cur)
 		} else {
-			info, err = clone.Stat(cur)
+			info, err = c.clone.Stat(cur)
 		}
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -174,8 +215,11 @@ func resolve(clone fs.StatFS, dir, src []part) (reach, error) {
 			return reach{}, errOutside
 		case info.Mode()&fs.ModeSymlink != 0:
 			hops++
+			if !canLink || hops > maxLinkHops {
+				return reach{}, errOutside
+			}
 			target, err := links.ReadLink(cur)
-			if hops > maxLinkHops || err != nil || target == "" || path.IsAbs(target) {
+			if err != nil || target == "" || path.IsAbs(target) {
 				return reach{}, errOutside
 			}
 			todo = append(parts(target, false), todo...)
@@ -188,10 +232,10 @@ func resolve(clone fs.StatFS, dir, src []part) (reach, error) {
 		}
 	}
 	if missing != "" {
-		return reach{}, confirm(clone, missing)
+		return reach{}, c.confirm(missing)
 	}
 	reached := path.Join(done...)
-	if err := confirm(clone, reached); err != nil {
+	if err := c.confirm(reached); err != nil {
 		return reach{}, err
 	}
 	return reach{path: reached, dir: isDir}, nil
@@ -206,11 +250,11 @@ type reach struct {
 
 // confirm asks the clone's own Stat about a path reached by resolve: not
 // there is fine, any other refusal is outside.
-func confirm(clone fs.StatFS, name string) error {
-	if name == "" {
-		name = "."
+func (c *sourceCheck) confirm(name string) error {
+	if err := c.spend(); err != nil {
+		return err
 	}
-	if _, err := clone.Stat(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if _, err := c.clone.Stat(orDot(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return errOutside
 	}
 	return nil

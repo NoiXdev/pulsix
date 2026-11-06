@@ -103,13 +103,13 @@ func TestCheckSourceReportsAnUnreadableDirectory(t *testing.T) {
 }
 
 func TestCheckSourceBoundsTheWalk(t *testing.T) {
-	if err := checkSourceWithin(treeClone(), testCloneDir, "", "col/ok", treeLimits{entries: 3, depth: 64}); !errors.Is(err, errTooManyEntries) {
+	if err := newSourceCheck(t.Context(), treeClone(), treeLimits{entries: 3, depth: 64, lookups: maxLookups}).source(testCloneDir, "", "col/ok"); !errors.Is(err, errTooManyEntries) {
 		t.Errorf("entries: %v, want errTooManyEntries", err)
 	}
-	if err := checkSourceWithin(treeClone(), testCloneDir, "", "col/ok", treeLimits{entries: 100, depth: 0}); !errors.Is(err, errTooDeep) {
+	if err := newSourceCheck(t.Context(), treeClone(), treeLimits{entries: 100, depth: 0, lookups: maxLookups}).source(testCloneDir, "", "col/ok"); !errors.Is(err, errTooDeep) {
 		t.Errorf("depth: %v, want errTooDeep", err)
 	}
-	if err := checkSourceWithin(treeClone(), testCloneDir, "", "col/ok", treeLimits{entries: 100, depth: 3}); err != nil {
+	if err := newSourceCheck(t.Context(), treeClone(), treeLimits{entries: 100, depth: 3, lookups: maxLookups}).source(testCloneDir, "", "col/ok"); err != nil {
 		t.Errorf("within bounds: %v, want nil", err)
 	}
 	// The default depth.
@@ -193,23 +193,23 @@ func TestCheckSourcesMessages(t *testing.T) {
 		{"requirements.yml", "", "https://h/x.git, -b", `requirements.yml: the source "https://h/x.git, -b" starts with "-"`},
 	}
 	for _, tc := range cases {
-		err := checkSources(treeClone(), testCloneDir, tc.fileDir, plan{name: tc.name, sources: []string{"ns.col", tc.src}})
+		err := checkSources(t.Context(), treeClone(), testCloneDir, tc.fileDir, plan{name: tc.name, sources: []string{"ns.col", tc.src}})
 		if err == nil || err.Error() != tc.want {
-			t.Errorf("checkSources(%q) = %v, want %q", tc.src, err, tc.want)
+			t.Errorf("checkSources(t.Context(), %q) = %v, want %q", tc.src, err, tc.want)
 		}
 		if strings.Contains(tc.want, "leads outside") && !errors.Is(err, errOutside) {
-			t.Errorf("checkSources(%q) = %v, want errors.Is errOutside", tc.src, err)
+			t.Errorf("checkSources(t.Context(), %q) = %v, want errors.Is errOutside", tc.src, err)
 		}
 	}
 	for _, src := range []string{"a-b", "ns.col", "https://h/-x", "git+https://h/x.git,v1", "x.tar.gz-1"} {
-		if err := checkSources(treeClone(), testCloneDir, "", plan{name: "r.yml", sources: []string{src}}); err != nil {
-			t.Errorf("checkSources(%q) = %v, want nil", src, err)
+		if err := checkSources(t.Context(), treeClone(), testCloneDir, "", plan{name: "r.yml", sources: []string{src}}); err != nil {
+			t.Errorf("checkSources(t.Context(), %q) = %v, want nil", src, err)
 		}
 	}
 	deep := fstest.MapFS{strings.Repeat("d/", maxTreeDepth+2) + "f": {Data: []byte("x")}}
-	err := checkSources(deep, testCloneDir, "", plan{name: "r.yml", sources: []string{"d"}})
+	err := checkSources(t.Context(), deep, testCloneDir, "", plan{name: "r.yml", sources: []string{"d"}})
 	if want := `r.yml: the source "d" is nested deeper than 64 directories`; err == nil || err.Error() != want {
-		t.Errorf("checkSources(deep) = %v, want %q", err, want)
+		t.Errorf("checkSources(t.Context(), deep) = %v, want %q", err, want)
 	}
 	err = sourceError("r.yml", "", "s", errTooManyEntries)
 	if want := `r.yml: the source "s" has more than 50000 files and directories to check`; err.Error() != want {
