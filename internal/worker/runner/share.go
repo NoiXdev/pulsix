@@ -97,7 +97,10 @@ func ShareWorkDir(dir string) error {
 // the role tree beside it, and still cannot write there — one job must not
 // be able to poison the next job's checkout, which is why group write goes
 // even when the clone arrived with it (a worker umask of 002 produces
-// 0664 files).
+// 0664 files). The requirements entry the run installed for its commit
+// (<repo>.requirements/<key>, next to the clone) is opened the same way on
+// every run: the play reads its roles and collections and cannot change
+// them for the next run of that commit.
 //
 // Unlike ShareWorkDir this sets no setgid bit: nothing is created here by
 // the play, so there is no group to inherit. Symlinks are skipped for the

@@ -245,6 +245,7 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 	})).Run(ctx)
 
 	runExec := runner.NewRunner(wcfg.AnsibleRunnerBin, wcfg.AnsibleBin, "git", 0, log)
+	runExec.Requirements = runner.NewRequirements(runExec, wcfg)
 	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, log)
 	loop := worker.NewLoop(
 		wcfg, client,

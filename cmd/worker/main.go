@@ -159,6 +159,7 @@ func run(env []string, probeSupervisor func() error) int {
 	// build reports an infrastructure error — the claim is at-least-once,
 	// the manager requeues it.
 	runExec := runner.NewRunner(cfg.AnsibleRunnerBin, cfg.AnsibleBin, "git", 0, slog.Default())
+	runExec.Requirements = runner.NewRequirements(runExec, cfg)
 	probeExec := worker.NewSSHProbeExecutor(&sshprobe.Probe{}, slog.Default())
 	loop := worker.NewLoop(
 		cfg, client,

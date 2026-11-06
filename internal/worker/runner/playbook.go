@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -33,25 +32,31 @@ var systemPlaybooks = map[string]string{
 	kindRevokeKey: workerplaybooks.NameRevokeKey,
 }
 
+// repoCheckout is the clone a repo playbook runs from: Clone is its
+// directory, RepoSubpath the repository's own subpath ("" for none), where
+// its requirements are looked for (ensureRequirements).
+type repoCheckout struct {
+	Clone, RepoSubpath string
+}
+
 // materializePlaybook resolves the run's playbook file and returns its
 // absolute path. An adhoc kind builds its inline playbook; a bootstrap or
 // rotate_key job materializes the worker's embedded system playbook; a run
 // job with a repo reference fetches the repository (repo cache dir) and
 // points at the file inside the clone; an inline playbook is written
-// verbatim. rolesDir is the repo's galaxy directory — the roles the sync
-// installed from requirements.yml — when a repo playbook has one, and ""
-// for everything else; the run's ansible.cfg puts it on the roles path.
-func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env worker.RunEnv) (playbook, rolesDir string, err error) {
+// verbatim. The checkout is the repo playbook's clone, whose requirements
+// the run installs next, and nil for everything else.
+func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env worker.RunEnv) (string, *repoCheckout, error) {
 	if job.GetKind() == kindAdhoc {
 		text, err := adhocPlaybookText(job.GetKindPayload())
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
 		path := filepath.Join(env.WorkDir, projectDirName, playbookFileName)
 		if err := writeTextFile(path, text, 0o600); err != nil {
-			return "", "", err
+			return "", nil, err
 		}
-		return path, "", nil
+		return path, nil, nil
 	}
 
 	// The two system playbooks ride inside the worker binary; their claims
@@ -59,41 +64,40 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 	if name, ok := systemPlaybooks[job.GetKind()]; ok {
 		text, err := workerplaybooks.Get(name)
 		if err != nil {
-			return "", "", fmt.Errorf("embedded playbook: %w", err)
+			return "", nil, fmt.Errorf("embedded playbook: %w", err)
 		}
 		path := filepath.Join(env.WorkDir, projectDirName, playbookFileName)
 		if err := writeTextFile(path, string(text), 0o600); err != nil {
-			return "", "", err
+			return "", nil, err
 		}
-		return path, "", nil
+		return path, nil, nil
 	}
 
 	ref := job.GetPlaybook()
 	repoID, playbookPath, isRepo, err := parsePlaybookRef(ref)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	if !isRepo {
 		if strings.TrimSpace(ref) == "" {
-			return "", "", errors.New("the claim carries no playbook")
+			return "", nil, errors.New("the claim carries no playbook")
 		}
 		path := filepath.Join(env.WorkDir, projectDirName, playbookFileName)
 		if err := writeTextFile(path, ref, 0o600); err != nil {
-			return "", "", err
+			return "", nil, err
 		}
-		return path, "", nil
+		return path, nil, nil
 	}
 
 	spec, secret, err := repoSpec(job, repoID, playbookPath)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	path, err := r.fetchRepo(ctx, spec, secret, env.RepoCacheDir, env.WorkDir)
 	if err != nil {
-		return "", "", err
+		return "", nil, err
 	}
 	clone := r.repoDir(env.RepoCacheDir, worker.RepoSpec{OrgID: spec.OrgID, RepoID: spec.RepoID})
-	rolesDir = galaxyRolesDir(clone)
 	if env.Config.PlayUID != 0 {
 		// A repo playbook is run where it was checked out, not copied into
 		// the work dir, so sharing the work dir does nothing for it: the
@@ -101,33 +105,10 @@ func (r *Runner) materializePlaybook(ctx context.Context, job *workerpb.Job, env
 		// cannot so much as traverse it. Open the clone — and the path
 		// down to it — for reading, never for writing.
 		if err := ShareRepoRead(env.RepoCacheDir, clone); err != nil {
-			return "", "", fmt.Errorf("share the repo checkout with the play uid: %w", err)
-		}
-		// The roles the sync installed from requirements.yml sit next to
-		// the clone, in the same cache: the play reads them on the roles
-		// path, and must not be able to rewrite them for the next job.
-		if rolesDir != "" {
-			if err := ShareRepoRead(env.RepoCacheDir, rolesDir); err != nil {
-				return "", "", fmt.Errorf("share the installed roles with the play uid: %w", err)
-			}
+			return "", nil, fmt.Errorf("share the repo checkout with the play uid: %w", err)
 		}
 	}
-	return path, rolesDir, nil
-}
-
-// galaxyRolesDir returns the clone's galaxy directory (worker.GalaxyDir)
-// when it is a real directory, "" otherwise. A symlink there — or anything
-// else that is not a directory — is not a sync's install and is ignored
-// rather than followed: the roles path must not lead out of the repo
-// cache. A path that cannot be read is treated like a missing one; a role
-// the playbook needs from it then fails the run with Ansible's own "role
-// not found" error, which lists the searched paths.
-func galaxyRolesDir(clone string) string {
-	dir := worker.GalaxyDir(clone)
-	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
-		return ""
-	}
-	return dir
+	return path, &repoCheckout{Clone: clone, RepoSubpath: spec.RepoSubpath}, nil
 }
 
 // repoSpec reads the repository out of the claim: the kind payload carries

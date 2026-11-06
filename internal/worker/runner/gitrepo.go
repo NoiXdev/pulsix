@@ -19,8 +19,10 @@
 //     the URL (the one place an operator's token could hide) and never the
 //     key material.
 //
-// v0.2b runs one job at a time per worker, so the cache needs no lock; the
-// embedded worker of Task 17 uses its own data dir.
+// v0.2b runs one job at a time per worker, so the clone needs no lock; the
+// embedded worker of Task 17 uses its own data dir. The requirements cache
+// next to the clone (<repo>.requirements, package requirements) has a lock
+// of its own: a sync and a run install into it.
 package runner
 
 import (

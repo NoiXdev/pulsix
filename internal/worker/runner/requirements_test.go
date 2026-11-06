@@ -44,6 +44,14 @@ func TestRepoSubpath(t *testing.T) {
 		{"claimed leaves the clone", str("../x"), "../x/site.yml", "site.yml", "", `the repository subpath "../x" leads out of the repository`},
 		{"claimed leaves the clone after cleaning", str("a/../.."), "a/../../site.yml", "site.yml", "", `the repository subpath "a/../.." leads out of the repository`},
 		{"derived leaves the clone", nil, "../site.yml", "site.yml", "", `the repository subpath ".." leads out of the repository`},
+		{
+			"claimed differs from the subpath", str("other"), "ansible/site.yml", "site.yml", "",
+			`the claim's repo subpath "other" does not match its subpath "ansible/site.yml"`,
+		},
+		{
+			"claimed empty but the subpath has one", str(""), "ansible/site.yml", "site.yml", "",
+			`the claim's repo subpath "" does not match its subpath "ansible/site.yml"`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,7 +81,7 @@ func TestRepoSpecReadsTheRepoSubpath(t *testing.T) {
 		wantErr bool
 	}{
 		{"claimed", payload(`,"repo_subpath":"ansible"`), "ansible", false},
-		{"claimed empty is taken as is", payload(`,"repo_subpath":""`), "", false},
+		{"claimed empty differs from the subpath", payload(`,"repo_subpath":""`), "", true},
 		{"older manager: derived", payload(""), "ansible", false},
 		{"claimed out of the clone", payload(`,"repo_subpath":"../ansible"`), "", true},
 	}

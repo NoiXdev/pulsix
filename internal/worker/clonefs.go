@@ -68,6 +68,24 @@ func openCloneFS(dir, subpath string) (*cloneFS, error) {
 	return &cloneFS{root: inner}, nil
 }
 
+// ReadRoot is a confined read root that must be closed.
+type ReadRoot interface {
+	fs.StatFS
+	Close() error
+}
+
+// OpenCloneFS opens the whole clone at cloneDir as a read root under the
+// rules above. The root also reads links itself (fs.ReadLinkFS, confined
+// the same way), which the requirements check needs to tell a "../" that
+// stays inside the clone from one that leaves it.
+func OpenCloneFS(cloneDir string) (ReadRoot, error) {
+	c, err := openCloneFS(cloneDir, "")
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
 // errNotGalaxyDir: the galaxy path is not a directory of its own (a
 // symlink, a file, …).
 var errNotGalaxyDir = errors.New("not a directory")
@@ -120,6 +138,60 @@ func (c *cloneFS) Stat(name string) (fs.FileInfo, error) {
 		return nil, &fs.PathError{Op: "stat", Path: name, Err: err}
 	}
 	return c.root.Stat(p)
+}
+
+// Lstat describes a path of the read root without following a link at its
+// last component; the components above it are resolved like any path.
+func (c *cloneFS) Lstat(name string) (fs.FileInfo, error) {
+	p, err := c.resolveParent(name)
+	if err != nil {
+		return nil, &fs.PathError{Op: "lstat", Path: name, Err: err}
+	}
+	return c.root.Lstat(p)
+}
+
+// ReadLink returns the target of the link at name as it is written (a
+// slash path); the components above name are resolved like any path. The
+// caller decides what the target means: it is not resolved here.
+func (c *cloneFS) ReadLink(name string) (string, error) {
+	p, err := c.resolveParent(name)
+	if err != nil {
+		return "", &fs.PathError{Op: "readlink", Path: name, Err: err}
+	}
+	target, err := c.root.Readlink(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(target), nil
+}
+
+// resolveParent is name with every link above its last component resolved
+// (resolve), the last component kept as it is: errOutsideRead when that
+// component is git's directory.
+func (c *cloneFS) resolveParent(name string) (string, error) {
+	if !fs.ValidPath(name) {
+		return "", fs.ErrInvalid
+	}
+	if name == "." {
+		return ".", nil
+	}
+	dir, base := path.Split(name)
+	if strings.EqualFold(base, ".git") {
+		return "", errOutsideRead
+	}
+	parent, err := c.resolve(orDot(strings.TrimSuffix(dir, "/")))
+	if err != nil {
+		return "", err
+	}
+	return path.Join(parent, base), nil
+}
+
+// orDot is p, or "." for the read root.
+func orDot(p string) string {
+	if p == "" {
+		return "."
+	}
+	return p
 }
 
 // resolve is name with every symlink on it resolved, as a path of the read

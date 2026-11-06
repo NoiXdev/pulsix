@@ -43,7 +43,6 @@ import (
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
-	"github.com/noixdev/pulsix/internal/worker/requirements"
 	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
 
@@ -132,6 +131,9 @@ type Runner struct {
 	// and failure notices. Payload material never lands here — the run's
 	// output travels as events, failures name ids and exit codes only.
 	Log *slog.Logger
+	// Requirements installs a repo run's requirements before the play
+	// (NewRequirements); nil fails a run whose commit has some.
+	Requirements worker.Requirements
 }
 
 // NewRunner wires the runner with explicit dependencies.
@@ -163,14 +165,19 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 	if ansibleBin == "" {
 		ansibleBin = env.Config.AnsibleBin
 	}
-	playbook, rolesDir, err := r.materializePlaybook(ctx, job, env)
+	red := newRedactor(job)
+	playbook, checkout, err := r.materializePlaybook(ctx, job, env)
 	if err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize playbook: %w", err)
+	}
+	installed, err := r.installRequirements(ctx, env, checkout, red, sink)
+	if err != nil {
+		return worker.StatusError, nil, err
 	}
 	if err := r.materializeInventory(job, env); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize inventory: %w", err)
 	}
-	if err := r.materializeRunnerConfig(job, env, requirements.Entry{RolesDir: rolesDir}); err != nil {
+	if err := r.materializeRunnerConfig(job, env, installed); err != nil {
 		return worker.StatusError, nil, fmt.Errorf("materialize runner config: %w", err)
 	}
 	if env.Config.PlayUID != 0 {
@@ -276,7 +283,7 @@ func (r *Runner) Run(ctx context.Context, job *workerpb.Job, env worker.RunEnv, 
 		r.stopGroup(env, job.GetId(), cmd.Process.Pid, exited)
 	}()
 
-	stats, scanErr := r.streamEvents(ctx, stdout, sink, newRedactor(job))
+	stats, scanErr := r.streamEvents(ctx, stdout, sink, red)
 	// cmd.Wait() is called exactly once, from this goroutine, regardless of
 	// which path below runs: the write to waitErr happens-before
 	// close(exited), and every reader below is sequenced after a receive

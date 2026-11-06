@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
+	"github.com/noixdev/pulsix/internal/worker/requirements"
 )
 
 // kindSyncRepo is this executor's job kind.
@@ -80,6 +81,14 @@ type RepoSpec struct {
 type RepoFetcher interface {
 	FetchRepoDir(ctx context.Context, spec RepoSpec, secretJSON, cacheRoot, workDir string) (string, *GitHostKey, error)
 	HeadCommit(ctx context.Context, dir string) (string, error)
+}
+
+// Requirements installs a commit's requirements into the repository's
+// per-commit cache and hands out the published entry (spec
+// 2026-11-06-requirements-cache); *requirements.Service implements it,
+// wired through runner.NewRequirements.
+type Requirements interface {
+	Ensure(ctx context.Context, req requirements.Request) (requirements.Entry, error)
 }
 
 // SyncExecutor executes sync_repo jobs: materialize the repository,
