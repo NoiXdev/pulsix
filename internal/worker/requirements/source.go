@@ -18,12 +18,17 @@ var errOutside = errors.New("is outside the repository")
 // own limit does; a loop ends there.
 const maxLinkHops = 40
 
-// checkSources checks every source a requirements file names (checkSource)
-// and names the first one that is refused.
+// checkSources checks every source a requirements file names and names
+// the first one that is refused: one galaxy would hand to git as an option
+// (optionLike), or one checkSource refuses (sourceError).
 func checkSources(clone fs.StatFS, cloneDir, fileDir string, p plan) error {
+	root := requirementsRoot(fileDir, p.name)
 	for _, src := range p.sources {
+		if optionLike(src) {
+			return fmt.Errorf("%s: the source %q starts with \"-\"", p.name, src)
+		}
 		if err := checkSource(clone, cloneDir, fileDir, src); err != nil {
-			return fmt.Errorf("%s: the source %q %w", p.name, src, err)
+			return sourceError(p.name, root, src, err)
 		}
 	}
 	return nil
@@ -50,27 +55,43 @@ func checkSources(clone fs.StatFS, cloneDir, fileDir string, p plan) error {
 // expand (dataclasses.py:137-149 globs a collection directory). A path
 // that does not exist is left to galaxy: it then is a name, or galaxy
 // fails. Other URLs (git+file:// included) are left to galaxy and git.
+// A path that is a directory is walked (walkTree): galaxy reads its files.
 func checkSource(clone fs.StatFS, cloneDir, fileDir, src string) error {
-	if err := checkPath(clone, cloneDir, fileDir, src, true); err != nil {
+	return checkSourceWithin(clone, cloneDir, fileDir, src, treeLimits{entries: maxTreeEntries, depth: maxTreeDepth})
+}
+
+// checkSourceWithin is checkSource with the walk's bounds as a parameter.
+func checkSourceWithin(clone fs.StatFS, cloneDir, fileDir, src string, lim treeLimits) error {
+	if err := checkPath(clone, cloneDir, fileDir, src, true, lim); err != nil {
 		return err
 	}
 	if p, ok := fileURLPath(src); ok {
-		return checkPath(clone, cloneDir, fileDir, p, false)
+		return checkPath(clone, cloneDir, fileDir, p, false, lim)
 	}
 	return nil
 }
 
 // checkPath checks p, relative to fileDir or absolute, as a path into the
-// clone. glob says whether p's own parts are a pattern to galaxy.
-func checkPath(clone fs.StatFS, cloneDir, fileDir, p string, glob bool) error {
+// clone. asPath says whether p is the source as galaxy opens it as a path:
+// then its own parts are a pattern to galaxy, and a directory it names is
+// read (urllib opens no directory).
+func checkPath(clone fs.StatFS, cloneDir, fileDir, p string, asPath bool, lim treeLimits) error {
+	dir := parts(fileDir, false)
 	if strings.HasPrefix(p, "/") {
 		rel, ok := belowDir(cloneDir, p)
 		if !ok {
 			return errOutside
 		}
-		return resolve(clone, nil, parts(rel, glob))
+		dir, p = nil, rel
 	}
-	return resolve(clone, parts(fileDir, false), parts(p, glob))
+	r, err := resolve(clone, dir, parts(p, asPath))
+	if err != nil {
+		return err
+	}
+	if asPath && r.dir {
+		return walkTree(clone, r.path, lim)
+	}
+	return nil
 }
 
 // belowDir is p relative to dir when p is dir or below it, as written: p
@@ -110,12 +131,14 @@ func parts(p string, glob bool) []part {
 // the rest is still followed by name and refused if it climbs out of the
 // clone. The path reached (the existing one, or its first missing part) is
 // last confirmed with the clone's own Stat, which refuses what its
-// confined root refuses.
-func resolve(clone fs.StatFS, dir, src []part) error {
+// confined root refuses. resolve says what it reached: the path without
+// links, and whether that exists as a directory.
+func resolve(clone fs.StatFS, dir, src []part) (reach, error) {
 	links, canLink := clone.(fs.ReadLinkFS)
 	todo := slices.Concat(dir, src)
 	var done []string
 	missing := "" // the first part that does not exist
+	isDir := true // the last part reached; the clone's root is one
 	hops := 0
 	for len(todo) > 0 {
 		p := todo[0]
@@ -123,15 +146,16 @@ func resolve(clone fs.StatFS, dir, src []part) error {
 		switch {
 		case p.name == "..":
 			if len(done) == 0 || !canLink && missing == "" {
-				return errOutside
+				return reach{}, errOutside
 			}
 			done = done[:len(done)-1]
+			isDir = true
 			continue
 		case missing != "":
 			done = append(done, p.name)
 			continue
 		case strings.EqualFold(p.name, ".git"), p.glob && strings.ContainsAny(p.name, "*?["):
-			return errOutside
+			return reach{}, errOutside
 		}
 		cur := path.Join(path.Join(done...), p.name)
 		var info fs.FileInfo
@@ -147,26 +171,37 @@ func resolve(clone fs.StatFS, dir, src []part) error {
 			done = append(done, p.name)
 			continue
 		case err != nil:
-			return errOutside
+			return reach{}, errOutside
 		case info.Mode()&fs.ModeSymlink != 0:
 			hops++
 			target, err := links.ReadLink(cur)
 			if hops > maxLinkHops || err != nil || target == "" || path.IsAbs(target) {
-				return errOutside
+				return reach{}, errOutside
 			}
 			todo = append(parts(target, false), todo...)
 			continue
 		}
 		done = append(done, p.name)
-		if !info.IsDir() && len(todo) > 0 {
+		isDir = info.IsDir()
+		if !isDir && len(todo) > 0 {
 			break // the kernel opens nothing below a file
 		}
 	}
-	reached := missing
-	if reached == "" {
-		reached = path.Join(done...)
+	if missing != "" {
+		return reach{}, confirm(clone, missing)
 	}
-	return confirm(clone, reached)
+	reached := path.Join(done...)
+	if err := confirm(clone, reached); err != nil {
+		return reach{}, err
+	}
+	return reach{path: reached, dir: isDir}, nil
+}
+
+// reach is what resolve reached: a clone-relative path without links, and
+// whether it exists as a directory.
+type reach struct {
+	path string
+	dir  bool
 }
 
 // confirm asks the clone's own Stat about a path reached by resolve: not

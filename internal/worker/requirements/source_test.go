@@ -62,6 +62,7 @@ func linkClone() refusingFS {
 	c.MapFS["deep/a/b/c/requirements.yml"] = &fstest.MapFile{Data: []byte("[]\n")}
 	c.MapFS["x:/y"] = &fstest.MapFile{Data: []byte("")} // a directory named like a URL scheme
 	c.MapFS["https:/host/r.tar.gz"] = &fstest.MapFile{Data: []byte("tar")}
+	c.MapFS["vendor/link/r.tar.gz"] = &fstest.MapFile{Data: []byte("tar")} // there, but refused by the clone's Stat
 	return c
 }
 
@@ -92,8 +93,10 @@ func TestCheckSource(t *testing.T) {
 		{src: ".git/config", refused: true},
 
 		// Absolute paths: inside only below the clone directory, as written.
-		{src: "/cache/org/repo"},
-		{src: "/cache/org/repo/"},
+		// The clone itself is a directory source that holds links out
+		// (vendor/abs): refused by the tree walk.
+		{src: "/cache/org/repo", refused: true},
+		{src: "/cache/org/repo/", refused: true},
 		{src: "/cache/org/repo2/r.tar.gz", refused: true},
 		{src: "/cache/org/repo/../other/r.tar.gz", refused: true},
 		{src: "/cache/org/repo/vendor/../../x", refused: true},
@@ -183,7 +186,7 @@ func TestCheckSourceWithTheBriefsClone(t *testing.T) {
 		{"geerlingguy.apache", ""}, {"https://github.com/x/y.git", ""}, {"git+https://github.com/x/y.git", ""},
 		{"git+file:///srv/x", ""}, {"git@github.com:x/y.git", ""}, {"./vendor/r.tar.gz", ""},
 		{"vendor/r.tar.gz", ""}, {"../vendor/r.tar.gz", "roles"}, {"../vendor/c", "collections"},
-		{"/cache/org/repo/vendor/r.tar.gz", ""}, {"file:///cache/org/repo/vendor/r.tar.gz", ""},
+		{"/cache/org/repo/vendor/r.tar.gz", ""}, {"file:///cache/org/repo/vendor/r.tar.gz", ""}, {"/cache/org/repo", ""},
 		{"./missing.tar.gz", ""},
 	}
 	for _, tc := range accepted {
