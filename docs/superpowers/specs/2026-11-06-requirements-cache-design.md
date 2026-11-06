@@ -118,9 +118,11 @@ The worker reads each file itself (yaml.v3) to decide what to run, because galax
 | a mapping with a non-empty `collections` list | — | yes |
 | anything else (a scalar, a mapping whose `roles`/`collections` is not a list, invalid YAML) | the run (or sync) fails: "`<file>` is not a requirements file: …" | |
 
-A commit whose counted files list nothing gets no entry and one log line ("requirements.yml lists nothing to install"). Each file is read through the clone's confined root (`openCloneFS` rules: no link leaving the clone, nothing under `.git`), and galaxy is handed a copy in the run's work dir (`-r <workdir>/requirements/<n>.yml`, working directory = the file's own directory in the clone). The hash covers exactly the bytes galaxy saw. Today `findRequirements` uses `os.Stat`, which follows a `requirements.yml` symlink out of the clone.
+A commit whose counted files list nothing gets no entry and one log line ("requirements.yml lists nothing to install"). Each file is read through the clone's confined root (`openCloneFS` rules: no link leaving the clone, nothing under `.git`), and galaxy is handed a copy (`-r <tmp>/input/<n>.yml` inside the temp entry since the owner decision of 2026-11-06, below; working directory = the file's own directory in the clone). The hash covers exactly the bytes galaxy saw. Today `findRequirements` uses `os.Stat`, which follows a `requirements.yml` symlink out of the clone.
 
 ### 4. The commands
+
+(The identity galaxy runs as, its `HOME`, `TMPDIR` and `ANSIBLE_CONFIG`, and how the worker takes the result over are set by "Owner decision 2026-11-06: galaxy runs under the play uid" at the end of this document; it supersedes the paths below where they differ.)
 
 Per counted file, in the order of goal 3, roles before collections within a file:
 
@@ -235,3 +237,45 @@ The role order is the one the 7.90 branch corrects the parser to, matching ansib
 
 - **Base:** 7.88 is built on `main` after `fix/7.89-7.90` has merged. That branch's Task 3 is dropped (not implemented); its items are goal 1a here. The corrected role order and the data-dir refusal come from that branch and are in place when 7.88 starts.
 - **`include:` in the legacy list-form roles file:** refused by the shape check, like any other top-level shape the worker does not accept: the step fails before galaxy runs with "`<file>`: `include:` is not supported; list the roles in this file". Following it inside the clone would need its own hashing and confinement rules for a rarely used legacy form; accepting it would let a requirements file read any file on the worker, against owner answer 2. Other local-file references inside a requirements file are covered by the local-source rule (Constraints).
+
+## Owner decision 2026-11-06: galaxy runs under the play uid
+
+### Threat (found while planning, verified offline with ansible-core 2.21.5)
+
+ansible-galaxy writes where the requirements' metadata tells it to, not only below `-p`, and it runs as the worker's uid, which owns every organization's clones and caches:
+
+- a top-level role `name: ../../escaped` was extracted two levels above `-p`;
+- a **role dependency** (`dependencies:` in a role tarball's `meta/main.yml`) named `../../../ESCAPED_DEP` was extracted into `<RepoCacheDir>/<org>/` — beside the clones — from `-p <cache>/.tmp-x/roles`; dependencies are inside the tarball, so no check of the requirements file sees them;
+- a **local collection tarball** (`type: file`) whose `MANIFEST.json` has `name: "../../../../<absolute path without its leading slash>"` was installed at that absolute path (a scratch directory far outside `-p`); a `type: dir` collection whose `galaxy.yml` name held `../` made galaxy try `/esc2`.
+
+Today's sync has the same exposure. Any repository author (or the author of a role or collection it depends on) can therefore write into another repository's clone or cache, or another organization's, as the worker.
+
+### Decision (owner, 2026-11-06, binding)
+
+ansible-galaxy — role and collection install, for runs and for the sync — runs under the restricted play uid (`PULSIX_WORKER_PLAY_UID`, default 65533) and can write only into its temporary cache entry. The worker takes the result over afterwards and publishes it by rename as planned. Without a configured play uid (local development, non-Linux) the install runs as the worker, as before, and logs a warning that it is not isolated.
+
+### Design
+
+- **Same mechanism as the play.** Galaxy starts exactly like ansible-runner (`runner.newRunnerCmd`, generalised): through the setuid helper (`PULSIX_WORKER_SETUID_HELPER`, uid 65533, primary gid = the worker's 65532) and, on Linux, under the play supervisor (backlog 2.107), which ends the whole process tree when galaxy exits or is stopped. Cancel and timeout use the runner's `stopGroup` (TERM → grace → KILL, across the uid boundary through the helper's `--signal` mode, backlog 2.104). Leftover files the play uid owns are removed as the play uid through the helper, like the loop's work dir cleanup (`removeAsPlayUID`, generalised). The loop's play-uid sweep between jobs is unchanged.
+- **Where the play uid may write.** The temp entry is laid out as
+  ```
+  <repo>.requirements/            0750  worker  (group may traverse, not write)
+      .lock                       0600
+      .tmp-<x>/                   0750  worker  (not group-writable: `../` out of roles/ or collections/ is EACCES)
+          input/                  0750  worker; <n>.yml and galaxy.cfg 0640 (read-only to the play uid)
+          home/ tmp/              2770  worker group, setgid (galaxy's HOME and TMPDIR; home/.ssh/known_hosts)
+          roles/ collections/     2770  worker group, setgid (the two -p targets)
+  ```
+  Every directory from `RepoCacheDir` down to `.tmp-<x>` and down to the clone gets group read+traverse and never group write (the ancestor walk of `ShareRepoRead`, which refuses a symlink on the path). Only the worker uid and the play uid hold gid 65532, so the four 2770 directories are writable by the play uid and nothing else; everything above them is not, so a `../` name fails with "Permission denied". The run's work dir is not used by the install at all (it stays owner-only until `ShareWorkDir`, backlog 7.21).
+- **Environment.** As goal 4, except `HOME=<tmp>/home`, `TMPDIR=<tmp>/tmp`, `ANSIBLE_CONFIG=<tmp>/input/galaxy.cfg`, `-r <tmp>/input/<n>.yml`, known_hosts `<tmp>/home/.ssh/known_hosts`. Galaxy's scratch (temp clones, response cache) is inside the temp entry and goes with it.
+- **Take-over before publishing.** After the last command, with no process of the install left (the supervisor guarantees it), the worker copies `roles/` and `collections/` of `.tmp-<x>` into a fresh worker-owned `.tmp-<y>` and checks every entry while it copies: directories and regular files are copied (directories 0700, files 0600, or 0700 when any execute bit was set: setuid/setgid/sticky and group/world bits are dropped); a regular file must have one link (a hard link is refused), is opened without following links and must be the file that was listed; a symlink is recreated only when its target is relative and stays inside the entry; anything else (a device, a FIFO, a socket, a link leaving the entry, a file the worker cannot read) refuses the install, naming the path. `.tmp-<y>` is renamed to the entry name; `.tmp-<x>` is removed (as the play uid where needed). The published entry is therefore wholly worker-owned and owner-only, so no later play can change it, and nothing the play uid created survives in it.
+- **How a run reads it.** Unchanged: `ShareRepoRead(RepoCacheDir, entry)` per run opens it read-only to the play's group; `roles_path` and `collections_path` name it.
+- **No silent fallback.** With a play uid set, a helper that is missing or refuses, a supervisor that is not available (`PlaySupervisor` empty), or a path that cannot be opened to the play group fails the install (run `error`, sync failed) with the reason; galaxy never runs as the worker then. Only an unset play uid runs galaxy as the worker, with a warn line in the worker log per galaxy command: `ansible-galaxy is not isolated: PULSIX_WORKER_PLAY_UID is not set, so it runs as the worker's own uid`.
+- **Interfaces.** `requirements.Galaxy` gains `RemoveAll(dir string) error` (removes what the install wrote, also what the play uid owns); `requirements.Install` carries `CloneDir` and `RepoCacheDir` (what to open to the play group) instead of the work dir; the exec implementation moves from `internal/worker` to `internal/worker/runner` (`runner.Galaxy`, built from the `Runner` and the worker `Config`), because the helper, the supervisor and `stopGroup` live there.
+- **Cost.** One extra copy of each install (time and, briefly, twice the disk) on a cache miss; a role or collection whose files the worker cannot read (mode 0700 directories inside a tarball) fails the install by name.
+
+### Tests
+
+- Unit (no root): the modes the preparation sets (every 2770 directory, nothing above them group-writable, a symlinked ancestor refused); the command shape under the helper and the supervisor; the refusals (no supervisor, missing helper, helper refusal); the warning without a play uid; the take-over table (symlink out, absolute symlink, hard link, FIFO, setuid file normalised, unreadable file, legitimate tree copied byte for byte).
+- Real Ansible as the worker (control, local and CI): the traversal collection tarball and the role dependency really do land outside the entry when nothing isolates galaxy — so the in-image test's fixtures are proven to attack.
+- In the worker image (`internal/e2e/uidboundary`, driven by `TestPlaybookUIDBoundary`, CI's docker job; locally only after building the image): a legitimate install works under uid 65533 and is published worker-owned; the traversal tarball and the dependency fail the run with "Permission denied", and nothing exists at their target paths.
