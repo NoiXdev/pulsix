@@ -28,7 +28,7 @@ func TestParseFile(t *testing.T) {
 		{name: "empty mapping", data: "{}"},
 		{name: "both lists empty", data: "roles: []\ncollections: []\n"},
 		{name: "both keys null", data: "roles:\ncollections:\n"},
-		{name: "list form", data: "- src: ./r.tar.gz\n", roles: true},
+		{name: "list form", data: "- src: ./r.tar.gz\n  name: r\n", roles: true},
 		{name: "plain role strings", data: "- geerlingguy.apache\n- acme.web,1.0\n", roles: true},
 		{name: "roles only", data: "roles:\n  - name: a.b\n", roles: true},
 		{name: "collections only", data: "collections:\n  - community.general\n", collections: true},
@@ -63,7 +63,7 @@ func TestParseFile(t *testing.T) {
 		{name: "tabs and wide characters", data: "- {name: a,\tsrc: ./r\u00fc\u4e2d.tar.gz}\t# \u00e9\n", roles: true},
 		{name: "a non-specific tag after a byte order mark", data: "\ufeff- ! a.b\n", err: plainYAML, exact: true},
 		{name: "a non-specific tag on a key", data: "- src: ./r.tar.gz\n  ! name: web\n", err: plainYAML, exact: true},
-		{name: "exclamation and ampersand inside strings", data: "- src: 'a!b&c'\n  name: \"w!&\"\n- x!y&z\n", roles: true},
+		{name: "exclamation and ampersand inside strings", data: "- src: 'a!b&c'\n  name: w\n  version: \"w!&\"\n- x.y,v!y&z\n", roles: true},
 		{
 			name: "scalar", data: "42",
 			err: notReq + "the top level must be a list of roles or a mapping of roles and collections",
@@ -99,22 +99,22 @@ func TestParseFile(t *testing.T) {
 		{name: "a role name that is a number", data: "- src: ./r.tar.gz\n  name: 42\n", roles: true},
 		{
 			name: "a name taken from a source above the roles directory", data: "- src: ../../r.tar.gz\n",
-			err: notReq + `the role name "../../r.tar.gz", taken from its source, leads outside the roles directory`, exact: true,
+			err: notReq + `the role name "../../r.tar.gz", taken from its source, is not a plain directory name; give the role a name:`, exact: true,
 		},
 		{
 			name: "a name taken from a role string above the roles directory", data: "- ../../r.tar.gz,1.0\n",
-			err: notReq + `the role name "../../r.tar.gz", taken from its source, leads outside the roles directory`, exact: true,
+			err: notReq + `the role name "../../r.tar.gz", taken from its source, is not a plain directory name; give the role a name:`, exact: true,
 		},
 		{
 			name: "a name taken from an absolute source", data: "- /srv/clone/r.tar.gz\n",
-			err: notReq + `the role name "/srv/clone/r.tar.gz", taken from its source, leads outside the roles directory`, exact: true,
+			err: notReq + `the role name "/srv/clone/r.tar.gz", taken from its source, is not a plain directory name; give the role a name:`, exact: true,
 		},
 		{
 			name: "a name taken from the source after the scm prefix", data: "- src: git+../../r\n",
-			err: notReq + `the role name "../../r", taken from its source, leads outside the roles directory`, exact: true,
+			err: notReq + `the role name "../../r", taken from its source, is not a plain directory name; give the role a name:`, exact: true,
 		},
 		{name: "a name taken from a URL is its last part", data: "- src: https://example.org/x/../r.tar.gz\n", roles: true},
-		{name: "a name taken from a URL that is ..", data: "- git+https://example.org/x/..\n", err: notReq + `the role name "..", taken from its source, leads outside the roles directory`, exact: true},
+		{name: "a name taken from a URL that is ..", data: "- git+https://example.org/x/..\n", err: notReq + `the role name "..", taken from its source, is not a plain directory name; give the role a name:`, exact: true},
 		{name: "an explicit name makes the source's path irrelevant", data: "- src: ../../r.tar.gz\n  name: r\n", roles: true},
 		{name: "roles entry is a list", data: "- [a]\n", err: notReq + "roles entry 1 is neither a name nor a mapping", exact: true},
 		{name: "roles entry is null", data: "roles:\n  - a.b\n  -\n", err: notReq + "roles entry 2 is neither a name nor a mapping", exact: true},
@@ -240,7 +240,7 @@ func TestParseFileCollectsSources(t *testing.T) {
 	}{
 		{
 			name: "the brief's file",
-			data: "roles:\n  - src: ./r.tar.gz\n  - name: acme.web\n  - geerlingguy.apache,1.2.0\n" +
+			data: "roles:\n  - src: ./r.tar.gz\n    name: r\n  - name: acme.web\n  - geerlingguy.apache,1.2.0\n" +
 				"collections:\n  - name: ../c\n    type: dir\n  - name: ns.col\n    source: https://hub.example.org\n",
 			want: []string{"./r.tar.gz", "acme.web", "geerlingguy.apache", "../c", "ns.col", "https://hub.example.org"},
 		},

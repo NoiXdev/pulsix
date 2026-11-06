@@ -46,21 +46,56 @@ func checkText(data []byte) error {
 	}
 	for i, r := range string(text) {
 		switch {
-		case r == '\t', r == '\n':
 		case r == '\r':
 			if i+1 == len(text) || text[i+1] != '\n' {
 				return errOddText
 			}
-		case r == '\u2028', r == '\u2029', unicode.IsControl(r), unicode.Is(unicode.Cf, r):
+		case invisible(r):
 			return errOddText
 		}
 	}
 	return nil
 }
 
+// checkValues refuses a scalar below n, key or value, whose decoded text
+// holds a character checkText refuses in the raw text (errOddText): a
+// double-quoted escape ("\x1c", "\u200b", "\N", …) must not bring one back.
+// Galaxy's str.strip() trims U+001C-U+001F where Go would not, for one.
+// Tab, LF and CR are fine in a value ("\t", "\n", "\r").
+func checkValues(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		if !utf8.ValidString(n.Value) {
+			return errOddText
+		}
+		for _, r := range n.Value {
+			if r != '\r' && invisible(r) {
+				return errOddText
+			}
+		}
+	}
+	for _, c := range n.Content {
+		if err := checkValues(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// invisible reports a character refused in a requirements file: a control
+// character other than tab and LF (C0, DEL, C1; the callers decide on CR),
+// U+2028, U+2029 and the format characters (Unicode category Cf, U+FEFF
+// among them).
+func invisible(r rune) bool {
+	if r == '\t' || r == '\n' {
+		return false
+	}
+	return r == '\u2028' || r == '\u2029' || unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+}
+
 // decodePlain parses data as one plain YAML document. (nil, nil) for an empty
 // document (nothing but comments or whitespace). A parse error comes back as
-// it is; errOddText, errSecondDocument and errNotPlainYAML name the refusals.
+// it is; errOddText (raw text or a decoded scalar), errSecondDocument and
+// errNotPlainYAML name the refusals.
 func decodePlain(data []byte) (*yaml.Node, error) {
 	if err := checkText(data); err != nil {
 		return nil, err
@@ -81,6 +116,9 @@ func decodePlain(data []byte) (*yaml.Node, error) {
 	lines := strings.Split(strings.TrimPrefix(string(data), "\uFEFF"), "\n")
 	if !isPlain(&doc, lines) {
 		return nil, errNotPlainYAML
+	}
+	if err := checkValues(&doc); err != nil {
+		return nil, err
 	}
 	return &doc, nil
 }
