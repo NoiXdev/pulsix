@@ -33,8 +33,6 @@ const (
 	// galaxyStderrTail is how much of a failed command's stderr its
 	// ExitError keeps.
 	galaxyStderrTail = 16 << 10
-	// galaxyRemoveTimeout bounds RemoveAll's removal as the play uid.
-	galaxyRemoveTimeout = 10 * time.Second
 )
 
 // Galaxy runs ansible-galaxy for the requirements service.
@@ -116,7 +114,7 @@ func (g *Galaxy) Install(ctx context.Context, in requirements.Install, line func
 	case <-exited:
 	case <-ctx.Done():
 		stopped = true
-		g.Runner.stopGroup(worker.RunEnv{Config: g.Config}, "ansible-galaxy", cmd.Process.Pid, exited)
+		g.Runner.stopGroup(worker.RunEnv{Config: g.Config}, fmt.Sprintf("ansible-galaxy %s install into %s", in.Kind, in.Entry), cmd.Process.Pid, exited)
 		<-exited
 	}
 	// Wait has returned, so both copies are done: nothing writes any more.
@@ -168,9 +166,10 @@ func (g *Galaxy) command(in requirements.Install) (*exec.Cmd, error) {
 // it; the generated config is read instead of the repository's; the
 // collections already installed elsewhere are not seen, so every listed
 // collection lands in the entry; git reads no system or global config,
-// never prompts, and speaks no local (file) or ext protocol.
+// never prompts, and speaks no local (file) or ext protocol; Python reads
+// no user site-packages of the uid it runs as and writes no bytecode.
 func galaxyEnv(in requirements.Install, environ []string) []string {
-	out := make([]string, 0, len(environ)+11)
+	out := make([]string, 0, len(environ)+13)
 	for _, kv := range environ {
 		if name, _, _ := strings.Cut(kv, "="); galaxyEnvAllowed(name) {
 			out = append(out, kv)
@@ -188,6 +187,8 @@ func galaxyEnv(in requirements.Install, environ []string) []string {
 		"GIT_ALLOW_PROTOCOL=https:http:ssh:git",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"PYTHONNOUSERSITE=1",
+		"PYTHONDONTWRITEBYTECODE=1",
 	)
 }
 
@@ -204,20 +205,38 @@ func galaxyEnvAllowed(name string) bool {
 	return strings.HasPrefix(name, "LC_")
 }
 
-// RemoveAll removes dir. What the play uid wrote there may not be
-// removable by the worker; then, under a play uid, it is cleared as the
-// play uid (only logged when that fails) and the worker removes dir again.
+// RemoveAll removes dir. Under a play uid, what the play uid wrote there
+// may not be removable by the worker (a read-only directory of a role
+// tarball); then the play uid clears the contents of the directories it
+// could write to, and only those — everything else in
+// dir is the worker's — and the worker removes dir again. Only what is
+// still left fails it, with the play uid's error beside the worker's.
 func (g *Galaxy) RemoveAll(dir string) error {
 	err := os.RemoveAll(dir)
 	if err == nil || g.Config.PlayUID == 0 {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), galaxyRemoveTimeout)
-	defer cancel()
-	if perr := worker.RemoveAsPlayUID(ctx, g.Config, dir); perr != nil {
-		g.Runner.log().Warn("could not clear the play uid's files from a requirements install", "dir", dir, "err", perr)
+	var written []string
+	// The temp entry's directories the play uid can write to
+	// (prepareInstall): all it can have written, and all it can clear.
+	for _, name := range []string{worker.RunHomeDirName, "tmp", "roles", "collections"} {
+		path := filepath.Join(dir, name)
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			written = append(written, path)
+		}
 	}
-	return os.RemoveAll(dir)
+	var playErr error
+	if len(written) > 0 {
+		// Detached: a cleanup runs also when the step's context has ended.
+		playErr = worker.RemoveAsPlayUID(context.Background(), g.Config, written...)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		if playErr != nil {
+			return errors.Join(err, fmt.Errorf("clear the play uid's files: %w", playErr))
+		}
+		return err
+	}
+	return nil
 }
 
 // maxGalaxyLine bounds a line held without its newline; longer output is

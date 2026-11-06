@@ -28,7 +28,14 @@ import (
 // helper cost ten seconds of a restart rather than thirty. Past it the
 // dir is left behind and logged as an error, which is the same failure
 // the longer bound had — later.
-const removeGrace = 10 * time.Second
+//
+// The rm is preceded by a chmod as the play uid (RemoveAsPlayUID), which
+// gets its own, shorter chmodGrace: a wedged helper costs at most the sum,
+// fifteen seconds.
+const (
+	removeGrace = 10 * time.Second
+	chmodGrace  = 5 * time.Second
+)
 
 // newWorkDir creates a fresh temp dir under the data dir; runOne removes
 // it when the run ends. It is owner-only (MkdirTemp's 0700) whether or not
@@ -126,10 +133,8 @@ func (l *Loop) removeWorkDir(workDir string) {
 	if err != nil && l.cfg.PlayUID != 0 {
 		// A detached context on purpose: the usual reason a run ends is
 		// the loop's own shutdown, and the cleanup must still get to run.
-		ctx, cancel := context.WithTimeout(context.Background(), removeGrace)
-		playErr := RemoveAsPlayUID(ctx, l.cfg, workDir)
-		cancel()
-		if playErr != nil {
+		// Each helper call has its own bound (chmodGrace, removeGrace).
+		if playErr := RemoveAsPlayUID(context.Background(), l.cfg, workDir); playErr != nil {
 			l.log.WarnContext(context.Background(), "could not clear the play uid's leftovers from the work dir",
 				"dir", workDir, "err", playErr)
 		}
@@ -141,27 +146,34 @@ func (l *Loop) removeWorkDir(workDir string) {
 	}
 }
 
-// RemoveAsPlayUID clears dir's contents as the play uid (cfg.PlayUID,
-// through cfg.SetuidHelper): first `chmod -R u+rwX` on them, so that a
-// directory the play uid created without write permission (a role
-// tarball's own mode) can be emptied, then `rm -rf`. The chmod's own
-// failure is not one: it also meets the worker's entries, which the play
-// uid may not chmod, and the rm decides. dir itself is never handed over.
+// RemoveAsPlayUID clears the contents of dirs as the play uid
+// (cfg.PlayUID, through cfg.SetuidHelper): first `chmod -R u+rwX` on them,
+// so that a directory the play uid created without write permission (a
+// role tarball's own mode) can be emptied, then `rm -rf`. The chmod's own
+// failure is not one (it may meet an entry the worker owns); the rm
+// decides. The dirs themselves are never handed over.
 //
 // The entries are enumerated by the worker and passed explicitly — no
 // glob, so nothing depends on a shell. chmod and rm are resolved to
 // absolute paths because the helper execs them: there is no PATH search
-// on the other side of the drop. ctx bounds both calls.
+// on the other side of the drop. The chmod is bounded by chmodGrace, the
+// rm by removeGrace, each on its own; ctx only cancels.
 //
-// Removing as the play uid is safe only while nothing above dir is
-// writable by the play's group: rm runs with the play uid's own rights, so
-// it can only remove what that uid could remove anyway.
-func RemoveAsPlayUID(ctx context.Context, cfg Config, dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("list %s: %w", dir, err)
+// The rm runs with the play uid's own rights, so it removes only what that
+// uid could remove anyway; it succeeds only for entries of directories the
+// play's group can write to.
+func RemoveAsPlayUID(ctx context.Context, cfg Config, dirs ...string) error {
+	var paths []string
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Errorf("list %s: %w", dir, err)
+		}
+		for _, e := range entries {
+			paths = append(paths, filepath.Join(dir, e.Name()))
+		}
 	}
-	if len(entries) == 0 {
+	if len(paths) == 0 {
 		return nil
 	}
 	chmod, err := exec.LookPath("chmod")
@@ -172,23 +184,22 @@ func RemoveAsPlayUID(ctx context.Context, cfg Config, dir string) error {
 	if err != nil {
 		return fmt.Errorf("find rm to clear the play uid's leftovers: %w", err)
 	}
-	paths := make([]string, len(entries))
-	for i, e := range entries {
-		paths[i] = filepath.Join(dir, e.Name())
-	}
 	uid := strconv.FormatUint(uint64(cfg.PlayUID), 10)
-	_ = asPlayUID(ctx, cfg, append([]string{uid, chmod, "-R", "u+rwX", "--"}, paths...))
-	return asPlayUID(ctx, cfg, append([]string{uid, rm, "-rf", "--"}, paths...))
+	_ = asPlayUID(ctx, cfg, chmodGrace, append([]string{uid, chmod, "-R", "u+rwX", "--"}, paths...))
+	return asPlayUID(ctx, cfg, removeGrace, append([]string{uid, rm, "-rf", "--"}, paths...))
 }
 
-// asPlayUID runs the setuid helper with argv; an error carries its output.
-func asPlayUID(ctx context.Context, cfg Config, argv []string) error {
+// asPlayUID runs the setuid helper with argv for at most grace; an error
+// carries its output.
+func asPlayUID(ctx context.Context, cfg Config, grace time.Duration, argv []string) error {
 	helper := cfg.SetuidHelper
 	if helper == "" {
 		// Load always fills this; a Config assembled by hand (tests, the
 		// embedded worker) may not.
 		helper = defaultSetuidHelper
 	}
+	ctx, cancel := context.WithTimeout(ctx, grace)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, helper, argv...)
 	// The helper's final execv is a plain binary with unchanged
 	// credentials, so this child is dumpable and its /proc/<pid>/environ

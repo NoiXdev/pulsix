@@ -168,6 +168,8 @@ func TestGalaxyEnvironment(t *testing.T) {
 		"GIT_TERMINAL_PROMPT":               "0",
 		"GIT_CONFIG_NOSYSTEM":               "1",
 		"GIT_CONFIG_GLOBAL":                 os.DevNull,
+		"PYTHONNOUSERSITE":                  "1",
+		"PYTHONDONTWRITEBYTECODE":           "1",
 		"PATH":                              os.Getenv("PATH"),
 		"HTTPS_PROXY":                       "http://proxy:3128",
 	} {

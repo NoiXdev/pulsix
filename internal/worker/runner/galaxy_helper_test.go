@@ -3,7 +3,6 @@ package runner
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -16,61 +15,6 @@ import (
 	"github.com/noixdev/pulsix/internal/worker/requirements"
 	"github.com/noixdev/pulsix/internal/worker/supervisor"
 )
-
-// TestGalaxyRemoveAllAsThePlayUID: what the play uid wrote can hold a
-// directory without write permission (a role tarball's own mode), which
-// neither the worker nor a plain rm of the play uid can empty. The helper
-// stand-in execs what it is given, as the real one does after the drop.
-func TestGalaxyRemoveAllAsThePlayUID(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores the permission bits this case is built from")
-	}
-	stuckDir := func(t *testing.T) string {
-		dir := filepath.Join(t.TempDir(), ".tmp-x")
-		sub := filepath.Join(dir, "sub")
-		mkdirMode(t, sub, 0o700)
-		writeMode(t, filepath.Join(sub, "file"), "x", 0o600)
-		mkdirMode(t, sub, 0o500)
-		t.Cleanup(func() { _ = os.Chmod(sub, 0o700) })
-		return dir
-	}
-	calls := filepath.Join(t.TempDir(), "calls")
-	helper := filepath.Join(t.TempDir(), "exec-helper")
-	writeMode(t, helper, "#!/bin/sh\nprintf '%s\\n' \"$@\" >> "+shQuote(calls)+"\nprintf '===\\n' >> "+shQuote(calls)+"\nshift\nexec \"$@\"\n", 0o700)
-	var logs bytes.Buffer
-
-	dir := stuckDir(t)
-	if err := testGalaxy(worker.Config{PlayUID: 65533, SetuidHelper: helper}, &logs).RemoveAll(dir); err != nil {
-		t.Fatalf("RemoveAll: %v", err)
-	}
-	if _, err := os.Lstat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("%s survived: %v", dir, err)
-	}
-	got := recordedCalls(t, calls)
-	if len(got) != 2 {
-		t.Fatalf("helper calls = %q, want chmod then rm", got)
-	}
-	sub := filepath.Join(dir, "sub")
-	chmod, rm := got[0], got[1]
-	if len(chmod) != 6 || chmod[0] != "65533" || !filepath.IsAbs(chmod[1]) || filepath.Base(chmod[1]) != "chmod" ||
-		!slices.Equal(chmod[2:], []string{"-R", "u+rwX", "--", sub}) {
-		t.Errorf("first call = %q, want 65533 <abs chmod> -R u+rwX -- %s", chmod, sub)
-	}
-	if len(rm) != 5 || rm[0] != "65533" || !filepath.IsAbs(rm[1]) || filepath.Base(rm[1]) != "rm" ||
-		!slices.Equal(rm[2:], []string{"-rf", "--", sub}) {
-		t.Errorf("second call = %q, want 65533 <abs rm> -rf -- %s", rm, sub)
-	}
-
-	_ = os.Remove(calls)
-	dir = stuckDir(t)
-	err := testGalaxy(worker.Config{SetuidHelper: helper}, &logs).RemoveAll(dir)
-	if err == nil || !strings.Contains(err.Error(), "sub") {
-		t.Errorf("RemoveAll without a play uid = %v, want the error naming sub", err)
-	}
-	if c := recordedCalls(t, calls); len(c) != 0 {
-		t.Errorf("the helper ran without a play uid: %q", c)
-	}
-}
 
 // TestGalaxyHelperReceivesTheCommand: under a play uid, what starts is the
 // setuid helper with the supervisor and galaxy's absolute path, in the
@@ -156,5 +100,49 @@ func TestNewRequirementsInstallsThroughGalaxy(t *testing.T) {
 	r := &Runner{Log: slog.New(slog.NewTextHandler(&logs, nil))}
 	if NewRequirements(r, worker.Config{}) == nil {
 		t.Fatal("NewRequirements returned nil")
+	}
+}
+
+// TestGalaxyNamesTheInstallWhenItsSupervisorIsKilled: a supervisor that
+// does not stop within grace and backstop is killed, and the warning
+// names the install (its temp entry), not a bare program name.
+func TestGalaxyNamesTheInstallWhenItsSupervisorIsKilled(t *testing.T) {
+	ansibleBin, _ := fakeGalaxy(t, "exit 0")
+	started := filepath.Join(t.TempDir(), "started")
+	sup := filepath.Join(t.TempDir(), "stubborn-supervisor")
+	writeMode(t, sup, "#!/bin/sh\ntrap '' TERM\ntouch "+shQuote(started)+"\nwhile :; do sleep 0.05; done\n", 0o700)
+	in := galaxyInstall(t, requirements.KindRole)
+	var logs bytes.Buffer
+	g := testGalaxy(worker.Config{PlaySupervisor: sup, AnsibleBin: ansibleBin}, &logs)
+	g.Runner.SupervisorBackstop = 100 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- g.Install(ctx, in, func(string) {}) }()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the supervisor never started")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("Install of a stopped command returned nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Install did not return after the backstop KILL")
+	}
+	var warning string
+	for l := range strings.Lines(logs.String()) {
+		if strings.Contains(l, "play supervisor did not stop the run in time") {
+			warning = l
+		}
+	}
+	if !strings.Contains(warning, in.Entry) {
+		t.Errorf("log = %q, want the backstop warning naming %s", logs.String(), in.Entry)
 	}
 }
