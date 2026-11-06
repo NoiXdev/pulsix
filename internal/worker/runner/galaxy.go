@@ -193,13 +193,18 @@ func galaxyEnv(in requirements.Install, environ []string) []string {
 }
 
 // galaxyEnvAllowed reports whether galaxy inherits the worker's variable
-// name: the program search path, the locale and time zone, the CA bundle
-// and the proxy, which reaching a galaxy server needs.
+// name: the program, library and Python search paths, the locale and time
+// zone, and the CA bundles and the proxy, which reaching a galaxy server or
+// a git host needs. All of them a play gets as well (stripPrivateEnv); none
+// carries a secret.
 func galaxyEnvAllowed(name string) bool {
 	switch name {
-	case "PATH", "LANG", "LANGUAGE", "TZ",
-		"SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
-		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy":
+	case "PATH", "LD_LIBRARY_PATH", "PYTHONPATH", "PYTHONHOME",
+		"LANG", "LANGUAGE", "TZ",
+		"SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+		"GIT_SSL_CAINFO", "GIT_SSL_CAPATH",
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+		"http_proxy", "https_proxy", "no_proxy", "all_proxy":
 		return true
 	}
 	return strings.HasPrefix(name, "LC_")

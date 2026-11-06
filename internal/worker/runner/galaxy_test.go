@@ -149,8 +149,29 @@ func TestGalaxyEnvironment(t *testing.T) {
 	t.Setenv("PULSIX_STRAY", "1")
 	t.Setenv("STRAY_SECRET", "1")
 	t.Setenv("GIT_CONFIG_COUNT", "1")
-	t.Setenv("PYTHONPATH", "/stray")
 	t.Setenv("HTTPS_PROXY", "http://proxy:3128")
+	// The non-secret variables a play gets that galaxy needs as well: the
+	// proxy, the CA bundles and the library and Python search paths.
+	passed := map[string]string{
+		"ALL_PROXY":          "socks5://proxy:1080",
+		"all_proxy":          "socks5://proxy:1081",
+		"GIT_SSL_CAINFO":     "/etc/pki/git-ca.pem",
+		"GIT_SSL_CAPATH":     "/etc/pki/git-ca",
+		"CURL_CA_BUNDLE":     "/etc/pki/curl-ca.pem",
+		"REQUESTS_CA_BUNDLE": "/etc/pki/requests-ca.pem",
+		"SSL_CERT_FILE":      "/etc/pki/ca.pem",
+		"SSL_CERT_DIR":       "/etc/pki/certs",
+		"LD_LIBRARY_PATH":    "/opt/lib",
+		"PYTHONPATH":         "/opt/python",
+		"PYTHONHOME":         "/opt/python-home",
+	}
+	for k, v := range passed {
+		t.Setenv(k, v)
+	}
+	// Secret-looking variables stay with the worker.
+	for _, k := range []string{"PULSIX_ENROLL_TOKEN", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK", "GIT_ASKPASS"} {
+		t.Setenv(k, "secret")
+	}
 	ansibleBin, out := fakeGalaxy(t, "exit 0")
 	in := galaxyInstall(t, requirements.KindCollection)
 	var logs bytes.Buffer
@@ -181,7 +202,13 @@ func TestGalaxyEnvironment(t *testing.T) {
 	if !strings.Contains(env["GIT_SSH_COMMAND"], knownHosts) {
 		t.Errorf("GIT_SSH_COMMAND = %q, want it to contain %s", env["GIT_SSH_COMMAND"], knownHosts)
 	}
-	for _, k := range []string{"ANSIBLE_STRAY", "PULSIX_STRAY", "STRAY_SECRET", "GIT_CONFIG_COUNT", "PYTHONPATH"} {
+	for k, want := range passed {
+		if env[k] != want {
+			t.Errorf("%s = %q, want %q passed through", k, env[k], want)
+		}
+	}
+	for _, k := range []string{"ANSIBLE_STRAY", "PULSIX_STRAY", "STRAY_SECRET", "GIT_CONFIG_COUNT",
+		"PULSIX_ENROLL_TOKEN", "AWS_SECRET_ACCESS_KEY", "SSH_AUTH_SOCK", "GIT_ASKPASS"} {
 		if v, ok := env[k]; ok {
 			t.Errorf("%s=%q reached galaxy; only the allowlisted environment may", k, v)
 		}
