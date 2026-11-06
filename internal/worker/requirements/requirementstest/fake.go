@@ -32,6 +32,9 @@ type Galaxy struct {
 	Hold chan struct{}
 	// OnInstall runs first on every call; its error is returned.
 	OnInstall func(in requirements.Install) error
+	// RemoveErr, when set, makes RemoveAll record the directory and
+	// return RemoveErr without removing anything.
+	RemoveErr error
 
 	mu      sync.Mutex
 	calls   []requirements.Install
@@ -74,11 +77,15 @@ func (g *Galaxy) Install(ctx context.Context, in requirements.Install, line func
 	return g.Err
 }
 
-// RemoveAll removes dir with os.RemoveAll and records it.
+// RemoveAll removes dir with os.RemoveAll (unless RemoveErr is set) and
+// records it.
 func (g *Galaxy) RemoveAll(dir string) error {
 	g.mu.Lock()
 	g.removed = append(g.removed, dir)
 	g.mu.Unlock()
+	if g.RemoveErr != nil {
+		return g.RemoveErr
+	}
 	return os.RemoveAll(dir)
 }
 

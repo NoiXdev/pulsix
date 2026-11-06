@@ -33,8 +33,39 @@ func (c counted) installs() bool { return c.roles || c.collections }
 // The files are read and checked before the cache is touched. A commit
 // whose files count nothing, or list nothing, gets a zero Entry and no
 // cache. The whole step, the source check included, is bounded by the
-// service's timeout. Lines for the run log go to req.Line (spec goal 6).
+// service's timeout; whatever the deadline ends reports "timed out after
+// <timeout>". Lines for the run log go to req.Line (spec goal 6).
+//
+// Only what decides the returned entry fails the step: the files, the
+// cache and entry refusals (OpenDir), the lock, galaxy, the take-over and
+// the publishing rename. A cleanup that fails (a leftover temp directory,
+// the legacy galaxy directory, the temp entry after its take-over, marking
+// the entry used, eviction) is logged as a warning and the entry is still
+// returned. URL credentials are removed from every error's text.
 func (s *Service) Ensure(ctx context.Context, req Request) (Entry, error) {
+	entry, err := s.ensure(ctx, req)
+	if err != nil {
+		return Entry{}, withoutUserinfo(err)
+	}
+	return entry, nil
+}
+
+// withoutUserinfo is err with URL credentials removed from its text; it
+// still unwraps to err.
+func withoutUserinfo(err error) error {
+	msg := removeUserinfo(err.Error())
+	if msg == err.Error() {
+		return err
+	}
+	return &refusal{msg: msg, err: err}
+}
+
+// warn logs a cleanup that failed; the step goes on.
+func (s *Service) warn(msg, path string, err error) {
+	s.log.Warn(msg, "path", path, "err", removeUserinfo(err.Error()))
+}
+
+func (s *Service) ensure(ctx context.Context, req Request) (Entry, error) {
 	if req.Files.Empty() {
 		return Entry{}, nil
 	}
@@ -45,7 +76,7 @@ func (s *Service) Ensure(ctx context.Context, req Request) (Entry, error) {
 	if out == nil {
 		out = func(string) {}
 	}
-	step, cancel := context.WithTimeout(ctx, s.timeout)
+	step, cancel := context.WithTimeoutCause(ctx, s.timeout, timedOut{s.timeout})
 	defer cancel()
 	files, err := readFiles(step, req)
 	if err != nil {
@@ -62,7 +93,7 @@ func (s *Service) Ensure(ctx context.Context, req Request) (Entry, error) {
 		return Entry{}, err
 	}
 	defer func() { _ = root.Close() }()
-	unlock, err := lock(step, root)
+	unlock, err := lockWith(step, root, s.lockWaiting)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -70,10 +101,10 @@ func (s *Service) Ensure(ctx context.Context, req Request) (Entry, error) {
 	if err := sweepTemp(root, func(name string) error {
 		return s.galaxy.RemoveAll(filepath.Join(cacheDir, name))
 	}); err != nil {
-		return Entry{}, err
+		s.warn("remove leftover requirements installs", cacheDir, err)
 	}
 	if err := removeLegacy(req.CloneDir); err != nil {
-		return Entry{}, err
+		s.warn("remove the legacy galaxy directory", filepath.Clean(req.CloneDir)+".galaxy", err)
 	}
 
 	data := make([]fileData, len(files))
@@ -89,7 +120,7 @@ func (s *Service) Ensure(ctx context.Context, req Request) (Entry, error) {
 		out("Requirements: using the install for commit " + req.Commit[:7] + " on this worker")
 	case errors.Is(err, fs.ErrNotExist):
 		in := install{req: req, root: root, cacheDir: cacheDir, name: name, files: files, out: out}
-		if err := s.install(ctx, step, in); err != nil {
+		if err := s.install(step, in); err != nil {
 			return Entry{}, err
 		}
 		if entry, err = OpenDir(dir); err != nil {
@@ -100,14 +131,23 @@ func (s *Service) Ensure(ctx context.Context, req Request) (Entry, error) {
 		return Entry{}, err
 	}
 
-	now := s.clock.Now()
-	if err := root.Chtimes(name, now, now); err != nil {
-		return Entry{}, fmt.Errorf("mark requirements entry %s used: %w", name, err)
+	if err := s.markUsed(root, name); err != nil {
+		s.warn("mark the requirements entry used", dir, err)
 	}
 	if err := evict(root, maxEntries, name); err != nil {
-		return Entry{}, err
+		s.warn("evict requirements entries", cacheDir, err)
 	}
 	return newEntry(dir), nil
+}
+
+// markUsed sets the entry's times to now: the eviction keeps the most
+// recently used.
+func (s *Service) markUsed(root *os.Root, name string) error {
+	if s.touch != nil {
+		return s.touch(name)
+	}
+	now := s.clock.Now()
+	return root.Chtimes(name, now, now)
 }
 
 // readFiles reads, parses and checks every counted file through the
@@ -190,9 +230,9 @@ type install struct {
 
 // install runs galaxy for every file into a fresh temp entry, takes the
 // result over and publishes it under in.name. On any failure nothing is
-// published and the temp entries are removed. caller is Ensure's own
-// context, step the one bounded by the timeout.
-func (s *Service) install(caller, step context.Context, in install) error {
+// published and the temp entries are removed. step bounds galaxy and the
+// take-over.
+func (s *Service) install(step context.Context, in install) error {
 	tmp, err := mkTemp(in.root)
 	if err != nil {
 		return err
@@ -230,17 +270,17 @@ func (s *Service) install(caller, step context.Context, in install) error {
 			err := s.galaxy.Install(step, cmd, lines.line)
 			lines.done()
 			if err != nil {
-				return discard(s.commandError(caller, step, kind, f.name, err))
+				return discard(commandError(step, kind, f.name, err))
 			}
 		}
 	}
 
-	pub, err := takeOver(in.root, tmp)
+	pub, err := takeOver(step, in.root, tmp)
 	if err != nil {
 		return discard(err)
 	}
 	if err := s.galaxy.RemoveAll(tmpDir); err != nil {
-		return removePublished(in.root, pub, fmt.Errorf("remove %s: %w", tmpDir, err))
+		s.warn("remove the install after its take-over", tmpDir, err)
 	}
 	if err := in.root.Rename(pub, in.name); err != nil {
 		return removePublished(in.root, pub, fmt.Errorf("publish requirements entry %s: %w", in.name, err))
@@ -292,16 +332,15 @@ func removePublished(root *os.Root, pub string, err error) error {
 }
 
 // commandError is a failed galaxy command as Ensure reports it (Ruling 10):
-// the caller's context ended → its error; the step's time ran out → "timed
-// out after"; an exit → the code and the end of stderr, credentials removed.
-func (s *Service) commandError(caller, step context.Context, kind Kind, name string, err error) error {
+// the step ended → its cause ("timed out after …" for the deadline, the
+// caller's error when the caller's context ended); an exit → the code and
+// the end of stderr, credentials removed.
+func commandError(step context.Context, kind Kind, name string, err error) error {
 	cmd := fmt.Sprintf("ansible-galaxy %s install -r %s", kind, name)
 	var exit *ExitError
 	switch {
-	case caller.Err() != nil:
-		return fmt.Errorf("%s: %w", cmd, caller.Err())
-	case errors.Is(step.Err(), context.DeadlineExceeded):
-		return fmt.Errorf("%s: timed out after %s", cmd, s.timeout)
+	case step.Err() != nil:
+		return fmt.Errorf("%s: %w", cmd, context.Cause(step))
 	case errors.As(err, &exit):
 		tail := stderrTail(exit.Stderr)
 		redacted := &ExitError{Code: exit.Code, Stderr: tail}

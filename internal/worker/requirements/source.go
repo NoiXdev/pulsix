@@ -104,10 +104,11 @@ func newSourceCheck(ctx context.Context, clone fs.StatFS, lim treeLimits) *sourc
 }
 
 // spend counts one lookup (a path part, a link hop, a directory entry)
-// against the budget and ends the check when its context has ended.
+// against the budget and ends the check when its context has ended, with
+// the context's cause (context.Cause).
 func (c *sourceCheck) spend() error {
-	if err := c.ctx.Err(); err != nil {
-		return err
+	if c.ctx.Err() != nil {
+		return context.Cause(c.ctx)
 	}
 	if c.lookups++; c.lookups > c.lim.lookups {
 		return errTooManyLookups

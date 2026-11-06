@@ -20,14 +20,22 @@ const lockPoll = 20 * time.Millisecond
 // directory): it is not something the worker put there.
 var errLockNotFile = errors.New(".lock is not a regular file")
 
-// lock takes the exclusive lock of the cache directory that root is opened
+// lock is lockWith without a waiting hook.
+func lock(ctx context.Context, root *os.Root) (unlock func(), err error) {
+	return lockWith(ctx, root, nil)
+}
+
+// lockWith takes the exclusive lock of the cache directory that root is opened
 // on: flock(LOCK_EX|LOCK_NB) on its .lock file (created 0600; a symlink there
 // is refused, not followed), retried every lockPoll until it is held or ctx
 // ends. A wait is therefore cancellable and bounded by ctx. unlock releases
-// the lock and closes the file; it is called once.
-func lock(ctx context.Context, root *os.Root) (unlock func(), err error) {
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("lock requirements cache: %w", err)
+// the lock and closes the file; it is called once. waiting, when not nil,
+// runs once, when the lock is first found held. A context that ended
+// reports its cause (context.Cause): "timed out after …" for the step's
+// deadline.
+func lockWith(ctx context.Context, root *os.Root, waiting func()) (unlock func(), err error) {
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("lock requirements cache: %w", context.Cause(ctx))
 	}
 	f, err := openLockFile(root)
 	if err != nil {
@@ -47,10 +55,14 @@ func lock(ctx context.Context, root *os.Root) (unlock func(), err error) {
 				_ = f.Close()
 			}, nil
 		}
+		if waiting != nil {
+			waiting()
+			waiting = nil
+		}
 		select {
 		case <-ctx.Done():
 			_ = f.Close()
-			return nil, fmt.Errorf("lock requirements cache: %w", ctx.Err())
+			return nil, fmt.Errorf("lock requirements cache: %w", context.Cause(ctx))
 		case <-ticker.C:
 		}
 	}

@@ -1,6 +1,7 @@
 package requirements
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -104,12 +105,15 @@ func displayPath(p string) string {
 // where nothing changes them any more. The caller's guarantee that no
 // process of the install still runs only makes the copy a consistent
 // snapshot of what galaxy wrote.
-func takeOver(cache *os.Root, src string) (string, error) {
-	return takeOverWith(cache, src, defaultTakeOverLimits(), takeOverHooks{})
+//
+// ctx ends the take-over between two entries (the step's timeout or a
+// cancel): its bounds alone would still allow minutes of copying.
+func takeOver(ctx context.Context, cache *os.Root, src string) (string, error) {
+	return takeOverWith(ctx, cache, src, defaultTakeOverLimits(), takeOverHooks{})
 }
 
 // takeOverWith is takeOver within the bounds lim.
-func takeOverWith(cache *os.Root, src string, lim takeOverLimits, hooks takeOverHooks) (string, error) {
+func takeOverWith(ctx context.Context, cache *os.Root, src string, lim takeOverLimits, hooks takeOverHooks) (string, error) {
 	from, err := cache.OpenRoot(src)
 	if err != nil {
 		return "", fmt.Errorf("take over the install: %w", err)
@@ -121,7 +125,7 @@ func takeOverWith(cache *os.Root, src string, lim takeOverLimits, hooks takeOver
 	}
 	to, err := cache.OpenRoot(dst)
 	if err == nil {
-		c := &copier{from: from, to: to, lim: lim, hooks: hooks}
+		c := &copier{ctx: ctx, from: from, to: to, lim: lim, hooks: hooks}
 		err = c.run()
 		if cerr := to.Close(); err == nil && cerr != nil {
 			err = fmt.Errorf("take over the install: %w", cerr)
@@ -140,6 +144,7 @@ func takeOverWith(cache *os.Root, src string, lim takeOverLimits, hooks takeOver
 
 // copier copies one install, spending its bounds.
 type copier struct {
+	ctx      context.Context
 	from, to *os.Root
 	lim      takeOverLimits
 	hooks    takeOverHooks
@@ -149,9 +154,9 @@ type copier struct {
 
 // run copies the install, then checks the links of the copy.
 func (c *copier) run() error {
-	copying := &walker{lim: c.lim}
+	copying := &walker{ctx: c.ctx, lim: c.lim}
 	err := copying.walk(takeOverTrees, c.copyOne)
-	checking := &walker{lim: c.lim}
+	checking := &walker{ctx: c.ctx, lim: c.lim}
 	if err == nil {
 		err = checking.walk(takeOverTrees, c.checkOne)
 	}

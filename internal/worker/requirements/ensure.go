@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -93,13 +94,44 @@ type Service struct {
 	galaxy  Galaxy
 	clock   Clock
 	timeout time.Duration
+	log     *slog.Logger
+
+	// Test seams (export_test.go): lockWaiting runs when an Ensure finds
+	// the lock held; touch replaces the Chtimes that marks an entry used.
+	lockWaiting func()
+	touch       func(name string) error
+}
+
+// Option configures a Service.
+type Option func(*Service)
+
+// WithLogger sends the warnings of a cleanup that failed (a leftover, the
+// legacy directory, an eviction) to logger instead of slog.Default(). They
+// go to the worker's log, not to the run log: the operator acts on them.
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *Service) { s.log = logger }
 }
 
 // NewService returns a Service that runs galaxy. timeout bounds one Ensure;
 // 0 means DefaultTimeout.
-func NewService(galaxy Galaxy, clock Clock, timeout time.Duration) *Service {
+func NewService(galaxy Galaxy, clock Clock, timeout time.Duration, opts ...Option) *Service {
 	if timeout == 0 {
 		timeout = DefaultTimeout
 	}
-	return &Service{galaxy: galaxy, clock: clock, timeout: timeout}
+	s := &Service{galaxy: galaxy, clock: clock, timeout: timeout}
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.log == nil {
+		s.log = slog.Default()
+	}
+	return s
 }
+
+// timedOut is the cause of a step that ran out of time: "timed out after
+// <timeout>" in every error of the step that the deadline ended, and still
+// context.DeadlineExceeded to errors.Is.
+type timedOut struct{ after time.Duration }
+
+func (e timedOut) Error() string        { return "timed out after " + e.after.String() }
+func (e timedOut) Is(target error) bool { return target == context.DeadlineExceeded }

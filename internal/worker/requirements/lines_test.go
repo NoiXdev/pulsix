@@ -1,6 +1,7 @@
 package requirements_test
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -78,5 +79,30 @@ func TestSystemClockIsTheWallClock(t *testing.T) {
 	now := requirements.SystemClock{}.Now()
 	if now.Before(before) || now.After(time.Now()) {
 		t.Errorf("SystemClock.Now() = %v, want the wall clock", now)
+	}
+}
+
+func TestEnsureRemovesUserinfoFromEveryError(t *testing.T) {
+	cases := []struct {
+		name, content string
+		galaxyErr     error
+		want          string
+	}{
+		{"a refused file", "- src: x\n  name: x\n  version: \"-https://bob:s3cret@git.example.org/v\"\n", nil,
+			`requirements.yml: the version "-https://[redacted]@git.example.org/v" starts with "-"`},
+		{"a galaxy error", rolesOnly, errors.New("clone https://bob:s3cret@git.example.org/r.git: refused"),
+			"ansible-galaxy role install -r requirements.yml: clone https://[redacted]@git.example.org/r.git: refused"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newClone(t, map[string]string{"requirements.yml": tc.content})
+			g := newGalaxy()
+			g.Err = tc.galaxyErr
+			_, _, err := c.ensure(newService(g), commitA)
+			assertErr(t, err, tc.want)
+			if tc.galaxyErr != nil && !errors.Is(err, tc.galaxyErr) {
+				t.Errorf("err %v does not wrap the galaxy error", err)
+			}
+		})
 	}
 }

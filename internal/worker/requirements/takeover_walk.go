@@ -1,6 +1,7 @@
 package requirements
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -24,8 +25,10 @@ const listChunk = 1024
 // entries. Their bytes (each name plus nameOverhead) are budgeted by
 // lim.names, so the memory of a walk stays below that bound (64 MiB by
 // default) plus one chunk of listChunk entries, however many entries a tree
-// has and however long their names are.
+// has and however long their names are. The walk ends before the next
+// entry once ctx has ended, with ctx's cause.
 type walker struct {
+	ctx     context.Context
 	lim     takeOverLimits
 	entries int
 	held    int
@@ -63,6 +66,9 @@ func (w *walker) walk(tops []string, visit visitFunc) error {
 			w.held -= f.size
 			stack = stack[:len(stack)-1]
 			continue
+		}
+		if w.ctx.Err() != nil {
+			return fmt.Errorf("take over the install: %w", context.Cause(w.ctx))
 		}
 		p := path.Join(f.dir, f.names[f.next])
 		f.next++

@@ -122,7 +122,7 @@ func TestTakeOverCopiesALegitimateInstall(t *testing.T) {
 	writeTestFile(t, filepath.Join(s, "collections/ansible_collections/acme/tools/README.md"), "# tools\n", 0o644)
 	before := treeSnapshot(t, s)
 
-	name, err := takeOver(root, src)
+	name, err := takeOver(t.Context(), root, src)
 	if err != nil {
 		t.Fatalf("takeOver: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestTakeOverKeepsLinksThatStayInside(t *testing.T) {
 		symlinkTest(t, target, filepath.Join(s, link))
 	}
 
-	name, err := takeOver(root, src)
+	name, err := takeOver(t.Context(), root, src)
 	if err != nil {
 		t.Fatalf("takeOver: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestTakeOverRefuses(t *testing.T) {
 			dir, root, src := takeOverSource(t)
 			tc.setup(t, filepath.Join(dir, src))
 
-			name, err := takeOver(root, src)
+			name, err := takeOver(t.Context(), root, src)
 			if err == nil || err.Error() != tc.want {
 				t.Fatalf("takeOver = %q, %v; want %q", name, err, tc.want)
 			}
@@ -300,7 +300,7 @@ func TestTakeOverNamesAnUnreadableFile(t *testing.T) {
 	writeTestFile(t, filepath.Join(dir, src, "roles/a/ok"), "ok\n", 0o644)
 	writeTestFile(t, filepath.Join(dir, src, "roles/secret"), "secret\n", 0o000)
 
-	name, err := takeOver(root, src)
+	name, err := takeOver(t.Context(), root, src)
 	if err == nil || !strings.HasPrefix(err.Error(), "take over the install: roles/secret: ") || !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("takeOver = %q, %v; want the open error naming roles/secret", name, err)
 	}
@@ -319,7 +319,7 @@ func TestTakeOverNamesAnUnreadableDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(closed, 0o700) })
 
-	name, err := takeOver(root, src)
+	name, err := takeOver(t.Context(), root, src)
 	want := "take over the install: collections/ansible_collections/acme/closed: "
 	if err == nil || !strings.HasPrefix(err.Error(), want) || !errors.Is(err, fs.ErrPermission) {
 		t.Fatalf("takeOver = %q, %v; want the open error naming the directory", name, err)
@@ -356,7 +356,7 @@ func TestTakeOverIsBounded(t *testing.T) {
 			dir, root, src := takeOverSource(t)
 			tc.setup(t, filepath.Join(dir, src))
 
-			name, err := takeOverWith(root, src, tc.lim, takeOverHooks{})
+			name, err := takeOverWith(t.Context(), root, src, tc.lim, takeOverHooks{})
 			if err == nil || err.Error() != tc.want {
 				t.Fatalf("takeOverWith = %q, %v; want %q", name, err, tc.want)
 			}
@@ -373,7 +373,7 @@ func TestTakeOverQuotesAnOddName(t *testing.T) {
 		dir, root, src := takeOverSource(t)
 		symlinkTest(t, "/etc/passwd", filepath.Join(dir, src, name))
 
-		_, err := takeOver(root, src)
+		_, err := takeOver(t.Context(), root, src)
 		if err == nil || err.Error() != want {
 			t.Errorf("takeOver = %v, want %q", err, want)
 		}
@@ -387,7 +387,7 @@ func TestTakeOverWithoutRolesOrCollections(t *testing.T) {
 	}
 	writeTestFile(t, filepath.Join(dir, src, "collections/ansible_collections/a/b/x"), "x", 0o644)
 
-	name, err := takeOver(root, src)
+	name, err := takeOver(t.Context(), root, src)
 	if err != nil {
 		t.Fatalf("takeOver: %v", err)
 	}

@@ -1,6 +1,8 @@
 package requirements
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,7 +38,7 @@ func TestTakeOverChecksLinksInTheCopy(t *testing.T) {
 		swapped = true
 	}}
 
-	name, err := takeOverWith(root, src, defaultTakeOverLimits(), hooks)
+	name, err := takeOverWith(t.Context(), root, src, defaultTakeOverLimits(), hooks)
 	if !swapped {
 		t.Fatal("the hook never swapped roles/a/s")
 	}
@@ -67,7 +69,7 @@ func TestTakeOverBoundsTheNamesItHolds(t *testing.T) {
 
 	var peak int
 	_, root, src := setup(t)
-	if _, err := takeOverWith(root, src, lim(1<<20), takeOverHooks{peak: &peak}); err != nil {
+	if _, err := takeOverWith(t.Context(), root, src, lim(1<<20), takeOverHooks{peak: &peak}); err != nil {
 		t.Fatalf("takeOverWith: %v", err)
 	}
 	// Held at the deepest point: the top names, roles' names and the five
@@ -80,15 +82,39 @@ func TestTakeOverBoundsTheNamesItHolds(t *testing.T) {
 	}
 
 	_, root, src = setup(t)
-	if _, err := takeOverWith(root, src, lim(wantPeak), takeOverHooks{}); err != nil {
+	if _, err := takeOverWith(t.Context(), root, src, lim(wantPeak), takeOverHooks{}); err != nil {
 		t.Errorf("takeOverWith within a budget of exactly the peak: %v", err)
 	}
 
 	dir, root, src := setup(t)
-	_, err := takeOverWith(root, src, lim(wantPeak-1), takeOverHooks{})
+	_, err := takeOverWith(t.Context(), root, src, lim(wantPeak-1), takeOverHooks{})
 	want := "take over the install: roles/d: more than " + strconv.Itoa(wantPeak-1) + " bytes of names to hold"
 	if err == nil || err.Error() != want {
 		t.Fatalf("takeOverWith one byte under the peak = %v, want %q", err, want)
 	}
 	onlyNames(t, dir, src)
+}
+
+func TestTakeOverEndsWithItsContext(t *testing.T) {
+	dir, root, src := takeOverSource(t)
+	writeTestFile(t, filepath.Join(dir, src, "roles/acme.web/tasks/main.yml"), "- debug: msg=hi\n", 0o600)
+	ctx, cancel := context.WithCancel(t.Context())
+	var copied []string
+	hooks := takeOverHooks{afterCopy: func(p string) {
+		copied = append(copied, p)
+		cancel()
+	}}
+	name, err := takeOverWith(ctx, root, src, defaultTakeOverLimits(), hooks)
+	if !errors.Is(err, context.Canceled) || name != "" {
+		t.Fatalf("takeOverWith = %q, %v, want context.Canceled", name, err)
+	}
+	if want := "take over the install: context canceled"; err.Error() != want {
+		t.Errorf("err = %q, want %q", err, want)
+	}
+	if len(copied) != 1 {
+		t.Errorf("copied %q after the cancel, want one entry", copied)
+	}
+	if got := names(t, dir); len(got) != 1 || got[0] != src {
+		t.Errorf("cache holds %v, want only %s", got, src)
+	}
 }

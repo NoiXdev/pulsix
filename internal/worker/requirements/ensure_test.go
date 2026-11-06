@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -262,57 +261,6 @@ func TestEnsureEvictsTheLeastRecentlyUsed(t *testing.T) {
 	ensure(2)
 	ensure(5)
 	kept(2, 4, 5)
-}
-
-func TestEnsureInstallsOnceForTwoConcurrentCalls(t *testing.T) {
-	c := newClone(t, map[string]string{"requirements.yml": rolesAndCollections})
-	g := newGalaxy()
-	g.Hold = make(chan struct{})
-	started := make(chan struct{})
-	var once sync.Once
-	g.OnInstall = func(requirements.Install) error {
-		once.Do(func() { close(started) })
-		return nil
-	}
-	svc := newService(g)
-	files := c.files("")
-	type result struct {
-		entry requirements.Entry
-		lines []string
-		err   error
-	}
-	results := make(chan result, 2)
-	for range 2 {
-		go func() {
-			rec := &recorder{}
-			entry, err := svc.Ensure(t.Context(), c.request(commitA, files, rec))
-			results <- result{entry, rec.get(), err}
-		}()
-	}
-	select {
-	case <-started:
-	case r := <-results:
-		close(g.Hold)
-		t.Fatalf("an Ensure returned before galaxy ran: %+v", r)
-	case <-time.After(30 * time.Second):
-		close(g.Hold)
-		t.Fatal("galaxy never ran")
-	}
-	close(g.Hold)
-	a, b := <-results, <-results
-	if a.err != nil || b.err != nil {
-		t.Fatalf("Ensure: %v, %v", a.err, b.err)
-	}
-	if a.entry != b.entry || a.entry.IsZero() {
-		t.Errorf("entries %+v and %+v, want one", a.entry, b.entry)
-	}
-	if n := len(g.Calls()); n != 2 {
-		t.Errorf("galaxy ran %d times, want 2 (one role and one collection install)", n)
-	}
-	using := []string{usingLine(commitA)}
-	if slices.Equal(a.lines, using) == slices.Equal(b.lines, using) {
-		t.Errorf("lines %q and %q, want exactly one reuse", a.lines, b.lines)
-	}
 }
 
 func assertFile(t *testing.T, path, want string) {
