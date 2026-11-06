@@ -10,6 +10,7 @@ func TestParseFile(t *testing.T) {
 	const name = "roles/requirements.yml"
 	const notReq = name + " is not a requirements file: "
 	const include = name + ": include: is not supported; list the roles in this file"
+	const plainYAML = notReq + "anchors, aliases, merge keys and tags are not supported"
 	cases := []struct {
 		name               string
 		data               string
@@ -29,8 +30,36 @@ func TestParseFile(t *testing.T) {
 		{name: "roles only", data: "roles:\n  - name: a.b\n", roles: true},
 		{name: "collections only", data: "collections:\n  - community.general\n", collections: true},
 		{name: "both", data: "roles:\n  - name: a.b\ncollections:\n  - community.general\n", roles: true, collections: true},
-		{name: "an alias of a list", data: "x: &r []\n", err: notReq + "only roles and collections are allowed at the top level, found x"},
-		{name: "roles as an alias", data: "collections: &c\n  - name: a.b\nroles: *c\n", roles: true, collections: true},
+		{name: "an anchor on a value", data: "x: &r []\n", err: plainYAML, exact: true},
+		{name: "roles as an alias", data: "collections: &c\n  - name: a.b\nroles: *c\n", err: plainYAML, exact: true},
+		{name: "an alias as a role name", data: "- src: &s ./r.tar.gz\n  name: *s\n", err: plainYAML, exact: true},
+		{
+			name: "an alias key that galaxy merges, list form", data: "- &m <<: {src: ./r1.tar.gz, name: ok1}\n- *m : {name: ../../x}\n  src: ./r.tar.gz\n",
+			err: plainYAML, exact: true,
+		},
+		{
+			name: "an alias key that galaxy merges, collections", data: "collections:\n  - &m <<: {name: ns.ok}\n  - *m : {name: ../c, type: dir}\n",
+			err: plainYAML, exact: true,
+		},
+		{name: "a tagged merge key, list form", data: "- !!merge foo: {name: ../../x}\n  src: ./r.tar.gz\n", err: plainYAML, exact: true},
+		{name: "a tagged merge key, collections", data: "collections:\n  - !!merge foo: {name: ../c, source: ../d}\n", err: plainYAML, exact: true},
+		{name: "a tagged merge key hiding include", data: "roles:\n  - !!merge foo: {include: other.yml}\n", err: plainYAML, exact: true},
+		{name: "a plain merge key", data: "- <<: {name: ../../x}\n  src: ./r.tar.gz\n", err: plainYAML, exact: true},
+		{name: "a quoted merge key", data: "- '<<': {name: a}\n  src: ./r.tar.gz\n", err: plainYAML, exact: true},
+		{name: "a !!str tag on a name", data: "- src: ./r.tar.gz\n  name: !!str web\n", err: plainYAML, exact: true},
+		{name: "an unknown tag", data: "- !unknown acme.web\n", err: plainYAML, exact: true},
+		{name: "a non-specific tag", data: "roles:\n  - src: ./r.tar.gz\n    name: ! web\n", err: plainYAML, exact: true},
+		{name: "a non-specific tag after wide characters", data: "- {name: \"\u00fc\u00fc\", src: ! ./r.tar.gz}\n", err: plainYAML, exact: true},
+		{name: "a tag on the top level", data: "--- !!seq\n- a.b\n", err: plainYAML, exact: true},
+		{name: "a tag on a key", data: "!!str roles: []\n", err: plainYAML, exact: true},
+		{name: "a second document", data: "roles: []\n---\nroles:\n  - name: ../../x\n", err: notReq + "only one YAML document is allowed", exact: true},
+		{name: "an empty second document", data: "- a.b\n---\n", err: notReq + "only one YAML document is allowed", exact: true},
+		{name: "invalid YAML in a second document", data: "- a.b\n---\n[\n", err: notReq + "invalid YAML: "},
+		{name: "a document start marker", data: "---\n- a.b\n...\n", roles: true},
+		{name: "a byte order mark", data: "\ufeff- {name: a, src: ./r.tar.gz}\n", roles: true},
+		{name: "a non-specific tag after a byte order mark", data: "\ufeff- ! a.b\n", err: plainYAML, exact: true},
+		{name: "a non-specific tag on a key", data: "- src: ./r.tar.gz\n  ! name: web\n", err: plainYAML, exact: true},
+		{name: "exclamation and ampersand inside strings", data: "- src: 'a!b&c'\n  name: \"w!&\"\n- x!y&z\n", roles: true},
 		{
 			name: "scalar", data: "42",
 			err: notReq + "the top level must be a list of roles or a mapping of roles and collections",
@@ -60,7 +89,6 @@ func TestParseFile(t *testing.T) {
 		{name: "role name null", data: "- src: ./r.tar.gz\n  name:\n", err: notReq + `the role name "" is not a plain directory name`, exact: true},
 		{name: "old style role key", data: "- role: ../../escaped\n", err: notReq + `the role name "../../escaped" is not a plain directory name`, exact: true},
 		{name: "role key beats name", data: "- role: ../x\n  name: fine\n  src: ./r.tar.gz\n", err: notReq + `the role name "../x" is not a plain directory name`, exact: true},
-		{name: "role name in a merge", data: "- <<: {name: ../../x}\n  src: ./r.tar.gz\n", err: notReq + `the role name "../../x" is not a plain directory name`, exact: true},
 		{name: "third part of a role string", data: "- ./r.tar.gz,1.0,../x\n", err: notReq + `the role name "../x" is not a plain directory name`, exact: true},
 		{name: "a plain third part", data: "- ./r.tar.gz,1.0,web\n", roles: true},
 		{name: "a line galaxy refuses itself", data: "- a,b,c,d\n", roles: true},
@@ -132,11 +160,6 @@ func TestParseFileCollectsSources(t *testing.T) {
 			name: "src over name, the role key without src",
 			data: "- src: ./vendor/r.tar.gz\n  name: r\n- role: acme.old\n- git+https://example.org/r.git,v1,r2\n",
 			want: []string{"./vendor/r.tar.gz", "acme.old", "git+https://example.org/r.git"},
-		},
-		{
-			name: "fields from a merge",
-			data: "- <<: {src: ./vendor/r.tar.gz}\n  name: r\n",
-			want: []string{"./vendor/r.tar.gz"},
 		},
 		{name: "nothing", data: "roles: []\n", want: nil},
 	}

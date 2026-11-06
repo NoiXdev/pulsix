@@ -1,6 +1,7 @@
 package requirements
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -24,23 +25,26 @@ type plan struct {
 // each a list or null. Refused before galaxy runs: anything else, include:
 // in a role list (it would read any file on the worker), and a role name that
 // would put the role outside the roles directory (galaxy extracts the role to
-// <roles>/<name>). Duplicate keys are refused too: galaxy keeps the last, so
-// the file must not read one way here and another way there.
+// <roles>/<name>). The file must never read one way here and another way in
+// galaxy, so YAML that the two loaders read differently is refused as well:
+// a second document, anchors, aliases, merge keys, explicit tags (decodePlain)
+// and duplicate keys (galaxy keeps the last).
 func parseFile(name string, data []byte) (plan, error) {
 	p := plan{name: name}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	doc, err := decodePlain(data)
+	switch {
+	case errors.Is(err, errSecondDocument), errors.Is(err, errNotPlainYAML):
+		return plan{}, notRequirements(name, "%v", err)
+	case err != nil:
 		return plan{}, notRequirements(name, "invalid YAML: %v", err)
-	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
+	case doc == nil || doc.Kind != yaml.DocumentNode || len(doc.Content) == 0:
 		return p, nil
 	}
 	var whole any
 	if err := doc.Decode(&whole); err != nil {
 		return plan{}, notRequirements(name, "invalid YAML: %v", err)
 	}
-	var err error
-	switch top := deref(doc.Content[0]); {
+	switch top := doc.Content[0]; {
 	case top.Kind == yaml.ScalarNode && top.ShortTag() == "!!null":
 	case top.Kind == yaml.SequenceNode:
 		err = p.addRoles(top)
@@ -59,12 +63,12 @@ func parseFile(name string, data []byte) (plan, error) {
 // or null, in file order.
 func (p *plan) addMapping(top *yaml.Node) error {
 	for i := 0; i < len(top.Content); i += 2 {
-		if k := deref(top.Content[i]); k.Kind != yaml.ScalarNode || k.Value != "roles" && k.Value != "collections" {
+		if k := top.Content[i]; k.Kind != yaml.ScalarNode || k.Value != "roles" && k.Value != "collections" {
 			return notRequirements(p.name, "only roles and collections are allowed at the top level, found %s", k.Value)
 		}
 	}
 	for i := 0; i < len(top.Content); i += 2 {
-		k, v := deref(top.Content[i]).Value, deref(top.Content[i+1])
+		k, v := top.Content[i].Value, top.Content[i+1]
 		switch {
 		case v.Kind == yaml.ScalarNode && v.ShortTag() == "!!null":
 			continue
@@ -88,7 +92,6 @@ func (p *plan) addMapping(top *yaml.Node) error {
 // ("src[,version[,name]]") or a mapping.
 func (p *plan) addRoles(list *yaml.Node) error {
 	for i, e := range list.Content {
-		e = deref(e)
 		var err error
 		switch {
 		case isString(e):
@@ -160,7 +163,6 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 // whose name and source are sources.
 func (p *plan) addCollections(list *yaml.Node) error {
 	for i, e := range list.Content {
-		e = deref(e)
 		switch {
 		case isString(e):
 			p.sources = append(p.sources, e.Value)
@@ -214,14 +216,6 @@ func roleNameFromSource(src string) string {
 	name = strings.TrimSuffix(name, ".tar.gz")
 	name, _, _ = strings.Cut(name, ",")
 	return name
-}
-
-// deref follows an alias to the node it names.
-func deref(n *yaml.Node) *yaml.Node {
-	for n.Kind == yaml.AliasNode && n.Alias != nil {
-		n = n.Alias
-	}
-	return n
 }
 
 // isString reports a scalar that YAML reads as a string (not a number, a
