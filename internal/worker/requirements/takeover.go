@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -17,12 +16,15 @@ import (
 
 // The bounds of a take-over. A large install (dozens of collections) holds
 // some tens of thousands of files and a few hundred MiB, so the bounds leave
-// room while still ending a crafted tree. Lookups are the path parts the
-// symlink check visits, across all links of the install.
+// room while still ending a crafted tree. The copy is not sparse: a file
+// counts and costs its full size. Lookups are the path parts the symlink
+// check visits, across all links of the install. Names are the bytes of
+// names and directory paths a walk holds at once (see walker).
 const (
 	maxTakeOverEntries = 500000
-	maxTakeOverBytes   = 8 << 30
+	maxTakeOverBytes   = 2 << 30
 	maxTakeOverLookups = 1000000
+	maxTakeOverNames   = 64 << 20
 )
 
 // The reasons a take-over refuses an entry.
@@ -41,10 +43,21 @@ type takeOverLimits struct {
 	entries, depth int
 	bytes          int64
 	lookups        int
+	names          int
 }
 
 func defaultTakeOverLimits() takeOverLimits {
-	return takeOverLimits{entries: maxTakeOverEntries, depth: maxTreeDepth, bytes: maxTakeOverBytes, lookups: maxTakeOverLookups}
+	return takeOverLimits{
+		entries: maxTakeOverEntries, depth: maxTreeDepth, bytes: maxTakeOverBytes,
+		lookups: maxTakeOverLookups, names: maxTakeOverNames,
+	}
+}
+
+// takeOverHooks are test seams: afterCopy runs after each entry was copied,
+// and peak receives the most name bytes a walk held at once.
+type takeOverHooks struct {
+	afterCopy func(p string)
+	peak      *int
 }
 
 // takeOverError names the refused path, relative to the temp entry.
@@ -59,11 +72,11 @@ func (e *takeOverError) Error() string {
 
 func (e *takeOverError) Unwrap() error { return e.err }
 
-// displayPath is p as an error shows it: quoted when it holds a byte that
-// could pass for something else in a log line.
+// displayPath is p as an error shows it: quoted when it holds a byte or a
+// separator that could pass for something else in a log line.
 func displayPath(p string) string {
 	odd := func(r rune) bool { return r == '"' || !unicode.IsPrint(r) }
-	if !utf8.ValidString(p) || strings.ContainsFunc(p, odd) {
+	if !utf8.ValidString(p) || strings.ContainsFunc(p, odd) || strings.Contains(p, ": ") {
 		return strconv.Quote(p)
 	}
 	return p
@@ -73,27 +86,30 @@ func displayPath(p string) string {
 // galaxy, as the play uid when one is set) into a fresh worker-owned temp
 // entry and returns that one's name.
 //
-// The copy checks every entry: a directory becomes 0700, a regular file 0600
-// (0700 when any execute bit was set), so setuid, setgid, sticky and group or
-// world bits are dropped. A regular file must have one link and is opened
-// without following links through src's root, and must be the file that was
-// listed. A symlink is recreated with the same target only when the target
-// is relative and stays inside the install, lexically and when followed the
-// way the kernel follows it. Anything else (a device, a FIFO, a socket, a
-// link leading out, a file the worker cannot read) refuses the take-over,
-// naming the path. Nothing but regular files and directories is ever opened,
-// so a FIFO cannot block it. On any error the partial copy is removed and no
-// name is returned.
+// The copy checks every entry as it copies it: a directory becomes 0700, a
+// regular file 0600 (0700 when any execute bit was set), so setuid, setgid,
+// sticky and group or world bits are dropped. A regular file must have one
+// link and is opened without following links through src's root, and must
+// be the file that was listed. A symlink is recreated with the same target
+// when the target is relative and lexically inside the install. Anything
+// else (a device, a FIFO, a socket, a file the worker cannot read) refuses
+// the take-over, naming the path. Nothing but regular files and directories
+// is ever opened, so a FIFO cannot block it. Once the copy is complete,
+// every link in it is followed the way the kernel follows it and must stay
+// inside; that check runs on the copy, which only the worker can reach.
+// On any error the partial copy is removed and no name is returned.
 //
-// The caller guarantees that no process of the install still runs, so the
-// tree does not change while it is copied; what does is refused, not
-// trusted.
+// Safety does not rely on src staying unchanged: each entry is checked as
+// it is copied, and the links, which depend on other entries, are checked
+// where nothing changes them any more. The caller's guarantee that no
+// process of the install still runs only makes the copy a consistent
+// snapshot of what galaxy wrote.
 func takeOver(cache *os.Root, src string) (string, error) {
-	return takeOverWith(cache, src, defaultTakeOverLimits())
+	return takeOverWith(cache, src, defaultTakeOverLimits(), takeOverHooks{})
 }
 
 // takeOverWith is takeOver within the bounds lim.
-func takeOverWith(cache *os.Root, src string, lim takeOverLimits) (string, error) {
+func takeOverWith(cache *os.Root, src string, lim takeOverLimits, hooks takeOverHooks) (string, error) {
 	from, err := cache.OpenRoot(src)
 	if err != nil {
 		return "", fmt.Errorf("take over the install: %w", err)
@@ -105,8 +121,8 @@ func takeOverWith(cache *os.Root, src string, lim takeOverLimits) (string, error
 	}
 	to, err := cache.OpenRoot(dst)
 	if err == nil {
-		c := &copier{from: from, to: to, lim: lim}
-		err = c.copyTrees()
+		c := &copier{from: from, to: to, lim: lim, hooks: hooks}
+		err = c.run()
 		if cerr := to.Close(); err == nil && cerr != nil {
 			err = fmt.Errorf("take over the install: %w", cerr)
 		}
@@ -126,95 +142,78 @@ func takeOverWith(cache *os.Root, src string, lim takeOverLimits) (string, error
 type copier struct {
 	from, to *os.Root
 	lim      takeOverLimits
-	entries  int
+	hooks    takeOverHooks
 	bytes    int64
 	lookups  int
 }
 
-// copyTrees copies each of takeOverTrees that exists, depth first, a
-// directory's entries in name order.
-func (c *copier) copyTrees() error {
-	type item struct {
-		path  string
-		depth int
+// run copies the install, then checks the links of the copy.
+func (c *copier) run() error {
+	copying := &walker{lim: c.lim}
+	err := copying.walk(takeOverTrees, c.copyOne)
+	checking := &walker{lim: c.lim}
+	if err == nil {
+		err = checking.walk(takeOverTrees, c.checkOne)
 	}
-	var stack []item
-	for _, top := range slices.Backward(takeOverTrees) {
-		if _, err := c.from.Lstat(top); errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		stack = append(stack, item{top, 0})
+	if c.hooks.peak != nil {
+		*c.hooks.peak = max(copying.peak, checking.peak)
 	}
-	c.entries = len(stack)
-	for len(stack) > 0 {
-		it := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		children, err := c.copyOne(it.path, it.depth)
-		if err != nil {
-			return &takeOverError{path: it.path, err: err}
-		}
-		for _, name := range slices.Backward(children) {
-			stack = append(stack, item{path.Join(it.path, name), it.depth + 1})
-		}
-	}
-	return nil
+	return err
 }
 
-// copyOne copies the entry p and returns a directory's entry names.
-func (c *copier) copyOne(p string, depth int) ([]string, error) {
+// copyOne copies the entry p; for a directory it returns the original
+// opened, to be listed.
+func (c *copier) copyOne(p string, depth int) (*os.File, error) {
 	fi, err := c.from.Lstat(p)
+	if depth == 0 && errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, bare(err)
 	}
+	var dir *os.File
 	switch mode := fi.Mode(); {
 	case mode.IsDir():
 		if depth > c.lim.depth {
 			return nil, fmt.Errorf("nested deeper than %d directories", c.lim.depth)
 		}
-		return c.copyDir(p, fi)
+		dir, err = c.copyDir(p, fi)
 	case mode.IsRegular():
-		return nil, c.copyFile(p, fi)
+		err = c.copyFile(p, fi)
 	case mode&fs.ModeSymlink != 0:
-		return nil, c.copyLink(p)
+		err = c.copyLink(p)
+	default:
+		err = errTakeOverOddType
 	}
-	return nil, errTakeOverOddType
+	if err != nil {
+		return nil, err
+	}
+	if c.hooks.afterCopy != nil {
+		c.hooks.afterCopy(p)
+	}
+	return dir, nil
 }
 
-// copyDir makes the directory p and lists the entries of the original.
-func (c *copier) copyDir(p string, fi fs.FileInfo) ([]string, error) {
+// copyDir makes the directory p and returns the original opened.
+func (c *copier) copyDir(p string, fi fs.FileInfo) (*os.File, error) {
 	f, err := c.from.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK|syscall.O_DIRECTORY, 0)
 	if err != nil {
 		return nil, bare(err)
 	}
-	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
+	switch {
+	case err != nil:
+		err = bare(err)
+	case !os.SameFile(fi, st):
+		err = errTakeOverChanged
+	default:
+		err = bare(c.to.Mkdir(p, 0o700))
+	}
 	if err != nil {
-		return nil, bare(err)
+		_ = f.Close()
+		return nil, err
 	}
-	if !os.SameFile(fi, st) {
-		return nil, errTakeOverChanged
-	}
-	var names []string
-	for {
-		list, err := f.ReadDir(1024)
-		if c.entries += len(list); c.entries > c.lim.entries {
-			return nil, fmt.Errorf("more than %d files and directories", c.lim.entries)
-		}
-		for _, e := range list {
-			names = append(names, e.Name())
-		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, bare(err)
-		}
-	}
-	slices.Sort(names)
-	if err := c.to.Mkdir(p, 0o700); err != nil {
-		return nil, bare(err)
-	}
-	return names, nil
+	return f, nil
 }
 
 // copyFile copies the regular file p.
@@ -263,8 +262,9 @@ func (c *copier) copyFile(p string, fi fs.FileInfo) error {
 	return nil
 }
 
-// copyLink recreates the symlink p when its target stays inside the
-// install.
+// copyLink recreates the symlink p when its target is relative and
+// lexically inside the install. Where it really leads is checked in the
+// copy (checkOne).
 func (c *copier) copyLink(p string) error {
 	target, err := c.from.Readlink(p)
 	if err != nil {
@@ -276,71 +276,27 @@ func (c *copier) copyLink(p string) error {
 	if j := path.Join(path.Dir(p), target); j == ".." || strings.HasPrefix(j, "../") {
 		return errTakeOverLinkOut
 	}
-	if err := c.followLink(p, target); err != nil {
-		return err
-	}
 	return bare(c.to.Symlink(target, p))
 }
 
-// followLink follows the link p to target as the kernel would in the copy,
-// where only takeOverTrees exist at the top: part by part, a ".." going to
-// the real parent of what was reached and a further link spliced in. Every
-// directory p is in was walked as a real directory. Reaching a part that
-// does not exist, or a part below a file, ends the walk without error: the
-// kernel stops there as well, and the copy holds nothing the original does
-// not. Going above the install, or an absolute link on the way, is
-// errTakeOverLinkOut.
-func (c *copier) followLink(p, target string) error {
-	var done []string
-	if d := path.Dir(p); d != "." {
-		done = strings.Split(d, "/")
+// checkOne checks the entry p of the complete copy: a link must stay
+// inside. For a directory it returns the directory opened, to be listed.
+func (c *copier) checkOne(p string, depth int) (*os.File, error) {
+	fi, err := c.to.Lstat(p)
+	if depth == 0 && errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
-	todo := strings.Split(target, "/")
-	hops := 1
-	for len(todo) > 0 {
-		if c.lookups++; c.lookups > c.lim.lookups {
-			return fmt.Errorf("more than %d lookups to check its symlinks", c.lim.lookups)
-		}
-		name := todo[0]
-		todo = todo[1:]
-		switch {
-		case name == "" || name == ".":
-			continue
-		case name == "..":
-			if len(done) == 0 {
-				return errTakeOverLinkOut
-			}
-			done = done[:len(done)-1]
-			continue
-		case len(done) == 0 && !slices.Contains(takeOverTrees, name):
-			return nil // not in the copy
-		}
-		cur := path.Join(path.Join(done...), name)
-		fi, err := c.from.Lstat(cur)
-		switch {
-		case errors.Is(err, fs.ErrNotExist):
-			return nil
-		case err != nil:
-			return bare(err)
-		case fi.Mode()&fs.ModeSymlink != 0:
-			if hops++; hops > maxLinkHops {
-				return errTakeOverLinkChain
-			}
-			next, err := c.from.Readlink(cur)
-			if err != nil {
-				return bare(err)
-			}
-			if next == "" || path.IsAbs(next) {
-				return errTakeOverLinkOut
-			}
-			todo = append(strings.Split(next, "/"), todo...)
-			continue
-		case !fi.IsDir():
-			return nil // nothing is opened below a file
-		}
-		done = append(done, name)
+	if err != nil {
+		return nil, bare(err)
 	}
-	return nil
+	switch {
+	case fi.IsDir():
+		f, err := c.to.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0)
+		return f, bare(err)
+	case fi.Mode()&fs.ModeSymlink != 0:
+		return nil, c.followLink(c.to, p)
+	}
+	return nil, nil
 }
 
 // links is the link count of a file.

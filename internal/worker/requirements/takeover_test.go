@@ -334,19 +334,19 @@ func TestTakeOverIsBounded(t *testing.T) {
 		setup func(t *testing.T, src string)
 		want  string
 	}{
-		{"entries", takeOverLimits{entries: 4, depth: 64, bytes: 1 << 20, lookups: 1000}, func(t *testing.T, s string) {
+		{"entries", takeOverLimits{entries: 4, depth: 64, bytes: 1 << 20, lookups: 1000, names: 1 << 20}, func(t *testing.T, s string) {
 			for _, n := range []string{"1", "2", "3", "4"} {
 				writeTestFile(t, filepath.Join(s, "roles/many", n), n, 0o644)
 			}
 		}, "take over the install: roles/many: more than 4 files and directories"},
-		{"depth", takeOverLimits{entries: 100, depth: 2, bytes: 1 << 20, lookups: 1000}, func(t *testing.T, s string) {
+		{"depth", takeOverLimits{entries: 100, depth: 2, bytes: 1 << 20, lookups: 1000, names: 1 << 20}, func(t *testing.T, s string) {
 			writeTestFile(t, filepath.Join(s, "roles/a/b/c/f"), "f", 0o644)
 		}, "take over the install: roles/a/b/c: nested deeper than 2 directories"},
-		{"bytes", takeOverLimits{entries: 100, depth: 64, bytes: 10, lookups: 1000}, func(t *testing.T, s string) {
+		{"bytes", takeOverLimits{entries: 100, depth: 64, bytes: 10, lookups: 1000, names: 1 << 20}, func(t *testing.T, s string) {
 			writeTestFile(t, filepath.Join(s, "roles/small"), "12345", 0o644)
 			writeTestFile(t, filepath.Join(s, "roles/xbig"), "123456", 0o644)
 		}, "take over the install: roles/xbig: more than 10 bytes of files"},
-		{"lookups", takeOverLimits{entries: 100, depth: 64, bytes: 1 << 20, lookups: 5}, func(t *testing.T, s string) {
+		{"lookups", takeOverLimits{entries: 100, depth: 64, bytes: 1 << 20, lookups: 5, names: 1 << 20}, func(t *testing.T, s string) {
 			writeTestFile(t, filepath.Join(s, "roles/a/f"), "f", 0o644)
 			symlinkTest(t, "a/../a/../a/f", filepath.Join(s, "roles/l"))
 		}, "take over the install: roles/l: more than 5 lookups to check its symlinks"},
@@ -356,7 +356,7 @@ func TestTakeOverIsBounded(t *testing.T) {
 			dir, root, src := takeOverSource(t)
 			tc.setup(t, filepath.Join(dir, src))
 
-			name, err := takeOverWith(root, src, tc.lim)
+			name, err := takeOverWith(root, src, tc.lim, takeOverHooks{})
 			if err == nil || err.Error() != tc.want {
 				t.Fatalf("takeOverWith = %q, %v; want %q", name, err, tc.want)
 			}
@@ -366,13 +366,17 @@ func TestTakeOverIsBounded(t *testing.T) {
 }
 
 func TestTakeOverQuotesAnOddName(t *testing.T) {
-	dir, root, src := takeOverSource(t)
-	symlinkTest(t, "/etc/passwd", filepath.Join(dir, src, "roles/a\nb"))
+	for name, want := range map[string]string{
+		"roles/a\nb": `take over the install: "roles/a\nb": a symlink leaving the install`,
+		"roles/a: b": `take over the install: "roles/a: b": a symlink leaving the install`,
+	} {
+		dir, root, src := takeOverSource(t)
+		symlinkTest(t, "/etc/passwd", filepath.Join(dir, src, name))
 
-	_, err := takeOver(root, src)
-	want := `take over the install: "roles/a\nb": a symlink leaving the install`
-	if err == nil || err.Error() != want {
-		t.Fatalf("takeOver = %v, want %q", err, want)
+		_, err := takeOver(root, src)
+		if err == nil || err.Error() != want {
+			t.Errorf("takeOver = %v, want %q", err, want)
+		}
 	}
 }
 
