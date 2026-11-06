@@ -158,14 +158,25 @@ hand) and installs into `<repo>.galaxy` again on its next sync.
   install (private galaxy servers are not supported). A `requirements.yml`
   holding only comments no longer fails a sync. A requirements file is now
   refused, failing the sync and every run of that commit with the file and the
-  reason, when it uses YAML anchors, aliases, merge keys or tags, or holds
-  more than one YAML document; is not UTF-8 or holds invisible characters;
-  uses `include:`; names a role whose name is not a plain directory name (a
-  local `src` such as `./r.tar.gz` is its own name, so such a role needs a
-  `name:`); names a collection that is not `namespace.name`; has a local
-  source outside the repository (`../`, an absolute path, a link leading out);
-  has a source (or a comma part of one) starting with `-`; or names a git
-  source whose subdirectory leads out of its checkout. A repository subpath
+  reason, when it uses YAML anchors, aliases, merge keys or tags; holds more
+  than one YAML document or duplicate keys; uses the `%YAML 1.2` directive or
+  the `\/` escape (the parser accepts YAML 1.1 only); is not UTF-8 text or
+  holds a NUL, a line break other than `\n` and `\r\n`, or an invisible
+  character; is larger than 512 KiB; uses `include:`; names a role whose name
+  is not a plain directory name (a local `src` such as `./r.tar.gz` is its
+  own name, so such a role needs a `name:`); names a collection that is not
+  `namespace.name` where galaxy uses the name as a path (`type: galaxy`, a
+  `source:` beside it, or no type and a name with one dot); has a local
+  source outside the repository (`../`, an absolute path, `.git`, a link
+  leading out) or with a glob character (`*`, `?`, `[`); has a directory
+  source holding a link that leads out of the repository, more than 50000
+  files and directories, or nesting deeper than 64; has a version, scm, name,
+  type or source (or a comma part of a role string) starting with `-`; or
+  names a git source whose `#subdirectory` leads out of its checkout. The
+  worker refuses to take over an install, failing it by the path, when it
+  holds a hard link, an absolute symlink or one leading out of the install, a
+  FIFO, device or socket, more than 500000 files and directories, more than
+  2 GiB of files, or nesting deeper than 64. A repository subpath
   into git's own files (`.git`, or a link to it) now fails the sync as it
   fails the runs. With `PULSIX_WORKER_PLAY_UID` set, `ansible-galaxy` runs as
   the play uid and can write only into its temporary install directory: a role
@@ -176,6 +187,34 @@ hand) and installs into `<repo>.galaxy` again on its next sync.
   leftover `<repo>.galaxy` is removed by the first install of that repository;
   it stays for a repository that no longer has requirements and may be removed
   by hand.
+- **7.88, failed requirements installs:** a failed install now fails every
+  run of a repository with requirements files, not only its sync, with
+  `Requirements: install requirements: <reason>` as the last line of its log
+  (an install that failed leaves nothing behind, so the next run of that
+  commit tries again and fails the same way); this includes a
+  worker without network access to the galaxy source or the git hosts the
+  files name (an air-gapped worker), and there is no setting to skip the
+  install, so for offline workers vendor the roles and collections into the
+  repository (local `src`/`source` paths, collections as `type: dir`).
+- **7.88, galaxy's environment:** `ansible-galaxy` runs with a narrower
+  environment than a play: git reads no system or global config
+  (`/etc/gitconfig`, `~/.gitconfig`), so proxies, CA settings and `insteadOf`
+  mirrors set there no longer apply and must come from environment variables;
+  galaxy inherits only `PATH`, `LD_LIBRARY_PATH`, `PYTHONPATH`, `PYTHONHOME`,
+  `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `SSL_CERT_FILE`, `SSL_CERT_DIR`,
+  `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`, `GIT_SSL_CAPATH`
+  and the proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`,
+  `ALL_PROXY`, each also in lower case) from the worker; git sources speak
+  only https, http, ssh and git (no `file://`); and `PYTHONNOUSERSITE=1` is
+  set, so an Ansible installed with `pip --user` is not found by galaxy.
+  `ansible-galaxy` is the one next to `PULSIX_ANSIBLE_BIN` when that is a
+  path, and the one on `PATH` otherwise.
+- **7.88, play uid for requirements:** set `PULSIX_WORKER_PLAY_UID` on every
+  worker that runs repositories with requirements files (the worker image
+  leaves it unset; the bundled compose file sets 65533): without it every
+  requirements install (the first run or sync of a commit on a worker) runs
+  galaxy as the worker's own uid, not isolated, and the worker log warns so
+  for every `ansible-galaxy` command.
 
 ## Roll order
 
