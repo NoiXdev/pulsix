@@ -121,6 +121,9 @@ func runOneJobErr(t *testing.T, job *workerpb.Job) (*workerpb.ReportResultReques
 	var logs bytes.Buffer
 	client := &fakeManager{job: job, reported: make(chan struct{})}
 	executor := runner.NewRunner("", "", "", 0, slog.New(slog.NewTextHandler(&logs, nil)))
+	// As cmd/worker wires it: a repo run installs its commit's
+	// requirements through ansible-galaxy under the play uid.
+	executor.Requirements = runner.NewRequirements(executor, cfg)
 	loop := worker.NewLoop(cfg, client, executor, worker.WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -213,7 +216,7 @@ func TestRepoPlaybookRunsUnderThePlayUID(t *testing.T) {
 	writeWorkerKey(t)
 
 	repoID := "01900000-0000-7000-8000-0000000000bb"
-	source := gitFixture(t)
+	source := gitFixture(t, nil)
 	job := localhostJob(t, "")
 	job.Id = "01900000-0000-7000-8000-00000000002a"
 	job.Playbook = "repo:" + repoID + ":playbooks/site.yml"
@@ -347,8 +350,11 @@ func mustJSON(t *testing.T, s string) string {
 }
 
 // gitFixture builds a one-commit repository the repo fetch can clone over
-// a file:// URL, with a task whose output identifies it in the stream.
-func gitFixture(t *testing.T) string {
+// a file:// URL, with a task whose output identifies it in the stream at
+// playbooks/site.yml, and extra (slash path from the repository root to
+// content; a tarball's bytes as a string) beside it — an extra file of the
+// same path replaces the default playbook.
+func gitFixture(t *testing.T, extra map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	run := func(args ...string) {
@@ -369,6 +375,15 @@ func gitFixture(t *testing.T) string {
 		"    - name: a playbook from the repository\n      ansible.builtin.command: echo from the repository\n      changed_when: false\n"
 	if err := os.WriteFile(filepath.Join(dir, "playbooks", "site.yml"), []byte(play), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	for rel, content := range extra {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	run("add", ".")
 	run("commit", "-m", "site")

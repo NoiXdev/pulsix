@@ -39,6 +39,7 @@ func cancelRun(t *testing.T, cfg worker.Config, job *workerpb.Job, started func(
 	var logs bytes.Buffer
 	client := &fakeManager{job: job, reported: make(chan struct{})}
 	executor := runner.NewRunner("", "", "", 0, slog.New(slog.NewTextHandler(&logs, nil)))
+	executor.Requirements = runner.NewRequirements(executor, cfg)
 	loop := worker.NewLoop(cfg, client, executor, worker.WithLogger(slog.New(slog.NewTextHandler(&logs, nil))))
 
 	ctx, stop := context.WithTimeout(context.Background(), 5*time.Minute)
