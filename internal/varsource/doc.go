@@ -10,10 +10,10 @@
 // manager for inline playbooks.
 //
 // A repo sync may also hand it the roles installed from requirements.yml
-// as a second fs.FS of their own (ParseRepoWithRoles): a plain role name
-// not found in <playbook dir>/roles is looked up there before the
-// playbook's own directory, as ansible-playbook does; its files are named
-// "(requirements)/<role>/…" (InstalledRolesPrefix) and kept apart from any
-// repository path of that name, and its reads count against the same
-// limits as the repository's.
+// as a second fs.FS of their own (ParseRepoWithRoles): a role name, plain
+// or with a slash, not found in <playbook dir>/roles is looked up there
+// before the playbook's own directory, as ansible-playbook does; its files
+// are named "(requirements)/<role>/…" (InstalledRolesPrefix) and kept apart
+// from any repository path of that name, and its reads count against the
+// same limits as the repository's.
 package varsource

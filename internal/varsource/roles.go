@@ -22,6 +22,7 @@ type roleTarget struct {
 	state     RoleState // RoleRead stands for "found"; reading decides the rest
 	dir       string
 	installed bool   // dir is in the installed roles, not the repository
+	file      bool   // dir is not a directory: Ansible takes it for a role without content
 	where     string // where a role not found was looked for
 }
 
@@ -98,6 +99,15 @@ func (w *walk) useRole(f *playFile, r roleRef) {
 	case RoleNotFound:
 		y.note(warning(codeRoleNotFound, y.file, r.line, "role %q not found %s; its variables are not read", name, t.where))
 	default:
+		if t.file {
+			t.state = RoleNoSpecs
+			shown := clip(t.dir, maxRefBytes)
+			if t.installed {
+				shown = InstalledRolesPrefix + shown
+			}
+			y.note(hint(codeRoleWithoutSpecs, y.file, r.line, "role %q is the file %s, which Ansible takes for a role without content; it adds no fields", name, shown))
+			break
+		}
 		t.state = w.readRole(t, r)
 		if t.state == RoleNoSpecs {
 			y.note(hint(codeRoleWithoutSpecs, y.file, r.line, "role %q declares no argument specs (meta/argument_specs.yml); it adds no fields", name))
@@ -112,14 +122,13 @@ func (r roleRef) shownName() string       { return clip(r.name, maxRefBytes) }
 func (r roleRef) shownEntryPoint() string { return clip(r.entryPoint, maxRefBytes) }
 
 // target finds a role by name from a playbook directory: a template is
-// dynamic; an inline playbook has no repository; a name with a slash is a
-// path relative to the playbook's directory; any other is looked up where
-// ansible-playbook looks for it — in <dir>/roles, then among the roles
-// installed from requirements.yml (the run's roles_path), then in <dir>
-// itself — and a name of three or more dotted parts found nowhere is a
-// collection role (namespace.collection.role). roles/ at the repository
-// root is not searched for a playbook in a subdirectory: the run never
-// finds a role there (backlog 7.90).
+// dynamic; an inline playbook has no repository; any other name, plain or
+// with a slash, is looked up where ansible-playbook looks for it (see
+// roleCandidates), and a name without a slash and with three or more
+// dotted parts found nowhere is a collection role
+// (namespace.collection.role). roles/ at the repository root is not
+// searched for a playbook in a subdirectory: the run never finds a role
+// there (backlog 7.90).
 func (w *walk) target(name, dir string) roleTarget {
 	switch {
 	case templated(name):
@@ -136,47 +145,84 @@ func (w *walk) target(name, dir string) roleTarget {
 	return t
 }
 
+// roleCandidate is a place a role name may lead to: a path in the
+// repository, or in the installed roles.
+type roleCandidate struct {
+	path      string
+	installed bool
+}
+
+// roleCandidates are the places ansible-playbook looks for the role name
+// of a playbook in dir, in its order. ansible-core 2.21
+// (RoleDefinition._load_role_path, backlog 7.91) tests, for every name,
+// plain or with a slash, the entries of [<dir>/roles, roles_path, <dir>]
+// joined with the name, and takes the first that exists. The parser mirrors
+// that with <dir>/roles/<name>, the installed roles' <name> (when there are
+// any), then <dir>/<name>. Names are joined lexically, as Ansible's
+// realpath does for a path without a symlink ahead of a "..". A candidate
+// that leaves its tree is left out: in the repository a path equal to ".."
+// or starting with "../", in the installed roles a path that is not an
+// fs.ValidPath.
+//
+// Left out on purpose:
+//   - the role's dependents' directory (role_basedir): the parser reads no
+//     role dependencies;
+//   - the system entries of roles_path (/usr/share/ansible/roles and
+//     /etc/ansible/roles): outside the repository;
+//   - Ansible's last step, the name against the working directory: the run's
+//     working directory holds no file of the clone.
+func roleCandidates(name, dir string, withInstalled bool) []roleCandidate {
+	var out []roleCandidate
+	inRepo := func(p string) {
+		if p != ".." && !strings.HasPrefix(p, "../") {
+			out = append(out, roleCandidate{path: p})
+		}
+	}
+	inRepo(path.Join(dir, "roles", name))
+	if c := path.Clean(name); withInstalled && fs.ValidPath(c) {
+		out = append(out, roleCandidate{path: c, installed: true})
+	}
+	inRepo(path.Join(dir, name))
+	return out
+}
+
 func (w *walk) findRole(name, dir string) roleTarget {
 	switch {
-	case strings.Contains(name, "/"):
-		p := path.Join(dir, name)
-		if strings.HasPrefix(name, "/") || p == ".." || strings.HasPrefix(p, "../") {
-			return roleTarget{state: RoleNotFound, where: "inside the repository"}
-		}
-		if isDir(w.p.fsys, p) {
-			return roleTarget{state: RoleRead, dir: p}
-		}
-		return roleTarget{state: RoleNotFound, where: "at " + clip(p, maxRefBytes)}
+	case strings.HasPrefix(name, "/"):
+		return roleTarget{state: RoleNotFound, where: "inside the repository"}
 	case name == "" || name == "." || name == "..":
 		return roleTarget{state: RoleNotFound, where: "(not a role name)"}
 	}
-	// A plain name, in ansible-playbook's order (ansible-core 2.21:
-	// <dir>/roles, roles_path, <dir>). For a playbook at the root <dir> is
-	// the root itself, so any top-level directory of that name is taken
-	// for the role, as Ansible takes it.
-	inRoles, beside := path.Join(dir, "roles", name), path.Join(dir, name)
-	if isDir(w.p.fsys, inRoles) {
-		return roleTarget{state: RoleRead, dir: inRoles}
+	cands := roleCandidates(name, dir, w.p.roles != nil)
+	var tried []string
+	installed := false
+	for _, c := range cands {
+		fsys := w.p.fsys
+		if c.installed {
+			fsys, installed = w.p.roles, true
+		} else {
+			tried = append(tried, c.path)
+		}
+		// Ansible tests os.path.exists, false on any error (a missing
+		// path, ENOTDIR below a file, no permission), so any error means
+		// "not here".
+		info, err := fs.Stat(fsys, c.path)
+		if err != nil {
+			continue
+		}
+		return roleTarget{state: RoleRead, dir: c.path, installed: c.installed, file: !info.IsDir()}
 	}
-	if w.p.roles != nil && isDir(w.p.roles, name) {
-		return roleTarget{state: RoleRead, dir: name, installed: true}
-	}
-	if isDir(w.p.fsys, beside) {
-		return roleTarget{state: RoleRead, dir: beside}
-	}
-	if strings.Count(name, ".") >= 2 {
+	if !strings.Contains(name, "/") && strings.Count(name, ".") >= 2 {
 		return roleTarget{state: RoleCollection}
 	}
-	where := "at " + clip(inRoles+" or "+beside, maxRefBytes)
-	if w.p.roles != nil {
+	if len(tried) == 0 {
+		return roleTarget{state: RoleNotFound, where: "inside the repository"}
+	}
+	where := "at " + clip(strings.Join(tried, " or "), maxRefBytes)
+	if installed {
 		where += " or among the roles installed from requirements.yml"
 	}
 	return roleTarget{state: RoleNotFound, where: where}
-}
-
-func isDir(fsys fs.FS, name string) bool {
-	info, err := fs.Stat(fsys, name)
-	return err == nil && info.IsDir()
 }
 
 // roleSpec is a role's spec file as read once per walk: many entry points

@@ -70,14 +70,17 @@ func joinDir(dir, name string) string {
 	return dir + "/" + name
 }
 
-func TestInstalledRolesNotSearchedForPaths(t *testing.T) {
+// TestInstalledRolesAreSearchedForPaths: a name with a slash is looked up in
+// the installed roles too, as Ansible does (backlog 7.91; it was a not-found
+// before).
+func TestInstalledRolesAreSearchedForPaths(t *testing.T) {
 	repo := mapFS(map[string]string{"site.yml": "- hosts: all\n  roles: [x/y]\n"})
 	roles := mapFS(map[string]string{"x/y/meta/argument_specs.yml": oneOption("y_var")})
 	pb := parseWithRoles(t, repo, roles)
-	wantRoles(t, pb.Roles, RoleUse{Name: "x/y", EntryPoint: "main", State: RoleNotFound})
-	wantNotes(t, pb.Notes, "warning role_not_found site.yml:2")
-	if strings.Contains(pb.Notes[0].Message, "requirements.yml") {
-		t.Fatalf("a path names the installed roles: %q", pb.Notes[0].Message)
+	wantRoles(t, pb.Roles, RoleUse{Name: "x/y", EntryPoint: "main", State: RoleRead})
+	wantNotes(t, pb.Notes)
+	if src := pb.Fields[0].Source; src.File != "(requirements)/x/y/meta/argument_specs.yml" || src.Role != "x/y" {
+		t.Fatalf("source = %+v", src)
 	}
 }
 
@@ -110,22 +113,23 @@ func TestParseRepoWithoutInstalledRoles(t *testing.T) {
 }
 
 // TestInstalledRolesAreKeptApartFromRepoPaths: a repo directory named
-// "(requirements)" or a repo role at the installed role's own directory
-// name is a different role, with its own spec read.
+// "(requirements)" is a different role from the installed one, with its own
+// spec read; the installed role comes before a repo directory of its name
+// beside the playbook (and "./acme.web" is that same installed role since
+// backlog 7.91, so it is not listed here).
 func TestInstalledRolesAreKeptApartFromRepoPaths(t *testing.T) {
 	repo := mapFS(map[string]string{
-		"site.yml": "- hosts: all\n  roles: [\"(requirements)/acme.web\", ./acme.web, acme.web]\n",
+		"site.yml": "- hosts: all\n  roles: [\"(requirements)/acme.web\", acme.web]\n",
 		"(requirements)/acme.web/meta/argument_specs.yml": oneOption("shadow_var"),
 		"acme.web/meta/argument_specs.yml":                oneOption("local_var"),
 	})
 	roles := mapFS(map[string]string{"acme.web/meta/argument_specs.yml": oneOption("installed_var")})
 	pb := parseWithRoles(t, repo, roles)
-	if got := fieldNames(pb.Fields); !reflect.DeepEqual(got, []string{"shadow_var", "local_var", "installed_var"}) {
+	if got := fieldNames(pb.Fields); !reflect.DeepEqual(got, []string{"shadow_var", "installed_var"}) {
 		t.Fatalf("fields = %q (notes %v)", got, pb.Notes)
 	}
 	wantRoles(t, pb.Roles,
 		RoleUse{Name: "(requirements)/acme.web", EntryPoint: "main", State: RoleRead},
-		RoleUse{Name: "./acme.web", EntryPoint: "main", State: RoleRead},
 		RoleUse{Name: "acme.web", EntryPoint: "main", State: RoleRead},
 	)
 }
