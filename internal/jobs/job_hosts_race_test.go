@@ -35,6 +35,10 @@ func TestCreateJobSkipsAHostDeletedMeanwhile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var blockerPID int
+	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID); err != nil {
+		t.Fatal(err)
+	}
 	var txOnce sync.Once
 	release := func(commit bool) error {
 		var err error
@@ -73,16 +77,20 @@ func TestCreateJobSkipsAHostDeletedMeanwhile(t *testing.T) {
 		}
 	})
 
+	// The poll matches the blocker, not query text: a backend waiting on a lock
+	// held by the open delete's own backend, which is exactly CreateJob's
+	// statement on the host's row.
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		var blocked int
+		var blocked bool
 		if err := owner.Pool().QueryRow(ctx,
-			`SELECT count(*) FROM pg_stat_activity
-			  WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%job_hosts%'`,
+			`SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+			  WHERE datname = current_database() AND wait_event_type = 'Lock'
+			    AND $1 = ANY(pg_blocking_pids(pid)))`, blockerPID,
 		).Scan(&blocked); err != nil {
 			t.Fatal(err)
 		}
-		if blocked >= 1 {
+		if blocked {
 			break
 		}
 		select {

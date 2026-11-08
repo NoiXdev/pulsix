@@ -3,15 +3,18 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -240,6 +243,9 @@ func TestListJobsHostFilterUsesTheLinkIndexUnderAGenericPlan(t *testing.T) {
 // TestExplainGenericFreesItsStatementAfterAFailure: a failed call must not
 // leave the prepared statement behind on the connection, or the next call
 // on the same pooled connection dies on "already exists" instead of running.
+// The first call must fail at the EXPLAIN EXECUTE, after the PREPARE went
+// through: any earlier failure leaves nothing to clean up and proves nothing.
+// 22P02 (invalid_text_representation) is the bad uuid argument.
 func TestExplainGenericFreesItsStatementAfterAFailure(t *testing.T) {
 	ctx := context.Background()
 	app := testdb.Open(t)
@@ -260,8 +266,10 @@ func TestExplainGenericFreesItsStatementAfterAFailure(t *testing.T) {
 
 	query := generatedQuery(t, "listJobsForHost")
 	const tail = `, '` + "00000000-0000-0000-0000-000000000000" + `', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 51`
-	if _, _, err := explainGenericOn(ctx, conn.Conn(), org, query, `'not-a-uuid'`+tail, false); err == nil {
-		t.Fatal("explain with an invalid organization argument succeeded")
+	_, _, err = explainGenericOn(ctx, conn.Conn(), org, query, `'not-a-uuid'`+tail, false)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "22P02" || !strings.HasPrefix(err.Error(), "explain: ") {
+		t.Fatalf("first call: error = %v, want an \"explain: \" error with code 22P02 (invalid input for the uuid argument)", err)
 	}
 	if _, _, err := explainGenericOn(ctx, conn.Conn(), org, query, `'`+org.String()+`'`+tail, false); err != nil {
 		t.Fatalf("second call on the same connection: %v", err)
