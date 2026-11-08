@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -87,6 +88,93 @@ func TestChangePasswordLogsNoPassword(t *testing.T) {
 		}
 	}
 	for _, secret := range []string{current, next1, next2, tempPass, tooShort, wrong} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("the server log carries %q: %s", secret, got)
+		}
+	}
+}
+
+// requireCapturedAuditFailure fails unless the captured log holds the line a
+// failing audit store makes the request write for action, so the absence
+// checks that follow cannot pass over an empty log.
+func requireCapturedAuditFailure(t *testing.T, logs *bytes.Buffer, action string) string {
+	t.Helper()
+	got := logs.String()
+	for _, line := range []string{"audit: failed to record event", action} {
+		if !strings.Contains(got, line) {
+			t.Fatalf("the captured log lacks %q, so the absence check below would be vacuous: %q", line, got)
+		}
+	}
+	return got
+}
+
+// TestResetLogsNoToken: neither the reset token nor a password of the reset
+// request reaches the server log, whether the request is refused or
+// succeeds. Like TestChangePasswordLogsNoPassword, the server audits through
+// a store that always fails, so the successful reset writes a log line and
+// the capture is proven live before the absence check.
+func TestResetLogsNoToken(t *testing.T) {
+	const (
+		oldPassword = "the old password 1"
+		newPassword = "the new password 22"
+		reusedWith  = "yet another password"
+		tooShort    = "short"
+	)
+	s := apitest.New(t, apitest.WithFailingAudit())
+	logs := captureLog(t)
+	const email = "reset-log@example.test"
+	s.SeedUser(email, oldPassword)
+
+	if resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email}); resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("forgot: status %d", resp.StatusCode)
+	}
+	token := waitForResetMail(t, s, email)
+	reset := func(password string) *http.Response {
+		return postJSON(t, s.Client(), s.HTTP.URL+resetPath, map[string]string{"token": token, "new_password": password})
+	}
+	if resp := reset(tooShort); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("a short password: status %d, want 422", resp.StatusCode)
+	}
+	if resp := reset(newPassword); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("reset: status %d (%s), want 204", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if resp := reset(reusedWith); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("the same link again: status %d, want 400", resp.StatusCode)
+	}
+
+	got := requireCapturedAuditFailure(t, logs, "POST resetPassword")
+	for _, secret := range []string{token, oldPassword, newPassword, reusedWith, tooShort} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("the server log carries %q: %s", secret, got)
+		}
+	}
+}
+
+// TestAdminTemporaryPasswordLogsNoPassword: the temporary password an admin
+// sets reaches the response and nothing else, not the server log. The audit
+// store fails on purpose, as in TestResetLogsNoToken, so the log has a line
+// to prove the capture before the absence check.
+func TestAdminTemporaryPasswordLogsNoPassword(t *testing.T) {
+	s := apitest.New(t, apitest.WithFailingAudit())
+	logs := captureLog(t)
+	_, adminClient := adminWithFactor(t, s, "temp-log-admin@example.test")
+	target := s.SeedUser("temp-log-target@example.test", "the old password 1")
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "temporary-password"), nil)
+	raw := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("temporary password: status %d (%s), want 200", resp.StatusCode, raw)
+	}
+	var body temporaryPasswordBody
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !temporaryPasswordShape.MatchString(body.Password) {
+		t.Fatalf("body = %+v, want a temporary password", body)
+	}
+
+	got := requireCapturedAuditFailure(t, logs, "POST setTemporaryPassword")
+	for _, secret := range []string{body.Password, "the old password 1"} {
 		if strings.Contains(got, secret) {
 			t.Fatalf("the server log carries %q: %s", secret, got)
 		}

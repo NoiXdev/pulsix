@@ -15,10 +15,11 @@ import (
 // TestAdminTemporaryPasswordEndsOtherSessions: the temporary password is
 // shown once, uncached; the account's sessions end at once; the password
 // signs in and forces a change; and it appears nowhere else — not in the
-// log, the audit trail or the notice mail.
+// audit trail or the notice mail (the log is checked by
+// TestAdminTemporaryPasswordLogsNoPassword, which needs a failing audit store
+// to have a line to capture).
 func TestAdminTemporaryPasswordEndsOtherSessions(t *testing.T) {
 	s := apitest.New(t)
-	logs := captureLog(t)
 	admin, adminClient := adminWithFactor(t, s, "temp-admin@example.test")
 	target := s.SeedUser("temp-target@example.test", "the old password 1")
 	targetClient := s.LoginAs(target)
@@ -75,7 +76,7 @@ func TestAdminTemporaryPasswordEndsOtherSessions(t *testing.T) {
 	if len(sent) != 1 || sent[0].To != "temp-target@example.test" {
 		t.Fatalf("mails %+v, want one notice to the target", sent)
 	}
-	for where, text := range map[string]string{"log": logs.String(), "audit trail": trail, "notice mail": sent[0].Subject + sent[0].Body} {
+	for where, text := range map[string]string{"audit trail": trail, "notice mail": sent[0].Subject + sent[0].Body} {
 		if strings.Contains(text, body.Password) {
 			t.Fatalf("the %s carries the temporary password: %s", where, text)
 		}

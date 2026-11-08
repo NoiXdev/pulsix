@@ -11,8 +11,10 @@ import (
 // then roles_path (the requirements entry), then the playbook's own
 // directory — never roles/ at the repository root. This is the order the
 // parser in internal/varsource mirrors (backlog 7.90). The subtests for slash
-// names, a role beside the playbook and a file at a candidate are the evidence
-// for P1/P2, which internal/varsource mirrors (backlog 7.91).
+// names, a role beside the playbook and a file at a candidate pin that the
+// same search order applies to a slash name, that an earlier candidate wins,
+// and that a regular file at a candidate is a role without content; the
+// parser mirrors this too (backlog 7.91).
 func TestRoleSearchFromASubdirectoryInRealAnsible(t *testing.T) {
 	ansible := requireAnsiblePlaybook(t)
 	debug := func(msg string) string { return "- ansible.builtin.debug:\n    msg: " + msg + "\n" }

@@ -181,10 +181,11 @@ func TestForgotPasswordRateLimit(t *testing.T) {
 
 // TestResetDoesNotSignIn: a reset sets the password and ends every session,
 // but signs nobody in; the next sign-in still needs the second factor. The
-// token appears in neither the log nor the audit trail.
+// token does not appear in the audit trail (the log is checked by
+// TestResetLogsNoToken, which needs a failing audit store to have a line to
+// capture).
 func TestResetDoesNotSignIn(t *testing.T) {
 	s := apitest.New(t)
-	logs := captureLog(t)
 	const email = "reset-me@example.test"
 	uid := s.SeedUser(email, "the old password 1")
 	s.SeedPasskey(uid, "my key")
@@ -231,10 +232,8 @@ func TestResetDoesNotSignIn(t *testing.T) {
 	if n != 1 || !match {
 		t.Fatalf("audit: %d resetPassword events (instance-level, the user acting on themselves: %v), want 1", n, match)
 	}
-	for where, text := range map[string]string{"log": logs.String(), "audit trail": trail} {
-		if strings.Contains(text, token) {
-			t.Fatalf("the %s carries the reset token", where)
-		}
+	if strings.Contains(trail, token) {
+		t.Fatal("the audit trail carries the reset token")
 	}
 }
 

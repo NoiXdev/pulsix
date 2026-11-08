@@ -171,6 +171,9 @@ type roleCandidate struct {
 //     /etc/ansible/roles): outside the repository;
 //   - Ansible's last step, the name against the working directory: the run's
 //     working directory holds no file of the clone.
+//   - unfrackpath's expandvars and expanduser: a name such as $HOME/x or ~/x
+//     is not followed. The parser only searches less than Ansible does, so it
+//     stays confined to the clone and the installed roles.
 func roleCandidates(name, dir string, withInstalled bool) []roleCandidate {
 	var out []roleCandidate
 	inRepo := func(p string) {

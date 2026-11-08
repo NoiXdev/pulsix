@@ -134,6 +134,27 @@ func TestInstalledRolesAreKeptApartFromRepoPaths(t *testing.T) {
 	)
 }
 
+// TestDotSlashNameIsTheInstalledRoleItself: "./acme.web" leads to the same
+// installed role as "acme.web" (backlog 7.91: an installed role comes before
+// the repository directory), so naming both reads the role once.
+func TestDotSlashNameIsTheInstalledRoleItself(t *testing.T) {
+	repo := mapFS(map[string]string{
+		"site.yml":                         "- hosts: all\n  roles: [\"./acme.web\", acme.web]\n",
+		"acme.web/meta/argument_specs.yml": oneOption("local_var"),
+	})
+	roles := mapFS(map[string]string{"acme.web/meta/argument_specs.yml": oneOption("installed_var")})
+	pb := parseWithRoles(t, repo, roles)
+	if got := fieldNames(pb.Fields); !reflect.DeepEqual(got, []string{"installed_var"}) {
+		t.Fatalf("fields = %q (notes %v)", got, pb.Notes)
+	}
+	if len(pb.Roles) != 1 || pb.Roles[0].State != RoleRead {
+		t.Fatalf("roles = %+v, want exactly one read role", pb.Roles)
+	}
+	if src := pb.Fields[0].Source; src.File != "(requirements)/acme.web/meta/argument_specs.yml" {
+		t.Fatalf("source = %+v, want the installed role's", src)
+	}
+}
+
 func TestInstalledRoleNotesUseTheShownPath(t *testing.T) {
 	repo := mapFS(map[string]string{"site.yml": "- hosts: all\n  roles: [bad, big]\n"})
 	roles := mapFS(map[string]string{
