@@ -262,17 +262,22 @@ const wordLeftOut = "… a word longer than 64 KiB left out"
 //
 // A line never splits a word, a run of non-white-space bytes: the service
 // removes URL userinfo line by line, and a cut inside a URL would hide its
-// credentials from the pattern. A line that reaches maxGalaxyLine without a
-// newline is cut at the last white-space byte of that window (the byte is
-// dropped); a window without one is a word longer than maxGalaxyLine, which
-// is left out up to the next white-space byte or newline.
+// credentials from the pattern. A line of up to maxGalaxyLine bytes is sent
+// whole, however the Writes split it. A longer one is cut at the last
+// white-space byte of its first maxGalaxyLine+1 bytes (the byte is dropped, so
+// a word of exactly maxGalaxyLine bytes followed by white space survives); a
+// window without one is a word longer than maxGalaxyLine, which is left out up
+// to the next white-space byte or newline.
 type lineWriter struct {
 	send func(string)
 	keep int
 	buf  []byte
 	// skipping: the word being left out has not ended yet.
 	skipping bool
-	kept     []byte
+	// dropLF: a carriage return that ended a cut ended the buffer too, so a
+	// newline that opens the next Write belongs to it, not to a line of its own.
+	dropLF bool
+	kept   []byte
 	// cut: kept has lost its front, so it may start inside a word.
 	cut bool
 }
@@ -286,6 +291,12 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		}
 	}
 	w.buf = append(w.buf, p...)
+	if w.dropLF && len(w.buf) > 0 {
+		if w.buf[0] == '\n' {
+			w.buf = w.buf[1:]
+		}
+		w.dropLF = false
+	}
 	for {
 		if w.skipping {
 			i := bytes.IndexAny(w.buf, " \t\f\r\n")
@@ -294,11 +305,7 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 				return len(p), nil
 			}
 			w.skipping = false
-			rest := w.buf[i+1:]
-			if w.buf[i] == '\r' && len(rest) > 0 && rest[0] == '\n' {
-				rest = rest[1:]
-			}
-			w.buf = rest
+			w.buf = w.after(i)
 			continue
 		}
 		if i := bytes.IndexByte(w.buf, '\n'); i >= 0 && i <= maxGalaxyLine {
@@ -306,19 +313,34 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 			w.buf = w.buf[i+1:]
 			continue
 		}
-		if len(w.buf) < maxGalaxyLine {
+		if len(w.buf) <= maxGalaxyLine {
 			return len(p), nil
 		}
-		window := w.buf[:maxGalaxyLine]
+		window := w.buf[:maxGalaxyLine+1]
 		if i := bytes.LastIndexAny(window, " \t\f\r"); i >= 0 {
 			w.send(string(w.buf[:i]))
-			w.buf = w.buf[i+1:]
+			w.buf = w.after(i)
 			continue
 		}
 		w.send(wordLeftOut)
 		w.skipping = true
-		w.buf = w.buf[maxGalaxyLine:]
+		w.buf = w.buf[len(window):]
 	}
+}
+
+// after is the buffer past the white-space byte at i. A carriage return
+// takes a newline right behind it along: they are one line ending.
+func (w *lineWriter) after(i int) []byte {
+	rest := w.buf[i+1:]
+	if w.buf[i] != '\r' {
+		return rest
+	}
+	if len(rest) == 0 {
+		w.dropLF = true
+	} else if rest[0] == '\n' {
+		rest = rest[1:]
+	}
+	return rest
 }
 
 // flush sends a last line without its newline.

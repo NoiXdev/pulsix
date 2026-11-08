@@ -14,6 +14,7 @@ import (
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/requirements"
 	"github.com/noixdev/pulsix/internal/worker/supervisor"
+	"github.com/noixdev/pulsix/internal/worker/urlcred"
 )
 
 // TestGalaxyHelperReceivesTheCommand: under a play uid, what starts is the
@@ -159,11 +160,15 @@ func writeAll(t *testing.T, w *lineWriter, chunks ...string) {
 }
 
 // TestGalaxyLineWriterNeverCutsAWord: the window's end falls inside a
-// URL, and the line is cut before the URL, so its userinfo is never split.
+// URL's token, and the line is cut before the URL, so its userinfo is never
+// split and every line still redacts clean.
 func TestGalaxyLineWriterNeverCutsAWord(t *testing.T) {
-	pre := strings.Repeat("y", maxGalaxyLine-8)
-	url := "https://user:tok3n@host/r.git"
+	pre := strings.Repeat("y", maxGalaxyLine-12)
+	url := "https://ghp_tok3n@host/r.git"
 	in := pre + " " + url + "\n"
+	if edge := strings.Index(in, "ghp_tok3n"); edge >= maxGalaxyLine || edge+len("ghp_tok3n") <= maxGalaxyLine {
+		t.Fatalf("the window edge %d must fall inside the token at %d", maxGalaxyLine, edge)
+	}
 	bytewise := make([]string, len(in))
 	for i := range in {
 		bytewise[i] = in[i : i+1]
@@ -173,7 +178,45 @@ func TestGalaxyLineWriterNeverCutsAWord(t *testing.T) {
 			var got collect
 			writeAll(t, &lineWriter{send: got.line}, chunks...)
 			if want := []string{pre, url}; !slices.Equal(got.lines, want) {
-				t.Errorf("lines = %v, want %v", lens(got.lines), lens(want))
+				t.Fatalf("lines = %v, want %v", lens(got.lines), lens(want))
+			}
+			for _, l := range got.lines {
+				if r := urlcred.Redact(l); strings.Contains(r, "ghp_tok3n") {
+					t.Errorf("a redacted line still holds the token: %.60q", r)
+				}
+			}
+		})
+	}
+}
+
+// TestGalaxyLineWriterTreatsTheEdgeTheSameWhereverTheWritesSplit: a line, or
+// a word, of exactly maxGalaxyLine bytes is not over the bound, so it is sent
+// whole and the white space behind it ends it.
+func TestGalaxyLineWriterTreatsTheEdgeTheSameWhereverTheWritesSplit(t *testing.T) {
+	edge := strings.Repeat("e", maxGalaxyLine)
+	for _, tc := range []struct {
+		name   string
+		chunks []string
+		want   []string
+	}{
+		{"line and newline in one write", []string{edge + "\n"}, []string{edge}},
+		{"line, then the newline", []string{edge, "\n"}, []string{edge}},
+		{"line and CRLF in one write", []string{edge + "\r\n"}, []string{edge}},
+		{"line, then CRLF", []string{edge, "\r\n"}, []string{edge}},
+		{"line and CR, then the LF", []string{edge + "\r", "\n"}, []string{edge}},
+		{"line and CRLF, then more", []string{edge + "\r\nnext\n"}, []string{edge, "next"}},
+		{"line and CR, then the LF and more", []string{edge + "\r", "\nnext\n"}, []string{edge, "next"}},
+		{"word and a space in one write", []string{edge + " end\n"}, []string{edge, "end"}},
+		{"word, then a space", []string{edge, " end\n"}, []string{edge, "end"}},
+		{"word, then a space byte by byte", []string{edge, " ", "e", "n", "d", "\n"}, []string{edge, "end"}},
+		{"one byte over the edge", []string{edge + "e\n"}, []string{wordLeftOut}},
+		{"one byte over the edge, then a space", []string{edge + "e", " end\n"}, []string{wordLeftOut, "end"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got collect
+			writeAll(t, &lineWriter{send: got.line}, tc.chunks...)
+			if !slices.Equal(got.lines, tc.want) {
+				t.Errorf("lines = %v, want %v", lens(got.lines), lens(tc.want))
 			}
 		})
 	}

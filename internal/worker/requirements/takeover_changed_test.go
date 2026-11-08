@@ -29,19 +29,20 @@ func TestTakeOverRefusesAnEntryThatChangesWhileItIsCopied(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
-		// hooks returns the seams; s is the temp entry's directory.
-		hooks func(t *testing.T, s string) takeOverHooks
+		// hooks returns the seams for the row's path; s is the temp entry's
+		// directory.
+		hooks func(t *testing.T, s, path string) takeOverHooks
 	}{
-		{"a file replaced after it was listed", "roles/r/f", func(t *testing.T, s string) takeOverHooks {
+		{"a file replaced after it was listed", "roles/r/f", func(t *testing.T, s, path string) takeOverHooks {
 			return takeOverHooks{beforeOpen: func(p string) {
-				if p == "roles/r/f" {
+				if p == path {
 					replace(t, filepath.Join(s, p))
 				}
 			}}
 		}},
-		{"a file hard-linked after it was listed", "roles/r/f", func(t *testing.T, s string) takeOverHooks {
+		{"a file hard-linked after it was listed", "roles/r/f", func(t *testing.T, s, path string) takeOverHooks {
 			return takeOverHooks{beforeOpen: func(p string) {
-				if p != "roles/r/f" {
+				if p != path {
 					return
 				}
 				if err := os.Link(filepath.Join(s, p), filepath.Join(s, "home", "link")); err != nil {
@@ -49,9 +50,9 @@ func TestTakeOverRefusesAnEntryThatChangesWhileItIsCopied(t *testing.T) {
 				}
 			}}
 		}},
-		{"a directory replaced after it was listed", "roles/r", func(t *testing.T, s string) takeOverHooks {
+		{"a directory replaced after it was listed", "roles/r", func(t *testing.T, s, path string) takeOverHooks {
 			return takeOverHooks{beforeOpen: func(p string) {
-				if p != "roles/r" {
+				if p != path {
 					return
 				}
 				if err := os.Rename(filepath.Join(s, p), filepath.Join(s, "home", "r")); err != nil {
@@ -63,9 +64,9 @@ func TestTakeOverRefusesAnEntryThatChangesWhileItIsCopied(t *testing.T) {
 				}
 			}}
 		}},
-		{"a file that grows while it is copied", "roles/r/f", func(t *testing.T, s string) takeOverHooks {
+		{"a file that grows while it is copied", "roles/r/f", func(t *testing.T, s, path string) takeOverHooks {
 			return takeOverHooks{afterRead: func(p string) {
-				if p != "roles/r/f" {
+				if p != path {
 					return
 				}
 				// The mtime is put back, so only the size gives it away.
@@ -89,9 +90,9 @@ func TestTakeOverRefusesAnEntryThatChangesWhileItIsCopied(t *testing.T) {
 				}
 			}}
 		}},
-		{"a file whose mtime changes while it is copied", "roles/r/f", func(t *testing.T, s string) takeOverHooks {
+		{"a file whose mtime changes while it is copied", "roles/r/f", func(t *testing.T, s, path string) takeOverHooks {
 			return takeOverHooks{afterRead: func(p string) {
-				if p != "roles/r/f" {
+				if p != path {
 					return
 				}
 				later := time.Now().Add(time.Hour)
@@ -106,7 +107,7 @@ func TestTakeOverRefusesAnEntryThatChangesWhileItIsCopied(t *testing.T) {
 			dir, root, src := takeOverSource(t)
 			s := filepath.Join(dir, src)
 			writeTestFile(t, filepath.Join(s, "roles/r/f"), "content\n", 0o640)
-			hooks := tc.hooks(t, s)
+			hooks := tc.hooks(t, s, tc.path)
 
 			name, err := takeOverWith(t.Context(), root, src, defaultTakeOverLimits(), hooks)
 			want := "take over the install: " + tc.path + ": changed while it was copied"
@@ -127,8 +128,8 @@ func TestTakeOverNamesADestinationError(t *testing.T) {
 		name  string
 		path  string
 		build func(t *testing.T, s string)
-		// make creates p in the destination d.
-		make func(t *testing.T, d string)
+		// squat creates the entry at path in the destination d.
+		squat func(t *testing.T, d string)
 	}{
 		{"a file", "roles/r/f", func(t *testing.T, s string) {
 			writeTestFile(t, filepath.Join(s, "roles/r/f"), "content\n", 0o640)
@@ -160,7 +161,7 @@ func TestTakeOverNamesADestinationError(t *testing.T) {
 				if p != tc.path {
 					return
 				}
-				tc.make(t, destinationEntry(t, dir, src))
+				tc.squat(t, destinationEntry(t, dir, src))
 				created = true
 			}}
 

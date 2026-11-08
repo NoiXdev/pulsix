@@ -79,6 +79,28 @@ func TestGitEndsWithItsContext(t *testing.T) {
 		}
 	})
 
+	// Only a cancel is a cancel: a context that ran out of time is a failure
+	// the caller reports as one.
+	t.Run("a deadline stays an error", func(t *testing.T) {
+		gitBin, _ := hangingGit(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+
+		done := make(chan error, 1)
+		go func() {
+			_, err := (&Runner{GitBin: gitBin}).HeadCommit(ctx, t.TempDir())
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				t.Fatalf("HeadCommit error = %v, want one wrapping context.DeadlineExceeded and not context.Canceled", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("HeadCommit did not end within 10s of the deadline")
+		}
+	})
+
 	t.Run("a fetch cancelled while git runs", func(t *testing.T) {
 		gitBin, marker := hangingGit(t)
 		ctx, cancel := context.WithCancel(context.Background())

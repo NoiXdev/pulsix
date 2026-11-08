@@ -1,6 +1,7 @@
 package requirements
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -159,4 +160,49 @@ func TestCheckSourceReadsADirectoryInBatches(t *testing.T) {
 			t.Errorf("%d entries read, want %d", *clone.handed, listChunk+5)
 		}
 	})
+}
+
+// cancelDirFS lists big as listChunk files and then, from the same call,
+// cancels the context with a cause: the walk is told between two batches.
+type cancelDirFS struct {
+	refusingFS
+	cancel context.CancelCauseFunc
+	cause  error
+	calls  *int
+}
+
+func (f cancelDirFS) Open(name string) (fs.File, error) {
+	if name != "big" {
+		return f.MapFS.Open(name)
+	}
+	return &funcDir{name: name, read: func(n int) ([]fs.DirEntry, error) {
+		*f.calls++
+		var out []fs.DirEntry
+		for i := 0; i < n; i++ {
+			out = append(out, fs.FileInfoToDirEntry(fakeInfo{fmt.Sprintf("f%07d", i), 0o644}))
+		}
+		f.cancel(f.cause)
+		return out, nil
+	}}, nil
+}
+
+// TestCheckSourceStopsBetweenBatchesWhenTheContextEnds: a context that ends
+// while one batch is read ends the walk before the next ReadDir, with the
+// context's cause.
+func TestCheckSourceStopsBetweenBatchesWhenTheContextEnds(t *testing.T) {
+	cause := errors.New("the step timed out")
+	ctx, cancel := context.WithCancelCause(t.Context())
+	defer cancel(nil)
+	calls := 0
+	clone := cancelDirFS{
+		refusingFS: refusingFS{fstest.MapFS{"big/.keep": {Data: []byte("x")}}},
+		cancel:     cancel, cause: cause, calls: &calls,
+	}
+	err := newSourceCheck(ctx, clone, defaultLimits()).source(testCloneDir, "", "big")
+	if !errors.Is(err, cause) {
+		t.Fatalf("source = %v, want one wrapping the cause %v", err, cause)
+	}
+	if calls != 1 {
+		t.Errorf("ReadDir called %d times, want 1", calls)
+	}
 }
