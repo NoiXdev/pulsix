@@ -49,8 +49,9 @@ const toProblems = (ps: InventoryGroup['problems']): Problem[] => (ps ?? []).map
  * follows the group, an edited one saves on the revision it was edited on
  * (or one the page's own writes moved it to). A save's stale notice and
  * the problems it was refused with show only beside the generation it was
- * started on (until a later save of that draft succeeds), an answer's problems only beside the draft it rebuilt while
- * that draft is on the answer's revision (then the group's). Until a save
+ * started on (until a later save of that draft succeeds), an answer's
+ * problems only beside the draft it rebuilt while that draft is on the
+ * answer's revision (then the group's). Until a save
  * reports anything, and after a rebuild that no answer made, the form shows
  * the group's current problems, also beside an edit (backlog 7.91). */
 function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
