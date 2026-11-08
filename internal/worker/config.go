@@ -79,7 +79,8 @@ type Config struct {
 	// SAN.
 	ServerName string
 	// DataDir is the worker's scratch root: per-job temp dirs and the
-	// persistent repo cache live under it.
+	// persistent repo cache live under it. It is absolute: Load resolves a
+	// relative value against the working directory once, at start.
 	DataDir string
 	// Zones are the zone ids the claim names. Empty (the normal setting)
 	// means the claim sends no zone ids and the manager uses the zone the
@@ -159,13 +160,26 @@ func Load(env []string) (Config, error) {
 	}
 	cfg.ManagerAddr = addr
 
-	cfg.DataDir = vals[envDataDir]
-	if cfg.DataDir == "" {
-		cfg.DataDir = defaultDataDir
+	raw := vals[envDataDir]
+	if raw == "" {
+		raw = defaultDataDir
 	}
-	if !dataDirSafe(cfg.DataDir) {
-		return cfg, fmt.Errorf("%s %q may only contain letters, digits and . _ / + @ = -: the worker writes paths below it into each run's ansible.cfg and SSH arguments, where other characters split or end a setting", envDataDir, cfg.DataDir)
+	// Resolve a relative value now, against the working directory at start,
+	// so the safety check sees the path that is actually used and nothing
+	// derived from it (the identity directory, a run's ansible.cfg) depends
+	// on the working directory later.
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return cfg, fmt.Errorf("%s %q: resolve to an absolute path: %w", envDataDir, raw, err)
 	}
+	if !dataDirSafe(abs) {
+		resolved := ""
+		if abs != raw {
+			resolved = fmt.Sprintf(" (resolved to %q)", abs)
+		}
+		return cfg, fmt.Errorf("%s %q%s may only contain letters, digits and . _ / + @ = -: the worker writes paths below it into each run's ansible.cfg and SSH arguments, where other characters split or end a setting", envDataDir, raw, resolved)
+	}
+	cfg.DataDir = abs
 	// The certificate bundle: either all three paths (the bundle `pulsix-manager
 	// worker add` prints) or none, then the identity directory token
 	// enrollment fills.

@@ -261,7 +261,7 @@ func runEmbeddedLoop(ctx context.Context, caInst *ca.CA, workersSvc *workers.Ser
 		worker.WithLogger(log),
 		worker.WithIdentity(id),
 	)
-	log.InfoContext(ctx, "embedded worker running", "org_id", zone.OrgID, "zone_id", zone.ID)
+	log.InfoContext(ctx, "embedded worker running", "org_id", zone.OrgID, "zone_id", zone.ID, "data_dir", wcfg.DataDir)
 	if err := loop.Run(ctx); err != nil {
 		log.ErrorContext(ctx, "embedded worker: loop stopped", "err", err)
 	}
