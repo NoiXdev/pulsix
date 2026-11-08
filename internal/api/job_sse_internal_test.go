@@ -15,9 +15,7 @@ import (
 
 func TestStreamErrorFrameIsGenericAndLogged(t *testing.T) {
 	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-	t.Cleanup(func() { slog.SetDefault(prev) })
+	log := slog.New(slog.NewTextHandler(&logs, nil))
 
 	var frames []struct {
 		event string
@@ -31,7 +29,7 @@ func TestStreamErrorFrameIsGenericAndLogged(t *testing.T) {
 		return nil
 	}
 	cause := errors.New(`pq: relation "jobs" does not exist (SQLSTATE 42P01) conn 10.0.0.5:5432`)
-	streamError(context.Background(), write, "read job status", cause)
+	streamError(context.Background(), log, write, "read job status", cause)
 
 	if len(frames) != 1 || frames[0].event != "error" {
 		t.Fatalf("frames = %+v, want one error frame", frames)

@@ -1,8 +1,6 @@
 package api_test
 
 import (
-	"bytes"
-	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -12,28 +10,17 @@ import (
 
 const changePasswordPath = "/api/v1/auth/password"
 
-// captureLog routes the default slog logger into a buffer for the rest of
-// the test.
-func captureLog(t *testing.T) *bytes.Buffer {
-	t.Helper()
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return &buf
-}
-
 // TestChangePasswordEndpoint: the owner changes their own password. The
 // current session keeps working, every other session of the account ends,
 // the forced-change flag is cleared, and neither password shows up in the
-// response, the log or the audit trail.
+// response or the audit trail. The log is checked in
+// TestChangePasswordLogsNoPassword.
 func TestChangePasswordEndpoint(t *testing.T) {
 	const (
 		oldPassword = "the old password 1"
 		newPassword = "the new password 22"
 	)
 	s := apitest.New(t)
-	logs := captureLog(t)
 	uid := s.SeedUser("change-own@example.test", oldPassword)
 	s.SeedPasskey(uid, "key")
 	markMustChange(t, s, uid)
@@ -95,9 +82,6 @@ func TestChangePasswordEndpoint(t *testing.T) {
 		t.Fatalf("audit: %d changePassword events (instance-level, actor and object the user: %v), want 1", events, orgless)
 	}
 	for _, secret := range []string{oldPassword, newPassword} {
-		if strings.Contains(logs.String(), secret) {
-			t.Fatalf("the server log carries a password: %s", logs)
-		}
 		if strings.Contains(trail, secret) {
 			t.Fatalf("the audit trail carries a password: %s", trail)
 		}
@@ -109,7 +93,6 @@ func TestChangePasswordEndpoint(t *testing.T) {
 func TestChangePasswordRefusals(t *testing.T) {
 	const password = "the current password"
 	s := apitest.New(t)
-	logs := captureLog(t)
 	uid := s.SeedUser("change-refused@example.test", password)
 	s.SeedPasskey(uid, "key")
 
@@ -161,9 +144,7 @@ func TestChangePasswordRefusals(t *testing.T) {
 	}); resp.StatusCode != http.StatusOK {
 		t.Fatalf("a refused change altered the password: login status %d", resp.StatusCode)
 	}
-	if strings.Contains(logs.String(), "a brand new password") || strings.Contains(logs.String(), password) {
-		t.Fatalf("the server log carries a password: %s", logs)
-	}
+	// The log check is in TestChangePasswordLogsNoPassword.
 }
 
 // TestLoginRefusesExpiredTemporaryPasswordOverHTTP: the expiry travels from
@@ -203,7 +184,6 @@ func TestLoginRefusesExpiredTemporaryPasswordOverHTTP(t *testing.T) {
 func TestChangePasswordRefusesExpiredTemporaryPassword(t *testing.T) {
 	const password = "the temporary password"
 	s := apitest.New(t)
-	logs := captureLog(t)
 	uid := s.SeedUser("temp-expired-change@example.test", password)
 	markMustChange(t, s, uid)
 	if _, err := s.DB.Pool().Exec(t.Context(),
@@ -228,7 +208,5 @@ func TestChangePasswordRefusesExpiredTemporaryPassword(t *testing.T) {
 			t.Fatalf("detail %q, want %q", d, tc.wantDetail)
 		}
 	}
-	if strings.Contains(logs.String(), password) {
-		t.Fatalf("the server log carries a password: %s", logs)
-	}
+	// The log check is in TestChangePasswordLogsNoPassword.
 }
