@@ -1,6 +1,7 @@
-// The worker's umask and the setuid helper (backlog 7.92): the helper floors
-// the inherited mask at 027, so what the play uid and galaxy create stays
-// readable to the worker's group whatever umask the worker was started with.
+// The worker's umask and the setuid helper (backlog 7.92): the helper clears
+// the group read and execute bits from the inherited mask, so what the play
+// uid and galaxy create stays readable to the worker's group whatever umask
+// the worker was started with.
 package uidboundary
 
 import (
@@ -18,7 +19,7 @@ import (
 // supervisor and sets none of its own, so before the fix what galaxy created
 // was owner-only to the play uid; the worker, which only shares the group,
 // could not open it and the take-over failed with "openat: permission
-// denied". The fix is the helper's floor (TestSetuidHelperFloorsTheUmask):
+// denied". The fix is the helper's clearing of the group bits (TestSetuidHelperFloorsTheUmask):
 // 077 becomes 027 for the play uid, and the run ends with the same files as
 // under umask 022.
 func TestRequirementsUnderAWorkerUmaskOf077(t *testing.T) {
@@ -34,10 +35,11 @@ func TestRequirementsUnderAWorkerUmaskOf077(t *testing.T) {
 	assertPublishedInstall(t, repoID, result, events, logs)
 }
 
-// TestSetuidHelperFloorsTheUmask: the helper clears the group read and
-// execute bits (027) from the worker's umask before it execs the play and
-// never loosens what the worker asked for. 077 becomes 027; 027, 022, 007 and
-// 002 keep their value.
+// TestSetuidHelperFloorsTheUmask: the helper clears exactly the group read
+// and execute bits (050) from the worker's umask before it execs the play and
+// keeps every other bit, so it never loosens what the worker asked for beyond
+// group read and traverse. 077 becomes 027; 027, 022, 007 and 002 keep their
+// value, and 0277 keeps its owner bits (0227).
 func TestSetuidHelperFloorsTheUmask(t *testing.T) {
 	inImage(t)
 	helper := workerConfig(t).SetuidHelper
@@ -51,6 +53,7 @@ func TestSetuidHelperFloorsTheUmask(t *testing.T) {
 		{0o022, "0022"},
 		{0o007, "0007"},
 		{0o002, "0002"},
+		{0o277, "0227"},
 	} {
 		t.Run(fmt.Sprintf("%03o", tc.worker), func(t *testing.T) {
 			old := syscall.Umask(tc.worker)
