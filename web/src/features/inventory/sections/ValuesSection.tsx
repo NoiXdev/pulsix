@@ -101,7 +101,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
     try {
       const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
       // The page's own step, which an edited draft may follow.
-      own.record({ from: revision, to: res.group.revision });
+      own.record({ from: revision, to: res.group.revision, kind: 'content' });
       setAnswered({ revision: res.group.revision, problems: toProblems(res.group.problems) });
       saved(ticket, res.group.vars, res.group.revision);
       save.reset();

@@ -24,10 +24,9 @@ interface Props {
 /** setup renders the draft with a hold spy whose releases it keeps, in
  * the order the holds were taken. */
 function setup(initial: Props) {
-  const releases: ReturnType<typeof vi.fn>[] = [];
-  const hold = vi.fn((revision: number) => {
-    void revision;
-    const release = vi.fn();
+  const releases: ReturnType<typeof vi.fn<() => void>>[] = [];
+  const hold = vi.fn<(r: number) => () => void>(() => {
+    const release = vi.fn<() => void>();
     releases.push(release);
     return release;
   });
@@ -208,17 +207,24 @@ describe('useRevisionDraft', () => {
       stored: A,
       revision: 5,
       steps: [
-        { from: 3, to: 4 },
-        { from: 4, to: 5 },
+        { from: 3, to: 4, kind: 'content' },
+        { from: 4, to: 5, kind: 'content' },
       ],
     });
     expect(result.current.revision).toBe(5);
   });
 
+  it('follows a settings step too, which changes no content', () => {
+    const { result, rerender } = setup({ stored: A, revision: 3 });
+    act(() => result.current.edit({ built: 'mine' }));
+    rerender({ stored: A, revision: 4, steps: [{ from: 3, to: 4, kind: 'settings' }] });
+    expect(result.current.revision).toBe(4);
+  });
+
   it('ignores own steps that do not start at the pinned revision', () => {
     const { result, rerender } = setup({ stored: A, revision: 3 });
     act(() => result.current.edit({ built: 'mine' }));
-    rerender({ stored: A, revision: 5, steps: [{ from: 4, to: 5 }] });
+    rerender({ stored: A, revision: 5, steps: [{ from: 4, to: 5, kind: 'content' }] });
     expect(result.current.revision).toBe(3);
   });
 

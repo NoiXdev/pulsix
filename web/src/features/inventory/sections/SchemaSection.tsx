@@ -54,7 +54,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
     setReported({ on: ticket, problems: [], answer: false });
     try {
       const res = await save.mutateAsync({ schema: draft, revision });
-      own.record({ from: revision, to: res.group.revision });
+      own.record({ from: revision, to: res.group.revision, kind: 'content' });
       saved(ticket, res.group.schema, res.group.revision);
       toast.show(res.incomplete_members > 0 ? t.inventory.schemaTab.savedIncomplete(res.incomplete_members) : t.inventory.schemaTab.saved);
     } catch (err) {

@@ -1,26 +1,30 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 /** RevisionStep is one write made from this page: it sent If-Match `from`
- * and was answered with revision `to`. Nobody else wrote in between. */
+ * and was answered with revision `to`. Nobody else wrote in between. A
+ * `content` step saved the values or the schema, a `settings` step the
+ * settings dialog's fields. */
 export interface RevisionStep {
   readonly from: number;
   readonly to: number;
+  readonly kind: 'content' | 'settings';
 }
 
 /**
  * OwnSteps is the group page's record of its own writes to the group: each
  * sent If-Match `from` and was answered with revision `to`, so an edited
- * draft pinned at `from`, or the settings dialog opened on it, may follow
- * it (useRevisionDraft, backlogs 7.89, 7.91). Whoever may follow from a
+ * draft pinned at `from` may follow it (useRevisionDraft, backlog 7.89),
+ * and the settings dialog opened on it may follow a `content` step
+ * (backlog 7.91). Whoever may follow from a
  * revision holds it, and the record drops the steps that start below both
  * the group's revision and every held one.
  *
  * That is safe: a walk starts at a held revision or at one pinned later,
  * which is at least the group's revision when it is pinned, and the group's
  * revision on the page never decreases, so no walk reaches a dropped step.
- * Between a pin and the effect that holds it, the group's revision bounds
- * the drop. At worst a dropped step turns a follow into a 412 and a stale
- * notice, never into a silent overwrite.
+ * Between a pin and the effect that holds it, the group's revision or the
+ * hold it replaces bounds the drop. At worst a dropped step turns a follow
+ * into a 412 and a stale notice, never into a silent overwrite.
  */
 export interface OwnSteps {
   steps: readonly RevisionStep[];
@@ -38,11 +42,13 @@ export function useOwnSteps(): OwnSteps {
 }
 
 /** followOwnSteps walks the page's own steps from `pinned`, each starting
- * where the last one ended, and only forward. */
-export function followOwnSteps(pinned: number, steps: readonly RevisionStep[]): number {
+ * where the last one ended, and only forward. With `only`, it walks the
+ * steps of that kind alone: a form must not follow a step that wrote its
+ * own fields, or it would save its old values over that write. */
+export function followOwnSteps(pinned: number, steps: readonly RevisionStep[], only?: RevisionStep['kind']): number {
   let revision = pinned;
   for (;;) {
-    const step = steps.find((s) => s.from === revision && s.to > revision);
+    const step = steps.find((s) => s.from === revision && s.to > revision && (only === undefined || s.kind === only));
     if (!step) return revision;
     revision = step.to;
   }

@@ -24,7 +24,7 @@ const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background 
  * over from the stored group. The revision sent is the one the form was
  * filled from, never a newer one: saving old values on a fresh revision
  * would silently undo the other writer's change, except along the page's
- * own steps (backlog 7.91). */
+ * own values and schema saves (backlog 7.91). */
 export function GroupSettingsDialog({
   org, group, groups, canCreateCredential, onClose,
 }: {
@@ -76,12 +76,14 @@ export function GroupSettingsDialog({
   async function save(e: FormEvent) {
     e.preventDefault();
     try {
-      // A write of the page's own since the form was filled changed none of
-      // its fields, so it saves on the revision that write stored.
-      const from = followOwnSteps(revision, own.steps);
+      // A values or schema save of the page's own since the form was filled
+      // changed none of its fields, so it saves on the revision that save
+      // stored. A settings step is not followed: the form may hold the
+      // values from before it, which would undo it.
+      const from = followOwnSteps(revision, own.steps, 'content');
       const res = await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision: from });
       // The page's own step, which an edited draft may follow.
-      own.record({ from, to: res.group.revision });
+      own.record({ from, to: res.group.revision, kind: 'settings' });
       toast.show(t.inventory.settings.saved);
       onClose();
     } catch (err) {
