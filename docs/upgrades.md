@@ -140,6 +140,12 @@ hand) and installs into `<repo>.galaxy` again on its next sync.
   `PULSIX_WORKER_DATA_DIR` against its working directory at start. It logs the
   resolved path, and a resolved path with unsafe characters (anything but
   letters, digits and `. _ / + @ = -`) is refused at start.
+- **7.98, credentials in logged URLs:** run logs, galaxy failure tails and
+  git diagnostics now remove a URL's credentials even when they hold an
+  unencoded `/`, `?` or `#`: everything from `://` to the last `@` before the
+  next space goes. A URL that carries an `@` in its path or query loses its
+  host in those messages too (`https://registry/@scope/pkg` is shown as
+  `https://[redacted]@scope/pkg`).
 - **7.92, umask under the play uid:** plays and requirements installs under
   `PULSIX_WORKER_PLAY_UID` create files the worker's group can read even when
   the worker runs with umask 077: the setuid helper clears only the group
