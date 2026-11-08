@@ -129,12 +129,17 @@ hand) and installs into `<repo>.galaxy` again on its next sync.
 - **7.91, role lookup in the variable read:** the lookup now follows Ansible's
   order for every role name: `<playbook dir>/roles/<name>`, then the installed
   roles, then `<playbook dir>/<name>`. A regular file at a candidate is a role
-  without content. More roles can be found, so a template's variable sources
-  can change after the next repository sync.
+  without content. More roles can be found, and a role can also lose its
+  fields: a regular file at an earlier candidate now shadows a role directory
+  further down (it becomes a role without content), and an earlier candidate
+  now wins (`./name` resolves to an installed role before the repository
+  directory; a slash name prefers `<playbook dir>/roles/a/b` over
+  `<playbook dir>/a/b`). So a template's variable sources can gain or lose
+  fields after the next repository sync; check the templates' variables pages.
 - **7.91, relative worker data dir:** the worker resolves a relative
   `PULSIX_WORKER_DATA_DIR` against its working directory at start. It logs the
-  resolved path, and a resolved path with unsafe characters is refused at
-  start.
+  resolved path, and a resolved path with unsafe characters (anything but
+  letters, digits and `. _ / + @ = -`) is refused at start.
 - **7.92, umask under the play uid:** plays and requirements installs under
   `PULSIX_WORKER_PLAY_UID` create files the worker's group can read even when
   the worker runs with umask 077: the setuid helper clears only the group
