@@ -24,6 +24,6 @@
 // Galaxy's behaviour is cited by function name, read against ansible-core
 // 2.21.5.
 //
-// The package imports nothing from internal/worker or internal/worker/runner;
-// both import it.
+// The package imports nothing from internal/worker or internal/worker/runner,
+// except the leaf package urlcred; both import it.
 package requirements

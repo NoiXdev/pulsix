@@ -106,3 +106,44 @@ func TestEnsureRemovesUserinfoFromEveryError(t *testing.T) {
 		})
 	}
 }
+
+// TestEnsureRemovesABareTokenUsername: a token used as a URL's username
+// (https://TOKEN@host/…) never reaches the log or an error: not in a
+// streamed line, not in galaxy's stderr tail, not in a galaxy error.
+func TestEnsureRemovesABareTokenUsername(t *testing.T) {
+	const want = "https://[redacted]@git.example.org/r.git"
+	t.Run("a streamed line", func(t *testing.T) {
+		c := newClone(t, map[string]string{"requirements.yml": rolesOnly})
+		g := newGalaxy()
+		g.Lines = []string{"cloning https://ghp_s3cret@git.example.org/r.git"}
+		_, lines, err := c.ensure(newService(g), commitA)
+		if err != nil {
+			t.Fatalf("Ensure: %v", err)
+		}
+		if len(lines) < 2 || lines[1] != "cloning "+want {
+			t.Errorf("lines = %q, want the second to be %q", lines, "cloning "+want)
+		}
+		for _, l := range lines {
+			if strings.Contains(l, "ghp_s3cret") {
+				t.Errorf("line leaks the token: %q", l)
+			}
+		}
+	})
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"the stderr tail of a failure", &requirements.ExitError{Code: 1, Stderr: "fatal: https://ghp_s3cret@git.example.org/r.git not found"}},
+		{"a galaxy error", errors.New("clone https://ghp_s3cret@git.example.org/r.git: refused")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newClone(t, map[string]string{"requirements.yml": rolesOnly})
+			g := newGalaxy()
+			g.Err = tc.err
+			_, _, err := c.ensure(newService(g), commitA)
+			if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "ghp_s3cret") {
+				t.Errorf("err = %v, want it to contain %q and not the token", err, want)
+			}
+		})
+	}
+}

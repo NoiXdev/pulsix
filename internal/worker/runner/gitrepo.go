@@ -40,6 +40,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/worker"
+	"github.com/noixdev/pulsix/internal/worker/urlcred"
 )
 
 // gitRepoSpec is one repository the run must materialize, straight from the
@@ -277,22 +278,18 @@ func safeSubpath(sub string) (string, error) {
 	return filepath.FromSlash(sub), nil
 }
 
-// urlCredPattern matches `user:password@` userinfo inside a URL-shaped
-// token (https://, ssh://, and the scp-like form alike) — the password half
-// is what must never survive into a job's error text. A user without a
-// password (git@github.com) is left alone.
-var urlCredPattern = regexp.MustCompile(`[^@/\s:]+:[^@/\s]+@`)
-
 // redactURLs strips credential-bearing URLs from a git diagnostic: every
 // occurrence of the repo's own URL goes first (it is the claim's value,
-// embeddable credentials included), then any remaining scheme://user:pass@
-// userinfo pattern loses its secret half. Over-redaction is acceptable —
-// a diagnostic is never worth a secret.
+// embeddable credentials included), then urlcred.Redact: the userinfo of
+// any URL with a scheme (a token can be a bare username), and user:password@
+// anywhere. A bare scp-style user (git@github.com:org/repo.git) names no
+// secret and stays. Over-redaction is acceptable — a diagnostic is never
+// worth a secret.
 func redactURLs(s, url string) string {
 	if url != "" {
 		s = strings.ReplaceAll(s, url, "[repo url]")
 	}
-	return urlCredPattern.ReplaceAllString(s, "[redacted]@")
+	return urlcred.Redact(s)
 }
 
 // HeadCommit is the commit the clone at dir is at (git rev-parse HEAD in

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/noixdev/pulsix/internal/worker/urlcred"
 )
 
 // counted is a counted file, read and checked.
@@ -53,7 +55,7 @@ func (s *Service) Ensure(ctx context.Context, req Request) (Entry, error) {
 // withoutUserinfo is err with URL credentials removed from its text; it
 // still unwraps to err.
 func withoutUserinfo(err error) error {
-	msg := removeUserinfo(err.Error())
+	msg := urlcred.Redact(err.Error())
 	if msg == err.Error() {
 		return err
 	}
@@ -62,7 +64,7 @@ func withoutUserinfo(err error) error {
 
 // warn logs a cleanup that failed; the step goes on.
 func (s *Service) warn(msg, path string, err error) {
-	s.log.Warn(msg, "path", path, "err", removeUserinfo(err.Error()))
+	s.log.Warn(msg, "path", path, "err", urlcred.Redact(err.Error()))
 }
 
 func (s *Service) ensure(ctx context.Context, req Request) (Entry, error) {

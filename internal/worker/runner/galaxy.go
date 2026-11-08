@@ -128,7 +128,7 @@ func (g *Galaxy) Install(ctx context.Context, in requirements.Install, line func
 	case waitErr == nil:
 		return nil
 	case errors.As(waitErr, &exit) && exit.Exited():
-		return &requirements.ExitError{Code: exit.ExitCode(), Stderr: string(stderr.kept)}
+		return &requirements.ExitError{Code: exit.ExitCode(), Stderr: stderr.tail()}
 	}
 	return fmt.Errorf("ansible-galaxy %s install: %w", in.Kind, waitErr)
 }
@@ -244,18 +244,31 @@ func (g *Galaxy) RemoveAll(dir string) error {
 	return nil
 }
 
-// maxGalaxyLine bounds a line held without its newline; longer output is
-// sent in pieces of this size.
+// maxGalaxyLine bounds a line held without its newline.
 const maxGalaxyLine = 64 << 10
+
+// wordLeftOut is sent in place of a word longer than maxGalaxyLine.
+const wordLeftOut = "… a word longer than 64 KiB left out"
 
 // lineWriter sends what one stream writes, a line at a time, and keeps the
 // last keep bytes of it. Each stream has its own writer (exec copies each
 // from one goroutine); send is shared and serialized by the caller.
+//
+// A line never splits a word, a run of non-white-space bytes: the service
+// removes URL userinfo line by line, and a cut inside a URL would hide its
+// credentials from the pattern. A line that reaches maxGalaxyLine without a
+// newline is cut at the last white-space byte of that window (the byte is
+// dropped); a window without one is a word longer than maxGalaxyLine, which
+// is left out up to the next white-space byte or newline.
 type lineWriter struct {
 	send func(string)
 	keep int
 	buf  []byte
-	kept []byte
+	// skipping: the word being left out has not ended yet.
+	skipping bool
+	kept     []byte
+	// cut: kept has lost its front, so it may start inside a word.
+	cut bool
 }
 
 func (w *lineWriter) Write(p []byte) (int, error) {
@@ -263,22 +276,43 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 		w.kept = append(w.kept, p...)
 		if len(w.kept) > w.keep {
 			w.kept = append(w.kept[:0], w.kept[len(w.kept)-w.keep:]...)
+			w.cut = true
 		}
 	}
 	w.buf = append(w.buf, p...)
 	for {
-		i := bytes.IndexByte(w.buf, '\n')
-		if i < 0 {
-			break
+		if w.skipping {
+			i := bytes.IndexAny(w.buf, " \t\f\r\n")
+			if i < 0 {
+				w.buf = w.buf[:0]
+				return len(p), nil
+			}
+			w.skipping = false
+			rest := w.buf[i+1:]
+			if w.buf[i] == '\r' && len(rest) > 0 && rest[0] == '\n' {
+				rest = rest[1:]
+			}
+			w.buf = rest
+			continue
 		}
-		w.send(strings.TrimSuffix(string(w.buf[:i]), "\r"))
-		w.buf = w.buf[i+1:]
-	}
-	for len(w.buf) >= maxGalaxyLine {
-		w.send(string(w.buf[:maxGalaxyLine]))
+		if i := bytes.IndexByte(w.buf, '\n'); i >= 0 && i <= maxGalaxyLine {
+			w.send(strings.TrimSuffix(string(w.buf[:i]), "\r"))
+			w.buf = w.buf[i+1:]
+			continue
+		}
+		if len(w.buf) < maxGalaxyLine {
+			return len(p), nil
+		}
+		window := w.buf[:maxGalaxyLine]
+		if i := bytes.LastIndexAny(window, " \t\f\r"); i >= 0 {
+			w.send(string(w.buf[:i]))
+			w.buf = w.buf[i+1:]
+			continue
+		}
+		w.send(wordLeftOut)
+		w.skipping = true
 		w.buf = w.buf[maxGalaxyLine:]
 	}
-	return len(p), nil
 }
 
 // flush sends a last line without its newline.
@@ -287,4 +321,18 @@ func (w *lineWriter) flush() {
 		w.send(strings.TrimSuffix(string(w.buf), "\r"))
 		w.buf = nil
 	}
+}
+
+// tail is the end of what was written, at most keep bytes. Once the front
+// was cut it starts after its first white-space byte, so it never begins
+// inside a word (a URL's userinfo); without one it is empty.
+func (w *lineWriter) tail() string {
+	if !w.cut {
+		return string(w.kept)
+	}
+	i := bytes.IndexAny(w.kept, " \t\f\r\n")
+	if i < 0 {
+		return ""
+	}
+	return string(w.kept[i+1:])
 }

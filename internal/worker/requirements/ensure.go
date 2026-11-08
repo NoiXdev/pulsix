@@ -43,7 +43,9 @@ type Install struct {
 // Galaxy runs ansible-galaxy.
 type Galaxy interface {
 	// Install runs one command and sends each line of its output to line.
-	// A command that ran and failed returns an *ExitError.
+	// A command that ran and failed returns an *ExitError. A line never
+	// splits a word (a run of non-white-space bytes), so the service can
+	// remove URL userinfo line by line.
 	Install(ctx context.Context, in Install, line func(string)) error
 	// RemoveAll removes dir and what the install wrote into it, also files
 	// the play uid owns.

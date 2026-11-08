@@ -42,9 +42,14 @@ func TestRedactURLs(t *testing.T) {
 			"fatal: could not read from remote repository: [redacted]@host.example.org:repo",
 		},
 		{
-			"user-only userinfo stays",
-			"fatal: unable to access 'ssh://git@github.com/org/repo.git/': host unreachable",
-			"fatal: unable to access 'ssh://git@github.com/org/repo.git/': host unreachable",
+			"a token as a bare username",
+			"fatal: unable to access 'https://ghp_tok@example.org/r.git/'",
+			"fatal: unable to access 'https://[redacted]@example.org/r.git/'",
+		},
+		{
+			"an scp-style user stays",
+			"fatal: could not read from git@github.com:org/repo.git",
+			"fatal: could not read from git@github.com:org/repo.git",
 		},
 		{
 			"no credentials, unchanged",

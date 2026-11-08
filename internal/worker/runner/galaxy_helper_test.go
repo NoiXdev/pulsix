@@ -66,8 +66,8 @@ func TestGalaxyLinesWithoutTheirNewline(t *testing.T) {
 	}
 }
 
-// TestGalaxyLineWriterBoundsWhatItHolds: a line without a newline is sent
-// in pieces of maxGalaxyLine, and only the last keep bytes are kept.
+// TestGalaxyLineWriterBoundsWhatItHolds: a word longer than maxGalaxyLine
+// is left out, and only the last keep bytes are kept.
 func TestGalaxyLineWriterBoundsWhatItHolds(t *testing.T) {
 	var got collect
 	w := &lineWriter{send: got.line, keep: 4}
@@ -78,7 +78,7 @@ func TestGalaxyLineWriterBoundsWhatItHolds(t *testing.T) {
 		}
 	}
 	w.flush()
-	want := []string{strings.Repeat("x", maxGalaxyLine), "xxx", "abcd"}
+	want := []string{wordLeftOut, "abcd"}
 	if !slices.Equal(got.lines, want) {
 		t.Errorf("lines = %d of lengths %v, want %v", len(got.lines), lens(got.lines), lens(want))
 	}
@@ -144,5 +144,71 @@ func TestGalaxyNamesTheInstallWhenItsSupervisorIsKilled(t *testing.T) {
 	}
 	if !strings.Contains(warning, in.Entry) {
 		t.Errorf("log = %q, want the backstop warning naming %s", logs.String(), in.Entry)
+	}
+}
+
+// writeAll feeds chunks to w, then flushes it.
+func writeAll(t *testing.T, w *lineWriter, chunks ...string) {
+	t.Helper()
+	for _, c := range chunks {
+		if _, err := w.Write([]byte(c)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w.flush()
+}
+
+// TestGalaxyLineWriterNeverCutsAWord: the window's end falls inside a
+// URL, and the line is cut before the URL, so its userinfo is never split.
+func TestGalaxyLineWriterNeverCutsAWord(t *testing.T) {
+	pre := strings.Repeat("y", maxGalaxyLine-8)
+	url := "https://user:tok3n@host/r.git"
+	in := pre + " " + url + "\n"
+	bytewise := make([]string, len(in))
+	for i := range in {
+		bytewise[i] = in[i : i+1]
+	}
+	for name, chunks := range map[string][]string{"one write": {in}, "byte by byte": bytewise} {
+		t.Run(name, func(t *testing.T) {
+			var got collect
+			writeAll(t, &lineWriter{send: got.line}, chunks...)
+			if want := []string{pre, url}; !slices.Equal(got.lines, want) {
+				t.Errorf("lines = %v, want %v", lens(got.lines), lens(want))
+			}
+		})
+	}
+}
+
+// TestGalaxyLineWriterLeavesOutALongWord: a word with no white space in
+// 64 KiB is replaced by a marker, wherever the Writes split it.
+func TestGalaxyLineWriterLeavesOutALongWord(t *testing.T) {
+	in := strings.Repeat("z", maxGalaxyLine+5) + " end\n"
+	for name, chunks := range map[string][]string{
+		"one write":  {in},
+		"two writes": {in[:maxGalaxyLine+2], in[maxGalaxyLine+2:]},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got collect
+			writeAll(t, &lineWriter{send: got.line}, chunks...)
+			if want := []string{wordLeftOut, "end"}; !slices.Equal(got.lines, want) {
+				t.Errorf("lines = %v, want %v", lens(got.lines), want)
+			}
+		})
+	}
+}
+
+// TestGalaxyStderrTailStartsAtAWord: the kept tail, once its front was cut,
+// starts after its first white space, so no URL is cut in front.
+func TestGalaxyStderrTailStartsAtAWord(t *testing.T) {
+	const in = "abc https://tok@h x\n"
+	w := &lineWriter{send: func(string) {}, keep: 8}
+	writeAll(t, w, in)
+	if string(w.kept) != "tok@h x\n" || w.tail() != "x\n" {
+		t.Errorf("kept = %q, tail = %q, want %q and %q", w.kept, w.tail(), "tok@h x\n", "x\n")
+	}
+	whole := &lineWriter{send: func(string) {}, keep: 64}
+	writeAll(t, whole, in)
+	if whole.tail() != in {
+		t.Errorf("tail of an input that never overflowed = %q, want all of it", whole.tail())
 	}
 }
