@@ -49,7 +49,7 @@ const toProblems = (ps: InventoryGroup['problems']): Problem[] => (ps ?? []).map
  * follows the group, an edited one saves on the revision it was edited on
  * (or one the page's own writes moved it to). A save's stale notice and
  * the problems it was refused with show only beside the generation it was
- * started on, an answer's problems only beside the draft it rebuilt while
+ * started on (until a later save of that draft succeeds), an answer's problems only beside the draft it rebuilt while
  * that draft is on the answer's revision (then the group's). Until a save
  * reports anything, and after a rebuild that no answer made, the form shows
  * the group's current problems, also beside an edit (backlog 7.91). */
@@ -70,7 +70,8 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // group the page read last (which may land later), is the authority for
   // the content the draft then holds.
   const [answered, setAnswered] = useState<{ revision: number; problems: Problem[] } | null>(null);
-  // The generation a save was refused as stale on.
+  // The generation a save was refused as stale on; a later save that
+  // succeeds clears it.
   const [staleOn, setStaleOn] = useState<number | null>(null);
   // A draft replaced wholesale on the answer's revision shows that answer's
   // problems; any other replacement, the group's. An answer that kept the
@@ -104,6 +105,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
       own.record({ from: revision, to: res.group.revision, kind: 'content' });
       setAnswered({ revision: res.group.revision, problems: toProblems(res.group.problems) });
       saved(ticket, res.group.vars, res.group.revision);
+      setStaleOn(null);
       save.reset();
       toast.show(t.inventory.valuesTab.saved);
     } catch (err) {

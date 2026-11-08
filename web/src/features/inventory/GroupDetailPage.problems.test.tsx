@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { addField, group, refetch, routes, renderAt, SCHEMA, stale } from './groupPageTestKit.tsx';
+import { addField, group, refetch, routes, renderAt, SCHEMA, schemaSaved, stale } from './groupPageTestKit.tsx';
 
 /** A schema someone else saved: one more group field. */
 const OTHER = { fields: [...SCHEMA.fields, { name: 'region', type: 'string' }] };
@@ -143,6 +143,68 @@ describe('GroupDetailPage problems', () => {
     // The draft already shows the schema that made the save stale.
     await schemaSaveEnabled();
     expect(within(schemaRegion()).getByText('region')).toBeInTheDocument();
+    expect(within(schemaRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+  });
+
+  it('drops the stale notice of an earlier refusal once a save of the same draft succeeds', async () => {
+    const user = userEvent.setup();
+    let puts = 0;
+    let release: () => void = () => undefined;
+    mockApi(
+      routes('admin', {
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': async (req: MockRequest) => {
+          puts += 1;
+          if (puts === 1) return stale();
+          await new Promise<void>((r) => (release = r));
+          return group({ revision: 4, vars: (req.body as { vars: Record<string, unknown> }).vars });
+        },
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    const env = await screen.findByLabelText('env');
+    await user.type(env, 'x');
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    expect(await within(valuesRegion()).findByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+    // The next save succeeds with an edit typed meanwhile, so the draft is
+    // kept and its generation stays the one the refusal was reported on.
+    await user.click(screen.getByRole('button', { name: 'Save values' }));
+    await waitFor(() => expect(puts).toBe(2));
+    await user.type(screen.getByLabelText('env'), 'y');
+    release();
+
+    await screen.findByText('Group values saved');
+    expect(screen.getByLabelText('env')).toHaveValue('prodxy');
+    expect(within(valuesRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+  });
+
+  it('drops the stale notice of an earlier refusal once a schema save of the same draft succeeds', async () => {
+    const user = userEvent.setup();
+    let puts = 0;
+    let release: () => void = () => undefined;
+    mockApi(
+      routes('admin', {
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/schema': async (req: MockRequest) => {
+          puts += 1;
+          if (puts === 1) return stale();
+          await new Promise<void>((r) => (release = r));
+          return schemaSaved(4, (req.body as { schema: unknown }).schema);
+        },
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    await screen.findByRole('table', { name: 'Fields' });
+    await addField(user);
+    await schemaSaveEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save schema' }));
+    expect(await within(schemaRegion()).findByRole('button', { name: 'Reload' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Save schema' }));
+    await waitFor(() => expect(puts).toBe(2));
+    await addField(user);
+    release();
+
+    await screen.findByText('Schema saved');
     expect(within(schemaRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
   });
 

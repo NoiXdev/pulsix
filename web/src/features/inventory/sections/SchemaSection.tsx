@@ -22,7 +22,8 @@ import { useT } from '../../../i18n/useT.ts';
  * it was edited on (or one the page's own writes moved it to). A save's
  * stale notice and the problems it was refused with show only beside the
  * generation it was started on, whatever revision the draft has followed
- * since. Any other generation shows neither (backlog 7.91). */
+ * since, until a later save of that draft succeeds. Any other generation
+ * shows neither (backlog 7.91). */
 export function SchemaSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
@@ -35,7 +36,8 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
   const { draft, revision, generation, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.schema, group.revision, toVarSchema, own);
   // What a save reported for the draft it was started on.
   const [reported, setReported] = useState<Reported | null>(null);
-  // The generation a save was refused as stale on.
+  // The generation a save was refused as stale on; a later save that
+  // succeeds clears it.
   const [staleOn, setStaleOn] = useState<number | null>(null);
   const problems = shownProblems(reported, { generation, revision }, []);
 
@@ -56,6 +58,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
       const res = await save.mutateAsync({ schema: draft, revision });
       own.record({ from: revision, to: res.group.revision, kind: 'content' });
       saved(ticket, res.group.schema, res.group.revision);
+      setStaleOn(null);
       toast.show(res.incomplete_members > 0 ? t.inventory.schemaTab.savedIncomplete(res.incomplete_members) : t.inventory.schemaTab.saved);
     } catch (err) {
       if (errorStatus(err) === 412) return setStaleOn(ticket.generation);
