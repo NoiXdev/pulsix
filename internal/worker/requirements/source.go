@@ -59,13 +59,14 @@ func checkSources(ctx context.Context, clone fs.StatFS, cloneDir, fileDir string
 }
 
 // gitSubdirectory is the fragment galaxy's parse_scm takes from a
-// collection git source (ansible.galaxy.collection.concrete_artifact_manager
-// .parse_scm): the part before the first comma (the rest is the version),
-// the URL fragment as urldefrag finds it (urlparse drops tab, CR and LF
-// first and cuts at the first "#"), not percent-decoded. galaxy installs
-// from os.path.join(<checkout>, fragment) (_extract_collection_from_git).
-// ok is false without a fragment. Only collections use one: a role's git
-// source goes to git clone whole (ansible.utils.galaxy.scm_archive_resource).
+// collection git source (parse_scm in
+// ansible.galaxy.collection.concrete_artifact_manager): the part before the
+// first comma (the rest is the version), the URL fragment as urldefrag finds
+// it (urlparse drops tab, CR and LF first and cuts at the first "#"), not
+// percent-decoded. galaxy installs from os.path.join(<checkout>, fragment)
+// (_extract_collection_from_git). ok is false without a fragment. Only
+// collections use one: a role's git source goes to git clone whole
+// (ansible.utils.galaxy.scm_archive_resource).
 func gitSubdirectory(src string) (string, bool) {
 	s, _, _ := strings.Cut(src, ",")
 	s = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(s)

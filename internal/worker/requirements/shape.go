@@ -161,9 +161,10 @@ func (p *plan) addRoleString(role string) error {
 
 // addRoleMapping reads a role mapping as galaxy's role_yaml_parse does: the
 // name is role:, else name:, else taken from src after its "scm+" prefix. The
-// scm is that prefix of src; only a src without a "+" leaves it to scm:. A
-// Mercurial one is refused (refuseMercurial), quoting the source the plan
-// recorded (src, else the name).
+// scm is that prefix of src; a src without a "+" leaves it to scm:. With a
+// role: key galaxy returns early, without the "+" split, so scm: is kept
+// whatever src holds. A Mercurial scm is refused (refuseMercurial), quoting
+// the source the plan recorded (src, else the name).
 func (p *plan) addRoleMapping(e *yaml.Node) error {
 	fields := mappingFields(e)
 	if _, ok := fields["include"]; ok {
@@ -188,8 +189,9 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 			p.sources = append(p.sources, nameNode.Value)
 		}
 	}
+	_, hasRole := fields["role"]
 	scmNode, scmGiven := fields["scm"]
-	if hasSCM(from, "hg") || !strings.Contains(from, "+") && scmGiven && scalarText(scmNode) == "hg" {
+	if hasSCM(from, "hg") || scmGiven && scalarText(scmNode) == "hg" && (hasRole || !strings.Contains(from, "+")) {
 		return p.refuseMercurial(from)
 	}
 	switch {

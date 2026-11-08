@@ -14,6 +14,9 @@ func TestParseFileRefusesMercurialSources(t *testing.T) {
 		{"role mapping with an hg+ src", "- {src: \"hg+https://h/r\", name: r}\n", "hg+https://h/r"},
 		{"role mapping with scm hg", "- {src: \"https://h/r\", scm: hg, name: r}\n", "https://h/r"},
 		{"role mapping with scm hg and no src", "- {name: r, scm: hg}\n", "r"},
+		// With role: galaxy returns early, so scm: hg is kept whatever src holds.
+		{"role mapping with role, scm hg and a git+ src", "- {role: r, src: \"git+https://h/r\", scm: hg}\n", "git+https://h/r"},
+		{"role mapping with role, scm hg and a plus in a path", "- {role: r, src: \"./vendor/x+y\", scm: hg}\n", "./vendor/x+y"},
 		{"collection string", "collections: [\"hg+./vendor/c\"]\n", "hg+./vendor/c"},
 		{"collection name", "collections: [{name: \"hg+https://h/c\", type: git}]\n", "hg+https://h/c"},
 		{"collection source", "collections: [{name: ns.c, type: git, source: \"hg+https://h/c\"}]\n", "hg+https://h/c"},
