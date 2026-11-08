@@ -54,11 +54,16 @@ func defaultTakeOverLimits() takeOverLimits {
 	}
 }
 
-// takeOverHooks are test seams: afterCopy runs after each entry was copied,
-// and peak receives the most name bytes a walk held at once.
+// takeOverHooks are test seams: beforeOpen runs once an entry was listed
+// and its Lstat succeeded, before anything opens or reads it; afterRead
+// runs once a file's content was copied, before it is checked again;
+// afterCopy runs after each entry was copied; and peak receives the most
+// name bytes a walk held at once.
 type takeOverHooks struct {
-	afterCopy func(p string)
-	peak      *int
+	beforeOpen func(p string)
+	afterRead  func(p string)
+	afterCopy  func(p string)
+	peak       *int
 }
 
 // takeOverError names the refused path, relative to the temp entry.
@@ -176,6 +181,9 @@ func (c *copier) copyOne(p string, depth int) (*os.File, error) {
 	if err != nil {
 		return nil, bare(err)
 	}
+	if c.hooks.beforeOpen != nil {
+		c.hooks.beforeOpen(p)
+	}
 	var dir *os.File
 	switch mode := fi.Mode(); {
 	case mode.IsDir():
@@ -257,6 +265,9 @@ func (c *copier) copyFile(p string, fi fs.FileInfo) error {
 		return bare(err)
 	}
 	c.bytes += n
+	if c.hooks.afterRead != nil {
+		c.hooks.afterRead(p)
+	}
 	after, err := f.Stat()
 	if err != nil {
 		return bare(err)
