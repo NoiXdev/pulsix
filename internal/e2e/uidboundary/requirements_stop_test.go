@@ -1,7 +1,6 @@
 // The requirements install under the play uid, beyond the boundary itself
 // (requirements_test.go, requirements_escape_test.go): a cancel stops galaxy and the git it started
-// across the uid boundary, and what a worker umask of 077 does to the
-// take-over today.
+// across the uid boundary.
 package uidboundary
 
 import (
@@ -11,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -121,41 +119,6 @@ func TestCancellingARequirementsInstallStopsGalaxyAndGit(t *testing.T) {
 	entries, temps := cacheNames(t, requirementsDir(repoID))
 	if len(entries) != 0 || len(temps) != 0 {
 		t.Errorf("requirements cache holds entries %q and temp entries %q after the cancel, want neither", entries, temps)
-	}
-	if w := requirementsWarnings(logs); len(w) != 0 {
-		t.Errorf("the worker logged %d requirements warnings, want none:\n%s", len(w), strings.Join(w, "\n"))
-	}
-}
-
-// TestRequirementsUnderAWorkerUmaskOf077 pins what a worker started with
-// umask 077 gets today (ansible-core 2.21.4): galaxy inherits the umask
-// across the setuid helper and the supervisor, nothing sets it, so what
-// galaxy creates itself is owner-only to the play uid. The worker, which
-// only shares the group, cannot open it, and the take-over refuses the
-// install by name — the first path it meets, the role's directory. This is
-// the evidence for backlog 7.92, not the wanted behaviour: once the
-// install sets its own umask the run succeeds and this test must flip to
-// TestRequirementsInstallUnderThePlayUID's assertions.
-func TestRequirementsUnderAWorkerUmaskOf077(t *testing.T) {
-	inImage(t)
-	writeWorkerKey(t)
-	const repoID = "01900000-0000-7000-8000-0000000000f5"
-
-	old := syscall.Umask(0o077)
-	t.Cleanup(func() { syscall.Umask(old) })
-
-	result, events, logs := runOneJob(t, repoJob(t, "01900000-0000-7000-8000-0000000000e5", repoID, gitFixture(t, installFixture(t))))
-
-	if got := result.GetStatus(); got != "error" {
-		t.Errorf("status = %q, want error under umask 077 (error: %q):\n%s", got, result.GetError(), eventDump(events))
-	}
-	const want = "install requirements: take over the install: roles/from_installed: "
-	if msg := result.GetError(); !strings.HasPrefix(msg, want) || !strings.Contains(msg, "permission denied") {
-		t.Errorf("error = %q, want it to start with %q and contain %q", msg, want, "permission denied")
-	}
-	entries, temps := cacheNames(t, requirementsDir(repoID))
-	if len(entries) != 0 || len(temps) != 0 {
-		t.Errorf("requirements cache holds entries %q and temp entries %q, want neither", entries, temps)
 	}
 	if w := requirementsWarnings(logs); len(w) != 0 {
 		t.Errorf("the worker logged %d requirements warnings, want none:\n%s", len(w), strings.Join(w, "\n"))

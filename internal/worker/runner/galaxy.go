@@ -63,6 +63,11 @@ func galaxyBin(ansibleBin string) string {
 // helper or a refusal fails it. Without one it runs as the worker and logs
 // that it is not isolated.
 //
+// Under a play uid the setuid helper floors galaxy's umask at 027 (backlog
+// 7.92), so the requirements take-over can read what galaxy wrote even when
+// the worker itself runs with umask 077. Without a play uid galaxy runs as
+// the worker, with the worker's own umask, and the question does not arise.
+//
 // An install as the play uid is safe only while no play runs as that uid
 // at the same time: a play could write into the temp entry's 2770
 // directories, and the take-over cannot tell. The worker loop runs one job

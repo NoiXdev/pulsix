@@ -43,6 +43,15 @@
  * see the execv note below), so "--signal" can never occur as argv[2] in the
  * exec form in practice.
  *
+ * The exec form also floors the inherited umask (backlog 7.92): it clears the
+ * group read and execute bits (027) from the mask and keeps every other bit
+ * of it. The worker reads what plays and galaxy write through the shared
+ * group (the run's artifacts, the requirements take-over), so a worker
+ * started with umask 077 would otherwise get files and directories it cannot
+ * open. `old & 027` never loosens what the worker asked for: 022 and 002
+ * stay as they are, 077 becomes 027. The signal form creates no files and
+ * leaves the mask alone.
+ *
  * Built by deploy/worker/Dockerfile, statically linked, installed
  * root-owned with mode 4750:
  *   cc -static -Wall -Wextra -Werror -O2 -DPLAY_UID=65533 -DWORKER_GID=65532
@@ -54,6 +63,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -238,6 +248,10 @@ int main(int argc, char *argv[]) {
 		}
 		return 0;
 	}
+	/* The umask floor described in the header (backlog 7.92). umask cannot
+	 * fail, so there is nothing to check. */
+	mode_t old = umask(0);
+	umask(old & 027);
 	/* execv, not execvp: PATH comes from the environment, and the program to
 	 * run must be decided by argv alone. The environment is passed through
 	 * untouched — the worker already strips its own PULSIX_ and ANSIBLE_
