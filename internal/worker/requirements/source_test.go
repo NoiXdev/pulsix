@@ -163,6 +163,9 @@ func TestCheckSource(t *testing.T) {
 		{src: "vendor/[c]", refused: true, want: errGlob},
 		{src: "missing/*"},
 		{src: "https://example.org/r.tar.gz?x=1"},
+		// Reaches the glob check only because the fixture clone holds a local
+		// https:/host/ directory (the "//" collapses); a real remote URL never
+		// does, as no such directory exists in a repository's clone.
 		{src: "https://host/r.tar.gz?x=1", refused: true, want: errGlob},
 	}
 	for _, tc := range cases {

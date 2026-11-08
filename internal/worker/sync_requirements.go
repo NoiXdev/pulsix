@@ -6,9 +6,10 @@
 //
 // The step's lines go to the sync's log as stdout events {"text": …},
 // ahead of its ok event; URL userinfo (a token used as a bare username
-// included) is already removed from them by the requirements service, and galaxy never receives the sync claim's one
-// secret, the git credential (the plan's Ruling 6). Unlike a run, the sync
-// opens no entry to the play uid: only runs read it as that uid (Ruling 5).
+// included) is already removed from them by the requirements service, and
+// galaxy never receives the sync claim's one secret, the git credential (the
+// plan's Ruling 6). Unlike a run, the sync opens no entry to the play uid:
+// only runs read it as that uid (Ruling 5).
 package worker
 
 import (

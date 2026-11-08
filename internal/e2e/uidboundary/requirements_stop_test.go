@@ -1,5 +1,6 @@
 // The requirements install under the play uid, beyond the boundary itself
-// (requirements_test.go, requirements_escape_test.go): a cancel stops galaxy and the git it started
+// (requirements_test.go, requirements_escape_test.go): a cancel stops galaxy
+// and the git it started
 // across the uid boundary.
 package uidboundary
 
@@ -110,17 +111,22 @@ func TestCancellingARequirementsInstallStopsGalaxyAndGit(t *testing.T) {
 	t.Logf("cancelled while %q ran as uid %d", hung, playUID)
 
 	if got := result.GetStatus(); got != "cancelled" {
-		t.Errorf("status = %q, want cancelled (error: %q):\n%s", got, result.GetError(), logs)
+		t.Errorf("status = %q, want cancelled (error: %q):\n%s",
+			got, result.GetError(), logs)
 	}
-	if !waitUntil(cancelledAt.Add(stopGrace+time.Second), func() bool { return !playUIDEntryExists(t) }) {
-		t.Errorf("a /proc entry of uid %d, live or zombie, is left %v after the cancel: galaxy or its git outlived the install\n%s",
+	gone := func() bool { return !playUIDEntryExists(t) }
+	if !waitUntil(cancelledAt.Add(stopGrace+time.Second), gone) {
+		t.Errorf("a /proc entry of uid %d, live or zombie, is left %v after "+
+			"the cancel: galaxy or its git outlived the install\n%s",
 			playUID, stopGrace+time.Second, debugPlayUIDProcesses(t))
 	}
 	entries, temps := cacheNames(t, requirementsDir(repoID))
 	if len(entries) != 0 || len(temps) != 0 {
-		t.Errorf("requirements cache holds entries %q and temp entries %q after the cancel, want neither", entries, temps)
+		t.Errorf("requirements cache holds entries %q and temp entries %q "+
+			"after the cancel, want neither", entries, temps)
 	}
 	if w := requirementsWarnings(logs); len(w) != 0 {
-		t.Errorf("the worker logged %d requirements warnings, want none:\n%s", len(w), strings.Join(w, "\n"))
+		t.Errorf("the worker logged %d requirements warnings, want none:\n%s",
+			len(w), strings.Join(w, "\n"))
 	}
 }

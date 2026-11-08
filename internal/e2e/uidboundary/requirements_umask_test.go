@@ -14,14 +14,14 @@ import (
 )
 
 // TestRequirementsUnderAWorkerUmaskOf077 pins that a worker started with
-// umask 077 still installs its requirements. Evidence (ansible-core 2.21.4):
+// umask 077 still installs its requirements. Evidence (ansible-core 2.21.5):
 // galaxy inherits the worker's umask across the setuid helper and the
 // supervisor and sets none of its own, so before the fix what galaxy created
 // was owner-only to the play uid; the worker, which only shares the group,
 // could not open it and the take-over failed with "openat: permission
-// denied". The fix is the helper's clearing of the group bits (TestSetuidHelperFloorsTheUmask):
-// 077 becomes 027 for the play uid, and the run ends with the same files as
-// under umask 022.
+// denied". The fix is the helper's clearing of the group bits
+// (TestSetuidHelperFloorsTheUmask): 077 becomes 027 for the play uid, and the
+// run ends with the same files as under umask 022.
 func TestRequirementsUnderAWorkerUmaskOf077(t *testing.T) {
 	inImage(t)
 	writeWorkerKey(t)
@@ -30,7 +30,9 @@ func TestRequirementsUnderAWorkerUmaskOf077(t *testing.T) {
 	old := syscall.Umask(0o077)
 	t.Cleanup(func() { syscall.Umask(old) })
 
-	result, events, logs := runOneJob(t, repoJob(t, "01900000-0000-7000-8000-0000000000e5", repoID, gitFixture(t, installFixture(t))))
+	source := gitFixture(t, installFixture(t))
+	job := repoJob(t, "01900000-0000-7000-8000-0000000000e5", repoID, source)
+	result, events, logs := runOneJob(t, job)
 
 	assertPublishedInstall(t, repoID, result, events, logs)
 }
@@ -59,12 +61,14 @@ func TestSetuidHelperFloorsTheUmask(t *testing.T) {
 			old := syscall.Umask(tc.worker)
 			t.Cleanup(func() { syscall.Umask(old) })
 
-			out, err := exec.Command(helper, strconv.Itoa(playUID), "/bin/sh", "-c", "umask").CombinedOutput()
+			out, err := exec.Command(helper, strconv.Itoa(playUID),
+				"/bin/sh", "-c", "umask").CombinedOutput()
 			if err != nil {
 				t.Fatalf("helper: %v\n%s", err, out)
 			}
 			if got := strings.TrimSpace(string(out)); got != tc.want {
-				t.Errorf("the play uid's umask under a worker umask of %04o = %q, want %q", tc.worker, got, tc.want)
+				t.Errorf("the play uid's umask under a worker umask of %04o "+
+					"= %q, want %q", tc.worker, got, tc.want)
 			}
 		})
 	}
