@@ -32,7 +32,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
   // rows, sub-field lists); a wholesale replacement of the draft bumps
   // `generation`, which remounts it, or it could keep showing state from
   // before.
-  const { draft, revision, generation, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.schema, group.revision, toVarSchema, own.steps);
+  const { draft, revision, generation, edit, startSave, saved, reloaded, discard } = useRevisionDraft(group.schema, group.revision, toVarSchema, own);
   // What a save reported for the draft it was started on.
   const [reported, setReported] = useState<Reported | null>(null);
   // The generation a save was refused as stale on.

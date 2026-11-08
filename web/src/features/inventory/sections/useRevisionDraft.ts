@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { followOwnSteps, useHeldRevision, type OwnSteps } from '../ownSteps.ts';
 
 /** DraftMark names one draft: its generation and the revision it saves on.
  * Problems and a stale notice belong to the draft they were reported for. */
@@ -12,13 +13,6 @@ export interface DraftMark {
  * one was typed while it was in flight. */
 export interface SaveTicket extends DraftMark {
   readonly edits: number;
-}
-
-/** RevisionStep is one write made from this page: it sent If-Match `from`
- * and was answered with revision `to`. Nobody else wrote in between. */
-export interface RevisionStep {
-  readonly from: number;
-  readonly to: number;
 }
 
 export interface RevisionDraft<D> {
@@ -47,17 +41,6 @@ interface State<D> {
 
 const contentKey = (stored: unknown) => JSON.stringify(stored ?? null);
 
-/** follow walks the page's own steps from `pinned`, each starting where the
- * last one ended. */
-function follow(pinned: number, steps: readonly RevisionStep[]): number {
-  let revision = pinned;
-  for (;;) {
-    const step = steps.find((s) => s.from === revision && s.to > revision);
-    if (!step) return revision;
-    revision = step.to;
-  }
-}
-
 /**
  * useRevisionDraft holds a form's draft of a group's stored content and the
  * revision a save of it sends as its If-Match (backlogs 7.86, 7.89).
@@ -82,7 +65,9 @@ function follow(pinned: number, steps: readonly RevisionStep[]): number {
  * page that sent If-Match r and got r' back means nobody else wrote in
  * between, so a draft pinned at r follows it to r' (and on along a chain of
  * such steps). A step that does not start at the pinned revision is not
- * followed, so someone else's write in between still ends in a 412.
+ * followed, so someone else's write in between still ends in a 412. An
+ * edited draft holds its pinned revision (`own.hold`), so the record keeps
+ * the steps it may still follow.
  *
  * A successful save pins the revision it stored and makes what it stored
  * the draft's base; with no edit typed while it was in flight the draft is
@@ -100,7 +85,7 @@ export function useRevisionDraft<D>(
   stored: unknown,
   revision: number,
   build: (stored: unknown) => D,
-  ownSteps: readonly RevisionStep[],
+  own: Pick<OwnSteps, 'steps' | 'hold'>,
 ): RevisionDraft<D> {
   const key = contentKey(stored);
   const [state, setState] = useState<State<D>>(() => ({
@@ -122,7 +107,9 @@ export function useRevisionDraft<D>(
     setState(s);
   }
 
-  const current = (st: State<D>) => (st.touched ? follow(st.pinned, ownSteps) : Math.max(st.pinned, revision));
+  useHeldRevision(own.hold, s.touched ? s.pinned : null);
+
+  const current = (st: State<D>) => (st.touched ? followOwnSteps(st.pinned, own.steps) : Math.max(st.pinned, revision));
 
   return {
     draft: s.draft,

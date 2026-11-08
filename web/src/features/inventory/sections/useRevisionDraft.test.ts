@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { useRevisionDraft, type RevisionStep } from './useRevisionDraft.ts';
+import { useRevisionDraft } from './useRevisionDraft.ts';
+import type { RevisionStep } from '../ownSteps.ts';
 
 interface Content {
   v: string;
@@ -20,8 +21,20 @@ interface Props {
   steps?: readonly RevisionStep[];
 }
 
+/** setup renders the draft with a hold spy whose releases it keeps, in
+ * the order the holds were taken. */
 function setup(initial: Props) {
-  return renderHook(({ stored, revision, steps }: Props) => useRevisionDraft(stored, revision, build, steps ?? []), { initialProps: initial });
+  const releases: ReturnType<typeof vi.fn>[] = [];
+  const hold = vi.fn((revision: number) => {
+    void revision;
+    const release = vi.fn();
+    releases.push(release);
+    return release;
+  });
+  const rendered = renderHook(({ stored, revision, steps }: Props) => useRevisionDraft(stored, revision, build, { steps: steps ?? [], hold }), {
+    initialProps: initial,
+  });
+  return { ...rendered, hold, releases };
 }
 
 describe('useRevisionDraft', () => {
@@ -207,5 +220,18 @@ describe('useRevisionDraft', () => {
     act(() => result.current.edit({ built: 'mine' }));
     rerender({ stored: A, revision: 5, steps: [{ from: 4, to: 5 }] });
     expect(result.current.revision).toBe(3);
+  });
+
+  it('holds its pinned revision while edited and releases it when rebuilt', () => {
+    const { result, hold, releases } = setup({ stored: A, revision: 3 });
+    expect(hold).not.toHaveBeenCalled();
+
+    act(() => result.current.edit({ built: 'mine' }));
+    expect(hold.mock.calls).toEqual([[3]]);
+
+    const ticket = result.current.startSave();
+    act(() => result.current.saved(ticket, C, 5));
+    expect(releases[0]).toHaveBeenCalledOnce();
+    expect(hold).toHaveBeenCalledOnce();
   });
 });

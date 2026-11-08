@@ -48,7 +48,7 @@ function GroupDetail({ org, group, role }: { org: string; group: InventoryGroup;
   const s = t.inventory.detail.section;
   // The page's own writes to the group, which an edited draft may follow
   // (useRevisionDraft); the record starts over with another group.
-  const ownSteps = useOwnStepsRecord(group.id);
+  const ownSteps = useOwnStepsRecord(group.id, group.revision);
 
   const nav: SectionNavItem[] = [
     { id: 'members', label: s.members, count: own?.members },

@@ -12,7 +12,7 @@ import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import type { InventoryGroup, InventoryGroupSummary } from '../../api/types.ts';
 import { descendantIds, orderTree } from './tree.ts';
 import { StaleNotice } from './sections/StaleNotice.tsx';
-import { useOwnSteps } from './ownSteps.ts';
+import { followOwnSteps, useHeldRevision, useOwnSteps } from './ownSteps.ts';
 import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 
@@ -23,7 +23,8 @@ const LOADING_FIELD = 'h-8 w-full rounded-md border border-border bg-background 
  * 412 keeps it open with the stale notice, whose Reload starts the form
  * over from the stored group. The revision sent is the one the form was
  * filled from, never a newer one: saving old values on a fresh revision
- * would silently undo the other writer's change. */
+ * would silently undo the other writer's change, except along the page's
+ * own steps (backlog 7.91). */
 export function GroupSettingsDialog({
   org, group, groups, canCreateCredential, onClose,
 }: {
@@ -45,6 +46,9 @@ export function GroupSettingsDialog({
   const reload = useReloadInventory(org);
   const own = useOwnSteps();
   const [revision, setRevision] = useState(group.revision);
+  // The form may follow the page's own writes from the revision it was
+  // filled from, so the record keeps their steps while it is open.
+  useHeldRevision(own.hold, revision);
   const [name, setName] = useState(group.name);
   const [description, setDescription] = useState(group.description);
   const [parent, setParent] = useState(group.parent_id ?? '');
@@ -72,9 +76,12 @@ export function GroupSettingsDialog({
   async function save(e: FormEvent) {
     e.preventDefault();
     try {
-      const res = await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision });
+      // A write of the page's own since the form was filled changed none of
+      // its fields, so it saves on the revision that write stored.
+      const from = followOwnSteps(revision, own.steps);
+      const res = await update.mutateAsync({ name, description: description || undefined, parent_id: parent || undefined, bastion_id: bastion || undefined, revision: from });
       // The page's own step, which an edited draft may follow.
-      own.record({ from: revision, to: res.group.revision });
+      own.record({ from, to: res.group.revision });
       toast.show(t.inventory.settings.saved);
       onClose();
     } catch (err) {

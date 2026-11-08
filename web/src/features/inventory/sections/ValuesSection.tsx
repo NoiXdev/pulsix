@@ -62,7 +62,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // A draft is built from stored values the same way on mount and after a
   // save: secrets as keep markers, never as anything typed.
   const draftOf = (vars: unknown) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
-  const { draft, revision, generation, edit, startSave, saved, reloaded } = useRevisionDraft(group.vars, group.revision, draftOf, own.steps);
+  const { draft, revision, generation, edit, startSave, saved, reloaded } = useRevisionDraft(group.vars, group.revision, draftOf, own);
   // What was reported for a draft; nothing (the group's problems) at mount.
   const [reported, setReported] = useState<Reported | null>(null);
   // The problems a save's or reload's answer brought along, with the
