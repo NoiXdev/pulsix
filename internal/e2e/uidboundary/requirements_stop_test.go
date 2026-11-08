@@ -1,5 +1,5 @@
 // The requirements install under the play uid, beyond the boundary itself
-// (requirements_test.go): a cancel stops galaxy and the git it started
+// (requirements_test.go, requirements_escape_test.go): a cancel stops galaxy and the git it started
 // across the uid boundary, and what a worker umask of 077 does to the
 // take-over today.
 package uidboundary
