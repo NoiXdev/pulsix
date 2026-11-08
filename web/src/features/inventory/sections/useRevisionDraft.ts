@@ -1,9 +1,16 @@
 import { useRef, useState } from 'react';
 
-/** SaveTicket is what a save remembers when it starts: the edits counted
- * so far, so its answer can tell whether one was typed while it was in
- * flight. */
-export interface SaveTicket {
+/** DraftMark names one draft: its generation and the revision it saves on.
+ * Problems and a stale notice belong to the draft they were reported for. */
+export interface DraftMark {
+  readonly generation: number;
+  readonly revision: number;
+}
+
+/** SaveTicket is what a save remembers when it starts: the draft it was
+ * started on, and the edits counted so far, so its answer can tell whether
+ * one was typed while it was in flight. */
+export interface SaveTicket extends DraftMark {
   readonly edits: number;
 }
 
@@ -19,8 +26,8 @@ export interface RevisionDraft<D> {
   draft: D;
   /** What a save sends as If-Match. */
   revision: number;
-  /** Bumps whenever the draft is replaced wholesale (editor key, problem
-   * reset). */
+  /** Bumps whenever the draft is replaced wholesale (editor key; a save's
+   * problems and stale notice belong to one generation). */
   generation: number;
   edit(next: D): void;
   startSave(): SaveTicket;
@@ -126,7 +133,7 @@ export function useRevisionDraft<D>(
       setState((st) => (st.touched ? { ...st, draft: next } : { ...st, draft: next, touched: true, pinned: current(st) }));
     },
     startSave() {
-      return { edits: edits.current };
+      return { edits: edits.current, generation: s.generation, revision: current(s) };
     },
     saved(ticket, savedContent, savedRevision) {
       const untouched = edits.current === ticket.edits;

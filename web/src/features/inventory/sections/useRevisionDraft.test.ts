@@ -179,6 +179,15 @@ describe('useRevisionDraft', () => {
     expect(result.current.revision).toBe(5);
   });
 
+  it('a save ticket names the draft it was started on', () => {
+    const { result } = setup({ stored: A, revision: 3 });
+    act(() => result.current.edit({ built: 'mine' }));
+    expect(result.current.startSave()).toMatchObject({ generation: 0, revision: 3 });
+
+    act(() => result.current.reloaded(B, 4));
+    expect(result.current.startSave()).toMatchObject({ generation: 1, revision: 4 });
+  });
+
   it('follows a chain of own steps from the pinned revision', () => {
     const { result, rerender } = setup({ stored: A, revision: 3 });
     act(() => result.current.edit({ built: 'mine' }));

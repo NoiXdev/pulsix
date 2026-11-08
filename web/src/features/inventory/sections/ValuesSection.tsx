@@ -10,6 +10,7 @@ import { groupFields, problemsFromError } from '../../variables/paths.ts';
 import { declaredOnly, toKeepMarkers } from '../../variables/secrets.ts';
 import type { Problem, Vars } from '../../variables/types.ts';
 import { StaleNotice } from './StaleNotice.tsx';
+import { refusedWith, shownProblems, type Reported } from './draftProblems.ts';
 import { useRevisionDraft } from './useRevisionDraft.ts';
 import { useOwnSteps } from '../ownSteps.ts';
 import { useT } from '../../../i18n/useT.ts';
@@ -46,7 +47,11 @@ const toProblems = (ps: InventoryGroup['problems']): Problem[] => (ps ?? []).map
 /** ValuesForm edits the group's values. The draft and the revision its save
  * sends follow useRevisionDraft (backlogs 7.86, 7.90): an unedited draft
  * follows the group, an edited one saves on the revision it was edited on
- * (or one the page's own writes moved it to). */
+ * (or one the page's own writes moved it to). A save's problems and stale
+ * notice show only beside the draft (generation and revision) it was
+ * started on, an answer's problems only beside the draft it rebuilt while
+ * that draft is on the answer's revision. A draft rebuilt any other way
+ * shows the group's problems (backlog 7.91). */
 function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
@@ -57,21 +62,22 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // save: secrets as keep markers, never as anything typed.
   const draftOf = (vars: unknown) => toKeepMarkers(fields, declaredOnly(fields, (vars ?? {}) as Vars));
   const { draft, revision, generation, edit, startSave, saved, reloaded } = useRevisionDraft(group.vars, group.revision, draftOf, own.steps);
-  const [problems, setProblems] = useState<Problem[]>(() => toProblems(group.problems));
-  const [stale, setStale] = useState(false);
-  // The problems a save's or reload's answer brought along, for the draft it
-  // may replace: that answer, not the group the page read last (which may
-  // land later), is the authority for the content the draft then holds.
-  const [answered, setAnswered] = useState<Problem[] | null>(null);
-  // A draft replaced wholesale is not the one the problems were found in or
-  // a stale notice was about. Replaced by an answer, it shows that answer's
-  // problems; replaced because the group's content changed, the group's.
-  // An answer that kept the draft (an edit typed meanwhile) is dropped.
+  // What was reported for a draft; nothing (the group's problems) at mount.
+  const [reported, setReported] = useState<Reported | null>(null);
+  // The problems a save's or reload's answer brought along, with the
+  // revision it answered, for the draft it may replace: that answer, not the
+  // group the page read last (which may land later), is the authority for
+  // the content the draft then holds.
+  const [answered, setAnswered] = useState<{ revision: number; problems: Problem[] } | null>(null);
+  // The generation a save was refused as stale on.
+  const [staleOn, setStaleOn] = useState<number | null>(null);
+  // A draft replaced wholesale on the answer's revision shows that answer's
+  // problems; any other replacement, the group's. An answer that kept the
+  // draft (an edit typed meanwhile) is dropped.
   const [seen, setSeen] = useState(generation);
   if (seen !== generation || answered) {
     if (seen !== generation) {
-      setProblems(answered ?? toProblems(group.problems));
-      setStale(false);
+      setReported(answered && answered.revision === revision ? { on: { generation, revision }, problems: answered.problems } : null);
     }
     setSeen(generation);
     setAnswered(null);
@@ -83,33 +89,33 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   // does not keeps it, which then saves on the reloaded revision.
   async function onReload() {
     const fresh = await reload(group.id);
-    setAnswered(toProblems(fresh.problems));
+    setAnswered({ revision: fresh.revision, problems: toProblems(fresh.problems) });
     reloaded(fresh.vars, fresh.revision);
-    setStale(false);
+    setStaleOn(null);
   }
 
   async function onSave() {
-    setProblems([]);
     const ticket = startSave();
+    setReported({ on: ticket, problems: [] });
     try {
       const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
       // The page's own step, which an edited draft may follow.
       own.record({ from: revision, to: res.group.revision });
-      setAnswered(toProblems(res.group.problems));
+      setAnswered({ revision: res.group.revision, problems: toProblems(res.group.problems) });
       saved(ticket, res.group.vars, res.group.revision);
       save.reset();
       toast.show(t.inventory.valuesTab.saved);
     } catch (err) {
-      if (errorStatus(err) === 412) return setStale(true);
+      if (errorStatus(err) === 412) return setStaleOn(ticket.generation);
       const ps = problemsFromError(err, 'body.vars');
-      if (ps.length > 0) setProblems(ps);
+      if (ps.length > 0) setReported(refusedWith(ticket, ps));
       else toast.show(err instanceof Error ? err.message : t.inventory.valuesTab.saveFailed, 'destructive');
     }
   }
 
   return (
     <div className="flex max-w-[640px] flex-col gap-4">
-      {stale && <StaleNotice onReload={onReload} />}
+      {staleOn === generation && <StaleNotice onReload={onReload} />}
       {(group.orphaned ?? []).length > 0 && (
         <p className="rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
           {t.inventory.valuesTab.orphanedBefore}
@@ -120,7 +126,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
       {/* Inputs keep state of their own (a secret's stored marker, a
           repeater's entry keys); a draft replaced wholesale remounts them,
           as the section's key did before (backlog 7.90). */}
-      <SchemaForm key={generation} fields={fields} value={draft} onChange={edit} problems={problems} disabled={!canWrite} idPrefix="values" />
+      <SchemaForm key={generation} fields={fields} value={draft} onChange={edit} problems={shownProblems(reported, { generation, revision }, toProblems(group.problems))} disabled={!canWrite} idPrefix="values" />
       {canWrite && (
         <div className="flex justify-end">
           <Button variant="primary" disabled={save.isPending} onClick={() => void onSave()}>
