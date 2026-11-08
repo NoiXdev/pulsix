@@ -250,6 +250,10 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
+	subpath, err := CanonicalSubpath(in.Subpath)
+	if err != nil {
+		return Repo{}, err
+	}
 	var created Repo
 	// One transaction for both writes: a repository and the vault
 	// passwords its request named are one fact, and half of it is worse
@@ -258,7 +262,7 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (
 		var err error
 		created, err = s.store.Create(ctx, Repo{
 			ID: uuid.Must(uuid.NewV7()), OrgID: orgID,
-			Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: in.Subpath,
+			Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: subpath,
 			CredentialID:      in.CredentialID,
 			VaultCredentialID: in.VaultCredentialID,
 		})
@@ -339,15 +343,19 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
+	subpath, err := CanonicalSubpath(in.Subpath)
+	if err != nil {
+		return Repo{}, err
+	}
 	branch := defaultBranch(in.Branch)
 	if cur.SharedRepoID != nil {
-		if err := refuseSharedFieldChange(cur, in.Name, in.URL, branch, in.Subpath); err != nil {
+		if err := refuseSharedFieldChange(cur, in.Name, in.URL, branch, subpath); err != nil {
 			return Repo{}, err
 		}
 	}
 	next := cur
 	next.Name, next.URL, next.Branch, next.Subpath, next.CredentialID =
-		in.Name, in.URL, branch, in.Subpath, in.CredentialID
+		in.Name, in.URL, branch, subpath, in.CredentialID
 	// next.VaultCredentialID is deliberately left as cur's own value, not
 	// overwritten with in.VaultCredentialID: validate above already refuses
 	// a non-nil in.VaultCredentialID, so writing it through here would NULL
@@ -489,8 +497,8 @@ func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, v
 	if branch != "" && (strings.Contains(branch, "..") || strings.HasPrefix(branch, "-") || !branchPattern.MatchString(branch)) {
 		return fmt.Errorf("%w: invalid branch: may contain letters, digits, dots, slashes and hyphens (1–100 characters), no \"..\", not starting with \"-\"", ErrInvalidInput)
 	}
-	if strings.Contains(subpath, "..") || !subpathPattern.MatchString(subpath) {
-		return fmt.Errorf("%w: invalid subpath: may be empty or contain letters, digits, dots, slashes and hyphens (up to 200 characters), no \"..\"", ErrInvalidInput)
+	if _, err := CanonicalSubpath(subpath); err != nil {
+		return err
 	}
 	if err := s.validateGitCredential(ctx, orgID, credentialID); err != nil {
 		return err

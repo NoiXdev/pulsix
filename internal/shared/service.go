@@ -14,6 +14,7 @@ import (
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/repos"
 )
 
 // Sentinel errors mapped to HTTP status by the transport layer (Task 4),
@@ -47,13 +48,14 @@ var (
 	// without a database: a shared template whose extra-vars schema
 	// declares a secret field (schemaHasSecretField's own doc comment,
 	// definition.go), or extra vars naming a connection-security variable
-	// ansiblevars.ForbiddenIn reserves. RepoDefinitionInput never needed
-	// this sentinel — url/branch/subpath format validation is pushed to
-	// the API schema layer (shared_handlers.go's own repoDefinitionBody
-	// comment) because none of the three carries anything this package
-	// alone can judge; a template's extra vars are different; nothing but
-	// this package ever sees them before they are written straight into
-	// every organization's own job_templates row.
+	// ansiblevars.ForbiddenIn reserves; and a repository definition's
+	// subpath that repos.CanonicalSubpath refuses (backlog 7.94: a
+	// projection's subpath is the definition's, so it must meet the rules
+	// an organization's own repository does). Url and branch format
+	// validation stays at the API schema layer (shared_handlers.go's own
+	// repoDefinitionBody comment); a template's extra vars are different;
+	// nothing but this package ever sees them before they are written
+	// straight into every organization's own job_templates row.
 	ErrInvalidInput = errors.New("invalid input")
 	// ErrInvalidPlaybookPath is the invalid-input class for a template
 	// definition's playbook_path that no repo playbook can have
@@ -275,9 +277,13 @@ func (s *Service) CreateRepo(ctx context.Context, in RepoDefinitionInput) (RepoD
 	if colliding := CollidingOrgs(existing, in.Name); len(colliding) > 0 {
 		return RepoDefinition{}, &NameCollisionError{Name: in.Name, Orgs: colliding}
 	}
+	subpath, err := canonicalSubpath(in.Subpath)
+	if err != nil {
+		return RepoDefinition{}, err
+	}
 	def := RepoDefinition{
 		ID: uuid.Must(uuid.NewV7()), Name: in.Name, URL: in.URL,
-		Branch: defaultBranch(in.Branch), Subpath: in.Subpath,
+		Branch: defaultBranch(in.Branch), Subpath: subpath,
 	}
 	return s.store.CreateWithProjections(ctx, def)
 }
@@ -295,8 +301,26 @@ func (s *Service) UpdateRepo(ctx context.Context, id uuid.UUID, in RepoDefinitio
 	if colliding := CollidingOrgs(existing, in.Name); len(colliding) > 0 {
 		return RepoDefinition{}, &NameCollisionError{Name: in.Name, Orgs: colliding}
 	}
-	def := RepoDefinition{ID: id, Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: in.Subpath}
+	subpath, err := canonicalSubpath(in.Subpath)
+	if err != nil {
+		return RepoDefinition{}, err
+	}
+	def := RepoDefinition{ID: id, Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: subpath}
 	return s.store.UpdateAndPropagate(ctx, def)
+}
+
+// canonicalSubpath is repos.CanonicalSubpath for a definition (backlog
+// 7.94): a projection's subpath is the definition's, so it gets the same
+// stored form and the same refusals as an organization's own repository,
+// as this package's ErrInvalidInput. It runs after the name checks and
+// before the store is touched, so a refused write never reaches an
+// organization.
+func canonicalSubpath(raw string) (string, error) {
+	sub, err := repos.CanonicalSubpath(raw)
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid subpath: %s", ErrInvalidInput, repos.SubpathRule)
+	}
+	return sub, nil
 }
 
 // DeleteRepo removes a definition and every one of its projections

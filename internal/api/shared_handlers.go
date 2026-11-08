@@ -51,10 +51,10 @@ type repoDefinitionDetailOutput struct {
 
 // repoDefinitionBody is the editable shape both create and update take —
 // the same full-replacement convention repoCreateInput/repoUpdateInput
-// already use for an ordinary repository, and the same length bounds
-// (shared.RepoDefinitionInput itself enforces none: Task 2's own report
-// reads the absence of ErrInvalidInput from its sentinel list as a
-// deliberate signal that format validation belongs at this schema layer).
+// already use for an ordinary repository, and the same length bounds. The
+// subpath's format is shared.Service's to judge (repos.CanonicalSubpath,
+// backlog 7.94: shared.ErrInvalidInput, 400); the other fields' format
+// belongs at this schema layer.
 type repoDefinitionBody struct {
 	Name    string `json:"name" minLength:"1" maxLength:"63"`
 	URL     string `json:"url" minLength:"1" maxLength:"500"`
@@ -616,11 +616,11 @@ func mapSharedErr(ctx context.Context, deps Deps, err error) error {
 		return huma.Error409Conflict(err.Error())
 	case errors.Is(err, shared.ErrInUse):
 		return huma.Error409Conflict(err.Error())
-	// shared.ErrInvalidInput (Task 6 only, so far: a shared job template's
-	// extra-vars schema declaring a secret field, or extra vars naming a
-	// forbidden connection-security variable — shared.
-	// validateTemplateDefinitionInput's own doc comment). Never carries an
-	// organization either.
+	// shared.ErrInvalidInput: a shared job template's extra-vars schema
+	// declaring a secret field, or extra vars naming a forbidden
+	// connection-security variable (shared.validateTemplateDefinitionInput's
+	// own doc comment), or a repository definition's invalid subpath
+	// (backlog 7.94). Never carries an organization either.
 	case errors.Is(err, shared.ErrInvalidPlaybookPath):
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, shared.ErrInvalidInput):
