@@ -49,16 +49,17 @@ func (e *linkOutsideError) Unwrap() error { return errOutside }
 // walkTree checks every link in the directory root (clone-relative,
 // without links) and below it: galaxy reads a directory source's files and
 // follows links in it. A collection of type dir copies a file link's
-// target (galaxy/collection/__init__.py:1335-1351, verified: a link to a
-// file outside the clone ended up in the install) and a subdirs collection
-// installs every child directory, a link to one outside the clone too
-// (dependency_resolution/dataclasses.py:137-149, verified). Each link must
+// target (ansible.galaxy.collection._build_collection_tar, verified: a link
+// to a file outside the clone ended up in the install) and a subdirs
+// collection installs every child directory, a link to one outside the clone
+// too (ansible.galaxy.dependency_resolution.dataclasses
+// ._find_collections_in_subdirs, verified). Each link must
 // resolve inside the clone (resolve); the directory a link leads to is
 // walked as well, once per link target (seen), so a loop ends. A .git
-// directory is not walked: galaxy skips it (collection/__init__.py:1203)
-// and the clone's own .git is refused by resolve. The walk is bounded by
-// lim, its entries spent from the budget as each directory is read in
-// batches (readDir).
+// directory is not walked: galaxy skips it (ansible.galaxy.collection
+// ._build_files_manifest_walk) and the clone's own .git is refused by
+// resolve. The walk is bounded by lim, its entries spent from the budget as
+// each directory is read in batches (readDir).
 func (c *sourceCheck) walkTree(root string) error {
 	type dir struct {
 		path  string
@@ -153,11 +154,12 @@ func orDot(p string) string {
 
 // optionLike reports a source git could read as an option: galaxy runs
 // git clone --depth=1 <source> <dir> for a collection of type git without
-// "--" (galaxy/collection/concrete_artifact_manager.py:440-443; verified:
-// a name --upload-pack=… reached git's argv). The source is read as galaxy
-// splits it, generously: stripped, after an "scm+" prefix (requirement.py
-// :84-85, concrete_artifact_manager.py:403-406), and each comma part (the
-// ",version" of parse_scm, :399-400, goes to git checkout).
+// "--" (ansible.galaxy.collection.concrete_artifact_manager
+// ._extract_collection_from_git; verified: a name --upload-pack=… reached
+// git's argv). The source is read as galaxy splits it, generously: stripped,
+// after an "scm+" prefix (RoleRequirement.role_yaml_parse, and parse_scm in
+// the same module as _extract_collection_from_git), and each comma part (the
+// ",version" of parse_scm goes to git checkout).
 func optionLike(src string) bool {
 	candidates := []string{src}
 	if _, after, ok := strings.Cut(src, "+"); ok {

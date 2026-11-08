@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"testing/fstest"
 )
 
 // Galaxy installs a collection to <path>/<namespace>/<name>, split from the
@@ -95,5 +96,24 @@ func TestMightBeCollectionName(t *testing.T) {
 		if got := mightBeCollectionName.MatchString(s); got != want {
 			t.Errorf("mightBeCollectionName(%q) = %v, want %v", s, got, want)
 		}
+	}
+}
+
+// Pins existing behaviour, expected to pass at once (ruling P1): an untyped
+// ns.class is accepted by parseFile, and the string is walked as a directory
+// by checkSources, so galaxy reading it as a local path (a Python keyword is
+// no collection name to galaxy) leaves nothing unchecked.
+func TestAnUntypedKeywordNameIsCheckedAsAPath(t *testing.T) {
+	p, err := parseFile("requirements.yml", []byte("collections: [ns.class]\n"))
+	if err != nil {
+		t.Fatalf("parseFile = %v, want nil", err)
+	}
+	clone := refusingFS{fstest.MapFS{
+		"ns.class/galaxy.yml": {Data: []byte("namespace: ns\n")},
+		"ns.class/out":        link("../../outside"),
+	}}
+	want := `requirements.yml: the source "ns.class" holds the link "ns.class/out", which leads outside the repository`
+	if err := checkSources(t.Context(), clone, testCloneDir, "", p); err == nil || err.Error() != want {
+		t.Fatalf("checkSources = %v, want %q", err, want)
 	}
 }

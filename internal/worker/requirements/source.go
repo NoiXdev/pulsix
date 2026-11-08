@@ -59,13 +59,13 @@ func checkSources(ctx context.Context, clone fs.StatFS, cloneDir, fileDir string
 }
 
 // gitSubdirectory is the fragment galaxy's parse_scm takes from a
-// collection git source (collection/concrete_artifact_manager.py:397-421):
-// the part before the first comma (the rest is the version), the URL
-// fragment as urldefrag finds it (urlparse drops tab, CR and LF first and
-// cuts at the first "#"), not percent-decoded. galaxy installs from
-// os.path.join(<checkout>, fragment) (:475-477). ok is false without a
-// fragment. Only collections use one: a role's git source goes to
-// git clone whole (utils/galaxy.py:75).
+// collection git source (ansible.galaxy.collection.concrete_artifact_manager
+// .parse_scm): the part before the first comma (the rest is the version),
+// the URL fragment as urldefrag finds it (urlparse drops tab, CR and LF
+// first and cuts at the first "#"), not percent-decoded. galaxy installs
+// from os.path.join(<checkout>, fragment) (_extract_collection_from_git).
+// ok is false without a fragment. Only collections use one: a role's git
+// source goes to git clone whole (ansible.utils.galaxy.scm_archive_resource).
 func gitSubdirectory(src string) (string, bool) {
 	s, _, _ := strings.Cut(src, ",")
 	s = strings.NewReplacer("\t", "", "\r", "", "\n", "").Replace(s)
@@ -130,20 +130,20 @@ func (c *sourceCheck) spend() error {
 // file's own directory, fileDir (clone-relative), and opens a source in two
 // ways, both checked here:
 //
-//   - As a path, as written (galaxy/role.py:249 os.path.isfile(src) for a
+//   - As a path, as written (GalaxyRole.install, os.path.isfile(src), for a
 //     role; a collection's file, dir or subdirs source,
-//     galaxy/collection/concrete_artifact_manager.py:228): relative to the
+//     ConcreteArtifactsManager.get_artifact_path): relative to the
 //     working directory, without ~ or variable expansion and without
 //     normalising. Every string is such a path, a URL too: x://../../y is
 //     a relative path when the clone holds a directory x:.
-//   - As a file URL, through urllib (role.py:251-252 for a source with
-//     "://", concrete_artifact_manager.py:207 for a collection of type url;
-//     fileURLPath).
+//   - As a file URL, through urllib (GalaxyRole.install for a source with
+//     "://", ConcreteArtifactsManager.get_artifact_path, through
+//     _download_file, for a collection of type url; fileURLPath).
 //
 // A path is followed the way the kernel does (resolve): absolute only below
 // cloneDir as written, a link resolved before a later "..", nothing in
 // .git, no link that leaves the clone, and no glob character galaxy would
-// expand (dataclasses.py:137-149 globs a collection directory). A path
+// expand (_find_collections_in_subdirs globs a collection directory). A path
 // that does not exist is left to galaxy: it then is a name, or galaxy
 // fails. Other URLs (git+file:// included) are left to galaxy and git.
 // A path that is a directory is walked (walkTree): galaxy reads its files.
@@ -326,18 +326,17 @@ func refusalOf(err error) error {
 }
 
 // fileURLPath is the local path urllib opens for src (Python 3.14,
-// urllib/request.py:1478-1491 FileHandler.open_local_file through
-// url2pathname, :1671-1707), and whether src is a file URL at all. It
-// follows urllib generously, so that any string urllib might read as a
-// file URL is checked: the string unwrapped as Request does
-// (urllib/parse.py:1105-1115: Python's strip, <...>, URL:), the scheme
-// found as urlsplit does (:501-533: leading C0 controls and spaces
-// dropped, tab, CR and LF removed everywhere, any letter case), the
-// authority dropped (a host that resolves to this machine is local too,
-// so the path is checked whatever the host), the path cut at the first
-// "?" or "#", then percent-decoded (pyUnquote). A path without "//" is
-// relative to galaxy's working directory: a collection of type url named
-// file:../x.tar.gz was read from beside it (verified).
+// urllib.request.FileHandler.open_local_file through url2pathname), and
+// whether src is a file URL at all. It follows urllib generously, so that
+// any string urllib might read as a file URL is checked: the string
+// unwrapped as Request does (urllib.parse.unwrap: Python's strip, <...>,
+// URL:), the scheme found as urlsplit does (urllib.parse._urlsplit: leading
+// C0 controls and spaces dropped, tab, CR and LF removed everywhere, any
+// letter case), the authority dropped (a host that resolves to this machine
+// is local too, so the path is checked whatever the host), the path cut at
+// the first "?" or "#", then percent-decoded (pyUnquote). A path without
+// "//" is relative to galaxy's working directory: a collection of type url
+// named file:../x.tar.gz was read from beside it (verified).
 func fileURLPath(src string) (string, bool) {
 	u := pyStrip(src)
 	if len(u) >= 2 && u[0] == '<' && u[len(u)-1] == '>' {

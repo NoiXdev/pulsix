@@ -38,7 +38,7 @@ type value struct{ field, text string }
 // given or taken from the source, that is not a plain directory name
 // (plainRoleName; galaxy extracts the role to <roles>/<name>), and a
 // collection name galaxy installs under that is not namespace.name
-// (checkCollection). The file must
+// (checkCollection), and a Mercurial source (refuseMercurial). The file must
 // never read one way here and another way in galaxy, so YAML that the two
 // loaders read differently is refused as well: text other than UTF-8 with \n
 // or \r\n breaks, invisible characters in the text or in a decoded value, a
@@ -125,13 +125,13 @@ func (p *plan) addRoles(list *yaml.Node) error {
 }
 
 // addRoleString reads a role string as galaxy's
-// RoleRequirement.role_yaml_parse does (ansible-core 2.21.5,
-// ansible/playbook/role/requirement.py:67-87): with one comma it is
-// "src,version", with two "src,version,name", each stripped of Python's
+// RoleRequirement.role_yaml_parse does (ansible-core 2.21.5): with one comma
+// it is "src,version", with two "src,version,name", each stripped of Python's
 // whitespace first (pyStrip); without a comma it is the source as it stands,
 // not stripped; with more galaxy refuses the line before it installs
 // anything. Without a third part the name is taken from src, before src's
-// "scm+" prefix is cut.
+// "scm+" prefix is cut. A src whose prefix is "hg+" is refused
+// (refuseMercurial).
 func (p *plan) addRoleString(role string) error {
 	var src string
 	switch strings.Count(role, ",") {
@@ -145,17 +145,25 @@ func (p *plan) addRoleString(role string) error {
 		parts := strings.SplitN(pyStrip(role), ",", 3)
 		p.sources = append(p.sources, parts[0])
 		p.values = append(p.values, value{"version", parts[1]}, value{"name", parts[2]})
+		if hasSCM(parts[0], "hg") {
+			return p.refuseMercurial(parts[0])
+		}
 		return p.checkName(parts[2])
 	default:
 		return nil
 	}
 	p.sources = append(p.sources, src)
+	if hasSCM(src, "hg") {
+		return p.refuseMercurial(src)
+	}
 	return p.checkTakenName(roleNameFromSource(src))
 }
 
-// addRoleMapping reads a role mapping as galaxy's role_yaml_parse does
-// (requirement.py:89-108): the name is role:, else name:, else taken from
-// src after its "scm+" prefix.
+// addRoleMapping reads a role mapping as galaxy's role_yaml_parse does: the
+// name is role:, else name:, else taken from src after its "scm+" prefix. The
+// scm is that prefix of src; only a src without a "+" leaves it to scm:. A
+// Mercurial one is refused (refuseMercurial), quoting the source the plan
+// recorded (src, else the name).
 func (p *plan) addRoleMapping(e *yaml.Node) error {
 	fields := mappingFields(e)
 	if _, ok := fields["include"]; ok {
@@ -167,15 +175,22 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 	if !hasName {
 		nameNode, hasName = fields["name"]
 	}
+	var from string
 	switch {
 	case hasSrc:
+		from = scalarText(src)
 		if isString(src) {
 			p.sources = append(p.sources, src.Value)
 		}
 	case hasName:
+		from = scalarText(nameNode)
 		if isString(nameNode) {
 			p.sources = append(p.sources, nameNode.Value)
 		}
+	}
+	scmNode, scmGiven := fields["scm"]
+	if hasSCM(from, "hg") || !strings.Contains(from, "+") && scmGiven && scalarText(scmNode) == "hg" {
+		return p.refuseMercurial(from)
 	}
 	switch {
 	case hasName:
@@ -188,6 +203,20 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 		return p.checkTakenName(roleNameFromSource(s))
 	}
 	return nil
+}
+
+// hasSCM reports whether src starts with "scm+": galaxy's role_yaml_parse
+// takes the text before src's first "+" as the scm.
+func hasSCM(src, scm string) bool {
+	before, _, ok := strings.Cut(src, "+")
+	return ok && before == scm
+}
+
+// refuseMercurial refuses a Mercurial source: galaxy runs hg for it and the
+// worker image has none. A local path after hg+ is refused as well
+// as a URL.
+func (p *plan) refuseMercurial(src string) error {
+	return fmt.Errorf("%s: the source %q is a Mercurial source; Mercurial sources are not supported", p.name, src)
 }
 
 // addValues records a mapping's scalar values under the keys in fields

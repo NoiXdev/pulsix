@@ -21,6 +21,9 @@
 // followed; only the worker's own leftovers (temporary directories, evicted
 // entries) are ever deleted.
 //
+// Galaxy's behaviour is cited by function name, read against ansible-core
+// 2.21.5.
+//
 // The package imports nothing from internal/worker or internal/worker/runner;
 // both import it.
 package requirements
