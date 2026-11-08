@@ -280,8 +280,9 @@ func safeSubpath(sub string) (string, error) {
 
 // redactURLs strips credential-bearing URLs from a git diagnostic: every
 // occurrence of the repo's own URL goes first (it is the claim's value,
-// embeddable credentials included), then urlcred.Redact: the userinfo of
-// any URL with a scheme (a token can be a bare username), and user:password@
+// embeddable credentials included), then urlcred.Redact: everything from a
+// URL's "://" to the last @ before the next white space (a token can be a
+// bare username, a password can hold an unencoded /), and user:password@
 // anywhere. A bare scp-style user (git@github.com:org/repo.git) names no
 // secret and stays. Over-redaction is acceptable — a diagnostic is never
 // worth a secret.
