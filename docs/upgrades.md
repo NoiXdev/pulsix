@@ -126,6 +126,20 @@ hand) and installs into `<repo>.galaxy` again on its next sync.
 
 ## Behaviour changes to check after an upgrade
 
+- **7.92, umask under the play uid:** plays and requirements installs under
+  `PULSIX_WORKER_PLAY_UID` create files the worker's group can read even when
+  the worker runs with umask 077: the setuid helper clears only the group
+  read and execute bits of the worker's umask (077 becomes 027; 022, 002 and
+  007 stay). Requirements installs that failed under umask 077 with
+  `openat: permission denied` work after updating the worker image.
+- **7.97, Mercurial requirements sources:** a role whose source starts with
+  `hg+` or that sets `scm: hg`, and a collection named or sourced `hg+…`, is
+  refused before galaxy runs ("Mercurial sources are not supported"). The
+  worker image never had `hg`; a worker installed elsewhere now refuses them
+  too.
+- **7.97, cancelled during git:** a run or sync cancelled while the worker
+  fetches the repository or reads its commit ends as cancelled instead of
+  error.
 - **7.94, repository subpaths:** a subpath is stored without leading,
   trailing or doubled slashes and without `.` segments, and the API answers
   with the stored form (`/ansible/` comes back as `ansible`). Repositories
