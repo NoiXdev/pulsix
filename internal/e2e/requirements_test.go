@@ -12,18 +12,16 @@
 package e2e
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
-	"path"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/worker/requirements/requirementstest"
 )
 
 const requirementsFile = `roles:
@@ -111,7 +109,7 @@ func (s *scenario) driveRequirements() {
 	prefix := "/api/v1/" + s.apiPath()
 	s.pinHostKey()
 
-	roleArchive := roleTarball(s.t, "req_role", map[string]string{
+	roleArchive := requirementstest.RoleTarball(s.t, "req_role", map[string]string{
 		"meta/argument_specs.yml": reqRoleSpecs,
 		"tasks/main.yml":          reqRoleTasks,
 	})
@@ -198,55 +196,4 @@ func stdoutTexts(e jobEventsOut) []string {
 		}
 	}
 	return texts
-}
-
-// roleTarball is a role tarball as galaxy installs it: files (paths
-// relative to the role) under the top directory name, always with a
-// meta/main.yml (galaxy refuses a role tarball without one), which files
-// may replace. Test packages do not share helpers; this mirrors
-// internal/worker/runner/requirements_real_test.go. The result is a string
-// because pushFixtureChange carries file contents as strings.
-func roleTarball(t *testing.T, name string, files map[string]string) string {
-	t.Helper()
-	members := map[string]string{name + "/meta/main.yml": "galaxy_info: {author: pulsix}\ndependencies: []\n"}
-	for rel, content := range files {
-		members[name+"/"+rel] = content
-	}
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	dirs := map[string]bool{}
-	for _, member := range slices.Sorted(func(yield func(string) bool) {
-		for m := range members {
-			if !yield(m) {
-				return
-			}
-		}
-	}) {
-		var parents []string
-		for d := path.Dir(member); d != "." && !dirs[d]; d = path.Dir(d) {
-			dirs[d] = true
-			parents = append(parents, d)
-		}
-		slices.Reverse(parents)
-		for _, d := range parents {
-			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d + "/", Mode: 0o755}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		content := members[member]
-		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: member, Mode: 0o644, Size: int64(len(content))}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(content)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.String()
 }

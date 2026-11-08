@@ -1,6 +1,8 @@
 // Package requirementstest holds fakes of the requirements service's
 // dependencies: a Galaxy that writes a fixed install without running
-// ansible-galaxy, and a Clock that advances by a fixed step.
+// ansible-galaxy, and a Clock that advances by a fixed step. It also holds
+// the galaxy tarball fixtures (TarGz, RoleTarball, EvilCollectionTarball)
+// the runner, e2e and in-image tests share.
 package requirementstest
 
 import (

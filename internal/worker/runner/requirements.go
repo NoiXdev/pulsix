@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 	"strings"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
@@ -30,7 +29,7 @@ import (
 // always sends subpath = repo subpath + "/" + playbook path) and a
 // repository subpath that leads out of the clone.
 func repoSubpath(claimed *string, subpath, playbookPath string) (string, error) {
-	sub, playbook := cleanRepoPath(subpath), cleanRepoPath(playbookPath)
+	sub, playbook := worker.CleanRepoPath(subpath), worker.CleanRepoPath(playbookPath)
 	var derived string
 	switch {
 	case playbook == "":
@@ -42,7 +41,7 @@ func repoSubpath(claimed *string, subpath, playbookPath string) (string, error) 
 	default:
 		return "", fmt.Errorf("the claim's subpath %q does not end with the playbook path %q", subpath, playbookPath)
 	}
-	if claimed != nil && cleanRepoPath(*claimed) != derived {
+	if claimed != nil && worker.CleanRepoPath(*claimed) != derived {
 		return "", fmt.Errorf("the claim's repo subpath %q does not match its subpath %q", *claimed, subpath)
 	}
 	raw := derived
@@ -53,16 +52,6 @@ func repoSubpath(claimed *string, subpath, playbookPath string) (string, error) 
 		return "", fmt.Errorf("the repository subpath %q leads out of the repository", raw)
 	}
 	return derived, nil
-}
-
-// cleanRepoPath normalises a clone-relative slash path: no leading "/",
-// path.Clean semantics, "." as "".
-func cleanRepoPath(p string) string {
-	p = path.Clean(strings.TrimLeft(p, "/"))
-	if p == "." {
-		return ""
-	}
-	return p
 }
 
 // installRequirements is Run's requirements step, right after the playbook

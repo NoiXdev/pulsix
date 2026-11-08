@@ -10,19 +10,13 @@
 package runner
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -32,6 +26,7 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker"
 	"github.com/noixdev/pulsix/internal/worker/requirements"
+	"github.com/noixdev/pulsix/internal/worker/requirements/requirementstest"
 )
 
 // requireAnsibleGalaxy is requireAnsiblePlaybook that also needs the
@@ -49,97 +44,6 @@ func requireAnsibleGalaxy(t *testing.T) string {
 		t.Skipf("%s not installed (set PULSIX_E2E_REAL_ANSIBLE=1 to require it): %v", galaxy, err)
 	}
 	return ""
-}
-
-// tarGz is a gzipped tarball of files (slash path to content), with an
-// entry for every parent directory, in path order.
-func tarGz(t *testing.T, files map[string]string) string {
-	t.Helper()
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	names := slices.Sorted(func(yield func(string) bool) {
-		for name := range files {
-			if !yield(name) {
-				return
-			}
-		}
-	})
-	dirs := map[string]bool{}
-	for _, name := range names {
-		var parents []string
-		for d := path.Dir(name); d != "." && !dirs[d]; d = path.Dir(d) {
-			dirs[d] = true
-			parents = append(parents, d)
-		}
-		slices.Reverse(parents)
-		for _, d := range parents {
-			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d + "/", Mode: 0o755}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		content := files[name]
-		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(content))}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write([]byte(content)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.String()
-}
-
-// roleTarball is a role tarball as galaxy installs it: files (paths
-// relative to the role) under the top directory name, always with a
-// meta/main.yml (galaxy refuses a role tarball without one); files may
-// replace that default.
-func roleTarball(t *testing.T, name string, files map[string]string) string {
-	t.Helper()
-	members := map[string]string{name + "/meta/main.yml": "galaxy_info: {author: pulsix}\ndependencies: []\n"}
-	for rel, content := range files {
-		members[name+"/"+rel] = content
-	}
-	return tarGz(t, members)
-}
-
-// evilCollectionTarball is a collection tarball (type: file) whose
-// MANIFEST.json name climbs from galaxy's install target to the absolute
-// path target: the minimal shape ansible-core 2.21.5 installed at target.
-func evilCollectionTarball(t *testing.T, target string) string {
-	t.Helper()
-	marshal := func(v any) []byte {
-		t.Helper()
-		b, err := json.Marshal(v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return b
-	}
-	filesJSON := marshal(map[string]any{
-		"files":  []any{map[string]any{"name": ".", "ftype": "dir", "chksum_type": nil, "chksum_sha256": nil, "format": 1}},
-		"format": 1,
-	})
-	sum := sha256.Sum256(filesJSON)
-	manifest := marshal(map[string]any{
-		"collection_info": map[string]any{
-			"namespace":    "pulsix_test",
-			"name":         strings.Repeat("../", 32) + strings.TrimPrefix(target, "/"),
-			"version":      "1.0.0",
-			"dependencies": map[string]any{},
-		},
-		"file_manifest_file": map[string]any{
-			"name": "FILES.json", "ftype": "file", "chksum_type": "sha256",
-			"chksum_sha256": hex.EncodeToString(sum[:]), "format": 1,
-		},
-		"format": 1,
-	})
-	return tarGz(t, map[string]string{"MANIFEST.json": string(manifest), "FILES.json": string(filesJSON)})
 }
 
 // debugTask is a task file that prints msg.
@@ -219,8 +123,8 @@ func TestRequirementsInstallAndResolveInRealAnsible(t *testing.T) {
 		"requirements.yml":                   "roles: [{name: vendored_role, src: ./vendor/vendored_role.tar.gz}]\n",
 		"roles/requirements.yml":             "- {name: shadowed_role, src: ../vendor/shadowed_role.tar.gz}\n",
 		"collections/requirements.yml":       "collections: [{name: ../vendor/demo, type: dir}, {name: ../vendor/shadow, type: dir}]\n",
-		"vendor/vendored_role.tar.gz":        roleTarball(t, "vendored_role", map[string]string{"tasks/main.yml": debugTask("from-vendored-role")}),
-		"vendor/shadowed_role.tar.gz":        roleTarball(t, "shadowed_role", map[string]string{"tasks/main.yml": debugTask("from-entry-shadowed-role")}),
+		"vendor/vendored_role.tar.gz":        requirementstest.RoleTarball(t, "vendored_role", map[string]string{"tasks/main.yml": debugTask("from-vendored-role")}),
+		"vendor/shadowed_role.tar.gz":        requirementstest.RoleTarball(t, "shadowed_role", map[string]string{"tasks/main.yml": debugTask("from-entry-shadowed-role")}),
 		"roles/shadowed_role/tasks/main.yml": debugTask("from-repo-role"),
 		"collections/ansible_collections/pulsix_test/shadow/roles/greet/tasks/main.yml": debugTask("from-adjacent-collection"),
 	}
@@ -304,7 +208,7 @@ func TestTraversalFixturesEscapeWithoutIsolationInRealAnsible(t *testing.T) {
 		h := newRealRequirementsRun(t, ansible, map[string]string{
 			"site.yml":                     site,
 			"collections/requirements.yml": "collections: [{name: ../vendor/evil.tar.gz, type: file}]\n",
-			"vendor/evil.tar.gz":           evilCollectionTarball(t, target),
+			"vendor/evil.tar.gz":           requirementstest.EvilCollectionTarball(t, target),
 		})
 		mustNotExist(t, target)
 		_, _, lines, err := h.ensure(t)
@@ -323,11 +227,11 @@ func TestTraversalFixturesEscapeWithoutIsolationInRealAnsible(t *testing.T) {
 		h := newRealRequirementsRun(t, ansible, map[string]string{
 			"site.yml":         site,
 			"requirements.yml": "- {name: outer, src: ./vendor/outer.tar.gz}\n",
-			"vendor/outer.tar.gz": roleTarball(t, "outer", map[string]string{
+			"vendor/outer.tar.gz": requirementstest.RoleTarball(t, "outer", map[string]string{
 				"meta/main.yml":  "galaxy_info: {author: pulsix}\ndependencies:\n  - {src: ./vendor/inner.tar.gz, name: ../../../ESCAPED_DEP}\n",
 				"tasks/main.yml": debugTask("outer"),
 			}),
-			"vendor/inner.tar.gz": roleTarball(t, "inner", map[string]string{"tasks/main.yml": debugTask("inner")}),
+			"vendor/inner.tar.gz": requirementstest.RoleTarball(t, "inner", map[string]string{"tasks/main.yml": debugTask("inner")}),
 		})
 		// Beside the clone: roles/ -> .tmp-<x> -> <repo>.requirements -> <org>.
 		escaped := filepath.Join(filepath.Dir(h.clone()), "ESCAPED_DEP")

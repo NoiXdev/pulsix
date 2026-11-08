@@ -16,8 +16,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
-	"strings"
 
 	"github.com/noixdev/pulsix/internal/pb/workerpb"
 	"github.com/noixdev/pulsix/internal/worker/requirements"
@@ -75,7 +73,7 @@ func (e *SyncExecutor) installRequirements(ctx context.Context, dir, subpath str
 		return requirements.Entry{}, err
 	}
 	defer func() { _ = clone.Close() }()
-	files, err := requirements.Find(clone, cleanSubpath(subpath))
+	files, err := requirements.Find(clone, CleanRepoPath(subpath))
 	if err != nil {
 		return requirements.Entry{}, fmt.Errorf("find requirements: %w", err)
 	}
@@ -97,18 +95,6 @@ func (e *SyncExecutor) installRequirements(ctx context.Context, dir, subpath str
 		RepoCacheDir: env.RepoCacheDir,
 		Line:         line,
 	})
-}
-
-// cleanSubpath is the repository subpath as a clone-relative slash path:
-// the settings store forms like "ansible/", "/ansible" and ".", as the
-// runner normalises them ("" for none). One that leads out of the clone
-// stays so, and the clone's confined root refuses it.
-func cleanSubpath(subpath string) string {
-	p := path.Clean(strings.TrimLeft(subpath, "/"))
-	if p == "." {
-		return ""
-	}
-	return p
 }
 
 // linePayload is a stdout event's payload for one line of text.
