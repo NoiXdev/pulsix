@@ -1,6 +1,7 @@
 package requirements
 
 import (
+	"cmp"
 	"errors"
 	"io/fs"
 	"os"
@@ -70,6 +71,7 @@ func TestCheckSource(t *testing.T) {
 	cases := []struct {
 		src, fileDir string
 		refused      bool
+		want         error // the refusal's sentinel; errOutside when empty
 	}{
 		// The brief's cases.
 		{src: "geerlingguy.apache"},
@@ -156,19 +158,20 @@ func TestCheckSource(t *testing.T) {
 		{src: "x://y"},
 
 		// Glob characters: galaxy expands them for a collection directory.
-		{src: "vendor/*", refused: true},
-		{src: "vendor/c?", refused: true},
-		{src: "vendor/[c]", refused: true},
+		{src: "vendor/*", refused: true, want: errGlob},
+		{src: "vendor/c?", refused: true, want: errGlob},
+		{src: "vendor/[c]", refused: true, want: errGlob},
 		{src: "missing/*"},
 		{src: "https://example.org/r.tar.gz?x=1"},
-		{src: "https://host/r.tar.gz?x=1", refused: true},
+		{src: "https://host/r.tar.gz?x=1", refused: true, want: errGlob},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fileDir+"|"+tc.src, func(t *testing.T) {
 			err := checkSource(linkClone(), testCloneDir, tc.fileDir, tc.src)
 			if tc.refused {
-				if !errors.Is(err, errOutside) {
-					t.Fatalf("checkSource(%q, %q) = %v, want errOutside", tc.fileDir, tc.src, err)
+				want := cmp.Or(tc.want, errOutside)
+				if !errors.Is(err, want) {
+					t.Fatalf("checkSource(%q, %q) = %v, want %v", tc.fileDir, tc.src, err, want)
 				}
 				return
 			}
@@ -215,6 +218,7 @@ func TestCheckSourceFollowsLinksLikeTheKernel(t *testing.T) {
 	cases := []struct {
 		src, fileDir string
 		refused      bool
+		want         error // the refusal's sentinel; errOutside when empty
 	}{
 		{src: "vendor/in/r.tar.gz"},
 		{src: "vendor/in/c/galaxy.yml"},
@@ -242,13 +246,13 @@ func TestCheckSourceFollowsLinksLikeTheKernel(t *testing.T) {
 		{src: "file:///cache/org/repo/top/../other/r.tar.gz", refused: true},
 		{src: "/cache/org/repo/top/../other/r.tar.gz", refused: true},
 		// A glob after a link.
-		{src: "vendor/in/*", refused: true},
+		{src: "vendor/in/*", refused: true, want: errGlob},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fileDir+"|"+tc.src, func(t *testing.T) {
 			err := checkSource(linkClone(), testCloneDir, tc.fileDir, tc.src)
-			if tc.refused != errors.Is(err, errOutside) || !tc.refused && err != nil {
-				t.Fatalf("checkSource(%q, %q) = %v, want refused %v", tc.fileDir, tc.src, err, tc.refused)
+			if want := cmp.Or(tc.want, errOutside); tc.refused != errors.Is(err, want) || !tc.refused && err != nil {
+				t.Fatalf("checkSource(%q, %q) = %v, want refused %v (%v)", tc.fileDir, tc.src, err, tc.refused, want)
 			}
 		})
 	}

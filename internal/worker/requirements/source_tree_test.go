@@ -13,11 +13,13 @@ import (
 // treeFS is a clone whose col/unreadable cannot be listed.
 type treeFS struct{ refusingFS }
 
-func (f treeFS) ReadDir(name string) ([]fs.DirEntry, error) {
+func (f treeFS) Open(name string) (fs.File, error) {
 	if name == "col/unreadable" {
-		return nil, &fs.PathError{Op: "readdir", Path: name, Err: errors.New("boom")}
+		return &funcDir{name: name, read: func(int) ([]fs.DirEntry, error) {
+			return nil, &fs.PathError{Op: "readdir", Path: name, Err: errors.New("boom")}
+		}}, nil
 	}
-	return f.MapFS.ReadDir(name)
+	return f.MapFS.Open(name)
 }
 
 // treeClone holds directory sources (collections of type dir and subdirs)

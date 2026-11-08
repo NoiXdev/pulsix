@@ -1,8 +1,10 @@
 package requirements
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"slices"
@@ -55,7 +57,8 @@ func (e *linkOutsideError) Unwrap() error { return errOutside }
 // walked as well, once per link target (seen), so a loop ends. A .git
 // directory is not walked: galaxy skips it (collection/__init__.py:1203)
 // and the clone's own .git is refused by resolve. The walk is bounded by
-// lim, its entries spent from the budget.
+// lim, its entries spent from the budget as each directory is read in
+// batches (readDir).
 func (c *sourceCheck) walkTree(root string) error {
 	type dir struct {
 		path  string
@@ -73,14 +76,11 @@ func (c *sourceCheck) walkTree(root string) error {
 		if err := c.spend(); err != nil {
 			return err
 		}
-		list, err := fs.ReadDir(c.clone, orDot(d.path))
+		list, err := c.readDir(d.path, &entries)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", orDot(d.path), err)
+			return err
 		}
 		for _, e := range list {
-			if entries++; entries > c.lim.entries {
-				return errTooManyEntries
-			}
 			if err := c.spend(); err != nil {
 				return err
 			}
@@ -105,6 +105,43 @@ func (c *sourceCheck) walkTree(root string) error {
 		}
 	}
 	return nil
+}
+
+// readDir lists the directory name (clone-relative) in batches of listChunk
+// entries, adding each batch to *entries as it arrives and ending with
+// errTooManyEntries as soon as that passes the budget, so a directory with
+// millions of entries is never held whole. The context is checked between
+// batches. The entries are sorted by name. A read error is wrapped with the
+// directory's name.
+func (c *sourceCheck) readDir(name string, entries *int) ([]fs.DirEntry, error) {
+	f, err := c.clone.Open(orDot(name))
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", orDot(name), err)
+	}
+	defer func() { _ = f.Close() }()
+	d, ok := f.(fs.ReadDirFile)
+	if !ok {
+		return nil, fmt.Errorf("read %s: not a directory", orDot(name))
+	}
+	var list []fs.DirEntry
+	for {
+		if c.ctx.Err() != nil {
+			return nil, context.Cause(c.ctx)
+		}
+		batch, err := d.ReadDir(listChunk)
+		if *entries += len(batch); *entries > c.lim.entries {
+			return nil, errTooManyEntries
+		}
+		list = append(list, batch...)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read %s: %w", orDot(name), err)
+		}
+	}
+	slices.SortFunc(list, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return list, nil
 }
 
 func orDot(p string) string {
@@ -146,7 +183,8 @@ func sourceError(name, root, src string, err error) error {
 			msg: fmt.Sprintf("%s: the source %q holds the link %q, which leads outside the repository", name, src, relTo(root, link.link)),
 			err: errOutside,
 		}
-	case errors.Is(err, errOutside), errors.Is(err, errTooManyEntries), errors.Is(err, errTooDeep), errors.Is(err, errTooManyLookups):
+	case errors.Is(err, errOutside), errors.Is(err, errUnreadable), errors.Is(err, errGlob),
+		errors.Is(err, errTooManyEntries), errors.Is(err, errTooDeep), errors.Is(err, errTooManyLookups):
 		return fmt.Errorf("%s: the source %q %w", name, src, err)
 	}
 	return fmt.Errorf("%s: the source %q: %w", name, src, err)

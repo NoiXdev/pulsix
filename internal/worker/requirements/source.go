@@ -15,6 +15,15 @@ import (
 // owner answer 2).
 var errOutside = errors.New("is outside the repository")
 
+// errUnreadable: a part of the source's path cannot be looked at because the
+// worker may not (permission denied), so whether it leaves the clone is not
+// known. The source is refused all the same, but not as outside.
+var errUnreadable = errors.New("cannot be read: permission denied")
+
+// errGlob: a part of the source itself holds a glob character, which galaxy
+// may expand for a collection directory and this check does not follow.
+var errGlob = errors.New("holds a glob character (*, ? or [), which is not supported")
+
 // maxLinkHops bounds the links one path resolves through, as the kernel's
 // own limit does; a loop ends there.
 const maxLinkHops = 40
@@ -138,7 +147,9 @@ func (c *sourceCheck) spend() error {
 // that does not exist is left to galaxy: it then is a name, or galaxy
 // fails. Other URLs (git+file:// included) are left to galaxy and git.
 // A path that is a directory is walked (walkTree): galaxy reads its files.
-// The error is errOutside, a bound's sentinel, or the context's error.
+// The error is errOutside, errUnreadable (the worker may not look at a part
+// of the path), errGlob (a glob character in the source), a bound's
+// sentinel, or the context's error.
 func (c *sourceCheck) source(cloneDir, fileDir, src string) error {
 	if err := c.path(cloneDir, fileDir, src, true); err != nil {
 		return err
@@ -236,8 +247,10 @@ func (c *sourceCheck) resolve(dir, src []part) (reach, error) {
 		case missing != "":
 			done = append(done, p.name)
 			continue
-		case strings.EqualFold(p.name, ".git"), p.glob && strings.ContainsAny(p.name, "*?["):
+		case strings.EqualFold(p.name, ".git"):
 			return reach{}, errOutside
+		case p.glob && strings.ContainsAny(p.name, "*?["):
+			return reach{}, errGlob
 		}
 		cur := path.Join(path.Join(done...), p.name)
 		var info fs.FileInfo
@@ -253,7 +266,7 @@ func (c *sourceCheck) resolve(dir, src []part) (reach, error) {
 			done = append(done, p.name)
 			continue
 		case err != nil:
-			return reach{}, errOutside
+			return reach{}, refusalOf(err)
 		case info.Mode()&fs.ModeSymlink != 0:
 			hops++
 			if !canLink || hops > maxLinkHops {
@@ -290,15 +303,26 @@ type reach struct {
 }
 
 // confirm asks the clone's own Stat about a path reached by resolve: not
-// there is fine, any other refusal is outside.
+// there is fine, a permission error is errUnreadable, any other refusal is
+// outside.
 func (c *sourceCheck) confirm(name string) error {
 	if err := c.spend(); err != nil {
 		return err
 	}
 	if _, err := c.clone.Stat(orDot(name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return errOutside
+		return refusalOf(err)
 	}
 	return nil
+}
+
+// refusalOf is the sentinel for a lookup the clone failed: the worker's own
+// lack of permission is errUnreadable, anything else the clone's confined
+// root refuses is errOutside.
+func refusalOf(err error) error {
+	if errors.Is(err, fs.ErrPermission) {
+		return errUnreadable
+	}
+	return errOutside
 }
 
 // fileURLPath is the local path urllib opens for src (Python 3.14,
