@@ -48,6 +48,20 @@ an operator can count on. The operator's steps are in
   creating runs without `job_hosts` rows, and nothing fills them in later:
   those runs never appear in their hosts' run lists. Stop every manager
   instance before the new version starts.
+- **Migration 00083 rewrites stored repository subpaths (7.94).** Every
+  subpath of an organization's repository and of an installation's
+  repository definition loses its empty and `.` segments: `/ansible/`,
+  `./ansible` and `ansible//` become `ansible`, and `/` or `.` becomes none.
+  The old spellings named the same directory, so an older release reads the
+  new values the same way and a downgrade needs no reverse step. A
+  definition could hold any subpath before; one with `..`, characters other
+  than letters, digits, `.`, `_`, `/` and `-`, or more than 200 characters
+  stays as it was: its repositories' runs and syncs fail as before, and an
+  organization cannot save its projection (not even to set a credential)
+  until the definition is saved with a valid subpath. A manager of an older
+  version still running while the new one migrates stores a repository saved
+  through it as sent again; stop every manager instance before the new
+  version starts.
 
 ## A database newer than the binary is refused
 
@@ -112,6 +126,15 @@ hand) and installs into `<repo>.galaxy` again on its next sync.
 
 ## Behaviour changes to check after an upgrade
 
+- **7.94, repository subpaths:** a subpath is stored without leading,
+  trailing or doubled slashes and without `.` segments, and the API answers
+  with the stored form (`/ansible/` comes back as `ansible`). Repositories
+  whose runs failed on a subpath starting with `/` run again after the
+  upgrade; sync each one whose variable sources say "the repository subpath
+  could not be opened" to read them. An installation's repository
+  definition now refuses the subpaths an organization's repository always
+  refused (`..`, characters other than letters, digits, `.`, `_`, `/` and
+  `-`, more than 200 characters) with 400.
 - **7.75, shared job template definitions:** a run receives only the values
   of fields the extra-vars schema declares. A value a shared definition held
   under a key its schema does not declare is no longer sent since 7.75, and
