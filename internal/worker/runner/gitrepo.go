@@ -295,7 +295,8 @@ func redactURLs(s, url string) string {
 // HeadCommit is the commit the clone at dir is at (git rev-parse HEAD in
 // the clone's own .git: a directory that is no clone has none, even below
 // another repository). Its failure carries the same redacted diagnostic as
-// the fetch's.
+// the fetch's. A cancel ends it with an error wrapping the context's own,
+// which installRequirements and the worker loop map to cancelled.
 func (r *Runner) HeadCommit(ctx context.Context, dir string) (string, error) {
 	gitBin := r.GitBin
 	if gitBin == "" {
@@ -324,7 +325,12 @@ func runGit(ctx context.Context, gitBin, dir string, env []string, redactURL str
 	return runGitOut(ctx, gitBin, dir, env, redactURL, nil, args...)
 }
 
-// runGitOut is runGit with git's standard output written to stdout.
+// runGitOut is runGit with git's standard output written to stdout. A git
+// the context ended (a cancelled run or sync kills it, or it never started)
+// fails as "git <cmd> stopped" wrapping the context's error, checked before
+// the exit code: a killed git is an ExitError with code -1, which would read
+// as an ordinary failure. The loop maps an error wrapping context.Canceled
+// to a cancelled job, never to an error.
 func runGitOut(ctx context.Context, gitBin, dir string, env []string, redactURL string, stdout io.Writer, args ...string) error {
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, gitBin, args...)
@@ -333,6 +339,9 @@ func runGitOut(ctx context.Context, gitBin, dir string, env []string, redactURL 
 	cmd.Stdout = stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("git %s stopped: %w", args[0], ctxErr)
+		}
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return fmt.Errorf("git %s: exit %d: %s", args[0], exit.ExitCode(), gitDiagnostic(stderr.String(), redactURL))
