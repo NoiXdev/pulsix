@@ -20,9 +20,9 @@ import { useT } from '../../../i18n/useT.ts';
  * and the revision its save sends follow useRevisionDraft (backlog 7.89):
  * an unedited draft follows the group, an edited one saves on the revision
  * it was edited on (or one the page's own writes moved it to). A save's
- * problems and stale notice show only beside the draft (generation and
- * revision) it was started on. Any other draft shows neither (backlog
- * 7.91). */
+ * stale notice and the problems it was refused with show only beside the
+ * generation it was started on, whatever revision the draft has followed
+ * since. Any other generation shows neither (backlog 7.91). */
 export function SchemaSection({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
@@ -51,7 +51,7 @@ export function SchemaSection({ org, group, canWrite }: { org: string; group: In
 
   async function onSave() {
     const ticket = startSave();
-    setReported({ on: ticket, problems: [] });
+    setReported({ on: ticket, problems: [], answer: false });
     try {
       const res = await save.mutateAsync({ schema: draft, revision });
       own.record({ from: revision, to: res.group.revision });

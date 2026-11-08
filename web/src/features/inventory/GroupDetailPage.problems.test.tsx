@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { group, refetch, routes, renderAt, SCHEMA, stale } from './groupPageTestKit.tsx';
+import { addField, group, refetch, routes, renderAt, SCHEMA, stale } from './groupPageTestKit.tsx';
 
 /** A schema someone else saved: one more group field. */
 const OTHER = { fields: [...SCHEMA.fields, { name: 'region', type: 'string' }] };
@@ -48,6 +48,8 @@ async function saveValues(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByLabelText('env');
   await user.click(screen.getByRole('button', { name: 'Save values' }));
 }
+
+const schemaSaveEnabled = () => waitFor(() => expect(screen.getByRole('button', { name: 'Save schema' })).toBeEnabled());
 
 const valuesSaveEnabled = () => waitFor(() => expect(screen.getByRole('button', { name: 'Save values' })).toBeEnabled());
 
@@ -123,5 +125,51 @@ describe('GroupDetailPage problems', () => {
     await valuesSaveEnabled();
     expect(screen.getByLabelText('env')).toHaveValue('staging');
     expect(within(valuesRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+  });
+
+  it("drops the stale notice of a refused schema save when someone else's schema replaced the draft meanwhile", async () => {
+    const user = userEvent.setup();
+    const { state, qc } = heldSavePage('schema');
+    await screen.findByRole('table', { name: 'Fields' });
+    await schemaSaveEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save schema' }));
+    await waitFor(() => expect(state.puts).toHaveLength(1));
+
+    state.current = group({ revision: 4, schema: OTHER });
+    await refetch(qc);
+    state.answer = stale();
+    state.release();
+
+    // The draft already shows the schema that made the save stale.
+    await schemaSaveEnabled();
+    expect(within(schemaRegion()).getByText('region')).toBeInTheDocument();
+    expect(within(schemaRegion()).queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+  });
+
+  it("keeps a refused schema draft's problems while it follows the page's own values save", async () => {
+    const user = userEvent.setup();
+    let current = group();
+    mockApi(
+      routes('admin', {
+        'GET /api/v1/orgs/acme/inventory/groups/g1': () => current,
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/schema': () => refused('body.schema.fields[0].name', 'is taken'),
+        'PUT /api/v1/orgs/acme/inventory/groups/g1/vars': (req: MockRequest) => {
+          current = group({ revision: 4, vars: (req.body as { vars: Record<string, unknown> }).vars });
+          return current;
+        },
+      }),
+    );
+    renderAt('/o/acme/groups/g1');
+    await screen.findByRole('table', { name: 'Fields' });
+    await addField(user);
+    await schemaSaveEnabled();
+    await user.click(screen.getByRole('button', { name: 'Save schema' }));
+    expect(await within(schemaRegion()).findByText(/The schema has 1 problem/)).toBeInTheDocument();
+
+    // The page's own values save moves the edited draft from 3 to 4; its
+    // content, which the problems describe, is unchanged.
+    await saveValues(user);
+    await screen.findByText('Group values saved');
+    expect(within(schemaRegion()).getByText(/The schema has 1 problem/)).toBeInTheDocument();
   });
 });

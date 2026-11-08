@@ -47,11 +47,12 @@ const toProblems = (ps: InventoryGroup['problems']): Problem[] => (ps ?? []).map
 /** ValuesForm edits the group's values. The draft and the revision its save
  * sends follow useRevisionDraft (backlogs 7.86, 7.90): an unedited draft
  * follows the group, an edited one saves on the revision it was edited on
- * (or one the page's own writes moved it to). A save's problems and stale
- * notice show only beside the draft (generation and revision) it was
+ * (or one the page's own writes moved it to). A save's stale notice and
+ * the problems it was refused with show only beside the generation it was
  * started on, an answer's problems only beside the draft it rebuilt while
- * that draft is on the answer's revision. A draft rebuilt any other way
- * shows the group's problems (backlog 7.91). */
+ * that draft is on the answer's revision (then the group's). Until a save
+ * reports anything, and after a rebuild that no answer made, the form shows
+ * the group's current problems, also beside an edit (backlog 7.91). */
 function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGroup; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
@@ -77,7 +78,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
   const [seen, setSeen] = useState(generation);
   if (seen !== generation || answered) {
     if (seen !== generation) {
-      setReported(answered && answered.revision === revision ? { on: { generation, revision }, problems: answered.problems } : null);
+      setReported(answered && answered.revision === revision ? { on: { generation, revision }, problems: answered.problems, answer: true } : null);
     }
     setSeen(generation);
     setAnswered(null);
@@ -96,7 +97,7 @@ function ValuesForm({ org, group, canWrite }: { org: string; group: InventoryGro
 
   async function onSave() {
     const ticket = startSave();
-    setReported({ on: ticket, problems: [] });
+    setReported({ on: ticket, problems: [], answer: false });
     try {
       const res = await save.mutateAsync({ vars: declaredOnly(fields, draft), revision });
       // The page's own step, which an edited draft may follow.
