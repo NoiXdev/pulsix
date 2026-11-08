@@ -40,7 +40,7 @@ describe('validateRepoInput mirrors the server', () => {
 
   it('rejects a subpath with ..', () => {
     expect(validateRepoInput({ name: 'infra', url: 'https://x.example/a.git', branch: '', subpath: '../etc' }).subpath).toBe(
-      'invalid subpath: may be empty or contain letters, digits, dots, slashes and hyphens (up to 200 characters), no ".."',
+      'invalid subpath: may be empty or contain letters, digits, dots, underscores, slashes and hyphens (up to 200 characters), no ".."',
     );
   });
 });

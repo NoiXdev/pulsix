@@ -4,6 +4,7 @@ import { FormPage } from '../../../ui/form-page.tsx';
 import { Input } from '../../../ui/input.tsx';
 import { Label } from '../../../ui/label.tsx';
 import { useToast } from '../../../ui/toastContext.ts';
+import { subpathError } from '../../repos/validate.ts';
 import { CreateGate, DefinitionLoader } from './DefinitionLoader.tsx';
 import {
   useCreateRepoDefinition,
@@ -46,14 +47,12 @@ interface DefinitionFormValues {
 
 /**
  * validateDefinitionInput mirrors repoDefinitionBody's own bounds
- * (internal/api/shared_handlers.go: minLength/maxLength only, no pattern) —
- * unlike features/repos/validate.ts, which mirrors internal/repos/
- * service.go's own regex checks on an organization's repository.
- * shared.RepoDefinitionInput deliberately enforces no format beyond huma's
- * own schema layer (see shared_handlers.go's own comment on
- * repoDefinitionBody), so reusing repos/validate.ts's stricter patterns
- * here would reject input the server would accept — this stays only as
- * strict as the server actually is.
+ * (internal/api/shared_handlers.go: minLength/maxLength only, no pattern)
+ * for name, url and branch, and the subpath rule an organization's
+ * repository has (features/repos/validate.ts's subpathError), which
+ * shared.Service applies to a definition since backlog 7.94. The other
+ * fields stay only as strict as the server is: repos/validate.ts's name and
+ * url patterns would reject input a definition accepts.
  */
 function validateDefinitionInput(
   values: DefinitionFormValues,
@@ -66,6 +65,10 @@ function validateDefinitionInput(
   else if (values.url.length > 500) errors.url = t.validation.maxChars(500);
   if (values.branch.length > 100) errors.branch = t.validation.maxChars(100);
   if (values.subpath.length > 200) errors.subpath = t.validation.maxChars(200);
+  else {
+    const subpath = subpathError(values.subpath, t);
+    if (subpath) errors.subpath = subpath;
+  }
   return errors;
 }
 

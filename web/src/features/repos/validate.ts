@@ -32,10 +32,17 @@ export function validateRepoInput(values: RepoFormValues, t: Messages): Partial<
   if (values.branch !== '' && (values.branch.includes('..') || !BRANCH_PATTERN.test(values.branch))) {
     errors.branch = t.repos.validate.branch;
   }
-  if (values.subpath.includes('..') || !SUBPATH_PATTERN.test(values.subpath)) {
-    errors.subpath = t.repos.validate.subpath;
-  }
+  errors.subpath = subpathError(values.subpath, t);
   return errors;
+}
+
+/** subpathError mirrors internal/repos/subpath.go's CanonicalSubpath
+ * refusals, which an installation's repository definition shares since
+ * backlog 7.94. Leading, trailing and doubled slashes are fine: the server
+ * drops them. */
+export function subpathError(subpath: string, t: Messages): string | undefined {
+  if (subpath.includes('..') || !SUBPATH_PATTERN.test(subpath)) return t.repos.validate.subpath;
+  return undefined;
 }
 
 function urlError(url: string, t: Messages): string | undefined {

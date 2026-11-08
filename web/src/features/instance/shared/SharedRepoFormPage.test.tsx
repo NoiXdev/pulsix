@@ -65,6 +65,28 @@ describe('SharedRepoFormPage — new', () => {
     expect(router.state.location.pathname).toBe(`${LIST}/new`);
   });
 
+  // Backlog 7.94: a definition's subpath follows an organization's
+  // repository's rule, so the form says so before the server refuses it.
+  it('does not submit a subpath with ".." and names the rule', async () => {
+    const user = userEvent.setup();
+    let posts = 0;
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/repos/definitions': { definitions: [] },
+      'POST /api/v1/admin/repos/definitions': () => {
+        posts += 1;
+        return { definition: def() };
+      },
+    });
+    renderPage(`${LIST}/new`);
+    await user.type(await screen.findByLabelText('Name'), 'infra-base');
+    await user.type(screen.getByLabelText('URL'), 'https://git.example/provider/infra-base.git');
+    await user.type(screen.getByLabelText('Subdirectory'), '../outside');
+    await user.click(screen.getByRole('button', { name: 'Create definition' }));
+    expect(await screen.findByText(/^invalid subpath: may be empty/)).toBeInTheDocument();
+    expect(posts).toBe(0);
+  });
+
   // Spec decision 7: a name collision names the colliding organizations —
   // to an instance admin only, which this screen is. The server composes
   // the full sentence (mapSharedErr, internal/api/shared_handlers.go)

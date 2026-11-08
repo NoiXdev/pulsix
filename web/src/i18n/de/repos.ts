@@ -70,6 +70,6 @@ export const deRepos: Messages['repos'] = {
     urlWhitespace: 'ungültige URL: darf keine Leerzeichen enthalten',
     urlLength: (max: number) => `ungültige URL: länger als ${max} Zeichen`,
     branch: 'ungültiger Branch: darf Buchstaben, Ziffern, Punkte, Schrägstriche und Bindestriche enthalten (1–100 Zeichen), kein „..“',
-    subpath: 'ungültiges Unterverzeichnis: darf leer sein oder Buchstaben, Ziffern, Punkte, Schrägstriche und Bindestriche enthalten (bis zu 200 Zeichen), kein „..“',
+    subpath: 'ungültiges Unterverzeichnis: darf leer sein oder Buchstaben, Ziffern, Punkte, Unterstriche, Schrägstriche und Bindestriche enthalten (bis zu 200 Zeichen), kein „..“',
   },
 };

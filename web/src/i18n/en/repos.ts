@@ -67,6 +67,6 @@ export const enRepos = {
     urlWhitespace: 'invalid url: must not contain whitespace',
     urlLength: (max: number) => `invalid url: exceeds ${max} characters`,
     branch: 'invalid branch: may contain letters, digits, dots, slashes and hyphens (1–100 characters), no ".."',
-    subpath: 'invalid subpath: may be empty or contain letters, digits, dots, slashes and hyphens (up to 200 characters), no ".."',
+    subpath: 'invalid subpath: may be empty or contain letters, digits, dots, underscores, slashes and hyphens (up to 200 characters), no ".."',
   },
 };
