@@ -189,6 +189,28 @@ func TestGalaxyLineWriterNeverCutsAWord(t *testing.T) {
 	}
 }
 
+// TestGalaxyLineWriterKeepsASlashPasswordWhole (backlog 7.98): a password
+// with an unencoded / straddling the window edge is still one word, so the
+// line that carries it is redacted whole.
+func TestGalaxyLineWriterKeepsASlashPasswordWhole(t *testing.T) {
+	pre := strings.Repeat("y", maxGalaxyLine-16)
+	url := "https://user:s3/cr3t@host/r.git"
+	in := pre + " " + url + "\n"
+	if edge := strings.Index(in, "s3/cr3t"); edge >= maxGalaxyLine || edge+len("s3/cr3t") <= maxGalaxyLine {
+		t.Fatalf("the window edge %d must fall inside the password at %d", maxGalaxyLine, edge)
+	}
+	var got collect
+	writeAll(t, &lineWriter{send: got.line}, in)
+	if want := []string{pre, url}; !slices.Equal(got.lines, want) {
+		t.Fatalf("lines = %v, want %v", lens(got.lines), lens(want))
+	}
+	for _, l := range got.lines {
+		if r := urlcred.Redact(l); strings.Contains(r, "s3/cr3t") || strings.Contains(r, "cr3t") {
+			t.Errorf("a redacted line still holds the password: %.60q", r)
+		}
+	}
+}
+
 // TestGalaxyLineWriterTreatsTheEdgeTheSameWhereverTheWritesSplit: a line, or
 // a word, of exactly maxGalaxyLine bytes is not over the bound, so it is sent
 // whole and the white space behind it ends it.

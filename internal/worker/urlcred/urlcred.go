@@ -6,13 +6,17 @@ package urlcred
 import "regexp"
 
 var (
-	// schemeUserinfo matches the userinfo of a URL with a scheme. A match
-	// holds no white space, which the galaxy line splitter relies on: it
-	// cuts a line only at white space, so it never splits a match.
-	schemeUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^@/\s?#]+@`)
+	// schemeUserinfo matches everything from a URL's scheme separator up to
+	// the last @ before the next white space: a credential may hold an
+	// unencoded /, ? or # (backlog 7.98), which a URL parser would take for
+	// the end of the userinfo, but git and galaxy print the URL as written.
+	// A match holds no white space, which the galaxy line splitter relies
+	// on: it cuts a line only at white space, so it never splits a match.
+	schemeUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)\S*@`)
 	// userPassword matches user:password@ anywhere, scp-style addresses
-	// (deploy:secret@host:repo) included.
-	userPassword = regexp.MustCompile(`[^@/\s:]+:[^@/\s]+@`)
+	// (deploy:secret@host:repo) included; the password may hold a / but
+	// not start with one, so a scheme's "://" is never taken for a user.
+	userPassword = regexp.MustCompile(`[^@/\s:]+:[^@/\s][^@\s]*@`)
 )
 
 // Redact replaces the credentials in s with [redacted].
@@ -23,7 +27,9 @@ var (
 // scp-style user (git@github.com:org/repo.git) names no secret and stays.
 //
 // Over-redaction is accepted: a diagnostic is never worth a secret, so
-// anything shaped like user:password@ goes, mailto:a@b.c included.
+// anything shaped like user:password@ goes, mailto:a@b.c included, and so
+// does the host of a URL that carries an @ further on, in its path or
+// query (https://registry/@scope/pkg becomes https://[redacted]@scope/pkg).
 func Redact(s string) string {
 	s = schemeUserinfo.ReplaceAllString(s, "${1}[redacted]@")
 	return userPassword.ReplaceAllString(s, "[redacted]@")
