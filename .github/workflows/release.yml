@@ -2,11 +2,10 @@
 # workflow (NoiXdev/github-workflows, create_docker_changelog_version_release):
 # it computes the next version, writes it into version.json, builds the
 # multi-architecture manager and worker images with that version as their
-# VERSION build argument, pushes both to Docker Hub (and to Harbor once
-# vars.HARBOR_NAMESPACE is set), commits the version and CHANGELOG.md to
-# main, tags, creates the GitHub release and announces it on Discord. One
-# version for everything (the v0.1 core plan's rule): the compose stack runs
-# both images under one PULSIX_VERSION.
+# VERSION build argument, pushes both to Docker Hub, commits the version and
+# CHANGELOG.md to main, tags, creates the GitHub release and announces it on
+# Discord. One version for everything (the v0.1 core plan's rule): the
+# compose stack runs both images under one PULSIX_VERSION.
 #
 # Started by hand from the Actions tab. A pre-release (prerelease_id rc, beta
 # or alpha) publishes its version tag only; `latest` stays on the last final
@@ -84,7 +83,7 @@ jobs:
     # Pinned by commit, never @main (backlog 7.16): `secrets: inherit` hands
     # the registry credentials and the Discord webhook to whatever this
     # reference resolves to.
-    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@22bede08a78f3a9757587f46a31796963d01b948 # main, 2026-11-09
+    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@f7196176a79585ae7dccf8370ee72d75ad15610a # main, 2026-11-09
     with:
       bump: ${{ inputs.bump }}
       prerelease_id: ${{ inputs.prerelease_id != 'none' && inputs.prerelease_id || '' }}
@@ -99,8 +98,4 @@ jobs:
       extra_image: pulsix-worker
       extra_image_dockerfile: deploy/worker/Dockerfile
       version_build_arg: VERSION
-      # Harbor is opt-in through the repository variable HARBOR_NAMESPACE
-      # (with the secrets HARBOR_USERNAME and HARBOR_PASSWORD); unset, the
-      # images go to Docker Hub only.
-      harbor_namespace: ${{ vars.HARBOR_NAMESPACE }}
     secrets: inherit
