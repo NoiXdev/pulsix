@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a problem with Pulsix
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug report. **Do not** use this template for security
+        vulnerabilities — see [SECURITY.md](../blob/main/SECURITY.md).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Web interface
+        - API
+        - Manager
+        - Worker (playbook runs, remote checks)
+        - Agent
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Pulsix version
+      description: Release tag or commit SHA (e.g. v0.9.0 or 6f330bc); for a worker or agent, its own version too.
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running it?
+      options:
+        - Docker Compose (official images)
+        - Self-built from source
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Trimmed log output or browser console errors. Remove passwords, tokens and host names you do not want to share.
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, related issues, environment quirks, etc.
