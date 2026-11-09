@@ -72,8 +72,10 @@ func galaxyBin(ansibleBin string) string {
 // An install as the play uid is safe only while no play runs as that uid
 // at the same time: a play could write into the temp entry's 2770
 // directories, and the take-over cannot tell. The worker loop runs one job
-// at a time (loop.go, PULSIX_MAX_CONCURRENT above 1 only warns), so none
-// does today; real concurrency must serialize installs against plays.
+// at a time and ends every play-uid process between jobs (loop.go,
+// PULSIX_MAX_CONCURRENT above 1 only warns), so none does today; running
+// jobs side by side (backlog 7.100) must serialize installs against plays
+// or give installs a uid of their own.
 func (g *Galaxy) Install(ctx context.Context, in requirements.Install, line func(string)) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("ansible-galaxy %s install not started: %w", in.Kind, err)

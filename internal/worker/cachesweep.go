@@ -23,9 +23,9 @@
 // a repository's name; the next sweep removes the leftover.
 //
 // The loop runs one job at a time and sweeps between them, so no run uses
-// a cache while it goes. A large removal delays the next claim, and a stop
-// waits for it; a worker killed during one leaves a ".removing-*" name. Running jobs side by side (backlog 7.93) has to
-// keep that true.
+// a cache while it goes; running jobs side by side (backlog 7.100) has to
+// keep that true. A large removal delays the next claim, and a stop waits
+// for it; a worker killed during one leaves a ".removing-*" name.
 package worker
 
 import (
