@@ -288,10 +288,9 @@ func TestRepoHookFiresWithAnEmptyBody(t *testing.T) {
 }
 
 // TestHookBodySizeBoundary covers Task 10 review Minor 1: spec §3 accepts
-// a body up to and including 1 MiB. huma's MaxBytesReader treats a body
-// that reads exactly maxBytes as "too large" regardless of whether more
-// data follows, so the operation's MaxBodyBytes must be set one byte over
-// triggers.MaxBodyBytes for the boundary itself to be accepted.
+// a body up to and including 1 MiB, and refuses one byte more with 413.
+// It pins the boundary against huma's own body limit, whose off-by-one
+// changed in v2.40.0.
 func TestHookBodySizeBoundary(t *testing.T) {
 	f := newRunFixture(t, "hook-boundary")
 	c := f.createTrigger(t, func(in *triggers.Input) { in.Mapping = triggers.Mapping{} })

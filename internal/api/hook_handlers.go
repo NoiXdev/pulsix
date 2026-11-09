@@ -51,12 +51,12 @@ func registerHookRoutes(hapi huma.API, deps Deps) {
 	} {
 		huma.Register(hapi, huma.Operation{
 			OperationID: h.op, Method: http.MethodPost, Path: h.path, Summary: h.summary, Tags: []string{"Webhooks"},
-			// +1: spec §3 accepts a body up to and including 1 MiB, but
-			// huma's MaxBytesReader treats a body that reads exactly
-			// MaxBodyBytes as too large regardless of whether more data
-			// follows it, so the boundary itself needs one extra byte of
-			// headroom to be accepted (Task 10 review, Minor 1).
-			DefaultStatus: http.StatusAccepted, MaxBodyBytes: triggers.MaxBodyBytes + 1,
+			// Spec §3 accepts a body up to and including 1 MiB. huma reads
+			// the body through http.MaxBytesReader since v2.40.0, which
+			// accepts exactly MaxBodyBytes; the extra byte of headroom older
+			// versions needed (Task 10 review, Minor 1) would now let
+			// 1 MiB + 1 through (TestHookBodySizeBoundary).
+			DefaultStatus: http.StatusAccepted, MaxBodyBytes: triggers.MaxBodyBytes,
 		}, func(ctx context.Context, in *hookInput) (*hookOutput, error) {
 			res, err := deps.Triggers.Receive(ctx, triggers.Request{
 				TriggerID: in.ID, Kind: h.kind, Body: in.RawBody, Header: in.header.Get,
