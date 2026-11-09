@@ -27,6 +27,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Pinned on purpose, see docs/dependency-exceptions.md; lift together.
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       js-minor-patch:
         update-types:
