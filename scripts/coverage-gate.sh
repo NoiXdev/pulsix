@@ -20,9 +20,10 @@
 # below — never silently, always printed as SKIP so the exclusion is
 # visible in CI output.
 #
-# The two test harnesses, internal/api/apitest and internal/db/testdb, are
-# excluded the same way (backlog 1.36): they are infrastructure other
-# packages' tests run on, measured through those tests.
+# The test harnesses, internal/api/apitest, internal/db/testdb and
+# internal/worker/requirements/requirementstest, are excluded the same way
+# (backlog 1.36): they are infrastructure other packages' tests run on,
+# measured through those tests.
 #
 # Machine-generated packages (sqlc, protoc, mockgen, ...) are excluded
 # too, but the exclusion is EARNED BY EVIDENCE IN THE FILES, never
@@ -160,13 +161,15 @@ awk -v module="$module" -v generated="$generated_list" '
 			next
 		}
 
-		# Test harnesses (backlog 1.36): internal/api/apitest and
-		# internal/db/testdb are infrastructure the tests of other packages
-		# run on, the way cmd/... is wiring; those tests exercise them, no
+		# Test harnesses (backlog 1.36): internal/api/apitest,
+		# internal/db/testdb and internal/worker/requirements/requirementstest
+		# (the fake galaxy and the tarball builder, 7.88) are infrastructure
+		# the tests of other packages run on, the way cmd/... is wiring;
+		# those tests exercise them, no
 		# suite of their own measures them. Placed after the FAIL check, so
 		# a failing harness test still fails the gate. (No apostrophes in
 		# this awk program: it sits inside single quotes.)
-		if (pkg == module "/internal/api/apitest" || pkg == module "/internal/db/testdb") {
+		if (pkg == module "/internal/api/apitest" || pkg == module "/internal/db/testdb" || pkg == module "/internal/worker/requirements/requirementstest") {
 			printf "SKIP  %-55s (test harness, exercised by the tests of other packages, excluded from gate)\n", pkg
 			next
 		}

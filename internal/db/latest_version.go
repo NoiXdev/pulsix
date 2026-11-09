@@ -12,7 +12,12 @@ import (
 // binary: the schema version a database is at once Migrate has run. A
 // restore compares a backup's schema version against it.
 func LatestVersion() (int64, error) {
-	entries, err := fs.ReadDir(migrations, "migrations")
+	return latestVersionIn(migrations)
+}
+
+// latestVersionIn is LatestVersion over the migrations directory of fsys.
+func latestVersionIn(fsys fs.FS) (int64, error) {
+	entries, err := fs.ReadDir(fsys, "migrations")
 	if err != nil {
 		return 0, fmt.Errorf("list embedded migrations: %w", err)
 	}
