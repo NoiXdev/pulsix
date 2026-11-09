@@ -17,9 +17,9 @@
 # 2026-09-11 (see task-16-report.md for how each was checked) and are
 # pinned by tag *and* digest so a build today and a build next year from
 # the same Dockerfile produce bit-identical base layers:
-#   - node:24.21.0-alpine   (matches the "24" major the rest of the repo
-#     already targets — web/package.json's @types/node is 24.x, and CI's
-#     setup-node uses node-version 24)
+#   - node:26.13.0-alpine   (the active LTS line since 2026-10; matches the
+#     "26" major the rest of the repo targets — web/package.json's
+#     @types/node is 26.x, and CI's setup-node uses node-version 26)
 #   - golang:1.27.3-alpine  (matches go.mod's `go 1.27` and CI's setup-go
 #     exactly; moved off 1.27.1 with backlog 1.36)
 #   - gcr.io/distroless/static:nonroot (the final, shipped stage)

@@ -17,14 +17,15 @@ jobs:
     # release (repo constraint, backlog 1.32), each with a version comment.
     # Re-verified 2026-09-17 against `gh api repos/<owner>/<repo>/releases/latest`
     # and `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` (annotated tags
-    # dereferenced to their commit):
+    # dereferenced to their commit); since 2026-11-09 Dependabot keeps the
+    # pins current (.github/dependabot.yml) and this table with them:
     #   actions/checkout v7.0.1         3d3c42e5aac5ba805825da76410c181273ba90b1
     #   actions/setup-go v7.0.0         b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-    #   actions/setup-node v7.0.0       820762786026740c76f36085b0efc47a31fe5020
-    #   actions/setup-python v7.0.0     5fda3b95a4ea91299a34e894583c3862153e4b97
-    #   actions/upload-artifact v7.0.1  043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    #   actions/setup-node v7.1.0       949feb2413d6458794dcd2491c4babbbce0c15c1
+    #   actions/setup-python v7.1.0     6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+    #   actions/upload-artifact v7.0.2  cf430e030ddbb5b0abf93d22962f4752f3646cd9
     #   golangci-lint-action v9.3.0     ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a (annotated tag)
-    #   bufbuild/buf-action v1.5.0      8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3
+    #   bufbuild/buf-action v1.7.0      37ac33d8960807670a6e9719080e885197b09cc6
     # (Run 34651823450's Node 20 deprecation notices and its go1.24-built
     # golangci-lint v1.64.8 came from the older @v4/@v5/@v6 tag refs; these
     # pins run on Node 24 and install golangci-lint v2.)
@@ -124,10 +125,8 @@ jobs:
             echo "breaking=false" >> "$GITHUB_OUTPUT"
             echo "::notice::no breaking-change baseline for this $EVENT_NAME event (base '${base}'); buf breaking skipped"
           fi
-      # bufbuild/buf-action — newest stable release v1.5.0 (published
-      # 2026-07-22), pinned to its commit SHA
-      # 8c6a16e16f12ba20b6470afa9c2ba9b5ba8c97c3, resolved from the release
-      # tag via git ls-remote on 2026-09-14 (see the go job's pin table).
+      # bufbuild/buf-action — pinned to the commit SHA of its newest stable
+      # release (see the go job's pin table, which Dependabot keeps current).
       # Runs `buf build`, `buf lint` and `buf breaking` on the proto/ module
       # (the action's own default buf install, so no separate setup step).
       # Every step is set explicitly: the action's lint/format/breaking
@@ -160,7 +159,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27.3" }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
+        with: { node-version: "26", cache: "npm", cache-dependency-path: web/package-lock.json }
       - run: npm ci
       - run: npm run lint
       - run: npx tsc -b
@@ -196,7 +195,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with: { go-version: "1.27.3" }
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
+        with: { node-version: "26", cache: "npm", cache-dependency-path: web/package-lock.json }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       # web/e2e/global-setup.ts starts the same docker-compose test stack,
@@ -331,7 +330,7 @@ jobs:
   #     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
   #       with: { go-version: "1.27.3" }
   #     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-  #       with: { node-version: "24", cache: "npm", cache-dependency-path: web/package-lock.json }
+  #       with: { node-version: "26", cache: "npm", cache-dependency-path: web/package-lock.json }
   #     - run: npm ci
   #     - run: npx playwright install --with-deps chromium
   #     - run: npm run e2e
