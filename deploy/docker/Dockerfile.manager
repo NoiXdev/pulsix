@@ -35,7 +35,7 @@
 # separate worker container the default.)
 
 # ---- Stage 1: build the SPA ----------------------------------------------
-FROM node:24.21.0-alpine@sha256:be80f76cf40ec8e42b9bec49f60a55e0660f30af58d3e5a25530785b30ea67e2 AS web
+FROM node:26.13.0-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS web
 WORKDIR /src/web
 # Copied separately from the rest of web/ so `npm ci` only reruns (and its
 # layer only invalidates) when the lockfile actually changes.
