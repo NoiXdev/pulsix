@@ -1,0 +1,55 @@
+# Posts an existing GitHub release to the organization's Discord channel,
+# through the same shared action the release workflow announces with
+# (NoiXdev/github-workflows, actions/announce-release). For a release whose
+# announcement did not go out - the release workflow announces only after
+# every step of its own succeeded.
+name: announce
+run-name: Announce Pulsix ${{ inputs.tag }} on Discord
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to announce, e.g. v0.1.0-rc.1"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read the release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          # Validated before use: the tag reaches the API and the message.
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$TAG' does not look like a release tag" >&2
+            exit 1
+          fi
+          gh release view "$TAG" -R "$REPO" --json body --jq .body > "$RUNNER_TEMP/body.md"
+          {
+            echo "url=$(gh release view "$TAG" -R "$REPO" --json url --jq .url)"
+            echo "body<<BODY_EOF_${GITHUB_RUN_ID}"
+            head -c 60000 "$RUNNER_TEMP/body.md"
+            echo ""
+            echo "BODY_EOF_${GITHUB_RUN_ID}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post to Discord
+        # Pinned by commit like the release workflow's call (backlog 7.16):
+        # it receives the webhook secret.
+        uses: NoiXdev/github-workflows/actions/announce-release@f7196176a79585ae7dccf8370ee72d75ad15610a # main, 2026-11-09
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTIFICATION }}
+          tag: ${{ inputs.tag }}
+          body: ${{ steps.release.outputs.body }}
+          url: ${{ steps.release.outputs.url }}
+          product-name: Pulsix
