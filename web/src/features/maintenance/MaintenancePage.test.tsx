@@ -48,7 +48,7 @@ describe('MaintenancePage', () => {
     const row = (await screen.findByText('nightly')).closest('[data-row]')!.parentElement as HTMLElement;
     expect(within(row).getByText('Whole organization')).toBeInTheDocument();
     expect(within(row).getByText('Sat at 02:00 · for 2h · Europe/Berlin')).toBeInTheDocument();
-    expect(within(row).getByText('active now')).toHaveStyle({ color: 'var(--px-maintenance)' });
+    expect(within(row).getByText('active now').style.color).toBe('var(--px-maintenance)');
     expect(screen.getByText('Host db-1')).toBeInTheDocument();
     expect(screen.getByText(/1 active now · maintenance lets schedules skip/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'New window' })).not.toBeInTheDocument();

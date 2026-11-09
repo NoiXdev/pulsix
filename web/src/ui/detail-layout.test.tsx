@@ -267,7 +267,7 @@ describe('SidebarHeading', () => {
     );
     const h1 = screen.getByRole('heading', { level: 1, name: 'web-04' });
     expect(h1.className).toContain('font-mono');
-    expect(screen.getByTitle('2 warnings')).toHaveStyle({ background: 'var(--px-warn)' });
+    expect(screen.getByTitle('2 warnings').style.background).toBe('var(--px-warn)');
     expect(screen.getByText('Warnings pill')).toBeInTheDocument();
     expect(screen.getByText('deploy · web')).toBeInTheDocument();
   });

@@ -65,7 +65,7 @@ describe('ReposPage', () => {
     });
     renderPage();
     const pill = await screen.findByText('failed');
-    expect(pill).toHaveStyle({ color: 'var(--px-crit)' });
+    expect(pill.style.color).toBe('var(--px-crit)');
     expect(screen.getByTitle('authentication failed')).toBeInTheDocument();
   });
 

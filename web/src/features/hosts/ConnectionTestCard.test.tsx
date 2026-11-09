@@ -81,7 +81,7 @@ describe('ConnectionTestCard', () => {
     expect(pills.length).toBeGreaterThanOrEqual(2); // the result pill and the passing ssh check
     expect(screen.getByText('publickey')).toBeInTheDocument();
     const denied = screen.getByText('denied');
-    expect(denied).toHaveStyle({ color: 'var(--px-crit)' });
+    expect(denied.style.color).toBe('var(--px-crit)');
   });
 
   it('reports a failed test and a changed host key in crit with the blocked hint', async () => {
@@ -93,7 +93,7 @@ describe('ConnectionTestCard', () => {
     renderCard();
     expect(await screen.findByText('failed')).toBeInTheDocument();
     const changed = screen.getAllByText('changed').find((el) => el.textContent === 'changed');
-    expect(changed).toHaveStyle({ color: 'var(--px-crit)' });
+    expect(changed?.style.color).toBe('var(--px-crit)');
     expect(screen.getByText(/jobs are blocked until the new key is pinned/i)).toBeInTheDocument();
   });
 

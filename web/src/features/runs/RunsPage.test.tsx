@@ -65,7 +65,7 @@ describe('RunsPage', () => {
     const kindCell = screen.getAllByText('connection test').find((el) => el.tagName !== 'OPTION');
     expect(kindCell).toBeDefined();
     const failed = screen.getAllByText('failed').find((el) => el.tagName !== 'OPTION');
-    expect(failed).toHaveStyle({ color: 'var(--px-crit)' });
+    expect(failed?.style.color).toBe('var(--px-crit)');
     expect(screen.getByText('0197c0c1')).toBeInTheDocument();
     const runCell = screen.getAllByText('run').find((el) => el.tagName !== 'OPTION');
     expect(runCell).toBeDefined();
