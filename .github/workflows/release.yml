@@ -1,6 +1,7 @@
 # Cuts a Pulsix release: one `vX.Y.Z` tag on `main` builds and pushes the
 # multi-arch manager and worker images, each tagged with that version and
-# `latest`, to both registries. This is the project's
+# `latest`, to both registries; a pre-release tag (`vX.Y.Z-rcN`) pushes the
+# version tag only. This is the project's
 # single-version-for-everything rule (see the v0.1 core plan): the compose
 # stack runs both images under one PULSIX_VERSION, so they must always be
 # released together; later milestones add the agent binaries under the
@@ -87,19 +88,26 @@ jobs:
       # `run:` is the script-injection pattern GitHub's hardening guidance
       # warns about (a crafted tag name would otherwise execute in the
       # runner's shell). The value is also validated to look like
-      # vMAJOR.MINOR.PATCH before it is used for anything, so a malformed
-      # or hostile tag fails the workflow here instead of reaching the
-      # build/push step below.
+      # vMAJOR.MINOR.PATCH, or a pre-release of it (-alphaN, -betaN, -rcN,
+      # each also with a dot: -rc.1), before it is used for anything, so a
+      # malformed or hostile tag fails the workflow here instead of
+      # reaching the build/push step below. A pre-release is published
+      # under its own tag only: `latest` stays on the last final release.
       - name: Derive the release version from the tag
         id: version
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::tag '$TAG' does not look like vMAJOR.MINOR.PATCH" >&2
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            prerelease=false
+          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.?[0-9]+$ ]]; then
+            prerelease=true
+          else
+            echo "::error::tag '$TAG' does not look like vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rcN" >&2
             exit 1
           fi
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       # QEMU is what makes the arm64 half of the build possible on an
       # amd64 GitHub-hosted runner (user-mode emulation for the "COPY
@@ -146,9 +154,9 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
           tags: |
             noixdev/pulsix-manager:${{ steps.version.outputs.version }}
-            noixdev/pulsix-manager:latest
             harbor.cloud.noidee.dev/noixdev/pulsix-manager:${{ steps.version.outputs.version }}
-            harbor.cloud.noidee.dev/noixdev/pulsix-manager:latest
+            ${{ steps.version.outputs.prerelease == 'false' && 'noixdev/pulsix-manager:latest' || '' }}
+            ${{ steps.version.outputs.prerelease == 'false' && 'harbor.cloud.noidee.dev/noixdev/pulsix-manager:latest' || '' }}
 
       - name: Build and push the worker image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -161,6 +169,6 @@ jobs:
             VERSION=${{ steps.version.outputs.version }}
           tags: |
             noixdev/pulsix-worker:${{ steps.version.outputs.version }}
-            noixdev/pulsix-worker:latest
             harbor.cloud.noidee.dev/noixdev/pulsix-worker:${{ steps.version.outputs.version }}
-            harbor.cloud.noidee.dev/noixdev/pulsix-worker:latest
+            ${{ steps.version.outputs.prerelease == 'false' && 'noixdev/pulsix-worker:latest' || '' }}
+            ${{ steps.version.outputs.prerelease == 'false' && 'harbor.cloud.noidee.dev/noixdev/pulsix-worker:latest' || '' }}
