@@ -134,6 +134,16 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **Interpreter discovery warning:** every run's `ansible.cfg` now sets
+  `interpreter_python = auto_silent`. Ansible still discovers each host's
+  Python as before, but no longer prints its "using the discovered Python
+  interpreter" warning, which reached the worker as a bare line beside the
+  run's events and was dropped. A host or playbook that sets
+  `ansible_python_interpreter` is unaffected.
+- **Webhook body limit:** a webhook body of exactly 1 MiB is still accepted and
+  one byte more is refused with 413, unchanged; the dependency update that moved
+  the limit's off-by-one is compensated in the hook endpoints.
+
 - **7.96, roles inside collections:** the variable read now reads roles of
   collections, as a run finds them: a fully qualified name
   (`namespace.collection.role`), or a short name through a play's, block's or

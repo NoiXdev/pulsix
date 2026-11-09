@@ -336,7 +336,10 @@ func TestMaterializeRunnerConfigWritesExtravars(t *testing.T) {
 		t.Errorf("extravars = %q", text)
 	}
 	cfg := string(mustRead(t, filepath.Join(env.WorkDir, "ansible.cfg")))
-	for _, want := range []string{"host_key_checking = True", "retry_files_enabled = False", "ssh_args = -F "} {
+	// interpreter_python = auto_silent: the discovery warning is a bare line
+	// beside the runner's JSON events, which the worker drops as malformed
+	// (seen on amd64 runners, TestLocalhostPlayRunsUnderThePlayUID).
+	for _, want := range []string{"host_key_checking = True", "retry_files_enabled = False", "interpreter_python = auto_silent\n", "ssh_args = -F "} {
 		if !strings.Contains(cfg, want) {
 			t.Errorf("ansible.cfg lacks %q:\n%s", want, cfg)
 		}

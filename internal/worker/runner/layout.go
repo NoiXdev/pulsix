@@ -141,9 +141,15 @@ func ansibleCfgText(workDir string, vaultFiles []vaultFile, installed requiremen
 	if installed.CollectionsDir != "" {
 		collections = "collections_path = " + installed.CollectionsDir + ":" + systemCollectionsPath + "\n"
 	}
+	// interpreter_python = auto_silent keeps Ansible's own discovery
+	// (auto) without its warning: the warning is printed as a bare line
+	// beside ansible-runner's JSON events, where the worker can only drop it
+	// as a malformed event (seen on amd64 runners). A host or playbook that
+	// sets ansible_python_interpreter still wins.
 	return fmt.Sprintf(`[defaults]
 host_key_checking = True
 retry_files_enabled = False
+interpreter_python = auto_silent
 local_tmp = %s
 %s%s%s
 [ssh_connection]
