@@ -124,7 +124,26 @@ fallback is dropped one minor later. A worker downgraded below 7.88 ignores
 `<repo>.requirements/` next to each clone (it stays on disk until removed by
 hand) and installs into `<repo>.galaxy` again on its next sync.
 
+7.95 adds the WorkerService call `ListRepositories` (additive proto change).
+A worker asks it at start and then every six hours (five minutes after a
+failed call), between jobs, and removes
+the repo cache of every repository the answer does not list. A manager older
+than the call answers `Unimplemented`; the worker then removes nothing, logs
+that once per attempt at info level, and keeps the caches of deleted
+repositories as before. An older worker never asks.
+
 ## Behaviour changes to check after an upgrade
+
+- **7.95, repo cache sweep:** a worker now removes the clone,
+  `<repo>.requirements/` and the legacy `<repo>.galaxy` of every repository its
+  organization no longer has, and the directories of other organizations under
+  `repo-cache/` (left from an earlier enrollment on the same data dir). Only
+  directories the worker created go: a canonical uuid name (with one of those
+  suffixes inside the organization's directory) that is a real directory, not
+  a symlink. Each one is renamed to `.removing-*` before it is removed; a
+  leftover of that name is removed by the next sweep. Without a valid answer
+  from the manager nothing is removed. Expect a one-off drop in the data
+  volume's usage after the first sweep, and a log line per removed directory.
 
 - **7.91, role lookup in the variable read:** the lookup now follows Ansible's
   order for every role name: `<playbook dir>/roles/<name>`, then the installed
