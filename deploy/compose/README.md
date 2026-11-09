@@ -455,7 +455,7 @@ the way back is a backup.
    ```
 
 2. **Manager and bundled worker.** In `.env`, set `PULSIX_VERSION` to the
-   release you want (e.g. `v0.2.0`), then:
+   release you want (e.g. `0.2.0`; image tags carry no leading `v`), then:
 
    ```bash
    docker compose pull

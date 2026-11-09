@@ -84,7 +84,7 @@ jobs:
     # Pinned by commit, never @main (backlog 7.16): `secrets: inherit` hands
     # the registry credentials and the Discord webhook to whatever this
     # reference resolves to.
-    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@22bede08a78f3a9757587f46a31796963d01b948 # feat/docker-release-dockerfile-version-harbor, 2026-11-09
+    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@22bede08a78f3a9757587f46a31796963d01b948 # main, 2026-11-09
     with:
       bump: ${{ inputs.bump }}
       prerelease_id: ${{ inputs.prerelease_id != 'none' && inputs.prerelease_id || '' }}
