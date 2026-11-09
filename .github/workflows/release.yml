@@ -1,48 +1,64 @@
-# Cuts a Pulsix release: one `vX.Y.Z` tag on `main` builds and pushes the
-# multi-arch manager and worker images, each tagged with that version and
-# `latest`, to both registries; a pre-release tag (`vX.Y.Z-rcN`) pushes the
-# version tag only. This is the project's
-# single-version-for-everything rule (see the v0.1 core plan): the compose
-# stack runs both images under one PULSIX_VERSION, so they must always be
-# released together; later milestones add the agent binaries under the
-# same tag rather than introducing per-component tags.
+# Cuts a Pulsix release through the organization's shared Docker release
+# workflow (NoiXdev/github-workflows, create_docker_changelog_version_release):
+# it computes the next version, writes it into version.json, builds the
+# multi-architecture manager and worker images with that version as their
+# VERSION build argument, pushes both to Docker Hub (and to Harbor once
+# vars.HARBOR_NAMESPACE is set), commits the version and CHANGELOG.md to
+# main, tags, creates the GitHub release and announces it on Discord. One
+# version for everything (the v0.1 core plan's rule): the compose stack runs
+# both images under one PULSIX_VERSION.
+#
+# Started by hand from the Actions tab. A pre-release (prerelease_id rc, beta
+# or alpha) publishes its version tag only; `latest` stays on the last final
+# release. dry_run builds everything and pushes nothing - the rehearsal to
+# run first.
 name: release
+run-name: Release Pulsix (${{ inputs.bump }}${{ inputs.prerelease_id != 'none' && format(', {0}', inputs.prerelease_id) || '' }}${{ inputs.dry_run && ', dry run' || '' }})
+
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+      prerelease_id:
+        description: "Pre-release identifier: rc, beta or alpha; none for a final release"
+        type: choice
+        options: [none, rc, beta, alpha]
+        default: rc
+      dry_run:
+        description: "Build everything, push nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
 
 jobs:
-  # Backlog 1.32. A tag is not evidence. Normally tag.yml creates it, which
-  # can only happen for a green commit on main — but a tag can also be
-  # pushed by hand, and nothing about the tag itself says which it was. So
-  # the thing that publishes checks, rather than trusting the thing that
-  # triggered it.
-  #
-  # Both questions are answered about the tagged commit, not about the tag:
-  # is it on main, and did CI pass for it. The first is pure git and needs
-  # no API; the second reads the workflow runs for exactly that SHA.
+  # Backlog 1.32: only a green commit on main is published. The shared
+  # workflow releases exactly the commit this job checked (its `ref` input),
+  # not whatever main points at by the time the build starts.
   guard:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-
-      - name: The tagged commit must be on main
+      - name: The release must start from main
         env:
-          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
         run: |
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$SHA" origin/main; then
-            echo "::error::$SHA is not on main; a release is only ever cut from main" >&2
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::a release is only ever cut from main, not $REF" >&2
             exit 1
           fi
 
       - name: CI must have passed for that commit
+        id: sha
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
@@ -50,9 +66,8 @@ jobs:
         run: |
           # The newest ci run for this exact commit that was a push to main.
           # A run for the same SHA from a pull request or another branch does
-          # not count: only the main-branch run says the commit was tested as
-          # main. No run at all is a failure, not a pass: "never tested" must
-          # not publish either.
+          # not count, and no run at all is a failure: "never tested" must not
+          # publish either.
           conclusion=$(gh api \
             "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&branch=main&per_page=1" \
             --jq '.workflow_runs[0].conclusion // "none"')
@@ -60,115 +75,32 @@ jobs:
             echo "::error::ci for $SHA concluded '$conclusion'; only a green commit is published" >&2
             exit 1
           fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
   release:
     needs: guard
-    runs-on: ubuntu-latest
-    # Backlog 7.37. The `release` environment's deployment policy only lets
-    # `v*` tags deploy to it, so this job cannot run from any other ref. The
-    # registry credentials are out of reach of other refs only once they
-    # live in that environment as environment secrets: as repository
-    # secrets, any workflow on any branch can still read them. Moving them
-    # there is the owner's step.
-    environment: release
-    # A tag push is only ever triggered by someone with write access to
-    # this repository creating a tag — GitHub does not fire `push` events
-    # for tags from a fork's pull request, so this workflow, and the
-    # registry credentials below, are never reachable from a PR. This
-    # `permissions` block additionally keeps GITHUB_TOKEN itself
-    # read-only: pushing the built image uses the registry secrets below
-    # instead, GITHUB_TOKEN is not involved in that at all.
     permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # github.ref_name is interpolated into an env var, never directly
-      # into the run: script — interpolating an expression straight into
-      # `run:` is the script-injection pattern GitHub's hardening guidance
-      # warns about (a crafted tag name would otherwise execute in the
-      # runner's shell). The value is also validated to look like
-      # vMAJOR.MINOR.PATCH, or a pre-release of it (-alphaN, -betaN, -rcN,
-      # each also with a dot: -rc.1), before it is used for anything, so a
-      # malformed or hostile tag fails the workflow here instead of
-      # reaching the build/push step below. A pre-release is published
-      # under its own tag only: `latest` stays on the last final release.
-      - name: Derive the release version from the tag
-        id: version
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            prerelease=false
-          elif [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.?[0-9]+$ ]]; then
-            prerelease=true
-          else
-            echo "::error::tag '$TAG' does not look like vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rcN" >&2
-            exit 1
-          fi
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-
-      # QEMU is what makes the arm64 half of the build possible on an
-      # amd64 GitHub-hosted runner (user-mode emulation for the "COPY
-      # --from=web"/"go build" stages' non-native instructions); Buildx is
-      # the builder that actually understands --platform and produces one
-      # multi-arch manifest list per tag below.
-      #
-      # Both actions run an image of their own, privileged, in the job that
-      # holds the registry credentials: QEMU's binfmt installer and the
-      # BuildKit daemon. Pinning the actions does not pin those — left to
-      # their defaults they are the mutable tags tonistiigi/binfmt:latest
-      # and moby/buildkit:buildx-stable-1 — so both are pinned here by
-      # digest (backlog 7.17; the digests those tags pointed to on
-      # 2026-11-01). Bump them deliberately, like the action SHAs.
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          platforms: arm64
-          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          driver-opts: image=docker.io/moby/buildkit@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Log in to Harbor
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: harbor.cloud.noidee.dev
-          username: ${{ secrets.HARBOR_USERNAME }}
-          password: ${{ secrets.HARBOR_PASSWORD }}
-
-      - name: Build and push the manager image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/docker/Dockerfile.manager
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            VERSION=${{ steps.version.outputs.version }}
-          tags: |
-            noixdev/pulsix-manager:${{ steps.version.outputs.version }}
-            harbor.cloud.noidee.dev/noixdev/pulsix-manager:${{ steps.version.outputs.version }}
-            ${{ steps.version.outputs.prerelease == 'false' && 'noixdev/pulsix-manager:latest' || '' }}
-            ${{ steps.version.outputs.prerelease == 'false' && 'harbor.cloud.noidee.dev/noixdev/pulsix-manager:latest' || '' }}
-
-      - name: Build and push the worker image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: deploy/worker/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            VERSION=${{ steps.version.outputs.version }}
-          tags: |
-            noixdev/pulsix-worker:${{ steps.version.outputs.version }}
-            harbor.cloud.noidee.dev/noixdev/pulsix-worker:${{ steps.version.outputs.version }}
-            ${{ steps.version.outputs.prerelease == 'false' && 'noixdev/pulsix-worker:latest' || '' }}
-            ${{ steps.version.outputs.prerelease == 'false' && 'harbor.cloud.noidee.dev/noixdev/pulsix-worker:latest' || '' }}
+      contents: write
+    # Pinned by commit, never @main (backlog 7.16): `secrets: inherit` hands
+    # the registry credentials and the Discord webhook to whatever this
+    # reference resolves to.
+    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@22bede08a78f3a9757587f46a31796963d01b948 # feat/docker-release-dockerfile-version-harbor, 2026-11-09
+    with:
+      bump: ${{ inputs.bump }}
+      prerelease_id: ${{ inputs.prerelease_id != 'none' && inputs.prerelease_id || '' }}
+      dry_run: ${{ inputs.dry_run }}
+      ref: ${{ needs.guard.outputs.sha }}
+      product_name: Pulsix
+      platforms: linux/amd64,linux/arm64
+      version_file: version.json
+      # The manager image is the main one (vars.DOCKERHUB_IMAGE =
+      # pulsix-manager); the worker ships with it under the same version.
+      dockerfile: deploy/docker/Dockerfile.manager
+      extra_image: pulsix-worker
+      extra_image_dockerfile: deploy/worker/Dockerfile
+      version_build_arg: VERSION
+      # Harbor is opt-in through the repository variable HARBOR_NAMESPACE
+      # (with the secrets HARBOR_USERNAME and HARBOR_PASSWORD); unset, the
+      # images go to Docker Hub only.
+      harbor_namespace: ${{ vars.HARBOR_NAMESPACE }}
+    secrets: inherit

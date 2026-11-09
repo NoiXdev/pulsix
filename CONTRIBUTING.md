@@ -26,7 +26,9 @@ Every change comes with tests. CI must pass.
 
 ## Branching
 
-- `main` — release-ready code; releases are cut from `v*` tags on `main`.
+- `main` — release-ready code; releases are cut from a green commit on `main` by the
+  `release` workflow (started from the Actions tab), which also writes the
+  changelog and the tag.
 - Feature branches — created off `main`, named `feat/<topic>`, `fix/<topic>` or
   `docs/<topic>`. History stays linear: rebase onto `main` instead of merging it in.
 
