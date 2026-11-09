@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '../lib/utils.ts';
 import { ToastContext } from './toastContext.ts';
 
@@ -18,11 +18,27 @@ let nextId = 1;
  * file exports only the component (react-refresh/only-export-components). */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<ToastMessage[]>([]);
+  // The pending dismissal timers, cleared when the provider unmounts: one
+  // that fired afterwards would update state of an unmounted component (and,
+  // in a test run, fire after the environment was torn down).
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      pending.forEach(clearTimeout);
+      pending.clear();
+    };
+  }, []);
 
   const show = useCallback((text: string, tone: ToastMessage['tone'] = 'default') => {
     const id = nextId++;
     setMessages((prev) => [...prev, { id, text, tone }]);
-    setTimeout(() => setMessages((prev) => prev.filter((m) => m.id !== id)), 4000);
+    const timer = setTimeout(() => {
+      timers.current.delete(timer);
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+    }, 4000);
+    timers.current.add(timer);
   }, []);
 
   return (
