@@ -118,6 +118,10 @@ func (failingClient) Enroll(context.Context, *workerpb.EnrollRequest, ...grpc.Ca
 	return nil, errors.New("manager unreachable")
 }
 
+func (failingClient) ListRepositories(context.Context, *workerpb.ListRepositoriesRequest, ...grpc.CallOption) (*workerpb.ListRepositoriesResponse, error) {
+	return nil, errors.New("manager unreachable")
+}
+
 func (failingClient) RenewCertificate(context.Context, *workerpb.RenewCertificateRequest, ...grpc.CallOption) (*workerpb.RenewCertificateResponse, error) {
 	return nil, errors.New("manager unreachable")
 }

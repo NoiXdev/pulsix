@@ -105,6 +105,23 @@ func (a repoRefSource) Get(ctx context.Context, orgID, repoID uuid.UUID) (jobs.R
 	}, nil
 }
 
+// repoIDLister narrows repos.Service to grpcsrv.RepoLister: the ids a
+// worker's repo cache may keep (backlog 7.95).
+type repoIDLister struct{ s *repos.Service }
+
+// RepoIDs implements grpcsrv.RepoLister.
+func (a repoIDLister) RepoIDs(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	list, err := a.s.List(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, len(list))
+	for i, r := range list {
+		ids[i] = r.ID
+	}
+	return ids, nil
+}
+
 // toJobsVaultIdentities converts repos.VaultIdentity rows into the claim
 // path's own copy of the shape (jobs.VaultIdentity) — jobs cannot import
 // internal/repos (see jobs.VaultIdentity's own comment), so this wiring

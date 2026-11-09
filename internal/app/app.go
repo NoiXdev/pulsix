@@ -733,7 +733,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			CA: caInst, Workers: workersSvc,
 			Agents: agentsSvc, AgentService: agentSvc,
 			Claims: jobsClaimer{jobsQueue}, Events: jobsEventRecorder{jobsQueue}, Results: jobsResultRecorder{jobsQueue},
-			Audit: systemAuditor{auditRec}, Clock: time.Now, Streams: streams, Log: slog.Default(),
+			Audit: systemAuditor{auditRec}, Repos: repoIDLister{reposSvc}, Clock: time.Now, Streams: streams, Log: slog.Default(),
 			Version: cfg.Version,
 		})
 		if err != nil {

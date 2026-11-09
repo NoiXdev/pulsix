@@ -1,14 +1,15 @@
 // Package grpcsrv is the manager's mTLS gRPC endpoint for zone workers
 // (spec §14): it authenticates a connection by the client certificate the
 // internal CA issued, looks the serial up in the worker registry, and then
-// serves the three WorkerService calls — ClaimJob (atomically claim one
-// queued job and bind the run to a one-time token), RunEvents (the event
-// stream a run writes into, with the manager's cancel directive) and
-// ReportResult (the terminal status write).
+// serves the WorkerService calls — ClaimJob (atomically claim one queued
+// job and bind the run to a one-time token), RunEvents (the event stream a
+// run writes into, with the manager's cancel directive), ReportResult (the
+// terminal status write) and ListRepositories (what the worker's repo cache
+// may keep, backlog 7.95) — besides Enroll and RenewCertificate.
 //
 // The package owns transport only: business rules live in the domain
 // services it reaches through the narrow ports declared here (Claimer,
-// EventRecorder, ResultRecorder, SystemAuditor). Task 5's job queue
+// EventRecorder, ResultRecorder, SystemAuditor, RepoLister). Task 5's job queue
 // implements the queue-side ports; internal/app wires everything.
 package grpcsrv
 
@@ -102,6 +103,15 @@ var ErrJobNotClaimed = errors.New("job is not claimed by this worker")
 // ResultRecorder writes the terminal status.
 type ResultRecorder interface {
 	Finish(ctx context.Context, res Result) error
+}
+
+// RepoLister lists an organization's repositories for ListRepositories:
+// a worker removes the cached clones and requirements installs of every
+// repository not in the list (backlog 7.95).
+type RepoLister interface {
+	// RepoIDs returns the ids of every repository of the organization;
+	// none is an empty list, not an error.
+	RepoIDs(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // SystemEvent is one system-generated audit entry: no user is behind a

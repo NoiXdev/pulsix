@@ -11,6 +11,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/grpcsrv"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/jobs"
@@ -327,6 +329,45 @@ func TestRepoRefSourceGet(t *testing.T) {
 	}
 	if _, err := src.Get(ctx, org, uuid.Must(uuid.NewV7())); !errors.Is(err, repos.ErrNotFound) {
 		t.Fatalf("Get of an unknown id = %v, want repos.ErrNotFound", err)
+	}
+}
+
+// TestRepoIDListerRepoIDs: the gRPC repository listing (backlog 7.95)
+// names every repository of the organization and none of another's; an
+// organization without repositories is an empty list.
+func TestRepoIDListerRepoIDs(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "app-repo-ids")
+	other := seedOrg(t, d, "app-repo-ids-other")
+	empty := seedOrg(t, d, "app-repo-ids-empty")
+	svc := repos.NewService(repos.NewSQLStore(d), nil, nil)
+	var want []uuid.UUID
+	for _, name := range []string{"infra", "apps"} {
+		r, err := svc.Create(ctx, org, repos.CreateInput{Name: name, URL: "https://git.example.com/" + name + ".git", Branch: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, r.ID)
+	}
+	if _, err := svc.Create(ctx, other, repos.CreateInput{Name: "infra", URL: "https://git.example.com/x.git", Branch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+
+	lister := repoIDLister{s: svc}
+	var _ grpcsrv.RepoLister = lister
+	got, err := lister.RepoIDs(ctx, org)
+	if err != nil {
+		t.Fatalf("RepoIDs: %v", err)
+	}
+	slices.SortFunc(got, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	slices.SortFunc(want, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	if !slices.Equal(got, want) {
+		t.Fatalf("RepoIDs = %v, want %v", got, want)
+	}
+	got, err = lister.RepoIDs(ctx, empty)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("RepoIDs of an organization without repositories = %v, %v; want none", got, err)
 	}
 }
 

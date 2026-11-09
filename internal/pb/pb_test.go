@@ -130,12 +130,12 @@ func (minimalServer) ReportResult(context.Context, *workerpb.ReportResultRequest
 func TestRegisterWorkerServiceServer(t *testing.T) {
 	t.Parallel()
 
-	// The generated server interface exposes exactly the three job RPCs
-	// plus Enroll and RenewCertificate (v0.2c).
-	if got := reflect.TypeOf((*workerpb.WorkerServiceServer)(nil)).Elem().NumMethod(); got != 5 {
-		t.Errorf("WorkerServiceServer has %d methods, want 5", got)
+	// The generated server interface exposes exactly the three job RPCs,
+	// Enroll and RenewCertificate (v0.2c) and ListRepositories (7.95).
+	if got := reflect.TypeOf((*workerpb.WorkerServiceServer)(nil)).Elem().NumMethod(); got != 6 {
+		t.Errorf("WorkerServiceServer has %d methods, want 6", got)
 	}
-	for _, name := range []string{"ClaimJob", "RunEvents", "ReportResult", "Enroll", "RenewCertificate"} {
+	for _, name := range []string{"ClaimJob", "RunEvents", "ReportResult", "Enroll", "RenewCertificate", "ListRepositories"} {
 		_, ok := reflect.TypeOf((*workerpb.WorkerServiceServer)(nil)).Elem().MethodByName(name)
 		if !ok {
 			t.Errorf("WorkerServiceServer is missing method %q", name)

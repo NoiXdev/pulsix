@@ -24,6 +24,7 @@ const (
 	WorkerService_ReportResult_FullMethodName     = "/pulsix.worker.v1.WorkerService/ReportResult"
 	WorkerService_Enroll_FullMethodName           = "/pulsix.worker.v1.WorkerService/Enroll"
 	WorkerService_RenewCertificate_FullMethodName = "/pulsix.worker.v1.WorkerService/RenewCertificate"
+	WorkerService_ListRepositories_FullMethodName = "/pulsix.worker.v1.WorkerService/ListRepositories"
 )
 
 // WorkerServiceClient is the client API for WorkerService service.
@@ -50,6 +51,10 @@ type WorkerServiceClient interface {
 	// RenewCertificate issues a fresh certificate for the calling worker's
 	// key. The old certificate stays valid until it expires.
 	RenewCertificate(ctx context.Context, in *RenewCertificateRequest, opts ...grpc.CallOption) (*RenewCertificateResponse, error)
+	// ListRepositories returns the calling worker's organization and the ids
+	// of every repository it has. The worker removes the cached clones and
+	// requirements installs of every other repository (backlog 7.95).
+	ListRepositories(ctx context.Context, in *ListRepositoriesRequest, opts ...grpc.CallOption) (*ListRepositoriesResponse, error)
 }
 
 type workerServiceClient struct {
@@ -113,6 +118,16 @@ func (c *workerServiceClient) RenewCertificate(ctx context.Context, in *RenewCer
 	return out, nil
 }
 
+func (c *workerServiceClient) ListRepositories(ctx context.Context, in *ListRepositoriesRequest, opts ...grpc.CallOption) (*ListRepositoriesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListRepositoriesResponse)
+	err := c.cc.Invoke(ctx, WorkerService_ListRepositories_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // WorkerServiceServer is the server API for WorkerService service.
 // All implementations should embed UnimplementedWorkerServiceServer
 // for forward compatibility.
@@ -137,6 +152,10 @@ type WorkerServiceServer interface {
 	// RenewCertificate issues a fresh certificate for the calling worker's
 	// key. The old certificate stays valid until it expires.
 	RenewCertificate(context.Context, *RenewCertificateRequest) (*RenewCertificateResponse, error)
+	// ListRepositories returns the calling worker's organization and the ids
+	// of every repository it has. The worker removes the cached clones and
+	// requirements installs of every other repository (backlog 7.95).
+	ListRepositories(context.Context, *ListRepositoriesRequest) (*ListRepositoriesResponse, error)
 }
 
 // UnimplementedWorkerServiceServer should be embedded to have
@@ -160,6 +179,9 @@ func (UnimplementedWorkerServiceServer) Enroll(context.Context, *EnrollRequest) 
 }
 func (UnimplementedWorkerServiceServer) RenewCertificate(context.Context, *RenewCertificateRequest) (*RenewCertificateResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RenewCertificate not implemented")
+}
+func (UnimplementedWorkerServiceServer) ListRepositories(context.Context, *ListRepositoriesRequest) (*ListRepositoriesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListRepositories not implemented")
 }
 func (UnimplementedWorkerServiceServer) testEmbeddedByValue() {}
 
@@ -260,6 +282,24 @@ func _WorkerService_RenewCertificate_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _WorkerService_ListRepositories_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListRepositoriesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WorkerServiceServer).ListRepositories(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: WorkerService_ListRepositories_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WorkerServiceServer).ListRepositories(ctx, req.(*ListRepositoriesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // WorkerService_ServiceDesc is the grpc.ServiceDesc for WorkerService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -282,6 +322,10 @@ var WorkerService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RenewCertificate",
 			Handler:    _WorkerService_RenewCertificate_Handler,
+		},
+		{
+			MethodName: "ListRepositories",
+			Handler:    _WorkerService_ListRepositories_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -47,6 +47,10 @@ func (c *countingRenewClient) Enroll(context.Context, *workerpb.EnrollRequest, .
 	panic("not used by Check")
 }
 
+func (c *countingRenewClient) ListRepositories(context.Context, *workerpb.ListRepositoriesRequest, ...grpc.CallOption) (*workerpb.ListRepositoriesResponse, error) {
+	panic("not used by Check")
+}
+
 func (c *countingRenewClient) RenewCertificate(context.Context, *workerpb.RenewCertificateRequest, ...grpc.CallOption) (*workerpb.RenewCertificateResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

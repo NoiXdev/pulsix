@@ -423,6 +423,7 @@ type harness struct {
 	events  *FakeEventRecorder
 	results *FakeResultRecorder
 	audit   *FakeSystemAuditor
+	repos   *fakeRepoLister
 
 	workerCert []byte // cached standard worker certificate
 	workerKey  []byte
@@ -466,6 +467,25 @@ func (h *harness) advance(d time.Duration) {
 	h.now = h.now.Add(d)
 }
 
+// fakeRepoLister answers RepoIDs from byOrg, or with err; asked records
+// every organization it was asked about.
+type fakeRepoLister struct {
+	mu    sync.Mutex
+	byOrg map[uuid.UUID][]uuid.UUID
+	err   error
+	asked []uuid.UUID
+}
+
+func (f *fakeRepoLister) RepoIDs(_ context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, orgID)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.byOrg[orgID], nil
+}
+
 // newHarness builds the server, serves it on a fresh bufconn listener and
 // registers cleanup. The AgentService is registered as a stub: the agent
 // method-kind tests only need the interceptor to run ahead of the handler.
@@ -484,6 +504,7 @@ func newHarnessVersion(t *testing.T, version string) *harness {
 		events:  &FakeEventRecorder{},
 		results: &FakeResultRecorder{},
 		audit:   &FakeSystemAuditor{},
+		repos:   &fakeRepoLister{byOrg: map[uuid.UUID][]uuid.UUID{}},
 		now:     time.Now(),
 	}
 	var key [32]byte
@@ -500,7 +521,7 @@ func newHarnessVersion(t *testing.T, version string) *harness {
 	deps := Deps{
 		CA: h.ca, Workers: workers.NewService(h.store, workers.WithSigner(h.ca)),
 		Agents: agents.NewService(h.agents), AgentService: agentpb.UnimplementedAgentServiceServer{},
-		Claims: h.claims, Events: h.events, Results: h.results, Audit: h.audit,
+		Claims: h.claims, Events: h.events, Results: h.results, Audit: h.audit, Repos: h.repos,
 		Clock: h.clock, CancelPollInterval: 10 * time.Millisecond, Version: version,
 		Log: slog.New(slog.NewTextHandler(&h.logs, nil)),
 	}

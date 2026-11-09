@@ -27,6 +27,10 @@ service WorkerService {
   // RenewCertificate issues a fresh certificate for the calling worker's
   // key. The old certificate stays valid until it expires.
   rpc RenewCertificate(RenewCertificateRequest) returns (RenewCertificateResponse);
+  // ListRepositories returns the calling worker's organization and the ids
+  // of every repository it has. The worker removes the cached clones and
+  // requirements installs of every other repository (backlog 7.95).
+  rpc ListRepositories(ListRepositoriesRequest) returns (ListRepositoriesResponse);
 }
 
 message ClaimJobRequest {
@@ -164,4 +168,11 @@ message RenewCertificateRequest {
 
 message RenewCertificateResponse {
   bytes certificate = 1; // PEM leaf
+}
+
+message ListRepositoriesRequest {}
+
+message ListRepositoriesResponse {
+  string org_id = 1;               // uuid of the worker's organization
+  repeated string repo_ids = 2;    // uuids; empty when it has none
 }

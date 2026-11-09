@@ -151,6 +151,12 @@ func (r *ReconnectingClient) RenewCertificate(ctx context.Context, in *workerpb.
 	return g.client.RenewCertificate(ctx, in, opts...)
 }
 
+func (r *ReconnectingClient) ListRepositories(ctx context.Context, in *workerpb.ListRepositoriesRequest, opts ...grpc.CallOption) (*workerpb.ListRepositoriesResponse, error) {
+	g := r.acquire()
+	defer g.inFlight.Done()
+	return g.client.ListRepositories(ctx, in, opts...)
+}
+
 // RunEvents opens a stream on the CURRENT generation and keeps that
 // generation "in flight" (so Redial's cleanup will not close its
 // connection) until the stream itself ends — Recv returning any error,

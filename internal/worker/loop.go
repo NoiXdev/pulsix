@@ -115,6 +115,12 @@ type Loop struct {
 	// stopErr is set when the sweep after a job could not clear the play
 	// uid; Run stops on it instead of claiming the next job.
 	stopErr error
+	// cacheSweepDue is when the repo cache sweep is next due
+	// (cachesweep.go); zero before the first.
+	cacheSweepDue time.Time
+	// removeAsPlayUID clears what the worker alone cannot remove;
+	// RemoveAsPlayUID (a seam for the tests).
+	removeAsPlayUID func(ctx context.Context, cfg Config, dirs ...string) error
 }
 
 // LoopOption overrides injected dependencies for tests.
@@ -176,6 +182,7 @@ func NewLoop(cfg Config, client workerpb.WorkerServiceClient, exec Executor, opt
 		playUIDAlive: func(uid uint32) ([]int, error) {
 			return livePIDsOfUID("/proc", uid)
 		},
+		removeAsPlayUID: RemoveAsPlayUID,
 	}
 	for _, o := range opts {
 		o(l)
@@ -219,6 +226,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
+		// Between jobs, the caches of deleted repositories go (backlog
+		// 7.95).
+		l.sweepRepoCacheIfDue(ctx)
 		// A cancel stops the play only under the play supervisor
 		// (backlog 2.107); the claim says so, and the manager records it
 		// on the job for the run view (2.113).

@@ -83,7 +83,10 @@ type Deps struct {
 	Events       EventRecorder
 	Results      ResultRecorder
 	Audit        SystemAuditor
-	Clock        func() time.Time
+	// Repos answers ListRepositories; nil answers it Unimplemented, as a
+	// manager older than the call does.
+	Repos RepoLister
+	Clock func() time.Time
 	// Log is where everything this package writes goes — the server
 	// certificate source's background work and every request-path site,
 	// which reach it through Server.log(). nil is slog.Default()

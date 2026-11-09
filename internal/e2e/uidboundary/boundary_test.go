@@ -538,6 +538,10 @@ func (f *fakeManager) RenewCertificate(context.Context, *workerpb.RenewCertifica
 	return nil, errors.New("not in this fake")
 }
 
+func (f *fakeManager) ListRepositories(context.Context, *workerpb.ListRepositoriesRequest, ...grpc.CallOption) (*workerpb.ListRepositoriesResponse, error) {
+	return nil, errors.New("not in this fake")
+}
+
 func (f *fakeManager) result() *workerpb.ReportResultRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -107,6 +107,12 @@ type fakeWorkerClient struct {
 	streams      []*fakeRunStream
 
 	reports []*workerpb.ReportResultRequest
+
+	// repos answers ListRepositories; nil (with reposErr nil) answers
+	// Unimplemented, the way a manager older than the call does.
+	repos     *workerpb.ListRepositoriesResponse
+	reposErr  error
+	repoLists int
 }
 
 func (f *fakeWorkerClient) ClaimJob(_ context.Context, in *workerpb.ClaimJobRequest, _ ...grpc.CallOption) (*workerpb.ClaimJobResponse, error) {
@@ -152,6 +158,25 @@ func (f *fakeWorkerClient) Enroll(context.Context, *workerpb.EnrollRequest, ...g
 
 func (f *fakeWorkerClient) RenewCertificate(context.Context, *workerpb.RenewCertificateRequest, ...grpc.CallOption) (*workerpb.RenewCertificateResponse, error) {
 	return nil, errors.New("not in this fake")
+}
+
+func (f *fakeWorkerClient) ListRepositories(context.Context, *workerpb.ListRepositoriesRequest, ...grpc.CallOption) (*workerpb.ListRepositoriesResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repoLists++
+	switch {
+	case f.reposErr != nil:
+		return nil, f.reposErr
+	case f.repos == nil:
+		return nil, status.Error(codes.Unimplemented, "unknown method ListRepositories")
+	}
+	return f.repos, nil
+}
+
+func (f *fakeWorkerClient) listsNow() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.repoLists
 }
 
 func (f *fakeWorkerClient) setClaimErr(err error) {
