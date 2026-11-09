@@ -91,8 +91,8 @@ type SyncExecutor struct {
 	// sourcesTimeLimit bounds the read of the variable sources;
 	// varSourcesTimeLimit when zero.
 	sourcesTimeLimit time.Duration
-	// parseRepo reads the sources with the installed roles;
-	// varsource.ParseRepoWithRoles when nil (a seam for the tests).
+	// parseRepo reads the sources with the installed roles and collections;
+	// varsource.ParseRepoInstalled when nil (a seam for the tests).
 	parseRepo parseRepoFunc
 }
 

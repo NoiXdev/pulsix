@@ -62,6 +62,7 @@ const (
 	codeRoleNotFound           = "role_not_found"
 	codeRoleWithoutSpecs       = "role_without_specs"
 	codeRoleInvalid            = "role_invalid"
+	codeCollectionsInvalid     = "collections_invalid"
 	codeImportCycle            = "import_cycle"
 	codeImportTooDeep          = "import_too_deep"
 	codeImportOutside          = "import_outside"

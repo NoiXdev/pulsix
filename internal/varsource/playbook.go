@@ -158,8 +158,9 @@ func failedPlaybook(p string, state FileState, notes ...Note) Playbook {
 // which has no repository to find roles, sidecars or imports in. roles,
 // when not nil, holds the roles installed from requirements.yml.
 type parser struct {
-	fsys  fs.FS
-	roles fs.FS
+	fsys        fs.FS
+	roles       fs.FS
+	collections fs.FS
 }
 
 func (p *parser) inline() bool { return p.fsys == nil }
@@ -179,7 +180,9 @@ func (p *parser) parse(file string, d decoded, size int) Playbook {
 		unread:   newNameSet(),
 		specs:    map[specKey]*roleSpec{},
 		charged:  map[*yamlFile][2]int{},
-		targets:  map[[2]string]roleTarget{},
+		targets:  map[targetKey]roleTarget{},
+		lists:    newCollectionLists(),
+		collDirs: map[string]collectionAt{},
 		rawBytes: size,
 	}
 	read := w.visit(file, d, 0)
@@ -214,7 +217,9 @@ type walk struct {
 	onStack                               map[string]bool      // playbook files on the current import path
 	fileSeen                              map[FileUse]bool
 	roleSeen                              map[roleKey]bool
-	targets                               map[[2]string]roleTarget // (dir, name) → where the role is
+	targets                               map[targetKey]roleTarget // where each role name leads
+	lists                                 *collectionLists         // the collections lists of the walk's files
+	collDirs                              map[string]collectionAt  // where each collection is
 	filesRead, rawBytes, steps, readBytes int
 	over                                  string // why the walk was given up; "" while it holds
 }
@@ -224,7 +229,7 @@ type walk struct {
 func (w *walk) visit(file string, d decoded, depth int) bool {
 	w.visited[file] = true
 	w.filesRead++
-	f := readPlayFile(d.y, d.doc, path.Dir(file))
+	f := readPlayFile(d.y, d.doc, path.Dir(file), w.lists)
 	w.account(d.y)
 	if n, over := d.y.tooComplex(); over {
 		w.useFile(file, FileUnreadable)

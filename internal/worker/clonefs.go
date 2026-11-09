@@ -89,27 +89,54 @@ func OpenCloneFS(cloneDir string) (ReadRoot, error) {
 	return c, nil
 }
 
-// openInstalledRolesFS opens the roles/ of the installed requirements
-// entry as a read root of its own with the clone's rules: a link inside it
-// may not leave it. (nil, nil) for the zero Entry: the commit installs
-// nothing. The entry is opened through requirements.OpenDir, the one
-// verified open of the cache (spec goal 1a): an entry that is a symlink,
-// no directory or gone is an error naming the path and the reason, as it
-// is for a run.
-func openInstalledRolesFS(installed requirements.Entry) (*cloneFS, error) {
+// installedFS is the installed requirements entry's read roots: its roles/
+// and its collections/ansible_collections (backlog 7.96), each with the
+// clone's rules (a link inside it may not leave it). A root that could not
+// be opened is nil, with the reason in its error; an entry that installed
+// no collection has neither.
+type installedFS struct {
+	roles, collections       *cloneFS
+	rolesErr, collectionsErr error
+}
+
+// Close closes the roots that were opened.
+func (in installedFS) Close() {
+	for _, c := range []*cloneFS{in.roles, in.collections} {
+		if c != nil {
+			_ = c.Close()
+		}
+	}
+}
+
+// openInstalledFS opens the installed requirements entry's read roots;
+// nothing for the zero Entry: the commit installs nothing. The entry is
+// opened through requirements.OpenDir, the one verified open of the cache
+// (spec goal 1a): an entry that is a symlink, no directory or gone is the
+// error, naming the path and the reason, as it is for a run.
+func openInstalledFS(installed requirements.Entry) (installedFS, error) {
+	var in installedFS
 	if installed.IsZero() {
-		return nil, nil
+		return in, nil
 	}
 	entry, err := requirements.OpenDir(installed.Dir)
 	if err != nil {
-		return nil, fmt.Errorf("open installed roles: %w", err)
+		return in, fmt.Errorf("open installed requirements: %w", err)
 	}
 	defer func() { _ = entry.Close() }()
-	roles, err := entry.OpenRoot("roles")
-	if err != nil {
-		return nil, fmt.Errorf("open installed roles: %w", err)
+	if roles, err := entry.OpenRoot("roles"); err != nil {
+		in.rolesErr = fmt.Errorf("open installed roles: %w", err)
+	} else {
+		in.roles = &cloneFS{root: roles}
 	}
-	return &cloneFS{root: roles}, nil
+	colls, err := entry.OpenRoot(path.Join("collections", "ansible_collections"))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		in.collectionsErr = fmt.Errorf("open installed collections: %w", err)
+	default:
+		in.collections = &cloneFS{root: colls}
+	}
+	return in, nil
 }
 
 func (c *cloneFS) Close() error { return c.root.Close() }

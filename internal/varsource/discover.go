@@ -34,13 +34,31 @@ func ParseRepo(ctx context.Context, fsys fs.FS, commit string) Report {
 	return ParseRepoWithRoles(ctx, fsys, nil, commit)
 }
 
-// ParseRepoWithRoles is ParseRepo that also finds roles in roles, the
-// roles installed from requirements.yml (one directory per role), when it
-// is not nil. A plain role name not found in the repository is looked up
-// there; files read from it are named InstalledRolesPrefix + their path in
-// roles, and count against the same limits as the repository's.
+// ParseRepoWithRoles is ParseRepoInstalled with installed roles only.
 func ParseRepoWithRoles(ctx context.Context, fsys, roles fs.FS, commit string) Report {
-	d := &discovery{ctx: ctx, p: &parser{fsys: fsys, roles: roles}}
+	return ParseRepoInstalled(ctx, fsys, Installed{Roles: roles}, commit)
+}
+
+// Installed is what a commit's requirements installed, each nil when
+// there is none.
+type Installed struct {
+	// Roles holds one directory per role. Files read from it are named
+	// InstalledRolesPrefix + their path in it.
+	Roles fs.FS
+	// Collections is the install's ansible_collections directory:
+	// <namespace>/<collection>/… Files read from it are named
+	// InstalledCollectionsPrefix + their path in it.
+	Collections fs.FS
+}
+
+// ParseRepoInstalled is ParseRepo that also finds roles where a run finds
+// them among what the commit's requirements installed: a role name not
+// found in the repository is looked up in in.Roles, and a collection role
+// (backlog 7.96) in the collections beside the playbook and then in
+// in.Collections. Their files count against the same limits as the
+// repository's.
+func ParseRepoInstalled(ctx context.Context, fsys fs.FS, in Installed, commit string) Report {
+	d := &discovery{ctx: ctx, p: &parser{fsys: fsys, roles: in.Roles, collections: in.Collections}}
 	r := Report{Commit: commit}
 	if err := fs.WalkDir(fsys, ".", d.visit); err != nil {
 		r.Failed = true

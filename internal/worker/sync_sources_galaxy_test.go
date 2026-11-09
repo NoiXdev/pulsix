@@ -68,6 +68,27 @@ func TestSyncExecutorReadsRolesInstalledFromRequirements(t *testing.T) {
 	}
 }
 
+// TestSyncExecutorReadsCollectionRolesInstalledFromRequirements: a role
+// of a collection the commit's requirements installed is read (backlog
+// 7.96).
+func TestSyncExecutorReadsCollectionRolesInstalledFromRequirements(t *testing.T) {
+	clone := requirementsClone(t, map[string]string{
+		"site.yml":         "- hosts: all\n  roles: [acme.web.nginx]\n",
+		"requirements.yml": "collections:\n  - name: acme.web\n",
+	})
+	g := &requirementstest.Galaxy{Collections: map[string]string{"ansible_collections/acme/web/roles/nginx/meta/argument_specs.yml": webSpec}}
+	e := NewSyncExecutor(&fakeFetcher{dir: clone, commit: testCommit}, fakeRequirements(g))
+	r, _, _ := syncSources(t, e, "")
+	if len(r.Playbooks) != 1 || len(r.Notes) != 0 {
+		t.Fatalf("report = %+v", r)
+	}
+	pb := r.Playbooks[0]
+	if len(pb.Fields) != 1 || pb.Fields[0].Name != "web_port" ||
+		pb.Fields[0].Source.File != "(collections)/acme/web/roles/nginx/meta/argument_specs.yml" {
+		t.Fatalf("fields = %+v (notes %v)", pb.Fields, pb.Notes)
+	}
+}
+
 // TestSyncExecutorDoesNotFollowSymlinksOutOfTheInstalledRoles: the
 // take-over already refuses an install whose links leave it, so the links
 // that leave the roles are planted into the published entry after the
@@ -175,15 +196,15 @@ func TestSyncExecutorWithoutInstalledRoles(t *testing.T) {
 		"roles/web/meta/argument_specs.yml": webSpec,
 	}
 	clone := requirementsClone(t, files)
-	var roles []any
+	var handed []any
 	e := &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit},
-		parseRepo: func(ctx context.Context, fsys, installed fs.FS, commit string) varsource.Report {
-			roles = append(roles, installed)
-			return varsource.ParseRepoWithRoles(ctx, fsys, installed, commit)
+		parseRepo: func(ctx context.Context, fsys fs.FS, in varsource.Installed, commit string) varsource.Report {
+			handed = append(handed, in.Roles, in.Collections)
+			return varsource.ParseRepoInstalled(ctx, fsys, in, commit)
 		}}
 	r, _, _ := syncSources(t, e, "")
-	if !reflect.DeepEqual(roles, []any{nil}) {
-		t.Fatalf("installed roles handed to the parser = %v, want nil", roles)
+	if !reflect.DeepEqual(handed, []any{nil, nil}) {
+		t.Fatalf("installed roles and collections handed to the parser = %v, want nil", handed)
 	}
 	// The report as it was before the installed roles, through the same
 	// encoding.
@@ -217,29 +238,35 @@ func mustJSON(t *testing.T, v any) []byte {
 // one read_failed note says so, and the rest of the read goes on (spec
 // goal 7, the 7.75 rule).
 func TestSyncReadOfAnEntryThatCannotBeOpened(t *testing.T) {
+	const (
+		entryLog  = "open the installed requirements"
+		entryNote = "the roles and collections installed from requirements.yml could not be opened; roles found only there are reported as not found"
+		rolesLog  = "open the installed roles"
+		rolesNote = "the roles installed from requirements.yml could not be opened; roles found only there are reported as not found"
+	)
 	for _, tc := range []struct {
-		name, reason string
-		make         func(t *testing.T, entry string)
+		name, reason, logged, note string
+		make                       func(t *testing.T, entry string)
 	}{
-		{"symlink to a directory of roles", "a symlink, which is not followed", func(t *testing.T, entry string) {
+		{"symlink to a directory of roles", "a symlink, which is not followed", entryLog, entryNote, func(t *testing.T, entry string) {
 			target := filepath.Join(t.TempDir(), "elsewhere")
 			writeTree(t, target, map[string]string{"roles/acme.web/meta/argument_specs.yml": webSpec})
 			if err := os.Symlink(target, entry); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"dangling symlink", "a symlink, which is not followed", func(t *testing.T, entry string) {
+		{"dangling symlink", "a symlink, which is not followed", entryLog, entryNote, func(t *testing.T, entry string) {
 			if err := os.Symlink(filepath.Join(t.TempDir(), "gone"), entry); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"file", "not a directory", func(t *testing.T, entry string) {
+		{"file", "not a directory", entryLog, entryNote, func(t *testing.T, entry string) {
 			if err := os.WriteFile(entry, []byte("x"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"missing", "no such file or directory", func(*testing.T, string) {}},
-		{"without roles", "no such file or directory", func(t *testing.T, entry string) {
+		{"missing", "no such file or directory", entryLog, entryNote, func(*testing.T, string) {}},
+		{"without roles", "no such file or directory", rolesLog, rolesNote, func(t *testing.T, entry string) {
 			if err := os.Mkdir(entry, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -257,11 +284,10 @@ func TestSyncReadOfAnEntryThatCannotBeOpened(t *testing.T) {
 			e := &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}, Log: slog.New(slog.NewTextHandler(&logged, nil))}
 			entry := requirements.Entry{Dir: dir, RolesDir: filepath.Join(dir, "roles"), CollectionsDir: filepath.Join(dir, "collections")}
 			r := e.collectVarSources(context.Background(), clone, "", entry)
-			if !strings.Contains(logged.String(), "open the installed roles") || !strings.Contains(logged.String(), tc.reason) {
-				t.Fatalf("log = %s, want the open and %q", logged.String(), tc.reason)
+			if !strings.Contains(logged.String(), tc.logged) || !strings.Contains(logged.String(), tc.reason) {
+				t.Fatalf("log = %s, want %q and %q", logged.String(), tc.logged, tc.reason)
 			}
-			if r.Failed || len(r.Notes) != 1 || r.Notes[0].Code != "read_failed" ||
-				r.Notes[0].Message != "the roles installed from requirements.yml could not be opened; roles found only there are reported as not found" {
+			if r.Failed || len(r.Notes) != 1 || r.Notes[0].Code != "read_failed" || r.Notes[0].Message != tc.note {
 				t.Fatalf("report = %+v", r)
 			}
 			pb := r.Playbooks[0]
@@ -291,5 +317,41 @@ func TestPrependNotes(t *testing.T) {
 				t.Fatalf("prependNotes = %#v, want %#v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSyncReadDoesNotFollowCollectionsOutOfTheEntry: installed collections
+// that are a symlink leaving the entry are not read (backlog 7.96); the
+// read says so once and still reads the installed roles.
+func TestSyncReadDoesNotFollowCollectionsOutOfTheEntry(t *testing.T) {
+	clone := requirementsClone(t, map[string]string{"site.yml": "- hosts: all\n  roles: [acme.web.nginx, acme.db]\n"})
+	cache := requirements.CacheDir(clone)
+	dir := filepath.Join(cache, testCommit+"-0123456789abcdef")
+	writeTree(t, dir, map[string]string{"roles/acme.db/meta/argument_specs.yml": webSpec})
+	outside := t.TempDir()
+	writeTree(t, outside, map[string]string{"acme/web/roles/nginx/meta/argument_specs.yml": webSpec})
+	if err := os.MkdirAll(filepath.Join(dir, "collections"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "collections", "ansible_collections")); err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	e := &SyncExecutor{Fetcher: &fakeFetcher{dir: clone, commit: testCommit}, Log: slog.New(slog.NewTextHandler(&logged, nil))}
+	entry := requirements.Entry{Dir: dir, RolesDir: filepath.Join(dir, "roles"), CollectionsDir: filepath.Join(dir, "collections")}
+	r := e.collectVarSources(context.Background(), clone, "", entry)
+	if !strings.Contains(logged.String(), "open the installed collections") {
+		t.Fatalf("log = %s", logged.String())
+	}
+	if len(r.Notes) != 1 || r.Notes[0].Message != "the collections installed from requirements.yml could not be opened; their roles are not read" {
+		t.Fatalf("notes = %+v", r.Notes)
+	}
+	pb := r.Playbooks[0]
+	want := []varsource.RoleUse{
+		{Name: "acme.web.nginx", EntryPoint: "main", State: varsource.RoleCollection},
+		{Name: "acme.db", EntryPoint: "main", State: varsource.RoleRead},
+	}
+	if !reflect.DeepEqual(pb.Roles, want) {
+		t.Fatalf("roles = %+v", pb.Roles)
 	}
 }

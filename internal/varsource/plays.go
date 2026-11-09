@@ -34,12 +34,14 @@ var roleModules = []string{
 var importKeys = []string{"import_playbook", "ansible.builtin.import_playbook", "ansible.legacy.import_playbook"}
 
 // roleRef is a role use as written: its name, entry point ("main" unless
-// tasks_from names another) and line. dynamic: tasks_from is a template;
-// invalid: the use could not be read (no usable name or tasks_from), name
-// is then whatever text it had.
+// tasks_from names another), line and the collections list that applies to
+// it (backlog 7.96). dynamic: tasks_from is a template; invalid: the use
+// could not be read (no usable name or tasks_from), name is then whatever
+// text it had.
 type roleRef struct {
 	name, entryPoint string
 	line             int
+	collections      int // the walk's collectionLists id
 	dynamic, invalid bool
 }
 
@@ -66,16 +68,17 @@ type playFile struct {
 	cut      bool                // vars_prompt entries were left out by a cap
 	overflow bool                // more role uses or imports than one walk reads
 	seen     map[*yaml.Node]bool // vars mappings and prompt lists read
-	refSeen  map[string]bool
+	refSeen  map[refKey]bool
 	impSeen  map[string]bool
+	lists    *collectionLists    // the walk's collections lists
 	allowed  map[*yaml.Node]bool // nodes whose line comment was read as a marker
 }
 
 // readPlayFile reads the plays of one playbook file (doc is its parsed
 // document, checked by isPlaybook). Its owner checks y.tooComplex after.
-func readPlayFile(y *yamlFile, doc *yaml.Node, dir string) *playFile {
-	f := &playFile{y: y, dir: dir, set: newNameSet(), marked: newNameSet(), unread: newNameSet(),
-		seen: map[*yaml.Node]bool{}, refSeen: map[string]bool{}, impSeen: map[string]bool{}, allowed: map[*yaml.Node]bool{}}
+func readPlayFile(y *yamlFile, doc *yaml.Node, dir string, lists *collectionLists) *playFile {
+	f := &playFile{y: y, dir: dir, set: newNameSet(), marked: newNameSet(), unread: newNameSet(), lists: lists,
+		seen: map[*yaml.Node]bool{}, refSeen: map[refKey]bool{}, impSeen: map[string]bool{}, allowed: map[*yaml.Node]bool{}}
 	for _, item := range y.items(documentRoot(doc)) {
 		a := y.attrs(item)
 		if target, ok := importTarget(a); ok {
@@ -84,11 +87,12 @@ func readPlayFile(y *yamlFile, doc *yaml.Node, dir string) *playFile {
 		}
 		f.vars(a["vars"])
 		f.varsPrompt(a["vars_prompt"])
-		f.tasks(a["pre_tasks"], 0)
-		f.roleEntries(a["roles"])
-		f.tasks(a["tasks"], 0)
-		f.tasks(a["post_tasks"], 0)
-		f.tasks(a["handlers"], 0)
+		colls := f.collections(a["collections"], 0, false)
+		f.tasks(a["pre_tasks"], 0, colls)
+		f.roleEntries(a["roles"], colls)
+		f.tasks(a["tasks"], 0, colls)
+		f.tasks(a["post_tasks"], 0, colls)
+		f.tasks(a["handlers"], 0, colls)
 	}
 	if !y.exceeded() {
 		f.misplacedMarkers(doc)
@@ -176,8 +180,9 @@ func (f *playFile) setKeys(n *yaml.Node) {
 }
 
 // roleEntries reads a play's roles: list. Keys of an entry other than the
-// role keywords are role parameters, set in the playbook.
-func (f *playFile) roleEntries(n *yaml.Node) {
+// role keywords are role parameters, set in the playbook. colls is the
+// play's collections list; an entry's own collections key is not one.
+func (f *playFile) roleEntries(n *yaml.Node, colls int) {
 	for _, it := range f.list(n, "roles") {
 		e := resolve(it)
 		if e == nil {
@@ -197,26 +202,35 @@ func (f *playFile) roleEntries(n *yaml.Node) {
 			if nameNode == nil {
 				nameNode = a["name"]
 			}
-			f.roleName(nameNode, nil, e.Line)
+			f.roleName(nameNode, nil, e.Line, colls)
 			continue
 		}
-		f.roleName(e, nil, e.Line)
+		f.roleName(e, nil, e.Line, colls)
 	}
 }
 
 // tasks reads a task list for role uses, through block, rescue and always.
-func (f *playFile) tasks(n *yaml.Node, depth int) {
+// colls is the collections list the tasks inherit; a block's or a task's
+// own replaces it for what it holds.
+func (f *playFile) tasks(n *yaml.Node, depth int, colls int) {
 	if depth > maxBlockDepth {
 		f.y.giveUp()
 		return
 	}
 	for _, t := range f.list(n, "a task list") {
 		a := f.y.attrs(t)
+		_, isBlock := a["block"]
+		for _, k := range []string{"rescue", "always"} {
+			if _, ok := a[k]; ok {
+				isBlock = true
+			}
+		}
+		own := f.collections(a["collections"], colls, isBlock)
 		nested := false
 		for _, k := range []string{"block", "rescue", "always"} {
 			if v, ok := a[k]; ok {
 				nested = true
-				f.tasks(v, depth+1)
+				f.tasks(v, depth+1, own)
 			}
 		}
 		if nested {
@@ -225,7 +239,7 @@ func (f *playFile) tasks(n *yaml.Node, depth int) {
 		for _, k := range roleModules {
 			if args, ok := a[k]; ok {
 				f.setKeys(a["vars"])
-				f.roleTask(args)
+				f.roleTask(args, own)
 				break
 			}
 		}
@@ -234,13 +248,13 @@ func (f *playFile) tasks(n *yaml.Node, depth int) {
 
 // roleTask reads an import_role/include_role task's arguments: a mapping,
 // or the key=value form ("name=db tasks_from=install").
-func (f *playFile) roleTask(args *yaml.Node) {
+func (f *playFile) roleTask(args *yaml.Node, colls int) {
 	if args == nil {
 		return
 	}
 	if args.Kind != yaml.ScalarNode || isNull(args) {
 		a := f.y.attrs(args)
-		f.roleName(a["name"], a["tasks_from"], args.Line)
+		f.roleName(a["name"], a["tasks_from"], args.Line, colls)
 		return
 	}
 	text, _ := f.y.scalarText(args)
@@ -255,13 +269,13 @@ func (f *playFile) roleTask(args *yaml.Node) {
 		f.invalidRole(text, args.Line, roleUseUnreadable)
 		return
 	}
-	f.ref(name, kv["tasks_from"], args.Line)
+	f.ref(name, kv["tasks_from"], args.Line, colls)
 }
 
 // roleName records a role use from a name node and an optional tasks_from
 // node; line is where the entry starts, for a note when the name is
 // missing.
-func (f *playFile) roleName(nameNode, from *yaml.Node, line int) {
+func (f *playFile) roleName(nameNode, from *yaml.Node, line int, colls int) {
 	name, ok := f.y.scalarText(nameNode)
 	if !ok {
 		f.invalidRole("", line, roleUseUnreadable)
@@ -274,7 +288,7 @@ func (f *playFile) roleName(nameNode, from *yaml.Node, line int) {
 			return
 		}
 	}
-	f.ref(name, entry, resolve(nameNode).Line)
+	f.ref(name, entry, resolve(nameNode).Line, colls)
 }
 
 const roleUseUnreadable = "a role use needs a role name (and tasks_from, if any, as text); not read"
@@ -299,7 +313,7 @@ func (f *playFile) list(n *yaml.Node, what string) []*yaml.Node {
 // as unreadable and its role's fields are not taken as gone. name is what
 // text it had.
 func (f *playFile) invalidRole(name string, line int, why string) {
-	key := fmt.Sprintf("\x01%d\x00%s", line, name)
+	key := refKey{name: name, line: line, invalid: true}
 	if f.overflow || f.refSeen[key] {
 		return
 	}
@@ -307,10 +321,11 @@ func (f *playFile) invalidRole(name string, line int, why string) {
 	f.addRef(key, roleRef{name: name, entryPoint: "main", line: line, invalid: true})
 }
 
-// ref records a role use once per name and entry point. The entry point
-// is tasks_from's file name without .yml/.yaml, as Ansible takes it.
-func (f *playFile) ref(name, tasksFrom string, line int) {
-	r := roleRef{name: name, entryPoint: "main", line: line}
+// ref records a role use once per name, entry point and collections list.
+// The entry point is tasks_from's file name without .yml/.yaml, as Ansible
+// takes it.
+func (f *playFile) ref(name, tasksFrom string, line int, colls int) {
+	r := roleRef{name: name, entryPoint: "main", line: line, collections: colls}
 	if tasksFrom != "" {
 		if templated(tasksFrom) {
 			r.entryPoint, r.dynamic = tasksFrom, true
@@ -318,14 +333,23 @@ func (f *playFile) ref(name, tasksFrom string, line int) {
 			r.entryPoint = ep
 		}
 	}
-	key := r.name + "\x00" + r.entryPoint
+	key := refKey{name: r.name, entryPoint: r.entryPoint, collections: colls}
 	if f.overflow || f.refSeen[key] {
 		return
 	}
 	f.addRef(key, r)
 }
 
-func (f *playFile) addRef(key string, r roleRef) {
+// refKey identifies a role use within a file: an invalid one by its line
+// and text, any other by name, entry point and collections list.
+type refKey struct {
+	name, entryPoint string
+	collections      int
+	line             int
+	invalid          bool
+}
+
+func (f *playFile) addRef(key refKey, r roleRef) {
 	if len(f.refs) == maxWalkRoles {
 		f.overflow = true
 		return

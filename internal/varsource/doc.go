@@ -16,4 +16,12 @@
 // are named "(requirements)/<role>/…" (InstalledRolesPrefix) and kept apart
 // from any repository path of that name, and its reads count against the
 // same limits as the repository's.
+//
+// It may also hand it the installed collections (ParseRepoInstalled,
+// backlog 7.96): a collection role, named fully (namespace.collection.role)
+// or short through a play's, block's or task's collections list, is looked
+// up first in the collections beside the playbook and then in the installed
+// ones, as ansible-playbook does; its files are named
+// "(collections)/<namespace>/<collection>/roles/…"
+// (InstalledCollectionsPrefix).
 package varsource

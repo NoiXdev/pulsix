@@ -51,7 +51,7 @@ const varSourcesTimeLimit = 60 * time.Second
 
 // parseRepoFunc reads the sources of a repository subpath, with the roles
 // installed from the requirements files when roles is not nil.
-type parseRepoFunc func(ctx context.Context, fsys, roles fs.FS, commit string) varsource.Report
+type parseRepoFunc func(ctx context.Context, fsys fs.FS, in varsource.Installed, commit string) varsource.Report
 
 // readVarSources reads the clone's variable sources under subpath and
 // returns the encoded report and the ok event's summary of it. Without a
@@ -109,22 +109,32 @@ func (e *SyncExecutor) collectVarSources(ctx context.Context, dir, subpath strin
 	}
 	defer func() { _ = fsys.Close() }()
 
-	var roles fs.FS // nil unless installed roles were opened: no typed nil
-	installedRoles, err := openInstalledRolesFS(installed)
-	switch {
-	case err != nil:
-		e.logger().WarnContext(ctx, "open the installed roles", "err", err)
+	// fs.FS values stay nil unless their root was opened: no typed nil.
+	var roles, collections fs.FS
+	in, err := openInstalledFS(installed)
+	if err != nil {
+		e.logger().WarnContext(ctx, "open the installed requirements", "err", err)
+		notes = append(notes, varsource.ReadFailed("the roles and collections installed from requirements.yml could not be opened; roles found only there are reported as not found"))
+	}
+	defer in.Close()
+	if in.rolesErr != nil {
+		e.logger().WarnContext(ctx, "open the installed roles", "err", in.rolesErr)
 		notes = append(notes, varsource.ReadFailed("the roles installed from requirements.yml could not be opened; roles found only there are reported as not found"))
-	case installedRoles != nil:
-		defer func() { _ = installedRoles.Close() }()
-		roles = installedRoles
+	} else if in.roles != nil {
+		roles = in.roles
+	}
+	if in.collectionsErr != nil {
+		e.logger().WarnContext(ctx, "open the installed collections", "err", in.collectionsErr)
+		notes = append(notes, varsource.ReadFailed("the collections installed from requirements.yml could not be opened; their roles are not read"))
+	} else if in.collections != nil {
+		collections = in.collections
 	}
 
 	parse := e.parseRepo
 	if parse == nil {
-		parse = varsource.ParseRepoWithRoles
+		parse = varsource.ParseRepoInstalled
 	}
-	r = parse(ctx, fsys, roles, commit)
+	r = parse(ctx, fsys, varsource.Installed{Roles: roles, Collections: collections}, commit)
 	r.Notes = prependNotes(notes, r.Notes)
 	return r
 }
