@@ -134,6 +134,21 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **7.96, roles inside collections:** the variable read now reads roles of
+  collections, as a run finds them: a fully qualified name
+  (`namespace.collection.role`), or a short name through a play's, block's or
+  task's `collections:` list, is looked up in the collections beside the
+  playbook and in the collections the commit's `requirements.yml` installed,
+  before the role search. After the next repository sync, templates can gain
+  fields from those roles; check the templates' variables pages. A qualified
+  name whose collection exists but lacks the role is now the warning
+  `role_not_found` instead of the hint `role_collection`, and so is a dotted
+  name that is no valid collection reference (`my-ns.col.role`,
+  `ns.class.role`), which Ansible looks up as a plain role. A short name found
+  nowhere whose `collections:` list names a collection in neither place is the
+  hint `role_collection` instead of `role_not_found`. A `collections:` value
+  that is no name or list of names is the new warning `collections_invalid`.
+
 - **7.95, repo cache sweep:** a worker now removes the clone,
   `<repo>.requirements/` and the legacy `<repo>.galaxy` of every repository its
   organization no longer has, and the directories of other organizations under
