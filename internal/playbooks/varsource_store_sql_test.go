@@ -242,3 +242,52 @@ func TestInlineSourceNearTheCapReadsBackFromTheDatabase(t *testing.T) {
 		t.Fatalf("VarSource = %d fields, left out %v, incomplete %v, err %v; want all 17 fields", len(src.Playbook.Fields), src.LeftOut, src.Incomplete, err)
 	}
 }
+
+// TestInlineSourceWithExponentNumbersReadsBackFromTheDatabase (final review
+// I2): the database keeps a JSON number as numeric and writes it back in
+// full, so 1e300, six bytes in the stored compact text, reads back as 301
+// digits. A list default of such numbers, aliased across many variables,
+// fits the cap compactly yet comes back far past twice it. Such a number is
+// no form value, so the variables are not fields: the result stays small
+// and reads in full, with the other variable kept.
+func TestInlineSourceWithExponentNumbersReadsBackFromTheDatabase(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "pb-exponent-org")
+	scoped := db.WithOrgScope(ctx, org)
+	svc := newSQLService(d, nil)
+
+	// 20 variables share one list default of 1 000 numbers 1e300: about
+	// 140 KB as compact JSON, about 6 MB as the database would render it.
+	const marked = 20
+	var text strings.Builder
+	text.WriteString("- hosts: all\n  vars:\n    shared: &shared [" + strings.TrimSuffix(strings.Repeat("1e300,", 1_000), ",") + "]\n")
+	text.WriteString("    plain: 5  # pulsix: Plain\n")
+	for i := range marked {
+		fmt.Fprintf(&text, "    opt_%02d: *shared  # pulsix: Option %d\n", i, i)
+	}
+	text.WriteString("  tasks: []\n")
+	p, err := svc.CreateEditor(scoped, org, playbooks.CreateInput{Inline: text.String()})
+	if err != nil {
+		t.Fatalf("CreateEditor: %v", err)
+	}
+	stored, err := playbooks.NewSQLStore(d).Get(scoped, org, p.ID)
+	if err != nil || len(stored.InlineSource) > playbooks.MaxInlineSourceBytes {
+		t.Fatalf("read-back result is %d bytes (err %v), want at most the cap %d", len(stored.InlineSource), err, playbooks.MaxInlineSourceBytes)
+	}
+	src, err := svc.VarSource(scoped, org, p.ID)
+	if err != nil || src.LeftOut || src.Incomplete {
+		t.Fatalf("VarSource: left out %v, incomplete %v, err %v; want it read in full", src.LeftOut, src.Incomplete, err)
+	}
+	if len(src.Playbook.Fields) != 1 || src.Playbook.Fields[0].Name != "plain" {
+		t.Fatalf("fields = %+v, want only plain", src.Playbook.Fields)
+	}
+	notes := 0
+	for _, n := range src.Playbook.Notes {
+		if n.Code == "marker_value_type" {
+			notes++
+		}
+	}
+	if notes != marked {
+		t.Fatalf("%d marker_value_type notes, want %d (notes %+v)", notes, marked, src.Playbook.Notes)
+	}
+}

@@ -69,6 +69,87 @@ func TestLongNumbersAreNotDecoded(t *testing.T) {
 	})
 }
 
+// TestNumbersOutsidePlainRangeAreNotDecoded (final review I2): a number
+// whose value Go writes in exponent form (|v| >= 1e21, or 0 < |v| < 1e-6),
+// an integer of 22 to 64 digits that becomes such a float included, is
+// handled like a number longer than maxNumberLen. PostgreSQL's jsonb keeps
+// a number as numeric and writes it out in full, so 1e300 reads back as 301
+// digits: as a value such numbers would let a stored report grow far past
+// its cap on every read. As a default it is dropped, as a marker value
+// (alone or in a list) the variable is not a field, as a choice and as the
+// default of a text option it stays text.
+func TestNumbersOutsidePlainRangeAreNotDecoded(t *testing.T) {
+	for _, n := range []string{"1e300", "-1e300", "1e21", "-1.5e21", "1e-7", "-1e-300", "1" + strings.Repeat("0", 30), "1" + strings.Repeat("0", 63)} {
+		t.Run(n, func(t *testing.T) {
+			t.Run("default", func(t *testing.T) {
+				fields, notes := readSpec(t, specYAML("x: {type: float, default: "+n+"}"))
+				wantFields(t, fields, []schema.Field{fromSpec(4, schema.Field{Name: "x", Type: schema.TypeFloat})})
+				wantNotes(t, notes, "warning default_invalid "+specFile+":4")
+				if len(notes) == 0 || !strings.Contains(notes[0].Message, "1e21") {
+					t.Fatalf("notes = %+v, want a message naming the range", notes)
+				}
+			})
+			t.Run("marker", func(t *testing.T) {
+				vars := playVars(t, "v: "+n+"  # pulsix:")
+				_, notes, isMarker, ok := markedVar(newYAMLFile("site.yml"), vars.Content[0], vars.Content[1])
+				if !isMarker || ok {
+					t.Fatalf("isMarker, ok = %v, %v", isMarker, ok)
+				}
+				wantNotes(t, notes, "warning marker_value_type site.yml:3")
+			})
+			t.Run("marker list", func(t *testing.T) {
+				vars := playVars(t, "v: [0.5, "+n+"]  # pulsix:")
+				_, notes, isMarker, ok := markedVar(newYAMLFile("site.yml"), vars.Content[0], vars.Content[1])
+				if !isMarker || ok {
+					t.Fatalf("isMarker, ok = %v, %v", isMarker, ok)
+				}
+				wantNotes(t, notes, "warning marker_value_type site.yml:3")
+			})
+			t.Run("choice", func(t *testing.T) {
+				fields, notes := readSpec(t, specYAML("x: {choices: [a, "+n+"]}"))
+				wantFields(t, fields, []schema.Field{fromSpec(4, schema.Field{Name: "x", Type: schema.TypeEnum, Options: []string{"a", n}})})
+				wantNotes(t, notes, "warning choices_converted "+specFile+":4")
+			})
+			t.Run("text default", func(t *testing.T) {
+				fields, notes := readSpec(t, specYAML("x: {type: str, default: "+n+"}"))
+				wantFields(t, fields, []schema.Field{fromSpec(4, schema.Field{Name: "x", Type: schema.TypeString, Default: n})})
+				wantNotes(t, notes)
+			})
+		})
+	}
+}
+
+// TestNumbersInsidePlainRangeAreDecoded: the bounds of the plain range, zero
+// and the largest integers still decode as numbers.
+func TestNumbersInsidePlainRangeAreDecoded(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		typ  schema.Type
+		want any
+	}{
+		{"0", schema.TypeInt, 0},
+		{"0.0", schema.TypeFloat, 0.0},
+		{"-0.0", schema.TypeFloat, 0.0},
+		{"1e-6", schema.TypeFloat, 1e-6},
+		{"-1e-6", schema.TypeFloat, -1e-6},
+		{"9.99e20", schema.TypeFloat, 9.99e20},
+		{"-9.99e20", schema.TypeFloat, -9.99e20},
+		{"123456789012345", schema.TypeInt, 123456789012345},
+		{"-123456789012345", schema.TypeInt, -123456789012345},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			vars := playVars(t, "v: "+tc.text+"  # pulsix:")
+			f, notes, isMarker, ok := markedVar(newYAMLFile("site.yml"), vars.Content[0], vars.Content[1])
+			if !isMarker || !ok || len(notes) != 0 {
+				t.Fatalf("isMarker, ok = %v, %v, notes %+v; want a field", isMarker, ok, notes)
+			}
+			if f.Type != tc.typ || f.Default != tc.want {
+				t.Fatalf("field %s default %#v, want %s %#v", f.Type, f.Default, tc.typ, tc.want)
+			}
+		})
+	}
+}
+
 // TestChoicesExaminedBounded (review P5b): a choices list longer than the
 // option limit is refused before any choice is read.
 func TestChoicesExaminedBounded(t *testing.T) {

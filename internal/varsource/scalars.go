@@ -2,6 +2,7 @@ package varsource
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -18,6 +19,14 @@ const (
 	maxReadBytes = 8 << 20
 	// maxNumberLen bounds a number's text: a longer one is never decoded.
 	maxNumberLen = 64
+	// plainNumberMin and plainNumberMax bound a number's magnitude (zero
+	// aside): outside [plainNumberMin, plainNumberMax) Go's encoder writes
+	// a float64 in exponent form, and PostgreSQL's jsonb, which keeps it as
+	// numeric, writes it back in full (1e300 as 301 digits). Such a number
+	// is handled like one longer than maxNumberLen, so a stored report's
+	// text is never longer in jsonb than about twice Go's compact encoding.
+	plainNumberMin = 1e-6
+	plainNumberMax = 1e21
 	// maxDefaultBytes bounds the text of one default, a list's items
 	// summed; a larger default is refused once the cap is passed.
 	maxDefaultBytes = 64 << 10
@@ -106,9 +115,10 @@ func scalarCost(n *yaml.Node) int { return len(n.Value) + len(n.Tag) }
 
 // readScalar reads one scalar of a default (or of a marked value), charging
 // its bytes and adding them to *size. asText takes a number as its text
-// (a long one included) for a field that holds text. why says what keeps it
-// from being a default: the default cap passed, a number too long to
-// decode, or a tag with no field counterpart.
+// (an unusable one included) for a field that holds text. why says what
+// keeps it from being a default: the default cap passed, a number too long
+// to decode or outside the plain range, or a tag with no field
+// counterpart.
 func (y *yamlFile) readScalar(s *yaml.Node, size *int, asText bool) (typ schema.Type, v any, why string) {
 	if !y.spendBytes(scalarCost(s)) {
 		return "", nil, "could not be read within the file's budget"
@@ -116,7 +126,7 @@ func (y *yamlFile) readScalar(s *yaml.Node, size *int, asText bool) (typ schema.
 	if *size += len(s.Value); *size > maxDefaultBytes {
 		return "", nil, fmt.Sprintf("is larger than %d bytes", maxDefaultBytes)
 	}
-	if asText && longNumber(s) {
+	if asText && unusableNumber(s) {
 		return schema.TypeString, s.Value, ""
 	}
 	t, v, ok := scalarOf(s)
@@ -125,6 +135,8 @@ func (y *yamlFile) readScalar(s *yaml.Node, size *int, asText bool) (typ schema.
 		return t, v, ""
 	case longNumber(s):
 		return "", nil, fmt.Sprintf("holds a number longer than %d characters", maxNumberLen)
+	case unusableNumber(s):
+		return "", nil, "holds a number whose size is 1e21 or more, or below 1e-6, which a form field does not keep"
 	}
 	return "", nil, fmt.Sprintf("holds a value tagged %s, which has no form field", short(s.ShortTag()))
 }
@@ -172,8 +184,8 @@ var yaml11Bools = map[string]bool{
 // value, reading plain yes/no/on/off as booleans the way Ansible does. A
 // null has no type and no value; ok is false for a tag with no field
 // counterpart (a custom tag such as !vault, or !!binary) and for a number
-// longer than maxNumberLen. It charges nothing: callers read through the
-// yamlFile.
+// that is unusable (unusableNumber). It charges nothing: callers read
+// through the yamlFile.
 func scalarOf(n *yaml.Node) (schema.Type, any, bool) {
 	switch n.ShortTag() {
 	case "!!null":
@@ -200,28 +212,70 @@ func scalarOf(n *yaml.Node) (schema.Type, any, bool) {
 	return "", nil, false
 }
 
-func longNumber(n *yaml.Node) bool {
+func isNumber(n *yaml.Node) bool {
 	t := n.ShortTag()
-	return (t == "!!int" || t == "!!float") && len(n.Value) > maxNumberLen
+	return t == "!!int" || t == "!!float"
 }
 
-// numberOf decodes an !!int or !!float scalar of at most maxNumberLen
-// characters. An integer too large for int64 becomes a float64, which Check
-// then refuses as a whole number.
+// longNumber reports a number longer than maxNumberLen characters.
+func longNumber(n *yaml.Node) bool {
+	return isNumber(n) && len(n.Value) > maxNumberLen
+}
+
+// unusableNumber reports a number that is no form value: one longer than
+// maxNumberLen, or one whose value lies outside the plain range
+// (plainNumber), a 22- to 64-digit integer that becomes such a float64
+// included. Neither is decoded into a field.
+func unusableNumber(n *yaml.Node) bool {
+	if !isNumber(n) {
+		return false
+	}
+	if longNumber(n) {
+		return true
+	}
+	v, ok := decodeNumber(n)
+	return ok && !plainNumber(v)
+}
+
+// numberOf decodes an !!int or !!float scalar that is not unusable
+// (unusableNumber). An integer too large for int64 becomes a float64,
+// which Check then refuses as a whole number.
 func numberOf(n *yaml.Node, typ schema.Type) (schema.Type, any, bool) {
 	if longNumber(n) {
 		return "", nil, false
 	}
-	var v any
-	if err := n.Decode(&v); err != nil {
-		return "", nil, false
-	}
-	switch x := v.(type) {
-	case int, int64, float64:
-	case uint64:
-		v = float64(x)
-	default:
+	v, ok := decodeNumber(n)
+	if !ok || !plainNumber(v) {
 		return "", nil, false
 	}
 	return typ, v, true
+}
+
+// decodeNumber decodes a number scalar of at most maxNumberLen characters
+// into an int, an int64 or a float64 (a uint64 becomes a float64).
+func decodeNumber(n *yaml.Node) (any, bool) {
+	var v any
+	if err := n.Decode(&v); err != nil {
+		return nil, false
+	}
+	switch x := v.(type) {
+	case int, int64, float64:
+		return v, true
+	case uint64:
+		return float64(x), true
+	}
+	return nil, false
+}
+
+// plainNumber reports whether Go's encoder writes v in plain notation:
+// zero, or a magnitude in [plainNumberMin, plainNumberMax). Every int64 is
+// plain. NaN and the infinities count as plain here: literalDefault drops
+// them with a note of their own.
+func plainNumber(v any) bool {
+	x, ok := v.(float64)
+	if !ok || math.IsNaN(x) || math.IsInf(x, 0) || x == 0 {
+		return true
+	}
+	a := math.Abs(x)
+	return a >= plainNumberMin && a < plainNumberMax
 }

@@ -202,8 +202,15 @@ const MaxInlineSourceBytes = 1 << 20
 
 // maxInlineReadBytes is the longest stored result a read decodes. The cap
 // applies to the compact JSON the encoder writes, but the database's jsonb
-// type renders it back with a space after every ':' and ',', which at most
-// doubles the text, so a result stored within the cap must still read.
+// type renders it back differently: a space after every ':' and ',' (at
+// most one byte per two, as in "1," to "1, "), string escapes such as
+// < as the character itself (never longer), and a number as the
+// numeric it stored, written in full. That last one is why the result
+// holds no number Go writes in exponent form: varsource refuses a value
+// of 1e21 or more, or below 1e-6, as a form value (it would read back as
+// up to about 300 digits, 1e300 included). So the read-back text is at
+// most about one and a half times the stored one, and a result stored
+// within the cap still reads.
 const maxInlineReadBytes = 2 * MaxInlineSourceBytes
 
 // inlineSource parses an editor playbook's text for storing with it. The
