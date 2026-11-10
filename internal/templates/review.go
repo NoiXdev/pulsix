@@ -78,9 +78,8 @@ func (s *Service) listed(ctx context.Context, orgID uuid.UUID, list []Template) 
 
 // ListReviewed is List with the review of every linked template, by
 // template id; the variable sources are read once per playbook and held
-// one playbook at a time. A
-// template whose sources cannot be read is listed without a review (and
-// logged): the list stays usable.
+// one playbook at a time. A template whose sources cannot be read is listed
+// without a review (and logged): the list stays usable.
 func (s *Service) ListReviewed(ctx context.Context, orgID uuid.UUID) ([]Template, map[uuid.UUID]Review, error) {
 	raw, err := s.store.List(ctx, orgID)
 	if err != nil {

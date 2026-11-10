@@ -145,8 +145,18 @@ const inlineName = "inline"
 
 // decodeInlineSource reads what inlineSource stored: a report holding the
 // playbook, or, when the cap left it out, no playbook (leftOut) and a note.
-// A row saved before backlog 7.114 holds the bare playbook.
+// A row saved before backlog 7.114 holds the bare playbook. Whatever the
+// form, a row longer than MaxInlineSourceBytes reads as left out without
+// being decoded.
 func decodeInlineSource(raw json.RawMessage) (pb varsource.Playbook, leftOut bool, err error) {
+	// A row over the cap is never decoded: rows saved before backlog 7.114
+	// hold the bare playbook, which was uncapped.
+	if len(raw) > MaxInlineSourceBytes {
+		return leftOutPlaybook([]varsource.Note{{
+			Level: varsource.LevelWarning, Code: "report_too_large",
+			Message: fmt.Sprintf("the stored variable sources are larger than %d bytes and are left out; save the playbook again to read them", MaxInlineSourceBytes),
+		}}), true, nil
+	}
 	var probe struct {
 		Playbooks *json.RawMessage `json:"playbooks"`
 	}
@@ -164,12 +174,18 @@ func decodeInlineSource(raw json.RawMessage) (pb varsource.Playbook, leftOut boo
 	case len(rep.Playbooks) == 1:
 		return rep.Playbooks[0], false, nil
 	case len(rep.Playbooks) == 0 && rep.Incomplete:
-		return varsource.Playbook{
-			Path: inlineName, Failed: true, Fields: []schema.Field{}, SetInPlaybook: []string{},
-			Roles: []varsource.RoleUse{}, Files: []varsource.FileUse{}, Notes: rep.Notes,
-		}, true, nil
+		return leftOutPlaybook(rep.Notes), true, nil
 	}
 	return pb, false, fmt.Errorf("the stored report holds %d playbooks", len(rep.Playbooks))
+}
+
+// leftOutPlaybook stands for an inline playbook whose result is not read:
+// no fields, the notes saying why.
+func leftOutPlaybook(notes []varsource.Note) varsource.Playbook {
+	return varsource.Playbook{
+		Path: inlineName, Failed: true, Fields: []schema.Field{}, SetInPlaybook: []string{},
+		Roles: []varsource.RoleUse{}, Files: []varsource.FileUse{}, Notes: notes,
+	}
 }
 
 // inlineRev is an inline text's revision: "text:" and the first 12 hex
@@ -188,9 +204,11 @@ const MaxInlineSourceBytes = 1 << 20
 // parse is bounded and never fails (a problem is a note); the result is
 // stored as a one-playbook report cut by the repository sync's encoder to
 // MaxInlineSourceBytes, so a result that does not fit is stored as left out
-// and incomplete instead. A result the database cannot hold (a NUL
-// character, which its JSON type refuses) is not stored, and VarSource
-// parses the text on read instead.
+// and incomplete instead: a report without the playbook, so without a NUL
+// character from it, and stored whatever the playbook held. A result that
+// fits but that the database cannot hold (a NUL character, which its JSON
+// type refuses) is not stored, and VarSource parses the text on read
+// instead; that result is at most MaxInlineSourceBytes.
 func (s *Service) inlineSource(ctx context.Context, orgID uuid.UUID, text string) json.RawMessage {
 	raw, _, err := varsource.Encode(varsource.Report{
 		Playbooks: []varsource.Playbook{varsource.ParseInline(text)}, Notes: []varsource.Note{},

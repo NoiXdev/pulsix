@@ -457,3 +457,75 @@ func TestVarSourceReadsAnInlineResultStoredBareBeforeTheCap(t *testing.T) {
 		t.Fatalf("VarSource = %+v, %v", src, err)
 	}
 }
+
+// TestInlineSourceCapHoldsWithANULDefault (backlog 7.114): a result over the
+// cap is stored as the left-out report whether or not it holds a NUL
+// character, so no read parses the text again.
+func TestInlineSourceCapHoldsWithANULDefault(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	text := strings.Replace(aliasedPlaybook(), "  vars:\n", "  vars:\n    nul: \"a\\0b\"  # pulsix: Nul\n", 1)
+	store := newFakeStore()
+	svc := newService(store, newFakeRepos(nil))
+
+	p, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Inline: text})
+	if err != nil {
+		t.Fatalf("CreateEditor: %v", err)
+	}
+	stored := store.byID[p.ID].InlineSource
+	var rep varsource.Report
+	if len(stored) == 0 || len(stored) > playbooks.MaxInlineSourceBytes ||
+		json.Unmarshal(stored, &rep) != nil || !rep.Incomplete || len(rep.Playbooks) != 0 {
+		t.Fatalf("stored = %d bytes, report %+v; want the left-out report", len(stored), rep)
+	}
+	src, err := svc.VarSource(ctx, org, p.ID)
+	if err != nil || !src.Incomplete || !src.LeftOut || len(src.Playbook.Fields) != 0 {
+		t.Fatalf("VarSource = %+v, %v; want incomplete and left out, no parse", src, err)
+	}
+}
+
+// TestVarSourceBoundsALegacyBareRow (backlog 7.114): a row saved before the
+// cap holds the playbook alone and may be any size; one over the cap reads
+// as left out without being decoded, one at the cap reads as before.
+func TestVarSourceBoundsALegacyBareRow(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	text := markedPlaybook
+	bareOf := func(size int) json.RawMessage {
+		t.Helper()
+		pb := varsource.ParseInline(text)
+		pb.Notes = []varsource.Note{{Level: varsource.LevelWarning, Code: "pad", Message: ""}}
+		base, err := json.Marshal(pb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pb.Notes[0].Message = strings.Repeat("p", size-len(base))
+		raw, err := json.Marshal(pb)
+		if err != nil || len(raw) != size {
+			t.Fatalf("fixture is %d bytes (err %v), want %d", len(raw), err, size)
+		}
+		return raw
+	}
+	for name, tc := range map[string]struct {
+		size     int
+		leftOut  bool
+		wantAnyF bool
+	}{
+		"at the cap":   {playbooks.MaxInlineSourceBytes, false, true},
+		"over the cap": {playbooks.MaxInlineSourceBytes + 1, true, false},
+		"far over":     {6 << 20, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := newFakeStore()
+			svc := newService(store, newFakeRepos(nil))
+			id := uuid.Must(uuid.NewV7())
+			store.byID[id] = playbooks.Playbook{ID: id, OrgID: org, Source: playbooks.SourceEditor, Inline: &text, InlineSource: bareOf(tc.size)}
+
+			src, err := svc.VarSource(ctx, org, id)
+			if err != nil || src.LeftOut != tc.leftOut || src.Incomplete != tc.leftOut || (len(src.Playbook.Fields) > 0) != tc.wantAnyF {
+				t.Fatalf("VarSource = %+v, %v", src, err)
+			}
+			if tc.leftOut && (src.Rev != "" || len(src.Playbook.Notes) == 0) {
+				t.Fatalf("left-out source = %+v, want no revision and a note", src)
+			}
+		})
+	}
+}
