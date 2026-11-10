@@ -151,28 +151,12 @@ func NewTOTP(store TOTPStore, box *crypto.Box, issuer string, now func() time.Ti
 // enrolment (no row yet) or resuming an abandoned, never-confirmed
 // enrolment needs no code: there is no active factor yet to prove
 // possession of.
+//
+// It does not check the session the enrolment runs on: the API begins an
+// enrolment through Enrolment.BeginTOTP, which writes the pending secret
+// only on a session that is still live (backlog 7.109).
 func (t *TOTP) BeginEnrol(ctx context.Context, userID uuid.UUID, email, code string) (string, string, error) {
-	row, err := t.store.GetTOTPSecret(ctx, userID)
-	switch {
-	case errors.Is(err, ErrNoTOTPSecret):
-		// No existing factor: nothing to prove possession of.
-	case err != nil:
-		return "", "", err
-	case row.Confirmed:
-		ok, verr := t.Verify(ctx, userID, code)
-		if verr != nil {
-			return "", "", verr
-		}
-		if !ok {
-			return "", "", ErrInvalidTOTPCode
-		}
-	}
-
-	key, err := totp.Generate(totp.GenerateOpts{Issuer: t.issuer, AccountName: email, Algorithm: otp.AlgorithmSHA1})
-	if err != nil {
-		return "", "", err
-	}
-	sealed, err := t.box.Seal([]byte(key.Secret()))
+	key, sealed, err := t.newEnrolment(ctx, userID, email, code)
 	if err != nil {
 		return "", "", err
 	}
@@ -180,6 +164,40 @@ func (t *TOTP) BeginEnrol(ctx context.Context, userID uuid.UUID, email, code str
 		return "", "", err
 	}
 	return key.Secret(), key.URL(), nil
+}
+
+// newEnrolment is BeginEnrol up to the write: it checks code against a
+// confirmed secret, if the account has one, and draws the new secret,
+// returning it with its sealed form for UpsertTOTPSecret. A wrong code
+// spends a second-factor attempt (Verify) in a write of its own, so a
+// caller that runs the upsert in a transaction cannot roll that spend back
+// (backlog 7.26).
+func (t *TOTP) newEnrolment(ctx context.Context, userID uuid.UUID, email, code string) (*otp.Key, []byte, error) {
+	row, err := t.store.GetTOTPSecret(ctx, userID)
+	switch {
+	case errors.Is(err, ErrNoTOTPSecret):
+		// No existing factor: nothing to prove possession of.
+	case err != nil:
+		return nil, nil, err
+	case row.Confirmed:
+		ok, verr := t.Verify(ctx, userID, code)
+		if verr != nil {
+			return nil, nil, verr
+		}
+		if !ok {
+			return nil, nil, ErrInvalidTOTPCode
+		}
+	}
+
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: t.issuer, AccountName: email, Algorithm: otp.AlgorithmSHA1})
+	if err != nil {
+		return nil, nil, err
+	}
+	sealed, err := t.box.Seal([]byte(key.Secret()))
+	if err != nil {
+		return nil, nil, err
+	}
+	return key, sealed, nil
 }
 
 // ConfirmEnrol validates the first code, activates TOTP and issues 8

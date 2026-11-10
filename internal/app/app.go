@@ -266,7 +266,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	sessions := auth.NewSessions(q, time.Now)
 
 	totp := auth.NewTOTP(auth.NewSQLTOTPStore(appDB), box, "Pulsix", time.Now)
-	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), sessions, cfg.RPID(), "Pulsix", cfg.Origin(), time.Now)
+	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), sessions, appDB, cfg.RPID(), "Pulsix", cfg.Origin(), time.Now)
 	if err != nil {
 		appDB.Close()
 		return nil, fmt.Errorf("build passkey service: %w", err)

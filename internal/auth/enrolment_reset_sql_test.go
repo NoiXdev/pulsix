@@ -57,7 +57,7 @@ func newResetWorld(t *testing.T) *resetWorld {
 	clock := newMutableClock(time.Now().Truncate(30 * time.Second))
 	tp := auth.NewTOTP(auth.NewSQLTOTPStore(d), crypto.NewBox(key), "Pulsix", clock.Now)
 	sessions := auth.NewSessions(q, time.Now)
-	pk, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), sessions, testRPID, "Pulsix Test", testOrigin, time.Now)
+	pk, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), sessions, d, testRPID, "Pulsix Test", testOrigin, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

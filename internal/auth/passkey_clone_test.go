@@ -169,7 +169,7 @@ func TestFinishLoginRejectsDisabledUser(t *testing.T) {
 	users := &fakeStore{users: map[string]auth.User{
 		"disabled@x": {ID: uid, Email: "disabled@x", DisplayName: "Disabled", DisabledAt: &disabledAt},
 	}}
-	pk, err := auth.NewPasskeys(store, users, &fakeSessions{}, testRPID, "Pulsix Test", testOrigin, clock)
+	pk, err := auth.NewPasskeys(store, users, &fakeSessions{}, inlineTx{}, testRPID, "Pulsix Test", testOrigin, clock)
 	if err != nil {
 		t.Fatal(err)
 	}

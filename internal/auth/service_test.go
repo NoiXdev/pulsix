@@ -47,6 +47,10 @@ type fakeSessions struct {
 	revoked []uuid.UUID
 }
 
+// LockAccount makes fakeSessions an auth.LoginSessions; the fakes hold no
+// rows, so there is nothing to lock.
+func (f *fakeSessions) LockAccount(context.Context, uuid.UUID) error { return nil }
+
 func (f *fakeSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
 	f.created = append(f.created, userID)
 	f.mfa = append(f.mfa, mfaComplete)
@@ -55,6 +59,14 @@ func (f *fakeSessions) Create(_ context.Context, userID uuid.UUID, mfaComplete b
 func (f *fakeSessions) Revoke(_ context.Context, id uuid.UUID) error {
 	f.revoked = append(f.revoked, id)
 	return nil
+}
+
+// inlineTx is the TxRunner of the unit tests: the fakes have no
+// transaction, so fn just runs.
+type inlineTx struct{}
+
+func (inlineTx) WithInstanceTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
 }
 
 type mfaOn struct{}

@@ -75,6 +75,9 @@ WHERE sessions.id = (SELECT previous.id FROM previous);
 -- held by a second enrolment of the same account blocks, so two concurrent
 -- finishes deadlocked. KEY SHARE conflicts with FOR UPDATE only, not with
 -- an update of a non-key column.
+-- A passkey login takes it the same way before it opens its session, and
+-- re-checks its credential in a statement of its own afterwards
+-- (Sessions.LockAccount, backlog 7.109 variant b).
 SELECT id FROM users WHERE id = $1 FOR KEY SHARE;
 
 -- name: RevokeSession :exec

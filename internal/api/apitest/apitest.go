@@ -446,7 +446,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	cfg := config.Config{PublicURL: publicURL}
 
 	totp := auth.NewTOTP(auth.NewSQLTOTPStore(d), crypto.NewBox(testMasterKey), "Pulsix Test", time.Now)
-	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(appQ), auth.NewSQLStore(appQ), s.Sessions, cfg.RPID(), "Pulsix Test", cfg.Origin(), time.Now)
+	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(appQ), auth.NewSQLStore(appQ), s.Sessions, d, cfg.RPID(), "Pulsix Test", cfg.Origin(), time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

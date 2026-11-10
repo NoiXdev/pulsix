@@ -120,7 +120,11 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		// confirmed secret (BeginEnrol requires a fresh code in that case,
 		// so a stolen MFA-complete session can't silently plant a new
 		// secret over an existing one); first-time enrolment ignores it.
-		secret, url, err := deps.TOTP.BeginEnrol(ctx, p.UserID, u.Email, in.Body.Code)
+		// The pending secret is written only while p's session is still
+		// live: p was resolved before the body was read, and an
+		// administrator's second-factor reset may have ended it since
+		// (backlog 7.109).
+		secret, url, err := deps.Enrolment.BeginTOTP(ctx, p.UserID, p.SessionID, u.Email, in.Body.Code)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}

@@ -70,12 +70,24 @@ type PasskeyStore interface {
 	TakeCeremony(ctx context.Context, id uuid.UUID) (kind string, userID *uuid.UUID, data []byte, err error)
 }
 
+// LoginSessions is what a passkey login needs of the session store
+// (*Sessions). Both run inside the login's instance transaction: the account
+// lock first, then the session it opens (backlog 7.109).
+type LoginSessions interface {
+	// LockAccount takes the account row for the rest of the transaction,
+	// in the mode an administrator's second-factor reset waits for;
+	// ErrNotFound for an unknown account.
+	LockAccount(ctx context.Context, userID uuid.UUID) error
+	Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error)
+}
+
 // Passkeys runs WebAuthn registration and login ceremonies.
 type Passkeys struct {
 	wa       *webauthn.WebAuthn
 	store    PasskeyStore
 	users    Store
-	sessions SessionStore
+	sessions LoginSessions
+	tx       TxRunner
 	now      func() time.Time
 }
 
@@ -83,8 +95,10 @@ type Passkeys struct {
 // the relying party id (a registrable domain, no scheme or port); origin is
 // the full origin (scheme + host, with port) the browser reports as the
 // ceremony's collected origin. Both are derived from config.Config.PublicURL
-// in production; see config.Config.RPID and config.Config.Origin.
-func NewPasskeys(store PasskeyStore, users Store, sessions SessionStore, rpID, rpName, origin string, now func() time.Time) (*Passkeys, error) {
+// in production; see config.Config.RPID and config.Config.Origin. tx runs
+// the transaction a login opens its session in (FinishLogin); the stores
+// and sessions must be built on the same database so they pick it up.
+func NewPasskeys(store PasskeyStore, users Store, sessions LoginSessions, tx TxRunner, rpID, rpName, origin string, now func() time.Time) (*Passkeys, error) {
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID: rpID, RPDisplayName: rpName, RPOrigins: []string{origin},
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
@@ -98,7 +112,7 @@ func NewPasskeys(store PasskeyStore, users Store, sessions SessionStore, rpID, r
 	if err != nil {
 		return nil, fmt.Errorf("configure webauthn: %w", err)
 	}
-	return &Passkeys{wa: wa, store: store, users: users, sessions: sessions, now: now}, nil
+	return &Passkeys{wa: wa, store: store, users: users, sessions: sessions, tx: tx, now: now}, nil
 }
 
 // waUser adapts our User + credentials to webauthn.User.
@@ -275,7 +289,10 @@ func (p *Passkeys) BeginLogin(ctx context.Context) (json.RawMessage, uuid.UUID, 
 // FinishLogin verifies the assertion and opens an MFA-complete session: a
 // passkey login requires user verification (enforced by the RPID's
 // AuthenticatorSelection above), so it counts as a completed second factor
-// on its own.
+// on its own. The session is opened in one instance transaction that
+// re-checks the credential under the account lock (openLoginSession), so a
+// login whose assertion was checked before an administrator's second-factor
+// reset opens no session after it (backlog 7.109).
 func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, response json.RawMessage) (string, error) {
 	_, sd, err := p.takeCeremony(ctx, ceremonyID, ceremonyKindLogin)
 	if err != nil {
@@ -358,10 +375,51 @@ func (p *Passkeys) FinishLogin(ctx context.Context, ceremonyID uuid.UUID, respon
 			"credential_id", base64.RawURLEncoding.EncodeToString(cred.ID))
 		return "", ErrInvalidCredentials
 	}
-	if err := p.store.UpdateCredentialCounter(ctx, cred.ID, cred.Authenticator.SignCount); err != nil {
+	var cookie string
+	err = p.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		var err error
+		cookie, err = p.openLoginSession(ctx, found.u.ID, cred.ID, cred.Authenticator.SignCount)
+		return err
+	})
+	if err != nil {
 		return "", err
 	}
-	_, cookie, err := p.sessions.Create(ctx, found.u.ID, true)
+	return cookie, nil
+}
+
+// openLoginSession advances the credential's counter and opens the login's
+// MFA-complete session, inside the instance transaction FinishLogin runs it
+// in, and only while the credential is still userID's (backlog 7.109).
+//
+// The assertion was validated against a credential read before this
+// transaction began, and an administrator's second-factor reset may have
+// removed it since: the reset takes the account row FOR UPDATE before it
+// deletes the passkeys and ends the sessions. So the account row is locked
+// first (Sessions.LockAccount, the key-share lock enrolment takes, in the
+// same order), which waits for a reset in flight, and the credential is
+// re-read afterwards in a statement of its own, which sees what that reset
+// committed. A credential that is gone, or no longer userID's, fails the
+// login with ErrInvalidCredentials — exactly what an unregistered
+// credential gets — and opens nothing. A reset that starts after the lock
+// waits for this transaction and then ends the session it opened.
+func (p *Passkeys) openLoginSession(ctx context.Context, userID uuid.UUID, credentialID []byte, signCount uint32) (string, error) {
+	if err := p.sessions.LockAccount(ctx, userID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return "", ErrInvalidCredentials
+		}
+		return "", err
+	}
+	owner, err := p.store.FindUserByCredentialID(ctx, credentialID)
+	if errors.Is(err, ErrNotFound) || (err == nil && owner != userID) {
+		return "", ErrInvalidCredentials
+	}
+	if err != nil {
+		return "", err
+	}
+	if err := p.store.UpdateCredentialCounter(ctx, credentialID, signCount); err != nil {
+		return "", err
+	}
+	_, cookie, err := p.sessions.Create(ctx, userID, true)
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}

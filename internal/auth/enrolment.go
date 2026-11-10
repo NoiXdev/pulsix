@@ -96,7 +96,7 @@ func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID u
 	}
 	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
 		if err := e.sessions.LockLive(ctx, p.UserID, p.SessionID); err != nil {
-			return sessionEnded(err)
+			return sessionEnded("finish passkey registration", err)
 		}
 		if err := e.passkeys.store.AddCredential(ctx, p.UserID, name, c); err != nil {
 			return err
@@ -106,7 +106,7 @@ func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID u
 		}
 		var err error
 		if cookie, err = e.sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
-			return sessionEnded(err)
+			return sessionEnded("finish passkey registration", err)
 		}
 		return nil
 	})
@@ -117,11 +117,39 @@ func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID u
 }
 
 // sessionEnded reports a session that matched nothing as ErrUnauthenticated:
-// for a request that finishes an enrolment, its own session having ended is
-// a sign-in problem, not a missing ceremony or credential (ErrNotFound).
-func sessionEnded(err error) error {
+// for a request that begins or finishes an enrolment, its own session
+// having ended is a sign-in problem, not a missing ceremony or credential
+// (ErrNotFound). op names the step for the error's context.
+func sessionEnded(op string, err error) error {
 	if errors.Is(err, ErrNotFound) {
-		return fmt.Errorf("finish passkey registration: the session has ended: %w", ErrUnauthenticated)
+		return fmt.Errorf("%s: the session has ended: %w", op, ErrUnauthenticated)
 	}
-	return fmt.Errorf("finish passkey registration: %w", err)
+	return fmt.Errorf("%s: %w", op, err)
+}
+
+// BeginTOTP begins a TOTP enrolment on sessionID's session: it checks code
+// against the account's confirmed secret, if it has one, and writes a new
+// pending secret, returning it and its otpauth URL (TOTP.BeginEnrol).
+//
+// The pending secret is written only while the session is still live, in
+// one instance transaction with the account lock (backlog 7.109): a request
+// resolves its session before it reads its body, and an administrator's
+// second-factor reset may have ended it since. A session that has ended is
+// ErrUnauthenticated and writes nothing. The code check runs before that
+// transaction, so a wrong code spends its attempt even then (backlog 7.26).
+func (e *Enrolment) BeginTOTP(ctx context.Context, userID, sessionID uuid.UUID, email, code string) (secret, url string, err error) {
+	key, sealed, err := e.totp.newEnrolment(ctx, userID, email, code)
+	if err != nil {
+		return "", "", err
+	}
+	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		if err := e.sessions.LockLive(ctx, userID, sessionID); err != nil {
+			return sessionEnded("begin TOTP enrolment", err)
+		}
+		return e.totp.store.UpsertTOTPSecret(ctx, userID, sealed)
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return key.Secret(), key.URL(), nil
 }

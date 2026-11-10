@@ -93,7 +93,14 @@ type tinySessions struct{}
 func (tinySessions) Create(context.Context, uuid.UUID, bool) (uuid.UUID, string, error) {
 	return uuid.Nil, "", nil
 }
-func (tinySessions) Revoke(context.Context, uuid.UUID) error { return nil }
+func (tinySessions) Revoke(context.Context, uuid.UUID) error      { return nil }
+func (tinySessions) LockAccount(context.Context, uuid.UUID) error { return nil }
+
+type tinyTx struct{}
+
+func (tinyTx) WithInstanceTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return fn(ctx)
+}
 
 // TestLocalUserHandleCheckReallyRuns proves FinishLogin's handler actually
 // invokes userHandleMismatch on every login attempt that reaches it, by
@@ -116,7 +123,7 @@ func TestLocalUserHandleCheckReallyRuns(t *testing.T) {
 	owner := uuid.Must(uuid.NewV7())
 	store := &tinyPasskeyStore{ceremonies: map[uuid.UUID]tinyCeremony{}, findUserID: owner}
 	users := tinyUserStore{u: User{ID: owner, Email: "o@x", DisplayName: "O"}}
-	pk, err := NewPasskeys(store, users, tinySessions{}, "localhost", "Pulsix Test", "http://localhost:5173", time.Now)
+	pk, err := NewPasskeys(store, users, tinySessions{}, tinyTx{}, "localhost", "Pulsix Test", "http://localhost:5173", time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

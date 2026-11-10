@@ -189,11 +189,8 @@ func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) (string, e
 // Outside a transaction the lock ends with the statement, so callers run
 // this and their writes in one (TxRunner).
 func (s *Sessions) LockLive(ctx context.Context, userID, sessionID uuid.UUID) error {
-	if _, err := s.q.LockUserForEnrolment(ctx, userID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		return fmt.Errorf("lock the account: %w", err)
+	if err := s.LockAccount(ctx, userID); err != nil {
+		return err
 	}
 	row, err := s.q.GetSession(ctx, sessionID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -204,6 +201,24 @@ func (s *Sessions) LockLive(ctx context.Context, userID, sessionID uuid.UUID) er
 	}
 	if row.UserID != userID {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// LockAccount takes userID's account row in key-share mode for the rest of
+// the enclosing instance transaction (LockUserForEnrolment), the lock an
+// administrator's second-factor reset needs exclusively before it removes
+// the factors and ends the sessions (backlog 7.109). A write that depends on
+// a factor the reset removes takes it first and re-checks that factor in a
+// statement of its own afterwards: LockLive for an enrolment, which re-checks
+// its session, and a passkey login, which re-checks its credential before it
+// opens a session. An unknown account is ErrNotFound.
+func (s *Sessions) LockAccount(ctx context.Context, userID uuid.UUID) error {
+	if _, err := s.q.LockUserForEnrolment(ctx, userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("lock the account: %w", err)
 	}
 	return nil
 }

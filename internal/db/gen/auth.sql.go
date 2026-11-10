@@ -296,6 +296,9 @@ SELECT id FROM users WHERE id = $1 FOR KEY SHARE
 // held by a second enrolment of the same account blocks, so two concurrent
 // finishes deadlocked. KEY SHARE conflicts with FOR UPDATE only, not with
 // an update of a non-key column.
+// A passkey login takes it the same way before it opens its session, and
+// re-checks its credential in a statement of its own afterwards
+// (Sessions.LockAccount, backlog 7.109 variant b).
 func (q *Queries) LockUserForEnrolment(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, lockUserForEnrolment, id)
 	var id_2 uuid.UUID

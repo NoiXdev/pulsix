@@ -165,7 +165,7 @@ func (fakeAuthService) SetLocale(context.Context, uuid.UUID, *string) error { re
 // called).
 func testPasskeys(t *testing.T) *auth.Passkeys {
 	t.Helper()
-	pk, err := auth.NewPasskeys(nil, nil, nil, "localhost", "Test", "http://localhost", time.Now)
+	pk, err := auth.NewPasskeys(nil, nil, nil, nil, "localhost", "Test", "http://localhost", time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

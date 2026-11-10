@@ -175,7 +175,7 @@ func newPasskeysTwoUsers(t *testing.T, store auth.PasskeyStore, now func() time.
 		"p@x": {ID: uid, Email: "p@x", DisplayName: "P"},
 		"o@x": {ID: other, Email: "o@x", DisplayName: "O"},
 	}}
-	pk, err := auth.NewPasskeys(store, users, &fakeSessions{}, testRPID, "Pulsix Test", testOrigin, now)
+	pk, err := auth.NewPasskeys(store, users, &fakeSessions{}, inlineTx{}, testRPID, "Pulsix Test", testOrigin, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -505,7 +505,7 @@ func TestNewPasskeysRejectsInvalidConfig(t *testing.T) {
 	// An RPID that is an IP address, not a domain, fails go-webauthn's own
 	// config validation; NewPasskeys must wrap and return that error rather
 	// than panicking or silently building an unusable *Passkeys.
-	if _, err := auth.NewPasskeys(newMemPasskeyStore(time.Now), nil, nil, "127.0.0.1", "Test", "http://127.0.0.1", time.Now); err == nil {
+	if _, err := auth.NewPasskeys(newMemPasskeyStore(time.Now), nil, nil, nil, "127.0.0.1", "Test", "http://127.0.0.1", time.Now); err == nil {
 		t.Fatal("expected an error for a non-domain RPID")
 	}
 }
