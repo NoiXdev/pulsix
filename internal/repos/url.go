@@ -76,7 +76,8 @@ func splitUserinfo(raw string) (scheme, userinfo string, start, end int, ok bool
 		scheme, start = schemeSSH, len("ssh://")
 	default:
 		// scp-style: user@host:path, the user ends at the first "@" and
-		// cannot contain a "/".
+		// cannot contain a "/", the same split as urlPattern's scp
+		// alternative (`[^@/ ]+@[^:/ ]+:`).
 		at := strings.Index(raw, "@")
 		if at <= 0 || strings.Contains(raw[:at], "/") {
 			return "", "", 0, 0, false
@@ -117,15 +118,15 @@ func RedactURL(raw string) string {
 }
 
 // KeepStoredURL maps a submitted URL back to the stored one when it is the
-// stored URL as RedactURL showed it (backlog 7.103): a form edits a row
-// stored with credentials by sending back the URL it was given, so
-// "https://***@host/x" means "the URL stays", not "write ***", and not
-// "change it to a URL with a token". Any other submission is returned as
-// is; only a submission the credential refusal would catch is mapped, so
-// the ssh and scp-style forms, whose redacted URL is a valid URL of its own
-// (the user without the password), are written as submitted.
+// stored URL exactly as RedactURL showed it (backlog 7.103): a form edits a
+// row stored with credentials by sending back the URL it was given, so
+// "https://***@host/x" or "ssh://u@host/x" means "the URL stays", not
+// "write the redacted text". That keeps the location byte for byte (a
+// projection's installation-owned url is not "changed" by an edit of its
+// credential binding) and never drops a password from a row on an unrelated
+// save. Any other submission is returned as is.
 func KeepStoredURL(submitted, stored string) string {
-	if _, credentials := urlProblem(submitted); credentials && submitted == RedactURL(stored) {
+	if submitted != stored && submitted == RedactURL(stored) {
 		return stored
 	}
 	return submitted

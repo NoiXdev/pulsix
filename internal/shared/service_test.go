@@ -1457,3 +1457,21 @@ func TestUpdateRepoKeepsALegacyCredentialURL(t *testing.T) {
 		t.Fatalf("UpdateRepo to another credential URL = %v, want shared.ErrInvalidInput", err)
 	}
 }
+
+// TestUpdateRepoKeepsAStoredSSHURLWhenTheFormEchoesItsRedaction: the DTO
+// shows an ssh definition's URL without its password; sending that back must
+// not rewrite the stored URL (backlog 7.103).
+func TestUpdateRepoKeepsAStoredSSHURLWhenTheFormEchoesItsRedaction(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	stored := "ssh://u:p@git.example.com/infra.git"
+	store.defs[id] = shared.RepoDefinition{ID: id, Name: "infra", URL: stored, Branch: "main"}
+
+	got, err := shared.NewService(store).UpdateRepo(ctx, id, shared.RepoDefinitionInput{Name: "infra", URL: repos.RedactURL(stored), Branch: "release"})
+	if err != nil {
+		t.Fatalf("UpdateRepo = %v, want accepted", err)
+	}
+	if got.URL != stored {
+		t.Fatalf("UpdateRepo stored %q, want the stored URL kept", got.URL)
+	}
+}

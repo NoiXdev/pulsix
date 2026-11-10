@@ -325,24 +325,25 @@ func (s *Service) UpdateRepo(ctx context.Context, id uuid.UUID, in RepoDefinitio
 // ErrInvalidInput. An update that keeps the stored URL skips the credential
 // refusal, so a definition stored before the rule can still be saved, and
 // one that sends the stored URL back as the DTO redacted it
-// (repos.KeepStoredURL) keeps it too; it returns the URL to store. The
-// stored row is read only when the URL carries credentials, and
-// ErrNotFound surfaces from it as it would from the write.
+// (repos.KeepStoredURL) keeps it byte for byte too; it returns the URL to
+// store. The stored row is read after the form rules pass, and ErrNotFound
+// surfaces from it as it would from the write.
 func (s *Service) validateURL(ctx context.Context, id uuid.UUID, url string) (string, error) {
 	reason, credentials := repos.URLProblem(url)
-	if reason == "" {
-		return url, nil
+	if reason != "" && !credentials {
+		return "", fmt.Errorf("%w: %s", ErrInvalidInput, reason)
+	}
+	cur, err := s.store.GetDefinition(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if repos.KeepStoredURL(url, cur.URL) == cur.URL {
+		return cur.URL, nil
 	}
 	if credentials {
-		cur, err := s.store.GetDefinition(ctx, id)
-		if err != nil {
-			return "", err
-		}
-		if kept := repos.KeepStoredURL(url, cur.URL); kept == cur.URL {
-			return kept, nil
-		}
+		return "", fmt.Errorf("%w: %s", ErrInvalidInput, reason)
 	}
-	return "", fmt.Errorf("%w: %s", ErrInvalidInput, reason)
+	return url, nil
 }
 
 // canonicalSubpath is repos.CanonicalSubpath for a definition (backlog

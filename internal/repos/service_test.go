@@ -1050,3 +1050,52 @@ func TestRedactURL(t *testing.T) {
 		}
 	}
 }
+
+// TestUpdateKeepsStoredSSHURLWhenTheFormEchoesItsRedaction: the DTO shows a
+// legacy ssh or scp-style URL without its password, and the form sends that
+// back. It is the stored URL unchanged: a projection must not be refused for
+// "changing" an installation-owned url, and an organization's own row must
+// not lose the password to an unrelated save (backlog 7.103).
+func TestUpdateKeepsStoredSSHURLWhenTheFormEchoesItsRedaction(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	for _, stored := range []string{"ssh://u:p@git.example.com/x.git", "u:p@git.example.com:x.git"} {
+		t.Run("projected "+stored, func(t *testing.T) {
+			store := newFakeStore()
+			cred := gitKeyCred()
+			svc := newService(store, newFakeCreds(map[uuid.UUID]credentials.Credential{cred.ID: cred}), &fakeEnqueuer{})
+			sharedID := uuid.Must(uuid.NewV7())
+			row, err := store.Create(ctx, repos.Repo{
+				ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra", URL: stored, Branch: "main", SharedRepoID: &sharedID,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			echoed := repos.RedactURL(stored)
+			if echoed == stored {
+				t.Fatalf("test setup: %q has no password to redact", stored)
+			}
+			got, err := svc.Update(ctx, org, row.ID, repos.UpdateInput{Name: "infra", URL: echoed, Branch: "main", CredentialID: &cred.ID})
+			if err != nil {
+				t.Fatalf("Update of a projection echoing the redacted URL = %v, want accepted", err)
+			}
+			if got.URL != stored || got.CredentialID == nil || *got.CredentialID != cred.ID {
+				t.Fatalf("Update = %+v, want the stored URL kept and the credential set", got)
+			}
+		})
+		t.Run("own "+stored, func(t *testing.T) {
+			store := newFakeStore()
+			svc := newService(store, newFakeCreds(nil), &fakeEnqueuer{})
+			row, err := store.Create(ctx, repos.Repo{ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra", URL: stored, Branch: "main"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := svc.Update(ctx, org, row.ID, repos.UpdateInput{Name: "infra", URL: repos.RedactURL(stored), Branch: "release"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.URL != stored || got.Branch != "release" {
+				t.Fatalf("Update = %+v, want the stored URL (password included) kept", got)
+			}
+		})
+	}
+}
