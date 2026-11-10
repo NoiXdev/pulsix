@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -114,12 +115,30 @@ func TestRoleEntryPointsAreReplayedPerUse(t *testing.T) {
 	for _, f := range pb.Fields {
 		got = append(got, f.Name+"@"+f.Source.Role+"/"+f.Source.EntryPoint)
 	}
-	if want := []string{"a_var@x/main", "b_var@./roles/x/other"}; !equalStrings(got, want) {
+	if want := []string{"a_var@x/main", "b_var@./roles/x/other"}; !slices.Equal(got, want) {
 		t.Fatalf("fields = %q, want %q", got, want)
 	}
 	counts := codes(pb.Notes)
 	if counts[codeDuplicateKey] != 1 || counts[codeEntryPointMissing] != 1 {
 		t.Fatalf("notes = %v", pb.Notes)
+	}
+
+	// A mapping shared between entry points raises its duplicate_key note for
+	// whichever of them is used, not only for the first that reads it.
+	shared := `argument_specs:
+  a:
+    options: &O
+      x: {type: str}
+      x: {type: int}
+  b:
+    options: *O
+`
+	pb = ParsePlaybook(fstest.MapFS{
+		"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: b}\n")},
+		"roles/x/meta/argument_specs.yml": {Data: []byte(shared)},
+	}, "site.yml")
+	if codes(pb.Notes)[codeDuplicateKey] != 1 || len(pb.Fields) != 1 {
+		t.Fatalf("notes = %v, %d fields; want the duplicate_key warning of the shared mapping", pb.Notes, len(pb.Fields))
 	}
 
 	// An entry point no use asks for raises no note.
@@ -132,14 +151,76 @@ func TestRoleEntryPointsAreReplayedPerUse(t *testing.T) {
 	}
 }
 
-func equalStrings(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
+// aliasedEntryPoints is the spec file of the review of backlog 7.113: main
+// holds 99 options of 99 sub-options each, and n entry points alias main.
+func aliasedEntryPoints(n int) string {
+	var b strings.Builder
+	b.WriteString("argument_specs:\n  main: &E\n    options:\n      o0: &O\n        type: dict\n        options:\n")
+	for i := range 99 {
+		fmt.Fprintf(&b, "          l%d: {}\n", i)
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
+	for i := 1; i < 99; i++ {
+		fmt.Fprintf(&b, "      o%d: *O\n", i)
+	}
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "  e%d: *E\n", i)
+	}
+	return b.String()
+}
+
+// TestAliasedEntryPointsAreBounded: mapping every entry point of a role's
+// spec file at parse time costs what the file's budget allows, however many
+// entry points alias one big one. The file is then given up as
+// file_too_complex, with nothing read from it (backlog 7.113). Before the
+// budget was shared, an 11 KB file of this shape took 8.7 GiB of allocation.
+func TestAliasedEntryPointsAreBounded(t *testing.T) {
+	files := fstest.MapFS{
+		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x]\n")},
+		"roles/x/meta/argument_specs.yml": {Data: []byte(aliasedEntryPoints(800))},
+	}
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	pb := ParsePlaybook(files, "site.yml")
+	runtime.ReadMemStats(&after)
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
+		t.Fatalf("the walk allocated %d MiB, want under 64 MiB", alloc>>20)
+	}
+	wantRoles(t, pb.Roles, RoleUse{"x", "main", RoleUnreadable})
+	if pb.Failed || len(pb.Fields) != 0 {
+		t.Fatalf("failed = %v, %d fields; want none from a file given up", pb.Failed, len(pb.Fields))
+	}
+	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
+}
+
+// TestEntryPointsShareTheOptionBudget: entry points that each fit the
+// budget but not together give the file up whole, whichever is used; one
+// within it is read.
+func TestEntryPointsShareTheOptionBudget(t *testing.T) {
+	spec := func(entryPoints, options int) string {
+		var b strings.Builder
+		b.WriteString("argument_specs:\n")
+		for e := range entryPoints {
+			fmt.Fprintf(&b, "  e%d:\n    options:\n      o: {type: dict, options: {s: {type: str}", e)
+			for o := range options {
+				fmt.Fprintf(&b, ", s%d: {type: str}", o)
+			}
+			b.WriteString("}}\n")
 		}
+		return b.String()
 	}
-	return true
+	run := func(spec string) Playbook {
+		return ParsePlaybook(fstest.MapFS{
+			"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: e0}\n")},
+			"roles/x/meta/argument_specs.yml": {Data: []byte(spec)},
+		}, "site.yml")
+	}
+	if pb := run(spec(3, maxSpecFields/4)); len(pb.Fields) != 1 || pb.Roles[0].State != RoleRead {
+		t.Fatalf("within the budget: %d fields, roles %v, notes %v", len(pb.Fields), pb.Roles, pb.Notes)
+	}
+	pb := run(spec(5, maxSpecFields/4))
+	wantRoles(t, pb.Roles, RoleUse{"x", "e0", RoleUnreadable})
+	if len(pb.Fields) != 0 {
+		t.Fatalf("%d fields from a file given up", len(pb.Fields))
+	}
+	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
 }

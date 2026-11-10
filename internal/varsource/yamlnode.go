@@ -53,6 +53,15 @@ type yamlFile struct {
 	over      bool
 	notes     []Note // up to maxNotesPerFile (note)
 	dropped   int    // notes past the cap
+
+	// Set while a role's spec file is mapped entry point by entry point
+	// (roleSpec.extract): a mapping is read once, but every entry point that
+	// reads it raises its duplicate_key notes, so an entry point nobody uses
+	// cannot swallow them. dups holds a mapping's notes, seen the mappings the
+	// running capture has read.
+	trackDups bool
+	dups      map[*yaml.Node][]Note
+	seen      map[*yaml.Node]bool
 }
 
 func newYAMLFile(file string) *yamlFile {
@@ -102,9 +111,11 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 		return nil
 	}
 	if ps, ok := y.entries[n]; ok {
+		y.raiseDups(n)
 		return ps
 	}
 	y.entries[n] = nil // an anchor merged into itself reads as empty
+	y.markSeen(n)
 	if !y.spend(len(n.Content) / 2) {
 		return nil
 	}
@@ -123,7 +134,7 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 			continue
 		}
 		if j, dup := last[k.Value]; dup {
-			y.note(warning(codeDuplicateKey, y.file, k.Line,
+			y.noteDuplicate(n, warning(codeDuplicateKey, y.file, k.Line,
 				"%q is set twice in one mapping (lines %d and %d); the later one counts", short(k.Value), keys[j].Line, k.Line))
 		}
 		last[k.Value] = i
@@ -236,6 +247,40 @@ func (y *yamlFile) items(n *yaml.Node) []*yaml.Node {
 	return n.Content
 }
 
+// trackDuplicates starts keeping the duplicate_key notes of each mapping.
+func (y *yamlFile) trackDuplicates() {
+	y.trackDups, y.dups = true, map[*yaml.Node][]Note{}
+}
+
+// noteDuplicate raises a duplicate_key note of the mapping n, and keeps it
+// for the entry points that read n later when dups are tracked.
+func (y *yamlFile) noteDuplicate(n *yaml.Node, note Note) {
+	if y.trackDups {
+		y.dups[n] = append(y.dups[n], note)
+	}
+	y.note(note)
+}
+
+// markSeen records that the running capture has read the mapping n.
+func (y *yamlFile) markSeen(n *yaml.Node) {
+	if !y.trackDups {
+		return
+	}
+	if y.seen == nil {
+		y.seen = map[*yaml.Node]bool{}
+	}
+	y.seen[n] = true
+}
+
+// raiseDups raises the notes of a mapping read before, once per capture.
+func (y *yamlFile) raiseDups(n *yaml.Node) {
+	if !y.trackDups || y.seen[n] {
+		return
+	}
+	y.markSeen(n)
+	y.note(y.dups[n]...)
+}
+
 // release drops what the file's readers cached about its parsed nodes, so
 // the tree can be collected once its owner lets go of it. What stays is the
 // budget and the notes: the file is still accounted, and its notes taken at
@@ -243,4 +288,5 @@ func (y *yamlFile) items(n *yaml.Node) []*yaml.Node {
 func (y *yamlFile) release() {
 	y.entries = map[*yaml.Node][]pair{}
 	y.byKey = map[*yaml.Node]map[string]*yaml.Node{}
+	y.trackDups, y.dups, y.seen = false, nil, nil
 }

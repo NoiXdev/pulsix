@@ -17,11 +17,17 @@ import (
 // file is mapped for every entry point it declares at parse time, each
 // entry point's fields and notes kept apart, and a role use replays the one
 // it asks for. The tree and the file's node caches are dropped before spec
-// returns.
+// returns. The entry points share one option budget (maxSpecFields): mapping
+// them all is bounded by the file, not by how many entry points it declares
+// or how its aliases multiply them.
 type roleSpec struct {
 	missing bool // no such file
 	failed  bool // not read: too large, not valid YAML, … (noted once)
 	y       *yamlFile
+
+	// over: the file ran out of budget while it was mapped. It counts as not
+	// read, and its one file_too_complex note replaces its others.
+	over bool
 
 	// What reading the file raised before any entry point, replayed with the
 	// first use of the file: duplicate keys of the top-level mappings.
@@ -29,21 +35,18 @@ type roleSpec struct {
 	commonDropped int
 	commonShown   bool
 
-	noSpecs    bool  // a meta/main file without an argument_specs key
-	bad        *Note // the file or its argument_specs is no mapping: every entry point is broken
-	specsLine  int   // the argument_specs key's line, 0 without one
-	entries    map[string]*specEntry
-	exhausted  bool // the file's budget ran out before every entry point was mapped
-	budgetOver bool // the budget ran out before the entry points were reached
+	noSpecs   bool  // a meta/main file without an argument_specs key
+	bad       *Note // the file or its argument_specs is no mapping: every entry point is broken
+	specsLine int   // the argument_specs key's line, 0 without one
+	entries   map[string]*specEntry
 }
 
 // specEntry is one entry point of a spec file, mapped when the file was
-// parsed. ok is false when the file's budget ran out while it was mapped.
+// parsed.
 type specEntry struct {
 	res     specResult // fields carry no role name: a use sets its own
 	notes   []Note
 	dropped int
-	ok      bool
 }
 
 // spec reads and parses the spec file name (a path in the tree from) once
@@ -85,9 +88,12 @@ func (w *walk) spec(name string, from roleSource) *roleSpec {
 
 // extract maps every entry point of the parsed file with root (see
 // roleSpec). metaMain is a meta/main file, whose argument_specs key may be
-// absent.
+// absent. The entry points share one option budget, each one costing a unit
+// besides its options; past it, or past the file's visit budget, the file is
+// over.
 func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
 	y := s.y
+	y.trackDuplicates()
 	s.entries = map[string]*specEntry{}
 	var specs pair
 	var hasSpecs bool
@@ -102,24 +108,29 @@ func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
 			y.pairs(specs.value) // its duplicate keys, once
 		}
 	})
-	if y.exceeded() {
-		s.budgetOver = true
+	if s.noSpecs || s.bad != nil || y.exceeded() {
+		s.over = y.exceeded()
 		return
 	}
-	if s.noSpecs || s.bad != nil {
-		return
-	}
+	m := &specMapper{y: y, budget: maxSpecFields}
 	for _, ep := range y.pairs(specs.value) {
-		if y.exceeded() {
-			s.exhausted = true
-			return
+		m.budget--
+		if m.budget < 0 || !y.spend(1) {
+			y.giveUp()
+			break
 		}
 		e := &specEntry{}
 		e.notes, e.dropped = y.capture(func() {
-			e.res = mapEntry(y, ep, "", ep.key.Value, schema.SourceArgumentSpec)
+			e.res = mapEntry(y, m, ep, "", ep.key.Value, schema.SourceArgumentSpec)
 		})
-		e.ok = !y.exceeded()
+		if m.exhausted || y.exceeded() {
+			y.giveUp()
+			break
+		}
 		s.entries[ep.key.Value] = e
+	}
+	if s.over = y.exceeded(); s.over {
+		s.entries = nil
 	}
 }
 
@@ -150,7 +161,7 @@ func (w *walk) readRoleSpec(s *roleSpec, r roleRef) RoleState {
 		y.replay(s.common, s.commonDropped)
 	}
 	switch {
-	case s.budgetOver:
+	case s.over:
 		return RoleUnreadable
 	case s.noSpecs:
 		return RoleNoSpecs
@@ -160,17 +171,11 @@ func (w *walk) readRoleSpec(s *roleSpec, r roleRef) RoleState {
 	}
 	name := r.shownEntryPoint()
 	e, found := s.entries[name]
-	switch {
-	case !found && s.exhausted:
-		return RoleUnreadable
-	case !found:
-		y.note(missingEntryPoint(y.file, s.specsLine, name))
-		e = &specEntry{ok: true}
-	default:
+	if found {
 		y.replay(e.notes, e.dropped)
-	}
-	if !e.ok {
-		return RoleUnreadable
+	} else {
+		y.note(missingEntryPoint(y.file, s.specsLine, name))
+		e = &specEntry{}
 	}
 	res := e.res
 	res.fields = withRole(res.fields, r.shownName())

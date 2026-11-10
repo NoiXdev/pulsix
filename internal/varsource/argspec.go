@@ -8,9 +8,14 @@ import (
 )
 
 // maxSpecFields bounds the options one argument spec file may map, sub-
-// options included. Anchors and aliases can make a small file describe an
+// options included. A role's spec file maps every entry point it declares
+// when it is parsed (roleSpec.extract), so the bound is shared among them,
+// and each entry point costs one too: a file that uses more is given up as
+// file_too_complex with nothing read from it (backlog 7.113). A playbook's
+// sidecar maps one entry point, and a single entry point past the bound is
+// cut (too_many_fields). Anchors and aliases can make a small file describe an
 // exponentially large tree; the top-level option that runs out of budget is
-// skipped whole, with the rest (too_many_fields).
+// skipped whole, with the rest.
 const maxSpecFields = 10_000
 
 // argumentSpecFields maps one entry point of an argument spec file (a role's
@@ -101,13 +106,14 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 		y.note(missingEntryPoint(y.file, line, entryPoint))
 		return specResult{}
 	}
-	return mapEntry(y, ep, role, entryPoint, kind)
+	return mapEntry(y, &specMapper{y: y, budget: maxSpecFields}, ep, role, entryPoint, kind)
 }
 
-// mapEntry maps the options of the entry point ep of argument_specs.
-func mapEntry(y *yamlFile, ep pair, role, entryPoint string, kind schema.SourceKind) specResult {
+// mapEntry maps the options of the entry point ep of argument_specs with
+// m's budget, which a caller mapping several entry points of one file
+// shares among them (see roleSpec.extract).
+func mapEntry(y *yamlFile, m *specMapper, ep pair, role, entryPoint string, kind schema.SourceKind) specResult {
 	r := specResult{entryFound: true}
-	m := specMapper{y: y, budget: maxSpecFields}
 	entry := resolve(ep.value)
 	if !isNull(entry) && entry.Kind != yaml.MappingNode {
 		m.warn(codeFieldInvalid, ep.key.Line, "entry point %s is not a mapping; nothing read", short(entryPoint))
@@ -178,6 +184,10 @@ func (m *specMapper) option(p pair, parent string, depth int) (schema.Field, boo
 		return schema.Field{}, false
 	}
 	m.budget--
+	if !m.y.spend(1) { // an option costs a visit even where an alias makes its spec free to read (backlog 7.113)
+		m.exhausted = true
+		return schema.Field{}, false
+	}
 	if len(p.key.Value) > maxNameBytes {
 		m.warn(codeInvalidName, line, "%q is longer than %d characters, not a usable variable name; skipped", short(p.key.Value), maxNameBytes)
 		return schema.Field{}, false

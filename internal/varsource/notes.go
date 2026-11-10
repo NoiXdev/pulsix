@@ -187,11 +187,11 @@ func invalidYAML(file string, err error) Note {
 // dropped past the cap, instead of leaving them in y; y's own notes are as
 // they were before. replay puts them in y later, as if read raised them then.
 func (y *yamlFile) capture(read func()) (notes []Note, dropped int) {
-	keep, keepDropped := y.notes, y.dropped
-	y.notes, y.dropped = nil, 0
+	keep, keepDropped, keepSeen := y.notes, y.dropped, y.seen
+	y.notes, y.dropped, y.seen = nil, 0, nil
 	read()
 	notes, dropped = y.notes, y.dropped
-	y.notes, y.dropped = keep, keepDropped
+	y.notes, y.dropped, y.seen = keep, keepDropped, keepSeen
 	return notes, dropped
 }
 
