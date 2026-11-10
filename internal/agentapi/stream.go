@@ -91,9 +91,7 @@ func (s *Service) AgentStream(stream agentpb.AgentService_AgentStreamServer) err
 // working send — the fault-path unit tests do exactly that.
 func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentity, stream agentpb.AgentService_AgentStreamServer, tracked *trackedStream) error {
 	tracked.attach(stream)
-	// The ingest budget lives and dies with this loop, so it belongs to
-	// the stream (backlog 7.111) and needs no registry state.
-	budget := newIngestBudget(s.deps.Clock())
+	pacer := newIngestPacer(s.deps.Clock())
 	for {
 		msg, err := stream.Recv()
 		if err == io.EOF {
@@ -102,12 +100,20 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 		if err != nil {
 			return err // transport-level failure: pass the status through
 		}
+		// Check results are paced against the agent's ingest budget before
+		// they are stored (backlog 7.111), outside the processing lock so
+		// a revocation never waits on the pacing.
+		if results := msg.GetCheckResults(); results != nil && s.deps.Checks != nil {
+			if err := s.pace(ctx, agent, pacer, len(results.GetResults())); err != nil {
+				if errors.Is(err, errCheckResultsRejected) {
+					return status.Errorf(codes.InvalidArgument, "agent message rejected: %v", err)
+				}
+				return status.FromContextError(err).Err()
+			}
+		}
 		var cfg *agentpb.CheckConfig
 		done, err := tracked.store(func() error {
 			var procErr error
-			if !s.admit(ctx, agent, budget, msg) {
-				return nil
-			}
 			cfg, procErr = s.process(ctx, agent, msg)
 			return procErr
 		})
@@ -132,41 +138,6 @@ func (s *Service) receiveMessages(ctx context.Context, agent agents.AgentIdentit
 			return err
 		}
 	}
-}
-
-// admit charges a CheckResults message against the stream's ingest budget
-// and reports whether it may be processed; every other message is admitted
-// without charge (backlog 7.111).
-//
-// A refused batch is dropped whole and still acknowledged, and the stream
-// stays open. That is the answer the agent tolerates: it never waits for an
-// acknowledgement (consumeManagerMessages applies a CheckConfig and ignores
-// the rest) and counts a chunk as delivered once Send returned, so it does
-// not resend on a missing ack, while ending the RPC with an error would make
-// it reconnect and replay, which is the storm this budget exists to prevent.
-// The loss is bounded by the budget itself: an agent that behaves never
-// reaches it.
-func (s *Service) admit(ctx context.Context, agent agents.AgentIdentity, budget *ingestBudget, msg *agentpb.AgentMessage) bool {
-	results := msg.GetCheckResults()
-	if results == nil {
-		return true
-	}
-	n := len(results.GetResults())
-	now := s.deps.Clock()
-	if budget.allow(now, n) {
-		return true
-	}
-	if logIt, batches, observations := budget.drop(now, n); logIt {
-		log := s.deps.Log
-		if log == nil {
-			log = slog.Default()
-		}
-		log.WarnContext(ctx, "agent check results over the ingest budget; dropping",
-			"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID,
-			"dropped_batches", batches, "dropped_observations", observations,
-			"refill_per_interval", ingestRefill, "interval", ingestRefillEvery, "burst", ingestBurst)
-	}
-	return false
 }
 
 // process applies one agent message: a heartbeat touches the registry and

@@ -36,6 +36,11 @@ type StreamRegistry struct {
 	// stream does not buy a new resolve.
 	lastResolve map[string]time.Time
 	lastSweep   time.Time
+	// ingest is each serial's check-result budget (reserveIngest), per
+	// serial for the same reason as lastResolve: a new stream must not buy
+	// a new budget (backlog 7.111).
+	ingest          map[string]*ingestBucket
+	lastIngestSweep time.Time
 }
 
 // maxStreamsPerSerial bounds how many streams one agent identity holds
@@ -291,7 +296,8 @@ func (t *trackedStream) closeMailbox() {
 
 // NewStreamRegistry builds an empty registry.
 func NewStreamRegistry() *StreamRegistry {
-	return &StreamRegistry{byHost: map[uuid.UUID]map[uint64]*trackedStream{}, lastResolve: map[string]time.Time{}}
+	return &StreamRegistry{byHost: map[uuid.UUID]map[uint64]*trackedStream{}, lastResolve: map[string]time.Time{},
+		ingest: map[string]*ingestBucket{}}
 }
 
 // track registers one open stream of hostID (authenticated with serial, as

@@ -109,6 +109,11 @@ type Deps struct {
 	Checks ChecksPort
 	// Clock drives the enrollment rate limit; nil uses time.Now.
 	Clock func() time.Time
+	// Sleep waits for d or until ctx ends, returning ctx's error in that
+	// case; it paces an agent stream that exceeds its check-result ingest
+	// budget (backlog 7.111). nil waits on a real timer; tests inject one
+	// that moves the injected Clock instead.
+	Sleep func(ctx context.Context, d time.Duration) error
 	// Version is the manager's build version. An agent whose build is
 	// outside the supported range against it is logged once per process
 	// (backlog 7.3, internal/versioncompat); empty or "dev" judges nothing.
@@ -137,6 +142,9 @@ func New(deps Deps) (*Service, error) {
 	}
 	if deps.Clock == nil {
 		deps.Clock = time.Now
+	}
+	if deps.Sleep == nil {
+		deps.Sleep = sleepCtx
 	}
 	if deps.Streams == nil {
 		deps.Streams = NewStreamRegistry()

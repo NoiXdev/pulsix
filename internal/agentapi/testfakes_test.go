@@ -673,6 +673,31 @@ type harness struct {
 
 	mu  sync.Mutex
 	now time.Time
+	// slept is the total the service paced itself by (Deps.Sleep); a test
+	// may set sleepHook to replace the default, which moves the clock by
+	// the wait and returns at once.
+	slept     time.Duration
+	sleepHook func(ctx context.Context, d time.Duration) error
+}
+
+func (h *harness) sleep(ctx context.Context, d time.Duration) error {
+	h.mu.Lock()
+	hook := h.sleepHook
+	h.mu.Unlock()
+	if hook != nil {
+		return hook(ctx, d)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.slept += d
+	h.now = h.now.Add(d)
+	return nil
+}
+
+func (h *harness) sleptTotal() time.Duration {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.slept
 }
 
 // syncBuffer collects what the injected logger writes; the service logs
@@ -772,7 +797,7 @@ func newHarnessFull(t *testing.T, withFacts bool, checksPort *fakeChecks, realPo
 	h.signer = &fakeSigner{inner: h.ca}
 	deps := Deps{
 		CA: h.signer, Agents: h.agentSvc, Audit: h.audit,
-		Clock: h.clock, Version: version, Log: slog.New(slog.NewTextHandler(&h.logs, nil)),
+		Clock: h.clock, Sleep: h.sleep, Version: version, Log: slog.New(slog.NewTextHandler(&h.logs, nil)),
 	}
 	if withFacts {
 		deps.Facts = h.sink
