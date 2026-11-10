@@ -114,9 +114,10 @@ A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
 
-A worker older than 7.122 that reads a playbook holding a number of 1e21 or
-more, or below 1e-6, has its whole report ignored and logged by the manager
-until the worker is upgraded.
+A worker that predates the 7.114 number rule (v0.1.0-rc.1, for one) and reads
+a playbook holding a number of 1e21 or more, or below 1e-6 (zero aside), has
+its whole report ignored and logged by the manager (7.122) until the worker is
+upgraded.
 
 7.88 adds `repo.repo_subpath` to a repo run's claim (in its JSON kind
 payload; no proto change). The field is additive: a worker one minor older
