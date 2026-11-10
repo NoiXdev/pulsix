@@ -146,6 +146,8 @@ export const deTemplates: Messages['templates'] = {
     notFound: 'Für dieses Playbook wurden noch keine Variablenquellen gelesen — gleiche sein Repository ab.',
     notRead: 'Das Playbook konnte nicht gelesen werden; nichts ändert sich, bis es lesbar ist („Jetzt abgleichen“ zeigt die Warnungen).',
     inlineRoles: 'Bei einem Inline-Playbook werden Rollen nicht gelesen.',
+    inlineLeftOut: 'Die Variablen dieses Playbooks sind zu groß zum Einlesen (über 1 MiB); kürze es und speichere es erneut.',
+    inlineIncomplete: 'Ein Teil der Variablen dieses Playbooks ist zu groß zum Einlesen (über 1 MiB); kürze es und speichere es erneut.',
   },
   preview: {
     title: 'Mit dem Playbook abgleichen',

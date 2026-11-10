@@ -143,6 +143,10 @@ export const enTemplates = {
     notFound: 'No variable sources were read for this playbook yet — sync its repository.',
     notRead: 'The playbook could not be read; nothing changes until it can (Sync now lists the warnings).',
     inlineRoles: 'Roles are not read for an inline playbook.',
+    /** An editor playbook has no sync: its read is left out when its
+     * variables are over the 1 MiB cap, and saving a shorter text fixes it. */
+    inlineLeftOut: "This playbook's variables are too large to read (over 1 MiB); shorten it and save.",
+    inlineIncomplete: "Some of this playbook's variables are too large to read (over 1 MiB); shorten it and save.",
   },
   preview: {
     title: 'Sync with the playbook',
