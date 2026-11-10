@@ -123,7 +123,7 @@ func TestResetLogsNoToken(t *testing.T) {
 	s := apitest.New(t, apitest.WithFailingAudit())
 	logs := captureLog(t)
 	const email = "reset-log@example.test"
-	s.SeedUser(email, oldPassword)
+	s.SeedPasskey(s.SeedUser(email, oldPassword), "my key")
 
 	if resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email}); resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("forgot: status %d", resp.StatusCode)

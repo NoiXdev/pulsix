@@ -89,10 +89,16 @@ ORDER BY o.name, o.id;
 -- the same account (the owner's own password change, an invitation being
 -- accepted, a reset) happen one after the other. A deactivated account is
 -- found too: an administrator may act on it, and reactivating needs it.
-SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated,
-  must_change_password FROM users
-WHERE id = $1
-FOR UPDATE;
+-- has_second_factor is ListAccounts' expression (a confirmed TOTP secret or
+-- a passkey): the forgot-password path issues no link without one
+-- (backlog 7.102).
+SELECT (u.password_hash IS NOT NULL)::boolean AS has_password, (u.disabled_at IS NOT NULL)::boolean AS deactivated,
+  u.must_change_password,
+  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor
+FROM users u
+WHERE u.id = $1
+FOR UPDATE OF u;
 
 -- name: SetTemporaryPassword :execrows
 -- An administrator's temporary password: it forces a change at the next

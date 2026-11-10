@@ -25,6 +25,7 @@ func TestResetFlowSQL(t *testing.T) {
 	sessions := auth.NewSessions(gen.New(d.Pool()), time.Now)
 	hash := "$argon2id$old"
 	uid := seedUser(t, d, "flow@example.test", &hash)
+	seedFactors(t, d, uid)
 	if _, err := d.Pool().Exec(ctx,
 		`UPDATE users SET must_change_password = true, temp_password_expires_at = now() + interval '1 hour' WHERE id = $1`, uid); err != nil {
 		t.Fatal(err)
@@ -106,6 +107,7 @@ func TestResetConcurrentWithLinkRequestsSQL(t *testing.T) {
 	ctx := context.Background()
 	hash := "$argon2id$old"
 	uid := seedUser(t, d, "race@example.test", &hash)
+	seedFactors(t, d, uid)
 	mailer := &fakeMailer{}
 	svc := accounts.NewService(accounts.NewSQLStore(d), mailer, "https://pulsix.example", time.Now, &cyclingReader{})
 	if err := accounts.RequestResetNow(svc, ctx, "race@example.test"); err != nil {

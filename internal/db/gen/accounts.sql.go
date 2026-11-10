@@ -316,16 +316,20 @@ func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]L
 }
 
 const lockAccount = `-- name: LockAccount :one
-SELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated,
-  must_change_password FROM users
-WHERE id = $1
-FOR UPDATE
+SELECT (u.password_hash IS NOT NULL)::boolean AS has_password, (u.disabled_at IS NOT NULL)::boolean AS deactivated,
+  u.must_change_password,
+  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor
+FROM users u
+WHERE u.id = $1
+FOR UPDATE OF u
 `
 
 type LockAccountRow struct {
 	HasPassword        bool `json:"has_password"`
 	Deactivated        bool `json:"deactivated"`
 	MustChangePassword bool `json:"must_change_password"`
+	HasSecondFactor    bool `json:"has_second_factor"`
 }
 
 // Whether the account has a password, whether it is deactivated and
@@ -334,10 +338,18 @@ type LockAccountRow struct {
 // the same account (the owner's own password change, an invitation being
 // accepted, a reset) happen one after the other. A deactivated account is
 // found too: an administrator may act on it, and reactivating needs it.
+// has_second_factor is ListAccounts' expression (a confirmed TOTP secret or
+// a passkey): the forgot-password path issues no link without one
+// (backlog 7.102).
 func (q *Queries) LockAccount(ctx context.Context, id uuid.UUID) (LockAccountRow, error) {
 	row := q.db.QueryRow(ctx, lockAccount, id)
 	var i LockAccountRow
-	err := row.Scan(&i.HasPassword, &i.Deactivated, &i.MustChangePassword)
+	err := row.Scan(
+		&i.HasPassword,
+		&i.Deactivated,
+		&i.MustChangePassword,
+		&i.HasSecondFactor,
+	)
 	return i, err
 }
 

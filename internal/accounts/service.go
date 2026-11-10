@@ -147,6 +147,9 @@ type LockedAccount struct {
 	// MustChangePassword is set while an administrator's temporary
 	// password waits to be replaced.
 	MustChangePassword bool
+	// HasSecondFactor is whether the account has a confirmed TOTP secret
+	// or a passkey (backlog 7.102).
+	HasSecondFactor bool
 }
 
 // active reports whether the account is in use: its invitation accepted

@@ -34,7 +34,10 @@ type fakeStore struct {
 	deactivated map[uuid.UUID]bool
 	// mustChange marks the accounts that must change their password.
 	mustChange map[uuid.UUID]bool
-	recipient  accounts.Recipient
+	// secondFactor marks the accounts that have a confirmed second factor
+	// (DeleteSecondFactors clears it).
+	secondFactor map[uuid.UUID]bool
+	recipient    accounts.Recipient
 
 	// The reset flow (reset_test.go). emails maps an address to its
 	// account; tokens is the password_reset_tokens table.
@@ -166,7 +169,7 @@ func (f *fakeStore) LockAccount(_ context.Context, id uuid.UUID) (accounts.Locke
 	if !ok {
 		return accounts.LockedAccount{}, accounts.ErrNotFound
 	}
-	return accounts.LockedAccount{HasPassword: hasPassword, Deactivated: f.deactivated[id], MustChangePassword: f.mustChange[id]}, nil
+	return accounts.LockedAccount{HasPassword: hasPassword, Deactivated: f.deactivated[id], MustChangePassword: f.mustChange[id], HasSecondFactor: f.secondFactor[id]}, nil
 }
 
 func (f *fakeStore) SetTemporaryPassword(_ context.Context, id uuid.UUID, hash string, expiresAt time.Time) error {
@@ -182,8 +185,9 @@ func (f *fakeStore) RevokeAllSessions(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
-func (f *fakeStore) DeleteSecondFactors(_ context.Context, _ uuid.UUID) error {
+func (f *fakeStore) DeleteSecondFactors(_ context.Context, id uuid.UUID) error {
 	f.write()
+	delete(f.secondFactor, id)
 	f.actions = append(f.actions, "delete second factors")
 	return nil
 }

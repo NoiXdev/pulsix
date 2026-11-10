@@ -35,10 +35,11 @@ func newResetFixture() *resetFixture {
 	now := testNow
 	f := &resetFixture{
 		store: &fakeStore{
-			accounts:    map[uuid.UUID]bool{user: true},
-			deactivated: map[uuid.UUID]bool{},
-			emails:      map[string]uuid.UUID{"person@example.test": user},
-			recipient:   accounts.Recipient{Email: "person@example.test"},
+			accounts:     map[uuid.UUID]bool{user: true},
+			deactivated:  map[uuid.UUID]bool{},
+			secondFactor: map[uuid.UUID]bool{user: true},
+			emails:       map[string]uuid.UUID{"person@example.test": user},
+			recipient:    accounts.Recipient{Email: "person@example.test"},
 		},
 		mailer: &fakeMailer{},
 		user:   user,
@@ -129,6 +130,65 @@ func TestRequestResetSilentCases(t *testing.T) {
 		}
 		f.mailedToken(t)
 	})
+}
+
+// TestRequestResetRefusesAccountWithoutSecondFactor: the forgot path issues
+// no link to an account without a confirmed second factor, and answers
+// exactly as for an unknown address (backlog 7.102).
+func TestRequestResetRefusesAccountWithoutSecondFactor(t *testing.T) {
+	ctx := context.Background()
+	known := newResetFixture()
+	delete(known.store.secondFactor, known.user)
+	unknown := newResetFixture()
+
+	knownErr := known.svc.RequestReset(ctx, "person@example.test")
+	unknownErr := unknown.svc.RequestReset(ctx, "nobody@example.test")
+	known.svc.Wait()
+	unknown.svc.Wait()
+
+	if knownErr != nil || unknownErr != nil {
+		t.Fatalf("responses %v and %v, want both nil", knownErr, unknownErr)
+	}
+	if len(known.store.tokens) != 0 || len(known.mailer.sent) != 0 {
+		t.Fatalf("token rows %d, mails %d; want none for an account without a second factor", len(known.store.tokens), len(known.mailer.sent))
+	}
+	if len(unknown.store.tokens) != len(known.store.tokens) || len(unknown.mailer.sent) != len(known.mailer.sent) {
+		t.Fatal("the refusal differs from an unknown address")
+	}
+	if known.logs.String() != unknown.logs.String() {
+		t.Fatalf("the refusal logs %q, an unknown address %q; want the same", known.logs, unknown.logs)
+	}
+}
+
+// TestRequestResetAfterResetSecondFactorIssuesNothing: an administrator's
+// second-factor reset leaves the account without one, and from then on the
+// forgot path issues nothing, while the administrator's own link still
+// works (backlog 7.102).
+func TestRequestResetAfterResetSecondFactorIssuesNothing(t *testing.T) {
+	ctx := context.Background()
+	f := newResetFixture()
+	actor := uuid.Must(uuid.NewV7())
+
+	f.mailedToken(t)
+	if _, err := f.svc.ResetSecondFactor(ctx, true, actor, f.user); err != nil {
+		t.Fatal(err)
+	}
+	sent, rows := len(f.mailer.sent), len(f.store.tokens)
+
+	if err := f.svc.RequestReset(ctx, "person@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	f.svc.Wait()
+	if len(f.mailer.sent) != sent || len(f.store.tokens) != rows {
+		t.Fatalf("mails %d, token rows %d; want %d and %d: the forgot path must issue nothing", len(f.mailer.sent), len(f.store.tokens), sent, rows)
+	}
+
+	if notice, err := f.svc.SendResetLink(ctx, true, actor, f.user); err != nil || notice != accounts.NoticeSent {
+		t.Fatalf("SendResetLink = %q, %v; want sent", notice, err)
+	}
+	if len(f.store.tokens) != rows+1 {
+		t.Fatalf("token rows %d, want %d: the administrator's link must still be issued", len(f.store.tokens), rows+1)
+	}
 }
 
 func TestRequestResetLogsADroppedRequest(t *testing.T) {

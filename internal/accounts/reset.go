@@ -142,10 +142,15 @@ func (s *Service) Shutdown(ctx context.Context) error {
 // sorts them out), when it must change its password (an administrator set
 // a temporary one to lock someone out, and a link would let whoever reads
 // the mailbox undo that; the administrator's own SendResetLink still
-// works), or when the account was already issued
-// resetRequestLimit links within resetRequestWindow. Otherwise a new token
-// voids the account's older ones and is mailed; a failed send is logged
-// without the link. The error is a store failure, nil in every other case.
+// works), when the account has no confirmed second factor (a link would
+// let whoever reads the mailbox set the password and enrol their own
+// factor, which is how an administrator's second-factor reset is undone;
+// accounts that never enrolled one are included, their recovery is the
+// administrator's link or temporary password; backlog 7.102), or when the
+// account was already issued resetRequestLimit links within
+// resetRequestWindow. Otherwise a new token voids the account's older ones
+// and is mailed; a failed send is logged without the link. The error is a
+// store failure, nil in every other case.
 func (s *Service) requestReset(ctx context.Context, email string) error {
 	userID, err := s.store.AccountByEmail(ctx, strings.TrimSpace(email))
 	if errors.Is(err, ErrNotFound) {
@@ -161,7 +166,7 @@ func (s *Service) requestReset(ctx context.Context, email string) error {
 		if err != nil {
 			return fmt.Errorf("lock account: %w", err)
 		}
-		if !acct.active() || acct.MustChangePassword {
+		if !acct.active() || acct.MustChangePassword || !acct.HasSecondFactor {
 			return nil
 		}
 		now := s.now()

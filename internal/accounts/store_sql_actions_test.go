@@ -269,3 +269,71 @@ func TestSQLStoreResetTokens(t *testing.T) {
 		t.Fatalf("CountResetTokensSince after voiding = %d, %v; want used tokens still counted (1)", n, err)
 	}
 }
+
+// TestLockAccountReportsSecondFactorSQL: LockAccount maps whether the
+// account has a confirmed second factor, which the forgot path depends on
+// (backlog 7.102): true for a confirmed TOTP secret and for a passkey, false
+// for an unconfirmed secret, for none, and again after the administrator's
+// reset.
+func TestLockAccountReportsSecondFactorSQL(t *testing.T) {
+	d := testdb.Open(t)
+	ctx := context.Background()
+	store := accounts.NewSQLStore(d)
+	hash := "$argon2id$h"
+	totp := seedUser(t, d, "lock-totp@example.test", &hash)
+	passkey := seedUser(t, d, "lock-passkey@example.test", &hash)
+	unconfirmed := seedUser(t, d, "lock-unconfirmed@example.test", &hash)
+	none := seedUser(t, d, "lock-none@example.test", &hash)
+	for _, stmt := range []struct {
+		sql string
+		uid uuid.UUID
+	}{
+		{`INSERT INTO totp_secrets (user_id, secret_sealed, confirmed_at) VALUES ($1, 'sealed', now())`, totp},
+		{`INSERT INTO passkeys (id, user_id, name, credential_id, public_key, attestation)
+		  VALUES (gen_random_uuid(), $1::uuid, 'key', convert_to('cred-' || $1::uuid::text, 'UTF8'), 'pk', 'none')`, passkey},
+		{`INSERT INTO totp_secrets (user_id, secret_sealed) VALUES ($1, 'sealed')`, unconfirmed},
+	} {
+		if _, err := d.Pool().Exec(ctx, stmt.sql, stmt.uid); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	has := func(uid uuid.UUID) bool {
+		t.Helper()
+		var got accounts.LockedAccount
+		err := store.InTx(ctx, func(ctx context.Context) error {
+			var err error
+			got, err = store.LockAccount(ctx, uid)
+			return err
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.HasSecondFactor
+	}
+	for _, tc := range []struct {
+		name string
+		uid  uuid.UUID
+		want bool
+	}{
+		{"confirmed TOTP", totp, true},
+		{"passkey", passkey, true},
+		{"unconfirmed TOTP", unconfirmed, false},
+		{"no factor", none, false},
+	} {
+		if got := has(tc.uid); got != tc.want {
+			t.Errorf("LockAccount(%s).HasSecondFactor = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+
+	svc := accounts.NewService(store, &fakeMailer{unconfigured: true}, "https://pulsix.example", time.Now, &cyclingReader{})
+	admin := uuid.Must(uuid.NewV7())
+	for _, uid := range []uuid.UUID{totp, passkey} {
+		if _, err := svc.ResetSecondFactor(ctx, true, admin, uid); err != nil {
+			t.Fatal(err)
+		}
+		if has(uid) {
+			t.Errorf("HasSecondFactor still true after ResetSecondFactor")
+		}
+	}
+}

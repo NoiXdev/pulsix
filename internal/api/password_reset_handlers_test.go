@@ -72,7 +72,9 @@ func TestResetAvailable(t *testing.T) {
 // address has an account, or what state it is in.
 func TestForgotPasswordConstantShape(t *testing.T) {
 	s := apitest.New(t)
-	s.SeedUser("forgot-existing@example.test", "correct horse battery")
+	s.SeedPasskey(s.SeedUser("forgot-existing@example.test", "correct horse battery"), "my key")
+	// Backlog 7.102: no confirmed second factor, no link, and no way to tell.
+	s.SeedUser("forgot-no-factor@example.test", "correct horse battery")
 	deactivated := s.SeedUser("forgot-deactivated@example.test", "correct horse battery")
 	if _, err := s.DB.Pool().Exec(t.Context(), `UPDATE users SET disabled_at = now() WHERE id = $1`, deactivated); err != nil {
 		t.Fatal(err)
@@ -85,6 +87,7 @@ func TestForgotPasswordConstantShape(t *testing.T) {
 		"forgot-unknown@example.test",
 		"forgot-deactivated@example.test",
 		"forgot-pending@example.test",
+		"forgot-no-factor@example.test",
 	} {
 		resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email})
 		body := mustReadBody(t, resp)
@@ -97,7 +100,7 @@ func TestForgotPasswordConstantShape(t *testing.T) {
 			t.Fatalf("%s: body %q differs from %q", email, body, first)
 		}
 	}
-	// Drain the background work of all four requests, so a late mail or
+	// Drain the background work of all five requests, so a late mail or
 	// row would be counted.
 	s.Deps.Accounts.Wait()
 	waitForResetMail(t, s, "forgot-existing@example.test")
@@ -246,6 +249,7 @@ func TestTemporaryPasswordLocksOutAResetLink(t *testing.T) {
 	s := apitest.New(t)
 	const email = "locked-out@example.test"
 	target := s.SeedUser(email, "the old password 1")
+	s.SeedPasskey(target, "my key")
 	_, adminClient := adminWithFactor(t, s, "lockout-admin@example.test")
 
 	if resp := postJSON(t, s.Client(), s.HTTP.URL+forgotPath, map[string]string{"email": email}); resp.StatusCode != http.StatusAccepted {
