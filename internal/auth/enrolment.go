@@ -27,8 +27,9 @@ type TxRunner interface {
 }
 
 // Enrolment composes the writes that finishing a second factor consists
-// of. It owns no state of its own: the rule it encodes is that these
-// writes commit together.
+// of, and the owner's removal of one under the account's exclusive lock
+// (backlog 7.116). It owns no state of its own: the rule it encodes is that
+// these writes commit together.
 type Enrolment struct {
 	totp     *TOTP
 	passkeys *Passkeys
@@ -152,4 +153,37 @@ func (e *Enrolment) BeginTOTP(ctx context.Context, userID, sessionID uuid.UUID, 
 		return "", "", err
 	}
 	return key.Secret(), key.URL(), nil
+}
+
+// DeletePasskey removes the passkey id owned by userID under the account
+// row's exclusive lock (Sessions.LockAccountForRemoval), in one instance
+// transaction with the last-second-factor check (backlog 7.116). The lock
+// serialises the deletion with a passkey login, which takes the same row in
+// key-share mode before it re-reads its credential and opens a session, and
+// with a concurrent removal of the account's other factor. An unknown
+// account, or an id userID does not own, is ErrNotFound; the account's last
+// second factor is ErrLastSecondFactor. Either changes nothing.
+func (e *Enrolment) DeletePasskey(ctx context.Context, userID, id uuid.UUID) error {
+	return e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		if err := e.sessions.LockAccountForRemoval(ctx, userID); err != nil {
+			return fmt.Errorf("delete passkey: %w", err)
+		}
+		return SecondFactors{TOTP: e.totp, Passkeys: e.passkeys}.DeletePasskey(ctx, userID, id)
+	})
+}
+
+// DisableTOTP removes userID's TOTP secret and recovery codes under the
+// account row's exclusive lock, in one instance transaction with the
+// last-second-factor check (backlog 7.116): two concurrent removals of the
+// account's last two factors run one after the other, and the second sees
+// the first's removal and is refused. An unknown account is ErrNotFound;
+// TOTP as the account's last second factor is ErrLastSecondFactor. Either
+// changes nothing.
+func (e *Enrolment) DisableTOTP(ctx context.Context, userID uuid.UUID) error {
+	return e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		if err := e.sessions.LockAccountForRemoval(ctx, userID); err != nil {
+			return fmt.Errorf("disable TOTP: %w", err)
+		}
+		return SecondFactors{TOTP: e.totp, Passkeys: e.passkeys}.DisableTOTP(ctx, userID)
+	})
 }

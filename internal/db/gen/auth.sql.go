@@ -306,6 +306,29 @@ func (q *Queries) LockUserForEnrolment(ctx context.Context, id uuid.UUID) (uuid.
 	return id_2, err
 }
 
+const lockUserForFactorRemoval = `-- name: LockUserForFactorRemoval :one
+SELECT id FROM users WHERE id = $1 FOR UPDATE
+`
+
+// The owner's removal of a second factor (deleting a passkey, disabling
+// TOTP) takes the account row FOR UPDATE before its last-factor check and
+// its delete (backlog 7.116). FOR UPDATE, not KEY SHARE: two key-share
+// locks do not conflict, so a removal holding one would run alongside a
+// passkey login holding one too (LockUserForEnrolment), and the login could
+// re-read the credential just before the delete commits and open a session
+// for a passkey the owner has just removed. FOR UPDATE conflicts with the
+// login's key share, and with a second removal, so two concurrent removals
+// of the account's last two factors run one after the other and the second
+// sees what the first removed. It is the lock the administrator's
+// second-factor reset takes, and taking the users row first keeps the order
+// every users/sessions path follows (backlog 7.109).
+func (q *Queries) LockUserForFactorRemoval(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockUserForFactorRemoval, id)
+	var id_2 uuid.UUID
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const markSessionMFAComplete = `-- name: MarkSessionMFAComplete :execrows
 WITH previous AS (
     SELECT s.id, s.user_id, s.mfa_complete FROM sessions s

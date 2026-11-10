@@ -31,7 +31,10 @@ func (f SecondFactors) Enrolled(ctx context.Context, userID uuid.UUID) (bool, er
 
 // DisableTOTP removes userID's TOTP secret and recovery codes, unless the
 // account has no passkey to fall back on, in which case it returns
-// ErrLastSecondFactor and changes nothing.
+// ErrLastSecondFactor and changes nothing. The check and the removal are
+// separate statements; Enrolment.DisableTOTP runs them under the account's
+// exclusive lock so a concurrent removal cannot slip between them (backlog
+// 7.116).
 func (f SecondFactors) DisableTOTP(ctx context.Context, userID uuid.UUID) error {
 	hasPasskey, err := f.Passkeys.Enabled(ctx, userID)
 	if err != nil {
@@ -47,7 +50,9 @@ func (f SecondFactors) DisableTOTP(ctx context.Context, userID uuid.UUID) error 
 // account's last second factor — its only passkey and no confirmed TOTP
 // secret — in which case it returns ErrLastSecondFactor and changes nothing.
 // An id userID does not own is ErrNotFound, exactly as Passkeys.Delete
-// reports it.
+// reports it. Enrolment.DeletePasskey runs it under the account's exclusive
+// lock, which serialises it with a passkey login and with a concurrent
+// removal of the other factor (backlog 7.116).
 func (f SecondFactors) DeletePasskey(ctx context.Context, userID, id uuid.UUID) error {
 	creds, err := f.Passkeys.List(ctx, userID)
 	if err != nil {

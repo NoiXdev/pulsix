@@ -80,6 +80,21 @@ WHERE sessions.id = (SELECT previous.id FROM previous);
 -- (Sessions.LockAccount, backlog 7.109 variant b).
 SELECT id FROM users WHERE id = $1 FOR KEY SHARE;
 
+-- name: LockUserForFactorRemoval :one
+-- The owner's removal of a second factor (deleting a passkey, disabling
+-- TOTP) takes the account row FOR UPDATE before its last-factor check and
+-- its delete (backlog 7.116). FOR UPDATE, not KEY SHARE: two key-share
+-- locks do not conflict, so a removal holding one would run alongside a
+-- passkey login holding one too (LockUserForEnrolment), and the login could
+-- re-read the credential just before the delete commits and open a session
+-- for a passkey the owner has just removed. FOR UPDATE conflicts with the
+-- login's key share, and with a second removal, so two concurrent removals
+-- of the account's last two factors run one after the other and the second
+-- sees what the first removed. It is the lock the administrator's
+-- second-factor reset takes, and taking the users row first keeps the order
+-- every users/sessions path follows (backlog 7.109).
+SELECT id FROM users WHERE id = $1 FOR UPDATE;
+
 -- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1;
 

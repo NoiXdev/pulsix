@@ -223,5 +223,23 @@ func (s *Sessions) LockAccount(ctx context.Context, userID uuid.UUID) error {
 	return nil
 }
 
+// LockAccountForRemoval takes userID's account row exclusively (FOR UPDATE)
+// for the rest of the enclosing instance transaction
+// (LockUserForFactorRemoval), before the owner removes a second factor
+// (backlog 7.116). Unlike LockAccount's key share it conflicts with a
+// passkey login's lock, so a login waiting on it re-reads its credential
+// after the removal committed, and with a second removal of the same
+// account, so the two last-factor checks cannot both pass. An unknown
+// account is ErrNotFound.
+func (s *Sessions) LockAccountForRemoval(ctx context.Context, userID uuid.UUID) error {
+	if _, err := s.q.LockUserForFactorRemoval(ctx, userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("lock the account for a factor removal: %w", err)
+	}
+	return nil
+}
+
 // Revoke ends a session.
 func (s *Sessions) Revoke(ctx context.Context, id uuid.UUID) error { return s.q.RevokeSession(ctx, id) }

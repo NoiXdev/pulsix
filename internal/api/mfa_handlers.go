@@ -220,7 +220,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 			return nil, err
 		}
 		// Refused with 409 when TOTP is the account's last second factor.
-		if err := secondFactors(deps).DisableTOTP(ctx, p.UserID); err != nil {
+		if err := deps.Enrolment.DisableTOTP(ctx, p.UserID); err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}
 		// Instance-level event, same mechanism as confirm above: removing a

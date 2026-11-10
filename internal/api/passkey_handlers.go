@@ -185,7 +185,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		}
 		// Refused with 409 when this passkey is the account's last second
 		// factor.
-		if err := secondFactors(deps).DeletePasskey(ctx, p.UserID, id); err != nil {
+		if err := deps.Enrolment.DeletePasskey(ctx, p.UserID, id); err != nil {
 			return nil, mapPasskeyErr(ctx, err)
 		}
 		// Instance-level event, same mechanism as the other three routes
