@@ -183,15 +183,19 @@ func TestDottedRoleNames(t *testing.T) {
 	}
 }
 
-// TestRoleSpecParsedOncePerWalk: many entry points of one spec file
-// (tasks_from) open and parse it once.
-func TestRoleSpecParsedOncePerWalk(t *testing.T) {
+// TestRoleSpecReadOncePerEntryPoint: each entry point of a spec file
+// (tasks_from) reads the file once, and a use of one again, under another
+// name of the role, does not read it again. The walk lets each tree go
+// after its use, so a second entry point reads the file anew (backlog
+// 7.113).
+func TestRoleSpecReadOncePerEntryPoint(t *testing.T) {
 	var spec, play strings.Builder
 	spec.WriteString("argument_specs:\n")
 	play.WriteString("- hosts: all\n  tasks:\n")
 	for i := range 50 {
 		fmt.Fprintf(&spec, "  e%d:\n    options:\n      v%d: {type: str}\n", i, i)
 		fmt.Fprintf(&play, "    - import_role: {name: x, tasks_from: e%d}\n", i)
+		fmt.Fprintf(&play, "    - import_role: {name: ./roles/x, tasks_from: e%d}\n", i)
 	}
 	c := &countingFS{FS: fstest.MapFS{
 		"site.yml":                        {Data: []byte(play.String())},
@@ -201,7 +205,7 @@ func TestRoleSpecParsedOncePerWalk(t *testing.T) {
 	if len(pb.Roles) != 50 || len(pb.Fields) != 50 {
 		t.Fatalf("%d roles, %d fields", len(pb.Roles), len(pb.Fields))
 	}
-	if n := c.opens["roles/x/meta/argument_specs.yml"]; n != 1 {
-		t.Fatalf("the spec file was opened %d times, want once", n)
+	if n := c.opens["roles/x/meta/argument_specs.yml"]; n != 50 {
+		t.Fatalf("the spec file was opened %d times, want once per entry point (50)", n)
 	}
 }

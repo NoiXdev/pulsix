@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io/fs"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -14,16 +13,22 @@ import (
 
 // heapFS measures the live heap each time a role spec file is opened: the
 // walk is single-threaded, so after runtime.GC() the heap holds what the
-// walk kept of the roles it read before (backlog 7.113).
+// walk kept of the roles it read before (backlog 7.113). It also counts the
+// opens of each name.
 type heapFS struct {
 	fs.FS
-	peak uint64
+	peak  uint64
+	opens map[string]int
 }
 
 func (h *heapFS) Open(name string) (fs.File, error) {
 	if strings.HasSuffix(name, "argument_specs.yml") {
 		h.peak = max(h.peak, liveHeap())
 	}
+	if h.opens == nil {
+		h.opens = map[string]int{}
+	}
+	h.opens[name]++
 	return h.FS.Open(name)
 }
 
@@ -34,6 +39,43 @@ func liveHeap() uint64 {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return m.HeapAlloc
+}
+
+// heldBy walks the playbook site.yml of files and returns the result and
+// the heap the walk held, at most, when it opened a role spec file.
+func heldBy(files fstest.MapFS) (Playbook, *heapFS, uint64) {
+	h := &heapFS{FS: files}
+	base := liveHeap()
+	pb := ParsePlaybook(h, "site.yml")
+	return pb, h, h.peak - min(h.peak, base)
+}
+
+// rolesUsing is n roles r0… sharing one spec file, each used for the
+// comma-separated entry points of use, in that order.
+func rolesUsing(spec string, n int, use string) fstest.MapFS {
+	files := fstest.MapFS{}
+	var play strings.Builder
+	play.WriteString("- hosts: all\n  tasks:\n")
+	for i := range n {
+		files[fmt.Sprintf("roles/r%d/meta/argument_specs.yml", i)] = &fstest.MapFile{Data: []byte(spec)}
+		for _, ep := range strings.Split(use, ",") {
+			fmt.Fprintf(&play, "    - import_role: {name: r%d, tasks_from: %s}\n", i, ep)
+		}
+	}
+	files["site.yml"] = &fstest.MapFile{Data: []byte(play.String())}
+	return files
+}
+
+func wantAllRead(t *testing.T, pb Playbook, n int) {
+	t.Helper()
+	if pb.Failed || len(pb.Roles) != n {
+		t.Fatalf("failed = %v, %d roles, want %d read (notes %v)", pb.Failed, len(pb.Roles), n, pb.Notes)
+	}
+	for _, r := range pb.Roles {
+		if r.State != RoleRead {
+			t.Fatalf("role %v, want read", r)
+		}
+	}
 }
 
 // bulkySpec is a valid spec file for entry point main whose size is mostly
@@ -80,274 +122,193 @@ func TestWalkDoesNotRetainRoleTrees(t *testing.T) {
 		t.Fatalf("one parse holds %d bytes for a %d byte file; the measurement is off", oneParse, len(data))
 	}
 
-	h := &heapFS{FS: files}
-	base := liveHeap()
-	pb := ParsePlaybook(h, "site.yml")
+	pb, _, held := heldBy(files)
 	if pb.Failed || len(pb.Fields) != roles {
 		t.Fatalf("failed = %v, %d fields, want %d (notes %v)", pb.Failed, len(pb.Fields), roles, pb.Notes)
 	}
-	held := h.peak - min(h.peak, base)
 	t.Logf("one parse %d KiB; heap held while the last role was opened %d KiB", oneParse>>10, held>>10)
 	if held >= 3*oneParse {
 		t.Fatalf("the walk held %d KiB of heap at its last role, want under 3 x one parse (%d KiB): it keeps parse trees", held>>10, 3*oneParse>>10)
 	}
 }
 
-// TestRoleEntryPointsAreReplayedPerUse: the entry points of a spec file are
-// mapped when it is parsed, but a use gets only its own fields and notes,
-// and shows the role name it used (two names may lead to one directory).
-func TestRoleEntryPointsAreReplayedPerUse(t *testing.T) {
-	spec := `argument_specs:
-  main:
-    options:
-      a_var: {type: str}
-  other:
-    options:
-      b_var: {type: str}
-      b_var: {type: int}
-`
-	play := "- hosts: all\n  tasks:\n    - import_role: {name: x}\n    - import_role: {name: ./roles/x, tasks_from: other}\n    - import_role: {name: x, tasks_from: nope}\n"
-	pb := ParsePlaybook(fstest.MapFS{
-		"site.yml":                        {Data: []byte(play)},
-		"roles/x/meta/argument_specs.yml": {Data: []byte(spec)},
-	}, "site.yml")
-	var got []string
-	for _, f := range pb.Fields {
-		got = append(got, f.Name+"@"+f.Source.Role+"/"+f.Source.EntryPoint)
+// TestWalkDoesNotRetainImportTrees: an imported playbook's tree goes once
+// the file and what it pulls in are read; the walk keeps its notes only.
+// When the last of ten bulky imports opens its role's spec file, the walk
+// holds that import's tree, not all ten (backlog 7.113).
+func TestWalkDoesNotRetainImportTrees(t *testing.T) {
+	if testing.Short() {
+		t.Skip("parses 2 MB of YAML under the race detector")
 	}
-	if want := []string{"a_var@x/main", "b_var@./roles/x/other"}; !slices.Equal(got, want) {
-		t.Fatalf("fields = %q, want %q", got, want)
-	}
-	counts := codes(pb.Notes)
-	if counts[codeDuplicateKey] != 1 || counts[codeEntryPointMissing] != 1 {
-		t.Fatalf("notes = %v", pb.Notes)
-	}
-
-	// A mapping shared between entry points raises its duplicate_key note for
-	// whichever of them is used, not only for the first that reads it.
-	shared := `argument_specs:
-  a:
-    options: &O
-      x: {type: str}
-      x: {type: int}
-  b:
-    options: *O
-`
-	pb = ParsePlaybook(fstest.MapFS{
-		"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: b}\n")},
-		"roles/x/meta/argument_specs.yml": {Data: []byte(shared)},
-	}, "site.yml")
-	if codes(pb.Notes)[codeDuplicateKey] != 1 || len(pb.Fields) != 1 {
-		t.Fatalf("notes = %v, %d fields; want the duplicate_key warning of the shared mapping", pb.Notes, len(pb.Fields))
-	}
-
-	// The same through attrs (an option's spec, an entry point's own keys),
-	// which has a cache of its own.
-	for name, spec := range map[string]string{
-		"option spec": "argument_specs:\n  a:\n    options:\n      o: &S {type: str, type: int}\n  b:\n    options:\n      o: *S\n",
-		"entry point": "argument_specs:\n  a: &E\n    options: {o: {type: str}}\n    short_description: x\n    short_description: y\n  b: *E\n",
-	} {
-		pb = ParsePlaybook(fstest.MapFS{
-			"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: b}\n")},
-			"roles/x/meta/argument_specs.yml": {Data: []byte(spec)},
-		}, "site.yml")
-		if codes(pb.Notes)[codeDuplicateKey] != 1 {
-			t.Fatalf("%s: notes = %v, want the duplicate_key warning of the shared mapping", name, pb.Notes)
-		}
-	}
-
-	// A mapping merged into a shared one counts too.
-	merged := "argument_specs:\n  a:\n    options: &O\n      <<: &M {x: {type: str}, x: {type: int}}\n  b:\n    options: *O\n"
-	pb = ParsePlaybook(fstest.MapFS{
-		"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: b}\n")},
-		"roles/x/meta/argument_specs.yml": {Data: []byte(merged)},
-	}, "site.yml")
-	if codes(pb.Notes)[codeDuplicateKey] != 1 {
-		t.Fatalf("merged: notes = %v, want the duplicate_key warning of the merged mapping", pb.Notes)
-	}
-
-	// An entry point no use asks for raises no note.
-	pb = ParsePlaybook(fstest.MapFS{
-		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x]\n")},
-		"roles/x/meta/argument_specs.yml": {Data: []byte(spec)},
-	}, "site.yml")
-	if len(pb.Notes) != 0 {
-		t.Fatalf("notes of an unused entry point: %v", pb.Notes)
-	}
-}
-
-// aliasedEntryPoints is the spec file of the review of backlog 7.113: main
-// holds 99 options of 99 sub-options each, and n entry points alias main.
-func aliasedEntryPoints(n int) string {
-	var b strings.Builder
-	b.WriteString("argument_specs:\n  main: &E\n    options:\n      o0: &O\n        type: dict\n        options:\n")
-	for i := range 99 {
-		fmt.Fprintf(&b, "          l%d: {}\n", i)
-	}
-	for i := 1; i < 99; i++ {
-		fmt.Fprintf(&b, "      o%d: *O\n", i)
-	}
-	for i := 1; i <= n; i++ {
-		fmt.Fprintf(&b, "  e%d: *E\n", i)
-	}
-	return b.String()
-}
-
-// TestAliasedEntryPointsAreBounded: mapping every entry point of a role's
-// spec file at parse time costs what the file's budget allows, however many
-// entry points alias one big one. The file is then given up as
-// file_too_complex, with nothing read from it (backlog 7.113). Before the
-// budget was shared, an 11 KB file of this shape took 8.7 GiB of allocation.
-func TestAliasedEntryPointsAreBounded(t *testing.T) {
-	files := fstest.MapFS{
-		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x]\n")},
-		"roles/x/meta/argument_specs.yml": {Data: []byte(aliasedEntryPoints(800))},
-	}
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	pb := ParsePlaybook(files, "site.yml")
-	runtime.ReadMemStats(&after)
-	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
-		t.Fatalf("the walk allocated %d MiB, want under 64 MiB", alloc>>20)
-	}
-	wantRoles(t, pb.Roles, RoleUse{"x", "main", RoleUnreadable})
-	if pb.Failed || len(pb.Fields) != 0 {
-		t.Fatalf("failed = %v, %d fields; want none from a file given up", pb.Failed, len(pb.Fields))
-	}
-	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
-	if !strings.Contains(pb.Notes[0].Message, "options") {
-		t.Fatalf("message %q does not name the option budget", pb.Notes[0].Message)
-	}
-}
-
-// TestTooComplexMessageNamesItsBudget: only a role spec file given up on its
-// option budget mentions options; a file out of steps does not.
-func TestTooComplexMessageNamesItsBudget(t *testing.T) {
-	pb := ParsePlaybook(fstest.MapFS{"site.yml": {Data: []byte("- &p {hosts: all, vars: " + wideMapping(20_000, "a: 1") + "}\n" + strings.Repeat("- *p\n", 60))}}, "site.yml")
-	if len(pb.Notes) != 1 || pb.Notes[0].Code != codeFileTooComplex || strings.Contains(pb.Notes[0].Message, "options") {
-		t.Fatalf("notes = %v, want one file_too_complex note that does not mention options", pb.Notes)
-	}
-}
-
-// TestEntryPointsShareTheOptionBudget: entry points that each fit the
-// budget but not together give the file up whole, whichever is used; one
-// within it is read.
-func TestEntryPointsShareTheOptionBudget(t *testing.T) {
-	spec := func(entryPoints, options int) string {
+	const imports, size = 10, 200 << 10
+	play := func(roles string) string {
 		var b strings.Builder
-		b.WriteString("argument_specs:\n")
-		for e := range entryPoints {
-			fmt.Fprintf(&b, "  e%d:\n    options:\n      o: {type: dict, options: {s: {type: str}", e)
-			for o := range options {
-				fmt.Fprintf(&b, ", s%d: {type: str}", o)
-			}
-			b.WriteString("}}\n")
+		b.WriteString("- hosts: all\n  roles: [" + roles + "]\n  vars:\n    padding: [0")
+		for b.Len() < size {
+			b.WriteString(",0")
 		}
+		b.WriteString("]\n")
 		return b.String()
 	}
-	run := func(spec string) Playbook {
-		return ParsePlaybook(fstest.MapFS{
-			"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: e0}\n")},
-			"roles/x/meta/argument_specs.yml": {Data: []byte(spec)},
-		}, "site.yml")
+	files := fstest.MapFS{"roles/x/meta/argument_specs.yml": {Data: []byte(oneOption("x_var"))}}
+	var site strings.Builder
+	for i := range imports {
+		roles := ""
+		if i == imports-1 {
+			roles = "x"
+		}
+		files[fmt.Sprintf("p%d.yml", i)] = &fstest.MapFile{Data: []byte(play(roles))}
+		fmt.Fprintf(&site, "- import_playbook: p%d.yml\n", i)
 	}
-	if pb := run(spec(3, maxSpecFields/4)); len(pb.Fields) != 1 || pb.Roles[0].State != RoleRead {
-		t.Fatalf("within the budget: %d fields, roles %v, notes %v", len(pb.Fields), pb.Roles, pb.Notes)
-	}
-	pb := run(spec(5, maxSpecFields/4))
-	wantRoles(t, pb.Roles, RoleUse{"x", "e0", RoleUnreadable})
-	if len(pb.Fields) != 0 {
-		t.Fatalf("%d fields from a file given up", len(pb.Fields))
-	}
-	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
-}
+	files["site.yml"] = &fstest.MapFile{Data: []byte(site.String())}
 
-// TestSpecsMappingNotesAreRaisedOnce: the duplicate keys of the
-// argument_specs mapping are noted once, so they do not push the notes of
-// the entry point in use past the file's cap.
-func TestSpecsMappingNotesAreRaisedOnce(t *testing.T) {
-	var b strings.Builder
-	b.WriteString("argument_specs:\n  main:\n    options:\n      o: {type: raw}\n")
-	for range 150 {
-		b.WriteString("  other: {}\n")
+	before := liveHeap()
+	var doc yaml.Node
+	if err := yaml.Unmarshal(files["p0.yml"].Data, &doc); err != nil {
+		t.Fatal(err)
 	}
-	pb := ParsePlaybook(fstest.MapFS{
-		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x]\n")},
-		"roles/x/meta/argument_specs.yml": {Data: []byte(b.String())},
-	}, "site.yml")
-	counts := codes(pb.Notes)
-	if counts[codeUnsupportedType] != 1 || counts[codeTooManyNotes] != 0 {
-		t.Fatalf("notes = %v, want the unsupported_type warning and no too_many_notes", counts)
+	oneParse := liveHeap() - before
+	runtime.KeepAlive(&doc)
+
+	pb, _, held := heldBy(files)
+	if pb.Failed || len(pb.Fields) != 1 {
+		t.Fatalf("failed = %v, %d fields (notes %v)", pb.Failed, len(pb.Fields), pb.Notes)
+	}
+	t.Logf("one parse %d KiB; heap held when the role was opened %d KiB", oneParse>>10, held>>10)
+	if held >= 3*oneParse {
+		t.Fatalf("the walk held %d KiB at the last import's role, want under 3 x one parse (%d KiB): it keeps import trees", held>>10, 3*oneParse>>10)
 	}
 }
 
-// TestSharedDuplicateNotesAreBounded: entry points that merge one mapping
-// with many duplicate keys re-raise its notes for each of them. Doing that
-// is charged to the file and keeps no copy of the notes, so ten thousand
-// such entry points give the file up instead of holding gigabytes (backlog
-// 7.113).
-func TestSharedDuplicateNotesAreBounded(t *testing.T) {
-	var b strings.Builder
-	b.WriteString("d: &D {")
-	for range 201 {
-		b.WriteString("z: 1, ")
+// dupMapping is a flow mapping of n keys, all the same.
+func dupMapping(n int) string {
+	return "{" + strings.TrimSuffix(strings.Repeat("z,", n), ",") + "}"
+}
+
+// TestUnusedEntryPointsCostNothing: a spec file's entry points no use asks
+// for are not mapped, so nothing of them is kept, and the shapes that
+// made mapping them all expensive read as they always did (backlog 7.113).
+func TestUnusedEntryPointsCostNothing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("parses about 6 MB of YAML under the race detector")
 	}
-	b.WriteString("}\nargument_specs:\n")
-	for i := range 9_990 {
-		fmt.Fprintf(&b, "  e%d: {<<: *D}\n", i)
-	}
-	h := &heapFS{FS: fstest.MapFS{
-		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x, y]\n")},
-		"roles/x/meta/argument_specs.yml": {Data: []byte(b.String())},
-		"roles/y/meta/argument_specs.yml": {Data: []byte(oneOption("y_var"))},
-	}}
-	base := liveHeap()
-	pb := ParsePlaybook(h, "site.yml")
-	held := h.peak - min(h.peak, base)
-	t.Logf("heap held when the next role was opened: %d KiB", held>>10)
-	if held > 16<<20 {
-		t.Fatalf("the walk held %d MiB when it opened the next role, want under 16 MiB", held>>20)
-	}
-	wantRoles(t, pb.Roles, RoleUse{"x", "main", RoleUnreadable}, RoleUse{"y", "main", RoleRead})
-	if got := fieldNames(pb.Fields); !slices.Equal(got, []string{"y_var"}) {
-		t.Fatalf("fields = %q, want only y's", got)
-	}
-	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
+	const limit = 16 << 20
+
+	t.Run("entry points of many duplicate keys", func(t *testing.T) {
+		var b strings.Builder
+		b.WriteString("argument_specs:\n  main: {}\n")
+		for i := range 1200 {
+			fmt.Fprintf(&b, "  e%d: %s\n", i, dupMapping(201))
+		}
+		pb, _, held := heldBy(rolesUsing(b.String(), 6, "main"))
+		t.Logf("held %d KiB", held>>10)
+		if held > limit {
+			t.Fatalf("the walk held %d MiB at its last role, want under %d MiB", held>>20, limit>>20)
+		}
+		wantAllRead(t, pb, 6)
+		wantNotes(t, pb.Notes)
+	})
+
+	t.Run("merges of mappings with duplicate keys", func(t *testing.T) {
+		var b strings.Builder
+		b.WriteString("d: [")
+		for i := range 1200 {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			fmt.Fprintf(&b, "&m%d %s", i, dupMapping(201))
+		}
+		b.WriteString("]\n")
+		var groups []string
+		for g := range 19 {
+			var refs []string
+			for i := g * 64; i < min(1200, (g+1)*64); i++ {
+				refs = append(refs, fmt.Sprintf("*m%d", i))
+			}
+			fmt.Fprintf(&b, "g%d: &g%d {<<: [%s]}\n", g, g, strings.Join(refs, ", "))
+			groups = append(groups, fmt.Sprintf("*g%d", g))
+		}
+		b.WriteString("argument_specs:\n  main: {<<: [" + strings.Join(groups, ", ") + "]}\n")
+		pb, _, held := heldBy(rolesUsing(b.String(), 6, "main"))
+		t.Logf("held %d KiB", held>>10)
+		if held > limit {
+			t.Fatalf("the walk held %d MiB at its last role, want under %d MiB", held>>20, limit>>20)
+		}
+		wantAllRead(t, pb, 6)
+		// Each file notes its 1 200 x 200 duplicate keys once: 200 kept.
+		var want []string
+		for i := range 6 {
+			file := fmt.Sprintf("roles/r%d/meta/argument_specs.yml", i)
+			want = append(want, "warning duplicate_key "+file+":1", "warning too_many_notes "+file+":0")
+		}
+		wantNotes(t, pb.Notes, want...)
+		if m := pb.Notes[1].Message; m != "239800 more notes are left out" {
+			t.Fatalf("too_many_notes says %q", m)
+		}
+	})
+
+	t.Run("entry points aliasing a shared options mapping", func(t *testing.T) {
+		var b strings.Builder
+		b.WriteString("o: &O\n")
+		for i := range 100 {
+			fmt.Fprintf(&b, "  v%d: {type: str, description: d}\n", i)
+		}
+		b.WriteString("argument_specs:\n")
+		for i := range 99 {
+			fmt.Fprintf(&b, "  e%d: {options: *O}\n", i)
+		}
+		b.WriteString("  main: {options: {}}\n")
+		pb, _, held := heldBy(rolesUsing(b.String(), 500, "main"))
+		t.Logf("held %d KiB", held>>10)
+		if held > limit {
+			t.Fatalf("the walk held %d MiB at its last role, want under %d MiB", held>>20, limit>>20)
+		}
+		wantAllRead(t, pb, 500)
+		wantNotes(t, pb.Notes)
+	})
+
+	t.Run("entry points aliasing a big one", func(t *testing.T) {
+		var b strings.Builder
+		b.WriteString("argument_specs:\n  main: &E\n    options:\n      o0: &O\n        type: dict\n        options:\n")
+		for i := range 99 {
+			fmt.Fprintf(&b, "          l%d: {}\n", i)
+		}
+		for i := 1; i < 99; i++ {
+			fmt.Fprintf(&b, "      o%d: *O\n", i)
+		}
+		for i := 1; i <= 800; i++ {
+			fmt.Fprintf(&b, "  e%d: *E\n", i)
+		}
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		pb := ParsePlaybook(rolesUsing(b.String(), 1, "main"), "site.yml")
+		runtime.ReadMemStats(&after)
+		if alloc := after.TotalAlloc - before.TotalAlloc; alloc > 64<<20 {
+			t.Fatalf("the walk allocated %d MiB, want under 64 MiB", alloc>>20)
+		}
+		wantAllRead(t, pb, 1)
+		if len(pb.Fields) != 99 || len(pb.Fields[0].Fields) != 99 {
+			t.Fatalf("%d fields, want main's 99 of 99 sub-options each (notes %v)", len(pb.Fields), pb.Notes)
+		}
+	})
 }
 
 // TestSharedDuplicateKeysKeepNoUncappedList: a mapping with a quarter of a
-// million duplicate keys, merged by two entry points, keeps no more of its
-// notes than the file's cap, however many roles read such files, and the
-// count of the notes left out stays exact (backlog 7.113).
+// million duplicate keys keeps no more of its notes than the file's cap,
+// however many roles read such files, and the count of the notes left out
+// stays exact (backlog 7.113).
 func TestSharedDuplicateKeysKeepNoUncappedList(t *testing.T) {
+	if testing.Short() {
+		t.Skip("parses 3 MB of YAML under the race detector")
+	}
 	const keys, roles = 250_000, 6
-	var d strings.Builder
-	d.WriteString("d: &D {")
-	for range keys {
-		d.WriteString("z,")
-	}
-	d.WriteString("}\nargument_specs:\n  e0: {<<: *D}\n  main: {<<: *D}\n")
-	files := fstest.MapFS{}
-	var play strings.Builder
-	play.WriteString("- hosts: all\n  roles:\n")
-	for i := range roles {
-		files[fmt.Sprintf("roles/r%d/meta/argument_specs.yml", i)] = &fstest.MapFile{Data: []byte(d.String())}
-		fmt.Fprintf(&play, "    - r%d\n", i)
-	}
-	files["site.yml"] = &fstest.MapFile{Data: []byte(play.String())}
-	h := &heapFS{FS: files}
-	base := liveHeap()
-	pb := ParsePlaybook(h, "site.yml")
-	held := h.peak - min(h.peak, base)
+	spec := "d: &D " + dupMapping(keys) + "\nargument_specs:\n  e0: {<<: *D}\n  main: {<<: *D}\n"
+	pb, _, held := heldBy(rolesUsing(spec, roles, "main"))
 	t.Logf("heap held when the last role was opened: %d KiB", held>>10)
 	if held > 16<<20 {
 		t.Fatalf("the walk held %d MiB at its last role, want under 16 MiB", held>>20)
 	}
-	for _, r := range pb.Roles {
-		if r.State != RoleRead {
-			t.Fatalf("roles = %v, want all read", pb.Roles)
-		}
-	}
+	wantAllRead(t, pb, roles)
 	// All but the first of the equal keys are noted; the file keeps 200.
 	want := fmt.Sprintf("%d more notes are left out", keys-1-maxNotesPerFile)
 	found := false

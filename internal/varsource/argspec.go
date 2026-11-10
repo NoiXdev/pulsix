@@ -8,14 +8,9 @@ import (
 )
 
 // maxSpecFields bounds the options one argument spec file may map, sub-
-// options included. A role's spec file maps every entry point it declares
-// when it is parsed (roleSpec.extract), so the bound is shared among them,
-// and each entry point costs one too: a file that uses more is given up as
-// file_too_complex with nothing read from it (backlog 7.113). A playbook's
-// sidecar maps one entry point, and a single entry point past the bound is
-// cut (too_many_fields). Anchors and aliases can make a small file describe an
+// options included. Anchors and aliases can make a small file describe an
 // exponentially large tree; the top-level option that runs out of budget is
-// skipped whole, with the rest.
+// skipped whole, with the rest (too_many_fields).
 const maxSpecFields = 10_000
 
 // argumentSpecFields maps one entry point of an argument spec file (a role's
@@ -68,33 +63,15 @@ func readSpecRoot(y *yamlFile, root *yaml.Node, role, entryPoint string, kind sc
 	return r
 }
 
-// locateSpecs finds the argument_specs entry of a spec file's root. bad is
-// the note why the file or its argument_specs is not a mapping, nil when it
-// is (or argument_specs is absent or null).
-func locateSpecs(y *yamlFile, root *yaml.Node) (specs pair, hasSpecs bool, bad *Note) {
-	if !isNull(root) && root.Kind != yaml.MappingNode {
-		n := warning(codeFieldInvalid, y.file, root.Line, "the file is not a mapping; nothing read")
-		return pair{}, false, &n
-	}
-	specs, hasSpecs = y.entry(root, "argument_specs")
-	if v := resolve(specs.value); hasSpecs && !isNull(v) && v.Kind != yaml.MappingNode {
-		n := warning(codeFieldInvalid, y.file, specs.key.Line, "argument_specs is not a mapping of entry points; nothing read")
-		return pair{}, false, &n
-	}
-	return specs, hasSpecs, nil
-}
-
-// missingEntryPoint is the hint for an entry point argument_specs lacks;
-// line is the argument_specs key's line, 0 without one.
-func missingEntryPoint(file string, line int, entryPoint string) Note {
-	return hint(codeEntryPointMissing, file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint))
-}
-
 // mapEntryPoint maps the options of one entry point, noting into y.
 func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) specResult {
-	specs, hasSpecs, bad := locateSpecs(y, root)
-	if bad != nil {
-		y.note(*bad)
+	if !isNull(root) && root.Kind != yaml.MappingNode {
+		y.note(warning(codeFieldInvalid, y.file, root.Line, "the file is not a mapping; nothing read"))
+		return specResult{broken: true}
+	}
+	specs, hasSpecs := y.entry(root, "argument_specs")
+	if v := resolve(specs.value); hasSpecs && !isNull(v) && v.Kind != yaml.MappingNode {
+		y.note(warning(codeFieldInvalid, y.file, specs.key.Line, "argument_specs is not a mapping of entry points; nothing read"))
 		return specResult{broken: true}
 	}
 	ep, found := y.entry(specs.value, entryPoint)
@@ -103,17 +80,11 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 		if hasSpecs {
 			line = specs.key.Line
 		}
-		y.note(missingEntryPoint(y.file, line, entryPoint))
+		y.note(hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint)))
 		return specResult{}
 	}
-	return mapEntry(y, &specMapper{y: y, budget: maxSpecFields}, ep, role, entryPoint, kind)
-}
-
-// mapEntry maps the options of the entry point ep of argument_specs with
-// m's budget, which a caller mapping several entry points of one file
-// shares among them (see roleSpec.extract).
-func mapEntry(y *yamlFile, m *specMapper, ep pair, role, entryPoint string, kind schema.SourceKind) specResult {
 	r := specResult{entryFound: true}
+	m := specMapper{y: y, budget: maxSpecFields}
 	entry := resolve(ep.value)
 	if !isNull(entry) && entry.Kind != yaml.MappingNode {
 		m.warn(codeFieldInvalid, ep.key.Line, "entry point %s is not a mapping; nothing read", short(entryPoint))
@@ -184,10 +155,6 @@ func (m *specMapper) option(p pair, parent string, depth int) (schema.Field, boo
 		return schema.Field{}, false
 	}
 	m.budget--
-	if !m.y.spend(1) { // an option costs a visit even where an alias makes its spec free to read (backlog 7.113)
-		m.exhausted = true
-		return schema.Field{}, false
-	}
 	if len(p.key.Value) > maxNameBytes {
 		m.warn(codeInvalidName, line, "%q is longer than %d characters, not a usable variable name; skipped", short(p.key.Value), maxNameBytes)
 		return schema.Field{}, false

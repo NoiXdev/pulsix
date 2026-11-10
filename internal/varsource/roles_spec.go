@@ -9,58 +9,82 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// roleSpec is a role's spec file as read once per walk: many entry points
-// of one file (tasks_from) share one parse and one budget.
-//
-// The walk keeps what the parse yielded, never the tree (backlog 7.113): a
-// parsed file is about 85 times its bytes, and a walk may read many. So the
-// file is mapped for every entry point it declares at parse time, each
-// entry point's fields and notes kept apart, and a role use replays the one
-// it asks for. The tree and the file's node caches are dropped before spec
-// returns. The entry points share one option budget (maxSpecFields): mapping
-// them all is bounded by the file, not by how many entry points it declares
-// or how its aliases multiply them.
+// roleSpec is a role's spec file within a walk. What it keeps between uses
+// is what holds for every entry point of the file: whether it is missing,
+// failed or declares no specs, and the file's budget and notes (y). The
+// parsed tree is let go after each use, so a later use of another entry
+// point reads and parses the file again (backlog 7.113): a walk keeps no
+// tree of a role it is done with, and nothing of an entry point no use
+// asks for.
 type roleSpec struct {
+	name    string // path in the tree from
+	from    roleSource
 	missing bool // no such file
 	failed  bool // not read: too large, not valid YAML, … (noted once)
+	noSpecs bool // a meta/main file without an argument_specs key
 	y       *yamlFile
-
-	// over: the file ran out of budget while it was mapped. It counts as not
-	// read, and its one file_too_complex note replaces its others.
-	over bool
-
-	// What reading the file raised before any entry point, replayed with the
-	// first use of the file: duplicate keys of the top-level mappings.
-	common      captured
-	commonShown bool
-
-	noSpecs   bool  // a meta/main file without an argument_specs key
-	bad       *Note // the file or its argument_specs is no mapping: every entry point is broken
-	specsLine int   // the argument_specs key's line, 0 without one
-	entries   map[string]*specEntry
+	parsed  bool       // root is the tree of the current use
+	root    *yaml.Node // nil for an empty document
+	uses    map[string]*specUse
 }
 
-// specEntry is one entry point of a spec file, mapped when the file was
-// parsed.
-type specEntry struct {
-	res  specResult // fields carry no role name: a use sets its own
-	read captured
+// specUse is what a use of an entry point leaves for a later use of the
+// same entry point: its state, its fields' names and sources, and the
+// notes it raised. A later use adds the same notes and, as every name is
+// declared by then, the same duplicate_name hints, without reading the
+// file again. roleSeen already skips a role and entry point used before,
+// so only two entry point names that are alike as shown (clipped to
+// maxRefBytes) meet here; only such a name keeps one.
+type specUse struct {
+	state  RoleState
+	fields []schema.Field
+	log    noteLog
 }
 
-// spec reads and parses the spec file name (a path in the tree from) once
-// per walk. Its notes join the playbook's where it was first read; they and
-// its fields name the file as shown (with the tree's prefix).
+// noteLog is the notes an entry point's mapping raised, but for the
+// duplicate keys, which a file notes once (yamlFile.dupsNoted): the notes
+// a later use of the entry point raises again. It keeps up to
+// maxNotesPerFile, as many as the file could keep, and counts the rest.
+type noteLog struct {
+	notes []Note
+	more  int
+}
+
+func (l *noteLog) add(n Note) {
+	switch {
+	case n.Code == codeDuplicateKey:
+	case len(l.notes) < maxNotesPerFile:
+		l.notes = append(l.notes, n)
+	default:
+		l.more++
+	}
+}
+
+// spec returns the walk's record of the spec file name (a path in the
+// tree from), reading and parsing the file on its first use. Its notes join
+// the playbook's where it was first read; they and its fields name the
+// file as shown (with the tree's prefix).
 func (w *walk) spec(name string, from roleSource) *roleSpec {
 	key := specKey{file: name, from: from}
 	if s, ok := w.specs[key]; ok {
 		return s
 	}
-	fsys, prefix := w.tree(from)
-	file := prefix + name
-	s := &roleSpec{}
-	data, err := w.read(fsys, name)
+	s := &roleSpec{name: name, from: from}
+	w.specs[key] = s
+	w.parseSpec(s)
+	return s
+}
+
+// parseSpec reads and parses s's file for the use at hand. A read after
+// the first, for another entry point, is charged as the first was: its
+// bytes to the walk's (read), and what the use maps to the file's and the
+// walk's steps and bytes (account), against the same caps.
+func (w *walk) parseSpec(s *roleSpec) {
+	fsys, prefix := w.tree(s.from)
+	file := prefix + s.name
+	data, err := w.read(fsys, s.name)
 	switch {
-	case isNotExist(err):
+	case isNotExist(err) && s.y == nil:
 		s.missing = true
 	case errors.Is(err, errGivenUp):
 		s.failed = true
@@ -72,72 +96,21 @@ func (w *walk) spec(name string, from roleSource) *roleSpec {
 		if err := yaml.Unmarshal(data, &doc); err != nil {
 			s.failed = true
 			w.addNotes(invalidYAML(file, err))
-			break
-		}
-		s.y = newYAMLFile(file)
-		s.extract(documentRoot(&doc), strings.HasPrefix(path.Base(name), "main."))
-		s.y.release()
-		w.account(s.y)
-		w.sources = append(w.sources, noteSource{y: s.y})
-	}
-	w.specs[key] = s
-	return s
-}
-
-// extract maps every entry point of the parsed file with root (see
-// roleSpec). metaMain is a meta/main file, whose argument_specs key may be
-// absent. The entry points share one option budget, each one costing a unit
-// besides its options; past it, or past the file's visit budget, the file is
-// over.
-func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
-	y := s.y
-	y.trackDuplicates()
-	s.entries = map[string]*specEntry{}
-	var specs pair
-	var hasSpecs bool
-	var list []pair // the entry points
-	s.common = y.capture(func() {
-		if metaMain && (isNull(root) || root.Kind == yaml.MappingNode) && isNull(y.lookup(root, "argument_specs")) {
-			s.noSpecs = true
 			return
 		}
-		specs, hasSpecs, s.bad = locateSpecs(y, root)
-		if s.bad == nil && hasSpecs {
-			s.specsLine = specs.key.Line
-			list = y.pairs(specs.value) // its duplicate keys are noted here, once
+		if s.y == nil {
+			s.y = newYAMLFile(file)
+			s.y.dupsNoted = map[uint64]int{} // parsed again for each entry point
+			w.sources = append(w.sources, noteSource{y: s.y})
 		}
-	})
-	if s.noSpecs || s.bad != nil || y.exceeded() {
-		s.over = y.exceeded()
-		return
+		s.root, s.parsed = documentRoot(&doc), true
 	}
-	m := &specMapper{y: y, budget: maxSpecFields}
-	for _, ep := range list {
-		m.budget--
-		if m.budget < 0 {
-			y.giveUpOptions()
-			break
-		}
-		if !y.spend(1) {
-			y.giveUp()
-			break
-		}
-		e := &specEntry{}
-		e.read = y.capture(func() {
-			e.res = mapEntry(y, m, ep, "", ep.key.Value, schema.SourceArgumentSpec)
-		})
-		if y.exceeded() { // the visit or byte budget ran out
-			break
-		}
-		if m.exhausted {
-			y.giveUpOptions()
-			break
-		}
-		s.entries[ep.key.Value] = e
-	}
-	if s.over = y.exceeded(); s.over {
-		s.entries = nil
-	}
+}
+
+// release lets the tree of the current use go.
+func (s *roleSpec) release() {
+	s.root, s.parsed = nil, false
+	s.y.release()
 }
 
 // readRole reads the argument specs of a found role for r's entry point:
@@ -151,56 +124,68 @@ func (w *walk) readRole(t roleTarget, r roleRef) RoleState {
 		case s.failed:
 			return RoleUnreadable
 		}
-		return w.readRoleSpec(s, r)
+		return w.readRoleSpec(s, r, strings.HasPrefix(name, "main."))
 	}
 	return RoleNoSpecs
 }
 
-// readRoleSpec maps r's entry point of a parsed spec file. A meta/main
-// file without an argument_specs key declares no specs. A file, an
+// readRoleSpec maps r's entry point of a spec file. A meta/main file
+// without an argument_specs key declares no specs. A file, an
 // argument_specs value or an entry point of the wrong shape, or a file
 // that runs out of budget, is unreadable.
-func (w *walk) readRoleSpec(s *roleSpec, r roleRef) RoleState {
-	y := s.y
-	if !s.commonShown {
-		s.commonShown = true
-		y.replay(s.common)
-	}
-	switch {
-	case s.over:
+func (w *walk) readRoleSpec(s *roleSpec, r roleRef, metaMain bool) RoleState {
+	y, ep := s.y, r.shownEntryPoint()
+	switch u := s.uses[ep]; {
+	case y.exceeded():
 		return RoleUnreadable
 	case s.noSpecs:
 		return RoleNoSpecs
-	case s.bad != nil:
-		y.note(*s.bad)
+	case u != nil:
+		y.note(u.log.notes...)
+		y.dropped += u.log.more
+		w.addSpecResult(specResult{fields: u.fields})
+		return u.state
+	}
+	if !s.parsed {
+		w.parseSpec(s)
+		if !s.parsed {
+			return RoleUnreadable
+		}
+	}
+	defer s.release()
+	if metaMain && (isNull(s.root) || s.root.Kind == yaml.MappingNode) && isNull(y.lookup(s.root, "argument_specs")) {
+		w.account(y)
+		if y.exceeded() {
+			return RoleUnreadable
+		}
+		s.noSpecs = true
+		return RoleNoSpecs
+	}
+	var u *specUse
+	if strings.HasSuffix(ep, ellipsis) {
+		u = &specUse{}
+		y.log = &u.log
+	}
+	res := mapEntryPoint(y, s.root, r.shownName(), ep, schema.SourceArgumentSpec)
+	y.log = nil
+	w.account(y)
+	if y.exceeded() {
 		return RoleUnreadable
 	}
-	name := r.shownEntryPoint()
-	e, found := s.entries[name]
-	if found {
-		y.replay(e.read)
-	} else {
-		y.note(missingEntryPoint(y.file, s.specsLine, name))
-		e = &specEntry{}
-	}
-	res := e.res
-	res.fields = withRole(res.fields, r.shownName())
 	w.addSpecResult(res)
+	state := RoleRead
 	if res.broken {
-		return RoleUnreadable
+		state = RoleUnreadable
 	}
-	return RoleRead
-}
-
-// withRole copies fields with the role use that reads them named in their
-// sources: two names may lead to one role directory, and each shows its own.
-func withRole(fields []schema.Field, role string) []schema.Field {
-	out := make([]schema.Field, len(fields))
-	for i, f := range fields {
-		src := *f.Source
-		src.Role = role
-		f.Source = &src
-		out[i] = f
+	if u != nil {
+		u.state = state
+		for _, f := range res.fields {
+			u.fields = append(u.fields, schema.Field{Name: f.Name, Source: f.Source})
+		}
+		if s.uses == nil {
+			s.uses = map[string]*specUse{}
+		}
+		s.uses[ep] = u
 	}
-	return out
+	return state
 }

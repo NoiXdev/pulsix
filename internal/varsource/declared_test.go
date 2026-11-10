@@ -35,8 +35,8 @@ func TestFieldsCut(t *testing.T) {
 	}{
 		{"nothing cut", map[string]string{"site.yml": "- hosts: all\n  roles: [r]\n", "roles/r/meta/argument_specs.yml": specWithOptions(100)}, false},
 		{"one entry point over 100", map[string]string{"site.yml": "- hosts: all\n  roles: [r]\n", "roles/r/meta/argument_specs.yml": specWithOptions(101)}, true},
-		{"the sidecar's option budget", map[string]string{"site.yml": "- hosts: all\n",
-			"site.argument_specs.yml": "argument_specs:\n  main:\n    options:\n      a: {type: dict, options: " + wideMapping(maxSpecFields, "x: {type: str}") + "}\n      b: {type: str}\n"}, true},
+		{"the spec file's option budget", map[string]string{"site.yml": "- hosts: all\n  roles: [r]\n",
+			"roles/r/meta/argument_specs.yml": "argument_specs:\n  main:\n    options:\n      a: {type: dict, options: " + wideMapping(maxSpecFields, "x: {type: str}") + "}\n      b: {type: str}\n"}, true},
 		{"the sidecar over 100", map[string]string{"site.yml": "- hosts: all\n", "site.argument_specs.yml": specWithOptions(101)}, true},
 		{"more than 100 prompts", map[string]string{"site.yml": "- hosts: all\n  vars_prompt:\n" + prompts.String()}, true},
 		{"more than 100 in all", map[string]string{"site.yml": "- hosts: all\n  vars:\n" + markers.String()}, true},

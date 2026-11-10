@@ -39,10 +39,8 @@ func TestParseWorkIsBoundedWideAlias(t *testing.T) {
 		t.Fatalf("readOK = %v, %d fields, notes %v; want the 100 nested fields read", readOK, len(fields), notes)
 	}
 	wantNotes(t, notes)
-	// 40 000 keys once, plus a visit for each of the 5 100 options mapped
-	// (backlog 7.113).
-	if v := y.visits(); v > 46_000 {
-		t.Fatalf("visited %d nodes, want each mapping read once (≤ 46 000)", v)
+	if v := y.visits(); v > 41_000 {
+		t.Fatalf("visited %d nodes, want each mapping read once (≤ 41 000)", v)
 	}
 }
 
