@@ -138,7 +138,8 @@ func plausible(at, now time.Time) bool {
 //     refused like one (backlog 7.110): the label is copied into
 //     check_samples on every batch and into check_states on every
 //     evaluation, and nothing but this bound limited it before the 16 MiB
-//     gRPC receive limit.
+//     gRPC receive limit. A label holding a NUL byte is refused too,
+//     because Postgres text cannot hold one (backlog 7.115).
 //
 //   - MaxErrLen: an error text quotes the underlying OS or systemd fault
 //     and, for disk, the mount point it concerns (backlog 7.110). Unlike
@@ -146,7 +147,8 @@ func plausible(at, now time.Time) bool {
 //     (cutErr), never refused: a collection failure is exactly what an
 //     operator needs to see, and a long message must not hide it by
 //     costing the batch. 2048 holds a full path, its quoting and the
-//     fault text with room to spare.
+//     fault text with room to spare. A NUL byte is dropped from it
+//     (cleanErr) because Postgres text cannot hold one.
 //
 // Together the first three cap one row's contribution to
 // check_samples_lookup_idx — a btree over (org_id, host_id, check_key,
@@ -223,6 +225,8 @@ func withinContract(o Observation) error {
 		return fmt.Errorf("%w: metric for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxMetricLen)
 	case o.Label != nil && len(*o.Label) > MaxLabelLen:
 		return fmt.Errorf("%w: label for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxLabelLen)
+	case o.Label != nil && strings.ContainsRune(*o.Label, 0):
+		return fmt.Errorf("%w: label for check_key %q contains a NUL byte", ErrInvalidInput, o.CheckKey)
 	case !utf8.ValidString(o.CheckKey) || !utf8.ValidString(o.Item) || !utf8.ValidString(o.Metric):
 		return fmt.Errorf("%w: check_key, item and metric must be valid UTF-8", ErrInvalidInput)
 	case breaksLine(o.CheckKey) || breaksLine(o.Item) || breaksLine(o.Metric):
@@ -244,6 +248,14 @@ func cutErr(s string) string {
 		n--
 	}
 	return s[:n]
+}
+
+// cleanErr prepares an agent's error text for storage: it drops every NUL
+// byte, which a Postgres text column cannot hold and which would otherwise
+// fail the whole batch (backlog 7.115), and only then cuts the result with
+// cutErr, so the cut sees the text that will really be stored.
+func cleanErr(s string) string {
+	return cutErr(strings.ReplaceAll(s, "\x00", ""))
 }
 
 // breaksLine reports whether s holds a control character or a Unicode line
@@ -360,7 +372,7 @@ func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs [
 			res.Implausible++
 		default:
 			// o is a copy, so the caller's slice keeps its full text.
-			o.Err = cutErr(o.Err)
+			o.Err = cleanErr(o.Err)
 			valid = append(valid, o)
 		}
 	}

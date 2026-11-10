@@ -352,3 +352,41 @@ func TestRecordObservationsUpdatesExistingTuplesAtCap(t *testing.T) {
 		t.Fatalf("other host has %d samples, want 1", got)
 	}
 }
+
+// TestRecordObservationsStoresABatchWithANULError is backlog 7.115: a NUL
+// byte in one observation's error text used to make Postgres reject the
+// whole batch. The text is stripped instead and every observation lands.
+func TestRecordObservationsStoresABatchWithANULError(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-nul-error")
+	host := seedHost(t, d, org, "nul-error-host")
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now))
+	scoped := db.WithOrgScope(ctx, org)
+
+	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(1)},
+		{HostID: host, CheckKey: "disk", Item: "/", Metric: "used_pct", At: now, Err: "read /proc\x00/x: denied"},
+		{HostID: host, CheckKey: "cpu", Metric: "load1", At: now, Value: f64(2)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 3 {
+		t.Fatalf("ingest = %+v, want all 3 accepted", res)
+	}
+	cur, err := svc.CurrentForHost(scoped, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	found := false
+	for _, c := range cur {
+		if c.CheckKey == "disk" {
+			got, found = c.Err, true
+		}
+	}
+	if !found || got != "read /proc/x: denied" {
+		t.Fatalf("stored error = %q (found %v), want %q", got, found, "read /proc/x: denied")
+	}
+}
