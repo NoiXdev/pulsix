@@ -51,17 +51,10 @@ type yamlFile struct {
 	left      int // steps: mapping entries and sequence items visited
 	bytesLeft int // bytes of scalars read (scalars.go)
 	over      bool
-	notes     []Note // up to maxNotesPerFile (note)
-	dropped   int    // notes past the cap
-	// dupsNoted, when not nil, maps the place (nodePlace) of each mapping
-	// whose duplicate keys were noted to the parse that noted them. A role
-	// spec file is parsed again for each entry point it is used for
-	// (backlog 7.113), and a mapping an earlier parse noted is not noted
-	// again, as it was not when one parse served every entry point. Other
-	// files are parsed once and keep none.
-	dupsNoted map[uint64]int
-	parse     int      // the parse being read: release starts the next
-	log       *noteLog // when set, the notes raised are also logged (roles_spec.go)
+	notes     []Note     // up to maxNotesPerFile (note)
+	dropped   int        // notes past the cap
+	dups      *dupsNoted // a file parsed more than once (yamldups.go); nil for the others
+	log       *noteLog   // when set, the notes raised are also logged (roles_spec.go)
 }
 
 func newYAMLFile(file string) *yamlFile {
@@ -127,15 +120,17 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 		return nil
 	}
 	last := make(map[string]int, len(keys)) // key → index of its last entry
-	place, dups := nodePlace(n), false
-	parse, seen := y.dupsNoted[place]
-	noted := seen && parse != y.parse
+	// n's number in y.dups, and whether an earlier parse noted its keys.
+	looked, at, noted := false, -1, false
 	for i, k := range keys {
 		if isMergeKey(k) {
 			continue
 		}
 		if j, dup := last[k.Value]; dup {
-			dups = true
+			if !looked {
+				looked = true
+				at, noted = y.dups.lookup(n)
+			}
 			if !noted {
 				y.note(warning(codeDuplicateKey, y.file, k.Line,
 					"%q is set twice in one mapping (lines %d and %d); the later one counts", short(k.Value), keys[j].Line, k.Line))
@@ -143,8 +138,8 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 		}
 		last[k.Value] = i
 	}
-	if dups && !seen && y.dupsNoted != nil {
-		y.dupsNoted[place] = y.parse
+	if at >= 0 && !noted {
+		y.dups.mark(at)
 	}
 	out := make([]pair, 0, len(last))
 	placed := make(map[string]bool, len(last))
@@ -180,15 +175,6 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 	return out
 }
 
-// nodePlace is where a node starts in its file, the same in every parse
-// of the file. Two mappings start at one place only in contrived files (a
-// mapping used as a key, then aliased as a value). One parse reads each
-// mapping once anyway (entries), so such a pair can only hide notes of
-// one parse when an earlier parse noted the other mapping.
-func nodePlace(n *yaml.Node) uint64 {
-	return uint64(uint32(n.Line))<<32 | uint64(uint32(n.Column))
-}
-
 // release drops what the file's readers cached about its parsed nodes, so
 // the tree can be collected once its owner lets go of it (backlog 7.113).
 // What stays is the budget, the notes and which mappings had their
@@ -197,7 +183,7 @@ func nodePlace(n *yaml.Node) uint64 {
 func (y *yamlFile) release() {
 	y.entries = map[*yaml.Node][]pair{}
 	y.byKey = map[*yaml.Node]map[string]*yaml.Node{}
-	y.parse++
+	y.dups.release()
 }
 
 // keyNode is a mapping key as read: an alias key reads as the scalar its

@@ -192,3 +192,16 @@ func TestSharedDuplicateKeysAreCountedOnce(t *testing.T) {
 		t.Fatalf("too_many_notes says %q", m)
 	}
 }
+
+// TestDuplicateNotesOfMappingsAtOnePlace: a mapping used as a key starts
+// where the root mapping does. Each notes its duplicate keys, also when
+// the second is read only by a later parse of the file (backlog 7.113).
+func TestDuplicateNotesOfMappingsAtOnePlace(t *testing.T) {
+	spec := "&k {a: 1, a: 2}: v\nx: 1\nx: 2\nargument_specs: {a: {options: {o: {type: str}}}, b: {options: {p: {type: str}}, <<: *k}}\n"
+	pb := ParsePlaybook(rolesUsing(spec, 1, "a,b"), "site.yml")
+	file := "roles/r0/meta/argument_specs.yml"
+	wantNotes(t, pb.Notes, "warning duplicate_key "+file+":3", "warning duplicate_key "+file+":1")
+	if got := fieldNames(pb.Fields); !slices.Equal(got, []string{"o", "p"}) {
+		t.Fatalf("fields = %q", got)
+	}
+}

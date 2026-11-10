@@ -228,14 +228,17 @@ func TestUnusedEntryPointsCostNothing(t *testing.T) {
 			fmt.Fprintf(&b, "g%d: &g%d {<<: [%s]}\n", g, g, strings.Join(refs, ", "))
 			groups = append(groups, fmt.Sprintf("*g%d", g))
 		}
-		b.WriteString("argument_specs:\n  main: {<<: [" + strings.Join(groups, ", ") + "]}\n")
-		pb, _, held := heldBy(rolesUsing(b.String(), 6, "main"))
+		// e0 and main both merge the 1 200 mappings; both are used.
+		merge := "{<<: [" + strings.Join(groups, ", ") + "]}"
+		b.WriteString("argument_specs:\n  e0: " + merge + "\n  main: " + merge + "\n")
+		pb, _, held := heldBy(rolesUsing(b.String(), 6, "e0,main"))
 		t.Logf("held %d KiB", held>>10)
 		if held > limit {
 			t.Fatalf("the walk held %d MiB at its last role, want under %d MiB", held>>20, limit>>20)
 		}
-		wantAllRead(t, pb, 6)
-		// Each file notes its 1 200 x 200 duplicate keys once: 200 kept.
+		wantAllRead(t, pb, 12)
+		// Each file notes its 1 200 x 200 duplicate keys once, for e0: 200
+		// kept.
 		var want []string
 		for i := range 6 {
 			file := fmt.Sprintf("roles/r%d/meta/argument_specs.yml", i)
@@ -243,6 +246,31 @@ func TestUnusedEntryPointsCostNothing(t *testing.T) {
 		}
 		wantNotes(t, pb.Notes, want...)
 		if m := pb.Notes[1].Message; m != "239800 more notes are left out" {
+			t.Fatalf("too_many_notes says %q", m)
+		}
+	})
+
+	t.Run("nested merges of small mappings with duplicate keys", func(t *testing.T) {
+		// main merges 19 x 64 x 64 = 77 824 inline mappings {z,z} through
+		// nested merge lists; what a file keeps of which of them were noted
+		// stays small.
+		const roles = 15
+		leaf := "{<<: [" + strings.TrimSuffix(strings.Repeat(dupMapping(2)+",", 64), ",") + "]}"
+		mid := "{<<: [" + strings.TrimSuffix(strings.Repeat(leaf+",", 64), ",") + "]}"
+		spec := "argument_specs:\n  main: {<<: [" + strings.TrimSuffix(strings.Repeat(mid+",", 19), ",") + "]}\n"
+		pb, _, held := heldBy(rolesUsing(spec, roles, "main"))
+		t.Logf("held %d KiB", held>>10)
+		if held > limit {
+			t.Fatalf("the walk held %d MiB at its last role, want under %d MiB", held>>20, limit>>20)
+		}
+		wantAllRead(t, pb, roles)
+		var want []string
+		for i := range roles {
+			file := fmt.Sprintf("roles/r%d/meta/argument_specs.yml", i)
+			want = append(want, "warning duplicate_key "+file+":2", "warning too_many_notes "+file+":0")
+		}
+		wantNotes(t, pb.Notes, want...)
+		if m := pb.Notes[1].Message; m != "77624 more notes are left out" {
 			t.Fatalf("too_many_notes says %q", m)
 		}
 	})

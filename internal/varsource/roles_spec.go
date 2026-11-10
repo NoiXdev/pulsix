@@ -42,7 +42,7 @@ type specUse struct {
 }
 
 // noteLog is the notes an entry point's mapping raised, but for the
-// duplicate keys, which a file notes once (yamlFile.dupsNoted): the notes
+// duplicate keys, which a file notes once (dupsNoted): the notes
 // a later use of the entry point raises again. It keeps up to
 // maxNotesPerFile, as many as the file could keep, and counts the rest.
 type noteLog struct {
@@ -100,9 +100,10 @@ func (w *walk) parseSpec(s *roleSpec) {
 		}
 		if s.y == nil {
 			s.y = newYAMLFile(file)
-			s.y.dupsNoted = map[uint64]int{} // parsed again for each entry point
+			s.y.dups = &dupsNoted{} // parsed again for each entry point
 			w.sources = append(w.sources, noteSource{y: s.y})
 		}
+		s.y.dups.parsed(&doc)
 		s.root, s.parsed = documentRoot(&doc), true
 	}
 }
