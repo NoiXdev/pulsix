@@ -173,5 +173,38 @@ func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) (string, e
 	return cookieValue(id, secret), nil
 }
 
+// LockLive is the first step of finishing a second-factor enrolment inside
+// an instance transaction (backlog 7.109). It takes userID's account row in
+// share mode, which an administrator's second-factor reset needs exclusively
+// before it removes the factors and ends the sessions, and then checks that
+// sessionID is still a live session of userID: not revoked, not expired, its
+// account not deactivated. A request resolves its session before it reads
+// its body, so the Principal it carries can be older than a reset that
+// committed in between; this re-check under the lock is what refuses it.
+//
+// A session that is no longer live, or belongs to another account, is
+// ErrNotFound — the same answer MarkMFAComplete gives for an ended session.
+// Outside a transaction the lock ends with the statement, so callers run
+// this and their writes in one (TxRunner).
+func (s *Sessions) LockLive(ctx context.Context, userID, sessionID uuid.UUID) error {
+	if _, err := s.q.LockUserForEnrolment(ctx, userID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("lock the account: %w", err)
+	}
+	row, err := s.q.GetSession(ctx, sessionID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("look up session: %w", err)
+	}
+	if row.UserID != userID {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Revoke ends a session.
 func (s *Sessions) Revoke(ctx context.Context, id uuid.UUID) error { return s.q.RevokeSession(ctx, id) }

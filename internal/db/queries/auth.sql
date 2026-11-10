@@ -45,14 +45,32 @@ WHERE s.id = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.disabled
 -- through the CTE so the lock is taken first; left to itself the update ran
 -- first, and the CTE's FOR UPDATE then skipped a row this statement had
 -- already changed and read nothing at all.
+-- A revoked or expired session matches nothing (backlog 7.109): an
+-- administrator's second-factor reset revokes every session of the account,
+-- and a request that resolved its session before the reset must not be able
+-- to complete it afterwards. The predicate sits in the locking CTE, so a
+-- revocation that commits while this statement waits for the row lock is
+-- seen: the row is re-read and no longer qualifies.
 WITH previous AS (
-    SELECT s.id, s.user_id, s.mfa_complete FROM sessions s WHERE s.id = sqlc.arg(id) FOR UPDATE
+    SELECT s.id, s.user_id, s.mfa_complete FROM sessions s
+    WHERE s.id = sqlc.arg(id) AND s.revoked_at IS NULL AND s.expires_at > now()
+    FOR UPDATE
 ), stamp AS (
     UPDATE users SET last_sign_in_at = now()
     WHERE users.id IN (SELECT user_id FROM previous WHERE NOT mfa_complete)
 )
 UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = sqlc.arg(secret_hash)
 WHERE sessions.id = (SELECT previous.id FROM previous);
+
+-- name: LockUserForEnrolment :one
+-- Finishing a second-factor enrolment takes the account row in share mode
+-- first (backlog 7.109). An administrator's second-factor reset takes the
+-- same row FOR UPDATE (LockAccount) before it deletes the factors and
+-- revokes the sessions, so the two serialise on it: an enrolment that holds
+-- the lock commits before the reset starts, and the reset then removes what
+-- it wrote; one that waits sees the reset's revocation when it checks its
+-- session next, in a statement of its own (GetSession), and refuses.
+SELECT id FROM users WHERE id = $1 FOR SHARE;
 
 -- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1;

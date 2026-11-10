@@ -632,7 +632,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Deps = api.Deps{
 		Sessions: s.Sessions, Auth: auth.NewService(auth.NewSQLStore(appQ), s.Sessions, auth.AnyEnabled(totp, passkeys), time.Now), TOTP: totp, Passkeys: passkeys,
 		Tokens:    auth.NewTokens(auth.NewSQLTokenStore(d), time.Now),
-		Enrolment: auth.NewEnrolment(totp, s.Sessions, d),
+		Enrolment: auth.NewEnrolment(totp, passkeys, s.Sessions, d),
 		Tenancy:   tenancySvc,
 		Accounts:  accounts.NewService(accounts.NewSQLStore(d), s.Mail, publicURL, time.Now, rand.Reader),
 		Audit:     auditRec,

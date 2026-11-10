@@ -4,11 +4,16 @@
 // second half fails, the first must not stand: the account would then
 // carry eight recovery codes nobody ever saw, and the only way back is
 // re-enrolling, which issues new ones. This composes the two stores
-// inside one transaction so that cannot happen (backlog 1.26).
+// inside one transaction so that cannot happen (backlog 1.26). The same
+// holds for a passkey, and both run only on a session that is still live:
+// an administrator's second-factor reset ends every session of the account,
+// and an enrolment begun before it must not finish after it (backlog 7.109).
 package auth
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -26,13 +31,14 @@ type TxRunner interface {
 // writes commit together.
 type Enrolment struct {
 	totp     *TOTP
+	passkeys *Passkeys
 	sessions *Sessions
 	tx       TxRunner
 }
 
 // NewEnrolment wires the composition.
-func NewEnrolment(totp *TOTP, sessions *Sessions, tx TxRunner) *Enrolment {
-	return &Enrolment{totp: totp, sessions: sessions, tx: tx}
+func NewEnrolment(totp *TOTP, passkeys *Passkeys, sessions *Sessions, tx TxRunner) *Enrolment {
+	return &Enrolment{totp: totp, passkeys: passkeys, sessions: sessions, tx: tx}
 }
 
 // ConfirmTOTP validates the first code against the enrolling secret,
@@ -46,9 +52,15 @@ func NewEnrolment(totp *TOTP, sessions *Sessions, tx TxRunner) *Enrolment {
 //
 // An invalid code returns ErrInvalidTOTPCode and changes nothing. An
 // unknown or already-ended session returns ErrNotFound and changes
-// nothing.
+// nothing — including one an administrator's second-factor reset ended
+// after the request resolved it (backlog 7.109).
 func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID, code string) (codes []string, cookie string, err error) {
 	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		// Account row first, in the order the reset takes it, so the two
+		// serialise instead of deadlocking on each other's rows.
+		if err := e.sessions.LockLive(ctx, userID, sessionID); err != nil {
+			return fmt.Errorf("confirm TOTP: %w", err)
+		}
 		var err error
 		codes, err = e.totp.ConfirmEnrol(ctx, userID, code)
 		if err != nil {
@@ -63,4 +75,53 @@ func (e *Enrolment) ConfirmTOTP(ctx context.Context, userID, sessionID uuid.UUID
 		return nil, "", err
 	}
 	return codes, cookie, nil
+}
+
+// FinishPasskey finishes a passkey registration on p's session: it verifies
+// the attestation against the ceremony, stores the credential and, when the
+// session was pending only for want of a factor, completes it and returns
+// its new cookie ("" when the session was already complete and is left as
+// it is). p is the Principal the request resolved before it read its body.
+//
+// Storing the credential and upgrading the session are one transaction, and
+// it runs only while the session is still live (backlog 7.109): an
+// administrator's second-factor reset ends every session of the account, so
+// a registration begun before the reset must not leave a passkey behind it.
+// A session that has ended is ErrUnauthenticated and stores nothing. The
+// ceremony is consumed either way.
+func (e *Enrolment) FinishPasskey(ctx context.Context, p Principal, ceremonyID uuid.UUID, name string, response json.RawMessage) (cookie string, err error) {
+	c, err := e.passkeys.verifyRegistration(ctx, p.UserID, ceremonyID, name, response)
+	if err != nil {
+		return "", err
+	}
+	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		if err := e.sessions.LockLive(ctx, p.UserID, p.SessionID); err != nil {
+			return sessionEnded(err)
+		}
+		if err := e.passkeys.store.AddCredential(ctx, p.UserID, name, c); err != nil {
+			return err
+		}
+		if p.MFAComplete {
+			return nil
+		}
+		var err error
+		if cookie, err = e.sessions.MarkMFAComplete(ctx, p.SessionID); err != nil {
+			return sessionEnded(err)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return cookie, nil
+}
+
+// sessionEnded reports a session that matched nothing as ErrUnauthenticated:
+// for a request that finishes an enrolment, its own session having ended is
+// a sign-in problem, not a missing ceremony or credential (ErrNotFound).
+func sessionEnded(err error) error {
+	if errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("finish passkey registration: the session has ended: %w", ErrUnauthenticated)
+	}
+	return fmt.Errorf("finish passkey registration: %w", err)
 }

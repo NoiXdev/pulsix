@@ -266,14 +266,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	sessions := auth.NewSessions(q, time.Now)
 
 	totp := auth.NewTOTP(auth.NewSQLTOTPStore(appDB), box, "Pulsix", time.Now)
-	// Confirming a second factor writes the secret, its recovery codes and
-	// the session upgrade together or not at all (backlog 1.26).
-	enrolment := auth.NewEnrolment(totp, sessions, appDB)
 	passkeys, err := auth.NewPasskeys(auth.NewSQLPasskeyStore(q), auth.NewSQLStore(q), sessions, cfg.RPID(), "Pulsix", cfg.Origin(), time.Now)
 	if err != nil {
 		appDB.Close()
 		return nil, fmt.Errorf("build passkey service: %w", err)
 	}
+	// Finishing a second factor writes the credential and the session
+	// upgrade together or not at all, and only on a session that is still
+	// live (backlogs 1.26, 7.109).
+	enrolment := auth.NewEnrolment(totp, passkeys, sessions, appDB)
 	tokens := auth.NewTokens(auth.NewSQLTokenStore(appDB), time.Now)
 	authSvc := auth.NewService(auth.NewSQLStore(q), sessions, auth.AnyEnabled(totp, passkeys), time.Now)
 

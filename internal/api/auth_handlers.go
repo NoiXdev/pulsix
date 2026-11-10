@@ -192,6 +192,9 @@ func mapAuthErr(ctx context.Context, err error) error {
 		return huma.Error401Unauthorized("invalid credentials")
 	case errors.Is(err, auth.ErrNotFound):
 		return huma.Error401Unauthorized("login required")
+	case errors.Is(err, auth.ErrUnauthenticated):
+		// The request's session ended while it ran (backlog 7.109).
+		return huma.Error401Unauthorized("login required")
 	case errors.Is(err, auth.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, auth.ErrInvalidTOTPCode):

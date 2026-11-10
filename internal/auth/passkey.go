@@ -213,29 +213,44 @@ func (p *Passkeys) BeginRegistration(ctx context.Context, userID uuid.UUID) (jso
 // ceremonyID must be a registration ceremony begun by userID: it is
 // rejected (as ErrNotFound) if it belongs to another user, was begun as a
 // login, is unknown, or has already been consumed or expired.
+//
+// It does not check the session the registration runs on: the API finishes
+// a registration through Enrolment.FinishPasskey, which stores the
+// credential only on a session that is still live (backlog 7.109).
 func (p *Passkeys) FinishRegistration(ctx context.Context, userID, ceremonyID uuid.UUID, name string, response json.RawMessage) error {
-	cUser, sd, err := p.takeCeremony(ctx, ceremonyID, ceremonyKindRegister)
+	c, err := p.verifyRegistration(ctx, userID, ceremonyID, name, response)
 	if err != nil {
 		return err
 	}
+	return p.store.AddCredential(ctx, userID, name, c)
+}
+
+// verifyRegistration takes the ceremony and verifies the attestation
+// against it, returning the credential to store. The ceremony is consumed
+// whether or not the attestation verifies.
+func (p *Passkeys) verifyRegistration(ctx context.Context, userID, ceremonyID uuid.UUID, name string, response json.RawMessage) (Credential, error) {
+	cUser, sd, err := p.takeCeremony(ctx, ceremonyID, ceremonyKindRegister)
+	if err != nil {
+		return Credential{}, err
+	}
 	if cUser == nil || *cUser != userID {
-		return fmt.Errorf("ceremony %s belongs to another user: %w", ceremonyID, ErrNotFound)
+		return Credential{}, fmt.Errorf("ceremony %s belongs to another user: %w", ceremonyID, ErrNotFound)
 	}
 	u, err := p.loadUser(ctx, userID)
 	if err != nil {
-		return err
+		return Credential{}, err
 	}
 	parsed, err := protocol.ParseCredentialCreationResponseBody(bytes.NewReader(response))
 	if err != nil {
-		return fmt.Errorf("parse attestation: %w", err)
+		return Credential{}, fmt.Errorf("parse attestation: %w", err)
 	}
 	cred, err := p.wa.CreateCredential(u, *sd, parsed)
 	if err != nil {
-		return fmt.Errorf("verify attestation: %w", err)
+		return Credential{}, fmt.Errorf("verify attestation: %w", err)
 	}
 	c := fromWebauthnCredential(cred)
 	c.ID, c.Name = uuid.Must(uuid.NewV7()), name
-	return p.store.AddCredential(ctx, userID, name, c)
+	return c, nil
 }
 
 // BeginLogin returns request options for a discoverable-credential login:

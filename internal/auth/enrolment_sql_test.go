@@ -34,7 +34,7 @@ func enrolmentWorld(t *testing.T) (*auth.Enrolment, *auth.TOTP, *gen.Queries, *d
 	clock := newMutableClock(time.Now().Truncate(30 * time.Second))
 	tp := auth.NewTOTP(auth.NewSQLTOTPStore(d), crypto.NewBox(key), "Pulsix", clock.Now)
 	sessions := auth.NewSessions(q, time.Now)
-	return auth.NewEnrolment(tp, sessions, d), tp, gen.New(d.Pool()), d, clock
+	return auth.NewEnrolment(tp, nil, sessions, d), tp, gen.New(d.Pool()), d, clock
 }
 
 // codeAt is a valid code for secret at the clock's current step.

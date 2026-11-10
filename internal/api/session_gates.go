@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -237,23 +236,6 @@ func requireEnrolmentSession(ctx context.Context, deps Deps) (auth.Principal, er
 		return p, huma.Error403Forbidden("second factor required")
 	}
 	return p, nil
-}
-
-// completeEnrolment upgrades a session that was pending only for lack of a
-// second factor once it has just enrolled one, so it continues without a
-// fresh login, and returns the session's new cookie (the upgrade replaces
-// its secret, backlog 7.19). A session that was already MFA-complete is
-// left alone, and the cookie is nil.
-func completeEnrolment(ctx context.Context, deps Deps, p auth.Principal) (*http.Cookie, error) {
-	if p.MFAComplete {
-		return nil, nil
-	}
-	cookie, err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID)
-	if err != nil {
-		return nil, mapAuthErr(ctx, err)
-	}
-	c := sessionCookie(cookie, deps.Secure)
-	return &c, nil
 }
 
 // secondFactors is the account-level view over both kinds of second factor

@@ -2,9 +2,13 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptrace"
 	"testing"
+	"time"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
 )
@@ -180,5 +184,112 @@ func TestPasskeyEndpointsRejectMalformedCeremonyID(t *testing.T) {
 	// hedge between huma's 422 and the handler's 400.
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("delete with a malformed passkey id: %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+// TestPasskeyRegisterFinishAfterSecondFactorResetStoresNothing is the
+// request an administrator's second-factor reset must win against (backlog
+// 7.109). The cookie middleware resolves the session when the request's
+// headers arrive; the body is read later. A client that holds back the body
+// of register/finish until the reset has committed reached the handler
+// with the session it had before the reset, and the passkey it then
+// registered survived the reset that was meant to lock it out.
+//
+// "Expect: 100-continue" makes that window deterministic: the server sends
+// 100 Continue only when the handler first reads the body, so by then the
+// session has been resolved; the reset runs, and only then is the body sent.
+func TestPasskeyRegisterFinishAfterSecondFactorResetStoresNothing(t *testing.T) {
+	s := apitest.New(t)
+	admin := s.SeedUser("reset-admin@example.test", "correct horse battery")
+	uid := s.SeedUser("parked-finish@example.test", "correct horse battery")
+	// The account has a factor and the session proved it just now, so
+	// register/begin passes the step-up check (backlog 1.28).
+	s.SeedPasskey(uid, "Existing key")
+	c := s.LoginAs(uid)
+
+	resp := postJSON(t, c, s.HTTP.URL+"/api/v1/auth/passkeys/register/begin", struct{}{})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("register/begin: %d", resp.StatusCode)
+	}
+	var begin struct {
+		CeremonyID string          `json:"ceremony_id"`
+		Options    json.RawMessage `json:"options"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&begin); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"ceremony_id": begin.CeremonyID, "name": "Planted key",
+		"response": buildNoneAttestationResponse(t, begin.Options, "localhost", s.HTTP.URL, []byte("parked-finish-credential")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The client waits for 100 Continue before it sends the body, and the
+	// body itself waits on the pipe until the reset has committed.
+	c.Transport.(*http.Transport).ExpectContinueTimeout = time.Minute
+	pr, pw := io.Pipe()
+	resolved := make(chan struct{})
+	trace := &httptrace.ClientTrace{Got100Continue: func() { close(resolved) }}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(context.Background(), trace),
+		http.MethodPost, s.HTTP.URL+"/api/v1/auth/passkeys/register/finish", pr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = int64(len(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Expect", "100-continue")
+	type result struct {
+		status int
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := c.Do(req)
+		if err != nil {
+			done <- result{err: err}
+			return
+		}
+		_ = resp.Body.Close()
+		done <- result{status: resp.StatusCode}
+	}()
+
+	select {
+	case <-resolved:
+	case r := <-done:
+		t.Fatalf("register/finish answered before it read its body: status %d, err %v", r.status, r.err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("register/finish never asked for its body")
+	}
+	if _, err := s.Deps.Accounts.ResetSecondFactor(context.Background(), true, admin, uid); err != nil {
+		t.Fatalf("ResetSecondFactor: %v", err)
+	}
+	if _, err := pw.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	_ = pw.Close()
+
+	r := <-done
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if r.status != http.StatusUnauthorized {
+		t.Errorf("register/finish after the reset: %d, want %d", r.status, http.StatusUnauthorized)
+	}
+	var n int
+	if err := s.DB.Pool().QueryRow(context.Background(), `SELECT count(*) FROM passkeys WHERE user_id = $1`, uid).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("passkeys after the reset = %d, want 0", n)
+	}
+	var events int
+	if err := s.DB.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM audit_events WHERE action = 'POST finishPasskeyRegistration'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if events != 0 {
+		t.Errorf("a refused registration recorded %d audit events, want 0", events)
 	}
 }

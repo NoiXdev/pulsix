@@ -120,14 +120,19 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, huma.Error400BadRequest("invalid ceremony id")
 		}
-		if err := deps.Passkeys.FinishRegistration(ctx, p.UserID, cid, in.Body.Name, in.Body.Response); err != nil {
+		// Storing the passkey and completing a session that was pending
+		// only for want of a factor are one write, and only on a session
+		// that is still live: p was resolved before the body was read, and
+		// an administrator's second-factor reset may have ended the session
+		// since (backlog 7.109).
+		value, err := deps.Enrolment.FinishPasskey(ctx, p, cid, in.Body.Name, in.Body.Response)
+		if err != nil {
 			return nil, mapPasskeyErr(ctx, err)
 		}
-		// The account now has a second factor: a session that was pending
-		// only for want of one is complete from here on.
-		cookie, err := completeEnrolment(ctx, deps, p)
-		if err != nil {
-			return nil, err
+		var cookie *http.Cookie
+		if value != "" {
+			c := sessionCookie(value, deps.Secure)
+			cookie = &c
 		}
 		// Instance-level event, same mechanism as POST
 		// /admin/users/{id}/deactivate (Task 11 fix round 1, Finding 1) and
