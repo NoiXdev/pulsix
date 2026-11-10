@@ -144,6 +144,31 @@ repositories as before. An older worker never asks.
   one byte more is refused with 413, unchanged; the dependency update that moved
   the limit's off-by-one is compensated in the hook endpoints.
 
+- **7.112, host evaluation over 30 seconds:** one host's rule evaluation (its
+  context included) is now bounded at 30 seconds, where before only the 60
+  second batch was. A host that needs longer, a very large one, fails every
+  time: it is skipped for 60 seconds, the manager logs an error naming it, and
+  its alerts are not evaluated until it fits. Hosts behind it in the batch, of
+  every organization, are no longer starved by it. If the log shows it, look at
+  that host's check and rule volume.
+- **7.114, numbers in variable sources:** a number of 1e21 or more or below
+  1e-6 (zero aside), integers of 22 digits or more included, is no longer a form
+  value, because the database writes such a number out in full and the stored
+  result would grow far past its cap. A marked variable holding one is not a
+  form field and gets a warning (`marker_value_type`); a role spec default is
+  dropped with `default_invalid`; in a choice or as the default of a text option
+  the number stays the text as written. Editor playbooks are parsed on the
+  manager, so new saves follow once it is upgraded; a row saved before the
+  upgrade keeps its stored result, and is still read and transferred in full,
+  until the playbook is saved again. Repository playbooks are parsed on the
+  worker, so for them the rule takes effect only once the worker is upgraded
+  and the repository has synced again; until then the manager stores whatever
+  an older worker sends, unchecked (7.122).
+- **7.114, rollback:** the stored result of an editor playbook is now a report
+  envelope. There is no schema change, but a manager of an older version started
+  on the same database without a restore decodes it without error and reads
+  every saved editor playbook as having no variables (it does not parse the text
+  instead). A downgrade is a restore (see "Downgrading"), which avoids this.
 - **7.114, editor playbook variable results:** the parse result stored with
   an editor playbook is capped at 1 MiB (a text of 67 KB can parse to several
   MiB through aliases). A playbook saved with a larger result shows as
@@ -170,6 +195,11 @@ repositories as before. An older worker never asks.
   `name` used as the source, or collection `name` or `source` is a number
   (`1e3`, `0o17`) is refused as not a requirements file. Quote the value: a
   string still installs, and a local path is still checked against the clone.
+- **7.104, run output redaction:** run output also masks a secret printed
+  through `to_yaml` or `to_nice_yaml` (the single-quoted form, with every `'`
+  doubled) and through `urlencode` (percent-encoded, both the path and the query
+  form), each also in its JSON-escaped forms. More `[redacted]` can appear in
+  the logs of new runs; a secret without those characters adds nothing.
 - **7.103, credentials in repository URLs:** a repository URL, in an
   organization or a shared definition, is refused when it carries a password
   or, on https, any user (`https://user:token@host/x`, `https://token@host/x`);
