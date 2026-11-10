@@ -1411,8 +1411,10 @@ func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 	defer cancel()
 	n, err := store.ProcessDue(ctx, now, 10, func(hostCtx context.Context, due rules.Due) error {
 		if due.HostID == second {
-			// The deadline fires while this host is being loaded: its own
-			// work fails on the dead context, and nothing after it starts.
+			// The manager is cancelled (shutdown, not a deadline: backlog
+			// 7.112 postpones the host a deadline cut off) while this host
+			// is being loaded: its own work fails on the dead context, and
+			// nothing after it starts.
 			cancel()
 			return hostCtx.Err()
 		}
@@ -1438,7 +1440,7 @@ func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 			t.Fatalf("the %s host's cursor advanced; it must stay due", name)
 		}
 		// Not postponed either (backlog 7.58): the in-flight host failed
-		// because the batch was cut short, not because of anything about
+		// because the manager was cancelled, not because of anything about
 		// the host, so it keeps its place at the head of the next claim.
 		if countRows(t, d, `SELECT count(*) FROM check_eval_cursor WHERE host_id = $1 AND next_due_at <= now() AND retry_after IS NULL`, host) != 1 {
 			t.Fatalf("the %s host was postponed; a cancelled batch must not hold any host back", name)
@@ -1775,5 +1777,116 @@ func TestFailedHostIsPostponed(t *testing.T) {
 	// And the evaluation that committed cleared the hold.
 	if at, held := retryAfter(t, d, bad); held {
 		t.Fatalf("retry_after = %v after a committed evaluation, want NULL", at)
+	}
+}
+
+// blockingChecks is a HostChecks whose ContextForHost never answers for the
+// hosts in block: it holds until its context ends and returns that error,
+// the way the real port does when its many group-selector queries outlast
+// the deadline (backlog 7.112). Every other host resolves like cpuMinute.
+type blockingChecks struct {
+	block map[uuid.UUID]bool
+}
+
+func (b blockingChecks) ContextForHost(ctx context.Context, org, host uuid.UUID) (rules.CheckContext, error) {
+	if b.block[host] {
+		<-ctx.Done()
+		return rules.CheckContext{}, ctx.Err()
+	}
+	return cpuMinute().ContextForHost(ctx, org, host)
+}
+
+// TestHostCutOffByTheBatchDeadlineIsPostponed (backlog 7.112): the host
+// whose evaluation is running when the batch deadline fires is held out of
+// the claim exactly like a host that failed, because otherwise it keeps its
+// old next_due_at, heads every later claim and spends every later batch's
+// deadline again, with every host behind it — from any organization —
+// never reached. Host A (organization 1, the oldest due) blocks in
+// ContextForHost until the deadline; host B (organization 2) is healthy.
+// After the first tick A is postponed (and B, never reached, is not); the
+// second tick evaluates B.
+func TestHostCutOffByTheBatchDeadlineIsPostponed(t *testing.T) {
+	d := testdb.Open(t)
+	orgA := seedOrg(t, d, "deadline-cut-a")
+	orgB := seedOrg(t, d, "deadline-cut-b")
+	slow := seedHost(t, d, orgA, "slow")
+	healthy := seedHost(t, d, orgB, "healthy")
+	setCursor(t, d, orgA, slow, 0, -time.Hour, -2*time.Minute)
+	setCursor(t, d, orgB, healthy, 0, -time.Hour, -time.Minute)
+	_, _, slowNextDue := cursorRow(t, d, slow)
+
+	store := rules.NewEvalSQLStore(d, blockingChecks{block: map[uuid.UUID]bool{slow: true}}, items.NewSQLStore(d), discard())
+	tk := rules.NewTicker(store, &fakeSink{},
+		rules.WithInterval(10*time.Millisecond), rules.WithBatchDeadlineFloor(time.Second),
+		rules.WithTickerLogger(discard()))
+
+	var before time.Time
+	if err := d.Pool().QueryRow(context.Background(), `SELECT now()`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("first Tick: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("first Tick evaluated %d hosts, want 0 (the slow host consumed the deadline)", n)
+	}
+	at, held := retryAfter(t, d, slow)
+	if !held || at.Before(before.Add(rules.FailedHostBackoff)) {
+		t.Fatalf("the cut-off host's retry_after = %v (set %v), want at least %v (now + %s)", at, held, before.Add(rules.FailedHostBackoff), rules.FailedHostBackoff)
+	}
+	if _, _, nextDue := cursorRow(t, d, slow); !nextDue.Equal(slowNextDue) {
+		t.Fatalf("the cut-off host's next_due_at moved from %v to %v; only retry_after may change", slowNextDue, nextDue)
+	}
+	if _, held := retryAfter(t, d, healthy); held || !stillDue(t, d, healthy) {
+		t.Fatal("the host that was never reached must be left exactly as it was")
+	}
+
+	n, err = tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("second Tick: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("second Tick evaluated %d hosts, want 1 (the healthy host, no longer behind the slow one)", n)
+	}
+	if stillDue(t, d, healthy) {
+		t.Fatal("the healthy host is still due after the second tick; it was not evaluated")
+	}
+	if !stillDue(t, d, slow) {
+		t.Fatal("the cut-off host is no longer due; the hold must leave its cursor as it was")
+	}
+}
+
+// TestHostPastItsOwnDeadlineIsPostponedAndTheBatchGoesOn (backlog 7.112):
+// the whole per-host evaluation, ContextForHost on its own pool connection
+// included, runs under a deadline of its own, shorter than the batch's. A
+// host that outlasts it fails alone and is postponed like any failed host,
+// and the hosts behind it are still evaluated in the same batch rather than
+// waiting for the batch deadline to end the slow one.
+func TestHostPastItsOwnDeadlineIsPostponedAndTheBatchGoesOn(t *testing.T) {
+	d := testdb.Open(t)
+	orgA := seedOrg(t, d, "host-deadline-a")
+	orgB := seedOrg(t, d, "host-deadline-b")
+	slow := seedHost(t, d, orgA, "slow")
+	healthy := seedHost(t, d, orgB, "healthy")
+	setCursor(t, d, orgA, slow, 0, -time.Hour, -2*time.Minute)
+	setCursor(t, d, orgB, healthy, 0, -time.Hour, -time.Minute)
+
+	store := rules.NewEvalSQLStore(d, blockingChecks{block: map[uuid.UUID]bool{slow: true}}, items.NewSQLStore(d), discard())
+	store.SetHostDeadline(500 * time.Millisecond)
+	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerLogger(discard()))
+
+	n, err := tk.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("Tick evaluated %d hosts, want 1 (the healthy host behind the slow one)", n)
+	}
+	if _, held := retryAfter(t, d, slow); !held {
+		t.Fatal("the host past its own deadline has no retry_after")
+	}
+	if stillDue(t, d, healthy) {
+		t.Fatal("the healthy host is still due; the slow host's deadline must not end the batch")
 	}
 }

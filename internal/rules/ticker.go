@@ -17,6 +17,7 @@ package rules
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"runtime/debug"
 	"sync/atomic"
@@ -397,10 +398,11 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 
 // failedHostNext says what becomes of a host whose evaluation failed:
 // EvalSQLStore.evaluateOne (due_sql.go) holds it out of the claim for
-// failedHostBackoff, unless the batch's context is done, which leaves the
-// host exactly as it is, due for the next tick.
+// failedHostBackoff — including the host a deadline (its own or the
+// batch's) cut off, backlog 7.112 — unless the manager was cancelled, which
+// leaves the host exactly as it is, due for the next tick.
 func failedHostNext(ctx context.Context) string {
-	if ctx.Err() != nil {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		return "batch cut short; the host stays due for the next tick"
 	}
 	return "the host is held out of the claim for a while, then retried"

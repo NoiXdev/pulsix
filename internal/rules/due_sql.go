@@ -25,8 +25,8 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 )
 
-// The two bounds that keep one host from starving the ticker (backlog
-// 7.58). The batch deadline is 4 × the 15-second interval and the claim
+// The bounds that keep one host from starving the ticker (backlog 7.58,
+// 7.112). The batch deadline is 4 × the 15-second interval and the claim
 // orders by next_due_at, so a host whose evaluation runs for minutes, or
 // fails on every try, would otherwise spend every batch's deadline before
 // any healthy host behind it was reached.
@@ -34,8 +34,8 @@ import (
 // hostStatementTimeout is SET LOCAL on each host's own transaction: a
 // window statement over a day of raw samples for a host with many items
 // is cut off and fails that host alone. It bounds each statement, not the
-// whole host, which is enough — the window statement is the one whose cost
-// an operator's rule controls.
+// whole host: the window statement is the one whose cost a rule controls,
+// but not the only slow part, which is why hostEvalDeadline exists too.
 //
 // failedHostBackoff is how long a host whose own evaluation failed is
 // held out of the claim (PostponeEvalCursor sets its retry_after), so the
@@ -43,9 +43,22 @@ import (
 // do it: the host stays dirty, and a healthy dirty host's next_due_at is
 // its staleness deadline minutes ahead, so the failed one would still sort
 // first.
+//
+// hostEvalDeadline (backlog 7.112) bounds the WHOLE of one host's
+// evaluation, ContextForHost on its own pool connection included. The
+// statement timeout cannot: it is SET LOCAL on the host's transaction and
+// never applies to that separate connection, whose cost grows with the
+// organization's monitoring-group count. Half the default batch deadline,
+// so a slow host fails alone and is postponed while the hosts behind it are
+// still reached in the same batch.
+//
+// postponeTimeout bounds the postponement write itself, which runs on a
+// context detached from the batch (see evaluateOne).
 const (
 	hostStatementTimeout = 10 * time.Second
 	failedHostBackoff    = 60 * time.Second
+	hostEvalDeadline     = 30 * time.Second
+	postponeTimeout      = 5 * time.Second
 )
 
 // EvalSQLStore implements EvalStore.
@@ -54,6 +67,8 @@ type EvalSQLStore struct {
 	checks HostChecks
 	items  ItemStore
 	log    *slog.Logger
+
+	hostDeadline time.Duration
 }
 
 // NewEvalSQLStore builds the store; a nil log is slog.Default().
@@ -74,7 +89,7 @@ func NewEvalSQLStore(d *db.DB, checks HostChecks, items ItemStore, log *slog.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &EvalSQLStore{d: d, checks: checks, items: items, log: log}
+	return &EvalSQLStore{d: d, checks: checks, items: items, log: log, hostDeadline: hostEvalDeadline}
 }
 
 // evalTxKey is the context key evaluateOne binds one host's transaction
@@ -222,29 +237,40 @@ const (
 	// hostCommitted: fn returned nil and the transaction committed.
 	hostCommitted
 	// hostFailed: the host's own evaluation failed — fn's error, a panic,
-	// or a commit that did not go through. Postponed (unless the batch
-	// itself was cut short; see evaluateOne).
+	// or a commit that did not go through. Postponed (unless the manager was
+	// cancelled; see evaluateOne).
 	hostFailed
 )
 
-// evaluateOne evaluates one host (runHost) and reports whether it
-// committed. A host whose own evaluation failed is held out of the claim
-// for failedHostBackoff, on the pool, after its transaction has rolled back —
-// inside it the rollback would undo the postponement — so a host that
-// fails every time stops taking a slot in every claim (backlog 7.58).
+// evaluateOne evaluates one host (runHost) under hostDeadline and reports
+// whether it committed. A host whose own evaluation failed is held out of
+// the claim for failedHostBackoff, on the pool, after its transaction has
+// rolled back — inside it the rollback would undo the postponement — so a
+// host that fails every time stops taking a slot in every claim (backlog
+// 7.58).
 //
-// A failure while the batch's own context is done is not the host's
-// failure: the deadline fired or the manager is shutting down, and
-// ProcessDue's contract for that case is that every host it did not finish
-// is left exactly as it is, still at the head of the next claim. So
-// nothing is postponed then.
+// A host that was running when a DEADLINE fired — its own hostDeadline or
+// the batch's — is postponed the same way (backlog 7.112): it is the host
+// that spent the time, and leaving it as it is would keep it at the head
+// of every later claim, spending every later batch again with the hosts
+// behind it, from any organization, never reached. The write runs on a
+// context detached from the batch (the batch's may already be over) and
+// bounded by postponeTimeout.
+//
+// A failure after the manager was CANCELLED (shutdown) is not the host's
+// failure, and ProcessDue's contract for that case is that every host it
+// did not finish is left exactly as it is. So nothing is postponed then.
 func (s *EvalSQLStore) evaluateOne(ctx context.Context, d Due, fn func(ctx context.Context, d Due) error) bool {
-	outcome := s.runHost(ctx, d, fn)
-	if outcome == hostFailed && ctx.Err() == nil {
-		if err := gen.New(s.d.Pool()).PostponeEvalCursor(ctx, gen.PostponeEvalCursorParams{
+	hostCtx, cancel := context.WithTimeout(ctx, s.hostDeadline)
+	outcome := s.runHost(hostCtx, d, fn)
+	cancel()
+	if outcome == hostFailed && !errors.Is(ctx.Err(), context.Canceled) {
+		pctx, stop := context.WithTimeout(context.WithoutCancel(ctx), postponeTimeout)
+		defer stop()
+		if err := gen.New(s.d.Pool()).PostponeEvalCursor(pctx, gen.PostponeEvalCursorParams{
 			OrgID: d.OrgID, HostID: d.HostID, BackoffSeconds: failedHostBackoff.Seconds(),
 		}); err != nil {
-			s.log.ErrorContext(ctx, "postpone a failed host; the next claim may take it again",
+			s.log.ErrorContext(pctx, "postpone a failed host; the next claim may take it again",
 				"org", d.OrgID, "host", d.HostID, "err", err)
 		}
 	}

@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -28,3 +29,15 @@ func ClaimedTx(ctx context.Context) (pgx.Tx, bool) {
 
 // FailedHostBackoff exposes failedHostBackoff to this package's tests.
 const FailedHostBackoff = failedHostBackoff
+
+// WithBatchDeadlineFloor sets the ticker's batch-deadline floor, which a
+// test must be able to shorten: at its real 10 seconds, proving that a
+// batch deadline cuts a host off would mean waiting for it. (The
+// in-package ticker_internal_test.go reaches the field directly.)
+func WithBatchDeadlineFloor(d time.Duration) TickerOption {
+	return func(t *Ticker) { t.deadlineFloor = d }
+}
+
+// SetHostDeadline overrides the per-host deadline of one store (backlog
+// 7.112) so a test can cut a host off in milliseconds.
+func (s *EvalSQLStore) SetHostDeadline(d time.Duration) { s.hostDeadline = d }
