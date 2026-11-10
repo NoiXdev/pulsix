@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/inventory/schema"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/varsource"
 )
@@ -114,7 +115,9 @@ func (s *Service) VarSource(ctx context.Context, orgID, playbookID uuid.UUID) (V
 
 // inlineVarSource is an editor playbook's stored parse result, or its text
 // parsed now when none is stored (saved before backlog 7.75, or a result
-// that could not be stored or no longer decodes). Nothing is written.
+// that could not be stored or no longer decodes). A result the cap of
+// MaxInlineSourceBytes left out reads as incomplete and left out, with the
+// note saying why; the text is not parsed again. Nothing is written.
 func (s *Service) inlineVarSource(ctx context.Context, p Playbook) VarSource {
 	text := ""
 	if p.Inline != nil {
@@ -122,16 +125,51 @@ func (s *Service) inlineVarSource(ctx context.Context, p Playbook) VarSource {
 	}
 	src := VarSource{Kind: VarSourceInline, Rev: inlineRev(text), WorkerReads: true, Found: true}
 	if p.InlineSource != nil {
-		var pb varsource.Playbook
-		err := json.Unmarshal(p.InlineSource, &pb)
+		pb, leftOut, err := decodeInlineSource(p.InlineSource)
 		if err == nil {
 			src.Playbook = pb
+			if leftOut {
+				src.Incomplete, src.LeftOut, src.Rev = true, true, ""
+			}
 			return src
 		}
 		s.logger().WarnContext(ctx, "stored inline variable sources do not decode; parsing the text", "org", p.OrgID, "playbook", p.ID, "err", err)
 	}
 	src.Playbook = varsource.ParseInline(text)
 	return src
+}
+
+// inlineName is the file name an inline playbook's sources and notes carry
+// (varsource.ParseInline's, and the name the report's left-out list holds).
+const inlineName = "inline"
+
+// decodeInlineSource reads what inlineSource stored: a report holding the
+// playbook, or, when the cap left it out, no playbook (leftOut) and a note.
+// A row saved before backlog 7.114 holds the bare playbook.
+func decodeInlineSource(raw json.RawMessage) (pb varsource.Playbook, leftOut bool, err error) {
+	var probe struct {
+		Playbooks *json.RawMessage `json:"playbooks"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return pb, false, err
+	}
+	if probe.Playbooks == nil {
+		return pb, false, json.Unmarshal(raw, &pb)
+	}
+	var rep varsource.Report
+	if err := json.Unmarshal(raw, &rep); err != nil {
+		return pb, false, err
+	}
+	switch {
+	case len(rep.Playbooks) == 1:
+		return rep.Playbooks[0], false, nil
+	case len(rep.Playbooks) == 0 && rep.Incomplete:
+		return varsource.Playbook{
+			Path: inlineName, Failed: true, Fields: []schema.Field{}, SetInPlaybook: []string{},
+			Roles: []varsource.RoleUse{}, Files: []varsource.FileUse{}, Notes: rep.Notes,
+		}, true, nil
+	}
+	return pb, false, fmt.Errorf("the stored report holds %d playbooks", len(rep.Playbooks))
 }
 
 // inlineRev is an inline text's revision: "text:" and the first 12 hex
@@ -141,12 +179,22 @@ func inlineRev(text string) string {
 	return "text:" + hex.EncodeToString(sum[:])[:12]
 }
 
+// MaxInlineSourceBytes caps the parse result stored with an editor playbook
+// (backlog 7.114). Aliases let a text of 67 KB parse to about 6 MB, and
+// every read of the playbook loads the result.
+const MaxInlineSourceBytes = 1 << 20
+
 // inlineSource parses an editor playbook's text for storing with it. The
-// parse is bounded and never fails (a problem is a note); a result the
-// database cannot hold (a NUL character, which its JSON type refuses) is
-// not stored, and VarSource parses the text on read instead.
+// parse is bounded and never fails (a problem is a note); the result is
+// stored as a one-playbook report cut by the repository sync's encoder to
+// MaxInlineSourceBytes, so a result that does not fit is stored as left out
+// and incomplete instead. A result the database cannot hold (a NUL
+// character, which its JSON type refuses) is not stored, and VarSource
+// parses the text on read instead.
 func (s *Service) inlineSource(ctx context.Context, orgID uuid.UUID, text string) json.RawMessage {
-	raw, err := json.Marshal(varsource.ParseInline(text))
+	raw, _, err := varsource.Encode(varsource.Report{
+		Playbooks: []varsource.Playbook{varsource.ParseInline(text)}, Notes: []varsource.Note{},
+	}, MaxInlineSourceBytes)
 	if err == nil && hasNULEscape(raw) {
 		err = errors.New("the result contains a NUL character")
 	}

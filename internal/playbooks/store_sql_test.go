@@ -205,3 +205,46 @@ func TestSQLStoreDeleteReferencedPlaybookIsInUse(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+// TestSQLStoreListLeavesOutTheVarSource (backlog 7.114): the list query does
+// not select the stored variable sources, which can be megabytes per row;
+// Get still returns them.
+func TestSQLStoreListLeavesOutTheVarSource(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := playbooks.NewSQLStore(d)
+	org := seedOrg(t, q, "pb-list-org")
+	scoped := db.WithOrgScope(ctx, org)
+	repoID := seedRepo(t, d, org, "infra")
+
+	editor, err := store.Create(scoped, playbooks.Playbook{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Source: playbooks.SourceEditor,
+		Inline: ptr("- hosts: all\n"), InlineSource: []byte(`{"path":"inline"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Create(scoped, playbooks.Playbook{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Source: playbooks.SourceRepo,
+		RepoID: &repoID, Path: ptr("site.yml"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := store.List(scoped, org)
+	if err != nil || len(list) != 2 {
+		t.Fatalf("List = %v, %v", list, err)
+	}
+	for _, p := range list {
+		if p.InlineSource != nil {
+			t.Fatalf("listed playbook %s carries its variable sources: %s", p.ID, p.InlineSource)
+		}
+	}
+	if list[0].ID != editor.ID || list[0].Inline == nil || list[0].Source != playbooks.SourceEditor {
+		t.Fatalf("listed editor playbook = %+v, want its other columns", list[0])
+	}
+	got, err := store.Get(scoped, org, editor.ID)
+	if err != nil || len(got.InlineSource) == 0 {
+		t.Fatalf("Get = %+v, %v; want the stored variable sources", got, err)
+	}
+}

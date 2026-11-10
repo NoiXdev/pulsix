@@ -77,7 +77,8 @@ func (s *Service) listed(ctx context.Context, orgID uuid.UUID, list []Template) 
 }
 
 // ListReviewed is List with the review of every linked template, by
-// template id; the variable sources are read once per playbook. A
+// template id; the variable sources are read once per playbook and held
+// one playbook at a time. A
 // template whose sources cannot be read is listed without a review (and
 // logged): the list stays usable.
 func (s *Service) ListReviewed(ctx context.Context, orgID uuid.UUID) ([]Template, map[uuid.UUID]Review, error) {
@@ -85,24 +86,30 @@ func (s *Service) ListReviewed(ctx context.Context, orgID uuid.UUID) ([]Template
 	if err != nil {
 		return nil, nil, err
 	}
-	reviews := map[uuid.UUID]Review{}
-	sources := map[uuid.UUID]*varsync.Source{} // nil: the read failed
+	// One playbook's source at a time: it is read once for all the templates
+	// that follow it and dropped before the next is read, so a list holds
+	// one source, not one per playbook (backlog 7.114).
+	var order []uuid.UUID
+	byPlaybook := map[uuid.UUID][]Template{}
 	for _, t := range raw {
 		if !isLinked(t) {
 			continue
 		}
-		src, read := sources[t.PlaybookID]
-		if !read {
-			vs, err := s.varSource(ctx, orgID, t.PlaybookID)
-			if err != nil {
-				s.logger().ErrorContext(ctx, "template list: variables review left out", "org", orgID, "playbook", t.PlaybookID, "err", err)
-			} else {
-				src = new(toSource(vs))
-			}
-			sources[t.PlaybookID] = src
+		if _, seen := byPlaybook[t.PlaybookID]; !seen {
+			order = append(order, t.PlaybookID)
 		}
-		if src != nil {
-			reviews[t.ID] = review(t, *src)
+		byPlaybook[t.PlaybookID] = append(byPlaybook[t.PlaybookID], t)
+	}
+	reviews := map[uuid.UUID]Review{}
+	for _, playbookID := range order {
+		vs, err := s.varSource(ctx, orgID, playbookID)
+		if err != nil {
+			s.logger().ErrorContext(ctx, "template list: variables review left out", "org", orgID, "playbook", playbookID, "err", err)
+			continue
+		}
+		src := toSource(vs)
+		for _, t := range byPlaybook[playbookID] {
+			reviews[t.ID] = review(t, src)
 		}
 	}
 	list, err := s.listed(ctx, orgID, raw)

@@ -53,7 +53,11 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Playbook, error
 	}
 	out := make([]Playbook, len(rows))
 	for i, r := range rows {
-		out[i] = toPlaybook(r)
+		out[i] = Playbook{
+			ID: r.ID, OrgID: r.OrgID, RepoID: db.UUIDPtr(r.RepoID),
+			Path: r.Path, Inline: r.Inline, Source: r.Source,
+			CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		}
 	}
 	return out, nil
 }

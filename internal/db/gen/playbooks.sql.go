@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -140,18 +141,32 @@ func (q *Queries) GetPlaybook(ctx context.Context, arg GetPlaybookParams) (Playb
 }
 
 const listPlaybooks = `-- name: ListPlaybooks :many
-SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at, var_source FROM playbooks WHERE org_id = $1 ORDER BY created_at, id
+SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at
+FROM playbooks WHERE org_id = $1 ORDER BY created_at, id
 `
 
-func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]Playbook, error) {
+type ListPlaybooksRow struct {
+	ID        uuid.UUID   `json:"id"`
+	OrgID     uuid.UUID   `json:"org_id"`
+	RepoID    pgtype.UUID `json:"repo_id"`
+	Path      *string     `json:"path"`
+	Inline    *string     `json:"inline"`
+	Source    string      `json:"source"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+// Every column but var_source (backlog 7.114): an editor playbook's parse
+// result is up to 1 MiB and a list never shows it.
+func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]ListPlaybooksRow, error) {
 	rows, err := q.db.Query(ctx, listPlaybooks, orgID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Playbook
+	var items []ListPlaybooksRow
 	for rows.Next() {
-		var i Playbook
+		var i ListPlaybooksRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
@@ -161,7 +176,6 @@ func (q *Queries) ListPlaybooks(ctx context.Context, orgID uuid.UUID) ([]Playboo
 			&i.Source,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.VarSource,
 		); err != nil {
 			return nil, err
 		}

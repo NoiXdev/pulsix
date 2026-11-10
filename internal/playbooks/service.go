@@ -107,6 +107,9 @@ type TemplateResolver interface {
 type Store interface {
 	Create(ctx context.Context, p Playbook) (Playbook, error)
 	Get(ctx context.Context, orgID, id uuid.UUID) (Playbook, error)
+	// List is every playbook of the organization without InlineSource (the
+	// stored variable sources are up to MaxInlineSourceBytes per row and a
+	// list never uses them); Get has them.
 	List(ctx context.Context, orgID uuid.UUID) ([]Playbook, error)
 	// UpdateInline replaces the inline text of an editor playbook and its
 	// stored variable sources (nil stores none). A repo playbook's stored
@@ -214,7 +217,7 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Playbook, error
 	return s.store.Get(ctx, orgID, id)
 }
 
-// List returns every playbook of the organization.
+// List returns every playbook of the organization, without InlineSource.
 func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Playbook, error) {
 	return s.store.List(ctx, orgID)
 }

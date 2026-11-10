@@ -15,7 +15,10 @@ RETURNING *;
 SELECT * FROM playbooks WHERE org_id = $1 AND id = $2;
 
 -- name: ListPlaybooks :many
-SELECT * FROM playbooks WHERE org_id = $1 ORDER BY created_at, id;
+-- Every column but var_source (backlog 7.114): an editor playbook's parse
+-- result is up to 1 MiB and a list never shows it.
+SELECT id, org_id, repo_id, path, inline, source, created_at, updated_at
+FROM playbooks WHERE org_id = $1 ORDER BY created_at, id;
 
 -- name: UpdatePlaybookInline :one
 -- An editor playbook's inline text is its only editable field; its parse

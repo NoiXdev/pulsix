@@ -373,3 +373,87 @@ func TestEnsureRepo(t *testing.T) {
 		t.Fatalf("unknown repository = %v, want ErrNotFound", err)
 	}
 }
+
+// aliasedPlaybook is the audit's alias fixture (backlog 7.114): one 60 KiB
+// default shared by a hundred marked variables through an alias, so a text
+// of about 67 KB parses to a result of about 6 MB.
+func aliasedPlaybook() string {
+	var b strings.Builder
+	b.WriteString("- hosts: all\n  vars:\n    shared: &shared \"" + strings.Repeat("a", 60<<10) + "\"\n")
+	for i := range 100 {
+		fmt.Fprintf(&b, "    opt_%02d: *shared  # pulsix: Option %d\n", i, i)
+	}
+	b.WriteString("  tasks: []\n")
+	return b.String()
+}
+
+// TestInlineSourceCapsResult (backlog 7.114): the parse result stored with
+// an editor playbook is at most playbooks.MaxInlineSourceBytes; a result
+// that does not fit is left out and marked incomplete, with the encoder and
+// the semantics of a repository's report.
+func TestInlineSourceCapsResult(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	text := aliasedPlaybook()
+	if len(text) > 70_000 {
+		t.Fatalf("fixture text is %d bytes, want about 67 000", len(text))
+	}
+	if full, err := json.Marshal(varsource.ParseInline(text)); err != nil || len(full) <= playbooks.MaxInlineSourceBytes {
+		t.Fatalf("fixture result is %d bytes (err %v), want more than the cap %d", len(full), err, playbooks.MaxInlineSourceBytes)
+	}
+	store := newFakeStore()
+	svc := newService(store, newFakeRepos(nil))
+
+	p, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Inline: text})
+	if err != nil {
+		t.Fatalf("CreateEditor: %v", err)
+	}
+	stored := store.byID[p.ID].InlineSource
+	if len(stored) == 0 || len(stored) > playbooks.MaxInlineSourceBytes {
+		t.Fatalf("stored result is %d bytes, want 1..%d", len(stored), playbooks.MaxInlineSourceBytes)
+	}
+	var rep varsource.Report
+	if err := json.Unmarshal(stored, &rep); err != nil || !rep.Incomplete || len(rep.LeftOut) != 1 || len(rep.Playbooks) != 0 {
+		t.Fatalf("stored report = %+v (err %v), want incomplete with the playbook left out", rep, err)
+	}
+
+	src, err := svc.VarSource(ctx, org, p.ID)
+	if err != nil {
+		t.Fatalf("VarSource: %v", err)
+	}
+	if src.Kind != playbooks.VarSourceInline || !src.Incomplete || !src.LeftOut || src.Rev != "" || !src.WorkerReads {
+		t.Fatalf("VarSource = %+v, want an incomplete, left-out inline source", src)
+	}
+	if len(src.Playbook.Notes) == 0 {
+		t.Fatalf("playbook = %+v, want a note saying why", src.Playbook)
+	}
+
+	// A result that fits is stored whole and unmarked, as before.
+	small, err := svc.CreateEditor(ctx, org, playbooks.CreateInput{Inline: markedPlaybook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err = svc.VarSource(ctx, org, small.ID)
+	if err != nil || src.Incomplete || src.LeftOut || !strings.HasPrefix(src.Rev, "text:") || len(src.Playbook.Fields) != 1 {
+		t.Fatalf("VarSource(small) = %+v, %v", src, err)
+	}
+}
+
+// TestVarSourceReadsAnInlineResultStoredBareBeforeTheCap: rows saved before
+// backlog 7.114 hold the playbook alone, not a report around it.
+func TestVarSourceReadsAnInlineResultStoredBareBeforeTheCap(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := newService(store, newFakeRepos(nil))
+	text := markedPlaybook
+	bare, err := json.Marshal(varsource.ParseInline(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.Must(uuid.NewV7())
+	store.byID[id] = playbooks.Playbook{ID: id, OrgID: org, Source: playbooks.SourceEditor, Inline: &text, InlineSource: bare}
+
+	src, err := svc.VarSource(ctx, org, id)
+	if err != nil || src.Incomplete || src.LeftOut || len(src.Playbook.Fields) != 1 || src.Playbook.Fields[0].Name != "http_port" {
+		t.Fatalf("VarSource = %+v, %v", src, err)
+	}
+}

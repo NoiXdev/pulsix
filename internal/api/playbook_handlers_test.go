@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -248,5 +249,45 @@ func TestPlaybookPermissionsAndCrossOrgIsolation(t *testing.T) {
 	otherC := s.LoginAs(outsider)
 	if resp := requestJSON(t, otherC, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/pbp-other/playbooks/"+pbID, nil); resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("cross-org playbook read: %d", resp.StatusCode)
+	}
+}
+
+// TestPlaybookListBoundsVariableSources (backlog 7.114): an editor playbook
+// whose variable sources are far larger than its text is stored with a
+// result of at most 1 MiB, and the list neither returns nor needs it.
+func TestPlaybookListBoundsVariableSources(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("pb-bound-owner@example.test", "correct horse battery")
+	orgID := s.SeedOrg("pb-bound-org", owner)
+	c := s.LoginAs(owner)
+	base := s.HTTP.URL + "/api/v1/orgs/pb-bound-org/playbooks"
+
+	// One 60 KiB default shared by a hundred marked variables through an
+	// alias: a text of about 67 KB that parses to about 6 MB.
+	var text strings.Builder
+	text.WriteString("- name: aliased\n  hosts: all\n  vars:\n    shared: &shared \"" + strings.Repeat("a", 60<<10) + "\"\n")
+	for i := range 100 {
+		fmt.Fprintf(&text, "    opt_%02d: *shared  # pulsix: Option %d\n", i, i)
+	}
+	text.WriteString("  tasks: []\n")
+
+	resp := postJSON(t, c, base, map[string]any{"name": "aliased", "inline": text.String()})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create: %d %s", resp.StatusCode, body)
+	}
+
+	var size int
+	if err := s.DB.Pool().QueryRow(context.Background(),
+		`SELECT octet_length(var_source::text) FROM playbooks WHERE org_id = $1`, orgID).Scan(&size); err != nil {
+		t.Fatal(err)
+	}
+	if size == 0 || size > playbooks.MaxInlineSourceBytes {
+		t.Fatalf("stored variable sources are %d bytes, want 1..%d", size, playbooks.MaxInlineSourceBytes)
+	}
+
+	resp = requestJSON(t, c, http.MethodGet, base, nil)
+	list := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(list, "aliased") || len(list) > 4096 {
+		t.Fatalf("list: %d, %d bytes", resp.StatusCode, len(list))
 	}
 }
