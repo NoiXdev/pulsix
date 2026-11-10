@@ -176,7 +176,11 @@ func (s *SQLStore) ListPlaybookSources(ctx context.Context, orgID, repoID uuid.U
 // number as the numeric it stored, written in full. decodeReport refuses
 // a report holding a number Go writes in exponent form, so the read-back
 // text is at most about one and a half times the stored one, and a
-// result stored within the cap still reads. A longer one (a row written
+// result stored within the cap still reads. That bound holds because the
+// store re-marshals each playbook with Go (ReplaceVarSources) before it
+// reaches jsonb: a raw token such as 1e20 from a non-Go encoder would render
+// about five times longer, so storing the worker's bytes verbatim needs the
+// bound re-checked. A longer one (a row written
 // before that check, by a worker that did not apply it) is not decoded.
 const maxStoredResultReadBytes = 2 * varsource.MaxReportBytes
 

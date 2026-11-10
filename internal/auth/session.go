@@ -173,8 +173,9 @@ func (s *Sessions) MarkMFAComplete(ctx context.Context, id uuid.UUID) (string, e
 	return cookieValue(id, secret), nil
 }
 
-// LockLive is the first step of finishing a second-factor enrolment inside
-// an instance transaction (backlog 7.109). It takes userID's account row in
+// LockLive is the first step of finishing a second-factor enrolment, or of
+// completing a verified session (CompleteVerifiedSession, backlog 7.118),
+// inside an instance transaction (backlog 7.109). It takes userID's account row in
 // key-share mode, which an administrator's second-factor reset needs
 // exclusively before it removes the factors and ends the sessions, and which
 // still lets a concurrent enrolment of the same account stamp the row when

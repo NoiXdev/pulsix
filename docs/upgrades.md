@@ -114,6 +114,10 @@ A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
 
+A worker older than 7.122 that reads a playbook holding a number of 1e21 or
+more, or below 1e-6, has its whole report ignored and logged by the manager
+until the worker is upgraded.
+
 7.88 adds `repo.repo_subpath` to a repo run's claim (in its JSON kind
 payload; no proto change). The field is additive: a worker one minor older
 ignores it and keeps 7.83's behaviour (a run finds only the roles its own
@@ -143,7 +147,6 @@ repositories as before. An older worker never asks.
 - **Webhook body limit:** a webhook body of exactly 1 MiB is still accepted and
   one byte more is refused with 413, unchanged; the dependency update that moved
   the limit's off-by-one is compensated in the hook endpoints.
-
 - **7.122, numbers in a worker's variable sources:** the manager now refuses a
   repository sync's variable sources holding a number of 1e21 or more or below
   1e-6 (zero aside), whatever the worker's version. A worker older than this
