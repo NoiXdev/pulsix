@@ -20,6 +20,8 @@ permissions:
 jobs:
   announce:
     runs-on: ubuntu-latest
+    # The webhook secret lives on the release environment (see release.yml).
+    environment: release
     steps:
       - name: Read the release
         id: release
@@ -44,9 +46,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Post to Discord
-        # Pinned by commit like the release workflow's call (backlog 7.16):
-        # it receives the webhook secret.
-        uses: NoiXdev/github-workflows/actions/announce-release@f7196176a79585ae7dccf8370ee72d75ad15610a # main, 2026-11-09
+        # By @main like the release workflow's call; see the comment there.
+        uses: NoiXdev/github-workflows/actions/announce-release@main
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK_RELEASE_NOTIFICATION }}
           tag: ${{ inputs.tag }}

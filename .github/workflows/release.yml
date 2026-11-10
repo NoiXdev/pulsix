@@ -80,10 +80,13 @@ jobs:
     needs: guard
     permissions:
       contents: write
-    # Pinned by commit, never @main (backlog 7.16): `secrets: inherit` hands
-    # the registry credentials and the Discord webhook to whatever this
-    # reference resolves to.
-    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@f7196176a79585ae7dccf8370ee72d75ad15610a # main, 2026-11-09
+    # By @main, not by commit: a change to the shared workflow reaches every
+    # product without a pin bump in each (owner decision 2026-11-10, which
+    # supersedes backlog 7.16's pin). What guards the credentials instead is
+    # the `release` environment below: its deployment rule admits only main,
+    # and the registry and webhook secrets live on it, so only these jobs
+    # receive them.
+    uses: NoiXdev/github-workflows/.github/workflows/create_docker_changelog_version_release.yaml@main
     with:
       bump: ${{ inputs.bump }}
       prerelease_id: ${{ inputs.prerelease_id != 'none' && inputs.prerelease_id || '' }}
@@ -98,4 +101,5 @@ jobs:
       extra_image: pulsix-worker
       extra_image_dockerfile: deploy/worker/Dockerfile
       version_build_arg: VERSION
+      environment: release
     secrets: inherit
