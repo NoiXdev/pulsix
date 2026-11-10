@@ -285,39 +285,63 @@ func TestConfirmTOTPAfterResetStoresNothing(t *testing.T) {
 // row makes the enrolment wait, and the enrolment then finds its session
 // ended and stores nothing. Either way no passkey outlives the reset.
 func TestEnrolmentAndSecondFactorResetSerialise(t *testing.T) {
-	t.Run("enrolment first", func(t *testing.T) {
-		w := newResetWorld(t)
-		uid := w.seedAccount(t, "enrolment-first@example.test")
-		p := w.session(t, uid, true)
-		resetDone := make(chan error, 1)
-		err := w.d.WithInstanceTx(ctx, func(ctx context.Context) error {
-			if err := w.sessions.LockLive(ctx, uid, p.SessionID); err != nil {
+	// A pending session also stamps users.last_sign_in_at when it is
+	// completed, an update of the very row the reset is queued for.
+	for _, tc := range []struct {
+		name        string
+		mfaComplete bool
+	}{
+		{name: "enrolment first, complete session", mfaComplete: true},
+		{name: "enrolment first, pending session", mfaComplete: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newResetWorld(t)
+			uid := w.seedAccount(t, "enrolment-first@example.test")
+			p := w.session(t, uid, tc.mfaComplete)
+			resetDone := make(chan error, 1)
+			err := w.d.WithInstanceTx(ctx, func(ctx context.Context) error {
+				if err := w.sessions.LockLive(ctx, uid, p.SessionID); err != nil {
+					return err
+				}
+				go func() {
+					_, err := w.accounts.ResetSecondFactor(context.Background(), true, w.admin, uid)
+					resetDone <- err
+				}()
+				waitForLockWait(lockWaitCtx(t), t, backendPID(ctx, t, w.d))
+				select {
+				case err := <-resetDone:
+					t.Fatalf("the reset finished while an enrolment held the account: %v", err)
+				default:
+				}
+				if err := auth.NewSQLPasskeyStore(w.q).AddCredential(ctx, uid, "Key", auth.Credential{
+					ID: uuid.Must(uuid.NewV7()), CredentialID: randomCredentialID(t), PublicKey: []byte("pk"), Attestation: "none",
+				}); err != nil {
+					return err
+				}
+				if tc.mfaComplete {
+					return nil
+				}
+				_, err := w.sessions.MarkMFAComplete(ctx, p.SessionID)
 				return err
-			}
-			go func() {
-				_, err := w.accounts.ResetSecondFactor(context.Background(), true, w.admin, uid)
-				resetDone <- err
-			}()
-			waitForLockWait(lockWaitCtx(t), t, backendPID(ctx, t, w.d))
-			select {
-			case err := <-resetDone:
-				t.Fatalf("the reset finished while an enrolment held the account: %v", err)
-			default:
-			}
-			return auth.NewSQLPasskeyStore(w.q).AddCredential(ctx, uid, "Key", auth.Credential{
-				ID: uuid.Must(uuid.NewV7()), CredentialID: randomCredentialID(t), PublicKey: []byte("pk"), Attestation: "none",
 			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := <-resetDone; err != nil {
+				t.Fatalf("ResetSecondFactor: %v", err)
+			}
+			if n := w.passkeyCount(t, uid); n != 0 {
+				t.Fatalf("passkeys after the reset = %d, want 0", n)
+			}
+			var revoked bool
+			if err := w.d.Pool().QueryRow(ctx, `SELECT revoked_at IS NOT NULL FROM sessions WHERE id = $1`, p.SessionID).Scan(&revoked); err != nil {
+				t.Fatal(err)
+			}
+			if !revoked {
+				t.Error("the reset must end the session the enrolment completed")
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := <-resetDone; err != nil {
-			t.Fatalf("ResetSecondFactor: %v", err)
-		}
-		if n := w.passkeyCount(t, uid); n != 0 {
-			t.Fatalf("passkeys after the reset = %d, want 0", n)
-		}
-	})
+	}
 
 	t.Run("reset first", func(t *testing.T) {
 		w := newResetWorld(t)
@@ -423,4 +447,155 @@ func lockWaitCtx(t *testing.T) context.Context {
 	c, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 	return c
+}
+
+// Two enrolments on one pending account must not deadlock each other
+// (backlog 7.109, fix round 1). Each takes the account row before it
+// writes, and completing a pending session updates that row
+// (last_sign_in_at); a lock on it that conflicted with that update made two
+// concurrent finishes wait on each other. Both tests hold the enrolments at
+// the same point with a blocking transaction, release them together, and
+// assert the outcome rather than which one Postgres picked as a victim.
+//
+// A TOTP confirmation submitted twice on the same pending session: the
+// first commits; the second then finds the code's step already spent and is
+// refused as an invalid code — no deadlock, and the account carries exactly
+// the one set of recovery codes the first response returned.
+func TestConcurrentTOTPConfirmsDoNotDeadlock(t *testing.T) {
+	w := newResetWorld(t)
+	uid := w.seedAccount(t, "totp-double@example.test")
+	p := w.session(t, uid, false)
+	code := enrol(t, w.totp, w.clock, uid)
+
+	// Hold the TOTP row, so both confirmations take the account row and
+	// then queue on it.
+	tx, err := w.d.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM totp_secrets WHERE user_id = $1 FOR UPDATE`, uid); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, _, err := w.enrol.ConfirmTOTP(context.Background(), uid, p.SessionID, code)
+			results <- err
+		}()
+	}
+	waitForLockWaiters(lockWaitCtx(t), t, 2)
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var ok int
+	for range 2 {
+		err := <-results
+		switch {
+		case err == nil:
+			ok++
+		case !errors.Is(err, auth.ErrInvalidTOTPCode):
+			t.Errorf("the second confirmation = %v, want ErrInvalidTOTPCode (its code was spent), never a deadlock", err)
+		}
+	}
+	if ok != 1 {
+		t.Fatalf("successful confirmations = %d, want exactly 1", ok)
+	}
+	confirmed, codes := confirmedAndCodes(t, w.q, w.d, uid)
+	if !confirmed || codes != 8 {
+		t.Fatalf("after the confirmations: confirmed=%v, recovery codes=%d, want true and 8", confirmed, codes)
+	}
+}
+
+// Two pending sessions of one account each finishing a passkey: both
+// complete, one after the other — two passkeys, two complete sessions, no
+// deadlock.
+func TestConcurrentPasskeyFinishesDoNotDeadlock(t *testing.T) {
+	w := newResetWorld(t)
+	uid := w.seedAccount(t, "passkey-double@example.test")
+	type finish struct {
+		p        auth.Principal
+		cid      uuid.UUID
+		response []byte
+	}
+	var finishes []finish
+	for range 2 {
+		p := w.session(t, uid, false)
+		opts, cid, err := w.passkeys.BeginRegistration(ctx, uid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishes = append(finishes, finish{p: p, cid: cid,
+			response: buildNoneAttestationResponse(t, opts, testRPID, testOrigin, randomCredentialID(t))})
+	}
+
+	// Hold both session rows, so both finishes take the account row, store
+	// their passkey and then queue on their session's upgrade.
+	tx, err := w.d.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM sessions WHERE user_id = $1 FOR UPDATE`, uid); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	for _, f := range finishes {
+		go func() {
+			_, err := w.enrol.FinishPasskey(context.Background(), f.p, f.cid, "Key", f.response)
+			results <- err
+		}()
+	}
+	waitForLockWaiters(lockWaitCtx(t), t, 2)
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Errorf("FinishPasskey = %v, want both to succeed, never a deadlock", err)
+		}
+	}
+	if n := w.passkeyCount(t, uid); n != 2 {
+		t.Fatalf("passkeys = %d, want 2", n)
+	}
+	var pending int
+	if err := w.d.Pool().QueryRow(ctx, `SELECT count(*) FROM sessions WHERE user_id = $1 AND NOT mfa_complete`, uid).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Errorf("sessions still pending = %d, want 0", pending)
+	}
+}
+
+// waitForLockWaiters returns once n backends of the test's database wait
+// for a lock, read as the bootstrap superuser like waitForLockWait
+// (last_sign_in_sql_test.go), and fails the test when ctx ends first. It
+// counts every waiter, not only those blocked by the holding transaction
+// directly: a second transaction queued on the same row waits behind the
+// first one in the queue.
+func waitForLockWaiters(ctx context.Context, t *testing.T, n int) {
+	t.Helper()
+	conn, err := pgx.Connect(ctx, testdb.URL(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	for {
+		var waiting int
+		if err := conn.QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity
+			  WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&waiting); err != nil {
+			t.Fatalf("read pg_stat_activity: %v", err)
+		}
+		if waiting >= n {
+			return
+		}
+		select {
+		case <-time.After(5 * time.Millisecond):
+		case <-ctx.Done():
+			t.Fatalf("only %d of %d transactions ever waited on the lock", waiting, n)
+		}
+	}
 }

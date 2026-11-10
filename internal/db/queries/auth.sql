@@ -63,14 +63,19 @@ UPDATE sessions SET mfa_complete = true, mfa_at = now(), secret_hash = sqlc.arg(
 WHERE sessions.id = (SELECT previous.id FROM previous);
 
 -- name: LockUserForEnrolment :one
--- Finishing a second-factor enrolment takes the account row in share mode
--- first (backlog 7.109). An administrator's second-factor reset takes the
--- same row FOR UPDATE (LockAccount) before it deletes the factors and
+-- Finishing a second-factor enrolment takes the account row in key-share
+-- mode first (backlog 7.109). An administrator's second-factor reset takes
+-- the same row FOR UPDATE (LockAccount) before it deletes the factors and
 -- revokes the sessions, so the two serialise on it: an enrolment that holds
 -- the lock commits before the reset starts, and the reset then removes what
 -- it wrote; one that waits sees the reset's revocation when it checks its
 -- session next, in a statement of its own (GetSession), and refuses.
-SELECT id FROM users WHERE id = $1 FOR SHARE;
+-- KEY SHARE, not SHARE (fix round 1): completing a pending session updates
+-- this row (MarkSessionMFAComplete's last_sign_in_at stamp), which SHARE
+-- held by a second enrolment of the same account blocks, so two concurrent
+-- finishes deadlocked. KEY SHARE conflicts with FOR UPDATE only, not with
+-- an update of a non-key column.
+SELECT id FROM users WHERE id = $1 FOR KEY SHARE;
 
 -- name: RevokeSession :exec
 UPDATE sessions SET revoked_at = now() WHERE id = $1;
