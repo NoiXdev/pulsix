@@ -18,6 +18,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/accounts"
 	"github.com/noixdev/pulsix/internal/auth"
@@ -386,6 +387,65 @@ func TestEnrolmentAndSecondFactorResetSerialise(t *testing.T) {
 			t.Fatalf("passkeys after the reset = %d, want 0", n)
 		}
 	})
+}
+
+// A TOTP-verified session is completed in the reset's lock order, account
+// row first (backlog 7.118). Completing a pending session stamps the
+// account's last_sign_in_at, so a completion that took the session row
+// first would wait for the account while the reset, holding the account,
+// waited for the session row it goes on to revoke: a deadlock, and one of
+// the two aborted. Taking the account row first queues the completion
+// behind the reset instead; it then finds its session ended.
+func TestVerifiedSessionCompletionAndSecondFactorResetSerialise(t *testing.T) {
+	w := newResetWorld(t)
+	uid := w.seedAccount(t, "verify-reset@example.test")
+	p := w.session(t, uid, false)
+
+	// The reset's own steps, held open after it has taken the account row.
+	tx, err := w.d.Pool().Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, uid); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := w.enrol.CompleteVerifiedSession(context.Background(), uid, p.SessionID)
+		done <- err
+	}()
+	waitForLockWait(lockWaitCtx(t), t, backendPID(ctx, t, tx))
+	// The reset goes on to end the account's sessions. A completion that
+	// held its session row would make this wait on it in turn.
+	if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now() WHERE user_id = $1`, uid); err != nil {
+		t.Fatalf("the reset ending the sessions = %v (deadlock: %v)", err, isDeadlock(err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	err = <-done
+	if isDeadlock(err) {
+		t.Fatalf("CompleteVerifiedSession deadlocked with the reset: %v", err)
+	}
+	if !errors.Is(err, auth.ErrNotFound) {
+		t.Fatalf("CompleteVerifiedSession after the reset committed = %v, want ErrNotFound", err)
+	}
+	var revoked, complete bool
+	if err := w.d.Pool().QueryRow(ctx,
+		`SELECT revoked_at IS NOT NULL, mfa_complete FROM sessions WHERE id = $1`, p.SessionID).Scan(&revoked, &complete); err != nil {
+		t.Fatal(err)
+	}
+	if !revoked || complete {
+		t.Fatalf("after the reset: revoked=%v, mfa_complete=%v, want true and false", revoked, complete)
+	}
+}
+
+// isDeadlock reports whether err is Postgres aborting a transaction as a
+// deadlock victim (SQLSTATE 40P01).
+func isDeadlock(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
 }
 
 // The session can also end between the check at the start of the

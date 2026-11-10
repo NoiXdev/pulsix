@@ -278,3 +278,59 @@ func TestTOTPVerifyLocksTheAccountAfterRepeatedFailures(t *testing.T) {
 		t.Fatalf("the right code on a locked account: %d, want 429", resp.StatusCode)
 	}
 }
+
+// TestTOTPVerifyWithAWrongCodeStillSpendsAnAttempt guards backlog 7.118's
+// ruling against 7.26: verify completes the session in a transaction that
+// takes the account row first, and the code is checked before and outside
+// it. A wrong code must still spend one of the account's factor attempts;
+// checked inside the transaction, the rollback that follows the refusal
+// would refund it and lift the brute-force budget.
+func TestTOTPVerifyWithAWrongCodeStillSpendsAnAttempt(t *testing.T) {
+	s := apitest.New(t)
+	uid := s.SeedUser("spent@example.test", "correct horse battery")
+	secret, _ := enrolTOTP(t, s.LoginAs(uid), s)
+
+	fresh := s.Client()
+	if resp := postJSON(t, fresh, s.HTTP.URL+"/api/v1/auth/login", map[string]string{"email": "spent@example.test", "password": "correct horse battery"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("login: %d", resp.StatusCode)
+	}
+	attempts := func() int {
+		t.Helper()
+		var n int
+		if err := s.DB.Pool().QueryRow(t.Context(),
+			`SELECT failed_factor_attempts FROM totp_secrets WHERE user_id = $1`, uid).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	before := attempts()
+
+	resp := postJSON(t, fresh, s.HTTP.URL+"/api/v1/auth/totp/verify", map[string]string{"code": wrongTOTPCode(t, secret)})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("verify with a wrong code: %d, want 401", resp.StatusCode)
+	}
+	if after := attempts(); after != before+1 {
+		t.Fatalf("factor attempts after a wrong code = %d, want %d", after, before+1)
+	}
+}
+
+// wrongTOTPCode is a six-digit code that is valid for secret in no time
+// step near now, so a test cannot pass it by chance.
+func wrongTOTPCode(t *testing.T, secret string) string {
+	t.Helper()
+	valid := map[string]bool{}
+	for step := -2; step <= 2; step++ {
+		code, err := totp.GenerateCode(secret, time.Now().Add(time.Duration(step)*30*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		valid[code] = true
+	}
+	for _, c := range []string{"000000", "111111", "222222", "333333", "444444", "555555"} {
+		if !valid[c] {
+			return c
+		}
+	}
+	t.Fatal("no wrong code left")
+	return ""
+}

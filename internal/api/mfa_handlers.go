@@ -173,7 +173,11 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 		if err := verifyFactorCode(ctx, deps, p.UserID, in); err != nil {
 			return nil, err
 		}
-		cookie, err := deps.Sessions.MarkMFAComplete(ctx, p.SessionID)
+		// The code is checked above, outside the transaction that completes
+		// the session: a rollback must not refund the attempt a wrong code
+		// spent (backlog 7.26). The completion takes the account row first,
+		// in the second-factor reset's lock order (backlog 7.118).
+		cookie, err := deps.Enrolment.CompleteVerifiedSession(ctx, p.UserID, p.SessionID)
 		if err != nil {
 			return nil, mapAuthErr(ctx, err)
 		}

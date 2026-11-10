@@ -27,9 +27,10 @@ type TxRunner interface {
 }
 
 // Enrolment composes the writes that finishing a second factor consists
-// of, and the owner's removal of one under the account's exclusive lock
-// (backlog 7.116). It owns no state of its own: the rule it encodes is that
-// these writes commit together.
+// of, the owner's removal of one under the account's exclusive lock
+// (backlog 7.116), and the completion of a session whose code was verified
+// (backlog 7.118). It owns no state of its own: the rule it encodes is that
+// these writes commit together, under the account lock.
 type Enrolment struct {
 	totp     *TOTP
 	passkeys *Passkeys
@@ -186,4 +187,36 @@ func (e *Enrolment) DisableTOTP(ctx context.Context, userID uuid.UUID) error {
 		}
 		return SecondFactors{TOTP: e.totp, Passkeys: e.passkeys}.DisableTOTP(ctx, userID)
 	})
+}
+
+// CompleteVerifiedSession completes sessionID's session once the caller has
+// verified a TOTP or recovery code for userID, and returns its new cookie
+// (see Sessions.MarkMFAComplete), which the caller must send.
+//
+// It takes the account row first (Sessions.LockLive, key share), in the
+// order an administrator's second-factor reset takes the account and then
+// the sessions (backlog 7.118). Completing a pending session stamps the
+// account's last_sign_in_at, so a completion that locked its session row
+// first and the reset deadlocked; in this order the completion queues
+// behind the reset and then finds its session ended. A session that is no
+// longer live is ErrNotFound and changes nothing.
+//
+// The code is verified before this call, outside its transaction: a
+// verification spends a factor attempt (backlog 7.26), and a rollback here
+// would refund the attempt a wrong code spent.
+func (e *Enrolment) CompleteVerifiedSession(ctx context.Context, userID, sessionID uuid.UUID) (cookie string, err error) {
+	err = e.tx.WithInstanceTx(ctx, func(ctx context.Context) error {
+		if err := e.sessions.LockLive(ctx, userID, sessionID); err != nil {
+			return fmt.Errorf("complete the verified session: %w", err)
+		}
+		var err error
+		if cookie, err = e.sessions.MarkMFAComplete(ctx, sessionID); err != nil {
+			return fmt.Errorf("complete the verified session: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return cookie, nil
 }
