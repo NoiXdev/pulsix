@@ -288,3 +288,80 @@ func TestRepoPlaybookIsReadableByThePlayUID(t *testing.T) {
 		}
 	}
 }
+
+// TestFetchGitUpdateUsesClaimURL (backlog 7.101): a worker that already holds
+// a clone fetches from the URL the claim carries, not from the origin the
+// clone stored when it was made. The first source is made unreadable, so any
+// fetch that still contacts it fails.
+func TestFetchGitUpdateUsesClaimURL(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a chmod 000 directory; the old source cannot be made unreadable")
+	}
+	sourceA := gitFixture(t)
+	sourceB := gitFixture(t)
+	gitCommit(t, sourceB, "- hosts: all\n  tasks:\n    - name: from-b\n")
+	cacheRoot, workDir := t.TempDir(), t.TempDir()
+	r := &Runner{GitBin: gitOnPATH(t)}
+	spec := gitRepoSpec{OrgID: orgID, RepoID: repoID, URL: sourceA, Branch: "main", Subpath: "playbooks/site.yml"}
+
+	if _, err := r.fetchRepo(context.Background(), spec, "", cacheRoot, workDir); err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+	if err := os.Chmod(sourceA, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sourceA, 0o755) })
+
+	spec.URL = sourceB
+	playbook, err := r.fetchRepo(context.Background(), spec, "", cacheRoot, workDir)
+	if err != nil {
+		t.Fatalf("second fetch under the new URL: %v", err)
+	}
+	raw, err := os.ReadFile(playbook)
+	if err != nil || !strings.Contains(string(raw), "from-b") {
+		t.Fatalf("playbook = %q, %v; the clone must follow the claim's URL", raw, err)
+	}
+	// Later tooling reading the clone's config agrees with the claim.
+	clone := filepath.Join(cacheRoot, orgID.String(), repoID.String())
+	out, err := exec.Command(gitOnPATH(t), "-C", clone, "config", "--get", "remote.origin.url").Output()
+	if err != nil {
+		t.Fatalf("read remote.origin.url: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != sourceB {
+		t.Errorf("remote.origin.url = %q, want the claim's URL %q", got, sourceB)
+	}
+}
+
+// TestFetchGitUpdateSameURLStaysIncremental: an unchanged URL keeps updating
+// the existing clone in place, with no re-clone.
+func TestFetchGitUpdateSameURLStaysIncremental(t *testing.T) {
+	source := gitFixture(t)
+	cacheRoot, workDir := t.TempDir(), t.TempDir()
+	r := &Runner{GitBin: gitOnPATH(t)}
+	spec := gitRepoSpec{OrgID: orgID, RepoID: repoID, URL: source, Branch: "main", Subpath: "playbooks/site.yml"}
+
+	if _, err := r.fetchRepo(context.Background(), spec, "", cacheRoot, workDir); err != nil {
+		t.Fatalf("first fetch: %v", err)
+	}
+	gitDir := filepath.Join(cacheRoot, orgID.String(), repoID.String(), ".git")
+	before, err := os.Stat(gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, source, "- hosts: all\n  tasks:\n    - name: updated\n")
+	playbook, err := r.fetchRepo(context.Background(), spec, "", cacheRoot, workDir)
+	if err != nil {
+		t.Fatalf("second fetch: %v", err)
+	}
+	after, err := os.Stat(gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Error(".git was replaced; an unchanged URL must update the clone in place")
+	}
+	raw, err := os.ReadFile(playbook)
+	if err != nil || !strings.Contains(string(raw), "updated") {
+		t.Fatalf("playbook = %q, %v; the clone must follow the branch tip", raw, err)
+	}
+}

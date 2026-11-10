@@ -227,11 +227,21 @@ func (r *Runner) fetchGit(ctx context.Context, gitBin string, spec worker.RepoSp
 	}
 	if _, statErr := os.Stat(filepath.Join(target, ".git")); statErr == nil {
 		// Present: bring it to the branch's tip — the run must see the
-		// branch's current state, not a stale cache.
-		if err := runGit(ctx, gitBin, target, env, spec.URL, "fetch", "--quiet", "--", "origin", spec.Branch); err != nil {
+		// branch's current state, not a stale cache. The fetch names the
+		// claim's URL explicitly instead of the clone's stored "origin": a
+		// repository whose URL changed after this worker cloned it must not
+		// keep being served (and offered the current credential) by the old
+		// source (backlog 7.101). The credential plumbing in env applies to
+		// that one URL, since it is the only remote this fetch contacts.
+		if err := runGit(ctx, gitBin, target, env, spec.URL, "fetch", "--quiet", "--", spec.URL, spec.Branch); err != nil {
 			return wrap(err)
 		}
 		if err := runGit(ctx, gitBin, target, env, spec.URL, "reset", "--hard", "FETCH_HEAD"); err != nil {
+			return wrap(err)
+		}
+		// Keep the clone's own config in line with the claim, so later
+		// tooling that reads "origin" agrees with what was just fetched.
+		if err := runGit(ctx, gitBin, target, env, spec.URL, "config", "remote.origin.url", spec.URL); err != nil {
 			return wrap(err)
 		}
 		return nil
