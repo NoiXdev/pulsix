@@ -144,6 +144,58 @@ repositories as before. An older worker never asks.
   one byte more is refused with 413, unchanged; the dependency update that moved
   the limit's off-by-one is compensated in the hook endpoints.
 
+- **7.114, editor playbook variable results:** the parse result stored with
+  an editor playbook is capped at 1 MiB (a text of 67 KB can parse to several
+  MiB through aliases). A playbook saved with a larger result shows as
+  incomplete with its fields left out, and the note says why. Rows saved
+  before the upgrade are not rewritten: one longer than 2 MiB reads as
+  incomplete and left out until the playbook is saved again; shorter ones read
+  as before. `GET /playbooks` no longer carries the stored result, and the job
+  template list reads each linked playbook's source one at a time.
+- **7.111, check-result pacing:** the manager paces the check results of one
+  agent across all its streams: 4096 observations per 10 seconds, with a burst
+  of 8192. A legitimate agent never reaches it, and a replay after an outage
+  is delayed, not dropped. An agent over its budget is slowed and the manager
+  logs "agent check results throttled by the ingest budget" at most once a
+  minute per stream; its host stays online. A single batch of more than 1000
+  observations is refused and ends the stream, as before.
+- **7.110, check label and error text bounds:** a check result whose label is
+  longer than 512 bytes is refused with its whole batch (the stream ends with
+  `InvalidArgument`), and an error text longer than 2048 bytes is cut on a
+  character boundary and stored. Agents of this version cut error texts
+  themselves, and the labels of every shipped agent are short fixed words, so
+  an older agent is unaffected: its long error texts are cut by the manager,
+  and only a label over 512 bytes, which no plugin produces, would be refused.
+- **7.105, requirement sources:** a `requirements.yml` whose role `src`, role
+  `name` used as the source, or collection `name` or `source` is a number
+  (`1e3`, `0o17`) is refused as not a requirements file. Quote the value: a
+  string still installs, and a local path is still checked against the clone.
+- **7.103, credentials in repository URLs:** a repository URL, in an
+  organization or a shared definition, is refused when it carries a password
+  or, on https, any user (`https://user:token@host/x`, `https://token@host/x`);
+  attach a git credential instead. A bare user on `ssh://` and scp-style URLs
+  (`git@host:path`) stays. URLs stored earlier keep working and keep being
+  sent to the workers in full, but the API and the SPA show them redacted
+  (`https://***@host/x`; on ssh the password is dropped). Rotate any token that
+  was embedded in a URL: every member of the organization, and of every
+  organization a shared definition reaches, could read it. Saving the form
+  with the redacted URL keeps the stored URL; a legacy ssh URL with a password
+  therefore cannot be scrubbed by saving it: change the URL or rotate the
+  password.
+- **7.102, forgot-password without a second factor:** the forgot-password
+  link is issued only to an account with a confirmed second factor (a TOTP
+  secret or a passkey). For any other account, including one an administrator
+  reset and one that never enrolled a factor, no link is sent and the answer
+  is the same 202 as for an unknown address. An administrator resets such an
+  account instead, with a reset link or a temporary password, which work as
+  before.
+- **7.101, changed repository URL:** a worker that already holds a clone now
+  fetches from the URL of the repository's current definition and updates the
+  clone's `origin` to it. Before, it kept fetching from the URL it had cloned
+  from. After an upgrade, a repository whose URL was changed starts to follow
+  the new one on its next sync, so check that its credential matches the new
+  host.
+
 - **7.96, roles inside collections:** the variable read now reads roles of
   collections, as a run finds them: a fully qualified name
   (`namespace.collection.role`), or a short name through a play's, block's or
