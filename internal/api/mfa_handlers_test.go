@@ -335,10 +335,11 @@ func wrongTOTPCode(t *testing.T, secret string) string {
 	return ""
 }
 
-// TestTOTPEnrolOnASessionEndedByResetIs401 (backlog 7.119): a pending session
-// of an account with no second factor is ended by an administrator's reset,
-// and the handler maps Enrolment.BeginTOTP's refusal of the dead session to
-// 401, not to a secret or a 403.
+// TestTOTPEnrolOnASessionEndedByResetIs401 (backlog 7.119): a pending
+// session ended by an administrator's reset answers 401 at totp/enrol. The
+// revoked cookie is refused by the session lookup before the handler runs;
+// the mapping of BeginTOTP's own refusal is pinned by
+// TestEnrolRefusalForAnEndedSessionMapsTo401 (mfa_enrol_internal_test.go).
 func TestTOTPEnrolOnASessionEndedByResetIs401(t *testing.T) {
 	s := apitest.New(t)
 	_, adminClient := adminWithFactor(t, s, "enrol-reset-admin@example.test")
