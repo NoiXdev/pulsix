@@ -2,7 +2,10 @@ package playbooks_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,6 +17,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
+	"github.com/noixdev/pulsix/internal/varsource"
 )
 
 func newSQLService(d *db.DB, resolver playbooks.TemplateResolver) *playbooks.Service {
@@ -200,5 +204,41 @@ func TestEditorPlaybookVarSourceIsStored(t *testing.T) {
 	}
 	if src, err := svc.VarSource(scoped, org, p.ID); err != nil || len(src.Playbook.Fields) != 1 || src.Playbook.Fields[0].Default != `a\u0000b` {
 		t.Fatalf("VarSource(literal \\u0000) = %+v, %v", src, err)
+	}
+}
+
+// TestInlineSourceNearTheCapReadsBackFromTheDatabase (backlog 7.114): the
+// database re-renders a stored result with spaces, so a result stored just
+// under the cap comes back longer; it must still read in full, not as left
+// out.
+func TestInlineSourceNearTheCapReadsBackFromTheDatabase(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "pb-nearcap-org")
+	scoped := db.WithOrgScope(ctx, org)
+	svc := newSQLService(d, nil)
+
+	// 17 fields share one list default of 30 000 short items (60 KB of JSON,
+	// which the database renders as 90 KB): 1.02 MB stored, about 1.5 MB read.
+	var text strings.Builder
+	text.WriteString("- hosts: all\n  vars:\n    shared: &shared [" + strings.TrimSuffix(strings.Repeat("1,", 30_000), ",") + "]\n")
+	for i := range 17 {
+		fmt.Fprintf(&text, "    opt_%02d: *shared  # pulsix: Option %d\n", i, i)
+	}
+	text.WriteString("  tasks: []\n")
+	p, err := svc.CreateEditor(scoped, org, playbooks.CreateInput{Inline: text.String()})
+	if err != nil {
+		t.Fatalf("CreateEditor: %v", err)
+	}
+	stored, err := playbooks.NewSQLStore(d).Get(scoped, org, p.ID)
+	if err != nil || len(stored.InlineSource) <= playbooks.MaxInlineSourceBytes {
+		t.Fatalf("read-back result is %d bytes (err %v), want one the database made longer than the cap %d", len(stored.InlineSource), err, playbooks.MaxInlineSourceBytes)
+	}
+	var rep varsource.Report
+	if err := json.Unmarshal(stored.InlineSource, &rep); err != nil || rep.Incomplete || len(rep.Playbooks) != 1 {
+		t.Fatalf("stored report = incomplete %v, %d playbooks (err %v), want the playbook kept", rep.Incomplete, len(rep.Playbooks), err)
+	}
+	src, err := svc.VarSource(scoped, org, p.ID)
+	if err != nil || src.LeftOut || src.Incomplete || len(src.Playbook.Fields) != 17 {
+		t.Fatalf("VarSource = %d fields, left out %v, incomplete %v, err %v; want all 17 fields", len(src.Playbook.Fields), src.LeftOut, src.Incomplete, err)
 	}
 }

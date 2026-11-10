@@ -377,10 +377,13 @@ func TestEnsureRepo(t *testing.T) {
 // aliasedPlaybook is the audit's alias fixture (backlog 7.114): one 60 KiB
 // default shared by a hundred marked variables through an alias, so a text
 // of about 67 KB parses to a result of about 6 MB.
-func aliasedPlaybook() string {
+func aliasedPlaybook() string { return aliasedPlaybookOf(100) }
+
+// aliasedPlaybookOf is aliasedPlaybook with n marked variables.
+func aliasedPlaybookOf(n int) string {
 	var b strings.Builder
 	b.WriteString("- hosts: all\n  vars:\n    shared: &shared \"" + strings.Repeat("a", 60<<10) + "\"\n")
-	for i := range 100 {
+	for i := range n {
 		fmt.Fprintf(&b, "    opt_%02d: *shared  # pulsix: Option %d\n", i, i)
 	}
 	b.WriteString("  tasks: []\n")
@@ -484,8 +487,9 @@ func TestInlineSourceCapHoldsWithANULDefault(t *testing.T) {
 }
 
 // TestVarSourceBoundsALegacyBareRow (backlog 7.114): a row saved before the
-// cap holds the playbook alone and may be any size; one over the cap reads
-// as left out without being decoded, one at the cap reads as before.
+// cap holds the playbook alone and may be any size; one over the read limit
+// (twice the cap, which jsonb's spacing can reach) reads as left out without
+// being decoded, one at the limit reads as before.
 func TestVarSourceBoundsALegacyBareRow(t *testing.T) {
 	org := uuid.Must(uuid.NewV7())
 	text := markedPlaybook
@@ -509,9 +513,9 @@ func TestVarSourceBoundsALegacyBareRow(t *testing.T) {
 		leftOut  bool
 		wantAnyF bool
 	}{
-		"at the cap":   {playbooks.MaxInlineSourceBytes, false, true},
-		"over the cap": {playbooks.MaxInlineSourceBytes + 1, true, false},
-		"far over":     {6 << 20, true, false},
+		"at the read limit":   {2 * playbooks.MaxInlineSourceBytes, false, true},
+		"over the read limit": {2*playbooks.MaxInlineSourceBytes + 1, true, false},
+		"far over":            {6 << 20, true, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store := newFakeStore()

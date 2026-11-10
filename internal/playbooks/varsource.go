@@ -146,12 +146,12 @@ const inlineName = "inline"
 // decodeInlineSource reads what inlineSource stored: a report holding the
 // playbook, or, when the cap left it out, no playbook (leftOut) and a note.
 // A row saved before backlog 7.114 holds the bare playbook. Whatever the
-// form, a row longer than MaxInlineSourceBytes reads as left out without
-// being decoded.
+// form, a row longer than maxInlineReadBytes reads as left out without being
+// decoded.
 func decodeInlineSource(raw json.RawMessage) (pb varsource.Playbook, leftOut bool, err error) {
 	// A row over the cap is never decoded: rows saved before backlog 7.114
 	// hold the bare playbook, which was uncapped.
-	if len(raw) > MaxInlineSourceBytes {
+	if len(raw) > maxInlineReadBytes {
 		return leftOutPlaybook([]varsource.Note{{
 			Level: varsource.LevelWarning, Code: "report_too_large",
 			Message: fmt.Sprintf("the stored variable sources are larger than %d bytes and are left out; save the playbook again to read them", MaxInlineSourceBytes),
@@ -199,6 +199,12 @@ func inlineRev(text string) string {
 // (backlog 7.114). Aliases let a text of 67 KB parse to about 6 MB, and
 // every read of the playbook loads the result.
 const MaxInlineSourceBytes = 1 << 20
+
+// maxInlineReadBytes is the longest stored result a read decodes. The cap
+// applies to the compact JSON the encoder writes, but the database's jsonb
+// type renders it back with a space after every ':' and ',', which at most
+// doubles the text, so a result stored within the cap must still read.
+const maxInlineReadBytes = 2 * MaxInlineSourceBytes
 
 // inlineSource parses an editor playbook's text for storing with it. The
 // parse is bounded and never fails (a problem is a note); the result is
