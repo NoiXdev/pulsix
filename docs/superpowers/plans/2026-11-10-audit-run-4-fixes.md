@@ -197,3 +197,19 @@
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `./internal/playbooks/`, `./internal/api/ -run 'Playbook|JobTemplate' -timeout 1800s`, and the SPA tests for the playbook and template pages; all pass.
 - [ ] **Step 5: Commit** `fix(playbooks): bound editor-playbook variable sources and keep them out of lists`.
+
+### Task 13: A passkey login checked before a second-factor reset opens no session after it (7.109, variant b)
+
+Added 2026-11-10 from Task 7's review: the same root cause as Task 7 on the login side, outside Task 7's brief.
+
+**Files:**
+- Modify: `internal/auth/passkey.go` (`FinishLogin`), `internal/auth/session.go` (`Create`, or a new transactional variant), `internal/db/queries/auth.sql` if a query is needed (then sqlc)
+- Test: `internal/auth/*_test.go` (testdb)
+
+**Invariant:** the session a passkey login opens is created in one instance transaction that takes the account row `FOR KEY SHARE` (the lock Task 7 settled on) and re-checks that the credential row still exists; if `ResetSecondFactor` committed first the login fails with the same error as an unknown credential and no session row exists. Also: `TOTP.BeginEnrol` on a session that ended refuses (`ErrUnauthenticated` / 401) instead of writing a pending secret.
+
+- [ ] **Step 1: Write the failing tests** `TestPasskeyLoginAfterSecondFactorResetOpensNoSession` (validate the assertion, commit `ResetSecondFactor`, then let the session creation run → error, no session row for the user) and `TestBeginEnrolOnEndedSessionWritesNothing`.
+- [ ] **Step 2: Run** `go test -race -count=1 -timeout 900s ./internal/auth/`; they fail.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `./internal/auth/` and `./internal/api/ -run 'Passkey|TOTP|Login|Session' -timeout 1800s`; all pass.
+- [ ] **Step 5: Commit** `fix(auth): open no passkey session for a credential a reset removed`.
