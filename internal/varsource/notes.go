@@ -209,6 +209,7 @@ func (y *yamlFile) replay(c captured) {
 		y.note(c.notes[i:r.at]...)
 		i = r.at
 		y.note(r.notes...)
+		y.dropped += r.dropped
 	}
 	y.note(c.notes[i:]...)
 	y.dropped += c.dropped

@@ -215,6 +215,18 @@ func TestAliasedEntryPointsAreBounded(t *testing.T) {
 		t.Fatalf("failed = %v, %d fields; want none from a file given up", pb.Failed, len(pb.Fields))
 	}
 	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
+	if !strings.Contains(pb.Notes[0].Message, "options") {
+		t.Fatalf("message %q does not name the option budget", pb.Notes[0].Message)
+	}
+}
+
+// TestTooComplexMessageNamesItsBudget: only a role spec file given up on its
+// option budget mentions options; a file out of steps does not.
+func TestTooComplexMessageNamesItsBudget(t *testing.T) {
+	pb := ParsePlaybook(fstest.MapFS{"site.yml": {Data: []byte("- &p {hosts: all, vars: " + wideMapping(20_000, "a: 1") + "}\n" + strings.Repeat("- *p\n", 60))}}, "site.yml")
+	if len(pb.Notes) != 1 || pb.Notes[0].Code != codeFileTooComplex || strings.Contains(pb.Notes[0].Message, "options") {
+		t.Fatalf("notes = %v, want one file_too_complex note that does not mention options", pb.Notes)
+	}
 }
 
 // TestEntryPointsShareTheOptionBudget: entry points that each fit the
@@ -301,4 +313,48 @@ func TestSharedDuplicateNotesAreBounded(t *testing.T) {
 		t.Fatalf("fields = %q, want only y's", got)
 	}
 	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
+}
+
+// TestSharedDuplicateKeysKeepNoUncappedList: a mapping with a quarter of a
+// million duplicate keys, merged by two entry points, keeps no more of its
+// notes than the file's cap, however many roles read such files, and the
+// count of the notes left out stays exact (backlog 7.113).
+func TestSharedDuplicateKeysKeepNoUncappedList(t *testing.T) {
+	const keys, roles = 250_000, 6
+	var d strings.Builder
+	d.WriteString("d: &D {")
+	for range keys {
+		d.WriteString("z,")
+	}
+	d.WriteString("}\nargument_specs:\n  e0: {<<: *D}\n  main: {<<: *D}\n")
+	files := fstest.MapFS{}
+	var play strings.Builder
+	play.WriteString("- hosts: all\n  roles:\n")
+	for i := range roles {
+		files[fmt.Sprintf("roles/r%d/meta/argument_specs.yml", i)] = &fstest.MapFile{Data: []byte(d.String())}
+		fmt.Fprintf(&play, "    - r%d\n", i)
+	}
+	files["site.yml"] = &fstest.MapFile{Data: []byte(play.String())}
+	h := &heapFS{FS: files}
+	base := liveHeap()
+	pb := ParsePlaybook(h, "site.yml")
+	held := h.peak - min(h.peak, base)
+	t.Logf("heap held when the last role was opened: %d KiB", held>>10)
+	if held > 16<<20 {
+		t.Fatalf("the walk held %d MiB at its last role, want under 16 MiB", held>>20)
+	}
+	for _, r := range pb.Roles {
+		if r.State != RoleRead {
+			t.Fatalf("roles = %v, want all read", pb.Roles)
+		}
+	}
+	// All but the first of the equal keys are noted; the file keeps 200.
+	want := fmt.Sprintf("%d more notes are left out", keys-1-maxNotesPerFile)
+	found := false
+	for _, n := range pb.Notes {
+		found = found || (n.Code == codeTooManyNotes && n.Message == want)
+	}
+	if !found {
+		t.Fatalf("no too_many_notes note saying %q in %d notes", want, len(pb.Notes))
+	}
 }

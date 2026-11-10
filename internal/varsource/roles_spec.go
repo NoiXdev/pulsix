@@ -114,7 +114,11 @@ func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
 	m := &specMapper{y: y, budget: maxSpecFields}
 	for _, ep := range list {
 		m.budget--
-		if m.budget < 0 || !y.spend(1) {
+		if m.budget < 0 {
+			y.giveUpOptions()
+			break
+		}
+		if !y.spend(1) {
 			y.giveUp()
 			break
 		}
@@ -122,8 +126,11 @@ func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
 		e.read = y.capture(func() {
 			e.res = mapEntry(y, m, ep, "", ep.key.Value, schema.SourceArgumentSpec)
 		})
-		if m.exhausted || y.exceeded() {
-			y.giveUp()
+		if y.exceeded() { // the visit or byte budget ran out
+			break
+		}
+		if m.exhausted {
+			y.giveUpOptions()
 			break
 		}
 		s.entries[ep.key.Value] = e
