@@ -120,6 +120,10 @@ func TestEncodeBoundsAllocation(t *testing.T) {
 	// is out of reach of any run. A collection clears the pool too, so the
 	// collector is paused (TotalAlloc is a running total, pausing is free).
 	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	// Backstop: a regression to the full marshal allocates gigabytes per run,
+	// and with the collector paused would keep them; the limit makes the
+	// collector run again before the machine swaps.
+	defer debug.SetMemoryLimit(debug.SetMemoryLimit(1 << 30))
 	var data []byte
 	var out Report
 	var got uint64
@@ -132,7 +136,12 @@ func TestEncodeBoundsAllocation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got = after.TotalAlloc - before.TotalAlloc; got <= 4*MaxReportBytes {
+		got = after.TotalAlloc - before.TotalAlloc
+		if got > 16*MaxReportBytes {
+			// Not pool noise (whole buffers, tens of MB): a real regression.
+			t.Fatalf("Encode allocated %d bytes, want at most %d", got, 4*MaxReportBytes)
+		}
+		if got <= 4*MaxReportBytes {
 			break
 		}
 	}
