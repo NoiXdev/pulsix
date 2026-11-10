@@ -247,7 +247,7 @@ func NewService(store Store, creds CredentialSource, jobs JobEnqueuer) *Service 
 // an empty slice, so Create and Update share one "this is now the full set"
 // rule rather than Create having a silent special case for "none given").
 func (s *Service) Create(ctx context.Context, orgID uuid.UUID, in CreateInput) (Repo, error) {
-	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
+	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, "", in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
 	subpath, err := CanonicalSubpath(in.Subpath)
@@ -340,7 +340,8 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	if err != nil {
 		return Repo{}, err
 	}
-	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
+	in.URL = KeepStoredURL(in.URL, cur.URL)
+	if err := s.validate(ctx, orgID, in.CredentialID, in.VaultCredentialID, in.Name, in.URL, cur.URL, in.Branch, in.Subpath, in.VaultIdentities); err != nil {
 		return Repo{}, err
 	}
 	subpath, err := CanonicalSubpath(in.Subpath)
@@ -467,6 +468,10 @@ func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUI
 // referenced) first so a wrong-kind credential fails before anything is
 // stored.
 //
+// storedURL is the URL the row already has ("" on create): the embedded-
+// credential refusal (backlog 7.103) does not apply to an update that keeps
+// it, so a row stored before the rule can still be saved.
+//
 // The git credential check only runs when credentialID is set — a public
 // repository legitimately has none. It used to return early in that case,
 // before the vault checks below existed; that early return also skipped
@@ -484,15 +489,21 @@ func (s *Service) Sync(ctx context.Context, orgID, id uuid.UUID, actor *uuid.UUI
 // so a client still sending it gets this 400 naming the replacement
 // instead of huma silently dropping an undeclared field — "refused with a
 // reason" rather than "silently ignored" is the whole point.
-func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, vaultCredentialID *uuid.UUID, name, url, branch, subpath string, vaultIdentities []VaultIdentity) error {
+func (s *Service) validate(ctx context.Context, orgID uuid.UUID, credentialID, vaultCredentialID *uuid.UUID, name, url, storedURL, branch, subpath string, vaultIdentities []VaultIdentity) error {
 	if vaultCredentialID != nil {
 		return fmt.Errorf("%w: vault_credential_id no longer accepts a write; configure the repository's vault password through vault_identities instead", ErrInvalidInput)
 	}
 	if !namePattern.MatchString(name) {
 		return fmt.Errorf("%w: invalid name: must be lowercase letters, digits, dots, underscores or hyphens (1–63 characters), starting with a letter or digit", ErrInvalidInput)
 	}
-	if err := validateURL(url); err != nil {
-		return err
+	if reason, credentials := urlProblem(url); reason != "" {
+		// A URL stored before backlog 7.103 may carry credentials; saving
+		// another field of that row must not fail on it, so the refusal is
+		// skipped while the URL is the stored one. Every other URL rule
+		// still applies.
+		if !credentials || url != storedURL {
+			return fmt.Errorf("%w: %s", ErrInvalidInput, reason)
+		}
 	}
 	if branch != "" && (strings.Contains(branch, "..") || strings.HasPrefix(branch, "-") || !branchPattern.MatchString(branch)) {
 		return fmt.Errorf("%w: invalid branch: may contain letters, digits, dots, slashes and hyphens (1–100 characters), no \"..\", not starting with \"-\"", ErrInvalidInput)
@@ -574,23 +585,6 @@ func (s *Service) validateVaultCredential(ctx context.Context, orgID uuid.UUID, 
 	}
 	if cred.Kind != credentials.KindVaultPassword {
 		return fmt.Errorf("%w: the referenced vault credential must be a vault_password credential", ErrInvalidInput)
-	}
-	return nil
-}
-
-func validateURL(raw string) error {
-	switch {
-	case raw == "":
-		return fmt.Errorf("%w: invalid url: must be an https:// URL, an ssh:// URL or an SCP-like git URL", ErrInvalidInput)
-	case strings.HasPrefix(raw, "-"):
-		// git would parse it as an option (-oProxyCommand=…).
-		return fmt.Errorf("%w: invalid url: must not start with \"-\"", ErrInvalidInput)
-	case strings.ContainsAny(raw, " \t\n\r"):
-		return fmt.Errorf("%w: invalid url: must not contain whitespace", ErrInvalidInput)
-	case len(raw) > MaxURLLength:
-		return fmt.Errorf("%w: invalid url: exceeds %d characters", ErrInvalidInput, MaxURLLength)
-	case !urlPattern.MatchString(raw):
-		return fmt.Errorf("%w: invalid url: must be an https:// URL, an ssh:// URL or an SCP-like git URL", ErrInvalidInput)
 	}
 	return nil
 }

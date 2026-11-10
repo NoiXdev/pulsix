@@ -51,9 +51,11 @@ var (
 	// ansiblevars.ForbiddenIn reserves; and a repository definition's
 	// subpath that repos.CanonicalSubpath refuses (backlog 7.94: a
 	// projection's subpath is the definition's, so it must meet the rules
-	// an organization's own repository does). Url and branch format
-	// validation stays at the API schema layer (shared_handlers.go's own
-	// repoDefinitionBody comment); a template's extra vars are different;
+	// an organization's own repository does); and a repository definition's
+	// URL that repos.URLProblem refuses (backlog 7.103: the form rules and
+	// embedded credentials, which every organization's projection would
+	// otherwise inherit). Branch format validation stays at the API schema
+	// layer (shared_handlers.go's own repoDefinitionBody comment); a template's extra vars are different;
 	// nothing but this package ever sees them before they are written
 	// straight into every organization's own job_templates row.
 	ErrInvalidInput = errors.New("invalid input")
@@ -270,6 +272,9 @@ func NewService(store Store) *Service {
 // definition is written at all, so a refused create never partially
 // exists.
 func (s *Service) CreateRepo(ctx context.Context, in RepoDefinitionInput) (RepoDefinition, error) {
+	if reason, _ := repos.URLProblem(in.URL); reason != "" {
+		return RepoDefinition{}, fmt.Errorf("%w: %s", ErrInvalidInput, reason)
+	}
 	existing, err := s.store.ExistingNames(ctx, uuid.Nil)
 	if err != nil {
 		return RepoDefinition{}, fmt.Errorf("list existing repo names: %w", err)
@@ -294,6 +299,11 @@ func (s *Service) CreateRepo(ctx context.Context, in RepoDefinitionInput) (RepoD
 // the collision check excludes id's own current projections (they are what
 // is about to be renamed, not something it could collide with).
 func (s *Service) UpdateRepo(ctx context.Context, id uuid.UUID, in RepoDefinitionInput) (RepoDefinition, error) {
+	url, err := s.validateURL(ctx, id, in.URL)
+	if err != nil {
+		return RepoDefinition{}, err
+	}
+	in.URL = url
 	existing, err := s.store.ExistingNames(ctx, id)
 	if err != nil {
 		return RepoDefinition{}, fmt.Errorf("list existing repo names: %w", err)
@@ -307,6 +317,32 @@ func (s *Service) UpdateRepo(ctx context.Context, id uuid.UUID, in RepoDefinitio
 	}
 	def := RepoDefinition{ID: id, Name: in.Name, URL: in.URL, Branch: defaultBranch(in.Branch), Subpath: subpath}
 	return s.store.UpdateAndPropagate(ctx, def)
+}
+
+// validateURL applies repos.URLProblem's rules to a definition's URL
+// (backlog 7.103): the same form rules and the same refusal of embedded
+// credentials as an organization's own repository, as this package's
+// ErrInvalidInput. An update that keeps the stored URL skips the credential
+// refusal, so a definition stored before the rule can still be saved, and
+// one that sends the stored URL back as the DTO redacted it
+// (repos.KeepStoredURL) keeps it too; it returns the URL to store. The
+// stored row is read only when the URL carries credentials, and
+// ErrNotFound surfaces from it as it would from the write.
+func (s *Service) validateURL(ctx context.Context, id uuid.UUID, url string) (string, error) {
+	reason, credentials := repos.URLProblem(url)
+	if reason == "" {
+		return url, nil
+	}
+	if credentials {
+		cur, err := s.store.GetDefinition(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		if kept := repos.KeepStoredURL(url, cur.URL); kept == cur.URL {
+			return kept, nil
+		}
+	}
+	return "", fmt.Errorf("%w: %s", ErrInvalidInput, reason)
 }
 
 // canonicalSubpath is repos.CanonicalSubpath for a definition (backlog

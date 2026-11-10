@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/shared"
 )
 
@@ -29,8 +30,11 @@ type repoDefinitionDTO struct {
 	Subpath string `json:"subpath"`
 }
 
+// toRepoDefinitionDTO redacts the URL's userinfo (backlog 7.103): a
+// definition stored before credentials were refused may still carry one,
+// and every instance admin who lists definitions would read it.
 func toRepoDefinitionDTO(d shared.RepoDefinition) repoDefinitionDTO {
-	return repoDefinitionDTO{ID: d.ID.String(), Name: d.Name, URL: d.URL, Branch: d.Branch, Subpath: d.Subpath}
+	return repoDefinitionDTO{ID: d.ID.String(), Name: d.Name, URL: repos.RedactURL(d.URL), Branch: d.Branch, Subpath: d.Subpath}
 }
 
 type repoDefinitionListOutput struct {
@@ -52,9 +56,10 @@ type repoDefinitionDetailOutput struct {
 // repoDefinitionBody is the editable shape both create and update take —
 // the same full-replacement convention repoCreateInput/repoUpdateInput
 // already use for an ordinary repository, and the same length bounds. The
-// subpath's format is shared.Service's to judge (repos.CanonicalSubpath,
-// backlog 7.94: shared.ErrInvalidInput, 400); the other fields' format
-// belongs at this schema layer.
+// subpath's and url's formats are shared.Service's to judge
+// (repos.CanonicalSubpath, backlog 7.94, and repos.URLProblem, backlog
+// 7.103: shared.ErrInvalidInput, 400); the other fields' format belongs at
+// this schema layer.
 type repoDefinitionBody struct {
 	Name    string `json:"name" minLength:"1" maxLength:"63"`
 	URL     string `json:"url" minLength:"1" maxLength:"500"`

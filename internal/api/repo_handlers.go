@@ -99,9 +99,13 @@ type repoDTO struct {
 	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
+// toRepoDTO redacts the URL's userinfo (backlog 7.103): a row stored before
+// credentials were refused may still carry one, and every viewer of the
+// organization reads this DTO. The worker's claim is built elsewhere from
+// the stored URL and is unaffected.
 func toRepoDTO(r repos.Repo) repoDTO {
 	dto := repoDTO{
-		ID: r.ID.String(), Name: r.Name, URL: r.URL, Branch: r.Branch, Subpath: r.Subpath,
+		ID: r.ID.String(), Name: r.Name, URL: repos.RedactURL(r.URL), Branch: r.Branch, Subpath: r.Subpath,
 		VaultIdentities: toVaultIdentityDTOs(r.VaultIdentities),
 		LastSync:        r.LastSync, LastSyncError: r.LastSyncError,
 		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,

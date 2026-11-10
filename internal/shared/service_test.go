@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/inventory/schema"
+	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/shared"
 )
 
@@ -1364,5 +1365,95 @@ func TestTemplateDefinitionValuesFitTheirSchema(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// --- URL rules (backlog 7.103) ---
+
+var definitionURLCases = []struct {
+	name    string
+	url     string
+	refused bool
+}{
+	{"https user and password", "https://u:p@git.example.com/x.git", true},
+	{"ssh user and password", "ssh://u:p@git.example.com/x.git", true},
+	{"https bare token user", "https://tok@git.example.com/x.git", true},
+	{"scp-like user and password", "u:p@git.example.com:x.git", true},
+	{"leading dash", "-oProxyCommand=touch@evil:x", true},
+	{"plain http", "http://git.example.com/x.git", true},
+	{"whitespace", "https://git.example.com/a b", true},
+	{"ssh bare user", "ssh://git@git.example.com/x.git", false},
+	{"scp-like bare user", "git@git.example.com:x.git", false},
+	{"https plain", "https://git.example.com/x.git", false},
+}
+
+func TestCreateRepoAppliesTheURLRules(t *testing.T) {
+	for _, tc := range definitionURLCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			_, err := shared.NewService(store).CreateRepo(ctx, shared.RepoDefinitionInput{Name: "infra", URL: tc.url})
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("CreateRepo(%q) = %v, want accepted", tc.url, err)
+				}
+				return
+			}
+			if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "url") {
+				t.Fatalf("CreateRepo(%q) = %v, want shared.ErrInvalidInput naming the url", tc.url, err)
+			}
+			if len(store.createCalls) != 0 {
+				t.Fatalf("CreateWithProjections called %d times for a refused URL, want 0", len(store.createCalls))
+			}
+		})
+	}
+}
+
+func TestUpdateRepoAppliesTheURLRules(t *testing.T) {
+	for _, tc := range definitionURLCases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeStore()
+			id := uuid.Must(uuid.NewV7())
+			store.defs[id] = shared.RepoDefinition{ID: id, Name: "infra", URL: "https://git.example.com/infra.git", Branch: "main"}
+			_, err := shared.NewService(store).UpdateRepo(ctx, id, shared.RepoDefinitionInput{Name: "infra", URL: tc.url})
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("UpdateRepo(%q) = %v, want accepted", tc.url, err)
+				}
+				return
+			}
+			if !errors.Is(err, shared.ErrInvalidInput) {
+				t.Fatalf("UpdateRepo(%q) = %v, want shared.ErrInvalidInput", tc.url, err)
+			}
+			if len(store.updateCalls) != 0 {
+				t.Fatalf("UpdateAndPropagate called %d times for a refused URL, want 0", len(store.updateCalls))
+			}
+		})
+	}
+}
+
+// TestUpdateRepoKeepsALegacyCredentialURL: a definition stored before the
+// rule keeps saving other fields (no row is rewritten, backlog 7.103), but
+// a changed URL is judged afresh.
+func TestUpdateRepoKeepsALegacyCredentialURL(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	legacy := "https://u:tok@git.example.com/infra.git"
+	store.defs[id] = shared.RepoDefinition{ID: id, Name: "infra", URL: legacy, Branch: "main"}
+	svc := shared.NewService(store)
+
+	if _, err := svc.UpdateRepo(ctx, id, shared.RepoDefinitionInput{Name: "infra", URL: legacy, Branch: "release"}); err != nil {
+		t.Fatalf("UpdateRepo keeping the stored URL = %v, want accepted", err)
+	}
+	// The form sends back the URL it was shown, redacted: the stored URL
+	// unchanged, never a write of the "***".
+	got, err := svc.UpdateRepo(ctx, id, shared.RepoDefinitionInput{Name: "infra", URL: repos.RedactURL(legacy), Branch: "release/2"})
+	if err != nil {
+		t.Fatalf("UpdateRepo echoing the redacted URL = %v, want accepted", err)
+	}
+	if got.URL != legacy || len(store.updateCalls) == 0 || store.updateCalls[len(store.updateCalls)-1].URL != legacy {
+		t.Fatalf("UpdateRepo wrote %+v, want the stored URL kept, not the redacted one", store.updateCalls)
+	}
+	if _, err := svc.UpdateRepo(ctx, id, shared.RepoDefinitionInput{Name: "infra", URL: "https://u:other@git.example.com/infra.git"}); !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("UpdateRepo to another credential URL = %v, want shared.ErrInvalidInput", err)
 	}
 }

@@ -924,3 +924,129 @@ func TestVaultIdentityLabelValidation(t *testing.T) {
 		})
 	}
 }
+
+// credentialURLCases is the URL-credential rule (backlog 7.103) as a table
+// shared by the validator, the service and (through the same literals) the
+// shared-definition service's own tests: userinfo with a password is refused
+// everywhere, a bare user on https (a token in the user slot) is refused, a
+// bare user on ssh and scp-style URLs is the ordinary way to name the remote
+// account and stays.
+var credentialURLCases = []struct {
+	name    string
+	url     string
+	refused bool
+}{
+	{"https user and password", "https://u:p@git.example.com/x.git", true},
+	{"ssh user and password", "ssh://u:p@git.example.com/x.git", true},
+	{"https bare token user", "https://tok@git.example.com/x.git", true},
+	{"scp-like user and password", "u:p@git.example.com:x.git", true},
+	{"https empty password", "https://u:@git.example.com/x.git", true},
+	{"https user in a url with a port", "https://tok@git.example.com:8443/x.git", true},
+	{"ssh bare user", "ssh://git@git.example.com/x.git", false},
+	{"scp-like bare user", "git@git.example.com:x.git", false},
+	{"https without userinfo", "https://git.example.com/x.git", false},
+	{"https with an @ in the path", "https://git.example.com/a@b.git", false},
+}
+
+func TestValidateURLRefusesEmbeddedCredentials(t *testing.T) {
+	for _, tc := range credentialURLCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := repos.ValidateURL(tc.url)
+			if !tc.refused {
+				if err != nil {
+					t.Fatalf("ValidateURL(%q) = %v, want accepted", tc.url, err)
+				}
+				return
+			}
+			if !errors.Is(err, repos.ErrInvalidInput) || !strings.Contains(err.Error(), "credential") {
+				t.Fatalf("ValidateURL(%q) = %v, want ErrInvalidInput pointing at a git credential", tc.url, err)
+			}
+			if strings.Contains(err.Error(), "tok@") || strings.Contains(err.Error(), "u:p") {
+				t.Fatalf("ValidateURL(%q) = %v, the error echoes the secret", tc.url, err)
+			}
+		})
+	}
+}
+
+func TestCreateAndUpdateRefuseEmbeddedCredentials(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	for _, tc := range credentialURLCases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newService(newFakeStore(), newFakeCreds(nil), &fakeEnqueuer{})
+			created, err := svc.Create(ctx, org, repos.CreateInput{Name: "infra", URL: tc.url})
+			if tc.refused != (err != nil) {
+				t.Fatalf("Create(%q) error = %v, refused want %v", tc.url, err, tc.refused)
+			}
+			if tc.refused && !errors.Is(err, repos.ErrInvalidInput) {
+				t.Fatalf("Create(%q) = %v, want ErrInvalidInput", tc.url, err)
+			}
+			if tc.refused {
+				created, err = svc.Create(ctx, org, repos.CreateInput{Name: "infra", URL: "https://git.example.com/ok.git"})
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = svc.Update(ctx, org, created.ID, repos.UpdateInput{Name: "infra", URL: tc.url + "?v=2"})
+			if tc.refused != (err != nil) {
+				t.Fatalf("Update(%q) error = %v, refused want %v", tc.url, err, tc.refused)
+			}
+		})
+	}
+}
+
+// TestUpdateKeepsLegacyCredentialURL pins backlog 7.103's no-rewrite rule: a
+// row stored before the refusal keeps saving other fields, so an owner is
+// never locked out of an edit, but a changed URL is judged afresh.
+func TestUpdateKeepsLegacyCredentialURL(t *testing.T) {
+	org := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := newService(store, newFakeCreds(nil), &fakeEnqueuer{})
+	legacy, err := store.Create(ctx, repos.Repo{
+		ID: uuid.Must(uuid.NewV7()), OrgID: org, Name: "infra",
+		URL: "https://u:tok@git.example.com/x.git", Branch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := svc.Update(ctx, org, legacy.ID, repos.UpdateInput{Name: "infra", URL: legacy.URL, Branch: "release"})
+	if err != nil {
+		t.Fatalf("Update of another field = %v, want accepted", err)
+	}
+	if got.URL != legacy.URL || got.Branch != "release" {
+		t.Fatalf("Update = %+v, want the stored URL kept and the branch changed", got)
+	}
+	// The form sends back the URL it was shown, redacted: that is the stored
+	// URL unchanged, never a write of the "***".
+	got, err = svc.Update(ctx, org, legacy.ID, repos.UpdateInput{Name: "infra", URL: repos.RedactURL(legacy.URL), Branch: "release/2"})
+	if err != nil {
+		t.Fatalf("Update echoing the redacted URL = %v, want accepted", err)
+	}
+	if got.URL != legacy.URL || got.Branch != "release/2" {
+		t.Fatalf("Update = %+v, want the stored URL kept, not %q", got, repos.RedactURL(legacy.URL))
+	}
+	if _, err := svc.Update(ctx, org, legacy.ID, repos.UpdateInput{Name: "infra", URL: "https://u:other@git.example.com/x.git"}); !errors.Is(err, repos.ErrInvalidInput) {
+		t.Fatalf("Update to another credential URL = %v, want ErrInvalidInput", err)
+	}
+	if _, err := svc.Update(ctx, org, legacy.ID, repos.UpdateInput{Name: "infra", URL: "https://git.example.com/x.git"}); err != nil {
+		t.Fatalf("Update to a clean URL = %v, want accepted", err)
+	}
+}
+
+func TestRedactURL(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"https://u:p@git.example.com/x.git", "https://***@git.example.com/x.git"},
+		{"https://tok@git.example.com/x.git", "https://***@git.example.com/x.git"},
+		{"ssh://u:p@git.example.com:22/x.git", "ssh://u@git.example.com:22/x.git"},
+		{"ssh://git@git.example.com/x.git", "ssh://git@git.example.com/x.git"},
+		{"u:p@git.example.com:x.git", "u@git.example.com:x.git"},
+		{"git@git.example.com:x.git", "git@git.example.com:x.git"},
+		{"https://git.example.com/a@b.git", "https://git.example.com/a@b.git"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := repos.RedactURL(tc.in); got != tc.want {
+			t.Errorf("RedactURL(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
