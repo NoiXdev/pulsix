@@ -270,12 +270,12 @@ func TestSQLStoreResetTokens(t *testing.T) {
 	}
 }
 
-// TestLockAccountReportsSecondFactorSQL: LockAccount maps whether the
-// account has a confirmed second factor, which the forgot path depends on
-// (backlog 7.102): true for a confirmed TOTP secret and for a passkey, false
-// for an unconfirmed secret, for none, and again after the administrator's
-// reset.
-func TestLockAccountReportsSecondFactorSQL(t *testing.T) {
+// TestHasSecondFactorSQL: HasSecondFactor, read after LockAccount, reports
+// whether the account has a confirmed second factor, which the forgot path
+// depends on (backlog 7.102): true for a confirmed TOTP secret and for a
+// passkey, false for an unconfirmed secret, for none, and again after the
+// administrator's reset.
+func TestHasSecondFactorSQL(t *testing.T) {
 	d := testdb.Open(t)
 	ctx := context.Background()
 	store := accounts.NewSQLStore(d)
@@ -300,16 +300,19 @@ func TestLockAccountReportsSecondFactorSQL(t *testing.T) {
 
 	has := func(uid uuid.UUID) bool {
 		t.Helper()
-		var got accounts.LockedAccount
+		var got bool
 		err := store.InTx(ctx, func(ctx context.Context) error {
+			if _, err := store.LockAccount(ctx, uid); err != nil {
+				return err
+			}
 			var err error
-			got, err = store.LockAccount(ctx, uid)
+			got, err = store.HasSecondFactor(ctx, uid)
 			return err
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return got.HasSecondFactor
+		return got
 	}
 	for _, tc := range []struct {
 		name string
@@ -322,7 +325,7 @@ func TestLockAccountReportsSecondFactorSQL(t *testing.T) {
 		{"no factor", none, false},
 	} {
 		if got := has(tc.uid); got != tc.want {
-			t.Errorf("LockAccount(%s).HasSecondFactor = %v, want %v", tc.name, got, tc.want)
+			t.Errorf("HasSecondFactor(%s) = %v, want %v", tc.name, got, tc.want)
 		}
 	}
 

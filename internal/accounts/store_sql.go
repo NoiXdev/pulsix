@@ -137,7 +137,16 @@ func (s *SQLStore) LockAccount(ctx context.Context, id uuid.UUID) (LockedAccount
 	if err != nil {
 		return LockedAccount{}, fmt.Errorf("lock account: %w", err)
 	}
-	return LockedAccount{HasPassword: row.HasPassword, Deactivated: row.Deactivated, MustChangePassword: row.MustChangePassword, HasSecondFactor: row.HasSecondFactor}, nil
+	return LockedAccount{HasPassword: row.HasPassword, Deactivated: row.Deactivated, MustChangePassword: row.MustChangePassword}, nil
+}
+
+// HasSecondFactor implements Store.
+func (s *SQLStore) HasSecondFactor(ctx context.Context, id uuid.UUID) (bool, error) {
+	has, err := s.q.AccountHasSecondFactor(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("read second factors: %w", err)
+	}
+	return has, nil
 }
 
 // SetTemporaryPassword implements Store.

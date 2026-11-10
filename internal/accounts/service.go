@@ -100,6 +100,11 @@ type Store interface {
 	// row for the rest of the transaction; a deactivated account is found
 	// too. ErrNotFound for an unknown id.
 	LockAccount(ctx context.Context, id uuid.UUID) (LockedAccount, error)
+	// HasSecondFactor reports whether the account has a confirmed TOTP
+	// secret or a passkey (backlog 7.102). Call it after LockAccount, in
+	// the same transaction: it reads in a statement of its own, so it sees
+	// a second-factor reset that committed while LockAccount waited.
+	HasSecondFactor(ctx context.Context, id uuid.UUID) (bool, error)
 	// SetTemporaryPassword stores an administrator's temporary password:
 	// the hash, the forced change and the expiry. ErrNotFound for an
 	// unknown id.
@@ -147,9 +152,6 @@ type LockedAccount struct {
 	// MustChangePassword is set while an administrator's temporary
 	// password waits to be replaced.
 	MustChangePassword bool
-	// HasSecondFactor is whether the account has a confirmed TOTP secret
-	// or a passkey (backlog 7.102).
-	HasSecondFactor bool
 }
 
 // active reports whether the account is in use: its invitation accepted

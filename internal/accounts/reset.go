@@ -166,7 +166,16 @@ func (s *Service) requestReset(ctx context.Context, email string) error {
 		if err != nil {
 			return fmt.Errorf("lock account: %w", err)
 		}
-		if !acct.active() || acct.MustChangePassword || !acct.HasSecondFactor {
+		if !acct.active() || acct.MustChangePassword {
+			return nil
+		}
+		// After the lock, in a statement of its own: one that waited for
+		// an administrator's second-factor reset sees the factors gone.
+		hasFactor, err := s.store.HasSecondFactor(ctx, userID)
+		if err != nil {
+			return fmt.Errorf("check second factor: %w", err)
+		}
+		if !hasFactor {
 			return nil
 		}
 		now := s.now()

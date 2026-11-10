@@ -89,16 +89,25 @@ ORDER BY o.name, o.id;
 -- the same account (the owner's own password change, an invitation being
 -- accepted, a reset) happen one after the other. A deactivated account is
 -- found too: an administrator may act on it, and reactivating needs it.
--- has_second_factor is ListAccounts' expression (a confirmed TOTP secret or
--- a passkey): the forgot-password path issues no link without one
--- (backlog 7.102).
+-- It reads only the users row: anything in another table, read in this
+-- statement, comes from the snapshot taken before the lock wait, so it can
+-- predate the transaction this one waited for (AccountHasSecondFactor).
 SELECT (u.password_hash IS NOT NULL)::boolean AS has_password, (u.disabled_at IS NOT NULL)::boolean AS deactivated,
-  u.must_change_password,
-  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = u.id AND t.confirmed_at IS NOT NULL)
-   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = u.id))::boolean AS has_second_factor
+  u.must_change_password
 FROM users u
 WHERE u.id = $1
 FOR UPDATE OF u;
+
+-- name: AccountHasSecondFactor :one
+-- Whether the account has a confirmed TOTP secret or a passkey
+-- (ListAccounts' expression): the forgot-password path issues no link
+-- without one (backlog 7.102). A statement of its own, run after
+-- LockAccount: under READ COMMITTED it takes a fresh snapshot, so it sees
+-- a second-factor reset that committed while LockAccount waited for the
+-- row. Computed inside LockAccount, it read the factors as they were
+-- before that wait.
+SELECT (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = $1 AND t.confirmed_at IS NOT NULL)
+   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = $1))::boolean AS has_second_factor;
 
 -- name: SetTemporaryPassword :execrows
 -- An administrator's temporary password: it forces a change at the next

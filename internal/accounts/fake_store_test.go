@@ -169,7 +169,11 @@ func (f *fakeStore) LockAccount(_ context.Context, id uuid.UUID) (accounts.Locke
 	if !ok {
 		return accounts.LockedAccount{}, accounts.ErrNotFound
 	}
-	return accounts.LockedAccount{HasPassword: hasPassword, Deactivated: f.deactivated[id], MustChangePassword: f.mustChange[id], HasSecondFactor: f.secondFactor[id]}, nil
+	return accounts.LockedAccount{HasPassword: hasPassword, Deactivated: f.deactivated[id], MustChangePassword: f.mustChange[id]}, nil
+}
+
+func (f *fakeStore) HasSecondFactor(_ context.Context, id uuid.UUID) (bool, error) {
+	return f.secondFactor[id], nil
 }
 
 func (f *fakeStore) SetTemporaryPassword(_ context.Context, id uuid.UUID, hash string, expiresAt time.Time) error {
