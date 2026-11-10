@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 	"unicode"
@@ -56,10 +57,11 @@ func newRedactor(job *workerpb.Job) *redactor {
 			return
 		}
 		set[v] = true
-		// The value as Python's repr() prints it (backlog 7.53) is another
-		// base text a run can show, and each base is in turn shown as
-		// JSON text.
-		for _, base := range append([]string{v}, reprSpellings(v)...) {
+		// The value as Python's repr() prints it (backlog 7.53), as YAML
+		// single-quotes it and as it is percent-encoded (backlog 7.104) are
+		// further base texts a run can show, and each base is in turn shown
+		// as JSON text.
+		for _, base := range append(append([]string{v}, reprSpellings(v)...), encodedSpellings(v)...) {
 			set[base] = true
 			for _, esc := range jsonSpellings(base) {
 				set[esc] = true
@@ -102,6 +104,50 @@ func newRedactor(job *workerpb.Job) *redactor {
 		return strings.Compare(a, b)
 	})
 	return r
+}
+
+// encodedSpellings is the YAML and URL spellings of v a run can print (backlog
+// 7.104), each only when it differs from v. Ansible's to_yaml and
+// to_nice_yaml write a string that cannot be a plain scalar (a leading '@',
+// '!', '%' or '`', an embedded ': ') single-quoted with every ' doubled; only
+// that body is listed, the quotes around it are not part of the secret.
+// Jinja2's urlencode filter percent-encodes through Python's
+// quote(safe='/') for a string and through urlencode's query form (Go's
+// url.QueryEscape: safe set without '/', ' as '+') for a dict or a for_qs
+// call, both with upper-case hex.
+func encodedSpellings(v string) []string {
+	var out []string
+	if strings.Contains(v, "'") {
+		out = append(out, strings.ReplaceAll(v, "'", "''"))
+	}
+	for _, enc := range []string{pyQuote(v), url.QueryEscape(v)} {
+		if enc != v && !slices.Contains(out, enc) {
+			out = append(out, enc)
+		}
+	}
+	return out
+}
+
+// pyQuote is v as Python's urllib.parse.quote(v, safe='/') writes it: every
+// byte except ASCII letters, digits and "_.-~/" as %XX with upper-case hex
+// (backlog 7.104). Written by hand: url.PathEscape and url.QueryEscape each
+// differ from it in the characters they keep.
+func pyQuote(v string) string {
+	const hex = "0123456789ABCDEF"
+	var sb strings.Builder
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9',
+			c == '_', c == '.', c == '-', c == '~', c == '/':
+			sb.WriteByte(c)
+		default:
+			sb.WriteByte('%')
+			sb.WriteByte(hex[c>>4])
+			sb.WriteByte(hex[c&15])
+		}
+	}
+	return sb.String()
 }
 
 // jsonSpellings is every JSON string-body spelling of v a run can print:

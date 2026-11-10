@@ -7,7 +7,9 @@ package runner
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -326,5 +328,85 @@ func TestRedactsPythonReprSpellings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A secret a play prints through to_yaml/to_nice_yaml (a single-quoted YAML
+// scalar, every ' doubled) or through Jinja2's urlencode (Python's
+// quote(safe='/'), upper-case hex) or a query-string encoder (Go's
+// url.QueryEscape form, '+' for a space) must not reach the run log
+// (backlog 7.104). The literals are what ansible-core printed for the secret.
+func TestRedactsYAMLQuotedAndURLEncodedSpellings(t *testing.T) {
+	const quoted = `'@Pa'ss!w0rd'`
+	for _, tc := range []struct{ name, secret, literal string }{
+		{"to_yaml single-quoted scalar", quoted, `db: {password: '''@Pa''ss!w0rd'''}`},
+		{"to_nice_yaml single-quoted scalar", quoted, "db:\n    password: '''@Pa''ss!w0rd'''\n"},
+		{"urlencode, Python quote", quoted, `postgresql://app:%27%40Pa%27ss%21w0rd%27@db.example.invalid/app`},
+		{"url.QueryEscape", quoted, "dsn=" + url.QueryEscape(quoted)},
+		// A space is where the two encoders part: '%20' versus '+'.
+		{"url.QueryEscape space", "@Pa ss!w0rd", "dsn=" + url.QueryEscape("@Pa ss!w0rd")},
+		{"Python quote space", "@Pa ss!w0rd", "dsn=%40Pa%20ss%21w0rd"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newRedactor(&workerpb.Job{Redact: []string{tc.secret}})
+			asJSON, err := json.Marshal(tc.literal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, text := range map[string]string{
+				"plain":       tc.literal,
+				"inside JSON": `{"msg":` + string(asJSON) + `}`,
+			} {
+				got := r.text(text)
+				if strings.Contains(got, "w0rd") || !strings.Contains(got, redactedMarker) {
+					t.Fatalf("%s kept the secret: %s", name, got)
+				}
+			}
+		})
+	}
+}
+
+// pyQuote must match Python's urllib.parse.quote(v, safe='/'): every byte but
+// ASCII letters, digits and "_.-~/" is %XX with upper-case hex, UTF-8 bytes
+// included (backlog 7.104).
+func TestPyQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain-Text_9.~/x": "plain-Text_9.~/x",
+		`'@Pa'ss!w0rd'`:    "%27%40Pa%27ss%21w0rd%27",
+		"a b+c":            "a%20b%2Bc",
+		"pä":               "p%C3%A4",
+	} {
+		if got := pyQuote(in); got != want {
+			t.Errorf("pyQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A secret of only letters and digits has no YAML or percent-encoded
+// spelling, so it must add nothing beyond the spellings it had before
+// (backlog 7.104).
+func TestRedactAddsNoSpellingsForPlainSecret(t *testing.T) {
+	const secret = "Passw0rd9X"
+	want := map[string]bool{secret: true}
+	for _, base := range append([]string{secret}, reprSpellings(secret)...) {
+		want[base] = true
+		for _, e := range jsonSpellings(base) {
+			want[e] = true
+		}
+		for _, e := range nestedJSONSpellings(base) {
+			want[e] = true
+		}
+	}
+	for _, e := range base64Spellings(secret) {
+		want[e] = true
+	}
+	r := newRedactor(&workerpb.Job{Redact: []string{secret}})
+	if len(r.values) != len(want) {
+		t.Fatalf("got %d spellings, want %d: %q", len(r.values), len(want), r.values)
+	}
+	for _, v := range r.values {
+		if !want[v] {
+			t.Errorf("unexpected spelling %q", v)
+		}
 	}
 }
