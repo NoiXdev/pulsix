@@ -137,6 +137,30 @@ func TestRereadsAreCharged(t *testing.T) {
 	wantNotes(t, pb.Notes, "warning file_too_complex roles/r0/meta/argument_specs.yml:0")
 }
 
+// TestOneEntryPointOverTheFileBudget: an entry point whose own mapping
+// passes the file's budget on the first read leaves the file exhausted. Its
+// uses report unreadable, the file is noted once, and the later entry
+// point does not open it again (backlog 7.121).
+func TestOneEntryPointOverTheFileBudget(t *testing.T) {
+	// One mapping merges the 10 000-key one 64 times and argument_specs
+	// merges that 64 times (the most merge sources of a mapping): about
+	// 1 300 000 steps, past the file's 1 000 000 on the first read.
+	var wide strings.Builder
+	wide.WriteString("d: &D {e0: {}, e1: {}")
+	for i := range 10_000 {
+		fmt.Fprintf(&wide, ", k%d: 0", i)
+	}
+	wide.WriteString("}\nm: &M {<<: [*D" + strings.Repeat(", *D", 63) + "]}\n")
+	wide.WriteString("argument_specs: {<<: [*M" + strings.Repeat(", *M", 63) + "]}\n")
+	pb, h, _ := heldBy(rolesUsing(wide.String(), 1, "e0,e1"))
+	file := "roles/r0/meta/argument_specs.yml"
+	wantRoles(t, pb.Roles, RoleUse{"r0", "e0", RoleUnreadable}, RoleUse{"r0", "e1", RoleUnreadable})
+	wantNotes(t, pb.Notes, "warning file_too_complex "+file+":0")
+	if n := h.opens[file]; n != 1 {
+		t.Fatalf("the spec file was opened %d times, want once", n)
+	}
+}
+
 // TestRepeatedEntryPointIsNotReread: a use of an entry point already
 // mapped is served from what the first use kept. Two entry point names
 // longer than a shown name, alike in what is shown, are such a pair: the
