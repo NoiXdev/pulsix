@@ -390,3 +390,28 @@ func TestRecordObservationsStoresABatchWithANULError(t *testing.T) {
 		t.Fatalf("stored error = %q (found %v), want %q", got, found, "read /proc/x: denied")
 	}
 }
+
+// TestRecordObservationsCountsANULOnlyErrorAsMalformed: an error text made
+// only of NUL bytes is empty once cleaned, which leaves an observation with
+// no value, label or error. It is counted Malformed instead of reaching the
+// store's CHECK constraints, and the rest of the batch still lands.
+func TestRecordObservationsCountsANULOnlyErrorAsMalformed(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-nul-only-error")
+	host := seedHost(t, d, org, "nul-only-error-host")
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now))
+	scoped := db.WithOrgScope(ctx, org)
+
+	res, err := svc.RecordObservations(scoped, org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "usage", At: now, Value: f64(1)},
+		{HostID: host, CheckKey: "disk", Item: "/", Metric: "used_pct", At: now, Err: "\x00"},
+		{HostID: host, CheckKey: "cpu", Metric: "load1", At: now, Value: f64(2)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 2 || res.Malformed != 1 {
+		t.Fatalf("ingest = %+v, want 2 accepted and 1 malformed", res)
+	}
+}

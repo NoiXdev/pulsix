@@ -361,7 +361,12 @@ func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs [
 	now := s.now()
 	valid := make([]Observation, 0, len(obs))
 	for _, o := range obs {
-		// Shape first: an observation that carries both a value and a
+		// An error text is cleaned before the shape check: one made only
+		// of NUL bytes is empty afterwards and must count as malformed,
+		// not reach the store as a sample with neither value nor label.
+		// o is a copy, so the caller's slice keeps its full text.
+		o.Err = cleanErr(o.Err)
+		// Shape next: an observation that carries both a value and a
 		// label says nothing worth checking a timestamp against, and
 		// counting it as a clock problem would send an operator to NTP
 		// for an agent bug.
@@ -371,8 +376,6 @@ func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs [
 		case !plausible(o.At, now):
 			res.Implausible++
 		default:
-			// o is a copy, so the caller's slice keeps its full text.
-			o.Err = cleanErr(o.Err)
 			valid = append(valid, o)
 		}
 	}
