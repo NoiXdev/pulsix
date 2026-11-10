@@ -235,3 +235,12 @@ func (y *yamlFile) items(n *yaml.Node) []*yaml.Node {
 	}
 	return n.Content
 }
+
+// release drops what the file's readers cached about its parsed nodes, so
+// the tree can be collected once its owner lets go of it. What stays is the
+// budget and the notes: the file is still accounted, and its notes taken at
+// the end of the walk. A released file must not be read again (backlog 7.113).
+func (y *yamlFile) release() {
+	y.entries = map[*yaml.Node][]pair{}
+	y.byKey = map[*yaml.Node]map[string]*yaml.Node{}
+}

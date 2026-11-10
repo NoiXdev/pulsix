@@ -63,15 +63,33 @@ func readSpecRoot(y *yamlFile, root *yaml.Node, role, entryPoint string, kind sc
 	return r
 }
 
+// locateSpecs finds the argument_specs entry of a spec file's root. bad is
+// the note why the file or its argument_specs is not a mapping, nil when it
+// is (or argument_specs is absent or null).
+func locateSpecs(y *yamlFile, root *yaml.Node) (specs pair, hasSpecs bool, bad *Note) {
+	if !isNull(root) && root.Kind != yaml.MappingNode {
+		n := warning(codeFieldInvalid, y.file, root.Line, "the file is not a mapping; nothing read")
+		return pair{}, false, &n
+	}
+	specs, hasSpecs = y.entry(root, "argument_specs")
+	if v := resolve(specs.value); hasSpecs && !isNull(v) && v.Kind != yaml.MappingNode {
+		n := warning(codeFieldInvalid, y.file, specs.key.Line, "argument_specs is not a mapping of entry points; nothing read")
+		return pair{}, false, &n
+	}
+	return specs, hasSpecs, nil
+}
+
+// missingEntryPoint is the hint for an entry point argument_specs lacks;
+// line is the argument_specs key's line, 0 without one.
+func missingEntryPoint(file string, line int, entryPoint string) Note {
+	return hint(codeEntryPointMissing, file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint))
+}
+
 // mapEntryPoint maps the options of one entry point, noting into y.
 func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind schema.SourceKind) specResult {
-	if !isNull(root) && root.Kind != yaml.MappingNode {
-		y.note(warning(codeFieldInvalid, y.file, root.Line, "the file is not a mapping; nothing read"))
-		return specResult{broken: true}
-	}
-	specs, hasSpecs := y.entry(root, "argument_specs")
-	if v := resolve(specs.value); hasSpecs && !isNull(v) && v.Kind != yaml.MappingNode {
-		y.note(warning(codeFieldInvalid, y.file, specs.key.Line, "argument_specs is not a mapping of entry points; nothing read"))
+	specs, hasSpecs, bad := locateSpecs(y, root)
+	if bad != nil {
+		y.note(*bad)
 		return specResult{broken: true}
 	}
 	ep, found := y.entry(specs.value, entryPoint)
@@ -80,9 +98,14 @@ func mapEntryPoint(y *yamlFile, root *yaml.Node, role, entryPoint string, kind s
 		if hasSpecs {
 			line = specs.key.Line
 		}
-		y.note(hint(codeEntryPointMissing, y.file, line, "no entry point %q under argument_specs; no fields read from this file", short(entryPoint)))
+		y.note(missingEntryPoint(y.file, line, entryPoint))
 		return specResult{}
 	}
+	return mapEntry(y, ep, role, entryPoint, kind)
+}
+
+// mapEntry maps the options of the entry point ep of argument_specs.
+func mapEntry(y *yamlFile, ep pair, role, entryPoint string, kind schema.SourceKind) specResult {
 	r := specResult{entryFound: true}
 	m := specMapper{y: y, budget: maxSpecFields}
 	entry := resolve(ep.value)

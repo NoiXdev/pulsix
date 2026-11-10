@@ -229,6 +229,9 @@ type walk struct {
 func (w *walk) visit(file string, d decoded, depth int) bool {
 	w.visited[file] = true
 	w.filesRead++
+	// Once this file and what it pulls in are read, only its budget and notes
+	// are still needed: not the nodes its caches point at (backlog 7.113).
+	defer d.y.release()
 	f := readPlayFile(d.y, d.doc, path.Dir(file), w.lists)
 	w.account(d.y)
 	if n, over := d.y.tooComplex(); over {

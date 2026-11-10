@@ -1,14 +1,10 @@
 package varsource
 
 import (
-	"errors"
 	"fmt"
 	"io/fs"
 	"path"
 	"strings"
-
-	"github.com/noixdev/pulsix/internal/inventory/schema"
-	"gopkg.in/yaml.v3"
 )
 
 // InstalledRolesPrefix starts the path of a file read from the roles
@@ -280,91 +276,4 @@ func (w *walk) findRole(name, dir string, colls []string) roleTarget {
 		return roleTarget{state: RoleNotFound, where: "inside the repository"}
 	}
 	return roleTarget{state: RoleNotFound, where: clip(strings.Join(where, " or "), maxRefBytes)}
-}
-
-// roleSpec is a role's spec file as read once per walk: many entry points
-// of one file (tasks_from) share one parse and one budget.
-type roleSpec struct {
-	missing bool // no such file
-	failed  bool // not read: too large, not valid YAML, … (noted once)
-	y       *yamlFile
-	root    *yaml.Node
-}
-
-// spec reads and parses the spec file name (a path in the tree from) once
-// per walk. Its notes join the playbook's where it was first read; they and
-// its fields name the file as shown (with the tree's prefix).
-func (w *walk) spec(name string, from roleSource) *roleSpec {
-	key := specKey{file: name, from: from}
-	if s, ok := w.specs[key]; ok {
-		return s
-	}
-	fsys, prefix := w.tree(from)
-	file := prefix + name
-	s := &roleSpec{}
-	data, err := w.read(fsys, name)
-	switch {
-	case isNotExist(err):
-		s.missing = true
-	case errors.Is(err, errGivenUp):
-		s.failed = true
-	case err != nil:
-		s.failed = true
-		w.addNotes(readNote(file, err))
-	default:
-		var doc yaml.Node
-		if err := yaml.Unmarshal(data, &doc); err != nil {
-			s.failed = true
-			w.addNotes(invalidYAML(file, err))
-			break
-		}
-		s.y, s.root = newYAMLFile(file), documentRoot(&doc)
-		w.sources = append(w.sources, noteSource{y: s.y})
-	}
-	w.specs[key] = s
-	return s
-}
-
-// readRole reads the argument specs of a found role for r's entry point:
-// read, no_specs, or unreadable (a note says why).
-func (w *walk) readRole(t roleTarget, r roleRef) RoleState {
-	for _, name := range specNames {
-		s := w.spec(path.Join(t.dir, "meta", name), t.from)
-		switch {
-		case s.missing:
-			continue
-		case s.failed:
-			return RoleUnreadable
-		}
-		return w.readRoleSpec(s, r, strings.HasPrefix(name, "main."))
-	}
-	return RoleNoSpecs
-}
-
-// readRoleSpec maps r's entry point of a parsed spec file. A meta/main
-// file without an argument_specs key declares no specs. A file, an
-// argument_specs value or an entry point of the wrong shape, or a file
-// that runs out of budget, is unreadable.
-func (w *walk) readRoleSpec(s *roleSpec, r roleRef, metaMain bool) RoleState {
-	y := s.y
-	if y.exceeded() {
-		return RoleUnreadable
-	}
-	if metaMain && (isNull(s.root) || s.root.Kind == yaml.MappingNode) && isNull(y.lookup(s.root, "argument_specs")) {
-		w.account(y)
-		if y.exceeded() {
-			return RoleUnreadable
-		}
-		return RoleNoSpecs
-	}
-	res := mapEntryPoint(y, s.root, r.shownName(), r.shownEntryPoint(), schema.SourceArgumentSpec)
-	w.account(y)
-	if y.exceeded() {
-		return RoleUnreadable
-	}
-	w.addSpecResult(res)
-	if res.broken {
-		return RoleUnreadable
-	}
-	return RoleRead
 }

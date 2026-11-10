@@ -182,3 +182,20 @@ func invalidYAML(file string, err error) Note {
 	}
 	return warning(codeInvalidYAML, file, line, "not valid YAML, nothing read from this file: %v", err)
 }
+
+// capture runs read and returns the notes it raised, and how many were
+// dropped past the cap, instead of leaving them in y; y's own notes are as
+// they were before. replay puts them in y later, as if read raised them then.
+func (y *yamlFile) capture(read func()) (notes []Note, dropped int) {
+	keep, keepDropped := y.notes, y.dropped
+	y.notes, y.dropped = nil, 0
+	read()
+	notes, dropped = y.notes, y.dropped
+	y.notes, y.dropped = keep, keepDropped
+	return notes, dropped
+}
+
+func (y *yamlFile) replay(notes []Note, dropped int) {
+	y.note(notes...)
+	y.dropped += dropped
+}
