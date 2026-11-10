@@ -31,9 +31,8 @@ type roleSpec struct {
 
 	// What reading the file raised before any entry point, replayed with the
 	// first use of the file: duplicate keys of the top-level mappings.
-	common        []Note
-	commonDropped int
-	commonShown   bool
+	common      captured
+	commonShown bool
 
 	noSpecs   bool  // a meta/main file without an argument_specs key
 	bad       *Note // the file or its argument_specs is no mapping: every entry point is broken
@@ -44,9 +43,8 @@ type roleSpec struct {
 // specEntry is one entry point of a spec file, mapped when the file was
 // parsed.
 type specEntry struct {
-	res     specResult // fields carry no role name: a use sets its own
-	notes   []Note
-	dropped int
+	res  specResult // fields carry no role name: a use sets its own
+	read captured
 }
 
 // spec reads and parses the spec file name (a path in the tree from) once
@@ -97,7 +95,8 @@ func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
 	s.entries = map[string]*specEntry{}
 	var specs pair
 	var hasSpecs bool
-	s.common, s.commonDropped = y.capture(func() {
+	var list []pair // the entry points
+	s.common = y.capture(func() {
 		if metaMain && (isNull(root) || root.Kind == yaml.MappingNode) && isNull(y.lookup(root, "argument_specs")) {
 			s.noSpecs = true
 			return
@@ -105,7 +104,7 @@ func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
 		specs, hasSpecs, s.bad = locateSpecs(y, root)
 		if s.bad == nil && hasSpecs {
 			s.specsLine = specs.key.Line
-			y.pairs(specs.value) // its duplicate keys, once
+			list = y.pairs(specs.value) // its duplicate keys are noted here, once
 		}
 	})
 	if s.noSpecs || s.bad != nil || y.exceeded() {
@@ -113,14 +112,14 @@ func (s *roleSpec) extract(root *yaml.Node, metaMain bool) {
 		return
 	}
 	m := &specMapper{y: y, budget: maxSpecFields}
-	for _, ep := range y.pairs(specs.value) {
+	for _, ep := range list {
 		m.budget--
 		if m.budget < 0 || !y.spend(1) {
 			y.giveUp()
 			break
 		}
 		e := &specEntry{}
-		e.notes, e.dropped = y.capture(func() {
+		e.read = y.capture(func() {
 			e.res = mapEntry(y, m, ep, "", ep.key.Value, schema.SourceArgumentSpec)
 		})
 		if m.exhausted || y.exceeded() {
@@ -158,7 +157,7 @@ func (w *walk) readRoleSpec(s *roleSpec, r roleRef) RoleState {
 	y := s.y
 	if !s.commonShown {
 		s.commonShown = true
-		y.replay(s.common, s.commonDropped)
+		y.replay(s.common)
 	}
 	switch {
 	case s.over:
@@ -172,7 +171,7 @@ func (w *walk) readRoleSpec(s *roleSpec, r roleRef) RoleState {
 	name := r.shownEntryPoint()
 	e, found := s.entries[name]
 	if found {
-		y.replay(e.notes, e.dropped)
+		y.replay(e.read)
 	} else {
 		y.note(missingEntryPoint(y.file, s.specsLine, name))
 		e = &specEntry{}

@@ -141,6 +141,31 @@ func TestRoleEntryPointsAreReplayedPerUse(t *testing.T) {
 		t.Fatalf("notes = %v, %d fields; want the duplicate_key warning of the shared mapping", pb.Notes, len(pb.Fields))
 	}
 
+	// The same through attrs (an option's spec, an entry point's own keys),
+	// which has a cache of its own.
+	for name, spec := range map[string]string{
+		"option spec": "argument_specs:\n  a:\n    options:\n      o: &S {type: str, type: int}\n  b:\n    options:\n      o: *S\n",
+		"entry point": "argument_specs:\n  a: &E\n    options: {o: {type: str}}\n    short_description: x\n    short_description: y\n  b: *E\n",
+	} {
+		pb = ParsePlaybook(fstest.MapFS{
+			"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: b}\n")},
+			"roles/x/meta/argument_specs.yml": {Data: []byte(spec)},
+		}, "site.yml")
+		if codes(pb.Notes)[codeDuplicateKey] != 1 {
+			t.Fatalf("%s: notes = %v, want the duplicate_key warning of the shared mapping", name, pb.Notes)
+		}
+	}
+
+	// A mapping merged into a shared one counts too.
+	merged := "argument_specs:\n  a:\n    options: &O\n      <<: &M {x: {type: str}, x: {type: int}}\n  b:\n    options: *O\n"
+	pb = ParsePlaybook(fstest.MapFS{
+		"site.yml":                        {Data: []byte("- hosts: all\n  tasks:\n    - import_role: {name: x, tasks_from: b}\n")},
+		"roles/x/meta/argument_specs.yml": {Data: []byte(merged)},
+	}, "site.yml")
+	if codes(pb.Notes)[codeDuplicateKey] != 1 {
+		t.Fatalf("merged: notes = %v, want the duplicate_key warning of the merged mapping", pb.Notes)
+	}
+
 	// An entry point no use asks for raises no note.
 	pb = ParsePlaybook(fstest.MapFS{
 		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x]\n")},
@@ -221,6 +246,59 @@ func TestEntryPointsShareTheOptionBudget(t *testing.T) {
 	wantRoles(t, pb.Roles, RoleUse{"x", "e0", RoleUnreadable})
 	if len(pb.Fields) != 0 {
 		t.Fatalf("%d fields from a file given up", len(pb.Fields))
+	}
+	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
+}
+
+// TestSpecsMappingNotesAreRaisedOnce: the duplicate keys of the
+// argument_specs mapping are noted once, so they do not push the notes of
+// the entry point in use past the file's cap.
+func TestSpecsMappingNotesAreRaisedOnce(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("argument_specs:\n  main:\n    options:\n      o: {type: raw}\n")
+	for range 150 {
+		b.WriteString("  other: {}\n")
+	}
+	pb := ParsePlaybook(fstest.MapFS{
+		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x]\n")},
+		"roles/x/meta/argument_specs.yml": {Data: []byte(b.String())},
+	}, "site.yml")
+	counts := codes(pb.Notes)
+	if counts[codeUnsupportedType] != 1 || counts[codeTooManyNotes] != 0 {
+		t.Fatalf("notes = %v, want the unsupported_type warning and no too_many_notes", counts)
+	}
+}
+
+// TestSharedDuplicateNotesAreBounded: entry points that merge one mapping
+// with many duplicate keys re-raise its notes for each of them. Doing that
+// is charged to the file and keeps no copy of the notes, so ten thousand
+// such entry points give the file up instead of holding gigabytes (backlog
+// 7.113).
+func TestSharedDuplicateNotesAreBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("d: &D {")
+	for range 201 {
+		b.WriteString("z: 1, ")
+	}
+	b.WriteString("}\nargument_specs:\n")
+	for i := range 9_990 {
+		fmt.Fprintf(&b, "  e%d: {<<: *D}\n", i)
+	}
+	h := &heapFS{FS: fstest.MapFS{
+		"site.yml":                        {Data: []byte("- hosts: all\n  roles: [x, y]\n")},
+		"roles/x/meta/argument_specs.yml": {Data: []byte(b.String())},
+		"roles/y/meta/argument_specs.yml": {Data: []byte(oneOption("y_var"))},
+	}}
+	base := liveHeap()
+	pb := ParsePlaybook(h, "site.yml")
+	held := h.peak - min(h.peak, base)
+	t.Logf("heap held when the next role was opened: %d KiB", held>>10)
+	if held > 16<<20 {
+		t.Fatalf("the walk held %d MiB when it opened the next role, want under 16 MiB", held>>20)
+	}
+	wantRoles(t, pb.Roles, RoleUse{"x", "main", RoleUnreadable}, RoleUse{"y", "main", RoleRead})
+	if got := fieldNames(pb.Fields); !slices.Equal(got, []string{"y_var"}) {
+		t.Fatalf("fields = %q, want only y's", got)
 	}
 	wantNotes(t, pb.Notes, "warning file_too_complex roles/x/meta/argument_specs.yml:0")
 }

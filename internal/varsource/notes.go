@@ -183,19 +183,33 @@ func invalidYAML(file string, err error) Note {
 	return warning(codeInvalidYAML, file, line, "not valid YAML, nothing read from this file: %v", err)
 }
 
-// capture runs read and returns the notes it raised, and how many were
-// dropped past the cap, instead of leaving them in y; y's own notes are as
-// they were before. replay puts them in y later, as if read raised them then.
-func (y *yamlFile) capture(read func()) (notes []Note, dropped int) {
-	keep, keepDropped, keepSeen := y.notes, y.dropped, y.seen
-	y.notes, y.dropped, y.seen = nil, 0, nil
-	read()
-	notes, dropped = y.notes, y.dropped
-	y.notes, y.dropped, y.seen = keep, keepDropped, keepSeen
-	return notes, dropped
+// captured is what a read raised in a capture: its notes, how many were
+// dropped past the cap, and the shared duplicate_key notes it re-raised.
+type captured struct {
+	notes   []Note
+	dropped int
+	refs    []dupRef
 }
 
-func (y *yamlFile) replay(notes []Note, dropped int) {
-	y.note(notes...)
-	y.dropped += dropped
+// capture runs read and returns the notes it raised instead of leaving them
+// in y; y's own notes are as they were before. replay puts them in y later,
+// as if read raised them then.
+func (y *yamlFile) capture(read func()) captured {
+	keep, keepDropped, keepSeen, keepRefs := y.notes, y.dropped, y.seen, y.refs
+	y.notes, y.dropped, y.seen, y.refs = nil, 0, nil, nil
+	read()
+	c := captured{y.notes, y.dropped, y.refs}
+	y.notes, y.dropped, y.seen, y.refs = keep, keepDropped, keepSeen, keepRefs
+	return c
+}
+
+func (y *yamlFile) replay(c captured) {
+	i := 0
+	for _, r := range c.refs {
+		y.note(c.notes[i:r.at]...)
+		i = r.at
+		y.note(r.notes...)
+	}
+	y.note(c.notes[i:]...)
+	y.dropped += c.dropped
 }

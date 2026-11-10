@@ -60,8 +60,18 @@ type yamlFile struct {
 	// cannot swallow them. dups holds a mapping's notes, seen the mappings the
 	// running capture has read.
 	trackDups bool
-	dups      map[*yaml.Node][]Note
+	dups      map[*yaml.Node][]Note       // a mapping's own duplicate_key notes
+	merged    map[*yaml.Node][]*yaml.Node // the mappings a mapping merges in
 	seen      map[*yaml.Node]bool
+	refs      []dupRef // the notes the running capture re-raised
+}
+
+// dupRef is a mapping's duplicate_key notes a capture re-raised, at the
+// place among the capture's own notes where they were: it points at the
+// notes kept once, it does not copy them.
+type dupRef struct {
+	at    int
+	notes []Note
 }
 
 func newYAMLFile(file string) *yamlFile {
@@ -97,7 +107,7 @@ func (y *yamlFile) tooComplex() (Note, bool) {
 	if !y.over {
 		return Note{}, false
 	}
-	return warning(codeFileTooComplex, y.file, 0, "reading this file took more than %d steps or %d bytes (anchors, aliases and merge keys expanded); nothing read from it", maxVisits, maxReadBytes), true
+	return warning(codeFileTooComplex, y.file, 0, "reading this file took more than %d steps, %d bytes or %d options (anchors, aliases and merge keys expanded); nothing read from it", maxVisits, maxReadBytes, maxSpecFields), true
 }
 
 // pairs returns the entries of a mapping in order, nil for anything else.
@@ -156,6 +166,9 @@ func (y *yamlFile) pairs(n *yaml.Node) []pair {
 				break
 			}
 			sources++
+			if y.trackDups {
+				y.merged[n] = append(y.merged[n], resolve(src))
+			}
 			ps := y.pairs(src)
 			if !y.spend(len(ps)) {
 				return nil
@@ -208,6 +221,7 @@ func mergeSources(v *yaml.Node) []*yaml.Node {
 func (y *yamlFile) attrs(n *yaml.Node) map[string]*yaml.Node {
 	n = resolve(n)
 	if m, ok := y.byKey[n]; ok {
+		y.raiseDups(n)
 		return m
 	}
 	ps := y.pairs(n)
@@ -249,7 +263,7 @@ func (y *yamlFile) items(n *yaml.Node) []*yaml.Node {
 
 // trackDuplicates starts keeping the duplicate_key notes of each mapping.
 func (y *yamlFile) trackDuplicates() {
-	y.trackDups, y.dups = true, map[*yaml.Node][]Note{}
+	y.trackDups, y.dups, y.merged = true, map[*yaml.Node][]Note{}, map[*yaml.Node][]*yaml.Node{}
 }
 
 // noteDuplicate raises a duplicate_key note of the mapping n, and keeps it
@@ -272,13 +286,25 @@ func (y *yamlFile) markSeen(n *yaml.Node) {
 	y.seen[n] = true
 }
 
-// raiseDups raises the notes of a mapping read before, once per capture.
+// raiseDups re-raises the duplicate_key notes of the mapping n and of the
+// mappings it merges in, once per capture, as references to the notes kept
+// (see dupRef). Each is charged to the file, so entry points sharing a
+// mapping with many duplicate keys cannot multiply them for free.
 func (y *yamlFile) raiseDups(n *yaml.Node) {
-	if !y.trackDups || y.seen[n] {
+	if !y.trackDups || n == nil || y.seen[n] {
 		return
 	}
 	y.markSeen(n)
-	y.note(y.dups[n]...)
+	own, merged := y.dups[n], y.merged[n]
+	if len(own)+len(merged) == 0 || !y.spend(len(own)+len(merged)) {
+		return
+	}
+	if len(own) > 0 {
+		y.refs = append(y.refs, dupRef{at: len(y.notes), notes: own})
+	}
+	for _, m := range merged {
+		y.raiseDups(m)
+	}
 }
 
 // release drops what the file's readers cached about its parsed nodes, so
@@ -288,5 +314,5 @@ func (y *yamlFile) raiseDups(n *yaml.Node) {
 func (y *yamlFile) release() {
 	y.entries = map[*yaml.Node][]pair{}
 	y.byKey = map[*yaml.Node]map[string]*yaml.Node{}
-	y.trackDups, y.dups, y.seen = false, nil, nil
+	y.trackDups, y.dups, y.merged, y.seen, y.refs = false, nil, nil, nil, nil
 }
