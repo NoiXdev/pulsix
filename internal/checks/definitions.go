@@ -64,7 +64,11 @@ var supportedPlugins = map[string]bool{
 var keyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 const (
-	minInterval = 10 * time.Second
+	// MinInterval is the shortest check interval a definition may carry. It
+	// is exported because it is also the fastest an agent can legitimately
+	// produce observations, which internal/agentapi's per-stream ingest
+	// budget uses as its refill period (backlog 7.111).
+	MinInterval = 10 * time.Second
 	maxInterval = 24 * time.Hour
 )
 
@@ -205,8 +209,8 @@ func ValidateDefinitionShape(plugin, key string, params map[string]any, interval
 	if !keyPattern.MatchString(normalizedKey) {
 		return "", fmt.Errorf("%w: key must match %s", ErrInvalidInput, keyPattern.String())
 	}
-	if interval < minInterval || interval > maxInterval {
-		return "", fmt.Errorf("%w: interval must be between %s and %s", ErrInvalidInput, minInterval, maxInterval)
+	if interval < MinInterval || interval > maxInterval {
+		return "", fmt.Errorf("%w: interval must be between %s and %s", ErrInvalidInput, MinInterval, maxInterval)
 	}
 	if err := validateParams(plugin, params); err != nil {
 		return "", err

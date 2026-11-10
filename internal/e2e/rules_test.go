@@ -69,7 +69,7 @@ import (
 )
 
 // ruleCheckInterval is the host-bound cpu check's own interval: the
-// minimum internal/checks.minInterval accepts, so claim 4's staleness
+// minimum internal/checks.MinInterval accepts, so claim 4's staleness
 // deadline (3x this) is 30 seconds, not three minutes.
 const ruleCheckInterval = 10 * time.Second
 

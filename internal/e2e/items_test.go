@@ -84,7 +84,7 @@ import (
 )
 
 // itemCheckInterval is the host-bound disk check's own interval: the
-// minimum internal/checks.minInterval accepts, the same lever
+// minimum internal/checks.MinInterval accepts, the same lever
 // ruleCheckInterval uses in rules_test.go, so discovery and every
 // evaluation this scenario waits on run in seconds rather than minutes.
 const itemCheckInterval = 10 * time.Second
