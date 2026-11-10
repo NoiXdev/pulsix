@@ -181,11 +181,17 @@ func (p *plan) addRoleMapping(e *yaml.Node) error {
 	var from string
 	switch {
 	case hasSrc:
+		if err := p.requireString("role src", src); err != nil {
+			return err
+		}
 		from = scalarText(src)
 		if isString(src) {
 			p.sources = append(p.sources, src.Value)
 		}
 	case hasName:
+		if err := p.requireString("role name", nameNode); err != nil {
+			return err
+		}
 		from = scalarText(nameNode)
 		if isString(nameNode) {
 			p.sources = append(p.sources, nameNode.Value)
@@ -275,6 +281,19 @@ func roleNameFromSource(src string) string {
 // boolean or null).
 func isString(n *yaml.Node) bool {
 	return n.Kind == yaml.ScalarNode && n.ShortTag() == "!!str"
+}
+
+// requireString refuses a scalar that is neither a string nor null, for a
+// field the plan records as a source (backlog 7.105): yaml.v3 reads 1e3, 1e+3
+// and 0o17 as numbers where galaxy's PyYAML reads strings, and galaxy follows
+// them as relative paths, so checkSources would never see the path. A
+// quoted value is a string to both loaders and is recorded as it is. A list
+// or a mapping is no scalar and is left to the checks that already read it.
+func (p *plan) requireString(field string, n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode && n.ShortTag() != "!!str" && n.ShortTag() != "!!null" {
+		return notRequirements(p.name, "the %s %s is not a string; quote it", field, n.Value)
+	}
+	return nil
 }
 
 // mappingFields indexes a mapping's values by their scalar keys. The file has

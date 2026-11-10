@@ -24,7 +24,9 @@ var mightBeCollectionName = regexp.MustCompile(`^(?:\w|[^\x00-\x7f])*\.(?:\w|[^\
 // addCollections reads a collection list: each entry a name or a mapping
 // whose name and source are sources, and whose name galaxy may install
 // under is namespace.name (checkCollection). A string, name or source that
-// starts with "hg+" is a Mercurial source and is refused (refuseMercurial).
+// starts with "hg+" is a Mercurial source and is refused (refuseMercurial). A
+// name or source that is a number or a boolean is refused (requireString,
+// backlog 7.105).
 func (p *plan) addCollections(list *yaml.Node) error {
 	for i, e := range list.Content {
 		var err error
@@ -41,7 +43,14 @@ func (p *plan) addCollections(list *yaml.Node) error {
 			fields := mappingFields(e)
 			p.addValues(e, map[string]string{"name": "name", "version": "version", "type": "type", "source": "source"})
 			for _, field := range []string{"name", "source"} {
-				if v, ok := fields[field]; ok && isString(v) {
+				v, ok := fields[field]
+				if !ok {
+					continue
+				}
+				if err := p.requireString("collection "+field, v); err != nil {
+					return err
+				}
+				if isString(v) {
 					if strings.HasPrefix(v.Value, "hg+") {
 						return p.refuseMercurial(v.Value)
 					}

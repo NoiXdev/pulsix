@@ -27,7 +27,6 @@ func TestParseFileAllowsOnlyNamespaceNameCollectionNames(t *testing.T) {
 		{"type galaxy with a source", "collections:\n  - {name: ../x.y, type: galaxy, source: https://galaxy.example}\n", "../x.y"},
 		{"three parts", "collections:\n  - {name: a.b.c, type: galaxy}\n", "a.b.c"},
 		{"a trailing space", "collections:\n  - {name: \"ns.coll \", type: galaxy}\n", "ns.coll "},
-		{"a number as the name", "collections:\n  - {name: 1.5, type: file, source: ./c.tar.gz}\n", "1.5"},
 		// Without type: galaxy keeps any name its is_valid_collection_name
 		// accepts, and that takes any Python identifier, not only ASCII.
 		{"a plain string with a non-ASCII name", "collections:\n  - \"ns.cöll\"\n", "ns.cöll"},

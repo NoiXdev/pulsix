@@ -67,7 +67,7 @@ func TestCheckSourcesKeepsAGitSubdirectoryInsideTheCheckout(t *testing.T) {
 
 func TestParseFileCollectsGitSources(t *testing.T) {
 	file := "roles:\n  - src: git+https://h/r.git\n    name: r\n" +
-		"collections:\n  - git+https://h/a.git#sub\n  - name: https://h/b.git\n    type: git\n  - name: ns.b\n    type: git\n    source: git+https://h/c.git\n  - name: ns.col\n    source: 42\n"
+		"collections:\n  - git+https://h/a.git#sub\n  - name: https://h/b.git\n    type: git\n  - name: ns.b\n    type: git\n    source: git+https://h/c.git\n  - ns.col\n"
 	p, err := parseFile("requirements.yml", []byte(file))
 	if err != nil {
 		t.Fatal(err)
@@ -78,16 +78,17 @@ func TestParseFileCollectsGitSources(t *testing.T) {
 	}
 }
 
-// TestCheckSourcesChecksANonStringCollectionSource: a source YAML reads
-// as a number is no string source, but galaxy passes its text on.
-func TestCheckSourcesChecksANonStringCollectionSource(t *testing.T) {
+// TestCheckSourcesChecksANonStringCollectionVersion: a version YAML reads
+// as a number is no string, but galaxy passes its text on. (A source or name
+// that is a number never gets here: parseFile refuses it, backlog 7.105.)
+func TestCheckSourcesChecksANonStringCollectionVersion(t *testing.T) {
 	for _, src := range []string{"-0o17", "-17", "-1.5"} {
-		p, err := parseFile("requirements.yml", []byte("collections:\n  - name: ns.col\n    type: git\n    source: "+src+"\n"))
+		p, err := parseFile("requirements.yml", []byte("collections:\n  - name: ns.col\n    type: git\n    version: "+src+"\n"))
 		if err != nil {
 			t.Fatal(err)
 		}
 		err = checkSources(t.Context(), briefClone(), testCloneDir, "", p)
-		if want := `requirements.yml: the source "` + src + `" starts with "-"`; err == nil || err.Error() != want {
+		if want := `requirements.yml: the version "` + src + `" starts with "-"`; err == nil || err.Error() != want {
 			t.Errorf("checkSources(%s) = %v, want %q", src, err, want)
 		}
 	}
