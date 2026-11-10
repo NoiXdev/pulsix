@@ -27,6 +27,7 @@ package checks
 import (
 	"context"
 	"fmt"
+	"unicode/utf8"
 )
 
 // Observation is the smallest unit a plugin reports: one item (the empty
@@ -100,11 +101,31 @@ func labelObservation(item, metric, label string) Observation {
 	return Observation{Item: item, Metric: metric, Label: &label}
 }
 
+// maxErrLen is the manager's bound on an observation's error text
+// (internal/checks.MaxErrLen; a test keeps the two equal). The manager cuts
+// a longer one itself (backlog 7.110); the agent cuts first so a fault that
+// quotes a long mount point never travels the wire at full length.
+const maxErrLen = 2048
+
 // errObservation builds an error Observation: collection failed for this
 // exact item/metric, so no sample should be stored and the manager's
-// current value shows the failure text instead of a stale reading.
+// current value shows the failure text instead of a stale reading. The
+// text is cut at maxErrLen on a UTF-8 boundary.
 func errObservation(item, metric string, err error) Observation {
-	return Observation{Item: item, Metric: metric, Err: err.Error()}
+	return Observation{Item: item, Metric: metric, Err: cutErrText(err.Error())}
+}
+
+// cutErrText cuts s to maxErrLen bytes, dropping a rune that would
+// straddle the bound rather than splitting it.
+func cutErrText(s string) string {
+	if len(s) <= maxErrLen {
+		return s
+	}
+	n := maxErrLen
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // paramStrings reads params[key] as a list of strings. present is false

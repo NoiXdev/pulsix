@@ -6,7 +6,11 @@ package checks
 
 import (
 	"fmt"
+	"strings"
 	"testing"
+	"unicode/utf8"
+
+	managerchecks "github.com/noixdev/pulsix/internal/checks"
 )
 
 func TestParamStrings(t *testing.T) {
@@ -149,6 +153,28 @@ func TestErrObservation(t *testing.T) {
 	}
 	if o.Value != nil || o.Label != nil {
 		t.Errorf("an error observation must carry neither a value nor a label: %+v", o)
+	}
+}
+
+// TestErrObservationCutsToTheManagersBound is backlog 7.110. The manager
+// cuts an error text at MaxErrLen anyway; the agent cuts first so a long
+// mount-point-quoting fault does not travel the wire, and on a UTF-8
+// boundary so what it sends is still valid text. A test keeps the agent's
+// copy of the bound equal to the manager's.
+func TestErrObservationCutsToTheManagersBound(t *testing.T) {
+	if maxErrLen != managerchecks.MaxErrLen {
+		t.Fatalf("maxErrLen = %d, the manager's contract says %d", maxErrLen, managerchecks.MaxErrLen)
+	}
+	long := errObservation("/data", "disk.used_pct", fmt.Errorf("%s", strings.Repeat("e", 1<<20)))
+	if len(long.Err) != maxErrLen {
+		t.Fatalf("1 MiB error = %d bytes, want %d", len(long.Err), maxErrLen)
+	}
+	split := errObservation("", "m", fmt.Errorf("%s", strings.Repeat("e", maxErrLen-1)+"€€"))
+	if len(split.Err) > maxErrLen || !utf8.ValidString(split.Err) || split.Err != strings.Repeat("e", maxErrLen-1) {
+		t.Fatalf("a rune on the boundary: %d bytes, valid UTF-8 = %v", len(split.Err), utf8.ValidString(split.Err))
+	}
+	if o := errObservation("", "m", fmt.Errorf("permission denied")); o.Err != "permission denied" {
+		t.Fatalf("a short error was altered: %q", o.Err)
 	}
 }
 

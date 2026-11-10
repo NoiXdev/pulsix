@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -814,6 +815,98 @@ func TestRecordObservationsFieldLengthBoundaries(t *testing.T) {
 			}
 			if store.reachedStore() != 1 {
 				t.Fatalf("store calls = %d, want no further call after the refusal", store.reachedStore())
+			}
+		})
+	}
+}
+
+// capturingStore is the fake store plus a record of the observations the
+// service handed to it, for the tests that assert what was STORED.
+type capturingStore struct {
+	*fakeStore
+	got []checks.Observation
+}
+
+func (c *capturingStore) RecordObservations(ctx context.Context, org uuid.UUID, obs []checks.Observation) (checks.Ingest, error) {
+	c.got = append(c.got, obs...)
+	return c.fakeStore.RecordObservations(ctx, org, obs)
+}
+
+// TestWithinContractRefusesLongLabel is backlog 7.110: a label is bounded
+// like an item, refusing the whole batch one byte over MaxLabelLen and
+// accepting it exactly at the bound. The long label is SECOND in the
+// batch, so a check that only looked at obs[0] would not pass.
+func TestWithinContractRefusesLongLabel(t *testing.T) {
+	if checks.MaxLabelLen != 512 {
+		t.Fatalf("MaxLabelLen = %d, want 512", checks.MaxLabelLen)
+	}
+	now := time.Now().UTC()
+	host := uuid.Must(uuid.NewV7())
+	store := newFakeStore()
+	svc := checks.NewService(store, fixedClock(now))
+	org := uuid.Must(uuid.NewV7())
+	withLabel := func(n int) []checks.Observation {
+		o := obsAt(host, now, "service", "sshd", "service.state")
+		o.Value, o.Label = nil, str(strings.Repeat("x", n))
+		return []checks.Observation{obsAt(host, now, "cpu", "", "m"), o}
+	}
+
+	if _, err := svc.RecordObservations(context.Background(), org, withLabel(checks.MaxLabelLen)); err != nil {
+		t.Fatalf("label at exactly %d bytes must be accepted: %v", checks.MaxLabelLen, err)
+	}
+	if store.reachedStore() != 1 {
+		t.Fatalf("store calls = %d, want 1", store.reachedStore())
+	}
+	_, err := svc.RecordObservations(context.Background(), org, withLabel(checks.MaxLabelLen+1))
+	if !errors.Is(err, checks.ErrInvalidInput) {
+		t.Fatalf("label at %d bytes: err = %v, want ErrInvalidInput", checks.MaxLabelLen+1, err)
+	}
+	if store.reachedStore() != 1 {
+		t.Fatalf("store calls = %d, want no further call after the refusal", store.reachedStore())
+	}
+}
+
+// TestRecordObservationsCutsLongError is backlog 7.110: an over-long
+// error text is cut, not refused, so the failing state still records. The
+// cut lands on a UTF-8 boundary: a multi-byte rune straddling MaxErrLen is
+// dropped whole rather than split.
+func TestRecordObservationsCutsLongError(t *testing.T) {
+	if checks.MaxErrLen != 2048 {
+		t.Fatalf("MaxErrLen = %d, want 2048", checks.MaxErrLen)
+	}
+	now := time.Now().UTC()
+	host := uuid.Must(uuid.NewV7())
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"1 MiB", strings.Repeat("e", 1<<20), strings.Repeat("e", checks.MaxErrLen)},
+		{"at the bound", strings.Repeat("e", checks.MaxErrLen), strings.Repeat("e", checks.MaxErrLen)},
+		{"short", "permission denied", "permission denied"},
+		// A 3-byte rune whose first byte is the last one inside the bound.
+		{"rune on the boundary", strings.Repeat("e", checks.MaxErrLen-1) + "€€", strings.Repeat("e", checks.MaxErrLen-1)},
+		// The same rune ending exactly on the bound is kept.
+		{"rune ending on the bound", strings.Repeat("e", checks.MaxErrLen-3) + "€€", strings.Repeat("e", checks.MaxErrLen-3) + "€"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &capturingStore{fakeStore: newFakeStore()}
+			svc := checks.NewService(store, fixedClock(now))
+			o := checks.Observation{HostID: host, CheckKey: "disk", Item: "/", Metric: "disk.used_pct", At: now, Err: tc.in}
+			res, err := svc.RecordObservations(context.Background(), uuid.Must(uuid.NewV7()), []checks.Observation{o})
+			if err != nil || res.Accepted != 1 {
+				t.Fatalf("ingest = %+v, %v; an over-long error is cut, not refused", res, err)
+			}
+			if len(store.got) != 1 {
+				t.Fatalf("store saw %d observations, want 1", len(store.got))
+			}
+			got := store.got[0].Err
+			if len(got) > checks.MaxErrLen || !utf8.ValidString(got) {
+				t.Fatalf("stored error is %d bytes, valid UTF-8 = %v", len(got), utf8.ValidString(got))
+			}
+			if got != tc.want {
+				t.Fatalf("stored error = %d bytes, want %d", len(got), len(tc.want))
 			}
 		})
 	}

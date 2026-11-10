@@ -103,8 +103,9 @@ func plausible(at, now time.Time) bool {
 // The check-results contract's bounds — the ingest path's mirror of the
 // facts contract's own MaxFactsKeys/MaxFactsValueLen
 // (internal/agents/facts.go), and enforced the same way: a batch over any
-// of them is REFUSED with ErrInvalidInput, never clipped and never
-// partially stored. The distinction from the plausibility window and the
+// of them but one is REFUSED with ErrInvalidInput, never clipped and never
+// partially stored. The one exception is MaxErrLen, below: an error text
+// is cut. The distinction from the plausibility window and the
 // shape check (which COUNT a bad observation and keep the rest of the
 // batch) is deliberate and is about who is at fault. A skewed clock or a
 // host deleted mid-flight is something a correct agent can produce; a
@@ -131,7 +132,23 @@ func plausible(at, now time.Time) bool {
 //     the longest today is "disk.inodes_used_pct" at 20 bytes. 64 leaves
 //     room for whatever a later plugin names its metrics.
 //
-// Together those three cap one row's contribution to
+//   - MaxLabelLen: a label is a discrete state the agent's plugins name
+//     from a fixed set (service.state: "active", "failed", ...), so the
+//     longest in use is a few bytes. It is bounded like an item, 512, and
+//     refused like one (backlog 7.110): the label is copied into
+//     check_samples on every batch and into check_states on every
+//     evaluation, and nothing but this bound limited it before the 16 MiB
+//     gRPC receive limit.
+//
+//   - MaxErrLen: an error text quotes the underlying OS or systemd fault
+//     and, for disk, the mount point it concerns (backlog 7.110). Unlike
+//     the identifying strings it is CUT at the bound, on a UTF-8 boundary
+//     (cutErr), never refused: a collection failure is exactly what an
+//     operator needs to see, and a long message must not hide it by
+//     costing the batch. 2048 holds a full path, its quoting and the
+//     fault text with room to spare.
+//
+// Together the first three cap one row's contribution to
 // check_samples_lookup_idx — a btree over (org_id, host_id, check_key,
 // item, metric, at) whose index rows may not exceed 8191 bytes — at
 // 16+16+64+512+64+8 = 680 bytes plus per-row overhead, an order of
@@ -166,6 +183,8 @@ const (
 	MaxCheckKeyLen          = 64
 	MaxItemLen              = 512
 	MaxMetricLen            = 64
+	MaxLabelLen             = 512
+	MaxErrLen               = 2048
 )
 
 // MaxTuplesPerHost bounds the distinct (check_key, item, metric) tuples one
@@ -182,7 +201,8 @@ const (
 const MaxTuplesPerHost = 4096
 
 // withinContract reports whether o's identifying strings are inside the
-// check-results contract's bounds. An empty item is legal — that is what
+// check-results contract's bounds (the error text is not among them: it is
+// cut, not refused — cutErr). An empty item is legal — that is what
 // a whole-host metric reports — but an empty check_key or metric names
 // nothing that could ever be read back while still occupying a permanent
 // check_current row, so both are refused, exactly as RecordFacts refuses
@@ -201,12 +221,29 @@ func withinContract(o Observation) error {
 		return fmt.Errorf("%w: item for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxItemLen)
 	case len(o.Metric) > MaxMetricLen:
 		return fmt.Errorf("%w: metric for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxMetricLen)
+	case o.Label != nil && len(*o.Label) > MaxLabelLen:
+		return fmt.Errorf("%w: label for check_key %q exceeds %d bytes", ErrInvalidInput, o.CheckKey, MaxLabelLen)
 	case !utf8.ValidString(o.CheckKey) || !utf8.ValidString(o.Item) || !utf8.ValidString(o.Metric):
 		return fmt.Errorf("%w: check_key, item and metric must be valid UTF-8", ErrInvalidInput)
 	case breaksLine(o.CheckKey) || breaksLine(o.Item) || breaksLine(o.Metric):
 		return fmt.Errorf("%w: check_key, item and metric must not contain control characters or line breaks", ErrInvalidInput)
 	}
 	return nil
+}
+
+// cutErr cuts an error text to MaxErrLen bytes without splitting a UTF-8
+// sequence: a rune that would straddle the bound is dropped whole, so what
+// is stored stays valid text (backlog 7.110). Text within the bound is
+// returned unchanged.
+func cutErr(s string) string {
+	if len(s) <= MaxErrLen {
+		return s
+	}
+	n := MaxErrLen
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // breaksLine reports whether s holds a control character or a Unicode line
@@ -322,6 +359,8 @@ func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs [
 		case !plausible(o.At, now):
 			res.Implausible++
 		default:
+			// o is a copy, so the caller's slice keeps its full text.
+			o.Err = cutErr(o.Err)
 			valid = append(valid, o)
 		}
 	}
