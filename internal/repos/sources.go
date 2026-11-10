@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -174,7 +175,7 @@ func decodeReport(raw json.RawMessage) (r varsource.Report, dropped []string, er
 	if len(raw) > varsource.MaxReportBytes {
 		return r, nil, fmt.Errorf("the report is %d bytes, more than %d", len(raw), varsource.MaxReportBytes)
 	}
-	depth, nul := scanJSON(raw)
+	depth, nul, unplain := scanJSON(raw)
 	if depth > maxReportDepth {
 		return r, nil, fmt.Errorf("the report nests %d levels deep, more than %d", depth, maxReportDepth)
 	}
@@ -182,6 +183,14 @@ func decodeReport(raw json.RawMessage) (r varsource.Report, dropped []string, er
 	// finish on every retry. (Invalid UTF-8 the decode replaces.)
 	if nul {
 		return r, nil, errors.New("the report contains a NUL character")
+	}
+	// jsonb writes such a number out in full (1e300 as 301 digits), so a
+	// stored result could grow far past the report cap; a current worker
+	// never sends one (varsource.PlainFloat). The whole report is refused
+	// (backlog 7.122): only a worker older than that check sends one, and
+	// the previous record stands until it is upgraded.
+	if unplain {
+		return r, nil, errors.New("the report holds a number of 1e21 or more, or below 1e-6, which a current worker never sends")
 	}
 	var decoded *varsource.Report
 	if err := json.Unmarshal(raw, &decoded); err != nil {
@@ -213,10 +222,12 @@ func decodeReport(raw json.RawMessage) (r varsource.Report, dropped []string, er
 	return r, dropped, nil
 }
 
-// scanJSON reports how deeply the JSON text raw nests and whether it
-// carries a \u0000 escape (one whose backslash is not itself escaped). A
-// raw NUL byte is not valid JSON and fails the decode.
-func scanJSON(raw []byte) (maxDepth int, nul bool) {
+// scanJSON reports how deeply the JSON text raw nests, whether it carries
+// a \u0000 escape (one whose backslash is not itself escaped), and whether
+// a number outside a string is unplain: out of float64's range, or one Go
+// writes in exponent form (not varsource.PlainFloat). A raw NUL byte is
+// not valid JSON and fails the decode, as does a malformed number.
+func scanJSON(raw []byte) (maxDepth int, nul, unplain bool) {
 	depth := 0
 	inString := false
 	for i := 0; i < len(raw); i++ {
@@ -237,9 +248,33 @@ func scanJSON(raw []byte) (maxDepth int, nul bool) {
 			maxDepth = max(maxDepth, depth)
 		case c == '}' || c == ']':
 			depth--
+		case c == '-' || isDigit(c):
+			end := i + 1
+			for end < len(raw) && isNumberByte(raw[end]) {
+				end++
+			}
+			unplain = unplain || unplainNumber(raw[i:end])
+			i = end - 1
 		}
 	}
-	return maxDepth, nul
+	return maxDepth, nul, unplain
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func isNumberByte(c byte) bool {
+	return isDigit(c) || c == 'e' || c == 'E' || c == '.' || c == '+' || c == '-'
+}
+
+// unplainNumber reports a number token out of float64's range or not
+// plain (varsource.PlainFloat). A malformed token is not reported here:
+// the decode refuses it.
+func unplainNumber(tok []byte) bool {
+	x, err := strconv.ParseFloat(string(tok), 64)
+	if errors.Is(err, strconv.ErrRange) {
+		return true
+	}
+	return err == nil && !varsource.PlainFloat(x)
 }
 
 // VarSources is the repository's record and every playbook row; found is

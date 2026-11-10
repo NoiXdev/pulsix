@@ -167,11 +167,30 @@ func (s *SQLStore) ListPlaybookSources(ctx context.Context, orgID, repoID uuid.U
 	return out, nil
 }
 
+// maxStoredResultReadBytes is the longest stored playbook result a read
+// decodes (backlog 7.122), like playbooks.maxInlineReadBytes for editor
+// playbooks. A result is stored within varsource.MaxReportBytes, the
+// cap on the compact JSON a worker sends, but jsonb renders it back
+// differently: a space after every ':' and ',' (at most one byte per
+// two), string escapes as the character itself (never longer), and a
+// number as the numeric it stored, written in full. decodeReport refuses
+// a report holding a number Go writes in exponent form, so the read-back
+// text is at most about one and a half times the stored one, and a
+// result stored within the cap still reads. A longer one (a row written
+// before that check, by a worker that did not apply it) is not decoded.
+const maxStoredResultReadBytes = 2 * varsource.MaxReportBytes
+
 // decodePlaybookSource is one stored parse result; the row's path is the
-// playbook's. A row that no longer decodes (written by another version) is
-// treated as missing, with a log line: failing instead would fail every
-// later sync finish of the repository, which reads the previous rows.
+// playbook's. A row that no longer decodes (written by another version),
+// or is longer than maxStoredResultReadBytes, is treated as missing, with
+// a log line: failing instead would fail every later sync finish of the
+// repository, which reads the previous rows.
 func (s *SQLStore) decodePlaybookSource(ctx context.Context, orgID, repoID uuid.UUID, path string, result []byte) (varsource.Playbook, bool) {
+	if len(result) > maxStoredResultReadBytes {
+		s.logger().WarnContext(ctx, "stored playbook variable sources too large to read; treated as missing",
+			"org", orgID, "repo", repoID, "path", path, "bytes", len(result), "limit", maxStoredResultReadBytes)
+		return varsource.Playbook{}, false
+	}
 	var pb varsource.Playbook
 	if err := json.Unmarshal(result, &pb); err != nil {
 		s.logger().WarnContext(ctx, "stored playbook variable sources do not decode; treated as missing",

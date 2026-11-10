@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/google/uuid"
@@ -375,5 +377,117 @@ func TestPlaybookVarSourceReadsOnce(t *testing.T) {
 				t.Fatalf("store calls = %v, want one GetPlaybookVarSource", tc.store.ops)
 			}
 		})
+	}
+}
+
+// unplainReport is a minimal report whose one playbook declares a field
+// with the given label and default, both JSON text.
+func unplainReport(label, def string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"commit":%q,"playbooks":[{"path":"site.yml","failed":false,`+
+		`"fields":[{"name":"x","label":%s,"type":"float","default":%s}],"fields_cut":false,`+
+		`"set_in_playbook":[],"roles":[],"files":[],"notes":[]}],"incomplete":false,"notes":[]}`, commitB, label, def))
+}
+
+// TestDecodeReportRefusesAnUnplainNumber (backlog 7.122): a report holding
+// a number Go would write in exponent form (1e21 or more, or below 1e-6,
+// zero aside) is refused whole, whatever the worker's version: jsonb keeps
+// such a number as numeric and writes it out in full. A number inside a
+// string is text and counts for nothing.
+func TestDecodeReportRefusesAnUnplainNumber(t *testing.T) {
+	for _, tc := range []struct {
+		name, label, def string
+		refused          bool
+	}{
+		{"1e300", `"x"`, `1e300`, true},
+		{"-1e300", `"x"`, `-1e300`, true},
+		{"1e-7", `"x"`, `1e-7`, true},
+		{"1e21 written out", `"x"`, `1` + strings.Repeat("0", 21), true},
+		{"1e20 written out", `"x"`, `100000000000000000000`, false},
+		{"1e-6 written out", `"x"`, `0.000001`, false},
+		{"zero", `"x"`, `0`, false},
+		{"in a string", `"x"`, `"1e300"`, false},
+		{"after an escaped quote in a string", `"a\"1e300"`, `1`, false},
+		{"after a string ending in an escaped backslash", `"a\\"`, `1e300`, true},
+		{"in a list", `"x"`, `[1, 2, 1e300]`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := unplainReport(tc.label, tc.def)
+			if !json.Valid(raw) {
+				t.Fatalf("test report is not valid JSON: %s", raw)
+			}
+			err := repos.DecodeReport(raw)
+			switch {
+			case tc.refused && (err == nil || !strings.Contains(err.Error(), "1e21 or more, or below 1e-6")):
+				t.Fatalf("DecodeReport = %v, want the number range refusal", err)
+			case !tc.refused && err != nil:
+				t.Fatalf("DecodeReport = %v, want nil", err)
+			}
+		})
+	}
+
+	t.Run("RecordVarSources keeps the stored record", func(t *testing.T) {
+		store := previousRead()
+		stored, log := record(t, store, time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC), unplainReport(`"x"`, `1e300`))
+		if stored || store.replaced != 0 || len(store.marked) != 0 || store.record.Commit != commitA {
+			t.Fatalf("stored %v, replaced %d, marked %v, record %+v; want the previous record untouched", stored, store.replaced, store.marked, store.record)
+		}
+		if !strings.Contains(log, "variable sources ignored") || logLines(log) != 1 {
+			t.Fatalf("log = %q, want one 'variable sources ignored' line", log)
+		}
+	})
+}
+
+// TestDecodeReportAcceptsWhatTheCurrentWorkerSends (backlog 7.122): the
+// number check refuses nothing a current worker sends. The playbook goes
+// through the worker's parser and encoder; 1e300 is no form value there
+// (marker_value_type), every other number is, and the report is accepted.
+func TestDecodeReportAcceptsWhatTheCurrentWorkerSends(t *testing.T) {
+	fsys := fstest.MapFS{"site.yml": &fstest.MapFile{Data: []byte(`- hosts: all
+  vars:
+    zero: 0  # pulsix:
+    neg: -3  # pulsix:
+    half: 0.5  # pulsix:
+    tiny: 1e-6  # pulsix:
+    big: 1e20  # pulsix:
+    wide: 9007199254740993  # pulsix:
+    huge: 1e300  # pulsix:
+  tasks: []
+`)}}
+	r := varsource.ParseRepo(ctx, fsys, commitB)
+	if len(r.Playbooks) != 1 {
+		t.Fatalf("playbooks = %+v, want site.yml", r.Playbooks)
+	}
+	defaults := map[string]any{}
+	for _, f := range r.Playbooks[0].Fields {
+		defaults[f.Name] = f.Default
+	}
+	want := map[string]any{"zero": 0, "neg": -3, "half": 0.5, "tiny": 1e-6, "big": 1e20, "wide": 9007199254740993}
+	if len(defaults) != len(want) {
+		t.Fatalf("field defaults = %#v, want %#v", defaults, want)
+	}
+	for name, v := range want {
+		if defaults[name] != v {
+			t.Fatalf("default of %s = %#v, want %#v", name, defaults[name], v)
+		}
+	}
+	refusedHuge := false
+	for _, n := range r.Playbooks[0].Notes {
+		refusedHuge = refusedHuge || (n.Code == "marker_value_type" && strings.Contains(n.Message, "huge"))
+	}
+	if !refusedHuge {
+		t.Fatalf("notes = %+v, want huge refused as a form value", r.Playbooks[0].Notes)
+	}
+
+	data, _, err := varsource.Encode(r, varsource.MaxReportBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{`"default":100000000000000000000`, `"default":0.000001`, `"default":9007199254740993`} {
+		if !strings.Contains(string(data), s) {
+			t.Fatalf("encoded report lacks %s:\n%s", s, data)
+		}
+	}
+	if err := repos.DecodeReport(data); err != nil {
+		t.Fatalf("DecodeReport(current worker's report) = %v, want nil", err)
 	}
 }

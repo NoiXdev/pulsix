@@ -144,6 +144,16 @@ repositories as before. An older worker never asks.
   one byte more is refused with 413, unchanged; the dependency update that moved
   the limit's off-by-one is compensated in the hook endpoints.
 
+- **7.122, numbers in a worker's variable sources:** the manager now refuses a
+  repository sync's variable sources holding a number of 1e21 or more or below
+  1e-6 (zero aside), whatever the worker's version. A worker older than this
+  release that reads a playbook holding such a number has its whole report
+  ignored, with a "variable sources ignored" warning in the manager log, and
+  the repository keeps its previous variables until the worker is upgraded and
+  the repository has synced again. A stored repository playbook result longer
+  than 16 MiB as the database renders it (only possible from such an older
+  worker) is no longer decoded: that playbook reads as missing, with a warning
+  in the manager log, until the next sync replaces it.
 - **7.112, host evaluation over 30 seconds:** one host's rule evaluation (its
   context included) is now bounded at 30 seconds, where before only the 60
   second batch was. A host that needs longer, a very large one, fails every

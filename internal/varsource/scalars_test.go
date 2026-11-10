@@ -2,6 +2,7 @@ package varsource
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 	"strings"
 	"testing"
@@ -67,6 +68,24 @@ func TestLongNumbersAreNotDecoded(t *testing.T) {
 		wantFields(t, fields, []schema.Field{fromSpec(4, schema.Field{Name: "x", Type: schema.TypeEnum, Options: []string{"a", long}})})
 		wantNotes(t, notes, "warning choices_converted "+specFile+":4")
 	})
+}
+
+// TestPlainFloat (backlog 7.122): the range Go's encoder writes a float64
+// in plain notation, which the manager also checks a worker's report
+// against. NaN and the infinities count as plain (they never encode).
+func TestPlainFloat(t *testing.T) {
+	for _, tc := range []struct {
+		x    float64
+		want bool
+	}{
+		{0, true}, {1e-6, true}, {0.5, true}, {-3, true}, {1e20, true}, {9.99e20, true},
+		{math.NaN(), true}, {math.Inf(1), true},
+		{1e21, false}, {-1e21, false}, {9e-7, false}, {1e300, false}, {5e-324, false},
+	} {
+		if got := PlainFloat(tc.x); got != tc.want {
+			t.Errorf("PlainFloat(%v) = %v, want %v", tc.x, got, tc.want)
+		}
+	}
 }
 
 // TestNumbersOutsidePlainRangeAreNotDecoded (final review I2): a number

@@ -443,3 +443,49 @@ func TestGetPlaybookVarSource(t *testing.T) {
 		}
 	}
 }
+
+// TestStoredPlaybookResultOverTheReadLimitReadsAsMissing (backlog 7.122):
+// a stored result longer, as jsonb renders it, than the read limit is not
+// decoded: it reads as missing with a log line, never as an error that
+// would fail a sync. One exactly at the limit still decodes.
+func TestStoredPlaybookResultOverTheReadLimitReadsAsMissing(t *testing.T) {
+	d := testdb.Open(t)
+	store := repos.NewSQLStore(d)
+	var logs bytes.Buffer
+	store.SetLogger(slog.New(slog.NewTextHandler(&logs, nil)))
+	org := seedOrg(t, gen.New(d.Pool()), "var-sources-read-limit-org")
+	scoped := db.WithOrgScope(ctx, org)
+	repoID := seedSourcesRepo(t, d, org, "infra")
+	t0 := time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)
+
+	if err := store.ReplaceVarSources(scoped, org, repoID, repos.SourcesRecord{Commit: commitA, SyncedAt: t0, WorkerReads: true},
+		[]varsource.Playbook{playbookSource("at.yml"), playbookSource("over.yml")}); err != nil {
+		t.Fatal(err)
+	}
+	// {"pad": "aaa…"} renders as 11 bytes around the padding.
+	for path, size := range map[string]int{"at.yml": repos.MaxStoredResultReadBytes, "over.yml": repos.MaxStoredResultReadBytes + 1} {
+		var got int
+		if err := d.QueryRow(scoped,
+			`UPDATE repo_playbook_sources SET result = jsonb_build_object('pad', repeat('a', $2::int))
+			 WHERE repo_id = $1 AND path = $3 RETURNING octet_length(result::text)`, repoID, size-11, path).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != size {
+			t.Fatalf("%s: stored result renders as %d bytes, want %d", path, got, size)
+		}
+	}
+
+	pbs, err := store.ListPlaybookSources(scoped, org, repoID)
+	if err != nil || !sameStrings(playbookPaths(pbs), []string{"at.yml"}) {
+		t.Fatalf("ListPlaybookSources = %v, %v; want at.yml only", playbookPaths(pbs), err)
+	}
+	if _, pb, err := store.GetPlaybookVarSource(scoped, org, repoID, "at.yml"); err != nil || pb == nil || pb.Path != "at.yml" {
+		t.Fatalf("GetPlaybookVarSource(at.yml) = %+v, %v; want the row", pb, err)
+	}
+	if rec, pb, err := store.GetPlaybookVarSource(scoped, org, repoID, "over.yml"); err != nil || pb != nil || rec.Commit != commitA {
+		t.Fatalf("GetPlaybookVarSource(over.yml) = %+v, %+v, %v; want the record and no row", rec, pb, err)
+	}
+	if n := strings.Count(logs.String(), "too large to read"); n != 2 || strings.Contains(logs.String(), "at.yml") {
+		t.Fatalf("log = %q, want two 'too large to read' lines naming over.yml only", logs.String())
+	}
+}

@@ -267,13 +267,21 @@ func decodeNumber(n *yaml.Node) (any, bool) {
 	return nil, false
 }
 
-// plainNumber reports whether Go's encoder writes v in plain notation:
-// zero, or a magnitude in [plainNumberMin, plainNumberMax). Every int64 is
-// plain. NaN and the infinities count as plain here: literalDefault drops
-// them with a note of their own.
+// plainNumber reports whether Go's encoder writes v in plain notation
+// (PlainFloat for a float64). Every int64 is plain.
 func plainNumber(v any) bool {
 	x, ok := v.(float64)
-	if !ok || math.IsNaN(x) || math.IsInf(x, 0) || x == 0 {
+	return !ok || PlainFloat(x)
+}
+
+// PlainFloat reports whether Go's encoder writes x in plain notation:
+// zero, or a magnitude in [plainNumberMin, plainNumberMax). The manager
+// checks a worker's report against it (backlog 7.122), as jsonb would
+// write any other number out in full. NaN and the infinities count as
+// plain here: they never encode, and literalDefault drops them with a
+// note of their own.
+func PlainFloat(x float64) bool {
+	if math.IsNaN(x) || math.IsInf(x, 0) || x == 0 {
 		return true
 	}
 	a := math.Abs(x)
