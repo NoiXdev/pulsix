@@ -45,11 +45,14 @@ type redactor struct {
 // (secret extra vars, secret inventory vars, one-time logins, ...) plus
 // every part of every credential the claim ships — defense in depth for a
 // claim whose list is incomplete. Each value is also redacted in its
+// Python repr() spellings (backlog 7.53, see reprSpellings), in its YAML
+// single-quoted spelling (to_yaml and to_nice_yaml) and its percent-encoded
+// spellings (urlencode's path and query forms; backlog 7.104, see
+// encodedSpellings); each of these, and the value itself, in its
 // JSON-escaped spellings (display text shows module results as JSON, see
-// jsonSpellings), in its Python repr() spelling (backlog 7.53, see
-// reprSpelling), escaped once more for JSON text shown as a JSON string
-// (nestedJSONSpellings), in its base64 spellings (backlog 2.48, see base64Spellings) and, for a
-// multi-line value, line by line.
+// jsonSpellings) and escaped once more for JSON text shown as a JSON string
+// (nestedJSONSpellings); in its base64 spellings (backlog 2.48, see
+// base64Spellings) and, for a multi-line value, line by line.
 func newRedactor(job *workerpb.Job) *redactor {
 	set := map[string]bool{}
 	add := func(v string) {

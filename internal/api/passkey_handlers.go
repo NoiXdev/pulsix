@@ -23,7 +23,7 @@ type passkeyBeginOutput struct {
 
 // CeremonyID deliberately has no format:"uuid" tag: huma would then reject a
 // malformed value at the schema layer with 422 before the handler ever runs,
-// which would make FinishRegistration/FinishLogin's own uuid.Parse and the
+// which would make the handlers' own uuid.Parse and the
 // explicit huma.Error400BadRequest below dead code. Parsing (and mapping the
 // failure) is done by hand instead, so that path is actually exercised.
 type passkeyRegisterFinishInput struct {
@@ -139,7 +139,7 @@ func registerPasskeyRoutes(hapi huma.API, deps Deps) {
 		// TOTP confirm/disable (mfa_handlers.go): this is the step that
 		// actually attaches a new credential to the account, so it belongs
 		// on GET /me/activity like every other account-security change.
-		// FinishRegistration does not return the new credential's id (it
+		// FinishPasskey does not return the new credential's id (it
 		// assigns one internally but only persists it), so the object is
 		// identified by account rather than by credential row; the
 		// human-readable name the caller supplied carries the specific

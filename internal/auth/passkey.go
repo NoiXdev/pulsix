@@ -27,9 +27,9 @@ var ErrCredentialExists = errors.New("credential already registered")
 // registration and login ceremonies.
 const CeremonyTTL = 5 * time.Minute
 
-// ceremonyKindRegister and ceremonyKindLogin tag a stored ceremony so
-// FinishRegistration cannot be driven to completion with a ceremony that
-// BeginLogin created, and vice versa.
+// ceremonyKindRegister and ceremonyKindLogin tag a stored ceremony so a
+// registration cannot be finished with a ceremony that BeginLogin created,
+// and vice versa.
 const (
 	ceremonyKindRegister = "register"
 	ceremonyKindLogin    = "login"
@@ -223,25 +223,16 @@ func (p *Passkeys) BeginRegistration(ctx context.Context, userID uuid.UUID) (jso
 	return raw, cid, nil
 }
 
-// FinishRegistration verifies the attestation and stores the credential.
-// ceremonyID must be a registration ceremony begun by userID: it is
-// rejected (as ErrNotFound) if it belongs to another user, was begun as a
-// login, is unknown, or has already been consumed or expired.
-//
-// It does not check the session the registration runs on: the API finishes
-// a registration through Enrolment.FinishPasskey, which stores the
-// credential only on a session that is still live (backlog 7.109).
-func (p *Passkeys) FinishRegistration(ctx context.Context, userID, ceremonyID uuid.UUID, name string, response json.RawMessage) error {
-	c, err := p.verifyRegistration(ctx, userID, ceremonyID, name, response)
-	if err != nil {
-		return err
-	}
-	return p.store.AddCredential(ctx, userID, name, c)
-}
-
 // verifyRegistration takes the ceremony and verifies the attestation
-// against it, returning the credential to store. The ceremony is consumed
-// whether or not the attestation verifies.
+// against it, returning the credential to store. ceremonyID must be a
+// registration ceremony begun by userID: it is rejected (as ErrNotFound) if
+// it belongs to another user, was begun as a login, is unknown, or has
+// already been consumed or expired. The ceremony is consumed whether or not
+// the attestation verifies.
+//
+// The only finish is Enrolment.FinishPasskey, which stores the credential
+// only on a session that is still live (backlog 7.109); the tests' seam
+// without that check lives in export_test.go.
 func (p *Passkeys) verifyRegistration(ctx context.Context, userID, ceremonyID uuid.UUID, name string, response json.RawMessage) (Credential, error) {
 	cUser, sd, err := p.takeCeremony(ctx, ceremonyID, ceremonyKindRegister)
 	if err != nil {

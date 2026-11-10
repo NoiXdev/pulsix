@@ -326,8 +326,9 @@ func (t *Ticker) batchDeadline() time.Duration {
 // evaluate, apply, then feed the same result to the alert sink on the
 // claimed host's own transaction. Every error is returned, which is what
 // rolls that one host back and holds it out of the claim for a while
-// (failedHostBackoff, due_sql.go), or leaves it due when the batch itself
-// was cut short — and logged here, where the host is still in hand to
+// (failedHostBackoff, due_sql.go) — a host cut off by its own deadline or
+// the batch's included — or leaves it due when the manager was cancelled
+// (failedHostNext), and logged here, where the host is still in hand to
 // name.
 func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 	load, err := t.store.Load(ctx, d)

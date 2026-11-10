@@ -140,7 +140,12 @@ func NewTOTP(store TOTPStore, box *crypto.Box, issuer string, now func() time.Ti
 	return &TOTP{store: store, box: box, issuer: issuer, now: now}
 }
 
-// BeginEnrol creates an unconfirmed secret and returns it for the QR code.
+// newEnrolment is an enrolment's begin up to the write: it checks code
+// against a confirmed secret, if the account has one, and draws the new
+// secret, returning it with its sealed form for UpsertTOTPSecret. A wrong
+// code spends a second-factor attempt (Verify) in a write of its own, so a
+// caller that runs the upsert in a transaction cannot roll that spend back
+// (backlog 7.26).
 //
 // If the account already has a *confirmed* secret, code must be a fresh,
 // valid code for that existing secret: without this, one unauthenticated
@@ -152,26 +157,9 @@ func NewTOTP(store TOTPStore, box *crypto.Box, issuer string, now func() time.Ti
 // enrolment needs no code: there is no active factor yet to prove
 // possession of.
 //
-// It does not check the session the enrolment runs on: the API begins an
-// enrolment through Enrolment.BeginTOTP, which writes the pending secret
-// only on a session that is still live (backlog 7.109).
-func (t *TOTP) BeginEnrol(ctx context.Context, userID uuid.UUID, email, code string) (string, string, error) {
-	key, sealed, err := t.newEnrolment(ctx, userID, email, code)
-	if err != nil {
-		return "", "", err
-	}
-	if err := t.store.UpsertTOTPSecret(ctx, userID, sealed); err != nil {
-		return "", "", err
-	}
-	return key.Secret(), key.URL(), nil
-}
-
-// newEnrolment is BeginEnrol up to the write: it checks code against a
-// confirmed secret, if the account has one, and draws the new secret,
-// returning it with its sealed form for UpsertTOTPSecret. A wrong code
-// spends a second-factor attempt (Verify) in a write of its own, so a
-// caller that runs the upsert in a transaction cannot roll that spend back
-// (backlog 7.26).
+// The only begin is Enrolment.BeginTOTP, which writes the pending secret
+// only on a session that is still live (backlog 7.109); the tests' seam
+// without that check lives in export_test.go.
 func (t *TOTP) newEnrolment(ctx context.Context, userID uuid.UUID, email, code string) (*otp.Key, []byte, error) {
 	row, err := t.store.GetTOTPSecret(ctx, userID)
 	switch {

@@ -10,28 +10,21 @@ import (
 // returned to the caller and may be logged.
 const urlCredentialReason = "invalid url: must not embed a password or access token; attach a git_token or git_key credential to the repository instead"
 
-// ValidateURL judges a repository URL: the form rules (https://, ssh:// or
-// scp-style, no leading dash, no white space, bounded length) and, since
-// backlog 7.103, that it embeds no credential. Userinfo with a password is
-// refused on every form; a bare user is refused on https (it is a token in
-// the user slot) and accepted on ssh:// and scp-style URLs, where it names
-// the remote account (git@host:path). The error wraps ErrInvalidInput. The
-// shared-definition service applies the same rule through URLProblem.
-func ValidateURL(raw string) error {
-	if reason, _ := urlProblem(raw); reason != "" {
-		return fmt.Errorf("%w: %s", ErrInvalidInput, reason)
-	}
-	return nil
-}
-
-// URLProblem is ValidateURL's verdict as a bare reason ("" when the URL is
-// acceptable), for a caller that wraps it in its own invalid-input error;
-// credentials reports whether the reason is the embedded-credential
-// refusal rather than a form rule.
+// URLProblem is urlProblem's verdict, for a caller outside the package
+// that wraps it in its own invalid-input error (the shared-definition
+// service).
 func URLProblem(raw string) (reason string, credentials bool) {
 	return urlProblem(raw)
 }
 
+// urlProblem judges a repository URL and returns why it is refused ("" when
+// it is acceptable): the form rules (https://, ssh:// or scp-style, no
+// leading dash, no white space, bounded length) and, since backlog 7.103,
+// that it embeds no credential. Userinfo with a password is refused on
+// every form; a bare user is refused on https (it is a token in the user
+// slot) and accepted on ssh:// and scp-style URLs, where it names the
+// remote account (git@host:path). credentials reports whether the reason is
+// the embedded-credential refusal rather than a form rule.
 func urlProblem(raw string) (reason string, credentials bool) {
 	switch {
 	case raw == "":

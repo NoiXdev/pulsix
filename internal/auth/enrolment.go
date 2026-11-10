@@ -129,7 +129,7 @@ func sessionEnded(op string, err error) error {
 
 // BeginTOTP begins a TOTP enrolment on sessionID's session: it checks code
 // against the account's confirmed secret, if it has one, and writes a new
-// pending secret, returning it and its otpauth URL (TOTP.BeginEnrol).
+// pending secret, returning it and its otpauth URL.
 //
 // The pending secret is written only while the session is still live, in
 // one instance transaction with the account lock (backlog 7.109): a request

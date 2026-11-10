@@ -208,7 +208,7 @@ func registerPasskeyForTest(t *testing.T, s *apitest.Server, c *http.Client, nam
 // POST /auth/passkeys/register/finish is the step that actually attaches a
 // passkey to the account — it must show up on GET /me/activity with no
 // organization, the registering user as actor, and object type "passkey".
-// FinishRegistration (internal/auth) does not return the new credential's
+// Enrolment.FinishPasskey (internal/auth) does not return the new credential's
 // id, only persists it, so the object is identified by account rather than
 // by credential row — the handler's own doc comment (passkey_handlers.go)
 // explains the tradeoff; the human-readable name is carried in the

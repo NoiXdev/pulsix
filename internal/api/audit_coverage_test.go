@@ -63,7 +63,7 @@ var auditAllowlist = map[string]string{
 	"POST /api/v1/auth/logout":      "routine, high-volume session end; no organization or object, and the session list already covers who is signed in",
 	"POST /api/v1/auth/totp/verify": "routine, high-volume session step-up (a second-factor check on an already-existing session, not a change to the factor itself); no organization or object, and the session list already covers who is signed in",
 
-	// Ceremony *begin* steps commit no credential: BeginEnrol/BeginRegistration
+	// Ceremony *begin* steps commit no credential: BeginTOTP/BeginRegistration
 	// only hand the browser a challenge and stash server-side ceremony
 	// state. Nothing has actually changed about the account's second
 	// factors until the matching *finish* step succeeds — and that finish

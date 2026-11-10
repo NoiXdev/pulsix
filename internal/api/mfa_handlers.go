@@ -117,7 +117,7 @@ func registerMFARoutes(hapi huma.API, deps Deps) {
 			return nil, mapAuthErr(ctx, err)
 		}
 		// in.Body.Code is only checked when the account already has a
-		// confirmed secret (BeginEnrol requires a fresh code in that case,
+		// confirmed secret (BeginTOTP requires a fresh code in that case,
 		// so a stolen MFA-complete session can't silently plant a new
 		// secret over an existing one); first-time enrolment ignores it.
 		// The pending secret is written only while p's session is still
