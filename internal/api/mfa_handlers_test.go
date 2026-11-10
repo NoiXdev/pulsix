@@ -334,3 +334,23 @@ func wrongTOTPCode(t *testing.T, secret string) string {
 	t.Fatal("no wrong code left")
 	return ""
 }
+
+// TestTOTPEnrolOnASessionEndedByResetIs401 (backlog 7.119): a pending session
+// of an account with no second factor is ended by an administrator's reset,
+// and the handler maps Enrolment.BeginTOTP's refusal of the dead session to
+// 401, not to a secret or a 403.
+func TestTOTPEnrolOnASessionEndedByResetIs401(t *testing.T) {
+	s := apitest.New(t)
+	_, adminClient := adminWithFactor(t, s, "enrol-reset-admin@example.test")
+	target := s.SeedUser("enrol-reset-target@example.test", "correct horse battery")
+	pending := s.LoginAsPending(target)
+
+	resp := postJSON(t, adminClient, s.HTTP.URL+adminUserPath(target, "second-factor/reset"), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reset: %d %s, want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	resp = postJSON(t, pending, s.HTTP.URL+"/api/v1/auth/totp/enrol", struct{}{})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("totp/enrol on the ended session: %d %s, want 401", resp.StatusCode, mustReadBody(t, resp))
+	}
+}

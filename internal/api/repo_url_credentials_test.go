@@ -104,3 +104,121 @@ func TestRepoDTOHidesURLPassword(t *testing.T) {
 		t.Fatalf("definition list leaks the token: %s", raw)
 	}
 }
+
+// seedLeakyDefinition creates a shared definition through the API, then
+// stores a credential-bearing URL on it and on its projection in org by SQL,
+// the state a row stored before credentials were refused is in. It returns
+// the definition's and the projection's ids.
+func seedLeakyDefinition(t *testing.T, s *apitest.Server, c *http.Client, org uuid.UUID, stored string) (defID, projID string) {
+	t.Helper()
+	defs := s.HTTP.URL + "/api/v1/admin/repos/definitions"
+	resp := postJSON(t, c, defs, map[string]any{"name": "shared-echo", "url": "https://git.example.com/z.git", "branch": "main"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	var def repoDefinitionDetailBody
+	decodeInto(t, resp, &def)
+	defID = def.Definition.ID
+	if _, err := s.DB.Pool().Exec(context.Background(), "UPDATE shared_repos SET url = $1 WHERE id = $2", stored, defID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Pool().QueryRow(context.Background(),
+		"UPDATE git_repos SET url = $1 WHERE org_id = $2 AND shared_repo_id = $3 RETURNING id::text", stored, org, defID).Scan(&projID); err != nil {
+		t.Fatalf("projection of the definition in the organization: %v", err)
+	}
+	return defID, projID
+}
+
+func storedDefinitionURL(t *testing.T, s *apitest.Server, defID string) string {
+	t.Helper()
+	var u string
+	if err := s.DB.Pool().QueryRow(context.Background(), "SELECT url FROM shared_repos WHERE id = $1", defID).Scan(&u); err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+// TestProjectionUpdateEchoingRedactedURLKeepsIt (backlog 7.120): an
+// organization's edit of its projection's own fields, as the form sends it
+// with the redacted URL it was shown, is accepted and leaves the stored
+// URLs alone.
+func TestProjectionUpdateEchoingRedactedURLKeepsIt(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("proj-echo-owner@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, owner)
+	org := s.SeedOrg("proj-echo", owner)
+	oc := s.LoginAs(owner)
+	const stored = "https://u:tok@git.example.com/z.git"
+	defID, projID := seedLeakyDefinition(t, s, oc, org, stored)
+	cred := seedVaultCredentialForRepo(t, s, org, "echo-vault")
+
+	base := s.HTTP.URL + "/api/v1/orgs/proj-echo/repos/" + projID
+	var got repoBody
+	resp := requestJSON(t, oc, http.MethodGet, base, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatal(mustReadBody(t, resp))
+	}
+	decodeInto(t, resp, &got)
+	const redacted = "https://***@git.example.com/z.git"
+	if got.Repo.URL != redacted {
+		t.Fatalf("projection url = %q, want %q", got.Repo.URL, redacted)
+	}
+
+	resp = requestJSON(t, oc, http.MethodPut, base, map[string]any{
+		"name": got.Repo.Name, "url": got.Repo.URL, "branch": got.Repo.Branch, "subpath": got.Repo.Subpath,
+		"vault_identities": []map[string]any{{"credential_id": cred, "label": "prod"}},
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("projection update echoing the redacted URL: %d %s, want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var after repoBody
+	decodeInto(t, resp, &after)
+	if after.Repo.URL != redacted || len(after.Repo.VaultIdentities) != 1 {
+		t.Fatalf("update response = %+v, want the redacted URL and the new vault identity", after.Repo)
+	}
+	if u := storedDefinitionURL(t, s, defID); u != stored {
+		t.Fatalf("stored definition url = %q, want it untouched", u)
+	}
+	rec, err := repos.NewSQLStore(s.DB).Get(db.WithOrgScope(context.Background(), org), org, uuid.MustParse(projID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.URL != stored {
+		t.Fatalf("stored projection url = %q, want it untouched", rec.URL)
+	}
+}
+
+// TestSharedDefinitionPutEchoingRedactedURLKeepsIt (backlog 7.120): PUT of a
+// definition with the redacted URL its GET showed, and a changed branch,
+// answers 200, keeps the stored URL byte for byte and answers redacted.
+func TestSharedDefinitionPutEchoingRedactedURLKeepsIt(t *testing.T) {
+	s := apitest.New(t)
+	owner := s.SeedUser("def-echo-owner@example.test", "correct horse battery")
+	makeInstanceAdmin(t, s, owner)
+	org := s.SeedOrg("def-echo", owner)
+	oc := s.LoginAs(owner)
+	const stored = "https://u:tok@git.example.com/z.git"
+	defID, _ := seedLeakyDefinition(t, s, oc, org, stored)
+
+	path := s.HTTP.URL + "/api/v1/admin/repos/definitions/" + defID
+	var def repoDefinitionDetailBody
+	decodeInto(t, requestJSON(t, oc, http.MethodGet, path, nil), &def)
+	const redacted = "https://***@git.example.com/z.git"
+	if def.Definition.URL != redacted {
+		t.Fatalf("definition url = %q, want %q", def.Definition.URL, redacted)
+	}
+
+	resp := requestJSON(t, oc, http.MethodPut, path, map[string]any{
+		"name": def.Definition.Name, "url": def.Definition.URL, "branch": "release", "subpath": def.Definition.Subpath,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("PUT echoing the redacted URL: %d %s, want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	decodeInto(t, resp, &def)
+	if def.Definition.URL != redacted || def.Definition.Branch != "release" {
+		t.Fatalf("PUT response = %+v, want the redacted URL and the new branch", def.Definition)
+	}
+	if u := storedDefinitionURL(t, s, defID); u != stored {
+		t.Fatalf("stored definition url = %q, want it byte-identical to %q", u, stored)
+	}
+}

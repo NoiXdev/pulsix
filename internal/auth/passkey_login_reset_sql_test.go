@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/noixdev/pulsix/internal/auth"
 )
@@ -360,4 +361,57 @@ func TestBeginTOTPWithAWrongCodeStillSpendsAnAttempt(t *testing.T) {
 	if attempts != 1 {
 		t.Fatalf("failed_factor_attempts = %d, want 1", attempts)
 	}
+}
+
+// A passkey login creates its session while it holds the account lock (a
+// FOR KEY SHARE on the user row, taken by LockAccount): a regression that
+// creates the session outside that transaction would let an administrator's
+// reset slip in between and leave a live session behind (backlog 7.119).
+// The hook on Create asks, from another connection, for the row's exclusive
+// lock without waiting; the login's key share must make that fail with
+// lock_not_available.
+func TestPasskeyLoginCreatesItsSessionUnderTheAccountLock(t *testing.T) {
+	w := newResetWorld(t)
+	uid := w.seedAccount(t, "login-lock@example.test")
+	k := w.seedLoginKey(t, uid)
+
+	sessions := &lockProbeSessions{hookedSessions: hookedSessions{Sessions: w.sessions}}
+	sessions.probe = func(ctx context.Context) {
+		conn, err := w.d.Pool().Acquire(ctx)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Release()
+		sessions.probes++
+		var id uuid.UUID
+		err = conn.QueryRow(ctx, `SELECT id FROM users WHERE id = $1 FOR UPDATE NOWAIT`, uid).Scan(&id)
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+			t.Errorf("exclusive lock on the account while the session is created = %v, want SQLSTATE 55P03", err)
+		}
+	}
+	pk := w.loginPasskeys(t, sessions)
+	cid, response := beginLogin(t, pk, uid, k)
+	if _, err := pk.FinishLogin(ctx, cid, response); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	if sessions.probes != 1 {
+		t.Fatalf("lock probe ran %d times, want 1", sessions.probes)
+	}
+	if n := w.sessionCount(t, uid); n != 1 {
+		t.Fatalf("sessions after the login = %d, want 1", n)
+	}
+}
+
+// lockProbeSessions runs probe in front of the real Create.
+type lockProbeSessions struct {
+	hookedSessions
+	probe  func(ctx context.Context)
+	probes int
+}
+
+func (l *lockProbeSessions) Create(ctx context.Context, userID uuid.UUID, mfaComplete bool) (uuid.UUID, string, error) {
+	l.probe(ctx)
+	return l.hookedSessions.Create(ctx, userID, mfaComplete)
 }
