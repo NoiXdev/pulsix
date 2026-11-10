@@ -1,0 +1,1624 @@
+[
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "github-workflows/create_docker_changelog_version_release:floating-self-reference-in-pinned-release-workflow",
+    "title": "SHA-pinned shared release workflow runs its own compute-version and announce-release actions from mutable @main inside Pulsix's privileged release job",
+    "description": "release.yml pins NoiXdev/github-workflows' create_docker_changelog_version_release.yaml to commit f7196176 (release.yml:86). The comment at release.yml:83-85 gives the reason: `secrets: inherit` (release.yml:101) hands the registry credentials and the Discord webhook to whatever the reference resolves to (backlog 7.16, which also recorded on 2026-11-01 that github-workflows' main had no branch protection). The pinned file still calls two of its own actions by branch. Line 234 calls `NoiXdev/github-workflows/actions/compute-version@main`, with the comment 'Deliberately unpinned ... the README records why the self-references float' (github-workflows@f7196176:README.md:39-42). Line 577 calls `NoiXdev/github-workflows/actions/announce-release@main`. Every other `uses:` in that file is pinned to a 40-character SHA. GitHub resolves a nested `uses: owner/repo/path@ref` exactly as written, so the caller's SHA pin does not cover these two calls. They run whatever github-workflows' main holds when the job is set up.\n\nThe release job runs its steps in this order: (1) the Docker Hub configuration check, whose env holds DOCKERHUB_USERNAME and DOCKERHUB_TOKEN for that step only (github-workflows@f7196176:.github/workflows/create_docker_changelog_version_release.yaml:194-214). (2) actions/checkout with `token: secrets.GITHUB_TOKEN` and the default persist-credentials (216-223). (3) setup-node. (4) compute-version@main (230-238). (5) QEMU and Buildx. (6) docker/login-action with the Docker Hub secrets, skipped on a dry run (332-338). (7) Builds and pushes of the manager and worker images from the checked-out tree (370-433). (8) A commit pushed to Pulsix main, then a tag (486-513). (9) The GitHub release (515-).\n\nThe job's token has contents: write: release.yml:82 grants it, and the shared workflow asks for it at the workflow level (171-172). The step at position 4 is a composite action. It can read that token through `github.token` or the credential checkout persisted in .git/config. It can also change the working tree, which steps 7 and 8 then build into noixdev/pulsix-manager and pulsix-worker and commit. The Docker Hub token cannot be read through the `secrets` context inside a composite action. The action can, however, write GITHUB_PATH or GITHUB_ENV so that the `docker` binary later called by login-action and build-push-action is a wrapper of its choosing. Step 4 also runs on a dry run (the default input), and there it still has the contents: write token.\n\nThe announce job (565-583) has no job-level permissions, so it inherits contents: write. It runs announce-release@main with DISCORD_WEBHOOK_RELEASE_NOTIFICATION. Pulsix's own announce.yml:49 pins the same action to f7196176, which shows the intended policy.\n\nBacklog 7.16 accepted the floating self-references when the only floating one received just the webhook ('it receives only the webhook'). The Docker workflow adopted on 2026-11-09 (backlog 7.5) puts a floating action inside the credentialed build job, which that rationale did not cover. As a result, anyone who can update github-workflows' main controls code that runs in Pulsix's release job. That covers the image content, a hijack of the Docker Hub login, and the contents: write token on NoiXdev/pulsix (main, tags, releases). It needs no Pulsix review and no change to the pinned SHA. Whether this is broader trust than Pulsix's own release maintainers depends on who can write to that repository and whether its main is protected. Neither is visible in source.",
+    "claimed_root_cause": "The integrity control is a SHA pin on the reusable workflow alone. The pinned workflow refers to its own composite actions by the mutable branch `@main` (github-workflows@f7196176 create_docker_changelog_version_release.yaml:234 and :577). The code that runs with the release job's contents: write token, before the registry login and the image builds, is therefore chosen by github-workflows' current main, not by the pinned commit.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": ".github/workflows/release.yml",
+        "line": 86,
+        "scope": "jobs.release.uses",
+        "description": "The dispatch-only release job (after the guard: ref must be main, green CI for the SHA) calls create_docker_changelog_version_release.yaml at f7196176. The job has contents: write (line 82) and secrets: inherit (line 101). The comment at 83-85 says the pin exists so that the secrets reach only reviewed code."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 101,
+        "scope": "jobs.release.secrets",
+        "description": "secrets: inherit makes the organization secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (backlog 7.37) and DISCORD_WEBHOOK_RELEASE_NOTIFICATION available to the called workflow. It uses the Docker Hub secrets in the same job as compute-version (github-workflows@f7196176 create_docker_changelog_version_release.yaml:196-199 check step, 332-338 docker/login-action) and the webhook in the announce job (579)."
+      },
+      {
+        "kind": "sink",
+        "file": ".github/workflows/release.yml",
+        "line": 86,
+        "scope": "github-workflows@f7196176 create_docker_changelog_version_release.yaml:234 and :577",
+        "description": "Inside the pinned file, `uses: NoiXdev/github-workflows/actions/compute-version@main` runs in the release job. It comes after the checkout with the persisted contents: write token (216-223) and before the Docker Hub login (332-338), the image builds and pushes (370-433) and the push to Pulsix main and the tag push (486-513). `uses: NoiXdev/github-workflows/actions/announce-release@main` runs in the announce job with the webhook and the inherited workflow-level contents: write token (171-172). Both resolve to whatever github-workflows' main holds when the job is set up."
+      }
+    ],
+    "evidence": [
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 83,
+        "description": "Comment: 'Pinned by commit, never @main (backlog 7.16): `secrets: inherit` hands the registry credentials and the Discord webhook to whatever this reference resolves to.' The stated invariant is that the pin limits which code receives the release credentials. The nested @main calls inside the pinned file break that invariant."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 82,
+        "description": "The release job grants contents: write. The called workflow asks for it at the workflow level (github-workflows@f7196176 create_docker_changelog_version_release.yaml:171-172), so both the release job and the announce job get it. The checkout at 216-223 passes `token: secrets.GITHUB_TOKEN` and keeps persist-credentials at its default. compute-version@main then runs in that same job at 234."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 559,
+        "description": "Backlog 7.16 recorded that github-workflows' main had no branch protection (2026-11-01). It found that anyone with write access there controlled code that received this repository's secrets, and fixed that with the SHA pin. It left the self-references floating 'as that repository's README decides', on the grounds that the floating announce-release 'receives only the webhook'. It does not cover a floating action in the credentialed build job. The Docker workflow adopted on 2026-11-09 (backlog 7.5, line 539) introduced exactly that."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 587,
+        "description": "Backlog 7.37: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are organization secrets with no environment protection (won't do, owner decision 2026-11-09). Nothing outside the workflow code separates the floating action from the job that logs in and pushes with them."
+      },
+      {
+        "file": ".github/workflows/announce.yml",
+        "line": 49,
+        "description": "Pulsix's own announce workflow pins announce-release to f7196176 because it receives the webhook. The shared release workflow calls the same action at @main (github-workflows@f7196176 create_docker_changelog_version_release.yaml:577), with the same webhook and a contents: write token."
+      }
+    ],
+    "blockers": [
+      "Hosted fact: who can push, merge or force-push to NoiXdev/github-workflows' main today (collaborators, teams, apps), and whether branch protection or rulesets now exist there (required reviews, restricted pushes, no admin bypass). Backlog 7.16 recorded none on 2026-11-01. Not visible in source.",
+      "Hosted fact: what actions/compute-version and actions/announce-release contain on github-workflows' main when each Pulsix release or dry run starts (they may already differ from f7196176). Not observable without network access.",
+      "Owner decision: whether the README and backlog 7.16 acceptance of floating self-references is meant to cover a floating action inside the credentialed release job. In other words, whether github-workflows' writers are meant to have the same trust as Pulsix's release maintainers."
+    ],
+    "validation_plan": {
+      "local": "Source-only, already settled by this verifier. In the extracted github-workflows@f7196176 tree, `grep -n 'uses:' .github/workflows/create_docker_changelog_version_release.yaml` shows only two refs that are not SHAs: line 234 (compute-version@main, release job) and line 577 (announce-release@main, announce job). The release job runs: Docker Hub config check (194-214, secrets in step-local env) -> checkout with GITHUB_TOKEN and default persist-credentials (216-223) -> setup-node -> compute-version@main (230-238) -> QEMU/Buildx -> docker/login-action, skipped on a dry run (332-338) -> manager and worker build/push (370-433) -> commit, push to main, tag push (486-513) -> GitHub release. Workflow-level permissions are contents: write (171-172), and the announce job (565-583) declares none of its own. On the Pulsix side: release.yml:82 contents: write, :86 SHA pin, :101 secrets: inherit; announce.yml:49 pins the same announce-release action by SHA. Nothing further can be checked locally.",
+      "deployment": "Owner check, without dispatching anything. (1) Open the log of the v0.1.0-rc.1 release run, or any release or dry run. In the 'Set up job' section, find the 'Download action repository' lines. A line 'NoiXdev/github-workflows@main (SHA:<x>)' confirms that the reference floats at run time. Compare <x> with f7196176. (2) In NoiXdev/github-workflows, list every user, team and app with write, maintain or admin access. Check main's branch protection or rulesets: required pull-request reviews, restricted pushes and force-pushes, no bypass. The finding holds if that set is wider than Pulsix's release maintainers, or if main can be updated without review. The fix lives in github-workflows: pin compute-version and announce-release to a commit or a release tag. Pulsix then moves release.yml's pin to the new commit. Also set persist-credentials: false on the shared checkout (re-auth only for the push step), give the announce job `permissions: {}` or contents: read, and declare the needed secrets under workflow_call.secrets so the caller can replace `secrets: inherit` with an explicit list."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "github-workflows/release.yml:registry-secrets-reachable-outside-release-guard",
+    "title": "Release guard and Docker Hub credentials sit only in workflow code the dispatched ref supplies (no environment since 38098bdb)",
+    "description": "release.yml is workflow_dispatch only (line 18). Its publishing job `release` (line 79) gets contents: write (line 82) and calls the shared NoiXdev/github-workflows Docker release workflow, pinned by SHA (line 86), with `secrets: inherit` (line 101). That hands every organization secret available to the repository to the called workflow, including DOCKERHUB_USERNAME/DOCKERHUB_TOKEN and the Discord webhook. The release has two authorization checks, both in the guard job of the same file: github.ref must be refs/heads/main (lines 50-57), and the newest ci.yml push run on main for the SHA must be green (lines 59-77). A workflow_dispatch runs the release.yml stored on the selected branch, so a branch copy can drop either check. More directly, any workflow on any branch, for example ci.yml's `on: [push, pull_request]` (ci.yml:2) edited on a pushed branch, can name secrets.DOCKERHUB_TOKEN itself. Commit 38098bdb removed `environment: release` (git show 38098bdb: '-    environment: release' plus the direct secrets.DOCKERHUB_* logins). A caller job that uses a reusable workflow cannot declare an environment, and no workflow under .github/ declares one now. Even with an environment in place, the secrets would stay reachable, because docs/BACKLOG.md:587 records them as organization secrets readable by any run of the repository, not environment secrets, and the owner decided on 2026-11-09 to keep them that way ('won't do'). The main ruleset only forbids deletion and force push (BACKLOG.md:540), so a writer can also put a commit on main that passes the guard. The repository became public on 2026-11-09. That does not widen the attacker class to fork authors: no workflow uses pull_request_target or workflow_run, and fork pull_request runs get no organization secrets. The lower-trust actor is any principal with write access who is not meant to publish images. CODEOWNERS (line 3) names two accounts, @DGINXREAL and @noidee-dev, so more than one writer is plausible. Whether every writer is release-authorized is a hosted fact. Impact if such a writer exists: they can push attacker-chosen pulsix-manager and pulsix-worker images under a release tag to Docker Hub, and read the Discord webhook. That is a repository-writer-to-registry-publisher privilege gap, not an unauthenticated path.",
+    "claimed_root_cause": "Release authorization is enforced only in workflow code the triggering ref supplies (release.yml's guard job). The registry push credentials are organization secrets that are not bound to a protected environment, deployment rule or required reviewer, so any workflow run of the repository on any ref can read them. Since 38098bdb they are also passed wholesale through `secrets: inherit` to a reusable workflow whose caller job cannot carry an environment.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": ".github/workflows/release.yml",
+        "line": 18,
+        "scope": "on.workflow_dispatch",
+        "description": "Any principal with write access can dispatch the workflow from any branch, and GitHub runs the release.yml stored on that branch, not main's copy. A push-triggered workflow on a pushed branch (ci.yml:2) is an equivalent entry for the same principal."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 54,
+        "scope": "jobs.guard step 'The release must start from main'",
+        "description": "The refs/heads/main check lives in the same file the dispatched branch supplies, so a branch copy can remove or change it."
+      },
+      {
+        "kind": "propagation",
+        "file": ".github/workflows/release.yml",
+        "line": 70,
+        "scope": "jobs.guard step 'CI must have passed for that commit'",
+        "description": "The green-CI query (event=push&branch=main&head_sha, fails closed on 'none') is also branch-supplied workflow code, not an external gate. It is sound only against mistakes, not against a writer."
+      },
+      {
+        "kind": "sink",
+        "file": ".github/workflows/release.yml",
+        "line": 101,
+        "scope": "jobs.release secrets: inherit",
+        "description": "Every organization secret available to the repository, including DOCKERHUB_USERNAME/DOCKERHUB_TOKEN and DISCORD_WEBHOOK_RELEASE_NOTIFICATION, goes to the shared workflow that builds and pushes noixdev/pulsix-manager and pulsix-worker, with contents: write (line 82). The job has no environment key."
+      }
+    ],
+    "evidence": [
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 79,
+        "description": "The release job declares needs: guard (line 80) and contents: write (line 82) but no environment. git show 38098bdb removes `environment: release` and the direct secrets.DOCKERHUB_USERNAME/DOCKERHUB_TOKEN logins that 48d135a0 had placed behind it. grep for 'environment:' under .github/ returns nothing."
+      },
+      {
+        "file": ".github/workflows/release.yml",
+        "line": 86,
+        "description": "The shared reusable workflow is pinned by commit f7196176 and receives secrets: inherit (line 101). Its content is not in this repository."
+      },
+      {
+        "file": ".github/workflows/announce.yml",
+        "line": 51,
+        "description": "DISCORD_WEBHOOK_RELEASE_NOTIFICATION reaches a workflow_dispatch workflow that has no environment and no guard. Same root cause: a branch copy can read or exfiltrate the webhook."
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "line": 2,
+        "description": "ci.yml runs on push to every branch (and pull_request). A writer's branch copy of any workflow can reference organization secrets, which are not scoped to a ref. ci.yml itself references no secret except the default token."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 587,
+        "description": "Backlog 7.37, validated read-only on 2026-11-02: no repository secrets and no environments; DOCKERHUB_USERNAME/DOCKERHUB_TOKEN reach the repository as organization secrets 'so any workflow run of the repository can read them, whatever ref it runs on'. Owner decision on 2026-11-09: 'won't do'. The credentials stay organization secrets."
+      },
+      {
+        "file": "docs/BACKLOG.md",
+        "line": 540,
+        "description": "Backlog 7.6: the repository is public since 2026-11-09, and ruleset `main` only blocks deletion and force push. No required pull-request review is recorded, so any writer can also land a commit on main that passes the guard."
+      },
+      {
+        "file": ".github/CODEOWNERS",
+        "line": 3,
+        "description": "Two code-owner accounts (@DGINXREAL, @noidee-dev) are named for the whole tree, so more than one principal plausibly has write access. Local history also shows commits by dependabot[bot] and a release commit b3882032 by noix-dev-bot, but neither is shown to be able to author arbitrary workflow code."
+      }
+    ],
+    "blockers": [
+      "Hosted fact, not visible in source: the set of principals (users, teams, GitHub Apps, bots, deploy keys) with write or maintain access to NoiXdev/pulsix, and whether each is release-authorized. CODEOWNERS names two accounts. If every writer is a release owner, no lower-trust actor exists and the bypass is same-principal.",
+      "Hosted fact: the current repository-access policy of the organization secrets DOCKERHUB_USERNAME, DOCKERHUB_TOKEN and DISCORD_WEBHOOK_RELEASE_NOTIFICATION. BACKLOG 7.37 (validated 2026-11-02, re-affirmed by the owner on 2026-11-09) states that any run of this repository can read them, but the live setting is not observable here.",
+      "Not decisive but unverified: whether NoiXdev/github-workflows@f7196176 create_docker_changelog_version_release.yaml declares an environment or approval before docker login. Even if it does, it cannot protect organization secrets that a branch workflow names directly, so this only matters if the credentials were moved into that environment.",
+      "Owner accepted this risk as backlog 7.37 'won't do' on 2026-11-09. Triage must decide whether an accepted risk is reported or suppressed."
+    ],
+    "validation_plan": {
+      "local": "No in-audit local reproduction is possible: GitHub Actions secret delivery to a branch-supplied workflow cannot be emulated offline, and this audit may not dispatch workflows or contact GitHub. Source checks done: release.yml lines 18, 50-57, 59-77, 79-82, 86 and 101 verified at 52f27625; 38098bdb diff shows the removal of `environment: release` and the direct DOCKERHUB logins; no workflow declares environment, pull_request_target or workflow_run; BACKLOG.md:540 and :587 read. Optional owner-run step, outside this audit and never against NoiXdev/pulsix or a real registry: in a throwaway repository in a test organization, create an organization secret REG_TOKEN=marker with access to that repository, commit on main a workflow_dispatch release.yml with a refs/heads/main guard, then on a side branch commit a guardless copy that prints only sha256 of REG_TOKEN, dispatch it from the side branch, and observe the hash.",
+      "deployment": "Owner, read-only. (1) List the collaborators, teams, GitHub Apps and deploy keys with write or maintain on NoiXdev/pulsix (Settings > Collaborators and teams, Settings > GitHub Apps, or GET /repos/NoiXdev/pulsix/collaborators?permission=push), including @DGINXREAL from CODEOWNERS, and mark any that are not authorized to publish images. (2) Under Organization > Settings > Secrets and variables > Actions, record each of DOCKERHUB_USERNAME, DOCKERHUB_TOKEN and DISCORD_WEBHOOK_RELEASE_NOTIFICATION: its 'Repository access', and whether an environment holds it instead. (3) Read create_docker_changelog_version_release.yaml at f7196176 in NoiXdev/github-workflows for an environment or approval step before the registry login. The finding holds if a writer exists who is not release-authorized and the credentials are organization secrets reachable by this repository. Fix: move the Docker Hub credentials into a `release` environment with required reviewers (and a deployment-branch rule for main), declared by the shared workflow's publishing job, and remove them from the organization secrets this repository can read. Replace `secrets: inherit` with the explicitly declared secrets. Require pull-request review on main."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/accounts/reset.go:requestReset:forgot-link-after-admin-second-factor-reset",
+    "title": "Forgot-password issues a fresh reset link right after an admin's second-factor reset, so mailbox access alone takes over the account",
+    "description": "When an instance admin resets an account's second factor without also setting a temporary password, ResetSecondFactor deletes every factor, ends the sessions and voids reset links issued before it. Its own comment gives the reason: until a new factor is enrolled, whoever sets the password can enrol one (actions.go:78-82). TestLockOutVoidsResetLinks names the threat as an admin who suspects someone has 'the account, maybe its mailbox too' (actions_test.go:139-142). The public POST /api/v1/auth/password/forgot route does not keep that lock-out. requestReset refuses only accounts that are deactivated, still have an invitation pending, or must change their password (reset.go:164). So anyone who can read the mailbox can request a new link straight away, choose a password with POST /api/v1/auth/password/reset, and sign in. Because the account has no factor, that sign-in opens an enrolment-only session (auth/service.go:189-200). requireEnrolmentSession admits that session to TOTP enrol and confirm and to passkey registration (session_gates.go:221-239), and confirming the factor completes the session (mfa_handlers.go:141). The holder then has full use of the account. The rightful owner is locked out because the password changed and every session was revoked. The temporary-password lock-out already stops this, because forgot refuses while a password change is pending. A second-factor reset alone has no equivalent check. The design spec (settings-and-accounts-design.md:64) warns that 'anyone with the password can enrol a factor' during this window and tells admins to add a temporary password when the password is not certain. It does not consider that the forgot route turns mailbox access into knowing the password. That gap breaks the spec's anti-goal (line 107): no path, including a reset link, may sign someone in without their second factor.",
+    "root_cause": "requestReset decides whether to issue a link from acct.active() and acct.MustChangePassword only (internal/accounts/reset.go:164; LockAccount in internal/db/queries/accounts.sql:92-95 does not read factor state at all). A second-factor reset leaves the account active with must_change_password false (DeleteSecondFactors, accounts.sql:106-114, touches only factor tables) and records nothing the forgot path checks. The only protection is that the reset voids links that already exist (actions.go:99), and a link requested afterwards gets around it.",
+    "intended_behavior": "After an admin's second-factor reset, a reset link must not become the way into the account that now has no factor (ResetSecondFactor's doc comment, TestLockOutVoidsResetLinks, and spec anti-goal 'Any path that signs someone in without their second factor: not a reset link'). The self-service forgot route should issue no link while the account has no second factor, just as it already issues none while a password change is pending. The admin's own SendResetLink and temporary password remain the recovery paths for such an account.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/password_reset_handlers.go",
+        "line": 87,
+        "scope": "POST /api/v1/auth/password/forgot",
+        "description": "An unauthenticated caller submits the target's address. The handler calls Accounts.RequestReset and always answers 202; the work runs in the background."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/accounts/actions.go",
+        "line": 93,
+        "scope": "Service.ResetSecondFactor",
+        "description": "Earlier admin action. It deletes every factor (line 93), revokes sessions (96) and voids existing links (99). It sets neither must-change nor any factor-reset marker."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/accounts/reset.go",
+        "line": 164,
+        "scope": "Service.requestReset",
+        "description": "Refuses only when !acct.active() || acct.MustChangePassword. An account whose factor was reset passes this check."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/accounts/reset.go",
+        "line": 175,
+        "scope": "Service.requestReset",
+        "description": "issueResetToken stores a new 60-minute token, and the link is mailed to the account's stored address."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/accounts/reset.go",
+        "line": 294,
+        "scope": "Service.ResetPassword",
+        "description": "POST /api/v1/auth/password/reset with that token sets the caller-chosen password, clears must-change, voids the tokens and revokes every session."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/auth/service.go",
+        "line": 200,
+        "scope": "Service.Login",
+        "description": "No factor is left (hasFactor read at line 189), so a login with the new password returns a pending session with EnrolmentRequired=true."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/session_gates.go",
+        "line": 239,
+        "scope": "requireEnrolmentSession",
+        "description": "A pending session of an account with no factor is admitted to TOTP enrol/confirm and to passkey register. ConfirmTOTP (mfa_handlers.go:141) then completes the session, which gives full access as the target."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/accounts/reset.go",
+        "line": 164,
+        "description": "if !acct.active() || acct.MustChangePassword { return nil } is the only refusal before a link is issued. The doc comment (reset.go:138-148, line 143) gives the reason for the must-change refusal: 'a link would let whoever reads the mailbox undo that'."
+      },
+      {
+        "file": "internal/accounts/actions.go",
+        "line": 80,
+        "description": "ResetSecondFactor's comment: 'until a new factor is enrolled, whoever sets the password can enrol one, so a link issued before the reset must not be the way in'. Only links that existed before the reset are voided."
+      },
+      {
+        "file": "internal/accounts/actions_test.go",
+        "line": 141,
+        "description": "TestLockOutVoidsResetLinks says the admin who resets the second factor suspects someone has the account, 'maybe its mailbox too'."
+      },
+      {
+        "file": "internal/db/queries/accounts.sql",
+        "line": 106,
+        "description": "DeleteSecondFactors removes TOTP, recovery codes and passkeys and leaves must_change_password untouched. LockAccount (line 92) selects only has_password, deactivated and must_change_password."
+      },
+      {
+        "file": "internal/auth/service.go",
+        "line": 189,
+        "description": "Login checks only whether a factor exists. With none, it creates a session that is not MFA-complete and has EnrolmentRequired=true."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-11-04-settings-and-accounts-design.md",
+        "line": 107,
+        "description": "Spec anti-goal: 'Any path that signs someone in without their second factor: not a reset link, a temporary password, or an admin action.' Line 64 mentions only the case where the password is known and does not consider a link obtained through the mailbox."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "An instance admin reset the target's second factor without also setting a temporary password. This is the documented case of a person who lost their factor but whose password is considered certain."
+      },
+      {
+        "kind": "authentication_level",
+        "description": "The attacker can read the target's mailbox (the threat the code's lock-out comments name). No password or factor is needed."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "Outbound mail is configured, so self-service forgot is available."
+      },
+      {
+        "kind": "timing_dependency",
+        "description": "The attack must happen before the rightful owner signs in and enrols a new factor. The window has no expiry, and the 'second factor reset' notice mailed to the same mailbox announces it."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Someone who holds the target's mailbox but is not signed in to Pulsix, acting after an instance admin reset the target's second factor.",
+      "payloads": [
+        "internal/accounts/audit_v02_factor_reset_test.go (verifier harness, fake accounts store, no database): f := newResetFixture(); f.svc.ResetSecondFactor(ctx, true, admin, f.user); token := f.mailedToken(t) /* RequestReset(\"person@example.test\") + Wait */; f.svc.ResetPassword(ctx, token, \"dummy-chosen-password-v02\"). Contrast subtest: f.store.mustChange[f.user]=true, then RequestReset mails nothing.",
+        "internal/auth/service_test.go TestLoginWithoutAFactorRequiresEnrolment (existing repository test): Login with a correct password on an account where auth.NoMFA{} reports no factor returns MFARequired=false, EnrolmentRequired=true and a session that is not MFA-complete."
+      ],
+      "instructions": [
+        "Copy the repository to scratch and add internal/accounts/audit_v02_factor_reset_test.go, which uses the package's existing newResetFixture and fakeStore.",
+        "In the approved sandbox (network none, read-only root and source, uid 65532, 2 CPU, 2 GiB, 300 s), run: go test -count=1 -v -run 'TestAuditV02|TestLoginWithoutAFactorRequiresEnrolment' ./internal/accounts/ ./internal/auth/",
+        "Observe three things. After ResetSecondFactor, the forgot flow mails a new link and ResetPassword accepts it. With must-change pending, no link is mailed. A login on an account with no factor yields an enrolment-only session."
+      ],
+      "observed_result": "TestAuditV02ForgotAfterFactorReset/factor_reset_only PASS: 'factor reset: notice=sent actions=[delete second factors revoke sessions void reset tokens] mails=1', 'forgot after factor reset: link mailed, token length 43', 'RESULT: password set via fresh link after factor reset; setCalls=1 clearMustChange=true'. Contrast subtest PASS: 'CONTRAST: forgot with must-change pending mailed 0 link(s)'. TestLoginWithoutAFactorRequiresEnrolment PASS (MFARequired=false, EnrolmentRequired=true). The enrolment gate (session_gates.go:221-239) and ConfirmTOTP completing the session (mfa_handlers.go:141) are established from source only, because the API layer needs Postgres. Evidence: agents/v02-accounts/artifacts/evidence.txt."
+    },
+    "remediation": {
+      "strategy": "Make the self-service forgot path issue no link while the account has no confirmed second factor, mirroring the must-change refusal. The admin's SendResetLink and temporary password stay as recovery paths. Read the factor state under the same row lock LockAccount already takes, using the has_second_factor expression ListAccounts already uses (accounts.sql:47-48). Regenerate sqlc, add HasSecondFactor to LockedAccount, map row.HasSecondFactor in SQLStore.LockAccount (internal/accounts/store_sql.go:140; without that mapping the field stays false and forgot would stop working for every account), and add it to the fake store. Add regression tests: after ResetSecondFactor, RequestReset issues no token and sends no mail; SendResetLink still works. This also closes the same gap for accounts that never enrolled a factor.",
+      "code_changes": [
+        {
+          "file_name": "internal/db/queries/accounts.sql",
+          "fixed_code": "-- name: LockAccount :one\nSELECT (password_hash IS NOT NULL)::boolean AS has_password, (disabled_at IS NOT NULL)::boolean AS deactivated,\n  must_change_password,\n  (EXISTS (SELECT 1 FROM totp_secrets t WHERE t.user_id = users.id AND t.confirmed_at IS NOT NULL)\n   OR EXISTS (SELECT 1 FROM passkeys p WHERE p.user_id = users.id))::boolean AS has_second_factor\nFROM users\nWHERE id = $1\nFOR UPDATE;"
+        },
+        {
+          "file_name": "internal/accounts/service.go",
+          "fixed_code": "type LockedAccount struct {\n\t// HasPassword is false while the invitation is still pending.\n\tHasPassword bool\n\tDeactivated bool\n\t// MustChangePassword is set while an administrator's temporary\n\t// password waits to be replaced.\n\tMustChangePassword bool\n\t// HasSecondFactor is false after an administrator's factor reset\n\t// (or before a first enrolment): whoever sets the password then\n\t// enrols the factor, so forgot password sends no link.\n\tHasSecondFactor bool\n}"
+        },
+        {
+          "file_name": "internal/accounts/store_sql.go",
+          "fixed_code": "return LockedAccount{\n\tHasPassword:        row.HasPassword,\n\tDeactivated:        row.Deactivated,\n\tMustChangePassword: row.MustChangePassword,\n\tHasSecondFactor:    row.HasSecondFactor,\n}, nil"
+        },
+        {
+          "file_name": "internal/accounts/reset.go",
+          "fixed_code": "if !acct.active() || acct.MustChangePassword || !acct.HasSecondFactor {\n\treturn nil\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "The attack needs three things at once: the mailbox is compromised, an admin reset the factor without a temporary password, and the attacker acts before the owner re-enrols. The spec tells admins to add a temporary password when the password is uncertain, which narrows this further."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "The attacker fully takes over the target account (its org memberships and roles, or instance-admin rights if the target is an instance admin), the owner is locked out, and the second-factor guarantee of the reset flow does not hold for that account. Only one account per admin action is affected, and the attack depends on a prior mailbox compromise."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The source trace is complete and no other check sits on the forgot path. The service behaviour was reproduced independently with the repository's fake store in the sandbox, alongside a must-change contrast that shows the intended refusal. The login result is covered by an existing passing test. The SQL confirms that the factor reset leaves must_change_password false and that LockAccount does not read factor state. The HTTP gate step is source-only. A fresh Phase 5 verifier re-ran an equivalent fake-store harness under the same sandbox controls and got the same result: after ResetSecondFactor, forgot mailed a 43-character link that ResetPassword accepted; with must-change pending, no link was mailed; TestLoginWithoutAFactorRequiresEnrolment passed."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/agentapi/stream.go:receiveMessages:no-per-agent-check-results-ingest-budget",
+    "title": "One host agent identity can drive back-to-back maximum check-result batches against the instance-wide Postgres pool and check_samples hypertable",
+    "description": "An enrolled host agent sends CheckResults messages on AgentStream. The manager processes each message as soon as it is received. The server applies no rate, interval, row or byte budget to them. Each batch may hold 1000 observations (MaxObservationsPerBatch). The repository's own measurement (samples.go:150) puts 10 000 observations at 11.98 s of serial statements on one pool connection, so a full batch holds a connection for about 1.2 s, inside one transaction. One identity may keep two streams open (maxStreamsPerSerial = 2), so a looping agent can keep about two connections of the shared pool busy continuously. In code the pool is opened with pgxpool.NewWithConfig and no MaxConns. The shipped compose DSN sets neither pool_max_conns nor statement_timeout, so the default is max(4, NumCPU) connections. A few such agents could therefore occupy the pool that every tenant's HTTP, worker and rule-engine work shares. Possible sources are a compromised monitored host, which is root on a host with no REST access, or several agents enrolled by an operator of one organization. Each stream would also insert about 800 sample rows per second into the instance-wide check_samples hypertable, kept for 90 days. The label field is not length-bounded at ingest (withinContract bounds only check_key, item and metric), so a message may carry up to the 16 MiB gRPC receive cap of label data. Heartbeat resolves received a per-serial bound in backlog 7.25, but ingest did not. A legitimate agent sends at most 200 results per collect, about every 30 s, but only the client enforces this. Recovery: the load stops when the agent's certificate is revoked or the host is deleted. Rows already written stay until the 90-day retention or the host-delete cascade removes them. Source and the hunter's local harness establish that the input-to-cost path is unpaced. How much the real pool and database actually degrade has not been measured.",
+    "claimed_root_cause": "receiveMessages/process/recordCheckResults forward every CheckResults batch to checks.Service.RecordObservations. They apply no per-serial or per-organization pacing, row or byte budget, or concurrency limit on the shared pool (the only per-serial throttle, allowResolve, gates heartbeat resolves). MaxObservationsPerBatch bounds one transaction, not how many transactions an identity drives back to back. MaxTuplesPerHost bounds distinct tuples, not sample rows. The label value is unbounded except by the 16 MiB message cap. The legitimate cadence (200 results per message, 30 s collect) is enforced only in the agent.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/agentapi/stream.go",
+        "line": 95,
+        "scope": "Service.receiveMessages",
+        "description": "Each AgentMessage from the mTLS-authenticated agent stream (lower-trust host agent identity) is received and processed serially, with no pacing between messages"
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agentapi/stream.go",
+        "line": 150,
+        "scope": "Service.process",
+        "description": "A CheckResults body goes straight to recordCheckResults. Only the heartbeat branch is throttled, by allowResolve (line 200)"
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/agentapi/stream.go",
+        "line": 298,
+        "scope": "Service.recordCheckResults",
+        "description": "The whole batch is converted and handed to Checks.RecordObservations for the agent's organization"
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/samples.go",
+        "line": 336,
+        "scope": "Service.RecordObservations",
+        "description": "After the count, contract (check_key/item/metric only), shape and plausibility checks, every valid observation goes to the store"
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/store_sql.go",
+        "line": 271,
+        "scope": "SQLStore.RecordObservations",
+        "description": "One WithOrg transaction on the instance-wide pool for the whole batch"
+      },
+      {
+        "kind": "sink",
+        "file": "internal/checks/store_sql.go",
+        "line": 390,
+        "scope": "writeHostObservations",
+        "description": "An UpdateCheckCurrent plus an InsertCheckSample per observation, issued serially inside that transaction, writing to the shared check_samples hypertable, which has no uniqueness on (tuple, at)"
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/checks/samples.go",
+        "line": 150,
+        "description": "The repository's own measurement: 10 000 observations took 11.98 s on one pool connection, about 1.2 s per 1000-observation batch. The comment itself calls an unbounded batch a denial of service against other tenants"
+      },
+      {
+        "file": "internal/checks/samples.go",
+        "line": 165,
+        "description": "MaxObservationsPerBatch = 1000 bounds a single batch, not the batch rate"
+      },
+      {
+        "file": "internal/agentapi/registry.go",
+        "line": 46,
+        "description": "maxStreamsPerSerial = 2: one identity can run two ingest loops concurrently"
+      },
+      {
+        "file": "internal/agentapi/registry.go",
+        "line": 53,
+        "description": "heartbeatResolveInterval exists only for resolves. No ingest counterpart exists"
+      },
+      {
+        "file": "internal/agent/session.go",
+        "line": 46,
+        "description": "maxResultsPerMessage = 200 is the legitimate per-message size, enforced only client-side"
+      },
+      {
+        "file": "internal/db/db.go",
+        "line": 65,
+        "description": "The application pool is created with pgxpool.NewWithConfig and no MaxConns, so pgxpool defaults to max(4, NumCPU)"
+      },
+      {
+        "file": "deploy/compose/docker-compose.yml",
+        "line": 29,
+        "description": "The shipped DSN sets neither pool_max_conns nor statement_timeout"
+      },
+      {
+        "file": "internal/db/migrations/00044_check_samples.sql",
+        "line": 50,
+        "description": "Hypertable rows are kept for 90 days for the whole instance. label (line 45) is unbounded text"
+      }
+    ],
+    "blockers": [
+      "How long each batch holds a real connection, and how long other tenants' acquire waits become, need a live Postgres/TimescaleDB. DB-backed tests (testcontainers) are forbidden in the approved sandbox. The hunter's sandbox harness (agents/h16-availability/artifacts/evidence2.txt) proves only that the manager never paces or refuses back-to-back maximum batches: 20 batches of 1000 observations with 8 KiB labels were all acknowledged in 62 ms against a recording store, and two streams of one serial produced 2 concurrent store calls.",
+      "Deployment facts outside the repository: the production pool size (pool_max_conns in the deployed PULSIX_DATABASE_URL), any statement_timeout set on the role or in postgresql.conf, the manager's CPU count, database I/O capacity, and whether any proxy in front of the gRPC listener limits per-connection message rate."
+    ],
+    "validation_plan": {
+      "local": "Use a disposable, network-isolated testdb Postgres/TimescaleDB container, not the approved sandbox and never a shared one. In a two-organization fixture, enroll two agents in org A. Have each agent open two streams that send back-to-back 1000-observation CheckResults batches for existing tuples, with numeric values and plausible timestamps. Open the application pool with pool_max_conns=4. Meanwhile, time a single-row query for org B through the same *db.DB every 100 ms. Record pool.Stat().AcquireDuration, EmptyAcquireCount, the per-batch transaction duration and check_samples rows per second. Stop after about 10 s, once acquire waits are observable or clearly absent, and drop the containers. Org B's p99 acquire wait staying near zero refutes pool starvation. Waits of the order of a batch duration confirm it.",
+      "deployment": "The owner checks the production PULSIX_DATABASE_URL for pool_max_conns, and the pulsix_app role and postgresql.conf for statement_timeout. They record the manager's CPU count and the expected number of agents per organization, and confirm whether any proxy in front of the gRPC listener limits per-connection message rate. No load test against production."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/checks/samples.go:withinContract:unbounded-label-and-error-bytes-per-tuple",
+    "title": "A host agent can store multi-MiB check labels and error texts that never expire and are reloaded on every evaluation",
+    "description": "Backlog 7.57 caps a host at 4096 check_current tuples. That limits how many rows a host has, not how large they are. The check-results contract bounds check_key (64 bytes), item (512) and metric (64). The label and the collection-error text an agent sends have no length bound on the ingest path: not in the agentapi mapping, not in the service's contract or shape checks, not in the SQL store, and not as a column CHECK. The only ceiling is the shared gRPC receive limit of 16 MiB per message. A host agent under an attacker's control (root on an enrolled host, using its own mTLS identity) can fill its tuple quota and then keep resending existing tuples with labels or error strings close to 16 MiB each. An existing tuple is always updated in place, even at the cap. Up to 4096 such values then stay in check_current, which nothing prunes. The labels are also copied into check_samples (90-day retention) on every batch, the label into check_states.last_label on every evaluation, and into check_state_changes on state changes. Every accepted batch marks the host dirty. Each evaluation then reads the whole set into the manager process with ListCheckCurrent (SELECT *) inside a transaction with a 10 s statement timeout. The host page API (CurrentForHost) loads and encodes the same set. The manager process and the Postgres instance serve every tenant, so the memory, I/O and disk growth is shared. The principal is one host agent, and recovery needs manual row deletion. Verifier reproduction (sandboxed, against checks.Service with the package's fake store): a metric of 65 bytes is refused with ErrInvalidInput before reaching the store, while a 15 MiB label and a 15 MiB error string are each accepted (accepted=1, err=nil) and reach the store. A CheckResults protobuf carrying that 15 MiB label is 15,728,678 bytes, which fits under the 16 MiB receive limit. The persistence and reload half is source-only, because the Postgres-backed path cannot run here.",
+    "claimed_root_cause": "withinContract (internal/checks/samples.go:192-213) bounds only the three identifying strings (check_key, item, metric). Observation.Label and Observation.Err pass unchanged through agentapi.Service.recordCheckResults (stream.go:289-295), Service.RecordObservations (wellShaped and plausible look at shape and time only) and SQLStore.writeHostObservations into unconstrained text columns (migration 00044 check_current/check_samples label and error, migration 00046 check_states.last_label). So MaxTuplesPerHost bounds rows per host but not bytes per host. The rule evaluator's Load and the host page then read every stored byte.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/agentapi/stream.go",
+        "line": 292,
+        "scope": "Service.recordCheckResults",
+        "description": "The agent-supplied CheckResult label, and at line 294 the error string, from an mTLS-authenticated host agent stream are copied verbatim into checks.Observation. The only size limit is the gRPC MaxRecvMsgSize of 16 MiB that the agent service shares (internal/grpcsrv/server.go:192, 207-212)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/samples.go",
+        "line": 192,
+        "scope": "withinContract",
+        "description": "Checks the byte length, UTF-8 validity and control characters of check_key, item and metric. No case examines Label or Err."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/samples.go",
+        "line": 336,
+        "scope": "Service.RecordObservations",
+        "description": "Passes the valid observations to the store. The checks before it (wellShaped, plausible, MaxObservationsPerBatch) ignore the label and error size."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/store_sql.go",
+        "line": 360,
+        "scope": "writeHostObservations",
+        "description": "UpdateCheckCurrent replaces label and error of an existing tuple in place, so this happens even when the host is at the 4096-tuple cap. Line 381 (UpsertCheckCurrent) writes new tuples, and line 390 (InsertCheckSample) copies the label into the 90-day check_samples hypertable on every batch."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/rules/load_sql.go",
+        "line": 88,
+        "scope": "EvalSQLStore.Load",
+        "description": "ListCheckCurrent (checks.sql:108, SELECT *) loads every label and error of the host into the shared manager process on each evaluation of the dirty host. due_sql.go:368 writes LastLabel back into check_states for every evaluated tuple."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/checks/samples.go",
+        "line": 200,
+        "description": "Only the item, check_key and metric lengths are compared with constants (lines 198-202). No label or error bound exists anywhere in the package."
+      },
+      {
+        "file": "internal/checks/samples.go",
+        "line": 182,
+        "description": "MaxTuplesPerHost = 4096 limits how many distinct tuples a host has, not their byte size."
+      },
+      {
+        "file": "internal/pb/workerpb/limits.go",
+        "line": 20,
+        "description": "MaxWorkerToManagerBytes = 16 MiB is the gRPC server's receive limit. It also applies to the agent service registered on the same server (grpcsrv/server.go:192, 207-212), and it is the only effective per-value ceiling."
+      },
+      {
+        "file": "internal/db/migrations/00044_check_samples.sql",
+        "line": 79,
+        "description": "check_current.label and .error are unconstrained text columns. The comment at lines 60-66 says check_current rows are never deleted. check_samples.label (line 45) is unconstrained too, with 90-day retention (line 50)."
+      },
+      {
+        "file": "internal/db/queries/checks.sql",
+        "line": 108,
+        "description": "ListCheckCurrent selects every column of every tuple of the host, including label and error."
+      },
+      {
+        "file": "internal/rules/due_sql.go",
+        "line": 47,
+        "description": "hostStatementTimeout = 10 s is the only per-evaluation bound on how long the reload may run. It caps time, not bytes, and whether a multi-GiB set stays within it depends on deployment."
+      },
+      {
+        "file": "internal/api/host_check_handlers.go",
+        "line": 236,
+        "description": "The host page API also loads the full check_current set (CurrentForHost) for every view."
+      },
+      {
+        "file": "internal/checks/samples_test.go",
+        "line": 784,
+        "description": "The existing boundary test covers check_key, item and metric only. The verifier's sandboxed harness of the same shape (promoted agents/v03-agent-data/artifacts/evidence.txt) showed a 65-byte metric refused with 0 store calls. A 15 MiB label and a 15 MiB error string were each accepted (accepted=1, err=nil) and reached the store, and a CheckResults message carrying the label encodes to 15,728,678 bytes, under the 16 MiB limit. This agrees with the hunter's artifact agents/h09-agent-data/artifacts/evidence.txt."
+      }
+    ],
+    "blockers": [
+      "Persistence and per-evaluation reload go through the Postgres/TimescaleDB store (SQLStore.RecordObservations, ListCheckCurrent, UpsertCheckState). DB-backed tests (testcontainers) are forbidden in this sandbox, so only the service-level acceptance of unbounded label and error bytes and the wire-size fit were observed locally.",
+      "Whether the shared impact matters depends on the deployed manager memory limit, Postgres disk size and TOAST compression of the stored text, and on how many bytes ListCheckCurrent can return within the 10 s statement timeout of the evaluation transaction. None of these is visible in the repository."
+    ],
+    "validation_plan": {
+      "local": "In a testdb-backed test in internal/checks plus internal/rules: enrol one host and write 64 tuples, each with a 1 MiB label of incompressible random printable text, through checks.Service.RecordObservations on the SQL store. Assert that all 64 are accepted, that sum(pg_column_size(label)) in check_current is about 64 MiB, and that check_samples gained the same bytes. Run EvalSQLStore.Load for the host and measure runtime.MemStats.TotalAlloc before and after; expect about 64 MiB or more of label bytes. Repeat with a 1 MiB error string. Fix: add MaxLabelLen (a few hundred bytes) and MaxErrLen (a few KiB) to withinContract, returning ErrInvalidInput, optionally with octet_length CHECKs in a new additive migration. After the fix the same batch must be refused before the store with 0 store calls.",
+      "deployment": "On an owner-controlled staging instance, read the manager container's memory limit, the Postgres volume size and its free space, and the compression setting of the check_current and check_samples text columns. Compare them with 4096 tuples x about 16 MiB per label (about 64 GiB uncompressed per host), plus the check_samples growth per batch interval. That decides whether one host's set can exceed what a single Load or host-page render can hold, or exhaust shared disk. Use a dummy host only, with small values, and stop once the scaling is clear. Do not saturate."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/playbooks/varsource.go:inlineSource:inline-parse-result-unbounded-and-loaded-per-list",
+    "title": "Editor playbook variable-source results are up to about 12x larger than a maximum-size playbook text, and viewer list routes load every one at once",
+    "description": "When an operator saves an editor playbook (playbooks.write), the shared manager parses its YAML and stores json.Marshal(ParseInline(text)) in playbooks.var_source. Nothing checks the size of that result. Each result is still bounded: at most 100 fields, at most 64 KiB per default, and an 8 MiB scalar-read budget per file. So one result holds at most about 6.5 MB of defaults, which is under the 8 MiB MaxReportBytes cap that applies to a whole repository report. What is missing is any equivalent cap per playbook or per organization. Alias expansion makes the stored result much larger than its input. In the sandbox, a 67,101-byte text produced a 6,156,329-byte result (91.7x). That is 11.7x a maximum-size (512 KiB) inline text, which is what each list row already carries. With '<' defaults, Go's encoder produces 38.7 MB of escaped JSON. That size exists only briefly while saving: Postgres jsonb removes the escapes, so the stored and re-read value is about 6.5 MB. Two viewer routes read every row in one unpaginated request. GET /playbooks runs ListPlaybooks (SELECT *), which holds each row's raw var_source, about 6.2 MB per row, in one slice. GET /job-templates calls ListReviewed, which keeps every linked playbook's decoded source, with all its defaults, until the response is built. No per-organization limit on playbook count exists, so per-request memory grows linearly at about 6.7 MB per editor playbook, on the manager process that all tenants share. Roughly 300 such playbooks, about 20 MB of uploads, would put about 2 GB of retained data behind every list request. Reaching the same with maximum-size texts and no parse result would take about 4,000 uploads of 512 KiB. The hunter also reported a re-parse on every read for results containing U+0000; that is real but minor. inlineSource does not store such a result, so every read runs ParseInline again (40 ms and 84 MB of allocation for a 38.5 KB text). That cost is the same order as the yaml.Node parse GET /playbooks already runs for each editor row through Summary/firstPlayName (36 ms and 30 MB for a 512 KiB text), so it is a minor addition, not a new kind of cost. Whether this actually exhausts manager memory depends on the deployed memory limit and on the playbook count, and the list-route peak needs a real Postgres to measure.",
+    "claimed_root_cause": "inlineSource (internal/playbooks/varsource.go:148-158) stores ParseInline's result without a per-row size bound comparable to MaxReportBytes. The result can be about 12x a maximum-size inline text and about 90x its input, because aliased defaults are charged only against the 8 MiB read budget. ListPlaybooks (SELECT * with no pagination) and Templates.ListReviewed (which keeps every decoded source) load these results for every playbook of the organization in one request, and no per-organization playbook quota exists.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/playbook_handlers.go",
+        "line": 118,
+        "scope": "POST /api/v1/orgs/{org}/playbooks",
+        "description": "An operator (playbooks.write) posts an editor playbook with inline YAML. ValidateYAML caps it at 512 KiB (validate.go:30)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/playbooks/service.go",
+        "line": 153,
+        "scope": "Service.CreateEditor",
+        "description": "The result of inlineSource is stored as InlineSource on the new row. UpdateEditor does the same through UpdateInline."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/playbooks/varsource.go",
+        "line": 149,
+        "scope": "Service.inlineSource",
+        "description": "json.Marshal(varsource.ParseInline(text)) is returned for storage with no size check. Only a result containing a NUL escape is dropped, and inlineVarSource (lines 118-134) then re-parses the text on every read."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/db/queries/playbooks.sql",
+        "line": 18,
+        "scope": "ListPlaybooks",
+        "description": "SELECT * with no LIMIT loads every row's inline text and var_source for GET /api/v1/orgs/{org}/playbooks (playbooks.read, viewer; playbook_handlers.go:101-116)."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/templates/review.go",
+        "line": 100,
+        "scope": "Service.ListReviewed (GET /api/v1/orgs/{org}/job-templates)",
+        "description": "Each linked playbook's decoded source, with all defaults, is kept in the sources map for the whole request."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/varsource/playbook.go",
+        "line": 85,
+        "description": "MaxReportBytes = 8 MiB is enforced only for repository reports, over all of a repository's playbooks together (repos/sources.go:174, worker/sync_sources.go:69). The inline path has no equivalent."
+      },
+      {
+        "file": "internal/varsource/scalars.go",
+        "line": 23,
+        "description": "maxDefaultBytes = 64 KiB per default, applied after alias resolution. maxReadBytes = 8 MiB (line 18) is the only budget across fields, so 100 aliased defaults of about 60 KiB pass."
+      },
+      {
+        "file": "internal/varsource/playbook.go",
+        "line": 346,
+        "description": "Fields are capped at schema.MaxFields = 100, which bounds one result to about 6.5 MB of defaults. The result is bounded per row, but much larger than its input."
+      },
+      {
+        "file": "internal/varsource/inline.go",
+        "line": 9,
+        "description": "Only the input text is size-checked (MaxFileBytes = 512 KiB), never the parse result."
+      },
+      {
+        "file": "internal/playbooks/store_sql.go",
+        "line": 56,
+        "description": "List converts every row, including its raw var_source, into one slice, with no pagination."
+      },
+      {
+        "file": "internal/playbooks/validate.go",
+        "line": 79,
+        "description": "Baseline for calibration: GET /playbooks already runs yaml.Unmarshal into yaml.Node on each editor row through Playbook.Summary/firstPlayName. In the sandbox that took 36 ms and 30 MB for a 512 KiB text, comparable to the 40 ms and 84 MB NUL re-parse."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 103,
+        "description": "playbooks.write belongs to the operator role. playbooks.read and templates.read (lines 102 and 108) need only viewer."
+      },
+      {
+        "file": "internal/playbooks/varsource.go",
+        "line": 150,
+        "description": "A result containing U+0000 is not stored, so inlineVarSource calls ParseInline again on every read (line 133), once per linked playbook in ListReviewed."
+      }
+    ],
+    "blockers": [
+      "The peak memory of the list routes was not measured. GET /playbooks and GET /job-templates read through sqlc stores and need a real Postgres, and DB-backed tests are forbidden in this sandbox. Only the per-playbook amplification and the parse and decode costs were measured (agents/v14-availability/artifacts/evidence.txt).",
+      "Whether the linear growth exhausts the shared manager depends on deployment facts outside the repository: the manager container's memory limit and GOMEMLIMIT, any reverse-proxy rate limit or body limit on authenticated API calls, and how many editor playbooks an organization can realistically create."
+    ],
+    "validation_plan": {
+      "local": "Against a disposable testdb through internal/api/apitest, create one organization with one operator and 50 editor playbooks, each holding the 67,101-byte case-A text (100 non-private vars_prompt entries whose default aliases one 60 KiB anchored string), plus 50 job templates linked one-to-one. Record runtime.MemStats HeapInuse and TotalAlloc before and after one GET /api/v1/orgs/{org}/playbooks and one GET /api/v1/orgs/{org}/job-templates, called as a viewer. Expect about 6.2 MB per row held for the first and about 6.5 MB decoded per linked playbook for the second. Repeat with 50 rows of the same size without aliases as the baseline. Delete the test database afterwards.",
+      "deployment": "The owner checks the manager container's memory limit and GOMEMLIMIT, whether a reverse proxy limits request rates or body sizes for authenticated API calls, and whether any operational quota caps editor playbooks per organization. Only a disposable staging instance may be loaded."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/repos/service.go:validateURL:userinfo-credential-stored-and-returned-to-viewers-and-projections",
+    "title": "Repository URLs accept embedded credentials, which are stored in plaintext and returned to every viewer and to every organization a shared definition is projected into",
+    "description": "repos.validateURL accepts URL userinfo (https://user:token@host/..., https://token@host/..., ssh://user:pass@host/..., user:pass@host:path), and shared repository definitions skip URL format validation entirely. The value is stored unsealed in git_repos.url and echoed verbatim by toRepoDTO to anyone holding repos.read (the viewer role, and org-bound API tokens whose effective role is viewer). For a shared definition, the instance admin's URL is copied verbatim into git_repos of every organization, so a deploy token placed there is readable by every viewer of every organization. This contradicts the separation the product draws elsewhere: git tokens are meant to live in sealed git_token credentials (credentials.write = admin, never returned; the worker deliberately never embeds a token in a URL), notification webhooks refuse userinfo at save time precisely so the secret is never stored to leak (backlog 2.80, internal/notify/validate.go:103), and the v0.2f spec and backlog 2.90 state a shared definition carries 'no secret by construction'. The worker documents the URL as 'the one place an operator's token could hide' (internal/worker/runner/gitrepo.go:19-28) and redacts it from diagnostics, but nothing refuses it at save time or removes it from the API. (A secondary copy in the clone's .git/config is readable by play-uid code after ShareRepoRead, but plays on one worker already share a uid and can read any clone by documented design, so that copy adds no new boundary crossing and is not part of the rated impact.)",
+    "root_cause": "validateURL (internal/repos/service.go:581-596, urlPattern at line 61) checks only scheme shape, a leading '-', white space and length; it never parses or refuses userinfo. shared.Service.CreateRepo/UpdateRepo (internal/shared/service.go:272-311) perform no URL validation at all, while the API schema they defer to (internal/api/shared_handlers.go:52-63) bounds url only by minLength/maxLength. toRepoDTO (internal/api/repo_handlers.go:102-104) and toRepoDefinitionDTO (shared_handlers.go:32-33) return the stored value unredacted.",
+    "intended_behavior": "A repository URL is non-secret metadata visible to viewers and projected across organizations; a credential must go through the sealed git_token/git_key credential (GIT_ASKPASS / GIT_SSH_COMMAND on the worker). Save-time validation should refuse a password in userinfo, and any https userinfo (a bare https username can be a token), for both organization repositories and shared definitions, as the webhook validator does.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/repo_handlers.go",
+        "line": 223,
+        "scope": "POST /api/v1/orgs/{org}/repos (repos.write, operator)",
+        "description": "Operator submits url https://user:TOKEN@git.example/org/repo.git; PUT /repos/{id} (line 268) behaves the same, and for shared definitions so do the instance-admin routes POST/PUT /api/v1/admin/repos/definitions (shared_handlers.go:117, 153)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/repos/service.go",
+        "line": 581,
+        "scope": "validateURL (called from Service.validate in Create, line 250)",
+        "description": "Accepts the userinfo: urlPattern ^(https://[^/ ]+|ssh://[^/ ]+|[^@/ ]+@[^:/ ]+:) matches and no rule inspects userinfo; Create stores in.URL unchanged (line 265). Shared definitions bypass even this check (internal/shared/service.go:272-289)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/db/queries/shared.sql",
+        "line": 96,
+        "scope": "InsertProjectedRepos (via SQLStore.CreateWithProjections, store_sql.go:60 ProjectedRepoColumns)",
+        "description": "A shared definition's url is copied verbatim into git_repos for every organization; InsertProjectedRepo (line 104) does the same for each organization created later."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/repo_handlers.go",
+        "line": 104,
+        "scope": "toRepoDTO via GET /api/v1/orgs/{org}/repos (line 206) and GET /repos/{id} (line 252), both requireOrg(PermReposRead)",
+        "description": "URL: r.URL is returned unredacted to every viewer session and viewer-effective API token of the organization (of every organization, for a projection); PermReposRead = RoleViewer (internal/tenancy/roles.go:100)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/repos/service.go",
+        "line": 61,
+        "description": "urlPattern accepts any characters (including user:password@) before the first '/' for https:// and ssh://, and any non-@ prefix for scp-style."
+      },
+      {
+        "file": "internal/repos/service.go",
+        "line": 581,
+        "description": "validateURL has no userinfo refusal; sandbox harness: repos.Service.Create accepted four credential-bearing URL forms and Get returned each verbatim."
+      },
+      {
+        "file": "internal/shared/service.go",
+        "line": 272,
+        "description": "CreateRepo (and UpdateRepo at line 297) stores in.URL with no URL validation; sandbox harness: userinfo URL passed verbatim to CreateWithProjections and UpdateAndPropagate."
+      },
+      {
+        "file": "internal/api/shared_handlers.go",
+        "line": 60,
+        "description": "Schema layer bounds url by length only, although the comment above it says the other fields' format belongs at this layer."
+      },
+      {
+        "file": "internal/api/repo_handlers.go",
+        "line": 104,
+        "description": "toRepoDTO echoes r.URL unmodified; sandbox harness shows the dummy marker in the marshalled JSON."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 100,
+        "description": "PermReposRead is granted to RoleViewer."
+      },
+      {
+        "file": "internal/notify/validate.go",
+        "line": 103,
+        "description": "Sibling control: webhook URLs with userinfo are refused at save time (u.User != nil), the guarantee repository URLs lack."
+      },
+      {
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 19,
+        "description": "Worker design states a token is never embedded in a URL and names the URL as the one place an operator's token could hide, redacting it only from diagnostics."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-10-20-v0.2f-installation-owned-resources-design.md",
+        "line": 31,
+        "description": "Spec claims a shared definition carries no secret by construction; nothing in code enforces it for the url field."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "An operator (repos.write) of an organization, or an instance administrator for a shared definition, saves a repository URL that embeds a git token or password instead of using a sealed git_token credential; neither the API nor the SPA refuses or warns."
+      },
+      {
+        "kind": "authentication_level",
+        "description": "The reader is any member with the viewer role (or an org-bound API token with viewer effective role) of the organization, or of any organization the shared definition is projected into."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Viewer-role member (or viewer-effective API token) of an organization, or of any organization that receives a shared repository projection, reading the repository list.",
+      "payloads": [
+        "repos.Service.Create(ctx, org, repos.CreateInput{Name: \"ra\", URL: \"https://deploy:V11-DUMMY-A@git.example/org/repo.git\"})",
+        "shared.Service.CreateRepo(ctx, shared.RepoDefinitionInput{Name: \"basea\", URL: \"https://deploy:V11-DUMMY-E@git.example/provider/base.git\"})",
+        "toRepoDTO(repos.Repo{Name: \"infra\", URL: \"https://deploy:V11-DUMMY-G@git.example/org/repo.git\"})"
+      ],
+      "instructions": [
+        "Copy the repository to scratch and add: an external test in internal/repos calling Service.Create then Get through the package's fake store for https user:pass, https bare token, ssh user:pass and scp user:pass URLs with dummy markers; an external test in internal/shared calling CreateRepo and UpdateRepo through the package's fake store; an internal test in internal/api marshalling toRepoDTO of a repo whose URL carries a dummy marker.",
+        "Run go test -count=1 -v -run TestV11 ./internal/repos/ ./internal/shared/ ./internal/api/ in the approved Docker sandbox (network none, read-only source and module cache, env -i, cap-drop ALL, 300 s).",
+        "Source step (DB-backed, not executed): the stored value reaches viewers through requireOrg(PermReposRead) + toRepoDTO on GET /api/v1/orgs/{org}/repos and, for a shared definition, through InsertProjectedRepos/InsertProjectedRepo into every organization's git_repos row."
+      ],
+      "observed_result": "repos.Service.Create returned nil error for all four credential-bearing forms and Get returned each URL with its dummy marker unchanged; shared.Service.CreateRepo and UpdateRepo returned nil error and handed the userinfo URL verbatim to CreateWithProjections / UpdateAndPropagate; toRepoDTO's JSON carried \"url\":\"https://deploy:V11-DUMMY-G@git.example/org/repo.git\". No layer refused or redacted the userinfo."
+    },
+    "remediation": {
+      "strategy": "Refuse credentials in repository URLs at save time for both organization repositories and shared definitions (one exported validator used by repos.Service.validate and by shared.Service.CreateRepo/UpdateRepo, which should also apply the existing scheme/leading-dash/white-space rules), pointing the user at a git_token credential; allow only a bare user for ssh:// and scp-style URLs (git@host). Add read-side redaction of userinfo in toRepoDTO/toRepoDefinitionDTO for rows stored before the fix, and list existing rows with userinfo in an upgrade note so owners can rotate those tokens (migrations stay additive; do not rewrite rows). Regression tests: refusal of https://u:p@h/x, https://tok@h/x, ssh://u:p@h/x and u:p@h:x, acceptance of ssh://git@h/x and git@h:x; shared CreateRepo/UpdateRepo refuse the same; a viewer GET of a pre-existing userinfo row shows no secret.",
+      "code_changes": [
+        {
+          "file_name": "internal/repos/service.go",
+          "fixed_code": "// ValidateURL is exported so shared definitions get the same rules.\nfunc ValidateURL(raw string) error {\n\tif err := validateURL(raw); err != nil {\n\t\treturn err\n\t}\n\tif hasURLCredential(raw) {\n\t\treturn fmt.Errorf(\"%w: invalid url: must not carry a password or token; use a git_token credential\", ErrInvalidInput)\n\t}\n\treturn nil\n}\n\n// hasURLCredential reports userinfo that can hold a secret: any https\n// userinfo, and a password in ssh:// or scp-style addresses.\nfunc hasURLCredential(raw string) bool {\n\tif strings.HasPrefix(raw, \"https://\") {\n\t\tu, err := neturl.Parse(raw)\n\t\treturn err != nil || u.User != nil\n\t}\n\tif rest, ok := strings.CutPrefix(raw, \"ssh://\"); ok {\n\t\tauthority, _, _ := strings.Cut(rest, \"/\")\n\t\tif i := strings.LastIndex(authority, \"@\"); i >= 0 {\n\t\t\treturn strings.Contains(authority[:i], \":\")\n\t\t}\n\t\treturn false\n\t}\n\tif i := strings.Index(raw, \"@\"); i >= 0 {\n\t\treturn strings.Contains(raw[:i], \":\")\n\t}\n\treturn false\n}\n// validate(): call ValidateURL instead of validateURL."
+        },
+        {
+          "file_name": "internal/shared/service.go",
+          "fixed_code": "// in CreateRepo and UpdateRepo, before the store is touched:\nif err := repos.ValidateURL(in.URL); err != nil {\n\treturn RepoDefinition{}, fmt.Errorf(\"%w: %v\", ErrInvalidInput, err)\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires an operator or instance admin to embed a token in the URL instead of using a git_token credential; nothing suggests it, but nothing refuses or warns, and git hosting docs commonly show the token-in-URL form."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Disclosure of a git credential to lower-trust readers (viewers, viewer-effective API tokens) and, for a shared definition, to viewers of every organization; a token with write scope on a shared repository would let a viewer of one organization alter playbook content run in others."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Acceptance and verbatim retention are observed in the sandbox for both write paths, and the API DTO echo is observed directly; the remaining links (DB column copy, requireOrg(PermReposRead) on the GET routes, viewer role mapping) are short and fully source-visible, though the DB-backed HTTP path itself was not executed."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/rules/due_sql.go:evaluateOne:deadline-cut-host-never-postponed-heads-shared-eval-claim",
+    "title": "A host whose evaluation outlasts the batch deadline is never postponed and leads every evaluation claim for all organizations",
+    "description": "Backlog 7.58 bounded each statement in a host's evaluation transaction to 10 s (due_sql.go:296), capped windows per rule (catalog.go:74), and postpones a host for 60 s through retry_after when its own evaluation fails (due_sql.go:243-250). The batch deadline is max(4 x 15 s, 10 s) = 60 s (ticker.go:320-322). If that deadline fires while a host is being evaluated, evaluateOne deliberately postpones nothing because ctx.Err() != nil (due_sql.go:243). The host keeps its old next_due_at and retry_after stays NULL, so ClaimDueEvalCursors (ORDER BY next_due_at, rules.sql:155) lists it first again on the next tick. That tick spends its whole deadline on the same host, and every host behind it in the instance-wide claim, from any organization, goes unevaluated. Source shows a concrete way for an organization member to make one host's evaluation outlast the deadline without any statement reaching the 10 s timeout. EvalSQLStore.Load calls ContextForHost on a separate org-scoped pool connection outside the host transaction, so statement_timeout does not apply to it (load_sql.go:82). ContextForHost calls ResolveHost and GroupsForHost (rules_ports.go:43-52). Each of those runs loadResolveBundle, which issues one MatchingHosts selector query for every monitoring group in the organization (checks/resolver.go:136-146, groups.go:314-317). That makes 2 x G queries per host evaluation for G groups. G has no cap: CreateGroup only validates the name, priority and selector (groups.go:227-257). The POST /orgs/{org}/monitoring-groups route needs only checks.write, which the operator role already has (roles.go:132, monitoring_group_handlers.go:133-134), and source shows no rate limit on it. Once G is large enough for that loop to take more than 60 s, every monitored host in the organization outlasts the deadline. The first one claimed is cancelled mid-Load, is not postponed, and sorts first in every later claim. Multiple managers do not help: each claim skips rows locked by another manager's evaluation (SKIP LOCKED), and the next of that organization's hosts behaves the same way, so k managers are stalled by k such hosts. The org's agents add further cost through tuple count (up to 4096 upserts in Apply) and sample density, but those statements are each bounded or postponed and are not needed for this path. Sweep still runs every tick, but no new rule state or alerts are produced for other organizations while this lasts. It recovers only when the groups are deleted or the evaluation becomes cheap enough to finish inside the deadline.",
+    "claimed_root_cause": "There is no time budget for a host's whole evaluation. ContextForHost runs outside the host transaction's statement_timeout, and its query count grows linearly with the organization's uncapped number of monitoring groups. The batch-cancelled branch of evaluateOne (due_sql.go:243) never postpones the host that consumed the deadline, which leaves it at the head of a claim ordered only by next_due_at. The claim also has no per-organization share.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/monitoring_group_handlers.go",
+        "line": 133,
+        "scope": "POST /api/v1/orgs/{org}/monitoring-groups",
+        "description": "An org member with checks.write (operator or above) creates monitoring groups. CreateGroup (checks/groups.go:250-257) validates only name, priority and selector syntax and has no per-org count cap. Source shows no write rate limit."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/ticker.go",
+        "line": 268,
+        "scope": "Ticker.Tick",
+        "description": "The shared rule ticker (Run, ticker.go:414) runs one instance-wide batch of up to 200 hosts under one deadline of max(4 x 15 s, 10 s) = 60 s (ticker.go:276, 320-322)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/db/queries/rules.sql",
+        "line": 155,
+        "scope": "ClaimDueEvalCursors",
+        "description": "Due hosts from every organization are listed oldest next_due_at first, skipping only rows whose retry_after has not passed (line 154). There is no per-organization share."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/rules/load_sql.go",
+        "line": 82,
+        "scope": "EvalSQLStore.Load",
+        "description": "ContextForHost runs on the pool with an org-scope binding, not on the host transaction, so the SET LOCAL statement_timeout from due_sql.go:296 does not apply."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/checks/resolver.go",
+        "line": 136,
+        "scope": "Service.loadResolveBundle",
+        "description": "This loop issues one MatchingHosts selector query per monitoring group. ResolveHost (resolver.go:320) and GroupsForHost (groups.go:314) each call loadResolveBundle, so each host evaluation costs 2 x G queries, with G set by the org."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/rules/due_sql.go",
+        "line": 243,
+        "scope": "EvalSQLStore.evaluateOne",
+        "description": "When the batch context is done, a failed host is not postponed: no retry_after is set and next_due_at is unchanged. The host therefore heads the next tick's claim and spends that batch's deadline again, and hosts from other organizations behind it are never reached."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/rules/due_sql.go",
+        "line": 47,
+        "description": "hostStatementTimeout is 10 s. It is applied by SET LOCAL to the host transaction only (line 296), so it bounds each statement, not the whole host, and does not cover ContextForHost's separate connection."
+      },
+      {
+        "file": "internal/rules/due_sql.go",
+        "line": 236,
+        "description": "The doc comment states the design: when the batch context is done, nothing is postponed and unfinished hosts stay at the head of the next claim. This includes the host that used up the deadline."
+      },
+      {
+        "file": "internal/rules/due_sql.go",
+        "line": 171,
+        "description": "ProcessDue stops the batch at the first host after ctx is done. All hosts after the deadline-consuming one stay unevaluated for that tick."
+      },
+      {
+        "file": "internal/app/rules_ports.go",
+        "line": 43,
+        "description": "ContextForHost calls the org-wide ResolveHost and then GroupsForHost (line 51). Both rebuild the resolve bundle."
+      },
+      {
+        "file": "internal/checks/groups.go",
+        "line": 250,
+        "description": "CreateGroup has no limit on the number of monitoring groups per organization. normalize (line 227) checks only name length, priority range and selector syntax."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 132,
+        "description": "checks.write, which is enough to create monitoring groups, is granted from the operator role up."
+      },
+      {
+        "file": "internal/rules/ticker.go",
+        "line": 321,
+        "description": "batchDeadline = max(batchDeadlineFactor x interval, deadlineFloor) = 60 s at the 15 s interval. It is the only bound on a host's total evaluation time."
+      },
+      {
+        "file": "internal/rules/catalog.go",
+        "line": 74,
+        "description": "MaxWindowsPerRule = 16 bounds windows per rule, and the window statement is a single statement under the 10 s timeout whose failure is postponed. The 7.58 window fix holds, and the residual path does not depend on windows."
+      }
+    ],
+    "blockers": [
+      "The number of monitoring groups (and hosts per org) needed for one host's ContextForHost plus the rest of its evaluation to exceed the 60 s batch deadline depends on real Postgres/TimescaleDB query latency. DB-backed tests (testcontainers) and load generation are forbidden in this audit sandbox, and EvalSQLStore.evaluateOne cannot be exercised without a real pool, so the cancel-without-postpone outcome and the threshold G cannot be observed locally.",
+      "The blast radius depends on how many managers run the ticker (each is stalled by one such host, and an org with at least that many monitored hosts stalls all of them) and on whether a deployment's Postgres sets its own statement_timeout or the reverse proxy limits write rates. Both are deployment facts outside the repository."
+    ],
+    "validation_plan": {
+      "local": "In a testdb-backed internal/rules test: build EvalSQLStore with a HostChecks fake whose ContextForHost blocks until its context is done. Seed check_eval_cursor rows that are due for host A (org 1, oldest next_due_at) and host B (org 2). Build a Ticker with a 1 s interval and a 2 s deadlineFloor, and call Tick twice. Assert that after both ticks host A's retry_after is NULL and its next_due_at is unchanged, and that host B's evaluated_at never advanced. Separately, against testdb with the real checks.Service plus the hosts matcher, create 50 monitored hosts and then G = 1000, 5000 and 20000 monitoring groups with simple selectors (e.g. tag=x). Time rulesHostChecks.ContextForHost for one host to find the G at which it exceeds 60 s. After a fix, the first test must show host A postponed and host B evaluated in the second tick. Candidate fixes: postpone or deprioritise the host that was running when the deadline fired, wrap the whole of fn including ContextForHost in a per-host context deadline below the batch deadline, cap monitoring groups per org or cache the resolve bundle per org per tick, and cap each organization's share of a batch.",
+      "deployment": "On an owner-controlled staging instance, run read-only queries. SELECT org_id, count(*) FROM monitoring_groups GROUP BY org_id ORDER BY 2 DESC finds the largest group counts. SELECT org_id, host_id, next_due_at, evaluated_at, dirty_at, retry_after FROM check_eval_cursor WHERE retry_after IS NULL AND next_due_at < now() - interval '5 minutes' ORDER BY next_due_at LIMIT 20 finds hosts stuck at the head of the claim. Check the manager logs for repeated 'evaluation batch cancelled' and 'evaluation tick overran its interval' warnings with hosts=0 or 1, and for 'load host for evaluation' errors naming the same host every tick. Record how many managers run the ticker and whether the database or a proxy enforces its own statement_timeout or API write rate limits. Do not create groups on a shared or production instance."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/varsource/report.go:Encode:full-marshal-before-size-cap",
+    "title": "Worker JSON-encodes the whole variable-sources report before applying the 8 MiB cap, so a ~66 KB repository drives a sync to gigabytes of memory",
+    "description": "Every sync_repo job on the zone worker reads the clone's variable sources (SyncExecutor.Run -> readVarSources -> collectVarSources -> varsource.ParseRepoInstalled) and then calls varsource.Encode(report, MaxReportBytes). Encode runs json.Marshal over the complete report and compares the length with the 8 MiB cap only afterwards; the binary search that follows re-marshals large prefixes again. The parsed report itself stays small because a YAML alias returns the anchored node, so one 60 KiB string backs every option default that aliases it (readScalar charges the per-file budget per use, but stays under the 8 MiB file budget for 100 uses). One role argument spec with 100 options aliasing one 60 KiB default, plus N one-line playbooks that use the role, therefore gives N x ~6.2 MB of JSON. Nothing bounds the aggregate across playbooks before Encode; only MaxPlaybooks (1000) bounds the count. Reproduced through the real sync executor in a 2 GiB sandbox: a 66 627-byte repository with 48 playbooks made one sync allocate 2.45 GB (process memory 1.46 GB), and with 64 playbooks (about 66.7 KB) the sync process was killed. In isolation, a 64-playbook report that holds 7.7 MB of live heap made Encode allocate 3.05 GB and raised the process's OS memory from 26 MB to 1.82 GB. Growth is linear in the playbook count, so the 1000-playbook cap needs tens of GB. A Go out-of-memory failure (or a kernel OOM kill) ends the process; collectVarSources' recover does not cover Encode and could not catch a fatal runtime error anyway. Anyone who can push to a branch Pulsix syncs (lower trust than the org admin who configured the repository) can make the org's zone worker crash on each sync of that commit. With the non-default PULSIX_EMBEDDED_WORKER=1, the same code runs inside the manager process.",
+    "root_cause": "varsource.Encode (internal/varsource/report.go:30) json.Marshals the entire Report before the size check at line 34, and the binary search (line 46) re-marshals large prefixes. The report's encoded size is bounded only by the per-walk scalar budgets (charged per alias use, but the Go string is shared, so the in-memory report stays small) times MaxPlaybooks. Nothing tracks the encoded size while playbooks are collected in discovery.examine.",
+    "intended_behavior": "Producing a report of at most MaxReportBytes should never need more than a small multiple of MaxReportBytes (plus one playbook) of memory. Size should be counted per playbook before anything large is marshalled, and playbooks that do not fit should go to LeftOut with report_too_large.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/worker/sync.go",
+        "line": 158,
+        "scope": "SyncExecutor.Run (sync_repo job)",
+        "description": "After the fetch and requirements step, every repository sync (webhook, scheduled or manual trigger) calls readVarSources on the clone, whose content the repository writer controls."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/sync_sources.go",
+        "line": 137,
+        "scope": "SyncExecutor.collectVarSources",
+        "description": "varsource.ParseRepoInstalled parses the clone's playbooks, roles and argument specs in the worker process."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/varsource/discover.go",
+        "line": 198,
+        "scope": "discovery.examine",
+        "description": "Each candidate playbook (up to MaxPlaybooks = 1000) is walked separately and appended to d.playbooks. Each walk re-reads the shared role spec, and nothing tracks the aggregate encoded size."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/varsource/argspec.go",
+        "line": 185,
+        "scope": "specMapper.option",
+        "description": "Each argument-spec option's default goes through applyDefault."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/varsource/scalars.go",
+        "line": 116,
+        "scope": "yamlFile.readScalar",
+        "description": "A default is capped at maxDefaultBytes (64 KiB) and charged to the file's 8 MiB budget on each use. An alias resolves to the same anchored node, so 100 option defaults share one string."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/varsource/argspec.go",
+        "line": 327,
+        "scope": "specMapper.applyDefault",
+        "description": "f.Default = v stores the shared string in each field: about 100 x 60 KiB of encoded output per playbook, with almost no retained memory."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/sync_sources.go",
+        "line": 69,
+        "scope": "SyncExecutor.readVarSources",
+        "description": "The full report with every playbook goes to varsource.Encode with MaxReportBytes. No context or memory bound applies."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/varsource/report.go",
+        "line": 30,
+        "scope": "varsource.Encode",
+        "description": "json.Marshal(r) writes out every playbook's fields, repeating each shared default, before the len(data) <= maxBytes check at line 34. The binary search at line 46 then re-marshals large prefixes."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/varsource/report.go",
+        "line": 34,
+        "description": "The MaxReportBytes comparison comes only after the complete marshal at line 30."
+      },
+      {
+        "file": "internal/varsource/report.go",
+        "line": 46,
+        "description": "Each binary-search step re-marshals a prefix of up to half the report, which adds about 3 GB of allocation at 64 playbooks in total."
+      },
+      {
+        "file": "internal/varsource/playbook.go",
+        "line": 82,
+        "description": "MaxPlaybooks = 1000 bounds how many playbooks there are, not how large each one's encoded fields are."
+      },
+      {
+        "file": "internal/varsource/playbook.go",
+        "line": 96,
+        "description": "maxWalkReadBytes = 4 * maxReadBytes (32 MiB) is a per-playbook scalar budget. It is charged per use, so encoded output per playbook can reach tens of MB while the parse retains little."
+      },
+      {
+        "file": "internal/varsource/scalars.go",
+        "line": 18,
+        "description": "maxReadBytes (8 MiB per file) and maxDefaultBytes (64 KiB, line 23) are the only bounds on default text. A 60 KiB anchored default used 100 times stays inside both."
+      },
+      {
+        "file": "internal/worker/sync_sources.go",
+        "line": 50,
+        "description": "The 60 s limit is checked only between candidate files. Discovering and walking tiny playbooks over one 60 KB spec finishes well inside it (64 playbooks parsed and encoded in 0.8 s), and Encode takes no context."
+      },
+      {
+        "file": "internal/worker/sync_sources.go",
+        "line": 90,
+        "description": "The recover in collectVarSources covers only parsing, not Encode, and cannot catch a fatal Go out-of-memory error or a kernel OOM kill."
+      },
+      {
+        "file": "deploy/compose/docker-compose.yml",
+        "line": 190,
+        "description": "The shipped worker service has no memory limit and runs on the host it shares with the manager and database. It restarts unless stopped (line 235), so each sync of the commit repeats the crash."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "The attacker can push to the synced branch of a git repository that an org admin configured in Pulsix. Repository content is lower trust than the org admin, and no Pulsix account is needed."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "A sync of that repository runs: a webhook repo_sync trigger, a schedule, or an operator's manual sync."
+      },
+      {
+        "kind": "environmental_dependency",
+        "description": "The process dies only when the worker host or container has less memory than the encode needs. Measured: about 1.8 GB of process memory for 64 playbooks, linear in the playbook count, so several GB at a few hundred playbooks and tens of GB at the 1000 cap. Hosts with less memory than that lose the worker. Hosts with more see only a large memory and CPU spike."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Repository writer who adds one role and a few dozen one-line playbooks to a repository that Pulsix syncs.",
+      "payloads": [
+        "roles/big/meta/argument_specs.yml: big: &big \"<61440 x 'x'>\"\\nargument_specs:\\n  main:\\n    options:\\n      f0: {type: str, default: *big}\\n      ... (through f99, each default: *big)",
+        "roles/big/tasks/main.yml: []",
+        "p0000.yml .. p0063.yml (64 files): - hosts: all\\n  roles: [big]"
+      ],
+      "instructions": [
+        "Copy the source to scratch. Add internal/worker/zz_verify_encode_test.go, which writes the payload tree for N playbooks into t.TempDir() and drives SyncExecutor.Run with the package's fakeFetcher through the existing syncSources helper. It logs TotalAlloc and MemStats.Sys around the sync.",
+        "Add internal/varsource/zz_verify_encode_test.go, which calls ParseRepo on the same tree (64 playbooks, testing/fstest.MapFS), logs the live heap after GC, then calls Encode(report, MaxReportBytes) and logs TotalAlloc and Sys.",
+        "Run each in the approved sandbox (golang:1.27.1-alpine, --network none, --read-only, --cap-drop ALL, --user 65532, --memory 2g --memory-swap 2g, --cpus 2, 300 s): go test -count=1 -v -run '^TestAuditVerifyGrowth$' ./internal/worker/; then ^TestAuditVerifyFresh48$ and ^TestAuditVerifyFresh64$ each in a fresh container; then ^TestAuditVerifySplit$ ./internal/varsource/."
+      ],
+      "observed_result": "Through the real sync executor: 1 playbook (65 311-byte repository) allocated 45.9 MB. 16 playbooks allocated 0.80 GB, and 32 playbooks 1.58 GB (process memory 1.19 GB), all sending 1 playbook with incomplete=true. In a fresh process, 48 playbooks (66 627-byte repository) allocated 2.45 GB (process memory 1.46 GB). 64 playbooks ended with 'signal: killed' under the 2 GiB limit; the tmpfs build cache also counts toward that limit. Isolated: 64 playbooks parsed to 6 400 fields with a live heap of 7.7 MB. Encode then allocated 3.05 GB and raised process memory from 26 MB to 1.82 GB, while the sent report was 6.16 MB. Growth is linear in the playbook count. The 1000-playbook endpoint is extrapolated, not executed."
+    },
+    "remediation": {
+      "strategy": "Bound the encode. Size each playbook with its own json.Marshal (each is bounded by its walk caps), find the longest prefix whose summed size fits MaxReportBytes, and only marshal or binary-search reports built from that prefix. Optionally also track the running encoded size in ParseRepoInstalled and stop walking once it passes the cap, moving the rest to LeftOut with report_too_large, which also saves parse time. Regression test: the alias fixture with 1000 playbooks must keep Encode's TotalAlloc under a small multiple of MaxReportBytes plus one playbook, and must still return 1 playbook with incomplete=true.",
+      "code_changes": [
+        {
+          "file_name": "internal/varsource/report.go",
+          "fixed_code": "// Encode renders r as JSON of at most maxBytes. A report too large keeps\n// the most playbooks from the front that fit. No marshal ever builds more\n// than maxBytes plus one playbook plus the report's own (bounded) fields.\nfunc Encode(r Report, maxBytes int) ([]byte, Report, error) {\n\t// How many playbooks from the front can fit at all, one playbook\n\t// marshalled at a time (one playbook is bounded by its walk caps).\n\tfit, total := 0, 0\n\tfor _, pb := range r.Playbooks {\n\t\tb, err := json.Marshal(pb)\n\t\tif err != nil {\n\t\t\treturn nil, r, fmt.Errorf(\"encode variable sources: %w\", err)\n\t\t}\n\t\tif total += len(b) + 1; total > maxBytes {\n\t\t\tbreak\n\t\t}\n\t\tfit++\n\t}\n\tif fit == len(r.Playbooks) {\n\t\tdata, err := json.Marshal(r) // bounded: every playbook fits\n\t\tif err != nil {\n\t\t\treturn nil, r, fmt.Errorf(\"encode variable sources: %w\", err)\n\t\t}\n\t\tif len(data) <= maxBytes {\n\t\t\treturn data, r, nil\n\t\t}\n\t}\n\t// Search only among cuts that can fit, so each marshal stays bounded.\n\tlo, hi := 0, min(fit, len(r.Playbooks)-1)\n\tvar best []byte\n\tvar bestReport Report\n\tfor lo <= hi {\n\t\tkeep := (lo + hi) / 2\n\t\tcut := dropPlaybooks(r, keep, maxBytes)\n\t\tdata, err := json.Marshal(cut)\n\t\tif err != nil {\n\t\t\treturn nil, r, fmt.Errorf(\"encode variable sources: %w\", err)\n\t\t}\n\t\tif len(data) <= maxBytes {\n\t\t\tbest, bestReport, lo = data, cut, keep+1\n\t\t} else {\n\t\t\thi = keep - 1\n\t\t}\n\t}\n\tif best == nil {\n\t\treturn nil, r, fmt.Errorf(\"encode variable sources: the report does not fit %d bytes even without playbooks\", maxBytes)\n\t}\n\treturn best, bestReport, nil\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "medium",
+        "reason": "Needs only push access to a repository Pulsix already syncs (lower trust than the org admin) and a ~66 KB commit. Syncs run automatically on webhooks or schedules, and no Pulsix credentials are needed."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "The org's zone worker process dies from memory exhaustion (shown at 64 playbooks under a 2 GiB limit). Each sync of that commit repeats it until the repository is fixed or the sync is stopped, which blocks that zone's playbook runs. The worker has no memory limit in the shipped compose stack, so the spike also pressures the shared host. With the non-default embedded worker, the manager process is hit. No data exposure or integrity effect."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Every trace line was checked in source. The amplification was reproduced through SyncExecutor.Run in the approved sandbox, and an isolated run shows Encode, not the parse, is where memory grows (7.7 MB live report -> 1.82 GB process memory). Only the crash threshold on a given host depends on its memory."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "internal/varsource/roles.go:walk.spec:parse-trees-retained-across-walk",
+    "title": "One playbook walk keeps every parsed role spec tree in memory, about 85x its raw bytes, roughly 1.4 GB live per sync",
+    "description": "The walk of one playbook limits the raw bytes it reads to 16 MiB (maxWalkBytes), 512 KiB per file. It keeps every parsed role argument-spec document (the yaml.Node tree and its yamlFile) referenced from w.specs and w.sources until the walk ends. It does this even when the spec cannot be used, for example a sequence instead of a mapping, so the role is reported as unreadable. A dense YAML flow list keeps about 84.5 bytes of heap per raw byte. One playbook that lists 31 roles, each with a 512 KiB meta/argument_specs.yml, therefore holds about 1.37 GB of live heap. With the default GOGC=100 the peak heap can reach about twice that. The walk ends normally: no walk cap trips, and the playbook is not even marked failed. Anyone who can push to a repository an org has configured can trigger this. The worker parses the clone in-process on every sync, and syncs can be webhook-triggered, so no human runs a job first. The memory is freed when the walk ends, so the effect is a transient peak once per sync. Whether that peak kills the worker, or other processes on a shared host (the bundled compose runs the worker next to the manager and Postgres with no memory limits), depends on the deployment. Measured in the sandbox at commit 52f27625: the retained heap grows linearly at 84.5x raw bytes. It was 44.3 MB for 1 role, 354 MB for 8, 709 MB for 16 and 1.06 GB for 24 (12 MiB raw). The playbook was not failed, and the heap dropped back to about 160 KB after the walk (agents/v06-varsource/artifacts/evidence.txt). Imported playbook files also stay referenced through w.sources and their yamlFile entry caches. The fix should therefore bound everything a walk keeps parsed, not only the role specs.",
+    "claimed_root_cause": "walk.spec (internal/varsource/roles.go:297-326) parses each spec file once per walk and stores the document root and its yamlFile in w.specs (line 324) and w.sources (line 322) for the rest of the walk. This is so that several entry points (tasks_from) of one file share one parse. The walk's limits (maxWalkBytes and the per-file MaxFileBytes on raw bytes, maxWalkSteps on nodes visited, maxWalkReadBytes on scalar bytes read) charge raw input and visits. None of them charges the nodes a parse creates and keeps. A large node that is never visited costs no steps, so a 16 MiB walk can keep about 85x that in yaml.Node trees.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/worker/sync_sources.go",
+        "line": 137,
+        "scope": "SyncExecutor.collectVarSources",
+        "description": "During every repository sync (webhook-triggered too), the worker parses the cloned repository content in-process through varsource.ParseRepoInstalled. That content is lower trust than the org admin who configured the repo."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/varsource/discover.go",
+        "line": 198,
+        "scope": "discovery.examine",
+        "description": "Each discovered playbook is walked one at a time by parser.parse, which creates a fresh walk with an empty specs map."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/varsource/roles.go",
+        "line": 330,
+        "scope": "walk.readRole",
+        "description": "For each distinct role the playbook uses (up to 512), walk.spec reads meta/argument_specs.yml (up to 512 KiB) through w.read. Only its raw bytes count against the 16 MiB walk cap."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/varsource/roles.go",
+        "line": 321,
+        "scope": "walk.spec",
+        "description": "The parsed tree (s.root) and its yamlFile (s.y) are stored in w.sources (line 322) and w.specs (line 324) and stay reachable until the walk finishes. This also happens when readRoleSpec then reports the role as unreadable."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/varsource/playbook.go",
+        "line": 94,
+        "description": "maxWalkBytes = 16 MiB limits the raw bytes read per walk, not the heap kept. 31 x 524 287-byte specs plus the playbook stay under it."
+      },
+      {
+        "file": "internal/varsource/files.go",
+        "line": 89,
+        "description": "walk.read adds only len(data), the raw file bytes, to w.rawBytes. The cost of the parse tree is never charged."
+      },
+      {
+        "file": "internal/varsource/roles.go",
+        "line": 324,
+        "description": "w.specs[key] = s keeps the parse for the rest of the walk. No path drops s.root or s.y after the entry point is mapped."
+      },
+      {
+        "file": "internal/varsource/playbook.go",
+        "line": 181,
+        "description": "parser.parse creates a fresh specs map for each walk, so the kept trees are freed only when that playbook's walk returns. The peak is per walk and does not add up across playbooks."
+      },
+      {
+        "file": "deploy/compose/docker-compose.yml",
+        "line": 235,
+        "description": "The bundled worker service sets restart: unless-stopped and no memory limit (no mem_limit, deploy.resources or GOMEMLIMIT anywhere in deploy/ or the Go code). Whether ~1.4 GB live (up to ~2.8 GB peak) ends the worker, or puts pressure on the manager and Postgres on the same host, depends on the deployment."
+      }
+    ],
+    "blockers": [
+      "The full-scale walk (31 roles x 512 KiB, about 1.37 GB live, up to about 2.8 GB with GOGC=100) was not run. The approved sandbox has a 2 GiB memory cgroup that also holds the tmpfs build cache. Bounded runs up to 24 roles (1.06 GB live, linear at 84.5x) were measured; 31 roles is an extrapolation of that linear trend.",
+      "Whether the transient peak ends the worker, or affects other services, depends on the memory the deployed worker container or host has. The bundled compose sets no memory limit and runs the worker next to the manager and Postgres. The repository does not fix this, and it decides whether the effect reaches beyond the org that owns the worker."
+    ],
+    "validation_plan": {
+      "local": "In an offline sandbox with a memory cgroup of at least 4 GiB (otherwise the same flags as the approved sandbox), run TestVerifyRetainedHeapScale (scratch/src/internal/varsource/zz_verify_mem_test.go) with roles = 31 and the default GOGC. Record HeapAlloc at the probe role and the cgroup's memory.peak. Then repeat with a build where walk.spec keeps only the mapped entry-point results, or a node-count budget, instead of s.root/s.y (and imports drop their trees once visited). Confirm the probe-time heap stays within a small multiple of one file's parse (about 45 MB).",
+      "deployment": "The owner reads the memory available to each deployed worker: docker stats or the cgroup memory.max of the pulsix-worker container, the host's free memory, and whether it shares the host with the manager and Postgres. Compare that with a transient peak of about 1.4 to 2.8 GB during one sync, and check the restart policy and any host OOM-killer settings. This is a read-only check, with no load test against production."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/worker/runner/gitrepo.go:fetchGit:update-fetches-stale-origin",
+    "title": "Existing worker clones ignore a changed repository URL and keep fetching (with the current credential) from the old origin",
+    "description": "Once a worker holds a clone of a repository (<RepoCacheDir>/<org>/<repo-id>/.git), every later sync and repository-playbook run updates it with 'git fetch --quiet -- origin <branch>' and 'git reset --hard FETCH_HEAD'. The URL from the claim is used on that path only as the redaction string, and nothing on the worker reads, compares or rewrites remote.origin.url. When an org admin edits the repository URL (repos.Service.Update), or an instance admin edits a shared repository definition that propagates the URL to every projection, the manager clears the host-key pin and the next claim carries the new URL, but workers that already cloned it keep pulling from the old source. Runs execute the old source's playbooks against the organization's hosts, syncs install its requirements and report its variable sources, and the repository's current git credential is in the fetch's environment (token via GIT_ASKPASS, or ssh key via GIT_SSH_COMMAND), so git offers it to the old host if that host asks for authentication. For ssh remotes this holds while the repository is unpinned or the old and new URLs name the same ssh host (for example a repository moved to another path on the same provider): once a pin for a different new host exists (the URL change clears the pin, and only a worker that freshly clones the new URL can capture a new one), the stale worker's strict host-key check against the seeded new-host entry fails before ssh authenticates, so that worker's syncs and runs error out instead. https remotes have no pin and are not limited this way. Workers without a clone clone the new URL, so workers in the same zone can run different code for the same repository. The repo cache sweep removes clones only for repositories that no longer exist, so the stale clone stays for the life of the worker's data dir.",
+    "root_cause": "Runner.fetchGit (internal/worker/runner/gitrepo.go:228-237) treats an existing clone as the authority on its source: the update path fetches the remote name 'origin', whose URL was fixed by the first 'git clone -- <spec.URL>' (gitrepo.go:249-250), instead of spec.URL. The cache key (<org>/<repo-id>) stays the same when the URL changes, and no other worker code checks or re-points the remote.",
+    "intended_behavior": "Every fetch should come from the URL currently configured on the repository (the claim payload's url), and the repository's credential should only be offered to that source. A URL change, which the manager already treats as a move to a different server by clearing the host-key pin (internal/repos/service.go:367-369, shared.sql UpdateProjectedRepo), should take effect on every worker, including workers that already hold a clone.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/repos/service.go",
+        "line": 357,
+        "scope": "repos.Service.Update",
+        "description": "An org admin's repository edit sets next.URL to the new URL under the same repository id. The only side effect of a URL change is clearing the host-key pin (lines 367-369). Shared-definition edits propagate the URL to projections through UpdateAndPropagate in the same way (internal/db/queries/shared.sql:196-200)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 1183,
+        "scope": "SQLQueue.repoKindPayload",
+        "description": "The next run or sync claim carries the new url in the repo payload, and the repository's current credential is placed under git:<repo-id> (line 1176)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/sync.go",
+        "line": 147,
+        "scope": "SyncExecutor.Run",
+        "description": "The sync passes the spec (new URL) and the git:<repo-id> credential to FetchRepoDir. The run path does the same through Runner.fetchRepo (internal/worker/runner/playbook.go:96 -> gitrepo.go:81)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 185,
+        "scope": "Runner.FetchRepoDir",
+        "description": "A git_token credential is exposed through GIT_ASKPASS (a git_key through GIT_SSH_COMMAND at line 166) for whatever host git contacts, then fetchGit is called (line 193)."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 228,
+        "scope": "Runner.fetchGit",
+        "description": "An existing <cacheRoot>/<org>/<repo-id>/.git selects the update path."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 231,
+        "scope": "Runner.fetchGit",
+        "description": "'git fetch --quiet -- origin <branch>' contacts the clone's stored origin URL, not spec.URL. 'reset --hard FETCH_HEAD' (line 234) then checks out that remote's content for the run or sync."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 231,
+        "description": "The update path fetches the remote name 'origin'. spec.URL is passed to runGit only as redactURL."
+      },
+      {
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 250,
+        "description": "Only the fresh-clone branch passes spec.URL to git, and git records it as remote.origin.url."
+      },
+      {
+        "file": "internal/repos/service.go",
+        "line": 367,
+        "description": "URL changes are allowed and treated as a server change (the pin is cleared), but nothing invalidates or re-points worker clones."
+      },
+      {
+        "file": "internal/worker/cachesweep.go",
+        "line": 186,
+        "description": "The sweep removes an org's clone only when the repository id is no longer listed, so a URL change never removes the old clone."
+      },
+      {
+        "file": "internal/db/queries/shared.sql",
+        "line": 196,
+        "description": "A shared-definition URL edit rewrites every projection's url under the same repository id (clearing pins), so the same stale clone applies to every organization's workers."
+      },
+      {
+        "file": "internal/worker/runner/gitrepo.go",
+        "line": 149,
+        "description": "A pinned claim seeds the run's known_hosts for the claim URL's host and fetches with StrictHostKeyChecking=yes (internal/worker/gitssh.go:77-78), so a stale ssh fetch to a different old host fails before authentication once the new URL is pinned; https fetches and same-host ssh moves are unaffected."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "data_state",
+        "description": "The worker already holds a clone of the repository from before the URL change (any earlier sync or run of that repository on that worker's data dir)."
+      },
+      {
+        "kind": "authorization_role",
+        "description": "The repository URL has to be changed by an org admin (or by an instance admin for a shared definition). The party who benefits needs no Pulsix role: it is whoever controls, or later gains control of, the content or host at the old URL, for example an abandoned, compromised, mistyped or squatted source that the admin replaced."
+      },
+      {
+        "kind": "third_party_dependency",
+        "description": "Standard git semantics: 'git fetch origin' resolves the remote URL stored by 'git clone'. The verifier observed this with the git 2.47.3 shipped in noixdev/pulsix-worker:dev."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "The credential-disclosure half applies only when the repository has a git_token and the old https host requests HTTP authentication, or when a git_key is used against an old ssh host while no pin for a different new ssh host is set (a pin seeds known_hosts for the new URL's host and StrictHostKeyChecking=yes then refuses the old host before authentication; a stale-clone worker never captures a new pin itself because ObservedGitHostKey looks up the new URL's host name). That half follows from the environment construction in source and was not observed against a live authenticating server."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Controller of a repository source that an organization used to configure and has since replaced. The effect was observed through the worker's own git invocations in sandboxed harnesses.",
+      "payloads": [
+        "Hunter harnesses (golang sandbox, fake git): FetchRepoDir(spec{URL:\"https://old-host.example.invalid/team/playbooks.git\",Branch:\"main\"}, \"\") followed by FetchRepoDir(spec{same org and repo id, URL:\"https://new-host.example.invalid/team/playbooks.git\"}, `{\"token\":\"TOKEN-FOR-NEW-HOST\"}`)",
+        "Verifier check (noixdev/pulsix-worker:dev, real git 2.47.3, --network none, read-only, local file:// bare repos A and B in tmpfs): 'git clone --quiet --branch=main --single-branch -- file:///tmp/bareA.git repo', push a new commit to A, then the exact update argv 'git fetch --quiet -- origin main' and 'git reset --hard FETCH_HEAD' as issued for a claim URL of file:///tmp/bareB.git"
+      ],
+      "instructions": [
+        "Source: confirm in internal/worker/runner/gitrepo.go:228-237 that the update path passes 'origin' rather than spec.URL to git, and that spec.URL reaches git only in the clone at line 250.",
+        "Hunter harness: in the approved golang:1.27.1-alpine sandbox, run the runner-package tests TestAuditChangedRepoURLKeepsOldOrigin and TestH10FetchExistingCloneIgnoresClaimURL (fake git that logs argv and the GIT_ASKPASS answer). Check that the second fetch issues 'fetch --quiet -- origin main' with the new token answered by askpass, and that the new URL never reaches git.",
+        "Real-git check: in the worker image, create two local bare repositories with different site.yml files. Clone A with fetchGit's clone argv, commit new content to A, then run fetchGit's update argv in the clone. Compare site.yml, remote.origin.url and HEAD with the tips of A and B."
+      ],
+      "observed_result": "Fake-git harnesses: the second FetchRepoDir ran 'fetch --quiet -- origin main' and 'reset --hard FETCH_HEAD' with GIT_ASKPASS answering the new token, and the claim URL never reached git (PASS; agents/h04-req-cache/artifacts/evidence.txt, agents/h10-runner/artifacts/evidence.txt). Real git 2.47.3 in the worker image: after the update with claim URL file:///tmp/bareB.git, site.yml contained 'NEW content pushed to OLD source A', remote.origin.url was still file:///tmp/bareA.git, and clone HEAD 54641d94 equalled A's tip, not B's 388ca8ad (agents/v07-req-cache/artifacts/evidence.txt)."
+    },
+    "remediation": {
+      "strategy": "On the update path, fetch from the claim's URL instead of the stored remote (or compare remote.origin.url with spec.URL and re-clone on a mismatch), so the credential, the pin check and the fetched content all go with the URL the manager currently has configured. Add a regression test where a second FetchRepoDir with a different URL hands that URL to git and never contacts the old one.",
+      "code_changes": [
+        {
+          "file_name": "internal/worker/runner/gitrepo.go",
+          "fixed_code": "if _, statErr := os.Stat(filepath.Join(target, \".git\")); statErr == nil {\n\t\t// Fetch from the URL the manager sent, never the clone's stored\n\t\t// remote: a changed repository URL must take effect on every worker\n\t\t// that already holds a clone, and the credential must only go there.\n\t\tif err := runGit(ctx, gitBin, target, env, spec.URL, \"fetch\", \"--quiet\", \"--\", spec.URL, spec.Branch); err != nil {\n\t\t\treturn wrap(err)\n\t\t}\n\t\tif err := runGit(ctx, gitBin, target, env, spec.URL, \"reset\", \"--hard\", \"FETCH_HEAD\"); err != nil {\n\t\t\treturn wrap(err)\n\t\t}\n\t\treturn nil\n\t}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "Requires a URL change on a repository that a worker already cloned, while the old source stays reachable and someone other than the organization controls it, or asks for credentials. URL changes are rare and the old source is often still the organization's own."
+      },
+      "impact": {
+        "score": "high",
+        "reason": "Playbooks from a source the organization removed run against its managed hosts with the org's machine credentials, and the repository's current git token or key can be offered to the old host. The UI shows the new URL, so the operator believes the change took effect."
+      },
+      "overall_severity": "medium"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "The worker control flow is fully visible in source, the argv was observed through the real fetchGit in fake-git harnesses, and the worker image's own git was observed resolving 'origin' to the old URL and checking out the old source's content. Only the credential prompt against a live authenticating old host was not exercised."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "internal/worker/runner/redact.go:newRedactor:yaml-single-quote-and-urlencode-spellings",
+    "title": "Run-output redaction misses a secret printed through to_yaml/to_nice_yaml (single-quoted) or urlencode",
+    "description": "The worker's run-output redactor replaces only an enumerated list of literal spellings of each claim secret: the value, its JSON and nested-JSON forms, its Python repr forms (the run-3 fix) and its base64 forms. Two everyday, reversible Ansible/Jinja2 transformations with named producers are missing: the YAML single-quoted scalar that to_yaml/to_nice_yaml emit for a string that cannot be a plain scalar (for example one with a leading indicator such as @, `, !, % or containing ': '), with every ' doubled, and the percent-encoding that the urlencode filter emits (the usual way a password goes into a connection URL). A secret extra var, inventory secret or credential printed in either form by a task (debug of a rendered config, a module result holding a DSN) reaches the stored run log unchanged, and the run log is readable by every org member with jobs.read, which is the viewer role. Backlog 7.9 already lists YAML spellings as 'not done'.",
+    "root_cause": "newRedactor (internal/worker/runner/redact.go:52-105) builds the redact set from a fixed list of spelling generators (plain value, reprSpellings, jsonSpellings, nestedJSONSpellings, base64Spellings, per-line pieces). redactor.text (redact.go:299-306) does a literal strings.ReplaceAll with that set. It generates no YAML single-quoted body (quote doubled) and no percent-encoded spelling, and nothing on the manager side redacts again (internal/grpcsrv/events.go:100-109 stores the payload as received).",
+    "intended_behavior": "Viewers with jobs.read never see a credential, secret extra var or secret inventory var that a task printed (internal/jobs/redact.go:1-5). The redactor's own policy is to cover every reversible transformation that has a named producer (internal/worker/runner/redact.go:269-274).",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/jobs/queue_sql.go",
+        "line": 581,
+        "scope": "SQLQueue.buildPayload",
+        "description": "When the job is claimed, an operator-configured template's secret-typed extra var values go into the claim's redact list as plain strings. Credentials and inventory secrets are added the same way at lines 701-704. A play run by an operator then prints the value."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 52,
+        "scope": "newRedactor",
+        "description": "Expands each value into its plain, repr, JSON, nested-JSON, base64 and per-line spellings only. It adds no YAML single-quoted body and no percent-encoded body."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/runner.go",
+        "line": 436,
+        "scope": "Runner.streamEvents",
+        "description": "Passes each mapped ansible-runner event's host, task and payload (event_data.res and the display stdout) through red.eventPayload. Display-only lines go through red.textPayload at line 440."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/runner/redact.go",
+        "line": 299,
+        "scope": "redactor.text",
+        "description": "Literal ReplaceAll over the list. '@Pa''ss!w0rd' and %40Pa%27ss%21w0rd match no entry and pass through unchanged."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/grpcsrv/events.go",
+        "line": 101,
+        "scope": "GRPC event stream receive loop (Events.Append)",
+        "description": "The manager appends host, task, state and payload as received, with no second redaction."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/api/job_handlers.go",
+        "line": 528,
+        "scope": "GET /api/v1/orgs/{org}/jobs/{id}/events",
+        "description": "Returns the stored events (toJobEventDTO only normalizes the JSON shape) to any member holding PermJobsRead, which maps to RoleViewer (internal/tenancy/roles.go:113)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 62,
+        "description": "The only alternative bases are the value and its repr spellings. JSON and nested-JSON forms are derived from those bases, and nothing is YAML-quoted or URL-quoted."
+      },
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 269,
+        "description": "Policy comment: reversible transformations that have a named producer belong in the list. to_yaml/to_nice_yaml and urlencode are such producers."
+      },
+      {
+        "file": "internal/worker/runner/redact.go",
+        "line": 341,
+        "description": "eventPayload forwards event_data host/task/task_action/res and the display stdout after only redactor.value and redactor.text."
+      },
+      {
+        "file": "internal/tenancy/roles.go",
+        "line": 113,
+        "description": "PermJobsRead is granted to RoleViewer, so the lowest org role reads run events."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "data_state",
+        "description": "The claim secret is at least 4 characters long. For the YAML case it must contain a ' and need quoting under PyYAML: a leading indicator character, ': ' or ' #' inside, or leading/trailing space. A secret without a ' is still caught, because its quoted body equals the value. For the URL case it must contain any character that urlencode escapes, meaning anything other than ASCII letters, digits, _.-~ and /."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "A play (written by an operator or taken from the repository) prints the secret through to_yaml, to_nice_yaml or urlencode, for example in a debug of a rendered config or in a module result holding a DSN, and an operator starts the run."
+      },
+      {
+        "kind": "authorization_role",
+        "description": "The reader is any org member with jobs.read (the viewer role) who is not otherwise entitled to read the secret."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "An org viewer reads the run log of a run whose play printed a secret in YAML single-quoted or percent-encoded form.",
+      "payloads": [
+        "claim redact list: [\"@Pa'ss!w0rd\"]",
+        "ansible-core 2.21.4 to_nice_yaml display msg: \"db:\\n    password: '@Pa''ss!w0rd'\\n\"",
+        "ansible-core 2.21.4 to_yaml display msg: \"db: {password: '@Pa''ss!w0rd'}\\n\"",
+        "ansible-core 2.21.4 urlencode display msg: \"postgresql://app:%40Pa%27ss%21w0rd@db.example.invalid/app\"",
+        "control: \"control @Pa'ss!w0rd\""
+      ],
+      "instructions": [
+        "Producer check in the worker image (noixdev/pulsix-worker:dev, --network none, --read-only, resource limits, --ipc private --shm-size 64m, tmpfs only, env -i, timeout 120): run ansible-playbook -i localhost, -c local on a dummy play with var s: \"@Pa'ss!w0rd\" and debug tasks msg={{ {'db':{'password': s}} | to_nice_yaml }}, the same with to_yaml, postgresql://app:{{ s | urlencode }}@db.example.invalid/app, and the control 'control {{ s }}'. Record the displayed msg strings.",
+        "Copy the repository to scratch and add internal/worker/runner/zz_v08_audit_test.go (TestV08RedactorRealProducerSpellings). It builds newRedactor(&workerpb.Job{Redact: []string{\"@Pa'ss!w0rd\"}}) and calls eventPayload on a runner_on_ok Event whose event_data.res.msg and display stdout carry each recorded msg verbatim.",
+        "Run in the approved offline sandbox: go test -count=1 -v -run TestV08 ./internal/worker/runner/ (golang:1.27.1-alpine, --network none, read-only source and module cache, cap-drop ALL, uid 65532, timeout 300 s)."
+      ],
+      "observed_result": "The worker image's ansible-core 2.21.4 (PyYAML 6.0.3, Jinja2 3.1.6) printed '@Pa''ss!w0rd' for to_nice_yaml and to_yaml, and %40Pa%27ss%21w0rd for urlencode (evidence2.txt). With those exact strings, eventPayload redacted the control ('control [redacted]' in res.msg and stdout). For to_nice_yaml, to_yaml and urlencode, res.msg and stdout were forwarded with redacted=false and still held the secret's reversible spelling (evidence.txt). The scope check passed: a secret without a ' ('@Pass!w0rd') became '[redacted]' in its YAML-quoted form."
+    },
+    "remediation": {
+      "strategy": "In newRedactor, add the two reversible spellings to the base set, each with its JSON and nested-JSON forms. (1) The YAML single-quoted body strings.ReplaceAll(v, \"'\", \"''\"), added when v contains a '. (2) The percent-encoded bodies that the producers emit: Python urllib.parse.quote with safe='/' (Jinja2 urlencode on a string), which percent-encodes every byte except ASCII letters, digits, _.-~ and / with uppercase hex; and url.QueryEscape (urlencode on a dict or for_qs: safe='', space written as '+'). Add only the spellings that differ from v. Add regression tests that mirror TestRedactsPythonReprSpellings for '@Pa'ss!w0rd' in the to_nice_yaml, to_yaml and urlencode display forms above. Optionally record the remaining YAML gaps (double-quoted escapes for non-printable characters, folded long scalars) in the backlog.",
+      "code_changes": [
+        {
+          "file_name": "internal/worker/runner/redact.go",
+          "fixed_code": "bases := append([]string{v}, reprSpellings(v)...)\nif strings.Contains(v, \"'\") {\n\tbases = append(bases, strings.ReplaceAll(v, \"'\", \"''\")) // YAML single-quoted body (to_yaml/to_nice_yaml)\n}\nfor _, enc := range []string{pythonQuote(v, \"/\"), url.QueryEscape(v)} { // Jinja2 urlencode (string / query forms)\n\tif enc != v {\n\t\tbases = append(bases, enc)\n\t}\n}\nfor _, base := range bases {\n\tset[base] = true\n\tfor _, esc := range jsonSpellings(base) {\n\t\tset[esc] = true\n\t}\n\tfor _, esc := range nestedJSONSpellings(base) {\n\t\tset[esc] = true\n\t}\n}\n\n// pythonQuote is urllib.parse.quote(v, safe): every byte except ASCII\n// letters, digits, \"_.-~\" and safe written as %XX (upper-case hex).\nfunc pythonQuote(v, safe string) string {\n\tvar sb strings.Builder\n\tfor _, c := range []byte(v) {\n\t\tif c < 0x80 && (unicode.IsLetter(rune(c)) || unicode.IsDigit(rune(c)) || strings.IndexByte(\"_.-~\"+safe, c) >= 0) {\n\t\t\tsb.WriteByte(c)\n\t\t} else {\n\t\t\tfmt.Fprintf(&sb, \"%%%02X\", c)\n\t\t}\n\t}\n\treturn sb.String()\n}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "The secret needs specific characters (a ' plus a YAML quoting trigger, or any URL-escaped character), and a play has to print it through to_yaml, to_nice_yaml or urlencode. Both are ordinary, but neither is the default output path."
+      },
+      "impact": {
+        "score": "medium",
+        "reason": "Every viewer of the org's run logs sees the full credential or secret var. Both quoted forms are trivially reversible. The leak stays inside one org's lowest role; it does not cross tenants."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Every trace line was re-read at 52f27625. The real producers (ansible-core 2.21.4 to_nice_yaml, to_yaml and urlencode in the worker image) generated the exact spellings, and the unmodified redactor forwarded each of them unredacted while redacting the control."
+    }
+  },
+  {
+    "verdict": "needs_validation",
+    "fingerprint": "pulsix/auth/enrolment-writes-not-revalidated-against-ResetSecondFactor",
+    "title": "Passkey registration finished with a session principal resolved before an admin ResetSecondFactor can add a passkey after the reset",
+    "description": "An instance admin uses ResetSecondFactor (internal/accounts/actions.go) to lock someone out of an account. In one transaction, under the users row lock, it deletes every TOTP secret, recovery code and passkey, revokes every session and voids reset links. It does not delete pending webauthn_ceremonies, and it cannot affect requests already in flight. CookieMiddleware resolves the session cookie into a Principal once, when the request headers arrive (middleware.go:31), before huma reads the body. huma v2.40.0 then reads the JSON body under a default 5 s per-operation BodyReadTimeout, before it calls the handler, and http.Server sets only ReadHeaderTimeout. A client can therefore send the headers of POST /api/v1/auth/passkeys/register/finish while its session is still live and send the body later, for example once a parallel GET /auth/me returns 401. When the handler runs, requireEnrolmentSession accepts the snapshot (MFAComplete=true, MustChangePassword=false). requireFreshFactor reads Enrolled live; the reset has just removed every factor, so Enrolled is false and the freshness check is skipped. FinishRegistration takes the ceremony, which is checked only for kind and user id and survived the reset, verifies the attestation and inserts the passkey with an unconditional INSERT. completeEnrolment does nothing for an MFA-complete principal, so the request returns 200. Passkey login then gives the attacker an MFA-complete session. Without a temporary password the attacker has full access again. With one, the attacker's sessions are held at password_change_required until the owner changes the password. Preconditions for the passkey path: register/begin takes no request body (passkey_handlers.go:89, *struct{}), so it runs as soon as the headers arrive and cannot be parked. The ceremony must therefore be begun before the reset, while the account still has a factor, so the attacker must pass requireFreshFactor at begin: a factor proven within StepUpWindow (5 min), and a ceremony used within CeremonyTTL (5 min). For this path the attacker is someone who holds an account factor (or a session that proved one in the last 5 minutes), which is the person a second-factor reset is meant to lock out; a cookie alone, without a fresh factor, is not enough for the passkey path. A parked finish request that times out never reaches the handler and does not consume the ceremony, so the attacker can open a new parked request every few seconds for the life of the ceremony and renew the ceremony with a step-up. Variants with the same root cause: (a) TOTP enrol and confirm (both take a codeInput body, so both can be parked) under stale principals. This variant needs only an MFA-complete session cookie, not a fresh factor: after the reset requireFreshFactor is exempt because Enrolled is false, and TOTP.BeginEnrol asks for no code when no secret exists, so the attacker parks an enrol and a confirm request before the reset, sends the enrol body after it, computes a code from the returned secret and sends the confirm body. MarkSessionMFAComplete selects the session by id only, with no revoked_at or expires_at predicate, so ConfirmTOTP commits a confirmed secret chosen by the attacker for a revoked session. Signing in with that secret also needs the password; without the password the planted factor still blocks the owner's re-enrolment (the owner's next pending session must verify a factor the owner does not have) until an admin resets again. (b) A passkey login whose assertion was validated just before the reset creates a live MFA-complete session after it. Sessions.Create is not re-validated against the reset. The bundled compose proxy (Traefik, deploy/compose/docker-compose.yml) configures no request-buffering middleware on the manager router, so the parked-body window is not removed there.",
+    "claimed_root_cause": "Credential-adding writes (Passkeys.FinishRegistration -> AddCredential/InsertPasskey, TOTP BeginEnrol/ConfirmEnrol, and Sessions.Create in FinishLogin) are authorised against a session Principal resolved before the request body is read. They are neither serialised on the users row lock that ResetSecondFactor takes (they do not re-check under it) nor conditioned on the authorising session still being live (Sessions.StillValid exists but is not used). requireFreshFactor exempts an account with no enrolled factor, and the reset produces exactly that state. Registration ceremonies are bound to the user only and survive the reset. MarkSessionMFAComplete does not filter revoked or expired sessions.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/api/passkey_handlers.go",
+        "line": 109,
+        "scope": "POST /api/v1/auth/passkeys/register/finish",
+        "description": "Route for an attacker-held interactive cookie session. huma reads its JSON body (ceremony_id, name, attestation response) under a 5 s default BodyReadTimeout before the handler runs, so the body can arrive after an admin's reset has committed."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/auth/middleware.go",
+        "line": 31,
+        "scope": "CookieMiddleware",
+        "description": "The Principal (MFAComplete, MFAAt, MustChangePassword) is resolved once via Sessions.Lookup when the headers arrive (mounted at api.go:407) and is never re-validated for this request."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/session_gates.go",
+        "line": 226,
+        "scope": "requireEnrolmentSession",
+        "description": "Accepts the snapshot: MFAComplete=true and MustChangePassword=false admit the request without a live session check."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/api/session_gates.go",
+        "line": 191,
+        "scope": "requireFreshFactor",
+        "description": "Enrolled is read live. After ResetSecondFactor it is false, so the function returns nil and the step-up check (passkey_handlers.go:116) is skipped because the lock-out removed every factor."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/accounts/actions.go",
+        "line": 93,
+        "scope": "Service.ResetSecondFactor",
+        "description": "Concurrent admin action under withAccount (LockAccount FOR UPDATE): DeleteSecondFactors, RevokeAllSessions and VoidResetTokens, then commit. Pending webauthn_ceremonies and in-flight requests are untouched."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/auth/passkey.go",
+        "line": 221,
+        "scope": "Passkeys.FinishRegistration",
+        "description": "The ceremony taken by TakeCeremony (passkeys.sql:20) is checked only for kind and owning user id. There is no binding to a session or reset generation, so a ceremony begun before the reset is still accepted."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/auth/passkey.go",
+        "line": 238,
+        "scope": "Passkeys.FinishRegistration -> SQLPasskeyStore.AddCredential",
+        "description": "InsertPasskey commits a new passkey for the account after the reset. Its FK lock on users waits for the reset transaction if that is still open, then succeeds because the users row still exists. The handler then returns 200 (completeEnrolment is a no-op at session_gates.go:248)."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/api/passkey_handlers.go",
+        "line": 89,
+        "description": "register/begin takes *struct{} (no body), so it cannot be parked. It runs requireFreshFactor while the account still has factors, so the attacker needs a factor proven within StepUpWindow before the reset to obtain a ceremony."
+      },
+      {
+        "file": "internal/db/queries/accounts.sql",
+        "line": 95,
+        "description": "LockAccount takes users FOR UPDATE. ResetSecondFactor's deletes and revocations run under it, but no enrolment write takes or re-checks under this lock, so they serialise after the reset instead of being refused."
+      },
+      {
+        "file": "internal/db/queries/accounts.sql",
+        "line": 106,
+        "description": "DeleteSecondFactors deletes totp_secrets, recovery_codes and passkeys only. webauthn_ceremonies rows for the user survive (the only other deletes are TakeCeremony and the expiry reaper in passkeys.sql)."
+      },
+      {
+        "file": "internal/db/queries/passkeys.sql",
+        "line": 4,
+        "description": "InsertPasskey is an unconditional INSERT with no predicate on a live session or a reset generation."
+      },
+      {
+        "file": "internal/api/session_gates.go",
+        "line": 248,
+        "description": "completeEnrolment returns without touching the session when the snapshot was MFA-complete, so no step of the request notices that the session was revoked."
+      },
+      {
+        "file": "internal/db/queries/auth.sql",
+        "line": 49,
+        "description": "MarkSessionMFAComplete's CTE selects the session by id only (no revoked_at/expires_at predicate, unlike GetSession at auth.sql:27), so it updates 1 row for a revoked session (variant a)."
+      },
+      {
+        "file": "internal/auth/enrolment.go",
+        "line": 57,
+        "description": "ConfirmTOTP relies on MarkMFAComplete returning ErrNotFound for an ended session to roll back the confirmation. Its doc comment promises 'an already-ended session returns ErrNotFound and changes nothing', but the SQL does not enforce this for a revoked session."
+      },
+      {
+        "file": "internal/auth/passkey.go",
+        "line": 349,
+        "description": "FinishLogin creates an MFA-complete session after validating against a credential read earlier in the request. A reset that commits in between does not prevent the session (variant b)."
+      },
+      {
+        "file": "internal/auth/session.go",
+        "line": 139,
+        "description": "Sessions.StillValid already re-checks a session mid-request (used by the job log stream, backlog 7.22). The enrolment routes do not use it or any equivalent."
+      },
+      {
+        "file": "cmd/manager/main.go",
+        "line": 227,
+        "description": "Only ReadHeaderTimeout is set on http.Server. Reading the body after the middleware is bounded only by huma v2.40.0's default per-operation BodyReadTimeout (5 s, huma.go:1567-1569, applied before the handler at huma.go:1041-1043)."
+      },
+      {
+        "file": "internal/api/mfa_handlers.go",
+        "line": 105,
+        "description": "POST /api/v1/auth/totp/enrol and /totp/confirm (line 132) take a codeInput body, so both can be parked. Enrol runs requireEnrolmentSession and requireFreshFactor (exempt once the reset removed every factor); TOTP.BeginEnrol (totp.go:154) asks for a code only when a confirmed secret exists. Variant (a) therefore needs only a pre-reset MFA-complete cookie."
+      },
+      {
+        "file": "deploy/compose/docker-compose.yml",
+        "line": 115,
+        "description": "The bundled Traefik router for the manager (labels at lines 115-119) declares no middleware, in particular no buffering middleware, so request bodies are streamed to the manager and the parked-body window applies behind the bundled proxy."
+      }
+    ],
+    "blockers": [
+      "The end-to-end result needs the real Postgres-backed stores: a ceremony surviving DeleteSecondFactors, InsertPasskey committing after the reset, and MarkSessionMFAComplete reporting 1 row for a revoked session. internal/db/testdb and internal/api/apitest start Postgres through testcontainers and the host Docker socket, which the approved sandbox forbids (--network none, no Docker socket). The API Deps use the concrete *auth.Sessions over gen.Queries, so there is no DB-free fake path through the handlers. No reproduction was run, and no artifact supports the claim.",
+      "Whether a custom (non-bundled) reverse proxy in front of the manager buffers request bodies is a deployment fact not visible in source. The bundled compose Traefik router declares no buffering middleware, so this blocker concerns only other proxies. Buffering removes the parked-body widening of the window, but not the base race between handler entry and the reset commit."
+    ],
+    "validation_plan": {
+      "local": "In a disposable checkout with Docker available (dummy data only), add an integration test in internal/api using apitest + testdb. (1) Create user U with one passkey via the virtual authenticator, as internal/auth/passkey_registration_success_test.go does, and sign in to get MFA-complete session S with fresh mfa_at. (2) POST /api/v1/auth/passkeys/register/begin with S and keep ceremony C. (3) Resolve S's Principal with Sessions.Lookup and keep it. (4) Call accounts.Service.ResetSecondFactor(true, adminID, U) and let it commit. (5) Run the register/finish huma handler with a request context that carries the stale Principal (auth.WithPrincipal), for example through a test router that injects the kept Principal instead of CookieMiddleware, or with an http.Handler wrapper that blocks between CookieMiddleware and the huma handler until step 4 commits. Send a valid attestation for C. Vulnerable: status 200 and ListPasskeys(U) returns 1 row after the reset; POST /auth/passkeys/login/finish with that credential then returns a session cookie. Also assert directly: after RevokeSession(S), Sessions.MarkMFAComplete(S) returns a nil error instead of ErrNotFound, and Enrolment.ConfirmTOTP(U, S, validCode) after TOTP.BeginEnrol on the revoked S leaves totp_secrets.confirmed_at set. Fixed (regression): the finish returns 401/404 and zero passkeys exist; MarkMFAComplete on a revoked session returns ErrNotFound. Variant (a) with a non-fresh session: build a Principal for an MFA-complete session whose mfa_at is older than StepUpWindow, run ResetSecondFactor, then call the totp/enrol and totp/confirm handlers with that stale Principal. Vulnerable: both return 200 and totp_secrets.confirmed_at is set after the reset.",
+      "deployment": "Owner-observed, read-only, only for deployments that use a reverse proxy other than the bundled compose Traefik (whose router declares no buffering middleware in source): check whether that proxy buffers request bodies on /api/v1/auth/*. Without buffering, a client can hold the body of register/finish or totp/enrol and totp/confirm for up to huma's 5 s BodyReadTimeout after its session was resolved. No request against a deployed instance is needed or wanted."
+    }
+  },
+  {
+    "verdict": "confirmed",
+    "fingerprint": "pulsix/worker/requirements/plan-sources-skip-non-string-scalars",
+    "title": "Requirements source check skips plain scalars that yaml.v3 types as numbers but ansible-galaxy reads as path strings",
+    "description": "The requirements step is documented to refuse any local source outside the repository's clone (spec 2026-11-06-requirements-cache-design.md, Constraints 'Local sources'; docs/upgrades.md 'local sources outside the repository are refused'). parseFile only adds a role src, a role name used as the source, a collection name or a collection source to plan.sources when yaml.v3 tags the scalar !!str, and checkSources resolves only plan.sources. Plain scalars such as 1e3, 1e+3 or 0o17 are !!float/!!int to yaml.v3 but strings to galaxy's PyYAML SafeLoader (YAML 1.1 floats need a dot; 0o is not a 1.1 octal). Reproduced end to end with dummy data: the Go check accepts 'collections: [{name: 1e3}]' (and 'name: ns.c, type: dir, source: 1e3') with 1e3 a symlink to ../other/ns/coll, while the quoted form is refused as outside the repository; ansible-galaxy 2.21.4 in the worker image then installs ns.coll from outside the clone, copying its regular files into the -p target. The worker's take-over copies regular files, so the outside content reaches the commit's requirements entry. Impact is bounded: galaxy runs as the play uid (or, without one, as the worker uid, as plays then do), and ShareRepoRead documents that every play on a worker can already read every checkout that worker has opened (backlog 2.106 trust model), so no read beyond what the repository's own plays can do was shown. The incremental effect is that a repository-content author can make a webhook-triggered sync, with no play run, pull a collection directory from elsewhere on the worker into its own owner-only cache entry, against the documented control. Narrowing of the hunter's claim: an outward file link inside an in-clone collection (0o17/plugins/key.pem) is kept as a symlink by galaxy 2.21.4, not copied, and the take-over refuses symlinks leaving the install, so that variant does not reach the entry. A plain .5e3 collection name is refused by checkCollectionName, and a bare '- 1e3' collection item is refused by the shape check.",
+    "root_cause": "shape.go addRoleMapping (lines 185 and 190) and collection.go addCollections (line 44) append a src, name or source to plan.sources and plan.gitSources only when isString(node) is true, which means only for yaml.v3 !!str. checkSources (source.go line 50) iterates only plan.sources. Values that the two YAML loaders type differently are therefore never resolved or walked, although the same code checks names by text whatever the tag (scalarText, shape.go line 297) and its comment acknowledges that galaxy's loader may read .5e3 as a string where yaml.v3 reads a number.",
+    "intended_behavior": "Every value ansible-galaxy may use as a local path (role src, role name used as the source, collection name, collection source) is resolved by checkSources whatever tag yaml.v3 gives it, and a value that leads outside the clone is refused before galaxy runs. Alternatively, such fields are refused unless they are YAML strings to both loaders.",
+    "trace": [
+      {
+        "kind": "entrypoint",
+        "file": "internal/worker/sync_requirements.go",
+        "line": 91,
+        "scope": "SyncExecutor.installRequirements",
+        "description": "A sync_repo job, which can be webhook-triggered by a push, hands the fetched clone's requirements files to requirements.Service.Ensure. Runs use the same service. The file content comes from the repository, which is lower trust than the org admin who configured it."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/requirements/ensure_install.go",
+        "line": 165,
+        "scope": "readFiles",
+        "description": "Each counted file is parsed by parseFile into a plan, and line 173 passes that plan's sources to checkSources."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/requirements/shape.go",
+        "line": 185,
+        "scope": "plan.addRoleMapping",
+        "description": "A role src is appended to p.sources only if isString(src); line 190 does the same for a role name used as the source. An unquoted 1e3 is !!float, so it is skipped (harness: sources=[])."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/requirements/collection.go",
+        "line": 44,
+        "scope": "plan.addCollections",
+        "description": "A collection name or source is appended to sources and gitSources only if isString(v). checkUntypedName (line 117) lets a dot-less name like 1e3 through, and a typed dir entry needs only a namespace.name name."
+      },
+      {
+        "kind": "propagation",
+        "file": "internal/worker/requirements/source.go",
+        "line": 50,
+        "scope": "checkSources",
+        "description": "Only p.sources are resolved (links, '..', .git, absolute paths, file: URLs) and directory sources walked. The skipped value is never examined, and checkSources returns nil."
+      },
+      {
+        "kind": "sink",
+        "file": "internal/worker/runner/galaxy.go",
+        "line": 168,
+        "scope": "Galaxy.command",
+        "description": "ansible-galaxy <kind> install -r <checked copy> -p <entry>/<kind> runs with cwd set to the file's directory in the clone. PyYAML reads 1e3 as the string '1e3'. from_requirement_dict treats it as a concrete artifact pointer, and _is_collection_dir follows the symlink, so galaxy installs the collection from outside the clone and copies its regular files into the temp entry. The take-over then publishes them in the requirements entry."
+      }
+    ],
+    "evidence": [
+      {
+        "file": "internal/worker/requirements/shape.go",
+        "line": 185,
+        "description": "if isString(src) { p.sources = append(p.sources, src.Value) }: a src that is not !!str never becomes a source."
+      },
+      {
+        "file": "internal/worker/requirements/shape.go",
+        "line": 190,
+        "description": "A role name is used as the source only when isString(nameNode)."
+      },
+      {
+        "file": "internal/worker/requirements/collection.go",
+        "line": 44,
+        "description": "Collection name and source are recorded as sources and gitSources only when isString(v)."
+      },
+      {
+        "file": "internal/worker/requirements/source.go",
+        "line": 50,
+        "description": "checkSources resolves and walks only p.sources."
+      },
+      {
+        "file": "internal/worker/requirements/shape.go",
+        "line": 297,
+        "description": "scalarText: names are checked by text whatever the tag, because galaxy's loader may read .5e3 as a string. The differential is known but applied only to role names, not to sources."
+      },
+      {
+        "file": "internal/worker/runner/galaxy.go",
+        "line": 167,
+        "description": "Galaxy argv: install -r <input copy> -p <entry>/<roles|collections>. cwd in.Dir is the clone directory of the file."
+      },
+      {
+        "file": "internal/worker/requirements/takeover.go",
+        "line": 34,
+        "description": "The take-over refuses symlinks that leave the install (errTakeOverLinkOut) but copies regular files, so content that galaxy copied from outside the clone is published. An outward file link kept as a link by galaxy is refused."
+      },
+      {
+        "file": "internal/worker/runner/share.go",
+        "line": 124,
+        "description": "ShareRepoRead comment: opened checkouts stay group-readable for the life of the worker, and every play can read every checkout opened before it (backlog 2.106). This bounds the impact to what the repository's own plays could already read."
+      },
+      {
+        "file": "docs/superpowers/specs/2026-11-06-requirements-cache-design.md",
+        "line": 204,
+        "description": "Constraint 'Local sources': a local-path source must resolve inside the clone under the confined-root rules, and anything else fails the step before galaxy runs."
+      }
+    ],
+    "conditions": [
+      {
+        "kind": "authorization_role",
+        "description": "The attacker can commit to a repository that an org admin configured in Pulsix (repository-content author). No Pulsix account is needed."
+      },
+      {
+        "kind": "data_state",
+        "description": "A collection directory (with galaxy.yml or MANIFEST.json), or a namespace directory of collections, exists outside the clone at a path the attacker can guess and that galaxy's uid can read. Examples are another repository's checkout or requirements entry on the same worker; every repository a worker serves belongs to the worker's organization."
+      },
+      {
+        "kind": "user_interaction",
+        "description": "A sync of the repository runs, either from a push webhook or from an operator. The installed content is used only when a play of that repository runs."
+      },
+      {
+        "kind": "system_configuration",
+        "description": "With PULSIX_WORKER_PLAY_UID set, galaxy reads only what the play uid can read. Without it, galaxy reads as the worker uid, as plays then do. In neither case does the read exceed what the repository's plays can already read under the documented worker trust model."
+      }
+    ],
+    "execution": {
+      "attacker_perspective": "Repository-content author pushing a commit to a repository that is synced by a Pulsix worker.",
+      "payloads": [
+        "requirements.yml:\ncollections:\n  - name: 1e3\n",
+        "requirements.yml:\ncollections:\n  - name: ns.c\n    type: dir\n    source: 1e3\n",
+        "ln -s ../other/ns/coll 1e3   # symlink committed in the repository root"
+      ],
+      "instructions": [
+        "Fixture (dummy data only): other/ns/coll/{galaxy.yml (namespace ns, name coll, version 1.0.0), README.md, plugins/marker.txt containing DUMMY_OUTSIDE_COLLECTION_MARKER}; repo/1e3 -> ../other/ns/coll; repo/req_plain_1e3.yml as the first payload, repo/req_typed_dir.yml as the second.",
+        "Go half: in the offline golang:1.27.1-alpine sandbox, run a harness test in internal/worker/requirements that builds the clone under os.OpenRoot (as the worker does), calls parseFile and then checkSources for the plain and the quoted forms.",
+        "Galaxy half: in the offline noixdev/pulsix-worker:dev image (ansible-core 2.21.4, worker-image sandbox flags, --network none, read-only root), cd repo and run 'ansible-galaxy collection install -r req_plain_1e3.yml -p /tmp/out_req_plain_1e3' with an empty ANSIBLE_CONFIG, ANSIBLE_COLLECTIONS_PATH=/tmp/none and ANSIBLE_COLLECTIONS_SCAN_SYS_PATH=false, then do the same for req_typed_dir.yml.",
+        "Check that the installed tree holds the outside marker. Artifacts: agents/v09-req-install/artifacts/evidence.txt (galaxy) and agents/v09-req-install/artifacts/evidence2.txt (Go check)."
+      ],
+      "observed_result": "Go check (evidence2.txt): for 'name: 1e3', 'name: 1e+3', 'name: 0o17', the typed dir source 1e3, role src 1e3 and role name 1e3, the result was sources=[] (or the value was missing) and checkSources err=<nil>. The quoted '1e3' gave sources=[\"1e3\"] and was refused with 'the source \"1e3\" is outside the repository'. Galaxy (evidence.txt): PyYAML 6.0.3 reads 1e3, 1e+3, .5e3 and 0o17 as str, and galaxy.py loads requirements with yaml_load. 'ansible-galaxy collection install -r req_plain_1e3.yml' installed 'ns.coll:1.0.0' to /tmp/out_req_plain_1e3/ansible_collections/ns/coll, including plugins/marker.txt with DUMMY_OUTSIDE_COLLECTION_MARKER as a regular file, not a link. The typed dir form installed ns.c with the same marker. An in-clone collection 0o17 holding an outward file link came out as a symlink, not as copied content."
+    },
+    "remediation": {
+      "strategy": "Record every scalar's text, whatever its yaml.v3 tag, as a source (and git source) for role src, role name used as the source, collection name and collection source, so checkSources resolves it. Alternatively, refuse these fields with notRequirements when their tag is not !!str or !!null, which matches decodePlain's rule of refusing YAML that the two loaders read differently. Add regression cases for 1e3, 1e+3, .5e3 and 0o17 in each field, with a symlink leading outside the clone.",
+      "code_changes": [
+        {
+          "file_name": "internal/worker/requirements/shape.go",
+          "fixed_code": "\tcase hasSrc:\n\t\tfrom = scalarText(src)\n\t\tif from != \"\" {\n\t\t\tp.sources = append(p.sources, from) // any tag: galaxy's YAML 1.1 loader may read 1e3 as a string\n\t\t}\n\tcase hasName:\n\t\tfrom = scalarText(nameNode)\n\t\tif from != \"\" {\n\t\t\tp.sources = append(p.sources, from)\n\t\t}"
+        },
+        {
+          "file_name": "internal/worker/requirements/collection.go",
+          "fixed_code": "\t\t\tfor _, field := range []string{\"name\", \"source\"} {\n\t\t\t\tv, ok := fields[field]\n\t\t\t\tif !ok {\n\t\t\t\t\tcontinue\n\t\t\t\t}\n\t\t\t\ttext := scalarText(v) // any tag, not only !!str\n\t\t\t\tif text == \"\" {\n\t\t\t\t\tcontinue\n\t\t\t\t}\n\t\t\t\tif strings.HasPrefix(text, \"hg+\") {\n\t\t\t\t\treturn p.refuseMercurial(text)\n\t\t\t\t}\n\t\t\t\tp.sources = append(p.sources, text)\n\t\t\t\tp.gitSources = append(p.gitSources, text)\n\t\t\t}"
+        }
+      ]
+    },
+    "severity": {
+      "likelihood": {
+        "score": "low",
+        "reason": "The payload is trivial for anyone who can commit to a synced repository and is triggered by a push webhook. A useful outside target must be an existing collection or namespace directory at a guessable path that galaxy's uid can read, and the effect shows only in the repository's own cache entry."
+      },
+      "impact": {
+        "score": "low",
+        "reason": "A documented control ('local sources outside the repository are refused') is bypassed, and content from outside the clone is installed into the commit's requirements entry. No read beyond the documented worker trust model was shown: the play uid (or the worker uid without one) can already read every checkout the worker opened from the repository's own plays, and the entry is worker-owned and owner-only. The incremental effect is that a sync, with no play run, pulls same-worker collection data into the entry. That is a defense-in-depth gap, not demonstrated disclosure or code execution."
+      },
+      "overall_severity": "low"
+    },
+    "confidence": {
+      "score": "high",
+      "reason": "Both halves were reproduced independently in the approved offline sandboxes: the Go check over an os.Root clone accepts the plain forms and refuses the quoted ones, and ansible-core 2.21.4 in the worker image installs the outside collection's files from the plain form. The source line numbers were verified at 52f27625. The low impact rests on source-documented trust-model statements (share.go ShareRepoRead, backlog 2.106) and the org-scoped worker."
+    }
+  }
+]
