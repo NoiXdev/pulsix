@@ -21,17 +21,11 @@
  */
 import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { pickDateTime } from './pickDateTime.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
 const WINDOW_NAME = 'e2e-calendar-window';
-
-/** localInput is the value a datetime-local input takes: local wall time
- * with no zone, minute precision. */
-function localInput(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
 
 test('the calendar shows a maintenance window across its three views and moves its range', async ({ page }) => {
   const now = new Date();
@@ -43,8 +37,10 @@ test('the calendar shows a maintenance window across its three views and moves i
   await page.getByRole('button', { name: 'New window' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(WINDOW_NAME);
-  await dialog.getByLabel('From').fill(localInput(from));
-  await dialog.getByLabel('Until').fill(localInput(until));
+  // Through the calendar, which also handles "an hour ago" being yesterday
+  // (or last month) for a run just after midnight.
+  await pickDateTime(dialog, 'From', from);
+  await pickDateTime(dialog, 'Until', until);
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toHaveCount(0);
 

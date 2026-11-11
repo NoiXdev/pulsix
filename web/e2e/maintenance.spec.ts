@@ -20,6 +20,7 @@
  */
 import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
+import { pickDateTime } from './pickDateTime.ts';
 import { pickOption } from './pickOption.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
@@ -42,12 +43,14 @@ test('an admin creates a maintenance window, turns it into a silence, and delete
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(WINDOW_NAME);
   await expect(dialog.getByLabel('Applies to')).toHaveValue('The whole organization');
-  // "Once" is the default; both instants are required, and they are far
-  // enough in the future that the row is listed but never "active now" —
-  // which keeps the status assertion below stable whenever this runs.
+  // "Once" is the default; both instants are required, and they lie in
+  // the future (02:00–04:00 a month from today) so the row is listed but
+  // never "active now" — which keeps the status assertion below stable
+  // whenever this runs. Near enough that the calendar is one step away.
   await expect(dialog.getByRole('radio', { name: 'Once' })).toHaveAttribute('aria-checked', 'true');
-  await dialog.getByLabel('From').fill('2099-01-01T02:00');
-  await dialog.getByLabel('Until').fill('2099-01-01T04:00');
+  const today = new Date();
+  await pickDateTime(dialog, 'From', new Date(today.getFullYear(), today.getMonth() + 1, today.getDate(), 2, 0));
+  await pickDateTime(dialog, 'Until', new Date(today.getFullYear(), today.getMonth() + 1, today.getDate(), 4, 0));
   await dialog.getByLabel('Note').fill('created by maintenance.spec.ts');
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(dialog).toHaveCount(0);
