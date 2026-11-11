@@ -283,6 +283,25 @@ describe('SharedCheckFormPage — create gate', () => {
       await waitFor(() => expect(posted()).toMatchObject({ plugin: 'network', params: {} }));
     });
 
+    it("prefills an existing network definition's interfaces on edit and saves them unchanged", async () => {
+      const user = userEvent.setup();
+      let put: unknown;
+      const network = checkDef({ key: 'network-uplinks', plugin: 'network', params: { interfaces: ['eth0', 'bond0'] }, interval_seconds: 60 });
+      mockApi({
+        'GET /api/v1/auth/me': ADMIN,
+        'GET /api/v1/admin/checks/definitions': { definitions: [network] },
+        'PUT /api/v1/admin/checks/definitions/c1': (req: MockRequest) => {
+          put = req.body;
+          return { definition: network };
+        },
+      });
+      renderPage(`${LIST}/c1`);
+      expect(await screen.findByLabelText(/^Interfaces \(one per line/)).toHaveValue('eth0\nbond0');
+      await user.click(screen.getByRole('button', { name: 'Save definition' }));
+      await waitFor(() => expect(put).toBeDefined());
+      expect(put).toEqual({ key: 'network-uplinks', plugin: 'network', interval_seconds: 60, params: { interfaces: ['eth0', 'bond0'] } });
+    });
+
     it('sends no parameters for uptime', async () => {
       const user = userEvent.setup();
       const posted = mockCreate();

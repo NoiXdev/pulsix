@@ -468,6 +468,27 @@ describe('ChecksPage', () => {
       await waitFor(() => expect(posted()).toMatchObject({ plugin: 'network', params: {} }));
     });
 
+    it("prefills an existing network check's interfaces on edit and saves them unchanged", async () => {
+      const user = userEvent.setup();
+      let put: Record<string, unknown> | undefined;
+      mockApi({
+        'GET /api/v1/orgs/acme': org('operator'),
+        'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+        'GET /api/v1/orgs/acme/checks': {
+          checks: [check({ id: 'c8', key: 'network', plugin: 'network', params: { interfaces: ['eth0', 'bond0'] } })],
+        },
+        'PUT /api/v1/orgs/acme/checks/c8': (req: MockRequest) => {
+          put = req.body as Record<string, unknown>;
+          return { check: check({ id: 'c8', key: 'network', plugin: 'network' }) };
+        },
+      });
+      renderPage();
+      await chooseFromMenu(user, 'network (Organization)', 'Edit');
+      expect(await screen.findByLabelText(/^Interfaces \(one per line/)).toHaveValue('eth0\nbond0');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(put).toMatchObject({ plugin: 'network', params: { interfaces: ['eth0', 'bond0'] } }));
+    });
+
     it('sends no parameters for uptime and shows no parameter field', async () => {
       const user = userEvent.setup();
       const posted = await openNew(user, 'uptime');
