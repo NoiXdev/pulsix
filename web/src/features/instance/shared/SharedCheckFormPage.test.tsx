@@ -246,4 +246,52 @@ describe('SharedCheckFormPage — create gate', () => {
     expect(screen.queryByRole('button', { name: 'Create definition' })).not.toBeInTheDocument();
     expect(listed).toBe(0);
   });
+
+  describe('network and uptime plugins', () => {
+    function mockCreate(): () => unknown {
+      let posted: unknown;
+      mockApi({
+        'GET /api/v1/auth/me': ADMIN,
+        'GET /api/v1/admin/checks/definitions': { definitions: [] },
+        'POST /api/v1/admin/checks/definitions': (req: MockRequest) => {
+          posted = req.body;
+          return { definition: checkDef({ id: 'c9', ...(req.body as Record<string, unknown>) }) };
+        },
+      });
+      return () => posted;
+    }
+
+    it('sends the interfaces list for network, and {} when it is empty', async () => {
+      const user = userEvent.setup();
+      const posted = mockCreate();
+      renderPage(`${LIST}/new`);
+      await screen.findByLabelText('Key');
+      await pickOption(screen, 'Plugin', { value: 'network' });
+      expect(screen.getByText(/Loopback and container or virtual interfaces are skipped/)).toBeInTheDocument();
+      await user.type(screen.getByLabelText(/^Interfaces \(one per line/), 'eth0\n\nbond0\n');
+      await user.click(screen.getByRole('button', { name: 'Create definition' }));
+      await waitFor(() => expect(posted()).toMatchObject({ plugin: 'network', params: { interfaces: ['eth0', 'bond0'] } }));
+    });
+
+    it('sends {} for network without interfaces', async () => {
+      const user = userEvent.setup();
+      const posted = mockCreate();
+      renderPage(`${LIST}/new`);
+      await screen.findByLabelText('Key');
+      await pickOption(screen, 'Plugin', { value: 'network' });
+      await user.click(screen.getByRole('button', { name: 'Create definition' }));
+      await waitFor(() => expect(posted()).toMatchObject({ plugin: 'network', params: {} }));
+    });
+
+    it('sends no parameters for uptime', async () => {
+      const user = userEvent.setup();
+      const posted = mockCreate();
+      renderPage(`${LIST}/new`);
+      await screen.findByLabelText('Key');
+      await pickOption(screen, 'Plugin', { value: 'uptime' });
+      expect(screen.queryByLabelText(/^Interfaces/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Create definition' }));
+      await waitFor(() => expect(posted()).toMatchObject({ plugin: 'uptime', params: {} }));
+    });
+  });
 });

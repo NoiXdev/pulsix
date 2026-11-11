@@ -425,4 +425,55 @@ describe('ChecksPage', () => {
       expect(posted).toMatchObject({ key: 'disk-data-copy', plugin: 'disk', interval_seconds: 120, binding_kind: 'org' }),
     );
   });
+
+  describe('network and uptime plugins', () => {
+    async function openNew(user: ReturnType<typeof userEvent.setup>, plugin: string): Promise<() => unknown> {
+      let posted: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': org('operator'),
+        'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+        'GET /api/v1/orgs/acme/checks': { checks: [] },
+        'POST /api/v1/orgs/acme/checks': (req: MockRequest) => {
+          posted = req.body;
+          return { check: check({ id: 'c9', plugin: plugin as 'network', origin: 'custom' }) };
+        },
+      });
+      renderPage();
+      await user.click(await screen.findByRole('button', { name: 'New check' }));
+      await pickOption(screen, 'Plugin', { value: plugin });
+      return () => posted;
+    }
+
+    it('offers Network and Uptime in the plugin list', async () => {
+      const user = userEvent.setup();
+      await openNew(user, 'network');
+      await user.click(screen.getByRole('combobox', { name: 'Plugin' }));
+      expect(await screen.findByRole('option', { name: 'Network' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Uptime' })).toBeInTheDocument();
+    });
+
+    it('sends the interfaces list, one per line', async () => {
+      const user = userEvent.setup();
+      const posted = await openNew(user, 'network');
+      await user.type(screen.getByLabelText(/^Interfaces \(one per line/), 'eth0\n\nbond0\n');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(posted()).toMatchObject({ plugin: 'network', params: { interfaces: ['eth0', 'bond0'] } }));
+    });
+
+    it('sends no parameters at all for an empty interfaces list', async () => {
+      const user = userEvent.setup();
+      const posted = await openNew(user, 'network');
+      expect(screen.getByText(/Loopback and container or virtual interfaces are skipped/)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(posted()).toMatchObject({ plugin: 'network', params: {} }));
+    });
+
+    it('sends no parameters for uptime and shows no parameter field', async () => {
+      const user = userEvent.setup();
+      const posted = await openNew(user, 'uptime');
+      expect(screen.queryByLabelText(/^Interfaces/)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(posted()).toMatchObject({ plugin: 'uptime', params: {} }));
+    });
+  });
 });

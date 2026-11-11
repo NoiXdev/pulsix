@@ -99,6 +99,8 @@ export const enChecks = {
       'A copy needs either a key of its own or a narrower binding than the row it came from: a narrower scope with the same key is what overrides that check for those hosts.',
     units: 'Units (one per line)',
     mounts: 'Mounts (one per line, empty means every mount)',
+    interfaces: 'Interfaces (one per line, empty means every real interface)',
+    interfacesHint: 'Loopback and container or virtual interfaces are skipped by default. An interface named here is always measured.',
     bindsTo: 'Binds to',
     interval: 'Interval (seconds)',
   },

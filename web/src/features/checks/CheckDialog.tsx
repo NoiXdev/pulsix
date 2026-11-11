@@ -15,7 +15,7 @@ import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlug
 const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
-const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service'];
+const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime'];
 
 /** lines turns a textarea's content into the string list the API takes,
  * dropping blank lines so a trailing newline is not a parameter. */
@@ -84,6 +84,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   const [hostId, setHostId] = useState(check?.host_id ?? '');
   const [units, setUnits] = useState(stringList(check?.params?.units).join('\n'));
   const [mounts, setMounts] = useState(stringList(check?.params?.mounts).join('\n'));
+  const [interfaces, setInterfaces] = useState(stringList(check?.params?.interfaces).join('\n'));
   const [error, setError] = useState<string | null>(null);
 
   function params(): Record<string, unknown> {
@@ -91,6 +92,10 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
     if (plugin === 'disk') {
       const list = lines(mounts);
       return list.length > 0 ? { mounts: list } : {};
+    }
+    if (plugin === 'network') {
+      const list = lines(interfaces);
+      return list.length > 0 ? { interfaces: list } : {};
     }
     return {};
   }
@@ -212,6 +217,21 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               placeholder="/&#10;/var"
               onChange={(e) => setMounts(e.target.value)}
             />
+          </>
+        )}
+        {plugin === 'network' && (
+          <>
+            <Label htmlFor="check-interfaces">{t.checks.dialog.interfaces}</Label>
+            <textarea
+              id="check-interfaces"
+              className={TEXTAREA}
+              value={interfaces}
+              disabled={shared}
+              placeholder="eth0&#10;bond0"
+              aria-describedby="check-interfaces-hint"
+              onChange={(e) => setInterfaces(e.target.value)}
+            />
+            <p id="check-interfaces-hint" className="text-[11px] text-muted-foreground">{t.checks.dialog.interfacesHint}</p>
           </>
         )}
         <div className="grid grid-cols-2 gap-3">

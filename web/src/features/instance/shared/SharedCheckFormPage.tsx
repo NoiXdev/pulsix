@@ -49,9 +49,10 @@ interface CheckDefinitionFormValues {
   intervalSeconds: string;
   units: string;
   mounts: string;
+  interfaces: string;
 }
 
-const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service'] as const;
+const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime'] as const;
 
 /** lines turns a textarea's content into the string list the API takes —
  * CheckDialog.tsx's own helper, duplicated rather than imported: that
@@ -89,8 +90,9 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
           key: definition.key, plugin: definition.plugin, intervalSeconds: String(definition.interval_seconds),
           units: Array.isArray(definition.params?.units) ? (definition.params.units as string[]).join('\n') : '',
           mounts: Array.isArray(definition.params?.mounts) ? (definition.params.mounts as string[]).join('\n') : '',
+          interfaces: Array.isArray(definition.params?.interfaces) ? (definition.params.interfaces as string[]).join('\n') : '',
         }
-      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '' },
+      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '', interfaces: '' },
   );
   const [values, setValues] = useState<CheckDefinitionFormValues>(initial);
   const [errors, setErrors] = useState<Partial<Record<keyof CheckDefinitionFormValues, string>>>({});
@@ -105,7 +107,13 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
       const list = lines(values.mounts);
       return list.length > 0 ? { mounts: list } : {};
     }
-    // cpu and memory take no params at all. Any plugin added later is
+    // network's interface list is optional the same way: empty means every
+    // real interface, so an empty textarea sends {}.
+    if (values.plugin === 'network') {
+      const list = lines(values.interfaces);
+      return list.length > 0 ? { interfaces: list } : {};
+    }
+    // cpu, memory and uptime take no params at all. Any plugin added later is
     // still unrendered here, so its stored value round-trips unchanged
     // while the plugin itself is unchanged — switching plugins away from
     // what params() was written against would carry over a shape the new
@@ -192,6 +200,20 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
               placeholder="/&#10;/var"
               onChange={(e) => setValues((cur) => ({ ...cur, mounts: e.target.value }))}
             />
+          </div>
+        )}
+        {values.plugin === 'network' && (
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="check-def-interfaces">{t.instance.shared.checks.interfaces}</Label>
+            <textarea
+              id="check-def-interfaces"
+              className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
+              value={values.interfaces}
+              placeholder="eth0&#10;bond0"
+              aria-describedby="check-def-interfaces-hint"
+              onChange={(e) => setValues((cur) => ({ ...cur, interfaces: e.target.value }))}
+            />
+            <p id="check-def-interfaces-hint" className="text-[11px] text-muted-foreground">{t.instance.shared.checks.interfacesHint}</p>
           </div>
         )}
         {values.plugin === 'service' && (
