@@ -130,3 +130,47 @@ test('Back, then Forward while the question is open, then Confirm, lands on the 
   await acceptConfirm(page, enUi.confirm.confirm);
   await expect(page).toHaveURL(LIST);
 });
+
+// Backlog 1.52: a save that finishes while a Back's question is open
+// withdraws the question and leaves for the list. Its navigation must wait
+// until the router has taken that Back, or the new entry is numbered one
+// higher than its place in the browser's history, and a later blocked pop
+// across it is undone by one entry too many: a Cancel would then still
+// leave the next form and lose its edits.
+test('a save that finishes during a Back keeps the next form guarded', async ({ page }) => {
+  await openDirtyForm(page);
+  await page.locator('#repo-def-name').fill(`e2e-save-during-back-${Date.now()}`);
+  await page.locator('#repo-def-url').fill('https://git.example/e2e/save-during-back.git');
+
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route('**/api/v1/admin/repos/definitions', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    await held;
+    await route.fallback();
+  });
+
+  const saved = page.waitForResponse(
+    (r) => r.url().endsWith('/api/v1/admin/repos/definitions') && r.request().method() === 'POST',
+  );
+  await page.getByRole('button', { name: 'Create definition' }).click();
+  await backOpensQuestion(page);
+  release();
+  expect((await saved).ok()).toBe(true);
+  await expect(leaveDialog(page)).toHaveCount(0);
+  await expect(page).toHaveURL(LIST);
+  await page.unroute('**/api/v1/admin/repos/definitions');
+
+  // A second form, dirty, and two Backs while its question is open.
+  await page.getByRole('link', { name: 'Add repository definition' }).click();
+  await expect(page).toHaveURL(FORM);
+  await page.locator('#repo-def-name').fill('e2e-unsaved');
+  await backOpensQuestion(page);
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(FORM);
+  await expect(leaveDialog(page)).toHaveCount(1);
+
+  await cancelLeave(page);
+  await expectFormKept(page);
+  await expectNextBackAsks(page);
+});

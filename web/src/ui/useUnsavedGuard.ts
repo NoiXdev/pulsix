@@ -11,12 +11,14 @@ import { useLeaveQuestion } from './useLeaveQuestion.ts';
  * returned `release` switches it off for good, synchronously, for the
  * navigation a successful save triggers itself (FormPage), and dismisses a
  * leave question still open from before the save finished: that navigation
- * bypasses it, so its answer no longer matters.
+ * bypasses it, so its answer no longer matters. Switching off is immediate;
+ * the promise it returns resolves once the router has acted on a dismissed
+ * question, and the save's navigation waits for it (backlog 1.52).
  *
  * Refs, so the blocker always sees the latest state without re-registering
  * and `release` takes effect before React renders the page as clean.
  */
-export function useUnsavedGuard(dirty: boolean): () => void {
+export function useUnsavedGuard(dirty: boolean): () => Promise<void> {
   const t = useT();
   const ask = useConfirm();
   const dirtyRef = useRef(dirty);
@@ -37,6 +39,6 @@ export function useUnsavedGuard(dirty: boolean): () => void {
 
   return useCallback(() => {
     released.current = true;
-    dismiss();
+    return dismiss();
   }, [dismiss]);
 }

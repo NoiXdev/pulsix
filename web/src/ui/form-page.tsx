@@ -43,7 +43,9 @@ export function FormPage({ title, backTo, children, onSubmit, submitting, dirty,
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!(await onSubmit())) return;
-    release();
+    // A leave question still open from a Back is withdrawn here; navigating
+    // before the router has taken that Back would misnumber the new entry.
+    await release();
     void navigate({ to: backTo.to, params: backTo.params });
   }
 

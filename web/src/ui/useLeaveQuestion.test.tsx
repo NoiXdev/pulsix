@@ -192,11 +192,72 @@ describe('useLeaveQuestion', () => {
       expect(go).not.toHaveBeenCalled();
     });
 
-    it('does nothing without an open question', () => {
+    it('does nothing without an open question', async () => {
       const w = withdrawable();
       const { result } = renderHook(() => useLeaveQuestion(w.ask));
-      expect(() => result.current.dismiss()).not.toThrow();
+      await expect(result.current.dismiss()).resolves.toBeUndefined();
       expect(w.ask).not.toHaveBeenCalled();
+    });
+
+    // Backlog 1.52: the router takes the withdrawn pop's position only once
+    // the blocker has answered, several continuations later. A push made
+    // before then (the save's navigation) gets an index one too high for
+    // where the browser is, so dismiss must not resolve before it.
+
+    /** routerPop runs a blocker call through the same chain of awaits as the
+     * app: useUnsavedGuard's async shouldBlockFn, useBlocker's composed
+     * blocker, then @tanstack/history's popstate handler, which syncs its
+     * location only after awaiting that. Calls `synced` once it would have. */
+    function routerPop(call: () => Promise<boolean>, synced: () => void): Promise<void> {
+      const shouldBlockFn = async () => call();
+      const blockerFn = async () => {
+        const block = await shouldBlockFn();
+        return block;
+      };
+      return (async () => {
+        if (!(await blockerFn())) synced();
+      })();
+    }
+    it('resolves only after the router has taken the withdrawn pop', async () => {
+      const w = withdrawable();
+      const { result } = renderHook(() => useLeaveQuestion(w.ask));
+      at(2, 1);
+      let routerSynced = false;
+      const first = routerPop(
+        () => result.current.shouldBlock({ action: 'BACK' }),
+        () => (routerSynced = true),
+      );
+      await result.current.dismiss();
+      expect(routerSynced).toBe(true);
+      await first;
+    });
+
+    it('resolves only after a withdrawn superseded pop has been let through', async () => {
+      const w = withdrawable();
+      const { result } = renderHook(() => useLeaveQuestion(w.ask));
+      at(2, 1);
+      let routerSynced = false;
+      const first = routerPop(
+        () => result.current.shouldBlock({ action: 'BACK' }),
+        () => (routerSynced = true),
+      );
+      at(2, 0);
+      await result.current.shouldBlock({ action: 'GO' });
+      await result.current.dismiss();
+      expect(routerSynced).toBe(true);
+      await first;
+    });
+
+    it('resolves once a withdrawn push question has been answered', async () => {
+      const w = withdrawable();
+      const { result } = renderHook(() => useLeaveQuestion(w.ask));
+      let answered = false;
+      const first = result.current.shouldBlock({ action: 'PUSH' }).then(() => {
+        answered = true;
+      });
+      await result.current.dismiss();
+      expect(answered).toBe(true);
+      await first;
     });
   });
 });
