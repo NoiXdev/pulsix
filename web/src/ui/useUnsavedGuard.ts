@@ -21,11 +21,21 @@ export function useUnsavedGuard(dirty: boolean): () => void {
     dirtyRef.current = dirty;
   }, [dirty]);
   const released = useRef(false);
+  // The question that is open. The in-page dialog does not freeze the page
+  // as a native confirm did, so a second navigation can arrive meanwhile:
+  // it is blocked at once and the first question stays the only one.
+  const asking = useRef(false);
 
   useBlocker({
     shouldBlockFn: async () => {
       if (released.current || !dirtyRef.current) return false;
-      return !(await ask({ message: t.ui.formPage.unsaved }));
+      if (asking.current) return true;
+      asking.current = true;
+      try {
+        return !(await ask({ message: t.ui.formPage.unsaved }));
+      } finally {
+        asking.current = false;
+      }
     },
     enableBeforeUnload: () => dirtyRef.current && !released.current,
   });

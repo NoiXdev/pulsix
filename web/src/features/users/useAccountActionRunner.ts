@@ -53,9 +53,22 @@ export function useAccountActionRunner(user: AdminUserDetail) {
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Revealed | null>(null);
 
+  // The leave question that is open: a second navigation meanwhile is
+  // blocked at once instead of asking again (the dialog does not freeze
+  // the page as a native confirm did).
+  const askingRef = useRef(false);
+
   useBlocker({
-    shouldBlockFn: async () =>
-      runningRef.current !== null && !(await ask({ message: t.users.actions.leaveWhileRunning })),
+    shouldBlockFn: async () => {
+      if (runningRef.current === null) return false;
+      if (askingRef.current) return true;
+      askingRef.current = true;
+      try {
+        return !(await ask({ message: t.users.actions.leaveWhileRunning }));
+      } finally {
+        askingRef.current = false;
+      }
+    },
     enableBeforeUnload: () => runningRef.current !== null,
   });
 

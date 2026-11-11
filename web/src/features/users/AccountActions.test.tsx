@@ -171,6 +171,12 @@ describe('AccountActions', () => {
     expect(leave).toHaveTextContent(
       'Leave this page? An account action is still running, and its answer, such as a temporary password, would be lost.',
     );
+    // A second navigation while the question is open does not ask again.
+    await act(async () => {
+      void router.navigate({ to: '/o/$org/settings/users', params: { org: 'acme' } });
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(screen.getAllByRole('dialog', { name: 'Are you sure?' })).toHaveLength(1);
     await user.click(within(leave).getByRole('button', { name: 'Cancel' }));
     expect(router.state.location.pathname).toBe('/o/acme/settings/users/u2');
 

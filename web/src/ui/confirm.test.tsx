@@ -364,6 +364,41 @@ describe('useUnsavedGuard through the confirm dialog', () => {
     expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos');
   });
 
+  const openDialogs = () => screen.queryAllByRole('dialog', { hidden: true }).filter((d) => d.hasAttribute('open'));
+
+  it('does not ask again for a second navigation while the question is open', async () => {
+    const router = renderForm(true);
+    await userEvent.click(await screen.findByRole('link', { name: 'Go elsewhere' }));
+    await screen.findByRole('dialog', { name: 'Are you sure?' });
+    await act(async () => {
+      router.history.push('/o/acme/settings/shared/repos');
+      router.history.back();
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(openDialogs()).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(openDialogs()).toHaveLength(0);
+    expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos/new');
+  });
+
+  it('goes to the first target when the first question is confirmed after a second navigation', async () => {
+    const router = renderForm(true);
+    await userEvent.click(await screen.findByRole('link', { name: 'Go elsewhere' }));
+    await screen.findByRole('dialog', { name: 'Are you sure?' });
+    await act(async () => {
+      router.history.push('/o/acme/elsewhere-else');
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(openDialogs()).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByText('the other page')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos');
+    expect(openDialogs()).toHaveLength(0);
+  });
+
   it('does not ask for a clean form', async () => {
     renderForm(false);
     await userEvent.click(await screen.findByRole('link', { name: 'Go elsewhere' }));
