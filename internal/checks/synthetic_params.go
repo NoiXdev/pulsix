@@ -62,7 +62,7 @@ var syntheticSchema = map[string]map[string]paramRule{
 		"timeout_s":   paramWhole(1, 30),
 	},
 	PluginDNS: {
-		"name":      paramName,
+		"name":      paramDNSName,
 		"type":      paramOneOf("A", "AAAA", "CNAME", "MX", "TXT", "NS"),
 		"server":    paramDNSServer,
 		"expect":    paramText(false),
@@ -154,6 +154,45 @@ func paramName(v any) string {
 		return ""
 	}
 	return fmt.Sprintf("a non-blank string of at most %d bytes", maxParamStringLen)
+}
+
+// dnsPlaceholderLabel stands in for {address} while a dns name is checked.
+const dnsPlaceholderLabel = "address"
+
+// paramDNSName accepts a DNS name, after {address} is replaced with a
+// placeholder label: dot-separated labels of letters, digits, '-' and '_'
+// (service names such as _sip._tcp), each 1–63 bytes, an optional
+// trailing dot, at most 253 bytes without it. A name that cannot be one
+// would only ever read dns.up = 0. web/src/features/checks/syntheticParams.ts
+// mirrors this rule.
+func paramDNSName(v any) string {
+	const want = "a DNS name: dot-separated labels of letters, digits, hyphens and underscores, at most 253 bytes (it may contain {address})"
+	s, ok := v.(string)
+	if !ok || len(s) > maxParamStringLen || !validDNSName(strings.ReplaceAll(s, "{address}", dnsPlaceholderLabel)) {
+		return want
+	}
+	return ""
+}
+
+// validDNSName is paramDNSName's rule for a name without placeholders.
+func validDNSName(s string) bool {
+	s = strings.TrimSuffix(s, ".")
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+		for _, r := range label {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // paramOneOf accepts exactly one of values, case included: the probe sends the

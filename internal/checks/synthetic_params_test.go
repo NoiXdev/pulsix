@@ -49,6 +49,12 @@ func TestSyntheticParamsAccepted(t *testing.T) {
 		{"dns server ipv6", checks.PluginDNS, map[string]any{"server": "2001:db8::53"}},
 		{"dns server ipv6 port", checks.PluginDNS, map[string]any{"server": "[2001:db8::53]:53"}},
 		{"dns server ipv6 bracketed", checks.PluginDNS, map[string]any{"server": "[2001:db8::53]"}},
+		{"dns name trailing dot", checks.PluginDNS, map[string]any{"name": "example.com."}},
+		{"dns name srv style", checks.PluginDNS, map[string]any{"name": "_sip._tcp.example.com"}},
+		{"dns name with placeholder", checks.PluginDNS, map[string]any{"name": "www.{address}"}},
+		{"dns name single label", checks.PluginDNS, map[string]any{"name": "intranet"}},
+		{"dns name 253 bytes", checks.PluginDNS, map[string]any{"name": dnsName(253)}},
+		{"dns name 63-byte label", checks.PluginDNS, map[string]any{"name": strings.Repeat("a", 63) + ".example"}},
 		{"long string at the cap", checks.PluginTCP, map[string]any{"port": 1.0, "expect": strings.Repeat("x", 500)}},
 	}
 	for _, tc := range cases {
@@ -120,6 +126,16 @@ func TestSyntheticParamsRefused(t *testing.T) {
 		{"dns server unclosed bracket", checks.PluginDNS, map[string]any{"server": "[2001:db8::53"}},
 		{"dns server bracketed ipv4", checks.PluginDNS, map[string]any{"server": "[192.0.2.53]"}},
 		{"dns empty name", checks.PluginDNS, map[string]any{"name": ""}},
+		{"dns name with a space", checks.PluginDNS, map[string]any{"name": "exa mple.com"}},
+		{"dns name with an at sign", checks.PluginDNS, map[string]any{"name": "ex@mple.com"}},
+		{"dns name empty label", checks.PluginDNS, map[string]any{"name": "example..com"}},
+		{"dns name leading dot", checks.PluginDNS, map[string]any{"name": ".example.com"}},
+		{"dns name root only", checks.PluginDNS, map[string]any{"name": "."}},
+		{"dns name two trailing dots", checks.PluginDNS, map[string]any{"name": "example.com.."}},
+		{"dns name placeholder with a space", checks.PluginDNS, map[string]any{"name": "{address} x"}},
+		{"dns name 254 bytes", checks.PluginDNS, map[string]any{"name": dnsName(254)}},
+		{"dns name 64-byte label", checks.PluginDNS, map[string]any{"name": strings.Repeat("a", 64) + ".example"}},
+		{"dns name not a string", checks.PluginDNS, map[string]any{"name": 5.0}},
 		{"dns empty expect", checks.PluginDNS, map[string]any{"expect": ""}},
 		{"dns timeout 31", checks.PluginDNS, map[string]any{"timeout_s": 31.0}},
 		{"dns unknown key", checks.PluginDNS, map[string]any{"qtype": "A"}},
@@ -132,6 +148,18 @@ func TestSyntheticParamsRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// dnsName is a valid DNS name of exactly n bytes: 49-byte labels.
+func dnsName(n int) string {
+	var b strings.Builder
+	for b.Len() < n {
+		if b.Len() > 0 {
+			b.WriteByte('.')
+		}
+		b.WriteString(strings.Repeat("a", min(49, n-b.Len())))
+	}
+	return b.String()
 }
 
 // TestIsSynthetic: the five probe plugins run on the manager, everything
