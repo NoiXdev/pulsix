@@ -47,6 +47,7 @@ export const enTriggers = {
   testResult: (outcome: string) => `Test call: ${outcome}`,
   testFailed: 'Test call failed',
   deleteConfirm: (name: string) => `Delete trigger ${name}?`,
+  deleteFailed: 'Deleting the trigger failed',
   savingFailed: 'Saving failed',
   senderSetup: 'Sender setup',
   deliveriesNone: 'No deliveries yet.',

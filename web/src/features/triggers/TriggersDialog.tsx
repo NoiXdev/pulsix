@@ -133,7 +133,11 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
 
   async function onDelete() {
     if (!(await ask({ message: m.deleteConfirm(t.name), confirmLabel: i18n.common.delete, destructive: true }))) return;
-    await remove.mutateAsync(t.id);
+    try {
+      await remove.mutateAsync(t.id);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : m.deleteFailed, 'destructive');
+    }
   }
 
   async function onTest() {
@@ -213,7 +217,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
           <Button type="button" onClick={() => setEditing(true)}>
             {m.edit}
           </Button>
-          <Button type="button" variant="destructive" onClick={() => void onDelete()}>
+          <Button type="button" variant="destructive" disabled={remove.isPending} onClick={() => void onDelete()}>
             {i18n.common.delete}
           </Button>
         </div>

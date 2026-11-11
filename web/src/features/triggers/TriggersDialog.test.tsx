@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
@@ -84,6 +84,31 @@ describe('TriggersDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Test call' }));
     await acceptConfirm(user);
     expect(await screen.findByText(/Test call: triggered/)).toBeInTheDocument();
+  });
+
+  it('disables Delete while it runs and shows a toast when it fails', async () => {
+    const user = userEvent.setup();
+    let release: () => void = () => {};
+    let calls = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/triggers': { triggers: [trigger()] },
+      'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
+      'DELETE /api/v1/orgs/acme/triggers/tr1': async () => {
+        calls++;
+        await new Promise<void>((r) => (release = r));
+        return new Response(JSON.stringify({ detail: 'delete refused' }), { status: 409 });
+      },
+    });
+    renderDialog();
+    const dialog = await screen.findByRole('dialog', { name: 'Triggers · patch-all' });
+    const remove = await within(dialog).findByRole('button', { name: 'Delete' });
+    await user.click(remove);
+    await acceptConfirm(user);
+    await waitFor(() => expect(remove).toBeDisabled());
+    release();
+    expect(await screen.findByText('delete refused')).toBeInTheDocument();
+    expect(remove).toBeEnabled();
+    expect(calls).toBe(1);
   });
 
   it('is read-only without write permission', async () => {

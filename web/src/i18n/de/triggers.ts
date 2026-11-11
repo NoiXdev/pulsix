@@ -42,6 +42,7 @@ export const deTriggers: Messages['triggers'] = {
   testResult: (outcome: string) => `Testaufruf: ${outcome}`,
   testFailed: 'Testaufruf fehlgeschlagen',
   deleteConfirm: (name: string) => `Trigger ${name} löschen?`,
+  deleteFailed: 'Der Trigger konnte nicht gelöscht werden',
   savingFailed: 'Speichern fehlgeschlagen',
   senderSetup: 'Einrichtung beim Sender',
   deliveriesNone: 'Noch keine Zustellungen.',
