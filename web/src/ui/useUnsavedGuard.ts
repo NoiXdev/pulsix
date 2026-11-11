@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useBlocker } from '@tanstack/react-router';
 import { useT } from '../i18n/useT.ts';
 import { useConfirm } from './confirmContext.ts';
+import { useLeaveQuestion } from './useLeaveQuestion.ts';
 
 /**
  * useUnsavedGuard asks before a page with unsaved changes is left — a link,
@@ -21,21 +22,12 @@ export function useUnsavedGuard(dirty: boolean): () => void {
     dirtyRef.current = dirty;
   }, [dirty]);
   const released = useRef(false);
-  // The question that is open. The in-page dialog does not freeze the page
-  // as a native confirm did, so a second navigation can arrive meanwhile:
-  // it is blocked at once and the first question stays the only one.
-  const asking = useRef(false);
+  const leave = useLeaveQuestion(() => ask({ message: t.ui.formPage.unsaved }));
 
   useBlocker({
-    shouldBlockFn: async () => {
+    shouldBlockFn: async (args) => {
       if (released.current || !dirtyRef.current) return false;
-      if (asking.current) return true;
-      asking.current = true;
-      try {
-        return !(await ask({ message: t.ui.formPage.unsaved }));
-      } finally {
-        asking.current = false;
-      }
+      return leave(args);
     },
     enableBeforeUnload: () => dirtyRef.current && !released.current,
   });

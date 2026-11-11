@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useBlocker } from '@tanstack/react-router';
 import { useToast } from '../../ui/toastContext.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
+import { useLeaveQuestion } from '../../ui/useLeaveQuestion.ts';
 import type { AccountNotice, AdminUserDetail } from '../../api/types.ts';
 import { isStepUpRequired, STEP_UP_REQUIRED, useStepUp } from '../account/stepUp.tsx';
 import { useT } from '../../i18n/useT.ts';
@@ -53,21 +54,12 @@ export function useAccountActionRunner(user: AdminUserDetail) {
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Revealed | null>(null);
 
-  // The leave question that is open: a second navigation meanwhile is
-  // blocked at once instead of asking again (the dialog does not freeze
-  // the page as a native confirm did).
-  const askingRef = useRef(false);
+  const leave = useLeaveQuestion(() => ask({ message: t.users.actions.leaveWhileRunning }));
 
   useBlocker({
-    shouldBlockFn: async () => {
+    shouldBlockFn: async (args) => {
       if (runningRef.current === null) return false;
-      if (askingRef.current) return true;
-      askingRef.current = true;
-      try {
-        return !(await ask({ message: t.users.actions.leaveWhileRunning }));
-      } finally {
-        askingRef.current = false;
-      }
+      return leave(args);
     },
     enableBeforeUnload: () => runningRef.current !== null,
   });
