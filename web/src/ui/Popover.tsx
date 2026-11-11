@@ -63,7 +63,7 @@ export function Popover({ anchor, onClose, id, label, children }: PopoverProps) 
   }, [anchor]);
 
   useEffect(() => {
-    // A <label> of the field (its htmlFor, or one wrapping it) stands for
+    // A <label htmlFor> of the field stands for
     // the field. A press on it would otherwise close the popover on
     // mousedown and open it again through the click the label passes on
     // to the field — a flicker. So the press keeps focus where it is, and

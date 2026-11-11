@@ -1,4 +1,5 @@
 import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { DayPicker, type ClassNames, type Labels, type Matcher } from 'react-day-picker';
 import { de } from 'react-day-picker/locale/de';
 import { enUS } from 'react-day-picker/locale/en-US';
@@ -199,10 +200,14 @@ export function DatePicker({
           // The browser would focus this invisible input and point its bubble
           // at it, where a keyboard user sees no focus ring and a screen
           // reader hears nothing. Cancelled, it does neither and the submit
-          // stays blocked; the field says why itself, on its trigger.
+          // stays blocked; the field says why itself, on its trigger. Any
+          // `invalid` event counts, so only a submit should run this form's
+          // validation (no checkValidity/reportValidity), or the trigger
+          // takes the focus. The message is in place before the focus
+          // arrives, so a screen reader hears it with the field.
           onInvalid={(e) => {
             e.preventDefault();
-            setReported(true);
+            flushSync(() => setReported(true));
             const proxy = e.currentTarget;
             const trigger = triggerRef.current;
             if (!trigger || !isFirstInvalid(proxy)) return;
