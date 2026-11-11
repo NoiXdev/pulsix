@@ -6,6 +6,7 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { AgentsPage } from './AgentsPage.tsx';
+import { AddAgentDialog } from './AddAgentDialog.tsx';
 import { clippedElements } from '../../test/clipped.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
@@ -236,6 +237,38 @@ describe('AgentsPage', () => {
     expect(await screen.findByLabelText('Install command')).toHaveTextContent('--manager pulsix.example:8444');
     expect(screen.getByLabelText('Enrollment token')).toHaveTextContent('pxa1.aaa.bbb.ccc');
     expect(posted).toMatchObject({ zone_id: 'z1', name_hint: 'edge-1', max_uses: 2, expires_in_minutes: 60 });
+  });
+
+  it('binds the token to a given host: sends host_id, no name_hint, names the host', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme/zones': { zones: [{ id: 'z1', org_id: 'o', slug: 'hel', name: 'Helsinki' }] },
+      'POST /api/v1/orgs/acme/agents/tokens': (req: MockRequest) => {
+        posted = req.body as Record<string, unknown>;
+        return {
+          token: 'pxa1.aaa.bbb.ccc',
+          token_record: { id: 't1', zone_id: 'z1', host_id: 'h1', max_uses: 1, uses: 0, expires_at: inDays(1), created_at: '' },
+          install_command: 'curl x',
+        };
+      },
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <AddAgentDialog org="acme" host={{ id: 'h1', name: 'web-1', zoneId: 'z1' }} onClose={() => {}} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('Enrol an agent on web-1')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Host name (optional)')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Create token' }));
+
+    expect(await screen.findByLabelText('Enrollment token')).toBeInTheDocument();
+    expect(posted).toMatchObject({ zone_id: 'z1', host_id: 'h1', max_uses: 1 });
+    expect(posted).not.toHaveProperty('name_hint');
   });
 
   // v0.4g Task 9: the Zone picker's create row. agents.write (operator) is

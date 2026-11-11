@@ -22,7 +22,7 @@ interface Created {
  * one-line install command that uses it. A token may admit several agents
  * (a fleet rollout) and expires on its own; the host it creates lands in
  * the chosen zone, named by the hint or by the agent itself. */
-export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => void }) {
+export function AddAgentDialog({ org, host, onClose }: { org: string; host?: { id: string; name: string; zoneId?: string }; onClose: () => void }) {
   const t = useT();
   const copy = useCopy();
   const zones = useZones(org);
@@ -35,12 +35,13 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
   const [created, setCreated] = useState<Created | null>(null);
   const [zoneDialogName, setZoneDialogName] = useState<string | null>(null);
   const zoneList = zones.data?.zones ?? [];
-  const zone = zoneId || zoneList[0]?.id || '';
+  const zone = host?.zoneId || zoneId || zoneList[0]?.id || '';
+  const title = host ? t.agents.dialog.titleHost(host.name) : t.agents.dialog.title;
 
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    if (nameHint && !NAME_RE.test(nameHint)) {
+    if (!host && nameHint && !NAME_RE.test(nameHint)) {
       setError(t.agents.dialog.nameRule);
       return;
     }
@@ -49,7 +50,7 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
         zone_id: zone,
         max_uses: maxUses,
         expires_in_minutes: minutes,
-        ...(nameHint ? { name_hint: nameHint } : {}),
+        ...(host ? { host_id: host.id } : nameHint ? { name_hint: nameHint } : {}),
       });
       setCreated({ token: res.token, command: res.install_command });
     } catch (err) {
@@ -59,7 +60,7 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
 
   if (created) {
     return (
-      <Dialog open onClose={onClose} title={t.agents.dialog.title} size="wide">
+      <Dialog open onClose={onClose} title={title} size="wide">
         <div className="flex flex-col gap-4">
           <p className="text-xs text-muted-foreground">
             {t.agents.dialog.instructions(t.agents.dialog.agentCount(maxUses), minutes)}
@@ -89,24 +90,27 @@ export function AddAgentDialog({ org, onClose }: { org: string; onClose: () => v
   }
 
   return (
-    <Dialog open onClose={onClose} title={t.agents.dialog.title}>
+    <Dialog open onClose={onClose} title={title}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
-        <Label htmlFor="agent-zone">{t.agents.dialog.zone}</Label>
-        <Select
+        {host && <p className="text-xs text-muted-foreground">{t.agents.dialog.hostIntro(host.name)}</p>}
+        {!host?.zoneId && <Label htmlFor="agent-zone">{t.agents.dialog.zone}</Label>}
+        {!host?.zoneId && <Select
           id="agent-zone"
           options={zoneList.map((z) => ({ value: z.id, label: `${z.name} (${z.slug})` }))}
           value={zone}
           onChange={setZoneId}
           create={{ label: t.agents.dialog.newZone, onSelect: setZoneDialogName }}
-        />
-        <Label htmlFor="agent-name">{t.agents.dialog.hostName}</Label>
-        <Input
-          id="agent-name"
-          className="font-mono"
-          value={nameHint}
-          onChange={(e) => setNameHint(e.target.value)}
-          placeholder={t.agents.dialog.hostNamePlaceholder}
-        />
+        />}
+        {!host && <Label htmlFor="agent-name">{t.agents.dialog.hostName}</Label>}
+        {!host && (
+          <Input
+            id="agent-name"
+            className="font-mono"
+            value={nameHint}
+            onChange={(e) => setNameHint(e.target.value)}
+            placeholder={t.agents.dialog.hostNamePlaceholder}
+          />
+        )}
         <Label htmlFor="agent-uses">{t.agents.dialog.maxUses}</Label>
         <Input id="agent-uses" type="number" min={1} max={100} value={maxUses} onChange={(e) => setMaxUses(Number(e.target.value))} />
         <Label htmlFor="agent-minutes">{t.agents.dialog.validFor}</Label>

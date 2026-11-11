@@ -225,7 +225,8 @@ export const deHosts: Messages['hosts'] = {
   },
   agent: {
     title: 'Agent',
-    none: 'Kein Agent auf diesem Host. Einen auf der Agents-Seite registrieren – das ausgegebene Token enthält den Installationsbefehl.',
+    none: 'Kein Agent auf diesem Host. Mit einem registrierten Agent wird er überwacht – das ausgegebene Token enthält den Installationsbefehl.',
+    enrol: 'Agent registrieren',
     name: 'Name',
     revoked: 'Agent widerrufen',
   },

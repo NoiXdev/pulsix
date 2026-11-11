@@ -37,6 +37,8 @@ export const deAgents: Messages['agents'] = {
   withdrawFailed: 'Zurückziehen fehlgeschlagen',
   dialog: {
     title: 'Agent registrieren',
+    titleHost: (n: string) => `Agent auf ${n} registrieren`,
+    hostIntro: (n: string) => `Das Token ist an ${n} gebunden: Der Agent, der es einlöst, wird diesem Host zugeordnet – Inventar, Variablen und Ausführungsverlauf bleiben erhalten – und der Host wird danach überwacht.`,
     nameRule: 'Nur Kleinbuchstaben, Ziffern und Bindestriche verwenden; der Name beginnt mit einem Buchstaben oder einer Ziffer.',
     createFailed: 'Das Token konnte nicht erstellt werden',
     instructions: (agents: string, minutes: number) =>

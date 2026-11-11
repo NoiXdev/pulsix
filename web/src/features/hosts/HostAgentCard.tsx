@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Card } from '../../ui/table.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -5,6 +6,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useHostAgent, useRevokeAgent } from '../../api/hooks/useAgents.ts';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from '../workers/expiry.ts';
 import { VersionSkewBadge } from '../workers/VersionSkewBadge.tsx';
+import { AddAgentDialog } from '../agents/AddAgentDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 
 /** HostAgentCard shows the agent running on this host (v0.3a, spec §8):
@@ -12,13 +14,14 @@ import { useT } from '../../i18n/useT.ts';
  * certificate expires — and, for an operator, the revoke action. A host
  * without an agent gets the enrolment hint instead: the read answers 404,
  * which is a state to render, not an error. */
-export function HostAgentCard({ org, hostId, canWrite }: { org: string; hostId: string; canWrite: boolean }) {
+export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org: string; hostId: string; hostName: string; zoneId?: string; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
   const query = useHostAgent(org, hostId);
   const revoke = useRevokeAgent(org);
   const agent = query.data?.agent;
   const now = new Date();
+  const [enrolling, setEnrolling] = useState(false);
 
   async function onRevoke() {
     if (!agent) return;
@@ -43,6 +46,14 @@ export function HostAgentCard({ org, hostId, canWrite }: { org: string; hostId: 
           {t.hosts.agent.none}
         </p>
       )}
+      {!agent && canWrite && !query.isPending && (
+        <div className="mt-3 flex justify-end">
+          <Button type="button" variant="primary" onClick={() => setEnrolling(true)}>
+            {t.hosts.agent.enrol}
+          </Button>
+        </div>
+      )}
+      {enrolling && <AddAgentDialog org={org} host={{ id: hostId, name: hostName, zoneId }} onClose={() => setEnrolling(false)} />}
       {agent && (
         <div className="flex flex-col gap-2 text-xs">
           <div className="flex justify-between gap-2">

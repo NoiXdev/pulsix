@@ -36,6 +36,8 @@ export const enAgents = {
   withdrawFailed: 'Withdrawing failed',
   dialog: {
     title: 'Enrol an agent',
+    titleHost: (n: string) => `Enrol an agent on ${n}`,
+    hostIntro: (n: string) => `The token is bound to ${n}: the agent that redeems it attaches to this host, which keeps its inventory, variables and run history, and the host starts being monitored.`,
     nameRule: 'Use lowercase letters, digits and hyphens, starting with a letter or digit.',
     createFailed: 'Creating the token failed',
     instructions: (agents: string, minutes: number) =>

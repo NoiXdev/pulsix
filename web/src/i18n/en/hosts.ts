@@ -226,7 +226,8 @@ export const enHosts = {
   },
   agent: {
     title: 'Agent',
-    none: 'No agent on this host. Enrol one from the Agents page — the token it prints carries the install command.',
+    none: 'No agent on this host. Enrolling one lets Pulsix monitor it — the token it prints carries the install command.',
+    enrol: 'Enrol agent',
     name: 'Name',
     revoked: 'Agent revoked',
   },
