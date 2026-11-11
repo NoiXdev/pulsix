@@ -465,6 +465,31 @@ func TestNotifyAllowCIDRs(t *testing.T) {
 	}
 }
 
+// TestProbeDenyCIDRs: a comma-separated CIDR list, empty by default; an
+// invalid entry fails start-up with an error naming the variable and the
+// entry.
+func TestProbeDenyCIDRs(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cfg, err := config.Load(env(base))
+	if err != nil || len(cfg.ProbeDenyCIDRs) != 0 {
+		t.Fatalf("default: %v, %v", cfg.ProbeDenyCIDRs, err)
+	}
+	base["PULSIX_PROBE_DENY_CIDRS"] = "172.18.0.0/16, fd00::/8"
+	cfg, err = config.Load(env(base))
+	if err != nil || len(cfg.ProbeDenyCIDRs) != 2 || cfg.ProbeDenyCIDRs[0].String() != "172.18.0.0/16" || cfg.ProbeDenyCIDRs[1].String() != "fd00::/8" {
+		t.Fatalf("parsed: %v, %v", cfg.ProbeDenyCIDRs, err)
+	}
+	base["PULSIX_PROBE_DENY_CIDRS"] = "10.0.0.0/8, 10.1.2.300/32"
+	_, err = config.Load(env(base))
+	if err == nil || !strings.Contains(err.Error(), "PULSIX_PROBE_DENY_CIDRS") || !strings.Contains(err.Error(), "10.1.2.300/32") {
+		t.Fatalf("an invalid entry must fail naming the variable and the entry, got %v", err)
+	}
+}
+
 // TestNotifyNAT64Prefixes is backlog 2.76's config half. Only the six
 // prefix lengths RFC 6052 §2.2 defines an address layout for are
 // accepted: a length it says nothing about has no defined embedding, so

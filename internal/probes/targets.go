@@ -1,0 +1,92 @@
+package probes
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/db"
+)
+
+// orgScope binds ctx to orgID's row-level-security scope, like the other
+// background loops do for their per-organization work.
+func orgScope(ctx context.Context, orgID uuid.UUID) context.Context {
+	return db.WithOrgScope(ctx, orgID)
+}
+
+// refresh re-reads every organization's synthetic checks and host
+// addresses. A slot that is gone (definition removed or disabled, host no
+// longer monitored or deleted) leaves the schedule; a new one is due at
+// once. When an organization cannot be read, its previous targets stand
+// until a later refresh succeeds: a database hiccup does not pause its
+// probes. When the organization list itself cannot be read, nothing
+// changes and the next tick retries.
+func (r *Runner) refresh(ctx context.Context, now time.Time) {
+	orgs, err := r.orgs.ListOrgIDs(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			r.log.ErrorContext(ctx, "probe runner: list organizations", "err", err)
+		}
+		return
+	}
+	next := make(map[slot]target, len(r.targets))
+	for _, org := range orgs {
+		ts, err := r.orgTargets(orgScope(ctx, org), org)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			r.log.ErrorContext(ctx, "probe runner: resolve organization", "org", org, "err", err)
+			for s, t := range r.targets {
+				if t.org == org {
+					next[s] = t
+				}
+			}
+			continue
+		}
+		for s, t := range ts {
+			next[s] = t
+		}
+	}
+	r.targets = next
+	r.refreshed = now
+	for s := range r.next {
+		if _, ok := next[s]; !ok {
+			delete(r.next, s)
+		}
+	}
+}
+
+// orgTargets resolves one organization: every monitored host's synthetic
+// checks, with the host's current address.
+func (r *Runner) orgTargets(ctx context.Context, org uuid.UUID) (map[slot]target, error) {
+	sets, err := r.resolver.ResolveOrg(ctx, org)
+	if err != nil {
+		return nil, fmt.Errorf("resolve checks: %w", err)
+	}
+	ids := make([]uuid.UUID, 0, len(sets))
+	for id, rs := range sets {
+		if len(rs.Synthetic) > 0 {
+			ids = append(ids, id)
+		}
+	}
+	out := map[slot]target{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	hs, err := r.hosts.ListHostsByIDs(ctx, org, ids)
+	if err != nil {
+		return nil, fmt.Errorf("list hosts: %w", err)
+	}
+	for _, h := range hs {
+		if !h.Monitored {
+			continue
+		}
+		for _, c := range sets[h.ID].Synthetic {
+			out[slot{host: h.ID, key: c.Key}] = target{org: org, address: h.Address, check: c}
+		}
+	}
+	return out, nil
+}

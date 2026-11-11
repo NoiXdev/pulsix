@@ -50,6 +50,8 @@ import (
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
+	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probes"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/schedule"
@@ -121,6 +123,10 @@ type App struct {
 	// service, which waits for a manual backup still running.
 	backups          *backup.Service
 	stopBackupTicker func()
+	// stopProbes stops the synthetic-check probe runner (backlog 3.13),
+	// waiting for the probes in flight (whose results it discards) and
+	// releasing its advisory lock.
+	stopProbes func()
 	// items is the discovery and decisions service (v0.3b-3). Wired here
 	// because its constructor's check-key set is derived from
 	// rules.Catalogue() (ItemCheckKeys, rules_ports.go), and this package
@@ -184,6 +190,9 @@ func (a *App) Close() {
 	}
 	if a.stopAlertNotify != nil {
 		a.stopAlertNotify()
+	}
+	if a.stopProbes != nil {
+		a.stopProbes()
 	}
 	if a.stopEmbedded != nil {
 		a.stopEmbedded()
@@ -722,6 +731,19 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		oncallStore, outbox, cfg.PublicURL, time.Now, slog.Default())
 	alertNotifyStop := startLoop(func(ctx context.Context) { alertFollower.Run(ctx, alertroutes.DefaultFollowInterval) })
 
+	// The synthetic-check probe runner (backlog 3.13): the holder of its
+	// advisory lock probes every monitored host's synthetic checks,
+	// resolved through checksSvc like the agents' own, and records the
+	// results through checksSvc too. Every dial goes through the guard
+	// (PULSIX_PROBE_DENY_CIDRS on top of the always-refused ranges).
+	// Stopped in Close and on every early return below.
+	probesStop := startLoop(probes.NewRunner(probes.Deps{
+		Orgs: hostsSvc, Resolver: checksSvc, Hosts: hostsSvc, Recorder: checksSvc,
+		Locker: schedule.NewAdvisoryLocker(appDB.Pool(), probes.AdvisoryKeyProbes),
+		Guard:  probe.NewGuard(cfg.ProbeDenyCIDRs),
+		Clock:  time.Now, Log: slog.Default(),
+	}).Run)
+
 	var grpcServer *grpc.Server
 	var stopEmbedded func()
 	if cfg.GRPCListen != "" {
@@ -741,6 +763,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			digestStop()
 			evalStop()
 			alertNotifyStop()
+			probesStop()
 			appDB.Close()
 			return nil, fmt.Errorf("build gRPC server: %w", err)
 		}
@@ -764,6 +787,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				digestStop()
 				evalStop()
 				alertNotifyStop()
+				probesStop()
 				appDB.Close()
 				return nil, fmt.Errorf("PULSIX_EMBEDDED_WORKER: resolve port from PULSIX_GRPC_LISTEN %q: %w", cfg.GRPCListen, splitErr)
 			}
@@ -782,7 +806,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/outbound"
+	"github.com/noixdev/pulsix/internal/probe"
 )
 
 // defaultCAListenHost is the DNS SAN the gRPC server certificate falls
@@ -94,6 +95,13 @@ type Config struct {
 	// configuration. Only the six prefix lengths RFC 6052 §2.2 defines
 	// an embedding for are accepted.
 	NotifyNAT64Prefixes []netip.Prefix
+	// ProbeDenyCIDRs are destination ranges the synthetic-check probes
+	// must never dial, on top of the always-refused loopback, link-local,
+	// unspecified and multicast addresses (PULSIX_PROBE_DENY_CIDRS, CIDRs
+	// comma separated, default empty; internal/probe's guard). The
+	// compose README recommends adding the stack's own network. An
+	// invalid entry fails start-up naming it.
+	ProbeDenyCIDRs []netip.Prefix
 	// Version is the manager's build version, exposed on /healthz. It is
 	// not read from the environment: Load leaves it at its zero value, and
 	// cmd/manager/main.go sets it directly from the package-level `version`
@@ -218,6 +226,11 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 	}
 	cfg.NotifyNAT64Prefixes = nat64
+	probeDeny, err := probe.ParseCIDRs(getenv("PULSIX_PROBE_DENY_CIDRS"))
+	if err != nil {
+		return cfg, fmt.Errorf("PULSIX_PROBE_DENY_CIDRS: %w", err)
+	}
+	cfg.ProbeDenyCIDRs = probeDeny
 	key, err := hex.DecodeString(getenv("PULSIX_MASTER_KEY"))
 	if err != nil || len(key) != 32 {
 		return cfg, fmt.Errorf("PULSIX_MASTER_KEY must be 64 hex characters (32 bytes)")
