@@ -197,10 +197,12 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
               onChange={onMetricChange}
               // No hint here: the metric catalogue has no name besides this
               // one (RuleMetricDTO carries only `name` and `check_key`), and
-              // check_key is always a prefix of name ("cpu" of
-              // "cpu.used_pct") — decoration, not disambiguation, since no
-              // two rows ever read the same (Move 2 only adds a hint where
-              // they could).
+              // check_key only names the check the metric comes from
+              // ("cpu" for "cpu.used_pct", "memory" for "mem.used_pct",
+              // "network" for "net.rx_bytes_per_s") — decoration, not
+              // disambiguation, since metric names are unique, so no two
+              // rows ever read the same (Move 2 only adds a hint where they
+              // could).
               options={metrics.map((m) => ({ value: m.name, label: m.name }))}
             />
           </div>

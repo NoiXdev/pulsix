@@ -709,8 +709,11 @@ func (s *Service) ListCheckDefs(ctx context.Context) ([]CheckDefinition, error) 
 }
 
 // reservedSeedKeys are the exact keys internal/checks.SeedDefinitions()
-// stamps into EVERY organization at the org-wide scope — present the
-// instant an organization is created and never absent afterward. A shared
+// stamps into every organization at the org-wide scope when it is created
+// (and migration 00084 backfills network and uptime), except a key a shared
+// definition already holds: that organization gets the shared projection
+// under the key instead of the seed (see the network/uptime note below). A
+// shared
 // check definition's own pre-flight collision check
 // (ExistingCheckDefinitionNames, called right after this function in
 // CreateCheckDefinition/UpdateCheckDefinition) can only catch a definition

@@ -38,7 +38,7 @@
   - An interface that disappears is forgotten.
 - Default interface set without the `interfaces` parameter:
   - every interface from `net.Interfaces` that is up and not loopback;
-  - excluded by name prefix: `veth`, `docker`, `br-`, `virbr`, `cni`, `flannel`, `cali`, `vxlan`, `kube-`, `tun`, `tap`.
+  - excluded by name prefix: `veth`, `docker`, `br-`, `virbr`, `cni`, `flannel`, `cali`, `vxlan`, `kube-`, `tun`, `tap`, and (added in the final review) `vnet`, `podman`, `lxcbr`, `lxdbr`.
 
   An explicit `interfaces` list is taken verbatim and bypasses all filters, as disk's `mounts` does.
 - Seeds:

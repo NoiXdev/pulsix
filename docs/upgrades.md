@@ -112,7 +112,9 @@ in an upgrade.
 
 An agent one minor older does not know the `network` and `uptime` check plugins
 (backlog 3.7): it skips those two checks, logs a warning per configuration
-push, and keeps running the rest until it is updated.
+push (the manager re-pushes on every heartbeat while the agent has not
+converged, so about one warning every 30 seconds at the default heartbeat
+interval), and keeps running the rest until it is updated.
 
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
@@ -158,7 +160,11 @@ repositories as before. An older worker never asks.
   second) and `uptime` (every 5 minutes: `uptime.seconds`); new organizations
   get them too. They show up as ordinary checks on every host. An organization
   that already has its own organization-wide check under the key `network` or
-  `uptime` keeps it and gets no seed for that key. The same holds for a key an
+  `uptime` keeps it and gets no seed for that key. A group- or host-bound
+  check an operator already has under `network` or `uptime` does not block the
+  seed (00084 only skips organization-wide rows), and it keeps overriding the
+  new organization-wide check on the hosts it covers, so those hosts run the
+  operator's definition, not the seed. The same holds for a key an
   installation-wide shared check definition already holds, in every
   organization: before this release only `cpu`, `memory`, `disk` and `service`
   were reserved, so such a definition may exist. It keeps the key and stays
@@ -168,7 +174,9 @@ repositories as before. An older worker never asks.
   the check by hand there. An agent older than this release does not know the
   plugins: it skips those two checks without a result, logs one warning per
   configuration push naming the keys, and does not report that configuration as
-  converged, so the manager keeps pushing it. Its other checks keep running.
+  converged, so the manager keeps pushing it on every heartbeat: about one
+  warning every 30 seconds at the default heartbeat interval, until the agent
+  is updated. Its other checks keep running.
   Update the agents to get the data. The migration is rolled back by deleting
   the seed rows under those two keys.
 - **7.123, the agent port in the compose file:** the bundled
