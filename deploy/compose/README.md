@@ -21,7 +21,9 @@ it is required.
 The manager waits for the database's healthcheck (`pg_isready`) before it
 starts, runs its own migrations on startup, and is reachable at
 `http://localhost:8080` (or whatever `PULSIX_PUBLIC_URL` names, once you
-put something in front of it — see below). Database data lives in the
+put something in front of it — see below). Agents on your hosts, and
+workers on other machines, connect to the manager's second published port,
+`8444`; it is not HTTP and is not routed through a reverse proxy. Database data lives in the
 named volume `pulsix-db`, so it survives `docker compose down` (but not
 `docker compose down -v`, which deliberately discards it).
 
@@ -180,17 +182,14 @@ its own bind-mounted bundle directory (owned the same way).
 
 ### Workers on other machines
 
-The worker endpoint is not published on the host by default. To serve a
-worker elsewhere, publish it in a `docker-compose.override.yml`:
+The agent and worker endpoint is published on the host at port 8444
+(`PULSIX_GRPC_HOST_PORT`), the same port the agents on your hosts dial;
+open it in the firewall to wherever agents and workers run. If you change
+the host port, or agents and workers reach the manager under another name
+than `PULSIX_PUBLIC_URL`'s, set `PULSIX_GRPC_PUBLIC_ADDR` (`host:port`) so
+the enrollment commands name the right address.
 
-```yaml
-services:
-  manager:
-    ports:
-      - "8444:8444"
-```
-
-Then enroll the remote worker with a one-time token instead of a copied
+Enroll the remote worker with a one-time token instead of a copied
 certificate bundle:
 
 1. On the Workers page, "Add worker" → pick the zone and a name → copy the
@@ -248,9 +247,10 @@ The manager logs a warning at startup whenever it is on. Further limits:
   connection tests only; every other job kind fails.
 - It serves only the `default` zone, and only on an instance with a
   single organization.
-- Every manager start registers a new worker entry named `embedded`, and
-  if enrollment fails after startup it stays stopped until the next
-  restart.
+- Every manager start re-attaches to the same worker entry named
+  `embedded` and adds a certificate for its new key; those certificates
+  accumulate until you revoke or delete the entry. If enrollment fails
+  after startup, the embedded worker stays stopped until the next restart.
 - The manager service runs with `init: true` for the same reason the
   `worker` service does: nothing the embedded worker leaves behind
   lingers as a defunct process. Add `--init` if you start the manager

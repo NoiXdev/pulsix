@@ -30,17 +30,22 @@ x-manager-base: &manager-base
     PULSIX_MASTER_KEY: "${PULSIX_MASTER_KEY:?run: openssl rand -hex 32}"
     PULSIX_PUBLIC_URL: "${PULSIX_PUBLIC_URL:?e.g. https://pulsix.example.com}"
     PULSIX_STATUS_DOMAIN: "${PULSIX_STATUS_DOMAIN:-}"
-    # The worker endpoint (spec §17): bound on every interface inside the
-    # container, so the `worker` service below reaches it over the
-    # compose network as "manager:8444". It is NOT published on the host:
-    # nothing outside this compose network needs it by default. To serve
-    # a worker running on another machine, publish it deliberately (see
-    # README.md, "Workers on other machines"). PULSIX_GRPC_SERVER_NAME
-    # gives the endpoint's server certificate a fixed name — the manager
-    # binds ":8444", which names no host of its own — and every worker
-    # must present that same name as its PULSIX_MANAGER_SERVER_NAME.
+    # The agent and worker endpoint (spec §17): bound on every interface
+    # inside the container, so the `worker` service below reaches it over
+    # the compose network as "manager:8444". Agents on your hosts and
+    # workers on other machines dial it from outside, so the `manager`
+    # service publishes it on the host too (PULSIX_GRPC_HOST_PORT,
+    # backlog 7.123); it only accepts clients this instance enrolled.
+    # PULSIX_GRPC_SERVER_NAME gives the endpoint's server certificate a
+    # fixed name — the manager binds ":8444", which names no host of its
+    # own — and every worker must present that same name as its
+    # PULSIX_MANAGER_SERVER_NAME. PULSIX_GRPC_PUBLIC_ADDR is the address
+    # the enrollment commands tell agents and workers to dial; empty means
+    # PULSIX_PUBLIC_URL's host with port 8444, so set it when the host
+    # port or the host name agents reach differs.
     PULSIX_GRPC_LISTEN: "${PULSIX_GRPC_LISTEN:-:8444}"
     PULSIX_GRPC_SERVER_NAME: "${PULSIX_GRPC_SERVER_NAME:-pulsix-manager}"
+    PULSIX_GRPC_PUBLIC_ADDR: "${PULSIX_GRPC_PUBLIC_ADDR:-}"
     # Off by default, and only for trusted single-tenant setups: when on,
     # playbooks run inside THIS container, next to PULSIX_MASTER_KEY and
     # PULSIX_DATABASE_URL (a playbook task on localhost can read them),
@@ -99,6 +104,9 @@ services:
       # already has something bound to 8080 — the container always
       # listens on 8080 internally, matching PULSIX_LISTEN's own default.
       - "${PULSIX_HOST_PORT:-8080}:8080"
+      # The agent and worker endpoint (see PULSIX_GRPC_LISTEN above):
+      # agents on your hosts connect here, so it is published by default.
+      - "${PULSIX_GRPC_HOST_PORT:-8444}:8444"
     # An init (PID 1) that reaps what its children orphan (backlog 2.111),
     # for the embedded worker above: with PULSIX_EMBEDDED_WORKER=1 it runs
     # inside this process and has the same orphan paths as the `worker`

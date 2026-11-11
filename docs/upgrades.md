@@ -148,6 +148,14 @@ repositories as before. An older worker never asks.
 - **Webhook body limit:** a webhook body of exactly 1 MiB is still accepted and
   one byte more is refused with 413, unchanged; the dependency update that moved
   the limit's off-by-one is compensated in the hook endpoints.
+- **7.123, the agent port in the compose file:** the bundled
+  `docker-compose.yml` now publishes the agent and worker endpoint on the host
+  at port 8444 (`PULSIX_GRPC_HOST_PORT`); before, agents on other hosts could
+  not connect until it was published by hand. A `docker-compose.override.yml`
+  that already publishes `8444:8444` merges with the new entry and keeps
+  working; the override entry can go. The port only accepts agents and workers the
+  instance enrolled; open it in the firewall to where they run, and set
+  `PULSIX_GRPC_PUBLIC_ADDR` if you publish it on another host port.
 - **7.122, numbers in a worker's variable sources:** the manager now refuses a
   repository sync's variable sources holding a number of 1e21 or more or below
   1e-6 (zero aside), whatever the worker's version. A worker older than this
