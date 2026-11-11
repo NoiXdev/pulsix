@@ -33,6 +33,12 @@ const S3_SETTINGS = {
   },
 };
 
+/** Opens a backup row's actions menu and returns it. */
+async function openActions(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
+  return screen.findByRole('menu', { name: `Actions for ${name}` });
+}
+
 const OK_ITEM = {
   name: 'pulsix-20261102T030000Z-scheduled.pxbak',
   created_at: '2026-11-02T03:00:00Z',
@@ -104,7 +110,8 @@ describe('BackupsPage', () => {
     expect(within(strip).getByText('Folder /var/lib/pulsix/backups')).toBeInTheDocument();
     expect(within(strip).getByText(/412 MB/)).toBeInTheDocument();
     expect(screen.getByText(/Every backup is encrypted/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute(
+    const menu = await openActions(userEvent.setup(), OK_ITEM.name);
+    expect(within(menu).getByRole('menuitem', { name: 'Download' })).toHaveAttribute(
       'href',
       '/api/v1/admin/backups/pulsix-20261102T030000Z-scheduled.pxbak/download',
     );
@@ -335,10 +342,15 @@ describe('BackupsPage', () => {
     }
     expect(screen.getByRole('alert')).toHaveTextContent('dial tcp: connection refused');
 
-    // Only a readable stored file can be restored; a damaged one can still be downloaded or deleted.
-    expect(screen.getAllByRole('button', { name: 'Restore…' })).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(2);
-    expect(screen.getAllByRole('link', { name: 'Download' })).toHaveLength(2);
+    // Only a stored file has actions; only a readable one can be restored, a
+    // damaged one can still be downloaded or deleted.
+    expect(screen.getAllByRole('button', { name: /^Actions for / })).toHaveLength(2);
+    const user = userEvent.setup();
+    const ok = await openActions(user, 'ok.pxbak');
+    expect(within(ok).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Download', 'Restore…', 'Delete']);
+    await user.keyboard('{Escape}');
+    const damaged = await openActions(user, 'pulsix-20261030T030000Z-scheduled.pxbak');
+    expect(within(damaged).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Download', 'Delete']);
   });
 
   it('marks a backup whose header cannot be authenticated as unverified, and still offers its actions', async () => {
@@ -355,8 +367,9 @@ describe('BackupsPage', () => {
     const label = await screen.findByText('Unverified');
     expect(screen.getAllByText('Unverified')).toHaveLength(1);
     expect(label.closest('[title]')).toHaveAttribute('title', expect.stringMatching(/cannot be authenticated/));
-    expect(screen.getAllByRole('button', { name: 'Restore…' })).toHaveLength(2);
-    expect(screen.getAllByRole('link', { name: 'Download' })).toHaveLength(2);
+    const menu = await openActions(userEvent.setup(), OK_ITEM.name);
+    expect(within(menu).getByRole('menuitem', { name: 'Restore…' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Download' })).toBeInTheDocument();
   });
 
   it('deletes a backup after confirmation', async () => {
@@ -373,10 +386,9 @@ describe('BackupsPage', () => {
       }),
     );
     renderPage();
-    const del = await screen.findByRole('button', { name: 'Delete' });
-    await user.click(del);
+    await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete' }));
     expect(deleted).toEqual([]);
-    await user.click(del);
+    await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete' }));
     await waitFor(() => expect(deleted).toEqual([`/api/v1/admin/backups/${OK_ITEM.name}`]));
     expect(confirm).toHaveBeenCalledTimes(2);
   });
@@ -385,7 +397,7 @@ describe('BackupsPage', () => {
     const user = userEvent.setup();
     mockApi(base({ 'GET /api/v1/admin/backups/settings': S3_SETTINGS }));
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Restore…' }));
+    await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Restore…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Restore a backup' });
     const command = within(dialog).getByText(/cli restore --from s3:\/\/firma-backups\/pulsix --replace pulsix-2026/);
     expect(command.textContent).toContain(

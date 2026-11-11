@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Download, RotateCcw, Trash2 } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
-import { Button } from '../../ui/button.tsx';
+import { RowMenu, RowMenuItem, RowMenuLink } from '../../ui/list-row.tsx';
 import { Pill, type Tone } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { backupDownloadUrl, useDeleteBackup } from '../../api/hooks/useBackups.ts';
@@ -12,7 +11,7 @@ import { formatSize } from './backupFormat.ts';
 import { RestoreDialog } from './RestoreDialog.tsx';
 import type { RestoreDestination } from './restoreCommands.ts';
 
-const COLUMNS = '1.3fr 1.2fr 0.6fr 0.7fr 2fr 1.9fr';
+const COLUMNS = '1.3fr 1.2fr 0.6fr 0.7fr 2fr 2.5rem';
 
 const STATE_TONE: Record<BackupEntry['state'], Tone> = {
   running: 'accent',
@@ -25,7 +24,8 @@ const STATE_TONE: Record<BackupEntry['state'], Tone> = {
 /**
  * BackupList is the table of backups at the destination merged with recent
  * attempts. A stored file (succeeded, or damaged — its header cannot be
- * read) can be downloaded and deleted; only a readable one can be restored.
+ * read) can be downloaded and deleted, from its row's menu; only a readable one
+ * can be restored.
  * An attempt that left no file (running, failed, interrupted) has no
  * actions: there is nothing to act on. A readable file whose header this
  * instance cannot authenticate (an older version's, another instance's, or
@@ -67,38 +67,31 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
                 )}
                 {item.error && <span className="text-[11px] break-words text-destructive">{item.error}</span>}
               </span>
-              <span className="flex flex-wrap justify-end gap-2">
+              <span className="flex justify-end">
                 {stored && (
-                  <a
-                    href={backupDownloadUrl(item.name)}
-                    download={item.name}
-                    className="inline-flex h-[34px] items-center justify-center gap-2 rounded-md border border-border bg-card px-3.5 text-[13px] font-semibold text-foreground transition-colors hover:bg-accent"
-                  >
-                    <Download size={14} /> {t.backups.list.download}
-                  </a>
-                )}
-                {item.state === 'succeeded' && (
-                  <Button type="button" onClick={() => setRestoring(item.name)}>
-                    <RotateCcw size={14} /> {t.backups.list.restore}
-                  </Button>
-                )}
-                {stored && (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    disabled={del.isPending}
-                    onClick={async () => {
-                      if (!confirm(t.backups.list.deleteConfirm(item.name))) return;
-                      try {
-                        await del.mutateAsync(item.name);
-                        toast.show(t.backups.list.deleted);
-                      } catch (err) {
-                        toast.show(err instanceof Error ? err.message : t.backups.list.deleteFailed, 'destructive');
-                      }
-                    }}
-                  >
-                    <Trash2 size={14} /> {t.backups.list.delete}
-                  </Button>
+                  <RowMenu label={t.common.rowActions(item.name)}>
+                    <RowMenuLink href={backupDownloadUrl(item.name)} download={item.name}>
+                      {t.backups.list.download}
+                    </RowMenuLink>
+                    {item.state === 'succeeded' && (
+                      <RowMenuItem onSelect={() => setRestoring(item.name)}>{t.backups.list.restore}</RowMenuItem>
+                    )}
+                    <RowMenuItem
+                      destructive
+                      disabled={del.isPending}
+                      onSelect={async () => {
+                        if (!confirm(t.backups.list.deleteConfirm(item.name))) return;
+                        try {
+                          await del.mutateAsync(item.name);
+                          toast.show(t.backups.list.deleted);
+                        } catch (err) {
+                          toast.show(err instanceof Error ? err.message : t.backups.list.deleteFailed, 'destructive');
+                        }
+                      }}
+                    >
+                      {t.backups.list.delete}
+                    </RowMenuItem>
+                  </RowMenu>
                 )}
               </span>
             </GridRow>

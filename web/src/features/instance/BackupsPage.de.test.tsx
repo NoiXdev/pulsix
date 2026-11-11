@@ -75,13 +75,15 @@ describe('BackupsPage in German', () => {
     expect(screen.getByRole('button', { name: 'Verbindung testen' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Zeitplan und Aufbewahrung' })).toBeInTheDocument();
     expect(screen.getByText('manuell (Ada)')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Herunterladen' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: `Aktionen für ${ITEM.name}` }));
+    const menu = await screen.findByRole('menu', { name: `Aktionen für ${ITEM.name}` });
+    expect(within(menu).getByRole('menuitem', { name: 'Herunterladen' })).toBeInTheDocument();
     expect(screen.queryByText('Nicht bestätigt')).not.toBeInTheDocument();
     // Once in the status strip, once in the list.
     expect(screen.getAllByText(/2\.11\.2026/)).toHaveLength(2);
     expect(screen.getAllByText(/1,4 MB/)).toHaveLength(2);
 
-    await user.click(screen.getByRole('button', { name: 'Wiederherstellen…' }));
+    await user.click(within(menu).getByRole('menuitem', { name: 'Wiederherstellen…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Backup wiederherstellen' });
     expect(within(dialog).getByText(/PULSIX_MASTER_KEY/)).toBeInTheDocument();
     expect(within(dialog).getByText(/Master-Key/)).toBeInTheDocument();

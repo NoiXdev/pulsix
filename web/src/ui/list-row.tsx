@@ -327,3 +327,25 @@ export function RowMenuItem({
     </button>
   );
 }
+
+/** A RowMenu entry that is a link — a download, or a page of its own — so the
+ * browser treats it as one (save-as, open in a new tab). Picking it closes
+ * the menu. */
+export function RowMenuLink({ href, download, children }: { href: string; download?: string; children: ReactNode }) {
+  const menu = useContext(MenuContext);
+  return (
+    <a
+      role="menuitem"
+      tabIndex={-1}
+      href={href}
+      download={download}
+      onClick={(e) => {
+        e.stopPropagation();
+        menu?.select();
+      }}
+      className="rounded px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-background focus-visible:bg-background focus-visible:outline-none"
+    >
+      {children}
+    </a>
+  );
+}
