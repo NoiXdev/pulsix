@@ -39,6 +39,11 @@ export const deUi: Messages['ui'] = {
     loadMoreFailed: 'Weitere Einträge konnten nicht geladen werden – angezeigt wird, was bereits geladen ist.',
     refreshFailed: 'Die Seite konnte nicht aktualisiert werden – angezeigt werden die zuletzt geladenen Daten.',
   },
+  confirm: {
+    title: 'Bist du sicher?',
+    cancel: 'Abbrechen',
+    confirm: 'Bestätigen',
+  },
   formPage: {
     actions: 'Formularaktionen',
     unsaved: 'Diese Seite verlassen? Ungespeicherte Änderungen gehen verloren.',

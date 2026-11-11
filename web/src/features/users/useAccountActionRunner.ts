@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useBlocker } from '@tanstack/react-router';
 import { useToast } from '../../ui/toastContext.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 import type { AccountNotice, AdminUserDetail } from '../../api/types.ts';
 import { isStepUpRequired, STEP_UP_REQUIRED, useStepUp } from '../account/stepUp.tsx';
 import { useT } from '../../i18n/useT.ts';
@@ -38,6 +39,7 @@ export interface Revealed {
 export function useAccountActionRunner(user: AdminUserDetail) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const stepUp = useStepUp();
   const calls = useAccountActionCalls(user.id);
   const [open, setOpenState] = useState<ActionKind | null>(null);
@@ -52,7 +54,8 @@ export function useAccountActionRunner(user: AdminUserDetail) {
   const [revealed, setRevealed] = useState<Revealed | null>(null);
 
   useBlocker({
-    shouldBlockFn: () => runningRef.current !== null && !window.confirm(t.users.actions.leaveWhileRunning),
+    shouldBlockFn: async () =>
+      runningRef.current !== null && !(await ask({ message: t.users.actions.leaveWhileRunning })),
     enableBeforeUnload: () => runningRef.current !== null,
   });
 

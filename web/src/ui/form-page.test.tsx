@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import { ConfirmProvider } from './confirm.tsx';
 import { FormPage } from './form-page.tsx';
 
 type Props = Partial<Parameters<typeof FormPage>[0]>;
@@ -32,7 +33,11 @@ function renderPage(props: Props = {}) {
     routeTree: rootRoute.addChildren([list, form]),
     history: createMemoryHistory({ initialEntries: ['/o/acme/settings/shared/repos/new'] }),
   });
-  render(<RouterProvider router={router} />);
+  render(
+    <ConfirmProvider>
+      <RouterProvider router={router} />
+    </ConfirmProvider>,
+  );
   return router;
 }
 
@@ -61,13 +66,12 @@ describe('FormPage', () => {
 
   it('leaves for the list without asking once onSubmit reports a save, even with unsaved changes', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const onSubmit = vi.fn().mockResolvedValue(true);
     const router = renderPage({ dirty: true, onSubmit });
     await user.click(await screen.findByRole('button', { name: 'Save' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos'));
     expect(onSubmit).toHaveBeenCalledTimes(1);
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 
   it('stays on the page when onSubmit reports nothing was saved', async () => {
@@ -79,28 +83,27 @@ describe('FormPage', () => {
 
   it('leaves without asking when nothing changed', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const router = renderPage();
     await user.click(await screen.findByRole('link', { name: 'Cancel' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos'));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 
   it('asks before leaving with unsaved changes, and stays when declined', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     const router = renderPage({ dirty: true });
     await user.click(await screen.findByRole('link', { name: 'Cancel' }));
-    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
-    expect(confirm).toHaveBeenCalledWith('Leave this page? Your unsaved changes will be lost.');
+    const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
+    expect(dialog).toHaveTextContent('Leave this page? Your unsaved changes will be lost.');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos/new');
   });
 
   it('leaves with unsaved changes once the confirmation is accepted', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     const router = renderPage({ dirty: true });
     await user.click(await screen.findByRole('link', { name: 'Cancel' }));
+    await user.click(within(await screen.findByRole('dialog', { name: 'Are you sure?' })).getByRole('button', { name: 'Confirm' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos'));
   });
 });

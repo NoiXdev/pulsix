@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { ChecksPage } from './ChecksPage.tsx';
 
 /** Shared fixtures for the Checks page's tests: the API shapes, a router with
@@ -32,7 +33,9 @@ export function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );

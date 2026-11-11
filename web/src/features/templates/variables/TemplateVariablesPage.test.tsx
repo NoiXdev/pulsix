@@ -348,12 +348,12 @@ describe('TemplateVariablesPage — fields and values', () => {
 
   it('asks before leaving with unsaved changes', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi(routes());
     const router = renderPage();
     await user.type(await screen.findByLabelText('region'), '-west');
     await user.click(screen.getByRole('link', { name: 'Job templates' }));
-    expect(confirm).toHaveBeenCalled();
+    const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(router.state.location.pathname).toBe('/o/acme/templates/t1/variables');
   });
 

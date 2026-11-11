@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { useBlocker } from '@tanstack/react-router';
 import { useT } from '../i18n/useT.ts';
+import { useConfirm } from './confirmContext.ts';
 
 /**
  * useUnsavedGuard asks before a page with unsaved changes is left — a link,
@@ -14,6 +15,7 @@ import { useT } from '../i18n/useT.ts';
  */
 export function useUnsavedGuard(dirty: boolean): () => void {
   const t = useT();
+  const ask = useConfirm();
   const dirtyRef = useRef(dirty);
   useEffect(() => {
     dirtyRef.current = dirty;
@@ -21,9 +23,9 @@ export function useUnsavedGuard(dirty: boolean): () => void {
   const released = useRef(false);
 
   useBlocker({
-    shouldBlockFn: () => {
+    shouldBlockFn: async () => {
       if (released.current || !dirtyRef.current) return false;
-      return !window.confirm(t.ui.formPage.unsaved);
+      return !(await ask({ message: t.ui.formPage.unsaved }));
     },
     enableBeforeUnload: () => dirtyRef.current && !released.current,
   });

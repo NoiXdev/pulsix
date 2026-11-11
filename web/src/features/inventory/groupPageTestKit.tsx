@@ -12,6 +12,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { GroupDetailPage } from './GroupDetailPage.tsx';
 
 /* The group page's test harness, shared by the GroupDetailPage.*.test.tsx
@@ -104,7 +105,9 @@ export function renderAt(path: string, { browser = false } = {}) {
   const view = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );

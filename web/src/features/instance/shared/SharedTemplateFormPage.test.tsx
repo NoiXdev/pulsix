@@ -92,7 +92,6 @@ describe('SharedTemplateFormPage — new', () => {
 
   it('asks before leaving with unsaved changes, and stays when declined', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
@@ -101,7 +100,9 @@ describe('SharedTemplateFormPage — new', () => {
     const router = await renderAndWait(`${LIST}/new`);
     await user.type(screen.getByLabelText('Name'), 'deploy-site');
     await user.click(screen.getByRole('link', { name: 'Cancel' }));
-    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
+    expect(dialog).toHaveTextContent('Leave this page?');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(router.state.location.pathname).toBe(`${LIST}/new`);
   });
 
@@ -157,7 +158,6 @@ describe('SharedTemplateFormPage — repository list', () => {
 describe('SharedTemplateFormPage — edit', () => {
   it('loads the definition, puts the change and goes back to the list', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     let put: unknown;
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
@@ -178,7 +178,7 @@ describe('SharedTemplateFormPage — edit', () => {
       name: 'deploy-site', shared_repo_id: 'r1', playbook_path: 'site.yml', limit: 'web*', extra_vars: {},
     });
     expect(await screen.findByText('Job template definition deploy-site saved')).toBeInTheDocument();
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 
   // The PUT is a full replace: an edit that does not touch the extra vars
@@ -260,7 +260,6 @@ describe('SharedTemplateFormPage — edit', () => {
   // unsaved-changes question.
   it('leaves a template with an extra vars schema and values without asking when nothing was touched', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
@@ -283,7 +282,7 @@ describe('SharedTemplateFormPage — edit', () => {
     await screen.findByDisplayValue('eu-west-1');
     await user.click(screen.getByRole('link', { name: 'Cancel' }));
     await waitFor(() => expect(router.state.location.pathname).toBe(LIST));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 
   it('shows the not-found page for an id that does not exist', async () => {

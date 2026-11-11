@@ -46,6 +46,11 @@ export const enUi = {
     loadMoreFailed: 'Could not load more — showing what is already loaded.',
     refreshFailed: 'Could not refresh this page — showing the last loaded data.',
   },
+  confirm: {
+    title: 'Are you sure?',
+    cancel: 'Cancel',
+    confirm: 'Confirm',
+  },
   formPage: {
     actions: 'Form actions',
     unsaved: 'Leave this page? Your unsaved changes will be lost.',

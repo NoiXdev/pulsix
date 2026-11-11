@@ -9,6 +9,7 @@ import {
   RouterProvider,
 } from '@tanstack/react-router';
 import { ToastProvider } from '../ui/toast.tsx';
+import { ConfirmProvider } from '../ui/confirm.tsx';
 import type { MockRoute } from './mockApi.ts';
 import { SearchEcho } from './SearchEcho.tsx';
 
@@ -139,7 +140,9 @@ export function renderAt(page: () => ReactNode, qc = new QueryClient({ defaultOp
   const result = render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );

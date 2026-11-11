@@ -9,6 +9,7 @@ import {
   type AnyRoute,
 } from '@tanstack/react-router';
 import { ToastProvider } from '../ui/toast.tsx';
+import { ConfirmProvider } from '../ui/confirm.tsx';
 import { I18nProvider } from '../i18n/I18nProvider.tsx';
 import type { Locale } from '../i18n/types.ts';
 
@@ -41,7 +42,9 @@ export function renderRoutes(
   });
   const page = (
     <ToastProvider>
-      <RouterProvider router={router} />
+      <ConfirmProvider>
+        <RouterProvider router={router} />
+      </ConfirmProvider>
     </ToastProvider>
   );
   render(<QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{page}</I18nProvider> : page}</QueryClientProvider>);

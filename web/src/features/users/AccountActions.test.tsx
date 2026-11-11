@@ -147,7 +147,6 @@ describe('AccountActions', () => {
   // again.
   it('says what runs after the confirm dialog closed, and asks before leaving so the answer is not lost', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     let answer: (body: unknown) => void = () => {};
     const router = render(accountDetail(), {
       'POST /api/v1/admin/users/u2/temporary-password': () =>
@@ -168,10 +167,11 @@ describe('AccountActions', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Running: Set temporary password…');
 
     act(() => void router.navigate({ to: '/o/$org/settings/users', params: { org: 'acme' } }));
-    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
-    expect(confirm).toHaveBeenCalledWith(
+    const leave = await screen.findByRole('dialog', { name: 'Are you sure?' });
+    expect(leave).toHaveTextContent(
       'Leave this page? An account action is still running, and its answer, such as a temporary password, would be lost.',
     );
+    await user.click(within(leave).getByRole('button', { name: 'Cancel' }));
     expect(router.state.location.pathname).toBe('/o/acme/settings/users/u2');
 
     answer({ password: SECRET, expires_at: '2026-11-05T10:00:00Z', notice: 'sent' });
@@ -182,7 +182,7 @@ describe('AccountActions', () => {
     // Nothing runs any more: leaving does not ask.
     act(() => void router.navigate({ to: '/o/$org/settings/users', params: { org: 'acme' } }));
     expect(await screen.findByText('USERS')).toBeInTheDocument();
-    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 
   it('reports a refusal as a toast when the confirm dialog was closed while the request ran', async () => {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { pickOption } from '../../../test/pickOption.ts';
@@ -91,7 +91,6 @@ describe('SharedCheckFormPage — new', () => {
 
   it('asks before leaving with unsaved changes, and stays when declined', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/checks/definitions': { definitions: [] },
@@ -99,7 +98,9 @@ describe('SharedCheckFormPage — new', () => {
     const router = renderPage(`${LIST}/new`);
     await user.type(await screen.findByLabelText('Key'), 'cpu');
     await user.click(screen.getByRole('link', { name: 'Cancel' }));
-    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
+    expect(dialog).toHaveTextContent('Leave this page?');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(router.state.location.pathname).toBe(`${LIST}/new`);
   });
 });
@@ -107,7 +108,6 @@ describe('SharedCheckFormPage — new', () => {
 describe('SharedCheckFormPage — edit', () => {
   it('loads the definition, puts the change and goes back to the list', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     let put: unknown;
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
@@ -127,7 +127,7 @@ describe('SharedCheckFormPage — edit', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe(LIST));
     expect(put).toEqual({ key: 'disk-data', plugin: 'disk', interval_seconds: 600, params: {} });
     expect(await screen.findByText('Check definition disk saved')).toBeInTheDocument();
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 
   it('leaves the stored disk mounts intact when the interval is edited', async () => {

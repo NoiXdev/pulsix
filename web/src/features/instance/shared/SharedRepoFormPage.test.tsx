@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../../test/renderRoutes.tsx';
@@ -112,7 +112,6 @@ describe('SharedRepoFormPage — new', () => {
 
   it('asks before leaving with unsaved changes, and stays when declined', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/repos/definitions': { definitions: [] },
@@ -120,13 +119,14 @@ describe('SharedRepoFormPage — new', () => {
     const router = renderPage(`${LIST}/new`);
     await user.type(await screen.findByLabelText('Name'), 'infra');
     await user.click(screen.getByRole('link', { name: 'Cancel' }));
-    await waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
+    expect(dialog).toHaveTextContent('Leave this page?');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     expect(router.state.location.pathname).toBe(`${LIST}/new`);
   });
 
   it('leaves without asking while nothing has been typed', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/repos/definitions': { definitions: [] },
@@ -134,7 +134,7 @@ describe('SharedRepoFormPage — new', () => {
     const router = renderPage(`${LIST}/new`);
     await user.click(await screen.findByRole('link', { name: 'Cancel' }));
     await waitFor(() => expect(router.state.location.pathname).toBe(LIST));
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 });
 
@@ -157,7 +157,6 @@ describe('SharedRepoFormPage — access', () => {
 describe('SharedRepoFormPage — edit', () => {
   it('loads the definition, puts the change and goes back to the list', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     let put: unknown;
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
@@ -181,7 +180,7 @@ describe('SharedRepoFormPage — edit', () => {
     });
     expect(await screen.findByText('Repository definition ansible-base saved')).toBeInTheDocument();
     // The save's own navigation is not an unsaved-changes departure.
-    expect(confirm).not.toHaveBeenCalled();
+    expect(document.querySelector('dialog[open]')).toBeNull();
   });
 
   it('shows the not-found page for an id that does not exist', async () => {
