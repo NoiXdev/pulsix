@@ -130,6 +130,7 @@ describe('ItemDecisionDialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(posted).toBeDefined());
+    await settled();
     expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 
@@ -201,6 +202,7 @@ describe('ItemDecisionDialog', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
+    await settled();
     expect(posted).toBe(false);
     expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
 
@@ -239,6 +241,7 @@ describe('ItemDecisionDialog', () => {
     expect(await screen.findByText(/preview unavailable/)).toBeInTheDocument();
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
     await user.click(screen.getByRole('button', { name: 'Save' }));
+    await settled();
     expect(posted).toBe(false);
     expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });

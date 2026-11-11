@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
-import { ListRow, ListRowName, RowMenu, RowMenuItem, StaticListRow } from './list-row.tsx';
+import { ListRow, ListRowName, RowMenu, RowMenuItem, RowMenuLink, StaticListRow } from './list-row.tsx';
 
 function renderRow(onSelect = vi.fn(), onOther = vi.fn()) {
   const rootRoute = createRootRoute();
@@ -330,6 +330,37 @@ describe('RowMenuItem disabled', () => {
     renderMenu();
     await user.click(screen.getByRole('button', { name: 'Actions' }));
     expect(screen.getByRole('menuitem', { name: 'First' })).not.toHaveAttribute('aria-disabled');
+  });
+});
+
+describe('RowMenuLink', () => {
+  it('is a menu item that keeps its href and download, and closes the menu when picked', async () => {
+    const user = userEvent.setup();
+    // jsdom does not navigate; keep it from logging that it cannot. Capture
+    // phase: the link's own handler stops the event's propagation.
+    const stopNavigation = (e: MouseEvent) => e.preventDefault();
+    document.addEventListener('click', stopNavigation, true);
+    try {
+      render(
+        <RowMenu label="Actions">
+          <RowMenuLink href="/api/v1/backups/b1.tar/download" download="b1.tar">
+            Download
+          </RowMenuLink>
+          <RowMenuItem onSelect={vi.fn()}>Delete…</RowMenuItem>
+        </RowMenu>,
+      );
+      const trigger = screen.getByRole('button', { name: 'Actions' });
+      await user.click(trigger);
+      const link = screen.getByRole('menuitem', { name: 'Download' });
+      expect(link.tagName).toBe('A');
+      expect(link).toHaveAttribute('href', '/api/v1/backups/b1.tar/download');
+      expect(link).toHaveAttribute('download', 'b1.tar');
+      await user.click(link);
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    } finally {
+      document.removeEventListener('click', stopNavigation, true);
+    }
   });
 });
 
