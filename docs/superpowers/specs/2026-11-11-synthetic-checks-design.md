@@ -48,8 +48,8 @@ monitorable at all. A host that has an agent gets them as well.
 ## Plugins
 
 Each plugin probes one target per host. The target is the host's `address`
-unless a parameter names one. In the parameters `url` and `name`, the text
-`{address}` is replaced with the host's address, so one definition bound to
+unless a parameter names one. In the parameters `url`, `name` and
+`server_name`, the text `{address}` is replaced with the host's address, so one definition bound to
 the org or a group works for every host in it. **(Claude's call.)**
 
 A host whose address is empty, where the check needs it, reports one
@@ -105,7 +105,10 @@ picker, so nobody expects them to run on the host.
     cannot keep another's probes from starting.
   - A probe's timeout is capped below its check's interval.
   - A definition change (create, edit, disable, delete, host address or
-    monitored flag) takes effect within one minute.
+    monitored flag) takes effect within one minute: a slot whose plugin,
+    params, interval or address changed is due again at once.
+  - A panic in a probe, a refresh or a tick is recovered and logged with
+    its stack; it never takes the manager down.
 - **Results** are written through `checks.Service.RecordObservations` with
   the target host's id on every observation. That marks the host dirty for
   the rules ticker exactly as agent ingest does.
@@ -158,7 +161,18 @@ Server-side validation mirrors the table:
 - ranges and enums are enforced;
 - `url` must parse with an http(s) scheme after `{address}` is substituted
   with a placeholder;
-- `server` must be an IP with an optional port.
+- `server` must be an IP with an optional port;
+- `name` must be a DNS name after `{address}` is substituted with a
+  placeholder label: dot-separated labels of letters, digits, hyphens and
+  underscores, 1–63 bytes each, an optional trailing dot, at most 253 bytes.
+
+The GUI's tcp `send` field takes `\r`, `\n`, `\t` and `\\` escapes (a
+single-line input cannot hold a line break), decoded before the value is
+sent; the API stores the value verbatim.
+
+The tls probe, and the http probe with `verify_tls` off, accept TLS 1.0 and
+1.1, so old LAN appliances do not read down; a verifying http probe keeps
+the TLS 1.2 floor.
 
 The API enums and the SPA's plugin lists gain the five names.
 
