@@ -91,7 +91,7 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
                         }
                       }}
                     >
-                      {t.backups.list.delete}
+                      {t.backups.list.deleteItem}
                     </RowMenuItem>
                   </RowMenu>
                 )}

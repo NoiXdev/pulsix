@@ -352,10 +352,10 @@ describe('BackupsPage', () => {
     expect(screen.getAllByRole('button', { name: /^Actions for / })).toHaveLength(2);
     const user = userEvent.setup();
     const ok = await openActions(user, 'ok.pxbak');
-    expect(within(ok).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Download', 'Restore…', 'Delete']);
+    expect(within(ok).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Download', 'Restore…', 'Delete…']);
     await user.keyboard('{Escape}');
     const damaged = await openActions(user, 'pulsix-20261030T030000Z-scheduled.pxbak');
-    expect(within(damaged).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Download', 'Delete']);
+    expect(within(damaged).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Download', 'Delete…']);
   });
 
   it('marks a backup whose header cannot be authenticated as unverified, and still offers its actions', async () => {
@@ -389,11 +389,11 @@ describe('BackupsPage', () => {
       }),
     );
     renderPage();
-    await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete' }));
+    await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete…' }));
     await declineConfirm(user);
     await settled();
     expect(deleted).toEqual([]);
-    await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete' }));
+    await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete…' }));
     await acceptConfirm(user);
     await waitFor(() => expect(deleted).toEqual([`/api/v1/admin/backups/${OK_ITEM.name}`]));
   });

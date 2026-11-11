@@ -78,7 +78,7 @@ export const enBackups = {
       'The details of this backup cannot be authenticated: it was written by an older Pulsix version, by another instance, or by someone else. A restore still checks its content against the master key.',
     empty: 'No backups yet.',
     download: 'Download',
-    delete: 'Delete',
+    deleteItem: 'Delete…',
     deleteConfirm: (name: string) => `Delete the backup ${name}?`,
     deleted: 'Backup deleted',
     deleteFailed: 'failed to delete the backup',
