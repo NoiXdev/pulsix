@@ -8,12 +8,13 @@
 -- TestNetworkUptimeSeedMigrationMatchesSeedForOrg compares the two.
 --
 -- An organization whose operator already uses the key `network` or `uptime`
--- at the organization-wide scope (a custom row, or a projection of a shared
--- definition) keeps that row: ON CONFLICT on 00043's unique key
+-- at the organization-wide scope with a custom row of its own keeps that
+-- row: ON CONFLICT on 00043's unique key
 -- (org_id, binding_kind, group_id, host_id, key) skips the seed for that
 -- key instead of failing the upgrade or replacing the operator's check. A
 -- row under either key bound to a group or a host is a different scope and
--- does not stop the seed.
+-- does not stop the seed. A projection of a shared definition is not an
+-- ON CONFLICT case: the NOT EXISTS clause below already skips its key.
 --
 -- A key an installation-owned definition already holds is not seeded at
 -- all, in any organization. Before this release only cpu, memory, disk and

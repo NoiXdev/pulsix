@@ -110,6 +110,10 @@ per heartbeat or claim. `newer` normally means the manager was rolled back or
 has not been updated yet; `update_required` means the component was skipped
 in an upgrade.
 
+An agent one minor older does not know the `network` and `uptime` check plugins
+(backlog 3.7): it skips those two checks, logs a warning per configuration
+push, and keeps running the rest until it is updated.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
@@ -148,6 +152,25 @@ repositories as before. An older worker never asks.
 - **Webhook body limit:** a webhook body of exactly 1 MiB is still accepted and
   one byte more is refused with 413, unchanged; the dependency update that moved
   the limit's off-by-one is compensated in the hook endpoints.
+- **3.7, network and uptime checks:** migration 00084 adds two seed checks to
+  every existing organization at the organization-wide scope, `network` (every
+  60 seconds: per interface receive and transmit bytes, errors and drops per
+  second) and `uptime` (every 5 minutes: `uptime.seconds`); new organizations
+  get them too. They show up as ordinary checks on every host. An organization
+  that already has its own organization-wide check under the key `network` or
+  `uptime` keeps it and gets no seed for that key. The same holds for a key an
+  installation-wide shared check definition already holds, in every
+  organization: before this release only `cpu`, `memory`, `disk` and `service`
+  were reserved, so such a definition may exist. It keeps the key and stays
+  editable under it, but it cannot be renamed onto a reserved key. If you later
+  delete or rename it, the organizations that existed at the upgrade are left
+  without that check (only organizations created afterwards get the seed); add
+  the check by hand there. An agent older than this release does not know the
+  plugins: it skips those two checks without a result, logs one warning per
+  configuration push naming the keys, and does not report that configuration as
+  converged, so the manager keeps pushing it. Its other checks keep running.
+  Update the agents to get the data. The migration is rolled back by deleting
+  the seed rows under those two keys.
 - **7.123, the agent port in the compose file:** the bundled
   `docker-compose.yml` now publishes the agent and worker endpoint on the host
   at port 8444 (`PULSIX_GRPC_HOST_PORT`); before, agents on other hosts could

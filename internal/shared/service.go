@@ -718,17 +718,13 @@ func (s *Service) ListCheckDefs(ctx context.Context) ([]CheckDefinition, error) 
 // compare against: on a genuinely fresh install, or an installation whose
 // last organization has since been deleted, there is nothing to collide
 // with, and the collision check alone would let the definition through.
-// The consequence is not merely "a confusing duplicate key" — it is a
-// HALF-PROVISIONED organization: tenancy.Service.CreateOrg commits the
-// organization row and its owner's membership BEFORE running the
-// organization-created hook chain (tenancy/service.go's own doc comment
-// explains why: no transaction spans both), so the very first
-// ProjectAllCheckDefinitionsInto call for the very next organization
-// created would fail on the real collision this reserved key finally has
-// something to hit, leaving CreateOrg's own caller an error and an
-// organization that nonetheless exists, with its owner already a member.
-// Refusing these six keys unconditionally, independent of whether any
-// collision can currently be demonstrated, is what closes that window
+// Since SeedForOrg runs after the shared projections and leaves a key a
+// shared definition holds to that projection, such a collision no longer
+// half-provisions an organization; the reservation instead keeps the seed
+// set uniform, so every organization has the same base checks and a shared
+// definition cannot silently replace one of them in organizations created
+// later. Refusing these six keys unconditionally, independent of whether
+// any collision can currently be demonstrated, closes that gap
 // rather than narrowing it. network and uptime were added in backlog 3.7,
 // after a definition could already use them: such a legacy definition
 // keeps its key (UpdateCheckDefinition refuses only a rename onto a
