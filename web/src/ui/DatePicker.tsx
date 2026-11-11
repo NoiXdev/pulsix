@@ -99,7 +99,8 @@ function isFirstInvalid(control: HTMLInputElement): boolean {
  *
  * A submit it blocks (required and empty, or `invalidMessage`) focuses the
  * field, marks it aria-invalid and shows why under it, linked through
- * aria-describedby, until the field is fine again.
+ * aria-describedby, until the field is fine again. A required field says so
+ * in its description too, as a button cannot carry aria-required.
  */
 export function DatePicker({
   value, onChange, id, required, disabled, min, max, placeholder, invalidMessage,
@@ -114,6 +115,7 @@ export function DatePicker({
   const popoverId = useId();
   const textId = useId();
   const messageId = useId();
+  const requiredId = useId();
 
   const selected = parseIsoDate(value);
   const minDate = parseIsoDate(min);
@@ -222,9 +224,10 @@ export function DatePicker({
           type="button"
           id={id}
           aria-label={ariaLabel}
-          aria-describedby={[text && textId, message && messageId].filter(Boolean).join(' ') || undefined}
+          // aria-required is not allowed on a button, so "Required" is
+          // part of the description instead; the name stays the label.
+          aria-describedby={[text && textId, required && requiredId, message && messageId].filter(Boolean).join(' ') || undefined}
           aria-invalid={invalid || message !== undefined || undefined}
-          aria-required={required || undefined}
           aria-haspopup="dialog"
           aria-expanded={open}
           aria-controls={open ? popoverId : undefined}
@@ -246,6 +249,11 @@ export function DatePicker({
           </span>
           <CalendarDays size={14} className="shrink-0 text-muted-foreground" aria-hidden />
         </button>
+        {required && (
+          <span id={requiredId} className="sr-only">
+            {t.ui.picker.requiredHint}
+          </span>
+        )}
         {open && !disabled && (
           <Popover anchor={triggerRef} onClose={close} id={popoverId} label={t.ui.picker.calendar}>
             <DayPicker

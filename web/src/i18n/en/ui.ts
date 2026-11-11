@@ -22,6 +22,8 @@ export const enUi = {
     invalidTime: 'Enter a time from 00:00 to 23:59, such as 09:30.',
     incomplete: 'Enter both a date and a time, or leave both empty.',
     required: 'Choose a date.',
+    // Read out with a required date field: a button cannot be aria-required.
+    requiredHint: 'Required',
     // The calendar's own names, handed to the calendar library so that
     // nothing a screen reader hears in it is the library's English.
     monthNav: 'Change the month',

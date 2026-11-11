@@ -281,14 +281,28 @@ describe('DatePicker', () => {
       );
     }
 
-    it('marks the trigger required', () => {
+    // aria-required is not allowed on a button: the trigger says it in
+    // its description instead, and its name stays the label.
+    it('describes the trigger as required', () => {
       const { trigger } = renderPicker({ required: true });
-      expect(trigger).toHaveAttribute('aria-required', 'true');
+      expect(trigger).not.toHaveAttribute('aria-required');
+      expect(trigger).toHaveAccessibleName('Start');
+      expect(trigger).toHaveAccessibleDescription(enUi.picker.requiredHint);
     });
 
-    it('is not marked required while optional', () => {
+    it('describes the date and then required, with a date chosen', () => {
+      const { trigger } = renderPicker({ required: true, value: '2026-11-11' });
+      expect(trigger).toHaveAccessibleDescription(`11/11/2026 ${enUi.picker.requiredHint}`);
+    });
+
+    it('says Pflichtfeld in German', () => {
+      const { trigger } = renderPicker({ required: true }, 'de');
+      expect(trigger).toHaveAccessibleDescription(deUi.picker.requiredHint);
+    });
+
+    it('is not described as required while optional', () => {
       const { trigger } = renderPicker();
-      expect(trigger).not.toHaveAttribute('aria-required');
+      expect(trigger).not.toHaveAccessibleDescription();
     });
 
     it('focuses the trigger and links a message to it, until a day is picked', async () => {
@@ -303,7 +317,7 @@ describe('DatePicker', () => {
       expect(onSubmit).not.toHaveBeenCalled();
       expect(trigger).toHaveFocus();
       expect(trigger).toHaveAttribute('aria-invalid', 'true');
-      expect(trigger).toHaveAccessibleDescription(enUi.picker.required);
+      expect(trigger).toHaveAccessibleDescription(`${enUi.picker.requiredHint} ${enUi.picker.required}`);
 
       await user.click(trigger);
       await user.click(day(14));
@@ -319,7 +333,7 @@ describe('DatePicker', () => {
       await user.click(screen.getByRole('button', { name: 'Save' }));
       const trigger = screen.getByRole('button', { name: 'Start' });
       expect(trigger).toHaveFocus();
-      expect(trigger).toHaveAccessibleDescription('Pick a day for that time');
+      expect(trigger).toHaveAccessibleDescription(`${enUi.picker.requiredHint} Pick a day for that time`);
     });
 
     // A browser focuses the first invalid control whose `invalid` event
@@ -349,7 +363,7 @@ describe('DatePicker', () => {
       );
       await user.click(screen.getByRole('button', { name: 'Save' }));
       expect(screen.getByRole('button', { name: 'Start' })).not.toHaveFocus();
-      expect(screen.getByRole('button', { name: 'Start' })).toHaveAccessibleDescription(enUi.picker.required);
+      expect(screen.getByRole('button', { name: 'Start' })).toHaveAccessibleDescription(`${enUi.picker.requiredHint} ${enUi.picker.required}`);
     });
   });
 
