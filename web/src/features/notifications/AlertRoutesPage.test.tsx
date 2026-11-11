@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -6,6 +6,8 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { AlertRoutesPage } from './AlertRoutesPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const me = { user: { id: 'u1', email: 'a@acme.io', display_name: 'A' }, mfa_complete: true, mfa_enrolment_required: false, totp_confirmed: true, instance_admin: false };
@@ -36,9 +38,11 @@ function renderPage() {
   });
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -190,7 +194,6 @@ describe('AlertRoutesPage', () => {
 
   it('deletes a route once confirmed', async () => {
     const user = userEvent.setup();
-    const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
     mockApi({
       'GET /api/v1/auth/me': me,
@@ -207,9 +210,8 @@ describe('AlertRoutesPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'Delete Critical to ops' }));
+    expect(await acceptConfirm(user)).toContain('Critical to ops');
     await waitFor(() => expect(deleted).toBe(1));
-    expect(confirmed.mock.calls[0][0]).toContain('Critical to ops');
-    confirmed.mockRestore();
   });
 
   // validateChannelSource (internal/alertroutes/route.go) requires a

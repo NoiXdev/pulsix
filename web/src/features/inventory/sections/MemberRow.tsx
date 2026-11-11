@@ -5,6 +5,7 @@ import { useToast } from '../../../ui/toastContext.ts';
 import { useUnassignHost } from '../../../api/hooks/useInventory.ts';
 import type { InventoryGroup, InventoryMember } from '../../../api/types.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { useConfirm } from '../../../ui/confirmContext.ts';
 
 /** MemberRow is one member of a group: the whole row opens the host, and its
  * ⋯ menu offers Open host and, for a writer, Edit values and Remove from
@@ -21,12 +22,13 @@ export function MemberRow({
 }) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const navigate = useNavigate();
   const unassign = useUnassignHost(org, group.id);
   const m = t.inventory.members;
 
   async function remove() {
-    if (!confirm(m.confirmRemove(member.host_name, group.name))) return;
+    if (!(await ask({ message: m.confirmRemove(member.host_name, group.name), confirmLabel: t.common.remove, destructive: true }))) return;
     try {
       await unassign.mutateAsync(member.host_id);
       toast.show(m.removed(member.host_name, group.name));

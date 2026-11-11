@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { mockApi } from '../../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../../test/renderRoutes.tsx';
 import { SharedChecksPage } from './SharedChecksPage.tsx';
+import { acceptConfirm } from '../../../test/confirmDialog.ts';
 
 const checkDef = (over: Record<string, unknown> = {}) => ({
   id: 'c1', key: 'disk-data', plugin: 'disk', params: {}, interval_seconds: 300, ...over,
@@ -68,7 +69,6 @@ describe('SharedChecksPage', () => {
   // decision 5 has no dependant for this kind), so there is no 409 case.
   it('deletes a definition after confirming', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = false;
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
@@ -81,7 +81,7 @@ describe('SharedChecksPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for disk-data' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
-    expect(confirm).toHaveBeenCalledWith(
+    expect(await acceptConfirm(user)).toBe(
       'Delete check definition disk-data? This removes it from every organization.',
     );
     expect(await screen.findByText('No shared check definitions yet.')).toBeInTheDocument();

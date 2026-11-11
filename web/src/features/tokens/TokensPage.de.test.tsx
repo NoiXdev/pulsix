@@ -7,6 +7,7 @@ import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { TokensPage } from './TokensPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 describe('TokensPage in German', () => {
   it('renders the page and its dates in German', async () => {
@@ -36,9 +37,11 @@ describe('TokensPage in German', () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <I18nProvider locale="de">
-          <ToastProvider>
-            <RouterProvider router={router} />
-          </ToastProvider>
+          <ConfirmProvider>
+            <ToastProvider>
+              <RouterProvider router={router} />
+            </ToastProvider>
+          </ConfirmProvider>
         </I18nProvider>
       </QueryClientProvider>,
     );
@@ -63,9 +66,11 @@ describe('TokensPage in German', () => {
     render(
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <I18nProvider locale="de">
-          <ToastProvider>
-            <RouterProvider router={router} />
-          </ToastProvider>
+          <ConfirmProvider>
+            <ToastProvider>
+              <RouterProvider router={router} />
+            </ToastProvider>
+          </ConfirmProvider>
         </I18nProvider>
       </QueryClientProvider>,
     );

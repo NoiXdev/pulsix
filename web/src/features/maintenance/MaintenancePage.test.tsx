@@ -12,6 +12,7 @@ import { pickOption } from '../../test/pickOption.ts';
 import { MaintenancePage } from './MaintenancePage.tsx';
 import { fromLocalInput, targetLabel, toLocalInput, whenLabel } from './time.ts';
 import type { MaintenanceWindow } from '../../api/types.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const nightly: MaintenanceWindow = {
@@ -35,9 +36,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }

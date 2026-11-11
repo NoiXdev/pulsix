@@ -8,6 +8,7 @@ import { mockApi } from '../../test/mockApi.ts';
 import { SchedulesPage } from './SchedulesPage.tsx';
 import { relative } from './simple.ts';
 import { de } from '../../i18n/de/index.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const template = { id: 't1', name: 'patch-all', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] }, limit: '', extra_vars: {}, created_at: '', updated_at: '' };
@@ -36,9 +37,11 @@ function renderPage(path: string) {
   return render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="de">
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );

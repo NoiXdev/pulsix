@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest, type MockRoute } from '../../test/mockApi.ts';
@@ -8,6 +8,7 @@ import { useMe } from '../../api/hooks/useMe.ts';
 import { accountDetail } from '../users/testFixtures.ts';
 import type { Locale } from '../../i18n/types.ts';
 import { MemberPage } from './MemberPage.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const MEMBERS = {
   members: [
@@ -161,7 +162,6 @@ describe('MemberPage', () => {
 
   it('removes the member after confirmation and returns to the list', async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let removed = false;
     const { router } = render(
       { role: 'admin', instanceAdmin: false },
@@ -174,11 +174,11 @@ describe('MemberPage', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: 'Remove from organization' }));
+    await acceptConfirm(user);
 
     expect(await screen.findByText('members list')).toBeInTheDocument();
     expect(removed).toBe(true);
     await waitFor(() => expect(router.state.location.pathname).toBe('/o/acme/settings/members'));
-    confirmSpy.mockRestore();
   });
 
   it('says the member does not exist when the id is not in this organization', async () => {

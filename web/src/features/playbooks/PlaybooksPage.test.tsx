@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -6,6 +6,8 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { PlaybooksPage } from './PlaybooksPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const repoRow = { id: 'r1', name: 'infra', url: 'https://git.example/acme/infra.git', branch: 'main', subpath: '', created_at: '', updated_at: '' };
@@ -25,9 +27,11 @@ function renderPage(initial = '/o/acme/playbooks') {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -152,7 +156,6 @@ describe('PlaybooksPage', () => {
 
   it('deletes an unused playbook after confirmation and reports a referenced one', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/playbooks': { playbooks: [playbook({})] },
@@ -165,6 +168,7 @@ describe('PlaybooksPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Install nginx' }));
     const dialog = await screen.findByRole('dialog', { name: 'Install nginx' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await acceptConfirm(user);
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('still referenced by a job template');
   });
 });

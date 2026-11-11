@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +8,8 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { RulesPage } from './RulesPage.tsx';
 import { clippedElements } from '../../test/clipped.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 /** Lets a response that has already been served reach the component: the
  * absence of a hint only means something once the metrics read has landed. */
@@ -64,9 +66,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -372,7 +376,6 @@ describe('RulesPage', () => {
 
   it('deletes from the row menu after confirmation', async () => {
     const user = userEvent.setup();
-    const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -388,9 +391,8 @@ describe('RulesPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Actions for CPU usage warning' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    expect(await acceptConfirm(user)).toContain('CPU usage warning');
     await waitFor(() => expect(deleted).toBe(1));
-    expect(confirmed.mock.calls[0][0]).toContain('CPU usage warning');
-    confirmed.mockRestore();
   });
 
   it('keeps the section tabs when the rules list fails', async () => {

@@ -23,6 +23,7 @@ import { BastionDialog } from "./BastionDialog.tsx";
 import { PinStateBadge } from "../hosts/PinStateBadge.tsx";
 import { Pill, type Tone } from "../../ui/badge.tsx";
 import { useT } from "../../i18n/useT.ts";
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS =
   "minmax(0, 1fr) minmax(0, 1.2fr) 130px 130px minmax(0, 1.6fr) 120px";
@@ -37,6 +38,7 @@ export function JumpHostsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const bastions = useBastions(org);
   const credentials = useCredentials(org);
   const zones = useZones(org);
@@ -113,7 +115,7 @@ export function JumpHostsPage() {
                     variant="ghost"
                     aria-label={t.credentials.jumpHosts.deleteLabel(b.name)}
                     onClick={async () => {
-                      if (!confirm(t.credentials.jumpHosts.confirmDelete(b.name))) return;
+                      if (!(await ask({ message: t.credentials.jumpHosts.confirmDelete(b.name), confirmLabel: t.common.delete, destructive: true }))) return;
                       try {
                         await remove.mutateAsync(b.id);
                         toast.show(t.credentials.jumpHosts.deleted(b.name));

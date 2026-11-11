@@ -12,6 +12,7 @@ import type { InventoryGroup, InventoryGroupSummary } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
 import { GroupSettingsDialog } from './GroupSettingsDialog.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const NONE = '—';
 
@@ -31,6 +32,7 @@ export function GroupSidebar({
 }) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const navigate = useNavigate();
   const remove = useDeleteGroup(org);
   const [editing, setEditing] = useState(false);
@@ -38,7 +40,7 @@ export function GroupSidebar({
   const own = groups.find((g) => g.id === group.id);
 
   async function onDelete() {
-    if (!confirm(t.inventory.settings.confirmDelete(group.name))) return;
+    if (!(await ask({ message: t.inventory.settings.confirmDelete(group.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(group.id);
       toast.show(t.inventory.settings.deleted(group.name));

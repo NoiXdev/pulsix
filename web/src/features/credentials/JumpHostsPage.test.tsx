@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,8 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { JumpHostsPage } from './JumpHostsPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const ME = { id: 'u', email: 'a@b', display_name: 'A', instance_admin: false };
 const BASTIONS = {
@@ -29,9 +31,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -106,7 +110,6 @@ describe('JumpHostsPage', () => {
 
   it('shows why a jump host cannot be deleted', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       ...base,
       'DELETE /api/v1/orgs/acme/bastions/b1': () =>
@@ -116,6 +119,7 @@ describe('JumpHostsPage', () => {
     });
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Delete bastion-a' }));
+    await acceptConfirm(user);
     expect(await screen.findByText(/still used by a zone/)).toBeInTheDocument();
   });
 

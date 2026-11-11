@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,8 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { MonitoringGroupsPage } from './MonitoringGroupsPage.tsx';
 import { clippedElements } from '../../test/clipped.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -27,9 +29,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -165,7 +169,6 @@ describe('MonitoringGroupsPage', () => {
 
   it('edits and deletes from the row menu', async () => {
     const user = userEvent.setup();
-    const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -186,8 +189,8 @@ describe('MonitoringGroupsPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Actions for Web tier' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
     await waitFor(() => expect(deleted).toBe(1));
-    confirmed.mockRestore();
   });
 
   it('edits a group, previewing the selector it already has', async () => {
@@ -218,7 +221,6 @@ describe('MonitoringGroupsPage', () => {
 
   it('deletes a group once the operator has confirmed it', async () => {
     const user = userEvent.setup();
-    const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -232,10 +234,9 @@ describe('MonitoringGroupsPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Actions for Web tier' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
-    await waitFor(() => expect(deleted).toBe(1));
     // The operator is told what else goes with it.
-    expect(confirmed.mock.calls[0][0]).toContain('check definitions bound to it are deleted');
-    confirmed.mockRestore();
+    expect(await acceptConfirm(user)).toContain('check definitions bound to it are deleted');
+    await waitFor(() => expect(deleted).toBe(1));
   });
 
   // Review finding 5: the guard used to replace the whole page, taking

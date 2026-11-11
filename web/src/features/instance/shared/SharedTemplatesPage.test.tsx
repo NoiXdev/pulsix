@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { mockApi } from '../../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../../test/renderRoutes.tsx';
 import { SharedTemplatesPage } from './SharedTemplatesPage.tsx';
+import { acceptConfirm } from '../../../test/confirmDialog.ts';
 
 const repoDef = () => ({
   id: 'r1', name: 'infra-base', url: 'https://git.example/provider/infra-base.git', branch: 'main', subpath: '',
@@ -73,7 +74,6 @@ describe('SharedTemplatesPage', () => {
 
   it('deletes a definition after confirming', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = false;
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
@@ -87,7 +87,7 @@ describe('SharedTemplatesPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for deploy-site' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
-    expect(confirm).toHaveBeenCalledWith(
+    expect(await acceptConfirm(user)).toBe(
       'Delete job template definition deploy-site? This removes it from every organization.',
     );
     expect(await screen.findByText('No shared job template definitions yet.')).toBeInTheDocument();
@@ -95,7 +95,6 @@ describe('SharedTemplatesPage', () => {
 
   it('shows which organization and what blocks a delete', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/repos/definitions': { definitions: [repoDef()] },
@@ -109,6 +108,7 @@ describe('SharedTemplatesPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for deploy-site' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
     expect(
       await screen.findByText("organization acme: a schedule still references this definition's projection"),
     ).toBeInTheDocument();

@@ -23,6 +23,7 @@ import { may } from '../../lib/roles.ts';
 import type { MonitoringGroup } from '../../api/types.ts';
 import { ChecksTabs } from './ChecksTabs.tsx';
 import { MonitoringGroupRow } from './MonitoringGroupRow.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 1.4fr) 90px';
 const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
@@ -44,6 +45,7 @@ export function MonitoringGroupsPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
@@ -101,7 +103,7 @@ export function MonitoringGroupsPage() {
   const columns = canWrite ? COLUMNS_WITH_MENU : COLUMNS_BASE;
 
   async function onDelete(g: MonitoringGroup) {
-    if (!confirm(t.checks.groups.deleteConfirm(g.name))) return;
+    if (!(await ask({ message: t.checks.groups.deleteConfirm(g.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(g.id);
     } catch (err) {

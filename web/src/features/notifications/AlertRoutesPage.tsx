@@ -20,6 +20,7 @@ import { RouteDialog } from './RouteDialog.tsx';
 import { ReachesNobody, RouteFiresOn } from './AlertRouteCells.tsx';
 import { routeReachesNobody, routeToInput } from './alertRoute.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = 'minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr) 90px 220px';
 
@@ -37,6 +38,7 @@ export function AlertRoutesPage() {
   const m = t.notifications;
   const a = m.alertRoutes;
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'channels.read');
@@ -138,7 +140,7 @@ export function AlertRoutesPage() {
   }
 
   async function onDelete(r: AlertRoute) {
-    if (!confirm(a.deleteConfirm(r.name))) return;
+    if (!(await ask({ message: a.deleteConfirm(r.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(r.id);
     } catch (err) {

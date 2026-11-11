@@ -15,6 +15,7 @@ import { may } from '../../lib/roles.ts';
 import type { MaintenanceWindow } from '../../api/types.ts';
 import { WindowDialog } from './WindowDialog.tsx';
 import { targetLabel, whenLabel } from './time.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = 'minmax(0, 0.8fr) 90px minmax(0, 0.8fr) minmax(0, 1.3fr) 110px 150px';
 
@@ -33,6 +34,7 @@ export function MaintenancePage() {
   const fmt = useFormat();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const canWrite = may(orgInfo.data?.org.role, 'maintenance.write');
   const windows = useMaintenanceWindows(org);
@@ -45,7 +47,7 @@ export function MaintenancePage() {
   const list = windows.data.windows ?? [];
 
   async function onDelete(w: MaintenanceWindow) {
-    if (!confirm(t.maintenance.deleteConfirm[w.reason === 'silence' ? 'silence' : 'maintenance'](w.name))) return;
+    if (!(await ask({ message: t.maintenance.deleteConfirm[w.reason === 'silence' ? 'silence' : 'maintenance'](w.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(w.id);
     } catch (err) {

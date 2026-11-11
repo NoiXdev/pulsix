@@ -22,6 +22,7 @@ import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { may } from '../../lib/roles.ts';
 import { PendingInvites } from './PendingInvites.tsx';
 import { roleOptions } from './roles.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = '36px minmax(0, 1fr) 130px 110px 90px 40px';
 
@@ -42,6 +43,7 @@ const INVITE_ROLES = ['viewer', 'operator', 'admin'] as const;
 export function MembersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const ask = useConfirm();
   const navigate = useNavigate();
 
   const members = useMembers(org);
@@ -64,7 +66,7 @@ export function MembersPage() {
   });
 
   async function remove(userId: string, name: string) {
-    if (!confirm(t.members.confirmRemove(name))) return;
+    if (!(await ask({ message: t.members.confirmRemove(name), confirmLabel: t.common.remove, destructive: true }))) return;
     try {
       await removeMember.mutateAsync(userId);
       toast.show(t.members.removed(name));

@@ -13,6 +13,7 @@ import { useT } from '../../i18n/useT.ts';
 import type { Worker, WorkerEnrollment } from '../../api/types.ts';
 import { AddWorkerDialog } from './AddWorkerDialog.tsx';
 import { EnrollmentRow, WorkerRow } from './WorkerRow.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 // The trailing 40px track holds a row's ⋯ menu, only reserved for canWrite.
 const COLUMNS_BASE = 'minmax(0, 0.9fr) minmax(0, 0.6fr) 100px 110px minmax(0, 1fr) 110px minmax(0, 0.7fr)';
@@ -27,6 +28,7 @@ export function WorkersPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'workers.read');
@@ -52,7 +54,7 @@ export function WorkersPage() {
   const enrollmentColumns = canWrite ? `${ENROLLMENT_COLUMNS} 40px` : ENROLLMENT_COLUMNS;
 
   async function onRevoke(w: Worker) {
-    if (!confirm(t.workers.revokeConfirm(w.name))) return;
+    if (!(await ask({ message: t.workers.revokeConfirm(w.name), destructive: true }))) return;
     try {
       await revoke.mutateAsync(w.id);
       toast.show(t.workers.revoked(w.name));
@@ -62,7 +64,7 @@ export function WorkersPage() {
   }
 
   async function onDelete(w: Worker) {
-    if (!confirm(t.workers.deleteConfirm(w.name))) return;
+    if (!(await ask({ message: t.workers.deleteConfirm(w.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(w.id);
     } catch (err) {

@@ -5,6 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { clippedElements } from '../../test/clipped.ts';
 import { group, routes, renderAt } from './groupPageTestKit.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -95,7 +96,6 @@ describe('GroupDetailPage layout', () => {
     const user = userEvent.setup();
     let patched: MockRequest | undefined;
     let deleted = false;
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi(
       routes('admin', {
         'GET /api/v1/orgs/acme/inventory/groups/g1': group({ bastion_id: undefined }),
@@ -126,7 +126,7 @@ describe('GroupDetailPage layout', () => {
 
     await user.click(screen.getByRole('button', { name: 'More actions for web' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete group…' }));
-    expect(window.confirm).toHaveBeenCalledWith('Delete group web? Its members lose the values they have for this group.');
+    expect(await acceptConfirm(user)).toBe('Delete group web? Its members lose the values they have for this group.');
     expect(await screen.findByText('GROUPS')).toBeInTheDocument();
     expect(deleted).toBe(true);
     expect(router.state.location.pathname).toBe('/o/acme/groups');
@@ -134,7 +134,6 @@ describe('GroupDetailPage layout', () => {
 
   it('reports a refused delete and stays on the group', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi(
       routes('admin', {
         'DELETE /api/v1/orgs/acme/inventory/groups/g1': () =>
@@ -146,6 +145,7 @@ describe('GroupDetailPage layout', () => {
     const { router } = renderAt('/o/acme/groups/g1');
     await user.click(await screen.findByRole('button', { name: 'More actions for web' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete group…' }));
+    await acceptConfirm(user);
     expect(await screen.findByText(/still has child groups/)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/o/acme/groups/g1');
   });

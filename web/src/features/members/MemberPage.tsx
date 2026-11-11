@@ -21,6 +21,7 @@ import { roleLabel } from '../../i18n/roleLabel.ts';
 import { AccountActions } from '../users/AccountActions.tsx';
 import { AccountSignIn } from '../users/AccountSignIn.tsx';
 import { roleOptions } from './roles.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
 
@@ -112,6 +113,7 @@ function MemberSidebar({ member }: { member: Member }) {
 function MemberRole({ org, member }: { org: string; member: Member }) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const navigate = useNavigate();
   const orgInfo = useOrg(org);
   const actorRole = orgInfo.data?.org.role;
@@ -140,7 +142,7 @@ function MemberRole({ org, member }: { org: string; member: Member }) {
   }
 
   async function remove() {
-    if (!confirm(t.members.confirmRemove(member.display_name))) return;
+    if (!(await ask({ message: t.members.confirmRemove(member.display_name), confirmLabel: t.common.remove, destructive: true }))) return;
     try {
       await removeMember.mutateAsync(member.user_id);
       toast.show(t.members.removed(member.display_name));

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,8 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { ReposPage } from './ReposPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const ORG = { org: { id: 'org-1', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 // credentials.write is admin-only (lib/roles.ts), stricter than the
@@ -35,9 +37,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -284,7 +288,6 @@ describe('ReposPage', () => {
 
   it('deletes a repository after confirmation', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = false;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
@@ -299,6 +302,7 @@ describe('ReposPage', () => {
     await user.click(await screen.findByRole('button', { name: 'infra' }));
     const dialog = await screen.findByRole('dialog', { name: 'infra' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await acceptConfirm(user);
     expect(await screen.findByText('No repositories yet.')).toBeInTheDocument();
   });
 

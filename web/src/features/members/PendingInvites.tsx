@@ -4,6 +4,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { usePendingInvites, useRevokeInvite } from '../../api/hooks/useMembers.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = 'minmax(0, 1fr) 110px minmax(0, 160px) 110px 70px';
 
@@ -16,6 +17,7 @@ const COLUMNS = 'minmax(0, 1fr) 110px minmax(0, 160px) 110px 70px';
  */
 export function PendingInvites({ org }: { org: string }) {
   const toast = useToast();
+  const ask = useConfirm();
   const t = useT();
   const fmt = useFormat();
   const invites = usePendingInvites(org);
@@ -46,7 +48,7 @@ export function PendingInvites({ org }: { org: string }) {
               className="text-[11px] text-destructive"
               aria-label={t.members.pending.revokeAria(inv.email)}
               onClick={async () => {
-                if (!confirm(t.members.pending.confirmRevoke(inv.email))) return;
+                if (!(await ask({ message: t.members.pending.confirmRevoke(inv.email), destructive: true }))) return;
                 try {
                   await revoke.mutateAsync(inv.id);
                   toast.show(t.members.pending.revoked(inv.email));

@@ -13,6 +13,7 @@ import { useT } from '../../i18n/useT.ts';
 import type { Agent, AgentToken } from '../../api/types.ts';
 import { AgentRow, AgentTokenRow } from './AgentRow.tsx';
 import { AddAgentDialog } from './AddAgentDialog.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 // The trailing 40px track holds a row's ⋯ menu. Every agent row has one (Open
 // host is always there); a token row only has one for a writer.
@@ -28,6 +29,7 @@ export function AgentsPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'agents.read');
@@ -51,7 +53,7 @@ export function AgentsPage() {
   const tokenColumns = canWrite ? `${TOKEN_COLUMNS} 40px` : TOKEN_COLUMNS;
 
   async function onRevoke(a: Agent) {
-    if (!confirm(t.agents.revokeConfirm(a.host_name))) return;
+    if (!(await ask({ message: t.agents.revokeConfirm(a.host_name), confirmLabel: t.agents.revoke, destructive: true }))) return;
     try {
       await revoke.mutateAsync(a.host_id);
       toast.show(t.agents.revoked(a.host_name));

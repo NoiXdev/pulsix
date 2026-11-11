@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { HostAgentCard } from './HostAgentCard.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
 
@@ -12,9 +13,11 @@ function renderCard(canWrite = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <HostAgentCard org="acme" hostId="h1" hostName="web-1" zoneId="z1" canWrite={canWrite} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <HostAgentCard org="acme" hostId="h1" hostName="web-1" zoneId="z1" canWrite={canWrite} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }

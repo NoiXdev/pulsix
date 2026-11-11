@@ -8,6 +8,7 @@ import { formatter } from '../../i18n/format.ts';
 import { mockApi } from '../../test/mockApi.ts';
 import { MaintenancePage } from './MaintenancePage.tsx';
 import type { MaintenanceWindow } from '../../api/types.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const org = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } };
 const nightly: MaintenanceWindow = {
@@ -31,9 +32,11 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="de">
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );

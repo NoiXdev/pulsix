@@ -6,6 +6,9 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { TriggersDialog } from './TriggersDialog.tsx';
+import { settled } from '../../test/settled.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 
 const trigger = (over: Record<string, unknown> = {}) => ({
   id: 'tr1', kind: 'template_run', template_id: 't1', name: 'deploy on push', enabled: true, preset: 'github', auth: 'hmac',
@@ -18,9 +21,11 @@ function renderDialog(canWrite = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <TriggersDialog org="acme" target={{ kind: 'template_run', id: 't1', name: 'patch-all' }} canWrite={canWrite} canRun onClose={() => {}} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <TriggersDialog org="acme" target={{ kind: 'template_run', id: 't1', name: 'patch-all' }} canWrite={canWrite} canRun onClose={() => {}} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -65,7 +70,6 @@ describe('TriggersDialog', () => {
 
   it('rotates the secret, runs a test call and lists deliveries', async () => {
     const user = userEvent.setup();
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme/triggers': { triggers: [trigger()] },
       'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [{ id: 'd1', at: '2026-09-18T10:00:00Z', source_ip: '140.82.112.5', outcome: 'rejected_auth' }] },
@@ -75,8 +79,10 @@ describe('TriggersDialog', () => {
     renderDialog();
     expect(await screen.findByText('rejected_auth')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Rotate secret' }));
+    await acceptConfirm(user);
     expect(await screen.findByText('rotated-secret')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Test call' }));
+    await acceptConfirm(user);
     expect(await screen.findByText(/Test call: triggered/)).toBeInTheDocument();
   });
 
@@ -90,17 +96,12 @@ describe('TriggersDialog', () => {
 
   // Fix round 1, Important 2: global-constraints.md's "A test call enqueues
   // a real run, and the button says so" was dropped from the UI. Test call
-  // now confirms before sending, mirroring Rotate secret's confirm()
+  // now confirms before sending, mirroring Rotate secret's confirmation
   // pattern — this pins the warning text and that declining the confirm
   // makes no request at all.
   it('confirms before a test call, stating it starts a real run', async () => {
     const user = userEvent.setup();
-    let confirmMessage = '';
     let testCalls = 0;
-    window.confirm = (message?: string) => {
-      confirmMessage = message ?? '';
-      return false;
-    };
     mockApi({
       'GET /api/v1/orgs/acme/triggers': { triggers: [trigger()] },
       'GET /api/v1/orgs/acme/triggers/tr1/deliveries': { deliveries: [] },
@@ -111,11 +112,12 @@ describe('TriggersDialog', () => {
     });
     renderDialog();
     await user.click(await screen.findByRole('button', { name: 'Test call' }));
-    expect(confirmMessage).toMatch(/real/i);
+    expect(await declineConfirm(user)).toMatch(/real/i);
+    await settled();
     expect(testCalls).toBe(0);
 
-    window.confirm = () => true;
     await user.click(screen.getByRole('button', { name: 'Test call' }));
+    await acceptConfirm(user);
     expect(await screen.findByText(/Test call: triggered/)).toBeInTheDocument();
     expect(testCalls).toBe(1);
   });
@@ -134,9 +136,11 @@ describe('TriggersDialog', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
-        <ToastProvider>
-          <TriggersDialog org="acme" target={{ kind: 'repo_sync', id: 'r1', name: 'infra' }} canWrite canRun={false} onClose={() => {}} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <TriggersDialog org="acme" target={{ kind: 'repo_sync', id: 'r1', name: 'infra' }} canWrite canRun={false} onClose={() => {}} />
+          </ToastProvider>
+        </ConfirmProvider>
       </QueryClientProvider>,
     );
     // canRun is false, but the trigger's own kind is repo_sync: Test call

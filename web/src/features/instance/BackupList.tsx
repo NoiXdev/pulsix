@@ -10,6 +10,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { formatSize } from './backupFormat.ts';
 import { RestoreDialog } from './RestoreDialog.tsx';
 import type { RestoreDestination } from './restoreCommands.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = '1.3fr 1.2fr 0.6fr 0.7fr 2fr 2.5rem';
 
@@ -35,6 +36,7 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
   const t = useT();
   const f = useFormat();
   const toast = useToast();
+  const ask = useConfirm();
   const del = useDeleteBackup();
   const [restoring, setRestoring] = useState<string | null>(null);
 
@@ -80,7 +82,7 @@ export function BackupList({ items, destination }: { items: BackupEntry[]; desti
                       destructive
                       disabled={del.isPending}
                       onSelect={async () => {
-                        if (!confirm(t.backups.list.deleteConfirm(item.name))) return;
+                        if (!(await ask({ message: t.backups.list.deleteConfirm(item.name), confirmLabel: t.common.delete, destructive: true }))) return;
                         try {
                           await del.mutateAsync(item.name);
                           toast.show(t.backups.list.deleted);

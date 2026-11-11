@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { check, chooseFromMenu, GROUPS, org, renderPage } from './checksPageTestKit.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 describe('ChecksPage', () => {
   it('lists definitions with their binding, interval, state and origin', async () => {
@@ -142,7 +143,6 @@ describe('ChecksPage', () => {
 
   it('deletes a definition once the operator has confirmed it', async () => {
     const user = userEvent.setup();
-    const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -156,9 +156,8 @@ describe('ChecksPage', () => {
     renderPage();
 
     await chooseFromMenu(user, 'disk-data (Organization)', 'Delete…');
+    expect(await acceptConfirm(user)).toContain('disk-data');
     await waitFor(() => expect(deleted).toBe(1));
-    expect(confirmed.mock.calls[0][0]).toContain('disk-data');
-    confirmed.mockRestore();
   });
 
   // Review finding 1: a value whose option is not in the loaded list must

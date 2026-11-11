@@ -12,6 +12,7 @@ import { RuleHostPicker, RuleItemPicker } from './RulePickers.tsx';
 import { defaultOpFor, lines } from './ruleDialogText.ts';
 import { RuleExpression } from './RuleExpression.tsx';
 import type { MonitoringGroup, Rule, RuleFormValue, RuleInput, RuleMetric, RuleScope } from '../../api/types.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 // Still used by RuleHostPicker's own search <input> below, which stays a
 // plain text field rather than becoming a Select.
@@ -58,6 +59,7 @@ export interface RuleDialogProps {
  */
 export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogProps) {
   const t = useT();
+  const ask = useConfirm();
   const editing = !!rule;
   const seeded = editing && rule.origin === 'seed';
   const create = useCreateRule(org);
@@ -156,12 +158,12 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
 
   async function switchToExpression() {
     if (!warned) {
-      if (!confirm(t.checks.ruleDialog.confirmSwitch)) return;
+      if (!(await ask({ message: t.checks.ruleDialog.confirmSwitch }))) return;
       setWarned(true);
     }
     // Only a numeric metric can carry one: formBody puts clear_op/
     // clear_value on the body for the numeric shape alone.
-    if (kind !== 'discrete' && clearOp !== '' && !confirm(t.checks.ruleDialog.confirmDropClear(clearOp, clearValue))) return;
+    if (kind !== 'discrete' && clearOp !== '' && !(await ask({ message: t.checks.ruleDialog.confirmDropClear(clearOp, clearValue) }))) return;
     try {
       const checked = await checkRule.mutateAsync({ ...commonBody(), mode: 'form', form: formBody() });
       setExpression(checked.source ?? '');

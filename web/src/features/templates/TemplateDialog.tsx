@@ -26,6 +26,7 @@ import { PlaybookPicker, type PlaybookChoice } from './PlaybookPicker.tsx';
 import { echoedVars } from './vars.ts';
 import { mergeScope, mergeSetting, mergeVaultRows } from './rebase.ts';
 import { existingOf, type Existing } from './existing.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 export interface TemplateDialogProps {
   org: string;
@@ -120,6 +121,7 @@ function TemplateForm({
 }) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const create = useCreateTemplate(org);
   const update = useUpdateTemplate(org, existing?.id ?? '');
   const remove = useDeleteTemplate(org);
@@ -306,7 +308,7 @@ function TemplateForm({
               variant="destructive"
               disabled={remove.isPending}
               onClick={async () => {
-                if (!confirm(t.templates.dialog.confirmDelete(existing.name))) return;
+                if (!(await ask({ message: t.templates.dialog.confirmDelete(existing.name), confirmLabel: t.common.delete, destructive: true }))) return;
                 try {
                   await remove.mutateAsync(existing.id);
                   toast.show(t.templates.dialog.deleted(existing.name));

@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { mockApi } from '../../../test/mockApi.ts';
 import { ADMIN, renderRoutes } from '../../../test/renderRoutes.tsx';
 import { SharedReposPage } from './SharedReposPage.tsx';
+import { acceptConfirm, declineConfirm } from '../../../test/confirmDialog.ts';
+import { settled } from '../../../test/settled.ts';
 
 const def = (over: Record<string, unknown> = {}) => ({
   id: 'd1', name: 'ansible-base', url: 'https://git.example/provider/ansible-base.git', branch: 'main', subpath: '', ...over,
@@ -74,7 +76,6 @@ describe('SharedReposPage', () => {
 
   it('deletes a definition after confirming', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = false;
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
@@ -87,7 +88,7 @@ describe('SharedReposPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for ansible-base' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
-    expect(confirm).toHaveBeenCalledWith(
+    expect(await acceptConfirm(user)).toBe(
       'Delete repository definition ansible-base? This removes it from every organization.',
     );
     expect(await screen.findByText('No shared repository definitions yet.')).toBeInTheDocument();
@@ -96,7 +97,6 @@ describe('SharedReposPage', () => {
 
   it('does not delete when the confirmation is declined', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
     let deletes = 0;
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
@@ -109,6 +109,8 @@ describe('SharedReposPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for ansible-base' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await declineConfirm(user);
+    await settled();
     expect(deletes).toBe(0);
     expect(screen.getByRole('link', { name: 'ansible-base' })).toBeInTheDocument();
   });
@@ -118,7 +120,6 @@ describe('SharedReposPage', () => {
   // and what still references it.
   it('shows which organization and what blocks a delete', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       'GET /api/v1/auth/me': ADMIN,
       'GET /api/v1/admin/repos/definitions': { definitions: [def()] },
@@ -131,6 +132,7 @@ describe('SharedReposPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for ansible-base' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
     expect(
       await screen.findByText("organization acme: job triggers still reference this definition's projection"),
     ).toBeInTheDocument();

@@ -20,6 +20,7 @@ import { presetLabel } from './presets.ts';
 import { outcomeLabel } from './outcome.ts';
 import { useT } from '../../i18n/useT.ts';
 import { snippets } from './snippets.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 /** TriggersDialog is the mockup's Triggers card for one job template or
  * git repository: every incoming webhook with URL, sender, allowlist,
@@ -108,6 +109,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   const i18n = useT();
   const m = i18n.triggers;
   const toast = useToast();
+  const ask = useConfirm();
   const copy = useCopy();
   const update = useUpdateTrigger(org, t.id);
   const remove = useDeleteTrigger(org);
@@ -120,7 +122,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   const mapping = Object.entries(t.mapping.extra_vars ?? {});
 
   async function onRotate() {
-    if (!confirm(m.rotateConfirm(t.name))) return;
+    if (!(await ask({ message: m.rotateConfirm(t.name), confirmLabel: m.rotate }))) return;
     try {
       const res = await rotate.mutateAsync(t.id);
       onSecret(res.secret);
@@ -129,8 +131,13 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
     }
   }
 
+  async function onDelete() {
+    if (!(await ask({ message: m.deleteConfirm(t.name), confirmLabel: i18n.common.delete, destructive: true }))) return;
+    await remove.mutateAsync(t.id);
+  }
+
   async function onTest() {
-    if (!confirm(m.testConfirm[t.kind === 'repo_sync' ? 'repo_sync' : 'template_run'](t.name))) return;
+    if (!(await ask({ message: m.testConfirm[t.kind === 'repo_sync' ? 'repo_sync' : 'template_run'](t.name) }))) return;
     try {
       const res = await test.mutateAsync({ id: t.id });
       toast.show(m.testResult(outcomeLabel(res.outcome, i18n)));
@@ -206,7 +213,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
           <Button type="button" onClick={() => setEditing(true)}>
             {m.edit}
           </Button>
-          <Button type="button" variant="destructive" onClick={() => void (confirm(m.deleteConfirm(t.name)) && remove.mutateAsync(t.id))}>
+          <Button type="button" variant="destructive" onClick={() => void onDelete()}>
             {i18n.common.delete}
           </Button>
         </div>

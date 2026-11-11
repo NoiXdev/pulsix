@@ -6,6 +6,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { AgentsPage } from './AgentsPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const org = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } };
 const agent = (n: number, status: string) => ({
@@ -25,9 +26,11 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="de">
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );

@@ -6,6 +6,7 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Router
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { RotationsPage } from './RotationsPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const me = { user: { id: 'u1', email: 'a@acme.io', display_name: 'A' }, mfa_complete: true, mfa_enrolment_required: false, totp_confirmed: true, instance_admin: false };
@@ -34,9 +35,11 @@ function renderPage() {
   });
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }

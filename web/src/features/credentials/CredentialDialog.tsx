@@ -11,6 +11,7 @@ import { kindLabel, usageLabel } from './labels.ts';
 import { PublicKeyPanel } from './PublicKeyPanel.tsx';
 import type { Credential } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 /** CredentialDialog shows one credential: its public key and snippets, its
  * metadata for editing, a way to replace its secret, and delete.
@@ -87,6 +88,7 @@ function CredentialForm({
 }) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const rotate = useRotateCredential(org);
   const [name, setName] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
@@ -112,7 +114,7 @@ function CredentialForm({
     // Irreversible: the old private key is gone, and every host and jump host
     // using it loses access until the new public key is installed.
     const warning = t.credentials.detail.confirmGenerate(c.name);
-    if (!confirm(warning)) return;
+    if (!(await ask({ message: warning, destructive: true }))) return;
     try {
       await update.mutateAsync({ name: c.name, username: c.username || undefined, expires_at: c.expires_at ?? undefined, generate: true });
       update.reset();
@@ -128,7 +130,7 @@ function CredentialForm({
     // server 422s anything else). A failed rotation leaves the credential
     // untouched.
     const warning = t.credentials.detail.confirmRotate(c.name);
-    if (!confirm(warning)) return;
+    if (!(await ask({ message: warning, destructive: true }))) return;
     try {
       const { job_count } = await rotate.mutateAsync(c.id);
       rotate.reset();
@@ -139,7 +141,7 @@ function CredentialForm({
   }
 
   async function onDelete() {
-    if (!confirm(t.credentials.detail.confirmDelete(c.name))) return;
+    if (!(await ask({ message: t.credentials.detail.confirmDelete(c.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(c.id);
       toast.show(t.credentials.detail.deleted(c.name));

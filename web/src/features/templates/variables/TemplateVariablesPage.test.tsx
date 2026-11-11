@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { pickOption } from '../../../test/pickOption.ts';
 import { SYNCED_AT, fields, preview, renderPage, routes, source, status, template, variables } from './pageTestFixtures.tsx';
+import { declineConfirm } from '../../../test/confirmDialog.ts';
 import { settled } from '../../../test/settled.ts';
 
 afterEach(() => vi.restoreAllMocks());
@@ -140,7 +141,6 @@ describe('TemplateVariablesPage — mode', () => {
 
   it('asks before it unlinks the variables', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     let put = false;
     mockApi(routes({
       'PUT /api/v1/orgs/acme/job-templates/t1/variables/mode': () => {
@@ -150,7 +150,8 @@ describe('TemplateVariablesPage — mode', () => {
     }));
     renderPage();
     await user.click(await screen.findByRole('radio', { name: 'Off' }));
-    expect(confirm).toHaveBeenCalled();
+    await declineConfirm(user);
+    await settled();
     expect(put).toBe(false);
   });
 });
@@ -361,12 +362,11 @@ describe('TemplateVariablesPage — fields and values', () => {
 
   it('leaves without asking when nothing changed', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm');
     mockApi(routes());
     renderPage();
     await user.click(await screen.findByRole('link', { name: 'Job templates' }));
     expect(await screen.findByText('TEMPLATE LIST')).toBeInTheDocument();
-    expect(confirm).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 
   it("shows a projection's variables read-only, without a sync", async () => {

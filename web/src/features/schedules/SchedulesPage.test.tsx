@@ -7,6 +7,8 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { SchedulesPage } from './SchedulesPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 const template = { id: 't1', name: 'patch-all', playbook_id: 'pb1', scope: { group_id: null, host_ids: [] }, limit: '', extra_vars: {}, created_at: '', updated_at: '' };
@@ -35,9 +37,11 @@ function renderPage(path = '/o/acme/schedules') {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -137,7 +141,6 @@ describe('SchedulesPage', () => {
 
   it('surfaces a toast instead of an unhandled rejection when delete fails', async () => {
     const user = userEvent.setup();
-    window.confirm = () => true;
     mockApi({
       ...base,
       'GET /api/v1/orgs/acme/schedules': { schedules: [schedule()] },
@@ -149,6 +152,7 @@ describe('SchedulesPage', () => {
     renderPage('/o/acme/schedules?id=s1');
     const panel = await screen.findByRole('region', { name: 'Schedule editor' });
     await user.click(await within(panel).findByRole('button', { name: 'Delete' }));
+    await acceptConfirm(user);
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('schedule still referenced');
     // The panel stays open — a failed delete must not act as if it succeeded.
@@ -183,10 +187,10 @@ describe('SchedulesPage', () => {
         return { paused: 1 };
       },
     });
-    window.confirm = () => true;
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Pause all' }));
-    expect(paused).toBe(true);
+    await acceptConfirm(user);
+    await waitFor(() => expect(paused).toBe(true));
   });
 
   it('offers no write buttons to a viewer', async () => {

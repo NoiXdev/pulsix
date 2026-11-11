@@ -9,6 +9,8 @@ import { WorkersPage } from './WorkersPage.tsx';
 import { expiryLabel, seenLabel } from './expiry.ts';
 import { en } from '../../i18n/en/index.ts';
 import { clippedElements } from '../../test/clipped.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -29,9 +31,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -220,7 +224,6 @@ describe('WorkersPage', () => {
   it('revokes after confirmation and withdraws a pending token', async () => {
     const user = userEvent.setup();
     const calls: string[] = [];
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),
       'GET /api/v1/orgs/acme/workers': { workers: [worker()] },
@@ -237,6 +240,7 @@ describe('WorkersPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for hel-1' }));
     await user.click(screen.getByRole('menuitem', { name: 'Revoke…' }));
+    await acceptConfirm(user);
     expect(await screen.findByText('Worker hel-1 revoked')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Actions for enrollment hel-2' }));
     await user.click(screen.getByRole('menuitem', { name: 'Withdraw' }));
@@ -246,7 +250,6 @@ describe('WorkersPage', () => {
   it('deletes a revoked worker after confirmation', async () => {
     const user = userEvent.setup();
     const calls: string[] = [];
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),
       'GET /api/v1/orgs/acme/workers': { workers: [worker({ id: 'w3', name: 'old', status: 'revoked', cert_expires_at: null })] },
@@ -260,12 +263,12 @@ describe('WorkersPage', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for old' }));
     expect(screen.queryByRole('menuitem', { name: 'Revoke…' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
     await waitFor(() => expect(calls).toEqual(['delete']));
   });
 
   it('shows an error toast when revoke fails', async () => {
     const user = userEvent.setup();
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),
       'GET /api/v1/orgs/acme/workers': { workers: [worker()] },
@@ -275,12 +278,12 @@ describe('WorkersPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for hel-1' }));
     await user.click(screen.getByRole('menuitem', { name: 'Revoke…' }));
+    await acceptConfirm(user);
     expect(await screen.findByText('worker not found')).toBeInTheDocument();
   });
 
   it('shows an error toast when delete fails', async () => {
     const user = userEvent.setup();
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),
       'GET /api/v1/orgs/acme/workers': { workers: [worker({ id: 'w3', name: 'old', status: 'revoked', cert_expires_at: null })] },
@@ -290,6 +293,7 @@ describe('WorkersPage', () => {
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for old' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
     expect(await screen.findByText('delete refused')).toBeInTheDocument();
   });
 

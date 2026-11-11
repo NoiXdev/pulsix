@@ -19,6 +19,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
 
@@ -34,6 +35,7 @@ const COLUMNS = 'minmax(0, 1fr) 100px 140px 140px 70px';
 export function TokensPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const ask = useConfirm();
   const t = useT();
   const copy = useCopy();
   const fmt = useFormat();
@@ -85,7 +87,7 @@ export function TokensPage() {
               type="button"
               className="text-[11px] text-destructive"
               onClick={async () => {
-                if (!confirm(t.tokens.revokeConfirm(token.name))) return;
+                if (!(await ask({ message: t.tokens.revokeConfirm(token.name), destructive: true }))) return;
                 try {
                   await revokeToken.mutateAsync(token.id);
                   toast.show(t.tokens.revoked(token.name));

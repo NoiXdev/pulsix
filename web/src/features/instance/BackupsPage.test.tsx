@@ -8,6 +8,9 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { ADMIN } from '../../test/renderRoutes.tsx';
 import { BackupsPage } from './BackupsPage.tsx';
 import { backupsRefetchInterval } from '../../api/hooks/useBackups.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
+import { settled } from '../../test/settled.ts';
 
 const FOLDER_SETTINGS = {
   destination: 'folder',
@@ -73,9 +76,11 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -375,8 +380,6 @@ describe('BackupsPage', () => {
   it('deletes a backup after confirmation', async () => {
     const user = userEvent.setup();
     const deleted: string[] = [];
-    const confirm = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    vi.stubGlobal('confirm', confirm);
     mockApi(
       base({
         [`DELETE /api/v1/admin/backups/${OK_ITEM.name}`]: (req: MockRequest) => {
@@ -387,10 +390,12 @@ describe('BackupsPage', () => {
     );
     renderPage();
     await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete' }));
+    await declineConfirm(user);
+    await settled();
     expect(deleted).toEqual([]);
     await user.click(within(await openActions(user, OK_ITEM.name)).getByRole('menuitem', { name: 'Delete' }));
+    await acceptConfirm(user);
     await waitFor(() => expect(deleted).toEqual([`/api/v1/admin/backups/${OK_ITEM.name}`]));
-    expect(confirm).toHaveBeenCalledTimes(2);
   });
 
   it('shows the restore commands of an S3 destination with its saved endpoint, region, path style, bucket and prefix', async () => {

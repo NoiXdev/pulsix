@@ -6,6 +6,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { alertBody, check, HOST, hostRoutes, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
 import { clippedElements } from '../../test/clipped.ts';
 import { HostDetailPage } from './HostDetailPage.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const renderPage = (qc?: QueryClient) => renderAt(HostDetailPage, qc);
 
@@ -267,42 +268,32 @@ describe('HostDetailPage', () => {
 
   it('deletes the host from the menu after confirmation and returns to the list', async () => {
     const user = userEvent.setup();
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
-    try {
-      mockApi(hostRoutes({}, { 'DELETE /api/v1/orgs/acme/hosts/h1': {} }));
-      renderPage();
+    mockApi(hostRoutes({}, { 'DELETE /api/v1/orgs/acme/hosts/h1': {} }));
+    renderPage();
 
-      await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
-      await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
 
-      expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
-    } finally {
-      window.confirm = originalConfirm;
-    }
+    expect(await screen.findByText('HOSTS PAGE')).toBeInTheDocument();
   });
 
   it('surfaces a toast instead of an unhandled rejection when delete fails', async () => {
     const user = userEvent.setup();
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
-    try {
-      mockApi(
-        hostRoutes(
-          {},
-          { 'DELETE /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'host still managed' }), { status: 409 }) },
-        ),
-      );
-      renderPage();
+    mockApi(
+      hostRoutes(
+        {},
+        { 'DELETE /api/v1/orgs/acme/hosts/h1': () => new Response(JSON.stringify({ detail: 'host still managed' }), { status: 409 }) },
+      ),
+    );
+    renderPage();
 
-      await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
-      await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    await user.click(await screen.findByRole('button', { name: 'More actions for web-04.fra' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
 
-      expect(await screen.findByRole('status')).toHaveTextContent('host still managed');
-      expect(screen.queryByText('HOSTS PAGE')).not.toBeInTheDocument();
-    } finally {
-      window.confirm = originalConfirm;
-    }
+    expect(await screen.findByRole('status')).toHaveTextContent('host still managed');
+    expect(screen.queryByText('HOSTS PAGE')).not.toBeInTheDocument();
   });
 
   it('mounts the monitoring sections for a viewer who may read checks', async () => {

@@ -30,6 +30,7 @@ import { RosterStrip } from './RosterStrip.tsx';
 import { ChannelDialog } from './ChannelDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useFormat } from '../../i18n/format.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = 'minmax(0, 0.9fr) 90px minmax(0, 1.4fr) 160px';
 
@@ -63,6 +64,7 @@ export function RotationsPage() {
   const m = t.notifications;
   const r8 = m.rotations;
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'channels.read');
@@ -108,7 +110,7 @@ export function RotationsPage() {
   }
 
   async function onDelete(r: OncallRotation) {
-    if (!confirm(r8.deleteConfirm(r.name))) return;
+    if (!(await ask({ message: r8.deleteConfirm(r.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(r.id);
     } catch (err) {

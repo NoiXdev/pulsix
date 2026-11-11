@@ -7,6 +7,7 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useCreatePlaybook, useDeletePlaybook, usePlaybook, useUpdatePlaybook } from '../../api/hooks/usePlaybooks.ts';
 import { validateYAML } from './validate.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 export interface PlaybookEditorProps {
   org: string;
@@ -65,6 +66,7 @@ function PlaybookForm({
 }) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const create = useCreatePlaybook(org);
   const update = useUpdatePlaybook(org, existing?.id ?? '');
   const remove = useDeletePlaybook(org);
@@ -92,7 +94,7 @@ function PlaybookForm({
   }
 
   async function onDelete() {
-    if (!confirm(t.playbooks.editor.confirmDelete(existing?.summary || t.playbooks.editor.fallbackName))) return;
+    if (!(await ask({ message: t.playbooks.editor.confirmDelete(existing?.summary || t.playbooks.editor.fallbackName), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(existing?.id ?? '');
       toast.show(t.playbooks.editor.deleted);

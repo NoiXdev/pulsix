@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +8,8 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { ItemsPage } from './ItemsPage.tsx';
 import { clippedElements } from '../../test/clipped.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 /** Lets a response that has already been served reach the component: the
  * absence of a hint only means something once the metrics read has landed. */
@@ -56,9 +58,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -206,7 +210,6 @@ describe('ItemsPage', () => {
 
   it('edits and deletes a decision from its row menu', async () => {
     const user = userEvent.setup();
-    const confirmed = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = 0;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -227,8 +230,8 @@ describe('ItemsPage', () => {
 
     await user.click(screen.getByRole('button', { name: 'Actions for decision /mnt/backup*' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete…' }));
+    await acceptConfirm(user);
     await waitFor(() => expect(deleted).toBe(1));
-    confirmed.mockRestore();
   });
 
   it('keeps the section tabs when the decisions list fails', async () => {

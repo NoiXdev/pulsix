@@ -17,6 +17,7 @@ import { ChannelDialog } from './ChannelDialog.tsx';
 import { ChannelRow } from './ChannelRow.tsx';
 import { DeliveryLog } from './DeliveryLog.tsx';
 import { DigestCard } from './DigestCard.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = 'minmax(0, 0.8fr) 90px minmax(0, 1.2fr) 90px 40px';
 
@@ -29,6 +30,7 @@ export function ChannelsPage() {
   const m = t.notifications;
   const c8 = m.channels;
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'channels.read');
@@ -82,7 +84,7 @@ export function ChannelsPage() {
   }
 
   async function onDelete(c: NotifyChannel) {
-    if (!confirm(c8.deleteConfirm(c.name))) return;
+    if (!(await ask({ message: c8.deleteConfirm(c.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(c.id);
     } catch (err) {

@@ -1,5 +1,6 @@
 import { useToast } from '../../../ui/toastContext.ts';
 import { useT } from '../../../i18n/useT.ts';
+import { useConfirm } from '../../../ui/confirmContext.ts';
 
 /**
  * useDeleteWithConfirm is the delete flow every shared-resource list shares:
@@ -24,8 +25,9 @@ export function useDeleteWithConfirm<T extends { id: string }>({
 }): (definition: T) => Promise<void> {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   return async (definition) => {
-    if (!confirm(confirmMessage(definition))) return;
+    if (!(await ask({ message: confirmMessage(definition), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove(definition.id);
       toast.show(deletedMessage(definition));

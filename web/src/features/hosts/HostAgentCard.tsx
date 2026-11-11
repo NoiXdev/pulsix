@@ -8,6 +8,7 @@ import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from '../workers/e
 import { VersionSkewBadge } from '../workers/VersionSkewBadge.tsx';
 import { AddAgentDialog } from '../agents/AddAgentDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 /** HostAgentCard shows the agent running on this host (v0.3a, spec §8):
  * whether it is still reporting, which build it runs, when its
@@ -17,6 +18,7 @@ import { useT } from '../../i18n/useT.ts';
 export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org: string; hostId: string; hostName: string; zoneId?: string; canWrite: boolean }) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const query = useHostAgent(org, hostId);
   const revoke = useRevokeAgent(org);
   const agent = query.data?.agent;
@@ -25,7 +27,7 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
 
   async function onRevoke() {
     if (!agent) return;
-    if (!confirm(t.agents.revokeConfirm(agent.host_name))) return;
+    if (!(await ask({ message: t.agents.revokeConfirm(agent.host_name), confirmLabel: t.agents.revoke, destructive: true }))) return;
     try {
       await revoke.mutateAsync(hostId);
       toast.show(t.hosts.agent.revoked);

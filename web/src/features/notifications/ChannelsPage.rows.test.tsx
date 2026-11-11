@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,9 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { clippedElements } from '../../test/clipped.ts';
 import { ChannelsPage } from './ChannelsPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
+import { settled } from '../../test/settled.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const hook = {
@@ -26,9 +29,11 @@ function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
   return { ...view, router };
@@ -68,7 +73,6 @@ describe('ChannelsPage rows', () => {
         return new Response(null, { status: 204 });
       },
     });
-    const confirm = vi.spyOn(window, 'confirm');
     renderPage();
 
     const menu = async (item: string) => {
@@ -85,14 +89,13 @@ describe('ChannelsPage rows', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     // Declining the confirmation deletes nothing; accepting it does.
-    confirm.mockReturnValueOnce(false);
     await menu('Delete…');
-    expect(confirm).toHaveBeenLastCalledWith(expect.stringContaining('Delete channel ops hook?'));
+    expect(await declineConfirm(user)).toContain('Delete channel ops hook?');
+    await settled();
     expect(deleted).toBe(0);
-    confirm.mockReturnValueOnce(true);
     await menu('Delete…');
+    await acceptConfirm(user);
     await waitFor(() => expect(deleted).toBe(1));
-    confirm.mockRestore();
   });
 
   it('shows a test in flight and sends one request for a repeated pick', async () => {

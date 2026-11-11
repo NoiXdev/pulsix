@@ -1,11 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { RuleDialog } from './RuleDialog.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { settled } from '../../test/settled.ts';
 import type { Rule, RuleMetric } from '../../api/types.ts';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 
 const METRICS: RuleMetric[] = [
   { name: 'cpu.used_pct', check_key: 'cpu', kind: 'numeric' },
@@ -52,7 +55,9 @@ function renderDialog(props: Partial<React.ComponentProps<typeof RuleDialog>> = 
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <RuleDialog org="acme" metrics={METRICS} groups={[]} onClose={() => {}} {...props} />
+      <ConfirmProvider>
+        <RuleDialog org="acme" metrics={METRICS} groups={[]} onClose={() => {}} {...props} />
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -106,7 +111,6 @@ describe('RuleDialog', () => {
 
   it('warns once before switching to the expression editor, and not again for the same dialog', async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       'POST /api/v1/orgs/acme/rules/validate': (req: MockRequest) => {
         const body = req.body as { mode: string; expression?: string; form?: { op: string; value: number } };
@@ -120,7 +124,7 @@ describe('RuleDialog', () => {
     await user.type(screen.getByLabelText('Value'), '90');
 
     await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await acceptConfirm(user);
     const textarea = await screen.findByLabelText('Expression');
     await waitFor(() => expect(textarea).toHaveValue('cpu.used_pct > 90'));
 
@@ -133,16 +137,14 @@ describe('RuleDialog', () => {
     expect(screen.getByLabelText('Value')).toHaveValue(90);
     expect(screen.queryByLabelText('Expression')).not.toBeInTheDocument();
 
+    // Warned once already: no second question for the same dialog.
     await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
     expect(await screen.findByLabelText('Expression')).toBeInTheDocument();
-
-    confirmSpy.mockRestore();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 
   it('names the clear condition it would delete before switching, and stays in form mode if that is declined', async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, 'confirm');
     mockApi({
       'POST /api/v1/orgs/acme/rules/validate': () => ({ ok: true, form_ready: true, source: 'cpu.used_pct >= 85' }),
     });
@@ -154,14 +156,13 @@ describe('RuleDialog', () => {
     await user.type(screen.getByLabelText('Clear value'), '80');
 
     // The one-way-door warning is accepted; the clear-condition one is not.
-    confirmSpy.mockReturnValueOnce(true).mockReturnValueOnce(false);
     await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
-
-    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    await acceptConfirm(user);
     // The second confirmation names the condition by value: the grammar has
     // no syntax for a clear condition, so the conversion deletes it, and
     // the rule would then flip on every crossing of 85.
-    const dropMessage = confirmSpy.mock.calls[1][0] as string;
+    const dropMessage = await declineConfirm(user);
+    await settled();
     expect(dropMessage).toContain('< 80');
     expect(dropMessage).toMatch(/clear condition/i);
     // Declined, so nothing changed: still the form editor, clear condition
@@ -172,17 +173,13 @@ describe('RuleDialog', () => {
     // Accepting both goes through, and the extra confirmation is asked
     // again rather than remembered: it is destructive, unlike the one-way
     // door warning, which is only asked once per dialog.
-    confirmSpy.mockReturnValue(true);
     await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
-    expect(confirmSpy).toHaveBeenCalledTimes(3);
+    await acceptConfirm(user);
     expect(await screen.findByLabelText('Expression')).toBeInTheDocument();
-
-    confirmSpy.mockRestore();
   });
 
   it('does not ask about a clear condition when the rule has none', async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       'POST /api/v1/orgs/acme/rules/validate': () => ({ ok: true, form_ready: true, source: 'cpu.used_pct > 90' }),
     });
@@ -191,24 +188,22 @@ describe('RuleDialog', () => {
     await user.type(screen.getByLabelText('Name'), 'High CPU');
     await user.type(screen.getByLabelText('Value'), '90');
     await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
+    await acceptConfirm(user);
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    // Only the one-way-door warning was asked; there is no clear condition to name.
     expect(await screen.findByLabelText('Expression')).toBeInTheDocument();
-
-    confirmSpy.mockRestore();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 
   it('does not switch to the expression editor when the warning is declined', async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     renderDialog();
 
     await user.click(screen.getByRole('button', { name: 'Switch to expression editor' }));
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await declineConfirm(user);
+    await settled();
     expect(screen.queryByLabelText('Expression')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Metric')).toBeInTheDocument();
-
-    confirmSpy.mockRestore();
   });
 
   it('lets a seeded rule keep its threshold and enabled state editable but its metric, scope and severity fixed', async () => {

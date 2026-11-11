@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -8,6 +8,8 @@ import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { MembersPage } from './MembersPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const MEMBERS = {
   members: [
@@ -31,9 +33,11 @@ function renderPage(qc: QueryClient, locale?: 'de') {
   const router = createRouter({ routeTree, history: createMemoryHistory({ initialEntries: ['/o/acme/settings/members'] }) });
 
   const page = (
-    <ToastProvider>
-      <RouterProvider router={router} />
-    </ToastProvider>
+    <ConfirmProvider>
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
+    </ConfirmProvider>
   );
   render(
     <QueryClientProvider client={qc}>{locale ? <I18nProvider locale={locale}>{page}</I18nProvider> : page}</QueryClientProvider>,
@@ -68,8 +72,6 @@ describe('MembersPage', () => {
         return {};
       },
     });
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
-
     renderPage(qc);
 
     const section = await screen.findByRole('region', { name: 'Open invitations' });
@@ -77,11 +79,11 @@ describe('MembersPage', () => {
     expect(within(section).getByText('Admin')).toBeInTheDocument();
     expect(within(section).getByText(/Tim R\./)).toBeInTheDocument();
     await user.click(within(section).getByRole('button', { name: 'Revoke invitation to wrong@acme.io' }));
+    await acceptConfirm(user);
 
     expect(await screen.findByText('Invitation to wrong@acme.io revoked')).toBeInTheDocument();
     expect(revoked).toEqual(['i1']);
     expect(screen.queryByText('wrong@acme.io')).not.toBeInTheDocument();
-    confirmSpy.mockRestore();
   });
 
   it('lists members and sends an invitation', async () => {
@@ -297,8 +299,6 @@ describe('MembersPage', () => {
   it('removes a member after confirmation', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme/members': MEMBERS,
       'GET /api/v1/orgs/acme': ORG('admin'),
@@ -309,16 +309,14 @@ describe('MembersPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
     await user.click(screen.getByRole('menuitem', { name: 'Remove…' }));
+    await acceptConfirm(user);
 
     expect(await screen.findByText('Sara K. removed')).toBeInTheDocument();
-    window.confirm = originalConfirm;
   });
 
   it('surfaces a toast instead of an unhandled rejection when removal fails', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme/members': MEMBERS,
       'GET /api/v1/orgs/acme': ORG('admin'),
@@ -329,10 +327,10 @@ describe('MembersPage', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Actions for Sara K.' }));
     await user.click(screen.getByRole('menuitem', { name: 'Remove…' }));
+    await acceptConfirm(user);
 
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('cannot remove the last owner');
-    window.confirm = originalConfirm;
   });
 
   it('shows the friendly access-denied page on a 403 (the members-spec requirement)', async () => {

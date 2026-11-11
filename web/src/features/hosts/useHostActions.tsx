@@ -8,6 +8,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { AdhocDialog } from '../runs/AdhocDialog.tsx';
 import { RunTemplateDialog } from '../runs/RunTemplateDialog.tsx';
 import { HostDialog } from './HostDialog.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 export interface HostActions {
   /** What the caller's role allows; an action it may not use is not offered. */
@@ -40,6 +41,7 @@ export interface HostActions {
 export function useHostActions(org: string, host: Host, role: string | undefined, opts: { onDeleted?: () => void } = {}): HostActions {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const navigate = useNavigate();
   const setCapabilities = useSetHostCapabilities(org, host.id);
   const deleteHost = useDeleteHost(org);
@@ -54,7 +56,7 @@ export function useHostActions(org: string, host: Host, role: string | undefined
   }
 
   async function remove() {
-    if (!confirm(t.hosts.detail.deleteConfirm(host.name))) return;
+    if (!(await ask({ message: t.hosts.detail.deleteConfirm(host.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await deleteHost.mutateAsync(host.id);
       toast.show(t.hosts.detail.deleted(host.name));

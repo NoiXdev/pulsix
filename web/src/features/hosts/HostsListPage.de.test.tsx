@@ -6,6 +6,7 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { HostsListPage } from './HostsListPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const ZONES = { zones: [{ id: 'z1', slug: 'fra', name: 'Frankfurt' }] };
 const host = (id: string, name: string) => ({
@@ -29,9 +30,11 @@ function renderPage() {
   return render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="de">
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );

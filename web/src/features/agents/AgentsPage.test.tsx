@@ -8,6 +8,8 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { AgentsPage } from './AgentsPage.tsx';
 import { AddAgentDialog } from './AddAgentDialog.tsx';
 import { clippedElements } from '../../test/clipped.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -30,9 +32,11 @@ function renderPage() {
     router,
     ...render(
       <QueryClientProvider client={qc}>
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </QueryClientProvider>,
     ),
   };
@@ -123,7 +127,6 @@ describe('AgentsPage', () => {
   it('revokes from the row menu without navigating', async () => {
     const user = userEvent.setup();
     let revoked = false;
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
       'GET /api/v1/orgs/acme/agents': { agents: [agent()] },
@@ -136,6 +139,7 @@ describe('AgentsPage', () => {
     const { router } = renderPage();
     await user.click(await screen.findByRole('button', { name: 'Actions for web-1' }));
     await user.click(screen.getByRole('menuitem', { name: 'Revoke…' }));
+    await acceptConfirm(user);
     await waitFor(() => expect(revoked).toBe(true));
     expect(await screen.findByText('Agent on web-1 revoked')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/o/acme/agents');
@@ -256,9 +260,11 @@ describe('AgentsPage', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
       <QueryClientProvider client={qc}>
-        <ToastProvider>
-          <AddAgentDialog org="acme" host={{ id: 'h1', name: 'web-1', zoneId: 'z1' }} onClose={() => {}} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <AddAgentDialog org="acme" host={{ id: 'h1', name: 'web-1', zoneId: 'z1' }} onClose={() => {}} />
+          </ToastProvider>
+        </ConfirmProvider>
       </QueryClientProvider>,
     );
 

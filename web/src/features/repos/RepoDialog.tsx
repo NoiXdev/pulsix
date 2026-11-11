@@ -15,6 +15,7 @@ import { kindName } from '../credentials/labels.ts';
 import { useT } from '../../i18n/useT.ts';
 import { VaultIdentitiesField } from '../credentials/VaultIdentitiesField.tsx';
 import { repoErrorsFromServer, validateRepoInput, type RepoFormValues } from './validate.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 export interface RepoDialogProps {
   org: string;
@@ -54,6 +55,7 @@ type FieldErrors = Partial<Record<keyof RepoFormValues, string>>;
 export function RepoDialog({ org, repo, credentials, canCreateCredential, onClose }: RepoDialogProps) {
   const t = useT();
   const toast = useToast();
+  const ask = useConfirm();
   const create = useCreateRepo(org);
   const update = useUpdateRepo(org, repo?.id ?? '');
   const remove = useDeleteRepo(org);
@@ -231,7 +233,7 @@ export function RepoDialog({ org, repo, credentials, canCreateCredential, onClos
               variant="destructive"
               disabled={remove.isPending}
               onClick={async () => {
-                if (!confirm(t.repos.dialog.confirmDelete(repo.name))) return;
+                if (!(await ask({ message: t.repos.dialog.confirmDelete(repo.name), confirmLabel: t.common.delete, destructive: true }))) return;
                 try {
                   await remove.mutateAsync(repo.id);
                   toast.show(t.repos.dialog.deleted(repo.name));

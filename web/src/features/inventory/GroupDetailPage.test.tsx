@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,8 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { GroupDetailPage } from './GroupDetailPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 const SCHEMA = {
   fields: [
@@ -50,9 +52,11 @@ function renderAt(path: string) {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -270,7 +274,6 @@ describe('GroupDetailPage', () => {
   it('saves the settings dialog with the jump host and reports a refused delete', async () => {
     const user = userEvent.setup();
     let patched: MockRequest | undefined;
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       ...base,
       'GET /api/v1/orgs/acme/bastions': { bastions: [{ id: 'b1', name: 'bastion-fra', address: 'b.example', port: 22, username: 'ops' }] },
@@ -293,6 +296,7 @@ describe('GroupDetailPage', () => {
     expect(patched?.body).toEqual({ name: 'webserver', bastion_id: 'b1' });
     await user.click(screen.getByRole('button', { name: 'More actions for webserver' }));
     await user.click(screen.getByRole('menuitem', { name: 'Delete group…' }));
+    await acceptConfirm(user);
     expect(await screen.findByText(/still has child groups/)).toBeInTheDocument();
   });
 
@@ -382,8 +386,6 @@ describe('GroupDetailPage', () => {
 
   it('reports a failed member removal instead of rejecting silently', async () => {
     const user = userEvent.setup();
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
     mockApi({
       ...base,
       'GET /api/v1/orgs/acme/inventory/groups/g1/members': { members: [MEMBER] },
@@ -392,9 +394,9 @@ describe('GroupDetailPage', () => {
     });
     renderAt('/o/acme/groups/g1');
     await memberAction(user, 'web-01', 'Remove from group…');
+    await acceptConfirm(user);
 
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('host no longer exists');
-    window.confirm = originalConfirm;
   });
 });

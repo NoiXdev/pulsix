@@ -7,6 +7,9 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { TemplatesPage } from './TemplatesPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
+import { settled } from '../../test/settled.ts';
 
 const ORG = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'operator', created_at: '' } };
 // credentials.write is admin-only (lib/roles.ts), stricter than the
@@ -47,9 +50,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -189,7 +194,6 @@ describe('TemplatesPage', () => {
   it('deletes a template after confirmation', async () => {
     const user = userEvent.setup();
     let deleted = false;
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
@@ -206,6 +210,7 @@ describe('TemplatesPage', () => {
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await acceptConfirm(user);
     await screen.findByText('Template deploy-site deleted');
     expect(deleted).toBe(true);
     expect(screen.queryByRole('dialog', { name: 'deploy-site' })).not.toBeInTheDocument();
@@ -213,7 +218,6 @@ describe('TemplatesPage', () => {
 
   it('surfaces a toast instead of an unhandled rejection when delete fails', async () => {
     const user = userEvent.setup();
-    window.confirm = () => true;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
@@ -228,6 +232,7 @@ describe('TemplatesPage', () => {
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await acceptConfirm(user);
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('template still referenced');
     // The dialog stays open — a failed delete must not act as if it succeeded.
@@ -237,7 +242,6 @@ describe('TemplatesPage', () => {
   it('declines to delete without confirmation', async () => {
     const user = userEvent.setup();
     let deleted = false;
-    window.confirm = () => false;
     mockApi({
       'GET /api/v1/orgs/acme': ORG,
       'GET /api/v1/orgs/acme/job-templates': { templates: [template()] },
@@ -254,6 +258,8 @@ describe('TemplatesPage', () => {
     await user.click(await screen.findByRole('button', { name: 'deploy-site' }));
     const dialog = await screen.findByRole('dialog', { name: 'deploy-site' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await declineConfirm(user);
+    await settled();
     expect(deleted).toBe(false);
     expect(screen.getByRole('dialog', { name: 'deploy-site' })).toBeInTheDocument();
   });

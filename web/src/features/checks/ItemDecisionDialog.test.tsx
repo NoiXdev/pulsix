@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { ItemDecisionDialog } from './ItemDecisionDialog.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { settled } from '../../test/settled.ts';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
 
 const CHECK_KEYS = ['disk', 'service'];
 
@@ -12,7 +15,9 @@ function renderDialog(props: Partial<React.ComponentProps<typeof ItemDecisionDia
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <ItemDecisionDialog org="acme" checkKeys={CHECK_KEYS} onClose={() => {}} {...props} />
+      <ConfirmProvider>
+        <ItemDecisionDialog org="acme" checkKeys={CHECK_KEYS} onClose={() => {}} {...props} />
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -76,7 +81,6 @@ describe('ItemDecisionDialog', () => {
   it('demands a second confirmation before saving a pattern matching more than the preview can show in full, and does not save without it', async () => {
     const user = userEvent.setup();
     let posted: Record<string, unknown> | undefined;
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi({
       'POST /api/v1/orgs/acme/item-decisions/preview': () => ({
         matches: Array.from({ length: 200 }, (_, i) => ({ host_id: 'h1', check_key: 'disk', item: `/mnt/${i}` })),
@@ -96,22 +100,18 @@ describe('ItemDecisionDialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toContain('350');
+    expect(await declineConfirm(user)).toContain('350');
+    await settled();
     expect(posted).toBeUndefined();
 
-    confirmSpy.mockReturnValue(true);
     await user.click(screen.getByRole('button', { name: 'Save' }));
+    await acceptConfirm(user);
     await waitFor(() => expect(posted).toBeDefined());
-    expect(confirmSpy).toHaveBeenCalledTimes(2);
-
-    confirmSpy.mockRestore();
   });
 
   it('does not ask for a second confirmation when the pattern matches fewer items than the preview can show in full', async () => {
     const user = userEvent.setup();
     let posted: Record<string, unknown> | undefined;
-    const confirmSpy = vi.spyOn(window, 'confirm');
     mockApi({
       'POST /api/v1/orgs/acme/item-decisions/preview': () => ({
         matches: [{ host_id: 'h1', check_key: 'disk', item: '/var' }],
@@ -130,9 +130,7 @@ describe('ItemDecisionDialog', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(posted).toBeDefined());
-    expect(confirmSpy).not.toHaveBeenCalled();
-
-    confirmSpy.mockRestore();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 
   it("surfaces the API's own message when an exact pattern contains a glob character", async () => {
@@ -181,7 +179,6 @@ describe('ItemDecisionDialog', () => {
   it('does not save a pattern before its own preview has caught up with it — the debounce window is not a way around the second confirmation', async () => {
     const user = userEvent.setup();
     let posted = false;
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     mockApi({
       'POST /api/v1/orgs/acme/item-decisions/preview': () => ({
         matches: [{ host_id: 'h1', check_key: 'disk', item: '/a' }],
@@ -205,18 +202,16 @@ describe('ItemDecisionDialog', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(posted).toBe(false);
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
 
     // The preview catches up once the debounce settles, Save re-enables,
     // and only then does the second confirmation (correctly) fire.
     await screen.findByText('Matches 9999 items');
     expect(screen.getByRole('button', { name: 'Save' })).not.toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(confirmSpy).toHaveBeenCalledTimes(1);
-    expect(confirmSpy.mock.calls[0][0]).toContain('9999');
+    expect(await declineConfirm(user)).toContain('9999');
+    await settled();
     expect(posted).toBe(false);
-
-    confirmSpy.mockRestore();
   });
 
   // A failed preview used to be the one way out of the gate: previewStale
@@ -227,7 +222,6 @@ describe('ItemDecisionDialog', () => {
   it('keeps Save disabled when the preview itself failed — the count is the only brake there is', async () => {
     const user = userEvent.setup();
     let posted = false;
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       'POST /api/v1/orgs/acme/item-decisions/preview': () => new Response(JSON.stringify({ detail: 'preview unavailable' }), { status: 500 }),
       'POST /api/v1/orgs/acme/item-decisions': () => {
@@ -246,9 +240,7 @@ describe('ItemDecisionDialog', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled());
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(posted).toBe(false);
-    expect(confirmSpy).not.toHaveBeenCalled();
-
-    confirmSpy.mockRestore();
+    expect(screen.queryByRole('dialog', { name: 'Are you sure?' })).not.toBeInTheDocument();
   });
 
   it('shows an organization-scoped watch stored outside this editor truthfully, and refuses to save it as is', async () => {

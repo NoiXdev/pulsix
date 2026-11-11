@@ -16,6 +16,7 @@ import type { ItemDecision, RuleMetric } from '../../api/types.ts';
 import { ItemDecisionDialog } from './ItemDecisionDialog.tsx';
 import { ChecksTabs } from './ChecksTabs.tsx';
 import { DecisionRow } from './DecisionRow.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS_BASE = 'minmax(0, 1fr) 80px minmax(0, 1.3fr) 90px minmax(0, 1.5fr) 110px';
 const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
@@ -65,6 +66,7 @@ export function ItemsPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
@@ -129,7 +131,7 @@ export function ItemsPage() {
   const noMetrics = canWrite && metrics.isSuccess && checkKeys.length === 0;
 
   async function onDelete(d: ItemDecision) {
-    if (!confirm(t.checks.items.deleteConfirm(t.checks.items.verdict[d.decision], d.pattern))) {
+    if (!(await ask({ message: t.checks.items.deleteConfirm(t.checks.items.verdict[d.decision], d.pattern), confirmLabel: t.common.delete, destructive: true }))) {
       return;
     }
     try {

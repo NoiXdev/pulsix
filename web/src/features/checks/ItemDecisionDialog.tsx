@@ -9,6 +9,7 @@ import { useT } from '../../i18n/useT.ts';
 import { useCreateItemDecision, useItemDecisionPreview, useUpdateItemDecision } from '../../api/hooks/useItems.ts';
 import { useHosts } from '../../api/hooks/useHosts.ts';
 import type { ItemDecision, ItemDecisionInput, ItemDecisionMatchKind, ItemDecisionPreviewInput, ItemDecisionScope, ItemDecisionVerdict } from '../../api/types.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 // Still used by DecisionHostPicker's own search <input> below, which stays
 // a plain text field rather than becoming a Select.
@@ -90,6 +91,7 @@ export interface ItemDecisionDialogProps {
  */
 export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDecisionDialogProps) {
   const t = useT();
+  const ask = useConfirm();
   const editing = !!decision;
   const create = useCreateItemDecision(org);
   const update = useUpdateItemDecision(org, decision?.id ?? '');
@@ -189,7 +191,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
     // in one place rather than trusting every path to the form down to
     // the DOM's own submit semantics.
     if (previewStale || orgWatchMismatch || patternTooLong) return;
-    if (preview.data?.capped && !confirm(t.checks.itemDialog.confirmBroad(preview.data.total))) return;
+    if (preview.data?.capped && !(await ask({ message: t.checks.itemDialog.confirmBroad(preview.data.total) }))) return;
     try {
       if (editing) await update.mutateAsync(body());
       else await create.mutateAsync(body());

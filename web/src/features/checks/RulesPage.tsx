@@ -16,6 +16,7 @@ import type { Rule } from '../../api/types.ts';
 import { RuleDialog } from './RuleDialog.tsx';
 import { RuleRow } from './RuleRow.tsx';
 import { ChecksTabs } from './ChecksTabs.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS_BASE = 'minmax(0, 1fr) 90px minmax(0, 1.2fr) 90px 100px';
 const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
@@ -47,6 +48,7 @@ export function RulesPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
@@ -114,7 +116,7 @@ export function RulesPage() {
 
   async function onDelete(r: Rule) {
     const seeded = r.origin === 'seed' ? t.checks.rules.deleteSeeded : '';
-    if (!confirm(`${t.checks.rules.deleteConfirm(r.name)}${seeded}`)) return;
+    if (!(await ask({ message: `${t.checks.rules.deleteConfirm(r.name)}${seeded}`, confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(r.id);
     } catch (err) {

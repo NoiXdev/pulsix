@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,9 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { CredentialsPage } from './CredentialsPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
+import { settled } from '../../test/settled.ts';
 
 const cred = (over: Record<string, unknown>) => ({
   id: 'c1', name: 'acme-deploy', kind: 'ssh_key', username: 'ansible', public_key: 'ssh-ed25519 AAAA pulsix:acme:acme-deploy',
@@ -27,9 +30,11 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -98,7 +103,6 @@ describe('CredentialsPage', () => {
   it('renames a credential and reports a refused delete', async () => {
     const user = userEvent.setup();
     let patched: unknown;
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
     mockApi({
       'GET /api/v1/auth/me': ME,
       'GET /api/v1/orgs/acme/credentials': { credentials: [cred({})] },
@@ -120,36 +124,33 @@ describe('CredentialsPage', () => {
     expect(await screen.findByText('Credential saved')).toBeInTheDocument();
     expect(patched).toEqual({ name: 'acme-deploy-2', username: 'ansible' });
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await acceptConfirm(user);
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('still used');
   });
 
   it('asks before generating a new key and sends nothing when cancelled', async () => {    const user = userEvent.setup();
     const patches: unknown[] = [];
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    try {
-      mockApi({
-        'GET /api/v1/auth/me': ME,
-        'GET /api/v1/orgs/acme/credentials': { credentials: [cred({})] },
-        'GET /api/v1/orgs/acme/credentials/c1': { credential: cred({}), snippets: SNIPPETS },
-        'PATCH /api/v1/orgs/acme/credentials/c1': (req: MockRequest) => {
-          patches.push(req.body);
-          return { credential: cred({ fingerprint: 'SHA256:new' }), snippets: SNIPPETS };
-        },
-      });
-      renderPage();
-      await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
-      const dialog = await screen.findByRole('dialog', { name: 'acme-deploy' });
-      await user.click(within(dialog).getByRole('button', { name: 'Generate new key' }));
-      expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/replaces the key of acme-deploy/));
-      expect(patches).toEqual([]);
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/orgs/acme/credentials': { credentials: [cred({})] },
+      'GET /api/v1/orgs/acme/credentials/c1': { credential: cred({}), snippets: SNIPPETS },
+      'PATCH /api/v1/orgs/acme/credentials/c1': (req: MockRequest) => {
+        patches.push(req.body);
+        return { credential: cred({ fingerprint: 'SHA256:new' }), snippets: SNIPPETS };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'acme-deploy' });
+    await user.click(within(dialog).getByRole('button', { name: 'Generate new key' }));
+    expect(await declineConfirm(user)).toMatch(/replaces the key of acme-deploy/);
+    await settled();
+    expect(patches).toEqual([]);
 
-      confirmSpy.mockReturnValue(true);
-      await user.click(within(dialog).getByRole('button', { name: 'Generate new key' }));
-      expect(await screen.findByText(/New key generated/)).toBeInTheDocument();
-      expect(patches).toEqual([{ name: 'acme-deploy', username: 'ansible', generate: true }]);
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    await user.click(within(dialog).getByRole('button', { name: 'Generate new key' }));
+    await acceptConfirm(user);
+    expect(await screen.findByText(/New key generated/)).toBeInTheDocument();
+    expect(patches).toEqual([{ name: 'acme-deploy', username: 'ansible', generate: true }]);
   });
 
   it('shows a failed credential load inside the dialog instead of staying on Loading', async () => {
@@ -184,35 +185,31 @@ describe('CredentialsPage', () => {
 
   it('rotates an ssh_key credential after confirmation and shows the new fingerprint', async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
-    try {
-      let rotated = false;
-      mockApi({
-        'GET /api/v1/auth/me': ME,
-        'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } },
-        'GET /api/v1/orgs/acme/credentials': () => ({ credentials: [cred({ fingerprint: rotated ? 'SHA256:new' : 'SHA256:old' })] }),
-        'GET /api/v1/orgs/acme/credentials/c1': () => ({ credential: cred({ fingerprint: rotated ? 'SHA256:new' : 'SHA256:old' }), snippets: SNIPPETS }),
-        'POST /api/v1/orgs/acme/credentials/c1/rotate': () => {
-          rotated = true;
-          return { job_id: '', job_count: 0 };
-        },
-      });
-      renderPage();
-      await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
-      const dialog = await screen.findByRole('dialog', { name: 'acme-deploy' });
+    let rotated = false;
+    mockApi({
+      'GET /api/v1/auth/me': ME,
+      'GET /api/v1/orgs/acme': { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } },
+      'GET /api/v1/orgs/acme/credentials': () => ({ credentials: [cred({ fingerprint: rotated ? 'SHA256:new' : 'SHA256:old' })] }),
+      'GET /api/v1/orgs/acme/credentials/c1': () => ({ credential: cred({ fingerprint: rotated ? 'SHA256:new' : 'SHA256:old' }), snippets: SNIPPETS }),
+      'POST /api/v1/orgs/acme/credentials/c1/rotate': () => {
+        rotated = true;
+        return { job_id: '', job_count: 0 };
+      },
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'acme-deploy' }));
+    const dialog = await screen.findByRole('dialog', { name: 'acme-deploy' });
 
-      // Declined: no request.
-      await user.click(within(dialog).getByRole('button', { name: 'Rotate key' }));
-      expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/rotated|rotation/i));
-      expect(rotated).toBe(false);
+    // Declined: no request.
+    await user.click(within(dialog).getByRole('button', { name: 'Rotate key' }));
+    expect(await declineConfirm(user)).toMatch(/rotated|rotation/i);
+    await settled();
+    expect(rotated).toBe(false);
 
-      // Confirmed: the rotation runs and the dialog refetches the credential.
-      confirmSpy.mockReturnValue(true);
-      await user.click(within(dialog).getByRole('button', { name: 'Rotate key' }));
-      expect(await within(dialog).findByText(/SHA256:new/)).toBeInTheDocument();
-    } finally {
-      confirmSpy.mockRestore();
-    }
+    // Confirmed: the rotation runs and the dialog refetches the credential.
+    await user.click(within(dialog).getByRole('button', { name: 'Rotate key' }));
+    await acceptConfirm(user);
+    expect(await within(dialog).findByText(/SHA256:new/)).toBeInTheDocument();
   });
 
   it('gives an operator no rotate button (rotation is an admin write)', async () => {

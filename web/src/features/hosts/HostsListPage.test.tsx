@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,6 +7,9 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { HostsListPage } from './HostsListPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm, declineConfirm } from '../../test/confirmDialog.ts';
+import { settled } from '../../test/settled.ts';
 
 const ZONES = { zones: [{ id: 'z1', slug: 'fra', name: 'Frankfurt' }] };
 const HOSTS = {
@@ -40,9 +43,11 @@ function renderPage(qc: QueryClient, initialPath = '/o/acme/hosts') {
 
   const result = render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
   return { ...result, router };
@@ -413,7 +418,6 @@ describe('host rows', () => {
 
   it('Delete asks first, then deletes and stays on the list', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
     let deleted = false;
     mockApi({
       ...rowRoutes('operator'),
@@ -427,16 +431,14 @@ describe('host rows', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
 
+    expect(await acceptConfirm(user)).toBe('Delete host web-04.fra? This cannot be undone.');
     await waitFor(() => expect(deleted).toBe(true));
-    expect(confirm).toHaveBeenCalledWith('Delete host web-04.fra? This cannot be undone.');
     expect(await screen.findByText('Host web-04.fra deleted')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/o/acme/hosts');
-    confirm.mockRestore();
   });
 
   it('Delete does nothing when the confirmation is declined', async () => {
     const user = userEvent.setup();
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
     let deleted = false;
     mockApi({
       ...rowRoutes('operator'),
@@ -450,8 +452,8 @@ describe('host rows', () => {
     await user.click(await screen.findByRole('button', { name: 'Actions for web-04.fra' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Delete…' }));
 
-    expect(confirm).toHaveBeenCalled();
+    await declineConfirm(user);
+    await settled();
     expect(deleted).toBe(false);
-    confirm.mockRestore();
   });
 });

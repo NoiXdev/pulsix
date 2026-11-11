@@ -25,6 +25,7 @@ import { ScheduleNotifications } from './ScheduleNotifications.tsx';
 import { ScheduleRuns } from './ScheduleRuns.tsx';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const WINDOWS = ['15m', '30m', '1h', '2h', '6h', '12h', '24h'];
 type MaintenanceGuard = 'ignore' | 'skip' | 'exclude_hosts';
@@ -63,6 +64,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
   const m = t.schedules.editor;
   const navigate = useNavigate();
   const toast = useToast();
+  const ask = useConfirm();
   const create = useCreateSchedule(org);
   const update = useUpdateSchedule(org, initial?.id ?? '');
   const remove = useDeleteSchedule(org);
@@ -158,7 +160,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
   }
 
   async function del() {
-    if (!initial || !confirm(m.deleteConfirm(initial.name))) return;
+    if (!initial || !(await ask({ message: m.deleteConfirm(initial.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(initial.id);
       onClose();

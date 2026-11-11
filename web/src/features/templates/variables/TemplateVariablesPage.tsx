@@ -29,6 +29,7 @@ import { ReviewBadges } from './ReviewBadges.tsx';
 import { SourcePanel, type VarsMode } from './SourcePanel.tsx';
 import { SyncPreviewDialog } from './SyncPreviewDialog.tsx';
 import { useT } from '../../../i18n/useT.ts';
+import { useConfirm } from '../../../ui/confirmContext.ts';
 
 /**
  * TemplateVariablesPage is a job template's variables (backlog 7.75, plan
@@ -85,6 +86,7 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
   const t = useT();
   const v = t.templates.variables;
   const toast = useToast();
+  const ask = useConfirm();
   const projected = Boolean(template.shared_template_id);
   const canWrite = may(role, 'templates.write') && !projected;
   const [loaded] = useState(() => {
@@ -162,7 +164,7 @@ function VariablesBody({ org, template, data, role, onReload }: BodyProps) {
       if (next !== 'off') setSyncing(next);
       return;
     }
-    if (next === 'off' && !window.confirm(t.templates.source.confirmOff)) return;
+    if (next === 'off' && !(await ask({ message: t.templates.source.confirmOff }))) return;
     try {
       await setMode.mutateAsync({ mode: next, revision: loaded.revision });
       await onReload();

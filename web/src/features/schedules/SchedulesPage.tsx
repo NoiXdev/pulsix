@@ -16,6 +16,7 @@ import { OUTCOME_TONE, outcomeLabel } from './outcome.ts';
 import { CATEGORY_TONE, type Category } from './notifyCategory.ts';
 import { useT } from '../../i18n/useT.ts';
 import { relative } from './simple.ts';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS = '90px minmax(0, 1.2fr) minmax(0, 1fr) 90px 150px 90px';
 
@@ -30,6 +31,7 @@ export function SchedulesPage() {
   const search = useSearch({ strict: false }) as { id?: string; template?: string };
   const navigate = useNavigate();
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const canWrite = may(orgInfo.data?.org.role, 'templates.write');
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
@@ -48,7 +50,7 @@ export function SchedulesPage() {
   const select = (id?: string) => void navigate({ to: '/o/$org/schedules', params: { org }, search: { id, template: search.template } });
 
   async function onPauseAll() {
-    if (!confirm(m.pauseAllConfirm)) return;
+    if (!(await ask({ message: m.pauseAllConfirm, confirmLabel: m.pauseAll }))) return;
     try {
       const res = await pauseAll.mutateAsync();
       toast.show(m.pausedCount(res.paused));

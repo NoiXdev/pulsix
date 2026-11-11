@@ -14,6 +14,7 @@ import type { CheckDefinition } from '../../api/types.ts';
 import { CheckDialog } from './CheckDialog.tsx';
 import { CheckRow } from './CheckRow.tsx';
 import { ChecksTabs } from './ChecksTabs.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 
 const COLUMNS_BASE = 'minmax(0, 1fr) 110px minmax(0, 1.1fr) 90px 110px';
 const COLUMNS_WITH_MENU = `${COLUMNS_BASE} 40px`;
@@ -29,6 +30,7 @@ export function ChecksPage() {
   const t = useT();
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
+  const ask = useConfirm();
   const orgInfo = useOrg(org);
   const role = orgInfo.data?.org.role;
   const canRead = may(role, 'checks.read');
@@ -91,7 +93,7 @@ export function ChecksPage() {
 
   async function onDelete(c: CheckDefinition) {
     const seeded = c.origin === 'seed' ? t.checks.list.deleteSeeded : '';
-    if (!confirm(`${t.checks.list.deleteConfirm(c.key)}${seeded}`)) return;
+    if (!(await ask({ message: `${t.checks.list.deleteConfirm(c.key)}${seeded}`, confirmLabel: t.common.delete, destructive: true }))) return;
     // c.origin === 'shared' never reaches here: CheckRow offers no Delete…
     // item for a projection (spec v0.2f decision 6).
     try {

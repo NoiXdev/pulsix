@@ -7,6 +7,7 @@ import { I18nProvider } from '../../i18n/I18nProvider.tsx';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
 import { BackupsPage } from './BackupsPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const ITEM = {
   name: 'pulsix-20261102T030000Z-manual.pxbak',
@@ -57,9 +58,11 @@ function renderGerman(item: Record<string, unknown>) {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <I18nProvider locale="de">
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );

@@ -9,6 +9,7 @@ import { mockApi } from '../../test/mockApi.ts';
 import { ChannelsPage } from './ChannelsPage.tsx';
 import { formatElapsed } from './steps.ts';
 import { de } from '../../i18n/de/index.ts';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 
 const org = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'admin', created_at: '' } };
 const hook = {
@@ -31,9 +32,11 @@ function renderPage() {
   render(
     <QueryClientProvider client={qc}>
       <I18nProvider locale="de">
-        <ToastProvider>
-          <RouterProvider router={router} />
-        </ToastProvider>
+        <ConfirmProvider>
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
+        </ConfirmProvider>
       </I18nProvider>
     </QueryClientProvider>,
   );

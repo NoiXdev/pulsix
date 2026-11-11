@@ -9,6 +9,7 @@ import { OrgLayout } from '../routes/OrgLayout.tsx';
 import { HostsListPage } from '../features/hosts/HostsListPage.tsx';
 import { LoginPage } from '../features/auth/LoginPage.tsx';
 import { resetSessionCache, useSignOut } from './session.ts';
+import { ConfirmProvider } from '../ui/confirm.tsx';
 
 describe('resetSessionCache', () => {
   it('drops every cached query and every cached mutation', async () => {
@@ -110,9 +111,11 @@ function renderApp(qc: QueryClient) {
 
   render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
   return router;

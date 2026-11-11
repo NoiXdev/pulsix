@@ -7,6 +7,8 @@ import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { TokensPage } from './TokensPage.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
+import { acceptConfirm } from '../../test/confirmDialog.ts';
 
 function renderPage(qc: QueryClient) {
   const rootRoute = createRootRoute();
@@ -23,9 +25,11 @@ function renderPage(qc: QueryClient) {
 
   return render(
     <QueryClientProvider client={qc}>
-      <ToastProvider>
-        <RouterProvider router={router} />
-      </ToastProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <RouterProvider router={router} />
+        </ToastProvider>
+      </ConfirmProvider>
     </QueryClientProvider>,
   );
 }
@@ -112,8 +116,6 @@ describe('TokensPage error handling (cheap fix)', () => {
   it('shows a toast instead of an unhandled rejection when revoking fails', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const originalConfirm = window.confirm;
-    window.confirm = () => true;
 
     mockApi({
       'GET /api/v1/orgs/acme/tokens': {
@@ -126,11 +128,10 @@ describe('TokensPage error handling (cheap fix)', () => {
     renderPage(qc);
 
     await user.click(await screen.findByRole('button', { name: 'revoke' }));
+    await acceptConfirm(user);
 
     const toast = await screen.findByRole('status');
     expect(toast).toHaveTextContent('token already revoked');
-
-    window.confirm = originalConfirm;
   });
 });
 
