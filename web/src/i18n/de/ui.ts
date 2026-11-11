@@ -17,6 +17,12 @@ export const deUi: Messages['ui'] = {
     timePlaceholder: 'hh:mm',
     invalidTime: 'Eine Uhrzeit von 00:00 bis 23:59 eingeben, etwa 09:30.',
     incomplete: 'Datum und Uhrzeit beide eingeben oder beide leer lassen.',
+    required: 'Ein Datum wählen.',
+    monthNav: 'Monat wechseln',
+    previousMonth: 'Vorheriger Monat',
+    nextMonth: 'Nächster Monat',
+    dayToday: (day: string) => `Heute, ${day}`,
+    daySelected: (day: string) => `${day}, ausgewählt`,
   },
   query: {
     signingOutTitle: 'Abmeldung',

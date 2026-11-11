@@ -33,7 +33,7 @@ export interface DateTimePickerProps {
  * marked invalid and the form cannot be submitted, as with the native input
  * — except while disabled: a greyed-out field never blocks a submit.
  * Clearing the day clears the time with it, so an optional field is left
- * empty rather than half-filled.
+ * empty rather than half-filled, and so does disabling the field.
  *
  * The time box carries the field's name as well: from `aria-label`
  * ("Starts, time"), or, with an `id` and no `aria-label`, from the
@@ -54,6 +54,17 @@ export function DateTimePicker({
   if (value !== seen) {
     setSeen(value);
     if (value !== joinDateTime(parts)) setParts(splitDateTime(value));
+  }
+
+  // Disabling the field while it shows only half a value drops that half:
+  // greyed out, it has no say in the form (see `incomplete` below), and a
+  // time left in the box would come back with the field (SnoozeDialog's
+  // "until the severity changes"). The caller already reads '', so this is
+  // no change of value and nothing is emitted.
+  const [wasDisabled, setWasDisabled] = useState(!!disabled);
+  if (!!disabled !== wasDisabled) {
+    setWasDisabled(!!disabled);
+    if (disabled && value === '' && (parts.date || parts.time)) setParts({ date: '', time: '' });
   }
 
   // Half a date-time reads '' to the caller, but it is not an empty field:

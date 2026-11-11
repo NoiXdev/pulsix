@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DatePicker, type DatePickerProps } from './DatePicker.tsx';
 import { Dialog } from './dialog.tsx';
 import { Label } from './label.tsx';
 import { I18nProvider } from '../i18n/I18nProvider.tsx';
 import type { Locale } from '../i18n/types.ts';
+import { enUi } from '../i18n/en/ui.ts';
+import { deUi } from '../i18n/de/ui.ts';
 
 function renderPicker(over: Partial<DatePickerProps> = {}, locale: Locale = 'en') {
   const onChange = vi.fn();
@@ -259,5 +261,161 @@ describe('DatePicker', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  // Backlog 1.50 (1): the browser would focus the hidden validation proxy
+  // after a blocked submit, where nobody sees or hears it.
+  describe('a blocked submit', () => {
+    function Harness({ onSubmit, invalidMessage }: { onSubmit: () => void; invalidMessage?: string }) {
+      const [value, setValue] = useState('');
+      return (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSubmit();
+          }}
+        >
+          <DatePicker aria-label="Start" value={value} onChange={setValue} required invalidMessage={invalidMessage} />
+          <button type="submit">Save</button>
+        </form>
+      );
+    }
+
+    it('marks the trigger required', () => {
+      const { trigger } = renderPicker({ required: true });
+      expect(trigger).toHaveAttribute('aria-required', 'true');
+    });
+
+    it('is not marked required while optional', () => {
+      const { trigger } = renderPicker();
+      expect(trigger).not.toHaveAttribute('aria-required');
+    });
+
+    it('focuses the trigger and links a message to it, until a day is picked', async () => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn();
+      render(<Harness onSubmit={onSubmit} />);
+      const trigger = screen.getByRole('button', { name: 'Start' });
+      expect(trigger).not.toHaveAttribute('aria-invalid');
+      expect(screen.queryByText(enUi.picker.required)).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(trigger).toHaveFocus();
+      expect(trigger).toHaveAttribute('aria-invalid', 'true');
+      expect(trigger).toHaveAccessibleDescription(enUi.picker.required);
+
+      await user.click(trigger);
+      await user.click(day(14));
+      expect(trigger).not.toHaveAttribute('aria-invalid');
+      expect(screen.queryByText(enUi.picker.required)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows the parent's message when it has one", async () => {
+      const user = userEvent.setup();
+      render(<Harness onSubmit={() => {}} invalidMessage="Pick a day for that time" />);
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      const trigger = screen.getByRole('button', { name: 'Start' });
+      expect(trigger).toHaveFocus();
+      expect(trigger).toHaveAccessibleDescription('Pick a day for that time');
+    });
+
+    // A browser focuses the first invalid control whose `invalid` event
+    // was not cancelled, even one after the picker; jsdom focuses nothing,
+    // so the later field does here what the browser would.
+    it('takes the focus back from a later invalid field', async () => {
+      const user = userEvent.setup();
+      render(
+        <form onSubmit={(e) => e.preventDefault()}>
+          <DatePicker aria-label="Start" value="" onChange={() => {}} required />
+          <input aria-label="Note" required onInvalid={(e) => e.currentTarget.focus()} />
+          <button type="submit">Save</button>
+        </form>,
+      );
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Start' })).toHaveFocus());
+    });
+
+    it('leaves the focus to an earlier invalid field', async () => {
+      const user = userEvent.setup();
+      render(
+        <form onSubmit={(e) => e.preventDefault()}>
+          <input aria-label="Name" required />
+          <DatePicker aria-label="Start" value="" onChange={() => {}} required />
+          <button type="submit">Save</button>
+        </form>,
+      );
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(screen.getByRole('button', { name: 'Start' })).not.toHaveFocus();
+      expect(screen.getByRole('button', { name: 'Start' })).toHaveAccessibleDescription(enUi.picker.required);
+    });
+  });
+
+  // Backlog 1.50 (2).
+  describe('closing', () => {
+    it('stays open, unmoved, when the field label is clicked', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      render(
+        <>
+          <Label htmlFor="start">Starts on</Label>
+          <DatePicker id="start" value="2026-11-11" onChange={onChange} />
+        </>,
+      );
+      const trigger = screen.getByRole('button', { name: 'Starts on' });
+      await user.click(trigger);
+      const grid = screen.getByRole('grid');
+      await user.click(screen.getByText('Starts on'));
+      // The same grid: not closed on mousedown and opened again on click.
+      expect(screen.getByRole('grid')).toBe(grid);
+      expect(trigger).toHaveAttribute('aria-expanded', 'true');
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    // Safari does not focus a button on click: without the picker's own
+    // focus() the closed calendar would leave focus on <body>.
+    it('gives focus back to the trigger when the trigger closes it', async () => {
+      const user = userEvent.setup();
+      const { trigger } = renderPicker({ value: '2026-11-11' });
+      await user.tab();
+      await user.keyboard('{Enter}');
+      expect(day(11)).toHaveFocus();
+      fireEvent.click(trigger);
+      expect(screen.queryByRole('grid')).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    });
+
+    it('gives focus back to the trigger when a day is clicked', async () => {
+      const user = userEvent.setup();
+      const { trigger } = renderPicker({ value: '2026-11-11' });
+      await user.tab();
+      await user.keyboard('{Enter}');
+      fireEvent.click(day(14));
+      expect(screen.queryByRole('grid')).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    });
+  });
+
+  // Backlog 1.50 (4): the calendar speaks the app's words, not the
+  // library's, so an upgrade cannot rename them under the e2e.
+  describe('its own labels', () => {
+    it.each([
+      ['en', enUi, 'Wednesday, November 11, 2026', 'Saturday, November 14, 2026'],
+      ['de', deUi, 'Mittwoch, 11. November 2026', 'Samstag, 14. November 2026'],
+    ] as const)('names the %s navigation and days from the catalogue', async (locale, ui, eleventh, fourteenth) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(2026, 10, 11, 9, 0));
+      const user = userEvent.setup();
+      const { trigger } = renderPicker({ value: '2026-11-11' }, locale);
+      await user.click(trigger);
+      const calendar = screen.getByRole('dialog', { name: ui.picker.calendar });
+      expect(within(calendar).getByRole('navigation', { name: ui.picker.monthNav })).toBeInTheDocument();
+      expect(within(calendar).getByRole('button', { name: ui.picker.previousMonth })).toBeInTheDocument();
+      expect(within(calendar).getByRole('button', { name: ui.picker.nextMonth })).toBeInTheDocument();
+      expect(day(11)).toHaveAccessibleName(ui.picker.daySelected(ui.picker.dayToday(eleventh)));
+      expect(day(14)).toHaveAccessibleName(fourteenth);
+    });
   });
 });

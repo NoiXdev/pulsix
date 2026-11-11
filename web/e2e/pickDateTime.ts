@@ -1,23 +1,21 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { enUi } from '../src/i18n/en/ui.ts';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-const MONTHS = Array.from({ length: 12 }, (_, i) =>
-  new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(2000, i, 1)),
-);
+const MONTHS = Array.from({ length: 12 }, (_, i) => new Date(2000, i, 1).toLocaleDateString('en', { month: 'long' }));
 
-function ordinal(n: number): string {
-  if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`;
-  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`;
-}
+const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** The calendar's own name for a day button, as react-day-picker writes it
- * in English ("Wednesday, November 11th, 2026"), with the "Today, " and
- * ", selected" it adds for those days allowed around it. */
+/** The calendar's name for a day button, which ui/DatePicker builds from
+ * our own catalogue: the day written out in English ("Wednesday,
+ * November 11, 2026"), with the catalogue's "Today" and "selected" allowed
+ * around it. Nothing here is the calendar library's wording. */
 function dayName(d: Date): RegExp {
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(d);
-  const core = `${weekday}, ${MONTHS[d.getMonth()]} ${ordinal(d.getDate())}, ${d.getFullYear()}`;
-  return new RegExp(`^(Today, )?${core}(, selected)?$`);
+  const core = d.toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  const { dayToday, daySelected } = enUi.picker;
+  const names = [core, dayToday(core), daySelected(core), daySelected(dayToday(core))];
+  return new RegExp(`^(?:${names.map(escape).join('|')})$`);
 }
 
 /** "November 2026", the month grid's accessible name, as a month count. */
@@ -35,7 +33,7 @@ function monthIndex(gridName: string): number {
  * datetime-local input.
  *
  * It opens the calendar behind the field labelled `label`, steps through
- * the months with the calendar's own Previous/Next buttons until `at`'s
+ * the months with the calendar's Previous/Next buttons until `at`'s
  * month is shown (whichever month it opened on: the field's day, or
  * today), picks the day by its accessible name, then types the time into
  * the time box, which is named after the field ("From Time").
@@ -47,7 +45,7 @@ function monthIndex(gridName: string): number {
 export async function pickDateTime(scope: Page | Locator, label: string, at: Date): Promise<void> {
   const page = 'goto' in scope ? scope : scope.page();
   await scope.getByRole('button', { name: label, exact: true }).click();
-  const calendar = page.getByRole('dialog', { name: 'Choose a date' });
+  const calendar = page.getByRole('dialog', { name: enUi.picker.calendar });
   const grid = calendar.getByRole('grid');
   await expect(grid).toBeVisible();
 
@@ -58,14 +56,14 @@ export async function pickDateTime(scope: Page | Locator, label: string, at: Dat
     const shown = (await grid.getAttribute('aria-label')) ?? '';
     const diff = target - monthIndex(shown);
     if (diff === 0) break;
-    await calendar.getByRole('button', { name: diff > 0 ? 'Go to the Next Month' : 'Go to the Previous Month' }).click();
+    await calendar.getByRole('button', { name: diff > 0 ? enUi.picker.nextMonth : enUi.picker.previousMonth, exact: true }).click();
     await expect(grid).not.toHaveAttribute('aria-label', shown);
   }
 
   await calendar.getByRole('button', { name: dayName(at) }).click();
   await expect(calendar).toHaveCount(0);
 
-  const time = scope.getByRole('textbox', { name: `${label} Time`, exact: true });
+  const time = scope.getByRole('textbox', { name: `${label} ${enUi.picker.time}`, exact: true });
   await time.fill(`${pad(at.getHours())}:${pad(at.getMinutes())}`);
   // Leaving the field commits it; Enter would also submit the form.
   await time.blur();

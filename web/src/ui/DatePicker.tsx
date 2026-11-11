@@ -1,5 +1,5 @@
-import { useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { DayPicker, type ClassNames, type Matcher } from 'react-day-picker';
+import { useCallback, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { DayPicker, type ClassNames, type Labels, type Matcher } from 'react-day-picker';
 import { de } from 'react-day-picker/locale/de';
 import { enUS } from 'react-day-picker/locale/en-US';
 import { CalendarDays } from 'lucide-react';
@@ -67,6 +67,22 @@ const CLASS_NAMES: Partial<ClassNames> = {
 };
 
 const FIELD_DATE: Intl.DateTimeFormatOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
+const DAY_NAME: Intl.DateTimeFormatOptions = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' };
+const MONTH_NAME: Intl.DateTimeFormatOptions = { month: 'long', year: 'numeric' };
+
+/** A control that takes part in constraint validation. */
+type Validated = Element & { willValidate: boolean; validity: ValidityState };
+
+const isValidated = (el: Element): el is Validated => 'validity' in el && 'willValidate' in el;
+
+/** True when `control` is the first invalid control of its form — the one
+ * a browser would focus after a blocked submit. */
+function isFirstInvalid(control: HTMLInputElement): boolean {
+  const form = control.form;
+  if (!form) return true;
+  const first = Array.from(form.elements).find((el) => isValidated(el) && el.willValidate && !el.validity.valid);
+  return first === undefined || first === control;
+}
 
 /**
  * DatePicker replaces the native date input: a field-shaped button that
@@ -80,6 +96,10 @@ const FIELD_DATE: Intl.DateTimeFormatOptions = { day: '2-digit', month: '2-digit
  * Keyboard: Enter or Space on the field opens the calendar with the chosen
  * day (or today) focused; the arrows, PageUp/PageDown and Home/End move;
  * Enter picks; Escape closes it and returns to the field.
+ *
+ * A submit it blocks (required and empty, or `invalidMessage`) focuses the
+ * field, marks it aria-invalid and shows why under it, linked through
+ * aria-describedby, until the field is fine again.
  */
 export function DatePicker({
   value, onChange, id, required, disabled, min, max, placeholder, invalidMessage,
@@ -93,6 +113,7 @@ export function DatePicker({
   const validationRef = useRef<HTMLInputElement>(null);
   const popoverId = useId();
   const textId = useId();
+  const messageId = useId();
 
   const selected = parseIsoDate(value);
   const minDate = parseIsoDate(min);
@@ -109,12 +130,42 @@ export function DatePicker({
   const todayAllowed = (!minDate || todayIso >= toIsoDate(minDate)) && (!maxDate || todayIso <= toIsoDate(maxDate));
   const firstMonth = selected ?? (maxDate && today > maxDate ? maxDate : minDate && today < minDate ? minDate : today);
 
-  const close = useCallback((reason: PopoverCloseReason | 'picked') => {
+  // Every close but a press elsewhere hands focus back to the field: Safari
+  // does not focus a button it clicks, so closing by the trigger would
+  // otherwise leave focus on <body>, the calendar's day having gone.
+  const close = useCallback((reason: PopoverCloseReason | 'picked' | 'trigger') => {
     setOpen(false);
     if (reason !== 'outside') triggerRef.current?.focus();
   }, []);
 
+  // The calendar's names come from the catalogue, not the library's
+  // English: the day as the GUI language writes it in full, with our own
+  // "Today" and "selected" around it.
+  const labels = useMemo<Partial<Labels>>(() => ({
+    labelNav: () => t.ui.picker.monthNav,
+    labelPrevious: () => t.ui.picker.previousMonth,
+    labelNext: () => t.ui.picker.nextMonth,
+    labelGrid: (month) => fmt.date(month, MONTH_NAME),
+    labelWeekday: (day) => fmt.date(day, { weekday: 'long' }),
+    labelDayButton: (day, modifiers) => {
+      let name = fmt.date(day, DAY_NAME);
+      if (modifiers.today) name = t.ui.picker.dayToday(name);
+      if (modifiers.selected) name = t.ui.picker.daySelected(name);
+      return name;
+    },
+  }), [t, fmt]);
+
   const invalid = invalidMessage !== undefined;
+  // What the validation proxy below refuses, worked out the way it does:
+  // its only constraints are `required` and the custom validity.
+  const missing = !!required && value === '';
+  const refused = !disabled && (invalid || missing);
+  const refusal = invalidMessage ?? (missing ? t.ui.picker.required : undefined);
+  // A blocked submit reports the refusal next to the field, until the
+  // field is fine again; a later refusal waits for the next submit.
+  const [reported, setReported] = useState(false);
+  if (reported && !refused) setReported(false);
+  const message = reported ? refusal : undefined;
   useLayoutEffect(() => {
     validationRef.current?.setCustomValidity(invalidMessage ?? '');
   }, [invalidMessage]);
@@ -125,80 +176,110 @@ export function DatePicker({
   };
 
   return (
-    <div className="relative">
-      {/* Native validation: `required`, and `invalidMessage` as a custom
-          validity. Not hidden (type=hidden) nor readonly: both are barred
-          from constraint validation. Sits under the trigger, first in the
-          tab order around it, so the browser's bubble points at the field
-          and Tab from it lands on the trigger. */}
-      <input
-        ref={validationRef}
-        tabIndex={-1}
-        aria-hidden
-        required={required}
-        // Disabled like the field it stands for: a disabled control is
-        // barred from constraint validation, so a greyed-out field never
-        // blocks the surrounding form's submit.
-        disabled={disabled}
-        value={value}
-        onChange={() => {}}
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-px opacity-0"
-      />
-      <button
-        ref={triggerRef}
-        type="button"
-        id={id}
-        aria-label={ariaLabel}
-        aria-describedby={text ? textId : undefined}
-        aria-invalid={invalid || undefined}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={open ? popoverId : undefined}
-        disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
-        onKeyDown={(e: KeyboardEvent) => {
-          if (e.key === 'Escape' && open) {
+    <div>
+      <div className="relative">
+        {/* Native validation: `required`, and `invalidMessage` as a custom
+            validity. Not hidden (type=hidden) nor readonly: both are barred
+            from constraint validation. Sits under the trigger, out of the
+            tab order; a blocked submit is reported on the trigger instead
+            (onInvalid below). */}
+        <input
+          ref={validationRef}
+          tabIndex={-1}
+          aria-hidden
+          required={required}
+          // Disabled like the field it stands for: a disabled control is
+          // barred from constraint validation, so a greyed-out field never
+          // blocks the surrounding form's submit.
+          disabled={disabled}
+          value={value}
+          onChange={() => {}}
+          // The browser would focus this invisible input and point its bubble
+          // at it, where a keyboard user sees no focus ring and a screen
+          // reader hears nothing. Cancelled, it does neither and the submit
+          // stays blocked; the field says why itself, on its trigger.
+          onInvalid={(e) => {
             e.preventDefault();
-            setOpen(false);
-          }
-        }}
-        className={cn(
-          'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 text-left text-xs text-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',
-          invalid && 'border-destructive',
-        )}
-      >
-        <span id={textId} className={cn('truncate', !text && 'text-muted-foreground')}>
-          {text || placeholder}
-        </span>
-        <CalendarDays size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-      </button>
-      {open && !disabled && (
-        <Popover anchor={triggerRef} onClose={close} id={popoverId} label={t.ui.picker.calendar}>
-          <DayPicker
-            mode="single"
-            required
-            selected={selected}
-            onSelect={(d) => pick(toIsoDate(d))}
-            defaultMonth={firstMonth}
-            startMonth={minDate}
-            endMonth={maxDate}
-            disabled={outOfRange}
-            locale={CALENDAR[locale].locale}
-            weekStartsOn={CALENDAR[locale].weekStartsOn}
-            classNames={CLASS_NAMES}
-            autoFocus
-          />
-          <div className="mt-1 flex items-center justify-between border-t border-border pt-2">
-            <Button type="button" variant="ghost" disabled={!todayAllowed} onClick={() => pick(todayIso)}>
-              {t.ui.picker.today}
-            </Button>
-            {!required && value !== '' && (
-              <Button type="button" variant="ghost" onClick={() => pick('')}>
-                {t.ui.picker.clear}
+            setReported(true);
+            const proxy = e.currentTarget;
+            const trigger = triggerRef.current;
+            if (!trigger || !isFirstInvalid(proxy)) return;
+            trigger.focus();
+            // A browser still focuses the first invalid control nobody
+            // cancelled, even one after this (a required DateTimePicker's
+            // empty time box): take the focus back once it has.
+            window.setTimeout(() => {
+              const active = document.activeElement;
+              if (active && active !== trigger && proxy.form?.contains(active) && isValidated(active) && !active.validity.valid) {
+                trigger.focus();
+              }
+            });
+          }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 h-px opacity-0"
+        />
+        <button
+          ref={triggerRef}
+          type="button"
+          id={id}
+          aria-label={ariaLabel}
+          aria-describedby={[text && textId, message && messageId].filter(Boolean).join(' ') || undefined}
+          aria-invalid={invalid || message !== undefined || undefined}
+          aria-required={required || undefined}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={open ? popoverId : undefined}
+          disabled={disabled}
+          onClick={() => (open ? close('trigger') : setOpen(true))}
+          onKeyDown={(e: KeyboardEvent) => {
+            if (e.key === 'Escape' && open) {
+              e.preventDefault();
+              setOpen(false);
+            }
+          }}
+          className={cn(
+            'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 text-left text-xs text-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',
+            (invalid || message !== undefined) && 'border-destructive',
+          )}
+        >
+          <span id={textId} className={cn('truncate', !text && 'text-muted-foreground')}>
+            {text || placeholder}
+          </span>
+          <CalendarDays size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+        </button>
+        {open && !disabled && (
+          <Popover anchor={triggerRef} onClose={close} id={popoverId} label={t.ui.picker.calendar}>
+            <DayPicker
+              mode="single"
+              required
+              selected={selected}
+              onSelect={(d) => pick(toIsoDate(d))}
+              defaultMonth={firstMonth}
+              startMonth={minDate}
+              endMonth={maxDate}
+              disabled={outOfRange}
+              locale={CALENDAR[locale].locale}
+              weekStartsOn={CALENDAR[locale].weekStartsOn}
+              classNames={CLASS_NAMES}
+              labels={labels}
+              autoFocus
+            />
+            <div className="mt-1 flex items-center justify-between border-t border-border pt-2">
+              <Button type="button" variant="ghost" disabled={!todayAllowed} onClick={() => pick(todayIso)}>
+                {t.ui.picker.today}
               </Button>
-            )}
-          </div>
-        </Popover>
+              {!required && value !== '' && (
+                <Button type="button" variant="ghost" onClick={() => pick('')}>
+                  {t.ui.picker.clear}
+                </Button>
+              )}
+            </div>
+          </Popover>
+        )}
+      </div>
+      {message && (
+        <p id={messageId} className="mt-1 text-[11px] text-destructive">
+          {message}
+        </p>
       )}
     </div>
   );

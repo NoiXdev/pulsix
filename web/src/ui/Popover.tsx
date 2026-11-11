@@ -5,7 +5,7 @@ export type PopoverCloseReason = 'escape' | 'outside';
 
 export interface PopoverProps {
   /** The field the popover belongs to: it is placed against this element,
-   *  and a press on it does not count as outside. */
+   *  and a press on it, or on a <label> of it, does not count as outside. */
   anchor: RefObject<HTMLElement | null>;
   onClose: (reason: PopoverCloseReason) => void;
   id?: string;
@@ -63,14 +63,35 @@ export function Popover({ anchor, onClose, id, label, children }: PopoverProps) 
   }, [anchor]);
 
   useEffect(() => {
+    // A <label> of the field (its htmlFor, or one wrapping it) stands for
+    // the field. A press on it would otherwise close the popover on
+    // mousedown and open it again through the click the label passes on
+    // to the field — a flicker. So the press keeps focus where it is, and
+    // the click is not passed on: the popover simply stays open.
+    const onAnchorLabel = (target: EventTarget | null) => {
+      const label = target instanceof Element ? target.closest('label') : null;
+      return label !== null && anchor.current !== null && label.control === anchor.current;
+    };
     const onPointerDown = (e: MouseEvent) => {
       const target = e.target as Node | null;
       if (!target) return;
       if (ref.current?.contains(target) || anchor.current?.contains(target)) return;
+      if (onAnchorLabel(target)) {
+        e.preventDefault();
+        return;
+      }
       onClose('outside');
     };
+    const onClick = (e: MouseEvent) => {
+      if (onAnchorLabel(e.target)) e.preventDefault();
+    };
     document.addEventListener('mousedown', onPointerDown);
-    return () => document.removeEventListener('mousedown', onPointerDown);
+    // Capture, so the label's click is cancelled before it reaches the field.
+    document.addEventListener('click', onClick, true);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('click', onClick, true);
+    };
   }, [anchor, onClose]);
 
   return (

@@ -4,6 +4,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DateTimePicker, type DateTimePickerProps } from './DateTimePicker.tsx';
 import { I18nProvider } from '../i18n/I18nProvider.tsx';
+import { enUi } from '../i18n/en/ui.ts';
 
 function renderPicker(over: Partial<DateTimePickerProps> = {}) {
   const onChange = vi.fn();
@@ -205,6 +206,74 @@ describe('DateTimePicker', () => {
       expect(screen.getByRole('button', { name: 'Starts' })).not.toHaveAttribute('aria-invalid');
       await user.click(screen.getByRole('button', { name: 'Save' }));
       expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    // Backlog 1.50 (1): the refusal lands on the date's trigger, with the
+    // reason linked to it, not on its invisible validation proxy.
+    it('focuses the date with the incomplete message after a blocked submit', async () => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+      render(<Harness initial="" onSubmit={onSubmit} />);
+      await user.type(screen.getByRole('textbox', { name: 'Starts, time' }), '08:15');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      const trigger = screen.getByRole('button', { name: 'Starts' });
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(trigger).toHaveFocus();
+      expect(trigger).toHaveAccessibleDescription(enUi.picker.incomplete);
+    });
+
+    // Backlog 1.50 (3): SnoozeDialog's "until the severity changes" greys
+    // the field out; a time typed before must not come back with it.
+    it('drops a shown half when disabled, without telling the caller', async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      function Toggling() {
+        const [value, setValue] = useState('');
+        const [off, setOff] = useState(false);
+        return (
+          <>
+            <DateTimePicker
+              aria-label="Starts"
+              value={value}
+              onChange={(v) => {
+                onChange(v);
+                setValue(v);
+              }}
+              disabled={off}
+            />
+            <button type="button" onClick={() => setOff((o) => !o)}>Toggle</button>
+          </>
+        );
+      }
+      render(<Toggling />);
+      const time = screen.getByRole('textbox', { name: 'Starts, time' });
+      await user.type(time, '08:15');
+      await user.tab();
+      expect(time).toHaveValue('08:15');
+
+      await user.click(screen.getByRole('button', { name: 'Toggle' }));
+      expect(screen.getByRole('textbox', { name: 'Starts, time' })).toHaveValue('');
+      await user.click(screen.getByRole('button', { name: 'Toggle' }));
+      expect(screen.getByRole('textbox', { name: 'Starts, time' })).toHaveValue('');
+      expect(screen.getByRole('button', { name: 'Starts' })).not.toHaveAttribute('aria-invalid');
+      expect(onChange).not.toHaveBeenCalled();
+    });
+
+    it('keeps a whole value when disabled', async () => {
+      const user = userEvent.setup();
+      function Toggling() {
+        const [off, setOff] = useState(false);
+        return (
+          <>
+            <DateTimePicker aria-label="Starts" value="2026-11-11T14:30" onChange={() => {}} disabled={off} />
+            <button type="button" onClick={() => setOff((o) => !o)}>Toggle</button>
+          </>
+        );
+      }
+      render(<Toggling />);
+      await user.click(screen.getByRole('button', { name: 'Toggle' }));
+      expect(screen.getByRole('textbox', { name: 'Starts, time' })).toHaveValue('14:30');
+      expect(screen.getByRole('button', { name: 'Starts' })).toHaveTextContent('11/11/2026');
     });
 
     it('submits when both halves are empty', async () => {
