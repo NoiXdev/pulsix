@@ -94,12 +94,17 @@ export default defineConfig({
     // The variable editor (backlog 7.75): an editor playbook is read when
     // it is saved, so this needs no worker.
     { name: 'variables', testMatch: /variables\.spec\.ts/, dependencies: ['triggers'] },
+    // The unsaved-changes guard against real browser history (backlog
+    // 1.51): it only opens a form and never saves it. It loads the admin's
+    // storage state, which accounts.spec's step-up proof replaces, so it
+    // sits ahead of that spec rather than after it.
+    { name: 'unsaved-guard', testMatch: /unsaved-guard\.spec\.ts/, dependencies: ['variables'] },
     // Account administration (backlog 7.74): the administrator sets a
     // temporary password for members.spec's operator, who must then change
     // it, and the operator then resets it through a mailed link. It
     // changes that operator's password, so it runs after every spec that
     // signs the operator in with the original one.
-    { name: 'accounts', testMatch: /accounts\.spec\.ts/, dependencies: ['variables'] },
+    { name: 'accounts', testMatch: /accounts\.spec\.ts/, dependencies: ['unsaved-guard'] },
     { name: 'ansible', testMatch: /ansible\.spec\.ts/, dependencies: ['accounts'] },
   ],
 });

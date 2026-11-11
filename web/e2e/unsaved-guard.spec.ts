@@ -2,9 +2,13 @@
  * The unsaved-changes guard (ui/useUnsavedGuard.ts) against REAL browser
  * history. Its unit tests run on memory history, which cannot show how
  * @tanstack/history's blocked-popstate handling (`history.go(-delta)` plus
- * "ignore the next pop") behaves when a second Back arrives while the leave
- * question is still open — the case that could step one entry too far when
- * the first question is then cancelled.
+ * "ignore the next pop") behaves when a second Back or a Forward arrives
+ * while the leave question is still open — the cases that could step one
+ * entry too far, or reload the page, when the first question is answered.
+ *
+ * A Back is done when the question opens: the browser shows A until the
+ * question is answered, and a Cancel then restores B. So every step waits
+ * for the URL the browser must show next instead of for a fixed time.
  *
  * Every scenario starts from the same known history: the shared
  * templates list, the shared repositories list (A), then the "new
@@ -40,64 +44,87 @@ async function cancelLeave(page: Page) {
   await expect(leaveDialog(page)).toHaveCount(0);
 }
 
-/** settle lets a blocked pop's history.go(-delta) restore finish. */
-async function settle(page: Page) {
-  await page.waitForTimeout(500);
+/** backOpensQuestion presses Back on the form: the browser moves to A at
+ * once and the question opens over the form. */
+async function backOpensQuestion(page: Page) {
+  await page.goBack();
+  await expect(page).toHaveURL(LIST);
+  await expect(leaveDialog(page)).toHaveCount(1);
+}
+
+/** expectFormKept checks that the form, and the edit in it, are still there:
+ * no navigation and no reload. */
+async function expectFormKept(page: Page) {
+  await expect(page).toHaveURL(FORM);
+  await expect(page.locator('#repo-def-name')).toHaveValue('e2e-unsaved');
+}
+
+/** The guard still works: a later Back asks again instead of being
+ * swallowed, and its Cancel restores the form. */
+async function expectNextBackAsks(page: Page) {
+  await backOpensQuestion(page);
+  await cancelLeave(page);
+  await expectFormKept(page);
 }
 
 test('Back asks, Cancel keeps the page and its edits, and the next Back asks again', async ({ page }) => {
   await openDirtyForm(page);
 
-  await page.goBack();
-  await expect(leaveDialog(page)).toHaveCount(1);
+  await backOpensQuestion(page);
   await cancelLeave(page);
-  await settle(page);
-  await expect(page).toHaveURL(FORM);
-  await expect(page.locator('#repo-def-name')).toHaveValue('e2e-unsaved');
+  await expectFormKept(page);
 
-  await page.goBack();
-  await expect(leaveDialog(page)).toHaveCount(1);
-  await cancelLeave(page);
-  await settle(page);
-  await expect(page).toHaveURL(FORM);
+  await expectNextBackAsks(page);
 });
 
 test('a second Back while the question is open asks once, and Cancel stays on the page', async ({ page }) => {
   await openDirtyForm(page);
 
-  await page.goBack();
-  await expect(leaveDialog(page)).toHaveCount(1);
-  // Let the first blocked pop's restore finish before the second Back, as a
-  // person's second key press would: otherwise it leaves from A itself.
-  await settle(page);
+  await backOpensQuestion(page);
+  // The second Back goes from A to the entry before it; being blocked, it
+  // is undone at once, back to the form (A, then BEFORE, then B).
   await page.evaluate(() => history.back());
-  await settle(page);
+  await expect(page).toHaveURL(FORM);
   await expect(leaveDialog(page)).toHaveCount(1);
 
   await cancelLeave(page);
-  await settle(page);
-  await expect(leaveDialog(page)).toHaveCount(0);
-  await expect(page).toHaveURL(FORM);
-  await expect(page.locator('#repo-def-name')).toHaveValue('e2e-unsaved');
-
-  // The guard still works: a later Back asks again instead of being swallowed.
-  await page.goBack();
-  await expect(leaveDialog(page)).toHaveCount(1);
-  await cancelLeave(page);
-  await settle(page);
-  await expect(page).toHaveURL(FORM);
+  await expectFormKept(page);
+  await expectNextBackAsks(page);
 });
 
 test('a second Back while the question is open, then Confirm, lands on the previous page', async ({ page }) => {
   await openDirtyForm(page);
 
-  await page.goBack();
-  await expect(leaveDialog(page)).toHaveCount(1);
-  // Let the first blocked pop's restore finish before the second Back, as a
-  // person's second key press would: otherwise it leaves from A itself.
-  await settle(page);
+  await backOpensQuestion(page);
   await page.evaluate(() => history.back());
-  await settle(page);
+  await expect(page).toHaveURL(FORM);
+  await expect(leaveDialog(page)).toHaveCount(1);
+
+  await acceptConfirm(page, enUi.confirm.confirm);
+  await expect(page).toHaveURL(LIST);
+});
+
+test('Back, then Forward while the question is open, then Cancel keeps the page without a reload', async ({ page }) => {
+  await openDirtyForm(page);
+
+  await backOpensQuestion(page);
+  // Forward returns the browser to the form itself: nothing to undo there,
+  // so it must neither reload the page nor leave history ignoring a pop.
+  await page.evaluate(() => history.forward());
+  await expect(page).toHaveURL(FORM);
+  await expect(leaveDialog(page)).toHaveCount(1);
+
+  await cancelLeave(page);
+  await expectFormKept(page);
+  await expectNextBackAsks(page);
+});
+
+test('Back, then Forward while the question is open, then Confirm, lands on the previous page', async ({ page }) => {
+  await openDirtyForm(page);
+
+  await backOpensQuestion(page);
+  await page.evaluate(() => history.forward());
+  await expect(page).toHaveURL(FORM);
   await expect(leaveDialog(page)).toHaveCount(1);
 
   await acceptConfirm(page, enUi.confirm.confirm);
