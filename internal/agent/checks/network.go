@@ -42,6 +42,13 @@ func (gopsutilNetInterfaces) Interfaces(ctx context.Context) (net.InterfaceStatL
 	return net.InterfacesWithContext(ctx)
 }
 
+// maxBaselineAge bounds how old a baseline may be and still yield a rate.
+// An interface can sit in the counters yet outside the reported set (down,
+// or not in this key's list) for a long time; a rate against such a stale
+// baseline would be averaged over the whole gap and mean nothing, so an
+// older baseline is replaced without reporting.
+const maxBaselineAge = 15 * time.Minute
+
 // netSample is one interface's counters at one collection.
 type netSample struct {
 	at       time.Time
@@ -147,6 +154,11 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 		sort.Strings(candidates)
 	}
 
+	// The counters and the clock are read in one critical section: one
+	// instance serves every check key, each in its own goroutine, and a
+	// sample taken earlier must never be stored over a later baseline.
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	stats, err := p.Counters.IOCounters(ctx, true)
 	if err != nil {
 		// Keep the baselines: the next good tick still reports a rate.
@@ -157,10 +169,6 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 		byName[s.Name] = s
 	}
 
-	// Now is read under the lock so concurrent collects apply in timestamp
-	// order.
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	now := p.Now()
 	if p.prev == nil {
 		p.prev = make(map[string]netSample)
@@ -187,7 +195,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 			continue
 		}
 		elapsed := cur.at.Sub(old.at).Seconds()
-		if elapsed <= 0 {
+		if elapsed <= 0 || cur.at.Sub(old.at) > maxBaselineAge {
 			continue
 		}
 		reset := false

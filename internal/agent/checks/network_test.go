@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -352,5 +353,115 @@ func TestNetworkDefaultAndExplicitOnOneInstanceKeepEachOthersBaselines(t *testin
 	obs, _ = p.Collect(context.Background(), nil)
 	if len(obs) != 12 {
 		t.Fatalf("default set after an explicit collect got %d observations, want 12", len(obs))
+	}
+}
+
+// gatedCounters answers call 0 at once, blocks call 1 until released and
+// answers later calls at once, so a test can interleave two collects.
+type gatedCounters struct {
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedCounters) IOCounters(context.Context, bool) ([]net.IOCountersStat, error) {
+	g.mu.Lock()
+	i := g.calls
+	g.calls++
+	g.mu.Unlock()
+	switch i {
+	case 0:
+		return []net.IOCountersStat{counters("eth0", 10)}, nil
+	case 1:
+		close(g.entered)
+		<-g.release
+		return []net.IOCountersStat{counters("eth0", 20)}, nil
+	default:
+		return []net.IOCountersStat{counters("eth0", 30)}, nil
+	}
+}
+
+// A slow collect must not store an older sample over a newer baseline: the
+// counters and the clock are read in one critical section.
+func TestNetworkConcurrentCollectsApplyInSampleOrder(t *testing.T) {
+	g := &gatedCounters{entered: make(chan struct{}), release: make(chan struct{})}
+	var tick int64
+	var tickMu sync.Mutex
+	p := newNetworkPlugin().(*networkPlugin)
+	p.Counters, p.Interfaces = g, upIfaces("eth0")
+	p.Now = func() time.Time {
+		tickMu.Lock()
+		defer tickMu.Unlock()
+		tick++
+		return time.Unix(1000+tick*10, 0)
+	}
+	_, _ = p.Collect(context.Background(), nil) // baseline: 10 at t=1010
+
+	res := make(chan []Observation, 2)
+	go func() { o, _ := p.Collect(context.Background(), nil); res <- o }()
+	<-g.entered
+	go func() { o, _ := p.Collect(context.Background(), nil); res <- o }()
+	time.Sleep(50 * time.Millisecond)
+	close(g.release)
+
+	for i := 0; i < 2; i++ {
+		obs := <-res
+		o := findObs(t, obs, "eth0", "net.rx_bytes_per_s")
+		if o.Value == nil || *o.Value != 1000 {
+			t.Fatalf("collect %d rx = %+v, want 1000 (10000 bytes over 10 s)", i, o)
+		}
+	}
+}
+
+func TestNetworkStaleBaselineReBaselinesWithoutReporting(t *testing.T) {
+	clock := &fakeNow{t: time.Unix(1000, 0)}
+	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10)}}
+	p := newTestNetwork(c, upIfaces("eth0"), clock)
+	_, _ = p.Collect(context.Background(), nil)
+
+	clock.t = clock.t.Add(maxBaselineAge) // exactly at the bound: still reports
+	c.stats = []net.IOCountersStat{counters("eth0", 20)}
+	if obs, _ := p.Collect(context.Background(), nil); len(obs) != 6 {
+		t.Fatalf("at the bound got %d observations, want 6", len(obs))
+	}
+
+	clock.t = clock.t.Add(maxBaselineAge + time.Second) // beyond it: re-baseline
+	c.stats = []net.IOCountersStat{counters("eth0", 30)}
+	if obs, _ := p.Collect(context.Background(), nil); len(obs) != 0 {
+		t.Fatalf("after a long gap got %+v, want nothing", obs)
+	}
+	clock.t = clock.t.Add(10 * time.Second)
+	c.stats = []net.IOCountersStat{counters("eth0", 40)}
+	obs, _ := p.Collect(context.Background(), nil)
+	if o := findObs(t, obs, "eth0", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
+		t.Fatalf("rx after re-baseline = %+v, want 1000", o)
+	}
+}
+
+func TestNetworkDefaultSetInterfaceLeavingTheCountersIsForgotten(t *testing.T) {
+	clock := &fakeNow{t: time.Unix(1000, 0)}
+	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 1), counters("eth1", 1)}}
+	p := newTestNetwork(c, upIfaces("eth0", "eth1"), clock)
+	_, _ = p.Collect(context.Background(), nil)
+	clock.t = clock.t.Add(time.Second)
+	c.stats = []net.IOCountersStat{counters("eth0", 2)}
+	_, _ = p.Collect(context.Background(), nil)
+	if _, ok := p.prev["eth1"]; ok {
+		t.Fatal("eth1 left the counters but keeps a baseline")
+	}
+}
+
+func TestNetworkExplicitMissingNameIsDeletedFromBaselines(t *testing.T) {
+	clock := &fakeNow{t: time.Unix(1000, 0)}
+	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 1)}}
+	p := newTestNetwork(c, upIfaces(), clock)
+	params := map[string]any{"interfaces": []string{"eth0"}}
+	_, _ = p.Collect(context.Background(), params)
+	c.stats = nil
+	clock.t = clock.t.Add(time.Second)
+	_, _ = p.Collect(context.Background(), params)
+	if _, ok := p.prev["eth0"]; ok {
+		t.Fatal("a vanished explicit interface keeps a baseline")
 	}
 }
