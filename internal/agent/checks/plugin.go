@@ -1,5 +1,5 @@
 // Package checks collects the raw measurements the Pulsix agent's check
-// plugins produce: processor, memory, disk and service state (v0.3b plan,
+// plugins produce: processor, memory, disk, service, network and uptime state (v0.3b plan,
 // Task 7). A plugin's only job is to observe — it never buffers, schedules
 // or ships anything, and it never judges whether an observation is good or
 // bad. The scheduler (Task 8) calls Registry's plugins on their configured
@@ -80,13 +80,17 @@ type Plugin interface {
 // wired to the real providers (gopsutil, and systemd over D-Bus on Linux —
 // service_stub.go's placeholder everywhere else). It is a func, not a
 // package var, so every caller gets its own plugin values; the plugins
-// themselves hold no mutable state between calls.
+// hold no mutable state between calls, except network, which keeps each
+// interface's previous counters to turn them into rates; the scheduler
+// shares one Registry's instance across every tick, so that state survives.
 func Registry() map[string]Plugin {
 	return map[string]Plugin{
 		"cpu":     newCPUPlugin(),
 		"memory":  newMemoryPlugin(),
 		"disk":    newDiskPlugin(),
 		"service": newServicePlugin(),
+		"network": newNetworkPlugin(),
+		"uptime":  newUptimePlugin(),
 	}
 }
 
