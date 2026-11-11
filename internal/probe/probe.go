@@ -47,7 +47,7 @@ const addressPlaceholder = "{address}"
 // cut to ctx's deadline when that is earlier.
 func Run(ctx context.Context, g *Guard, plugin string, params map[string]any, address string) []Observation {
 	if g == nil {
-		g = NewGuard(nil)
+		g = NewGuard(nil, nil)
 	}
 	switch plugin {
 	case "tcp":

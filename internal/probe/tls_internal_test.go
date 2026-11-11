@@ -159,7 +159,7 @@ func TestHTTPVerifiesAgainstInjectedRoots(t *testing.T) {
 
 func TestHTTPTransportDialsOnlyThroughTheGuard(t *testing.T) {
 	var refused atomic.Bool
-	tr := newHTTPTransport(NewGuard(nil), true, nil, &refused)
+	tr := newHTTPTransport(NewGuard(nil, nil), true, nil, &refused)
 	if tr.Proxy != nil {
 		t.Fatal("the transport must not use a proxy")
 	}

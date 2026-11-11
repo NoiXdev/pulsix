@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/outbound"
 )
 
 // ErrNotAllowed is the dial error for a target the guard refuses. A probe
@@ -15,41 +17,58 @@ import (
 // used to tell open ports from closed ones on addresses it must not reach.
 var ErrNotAllowed = errors.New("target address not allowed")
 
-// thisNetwork is 0.0.0.0/8 (RFC 1122 "this host on this network"): never a
-// valid destination, and on Linux 0.0.0.0 reaches the local host. It is
-// refused together with the unspecified addresses.
-var thisNetwork = netip.MustParsePrefix("0.0.0.0/8")
-
-// Guard decides whether an IP may be dialled. It always refuses loopback,
-// link-local, unspecified and multicast addresses, and every extra prefix.
+// Guard decides whether an IP may be dialled. It is the notification
+// egress policy (internal/outbound: loopback, link-local, unspecified,
+// multicast, broadcast and cloud metadata addresses, seen through every
+// IPv4-in-IPv6 form it knows, including the operator's own NAT64 prefixes)
+// plus the operator's extra prefixes (PULSIX_PROBE_DENY_CIDRS). Unlike a
+// webhook, a probe has no allowlist: PULSIX_NOTIFY_ALLOW_CIDRS does not
+// apply to it.
 type Guard struct {
-	allowLoopback bool
-	deny          []netip.Prefix
+	policy outbound.Policy
+	deny   []netip.Prefix
 }
 
-// NewGuard returns the production guard: the always-refused ranges plus
-// extra (PULSIX_PROBE_DENY_CIDRS).
-func NewGuard(extra []netip.Prefix) *Guard {
-	return &Guard{deny: clonePrefixes(extra)}
+// NewGuard returns the production guard: the outbound policy, seeing
+// through nat64 (PULSIX_NOTIFY_NAT64_PREFIXES), plus extra
+// (PULSIX_PROBE_DENY_CIDRS).
+func NewGuard(extra, nat64 []netip.Prefix) *Guard {
+	return &Guard{policy: outbound.NewPolicy(nil, nat64), deny: clonePrefixes(extra)}
 }
 
-// NewGuardForTest returns a guard that may also allow loopback, so tests can
-// probe their own listeners. Every other always-refused range stays refused.
+// NewGuardForTest returns a guard that may also allow loopback (127.0.0.0/8
+// and ::1 on the policy's allowlist), so tests can probe their own
+// listeners. Every other refused range stays refused.
 func NewGuardForTest(allowLoopback bool, extra []netip.Prefix) *Guard {
-	return &Guard{allowLoopback: allowLoopback, deny: clonePrefixes(extra)}
+	var allow []netip.Prefix
+	if allowLoopback {
+		allow = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	}
+	return &Guard{policy: outbound.NewPolicy(allow, nil), deny: clonePrefixes(extra)}
 }
 
 func clonePrefixes(in []netip.Prefix) []netip.Prefix {
 	out := make([]netip.Prefix, 0, len(in))
 	for _, p := range in {
-		out = append(out, p.Masked())
+		out = append(out, canonicalPrefix(p))
 	}
 	return out
 }
 
+// canonicalPrefix masks p and turns an IPv4-mapped IPv6 prefix of at least
+// /96 (::ffff:10.0.0.0/104) into its IPv4 form (10.0.0.0/8): Allowed
+// judges a mapped address as IPv4, so the mapped form would never match.
+func canonicalPrefix(p netip.Prefix) netip.Prefix {
+	if p.Addr().Is4In6() && p.Bits() >= 96 {
+		p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+	}
+	return p.Masked()
+}
+
 // ParseCIDRs parses a comma-separated CIDR list (PULSIX_PROBE_DENY_CIDRS).
 // Whitespace around entries is trimmed and empty entries are skipped; an
-// invalid entry is an error naming it.
+// invalid entry is an error naming it. An IPv4-mapped entry of /96 or
+// longer is stored in its IPv4 form.
 func ParseCIDRs(list string) ([]netip.Prefix, error) {
 	var out []netip.Prefix
 	for _, entry := range strings.Split(list, ",") {
@@ -61,26 +80,22 @@ func ParseCIDRs(list string) ([]netip.Prefix, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid CIDR %q: %w", entry, err)
 		}
-		out = append(out, p.Masked())
+		out = append(out, canonicalPrefix(p))
 	}
 	return out, nil
 }
 
 // Allowed reports whether ip may be dialled. An IPv4-mapped IPv6 address is
-// judged as the IPv4 address it carries.
+// judged as the IPv4 address it carries. A zoned address (fe80::1%eth0) is
+// refused: the policy refuses every zoned address, because no prefix can
+// match one. Only the boolean leaves the guard; the policy's own error
+// names the address and an environment variable and must never reach an
+// observation, which carries ErrNotAllowed's fixed text instead.
 func (g *Guard) Allowed(ip netip.Addr) bool {
-	if !ip.IsValid() {
+	if !ip.IsValid() || g.policy.Check(ip) != nil {
 		return false
 	}
-	ip = ip.Unmap().WithZone("")
-	switch {
-	case ip.IsLoopback() && !g.allowLoopback,
-		ip.IsLinkLocalUnicast(),
-		ip.IsUnspecified(),
-		thisNetwork.Contains(ip),
-		ip.IsMulticast():
-		return false
-	}
+	ip = ip.Unmap()
 	for _, p := range g.deny {
 		if p.Contains(ip) {
 			return false

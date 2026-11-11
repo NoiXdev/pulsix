@@ -125,7 +125,7 @@ func TestDNSDialRefusalIsAnError(t *testing.T) {
 	// refuses, as a guard would for a server that is only refused at dial
 	// time. Go's resolver hides the dial error, so the probe must remember it.
 	params := map[string]any{"name": "example.test", "server": "127.0.0.1:53", "expect": "192.0.2.7", "timeout_s": float64(2)}
-	obs := probeDNS(context.Background(), NewGuardForTest(true, nil), params, "", NewGuard(nil).Dialer)
+	obs := probeDNS(context.Background(), NewGuardForTest(true, nil), params, "", NewGuard(nil, nil).Dialer)
 	if len(obs) != 3 {
 		t.Fatalf("want one error per metric, got %+v", obs)
 	}

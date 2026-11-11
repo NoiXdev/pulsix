@@ -52,7 +52,7 @@ func TestTLSRefusedTargetIsAnError(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	obs := probe.Run(context.Background(), probe.NewGuard(nil), "tls", map[string]any{"port": float64(port)}, "127.0.0.1")
+	obs := probe.Run(context.Background(), probe.NewGuard(nil, nil), "tls", map[string]any{"port": float64(port)}, "127.0.0.1")
 	wantErrors(t, obs, "target address not allowed", "tls.up", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days")
 }
 

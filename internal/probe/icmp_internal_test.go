@@ -171,7 +171,7 @@ func TestICMPCountsReplies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var network string
 			conn := newEchoConn(tc.v6, tc.drop...)
-			obs := probeICMP(context.Background(), NewGuard(nil),
+			obs := probeICMP(context.Background(), NewGuard(nil, nil),
 				map[string]any{"count": tc.count, "timeout_s": float64(1)}, tc.address, opener(conn, nil, &network))
 			if network != tc.wantNet {
 				t.Fatalf("opened %q, want %q", network, tc.wantNet)
@@ -201,7 +201,7 @@ func TestICMPCountsReplies(t *testing.T) {
 func TestICMPNoReplyIsDown(t *testing.T) {
 	conn := newEchoConn(false, 0, 1)
 	start := time.Now()
-	obs := probeICMP(context.Background(), NewGuard(nil),
+	obs := probeICMP(context.Background(), NewGuard(nil, nil),
 		map[string]any{"count": float64(2), "timeout_s": float64(1)}, "192.0.2.1", opener(conn, nil, nil))
 	wantNoReply(t, obs)
 	if d := time.Since(start); d > 3*time.Second {
@@ -217,7 +217,7 @@ func TestICMPIgnoresForeignReplies(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn.replies <- reply{b: foreign, from: &net.UDPAddr{IP: net.ParseIP("192.0.2.1")}}
-	obs := probeICMP(context.Background(), NewGuard(nil),
+	obs := probeICMP(context.Background(), NewGuard(nil, nil),
 		map[string]any{"count": float64(1), "timeout_s": float64(1)}, "192.0.2.1", opener(conn, nil, nil))
 	wantNoReply(t, obs)
 }
@@ -239,7 +239,7 @@ func TestICMPCancelReturnsPromptly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
 	start := time.Now()
-	_ = probeICMP(ctx, NewGuard(nil), map[string]any{"count": float64(1), "timeout_s": float64(30)}, "192.0.2.1", opener(conn, nil, nil))
+	_ = probeICMP(ctx, NewGuard(nil, nil), map[string]any{"count": float64(1), "timeout_s": float64(30)}, "192.0.2.1", opener(conn, nil, nil))
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("probe took %v after cancel", d)
 	}

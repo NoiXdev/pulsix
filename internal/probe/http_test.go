@@ -178,7 +178,7 @@ func TestHTTPRefusedTargetIsAnError(t *testing.T) {
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
 	for _, u := range []string{srv.URL, fmt.Sprintf("http://localhost:%d/", port)} {
 		t.Run(u, func(t *testing.T) {
-			obs := probe.Run(context.Background(), probe.NewGuard(nil), "http", httpParams(u, map[string]any{"body_contains": "x"}), "")
+			obs := probe.Run(context.Background(), probe.NewGuard(nil, nil), "http", httpParams(u, map[string]any{"body_contains": "x"}), "")
 			wantErrors(t, obs, "target address not allowed", "http.up", "http.status_code", "http.response_ms", "http.body_match")
 		})
 	}

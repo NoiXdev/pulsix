@@ -53,7 +53,8 @@ type Deps struct {
 	// Probe runs one probe; default probe.Run with Guard.
 	Probe ProbeFunc
 	// Guard is the dial guard the default Probe uses (probe.NewGuard with
-	// PULSIX_PROBE_DENY_CIDRS in production; nil is probe.NewGuard(nil)).
+	// PULSIX_PROBE_DENY_CIDRS and PULSIX_NOTIFY_NAT64_PREFIXES in
+	// production; nil is probe.NewGuard(nil, nil)).
 	Guard *probe.Guard
 	// Clock stamps each result's At; default time.Now.
 	Clock func() time.Time

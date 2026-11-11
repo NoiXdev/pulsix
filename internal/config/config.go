@@ -96,8 +96,11 @@ type Config struct {
 	// an embedding for are accepted.
 	NotifyNAT64Prefixes []netip.Prefix
 	// ProbeDenyCIDRs are destination ranges the synthetic-check probes
-	// must never dial, on top of the always-refused loopback, link-local,
-	// unspecified and multicast addresses (PULSIX_PROBE_DENY_CIDRS, CIDRs
+	// must never dial, on top of the manager's own loopback, link-local and
+	// cloud metadata addresses, which are always refused (the same list
+	// notification webhooks refuse, seen through
+	// PULSIX_NOTIFY_NAT64_PREFIXES; PULSIX_NOTIFY_ALLOW_CIDRS does not
+	// re-admit any of them for a probe) (PULSIX_PROBE_DENY_CIDRS, CIDRs
 	// comma separated, default empty; internal/probe's guard). The
 	// compose README recommends adding the stack's own network. An
 	// invalid entry fails start-up naming it.

@@ -112,8 +112,13 @@ to reach what sits next to it. **(Claude's call.)**
 
 - Every connection a probe makes is checked **at dial time**, against the
   resolved IP. That covers DNS answers, redirects and rebinding.
-- Refused always: loopback, link-local (including `169.254.169.254`),
-  unspecified, multicast.
+- Refused always: the manager's own loopback, link-local (including
+  `169.254.169.254`) and cloud metadata addresses — the same list
+  notification webhooks refuse (`internal/outbound`'s policy: also
+  unspecified, multicast, broadcast and the providers' IPv6 metadata
+  ranges, seen through NAT64, 6to4, SIIT, Teredo and ISATAP and the
+  operator's own `PULSIX_NOTIFY_NAT64_PREFIXES`). `PULSIX_NOTIFY_ALLOW_CIDRS`
+  does not apply to probes. A zoned IPv6 address is refused.
 - An instance setting, the environment variable `PULSIX_PROBE_DENY_CIDRS`
   (a comma-separated CIDR list), adds more. The compose README recommends
   adding the stack's own network.

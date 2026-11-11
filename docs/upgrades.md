@@ -148,8 +148,10 @@ repositories as before. An older worker never asks.
 - **3.13, synthetic checks:** the `icmp`, `tcp`, `http`, `tls` and `dns`
   plugins are new and run on the manager, not on agents, so agents need no
   update and nothing is seeded into existing organizations. The manager
-  refuses loopback, link-local, unspecified and multicast targets always, and
-  the CIDRs of `PULSIX_PROBE_DENY_CIDRS` on top; the bundled compose file
+  always refuses its own loopback, link-local and cloud metadata addresses
+  (the same list notification webhooks refuse, seen through
+  `PULSIX_NOTIFY_NAT64_PREFIXES`; `PULSIX_NOTIFY_ALLOW_CIDRS` does not apply
+  to probes), and the CIDRs of `PULSIX_PROBE_DENY_CIDRS` on top; the bundled compose file
   defaults that to the stack's own network (`PULSIX_NETWORK_SUBNET`), so a
   check cannot probe the database or the manager's neighbours. Setting it
   replaces that default, so include the subnet when you override it. ICMP uses

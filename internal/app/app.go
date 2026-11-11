@@ -734,13 +734,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// The synthetic-check probe runner (backlog 3.13): the holder of its
 	// advisory lock probes every monitored host's synthetic checks,
 	// resolved through checksSvc like the agents' own, and records the
-	// results through checksSvc too. Every dial goes through the guard
-	// (PULSIX_PROBE_DENY_CIDRS on top of the always-refused ranges).
+	// results through checksSvc too. Every dial goes through the guard: the
+	// webhook egress policy's refused ranges (loopback, link-local, cloud
+	// metadata; seen through the operator's NAT64 prefixes) plus
+	// PULSIX_PROBE_DENY_CIDRS.
 	// Stopped in Close and on every early return below.
 	probesStop := startLoop(probes.NewRunner(probes.Deps{
 		Orgs: hostsSvc, Resolver: checksSvc, Hosts: hostsSvc, Recorder: checksSvc,
 		Locker: schedule.NewAdvisoryLocker(appDB.Pool(), probes.AdvisoryKeyProbes),
-		Guard:  probe.NewGuard(cfg.ProbeDenyCIDRs),
+		Guard:  probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes),
 		Clock:  time.Now, Log: slog.Default(),
 	}).Run)
 

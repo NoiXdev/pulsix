@@ -136,14 +136,14 @@ func TestTCPSendReachesListener(t *testing.T) {
 
 func TestTCPRefusedTargetIsAnError(t *testing.T) {
 	port, _ := tcpServer(t, "tcp", "127.0.0.1:0", "SSH-2.0-test\r\n")
-	obs := probe.Run(context.Background(), probe.NewGuard(nil), "tcp", tcpParams(port, map[string]any{"expect": "SSH-2.0"}), "127.0.0.1")
+	obs := probe.Run(context.Background(), probe.NewGuard(nil, nil), "tcp", tcpParams(port, map[string]any{"expect": "SSH-2.0"}), "127.0.0.1")
 	wantErrors(t, obs, "target address not allowed", "tcp.up", "tcp.connect_ms", "tcp.banner_match")
 }
 
 func TestTCPRefusedHostnameIsAnError(t *testing.T) {
 	// localhost resolves to loopback only, so every dial is refused.
 	port, _ := tcpServer(t, "tcp", "127.0.0.1:0", "")
-	obs := probe.Run(context.Background(), probe.NewGuard(nil), "tcp", tcpParams(port, nil), "localhost")
+	obs := probe.Run(context.Background(), probe.NewGuard(nil, nil), "tcp", tcpParams(port, nil), "localhost")
 	wantErrors(t, obs, "target address not allowed", "tcp.up", "tcp.connect_ms")
 }
 

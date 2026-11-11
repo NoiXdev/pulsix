@@ -32,7 +32,7 @@ func TestICMPLoopback(t *testing.T) {
 func TestICMPRefusedTargetIsAnError(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1", "169.254.169.254", "localhost"} {
 		t.Run(addr, func(t *testing.T) {
-			obs := probe.Run(context.Background(), probe.NewGuard(nil), "icmp", map[string]any{"count": float64(1)}, addr)
+			obs := probe.Run(context.Background(), probe.NewGuard(nil, nil), "icmp", map[string]any{"count": float64(1)}, addr)
 			wantErrors(t, obs, "target address not allowed", "icmp.up", "icmp.loss_pct", "icmp.rtt_ms")
 		})
 	}

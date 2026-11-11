@@ -300,8 +300,10 @@ lists the proxies it trusts (CIDRs or addresses, comma separated).
 ### Targets of synthetic checks
 
 The manager runs the synthetic checks (`icmp`, `tcp`, `http`, `tls`, `dns`)
-itself. It always refuses loopback, link-local, unspecified and multicast
-targets. `PULSIX_PROBE_DENY_CIDRS` (CIDRs or addresses, comma separated)
+itself. It always refuses its own loopback, link-local and cloud metadata
+addresses (the same list notification webhooks refuse, also when an address
+reaches one through NAT64; `PULSIX_NOTIFY_ALLOW_CIDRS` does not apply to
+checks). `PULSIX_PROBE_DENY_CIDRS` (CIDRs or addresses, comma separated)
 adds more. It defaults to the stack's own network (`PULSIX_NETWORK_SUBNET`,
 `10.213.73.0/24`), so a check cannot probe the database or the manager's
 neighbours. Setting it replaces that default: when you override it, include

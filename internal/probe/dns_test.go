@@ -210,7 +210,7 @@ func TestDNSEmptyAddressIsAnErrorOnlyWhenNeeded(t *testing.T) {
 
 func TestDNSRefusedServerIsAnError(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
-	obs := probe.Run(context.Background(), probe.NewGuard(nil), "dns",
+	obs := probe.Run(context.Background(), probe.NewGuard(nil, nil), "dns",
 		dnsParams(server, map[string]any{"name": "example.test", "expect": "192.0.2.7"}), "")
 	wantErrors(t, obs, "target address not allowed", "dns.up", "dns.resolve_ms", "dns.answer_match")
 }
