@@ -201,3 +201,20 @@ func TestHTTPTransportDialsOnlyThroughTheGuard(t *testing.T) {
 		t.Fatalf("a refused dial must be recorded: err %v, refused %v", err, refused.Load())
 	}
 }
+
+// TestOldTLSVersionsAreAccepted: Go's client floor of TLS 1.2 would make
+// old LAN appliances read down, so the tls probe (which verifies the chain
+// itself) and an http probe that does not verify accept TLS 1.0; an http
+// probe that verifies keeps Go's default floor.
+func TestOldTLSVersionsAreAccepted(t *testing.T) {
+	if v := tlsProbeConfig("probe.test").MinVersion; v != tls.VersionTLS10 {
+		t.Fatalf("tls probe MinVersion = %x, want TLS 1.0", v)
+	}
+	var refused atomic.Bool
+	if v := newHTTPTransport(loopbackOnly(), false, nil, &refused).TLSClientConfig.MinVersion; v != tls.VersionTLS10 {
+		t.Fatalf("http probe without verify_tls: MinVersion = %x, want TLS 1.0", v)
+	}
+	if v := newHTTPTransport(loopbackOnly(), true, nil, &refused).TLSClientConfig.MinVersion; v != 0 {
+		t.Fatalf("http probe with verify_tls: MinVersion = %x, want Go's default", v)
+	}
+}

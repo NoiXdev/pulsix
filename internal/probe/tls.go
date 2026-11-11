@@ -48,12 +48,7 @@ func probeTLS(ctx context.Context, g *Guard, params map[string]any, address stri
 		}
 		return down("tls")
 	}
-	conn := tls.Client(raw, &tls.Config{
-		ServerName: serverName,
-		// The chain is verified below, so an invalid one still completes the
-		// handshake and reports its expiry.
-		InsecureSkipVerify: true,
-	})
+	conn := tls.Client(raw, tlsProbeConfig(serverName))
 	defer func() { _ = conn.Close() }()
 
 	start := time.Now()
@@ -82,4 +77,18 @@ func probeTLS(ctx context.Context, g *Guard, params map[string]any, address stri
 		boolValue("tls.cert_valid", verr == nil),
 		value("tls.cert_expiry_days", leaf.NotAfter.Sub(now).Hours()/24),
 	)
+}
+
+// tlsProbeConfig is the tls probe's client configuration. The chain is
+// verified by probeTLS itself, so an invalid one still completes the
+// handshake and reports its expiry. TLS 1.0 and 1.1 are accepted: Go's
+// client floor of TLS 1.2 would read old LAN appliances (printers, UPS
+// cards, switches) as down when the point is to watch their certificate.
+// The probe sends nothing over the connection.
+func tlsProbeConfig(serverName string) *tls.Config {
+	return &tls.Config{
+		ServerName:         serverName,
+		InsecureSkipVerify: true,             //nolint:gosec // verified by probeTLS against the roots and server_name
+		MinVersion:         tls.VersionTLS10, //nolint:gosec // old appliances; see the doc comment
+	}
 }

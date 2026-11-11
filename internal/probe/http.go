@@ -127,14 +127,23 @@ func newHTTPTransport(g *Guard, verify bool, roots *x509.CertPool, refused *atom
 			}
 			return conn, err
 		},
-		TLSClientConfig: &tls.Config{
-			RootCAs: roots,
-			// verify_tls false is the operator's explicit choice.
-			InsecureSkipVerify: !verify,
-		},
+		TLSClientConfig:        httpTLSConfig(verify, roots),
 		DisableKeepAlives:      true,
 		MaxResponseHeaderBytes: httpBodyLimit,
 	}
+}
+
+// httpTLSConfig is the http probe's TLS client configuration. verify_tls
+// false is the operator's explicit choice, typically for an old LAN
+// appliance with a self-signed certificate; such appliances often speak
+// only TLS 1.0 or 1.1, which Go's client floor of TLS 1.2 refuses, so an
+// unverified probe accepts them too. A verifying probe keeps Go's floor.
+func httpTLSConfig(verify bool, roots *x509.CertPool) *tls.Config {
+	c := &tls.Config{RootCAs: roots, InsecureSkipVerify: !verify} //nolint:gosec // verify_tls false is the operator's choice
+	if !verify {
+		c.MinVersion = tls.VersionTLS10
+	}
+	return c
 }
 
 // redirectPolicy follows at most httpMaxRedirects redirects, or none: then
