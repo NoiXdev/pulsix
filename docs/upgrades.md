@@ -145,6 +145,16 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.13, synthetic checks:** the `icmp`, `tcp`, `http`, `tls` and `dns`
+  plugins are new and run on the manager, not on agents, so agents need no
+  update and nothing is seeded into existing organizations. The manager
+  refuses loopback, link-local, unspecified and multicast targets always, and
+  the CIDRs of `PULSIX_PROBE_DENY_CIDRS` on top; the bundled compose file
+  defaults that to the stack's own network (`PULSIX_NETWORK_SUBNET`), so a
+  check cannot probe the database or the manager's neighbours. Setting it
+  replaces that default, so include the subnet when you override it. ICMP uses
+  unprivileged sockets: on Linux `net.ipv4.ping_group_range` must include the
+  manager's group (Docker's default does), otherwise ICMP checks fail.
 - **Interpreter discovery warning:** every run's `ansible.cfg` now sets
   `interpreter_python = auto_silent`. Ansible still discovers each host's
   Python as before, but no longer prints its "using the discovered Python
