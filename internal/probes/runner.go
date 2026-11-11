@@ -218,7 +218,7 @@ func (r *Runner) tickOnce(ctx context.Context) {
 			}
 		})
 	}
-	r.launchDue(ctx, now)
+	r.launchDue(ctx, now, r.slack())
 }
 
 // lost forgets the schedule when the lock is gone: while another manager
@@ -235,10 +235,10 @@ func (r *Runner) lost() {
 	r.refreshed = time.Time{}
 }
 
-// slack is how early a due time may be met: half a tick, so the wake-up
-// jitter of a real ticker never pushes a probe a whole tick late. Two
-// probes of one check are therefore their interval apart to within that
-// jitter.
+// slack is how early a tick round may meet a due time: half a tick, so the
+// wake-up jitter of a real ticker never pushes a probe a whole tick late.
+// Two probes of one check are therefore their interval apart to within that
+// jitter. A launch round after a completion uses no slack (launchFreed).
 func (r *Runner) slack() time.Duration { return r.tickEvery / 2 }
 
 // probeTimeout caps a probe below its check's interval: interval − 1 s.

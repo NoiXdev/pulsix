@@ -13,18 +13,22 @@ import (
 // that now fit start at once instead of on the next tick. It never
 // launches while the lock is not held (the last tick's verdict; the next
 // tick confirms it again) and never refreshes; that stays the tick's job.
+// It starts only strictly due probes (no slack): it runs whenever any
+// probe finishes, so meeting due times early here would start checks
+// early again and again, and a fast probe could restart itself in a loop.
 func (r *Runner) launchFreed(ctx context.Context) {
 	if ctx.Err() != nil || !r.held {
 		return
 	}
-	r.safely(ctx, "launch", func() { r.launchDue(ctx, r.clock()) })
+	r.safely(ctx, "launch", func() { r.launchDue(ctx, r.clock(), 0) })
 }
 
 // launchDue starts every due slot that is not in flight, oldest due first,
 // until MaxConcurrent probes run, keeping each busy organization's fair
-// share of the slots (fairShare). A slot left out stays due.
-func (r *Runner) launchDue(ctx context.Context, now time.Time) {
-	due, share := r.dueSlots(now)
+// share of the slots (fairShare). A slot left out stays due. A slot is due
+// once now is at most slack before its due time.
+func (r *Runner) launchDue(ctx context.Context, now time.Time, slack time.Duration) {
+	due, share := r.dueSlots(now, slack)
 	slices.SortFunc(due, func(a, b slot) int {
 		if c := r.next[a].Compare(r.next[b]); c != 0 {
 			return c
@@ -51,7 +55,7 @@ func (r *Runner) launchDue(ctx context.Context, now time.Time) {
 
 // dueSlots lists the due slots that are not in flight and sizes the fair
 // share from them and from what is in flight.
-func (r *Runner) dueSlots(now time.Time) ([]slot, *fairShare) {
+func (r *Runner) dueSlots(now time.Time, slack time.Duration) ([]slot, *fairShare) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var due []slot
@@ -60,7 +64,7 @@ func (r *Runner) dueSlots(now time.Time) ([]slot, *fairShare) {
 		if _, busy := r.inFlight[s]; busy {
 			continue
 		}
-		if n, ok := r.next[s]; ok && now.Before(n.Add(-r.slack())) {
+		if n, ok := r.next[s]; ok && now.Before(n.Add(-slack)) {
 			continue
 		}
 		due = append(due, s)

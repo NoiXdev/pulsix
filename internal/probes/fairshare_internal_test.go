@@ -273,3 +273,47 @@ func TestLoneOrgUsesEverySlot(t *testing.T) {
 		t.Fatalf("started %d probes, want all %d slots for the only organization with checks", n, DefaultMaxConcurrent)
 	}
 }
+
+// TestCompletionRoundsStartNothingEarly: a launch round after a completion
+// starts only strictly due probes. Only a tick round meets a due time up
+// to half a tick early (for ticker jitter), so frequent completions never
+// probe a check twice within its interval: a 10 s check is probed 6 times
+// in 60 s however often other probes finish.
+func TestCompletionRoundsStartNothingEarly(t *testing.T) {
+	h := newHarness(t, nil)
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", 10*time.Second))
+	for at := time.Duration(0); at < time.Minute; at += 100 * time.Millisecond {
+		h.clock.Set(t0.Add(at))
+		if at%(5*time.Second) == 0 {
+			h.r.tick(context.Background())
+		} else {
+			h.r.launchFreed(context.Background()) // another probe finished
+		}
+		h.r.wg.Wait()
+	}
+	if n := len(h.probe.Keys()); n != 6 {
+		t.Fatalf("a 10 s check was probed %d times in 60 s, want 6", n)
+	}
+}
+
+// TestLongTickNoRelaunchLoop: with a tick longer than twice a check's
+// interval, a fast probe's own completion must not start it again.
+func TestLongTickNoRelaunchLoop(t *testing.T) {
+	h := newHarness(t, func(_ *harness, d *Deps) { d.Tick = 30 * time.Second })
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", 10*time.Second))
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.r.Run(ctx)
+	}()
+	waitFor(t, func() bool { return len(h.probe.Keys()) >= 1 })
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+	if n := len(h.probe.Keys()); n != 1 {
+		t.Fatalf("probed %d times with the clock standing still, want once", n)
+	}
+}

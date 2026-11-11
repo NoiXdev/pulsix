@@ -98,7 +98,9 @@ picker, so nobody expects them to run on the host.
 - **Bounds:**
   - A tick never runs longer than its own deadline.
   - At most 32 probes run at once per manager; a finished probe frees
-    its slot for a due one at once, not on the next tick. The slots are
+    its slot for a due one at once, not on the next tick. Such a round
+    starts only strictly due probes; only a tick may meet a due time up
+    to half a tick early, for ticker jitter. The slots are
     shared between the organizations that have due or running probes:
     each gets an even part of the 32 (at most its own due and running
     probes, at least one slot) and may use more only while the free
