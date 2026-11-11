@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { useState } from 'react';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, Link, RouterProvider } from '@tanstack/react-router';
 import { ConfirmProvider } from './confirm.tsx';
@@ -133,6 +133,79 @@ describe('useConfirm', () => {
     expect(screen.getByLabelText('out')).toHaveTextContent('1:false,2:true');
   });
 
+  it('does not let the close of an answered question settle the next one', async () => {
+    function Twice() {
+      const confirm = useConfirm();
+      const [out, setOut] = useState<string[]>([]);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              void (async () => {
+                const first = await confirm({ message: 'first' });
+                setOut((o) => [...o, `1:${first}`]);
+                // Asked straight from the continuation, before the previous
+                // dialog's asynchronous `close` event has arrived.
+                const second = await confirm({ message: 'second' });
+                setOut((o) => [...o, `2:${second}`]);
+              })();
+            }}
+          >
+            Ask twice
+          </button>
+          <output aria-label="out">{out.join(',')}</output>
+        </>
+      );
+    }
+    render(
+      <ConfirmProvider>
+        <Twice />
+      </ConfirmProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Ask twice' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    // Let any stale close event land.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(screen.getByLabelText('out')).toHaveTextContent('1:true');
+    expect(screen.getByLabelText('out')).not.toHaveTextContent('2:');
+    expect(screen.getByRole('dialog')).toHaveAttribute('open');
+    expect(screen.getByRole('dialog')).toHaveTextContent('second');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(screen.getByLabelText('out')).toHaveTextContent('1:true,2:true');
+  });
+
+  it('gives the focus back to the first opener after a queue of questions', async () => {
+    function Two() {
+      const confirm = useConfirm();
+      return (
+        <>
+          <button type="button" onClick={() => void confirm({ message: 'first' })}>
+            Ask first
+          </button>
+          <button type="button" onClick={() => void confirm({ message: 'second' })}>
+            Ask second
+          </button>
+        </>
+      );
+    }
+    render(
+      <ConfirmProvider>
+        <Two />
+      </ConfirmProvider>,
+    );
+    const opener = screen.getByRole('button', { name: 'Ask first' });
+    await userEvent.click(opener);
+    // Queued from outside, while the first dialog is open: its opener is
+    // whatever has focus then, i.e. the first dialog's Cancel.
+    act(() => screen.getByRole('button', { name: 'Ask second', hidden: true }).click());
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(opener).toHaveFocus();
+  });
+
   it('resolves pending questions with false when the provider unmounts', async () => {
     let result: Promise<boolean> | undefined;
     function Grab() {
@@ -205,6 +278,10 @@ describe('useUnsavedGuard through the confirm dialog', () => {
     await userEvent.click(await screen.findByRole('link', { name: 'Go elsewhere' }));
     expect(await screen.findByRole('dialog', { name: 'Are you sure?' })).toHaveTextContent('Leave this page?');
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.getByRole('dialog', { hidden: true })).not.toHaveAttribute('open'));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
     expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos/new');
     expect(screen.queryByText('the other page')).not.toBeInTheDocument();
   });

@@ -5,6 +5,7 @@ import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { pickOption } from '../../../test/pickOption.ts';
 import { ADMIN, renderRoutes } from '../../../test/renderRoutes.tsx';
 import { SharedCheckFormPage } from './SharedCheckFormPage.tsx';
+import { settled } from '../../../test/settled.ts';
 
 const LIST = '/o/acme/settings/shared/checks';
 
@@ -101,6 +102,7 @@ describe('SharedCheckFormPage — new', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
     expect(dialog).toHaveTextContent('Leave this page?');
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await settled();
     expect(router.state.location.pathname).toBe(`${LIST}/new`);
   });
 });

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ConfirmProvider } from './confirm.tsx';
 import { FormPage } from './form-page.tsx';
+import { settled } from '../test/settled.ts';
 
 type Props = Partial<Parameters<typeof FormPage>[0]>;
 
@@ -96,6 +97,7 @@ describe('FormPage', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
     expect(dialog).toHaveTextContent('Leave this page? Your unsaved changes will be lost.');
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await settled();
     expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos/new');
   });
 

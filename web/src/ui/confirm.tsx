@@ -7,8 +7,8 @@ import { ConfirmContext, type ConfirmFn, type ConfirmOptions } from './confirmCo
 interface Pending {
   options: ConfirmOptions;
   resolve: (answer: boolean) => void;
-  /** What had focus when the question was asked, to give it back. */
-  opener: Element | null;
+  /** Distinguishes the questions, so a dialog's events belong to one. */
+  id: number;
   settled: boolean;
 }
 
@@ -31,19 +31,33 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [current, setCurrent] = useState<Pending | null>(null);
   const currentRef = useRef<Pending | null>(null);
   const queue = useRef<Pending[]>([]);
+  const nextId = useRef(0);
+  /** What had focus when the first of a run of questions was asked. */
+  const openerRef = useRef<Element | null>(null);
+  /** The id of the question the dialog element was last opened for. The
+   * element is keyed by it, so the asynchronous `close` of an answered
+   * question never reaches the element showing the next one. */
+  const [shownId, setShownId] = useState(0);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
   const show = useCallback((next: Pending | null) => {
     currentRef.current = next;
     setCurrent(next);
+    if (next) setShownId(next.id);
   }, []);
 
   const confirm = useCallback<ConfirmFn>(
     (options) =>
       new Promise<boolean>((resolve) => {
-        const pending: Pending = { options, resolve, opener: document.activeElement, settled: false };
-        if (currentRef.current) queue.current.push(pending);
-        else show(pending);
+        const pending: Pending = { options, resolve, id: ++nextId.current, settled: false };
+        if (currentRef.current) {
+          queue.current.push(pending);
+        } else {
+          // Only the first question of a run has a meaningful opener; for a
+          // queued one it would be the previous dialog's Cancel.
+          openerRef.current = document.activeElement;
+          show(pending);
+        }
       }),
     [show],
   );
@@ -55,7 +69,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       pending.resolve(answer);
       const next = queue.current.shift() ?? null;
       show(next);
-      if (!next && pending.opener instanceof HTMLElement && pending.opener.isConnected) pending.opener.focus();
+      if (!next) {
+        const opener = openerRef.current;
+        openerRef.current = null;
+        if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      }
     },
     [show],
   );
@@ -88,9 +106,11 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     <ConfirmContext.Provider value={value}>
       {children}
       <Dialog
+        key={shownId}
         open={current !== null}
         onClose={() => {
-          if (currentRef.current) settle(currentRef.current, false);
+          // Only the question this render shows; a stale close is a no-op.
+          if (current) settle(current, false);
         }}
         title={options?.title ?? t.ui.confirm.title}
       >

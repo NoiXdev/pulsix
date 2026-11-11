@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
 import { pickOption } from '../../../test/pickOption.ts';
 import { SYNCED_AT, fields, preview, renderPage, routes, source, status, template, variables } from './pageTestFixtures.tsx';
+import { settled } from '../../../test/settled.ts';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -354,6 +355,7 @@ describe('TemplateVariablesPage — fields and values', () => {
     await user.click(screen.getByRole('link', { name: 'Job templates' }));
     const dialog = await screen.findByRole('dialog', { name: 'Are you sure?' });
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await settled();
     expect(router.state.location.pathname).toBe('/o/acme/templates/t1/variables');
   });
 
