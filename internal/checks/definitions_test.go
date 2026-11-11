@@ -740,6 +740,51 @@ func TestSeedForOrgPropagatesAFailure(t *testing.T) {
 	}
 }
 
+// TestSeedForOrgLeavesAKeyASharedProjectionHolds (backlog 3.7): network
+// and uptime were not reserved for shared definitions before, so an
+// installation can carry a shared definition under either key. Its
+// projection is written into a new organization before the seed set
+// (internal/app's hook order), and the seed then leaves that key to it —
+// at whatever scope the projection is bound — and still writes the rest.
+func TestSeedForOrgLeavesAKeyASharedProjectionHolds(t *testing.T) {
+	store := newFakeStore()
+	svc := checks.NewService(store)
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for _, p := range []checks.Definition{
+		{ID: uuid.Must(uuid.NewV7()), OrgID: org, Key: "network", Plugin: "cpu", Interval: time.Minute,
+			Enabled: true, Origin: "shared", BindingKind: checks.BindingOrg},
+		// Rebound to a host: the org-scope slot is free, and still the
+		// seed must not take it (migration 00063 rebinds the projection
+		// there when the host goes).
+		{ID: uuid.Must(uuid.NewV7()), OrgID: org, Key: "uptime", Plugin: "cpu", Interval: time.Minute,
+			Enabled: true, Origin: "shared", BindingKind: checks.BindingHost, HostID: &host},
+	} {
+		store.defsByID[p.ID] = p
+	}
+
+	if err := svc.SeedForOrg(ctx, org); err != nil {
+		t.Fatalf("SeedForOrg = %v, want the shared keys skipped", err)
+	}
+	defs, err := svc.ListDefinitions(ctx, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byKey := map[string][]string{}
+	for _, d := range defs {
+		byKey[d.Key] = append(byKey[d.Key], d.Origin)
+	}
+	for _, key := range []string{"cpu", "memory", "disk", "service"} {
+		if len(byKey[key]) != 1 || byKey[key][0] != "seed" {
+			t.Errorf("%s = %v, want one seed row", key, byKey[key])
+		}
+	}
+	for _, key := range []string{"network", "uptime"} {
+		if len(byKey[key]) != 1 || byKey[key][0] != "shared" {
+			t.Errorf("%s = %v, want only the shared projection", key, byKey[key])
+		}
+	}
+}
+
 func TestGetDefinitionIsOrgScoped(t *testing.T) {
 	store := newFakeStore()
 	svc := checks.NewService(store)

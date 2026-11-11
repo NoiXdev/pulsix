@@ -33,6 +33,15 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"disk.free_bytes":      {CheckKey: "disk", Kind: rules.MetricNumeric},
 		"disk.inodes_used_pct": {CheckKey: "disk", Kind: rules.MetricNumeric},
 		"service.state":        {CheckKey: "service", Kind: rules.MetricDiscrete},
+		// Backlog 3.7: the network and uptime plugins
+		// (internal/agent/checks/network.go, uptime.go).
+		"net.rx_bytes_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
+		"net.tx_bytes_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
+		"net.rx_errors_per_s": {CheckKey: "network", Kind: rules.MetricNumeric},
+		"net.tx_errors_per_s": {CheckKey: "network", Kind: rules.MetricNumeric},
+		"net.rx_drops_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
+		"net.tx_drops_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
+		"uptime.seconds":      {CheckKey: "uptime", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -66,6 +75,8 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"swap":    "memory",
 		"disk":    "disk",
 		"service": "service",
+		"net":     "network",
+		"uptime":  "uptime",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")
@@ -123,6 +134,9 @@ func TestTypeCheckValid(t *testing.T) {
 		{"not of a boolean", not(compare(">", number(1), number(0)))},
 		{"window at exactly MinWindow", compare(">", window("cpu.used_pct", "avg", 60), number(0))},
 		{"window at exactly MaxWindow", compare(">", window("cpu.used_pct", "avg", 86400), number(0))},
+		{"compare of a network rate", compare(">", metric("net.rx_errors_per_s"), number(0))},
+		{"window over a network rate", compare(">", window("net.tx_bytes_per_s", "avg", 600), number(1e6))},
+		{"compare of uptime", compare("<", metric("uptime.seconds"), number(600))},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

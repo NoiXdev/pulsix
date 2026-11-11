@@ -638,11 +638,25 @@ func (s *Service) CreateCheckDefinition(ctx context.Context, in CheckDefinitionI
 // UpdateCheckDefinition replaces def's editable fields and propagates the
 // shared ones to every existing projection (spec decision 2), atomically.
 // The same checks as CreateCheckDefinition apply to a rename; the collision
-// check excludes id's own current projections.
+// check excludes id's own current projections. A reserved key is refused
+// only when the update would move the definition ONTO it: network and
+// uptime became reserved (backlog 3.7) after a definition could already be
+// called that, and such a definition stays editable under its own key —
+// the seeds leave a key a shared definition holds alone
+// (checks.Service.SeedForOrg, migration 00084).
 func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in CheckDefinitionInput) (CheckDefinition, error) {
-	key, err := validateCheckDefinitionInput(in)
+	key, err := validateCheckDefinitionShape(in)
 	if err != nil {
 		return CheckDefinition{}, err
+	}
+	if reservedSeedKeys[key] {
+		current, err := s.store.GetCheckDefinition(ctx, id)
+		if err != nil {
+			return CheckDefinition{}, err
+		}
+		if current.Key != key {
+			return CheckDefinition{}, reservedKeyError(key)
+		}
 	}
 	existing, err := s.store.ExistingCheckDefinitionNames(ctx, id)
 	if err != nil {
@@ -715,7 +729,11 @@ func (s *Service) ListCheckDefs(ctx context.Context) ([]CheckDefinition, error) 
 // organization that nonetheless exists, with its owner already a member.
 // Refusing these six keys unconditionally, independent of whether any
 // collision can currently be demonstrated, is what closes that window
-// rather than narrowing it.
+// rather than narrowing it. network and uptime were added in backlog 3.7,
+// after a definition could already use them: such a legacy definition
+// keeps its key (UpdateCheckDefinition refuses only a rename onto a
+// reserved key), and the seeds leave that key to it instead
+// (checks.Service.SeedForOrg, migration 00084).
 var reservedSeedKeys = map[string]bool{
 	checks.PluginCPU: true, checks.PluginMemory: true, checks.PluginDisk: true, checks.PluginService: true,
 	checks.PluginNetwork: true, checks.PluginUptime: true,
@@ -753,16 +771,31 @@ const checkDefinitionUnknownScopeDescription = "a scope that organization has co
 // var's own doc comment for why this cannot be left to the ordinary
 // collision check alone.
 func validateCheckDefinitionInput(in CheckDefinitionInput) (string, error) {
+	key, err := validateCheckDefinitionShape(in)
+	if err != nil {
+		return "", err
+	}
+	if reservedSeedKeys[key] {
+		return "", reservedKeyError(key)
+	}
+	return key, nil
+}
+
+// validateCheckDefinitionShape is validateCheckDefinitionInput without the
+// reserved-key refusal, for UpdateCheckDefinition, which refuses a
+// reserved key only on a rename.
+func validateCheckDefinitionShape(in CheckDefinitionInput) (string, error) {
 	key, err := checks.ValidateDefinitionShape(in.Plugin, in.Key, in.Params, in.Interval)
 	if err != nil {
 		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	if reservedSeedKeys[key] {
-		return "", fmt.Errorf(
-			"%w: key %q is reserved for the \"Linux base\" set every organization already has; choose a different key",
-			ErrInvalidInput, key)
-	}
 	return key, nil
+}
+
+func reservedKeyError(key string) error {
+	return fmt.Errorf(
+		"%w: key %q is reserved for the \"Linux base\" set every organization already has; choose a different key",
+		ErrInvalidInput, key)
 }
 
 // checkParamsOrEmpty normalizes a nil params map to an empty one —

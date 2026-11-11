@@ -121,7 +121,8 @@ func plausible(at, now time.Time) bool {
 //     CheckConfig, and normalizeDefinition's keyPattern caps that at 63
 //     bytes. 64 is that bound with a byte of slack.
 //
-//   - MaxItemLen: an item is a disk mount point or a systemd unit name.
+//   - MaxItemLen: an item is a disk mount point, a network interface
+//     (at most 15 bytes on Linux) or a systemd unit name.
 //     Unit names are capped at 256 bytes by systemd and a path component
 //     at 255 by the kernel; 512 covers the deep bind-mount paths a
 //     container host really does carry, and is the same figure

@@ -308,9 +308,10 @@ func (s *Service) createDefinition(ctx context.Context, orgID uuid.UUID, in Defi
 // and disk org-wide alongside disk on one host with different parameters is
 // a real configuration — so widening this to a general cross-scope ban
 // would change behaviour for ordinary checks that have nothing to do with
-// shared resources. Seeded rows skip the check: SeedForOrg writes only the
-// reserved keys, which validateCheckDefinitionInput already refuses to a
-// shared definition, so the two sets cannot meet.
+// shared resources. Seeded rows skip this refusal: SeedForOrg instead
+// leaves out any seed key a shared projection holds (network and uptime
+// joined the seed set after a shared definition could already use either
+// key; internal/shared refuses every seed key to a new one).
 func (s *Service) refuseKeyHeldBySharedProjection(ctx context.Context, orgID uuid.UUID, key string) error {
 	defs, err := s.store.ListDefinitions(ctx, orgID)
 	if err != nil {

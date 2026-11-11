@@ -495,11 +495,10 @@ func New(t *testing.T, opts ...Option) *Server {
 	// (setup.Service.Complete) — exactly like production wiring
 	// (internal/app/app.go) chains all six hooks the same way, rules after
 	// checks so its rules can always assume the checks their metrics
-	// belong to already exist, and shared's three last (repositories, then
-	// templates, then check definitions — app.go's own ordering note on
-	// why check definitions run last) since propagation order among the
-	// three never depends on anything this fixture does differently from
-	// production. A whole-branch review found this chain missing the sixth
+	// belong to already exist, shared check definitions before the check
+	// seed (app.go's own ordering note: the seed leaves a key a shared
+	// projection holds alone), and shared repositories then templates
+	// last. A whole-branch review found this chain missing the sixth
 	// hook (ProjectAllCheckDefinitionsInto): the mismatch cost nothing
 	// visible because every check-definition test that needed a projection
 	// called the service directly, but it meant deleting app.go's own
@@ -507,8 +506,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	// TestOrgCreationProjectsAnExistingSharedCheckDefinition
 	// (shared_check_handlers_test.go), added to close exactly that gap.
 	orgCreated := app.ChainOrgCreatedHooks(
-		hostsSvc.EnsureDefaultZone, s.Checks.SeedForOrg, s.Rules.SeedForOrg,
-		s.Shared.ProjectAllInto, s.Shared.ProjectAllTemplatesInto, s.Shared.ProjectAllCheckDefinitionsInto,
+		hostsSvc.EnsureDefaultZone, s.Shared.ProjectAllCheckDefinitionsInto, s.Checks.SeedForOrg, s.Rules.SeedForOrg,
+		s.Shared.ProjectAllInto, s.Shared.ProjectAllTemplatesInto,
 	)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)

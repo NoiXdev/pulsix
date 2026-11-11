@@ -353,21 +353,14 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// required for correctness (InsertProjectedTemplate's own query LEFT
 	// JOINs and tolerates no match at all, leaving playbook_id NULL), but
 	// the natural order all the same, and one this hook can give for free.
-	// sharedSvc.ProjectAllCheckDefinitionsInto (Task 7, check definitions)
-	// runs last, after checksSvc.SeedForOrg has already written the
-	// organization's "Linux base" seed set: a shared check definition using
-	// one of that set's own reserved keys (cpu, memory, disk, service,
-	// network, uptime) can never be CREATED in the first place —
-	// Service.CreateCheckDefinition refuses every reserved key outright
-	// (shared.reservedSeedKeys) — so this ordering never actually needs to
-	// race against that seed set for a definition created since; it is
-	// simply the correct order instead of an arbitrary one, since
-	// checksSvc.SeedForOrg could in principle be wrong about what "already
-	// exists" means for a NEW organization's check definitions. (network
-	// and uptime joined the set in backlog 3.7: a shared definition created
-	// under either key before that still exists, and a new organization's
-	// projection of it collides with the seed until an instance admin
-	// renames it.)
+	// sharedSvc.ProjectAllCheckDefinitionsInto (check definitions) runs
+	// BEFORE checksSvc.SeedForOrg (backlog 3.7): network and uptime joined
+	// the seed set after an installation could already own a definition
+	// under either key, and SeedForOrg leaves a seed key to a shared
+	// projection it finds in the organization — which it can only find if
+	// the projection is written first. Every other shared check key is
+	// refused the seed keys outright (shared.reservedSeedKeys), so the two
+	// never meet otherwise.
 	// See tenancy.OrgCreatedHook's own doc comment for why this runs as a
 	// sequential step after each service's own writes commit, rather than
 	// inside either one's transaction — sharedSvc.ProjectAllInto's own doc
@@ -381,8 +374,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// for shared.Service.UpdateTemplate's own UpdateTemplateAndPropagate and
 	// shared.Service.UpdateCheckDefinition's own UpdateCheckDefinitionAndPropagate.
 	orgCreated := ChainOrgCreatedHooks(
-		hostsSvc.EnsureDefaultZone, checksSvc.SeedForOrg, rulesSvc.SeedForOrg,
-		sharedSvc.ProjectAllInto, sharedSvc.ProjectAllTemplatesInto, sharedSvc.ProjectAllCheckDefinitionsInto,
+		hostsSvc.EnsureDefaultZone, sharedSvc.ProjectAllCheckDefinitionsInto, checksSvc.SeedForOrg, rulesSvc.SeedForOrg,
+		sharedSvc.ProjectAllInto, sharedSvc.ProjectAllTemplatesInto,
 	)
 	tenancySvc.SetOrgCreatedHook(orgCreated)
 	setupSvc.SetOrgCreatedHook(orgCreated)

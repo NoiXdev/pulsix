@@ -151,3 +151,69 @@ func TestNetworkUptimeSeedMigration(t *testing.T) {
 func countRows(ctx context.Context, q *sql.DB, n *int, query string) error {
 	return q.QueryRowContext(ctx, query).Scan(n)
 }
+
+// TestNetworkUptimeSeedMigrationLeavesASharedKey (backlog 3.7): before
+// 00084, network and uptime were not reserved for installation-owned
+// definitions, so a shared definition can hold either key. Its projection
+// may sit at any scope: here a customer rebound it to a host, leaving the
+// org-wide slot free. The seed must not take that slot, in any
+// organization — migration 00063's trigger rebinds the projection there
+// when the host is deleted, and a seed in the slot would fail that delete
+// with 23505. Every other key is still seeded.
+func TestNetworkUptimeSeedMigrationLeavesASharedKey(t *testing.T) {
+	ctx := context.Background()
+	d, err := db.Open(ctx, testdb.FreshDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.MigrateTo(ctx, 83); err != nil {
+		t.Fatal(err)
+	}
+
+	rebound, untouched := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	zone, host, def := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`INSERT INTO organizations (id, slug, name) VALUES ($1, 'rebound', 'rebound'), ($2, 'untouched', 'untouched')`, []any{rebound, untouched}},
+		{`INSERT INTO zones (id, org_id, slug, name) VALUES ($1, $2, 'z', 'z')`, []any{zone, rebound}},
+		{`INSERT INTO hosts (id, org_id, zone_id, name) VALUES ($1, $2, $3, 'h')`, []any{host, rebound, zone}},
+		{`INSERT INTO shared_check_definitions (id, key, plugin, params, interval_seconds) VALUES ($1, 'network', 'cpu', '{}', 30)`, []any{def}},
+		{`INSERT INTO check_definitions (id, org_id, key, plugin, params, interval_seconds, origin, binding_kind, host_id, shared_definition_id)
+		  VALUES (gen_random_uuid(), $1, 'network', 'cpu', '{}', 30, 'shared', 'host', $2, $3)`, []any{rebound, host, def}},
+		{`INSERT INTO check_definitions (id, org_id, key, plugin, params, interval_seconds, origin, binding_kind, shared_definition_id)
+		  VALUES (gen_random_uuid(), $1, 'network', 'cpu', '{}', 30, 'shared', 'org', $2)`, []any{untouched, def}},
+	} {
+		if _, err := d.Pool().Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("%.40s: %v", stmt.sql, err)
+		}
+	}
+
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, org := range []uuid.UUID{rebound, untouched} {
+		var seeded int
+		if err := d.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM check_definitions WHERE org_id = $1 AND key = 'network' AND origin = 'seed'`, org).Scan(&seeded); err != nil {
+			t.Fatal(err)
+		}
+		if seeded != 0 {
+			t.Errorf("org %s has %d network seed rows, want none: a shared definition holds the key", org, seeded)
+		}
+		if got := orgScopeRows(ctx, t, d, org)["uptime"]; got.origin != "seed" {
+			t.Errorf("org %s uptime = %+v, want the seed (no shared definition holds it)", org, got)
+		}
+	}
+
+	// The customer deletes the host: the projection returns to org scope.
+	if _, err := d.Pool().Exec(ctx, `DELETE FROM hosts WHERE id = $1`, host); err != nil {
+		t.Fatalf("deleting the host the shared projection was bound to: %v", err)
+	}
+	if got := orgScopeRows(ctx, t, d, rebound)["network"]; got.origin != "shared" {
+		t.Fatalf("rebound network after the host delete = %+v, want the shared projection back at org scope", got)
+	}
+}

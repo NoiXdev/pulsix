@@ -30,9 +30,9 @@ type CatalogueEntry struct {
 //
 // OBLIGATION: a new plugin metric is added here in the same change that
 // adds the plugin, or no rule can ever name it. The entries below are
-// exactly what internal/agent/checks's four plugins emit today
-// (cpu.go, memory.go, disk.go, service.go) — cross-check any edit here
-// against those files, not the other way around.
+// exactly what internal/agent/checks's six plugins emit today
+// (cpu.go, memory.go, disk.go, service.go, network.go, uptime.go) —
+// cross-check any edit here against those files, not the other way around.
 func Catalogue() map[string]CatalogueEntry {
 	return map[string]CatalogueEntry{
 		"cpu.used_pct":         {CheckKey: "cpu", Kind: MetricNumeric},
@@ -46,6 +46,13 @@ func Catalogue() map[string]CatalogueEntry {
 		"disk.free_bytes":      {CheckKey: "disk", Kind: MetricNumeric},
 		"disk.inodes_used_pct": {CheckKey: "disk", Kind: MetricNumeric},
 		"service.state":        {CheckKey: "service", Kind: MetricDiscrete},
+		"net.rx_bytes_per_s":   {CheckKey: "network", Kind: MetricNumeric},
+		"net.tx_bytes_per_s":   {CheckKey: "network", Kind: MetricNumeric},
+		"net.rx_errors_per_s":  {CheckKey: "network", Kind: MetricNumeric},
+		"net.tx_errors_per_s":  {CheckKey: "network", Kind: MetricNumeric},
+		"net.rx_drops_per_s":   {CheckKey: "network", Kind: MetricNumeric},
+		"net.tx_drops_per_s":   {CheckKey: "network", Kind: MetricNumeric},
+		"uptime.seconds":       {CheckKey: "uptime", Kind: MetricNumeric},
 	}
 }
 

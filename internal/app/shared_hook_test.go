@@ -236,3 +236,73 @@ func projectedColumns(t *testing.T, d *db.DB, orgID, defID uuid.UUID) (url, bran
 	}
 	return
 }
+
+// TestBuildLeavesALegacySharedSeedKeyToItsProjection (backlog 3.7):
+// network and uptime were not reserved for shared definitions before they
+// joined the seed set, so an installation can already hold a shared
+// definition under either key. A new organization must still be created
+// in full: the projection lands first, the seed set leaves its key alone,
+// and the rule seed still runs after the check seed.
+func TestBuildLeavesALegacySharedSeedKeyToItsProjection(t *testing.T) {
+	ctx := context.Background()
+	cfg := testConfig(t)
+	a, err := Build(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	// Written directly: the service refuses the key today, which is the
+	// point — this definition predates that refusal.
+	legacy := uuid.Must(uuid.NewV7())
+	if _, err := a.db.Pool().Exec(ctx,
+		`INSERT INTO shared_check_definitions (id, key, plugin, params, interval_seconds) VALUES ($1, 'network', 'cpu', '{}', 30)`,
+		legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"admin_email":"legacy-admin@example.test","admin_password":"correct horse battery","admin_name":"Root","org_slug":"legacy-org","org_name":"Legacy Org","setup_token":"` + setup.Token(cfg.MasterKey) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/setup/complete", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	a.Handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("complete setup with a legacy shared network definition: status %d, body %s", rec.Code, rec.Body.String())
+	}
+
+	org, err := gen.New(a.db.Pool()).GetOrganizationBySlug(ctx, "legacy-org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := a.db.Pool().Query(ctx, `SELECT key, origin FROM check_definitions WHERE org_id = $1`, org.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string][]string{}
+	for rows.Next() {
+		var key, origin string
+		if err := rows.Scan(&key, &origin); err != nil {
+			t.Fatal(err)
+		}
+		got[key] = append(got[key], origin)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if o := got["network"]; len(o) != 1 || o[0] != "shared" {
+		t.Errorf("network = %v, want only the shared projection", o)
+	}
+	for _, key := range []string{"cpu", "memory", "disk", "service", "uptime"} {
+		if o := got[key]; len(o) != 1 || o[0] != "seed" {
+			t.Errorf("%s = %v, want one seed row", key, o)
+		}
+	}
+	var rulesSeeded int
+	if err := a.db.Pool().QueryRow(ctx, `SELECT count(*) FROM check_rules WHERE org_id = $1 AND origin = 'seed'`, org.ID).Scan(&rulesSeeded); err != nil {
+		t.Fatal(err)
+	}
+	if rulesSeeded == 0 {
+		t.Error("the rule seed set is missing; it must still run after the check seed")
+	}
+}

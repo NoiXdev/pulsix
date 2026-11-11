@@ -50,16 +50,40 @@ func SeedDefinitions() []DefinitionInput {
 // combined with it (internal/app cannot install two separate hooks on the
 // same tenancy.Service, so it composes both into one).
 //
+// One exception, and only one: a seed key a shared projection in this
+// organization already holds — at any scope — is left to that projection.
+// network and uptime joined the seed set (backlog 3.7) after an
+// installation could already own a definition under either key, and
+// internal/app runs the shared projection hook before this one so the
+// projection is there to be found. Taking the org-wide slot from a
+// projection rebound to a group or host would also break migration 00063's
+// trigger, which moves it back there when that group or host is deleted
+// (refuseKeyHeldBySharedProjection's own doc comment). Migration 00084
+// applies the same rule to organizations that already existed.
+//
 // Every SeedDefinitions entry binds to the organization under a distinct
 // key, so nothing here can collide with anything else this same call
-// writes; a key already taken by an unrelated row (in the pathological
-// case of this hook somehow running twice for the same organization) is
+// writes; a key already taken by any other row (in the pathological case
+// of this hook somehow running twice for the same organization) is
 // reported rather than silently skipped — CreateOrg propagates the error,
 // the same as any other step's failure, and the organization is left
 // without a full seed set for an operator or a retry to notice and repair,
 // rather than this call quietly leaving stale seed rows in place.
 func (s *Service) SeedForOrg(ctx context.Context, orgID uuid.UUID) error {
+	existing, err := s.store.ListDefinitions(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("list definitions before seeding: %w", err)
+	}
+	heldByShared := map[string]bool{}
+	for _, d := range existing {
+		if d.Origin == originShared {
+			heldByShared[d.Key] = true
+		}
+	}
 	for _, in := range SeedDefinitions() {
+		if heldByShared[in.Key] {
+			continue
+		}
 		if _, err := s.createDefinition(ctx, orgID, in, originSeed); err != nil {
 			return fmt.Errorf("seed check definition %q: %w", in.Key, err)
 		}

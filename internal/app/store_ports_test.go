@@ -235,6 +235,13 @@ func TestItemCheckKeys(t *testing.T) {
 	if len(keys) != len(distinct) {
 		t.Fatalf("key set has %d keys, catalogue has %d distinct", len(keys), len(distinct))
 	}
+	// Backlog 3.7: the network check reports per-interface items, so
+	// item decisions must accept its key; uptime's key comes along too.
+	for _, key := range []string{"network", "uptime"} {
+		if _, ok := keys[key]; !ok {
+			t.Errorf("check key %q missing from the set", key)
+		}
+	}
 }
 
 // TestVaultIdentityConversions pins the two conversion directions between

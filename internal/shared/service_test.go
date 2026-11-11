@@ -1105,6 +1105,32 @@ func TestUpdateCheckDefinitionRefusesAReservedSeedKey(t *testing.T) {
 	}
 }
 
+// TestUpdateCheckDefinitionKeepsALegacyReservedKeyEditable (backlog 3.7):
+// network and uptime became reserved after a definition could already be
+// called that. Such a definition stays editable under its own key — the
+// reservation stops a definition from TAKING the key, not one that already
+// had it — while renaming another definition onto it is still refused.
+func TestUpdateCheckDefinitionKeepsALegacyReservedKeyEditable(t *testing.T) {
+	store := newFakeStore()
+	legacy, other := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	store.checkDefs[legacy] = shared.CheckDefinition{ID: legacy, Key: "network", Plugin: "cpu", Interval: 60 * time.Second}
+	store.checkDefs[other] = shared.CheckDefinition{ID: other, Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second}
+	svc := shared.NewService(store)
+
+	got, err := svc.UpdateCheckDefinition(ctx, legacy, shared.CheckDefinitionInput{Key: "network", Plugin: "cpu", Interval: 120 * time.Second})
+	if err != nil {
+		t.Fatalf("UpdateCheckDefinition() keeping its own legacy key = %v, want nil", err)
+	}
+	if got.Key != "network" || got.Interval != 120*time.Second {
+		t.Fatalf("updated = %+v, want key network every 2m", got)
+	}
+
+	_, err = svc.UpdateCheckDefinition(ctx, other, shared.CheckDefinitionInput{Key: "network", Plugin: "disk", Interval: 300 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("UpdateCheckDefinition() renaming onto a reserved key = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestCreateCheckDefinitionRefusesACollidingKey(t *testing.T) {
 	store := newFakeStore()
 	orgA := uuid.Must(uuid.NewV7())
