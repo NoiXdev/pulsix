@@ -136,6 +136,10 @@ export function DatePicker({
         tabIndex={-1}
         aria-hidden
         required={required}
+        // Disabled like the field it stands for: a disabled control is
+        // barred from constraint validation, so a greyed-out field never
+        // blocks the surrounding form's submit.
+        disabled={disabled}
         value={value}
         onChange={() => {}}
         className="pointer-events-none absolute inset-x-0 bottom-0 h-px opacity-0"

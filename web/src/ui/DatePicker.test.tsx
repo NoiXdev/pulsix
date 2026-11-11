@@ -245,4 +245,19 @@ describe('DatePicker', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
+
+  // Final review #2: a disabled field is barred from validation, so a
+  // greyed-out picker never blocks the surrounding form's submit.
+  it('does not block a form submit while disabled, whatever its validity', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+    render(
+      <form onSubmit={onSubmit}>
+        <DatePicker aria-label="Start" value="" onChange={() => {}} required disabled invalidMessage="Pick a day" />
+        <button type="submit">Save</button>
+      </form>,
+    );
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
 });

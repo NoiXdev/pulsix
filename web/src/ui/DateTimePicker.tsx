@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useT } from '../i18n/useT.ts';
 import { DatePicker } from './DatePicker.tsx';
 import { TimeField } from './TimeField.tsx';
@@ -8,7 +8,8 @@ export interface DateTimePickerProps {
   /** 'YYYY-MM-DDTHH:mm', local, or '' for nothing chosen. */
   value: string;
   onChange: (value: string) => void;
-  /** Lands on the date's trigger button, so a `<Label htmlFor>` names it. */
+  /** Lands on the date's trigger button, so a `<Label htmlFor>` names it.
+   *  The time box is then named after that label too ("From Time"). */
   id?: string;
   'aria-label'?: string;
   required?: boolean;
@@ -29,13 +30,21 @@ export interface DateTimePickerProps {
  * while its time is cleared and retyped, lives here until both halves are
  * there again, while the value meanwhile reads ''. A day picked with no time
  * yet starts at 00:00. While exactly one half is filled, the other is
- * marked invalid and the form cannot be submitted, as with the native input.
+ * marked invalid and the form cannot be submitted, as with the native input
+ * — except while disabled: a greyed-out field never blocks a submit.
+ * Clearing the day clears the time with it, so an optional field is left
+ * empty rather than half-filled.
+ *
+ * The time box carries the field's name as well: from `aria-label`
+ * ("Starts, time"), or, with an `id` and no `aria-label`, from the
+ * `<Label htmlFor={id}>` naming the day plus a hidden "Time" ("From Time").
  */
 export function DateTimePicker({
   value, onChange, id, required, disabled, min, max, placeholder,
   'aria-label': ariaLabel,
 }: DateTimePickerProps) {
   const t = useT();
+  const timeLabelId = useId();
   const [parts, setParts] = useState(() => splitDateTime(value));
 
   // A value changed from outside replaces both halves — unless it is the
@@ -49,10 +58,17 @@ export function DateTimePicker({
 
   // Half a date-time reads '' to the caller, but it is not an empty field:
   // native datetime-local refuses it as badInput even when optional. Mark
-  // the missing half, which also blocks a surrounding form's submit.
-  const incomplete = t.ui.picker.incomplete;
+  // the missing half, which also blocks a surrounding form's submit —
+  // unless the field is disabled, which takes it out of the form's say.
+  const incomplete = disabled ? undefined : t.ui.picker.incomplete;
   const dateMissing = !parts.date && parts.time ? incomplete : undefined;
   const timeMissing = parts.date && !parts.time ? incomplete : undefined;
+
+  const timeName = ariaLabel
+    ? { 'aria-label': t.ui.picker.timeOf(ariaLabel) }
+    : id
+      ? { 'aria-labelledby': `${id} ${timeLabelId}` }
+      : { 'aria-label': t.ui.picker.time };
 
   const update = (next: DateTimeParts) => {
     setParts(next);
@@ -67,7 +83,7 @@ export function DateTimePicker({
           id={id}
           aria-label={ariaLabel}
           value={parts.date}
-          onChange={(date) => update({ date, time: date && !parts.time ? '00:00' : parts.time })}
+          onChange={(date) => update(date ? { date, time: parts.time || '00:00' } : { date: '', time: '' })}
           required={required}
           disabled={disabled}
           min={min ? splitDateTime(min).date : undefined}
@@ -77,8 +93,13 @@ export function DateTimePicker({
         />
       </div>
       <div className="w-20 shrink-0">
+        {!ariaLabel && id && (
+          <span id={timeLabelId} className="sr-only">
+            {t.ui.picker.time}
+          </span>
+        )}
         <TimeField
-          aria-label={ariaLabel ? t.ui.picker.timeOf(ariaLabel) : t.ui.picker.time}
+          {...timeName}
           value={parts.time}
           onChange={(time) => update({ ...parts, time })}
           required={required}

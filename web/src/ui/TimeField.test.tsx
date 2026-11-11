@@ -35,6 +35,13 @@ describe('TimeField', () => {
     expect(input).not.toHaveAttribute('aria-invalid');
   });
 
+  // Final review #8: a decimal keypad, since iOS's numeric one has no
+  // separator key and '9.30' (above) is a time this field reads.
+  it('asks touch keyboards for digits with a separator', () => {
+    const { input } = renderField();
+    expect(input).toHaveAttribute('inputmode', 'decimal');
+  });
+
   it('never emits a partial entry while typing', async () => {
     const user = userEvent.setup();
     const { onChange, input } = renderField();

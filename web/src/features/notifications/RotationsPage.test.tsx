@@ -117,4 +117,29 @@ describe('RotationsPage', () => {
     await user.click(screen.getByRole('button', { name: 'Create channel' }));
     expect(await screen.findByLabelText('Channel')).toHaveValue('ops-pager');
   });
+
+  // Final review #10: the stand-in row has no <form> to block an empty
+  // field, and fromLocalInput('') throws, so Add waits for both instants.
+  it('keeps Add disabled while either instant is cleared', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/auth/me': me,
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/oncall-rotations': { rotations: [rotation] },
+      'GET /api/v1/orgs/acme/notification-channels': { channels: [channel], mail_available: true },
+      'GET /api/v1/orgs/acme/oncall-rotations/rot1/shifts': { shifts: [] },
+      'GET /api/v1/orgs/acme/oncall-rotations/rot1/exceptions': { exceptions: [] },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Weekly')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add stand-in' }));
+    const add = screen.getByRole('button', { name: 'Add' });
+    expect(add).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Until' }));
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(screen.getByRole('textbox', { name: 'Until Time' })).toHaveValue('');
+    expect(add).toBeDisabled();
+  });
 });

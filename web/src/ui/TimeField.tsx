@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { cn } from '../lib/utils.ts';
 import { useT } from '../i18n/useT.ts';
+import { Input } from './input.tsx';
 import { isTimeShape, parseTime } from './pickerValue.ts';
 
 export interface TimeFieldProps {
@@ -10,6 +11,7 @@ export interface TimeFieldProps {
   /** Lands on the input, so a `<Label htmlFor>` names it. */
   id?: string;
   'aria-label'?: string;
+  'aria-labelledby'?: string;
   required?: boolean;
   disabled?: boolean;
   /** Marks the field invalid with this message, whatever is in it — for a
@@ -32,7 +34,7 @@ export interface TimeFieldProps {
  */
 export function TimeField({
   value, onChange, id, required, disabled, invalidMessage,
-  'aria-label': ariaLabel,
+  'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy,
 }: TimeFieldProps) {
   const t = useT();
   const ref = useRef<HTMLInputElement>(null);
@@ -79,14 +81,17 @@ export function TimeField({
   };
 
   return (
-    <input
+    <Input
       ref={ref}
       type="text"
-      inputMode="numeric"
+      // Decimal, not numeric: iOS's numeric pad has no separator key, and
+      // '9.30' is a time this field reads.
+      inputMode="decimal"
       autoComplete="off"
       maxLength={5}
       id={id}
       aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
       aria-invalid={invalid || invalidMessage !== undefined || undefined}
       required={required}
       disabled={disabled}
@@ -112,10 +117,7 @@ export function TimeField({
       onKeyDown={(e) => {
         if (e.key === 'Enter') commit();
       }}
-      className={cn(
-        'flex h-8 w-full rounded-md border border-border bg-background px-2.5 text-xs text-foreground tabular-nums placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',
-        (invalid || invalidMessage !== undefined) && 'border-destructive',
-      )}
+      className={cn('tabular-nums', (invalid || invalidMessage !== undefined) && 'border-destructive')}
     />
   );
 }

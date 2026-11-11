@@ -163,6 +163,50 @@ describe('DateTimePicker', () => {
       expect(onSubmit).toHaveBeenCalledTimes(1);
     });
 
+    // Final review #3: Clear on an optional field empties it, rather than
+    // leaving the time behind as a half-filled, invalid pair.
+    it('clears the time with the day, leaving an empty valid field', async () => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+      render(<Harness initial="2026-11-11T14:30" onSubmit={onSubmit} />);
+      const trigger = screen.getByRole('button', { name: 'Starts' });
+      const time = screen.getByRole('textbox', { name: 'Starts, time' });
+
+      await user.click(trigger);
+      await user.click(screen.getByRole('button', { name: 'Clear' }));
+      expect(time).toHaveValue('');
+      expect(time).not.toHaveAttribute('aria-invalid');
+      expect(trigger).not.toHaveAttribute('aria-invalid');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    // Final review #2: a disabled field is out of the form's say, whatever
+    // half is still in it.
+    it('does not block submit with half a value while disabled', async () => {
+      const user = userEvent.setup();
+      const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
+      function Toggling() {
+        const [value, setValue] = useState('');
+        const [off, setOff] = useState(false);
+        return (
+          <form onSubmit={onSubmit}>
+            <DateTimePicker aria-label="Starts" value={value} onChange={setValue} disabled={off} />
+            <button type="button" onClick={() => setOff(true)}>Off</button>
+            <button type="submit">Save</button>
+          </form>
+        );
+      }
+      render(<Toggling />);
+      await user.type(screen.getByRole('textbox', { name: 'Starts, time' }), '08:15');
+      expect(screen.getByRole('button', { name: 'Starts' })).toHaveAttribute('aria-invalid', 'true');
+
+      await user.click(screen.getByRole('button', { name: 'Off' }));
+      expect(screen.getByRole('button', { name: 'Starts' })).not.toHaveAttribute('aria-invalid');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
     it('submits when both halves are empty', async () => {
       const user = userEvent.setup();
       const onSubmit = vi.fn((e: { preventDefault: () => void }) => e.preventDefault());
@@ -183,5 +227,37 @@ describe('DateTimePicker', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  // Final review #4: with a <Label htmlFor={id}>, the time box is named
+  // after that label rather than a bare "Time" that every field shares.
+  describe('the time box name', () => {
+    it('follows the label of the field when an id is given', () => {
+      render(
+        <>
+          <label htmlFor="from">From</label>
+          <DateTimePicker id="from" value="" onChange={() => {}} />
+          <label htmlFor="until">Until</label>
+          <DateTimePicker id="until" value="" onChange={() => {}} />
+        </>,
+      );
+      expect(screen.getByRole('textbox', { name: 'From Time' })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: 'Until Time' })).toBeInTheDocument();
+    });
+
+    it('says Uhrzeit in German', () => {
+      render(
+        <I18nProvider locale="de">
+          <label htmlFor="from">Von</label>
+          <DateTimePicker id="from" value="" onChange={() => {}} />
+        </I18nProvider>,
+      );
+      expect(screen.getByRole('textbox', { name: 'Von Uhrzeit' })).toBeInTheDocument();
+    });
+
+    it('is a bare Time with neither an id nor an aria-label', () => {
+      render(<DateTimePicker value="" onChange={() => {}} />);
+      expect(screen.getByRole('textbox', { name: 'Time' })).toBeInTheDocument();
+    });
   });
 });

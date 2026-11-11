@@ -301,7 +301,14 @@ function StandIns({
               <Label htmlFor={`exc-note-${rotation.id}`}>{m.note}</Label>
               <Input id={`exc-note-${rotation.id}`} value={note} onChange={(e) => setNote(e.target.value)} maxLength={1000} />
             </div>
-            <Button type="button" variant="primary" onClick={() => void onAdd()} disabled={!channelId || createException.isPending}>
+            {/* No <form> here to block an empty field, so Add itself waits
+                for both instants: fromLocalInput('') would throw. */}
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => void onAdd()}
+              disabled={!channelId || startsAt === '' || endsAt === '' || createException.isPending}
+            >
               {r8.add}
             </Button>
           </div>

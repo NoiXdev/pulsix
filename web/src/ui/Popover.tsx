@@ -25,7 +25,8 @@ export interface PopoverProps {
  * the dialog's own `overflow: auto`: a fixed box is not clipped by a
  * scrolling ancestor, so a calendar opened near the bottom of a long form
  * shows whole (Review Focus 2). It follows the field on any scroll or
- * resize while open.
+ * window resize while open, and re-places itself when its own content
+ * changes size (a calendar month with six weeks instead of five).
  *
  * Escape closes the popover and nothing else: the handler calls
  * preventDefault(), which is what suppresses a native dialog's close
@@ -50,9 +51,14 @@ export function Popover({ anchor, onClose, id, label, children }: PopoverProps) 
     window.addEventListener('resize', reposition);
     // Capture, so a scroll inside any ancestor (a dialog's body) is seen too.
     window.addEventListener('scroll', reposition, true);
+    // A taller month can push it past the viewport's bottom: measure again.
+    // Guarded, as an environment without ResizeObserver still gets a popover.
+    const resized = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(reposition);
+    if (ref.current) resized?.observe(ref.current);
     return () => {
       window.removeEventListener('resize', reposition);
       window.removeEventListener('scroll', reposition, true);
+      resized?.disconnect();
     };
   }, [anchor]);
 
@@ -81,11 +87,14 @@ export function Popover({ anchor, onClose, id, label, children }: PopoverProps) 
       }}
       // Focus leaving for somewhere else on the page (Tab past the last
       // button) closes it, the way leaving a native picker does. A null
-      // relatedTarget is a click on nothing focusable, which the mousedown
-      // listener above already judges.
+      // relatedTarget is a click on nothing focusable, and focus landing on
+      // an ancestor (a click on a focusable dialog's own body) is a click
+      // that may well be inside it: both are left to the mousedown
+      // listener above, which judges by where the press was.
       onBlur={(e) => {
         const next = e.relatedTarget as Node | null;
-        if (next && !e.currentTarget.contains(next) && !anchor.current?.contains(next)) onClose('outside');
+        if (!next || e.currentTarget.contains(next) || next.contains(e.currentTarget)) return;
+        if (!anchor.current?.contains(next)) onClose('outside');
       }}
       // Never hidden while unplaced, not even for its first render: the
       // calendar focuses its day from an effect that runs before the

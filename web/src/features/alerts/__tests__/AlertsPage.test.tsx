@@ -280,6 +280,32 @@ describe('AlertsPage', () => {
     await waitFor(() => expect(sentBody).toEqual({ until_change: true }));
   });
 
+  // Final review #2: a time typed with no day is half a value, which marks
+  // the field invalid — but switching to "until the severity changes"
+  // disables the field, and a disabled field must not block the submit.
+  it('snoozes until the severity changes after only a time was typed', async () => {
+    const user = userEvent.setup();
+    let sentBody: unknown;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/alerts': { alerts: [alert()] },
+      'POST /api/v1/orgs/acme/alerts/a1/snooze': (req: MockRequest) => {
+        sentBody = req.body;
+        return {};
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
+    await user.type(await screen.findByRole('textbox', { name: 'Until Time' }), '10:00');
+    await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
+    const save = screen.getAllByRole('button', { name: /^snooze$/i }).find((b) => b.getAttribute('type') === 'submit')!;
+    expect(save).toBeEnabled();
+    await user.click(save);
+
+    await waitFor(() => expect(sentBody).toEqual({ until_change: true }));
+  });
+
   it('snoozes an alert until a chosen instant', async () => {
     pinClock();
     const user = userEvent.setup();
@@ -317,16 +343,16 @@ describe('AlertsPage', () => {
     await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
     const untilField = await screen.findByLabelText('Until');
     await pickDateTime(user, screen, 'Until', '10:00');
-    expect(untilField).toHaveTextContent('2026');
-    expect(screen.getByRole('textbox', { name: 'Time' })).toHaveValue('10:00');
+    expect(untilField).toHaveTextContent('10/15/2026');
+    expect(screen.getByRole('textbox', { name: 'Until Time' })).toHaveValue('10:00');
 
     await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     // Checking the box clears the date the operator had just typed, and
     // disables the field — a dialog that left the old date sitting in a
     // disabled input, or worse still submitted it alongside until_change,
     // would send the server a body it 422s on.
-    expect(untilField).not.toHaveTextContent('2026');
-    expect(screen.getByRole('textbox', { name: 'Time' })).toHaveValue('');
+    expect(untilField).not.toHaveTextContent('10/15/2026');
+    expect(screen.getByRole('textbox', { name: 'Until Time' })).toHaveValue('');
     expect(untilField).toBeDisabled();
   });
 
