@@ -134,6 +134,7 @@ export const enChecks = {
     },
     hints: {
       expect: 'Looked for in the first 4 KiB the server sends.',
+      send: 'Use \\r\\n for a line break, \\t for a tab and \\\\ for a backslash.',
       url: '{address} is replaced with the host’s address.',
       body_contains: 'Looked for in the first 1 MiB of the body.',
       server_name: 'Empty means the host’s address.',
@@ -145,6 +146,7 @@ export const enChecks = {
       wholeRange: (min: number, max: number) => `must be a whole number between ${min} and ${max}`,
       url: 'must be an http:// or https:// URL without a user name or password',
       server: 'must be an IP address, optionally with a port',
+      name: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
     },
   },
   groups: {

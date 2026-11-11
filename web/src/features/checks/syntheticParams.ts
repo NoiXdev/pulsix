@@ -38,7 +38,16 @@ interface Base {
  * while the field is empty. */
 export type SyntheticField =
   | (Base & { kind: 'number'; min: number; max: number; placeholder?: string; required?: boolean })
-  | (Base & { kind: 'text'; check?: 'url' | 'server'; trim?: boolean; placeholder?: string; required?: boolean })
+  | (Base & {
+      kind: 'text';
+      check?: 'url' | 'server' | 'dnsName';
+      trim?: boolean;
+      /** The field takes \r, \n, \t and \\ escapes (a single-line input
+       * cannot hold a line break): decoded on save, encoded on load. */
+      escapes?: boolean;
+      placeholder?: string;
+      required?: boolean;
+    })
   | (Base & { kind: 'select'; options: readonly string[]; default: string })
   | (Base & { kind: 'bool'; default: boolean });
 
@@ -54,7 +63,7 @@ export const SYNTHETIC_FIELDS: Record<SyntheticPlugin, readonly SyntheticField[]
   ],
   tcp: [
     { name: 'port', label: 'port', kind: 'number', min: 1, max: 65535, required: true },
-    { name: 'send', label: 'send', kind: 'text' },
+    { name: 'send', label: 'send', hint: 'send', kind: 'text', escapes: true },
     { name: 'expect', label: 'expect', hint: 'expect', kind: 'text' },
     timeout(30, 5),
   ],
@@ -72,7 +81,7 @@ export const SYNTHETIC_FIELDS: Record<SyntheticPlugin, readonly SyntheticField[]
     timeout(30, 10),
   ],
   dns: [
-    { name: 'name', label: 'name', hint: 'name', kind: 'text', trim: true, placeholder: '{address}' },
+    { name: 'name', label: 'name', hint: 'name', kind: 'text', check: 'dnsName', trim: true, placeholder: '{address}' },
     { name: 'type', label: 'type', kind: 'select', options: ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'], default: 'A' },
     { name: 'server', label: 'server', hint: 'server', kind: 'text', check: 'server', trim: true },
     { name: 'expect', label: 'answer', hint: 'answer', kind: 'text' },
@@ -84,12 +93,27 @@ export const SYNTHETIC_FIELDS: Record<SyntheticPlugin, readonly SyntheticField[]
  * in bytes. */
 const MAX_TEXT_BYTES = 500;
 
+const ESCAPES: Record<string, string> = { r: '\r', n: '\n', t: '\t', '\\': '\\' };
+
+/** decodeEscapes turns \r, \n, \t and \\ into the characters they name;
+ * any other backslash is kept as typed. */
+export function decodeEscapes(s: string): string {
+  return s.replace(/\\([rnt\\])/g, (_, c: string) => ESCAPES[c]);
+}
+
+/** encodeEscapes is decodeEscapes' inverse: decodeEscapes(encodeEscapes(s))
+ * is s for every s. */
+export function encodeEscapes(s: string): string {
+  return s.replace(/[\\\r\n\t]/g, (c) => ({ '\\': '\\\\', '\r': '\\r', '\n': '\\n', '\t': '\\t' })[c] ?? c);
+}
+
 /** textOf is a text field's value as it would be sent: trimmed where the
- * field is a name or address, verbatim where it is a substring to look
- * for. */
+ * field is a name or address, escapes decoded where it takes them,
+ * verbatim where it is a substring to look for. */
 function textOf(field: SyntheticField, value: string | boolean | undefined): string {
-  if (typeof value !== 'string') return '';
-  return field.kind === 'text' && field.trim ? value.trim() : value;
+  if (typeof value !== 'string' || field.kind !== 'text') return '';
+  if (field.escapes) return decodeEscapes(value);
+  return field.trim ? value.trim() : value;
 }
 
 /** syntheticParams builds the params object a save sends: only the fields
@@ -130,7 +154,8 @@ export function syntheticValuesFrom(plugin: string, params: Record<string, unkno
   for (const field of SYNTHETIC_FIELDS[plugin]) {
     const value = params[field.name];
     if (field.kind === 'number' && typeof value === 'number') out[field.name] = String(value);
-    else if ((field.kind === 'text' || field.kind === 'select') && typeof value === 'string') out[field.name] = value;
+    else if (field.kind === 'text' && typeof value === 'string') out[field.name] = field.escapes ? encodeEscapes(value) : value;
+    else if (field.kind === 'select' && typeof value === 'string') out[field.name] = value;
     else if (field.kind === 'bool' && typeof value === 'boolean') out[field.name] = value;
   }
   return out;
@@ -174,14 +199,28 @@ export function isDNSServer(s: string): boolean {
 }
 
 /** isProbeURL mirrors paramHTTPURL: an http(s) URL with a host and no
- * user info, once {address} stands for a host name. */
+ * user info, once {address} stands for a host name. The scheme must be
+ * followed by //: the URL parser would otherwise read http:/x and
+ * http:example.com as http://x/ and http://example.com/, which the
+ * server's parser refuses for having no host. */
 export function isProbeURL(s: string): boolean {
+  if (!/^https?:\/\//i.test(s)) return false;
   try {
     const u = new URL(s.replaceAll('{address}', 'address.invalid'));
     return (u.protocol === 'http:' || u.protocol === 'https:') && u.hostname !== '' && u.username === '' && u.password === '';
   } catch {
     return false;
   }
+}
+
+/** isDNSName mirrors paramDNSName: once {address} stands for a label,
+ * dot-separated labels of letters, digits, '-' and '_', each 1–63 bytes,
+ * an optional trailing dot, at most 253 bytes without it. */
+export function isDNSName(s: string): boolean {
+  let name = s.replaceAll('{address}', 'address');
+  if (name.endsWith('.')) name = name.slice(0, -1);
+  if (name === '' || name.length > 253) return false;
+  return name.split('.').every((label) => /^[A-Za-z0-9_-]{1,63}$/.test(label));
 }
 
 /** validateSynthetic returns one message per refused field, keyed by the
@@ -208,6 +247,8 @@ export function validateSynthetic(plugin: SyntheticPlugin, values: SyntheticValu
         errors[field.name] = msg.url;
       } else if (field.check === 'server' && !isDNSServer(text)) {
         errors[field.name] = msg.server;
+      } else if (field.check === 'dnsName' && !isDNSName(text)) {
+        errors[field.name] = msg.name;
       }
     }
   }

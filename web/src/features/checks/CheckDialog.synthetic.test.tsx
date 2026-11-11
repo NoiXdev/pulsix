@@ -71,6 +71,31 @@ describe('CheckDialog — synthetic plugins', () => {
     expect(posted[0].params).toEqual({ port: 22 });
   });
 
+  it('sends a line ending typed as \\r\\n in tcp send, and says how', async () => {
+    const user = userEvent.setup();
+    const posted = await openNew(user, 'tcp');
+    expect(screen.getByText(/Use \\r\\n for a line break/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Port'), '6379');
+    await user.type(screen.getByLabelText('Send after connecting'), 'PING\\r\\n');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0].params).toEqual({ port: 6379, send: 'PING\r\n' });
+  });
+
+  it('leaves the number fields to its own validation, not the browser bubble', async () => {
+    const user = userEvent.setup();
+    await openNew(user, 'tcp');
+    for (const label of ['Port', 'Timeout (seconds)']) {
+      const input = screen.getByLabelText(label);
+      expect(input).not.toHaveAttribute('min');
+      expect(input).not.toHaveAttribute('max');
+      expect(input).not.toHaveAttribute('step');
+    }
+    await user.type(screen.getByLabelText('Port'), '70000');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('must be a whole number between 1 and 65535')).toBeInTheDocument();
+  });
+
   it('sends the dns record type the user picked', async () => {
     const user = userEvent.setup();
     const posted = await openNew(user, 'dns');

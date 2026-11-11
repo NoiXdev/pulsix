@@ -128,6 +128,7 @@ export const deChecks: Messages['checks'] = {
     },
     hints: {
       expect: 'Wird in den ersten 4 KiB gesucht, die der Server sendet.',
+      send: '\\r\\n steht für einen Zeilenumbruch, \\t für einen Tabulator und \\\\ für einen Backslash.',
       url: '{address} wird durch die Adresse des Hosts ersetzt.',
       body_contains: 'Wird im ersten MiB des Inhalts gesucht.',
       server_name: 'Leer bedeutet die Adresse des Hosts.',
@@ -139,6 +140,7 @@ export const deChecks: Messages['checks'] = {
       wholeRange: (min: number, max: number) => `muss eine ganze Zahl zwischen ${min} und ${max} sein`,
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       server: 'muss eine IP-Adresse sein, optional mit Port',
+      name: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
     },
   },
   groups: {

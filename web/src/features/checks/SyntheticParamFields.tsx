@@ -43,9 +43,6 @@ export function SyntheticParamFields({
             id={id}
             type="number"
             inputMode="numeric"
-            min={field.min}
-            max={field.max}
-            step={1}
             disabled={disabled}
             placeholder={field.placeholder}
             value={typeof value === 'string' ? value : ''}
@@ -57,7 +54,9 @@ export function SyntheticParamFields({
           <Input
             id={id}
             className="font-mono"
-            maxLength={500}
+            // An escape is two characters for one byte sent: the
+            // byte bound itself is validateSynthetic's.
+            maxLength={field.escapes ? 1000 : 500}
             disabled={disabled}
             placeholder={field.placeholder}
             value={typeof value === 'string' ? value : ''}

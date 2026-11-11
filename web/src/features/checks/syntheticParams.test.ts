@@ -27,6 +27,10 @@ describe('syntheticParams', () => {
     ['a select the user set is sent', 'dns', { type: 'AAAA' }, { type: 'AAAA' }],
     ['fields of another plugin are ignored', 'tls', { port: '8443', url: 'http://x', count: '3' }, { port: 8443 }],
     ['blank-only names are left out', 'dns', { name: '   ', server: ' 192.0.2.53 ' }, { server: '192.0.2.53' }],
+    ['tcp send decodes \\r, \\n and \\t', 'tcp', { port: '6379', send: 'PING\\r\\n\\t' }, { port: 6379, send: 'PING\r\n\t' }],
+    ['tcp send decodes \\\\ to one backslash', 'tcp', { port: '1', send: 'a\\\\nb' }, { port: 1, send: 'a\\nb' }],
+    ['tcp send leaves an unknown escape alone', 'tcp', { port: '1', send: 'a\\xb\\' }, { port: 1, send: 'a\\xb\\' }],
+    ['tcp expect is sent verbatim', 'tcp', { port: '1', expect: 'a\\nb' }, { port: 1, expect: 'a\\nb' }],
   ])('%s', (_, plugin, values, want) => expect(syntheticParams(plugin, values)).toEqual(want));
 });
 
@@ -42,12 +46,38 @@ describe('syntheticValuesFrom', () => {
     expect(syntheticParams('dns', syntheticValuesFrom('dns', stored))).toEqual(stored);
   });
 
+  it('shows tcp send with its control characters escaped', () => {
+    expect(syntheticValuesFrom('tcp', { port: 6379, send: 'PING\r\n\tx\\y' })).toEqual({ port: '6379', send: 'PING\\r\\n\\tx\\\\y' });
+  });
+
+  it.each([
+    'PING\r\n',
+    'stats\r\n',
+    'GET / HTTP/1.0\r\nHost: x\r\n\r\n',
+    'a\\nb',
+    'tab\there',
+    'trailing\\',
+    '\\\\r',
+  ])('round-trips tcp send %j through the form', (send) => {
+    expect(syntheticParams('tcp', syntheticValuesFrom('tcp', { port: 1, send }))).toEqual({ port: 1, send });
+  });
+
   it('ignores unknown keys, wrong types and a non-synthetic plugin', () => {
     expect(syntheticValuesFrom('tcp', { port: 22, banner: 'x', send: 5 })).toEqual({ port: '22' });
     expect(syntheticValuesFrom('cpu', { port: 22 })).toEqual({});
     expect(syntheticValuesFrom('tcp', undefined)).toEqual({});
   });
 });
+
+/** dnsName is a valid DNS name of exactly n bytes: 49-byte labels. */
+function dnsName(n: number): string {
+  let s = '';
+  while (s.length < n) {
+    if (s.length > 0) s += '.';
+    s += 'a'.repeat(Math.min(49, n - s.length));
+  }
+  return s;
+}
 
 describe('validateSynthetic', () => {
   const t = en;
@@ -67,10 +97,25 @@ describe('validateSynthetic', () => {
     ['http refuses another scheme', 'http', { url: 'ftp://example.org/' }, { url: t.checks.synthetic.errors.url }],
     ['http refuses user info', 'http', { url: 'https://user:pass@example.org/' }, { url: t.checks.synthetic.errors.url }],
     ['http refuses a bare word', 'http', { url: 'example.org' }, { url: t.checks.synthetic.errors.url }],
+    ['http refuses a single slash', 'http', { url: 'http:/x' }, { url: t.checks.synthetic.errors.url }],
+    ['http refuses no slashes', 'http', { url: 'http:example.com' }, { url: t.checks.synthetic.errors.url }],
+    ['http accepts an upper-case scheme', 'http', { url: 'HTTPS://example.org/' }, {}],
     ['http timeout allows 60', 'http', { url: 'http://x', timeout_s: '60' }, {}],
     ['http timeout refuses 61', 'http', { url: 'http://x', timeout_s: '61' }, { timeout_s: range(1, 60) }],
     ['tls port out of range', 'tls', { port: '0' }, { port: range(1, 65535) }],
     ['tls timeout above 30', 'tls', { timeout_s: '31' }, { timeout_s: range(1, 30) }],
+    ['dns name', 'dns', { name: 'example.com' }, {}],
+    ['dns name with a trailing dot', 'dns', { name: 'example.com.' }, {}],
+    ['dns name service style', 'dns', { name: '_sip._tcp.example.com' }, {}],
+    ['dns name with {address}', 'dns', { name: 'www.{address}' }, {}],
+    ['dns name of 253 bytes', 'dns', { name: dnsName(253) }, {}],
+    ['dns name with a space', 'dns', { name: 'exa mple.com' }, { name: t.checks.synthetic.errors.name }],
+    ['dns name with an empty label', 'dns', { name: 'example..com' }, { name: t.checks.synthetic.errors.name }],
+    ['dns name with a leading dot', 'dns', { name: '.example.com' }, { name: t.checks.synthetic.errors.name }],
+    ['dns name root only', 'dns', { name: '.' }, { name: t.checks.synthetic.errors.name }],
+    ['dns name of 254 bytes', 'dns', { name: dnsName(254) }, { name: t.checks.synthetic.errors.name }],
+    ['dns name with a 64-byte label', 'dns', { name: `${'a'.repeat(64)}.example` }, { name: t.checks.synthetic.errors.name }],
+    ['tcp send counts its decoded bytes', 'tcp', { port: '1', send: '\\n'.repeat(500) }, {}],
     ['dns server IPv4', 'dns', { server: '192.0.2.53' }, {}],
     ['dns server IPv4 with port', 'dns', { server: '192.0.2.53:5353' }, {}],
     ['dns server IPv6', 'dns', { server: '2001:db8::53' }, {}],
