@@ -15,6 +15,10 @@ import { useT } from '../../../i18n/useT.ts';
 import type { Messages } from '../../../i18n/types.ts';
 import type { CheckDefinitionDef, CheckDefinitionDefInput } from '../../../api/types.ts';
 import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx';
+import { SyntheticKeyHint, SyntheticParamFields } from '../../checks/SyntheticParamFields.tsx';
+import {
+  isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
+} from '../../checks/syntheticParams.ts';
 
 /**
  * SharedCheckFormPage creates (`…/checks/new`) or edits (`…/checks/$id`) one
@@ -22,10 +26,10 @@ import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx'
  * 2 keeps both on the projection, which the organization edits through its
  * own Checks page (CheckDialog.tsx), never here.
  *
- * Params editing covers the "service" plugin's units and the "disk" plugin's
- * mounts, the parameters an instance admin is likely to set on a shared
- * check, rather than re-hosting CheckDialog.tsx's full per-plugin editor for
- * a form that has no per-organization state to show.
+ * Params editing covers the "service" plugin's units, the "disk" plugin's
+ * mounts, the "network" plugin's interfaces and every parameter of the
+ * synthetic plugins (SyntheticParamFields, the same fields CheckDialog.tsx
+ * shows).
  */
 export function SharedCheckFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
@@ -50,9 +54,10 @@ interface CheckDefinitionFormValues {
   units: string;
   mounts: string;
   interfaces: string;
+  synthetic: SyntheticValues;
 }
 
-const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime'] as const;
+const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'icmp', 'tcp', 'http', 'tls', 'dns'] as const;
 
 /** lines turns a textarea's content into the string list the API takes —
  * CheckDialog.tsx's own helper, duplicated rather than imported: that
@@ -91,14 +96,30 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
           units: Array.isArray(definition.params?.units) ? (definition.params.units as string[]).join('\n') : '',
           mounts: Array.isArray(definition.params?.mounts) ? (definition.params.mounts as string[]).join('\n') : '',
           interfaces: Array.isArray(definition.params?.interfaces) ? (definition.params.interfaces as string[]).join('\n') : '',
+          synthetic: syntheticValuesFrom(definition.plugin, definition.params),
         }
-      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '', interfaces: '' },
+      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '', interfaces: '', synthetic: {} },
   );
   const [values, setValues] = useState<CheckDefinitionFormValues>(initial);
   const [errors, setErrors] = useState<Partial<Record<keyof CheckDefinitionFormValues, string>>>({});
+  const [syntheticErrors, setSyntheticErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
+  function choosePlugin(next: string) {
+    setSyntheticErrors({});
+    setValues((cur) => ({
+      ...cur,
+      plugin: next,
+      // A new definition's key follows a synthetic plugin (the key alert
+      // rules match its metrics on); an existing one's key is never
+      // renamed behind the user's back.
+      key: definition ? cur.key : keyAfterPluginChange(cur.key, cur.plugin, next),
+      synthetic: definition && next === definition.plugin ? syntheticValuesFrom(next, definition.params) : {},
+    }));
+  }
+
   function params(): Record<string, unknown> {
+    if (isSynthetic(values.plugin)) return syntheticParams(values.plugin, values.synthetic);
     if (values.plugin === 'service') return { units: lines(values.units) };
     // disk's allow-list is optional and an empty one means every mount
     // (CheckDialog.tsx keeps the same contract for an organization's own
@@ -125,8 +146,10 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
   async function submit(): Promise<boolean> {
     setFormError(null);
     const fieldErrors = validateCheckDefinitionInput(values, t);
+    const refused = isSynthetic(values.plugin) ? validateSynthetic(values.plugin, values.synthetic, t) : {};
     setErrors(fieldErrors);
-    if (Object.keys(fieldErrors).length > 0) return false;
+    setSyntheticErrors(refused);
+    if (Object.keys(fieldErrors).length > 0 || Object.keys(refused).length > 0) return false;
     const body: CheckDefinitionDefInput = {
       ...(values.key !== '' ? { key: values.key } : {}),
       plugin: values.plugin, interval_seconds: Number(values.intervalSeconds), params: params(),
@@ -159,9 +182,13 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
             <Label htmlFor="check-def-plugin">{t.instance.shared.checks.plugin}</Label>
             <Select
               id="check-def-plugin"
-              options={CHECK_PLUGINS.map((value) => ({ value, label: t.instance.shared.checks.plugins[value] }))}
+              options={CHECK_PLUGINS.map((value) => ({
+                value,
+                label: t.instance.shared.checks.plugins[value],
+                ...(isSynthetic(value) ? { hint: t.checks.synthetic.pluginHint } : {}),
+              }))}
               value={values.plugin}
-              onChange={(v) => setValues((cur) => ({ ...cur, plugin: v }))}
+              onChange={choosePlugin}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -173,8 +200,10 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
               placeholder={values.plugin}
               onChange={(e) => setValues((cur) => ({ ...cur, key: e.target.value.trim() }))}
               aria-invalid={errors.key ? true : undefined}
+              aria-describedby={isSynthetic(values.plugin) ? 'check-def-key-hint' : undefined}
             />
             <FieldError>{errors.key}</FieldError>
+            {isSynthetic(values.plugin) && <SyntheticKeyHint id="check-def-key-hint" plugin={values.plugin} />}
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-def-interval">{t.instance.shared.checks.intervalSeconds}</Label>
@@ -190,6 +219,15 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
             <FieldError>{errors.intervalSeconds}</FieldError>
           </div>
         </div>
+        {isSynthetic(values.plugin) && (
+          <SyntheticParamFields
+            idPrefix="check-def-param"
+            plugin={values.plugin}
+            values={values.synthetic}
+            errors={syntheticErrors}
+            onChange={(synthetic) => setValues((cur) => ({ ...cur, synthetic }))}
+          />
+        )}
         {values.plugin === 'disk' && (
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-def-mounts">{t.instance.shared.checks.mounts}</Label>

@@ -7,15 +7,16 @@ import { Select } from '../../ui/Select.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useCreateCheck, useUpdateCheck } from '../../api/hooks/useChecks.ts';
-import { useHosts } from '../../api/hooks/useHosts.ts';
 import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlugin, MonitoringGroup } from '../../api/types.ts';
+import { HostPicker } from './HostPicker.tsx';
+import { SyntheticKeyHint, SyntheticParamFields } from './SyntheticParamFields.tsx';
+import {
+  isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
+} from './syntheticParams.ts';
 
-// Still used by HostPicker's own search <input> below, which stays a plain
-// text field rather than becoming a Select.
-const SELECT = 'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:opacity-50';
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
-const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime'];
+const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'icmp', 'tcp', 'http', 'tls', 'dns'];
 
 /** lines turns a textarea's content into the string list the API takes,
  * dropping blank lines so a trailing newline is not a parameter. */
@@ -85,9 +86,24 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   const [units, setUnits] = useState(stringList(check?.params?.units).join('\n'));
   const [mounts, setMounts] = useState(stringList(check?.params?.mounts).join('\n'));
   const [interfaces, setInterfaces] = useState(stringList(check?.params?.interfaces).join('\n'));
+  const [synthetic, setSynthetic] = useState<SyntheticValues>(() => syntheticValuesFrom(check?.plugin ?? '', check?.params));
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
+  function choosePlugin(next: CheckPlugin) {
+    // Only a new definition (or a copy) gets its key filled in: on an edit
+    // the key is the identifier the override precedence keys on, and
+    // changing it is a rename the user has to mean.
+    if (!editing) setKey(keyAfterPluginChange(key, plugin, next));
+    // Another plugin's values would mostly be refused by this one; going
+    // back to the stored plugin restores what is saved.
+    setSynthetic(next === check?.plugin ? syntheticValuesFrom(next, check.params) : {});
+    setFieldErrors({});
+    setPlugin(next);
+  }
+
   function params(): Record<string, unknown> {
+    if (isSynthetic(plugin)) return syntheticParams(plugin, synthetic);
     if (plugin === 'service') return { units: lines(units) };
     if (plugin === 'disk') {
       const list = lines(mounts);
@@ -127,6 +143,9 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    const refused = isSynthetic(plugin) ? validateSynthetic(plugin, synthetic, t) : {};
+    setFieldErrors(refused);
+    if (Object.keys(refused).length > 0) return;
     try {
       if (editing) {
         await update.mutateAsync(body());
@@ -152,10 +171,14 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             <Label htmlFor="check-plugin">{t.checks.dialog.plugin}</Label>
             <Select
               id="check-plugin"
-              options={PLUGINS.map((value) => ({ value, label: t.checks.dialog.plugins[value] }))}
+              options={PLUGINS.map((value) => ({
+                value,
+                label: t.checks.dialog.plugins[value],
+                ...(isSynthetic(value) ? { hint: t.checks.synthetic.pluginHint } : {}),
+              }))}
               value={plugin}
               disabled={sharedOrSeeded}
-              onChange={(v) => setPlugin(v as CheckPlugin)}
+              onChange={(v) => choosePlugin(v as CheckPlugin)}
             />
           </div>
           <div className="flex flex-col gap-1">
@@ -174,6 +197,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               title={t.checks.dialog.keyTitle}
               placeholder={plugin}
               maxLength={63}
+              aria-describedby={isSynthetic(plugin) ? 'check-key-hint' : undefined}
               // Trimmed as it is typed, so `pattern` judges exactly the
               // string body() sends. No valid key contains whitespace at
               // all, and leaving the two out of step made the browser
@@ -181,6 +205,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               // "disk-a" (review round 3, nit 4).
               onChange={(e) => setKey(e.target.value.trim())}
             />
+            {isSynthetic(plugin) && <SyntheticKeyHint id="check-key-hint" plugin={plugin} />}
           </div>
         </div>
         {seeded && (
@@ -233,6 +258,16 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             />
             <p id="check-interfaces-hint" className="text-[11px] text-muted-foreground">{t.checks.dialog.interfacesHint}</p>
           </>
+        )}
+        {isSynthetic(plugin) && (
+          <SyntheticParamFields
+            idPrefix="check-param"
+            plugin={plugin}
+            values={synthetic}
+            errors={fieldErrors}
+            disabled={shared}
+            onChange={setSynthetic}
+          />
         )}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
@@ -312,72 +347,5 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         </div>
       </form>
     </Dialog>
-  );
-}
-
-/**
- * HostPicker chooses the monitored host a host-bound definition applies
- * to. The hosts list is paginated, so — like inventory's
- * ManagedHostPicker — it searches through the API (`q`) rather than
- * filtering one page, and says plainly when more hosts match than are
- * listed instead of pretending the first page is the fleet.
- *
- * It is rendered only while the binding is "host", so choosing any other
- * binding costs no request at all.
- *
- * Whatever that search answers, the host this definition is ALREADY bound
- * to stays in the list as its own option: one page of results cannot be
- * assumed to contain it (a fleet paginated past it, a host no longer
- * monitored, a search the operator has since narrowed), and a select with
- * no option matching its value silently falls back to the empty
- * placeholder — the dialog would then state the binding was unset and
- * refuse to submit, with no message anywhere (review finding 1). For the
- * same reason typing in the search box no longer clears the selection.
- */
-function HostPicker({
-  org, value, currentName, onChange,
-}: {
-  org: string;
-  value: string;
-  /** The bound host's name as the definition itself reports it
-   * (host_name), when this is an edit of an existing host binding. */
-  currentName?: string;
-  onChange: (id: string) => void;
-}) {
-  const t = useT();
-  const [q, setQ] = useState('');
-  const hosts = useHosts(org, { monitored: true, q });
-  const listed = hosts.data?.pages.flatMap((p) => p.hosts ?? []) ?? [];
-  const currentMissing = value !== '' && !listed.some((h) => h.id === value);
-
-  return (
-    <div className="flex flex-col gap-1">
-      <Label htmlFor="check-host">{t.checks.host}</Label>
-      <input
-        type="search"
-        aria-label={t.checks.hostPicker.searchLabel}
-        placeholder={t.checks.hostPicker.searchPlaceholder}
-        className={SELECT}
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
-      <Select
-        id="check-host"
-        placeholder={t.checks.hostPicker.choose}
-        required
-        value={value}
-        onChange={onChange}
-        options={[
-          ...(currentMissing ? [{ value, label: t.checks.currentBinding(currentName ?? value) }] : []),
-          ...listed.map((h) => ({ value: h.id, label: h.name })),
-        ]}
-      />
-      {hosts.hasNextPage && <span className="text-[11px] text-muted-foreground">{t.checks.hostPicker.moreMatch}</span>}
-      {!hosts.data && hosts.isError && (
-        <span role="alert" className="text-[11px] text-destructive">
-          {t.checks.hostPicker.loadFailed} {hosts.error instanceof Error ? hosts.error.message : ''}
-        </span>
-      )}
-    </div>
   );
 }
