@@ -15,6 +15,8 @@
 import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
+import { acceptConfirm } from './confirm.ts';
+import { enCommon } from '../src/i18n/en/common.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -67,9 +69,9 @@ test('an operator creates a form rule, sees it listed, edits its threshold, and 
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
   // --- Delete --------------------------------------------------------
-  page.once('dialog', (d) => void d.accept());
   await rowActions.click();
   await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  await acceptConfirm(page, enCommon.delete);
   await expect(rowActions).toHaveCount(0);
   await expect(page.getByText(RULE_NAME)).toHaveCount(0);
 });

@@ -22,6 +22,8 @@ import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { waitForMessageTo } from './mailpit.ts';
 import { pickOption } from './pickOption.ts';
+import { acceptConfirm } from './confirm.ts';
+import { enCommon } from '../src/i18n/en/common.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -94,8 +96,8 @@ test('an admin adds an e-mail channel, sends a test through it, and points the d
   // --- Remove the channel ------------------------------------------------
   // Leaves the digest pointing at nothing, which is the state this
   // organization started in — the other specs share this manager.
-  page.once('dialog', (d) => void d.accept());
   await channelRow.getByRole('button', { name: `Actions for ${CHANNEL}` }).click();
   await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  await acceptConfirm(page, enCommon.delete);
   await expect(page.getByRole('button', { name: `Actions for ${CHANNEL}` })).toHaveCount(0);
 });

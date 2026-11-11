@@ -22,6 +22,8 @@ import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickDateTime } from './pickDateTime.ts';
 import { pickOption } from './pickOption.ts';
+import { acceptConfirm } from './confirm.ts';
+import { enCommon } from '../src/i18n/en/common.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -80,7 +82,7 @@ test('an admin creates a maintenance window, turns it into a silence, and delete
   await expect(row(page).getByText('silence', { exact: true })).toBeVisible();
 
   // --- Delete ----------------------------------------------------------
-  page.once('dialog', (d) => void d.accept());
   await page.getByRole('button', { name: `Delete ${WINDOW_NAME}` }).click();
+  await acceptConfirm(page, enCommon.delete);
   await expect(page.getByRole('button', { name: `Edit ${WINDOW_NAME}` })).toHaveCount(0);
 });

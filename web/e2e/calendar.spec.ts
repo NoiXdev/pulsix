@@ -22,6 +22,8 @@
 import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickDateTime } from './pickDateTime.ts';
+import { acceptConfirm } from './confirm.ts';
+import { enCommon } from '../src/i18n/en/common.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -82,7 +84,7 @@ test('the calendar shows a maintenance window across its three views and moves i
 
   // --- Clean up ----------------------------------------------------------
   await page.goto(`/o/${ORG.slug}/maintenance`);
-  page.once('dialog', (d) => void d.accept());
   await page.getByRole('button', { name: `Delete ${WINDOW_NAME}` }).click();
+  await acceptConfirm(page, enCommon.delete);
   await expect(page.getByRole('button', { name: `Delete ${WINDOW_NAME}` })).toHaveCount(0);
 });

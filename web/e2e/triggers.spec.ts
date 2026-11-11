@@ -20,6 +20,8 @@
 import { test, expect } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { pickOption } from './pickOption.ts';
+import { acceptConfirm } from './confirm.ts';
+import { enCommon } from '../src/i18n/en/common.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 
@@ -66,8 +68,8 @@ test('an operator creates a repo-sync webhook trigger, sees its secret once, and
   await expect(reopened.getByText(secret)).toHaveCount(0);
 
   // --- Delete -------------------------------------------------------------
-  page.once('dialog', (d) => void d.accept());
   await reopened.getByRole('button', { name: 'Delete' }).click();
+  await acceptConfirm(page, enCommon.delete);
   await expect(reopened.getByText('No incoming webhooks yet.')).toBeVisible();
   await page.keyboard.press('Escape');
 
@@ -75,7 +77,7 @@ test('an operator creates a repo-sync webhook trigger, sees its secret once, and
   // carry the trigger, and later specs share this manager. Deleting one
   // lives inside its own dialog, which the row's name opens.
   await page.getByRole('button', { name: REPO, exact: true }).click();
-  page.once('dialog', (d) => void d.accept());
   await page.getByRole('dialog', { name: REPO }).getByRole('button', { name: 'Delete' }).click();
+  await acceptConfirm(page, enCommon.delete);
   await expect(page.getByRole('button', { name: `Triggers of ${REPO}` })).toHaveCount(0);
 });

@@ -33,6 +33,8 @@ import { test, expect, type Locator, type Page } from '@playwright/test';
 import { ADMIN_STORAGE_STATE, ORG } from './env.ts';
 import { agentBinaryAvailable, startAgent, type RunningAgent } from './agent.ts';
 import { pickOption } from './pickOption.ts';
+import { acceptConfirm } from './confirm.ts';
+import { enCommon } from '../src/i18n/en/common.ts';
 
 test.use({ storageState: ADMIN_STORAGE_STATE });
 test.skip(!agentBinaryAvailable(), 'the agent binary was not built by global-setup (see web/e2e/agent.ts)');
@@ -116,9 +118,9 @@ async function createCritRule(page: Page, hostName: string): Promise<void> {
  * that stops calling that reading critical. */
 async function deleteCritRule(page: Page): Promise<void> {
   await page.goto(`${base}/checks/rules`);
-  page.once('dialog', (d) => void d.accept());
   await page.getByRole('button', { name: `Actions for ${RULE_NAME}` }).click();
   await page.getByRole('menuitem', { name: 'Delete…' }).click();
+  await acceptConfirm(page, enCommon.delete);
   await expect(page.getByRole('button', { name: `Actions for ${RULE_NAME}` })).toHaveCount(0);
 }
 
