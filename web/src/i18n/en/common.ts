@@ -5,6 +5,8 @@
  */
 export const enCommon = {
   save: 'Save',
+  copied: 'Copied',
+  copyUnavailable: 'Copying is not available here. Select the text and press Ctrl+C (Cmd+C on a Mac).',
   cancel: 'Cancel',
   rowActions: (name: string) => `Actions for ${name}`,
   sections: 'Sections',

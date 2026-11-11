@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
+import { copyText } from '../../lib/clipboard.ts';
 import { useT } from '../../i18n/useT.ts';
 import { restoreCommands, type RestoreDestination } from './restoreCommands.ts';
 
@@ -47,7 +48,7 @@ export function RestoreDialog({
  * One command with a copy button. `navigator.clipboard` exists only in a
  * secure context, and a compose install is often reached over plain
  * http://host:port, so the button cannot assume it: where the Clipboard API
- * is missing or refuses, the command text is selected so Ctrl/Cmd+C works
+ * (and the execCommand fallback) is missing or refuses, the command text is selected so Ctrl/Cmd+C works
  * and the page says so. It never throws.
  */
 function CommandBlock({ label, hint, command }: { label: string; hint?: string; command: string }) {
@@ -66,11 +67,9 @@ function CommandBlock({ label, hint, command }: { label: string; hint?: string; 
   }
 
   async function copy() {
-    try {
-      if (!navigator.clipboard) throw new Error('clipboard unavailable');
-      await navigator.clipboard.writeText(command);
+    if (await copyText(command)) {
       setFeedback('copied');
-    } catch {
+    } else {
       selectText();
       setFeedback('manual');
     }

@@ -12,6 +12,7 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { Pill, RoleBadge } from '../../ui/badge.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { copyText } from '../../lib/clipboard.ts';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useInviteMember, useMembers, useRemoveMember } from '../../api/hooks/useMembers.ts';
 import { schemas, type InviteFormValues } from '../../lib/schemas.ts';
@@ -215,12 +216,9 @@ export function MembersPage() {
               <Button
                 type="button"
                 onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(inviteLink.url);
-                    toast.show(t.members.shareLink.copied);
-                  } catch {
-                    toast.show(t.members.shareLink.copyFailed, 'destructive');
-                  }
+                  const ok = await copyText(inviteLink.url);
+                  if (ok) toast.show(t.members.shareLink.copied);
+                  else toast.show(t.members.shareLink.copyFailed, 'destructive');
                 }}
               >
                 <Copy size={14} /> {t.members.shareLink.copy}

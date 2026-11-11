@@ -13,6 +13,7 @@ import type { Messages } from '../../i18n/types.ts';
 import type { ActionKind } from './useAccountActionCalls.ts';
 import { useAccountActionRunner, type Revealed } from './useAccountActionRunner.ts';
 import { availableActions } from './accountState.ts';
+import { copyText } from '../../lib/clipboard.ts';
 
 const DESTRUCTIVE: ReadonlySet<ActionKind> = new Set(['resetFactor', 'deactivate']);
 
@@ -210,12 +211,7 @@ function TemporaryPasswordReveal({ revealed, onClose }: { revealed: Revealed; on
           <Button
             type="button"
             onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(revealed.password);
-                setCopy('copied');
-              } catch {
-                setCopy('failed');
-              }
+              setCopy((await copyText(revealed.password)) ? 'copied' : 'failed');
             }}
           >
             <Copy size={14} /> {copy === 'copied' ? a.copied : a.copy}

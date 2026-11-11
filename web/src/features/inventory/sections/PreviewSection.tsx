@@ -1,4 +1,5 @@
 import { Button } from '../../../ui/button.tsx';
+import { useCopy } from '../../../ui/useCopy.ts';
 import { Pill } from '../../../ui/badge.tsx';
 import { Section } from '../../../ui/detail-layout.tsx';
 import { useQueryGuard } from '../../../ui/useQueryGuard.tsx';
@@ -20,6 +21,7 @@ export function PreviewSection({ org, group }: { org: string; group: InventoryGr
 
 function PreviewBody({ org, group }: { org: string; group: InventoryGroup }) {
   const t = useT();
+  const copy = useCopy();
   const preview = useInventoryPreview(org, group.id);
   const guard = useQueryGuard(preview);
   if (guard) return guard;
@@ -34,7 +36,7 @@ function PreviewBody({ org, group }: { org: string; group: InventoryGroup }) {
           <span className="font-mono">{group.name}</span>
           {t.inventory.preview.introAfter}
         </p>
-        <Button onClick={() => void navigator.clipboard.writeText(json)}>{t.inventory.preview.copy}</Button>
+        <Button onClick={() => void copy(json)}>{t.inventory.preview.copy}</Button>
       </div>
       {warnings.length > 0 && (
         <ul className="flex flex-col gap-1.5" aria-label={t.inventory.preview.warnings}>

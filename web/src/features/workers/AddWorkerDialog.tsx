@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Copy } from 'lucide-react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
+import { useCopy } from '../../ui/useCopy.ts';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
@@ -26,6 +27,7 @@ interface Created {
  * shown below the file, sets the token as its environment. */
 export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => void }) {
   const t = useT();
+  const copy = useCopy();
   const zones = useZones(org);
   const create = useCreateWorkerEnrollment(org);
   const [zoneId, setZoneId] = useState('');
@@ -64,7 +66,7 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
             <code className="flex-1 truncate rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs" aria-label={t.workers.dialog.tokenLabel}>
               {created.token}
             </code>
-            <Button type="button" variant="ghost" aria-label={t.workers.dialog.copyToken} onClick={() => void navigator.clipboard.writeText(created.token)}>
+            <Button type="button" variant="ghost" aria-label={t.workers.dialog.copyToken} onClick={() => void copy(created.token)}>
               <Copy size={13} />
             </Button>
           </div>
@@ -95,7 +97,7 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
                 >
                   {created.composeUp}
                 </pre>
-                <Button type="button" variant="ghost" aria-label={t.workers.dialog.copyComposeUp} onClick={() => void navigator.clipboard.writeText(created.composeUp)}>
+                <Button type="button" variant="ghost" aria-label={t.workers.dialog.copyComposeUp} onClick={() => void copy(created.composeUp)}>
                   <Copy size={13} /> {t.workers.dialog.copy}
                 </Button>
               </div>
@@ -103,7 +105,7 @@ export function AddWorkerDialog({ org, onClose }: { org: string; onClose: () => 
             </div>
           )}
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" aria-label={t.workers.dialog.copySnippet} onClick={() => void navigator.clipboard.writeText(snippet)}>
+            <Button type="button" variant="ghost" aria-label={t.workers.dialog.copySnippet} onClick={() => void copy(snippet)}>
               <Copy size={13} /> {t.workers.dialog.copy}
             </Button>
             <Button type="button" variant="primary" onClick={onClose}>

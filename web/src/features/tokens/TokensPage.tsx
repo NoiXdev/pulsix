@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { KeyRound } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { useCopy } from '../../ui/useCopy.ts';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
@@ -34,6 +35,7 @@ export function TokensPage() {
   const { org } = useParams({ strict: false }) as { org: string };
   const toast = useToast();
   const t = useT();
+  const copy = useCopy();
   const fmt = useFormat();
   const schema = useMemo(() => tokenFormSchema(t), [t]);
 
@@ -121,7 +123,7 @@ export function TokensPage() {
             </code>
             <div className="flex justify-end gap-2">
               <Button
-                onClick={() => navigator.clipboard.writeText(justCreated)}
+                onClick={() => void copy(justCreated)}
               >
                 {t.tokens.copy}
               </Button>

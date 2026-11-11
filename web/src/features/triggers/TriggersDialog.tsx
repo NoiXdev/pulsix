@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
+import { useCopy } from '../../ui/useCopy.ts';
 import { useToast } from '../../ui/toastContext.ts';
 import type { Trigger, TriggerInput } from '../../api/types.ts';
 import {
@@ -79,12 +80,13 @@ export function TriggersDialog({ org, target, canWrite, canRun, onClose }: {
 /** SecretBox shows a trigger secret exactly once. */
 function SecretBox({ secret, onDone }: { secret: string; onDone: () => void }) {
   const m = useT().triggers;
+  const copy = useCopy();
   return (
     <div className="flex flex-col gap-2 rounded-md border border-[var(--px-warn)] p-3">
       <p className="text-xs font-semibold">{m.secretOnce}</p>
       <div className="flex items-center gap-2">
         <code className="flex-1 truncate font-mono text-xs">{secret}</code>
-        <Button type="button" variant="ghost" aria-label={m.copySecret} onClick={() => void navigator.clipboard.writeText(secret)}>
+        <Button type="button" variant="ghost" aria-label={m.copySecret} onClick={() => void copy(secret)}>
           <Copy size={13} />
         </Button>
       </div>
@@ -106,6 +108,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
   const i18n = useT();
   const m = i18n.triggers;
   const toast = useToast();
+  const copy = useCopy();
   const update = useUpdateTrigger(org, t.id);
   const remove = useDeleteTrigger(org);
   const rotate = useRotateTriggerSecret(org);
@@ -159,7 +162,7 @@ function TriggerCard({ org, target, trigger: t, canWrite, canRun, onSecret }: {
       <div className="flex items-center gap-2">
         <span className="text-xs font-semibold">POST</span>
         <code className="flex-1 truncate font-mono text-xs">{t.url}</code>
-        <Button type="button" variant="ghost" aria-label={m.copyUrl} onClick={() => void navigator.clipboard.writeText(t.url)}>
+        <Button type="button" variant="ghost" aria-label={m.copyUrl} onClick={() => void copy(t.url)}>
           <Copy size={13} />
         </Button>
       </div>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Copy } from 'lucide-react';
 import { Button } from '../../ui/button.tsx';
+import { useCopy } from '../../ui/useCopy.ts';
 import { useT } from '../../i18n/useT.ts';
 
 interface Snippets {
@@ -48,11 +49,12 @@ export function PublicKeyPanel({ publicKey, snippets }: { publicKey: string; sni
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
   const t = useT();
+  const copy = useCopy();
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
-        <Button type="button" variant="ghost" aria-label={t.credentials.publicKey.copyLabel(label)} onClick={() => void navigator.clipboard.writeText(text)}>
+        <Button type="button" variant="ghost" aria-label={t.credentials.publicKey.copyLabel(label)} onClick={() => void copy(text)}>
           <Copy size={14} /> {t.credentials.publicKey.copy}
         </Button>
       </div>
