@@ -93,6 +93,34 @@ describe('DatePicker', () => {
     expect(trigger).toHaveFocus();
   });
 
+  // Fix round 1: a real browser ignores focus() on an element inside a
+  // `visibility: hidden` box, and jsdom does not. react-day-picker focuses
+  // the day from an effect, so the popover must already be visible then —
+  // checked at the moment of the call, since jsdom would let it through.
+  it('is visible at the moment the calendar focuses its day', async () => {
+    const user = userEvent.setup();
+    const hiddenAtFocus: boolean[] = [];
+    const realFocus = HTMLElement.prototype.focus;
+    const spy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, opts) {
+      const pop = this.closest('[role="dialog"]');
+      if (pop && this.closest('[role="grid"]')) {
+        const chain: Element[] = [];
+        for (let el = this.parentElement; el; el = el.parentElement) chain.push(el);
+        hiddenAtFocus.push([this, ...chain].some((el) => getComputedStyle(el).visibility === 'hidden'));
+      }
+      realFocus.call(this, opts);
+    });
+    try {
+      renderPicker({ value: '2026-11-11' });
+      await user.tab();
+      await user.keyboard('{Enter}');
+      expect(hiddenAtFocus.length).toBeGreaterThan(0);
+      expect(hiddenAtFocus).not.toContain(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('picks today with the Today button', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(2026, 10, 11, 15, 30));

@@ -16,6 +16,7 @@ export const deUi: Messages['ui'] = {
     timeOf: (name: string) => `${name}, Uhrzeit`,
     timePlaceholder: 'hh:mm',
     invalidTime: 'Eine Uhrzeit von 00:00 bis 23:59 eingeben, etwa 09:30.',
+    incomplete: 'Datum und Uhrzeit beide eingeben oder beide leer lassen.',
   },
   query: {
     signingOutTitle: 'Abmeldung',

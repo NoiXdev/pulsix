@@ -87,7 +87,13 @@ export function Popover({ anchor, onClose, id, label, children }: PopoverProps) 
         const next = e.relatedTarget as Node | null;
         if (next && !e.currentTarget.contains(next) && !anchor.current?.contains(next)) onClose('outside');
       }}
-      style={{ top: place?.top ?? 0, left: place?.left ?? 0, visibility: place ? undefined : 'hidden' }}
+      // Never hidden while unplaced, not even for its first render: the
+      // calendar focuses its day from an effect that runs before the
+      // placement update lands, and a browser ignores focus() inside a
+      // `visibility: hidden` box — the arrow keys would then go nowhere.
+      // There is nothing to hide anyway: the layout effect above places it
+      // before the browser paints.
+      style={{ top: place?.top ?? 0, left: place?.left ?? 0 }}
       className="fixed z-50 rounded-md border border-border bg-card p-2 text-foreground shadow-lg"
     >
       {children}

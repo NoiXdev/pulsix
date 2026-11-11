@@ -12,6 +12,10 @@ export interface TimeFieldProps {
   'aria-label'?: string;
   required?: boolean;
   disabled?: boolean;
+  /** Marks the field invalid with this message, whatever is in it — for a
+   *  parent that knows something the field cannot (DateTimePicker: a date
+   *  with no time). Blocks a surrounding form's submit while set. */
+  invalidMessage?: string;
 }
 
 /**
@@ -27,7 +31,7 @@ export interface TimeFieldProps {
  * custom validity message, so a surrounding form cannot submit it.
  */
 export function TimeField({
-  value, onChange, id, required, disabled,
+  value, onChange, id, required, disabled, invalidMessage,
   'aria-label': ariaLabel,
 }: TimeFieldProps) {
   const t = useT();
@@ -51,9 +55,12 @@ export function TimeField({
 
   const unreadable = draft.trim() !== '' && parseTime(draft) === null;
   const message = t.ui.picker.invalidTime;
+  // An unreadable entry outranks the parent's message: it is the more
+  // specific thing to fix.
+  const validity = unreadable ? message : (invalidMessage ?? '');
   useLayoutEffect(() => {
-    ref.current?.setCustomValidity(unreadable ? message : '');
-  }, [unreadable, message]);
+    ref.current?.setCustomValidity(validity);
+  }, [validity]);
 
   const emit = (next: string) => {
     if (next !== value) onChange(next);
@@ -80,7 +87,7 @@ export function TimeField({
       maxLength={5}
       id={id}
       aria-label={ariaLabel}
-      aria-invalid={invalid || undefined}
+      aria-invalid={invalid || invalidMessage !== undefined || undefined}
       required={required}
       disabled={disabled}
       placeholder={t.ui.picker.timePlaceholder}
@@ -107,7 +114,7 @@ export function TimeField({
       }}
       className={cn(
         'flex h-8 w-full rounded-md border border-border bg-background px-2.5 text-xs text-foreground tabular-nums placeholder:text-muted-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',
-        invalid && 'border-destructive',
+        (invalid || invalidMessage !== undefined) && 'border-destructive',
       )}
     />
   );

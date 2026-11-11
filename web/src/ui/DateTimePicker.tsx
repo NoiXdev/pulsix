@@ -28,7 +28,8 @@ export interface DateTimePickerProps {
  * half-filled state: a time typed before any day is picked, or a day kept
  * while its time is cleared and retyped, lives here until both halves are
  * there again, while the value meanwhile reads ''. A day picked with no time
- * yet starts at 00:00.
+ * yet starts at 00:00. While exactly one half is filled, the other is
+ * marked invalid and the form cannot be submitted, as with the native input.
  */
 export function DateTimePicker({
   value, onChange, id, required, disabled, min, max, placeholder,
@@ -45,6 +46,13 @@ export function DateTimePicker({
     setSeen(value);
     if (value !== joinDateTime(parts)) setParts(splitDateTime(value));
   }
+
+  // Half a date-time reads '' to the caller, but it is not an empty field:
+  // native datetime-local refuses it as badInput even when optional. Mark
+  // the missing half, which also blocks a surrounding form's submit.
+  const incomplete = t.ui.picker.incomplete;
+  const dateMissing = !parts.date && parts.time ? incomplete : undefined;
+  const timeMissing = parts.date && !parts.time ? incomplete : undefined;
 
   const update = (next: DateTimeParts) => {
     setParts(next);
@@ -65,6 +73,7 @@ export function DateTimePicker({
           min={min ? splitDateTime(min).date : undefined}
           max={max ? splitDateTime(max).date : undefined}
           placeholder={placeholder}
+          invalidMessage={dateMissing}
         />
       </div>
       <div className="w-20 shrink-0">
@@ -74,6 +83,7 @@ export function DateTimePicker({
           onChange={(time) => update({ ...parts, time })}
           required={required}
           disabled={disabled}
+          invalidMessage={timeMissing}
         />
       </div>
     </div>

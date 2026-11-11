@@ -1,4 +1,4 @@
-import { useCallback, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { DayPicker, type ClassNames, type Matcher } from 'react-day-picker';
 import { de } from 'react-day-picker/locale/de';
 import { enUS } from 'react-day-picker/locale/en-US';
@@ -25,6 +25,10 @@ export interface DatePickerProps {
   min?: string;
   max?: string;
   placeholder?: string;
+  /** Marks the field invalid with this message — for a parent that knows
+   *  something the field cannot (DateTimePicker: a time with no date).
+   *  Blocks a surrounding form's submit while set. */
+  invalidMessage?: string;
 }
 
 /** The calendar language and first weekday for each GUI language:
@@ -78,7 +82,7 @@ const FIELD_DATE: Intl.DateTimeFormatOptions = { day: '2-digit', month: '2-digit
  * Enter picks; Escape closes it and returns to the field.
  */
 export function DatePicker({
-  value, onChange, id, required, disabled, min, max, placeholder,
+  value, onChange, id, required, disabled, min, max, placeholder, invalidMessage,
   'aria-label': ariaLabel,
 }: DatePickerProps) {
   const t = useT();
@@ -86,6 +90,7 @@ export function DatePicker({
   const fmt = useFormat();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const validationRef = useRef<HTMLInputElement>(null);
   const popoverId = useId();
   const textId = useId();
 
@@ -109,6 +114,11 @@ export function DatePicker({
     if (reason !== 'outside') triggerRef.current?.focus();
   }, []);
 
+  const invalid = invalidMessage !== undefined;
+  useLayoutEffect(() => {
+    validationRef.current?.setCustomValidity(invalidMessage ?? '');
+  }, [invalidMessage]);
+
   const pick = (next: string) => {
     if (next !== value) onChange(next);
     close('picked');
@@ -116,27 +126,27 @@ export function DatePicker({
 
   return (
     <div className="relative">
-      {/* Native validation for `required`. Not hidden (type=hidden) nor
-          readonly: both are barred from constraint validation. Sits under
-          the trigger, first in the tab order around it, so the browser's
-          "fill in this field" bubble points at the field and Tab from it
-          lands on the trigger. */}
-      {required && (
-        <input
-          tabIndex={-1}
-          aria-hidden
-          required
-          value={value}
-          onChange={() => {}}
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-px opacity-0"
-        />
-      )}
+      {/* Native validation: `required`, and `invalidMessage` as a custom
+          validity. Not hidden (type=hidden) nor readonly: both are barred
+          from constraint validation. Sits under the trigger, first in the
+          tab order around it, so the browser's bubble points at the field
+          and Tab from it lands on the trigger. */}
+      <input
+        ref={validationRef}
+        tabIndex={-1}
+        aria-hidden
+        required={required}
+        value={value}
+        onChange={() => {}}
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-px opacity-0"
+      />
       <button
         ref={triggerRef}
         type="button"
         id={id}
         aria-label={ariaLabel}
         aria-describedby={text ? textId : undefined}
+        aria-invalid={invalid || undefined}
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-controls={open ? popoverId : undefined}
@@ -148,7 +158,10 @@ export function DatePicker({
             setOpen(false);
           }
         }}
-        className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 text-left text-xs text-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50"
+        className={cn(
+          'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 text-left text-xs text-foreground focus-visible:border-primary focus-visible:outline-none disabled:opacity-50',
+          invalid && 'border-destructive',
+        )}
       >
         <span id={textId} className={cn('truncate', !text && 'text-muted-foreground')}>
           {text || placeholder}
