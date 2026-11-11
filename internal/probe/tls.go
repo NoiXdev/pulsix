@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,8 +18,8 @@ const (
 
 // probeTLS completes a TLS handshake with address:port without trusting the
 // certificate, then verifies the chain itself against roots (nil: the
-// system roots) and server_name, so the leaf's expiry is reported for an
-// invalid chain too.
+// system roots) and server_name ({address} replaced), so the leaf's expiry
+// is reported for an invalid chain too.
 func probeTLS(ctx context.Context, g *Guard, params map[string]any, address string, roots *x509.CertPool) []Observation {
 	metrics := []string{"tls.up", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days"}
 
@@ -30,7 +31,9 @@ func probeTLS(ctx context.Context, g *Guard, params map[string]any, address stri
 	if !ok {
 		return failAll(errBadPort.Error(), metrics...)
 	}
-	serverName := strParam(params, "server_name", "")
+	// server_name may carry {address}: it becomes the host's address
+	// without IPv6 brackets, the form SNI and verification take.
+	serverName := strings.ReplaceAll(strParam(params, "server_name", ""), addressPlaceholder, host)
 	if serverName == "" {
 		serverName = host
 	}
