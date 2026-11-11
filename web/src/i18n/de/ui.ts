@@ -8,6 +8,15 @@ export const deUi: Messages['ui'] = {
     noMatch: 'Kein Treffer',
     unavailable: (value: string) => `${value} (nicht verfügbar)`,
   },
+  picker: {
+    calendar: 'Datum wählen',
+    today: 'Heute',
+    clear: 'Leeren',
+    time: 'Uhrzeit',
+    timeOf: (name: string) => `${name}, Uhrzeit`,
+    timePlaceholder: 'hh:mm',
+    invalidTime: 'Eine Uhrzeit von 00:00 bis 23:59 eingeben, etwa 09:30.',
+  },
   query: {
     signingOutTitle: 'Abmeldung',
     signingOutDetail: 'Die Sitzung ist abgelaufen. Weiterleitung zur Anmeldung…',

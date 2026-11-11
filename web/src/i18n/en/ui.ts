@@ -1,7 +1,8 @@
 /**
  * The shared components in src/ui that say something themselves: the
  * combobox, the full-page error and loading states, the query guard's
- * toasts, the "Load more" button, the slug field and the metric chart.
+ * toasts, the "Load more" button, the slug field, the metric chart and the
+ * date and time pickers.
  */
 export const enUi = {
   loadMore: 'Load more',
@@ -10,6 +11,15 @@ export const enUi = {
     noOptions: 'No options',
     noMatch: 'No match',
     unavailable: (value: string) => `${value} (unavailable)`,
+  },
+  picker: {
+    calendar: 'Choose a date',
+    today: 'Today',
+    clear: 'Clear',
+    time: 'Time',
+    timeOf: (name: string) => `${name}, time`,
+    timePlaceholder: 'hh:mm',
+    invalidTime: 'Enter a time from 00:00 to 23:59, such as 09:30.',
   },
   query: {
     signingOutTitle: 'Signing you out',
