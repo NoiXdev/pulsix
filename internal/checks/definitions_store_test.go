@@ -417,3 +417,63 @@ func TestDefinitionStoreGenericErrorsSurface(t *testing.T) {
 		t.Fatalf("Delete on a canceled context = %v, want a plain wrapped error", err)
 	}
 }
+
+// TestNetworkUptimeSeedMigrationMatchesSeedForOrg (backlog 3.7, Review
+// Focus 5): migration 00084 writes the network and uptime seed rows for an
+// organization that existed before it, SeedForOrg writes them for one
+// created afterwards, and the two must agree on every column but the ids
+// and timestamps — the migration encodes SeedDefinitions() by hand, so this
+// is what notices the two drifting apart.
+func TestNetworkUptimeSeedMigrationMatchesSeedForOrg(t *testing.T) {
+	d, err := db.Open(ctx, testdb.FreshDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.MigrateTo(ctx, 83); err != nil {
+		t.Fatal(err)
+	}
+	existing := uuid.Must(uuid.NewV7())
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO organizations (id, slug, name) VALUES ($1, 'existing', 'existing')`, existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	created := seedOrg(t, d, "created")
+	if err := checks.NewService(checks.NewSQLStore(d)).SeedForOrg(db.WithOrgScope(ctx, created), created); err != nil {
+		t.Fatal(err)
+	}
+
+	rowsOf := func(org uuid.UUID) map[string]string {
+		t.Helper()
+		rows, err := d.Pool().Query(ctx, `
+SELECT key, (to_jsonb(c) - 'id' - 'org_id' - 'created_at' - 'updated_at')::text
+FROM check_definitions c WHERE org_id = $1 AND key IN ('network', 'uptime')`, org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := map[string]string{}
+		for rows.Next() {
+			var key, row string
+			if err := rows.Scan(&key, &row); err != nil {
+				t.Fatal(err)
+			}
+			got[key] = row
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	fromMigration, fromSeed := rowsOf(existing), rowsOf(created)
+	if len(fromSeed) != 2 {
+		t.Fatalf("SeedForOrg wrote %v, want network and uptime", fromSeed)
+	}
+	for key, want := range fromSeed {
+		if fromMigration[key] != want {
+			t.Errorf("%s from migration 00084 = %s\nwant SeedForOrg's %s", key, fromMigration[key], want)
+		}
+	}
+}

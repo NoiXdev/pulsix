@@ -356,16 +356,18 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// sharedSvc.ProjectAllCheckDefinitionsInto (Task 7, check definitions)
 	// runs last, after checksSvc.SeedForOrg has already written the
 	// organization's "Linux base" seed set: a shared check definition using
-	// one of that set's own reserved keys (cpu, memory, disk, service) can
-	// never be CREATED in the first place — Service.CreateCheckDefinition's
-	// own pre-flight collision check already finds it colliding in EVERY
-	// existing organization the moment the provider tries, since every
-	// organization has carried those four keys at the default ('org', nil,
-	// nil) scope since its own creation — so this ordering never actually
-	// needs to race against that seed set for a real definition; it is
+	// one of that set's own reserved keys (cpu, memory, disk, service,
+	// network, uptime) can never be CREATED in the first place —
+	// Service.CreateCheckDefinition refuses every reserved key outright
+	// (shared.reservedSeedKeys) — so this ordering never actually needs to
+	// race against that seed set for a definition created since; it is
 	// simply the correct order instead of an arbitrary one, since
 	// checksSvc.SeedForOrg could in principle be wrong about what "already
-	// exists" means for a NEW organization's check definitions.
+	// exists" means for a NEW organization's check definitions. (network
+	// and uptime joined the set in backlog 3.7: a shared definition created
+	// under either key before that still exists, and a new organization's
+	// projection of it collides with the seed until an instance admin
+	// renames it.)
 	// See tenancy.OrgCreatedHook's own doc comment for why this runs as a
 	// sequential step after each service's own writes commit, rather than
 	// inside either one's transaction — sharedSvc.ProjectAllInto's own doc

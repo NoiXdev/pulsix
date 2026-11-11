@@ -114,8 +114,8 @@ func TestOrgCreationSeedsCheckDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(defs) != 4 {
-		t.Fatalf("check definitions = %+v, want exactly the 4-plugin seed set", defs)
+	if len(defs) != 6 {
+		t.Fatalf("check definitions = %+v, want exactly the 6-plugin seed set", defs)
 	}
 	seen := map[string]bool{}
 	for _, d := range defs {
@@ -124,7 +124,7 @@ func TestOrgCreationSeedsCheckDefinitions(t *testing.T) {
 		}
 		seen[d.Key] = true
 	}
-	for _, want := range []string{"cpu", "memory", "disk", "service"} {
+	for _, want := range []string{"cpu", "memory", "disk", "service", "network", "uptime"} {
 		if !seen[want] {
 			t.Fatalf("seed set missing %q, got %+v", want, defs)
 		}
@@ -154,8 +154,8 @@ func TestFirstRunWizardSeedsCheckDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(defs) != 4 {
-		t.Fatalf("check definitions = %+v, want exactly the 4-plugin seed set", defs)
+	if len(defs) != 6 {
+		t.Fatalf("check definitions = %+v, want exactly the 6-plugin seed set", defs)
 	}
 }
 

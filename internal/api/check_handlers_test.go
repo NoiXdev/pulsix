@@ -187,7 +187,7 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		for _, d := range f.listChecks(t, f.viewerC) {
 			byKey[d.Key] = d
 		}
-		for _, key := range []string{"cpu", "memory", "disk", "service"} {
+		for _, key := range []string{"cpu", "memory", "disk", "service", "network", "uptime"} {
 			d, ok := byKey[key]
 			if !ok {
 				t.Fatalf("seed key %q missing from %+v", key, byKey)
@@ -259,6 +259,29 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 			if got := byKey[key].HostName; got != want {
 				t.Errorf("%s host_name = %q, want %q", key, got, want)
 			}
+		}
+	})
+
+	// The network and uptime plugins (backlog 3.7) are accepted on write,
+	// network with an explicit interface list, and come back as such.
+	t.Run("accepts the network and uptime plugins", func(t *testing.T) {
+		for _, body := range []map[string]any{
+			{"key": "net-wan", "plugin": "network", "interval_seconds": 30, "binding_kind": "host", "host_id": f.web.String(),
+				"params": map[string]any{"interfaces": []string{"eth0"}}},
+			{"key": "uptime-web", "plugin": "uptime", "interval_seconds": 300, "binding_kind": "host", "host_id": f.web.String()},
+		} {
+			created := f.createCheck(t, f.operatorC, body)
+			if created.Plugin != body["plugin"] || created.Key != body["key"] {
+				t.Fatalf("created = %+v, want plugin %v under key %v", created, body["plugin"], body["key"])
+			}
+			requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+		}
+		resp := requestJSON(t, f.operatorC, http.MethodPost, f.checksURL(), map[string]any{
+			"key": "net-typo", "plugin": "network", "interval_seconds": 30, "binding_kind": "org",
+			"params": map[string]any{"interface": []string{"eth0"}},
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("network with an unknown parameter = %d %s, want 400", resp.StatusCode, mustReadBody(t, resp))
 		}
 	})
 

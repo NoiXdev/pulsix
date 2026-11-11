@@ -140,3 +140,43 @@ func TestAdminUserDetailDTOSchemaCarriesEveryUserField(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckPluginEnumsNameEveryPlugin: the read-side DTOs carry the plugin
+// as a closed enum the generated SPA types are built from, so a plugin the
+// manager accepts but these enums leave out would type-check as impossible
+// in the GUI (backlog 3.7 added network and uptime). Every schema with an
+// enum-typed plugin property must list exactly the plugins internal/checks
+// accepts.
+func TestCheckPluginEnumsNameEveryPlugin(t *testing.T) {
+	doc, err := Document()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Components struct {
+			Schemas map[string]struct {
+				Properties map[string]struct {
+					Enum []string `json:"enum"`
+				} `json:"properties"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(doc, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"cpu", "memory", "disk", "service", "network", "uptime"}
+	found := 0
+	for name, schema := range parsed.Components.Schemas {
+		plugin, ok := schema.Properties["plugin"]
+		if !ok || len(plugin.Enum) == 0 {
+			continue
+		}
+		found++
+		if strings.Join(plugin.Enum, ",") != strings.Join(want, ",") {
+			t.Errorf("%s.plugin enum = %v, want %v", name, plugin.Enum, want)
+		}
+	}
+	if found < 3 {
+		t.Fatalf("schemas with a plugin enum = %d, want at least the three check DTOs", found)
+	}
+}

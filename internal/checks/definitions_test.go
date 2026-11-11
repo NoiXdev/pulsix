@@ -219,6 +219,38 @@ func TestCreateDefinitionValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "network with no parameters accepted (interfaces is optional)",
+			in:   checks.DefinitionInput{Plugin: checks.PluginNetwork, Interval: time.Minute, BindingKind: checks.BindingOrg},
+		},
+		{
+			name: "network with an interfaces list, as []any the way JSON decodes it, accepted",
+			in:   checks.DefinitionInput{Plugin: checks.PluginNetwork, Interval: time.Minute, BindingKind: checks.BindingOrg, Params: map[string]any{"interfaces": []any{"eth0", "wg0"}}},
+		},
+		{
+			name:    "network with an unknown parameter refused",
+			in:      checks.DefinitionInput{Plugin: checks.PluginNetwork, Interval: time.Minute, BindingKind: checks.BindingOrg, Params: map[string]any{"interface": []string{"eth0"}}},
+			wantErr: true,
+		},
+		{
+			name:    "network interfaces with an empty entry refused",
+			in:      checks.DefinitionInput{Plugin: checks.PluginNetwork, Interval: time.Minute, BindingKind: checks.BindingOrg, Params: map[string]any{"interfaces": []string{"eth0", " "}}},
+			wantErr: true,
+		},
+		{
+			name:    "network interfaces that is not a list of strings refused",
+			in:      checks.DefinitionInput{Plugin: checks.PluginNetwork, Interval: time.Minute, BindingKind: checks.BindingOrg, Params: map[string]any{"interfaces": "eth0"}},
+			wantErr: true,
+		},
+		{
+			name: "uptime with no parameters accepted",
+			in:   checks.DefinitionInput{Plugin: checks.PluginUptime, Interval: 5 * time.Minute, BindingKind: checks.BindingOrg},
+		},
+		{
+			name:    "uptime with parameters refused",
+			in:      checks.DefinitionInput{Plugin: checks.PluginUptime, Interval: 5 * time.Minute, BindingKind: checks.BindingOrg, Params: map[string]any{"anything": true}},
+			wantErr: true,
+		},
+		{
 			name:    "org binding with a group set refused",
 			in:      checks.DefinitionInput{Plugin: checks.PluginCPU, Interval: time.Minute, BindingKind: checks.BindingOrg, GroupID: &someGroup},
 			wantErr: true,
@@ -626,7 +658,7 @@ func TestListDefinitionsIsOrgScoped(t *testing.T) {
 }
 
 // TestSeedForOrgWritesTheLinuxBaseSet pins SeedDefinitions' own contract:
-// four rows, one per plugin, every one origin = "seed" and bound to the
+// six rows, one per plugin, every one origin = "seed" and bound to the
 // organization.
 func TestSeedForOrgWritesTheLinuxBaseSet(t *testing.T) {
 	svc := checks.NewService(newFakeStore())
@@ -638,8 +670,8 @@ func TestSeedForOrgWritesTheLinuxBaseSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(defs) != 4 {
-		t.Fatalf("len(defs) = %d, want 4", len(defs))
+	if len(defs) != 6 {
+		t.Fatalf("len(defs) = %d, want 6", len(defs))
 	}
 	seen := map[string]bool{}
 	for _, d := range defs {
@@ -651,7 +683,7 @@ func TestSeedForOrgWritesTheLinuxBaseSet(t *testing.T) {
 		}
 		seen[d.Key] = true
 	}
-	for _, want := range []string{"cpu", "memory", "disk", "service"} {
+	for _, want := range []string{"cpu", "memory", "disk", "service", "network", "uptime"} {
 		if !seen[want] {
 			t.Fatalf("seed set missing %q, got %v", want, defs)
 		}
@@ -660,20 +692,27 @@ func TestSeedForOrgWritesTheLinuxBaseSet(t *testing.T) {
 
 func TestSeedDefinitionsMatchesLinuxBase(t *testing.T) {
 	got := checks.SeedDefinitions()
-	if len(got) != 4 {
-		t.Fatalf("len = %d, want 4", len(got))
+	if len(got) != 6 {
+		t.Fatalf("len = %d, want 6", len(got))
 	}
 	byPlugin := map[string]checks.DefinitionInput{}
 	for _, in := range got {
 		byPlugin[in.Plugin] = in
 	}
-	for _, plugin := range []string{checks.PluginCPU, checks.PluginMemory, checks.PluginDisk, checks.PluginService} {
+	wantInterval := map[string]time.Duration{
+		checks.PluginCPU: time.Minute, checks.PluginMemory: time.Minute, checks.PluginDisk: 5 * time.Minute,
+		checks.PluginService: time.Minute, checks.PluginNetwork: time.Minute, checks.PluginUptime: 5 * time.Minute,
+	}
+	for plugin, interval := range wantInterval {
 		in, ok := byPlugin[plugin]
 		if !ok {
 			t.Fatalf("seed set missing plugin %q", plugin)
 		}
-		if in.BindingKind != checks.BindingOrg || !in.Enabled {
-			t.Fatalf("plugin %q = %+v, want org-bound and enabled", plugin, in)
+		if in.Key != plugin || in.BindingKind != checks.BindingOrg || !in.Enabled || in.Interval != interval {
+			t.Fatalf("plugin %q = %+v, want key %q, org-bound, enabled, every %s", plugin, in, plugin, interval)
+		}
+		if (plugin == checks.PluginNetwork || plugin == checks.PluginUptime) && len(in.Params) != 0 {
+			t.Fatalf("plugin %q params = %v, want none", plugin, in.Params)
 		}
 		if _, err := checks.NewService(newFakeStore()).CreateDefinition(ctx, uuid.Must(uuid.NewV7()), in); err != nil {
 			t.Fatalf("SeedDefinitions()' own %q entry must itself pass validation: %v", plugin, err)

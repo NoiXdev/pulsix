@@ -61,7 +61,7 @@ import (
 
 // seedCheckKeys is the "Linux base" set every organization is created
 // with (internal/checks.SeedDefinitions).
-var seedCheckKeys = []string{"cpu", "memory", "disk", "service"}
+var seedCheckKeys = []string{"cpu", "memory", "disk", "service", "network", "uptime"}
 
 // cpuMetric is the whole-host metric the gate follows through the whole
 // pipeline: the agent's cpu plugin reports it on every platform, as a

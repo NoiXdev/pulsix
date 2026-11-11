@@ -86,6 +86,8 @@ export const enChecks = {
       memory: 'Memory',
       disk: 'Disk',
       service: 'Service units',
+      network: 'Network',
+      uptime: 'Uptime',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',

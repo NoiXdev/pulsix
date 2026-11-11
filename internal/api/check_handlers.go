@@ -68,7 +68,7 @@ const pushTimeout = 30 * time.Second
 type checkDefinitionDTO struct {
 	ID              string         `json:"id"`
 	Key             string         `json:"key"`
-	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service"`
+	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service,network,uptime"`
 	Params          map[string]any `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
 	IntervalSeconds int            `json:"interval_seconds"`
 	Enabled         bool           `json:"enabled"`
@@ -103,8 +103,8 @@ type checkDefinitionDTO struct {
 // specific message on the next. One validator, one message.
 type checkDefinitionBody struct {
 	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on. Defaults to the plugin name on create; an update must name it, since defaulting it on a full replace would silently rename the definition"`
-	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service"`
-	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, service a required units list; cpu and memory take none"`
+	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service, network, uptime"`
+	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none"`
 	IntervalSeconds int            `json:"interval_seconds" doc:"How often the check runs, between 10 and 86400 seconds"`
 	Enabled         *bool          `json:"enabled,omitempty" doc:"Defaults to true; false keeps the row but stops the check at this scope"`
 	BindingKind     string         `json:"binding_kind" doc:"One of org, group, host"`

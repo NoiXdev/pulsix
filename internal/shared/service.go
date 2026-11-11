@@ -713,11 +713,12 @@ func (s *Service) ListCheckDefs(ctx context.Context) ([]CheckDefinition, error) 
 // created would fail on the real collision this reserved key finally has
 // something to hit, leaving CreateOrg's own caller an error and an
 // organization that nonetheless exists, with its owner already a member.
-// Refusing these four keys unconditionally, independent of whether any
+// Refusing these six keys unconditionally, independent of whether any
 // collision can currently be demonstrated, is what closes that window
 // rather than narrowing it.
 var reservedSeedKeys = map[string]bool{
 	checks.PluginCPU: true, checks.PluginMemory: true, checks.PluginDisk: true, checks.PluginService: true,
+	checks.PluginNetwork: true, checks.PluginUptime: true,
 }
 
 // checkDefinitionOrgScopeDescription names the scope both

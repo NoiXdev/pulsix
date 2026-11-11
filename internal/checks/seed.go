@@ -9,8 +9,8 @@ import (
 )
 
 // SeedDefinitions is the "Linux base" set (spec's Data model, "Seed set"):
-// the four plugins this milestone ships, each bound to the whole
-// organization under its own plugin name as key, so a fresh organization
+// every plugin the agent runs, each bound to the whole organization under
+// its own plugin name as key, so a fresh organization
 // already shows current values and graphs for every managed host without
 // an operator configuring anything first.
 //
@@ -23,9 +23,11 @@ import (
 //
 // This function's return value is used two ways that must never disagree:
 // SeedForOrg calls it directly for a newly created organization, and
-// migration 00043's backfill INSERT encodes the same four rows in SQL for
-// organizations that already existed — the migration cannot call Go code,
-// so keep the two in sync by hand when either changes.
+// migrations encode the same rows in SQL for organizations that already
+// existed — 00043 the first four, 00084 network and uptime (backlog 3.7).
+// A migration cannot call Go code, so keep them in sync by hand when either
+// changes; TestNetworkUptimeSeedMigrationMatchesSeedForOrg compares 00084's
+// rows with this function's.
 func SeedDefinitions() []DefinitionInput {
 	return []DefinitionInput{
 		{Key: PluginCPU, Plugin: PluginCPU, Interval: 60 * time.Second, Enabled: true, BindingKind: BindingOrg},
@@ -35,6 +37,8 @@ func SeedDefinitions() []DefinitionInput {
 			Key: PluginService, Plugin: PluginService, Interval: 60 * time.Second, Enabled: true, BindingKind: BindingOrg,
 			Params: map[string]any{"units": []string{"sshd"}},
 		},
+		{Key: PluginNetwork, Plugin: PluginNetwork, Interval: 60 * time.Second, Enabled: true, BindingKind: BindingOrg},
+		{Key: PluginUptime, Plugin: PluginUptime, Interval: 5 * time.Minute, Enabled: true, BindingKind: BindingOrg},
 	}
 }
 

@@ -30,14 +30,21 @@ export function formatNumber(value: number): string {
 
 /**
  * NUMERIC_PLUGIN says which plugins measure numbers. Only the service
- * plugin reports a label (the unit's state) — cpu, memory and disk report
- * numbers, and every one of them reports an error the same way
- * (internal/agent/checks: labelObservation is called from service.go
- * alone). It is a total map over the generated plugin union rather than a
- * list of exceptions, so a fifth plugin fails to compile here until
- * somebody decides which side of the line it is on.
+ * plugin reports a label (the unit's state) — cpu, memory, disk, network
+ * and uptime report numbers, and every one of them reports an error the
+ * same way (internal/agent/checks: labelObservation is called from
+ * service.go alone). It is a total map over the generated plugin union
+ * rather than a list of exceptions, so a new plugin fails to compile here
+ * until somebody decides which side of the line it is on.
  */
-const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = { cpu: true, memory: true, disk: true, service: false };
+const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
+  cpu: true,
+  memory: true,
+  disk: true,
+  service: false,
+  network: true,
+  uptime: true,
+};
 
 /**
  * isGraphable reports whether a graph may be offered for one of a check's

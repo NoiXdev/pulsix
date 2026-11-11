@@ -401,7 +401,7 @@ func registerSharedTemplateRoutes(hapi huma.API, deps Deps) {
 type checkDefinitionDefDTO struct {
 	ID              string         `json:"id"`
 	Key             string         `json:"key"`
-	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service"`
+	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service,network,uptime"`
 	Params          map[string]any `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
 	IntervalSeconds int            `json:"interval_seconds"`
 }
@@ -447,8 +447,8 @@ type checkDefinitionDefDetailOutput struct {
 // checks.Service.UpdateDefinition already does.
 type checkDefinitionDefBody struct {
 	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on inside every organization. Defaults to the plugin name on create."`
-	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service"`
-	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, service a required units list; cpu and memory take none"`
+	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service, network, uptime"`
+	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none"`
 	IntervalSeconds int            `json:"interval_seconds" doc:"How often the check runs, between 10 and 86400 seconds"`
 }
 

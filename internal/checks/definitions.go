@@ -43,20 +43,23 @@ const (
 	originShared = "shared"
 )
 
-// The four plugins this milestone ships (spec's Decisions table: "Plugin
-// set"). A table in code rather than a free-form string so an unknown
-// plugin is refused at write time instead of silently never running —
-// there is no fifth plugin the agent could execute even if a definition
-// named one.
+// The plugins the agent can run: the four v0.3b shipped (spec's Decisions
+// table: "Plugin set") plus network and uptime (backlog 3.7). A table in
+// code rather than a free-form string so an unknown plugin is refused at
+// write time instead of silently never running — there is no other plugin
+// the agent could execute even if a definition named one.
 const (
 	PluginCPU     = "cpu"
 	PluginMemory  = "memory"
 	PluginDisk    = "disk"
 	PluginService = "service"
+	PluginNetwork = "network"
+	PluginUptime  = "uptime"
 )
 
 var supportedPlugins = map[string]bool{
 	PluginCPU: true, PluginMemory: true, PluginDisk: true, PluginService: true,
+	PluginNetwork: true, PluginUptime: true,
 }
 
 // keyPattern is the same shape a plugin name itself always satisfies, so a
@@ -133,34 +136,20 @@ func stringList(v any) ([]string, bool) {
 }
 
 // validateParams checks params against plugin's own schema: disk takes an
-// optional mount allow-list ("mounts"), service a required non-empty unit
-// list ("units"), cpu and memory take no parameters at all. Rejecting
+// optional mount allow-list ("mounts"), network an optional interface list
+// ("interfaces"), service a required non-empty unit list ("units"), cpu,
+// memory and uptime take no parameters at all. Rejecting
 // unknown keys (rather than ignoring them) is deliberate — a typo'd
 // parameter name must fail loudly at write time, not be silently dropped
 // and discovered missing at the agent weeks later.
 func validateParams(plugin string, params map[string]any) error {
 	switch plugin {
-	case PluginCPU, PluginMemory:
+	case PluginCPU, PluginMemory, PluginUptime:
 		if len(params) > 0 {
 			return fmt.Errorf("%w: plugin %q takes no parameters", ErrInvalidInput, plugin)
 		}
-	case PluginDisk:
-		for k := range params {
-			if k != "mounts" {
-				return fmt.Errorf("%w: disk: unknown parameter %q", ErrInvalidInput, k)
-			}
-		}
-		if v, ok := params["mounts"]; ok {
-			mounts, ok := stringList(v)
-			if !ok {
-				return fmt.Errorf("%w: disk: mounts must be a list of strings", ErrInvalidInput)
-			}
-			for _, m := range mounts {
-				if strings.TrimSpace(m) == "" {
-					return fmt.Errorf("%w: disk: mounts must not contain an empty entry", ErrInvalidInput)
-				}
-			}
-		}
+	case PluginDisk, PluginNetwork:
+		return validateOptionalList(plugin, itemParam[plugin], params)
 	case PluginService:
 		for k := range params {
 			if k != "units" {
@@ -185,6 +174,32 @@ func validateParams(plugin string, params map[string]any) error {
 	return nil
 }
 
+// validateOptionalList checks the params of a plugin whose only parameter
+// is an optional list of the items it watches — disk's mounts, network's
+// interfaces: no other key, and when the list is given, strings that are
+// not blank.
+func validateOptionalList(plugin, param string, params map[string]any) error {
+	for k := range params {
+		if k != param {
+			return fmt.Errorf("%w: %s: unknown parameter %q", ErrInvalidInput, plugin, k)
+		}
+	}
+	v, ok := params[param]
+	if !ok {
+		return nil
+	}
+	list, ok := stringList(v)
+	if !ok {
+		return fmt.Errorf("%w: %s: %s must be a list of strings", ErrInvalidInput, plugin, param)
+	}
+	for _, e := range list {
+		if strings.TrimSpace(e) == "" {
+			return fmt.Errorf("%w: %s: %s must not contain an empty entry", ErrInvalidInput, plugin, param)
+		}
+	}
+	return nil
+}
+
 // ValidateDefinitionShape validates and normalizes the four columns spec
 // decision 2 gives a check definition's installation-owned half — plugin,
 // key, params and interval — independently of any binding. normalizeDefinition
@@ -200,7 +215,7 @@ func validateParams(plugin string, params map[string]any) error {
 func ValidateDefinitionShape(plugin, key string, params map[string]any, interval time.Duration) (normalizedKey string, err error) {
 	plugin = strings.TrimSpace(plugin)
 	if !supportedPlugins[plugin] {
-		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, got %q", ErrInvalidInput, plugin)
+		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, network, uptime, got %q", ErrInvalidInput, plugin)
 	}
 	normalizedKey = strings.TrimSpace(key)
 	if normalizedKey == "" {

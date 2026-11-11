@@ -147,8 +147,8 @@ func TestBuildSeedsRuleSetOnOrgCreation(t *testing.T) {
 	if err := admin.Pool().QueryRow(ctx, `SELECT count(*) FROM check_definitions WHERE org_id = $1`, org.ID).Scan(&defCount); err != nil {
 		t.Fatal(err)
 	}
-	if defCount != 4 {
-		t.Fatalf("check_definitions for the new org = %d, want the 4-plugin seed set (checksSvc.SeedForOrg must still run)", defCount)
+	if defCount != 6 {
+		t.Fatalf("check_definitions for the new org = %d, want the 6-plugin seed set (checksSvc.SeedForOrg must still run)", defCount)
 	}
 
 	rows, err := admin.Pool().Query(ctx, `SELECT origin, scope, metric, severity FROM check_rules WHERE org_id = $1`, org.ID)

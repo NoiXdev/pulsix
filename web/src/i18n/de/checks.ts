@@ -82,6 +82,8 @@ export const deChecks: Messages['checks'] = {
       memory: 'Arbeitsspeicher',
       disk: 'Datenträger',
       service: 'Dienst-Units',
+      network: 'Netzwerk',
+      uptime: 'Laufzeit',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',

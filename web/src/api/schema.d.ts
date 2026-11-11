@@ -3828,11 +3828,11 @@ export interface components {
             interval_seconds: number;
             /** @description Lower-case identifier a narrower scope overrides on. Defaults to the plugin name on create; an update must name it, since defaulting it on a full replace would silently rename the definition */
             key?: string;
-            /** @description disk takes an optional mounts list, service a required units list; cpu and memory take none */
+            /** @description disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none */
             params?: {
                 [key: string]: unknown;
             };
-            /** @description One of cpu, memory, disk, service */
+            /** @description One of cpu, memory, disk, service, network, uptime */
             plugin: string;
         };
         CheckDefinitionDTO: {
@@ -3859,7 +3859,7 @@ export interface components {
                 [key: string]: unknown;
             };
             /** @enum {string} */
-            plugin: "cpu" | "memory" | "disk" | "service";
+            plugin: "cpu" | "memory" | "disk" | "service" | "network" | "uptime";
             shared_definition_id?: string;
             /** Format: date-time */
             updated_at: string;
@@ -3878,11 +3878,11 @@ export interface components {
             interval_seconds: number;
             /** @description Lower-case identifier a narrower scope overrides on inside every organization. Defaults to the plugin name on create. */
             key?: string;
-            /** @description disk takes an optional mounts list, service a required units list; cpu and memory take none */
+            /** @description disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none */
             params?: {
                 [key: string]: unknown;
             };
-            /** @description One of cpu, memory, disk, service */
+            /** @description One of cpu, memory, disk, service, network, uptime */
             plugin: string;
         };
         CheckDefinitionDefDTO: {
@@ -3895,7 +3895,7 @@ export interface components {
                 [key: string]: unknown;
             };
             /** @enum {string} */
-            plugin: "cpu" | "memory" | "disk" | "service";
+            plugin: "cpu" | "memory" | "disk" | "service" | "network" | "uptime";
         };
         CheckDefinitionDefDetailOutputBody: {
             /**
@@ -4507,7 +4507,7 @@ export interface components {
                 [key: string]: unknown;
             };
             /** @enum {string} */
-            plugin: "cpu" | "memory" | "disk" | "service";
+            plugin: "cpu" | "memory" | "disk" | "service" | "network" | "uptime";
             /**
              * @description The scope the winning definition is bound at
              * @enum {string}

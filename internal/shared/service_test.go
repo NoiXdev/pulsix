@@ -1038,6 +1038,23 @@ func TestCreateCheckDefinitionAcceptsExplicitParams(t *testing.T) {
 	}
 }
 
+// TestCreateCheckDefinitionAcceptsTheNetworkAndUptimePlugins: a shared
+// definition runs the same per-plugin schema as an organization's own
+// (backlog 3.7), under a key of its own since the plugin names are seeds.
+func TestCreateCheckDefinitionAcceptsTheNetworkAndUptimePlugins(t *testing.T) {
+	for _, in := range []shared.CheckDefinitionInput{
+		{Key: "net-wan", Plugin: "network", Interval: 30 * time.Second, Params: map[string]any{"interfaces": []any{"eth0"}}},
+		{Key: "uptime-fleet", Plugin: "uptime", Interval: 5 * time.Minute},
+	} {
+		t.Run(in.Plugin, func(t *testing.T) {
+			store := newFakeStore()
+			if _, err := shared.NewService(store).CreateCheckDefinition(ctx, in); err != nil {
+				t.Fatalf("CreateCheckDefinition(%+v) error = %v", in, err)
+			}
+		})
+	}
+}
+
 func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)
@@ -1056,7 +1073,7 @@ func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 // case ExistingCheckDefinitionNames alone cannot protect, since there is
 // nothing for it to compare against) and the refusal must still fire.
 func TestCreateCheckDefinitionRefusesAReservedSeedKeyEvenWithNoOrganizations(t *testing.T) {
-	for _, key := range []string{"cpu", "memory", "disk", "service"} {
+	for _, key := range []string{"cpu", "memory", "disk", "service", "network", "uptime"} {
 		t.Run(key, func(t *testing.T) {
 			store := newFakeStore() // store.checkDefinitionNames is nil — nothing to collide with
 			svc := shared.NewService(store)

@@ -30,6 +30,10 @@ func TestDefinitionAsksForItem(t *testing.T) {
 		// item (""), so there is never anything to drop.
 		{"cpu asks for its whole-host item", PluginCPU, nil, "", true},
 		{"memory asks for its whole-host item", PluginMemory, nil, "", true},
+		{"uptime asks for its whole-host item", PluginUptime, nil, "", true},
+		{"network asks for an interface on its list", PluginNetwork, map[string]any{"interfaces": []string{"eth0", "wg0"}}, "wg0", true},
+		{"network stopped asking for an interface off its list", PluginNetwork, map[string]any{"interfaces": []string{"eth0"}}, "wg0", false},
+		{"network without a list asks for every interface", PluginNetwork, nil, "eth1", true},
 		// JSON round-trips a params list as []any, which is what the
 		// store hands back — the same list must still match.
 		{"a list decoded from JSON matches too", PluginService, map[string]any{"units": []any{"sshd"}}, "sshd", true},
