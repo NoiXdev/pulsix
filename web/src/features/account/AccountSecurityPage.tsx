@@ -91,10 +91,16 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-4 items-start">
+      {/* The enrolment page has one job, choosing a factor, so its two
+          cards stand one above the other; the security page keeps its
+          grid of four. */}
+      <div className={onEnrolled ? 'flex max-w-xl flex-col gap-4' : 'grid grid-cols-2 items-start gap-4'}>
         <Card>
           <div className="flex flex-col p-4 gap-3">
-            <h2 className="text-sm font-semibold">{t.account.passkeys.title}</h2>
+            <div className="flex flex-col gap-1">
+              <h2 className="text-sm font-semibold">{t.account.passkeys.title}</h2>
+              <p className="text-xs text-muted-foreground">{t.account.passkeys.intro}</p>
+            </div>
             {(passkeys.data?.passkeys ?? []).map((p) => (
               <div key={p.id} className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0">
                 <KeyRound size={15} className="text-muted-foreground" />
@@ -144,11 +150,12 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
                 }}
               >
                 <Input
+                  className="h-[34px] min-w-0 flex-1"
                   value={newPasskeyName}
                   onChange={(e) => setNewPasskeyName(e.target.value)}
                   placeholder={t.account.passkeys.namePlaceholder}
                 />
-                <Button type="submit" variant="primary">
+                <Button type="submit" variant="primary" className="shrink-0 whitespace-nowrap">
                   <KeyRound size={14} /> {t.account.passkeys.add}
                 </Button>
               </form>
@@ -157,11 +164,15 @@ export function AccountSecurityPage({ onEnrolled }: { onEnrolled?: () => void | 
         </Card>
 
         <Card>
-          <div className="flex flex-col gap-4 p-4">
-            <h2 className="text-sm font-semibold">{t.account.totp.title}</h2>
+          <div className="flex flex-col gap-3 p-4">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-sm font-semibold">{t.account.totp.title}</h2>
+              <p className="text-xs text-muted-foreground">{t.account.totp.intro}</p>
+            </div>
             {!enrolling && !recoveryCodes && (
               <Button
                 variant="primary"
+                className="self-start whitespace-nowrap"
                 onClick={() =>
                   void stepUp.run(
                     async () => {

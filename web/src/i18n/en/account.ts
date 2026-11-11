@@ -12,6 +12,7 @@ export const enAccount = {
   confirm: 'Confirm',
   passkeys: {
     title: 'Passkeys',
+    intro: 'Sign in with your fingerprint, your face or a security key, with nothing to type.',
     added: (date: string) => `added ${date}`,
     removeAria: (name: string) => `remove ${name}`,
     removed: (name: string) => `Passkey ${name} removed`,
@@ -24,6 +25,7 @@ export const enAccount = {
   },
   totp: {
     title: 'Authenticator app',
+    intro: 'A six-digit code from an app on your phone, with recovery codes in case you lose it.',
     enrol: 'Enrol authenticator app',
     enrolFailed: 'failed to start enrolment',
     scanHint: 'Scan with any TOTP app, or enter the secret manually, then confirm with a 6-digit code.',

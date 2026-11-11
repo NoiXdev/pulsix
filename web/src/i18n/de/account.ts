@@ -7,6 +7,7 @@ export const deAccount: Messages['account'] = {
   confirm: 'Bestätigen',
   passkeys: {
     title: 'Passkeys',
+    intro: 'Mit Fingerabdruck, Gesicht oder Sicherheitsschlüssel anmelden, ohne etwas abzutippen.',
     added: (date: string) => `hinzugefügt am ${date}`,
     removeAria: (name: string) => `${name} entfernen`,
     removed: (name: string) => `Passkey ${name} entfernt`,
@@ -19,6 +20,7 @@ export const deAccount: Messages['account'] = {
   },
   totp: {
     title: 'Authenticator-App',
+    intro: 'Ein sechsstelliger Code aus einer App auf dem Handy, mit Wiederherstellungscodes, falls es verloren geht.',
     enrol: 'Authenticator-App einrichten',
     enrolFailed: 'Einrichtung konnte nicht gestartet werden',
     scanHint:
