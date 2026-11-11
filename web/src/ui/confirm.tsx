@@ -32,7 +32,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   const currentRef = useRef<Pending | null>(null);
   const queue = useRef<Pending[]>([]);
   const nextId = useRef(0);
-  /** What had focus when the first of a run of questions was asked. */
+  /** What had focus when the first of a run of questions was asked. It is
+   * kept until the focus has been given back, so a question asked straight
+   * from an answer's continuation — before the dialog has closed and while
+   * the page behind it is still inert — joins the same run. */
   const openerRef = useRef<Element | null>(null);
   /** The id of the question the dialog element was last opened for. The
    * element is keyed by it, so the asynchronous `close` of an answered
@@ -54,8 +57,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           queue.current.push(pending);
         } else {
           // Only the first question of a run has a meaningful opener; for a
-          // queued one it would be the previous dialog's Cancel.
-          openerRef.current = document.activeElement;
+          // later one it would be the previous dialog's Cancel, or the body
+          // once that dialog has gone.
+          openerRef.current ??= document.activeElement;
           show(pending);
         }
       }),
@@ -67,21 +71,23 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       if (pending.settled) return;
       pending.settled = true;
       pending.resolve(answer);
-      const next = queue.current.shift() ?? null;
-      show(next);
-      if (!next) {
-        const opener = openerRef.current;
-        openerRef.current = null;
-        if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
-      }
+      show(queue.current.shift() ?? null);
     },
     [show],
   );
 
   // Runs after the Dialog's own effect (a child's effects come first), so
-  // the dialog is already modal and the focus sticks.
+  // the dialog is already modal when Cancel takes the focus — and already
+  // closed when the opener gets it back. While the dialog is modal the
+  // page behind it is inert and a focus() there is silently ignored.
   useEffect(() => {
-    if (current) cancelRef.current?.focus();
+    if (current) {
+      cancelRef.current?.focus();
+      return;
+    }
+    const opener = openerRef.current;
+    openerRef.current = null;
+    if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
   }, [current]);
 
   useEffect(() => {

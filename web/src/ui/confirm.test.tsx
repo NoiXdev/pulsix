@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -29,6 +29,30 @@ function renderAsker(options: ConfirmOptions = { message: 'Delete it?' }) {
     </ConfirmProvider>,
   );
 }
+
+/**
+ * jsdom does not make the page behind a modal dialog inert, so a focus()
+ * on the opener while the confirm is still open would "work" here and
+ * silently do nothing in a browser. This models the browser: a focus()
+ * outside the topmost open modal dialog is ignored, and every call is
+ * logged with whether a dialog was open at the time.
+ */
+function modelInertness() {
+  const calls: { el: HTMLElement; dialogOpen: boolean }[] = [];
+  const original = HTMLElement.prototype.focus;
+  vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function (this: HTMLElement, opts?: FocusOptions) {
+    const open = [...document.querySelectorAll('dialog[open]')];
+    const top = open[open.length - 1];
+    calls.push({ el: this, dialogOpen: open.length > 0 });
+    if (top && !top.contains(this)) return;
+    original.call(this, opts);
+  });
+  return calls;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('useConfirm', () => {
   it('shows the message under the default title', async () => {
@@ -85,6 +109,51 @@ describe('useConfirm', () => {
     await userEvent.click(opener);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(opener).toHaveFocus();
+  });
+
+  it('gives the focus back only once the dialog has closed', async () => {
+    const calls = modelInertness();
+    renderAsker();
+    const opener = screen.getByRole('button', { name: 'Ask' });
+    await userEvent.click(opener);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByText('true')).toBeInTheDocument();
+    const back = calls.filter((c) => c.el === opener);
+    expect(back.length).toBeGreaterThan(0);
+    expect(back.every((c) => !c.dialogOpen)).toBe(true);
+    expect(opener).toHaveFocus();
+  });
+
+  it('gives the focus back to the first opener when a question is asked straight after an answer', async () => {
+    modelInertness();
+    function Twice() {
+      const confirm = useConfirm();
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            void (async () => {
+              await confirm({ message: 'first' });
+              await confirm({ message: 'second' });
+            })();
+          }}
+        >
+          Ask twice
+        </button>
+      );
+    }
+    render(
+      <ConfirmProvider>
+        <Twice />
+      </ConfirmProvider>,
+    );
+    const opener = screen.getByRole('button', { name: 'Ask twice' });
+    await userEvent.click(opener);
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveTextContent('second'));
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
   it('uses the destructive variant for a destructive confirm and primary otherwise', async () => {
@@ -196,6 +265,7 @@ describe('useConfirm', () => {
         <Two />
       </ConfirmProvider>,
     );
+    modelInertness();
     const opener = screen.getByRole('button', { name: 'Ask first' });
     await userEvent.click(opener);
     // Queued from outside, while the first dialog is open: its opener is
