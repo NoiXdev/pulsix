@@ -589,3 +589,145 @@ func TestPanickingRefreshIsRecovered(t *testing.T) {
 		t.Fatalf("probed %d times, want the runner to carry on once the resolver recovers", n)
 	}
 }
+
+// selectiveProbe blocks the probes whose key starts with "a" until block
+// is closed (or their ctx ends) and answers every other one at once,
+// reporting its key on answered.
+type selectiveProbe struct {
+	block    chan struct{}
+	answered chan string
+	mu       sync.Mutex
+	keys     []string
+}
+
+func (p *selectiveProbe) Run(ctx context.Context, plugin string, params map[string]any, _ string) []probe.Observation {
+	key, _ := params["key"].(string)
+	p.mu.Lock()
+	p.keys = append(p.keys, key)
+	p.mu.Unlock()
+	if strings.HasPrefix(key, "a") {
+		select {
+		case <-p.block:
+		case <-ctx.Done():
+		}
+	} else {
+		p.answered <- key
+	}
+	one := 1.0
+	return []probe.Observation{{Metric: plugin + ".up", Value: &one}}
+}
+
+func (p *selectiveProbe) count(prefix string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, k := range p.keys {
+		if strings.HasPrefix(k, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// twoOrgs is a harness with a second organization, orgB.
+func twoOrgs(t *testing.T, p ProbeFunc) (*harness, uuid.UUID) {
+	t.Helper()
+	orgB := uuid.Must(uuid.NewV7())
+	h := newHarness(t, func(hh *harness, d *Deps) {
+		d.Orgs = fakeOrgs{ids: []uuid.UUID{hh.org, orgB}}
+		if p != nil {
+			d.Probe = p
+		}
+	})
+	return h, orgB
+}
+
+func (h *harness) addChecks(org uuid.UUID, prefix string, n int, interval time.Duration) {
+	for i := 0; i < n; i++ {
+		h.world.addHost(org, hosts.Host{ID: uuid.Must(uuid.NewV7()), Address: "192.0.2.1", Monitored: true},
+			synthetic(fmt.Sprintf("%s%d", prefix, i), "tcp", interval))
+	}
+}
+
+// TestOrgCannotStarveAnother: org A's black-hole probes, however many,
+// cannot keep org B's due probe from starting — neither at the same tick
+// nor one interval later, while A's probes still hold their slots (final
+// review, Important #5).
+func TestOrgCannotStarveAnother(t *testing.T) {
+	sp := &selectiveProbe{block: make(chan struct{}), answered: make(chan string, 8)}
+	h, orgB := twoOrgs(t, sp.Run)
+	h.addChecks(h.org, "a", 40, time.Minute)
+	h.addChecks(orgB, "b", 1, time.Minute)
+	ctx := context.Background()
+
+	// started reports whether org B's probe ran on the tick just done.
+	started := func() bool {
+		select {
+		case <-sp.answered:
+			return true
+		case <-time.After(2 * time.Second):
+			return false
+		}
+	}
+	h.clock.Set(t0)
+	h.r.tick(ctx)
+	if !started() {
+		t.Fatal("org B was not probed at t=0")
+	}
+	for at := 5 * time.Second; at < time.Minute; at += 5 * time.Second {
+		h.clock.Set(t0.Add(at))
+		h.r.tick(ctx)
+	}
+	h.clock.Set(t0.Add(time.Minute))
+	h.r.tick(ctx)
+	if !started() {
+		t.Fatal("org B was not probed again at t=60s while A's probes hung")
+	}
+	if n := sp.count("b"); n != 2 {
+		t.Fatalf("org B was probed %d times, want twice", n)
+	}
+	if n := h.running(); n > DefaultMaxConcurrent {
+		t.Fatalf("%d probes in flight, above the bound", n)
+	}
+	close(sp.block)
+	h.r.wg.Wait()
+}
+
+// TestBusyOrgsShareTheSlots: two organizations with more due work than
+// slots get half the slots each.
+func TestBusyOrgsShareTheSlots(t *testing.T) {
+	h, orgB := twoOrgs(t, nil)
+	h.probe.block = make(chan struct{})
+	h.addChecks(h.org, "a", 40, time.Minute)
+	h.addChecks(orgB, "b", 40, time.Minute)
+	h.clock.Set(t0)
+	h.r.tick(context.Background())
+	perOrg := map[uuid.UUID]int{}
+	h.r.mu.Lock()
+	for s := range h.r.inFlight {
+		perOrg[h.r.targets[s].org]++
+	}
+	h.r.mu.Unlock()
+	close(h.probe.block)
+	h.r.wg.Wait()
+	if perOrg[h.org] != 16 || perOrg[orgB] != 16 {
+		t.Fatalf("in flight per org = %v, want 16 each", perOrg)
+	}
+}
+
+// TestLoneOrgUsesEverySlot: with no other organization to keep room
+// for, one organization may use all the slots.
+func TestLoneOrgUsesEverySlot(t *testing.T) {
+	h, orgB := twoOrgs(t, nil)
+	h.probe.block = make(chan struct{})
+	h.addChecks(h.org, "a", 40, time.Minute)
+	h.world.addHost(orgB, hosts.Host{ID: uuid.Must(uuid.NewV7()), Address: "192.0.2.1", Monitored: true})
+	h.clock.Set(t0)
+	h.r.tick(context.Background())
+	n := h.running()
+	close(h.probe.block)
+	h.r.wg.Wait()
+	if n != DefaultMaxConcurrent {
+		t.Fatalf("started %d probes, want all %d slots for the only organization with checks", n, DefaultMaxConcurrent)
+	}
+}

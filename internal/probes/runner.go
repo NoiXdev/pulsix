@@ -39,7 +39,8 @@ const (
 	// synthetic checks and host addresses: a definition or host change
 	// takes effect within one refresh plus one tick.
 	DefaultRefresh = 30 * time.Second
-	// DefaultMaxConcurrent bounds the probes in flight per manager.
+	// DefaultMaxConcurrent bounds the probes in flight per manager,
+	// shared fairly between organizations (fairShare).
 	DefaultMaxConcurrent = 32
 )
 
@@ -102,7 +103,7 @@ type Runner struct {
 	next      map[slot]time.Time
 
 	mu       sync.Mutex
-	inFlight map[slot]struct{}
+	inFlight map[slot]uuid.UUID // running slot → its organization
 	wg       sync.WaitGroup
 }
 
@@ -112,7 +113,7 @@ func NewRunner(d Deps) *Runner {
 		orgs: d.Orgs, resolver: d.Resolver, hosts: d.Hosts, recorder: d.Recorder, locker: d.Locker,
 		probe: d.Probe, clock: d.Clock, log: d.Log,
 		tickEvery: d.Tick, refreshEvery: d.Refresh, maxConcurrent: d.MaxConcurrent,
-		targets: map[slot]target{}, next: map[slot]time.Time{}, inFlight: map[slot]struct{}{},
+		targets: map[slot]target{}, next: map[slot]time.Time{}, inFlight: map[slot]uuid.UUID{},
 	}
 	if r.probe == nil {
 		g := d.Guard
@@ -233,10 +234,11 @@ func (r *Runner) lost() {
 func (r *Runner) slack() time.Duration { return r.tickEvery / 2 }
 
 // launchDue starts every due slot that is not in flight, oldest due first,
-// until MaxConcurrent probes run.
+// until MaxConcurrent probes run, keeping every organization's fair share
+// of the slots (fairShare). A slot left out stays due for the next tick.
 func (r *Runner) launchDue(ctx context.Context, now time.Time) {
 	r.mu.Lock()
-	running := len(r.inFlight)
+	share := newFairShare(r.maxConcurrent, r.targets, r.inFlight)
 	var due []slot
 	for s := range r.targets {
 		if _, busy := r.inFlight[s]; busy {
@@ -259,14 +261,16 @@ func (r *Runner) launchDue(ctx context.Context, now time.Time) {
 		return cmp.Compare(a.key, b.key)
 	})
 	for _, s := range due {
-		if running >= r.maxConcurrent {
-			return // the rest stay due for the next tick
+		if share.full() {
+			return
 		}
-		running++
 		t := r.targets[s]
+		if !share.take(t.org) {
+			continue
+		}
 		r.next[s] = now.Add(t.check.Interval)
 		r.mu.Lock()
-		r.inFlight[s] = struct{}{}
+		r.inFlight[s] = t.org
 		r.mu.Unlock()
 		r.wg.Add(1)
 		go r.probeSlot(ctx, s, t)

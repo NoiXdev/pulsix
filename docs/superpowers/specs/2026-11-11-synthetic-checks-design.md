@@ -97,7 +97,12 @@ picker, so nobody expects them to run on the host.
   schedule table.)
 - **Bounds:**
   - A tick never runs longer than its own deadline.
-  - At most 32 probes run at once per manager.
+  - At most 32 probes run at once per manager, shared fairly between
+    organizations: each organization with synthetic checks is guaranteed
+    an even share of the 32 (at most as many as it has checks), and may
+    use more only while the free slots still cover every other
+    organization's unused share, so one organization's slow targets
+    cannot keep another's probes from starting.
   - A probe's timeout is capped below its check's interval.
   - A definition change (create, edit, disable, delete, host address or
     monitored flag) takes effect within one minute.
