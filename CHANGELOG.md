@@ -1,4 +1,77 @@
-## 0.1.0-rc.1 (2026-11-09)
+## [0.1.0-rc.2](https://github.com/NoiXdev/pulsix/compare/v0.1.0-rc.1...v0.1.0-rc.2) (2026-11-11)
+
+
+### Features
+
+* **agent:** network and uptime check plugins ([6f0fa74](https://github.com/NoiXdev/pulsix/commit/6f0fa7460e49c42200d71c2fa0a8c86dbabd3ea2))
+* **checks:** seed and accept the network and uptime checks ([212adfa](https://github.com/NoiXdev/pulsix/commit/212adfa6840f9faa59b4ff5b0dbee513afa5528c))
+* **web:** a confirmation dialog instead of the browser's confirm ([3cb38f6](https://github.com/NoiXdev/pulsix/commit/3cb38f65646bb695cbb2af6fe9ff73aaaa56f3b2))
+* **web:** date, date-time and time picker components ([67b0201](https://github.com/NoiXdev/pulsix/commit/67b02015eeaee2e5dbbb01a61b0b151eb3361dd0))
+* **web:** enrol an agent onto a host that already exists ([3120736](https://github.com/NoiXdev/pulsix/commit/31207364375243bc140d3a70236fd32fb62941b0))
+* **web:** give the app its favicon ([64bd464](https://github.com/NoiXdev/pulsix/commit/64bd4642151edc8bb7a8e9880d923aea93f602bc))
+* **web:** network and uptime checks in the check forms ([d4728a8](https://github.com/NoiXdev/pulsix/commit/d4728a8c23425140b5f017f2d7f5d1a30b960c21))
+* **web:** put a backup's actions into its row menu ([21e64e9](https://github.com/NoiXdev/pulsix/commit/21e64e95885e642c874395dfcdafd5dd50acd30c))
+* **web:** stack the second-factor choices and stop their buttons wrapping ([e3270d4](https://github.com/NoiXdev/pulsix/commit/e3270d429a3ba55accd613aa45fb06dce30a705f))
+* **web:** use the shared pickers for every date and time field ([e33ccbf](https://github.com/NoiXdev/pulsix/commit/e33ccbf8873649dc8c7e2458e9c12e03c843c2a5))
+
+
+### Bug Fixes
+
+* **accounts:** issue no self-service reset link to an account without a second factor ([34ba0dd](https://github.com/NoiXdev/pulsix/commit/34ba0ddfd4e641ac3834b94a890199618e1c1415))
+* **accounts:** read the forgot path's second factor after the row lock ([cd67401](https://github.com/NoiXdev/pulsix/commit/cd67401e2067ae61f9aa9562f8a45de31a638a38))
+* **agentapi:** give each agent stream a check-result ingest budget ([266e2e3](https://github.com/NoiXdev/pulsix/commit/266e2e324c6218d5ed4856879fdad3899a6ecac7))
+* **agentapi:** pace check results per agent instead of dropping per stream ([0cc7b53](https://github.com/NoiXdev/pulsix/commit/0cc7b53b293c947391ee5da083bfd4ac599c4e34))
+* **agent:** give every network check key its own baselines ([530987e](https://github.com/NoiXdev/pulsix/commit/530987e8ca5ecfd1f2f8857d831fdebb9110ba14))
+* **agent:** keep network baselines across check keys sharing the plugin ([caae538](https://github.com/NoiXdev/pulsix/commit/caae538737fb6f71eca6859eddb31b5c11182080))
+* **agent:** sample network counters under the lock and age out stale baselines ([18b0988](https://github.com/NoiXdev/pulsix/commit/18b09889a114c6196b77b07b3ebb410c2b87dc5e))
+* **auth:** complete a TOTP-verified session with the account row locked first ([975d6cf](https://github.com/NoiXdev/pulsix/commit/975d6cf9cbcc839f66aacc6f0580572307d65a57))
+* **auth:** finish a factor enrolment only on a session that is still live ([2cc98c9](https://github.com/NoiXdev/pulsix/commit/2cc98c924a7f18bf82db0fd09a419415fc13c9bb))
+* **auth:** let two enrolments of one account complete without a deadlock ([a832b98](https://github.com/NoiXdev/pulsix/commit/a832b989b5c884a8e1cd4ad80433b78bbb7983fe))
+* **auth:** open no passkey session for a credential a reset removed ([494517a](https://github.com/NoiXdev/pulsix/commit/494517af11dd58ce2d4f65a5a969a7b76bbe6923))
+* **auth:** remove a second factor under the account's exclusive lock ([80fbb5d](https://github.com/NoiXdev/pulsix/commit/80fbb5dad07293ef5a9bbc87090c52b0c2fe7a59))
+* **checks:** bound the label and error text an agent may store ([1baa4b6](https://github.com/NoiXdev/pulsix/commit/1baa4b6988db873ad2ceba44815ff5507f97a8fb))
+* **checks:** clean an error text before the shape check ([64c7dcd](https://github.com/NoiXdev/pulsix/commit/64c7dcd33d7f773a890540fc319699058dbc1bfa))
+* **checks:** drop a NUL from an agent's error text and refuse one in a label ([2b11fcc](https://github.com/NoiXdev/pulsix/commit/2b11fcc672cdeef8c6f61c46525e6dd8141deaf4))
+* **checks:** leave seed keys a shared definition holds and catalogue the new metrics ([23e491e](https://github.com/NoiXdev/pulsix/commit/23e491e2783c5aecb6fd08e289fea8ae87af6239))
+* **deploy:** publish the agent port in the compose file ([4eb1c90](https://github.com/NoiXdev/pulsix/commit/4eb1c900a7fd3a6c892355c3991183e6418eda60))
+* **playbooks:** bound editor-playbook variable sources and keep them out of lists ([9b2c365](https://github.com/NoiXdev/pulsix/commit/9b2c365be05afbcd79f933260d078c50aa4446a8))
+* **playbooks:** bound legacy inline variable-source rows on read ([dc5a9cb](https://github.com/NoiXdev/pulsix/commit/dc5a9cbcb478f6af2605a9c59ff68424a1899711))
+* **playbooks:** let a result stored under the cap read back after jsonb re-renders it ([9b65cc6](https://github.com/NoiXdev/pulsix/commit/9b65cc6370b8d7f0028f37fde85acda48b0a0f82))
+* **repos:** keep a stored URL when the form echoes its redaction ([b16de66](https://github.com/NoiXdev/pulsix/commit/b16de66af381a8a9ab26ea683fb7d9553a552bf8))
+* **repos:** refuse a worker report with numbers jsonb would write out in full, and bound a stored result's read ([a38ada5](https://github.com/NoiXdev/pulsix/commit/a38ada576549f673ccaf2c5aa3348bcb5f3949c3))
+* **repos:** refuse credentials in repository URLs and hide stored ones ([8402ce8](https://github.com/NoiXdev/pulsix/commit/8402ce8ce438115f2880c764c4cd5302608514fe))
+* **rules:** postpone the host a batch deadline cut off ([06dba92](https://github.com/NoiXdev/pulsix/commit/06dba923241e670b395ab7fc3fa250dae938639d))
+* **varsource:** bound the entry points a role spec file maps at parse time ([65624fa](https://github.com/NoiXdev/pulsix/commit/65624faaa738856ce4a552b23965024a7a2cc8e7))
+* **varsource:** cap the duplicate notes kept for entry points and word file_too_complex per budget ([f2b00e0](https://github.com/NoiXdev/pulsix/commit/f2b00e055532793138a44d117e66944ec84c0839))
+* **varsource:** charge and share the duplicate notes entry points re-raise ([2e3dc5c](https://github.com/NoiXdev/pulsix/commit/2e3dc5c3e3af539a4ae8cc38026fd3724551032e))
+* **varsource:** know noted duplicate keys by mapping number, kept as bits ([d30afb9](https://github.com/NoiXdev/pulsix/commit/d30afb9c7d1999bbf62f18e0f5837474e43e2278))
+* **varsource:** never encode more of the report than its cap ([c3e3167](https://github.com/NoiXdev/pulsix/commit/c3e3167ac2c06642e94b2dd7f51902ea8140eb42))
+* **varsource:** refuse numbers Go writes in exponent form as form values ([390f724](https://github.com/NoiXdev/pulsix/commit/390f724809d23abc29c1751d9781beb4eacfc64f))
+* **web:** a second Back during the leave question no longer over-corrects the first ([0263f39](https://github.com/NoiXdev/pulsix/commit/0263f39d7a082f4c5d0d90da59a1047c154e3ab1))
+* **web:** a second navigation does not ask again while the leave question is open ([6dff8c6](https://github.com/NoiXdev/pulsix/commit/6dff8c6a36ffe3dc433a603d49ccc16c7793b053))
+* **web:** copy buttons work without a secure context ([1a4423b](https://github.com/NoiXdev/pulsix/commit/1a4423b0c4bda141b1b719f2f8d71a6cc20da97c))
+* **web:** describe a required date picker instead of aria-required ([eff571d](https://github.com/NoiXdev/pulsix/commit/eff571d78ef109049fb2fba9d3661fd2bc070658))
+* **web:** drive the date-time pickers through the calendar in e2e ([f361611](https://github.com/NoiXdev/pulsix/commit/f361611975c48dc579236d352c7d16fd95f3bffb))
+* **web:** give the focus back once the confirm dialog has closed ([b8b6d6d](https://github.com/NoiXdev/pulsix/commit/b8b6d6d55f7e5ce3fa0b43cbc92286a00d9e4c28))
+* **web:** keep the calendar focusable and refuse half a date-time ([2168195](https://github.com/NoiXdev/pulsix/commit/21681955733961c772167bd6b972d0eab0e64bc0))
+* **web:** keep the confirm dialog's focus and close events per question ([6352765](https://github.com/NoiXdev/pulsix/commit/6352765601cd43fe6ecfbbb64f4b8a93d6b6eb5c))
+* **web:** keep the leave question's pops in step with real browser history ([c7ad5b6](https://github.com/NoiXdev/pulsix/commit/c7ad5b6867ee7065434034c10a21a8ec0df5008d))
+* **web:** report a failed trigger delete and disable Delete while it runs ([1a31a92](https://github.com/NoiXdev/pulsix/commit/1a31a92bdc9a24e1860baa1a563518303f138d0f))
+* **web:** set the picker's message before it takes the focus ([2411ddb](https://github.com/NoiXdev/pulsix/commit/2411ddbba9b95a3e9f2d10b57a9667c7a92a092d))
+* **web:** settle the date picker's accessibility leftovers ([0a1d86c](https://github.com/NoiXdev/pulsix/commit/0a1d86c900855f7c46b6276182607da818623263))
+* **web:** settle the picker edge cases from the final review ([6443a17](https://github.com/NoiXdev/pulsix/commit/6443a17b083fce9e006cd8e0e265c5274222a835))
+* **web:** tell an editor playbook too large to read to shorten it ([9536609](https://github.com/NoiXdev/pulsix/commit/95366091389285a7dac706de41f9c352dfb033dc))
+* **web:** write the backup row's Delete as Delete…, since it asks first ([213b330](https://github.com/NoiXdev/pulsix/commit/213b3303b1ce166a4457cc9e6a93b522ee403989))
+* **worker:** fetch an existing clone from the repository's current URL ([cbf4b7a](https://github.com/NoiXdev/pulsix/commit/cbf4b7ab15a7d559f91b8a64478cb3f5222bed99))
+* **worker:** redact YAML-quoted and URL-encoded spellings of secrets ([9be5ef3](https://github.com/NoiXdev/pulsix/commit/9be5ef396e315945c9f182162e2e63f4a4662afd))
+* **worker:** refuse requirements whose source fields are not strings ([caf88cc](https://github.com/NoiXdev/pulsix/commit/caf88cc48f9a919acb0ab4c4d666761eb79f2c85))
+
+
+### Performance Improvements
+
+* **varsource:** drop each role's parse tree once its results are extracted ([9b70dcd](https://github.com/NoiXdev/pulsix/commit/9b70dcdbe88650b3996937292e8581cdab11b7bf))
+
+## [0.1.0-rc.1](https://github.com/NoiXdev/pulsix/compare/c618947206ebfdeec82a83d86c300b92afee7f91...v0.1.0-rc.1) (2026-11-09)
 
 
 ### Features
