@@ -94,6 +94,7 @@ type Runner struct {
 	maxConcurrent           int
 
 	// Owned by the Run goroutine.
+	held      bool
 	targets   map[slot]target
 	refreshed time.Time
 	next      map[slot]time.Time
@@ -159,25 +160,45 @@ func (r *Runner) Run(ctx context.Context) {
 
 // tick takes (or keeps) the lock, refreshes the targets when a refresh is
 // due, and starts every due probe that fits under the concurrency bound.
+// The lock and the refresh run under the tick's own deadline (the refresh
+// interval), so a hung query cannot stall the loop while the lock is held;
+// the probes it starts run on ctx, each under its own deadline.
 func (r *Runner) tick(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
-	locked, err := r.locker.TryLock(ctx)
-	if err != nil {
-		if ctx.Err() == nil {
-			r.log.ErrorContext(ctx, "probe runner: acquire lock", "err", err)
-		}
-		return
+	tickCtx, cancel := context.WithTimeout(ctx, r.refreshEvery)
+	defer cancel()
+	locked, err := r.locker.TryLock(tickCtx)
+	if err != nil && ctx.Err() == nil {
+		r.log.ErrorContext(ctx, "probe runner: acquire lock", "err", err)
 	}
-	if !locked {
-		return // another manager probes
+	if err != nil || !locked {
+		r.lost()
+		return // another manager probes, or the lock cannot be confirmed
 	}
+	r.held = true
 	now := r.clock()
 	if r.refreshed.IsZero() || !now.Before(r.refreshed.Add(r.refreshEvery-r.slack())) {
-		r.refresh(ctx, now)
+		if err := r.refresh(tickCtx, now); err != nil && ctx.Err() == nil {
+			r.log.ErrorContext(ctx, "probe runner: refresh", "err", err)
+		}
 	}
 	r.launchDue(ctx, now)
+}
+
+// lost forgets the schedule when the lock is gone: while another manager
+// holds it, that one probes, and the timing remembered here says nothing
+// about what it did. A regained lock starts afresh, like any new holder,
+// and with a fresh refresh. Probes still in flight finish and are
+// recorded; their slots are not started again before they do.
+func (r *Runner) lost() {
+	if !r.held {
+		return
+	}
+	r.held = false
+	clear(r.next)
+	r.refreshed = time.Time{}
 }
 
 // slack is how early a due time may be met: half a tick, so the wake-up
@@ -259,7 +280,7 @@ func (r *Runner) probeSlot(ctx context.Context, s slot, t target) {
 			HostID: s.host, CheckKey: s.key, Metric: o.Metric, At: at, Value: o.Value, Err: o.Err,
 		}
 	}
-	res, err := r.recorder.RecordObservations(orgScope(ctx, t.org), t.org, batch)
+	res, err := r.recorder.RecordProbeObservations(orgScope(ctx, t.org), t.org, batch)
 	if err != nil {
 		if ctx.Err() == nil {
 			r.log.ErrorContext(ctx, "probe runner: record", "org", t.org, "host", s.host, "check", s.key, "err", err)

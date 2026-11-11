@@ -124,6 +124,57 @@ func TestClockOffsetMeasuredAtIngest(t *testing.T) {
 // sense this measurement means — it was not stored, so no reading of it
 // is on the page to explain. Measuring from it would report an hour of
 // skew for a host whose real readings are punctual.
+// TestProbeObservationsDoNotMeasureTheClock: the manager's own probe
+// results carry the manager's clock, so they say nothing about the host's.
+// Recorded through RecordProbeObservations they are stored like any other
+// batch but leave the host's agent-measured offset untouched (and give a
+// host without an agent no offset at all), while RecordObservations still
+// measures.
+func TestProbeObservationsDoNotMeasureTheClock(t *testing.T) {
+	now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	store := newFakeStore()
+	svc := checks.NewService(store, fixedClock(now))
+	org := uuid.Must(uuid.NewV7())
+	host := uuid.Must(uuid.NewV7())
+
+	if _, err := svc.RecordObservations(context.Background(), org, []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now.Add(-4 * time.Minute), Value: f64(1)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.RecordProbeObservations(context.Background(), org, []checks.Observation{
+		{HostID: host, CheckKey: "site", Metric: "http.up", At: now, Value: f64(1)},
+	})
+	if err != nil || res.Accepted != 1 {
+		t.Fatalf("probe batch = %+v, %v, want it stored", res, err)
+	}
+	if store.reachedStore() != 2 {
+		t.Fatalf("store reached %d times, want both batches", store.reachedStore())
+	}
+	if m, ok := svc.ClockOffset(host); !ok || m.Offset != 4*time.Minute {
+		t.Fatalf("offset = %v (present %v) after a probe batch, want the agent's 4m untouched", m.Offset, ok)
+	}
+
+	probeOnly := uuid.Must(uuid.NewV7())
+	if _, err := svc.RecordProbeObservations(context.Background(), org, []checks.Observation{
+		{HostID: probeOnly, CheckKey: "site", Metric: "http.up", At: now, Value: f64(1)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := svc.ClockOffset(probeOnly); ok {
+		t.Fatalf("a host only probed has offset %v, want no measurement", m.Offset)
+	}
+
+	// Its validation is RecordObservations': a malformed observation is
+	// counted, not stored.
+	res, err = svc.RecordProbeObservations(context.Background(), org, []checks.Observation{
+		{HostID: host, CheckKey: "site", Metric: "http.up", At: now},
+	})
+	if err != nil || res.Malformed != 1 || res.Accepted != 0 {
+		t.Fatalf("malformed probe batch = %+v, %v", res, err)
+	}
+}
+
 func TestClockOffsetRejectedObservationsDoNotMeasureAnything(t *testing.T) {
 	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
 	host := uuid.Must(uuid.NewV7())

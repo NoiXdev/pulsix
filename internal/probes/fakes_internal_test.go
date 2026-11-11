@@ -145,9 +145,25 @@ type recorded struct {
 type fakeRecorder struct {
 	mu      sync.Mutex
 	batches []recorded
+	// agentPath counts calls of RecordObservations, the agent ingest
+	// path, which measures the host's clock: the runner must never use it.
+	agentPath int
 }
 
-func (r *fakeRecorder) RecordObservations(_ context.Context, org uuid.UUID, obs []checks.Observation) (checks.Ingest, error) {
+func (r *fakeRecorder) RecordObservations(context.Context, uuid.UUID, []checks.Observation) (checks.Ingest, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.agentPath++
+	return checks.Ingest{}, nil
+}
+
+func (r *fakeRecorder) AgentPathCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.agentPath
+}
+
+func (r *fakeRecorder) RecordProbeObservations(_ context.Context, org uuid.UUID, obs []checks.Observation) (checks.Ingest, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.batches = append(r.batches, recorded{org: org, obs: append([]checks.Observation(nil), obs...)})

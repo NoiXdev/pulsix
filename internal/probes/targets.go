@@ -21,23 +21,21 @@ func orgScope(ctx context.Context, orgID uuid.UUID) context.Context {
 // longer monitored or deleted) leaves the schedule; a new one is due at
 // once. When an organization cannot be read, its previous targets stand
 // until a later refresh succeeds: a database hiccup does not pause its
-// probes. When the organization list itself cannot be read, nothing
-// changes and the next tick retries.
-func (r *Runner) refresh(ctx context.Context, now time.Time) {
+// probes. When the organization list cannot be read, or ctx ends (the
+// tick's deadline) midway, nothing changes and the error is returned; the
+// next tick retries.
+func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 	orgs, err := r.orgs.ListOrgIDs(ctx)
 	if err != nil {
-		if ctx.Err() == nil {
-			r.log.ErrorContext(ctx, "probe runner: list organizations", "err", err)
-		}
-		return
+		return fmt.Errorf("list organizations: %w", err)
 	}
 	next := make(map[slot]target, len(r.targets))
 	for _, org := range orgs {
 		ts, err := r.orgTargets(orgScope(ctx, org), org)
+		if ctx.Err() != nil {
+			return fmt.Errorf("resolve organization %s: %w", org, ctx.Err())
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
 			r.log.ErrorContext(ctx, "probe runner: resolve organization", "org", org, "err", err)
 			for s, t := range r.targets {
 				if t.org == org {
@@ -57,6 +55,7 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) {
 			delete(r.next, s)
 		}
 	}
+	return nil
 }
 
 // orgTargets resolves one organization: every monitored host's synthetic

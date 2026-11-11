@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,6 +119,9 @@ func TestRecordsWithHostKeyAndClock(t *testing.T) {
 	b := h.rec.Batches()
 	if len(b) != 1 || b[0].org != h.org || len(b[0].obs) != 1 {
 		t.Fatalf("batches = %+v, want one for the org with one observation", b)
+	}
+	if n := h.rec.AgentPathCalls(); n != 0 {
+		t.Fatalf("recorded through RecordObservations %d times; probe results must use RecordProbeObservations", n)
 	}
 	o := b[0].obs[0]
 	if o.HostID != h.host || o.CheckKey != "web" || o.Item != "" || o.Metric != "http.up" ||
@@ -328,4 +332,102 @@ func sorted(s []string) []string {
 	out := append([]string(nil), s...)
 	slices.Sort(out)
 	return out
+}
+
+// TestRegainedLockStartsAFreshSchedule: a holder that lost the lock does
+// not carry its old timing over: another manager probed meanwhile, and
+// the schedule it remembers says nothing about that. On regaining the
+// lock it starts afresh (like any new holder, one early probe at most).
+func TestRegainedLockStartsAFreshSchedule(t *testing.T) {
+	h := newHarness(t, nil)
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", 5*time.Minute))
+	h.tickAt(0)
+	h.locker.mu.Lock()
+	h.locker.allow = false
+	h.locker.mu.Unlock()
+	h.tickAt(5 * time.Second)
+	if n := len(h.r.next); n != 0 {
+		t.Fatalf("schedule kept %d entries after the lock was lost", n)
+	}
+	h.locker.mu.Lock()
+	h.locker.allow = true
+	h.locker.mu.Unlock()
+	h.tickAt(10 * time.Second)
+	if n := len(h.probe.Keys()); n != 2 {
+		t.Fatalf("probed %d times, want once before the loss and once on regaining the lock", n)
+	}
+	// Held throughout: no early probe.
+	h.tickAt(15 * time.Second)
+	if n := len(h.probe.Keys()); n != 2 {
+		t.Fatalf("probed %d times while holding, want no probe before the interval", n)
+	}
+}
+
+// blockingResolver hangs until its ctx ends, like a stuck query.
+type blockingResolver struct{ sawDeadline chan bool }
+
+func (b blockingResolver) ResolveOrg(ctx context.Context, _ uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error) {
+	_, ok := ctx.Deadline()
+	b.sawDeadline <- ok
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestTickHasADeadline: a hung query cannot stall the loop while the lock
+// is held — the tick's work runs under a deadline (the refresh interval).
+func TestTickHasADeadline(t *testing.T) {
+	br := blockingResolver{sawDeadline: make(chan bool, 1)}
+	h := newHarness(t, func(_ *harness, d *Deps) {
+		d.Resolver = br
+		d.Refresh = 50 * time.Millisecond
+	})
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", time.Minute))
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.r.tick(context.Background())
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a tick blocked on a hung resolver past its deadline")
+	}
+	if !<-br.sawDeadline {
+		t.Fatal("the resolver's ctx carried no deadline")
+	}
+}
+
+// TestTimedOutRefreshKeepsTargets: a refresh cut short by the tick's
+// deadline changes nothing; the known targets keep being probed.
+func TestTimedOutRefreshKeepsTargets(t *testing.T) {
+	var block atomic.Bool
+	h := newHarness(t, func(hh *harness, d *Deps) {
+		d.Resolver = switchResolver{w: hh.world, block: &block}
+		d.Refresh = 100 * time.Millisecond // the tick's deadline; every fake-clock tick refreshes
+	})
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", 30*time.Second))
+	h.tickAt(0)
+	block.Store(true)
+	h.tickAt(30 * time.Second) // refresh times out, the target stands
+	if n := len(h.probe.Keys()); n != 2 {
+		t.Fatalf("probed %d times, want the known target probed again after a timed-out refresh", n)
+	}
+}
+
+// switchResolver answers from the world, or hangs until ctx ends when
+// block is set.
+type switchResolver struct {
+	w     *fakeWorld
+	block *atomic.Bool
+}
+
+func (s switchResolver) ResolveOrg(ctx context.Context, org uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error) {
+	if s.block.Load() {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return s.w.ResolveOrg(ctx, org)
 }

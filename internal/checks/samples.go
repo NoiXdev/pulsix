@@ -346,6 +346,22 @@ func (i Ingest) Rejected() int { return i.Implausible + i.Malformed + i.UnknownH
 // first place. ErrInvalidInput from here is what agentapi maps to
 // InvalidArgument.
 func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (Ingest, error) {
+	return s.recordObservations(ctx, orgID, obs, true)
+}
+
+// RecordProbeObservations is RecordObservations for results the manager
+// measured itself (internal/probes, backlog 3.13): the same validation,
+// counting and store transaction, but no clock-offset measurement. A
+// probe result's At is the manager's own clock, so it says nothing about
+// the host's, and noting it would overwrite the offset the host's agent
+// was measured at (skew.go) with zero.
+func (s *Service) RecordProbeObservations(ctx context.Context, orgID uuid.UUID, obs []Observation) (Ingest, error) {
+	return s.recordObservations(ctx, orgID, obs, false)
+}
+
+// recordObservations is the body of both entry points; measureClock says
+// whether the batch's timestamps came from the hosts' clocks.
+func (s *Service) recordObservations(ctx context.Context, orgID uuid.UUID, obs []Observation, measureClock bool) (Ingest, error) {
 	var res Ingest
 	if len(obs) == 0 {
 		return res, nil
@@ -387,7 +403,9 @@ func (s *Service) RecordObservations(ctx context.Context, orgID uuid.UUID, obs [
 	// store is reached: this is the only moment the manager ever holds an
 	// agent's own timestamps next to its own clock, and nothing persists
 	// the comparison (skew.go explains what is kept and why here).
-	s.offsets.note(valid, now)
+	if measureClock {
+		s.offsets.note(valid, now)
+	}
 	stored, err := s.store.RecordObservations(ctx, orgID, valid)
 	if err != nil {
 		return Ingest{}, fmt.Errorf("record observations: %w", err)

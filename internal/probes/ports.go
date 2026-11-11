@@ -29,10 +29,11 @@ type Hosts interface {
 	ListHostsByIDs(ctx context.Context, orgID uuid.UUID, ids []uuid.UUID) ([]hosts.Host, error)
 }
 
-// Recorder stores a probe's results like an agent's: checks.Service's
-// RecordObservations.
+// Recorder stores a probe's results like an agent's, except that they
+// never measure the host's clock: checks.Service's
+// RecordProbeObservations.
 type Recorder interface {
-	RecordObservations(ctx context.Context, orgID uuid.UUID, obs []checks.Observation) (checks.Ingest, error)
+	RecordProbeObservations(ctx context.Context, orgID uuid.UUID, obs []checks.Observation) (checks.Ingest, error)
 }
 
 // Locker is the advisory lock that makes one manager the prober (the
