@@ -232,11 +232,27 @@ func NewAdvisoryLocker(pool *pgxpool.Pool, key int64) *AdvisoryLocker {
 	return &AdvisoryLocker{pool: pool, key: key}
 }
 
+// lockCheckTimeout bounds the query that confirms a held lock's session
+// still holds it.
+const lockCheckTimeout = 5 * time.Second
+
 // TryLock acquires the advisory lock on a dedicated session, held until
 // Unlock. The connection is released (and with it the session lock) there.
+//
+// A locker that already holds the lock confirms its session still does
+// (pg_locks, bounded by lockCheckTimeout): a session that died — a
+// terminated backend, a dropped connection — took the lock with it, and
+// another instance may hold it by now. Such a session is discarded and the
+// lock is tried afresh, so the answer is the honest one. The retest and
+// the auth reaper lock once per pass and never call TryLock while holding,
+// so this only costs a loop that holds the lock across ticks (the probe
+// runner) one small query per tick.
 func (l *AdvisoryLocker) TryLock(ctx context.Context) (bool, error) {
 	if l.conn != nil {
-		return true, nil // already holding this instance's lock
+		if l.stillHeld(ctx) {
+			return true, nil
+		}
+		l.discard()
 	}
 	conn, err := l.pool.Acquire(ctx)
 	if err != nil {
@@ -253,6 +269,41 @@ func (l *AdvisoryLocker) TryLock(ctx context.Context) (bool, error) {
 	}
 	l.conn = conn
 	return true, nil
+}
+
+// stillHeld reports whether the held session still holds the lock. A
+// single-bigint advisory lock shows in pg_locks as classid = the key's
+// high 32 bits, objid = its low 32 bits, objsubid = 1.
+//
+// The check runs detached from ctx's cancellation (bounded by
+// lockCheckTimeout instead), like Unlock: a shutdown that cancelled ctx
+// mid-query would otherwise break a healthy session, which then could not
+// be unlocked cleanly, and its lock would outlive the loop until the
+// server noticed the closed socket.
+func (l *AdvisoryLocker) stillHeld(ctx context.Context) bool {
+	checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), lockCheckTimeout)
+	defer cancel()
+	var held bool
+	err := l.conn.QueryRow(checkCtx, `SELECT EXISTS (
+		SELECT 1 FROM pg_locks
+		WHERE locktype = 'advisory' AND granted AND pid = pg_backend_pid()
+		  AND classid = (($1::bigint >> 32) & 4294967295)::oid
+		  AND objid = ($1::bigint & 4294967295)::oid
+		  AND objsubid = 1)`, l.key).Scan(&held)
+	return err == nil && held
+}
+
+// discard drops the held session without unlocking: it is closed rather
+// than returned to the pool, so a session that might still hold the lock
+// (a failed check on a live connection) never goes back to the pool with
+// it, and a broken one is not reused.
+func (l *AdvisoryLocker) discard() {
+	conn := l.conn
+	l.conn = nil
+	raw := conn.Hijack()
+	closeCtx, cancel := context.WithTimeout(context.Background(), lockCheckTimeout)
+	defer cancel()
+	_ = raw.Close(closeCtx)
 }
 
 // Unlock releases the advisory lock and its dedicated session. A locker
