@@ -4,23 +4,25 @@ import "github.com/google/uuid"
 
 // fairShare decides, for one launch round, which organization may start
 // another probe, so that one organization's slow targets (black holes
-// under long timeouts) cannot hold every slot while another
-// organization's probes wait (final review, Important #5).
+// under long timeouts) cannot keep another organization's due probes
+// from starting (final review, Important #5).
 //
-// Every organization with synthetic checks is guaranteed a reserve:
-// MaxConcurrent split evenly between those organizations (at least one
-// slot each), but never more than it has checks. A probe within its
-// organization's reserve may always start while a slot is free. A probe
-// beyond it starts only when the free slots left afterwards still cover
-// every other organization's unused reserve, so the slots stay in use
-// when the others need few, and the others always find their reserve
-// free. The reserves can only all be honoured while at most MaxConcurrent
-// organizations have checks; beyond that every organization still gets
-// a turn as slots free up, in due order.
+// Only a busy organization, one with due or in-flight probes, has a
+// reserve: MaxConcurrent split evenly between the busy organizations (at
+// least one slot each), but never more than its due and in-flight probes
+// together. An idle organization reserves nothing, so a lone busy one may
+// use every slot. A probe within its organization's reserve starts while a
+// slot is free; one beyond it starts only when the free slots left
+// afterwards still cover every other busy organization's unused reserve.
 //
-// A slot that is already held when another organization first gets a
-// check is not given back: that organization waits until probes end, at
-// most one probe deadline.
+// What this does not do: it never stops a running probe. An organization
+// that falls due while another holds every slot (because it was idle when
+// they were taken) gets the next slot that frees up, and a launch round
+// runs on every completion, so the wait is bounded by the other's
+// shortest running probe. The reserves only add up to at most
+// MaxConcurrent while at most MaxConcurrent organizations are busy; with
+// more, each still gets slots in due order as they free up, without a
+// guaranteed share.
 type fairShare struct {
 	free    int
 	held    map[uuid.UUID]int
@@ -30,26 +32,30 @@ type fairShare struct {
 	unused int
 }
 
-// newFairShare sizes the reserves from the current targets and counts
-// what is in flight (inFlight maps each running slot to its organization).
-func newFairShare(maxConcurrent int, targets map[slot]target, inFlight map[slot]uuid.UUID) *fairShare {
-	checksPerOrg := map[uuid.UUID]int{}
-	for _, t := range targets {
-		checksPerOrg[t.org]++
-	}
+// newFairShare sizes the reserves from each organization's due probes
+// (dueByOrg, not counting the in-flight ones) and what is in flight
+// (inFlight maps each running slot to its organization).
+func newFairShare(maxConcurrent int, dueByOrg map[uuid.UUID]int, inFlight map[slot]uuid.UUID) *fairShare {
 	f := &fairShare{
 		free:    maxConcurrent - len(inFlight),
 		held:    map[uuid.UUID]int{},
-		reserve: make(map[uuid.UUID]int, len(checksPerOrg)),
+		reserve: map[uuid.UUID]int{},
 	}
 	for _, org := range inFlight {
 		f.held[org]++
 	}
-	if len(checksPerOrg) == 0 {
+	demand := make(map[uuid.UUID]int, len(dueByOrg)+len(f.held))
+	for org, n := range dueByOrg {
+		demand[org] += n
+	}
+	for org, n := range f.held {
+		demand[org] += n
+	}
+	if len(demand) == 0 {
 		return f
 	}
-	per := max(1, maxConcurrent/len(checksPerOrg))
-	for org, n := range checksPerOrg {
+	per := max(1, maxConcurrent/len(demand))
+	for org, n := range demand {
 		f.reserve[org] = min(n, per)
 		f.unused += max(0, f.reserve[org]-f.held[org])
 	}

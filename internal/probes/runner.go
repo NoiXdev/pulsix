@@ -12,11 +12,9 @@
 package probes
 
 import (
-	"cmp"
 	"context"
 	"log/slog"
 	"runtime/debug"
-	"slices"
 	"sync"
 	"time"
 
@@ -82,7 +80,7 @@ type target struct {
 
 // Runner probes every monitored host's synthetic checks while it holds the
 // lock. Its schedule state is owned by the Run goroutine; only the
-// in-flight set is shared with the probe goroutines.
+// in-flight set and the wake channel are shared with the probe goroutines.
 type Runner struct {
 	orgs     Orgs
 	resolver Resolver
@@ -105,6 +103,10 @@ type Runner struct {
 	mu       sync.Mutex
 	inFlight map[slot]uuid.UUID // running slot → its organization
 	wg       sync.WaitGroup
+	// wake carries "a probe finished" to the Run loop, which then starts
+	// due probes into the freed slot at once. Buffered (1) and sent to
+	// without blocking: a burst of completions is one wake-up.
+	wake chan struct{}
 }
 
 // NewRunner builds the runner, filling the defaults.
@@ -114,6 +116,7 @@ func NewRunner(d Deps) *Runner {
 		probe: d.Probe, clock: d.Clock, log: d.Log,
 		tickEvery: d.Tick, refreshEvery: d.Refresh, maxConcurrent: d.MaxConcurrent,
 		targets: map[slot]target{}, next: map[slot]time.Time{}, inFlight: map[slot]uuid.UUID{},
+		wake: make(chan struct{}, 1),
 	}
 	if r.probe == nil {
 		g := d.Guard
@@ -139,7 +142,9 @@ func NewRunner(d Deps) *Runner {
 	return r
 }
 
-// Run probes until ctx is cancelled: one tick at once, then one per Tick.
+// Run probes until ctx is cancelled: one tick at once, then one per Tick,
+// and a launch round whenever a probe finishes, so MaxConcurrent bounds
+// the probes in flight rather than the launches per tick.
 // On return no probe is still running and the lock is released; results
 // of probes the cancellation cut short are discarded.
 func (r *Runner) Run(ctx context.Context) {
@@ -151,12 +156,15 @@ func (r *Runner) Run(ctx context.Context) {
 	}()
 	t := time.NewTicker(r.tickEvery)
 	defer t.Stop()
+	r.tick(ctx)
 	for {
-		r.tick(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			r.tick(ctx)
+		case <-r.wake:
+			r.launchFreed(ctx)
 		}
 	}
 }
@@ -233,50 +241,6 @@ func (r *Runner) lost() {
 // jitter.
 func (r *Runner) slack() time.Duration { return r.tickEvery / 2 }
 
-// launchDue starts every due slot that is not in flight, oldest due first,
-// until MaxConcurrent probes run, keeping every organization's fair share
-// of the slots (fairShare). A slot left out stays due for the next tick.
-func (r *Runner) launchDue(ctx context.Context, now time.Time) {
-	r.mu.Lock()
-	share := newFairShare(r.maxConcurrent, r.targets, r.inFlight)
-	var due []slot
-	for s := range r.targets {
-		if _, busy := r.inFlight[s]; busy {
-			continue
-		}
-		if n, ok := r.next[s]; ok && now.Before(n.Add(-r.slack())) {
-			continue
-		}
-		due = append(due, s)
-	}
-	r.mu.Unlock()
-
-	slices.SortFunc(due, func(a, b slot) int {
-		if c := r.next[a].Compare(r.next[b]); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.host.String(), b.host.String()); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.key, b.key)
-	})
-	for _, s := range due {
-		if share.full() {
-			return
-		}
-		t := r.targets[s]
-		if !share.take(t.org) {
-			continue
-		}
-		r.next[s] = now.Add(t.check.Interval)
-		r.mu.Lock()
-		r.inFlight[s] = t.org
-		r.mu.Unlock()
-		r.wg.Add(1)
-		go r.probeSlot(ctx, s, t)
-	}
-}
-
 // probeTimeout caps a probe below its check's interval: interval − 1 s.
 // The probe itself cuts its own timeout_s to that deadline.
 func probeTimeout(interval time.Duration) time.Duration {
@@ -298,6 +262,10 @@ func (r *Runner) probeSlot(ctx context.Context, s slot, t target) {
 		r.mu.Lock()
 		delete(r.inFlight, s)
 		r.mu.Unlock()
+		select {
+		case r.wake <- struct{}{}:
+		default: // a wake-up is already pending
+		}
 	}()
 	r.safely(ctx, "probe", func() { r.probeAndRecord(ctx, s, t) }, "org", t.org, "host", s.host, "check", s.key)
 }
