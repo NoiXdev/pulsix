@@ -70,6 +70,10 @@ type scheduledCheck struct {
 	spec   Spec
 	ticker Ticker
 	stop   chan struct{}
+	// plugin is what this check collects with: the registry's own value
+	// for a stateless plugin, a fresh per-check instance for a
+	// statefulPlugin, nil for a plugin this build does not have.
+	plugin Plugin
 	// spawned records whether a goroutine actually owns this check. Only
 	// a spawned check's ticker is stopped by that goroutine's own defer;
 	// anything else — a check tracked before Run started, or one whose
@@ -200,11 +204,29 @@ func specsEqual(a, b Spec) bool {
 // spawns its goroutine right away; otherwise Run's own startup loop
 // spawns it once it begins. Called with s.mu held.
 func (s *Scheduler) startLocked(spec Spec) {
-	sc := &scheduledCheck{spec: spec, ticker: s.ticker(spec.Interval), stop: make(chan struct{})}
+	sc := &scheduledCheck{spec: spec, ticker: s.ticker(spec.Interval), stop: make(chan struct{}), plugin: s.pluginFor(spec.Plugin)}
 	s.checks[spec.Key] = sc
 	if s.running {
 		s.spawnLocked(spec.Key, sc)
 	}
+}
+
+// pluginFor resolves the plugin one check collects with. A statefulPlugin
+// yields a fresh instance on every call, and startLocked is the only caller:
+// a new key, and a key Apply restarts because its definition changed, both
+// start with empty state. For network that means fresh baselines — the old
+// ones may belong to interfaces the new params no longer watch, or were
+// taken on the old interval — at the cost of one silent first collect. An
+// unchanged key keeps its scheduledCheck and therefore its instance.
+func (s *Scheduler) pluginFor(name string) Plugin {
+	p, ok := s.reg[name]
+	if !ok {
+		return nil
+	}
+	if sp, ok := p.(statefulPlugin); ok {
+		return sp.newInstance()
+	}
+	return p
 }
 
 // spawnLocked starts sc's goroutine. Called with s.mu held; the goroutine
@@ -215,13 +237,12 @@ func (s *Scheduler) startLocked(spec Spec) {
 // it, which is the same "stay dumb, do nothing surprising" posture the
 // rest of this package takes with data it cannot make sense of.
 func (s *Scheduler) spawnLocked(key string, sc *scheduledCheck) {
-	plugin, ok := s.reg[sc.spec.Plugin]
-	if !ok {
+	if sc.plugin == nil {
 		return // sc.spawned stays false: its ticker is nobody's but ours
 	}
 	sc.spawned = true
 	s.wg.Add(1)
-	go s.runCheck(s.ctx, key, plugin, sc, s.sink)
+	go s.runCheck(s.ctx, key, sc.plugin, sc, s.sink)
 }
 
 // stopLocked retires key's check: if a goroutine owns it, that goroutine

@@ -76,14 +76,22 @@ type Plugin interface {
 	Collect(ctx context.Context, params map[string]any) ([]Observation, error)
 }
 
+// statefulPlugin is a Plugin that keeps state between calls (network: each
+// interface's previous counters, to turn them into rates). Its Registry
+// value is only a prototype: the scheduler asks it for a fresh instance per
+// check key (newInstance), so two keys never share — or race over — that
+// state, and one instance is only ever collected by its own key's goroutine.
+type statefulPlugin interface {
+	Plugin
+	newInstance() Plugin
+}
+
 // Registry returns one instance of every check plugin the agent ships,
 // wired to the real providers (gopsutil, and systemd over D-Bus on Linux —
 // service_stub.go's placeholder everywhere else). It is a func, not a
-// package var, so every caller gets its own plugin values; the plugins
-// hold no mutable state between calls, except network, which keeps each
-// interface's previous counters to turn them into rates; the scheduler
-// shares one Registry's instance across every tick and every check key using
-// that plugin, so that state survives and must not assume a single caller.
+// package var, so every caller gets its own plugin values. The stateless
+// plugins are shared by every tick and every check key using them; a
+// statefulPlugin (network) is a prototype the scheduler clones per key.
 func Registry() map[string]Plugin {
 	return map[string]Plugin{
 		"cpu":     newCPUPlugin(),

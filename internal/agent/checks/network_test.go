@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -169,7 +168,7 @@ func TestNetworkBackwardsClockReportsNothing(t *testing.T) {
 }
 
 func TestNetworkDefaultSetSkipsLoopbackDownAndPrefixes(t *testing.T) {
-	names := []string{"eth0", "lo", "eth1", "veth12", "docker0", "br-abc", "virbr0", "cni0", "flannel.1", "cali1", "vxlan.calico", "kube-ipvs0", "tun0", "tap0", "ens3"}
+	names := []string{"eth0", "lo", "eth1", "veth12", "docker0", "br-abc", "virbr0", "cni0", "flannel.1", "cali1", "vxlan.calico", "kube-ipvs0", "tun0", "tap0", "vnet0", "podman0", "lxcbr0", "lxdbr0", "ens3"}
 	ifs := fixtureNetInterfaces{list: net.InterfaceStatList{
 		iface("eth0", "up"),
 		iface("lo", "up", "loopback"),
@@ -177,7 +176,8 @@ func TestNetworkDefaultSetSkipsLoopbackDownAndPrefixes(t *testing.T) {
 		iface("veth12", "up"), iface("docker0", "up"), iface("br-abc", "up"),
 		iface("virbr0", "up"), iface("cni0", "up"), iface("flannel.1", "up"),
 		iface("cali1", "up"), iface("vxlan.calico", "up"), iface("kube-ipvs0", "up"),
-		iface("tun0", "up"), iface("tap0", "up"), iface("ens3", "up"),
+		iface("tun0", "up"), iface("tap0", "up"), iface("vnet0", "up"),
+		iface("podman0", "up"), iface("lxcbr0", "up"), iface("lxdbr0", "up"), iface("ens3", "up"),
 	}}
 	clock := &fakeNow{t: time.Unix(1000, 0)}
 	c := &fixtureNetCounters{}
@@ -309,133 +309,63 @@ func TestNetworkDeadContext(t *testing.T) {
 	}
 }
 
-// Two check keys share the one plugin instance (scheduler.go hands every
-// key the Registry's plugin), so one key's collect must not forget the
-// baselines of interfaces it does not watch.
-func TestNetworkDisjointInterfaceListsOnOneInstanceBothReport(t *testing.T) {
-	clock := &fakeNow{t: time.Unix(1000, 0)}
-	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10), counters("eth1", 10)}}
-	p := newTestNetwork(c, upIfaces(), clock)
-	a := map[string]any{"interfaces": []string{"eth0"}}
-	b := map[string]any{"interfaces": []string{"eth1"}}
-	_, _ = p.Collect(context.Background(), a)
-	_, _ = p.Collect(context.Background(), b)
-
-	clock.t = clock.t.Add(10 * time.Second)
-	c.stats = []net.IOCountersStat{counters("eth0", 20), counters("eth1", 20)}
-	obsA, _ := p.Collect(context.Background(), a)
-	obsB, _ := p.Collect(context.Background(), b)
-	if o := findObs(t, obsA, "eth0", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
-		t.Fatalf("eth0 = %+v, want 1000", o)
-	}
-	if o := findObs(t, obsB, "eth1", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
-		t.Fatalf("eth1 = %+v, want 1000", o)
-	}
-}
-
-func TestNetworkDefaultAndExplicitOnOneInstanceKeepEachOthersBaselines(t *testing.T) {
-	clock := &fakeNow{t: time.Unix(1000, 0)}
-	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10), counters("eth1", 10)}}
-	p := newTestNetwork(c, upIfaces("eth0", "eth1"), clock)
-	explicit := map[string]any{"interfaces": []string{"eth0"}}
-	_, _ = p.Collect(context.Background(), nil)
-	_, _ = p.Collect(context.Background(), explicit)
-
-	clock.t = clock.t.Add(10 * time.Second)
-	c.stats = []net.IOCountersStat{counters("eth0", 20), counters("eth1", 20)}
-	obs, _ := p.Collect(context.Background(), nil)
-	if len(obs) != 12 {
-		t.Fatalf("default set got %d observations, want 12: %+v", len(obs), obs)
-	}
-	_, _ = p.Collect(context.Background(), explicit)
-	clock.t = clock.t.Add(10 * time.Second)
-	c.stats = []net.IOCountersStat{counters("eth0", 30), counters("eth1", 30)}
-	obs, _ = p.Collect(context.Background(), nil)
-	if len(obs) != 12 {
-		t.Fatalf("default set after an explicit collect got %d observations, want 12", len(obs))
-	}
-}
-
-// gatedCounters answers call 0 at once, blocks call 1 until released and
-// answers later calls at once, so a test can interleave two collects.
-type gatedCounters struct {
-	mu      sync.Mutex
-	calls   int
-	entered chan struct{}
-	release chan struct{}
-}
-
-func (g *gatedCounters) IOCounters(context.Context, bool) ([]net.IOCountersStat, error) {
-	g.mu.Lock()
-	i := g.calls
-	g.calls++
-	g.mu.Unlock()
-	switch i {
-	case 0:
-		return []net.IOCountersStat{counters("eth0", 10)}, nil
-	case 1:
-		close(g.entered)
-		<-g.release
-		return []net.IOCountersStat{counters("eth0", 20)}, nil
-	default:
-		return []net.IOCountersStat{counters("eth0", 30)}, nil
-	}
-}
-
-// A slow collect must not store an older sample over a newer baseline: the
-// counters and the clock are read in one critical section.
-func TestNetworkConcurrentCollectsApplyInSampleOrder(t *testing.T) {
-	g := &gatedCounters{entered: make(chan struct{}), release: make(chan struct{})}
-	var tick int64
-	var tickMu sync.Mutex
-	p := newNetworkPlugin().(*networkPlugin)
-	p.Counters, p.Interfaces = g, upIfaces("eth0")
-	p.Now = func() time.Time {
-		tickMu.Lock()
-		defer tickMu.Unlock()
-		tick++
-		return time.Unix(1000+tick*10, 0)
-	}
-	_, _ = p.Collect(context.Background(), nil) // baseline: 10 at t=1010
-
-	res := make(chan []Observation, 2)
-	go func() { o, _ := p.Collect(context.Background(), nil); res <- o }()
-	<-g.entered
-	go func() { o, _ := p.Collect(context.Background(), nil); res <- o }()
-	time.Sleep(50 * time.Millisecond)
-	close(g.release)
-
-	for i := 0; i < 2; i++ {
-		obs := <-res
-		o := findObs(t, obs, "eth0", "net.rx_bytes_per_s")
-		if o.Value == nil || *o.Value != 1000 {
-			t.Fatalf("collect %d rx = %+v, want 1000 (10000 bytes over 10 s)", i, o)
-		}
-	}
-}
-
-func TestNetworkStaleBaselineReBaselinesWithoutReporting(t *testing.T) {
+// A long interval still reports: the rate is the average over the whole
+// interval, however long it is (validation allows up to 24 h).
+func TestNetworkLongIntervalReportsTheAverage(t *testing.T) {
 	clock := &fakeNow{t: time.Unix(1000, 0)}
 	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10)}}
 	p := newTestNetwork(c, upIfaces("eth0"), clock)
 	_, _ = p.Collect(context.Background(), nil)
 
-	clock.t = clock.t.Add(maxBaselineAge) // exactly at the bound: still reports
-	c.stats = []net.IOCountersStat{counters("eth0", 20)}
-	if obs, _ := p.Collect(context.Background(), nil); len(obs) != 6 {
-		t.Fatalf("at the bound got %d observations, want 6", len(obs))
+	clock.t = clock.t.Add(30 * time.Minute)
+	c.stats = []net.IOCountersStat{counters("eth0", 10+1800)}
+	obs, err := p.Collect(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if len(obs) != 6 {
+		t.Fatalf("got %d observations after a 30 min interval, want 6: %+v", len(obs), obs)
+	}
+	if o := findObs(t, obs, "eth0", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
+		t.Fatalf("rx = %+v, want 1000 (1 800 000 bytes over 1 800 s)", o)
+	}
+}
+
+// An interface that is down is not collected, so it loses its baseline;
+// on its first tick back it re-baselines instead of reporting an average
+// over its downtime.
+func TestNetworkInterfaceBackFromDownReBaselines(t *testing.T) {
+	clock := &fakeNow{t: time.Unix(1000, 0)}
+	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10), counters("eth1", 10)}}
+	ifs := &fixtureNetInterfaces{list: upIfaces("eth0", "eth1").list}
+	p := newTestNetwork(c, upIfaces(), clock)
+	p.Interfaces = ifs
+	_, _ = p.Collect(context.Background(), nil)
+
+	// eth1 goes down for three ticks; its counters stay in the kernel's list.
+	ifs.list = net.InterfaceStatList{iface("eth0", "up"), iface("eth1")}
+	for i := 0; i < 3; i++ {
+		clock.t = clock.t.Add(time.Minute)
+		c.stats = []net.IOCountersStat{counters("eth0", 10), counters("eth1", 10)}
+		obs, _ := p.Collect(context.Background(), nil)
+		if got := metricItems(obs, "net.rx_bytes_per_s"); len(got) != 1 || got[0] != "eth0" {
+			t.Fatalf("while eth1 is down observed %v, want [eth0]", got)
+		}
 	}
 
-	clock.t = clock.t.Add(maxBaselineAge + time.Second) // beyond it: re-baseline
-	c.stats = []net.IOCountersStat{counters("eth0", 30)}
-	if obs, _ := p.Collect(context.Background(), nil); len(obs) != 0 {
-		t.Fatalf("after a long gap got %+v, want nothing", obs)
-	}
-	clock.t = clock.t.Add(10 * time.Second)
-	c.stats = []net.IOCountersStat{counters("eth0", 40)}
+	ifs.list = upIfaces("eth0", "eth1").list
+	clock.t = clock.t.Add(time.Minute)
+	c.stats = []net.IOCountersStat{counters("eth0", 10), counters("eth1", 70)}
 	obs, _ := p.Collect(context.Background(), nil)
-	if o := findObs(t, obs, "eth0", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
-		t.Fatalf("rx after re-baseline = %+v, want 1000", o)
+	if got := metricItems(obs, "net.rx_bytes_per_s"); len(got) != 1 || got[0] != "eth0" {
+		t.Fatalf("first tick back observed %v, want [eth0]: eth1 must re-baseline, not average its downtime", got)
+	}
+
+	clock.t = clock.t.Add(time.Minute)
+	c.stats = []net.IOCountersStat{counters("eth0", 10), counters("eth1", 130)}
+	obs, _ = p.Collect(context.Background(), nil)
+	if o := findObs(t, obs, "eth1", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
+		t.Fatalf("eth1 rx on the second tick back = %+v, want 1000", o)
 	}
 }
 
@@ -463,5 +393,31 @@ func TestNetworkExplicitMissingNameIsDeletedFromBaselines(t *testing.T) {
 	_, _ = p.Collect(context.Background(), params)
 	if _, ok := p.prev["eth0"]; ok {
 		t.Fatal("a vanished explicit interface keeps a baseline")
+	}
+}
+
+// newInstance keeps the providers and starts with no baselines: a fresh
+// key's first collect reports nothing even when the prototype's would.
+func TestNetworkNewInstanceKeepsProvidersAndStartsEmpty(t *testing.T) {
+	clock := &fakeNow{t: time.Unix(1000, 0)}
+	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10)}}
+	proto := newTestNetwork(c, upIfaces("eth0"), clock)
+	_, _ = proto.Collect(context.Background(), nil)
+
+	inst, ok := Plugin(proto).(statefulPlugin)
+	if !ok {
+		t.Fatal("the network plugin must be a statefulPlugin")
+	}
+	fresh := inst.newInstance()
+	clock.t = clock.t.Add(10 * time.Second)
+	c.stats = []net.IOCountersStat{counters("eth0", 20)}
+	if obs, err := fresh.Collect(context.Background(), nil); err != nil || len(obs) != 0 {
+		t.Fatalf("fresh instance's first collect = %+v, %v; want nothing", obs, err)
+	}
+	clock.t = clock.t.Add(10 * time.Second)
+	c.stats = []net.IOCountersStat{counters("eth0", 30)}
+	obs, _ := fresh.Collect(context.Background(), nil)
+	if o := findObs(t, obs, "eth0", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
+		t.Fatalf("fresh instance's second collect rx = %+v, want 1000 via the copied providers", o)
 	}
 }

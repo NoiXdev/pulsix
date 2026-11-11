@@ -6,18 +6,19 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/net"
 )
 
 // excludedInterfacePrefixes are skipped from the discovered interface set
-// by default: virtual and overlay devices (containers, bridges, tunnels)
-// are churn, not host network health. An explicit "interfaces" list
+// by default: virtual and overlay devices (containers, bridges, tunnels,
+// VM taps such as libvirt's vnet, Podman, LXC and LXD bridges) are churn,
+// not host network health. An explicit "interfaces" list
 // bypasses this, like disk's "mounts" does for pseudo filesystems.
 var excludedInterfacePrefixes = []string{
 	"veth", "docker", "br-", "virbr", "cni", "flannel", "cali", "vxlan", "kube-", "tun", "tap",
+	"vnet", "podman", "lxcbr", "lxdbr",
 }
 
 // netCounterReader is the net.IOCounters probe (per-interface counters).
@@ -42,13 +43,6 @@ func (gopsutilNetInterfaces) Interfaces(ctx context.Context) (net.InterfaceStatL
 	return net.InterfacesWithContext(ctx)
 }
 
-// maxBaselineAge bounds how old a baseline may be and still yield a rate.
-// An interface can sit in the counters yet outside the reported set (down,
-// or not in this key's list) for a long time; a rate against such a stale
-// baseline would be averaged over the whole gap and mean nothing, so an
-// older baseline is replaced without reporting.
-const maxBaselineAge = 15 * time.Minute
-
 // netSample is one interface's counters at one collection.
 type netSample struct {
 	at       time.Time
@@ -69,13 +63,15 @@ func sampleOf(s net.IOCountersStat, at time.Time) netSample {
 // networkPlugin reports per-interface rates (item = interface name). The
 // kernel only exposes monotonic counters, so the plugin keeps the previous
 // sample of every interface between calls and reports delta / elapsed. It
-// must therefore be one long-lived instance (Registry builds it once).
+// is a statefulPlugin: every check key collects with its own instance
+// (newInstance), so the baselines are always this key's own previous
+// collect, taken one interval ago — never another key's. An instance is
+// collected by its key's one goroutine only, so it holds no lock.
 type networkPlugin struct {
 	Counters   netCounterReader
 	Interfaces netInterfaceLister
 	Now        func() time.Time
 
-	mu   sync.Mutex
 	prev map[string]netSample
 }
 
@@ -84,8 +80,12 @@ func newNetworkPlugin() Plugin {
 		Counters:   gopsutilNetCounters{},
 		Interfaces: gopsutilNetInterfaces{},
 		Now:        time.Now,
-		prev:       make(map[string]netSample),
 	}
+}
+
+// newInstance returns a plugin with the same providers and no baselines.
+func (p *networkPlugin) newInstance() Plugin {
+	return &networkPlugin{Counters: p.Counters, Interfaces: p.Interfaces, Now: p.Now}
 }
 
 func (*networkPlugin) Name() string { return "network" }
@@ -116,8 +116,12 @@ func discoveredInterface(s net.InterfaceStat) bool {
 // prefixes — and reports six rates per interface. The first sight of an
 // interface, a counter that went backwards (wrap, reset, re-created
 // interface) and a non-positive elapsed time report nothing for it; the
-// sample still becomes the new baseline. An explicitly named interface the
-// counters do not know reports an error observation per metric.
+// sample still becomes the new baseline. The baselines are replaced by
+// exactly this collect's samples, so an interface not collected this time
+// (down, gone, no longer listed) loses its baseline and, when it is back,
+// re-baselines instead of reporting an average over its absence. An
+// explicitly named interface the counters do not know reports an error
+// observation per metric.
 func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -154,11 +158,6 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 		sort.Strings(candidates)
 	}
 
-	// The counters and the clock are read in one critical section: one
-	// instance serves every check key, each in its own goroutine, and a
-	// sample taken earlier must never be stored over a later baseline.
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	stats, err := p.Counters.IOCounters(ctx, true)
 	if err != nil {
 		// Keep the baselines: the next good tick still reports a rate.
@@ -170,10 +169,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 	}
 
 	now := p.Now()
-	if p.prev == nil {
-		p.prev = make(map[string]netSample)
-	}
-
+	next := make(map[string]netSample, len(candidates))
 	var obs []Observation
 	for _, name := range candidates {
 		st, ok := byName[name]
@@ -185,17 +181,16 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 					obs = append(obs, errObservation(name, m, wrapped))
 				}
 			}
-			delete(p.prev, name)
 			continue
 		}
 		cur := sampleOf(st, now)
+		next[name] = cur
 		old, seen := p.prev[name]
-		p.prev[name] = cur
 		if !seen {
 			continue
 		}
 		elapsed := cur.at.Sub(old.at).Seconds()
-		if elapsed <= 0 || cur.at.Sub(old.at) > maxBaselineAge {
+		if elapsed <= 0 {
 			continue
 		}
 		reset := false
@@ -211,14 +206,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 			obs = append(obs, valueObservation(name, m, float64(cur.counters[i]-old.counters[i])/elapsed))
 		}
 	}
-	// One instance serves every check key, so baselines are merged, not
-	// replaced: another key's interfaces keep theirs. Only an interface the
-	// counters no longer know is forgotten.
-	for name := range p.prev {
-		if _, ok := byName[name]; !ok {
-			delete(p.prev, name)
-		}
-	}
+	p.prev = next
 
 	return obs, errors.Join(errs...)
 }
