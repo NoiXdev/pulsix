@@ -3,6 +3,7 @@ package probes
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
@@ -18,8 +19,9 @@ func orgScope(ctx context.Context, orgID uuid.UUID) context.Context {
 
 // refresh re-reads every organization's synthetic checks and host
 // addresses. A slot that is gone (definition removed or disabled, host no
-// longer monitored or deleted) leaves the schedule; a new one is due at
-// once. When an organization cannot be read, its previous targets stand
+// longer monitored or deleted) leaves the schedule; a new one, and one
+// whose plugin, params, interval or address changed, is due at once, so
+// an edit takes effect within one refresh plus one tick. When an organization cannot be read, its previous targets stand
 // until a later refresh succeeds: a database hiccup does not pause its
 // probes. When the organization list cannot be read, or ctx ends (the
 // tick's deadline) midway, nothing changes and the error is returned; the
@@ -48,14 +50,23 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 			next[s] = t
 		}
 	}
-	r.targets = next
-	r.refreshed = now
 	for s := range r.next {
-		if _, ok := next[s]; !ok {
+		if t, ok := next[s]; !ok || changed(r.targets[s], t) {
 			delete(r.next, s)
 		}
 	}
+	r.targets = next
+	r.refreshed = now
 	return nil
+}
+
+// changed reports whether a slot's target differs in anything a probe
+// depends on: plugin, params, interval or the host's address.
+func changed(old, cur target) bool {
+	return old.address != cur.address ||
+		old.check.Plugin != cur.check.Plugin ||
+		old.check.Interval != cur.check.Interval ||
+		!reflect.DeepEqual(old.check.Params, cur.check.Params)
 }
 
 // orgTargets resolves one organization: every monitored host's synthetic

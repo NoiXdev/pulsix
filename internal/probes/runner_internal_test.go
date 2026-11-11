@@ -431,3 +431,65 @@ func (s switchResolver) ResolveOrg(ctx context.Context, org uuid.UUID) (map[uuid
 	}
 	return s.w.ResolveOrg(ctx, org)
 }
+
+// TestChangedTargetIsDueAtOnce: an edit of a check (interval, params,
+// plugin) or a change of the host's address takes effect on the refresh
+// that sees it, not one old interval later (final review, Important #2).
+func TestChangedTargetIsDueAtOnce(t *testing.T) {
+	withParam := func(c checks.Resolved, k string, v any) checks.Resolved {
+		p := map[string]any{}
+		for kk, vv := range c.Params {
+			p[kk] = vv
+		}
+		p[k] = v
+		c.Params = p
+		return c
+	}
+	for _, tc := range []struct {
+		name    string
+		before  checks.Resolved
+		after   checks.Resolved
+		address string
+	}{
+		{"interval edit", synthetic("cert", "tls", 24*time.Hour), synthetic("cert", "tls", time.Minute), "192.0.2.1"},
+		{"params edit", synthetic("web", "http", time.Hour), withParam(synthetic("web", "http", time.Hour), "url", "http://{address}/health"), "192.0.2.1"},
+		{"plugin edit", synthetic("x", "tcp", time.Hour), synthetic("x", "tls", time.Hour), "192.0.2.1"},
+		{"address change", synthetic("ping", "icmp", time.Hour), synthetic("ping", "icmp", time.Hour), "192.0.2.99"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, tc.before)
+			h.tickAt(0)
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Address: tc.address, Monitored: true}, tc.after)
+			h.tickAt(30 * time.Second) // refresh
+			calls := h.probe.Calls()
+			if len(calls) != 2 {
+				t.Fatalf("probed %d times, want the changed target probed again on the refresh tick", len(calls))
+			}
+			if calls[1].plugin != tc.after.Plugin || calls[1].address != tc.address {
+				t.Fatalf("second probe = %+v, want plugin %q at %q", calls[1], tc.after.Plugin, tc.address)
+			}
+			// The new interval governs from there.
+			n := len(h.probe.Calls())
+			h.tickAt(30*time.Second + tc.after.Interval)
+			if got := len(h.probe.Calls()); got != n+1 {
+				t.Fatalf("probed %d more times one new interval later, want 1", got-n)
+			}
+		})
+	}
+}
+
+// TestUnchangedTargetKeepsItsSchedule: a refresh that finds the same
+// target does not make it due early.
+func TestUnchangedTargetKeepsItsSchedule(t *testing.T) {
+	h := newHarness(t, nil)
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", time.Hour))
+	h.tickAt(0)
+	for at := 30 * time.Second; at <= 5*time.Minute; at += 30 * time.Second {
+		h.tickAt(at) // each one refreshes
+	}
+	if n := len(h.probe.Calls()); n != 1 {
+		t.Fatalf("an unchanged target was probed %d times within its interval, want once", n)
+	}
+}
