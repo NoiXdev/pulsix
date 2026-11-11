@@ -157,13 +157,14 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 		byName[s.Name] = s
 	}
 
-	now := p.Now()
+	// Now is read under the lock so concurrent collects apply in timestamp
+	// order.
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := p.Now()
 	if p.prev == nil {
 		p.prev = make(map[string]netSample)
 	}
-	next := make(map[string]netSample, len(candidates))
 
 	var obs []Observation
 	for _, name := range candidates {
@@ -176,11 +177,12 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 					obs = append(obs, errObservation(name, m, wrapped))
 				}
 			}
+			delete(p.prev, name)
 			continue
 		}
 		cur := sampleOf(st, now)
-		next[name] = cur
 		old, seen := p.prev[name]
+		p.prev[name] = cur
 		if !seen {
 			continue
 		}
@@ -201,7 +203,14 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 			obs = append(obs, valueObservation(name, m, float64(cur.counters[i]-old.counters[i])/elapsed))
 		}
 	}
-	p.prev = next
+	// One instance serves every check key, so baselines are merged, not
+	// replaced: another key's interfaces keep theirs. Only an interface the
+	// counters no longer know is forgotten.
+	for name := range p.prev {
+		if _, ok := byName[name]; !ok {
+			delete(p.prev, name)
+		}
+	}
 
 	return obs, errors.Join(errs...)
 }

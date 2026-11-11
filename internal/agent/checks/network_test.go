@@ -307,3 +307,50 @@ func TestNetworkDeadContext(t *testing.T) {
 		t.Fatalf("got %+v, %v; want nothing and the context error", obs, err)
 	}
 }
+
+// Two check keys share the one plugin instance (scheduler.go hands every
+// key the Registry's plugin), so one key's collect must not forget the
+// baselines of interfaces it does not watch.
+func TestNetworkDisjointInterfaceListsOnOneInstanceBothReport(t *testing.T) {
+	clock := &fakeNow{t: time.Unix(1000, 0)}
+	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10), counters("eth1", 10)}}
+	p := newTestNetwork(c, upIfaces(), clock)
+	a := map[string]any{"interfaces": []string{"eth0"}}
+	b := map[string]any{"interfaces": []string{"eth1"}}
+	_, _ = p.Collect(context.Background(), a)
+	_, _ = p.Collect(context.Background(), b)
+
+	clock.t = clock.t.Add(10 * time.Second)
+	c.stats = []net.IOCountersStat{counters("eth0", 20), counters("eth1", 20)}
+	obsA, _ := p.Collect(context.Background(), a)
+	obsB, _ := p.Collect(context.Background(), b)
+	if o := findObs(t, obsA, "eth0", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
+		t.Fatalf("eth0 = %+v, want 1000", o)
+	}
+	if o := findObs(t, obsB, "eth1", "net.rx_bytes_per_s"); o.Value == nil || *o.Value != 1000 {
+		t.Fatalf("eth1 = %+v, want 1000", o)
+	}
+}
+
+func TestNetworkDefaultAndExplicitOnOneInstanceKeepEachOthersBaselines(t *testing.T) {
+	clock := &fakeNow{t: time.Unix(1000, 0)}
+	c := &fixtureNetCounters{stats: []net.IOCountersStat{counters("eth0", 10), counters("eth1", 10)}}
+	p := newTestNetwork(c, upIfaces("eth0", "eth1"), clock)
+	explicit := map[string]any{"interfaces": []string{"eth0"}}
+	_, _ = p.Collect(context.Background(), nil)
+	_, _ = p.Collect(context.Background(), explicit)
+
+	clock.t = clock.t.Add(10 * time.Second)
+	c.stats = []net.IOCountersStat{counters("eth0", 20), counters("eth1", 20)}
+	obs, _ := p.Collect(context.Background(), nil)
+	if len(obs) != 12 {
+		t.Fatalf("default set got %d observations, want 12: %+v", len(obs), obs)
+	}
+	_, _ = p.Collect(context.Background(), explicit)
+	clock.t = clock.t.Add(10 * time.Second)
+	c.stats = []net.IOCountersStat{counters("eth0", 30), counters("eth1", 30)}
+	obs, _ = p.Collect(context.Background(), nil)
+	if len(obs) != 12 {
+		t.Fatalf("default set after an explicit collect got %d observations, want 12", len(obs))
+	}
+}

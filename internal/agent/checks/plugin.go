@@ -82,7 +82,8 @@ type Plugin interface {
 // package var, so every caller gets its own plugin values; the plugins
 // hold no mutable state between calls, except network, which keeps each
 // interface's previous counters to turn them into rates; the scheduler
-// shares one Registry's instance across every tick, so that state survives.
+// shares one Registry's instance across every tick and every check key using
+// that plugin, so that state survives and must not assume a single caller.
 func Registry() map[string]Plugin {
 	return map[string]Plugin{
 		"cpu":     newCPUPlugin(),
