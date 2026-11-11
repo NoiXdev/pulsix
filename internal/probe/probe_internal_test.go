@@ -114,8 +114,24 @@ func TestAnswerMatches(t *testing.T) {
 }
 
 func TestDNSUnsupportedTypeIsAnError(t *testing.T) {
-	obs := probeDNS(context.Background(), NewGuardForTest(true, nil), map[string]any{"name": "example.test", "type": "SRV"}, "")
+	obs := probeDNS(context.Background(), NewGuardForTest(true, nil), map[string]any{"name": "example.test", "type": "SRV"}, "", NewGuardForTest(true, nil).Dialer)
 	if len(obs) != 2 || obs[0].Err == "" || obs[1].Err == "" {
 		t.Fatalf("want one error per metric, got %+v", obs)
+	}
+}
+
+func TestDNSDialRefusalIsAnError(t *testing.T) {
+	// The up-front check passes (the guard allows loopback) but the dialer
+	// refuses, as a guard would for a server that is only refused at dial
+	// time. Go's resolver hides the dial error, so the probe must remember it.
+	params := map[string]any{"name": "example.test", "server": "127.0.0.1:53", "expect": "192.0.2.7", "timeout_s": float64(2)}
+	obs := probeDNS(context.Background(), NewGuardForTest(true, nil), params, "", NewGuard(nil).Dialer)
+	if len(obs) != 3 {
+		t.Fatalf("want one error per metric, got %+v", obs)
+	}
+	for _, o := range obs {
+		if o.Value != nil || o.Err != ErrNotAllowed.Error() {
+			t.Fatalf("%s: value %v, err %q; want err %q", o.Metric, o.Value, o.Err, ErrNotAllowed)
+		}
 	}
 }

@@ -24,6 +24,9 @@ type Observation struct {
 var (
 	errNoAddress = errors.New("host has no address")
 	errBadTarget = errors.New("target is not a valid address")
+	// errNameIsAddress: a dns A or AAAA check of an IP literal asks no
+	// server, so it cannot be attempted.
+	errNameIsAddress = errors.New("name is an address")
 )
 
 // addressPlaceholder in a name or URL parameter is replaced with the host's
@@ -33,8 +36,10 @@ const addressPlaceholder = "{address}"
 // Run probes address with plugin and params, already validated by
 // internal/checks. It never returns a Go error: every outcome is in the
 // observations. A failed attempt (refused, timed out, no answer) is
-// `<plugin>.up = 0` alone; an attempt that could not be made is one error
-// observation per metric the params would have produced.
+// `<plugin>.up = 0` alone, except that icmp also reports a measured
+// `icmp.loss_pct = 100` when its requests went out and none came back. An
+// attempt that could not be made is one error observation per metric the
+// params would have produced.
 //
 // The probe's timeout is its params' timeout_s (or the plugin's default),
 // cut to ctx's deadline when that is earlier.
@@ -48,7 +53,7 @@ func Run(ctx context.Context, g *Guard, plugin string, params map[string]any, ad
 	case "icmp":
 		return probeICMP(ctx, g, params, address, listenICMP)
 	case "dns":
-		return probeDNS(ctx, g, params, address)
+		return probeDNS(ctx, g, params, address, g.Dialer)
 	}
 	return failAll("unknown probe plugin "+plugin, plugin+".up")
 }

@@ -90,7 +90,13 @@ func probeICMP(ctx context.Context, g *Guard, params map[string]any, address str
 
 	r.run(ctx, conn)
 	if r.replies == 0 {
-		return down("icmp")
+		if r.sent[0].IsZero() {
+			// Cancelled before the first request: nothing was measured.
+			return down("icmp")
+		}
+		// Requests went out and none came back: the loss is measured, a
+		// round trip is not.
+		return []Observation{value("icmp.up", 0), value("icmp.loss_pct", 100)}
 	}
 	return []Observation{
 		value("icmp.up", 1),

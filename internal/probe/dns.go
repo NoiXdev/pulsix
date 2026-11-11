@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -15,9 +16,14 @@ const (
 	dnsDefaultPort    = 53
 )
 
+// dialerFor returns the dialer for one connection; production passes the
+// guard's Dialer, tests a dialer that refuses where the guard's up-front
+// check does not.
+type dialerFor func(timeout time.Duration) *net.Dialer
+
 // probeDNS resolves name (default: the host's address) for one record type,
 // through server when one is set and the manager's resolver otherwise.
-func probeDNS(ctx context.Context, g *Guard, params map[string]any, address string) []Observation {
+func probeDNS(ctx context.Context, g *Guard, params map[string]any, address string, dial dialerFor) []Observation {
 	expect := strParam(params, "expect", "")
 	metrics := []string{"dns.up", "dns.resolve_ms"}
 	if expect != "" {
@@ -33,12 +39,21 @@ func probeDNS(ctx context.Context, g *Guard, params map[string]any, address stri
 		name = strings.ReplaceAll(name, addressPlaceholder, host)
 	}
 
-	lookup, ok := dnsLookupFor(strParam(params, "type", "A"))
+	typ := strParam(params, "type", "A")
+	lookup, ok := dnsLookupFor(typ)
 	if !ok {
 		return failAll("unsupported record type", metrics...)
 	}
+	// The resolver answers an A or AAAA lookup of an IP literal itself,
+	// without asking any server, so such a check could never fail.
+	if _, err := netip.ParseAddr(name); err == nil && (typ == "A" || typ == "AAAA") {
+		return failAll(errNameIsAddress.Error(), metrics...)
+	}
 
 	resolver := net.DefaultResolver
+	// refused records a dial the guard refused: Go's resolver reports it
+	// only as a failed lookup, not as ErrNotAllowed.
+	var refused atomic.Bool
 	if server := strParam(params, "server", ""); server != "" {
 		ap, err := parseDNSServer(server)
 		if err != nil {
@@ -47,7 +62,7 @@ func probeDNS(ctx context.Context, g *Guard, params map[string]any, address stri
 		if !g.Allowed(ap.Addr()) {
 			return failAll(ErrNotAllowed.Error(), metrics...)
 		}
-		resolver = guardedResolver(g, ap)
+		resolver = guardedResolver(dial, ap, &refused)
 	}
 
 	ctx, cancel := bound(ctx, params, dnsDefaultTimeout)
@@ -56,7 +71,7 @@ func probeDNS(ctx context.Context, g *Guard, params map[string]any, address stri
 	start := time.Now()
 	answers, err := lookup(ctx, resolver, name)
 	elapsed := time.Since(start)
-	if errors.Is(err, ErrNotAllowed) {
+	if refused.Load() {
 		return failAll(ErrNotAllowed.Error(), metrics...)
 	}
 	if err != nil || len(answers) == 0 {
@@ -69,14 +84,18 @@ func probeDNS(ctx context.Context, g *Guard, params map[string]any, address stri
 	return obs
 }
 
-// guardedResolver sends every query to server, through the guard's dialer.
-// The guard was already asked about server; the dial-time check is the
-// backstop.
-func guardedResolver(g *Guard, server netip.AddrPort) *net.Resolver {
+// guardedResolver sends every query to server, through the guard's dialer,
+// and sets refused when that dialer refuses. The guard was already asked
+// about server; the dial-time check is the backstop.
+func guardedResolver(dial dialerFor, server netip.AddrPort, refused *atomic.Bool) *net.Resolver {
 	return &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return g.Dialer(0).DialContext(ctx, network, server.String())
+			conn, err := dial(0).DialContext(ctx, network, server.String())
+			if errors.Is(err, ErrNotAllowed) {
+				refused.Store(true)
+			}
+			return conn, err
 		},
 	}
 }

@@ -233,3 +233,26 @@ func TestDNSOtherTypesUnansweredAreDown(t *testing.T) {
 		})
 	}
 }
+
+func TestDNSNameThatIsAnAddressIsAnError(t *testing.T) {
+	// The resolver answers an IP literal itself without asking the server,
+	// so an A or AAAA check of one would read up whatever the server does.
+	server := startDNSStub(t, exampleZone())
+	tests := []struct {
+		name    string
+		params  map[string]any
+		address string
+		metrics []string
+	}{
+		{"default name on an ipv4 host", nil, "192.0.2.1", []string{"dns.up", "dns.resolve_ms"}},
+		{"default name on a bracketed ipv6 host", map[string]any{"type": "AAAA"}, "[2001:db8::1]", []string{"dns.up", "dns.resolve_ms"}},
+		{"explicit ipv6 name", map[string]any{"name": "2001:db8::1", "type": "AAAA", "expect": "2001:db8::1"}, "", []string{"dns.up", "dns.resolve_ms", "dns.answer_match"}},
+		{"explicit ipv4 name", map[string]any{"name": "192.0.2.7", "type": "A"}, "", []string{"dns.up", "dns.resolve_ms"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			obs := probe.Run(context.Background(), loopbackGuard(), "dns", dnsParams(server, tc.params), tc.address)
+			wantErrors(t, obs, "name is an address", tc.metrics...)
+		})
+	}
+}

@@ -203,10 +203,7 @@ func TestICMPNoReplyIsDown(t *testing.T) {
 	start := time.Now()
 	obs := probeICMP(context.Background(), NewGuard(nil),
 		map[string]any{"count": float64(2), "timeout_s": float64(1)}, "192.0.2.1", opener(conn, nil, nil))
-	m := icmpByMetric(t, obs)
-	if len(m) != 1 || m["icmp.up"].Value == nil || *m["icmp.up"].Value != 0 {
-		t.Fatalf("want only icmp.up=0, got %+v", obs)
-	}
+	wantNoReply(t, obs)
 	if d := time.Since(start); d > 3*time.Second {
 		t.Fatalf("probe took %v, beyond its 1 s timeout", d)
 	}
@@ -222,9 +219,18 @@ func TestICMPIgnoresForeignReplies(t *testing.T) {
 	conn.replies <- reply{b: foreign, from: &net.UDPAddr{IP: net.ParseIP("192.0.2.1")}}
 	obs := probeICMP(context.Background(), NewGuard(nil),
 		map[string]any{"count": float64(1), "timeout_s": float64(1)}, "192.0.2.1", opener(conn, nil, nil))
+	wantNoReply(t, obs)
+}
+
+// wantNoReply fails unless obs is exactly icmp.up=0 and icmp.loss_pct=100:
+// requests went out and none came back, so the loss was measured but no
+// round trip was.
+func wantNoReply(t *testing.T, obs []Observation) {
+	t.Helper()
 	m := icmpByMetric(t, obs)
-	if len(m) != 1 || *m["icmp.up"].Value != 0 {
-		t.Fatalf("want only icmp.up=0, got %+v", obs)
+	up, loss := m["icmp.up"], m["icmp.loss_pct"]
+	if len(m) != 2 || up.Value == nil || *up.Value != 0 || loss.Value == nil || *loss.Value != 100 {
+		t.Fatalf("want exactly icmp.up=0 and icmp.loss_pct=100, got %+v", obs)
 	}
 }
 
