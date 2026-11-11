@@ -4521,7 +4521,7 @@ export interface components {
         HostCheckValueDTO: {
             /**
              * Format: date-time
-             * @description The agent's own timestamp for this reading
+             * @description When this reading was taken: the agent's own timestamp for a check the agent runs, the Pulsix server's clock for a synthetic check the server probes itself
              */
             at: string;
             /** @description The decision that produced ignored; absent when none matched */

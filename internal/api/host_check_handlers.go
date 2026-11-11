@@ -53,7 +53,7 @@ type hostCheckValueDTO struct {
 	Value  *float64  `json:"value,omitempty" doc:"Set for a numeric metric"`
 	Label  string    `json:"label,omitempty" doc:"Set for a discrete metric, e.g. a service state"`
 	Error  string    `json:"error,omitempty" doc:"Set when collection failed; value and label are then both absent — check_current stores an error row with neither"`
-	At     time.Time `json:"at" doc:"The agent's own timestamp for this reading"`
+	At     time.Time `json:"at" doc:"When this reading was taken: the agent's own timestamp for a check the agent runs, the Pulsix server's clock for a synthetic check the server probes itself"`
 	Stale  bool      `json:"stale" doc:"No reading for more than three of the check's intervals"`
 	// State, Since and Flapping are the rule engine's own verdict on this
 	// tuple (v0.3b-2 Task 11), additive to the v0.3b-1 fields above: every
