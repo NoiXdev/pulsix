@@ -40,17 +40,34 @@ type Resolved struct {
 }
 
 // ResolvedSet is one host's complete, resolved configuration: what an
-// agent should be running, and the version it reports back to prove it is.
+// agent should be running, and the version it reports back to prove it is,
+// plus the synthetic checks the manager probes the host with.
 type ResolvedSet struct {
 	HostID uuid.UUID
-	// Checks is sorted by Key — both because that is a stable, readable
-	// order and because Version is computed over exactly this order.
+	// Checks are the host-local checks, the ones pushed to the host's
+	// agent. Sorted by Key — both because that is a stable, readable order
+	// and because Version is computed over exactly this order.
 	Checks []Resolved
-	// Version is the hex SHA-256 of the canonical encoding (see
+	// Synthetic are the checks the manager probes the host with (backlog
+	// 3.13, IsSynthetic), sorted by Key. They never go to the agent, which
+	// does not know their plugins, and Version does not cover them, so
+	// adding one does not re-push the agent's set.
+	Synthetic []Resolved
+	// Version is the hex SHA-256 of Checks' canonical encoding (see
 	// canonicalEncoding) — the configuration version an agent reports in
 	// its heartbeat and the manager compares against to decide whether to
 	// push.
 	Version string
+}
+
+// All returns every resolved check of the host, host-local and synthetic:
+// what the rule evaluation and the host page judge, since both kinds of
+// result land in the same tuples. Checks first, then Synthetic; a key is
+// in at most one of them, since both come out of one merge keyed by Key.
+func (rs ResolvedSet) All() []Resolved {
+	out := make([]Resolved, 0, len(rs.Checks)+len(rs.Synthetic))
+	out = append(out, rs.Checks...)
+	return append(out, rs.Synthetic...)
 }
 
 // resolveBundle is every input the resolver needs for one organization,
@@ -291,24 +308,31 @@ func version(checks []Resolved) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// toResolvedSet sorts checks by Key (resolve already does this, but a
-// ResolvedSet is never handed out with unsorted Checks even if a future
-// caller of resolve forgets to) and computes Version. checks is normalised
-// to a non-nil, empty slice when there is nothing to report — an
-// unmonitored host and a monitored host with zero surviving checks must
+// toResolvedSet splits resolved into the host-local Checks and the
+// Synthetic ones (IsSynthetic), sorts both by Key (resolve already sorts,
+// but a ResolvedSet is never handed out unsorted even if a future caller
+// of resolve forgets to) and computes Version over Checks alone. Both are
+// normalised to a non-nil, empty slice when there is nothing to report —
+// an unmonitored host and a monitored host with zero surviving checks must
 // serialise identically ("[]", never the bare "null" a nil slice would
 // produce once Task 6 puts this on the wire) even though they reach here
 // by different paths.
-func toResolvedSet(hostID uuid.UUID, checks []Resolved) (ResolvedSet, error) {
-	if checks == nil {
-		checks = []Resolved{}
+func toResolvedSet(hostID uuid.UUID, resolved []Resolved) (ResolvedSet, error) {
+	checks, synthetic := []Resolved{}, []Resolved{}
+	for _, r := range resolved {
+		if IsSynthetic(r.Plugin) {
+			synthetic = append(synthetic, r)
+		} else {
+			checks = append(checks, r)
+		}
 	}
 	sort.Slice(checks, func(i, j int) bool { return checks[i].Key < checks[j].Key })
+	sort.Slice(synthetic, func(i, j int) bool { return synthetic[i].Key < synthetic[j].Key })
 	v, err := version(checks)
 	if err != nil {
 		return ResolvedSet{}, fmt.Errorf("resolve: compute version: %w", err)
 	}
-	return ResolvedSet{HostID: hostID, Checks: checks, Version: v}, nil
+	return ResolvedSet{HostID: hostID, Checks: checks, Synthetic: synthetic, Version: v}, nil
 }
 
 // ResolveHost computes hostID's resolved set: organization, then every

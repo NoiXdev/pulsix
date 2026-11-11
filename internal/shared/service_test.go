@@ -1055,6 +1055,34 @@ func TestCreateCheckDefinitionAcceptsTheNetworkAndUptimePlugins(t *testing.T) {
 	}
 }
 
+// TestCreateCheckDefinitionAcceptsTheSyntheticPlugins: a shared definition
+// runs the same per-plugin schema as an organization's own (backlog 3.13),
+// so it accepts the five synthetic plugins and refuses their bad params.
+// Their names are not seeds, so they are not reserved either.
+func TestCreateCheckDefinitionAcceptsTheSyntheticPlugins(t *testing.T) {
+	for _, in := range []shared.CheckDefinitionInput{
+		{Plugin: "icmp", Interval: time.Minute},
+		{Plugin: "tcp", Interval: time.Minute, Params: map[string]any{"port": 22.0}},
+		{Plugin: "http", Interval: time.Minute, Params: map[string]any{"url": "https://{address}/"}},
+		{Plugin: "tls", Interval: time.Minute},
+		{Plugin: "dns", Interval: time.Minute, Params: map[string]any{"type": "MX"}},
+	} {
+		t.Run(in.Plugin, func(t *testing.T) {
+			store := newFakeStore()
+			if _, err := shared.NewService(store).CreateCheckDefinition(ctx, in); err != nil {
+				t.Fatalf("CreateCheckDefinition(%+v) error = %v", in, err)
+			}
+		})
+	}
+	store := newFakeStore()
+	_, err := shared.NewService(store).CreateCheckDefinition(ctx, shared.CheckDefinitionInput{
+		Plugin: "http", Interval: time.Minute, Params: map[string]any{"url": "ftp://x"},
+	})
+	if !errors.Is(err, shared.ErrInvalidInput) {
+		t.Fatalf("CreateCheckDefinition(http, ftp url) error = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 	store := newFakeStore()
 	svc := shared.NewService(store)

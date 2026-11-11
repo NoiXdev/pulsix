@@ -285,6 +285,34 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		}
 	})
 
+	// The synthetic plugins (backlog 3.13) are accepted on write with valid
+	// params and come back as such; invalid params are refused with the
+	// same 400 every other validation failure here gets.
+	t.Run("accepts the synthetic plugins and refuses their bad params", func(t *testing.T) {
+		created := f.createCheck(t, f.operatorC, map[string]any{
+			"key": "web-http", "plugin": "http", "interval_seconds": 60, "binding_kind": "host", "host_id": f.web.String(),
+			"params": map[string]any{"url": "https://{address}/health", "method": "HEAD", "timeout_s": 5},
+		})
+		if created.Plugin != "http" || created.Params["url"] != "https://{address}/health" || created.Params["method"] != "HEAD" {
+			t.Fatalf("created = %+v, want the http check with its params", created)
+		}
+		requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+		for name, params := range map[string]map[string]any{
+			"ftp url":     {"url": "ftp://x"},
+			"post":        {"url": "http://x", "method": "POST"},
+			"userinfo":    {"url": "https://u:p@x/"},
+			"unknown key": {"url": "http://x", "headers": map[string]any{}},
+			"no url":      {},
+		} {
+			resp := requestJSON(t, f.operatorC, http.MethodPost, f.checksURL(), map[string]any{
+				"key": "web-bad", "plugin": "http", "interval_seconds": 60, "binding_kind": "org", "params": params,
+			})
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("http with %s = %d %s, want 400", name, resp.StatusCode, mustReadBody(t, resp))
+			}
+		}
+	})
+
 	// Who may do what: a viewer reads, an operator writes (checks.read /
 	// checks.write, mirroring agents.*), and somebody who is not a member
 	// of the organization at all sees nothing.

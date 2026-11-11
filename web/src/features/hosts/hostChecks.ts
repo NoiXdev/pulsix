@@ -33,7 +33,9 @@ export function formatNumber(value: number): string {
  * plugin reports a label (the unit's state) — cpu, memory, disk, network
  * and uptime report numbers, and every one of them reports an error the
  * same way (internal/agent/checks: labelObservation is called from
- * service.go alone). It is a total map over the generated plugin union
+ * service.go alone). The synthetic plugins the manager probes with (icmp,
+ * tcp, http, tls, dns; internal/probe) report numbers only, their 1/0
+ * flags included. It is a total map over the generated plugin union
  * rather than a list of exceptions, so a new plugin fails to compile here
  * until somebody decides which side of the line it is on.
  */
@@ -44,6 +46,11 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
   service: false,
   network: true,
   uptime: true,
+  icmp: true,
+  tcp: true,
+  http: true,
+  tls: true,
+  dns: true,
 };
 
 /**

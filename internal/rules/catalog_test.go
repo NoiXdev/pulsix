@@ -42,6 +42,25 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"net.rx_drops_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
 		"net.tx_drops_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
 		"uptime.seconds":      {CheckKey: "uptime", Kind: rules.MetricNumeric},
+		// Backlog 3.13: the synthetic plugins the manager probes
+		// (internal/probe).
+		"icmp.up":              {CheckKey: "icmp", Kind: rules.MetricNumeric},
+		"icmp.loss_pct":        {CheckKey: "icmp", Kind: rules.MetricNumeric},
+		"icmp.rtt_ms":          {CheckKey: "icmp", Kind: rules.MetricNumeric},
+		"tcp.up":               {CheckKey: "tcp", Kind: rules.MetricNumeric},
+		"tcp.connect_ms":       {CheckKey: "tcp", Kind: rules.MetricNumeric},
+		"tcp.banner_match":     {CheckKey: "tcp", Kind: rules.MetricNumeric},
+		"http.up":              {CheckKey: "http", Kind: rules.MetricNumeric},
+		"http.status_code":     {CheckKey: "http", Kind: rules.MetricNumeric},
+		"http.response_ms":     {CheckKey: "http", Kind: rules.MetricNumeric},
+		"http.body_match":      {CheckKey: "http", Kind: rules.MetricNumeric},
+		"tls.up":               {CheckKey: "tls", Kind: rules.MetricNumeric},
+		"tls.handshake_ms":     {CheckKey: "tls", Kind: rules.MetricNumeric},
+		"tls.cert_valid":       {CheckKey: "tls", Kind: rules.MetricNumeric},
+		"tls.cert_expiry_days": {CheckKey: "tls", Kind: rules.MetricNumeric},
+		"dns.up":               {CheckKey: "dns", Kind: rules.MetricNumeric},
+		"dns.resolve_ms":       {CheckKey: "dns", Kind: rules.MetricNumeric},
+		"dns.answer_match":     {CheckKey: "dns", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -77,6 +96,11 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"service": "service",
 		"net":     "network",
 		"uptime":  "uptime",
+		"icmp":    "icmp",
+		"tcp":     "tcp",
+		"http":    "http",
+		"tls":     "tls",
+		"dns":     "dns",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")
@@ -137,6 +161,8 @@ func TestTypeCheckValid(t *testing.T) {
 		{"compare of a network rate", compare(">", metric("net.rx_errors_per_s"), number(0))},
 		{"window over a network rate", compare(">", window("net.tx_bytes_per_s", "avg", 600), number(1e6))},
 		{"compare of uptime", compare("<", metric("uptime.seconds"), number(600))},
+		{"compare of a synthetic up", compare("==", metric("http.up"), number(0))},
+		{"compare of a certificate's days left", compare("<", metric("tls.cert_expiry_days"), number(14))},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1219,3 +1219,21 @@ func TestCheckResultsRejectionLogNamesTheTupleCap(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckConfigForLeavesOutSyntheticChecks: the manager probes a
+// synthetic check itself (backlog 3.13); the agent does not know its
+// plugin, so the pushed configuration carries Checks alone and the version
+// that covers exactly them.
+func TestCheckConfigForLeavesOutSyntheticChecks(t *testing.T) {
+	cfg, err := checkConfigFor(checks.ResolvedSet{
+		Checks:    []checks.Resolved{{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute}},
+		Synthetic: []checks.Resolved{{Key: "web", Plugin: checks.PluginHTTP, Interval: time.Minute, Params: map[string]any{"url": "https://{address}/"}}},
+		Version:   "v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.GetChecks()) != 1 || cfg.GetChecks()[0].GetKey() != "cpu" || cfg.GetVersion() != "v1" {
+		t.Fatalf("config = %+v, want cpu alone under version v1", cfg)
+	}
+}

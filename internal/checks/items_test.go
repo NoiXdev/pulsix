@@ -34,6 +34,13 @@ func TestDefinitionAsksForItem(t *testing.T) {
 		{"network asks for an interface on its list", PluginNetwork, map[string]any{"interfaces": []string{"eth0", "wg0"}}, "wg0", true},
 		{"network stopped asking for an interface off its list", PluginNetwork, map[string]any{"interfaces": []string{"eth0"}}, "wg0", false},
 		{"network without a list asks for every interface", PluginNetwork, nil, "eth1", true},
+		// The synthetic plugins (backlog 3.13) report one whole-host
+		// item ("") whatever their parameters say.
+		{"icmp asks for its whole-host item", PluginICMP, map[string]any{"count": 3.0}, "", true},
+		{"tcp asks for its whole-host item", PluginTCP, map[string]any{"port": 22.0}, "", true},
+		{"http asks for its whole-host item", PluginHTTP, map[string]any{"url": "https://{address}/"}, "", true},
+		{"tls asks for its whole-host item", PluginTLS, nil, "", true},
+		{"dns asks for its whole-host item", PluginDNS, map[string]any{"name": "example.com"}, "", true},
 		// JSON round-trips a params list as []any, which is what the
 		// store hands back — the same list must still match.
 		{"a list decoded from JSON matches too", PluginService, map[string]any{"units": []any{"sshd"}}, "sshd", true},

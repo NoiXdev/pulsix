@@ -51,6 +51,24 @@ func TestRulesHostChecksContextForHost(t *testing.T) {
 	}
 }
 
+// TestRulesHostChecksContextForHostIncludesSyntheticChecks: a synthetic
+// check (backlog 3.13) is never pushed to the agent, but its results land
+// in the same tuples, so rules on its metrics need its interval exactly
+// like an agent check's — without it the evaluation would drop the tuple.
+func TestRulesHostChecksContextForHostIncludesSyntheticChecks(t *testing.T) {
+	r := &fakeCheckResolver{set: checks.ResolvedSet{
+		Checks:    []checks.Resolved{{Key: "cpu", Interval: time.Minute}},
+		Synthetic: []checks.Resolved{{Key: "web", Plugin: checks.PluginHTTP, Interval: 30 * time.Second}},
+	}}
+	got, err := rulesHostChecks{checks: r}.ContextForHost(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Intervals) != 2 || got.Intervals["cpu"] != time.Minute || got.Intervals["web"] != 30*time.Second {
+		t.Fatalf("intervals = %+v, want cpu and the synthetic web", got.Intervals)
+	}
+}
+
 // TestRulesHostChecksPropagatesFailures: neither half may be silently
 // treated as "this host has no checks" — that would take every tuple out
 // of the evaluation and delete the host's roll-up.

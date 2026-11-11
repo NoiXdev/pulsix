@@ -864,3 +864,81 @@ func TestResolveHostsEmptyAndFaults(t *testing.T) {
 		t.Fatal("a service built without WithHostRoster must refuse to resolve")
 	}
 }
+
+// TestResolveHostSplitsSyntheticChecks: a synthetic plugin is probed by the
+// manager and never pushed to the agent (backlog 3.13, "Where they run"), so
+// it lands in Synthetic while Checks and Version cover only what the agent
+// runs — adding one does not change the version the agent compares, so it
+// does not re-push the agent's set.
+func TestResolveHostSplitsSyntheticChecks(t *testing.T) {
+	store, matcher, roster, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	roster.monitored[host] = true
+	putDef(store, checks.Definition{OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
+	without, err := svc.ResolveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	putDef(store, checks.Definition{
+		OrgID: org, Key: "web", Plugin: checks.PluginHTTP, Params: map[string]any{"url": "https://{address}/"},
+		Interval: time.Minute, Enabled: true, BindingKind: checks.BindingHost, HostID: &host,
+	})
+	putDef(store, checks.Definition{
+		OrgID: org, Key: "ping", Plugin: checks.PluginICMP,
+		Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+	})
+	with, err := svc.ResolveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(with.Checks) != 1 || with.Checks[0].Key != "cpu" {
+		t.Fatalf("Checks = %+v, want only cpu", with.Checks)
+	}
+	if len(with.Synthetic) != 2 || with.Synthetic[0].Key != "ping" || with.Synthetic[1].Key != "web" {
+		t.Fatalf("Synthetic = %+v, want ping then web, sorted by key", with.Synthetic)
+	}
+	if web := with.Synthetic[1]; web.Plugin != checks.PluginHTTP || web.Source != checks.BindingHost || web.SourceID == nil || *web.SourceID != host {
+		t.Fatalf("Synthetic web = %+v, want the host-bound http definition", web)
+	}
+	if with.Version != without.Version {
+		t.Fatalf("Version = %s, want %s: a synthetic check must not change the agent's version", with.Version, without.Version)
+	}
+	all := with.All()
+	if len(all) != 3 || all[0].Key != "cpu" || all[1].Key != "ping" || all[2].Key != "web" {
+		t.Fatalf("All() = %+v, want cpu, then the synthetic ping and web", all)
+	}
+
+	// ResolveOrg and ResolveHosts split the same way.
+	byOrg, err := svc.ResolveOrg(ctx, org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byHosts, err := svc.ResolveHosts(ctx, org, []uuid.UUID{host})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, rs := range map[string]checks.ResolvedSet{"ResolveOrg": byOrg[host], "ResolveHosts": byHosts[host]} {
+		if len(rs.Checks) != 1 || len(rs.Synthetic) != 2 || rs.Version != without.Version {
+			t.Fatalf("%s = %+v, want the same split as ResolveHost", name, rs)
+		}
+	}
+}
+
+// TestResolveHostSyntheticIsNeverNil: like Checks, an empty Synthetic is a
+// non-nil empty slice.
+func TestResolveHostSyntheticIsNeverNil(t *testing.T) {
+	store, matcher, roster, org := newResolverFixture()
+	host := uuid.Must(uuid.NewV7())
+	roster.monitored[host] = true
+	putDef(store, checks.Definition{OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
+	rs, err := svc.ResolveHost(ctx, org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Synthetic == nil {
+		t.Fatal("Synthetic is nil, want a non-nil empty slice")
+	}
+}

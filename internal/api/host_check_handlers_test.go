@@ -734,6 +734,28 @@ func TestHostChecksReportsTupleState(t *testing.T) {
 		}
 	})
 
+	// backlog 3.13: a synthetic check never reaches the agent (it is not in
+	// ResolvedSet.Checks), yet the host page lists it like any other and
+	// shows its tuples' states — the manager resolves it an interval, so
+	// the evaluator judges it.
+	t.Run("a synthetic check is listed with its state", func(t *testing.T) {
+		created := f.createCheck(t, f.operatorC, map[string]any{
+			"key": "web-http", "plugin": "http", "interval_seconds": 60, "binding_kind": "host", "host_id": f.web.String(),
+			"params": map[string]any{"url": "https://{address}/"},
+		})
+		defer requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+		f.record(t, checks.Observation{HostID: f.web, CheckKey: "web-http", Metric: "http.up", At: now, Value: floatPtr(0)})
+		seedTupleState(t, f.s, f.orgID, f.web, "web-http", "", "http.up", "crit", since, now, false)
+
+		web := f.hostChecks(t, f.viewerC, f.web).byKey(t, "web-http")
+		if web.Plugin != "http" || !web.Enabled {
+			t.Fatalf("web-http = %+v, want the enabled http check", web)
+		}
+		if len(web.Values) != 1 || web.Values[0].State == nil || *web.Values[0].State != "crit" {
+			t.Fatalf("web-http values = %+v, want http.up with state crit", web.Values)
+		}
+	})
+
 	t.Run("a state row survives its check being disabled, but the read side hides it", func(t *testing.T) {
 		var serviceDef checkDTO
 		for _, d := range f.listChecks(t, f.ownerC) {

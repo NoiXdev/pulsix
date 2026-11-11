@@ -3,8 +3,9 @@ package checks
 // itemParam names the parameter that enumerates a plugin's items: the
 // mounts a disk check watches, the interfaces a network check watches, the
 // units a service check watches. cpu, memory and uptime take no parameters
-// and report one whole-host item (""), so they are absent here and bound
-// nothing.
+// and report one whole-host item (""), and so do the synthetic plugins
+// (icmp, tcp, http, tls, dns), whatever their parameters, so they are all
+// absent here and bound nothing.
 var itemParam = map[string]string{
 	PluginDisk:    "mounts",
 	PluginNetwork: "interfaces",

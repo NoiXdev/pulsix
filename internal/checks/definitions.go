@@ -43,11 +43,14 @@ const (
 	originShared = "shared"
 )
 
-// The plugins the agent can run: the four v0.3b shipped (spec's Decisions
-// table: "Plugin set") plus network and uptime (backlog 3.7). A table in
-// code rather than a free-form string so an unknown plugin is refused at
-// write time instead of silently never running — there is no other plugin
-// the agent could execute even if a definition named one.
+// The plugins a definition may name. The host-local ones run on the
+// host's agent: the four v0.3b shipped (spec's Decisions table: "Plugin
+// set") plus network and uptime (backlog 3.7). The synthetic ones (backlog
+// 3.13) are probed by the manager and never pushed to an agent
+// (IsSynthetic). A table in code rather than a free-form string so an
+// unknown plugin is refused at write time instead of silently never
+// running — there is no other plugin anything could execute even if a
+// definition named one.
 const (
 	PluginCPU     = "cpu"
 	PluginMemory  = "memory"
@@ -55,11 +58,18 @@ const (
 	PluginService = "service"
 	PluginNetwork = "network"
 	PluginUptime  = "uptime"
+
+	PluginICMP = "icmp"
+	PluginTCP  = "tcp"
+	PluginHTTP = "http"
+	PluginTLS  = "tls"
+	PluginDNS  = "dns"
 )
 
 var supportedPlugins = map[string]bool{
 	PluginCPU: true, PluginMemory: true, PluginDisk: true, PluginService: true,
 	PluginNetwork: true, PluginUptime: true,
+	PluginICMP: true, PluginTCP: true, PluginHTTP: true, PluginTLS: true, PluginDNS: true,
 }
 
 // keyPattern is the same shape a plugin name itself always satisfies, so a
@@ -138,7 +148,8 @@ func stringList(v any) ([]string, bool) {
 // validateParams checks params against plugin's own schema: disk takes an
 // optional mount allow-list ("mounts"), network an optional interface list
 // ("interfaces"), service a required non-empty unit list ("units"), cpu,
-// memory and uptime take no parameters at all. Rejecting
+// memory and uptime take no parameters at all, and the synthetic plugins
+// follow synthetic_params.go's table. Rejecting
 // unknown keys (rather than ignoring them) is deliberate — a typo'd
 // parameter name must fail loudly at write time, not be silently dropped
 // and discovered missing at the agent weeks later.
@@ -165,6 +176,8 @@ func validateParams(plugin string, params map[string]any) error {
 				return fmt.Errorf("%w: service: units must not contain an empty entry", ErrInvalidInput)
 			}
 		}
+	case PluginICMP, PluginTCP, PluginHTTP, PluginTLS, PluginDNS:
+		return validateSyntheticParams(plugin, params)
 	default:
 		// Reachable only if a caller adds a plugin constant without
 		// adding it to supportedPlugins and this switch — normalizeDefinition
@@ -215,7 +228,7 @@ func validateOptionalList(plugin, param string, params map[string]any) error {
 func ValidateDefinitionShape(plugin, key string, params map[string]any, interval time.Duration) (normalizedKey string, err error) {
 	plugin = strings.TrimSpace(plugin)
 	if !supportedPlugins[plugin] {
-		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, network, uptime, got %q", ErrInvalidInput, plugin)
+		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, network, uptime, icmp, tcp, http, tls, dns, got %q", ErrInvalidInput, plugin)
 	}
 	normalizedKey = strings.TrimSpace(key)
 	if normalizedKey == "" {

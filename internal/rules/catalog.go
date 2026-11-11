@@ -31,8 +31,10 @@ type CatalogueEntry struct {
 // OBLIGATION: a new plugin metric is added here in the same change that
 // adds the plugin, or no rule can ever name it. The entries below are
 // exactly what internal/agent/checks's six plugins emit today
-// (cpu.go, memory.go, disk.go, service.go, network.go, uptime.go) —
-// cross-check any edit here against those files, not the other way around.
+// (cpu.go, memory.go, disk.go, service.go, network.go, uptime.go), plus
+// the five synthetic plugins the manager probes with (backlog 3.13,
+// internal/probe: icmp.go, tcp.go, http.go, tls.go, dns.go) — cross-check
+// any edit here against those files, not the other way around.
 func Catalogue() map[string]CatalogueEntry {
 	return map[string]CatalogueEntry{
 		"cpu.used_pct":         {CheckKey: "cpu", Kind: MetricNumeric},
@@ -53,6 +55,23 @@ func Catalogue() map[string]CatalogueEntry {
 		"net.rx_drops_per_s":   {CheckKey: "network", Kind: MetricNumeric},
 		"net.tx_drops_per_s":   {CheckKey: "network", Kind: MetricNumeric},
 		"uptime.seconds":       {CheckKey: "uptime", Kind: MetricNumeric},
+		"icmp.up":              {CheckKey: "icmp", Kind: MetricNumeric},
+		"icmp.loss_pct":        {CheckKey: "icmp", Kind: MetricNumeric},
+		"icmp.rtt_ms":          {CheckKey: "icmp", Kind: MetricNumeric},
+		"tcp.up":               {CheckKey: "tcp", Kind: MetricNumeric},
+		"tcp.connect_ms":       {CheckKey: "tcp", Kind: MetricNumeric},
+		"tcp.banner_match":     {CheckKey: "tcp", Kind: MetricNumeric},
+		"http.up":              {CheckKey: "http", Kind: MetricNumeric},
+		"http.status_code":     {CheckKey: "http", Kind: MetricNumeric},
+		"http.response_ms":     {CheckKey: "http", Kind: MetricNumeric},
+		"http.body_match":      {CheckKey: "http", Kind: MetricNumeric},
+		"tls.up":               {CheckKey: "tls", Kind: MetricNumeric},
+		"tls.handshake_ms":     {CheckKey: "tls", Kind: MetricNumeric},
+		"tls.cert_valid":       {CheckKey: "tls", Kind: MetricNumeric},
+		"tls.cert_expiry_days": {CheckKey: "tls", Kind: MetricNumeric},
+		"dns.up":               {CheckKey: "dns", Kind: MetricNumeric},
+		"dns.resolve_ms":       {CheckKey: "dns", Kind: MetricNumeric},
+		"dns.answer_match":     {CheckKey: "dns", Kind: MetricNumeric},
 	}
 }
 

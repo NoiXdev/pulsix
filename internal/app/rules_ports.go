@@ -44,8 +44,11 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	if err != nil {
 		return rules.CheckContext{}, err
 	}
-	intervals := make(map[string]time.Duration, len(set.Checks))
-	for _, c := range set.Checks {
+	// Every resolved check, synthetic ones included: the manager's probes
+	// write into the same tuples an agent's results do (backlog 3.13).
+	all := set.All()
+	intervals := make(map[string]time.Duration, len(all))
+	for _, c := range all {
 		intervals[c.Key] = c.Interval
 	}
 	groups, err := a.checks.GroupsForHost(ctx, orgID, hostID)

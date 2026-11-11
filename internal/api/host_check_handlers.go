@@ -140,7 +140,7 @@ type hostCheckDTO struct {
 	// behind it at all, which the latest value cannot answer while
 	// collection is failing — an error row carries neither value nor
 	// label (migration 00044's CHECK).
-	Plugin          string              `json:"plugin" enum:"cpu,memory,disk,service,network,uptime"`
+	Plugin          string              `json:"plugin" enum:"cpu,memory,disk,service,network,uptime,icmp,tcp,http,tls,dns"`
 	Params          map[string]any      `json:"params"`
 	IntervalSeconds int                 `json:"interval_seconds"`
 	Enabled         bool                `json:"enabled" doc:"false means the winning scope turned this check off; it is listed so the GUI can show where"`
@@ -591,8 +591,11 @@ func resolvedCheckKeys(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) 
 	if err != nil {
 		return nil, mapChecksErr(ctx, err)
 	}
-	keys := make(map[string]bool, len(resolved.Checks))
-	for _, c := range resolved.Checks {
+	// Synthetic checks included: their results are tuples like any other
+	// (backlog 3.13), and ContextForHost resolves them an interval too.
+	all := resolved.All()
+	keys := make(map[string]bool, len(all))
+	for _, c := range all {
 		keys[c.Key] = true
 	}
 	return keys, nil
