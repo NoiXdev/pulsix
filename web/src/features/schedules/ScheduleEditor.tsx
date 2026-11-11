@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
+import { TimeField } from '../../ui/TimeField.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -251,7 +252,7 @@ function EditorForm({ org, templates, defaultTemplate, canWrite, canRun, onClose
           {(simple.kind === 'daily' || simple.kind === 'weekly' || simple.kind === 'monthly') && (
             <>
               <Label htmlFor="sched-at">{m.at}</Label>
-              <Input id="sched-at" type="time" value={simple.time} onChange={(e) => setSimple({ ...simple, time: e.target.value })} />
+              <TimeField id="sched-at" value={simple.time} onChange={(time) => setSimple({ ...simple, time })} />
             </>
           )}
         </div>

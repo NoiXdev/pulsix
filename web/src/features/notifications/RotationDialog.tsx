@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
+import { DateTimePicker } from '../../ui/DateTimePicker.tsx';
 import { Label } from '../../ui/label.tsx';
 import { fromLocalInput, toLocalInput } from '../maintenance/time.ts';
 import type { OncallRotation, OncallRotationInput } from '../../api/types.ts';
@@ -130,7 +131,7 @@ export function RotationDialog({ open, rotation, channels, onClose, onSave }: Ro
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="rot-anchor">{d.anchor}</Label>
-            <Input id="rot-anchor" type="datetime-local" value={anchor} onChange={(e) => setAnchor(e.target.value)} required />
+            <DateTimePicker id="rot-anchor" value={anchor} onChange={setAnchor} required />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="rot-tz">{m.timezone}</Label>

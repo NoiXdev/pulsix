@@ -7,6 +7,7 @@ import { en } from '../../i18n/en/index.ts';
 import { formatter } from '../../i18n/format.ts';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
+import { pickDateTime } from '../../test/pickDateTime.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { MaintenancePage } from './MaintenancePage.tsx';
 import { fromLocalInput, targetLabel, toLocalInput, whenLabel } from './time.ts';
@@ -162,8 +163,8 @@ describe('MaintenancePage', () => {
     const dialog = screen.getByRole('dialog', { name: 'New window' });
     await user.type(within(dialog).getByLabelText('Name'), 'mute it');
     await pickOption(within(dialog), 'Why', { value: 'silence' });
-    await user.type(within(dialog).getByLabelText('From'), '2026-09-22T10:00');
-    await user.type(within(dialog).getByLabelText('Until'), '2026-09-22T12:00');
+    await pickDateTime(user, within(dialog), 'From', '10:00');
+    await pickDateTime(user, within(dialog), 'Until', '12:00');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(posted?.reason).toBe('silence'));
   });

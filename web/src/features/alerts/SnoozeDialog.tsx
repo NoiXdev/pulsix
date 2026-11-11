@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { useT } from '../../i18n/useT.ts';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
-import { Input } from '../../ui/input.tsx';
+import { DateTimePicker } from '../../ui/DateTimePicker.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { useSnoozeAlert } from '../../api/hooks/useAlerts.ts';
@@ -68,13 +68,7 @@ export function SnoozeDialog({ org, alertId, onClose }: SnoozeDialogProps) {
     <Dialog open onClose={onClose} title={t.alerts.snoozeDialog.title}>
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <Label htmlFor="snooze-until">{t.alerts.snoozeDialog.until}</Label>
-        <Input
-          id="snooze-until"
-          type="datetime-local"
-          value={until}
-          disabled={untilChange}
-          onChange={(e) => onUntilChange(e.target.value)}
-        />
+        <DateTimePicker id="snooze-until" value={until} disabled={untilChange} onChange={onUntilChange} />
         <div className="flex items-center gap-2 text-xs text-foreground">
           <Switch id="snooze-until-change" checked={untilChange} onCheckedChange={onUntilChangeToggle} />
           <label htmlFor="snooze-until-change">{t.alerts.snoozeDialog.untilChange}</label>

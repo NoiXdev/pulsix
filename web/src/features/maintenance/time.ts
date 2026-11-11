@@ -4,7 +4,7 @@ import type { MaintenanceWindow } from '../../api/types.ts';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
-/** toLocalInput renders an instant for a datetime-local input (the
+/** toLocalInput renders an instant for a DateTimePicker (the
  * browser's own time zone), the inverse of fromLocalInput. */
 export function toLocalInput(iso?: string | null): string {
   if (!iso) return '';
@@ -12,7 +12,7 @@ export function toLocalInput(iso?: string | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** fromLocalInput reads a datetime-local value as the browser's local
+/** fromLocalInput reads a DateTimePicker value as the browser's local
  * time and returns the instant as ISO 8601 (UTC). */
 export function fromLocalInput(value: string): string {
   return new Date(value).toISOString();

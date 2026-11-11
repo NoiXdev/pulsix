@@ -1,12 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../../ui/toast.tsx';
 import { mockApi, type MockRequest } from '../../../test/mockApi.ts';
+import { pickDateTime } from '../../../test/pickDateTime.ts';
 import { pickOption } from '../../../test/pickOption.ts';
 import { AlertsPage } from '../AlertsPage.tsx';
+
+// Only Date is faked: the calendar opens on the current month.
+afterEach(() => vi.useRealTimers());
+const pinClock = () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date(2026, 9, 20, 12, 0));
+};
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 
@@ -273,6 +281,7 @@ describe('AlertsPage', () => {
   });
 
   it('snoozes an alert until a chosen instant', async () => {
+    pinClock();
     const user = userEvent.setup();
     let sentBody: unknown;
     mockApi({
@@ -286,17 +295,18 @@ describe('AlertsPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
-    const untilField = await screen.findByLabelText('Until');
-    await user.type(untilField, '2026-11-01T10:00');
+    await screen.findByLabelText('Until');
+    await pickDateTime(user, screen, 'Until', '10:00');
 
     const save = screen.getAllByRole('button', { name: /^snooze$/i }).find((b) => b.getAttribute('type') === 'submit')!;
     expect(save).not.toBeDisabled();
     await user.click(save);
 
-    await waitFor(() => expect(sentBody).toEqual({ until: new Date('2026-11-01T10:00').toISOString() }));
+    await waitFor(() => expect(sentBody).toEqual({ until: new Date('2026-10-15T10:00').toISOString() }));
   });
 
   it('picking "until the state changes" after typing a date clears the date, the two fields being mutually exclusive', async () => {
+    pinClock();
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
@@ -305,16 +315,18 @@ describe('AlertsPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: /^snooze$/i }));
-    const untilField = (await screen.findByLabelText('Until')) as HTMLInputElement;
-    await user.type(untilField, '2026-11-01T10:00');
-    expect(untilField).toHaveValue('2026-11-01T10:00');
+    const untilField = await screen.findByLabelText('Until');
+    await pickDateTime(user, screen, 'Until', '10:00');
+    expect(untilField).toHaveTextContent('2026');
+    expect(screen.getByRole('textbox', { name: 'Time' })).toHaveValue('10:00');
 
     await user.click(screen.getByRole('switch', { name: /severity next changes/i }));
     // Checking the box clears the date the operator had just typed, and
     // disables the field — a dialog that left the old date sitting in a
     // disabled input, or worse still submitted it alongside until_change,
     // would send the server a body it 422s on.
-    expect(untilField).toHaveValue('');
+    expect(untilField).not.toHaveTextContent('2026');
+    expect(screen.getByRole('textbox', { name: 'Time' })).toHaveValue('');
     expect(untilField).toBeDisabled();
   });
 

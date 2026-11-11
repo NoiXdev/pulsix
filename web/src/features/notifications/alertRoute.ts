@@ -172,7 +172,7 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
  * from/until pair, the shape {@link compileWindow} turns into the wire's
  * {cron, duration_seconds, timezone} and {@link decompileWindow} reads
  * back out of it. `from`/`until` are "HH:MM" 24-hour wall time, the
- * native format an `<input type="time">` both reads and writes. */
+ * format a TimeField both reads and writes. */
 export interface WindowDraft {
   days: Weekday[];
   from: string;

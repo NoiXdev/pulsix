@@ -4,6 +4,7 @@ import { BellOff, CalendarClock, Plus, Trash2 } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
+import { DateTimePicker } from '../../ui/DateTimePicker.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -290,11 +291,11 @@ function StandIns({
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor={`exc-start-${rotation.id}`}>{m.from}</Label>
-              <Input id={`exc-start-${rotation.id}`} type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+              <DateTimePicker id={`exc-start-${rotation.id}`} value={startsAt} onChange={setStartsAt} />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor={`exc-end-${rotation.id}`}>{m.until}</Label>
-              <Input id={`exc-end-${rotation.id}`} type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+              <DateTimePicker id={`exc-end-${rotation.id}`} value={endsAt} onChange={setEndsAt} />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor={`exc-note-${rotation.id}`}>{m.note}</Label>

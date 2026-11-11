@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
+import { TimeField } from '../../ui/TimeField.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
@@ -286,23 +287,11 @@ export function RouteDialog({ open, route, channels, hosts = [], groups = [], ro
             <div className="grid grid-cols-3 gap-2">
               <div className="flex flex-col gap-1">
                 <Label htmlFor="rt-window-from">{m.from}</Label>
-                <Input
-                  id="rt-window-from"
-                  type="time"
-                  value={windowDraft.from}
-                  onChange={(e) => setWindowDraft({ ...windowDraft, from: e.target.value })}
-                  required
-                />
+                <TimeField id="rt-window-from" value={windowDraft.from} onChange={(v) => setWindowDraft({ ...windowDraft, from: v })} required />
               </div>
               <div className="flex flex-col gap-1">
                 <Label htmlFor="rt-window-until">{m.until}</Label>
-                <Input
-                  id="rt-window-until"
-                  type="time"
-                  value={windowDraft.until}
-                  onChange={(e) => setWindowDraft({ ...windowDraft, until: e.target.value })}
-                  required
-                />
+                <TimeField id="rt-window-until" value={windowDraft.until} onChange={(v) => setWindowDraft({ ...windowDraft, until: v })} required />
               </div>
               <div className="flex flex-col gap-1">
                 <Label htmlFor="rt-window-tz">{m.timezone}</Label>

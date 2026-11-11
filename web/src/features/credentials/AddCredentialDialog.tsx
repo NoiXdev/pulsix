@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
+import { DatePicker } from '../../ui/DatePicker.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -170,7 +171,7 @@ export function AddCredentialDialog({
         )}
         <div className="flex flex-col gap-1">
           <Label htmlFor="cred-expires">{t.credentials.add.expires}</Label>
-          <Input id="cred-expires" type="date" value={expires} onChange={(e) => setExpires(e.target.value)} />
+          <DatePicker id="cred-expires" value={expires} onChange={setExpires} />
         </div>
         {error && (
           <p role="alert" className="text-xs text-destructive">

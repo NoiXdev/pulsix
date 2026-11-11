@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
+import { TimeField } from '../../ui/TimeField.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { Select } from '../../ui/Select.tsx';
@@ -82,7 +83,7 @@ function DigestForm({ org, channels, canWrite, initial }: DigestFormProps) {
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="digest-time">{m.time}</Label>
-          <Input id="digest-time" type="time" value={time} onChange={(e) => setTime(e.target.value)} disabled={!canWrite} />
+          <TimeField id="digest-time" value={time} onChange={setTime} disabled={!canWrite} />
         </div>
         <div className="flex flex-col gap-1">
           <Label htmlFor="digest-tz">{t.notifications.timezone}</Label>

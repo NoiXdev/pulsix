@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
+import { DateTimePicker } from '../../ui/DateTimePicker.tsx';
 import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { useT } from '../../i18n/useT.ts';
@@ -147,11 +148,11 @@ export function WindowDialog({ org, window: w, onClose }: { org: string; window?
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
               <Label htmlFor="mw-start">{t.maintenance.dialog.from}</Label>
-              <Input id="mw-start" type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} required />
+              <DateTimePicker id="mw-start" value={startsAt} onChange={setStartsAt} required />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="mw-end">{t.maintenance.dialog.until}</Label>
-              <Input id="mw-end" type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} required />
+              <DateTimePicker id="mw-end" value={endsAt} onChange={setEndsAt} required />
             </div>
           </div>
         )}
