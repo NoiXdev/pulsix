@@ -15,6 +15,7 @@ import (
 	"cmp"
 	"context"
 	"log/slog"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -159,12 +160,33 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
-// tick takes (or keeps) the lock, refreshes the targets when a refresh is
-// due, and starts every due probe that fits under the concurrency bound.
-// The lock and the refresh run under the tick's own deadline (the refresh
-// interval), so a hung query cannot stall the loop while the lock is held;
-// the probes it starts run on ctx, each under its own deadline.
+// tick runs one tickOnce, recovering a panic that escapes it (the
+// convention of notify's Dispatcher.tickSafely and the schedule tickers):
+// logged with its stack, the tick is skipped and the next one retries.
 func (r *Runner) tick(ctx context.Context) {
+	r.safely(ctx, "tick", func() { r.tickOnce(ctx) })
+}
+
+// safely runs f and recovers a panic in it, logging it with its stack as
+// what. f's work is abandoned at the panic.
+func (r *Runner) safely(ctx context.Context, what string, f func(), attrs ...any) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			r.log.ErrorContext(ctx, "probe runner: "+what+" panicked",
+				append(attrs, "panic", rec, "stack", string(debug.Stack()))...)
+		}
+	}()
+	f()
+}
+
+// tickOnce takes (or keeps) the lock, refreshes the targets when a refresh
+// is due, and starts every due probe that fits under the concurrency
+// bound. The lock and the refresh run under the tick's own deadline (the
+// refresh interval), so a hung query cannot stall the loop while the lock
+// is held; the probes it starts run on ctx, each under its own deadline.
+// A panic in the refresh changes nothing (the targets are replaced only
+// at its end), so the known targets are still probed.
+func (r *Runner) tickOnce(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
 	}
@@ -181,9 +203,11 @@ func (r *Runner) tick(ctx context.Context) {
 	r.held = true
 	now := r.clock()
 	if r.refreshed.IsZero() || !now.Before(r.refreshed.Add(r.refreshEvery-r.slack())) {
-		if err := r.refresh(tickCtx, now); err != nil && ctx.Err() == nil {
-			r.log.ErrorContext(ctx, "probe runner: refresh", "err", err)
-		}
+		r.safely(ctx, "refresh", func() {
+			if err := r.refresh(tickCtx, now); err != nil && ctx.Err() == nil {
+				r.log.ErrorContext(ctx, "probe runner: refresh", "err", err)
+			}
+		})
 	}
 	r.launchDue(ctx, now)
 }
@@ -260,7 +284,10 @@ func probeTimeout(interval time.Duration) time.Duration {
 
 // probeSlot probes one slot and records the result. A probe cut short by ctx's
 // cancellation (shutdown) did not measure the target, so its observations
-// are dropped; one that ran into its own deadline is a real result.
+// are dropped; one that ran into its own deadline is a real result. A
+// panic in the probe or the recording (untrusted network input reaches
+// net/http, crypto/tls and x/net/icmp) is logged with its stack and
+// records nothing; the slot is released and due again on schedule.
 func (r *Runner) probeSlot(ctx context.Context, s slot, t target) {
 	defer r.wg.Done()
 	defer func() {
@@ -268,9 +295,20 @@ func (r *Runner) probeSlot(ctx context.Context, s slot, t target) {
 		delete(r.inFlight, s)
 		r.mu.Unlock()
 	}()
+	r.safely(ctx, "probe", func() { r.probeAndRecord(ctx, s, t) }, "org", t.org, "host", s.host, "check", s.key)
+}
+
+// runProbe runs the probe under its deadline; the deferred cancel also
+// runs when the probe panics.
+func (r *Runner) runProbe(ctx context.Context, t target) []probe.Observation {
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout(t.check.Interval))
-	obs := r.probe(pctx, t.check.Plugin, t.check.Params, t.address)
-	cancel()
+	defer cancel()
+	return r.probe(pctx, t.check.Plugin, t.check.Params, t.address)
+}
+
+// probeAndRecord is probeSlot's body.
+func (r *Runner) probeAndRecord(ctx context.Context, s slot, t target) {
+	obs := r.runProbe(ctx, t)
 	if ctx.Err() != nil || len(obs) == 0 {
 		return
 	}

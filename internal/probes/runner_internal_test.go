@@ -1,9 +1,13 @@
 package probes
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -12,6 +16,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/probe"
 )
 
 var t0 = time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
@@ -491,5 +496,96 @@ func TestUnchangedTargetKeepsItsSchedule(t *testing.T) {
 	}
 	if n := len(h.probe.Calls()); n != 1 {
 		t.Fatalf("an unchanged target was probed %d times within its interval, want once", n)
+	}
+}
+
+// syncBuffer is a log sink the probe goroutines may write concurrently.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestPanickingProbeIsRecovered: a panic in a probe (untrusted network
+// input reaches net/http, crypto/tls and x/net/icmp) is logged with its
+// stack and records nothing; the slot is released and probed again on
+// schedule, and the manager keeps running (final review, Important #3).
+func TestPanickingProbeIsRecovered(t *testing.T) {
+	var logs syncBuffer
+	var calls atomic.Int32
+	h := newHarness(t, func(_ *harness, d *Deps) {
+		d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		d.Probe = func(context.Context, string, map[string]any, string) []probe.Observation {
+			calls.Add(1)
+			panic("malformed answer")
+		}
+	})
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", time.Minute))
+	h.tickAt(0)
+	if n := h.running(); n != 0 {
+		t.Fatalf("%d probes still in flight after the panic", n)
+	}
+	if b := h.rec.Batches(); len(b) != 0 {
+		t.Fatalf("recorded %+v for a panicked probe", b)
+	}
+	if out := logs.String(); !strings.Contains(out, "malformed answer") || !strings.Contains(out, "stack=") {
+		t.Fatalf("log %q does not carry the panic and its stack", out)
+	}
+	h.tickAt(time.Minute)
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("probed %d times, want the slot probed again one interval later", n)
+	}
+}
+
+// panicResolver panics while panicking is set, and answers from the
+// world otherwise.
+type panicResolver struct {
+	w         *fakeWorld
+	panicking *atomic.Bool
+}
+
+func (p panicResolver) ResolveOrg(ctx context.Context, org uuid.UUID) (map[uuid.UUID]checks.ResolvedSet, error) {
+	if p.panicking.Load() {
+		panic("resolver bug")
+	}
+	return p.w.ResolveOrg(ctx, org)
+}
+
+// TestPanickingRefreshIsRecovered: a panic in the refresh is logged with
+// its stack and changes nothing; the known targets keep being probed.
+func TestPanickingRefreshIsRecovered(t *testing.T) {
+	var logs syncBuffer
+	var panicking atomic.Bool
+	h := newHarness(t, func(hh *harness, d *Deps) {
+		d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+		d.Resolver = panicResolver{w: hh.world, panicking: &panicking}
+	})
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", 30*time.Second))
+	h.tickAt(0)
+	panicking.Store(true)
+	h.tickAt(30 * time.Second) // refresh panics
+	if n := len(h.probe.Keys()); n != 2 {
+		t.Fatalf("probed %d times, want the known target probed again after a panicked refresh", n)
+	}
+	if out := logs.String(); !strings.Contains(out, "resolver bug") || !strings.Contains(out, "stack=") {
+		t.Fatalf("log %q does not carry the panic and its stack", out)
+	}
+	panicking.Store(false)
+	h.tickAt(60 * time.Second)
+	if n := len(h.probe.Keys()); n != 3 {
+		t.Fatalf("probed %d times, want the runner to carry on once the resolver recovers", n)
 	}
 }
