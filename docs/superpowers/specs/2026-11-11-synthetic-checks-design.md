@@ -67,9 +67,11 @@ reported as an error.
 | `tls` | `port` (default 443), `server_name` (default: the address's host part), `timeout_s` (1–30, default 10) | `tls.up` (1 when the handshake completed, verified or not), `tls.handshake_ms`, `tls.cert_valid` (1 when the chain verifies against the system roots and matches `server_name`, else 0), `tls.cert_expiry_days` (days until the leaf's NotAfter, fractional, negative once expired) |
 | `dns` | `name` (default `{address}`), `type` (`A`, `AAAA`, `CNAME`, `MX`, `TXT`, `NS`; default `A`), `server` (optional `ip` or `ip:port`; default the manager's resolver), `expect` (optional: up only counts as matched when one answer equals it, compared case-insensitively without a trailing dot), `timeout_s` (1–30, default 5) | `dns.up` (1 when the query was answered with at least one record), `dns.resolve_ms`, `dns.answer_match` (1/0, only when `expect` is set and up) |
 
-`tls.up` and `http.up` count a certificate that does not verify as up. A
-verification failure with `verify_tls` true is the exception: `http.up` is 0
-and its collection error says why.
+`tls.up` counts a certificate that does not verify as up (`tls.cert_valid`
+says whether it verifies). `http` with `verify_tls` true fails the request on
+such a certificate, which reads `http.up = 0` like any failed attempt. A failed
+attempt stores no reason: an observation is a value or an error, and an error
+reads unknown, not down. **(Claude's call;** a reason metric is a follow-up.)
 
 The SPA marks these five as "runs from the Pulsix server" in the plugin
 picker, so nobody expects them to run on the host.
