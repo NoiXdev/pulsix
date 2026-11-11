@@ -19,7 +19,8 @@ interface Pending {
  *
  * - Focus starts on Cancel, so Enter never confirms a deletion by accident,
  *   and returns to the opener afterwards.
- * - Escape and any other close resolve `false`.
+ * - Escape and any other close resolve `false`, and so does aborting the
+ *   question's `signal`, which also takes it off the screen or the queue.
  * - Only one question is on screen: a second `confirm()` while one is open
  *   waits in a queue and is shown when the first is answered. Every promise
  *   is resolved — those still pending when the provider unmounts with `false`.
@@ -49,10 +50,32 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     if (next) setShownId(next.id);
   }, []);
 
+  const settle = useCallback(
+    (pending: Pending, answer: boolean) => {
+      if (pending.settled) return;
+      pending.settled = true;
+      pending.resolve(answer);
+      if (currentRef.current === pending) {
+        show(queue.current.shift() ?? null);
+        return;
+      }
+      // A question withdrawn while still queued: it is never shown.
+      const at = queue.current.indexOf(pending);
+      if (at >= 0) queue.current.splice(at, 1);
+    },
+    [show],
+  );
+
   const confirm = useCallback<ConfirmFn>(
     (options) =>
       new Promise<boolean>((resolve) => {
+        const { signal } = options;
+        if (signal?.aborted) {
+          resolve(false);
+          return;
+        }
         const pending: Pending = { options, resolve, id: ++nextId.current, settled: false };
+        signal?.addEventListener('abort', () => settle(pending, false), { once: true });
         if (currentRef.current) {
           queue.current.push(pending);
         } else {
@@ -63,17 +86,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           show(pending);
         }
       }),
-    [show],
-  );
-
-  const settle = useCallback(
-    (pending: Pending, answer: boolean) => {
-      if (pending.settled) return;
-      pending.settled = true;
-      pending.resolve(answer);
-      show(queue.current.shift() ?? null);
-    },
-    [show],
+    [show, settle],
   );
 
   // Runs after the Dialog's own effect (a child's effects come first), so

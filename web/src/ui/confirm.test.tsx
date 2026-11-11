@@ -313,20 +313,73 @@ describe('useConfirm', () => {
     expect(screen.getAllByRole('dialog', { hidden: true }).filter((d) => !d.hasAttribute('open'))).toHaveLength(1);
   });
 
+  it('resolves false and closes when its signal aborts', async () => {
+    const controller = new AbortController();
+    renderAsker({ message: 'Delete it?', signal: controller.signal });
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    expect(screen.getByRole('dialog')).toHaveAttribute('open');
+    act(() => controller.abort());
+    expect(await screen.findByText('false')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { hidden: true })).not.toHaveAttribute('open');
+  });
+
+  it('does not show a question whose signal has already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    renderAsker({ message: 'Delete it?', signal: controller.signal });
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }));
+    expect(await screen.findByText('false')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { hidden: true })).not.toHaveAttribute('open');
+  });
+
+  it('drops a queued question whose signal aborts, and keeps the one on screen', async () => {
+    const controller = new AbortController();
+    function Two() {
+      const confirm = useConfirm();
+      const [out, setOut] = useState<string[]>([]);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              void confirm({ message: 'first' }).then((a) => setOut((o) => [...o, `1:${a}`]));
+              void confirm({ message: 'second', signal: controller.signal }).then((a) => setOut((o) => [...o, `2:${a}`]));
+            }}
+          >
+            Ask two
+          </button>
+          <output aria-label="out">{out.join(',')}</output>
+        </>
+      );
+    }
+    render(
+      <ConfirmProvider>
+        <Two />
+      </ConfirmProvider>,
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Ask two' }));
+    act(() => controller.abort());
+    await waitFor(() => expect(screen.getByLabelText('out')).toHaveTextContent('2:false'));
+    expect(screen.getByRole('dialog')).toHaveTextContent('first');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(screen.getByLabelText('out')).toHaveTextContent('2:false,1:true');
+    expect(screen.getByRole('dialog', { hidden: true })).not.toHaveAttribute('open');
+  });
+
   it('throws without a provider', () => {
     expect(() => render(<Asker options={{ message: 'm' }} />)).toThrow(/ConfirmProvider/);
   });
 });
 
 describe('useUnsavedGuard through the confirm dialog', () => {
-  function renderForm(dirty: boolean) {
+  function renderForm(dirty: boolean, onSubmit: () => Promise<boolean> | boolean = () => true) {
     const rootRoute = createRootRoute();
     const other = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org/settings/shared/repos', component: () => <div>the other page</div> });
     const form = createRoute({
       getParentRoute: () => rootRoute,
       path: '/o/$org/settings/shared/repos/new',
       component: () => (
-        <FormPage title="Form" backTo={{ to: '/o/$org/settings/shared/repos', params: { org: 'acme' } }} onSubmit={() => true} submitting={false} dirty={dirty}>
+        <FormPage title="Form" backTo={{ to: '/o/$org/settings/shared/repos', params: { org: 'acme' } }} onSubmit={onSubmit} submitting={false} dirty={dirty}>
           <Link to="/o/$org/settings/shared/repos" params={{ org: 'acme' }}>Go elsewhere</Link>
         </FormPage>
       ),
@@ -372,7 +425,6 @@ describe('useUnsavedGuard through the confirm dialog', () => {
     await screen.findByRole('dialog', { name: 'Are you sure?' });
     await act(async () => {
       router.history.push('/o/acme/settings/shared/repos');
-      router.history.back();
       await new Promise((r) => setTimeout(r, 20));
     });
     expect(openDialogs()).toHaveLength(1);
@@ -394,6 +446,21 @@ describe('useUnsavedGuard through the confirm dialog', () => {
     });
     expect(openDialogs()).toHaveLength(1);
     await userEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    expect(await screen.findByText('the other page')).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos');
+    expect(openDialogs()).toHaveLength(0);
+  });
+
+  it('closes a question asked during a slow save once the save leaves the form', async () => {
+    let saved!: (ok: boolean) => void;
+    const router = renderForm(true, () => new Promise<boolean>((r) => (saved = r)));
+    await userEvent.click(await screen.findByRole('button', { name: 'Save' }));
+    await userEvent.click(screen.getByRole('link', { name: 'Go elsewhere' }));
+    await screen.findByRole('dialog', { name: 'Are you sure?' });
+    await act(async () => {
+      saved(true);
+      await new Promise((r) => setTimeout(r, 20));
+    });
     expect(await screen.findByText('the other page')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe('/o/acme/settings/shared/repos');
     expect(openDialogs()).toHaveLength(0);

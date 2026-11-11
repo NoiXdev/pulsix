@@ -59,7 +59,7 @@ export function useAccountActionRunner(user: AdminUserDetail) {
   useBlocker({
     shouldBlockFn: async (args) => {
       if (runningRef.current === null) return false;
-      return leave(args);
+      return leave.shouldBlock(args);
     },
     enableBeforeUnload: () => runningRef.current !== null,
   });
