@@ -3,7 +3,6 @@ package probe
 import (
 	"context"
 	"errors"
-	"math"
 	"net"
 	"strconv"
 	"strings"
@@ -31,9 +30,9 @@ func probeTCP(ctx context.Context, g *Guard, params map[string]any, address stri
 	if err != nil {
 		return failAll(err.Error(), metrics...)
 	}
-	port := numParam(params, "port", 0)
-	if port < 1 || port > 65535 || port != math.Trunc(port) {
-		return failAll("invalid port", metrics...)
+	port, ok := portParam(params, 0)
+	if !ok {
+		return failAll(errBadPort.Error(), metrics...)
 	}
 
 	ctx, cancel := bound(ctx, params, tcpDefaultTimeout)
@@ -41,7 +40,7 @@ func probeTCP(ctx context.Context, g *Guard, params map[string]any, address stri
 
 	start := time.Now()
 	// ctx carries the timeout, so the dialer needs none of its own.
-	conn, err := g.Dialer(0).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(int(port))))
+	conn, err := g.Dialer(0).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
 		if errors.Is(err, ErrNotAllowed) {
 			return failAll(ErrNotAllowed.Error(), metrics...)

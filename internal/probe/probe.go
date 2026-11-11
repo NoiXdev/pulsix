@@ -7,6 +7,7 @@ package probe
 import (
 	"context"
 	"errors"
+	"math"
 	"net/netip"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type Observation struct {
 var (
 	errNoAddress = errors.New("host has no address")
 	errBadTarget = errors.New("target is not a valid address")
+	errBadPort   = errors.New("invalid port")
 	// errNameIsAddress: a dns A or AAAA check of an IP literal asks no
 	// server, so it cannot be attempted.
 	errNameIsAddress = errors.New("name is an address")
@@ -54,6 +56,10 @@ func Run(ctx context.Context, g *Guard, plugin string, params map[string]any, ad
 		return probeICMP(ctx, g, params, address, listenICMP)
 	case "dns":
 		return probeDNS(ctx, g, params, address, g.Dialer)
+	case "http":
+		return probeHTTP(ctx, g, params, address, nil)
+	case "tls":
+		return probeTLS(ctx, g, params, address, nil)
 	}
 	return failAll("unknown probe plugin "+plugin, plugin+".up")
 }
@@ -97,6 +103,23 @@ func numParam(params map[string]any, key string, def float64) float64 {
 		return float64(v)
 	case int64:
 		return float64(v)
+	}
+	return def
+}
+
+// portParam reads the port param (or def) and reports whether it is a
+// whole number in 1..65535.
+func portParam(params map[string]any, def float64) (int, bool) {
+	port := numParam(params, "port", def)
+	if port < 1 || port > 65535 || port != math.Trunc(port) {
+		return 0, false
+	}
+	return int(port), true
+}
+
+func boolParam(params map[string]any, key string, def bool) bool {
+	if v, ok := params[key].(bool); ok {
+		return v
 	}
 	return def
 }
