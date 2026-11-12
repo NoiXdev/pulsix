@@ -57,6 +57,11 @@ type Config struct {
 	// (PULSIX_RETEST_INTERVAL, a Go duration; the default 1h). The daily
 	// re-test's 24 h window is a plan constant, not configuration.
 	RetestInterval time.Duration
+	// ItemExpiry is how long a check's item may stay silent, while its host
+	// keeps reporting, before the manager forgets it (PULSIX_ITEM_EXPIRY, a
+	// Go duration of at least 1h; the default 168h; 0 switches the automatic
+	// expiry off).
+	ItemExpiry time.Duration
 	// JobMaxAttempts is how often a job may be claimed before the reaper
 	// fails a stale claim instead of requeuing it (PULSIX_JOB_MAX_ATTEMPTS,
 	// a positive integer; default DefaultJobMaxAttempts). It stops a job
@@ -112,6 +117,14 @@ type Config struct {
 	// main.version=...` and the release workflow), after Load returns.
 	Version string
 }
+
+// DefaultItemExpiry is the default PULSIX_ITEM_EXPIRY; MinItemExpiry is the
+// shortest period accepted (a shorter one would forget an item that merely
+// skipped a few reports).
+const (
+	DefaultItemExpiry = 168 * time.Hour
+	MinItemExpiry     = time.Hour
+)
 
 // DefaultRetestInterval is the connection re-test scheduler's pass period.
 const DefaultRetestInterval = time.Hour
@@ -184,6 +197,14 @@ func Load(getenv func(string) string) (Config, error) {
 			return cfg, errors.New("PULSIX_RETEST_INTERVAL must be a positive duration (e.g. 30m, 2h)")
 		}
 		cfg.RetestInterval = d
+	}
+	cfg.ItemExpiry = DefaultItemExpiry
+	if raw := getenv("PULSIX_ITEM_EXPIRY"); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < 0 || (d != 0 && d < MinItemExpiry) {
+			return cfg, errors.New("PULSIX_ITEM_EXPIRY must be a duration of at least 1h (e.g. 72h, 168h) or 0 to disable")
+		}
+		cfg.ItemExpiry = d
 	}
 	cfg.JobMaxAttempts = DefaultJobMaxAttempts
 	if raw := getenv("PULSIX_JOB_MAX_ATTEMPTS"); raw != "" {

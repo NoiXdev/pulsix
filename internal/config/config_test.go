@@ -524,3 +524,47 @@ func TestNotifyNAT64Prefixes(t *testing.T) {
 		}
 	}
 }
+
+// TestItemExpiry: PULSIX_ITEM_EXPIRY is how long a check's item may stay
+// silent, while its host keeps reporting, before it is forgotten; the
+// default is 168h, 0 switches the expiry off, and anything else must be a
+// Go duration of at least one hour.
+func TestItemExpiry(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cases := []struct {
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{raw: "", want: 168 * time.Hour},
+		{raw: "0", want: 0},
+		{raw: "0s", want: 0},
+		{raw: "1h", want: time.Hour},
+		{raw: "72h", want: 72 * time.Hour},
+		{raw: "30m", wantErr: true},
+		{raw: "59m59s", wantErr: true},
+		{raw: "-2h", wantErr: true},
+		{raw: "a week", wantErr: true},
+		{raw: "7", wantErr: true},
+	}
+	for _, c := range cases {
+		m := map[string]string{"PULSIX_ITEM_EXPIRY": c.raw}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := config.Load(env(m))
+		if c.wantErr {
+			if err == nil || !strings.Contains(err.Error(), "PULSIX_ITEM_EXPIRY") {
+				t.Errorf("PULSIX_ITEM_EXPIRY=%q: want an error naming the variable, got %v", c.raw, err)
+			}
+			continue
+		}
+		if err != nil || cfg.ItemExpiry != c.want {
+			t.Errorf("PULSIX_ITEM_EXPIRY=%q: got %v, %v; want %v", c.raw, cfg.ItemExpiry, err, c.want)
+		}
+	}
+}

@@ -88,6 +88,8 @@ type App struct {
 	// stopAuthReaper stops the expired-ceremony and expired-session reaper
 	// (backlog 1.21), waiting until its goroutine has returned.
 	stopAuthReaper func()
+	// stopItemExpiry stops the item expiry loop (backlog 3.12b).
+	stopItemExpiry func()
 	// stopDispatch stops the notification dispatcher (spec 2026-09-18
 	// §5), waiting for a batch in flight.
 	stopDispatch func()
@@ -172,6 +174,9 @@ func (a *App) Close() {
 	}
 	if a.stopRetest != nil {
 		a.stopRetest()
+	}
+	if a.stopItemExpiry != nil {
+		a.stopItemExpiry()
 	}
 	if a.stopAuthReaper != nil {
 		a.stopAuthReaper()
@@ -307,7 +312,14 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// them refuses to resolve (checks.Service's own fail-closed posture),
 	// which is why both go in here rather than the later, API-surface task
 	// that reads from this same instance.
+	// alerts.Service (v0.4a): built here, ahead of checksSvc and api.New, so
+	// the same instance backs the API's own read/acknowledge/snooze surface
+	// (Deps.Alerts, registerAlertRoutes), the evaluation ticker's required
+	// AlertSink and checksSvc's alert closer for forgotten items (backlog
+	// 3.12b) — one wire, not three to keep in sync.
+	alertsSvc := alerts.NewService(alerts.NewSQLStore(appDB), time.Now)
 	checksSvc := checks.NewService(checks.NewSQLStore(appDB),
+		checks.WithAlertCloser(alertsSvc),
 		checks.WithMatcher(NewChecksHostMatcher(hostsSvc)),
 		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)))
 	// The rule engine's starter set (v0.3b-2, Task 5): rulesSvc needs no
@@ -545,12 +557,6 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(appDB), NewGroupHosts(resolver), time.Now, rand.Reader, slog.Default())
 	schedulesSvc.SetMaintenance(maintenanceSvc)
 
-	// alerts.Service (v0.4a): built here, ahead of api.New, so the same
-	// instance backs both the API's own read/acknowledge/snooze surface
-	// (Deps.Alerts, registerAlertRoutes) and the evaluation ticker's
-	// required AlertSink below — one wire, not two to keep in sync.
-	alertsSvc := alerts.NewService(alerts.NewSQLStore(appDB), time.Now)
-
 	// alertroutes.Service (v0.4b Task 10): built here, ahead of api.New, on
 	// the same *alertroutes.Store the follower below drives directly
 	// (NewFollower takes the concrete store, not this Service) — one store,
@@ -670,6 +676,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// staggered per host, under its own advisory lock. Stopped in Close.
 	retestStop := startLoop(schedule.NewRetest(hostsSvc, jobsSvc, schedule.NewAdvisoryLocker(appDB.Pool(), schedule.AdvisoryKeyRetest), cfg.RetestInterval, nil, time.Now, slog.Default()).Run)
 
+	// The item expiry (backlog 3.12b): once per hour, one manager forgets the
+	// items that have been silent for PULSIX_ITEM_EXPIRY while their host
+	// kept reporting, under its own advisory key. A period of 0 disables it.
+	// Stopped in Close.
+	itemExpiryStop := startLoop(checks.NewExpiryLoop(checksSvc, schedule.NewAdvisoryLocker(appDB.Pool(), checks.ExpiryAdvisoryKey), cfg.ItemExpiry, checks.DefaultExpiryInterval, slog.Default()).Run)
+
 	// The expired-ceremony and expired-session reaper (backlog 1.21): one
 	// DELETE pass per interval (default 1h) under its own advisory key,
 	// bounding the two unauthenticated/expired write paths' growth.
@@ -759,6 +771,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		if err != nil {
 			reaperStop()
 			retestStop()
+			itemExpiryStop()
 			authReaperStop()
 			tickerStop()
 			dispatchStop()
@@ -783,6 +796,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			if splitErr != nil {
 				reaperStop()
 				retestStop()
+				itemExpiryStop()
 				authReaperStop()
 				tickerStop()
 				dispatchStop()
@@ -808,7 +822,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }
