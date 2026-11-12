@@ -127,6 +127,13 @@ can be bound to any host, and the check shows no readings on the host page until
 its agent is updated. Nothing is seeded into organizations, so no existing host
 gains the check by itself, and there is no schema change.
 
+The same holds for the `temperature`, `smart` and `raid` plugins (backlog 3.9):
+an older agent skips such a check, warns on every configuration push and shows
+no readings until it is updated, and the manager does not gate on it. Nothing is
+seeded and there is no schema change. `smart` also needs smartmontools on the
+host (the agent reports "smartctl not found" until it is installed, and finds a
+later install without a restart).
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
