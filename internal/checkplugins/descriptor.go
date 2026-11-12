@@ -12,6 +12,10 @@
 //
 // One file per plugin holds its descriptor; registry.go lists them in the
 // order the SPA shows them.
+//
+// Adding a plugin: add its descriptor file here and register it; the other
+// steps (agent package, SPA fixture, i18n, rules golden table, probe case)
+// are listed in the "Adding a plugin" note of internal/agent/checks/plugins.
 package checkplugins
 
 // Runs says where a plugin's check is executed.

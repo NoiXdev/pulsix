@@ -7,7 +7,7 @@ import (
 )
 
 // TestRegistryWiresEveryPlugin pins the plugin names Task 8's scheduler and
-// the manager's plugin validation (internal/checks.supportedPlugins) agree
+// the manager's plugin descriptors (internal/checkplugins) agree
 // on; a typo'd registry key would silently orphan a plugin from every
 // check definition that names it.
 func TestRegistryWiresEveryPlugin(t *testing.T) {

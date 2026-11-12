@@ -5,17 +5,17 @@
 // here rather than in checks because checks importing the plugins would
 // close an import cycle.
 //
-// Adding a plugin: create plugins/<name>/ exporting only New(); add it to
-// Registry() and to the want list in registry_test.go. On the manager side,
-// add it to internal/checks (supportedPlugins and the params validation in
-// definitions.go) and to the plugin enums in internal/api (check_handlers.go,
-// host_check_handlers.go, shared_handlers.go); add its metrics to
-// internal/rules/catalog.go (see its OBLIGATION note). In the SPA, add it to
-// NUMERIC_PLUGIN in web/src/features/hosts/hostChecks.ts (and its label
-// metrics to DISCRETE_METRICS there) and to the plugin lists of
-// web/src/features/checks/CheckDialog.tsx and
-// web/src/features/instance/shared/SharedCheckFormPage.tsx. Finally update
-// the end-user docs in the noix-docs repo.
+// Adding a plugin: create plugins/<name>/ exporting only New(), and add it to
+// Registry() and to the want list in registry_test.go. Then add ONE descriptor
+// file in internal/checkplugins (params, metrics, item param, formats) and
+// register it there; the manager's validation, items, rules catalogue and API
+// enums derive from it. Regenerate the SPA fixture (go test
+// ./internal/checkplugins -run TestSPAFixtureIsCurrent -update-spa-fixture)
+// and schema.d.ts if needed, add en/de texts for the plugin name and each
+// param (the i18n completeness test enforces it), and update the golden table
+// in internal/rules/catalog_test.go. A server-run plugin also needs its case
+// in internal/probe's Run (the probe pin test checks it). Finally update the
+// end-user docs in the noix-docs repo.
 package plugins
 
 import (
