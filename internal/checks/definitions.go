@@ -59,6 +59,10 @@ const (
 	PluginNetwork = "network"
 	PluginUptime  = "uptime"
 	PluginDocker  = "docker" // backlog 3.12: container state via the local engine socket
+	// Backlog 3.9: hardware checks run by the agent.
+	PluginTemperature = "temperature"
+	PluginSmart       = "smart"
+	PluginRaid        = "raid"
 
 	PluginICMP = "icmp"
 	PluginTCP  = "tcp"
@@ -70,6 +74,7 @@ const (
 var supportedPlugins = map[string]bool{
 	PluginCPU: true, PluginMemory: true, PluginDisk: true, PluginService: true,
 	PluginNetwork: true, PluginUptime: true, PluginDocker: true,
+	PluginTemperature: true, PluginSmart: true, PluginRaid: true,
 	PluginICMP: true, PluginTCP: true, PluginHTTP: true, PluginTLS: true, PluginDNS: true,
 }
 
@@ -183,6 +188,8 @@ func validateParams(plugin string, params map[string]any) error {
 		}
 	case PluginDocker:
 		return validateDockerParams(params)
+	case PluginTemperature, PluginSmart, PluginRaid:
+		return validateHardwareParams(plugin)(params)
 	case PluginICMP, PluginTCP, PluginHTTP, PluginTLS, PluginDNS:
 		return validateSyntheticParams(plugin, params)
 	default:
@@ -235,7 +242,7 @@ func validateOptionalList(plugin, param string, params map[string]any) error {
 func ValidateDefinitionShape(plugin, key string, params map[string]any, interval time.Duration) (normalizedKey string, err error) {
 	plugin = strings.TrimSpace(plugin)
 	if !supportedPlugins[plugin] {
-		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, network, uptime, docker, icmp, tcp, http, tls, dns, got %q", ErrInvalidInput, plugin)
+		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, icmp, tcp, http, tls, dns, got %q", ErrInvalidInput, plugin)
 	}
 	normalizedKey = strings.TrimSpace(key)
 	if normalizedKey == "" {

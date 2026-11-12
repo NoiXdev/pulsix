@@ -333,6 +333,30 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		}
 	})
 
+	// The hardware plugins (backlog 3.9) run on the agent too.
+	t.Run("accepts the hardware plugins and refuses a bad device", func(t *testing.T) {
+		for key, params := range map[string]map[string]any{
+			"temperature": {"sensors": []any{"coretemp_core_0"}},
+			"smart":       {"devices": []any{"/dev/sda"}},
+			"raid":        {"arrays": []any{"md0"}},
+		} {
+			created := f.createCheck(t, f.operatorC, map[string]any{
+				"key": key, "plugin": key, "interval_seconds": 60, "binding_kind": "org", "params": params,
+			})
+			if created.Plugin != key {
+				t.Fatalf("created = %+v, want the %s check", created, key)
+			}
+			requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+		}
+		resp := requestJSON(t, f.operatorC, http.MethodPost, f.checksURL(), map[string]any{
+			"key": "smart-bad", "plugin": "smart", "interval_seconds": 60, "binding_kind": "org",
+			"params": map[string]any{"devices": []any{"sda"}},
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("smart with a relative device = %d %s, want 400", resp.StatusCode, mustReadBody(t, resp))
+		}
+	})
+
 	// Who may do what: a viewer reads, an operator writes (checks.read /
 	// checks.write, mirroring agents.*), and somebody who is not a member
 	// of the organization at all sees nothing.

@@ -32,7 +32,7 @@ type CatalogueEntry struct {
 // adds the plugin, or no rule can ever name it. The entries below are
 // exactly what the agent's seven check plugins emit today
 // (internal/agent/checks/plugins/: cpu, memory, disk, service, network,
-// uptime, plus docker from backlog 3.12; one package each), plus
+// uptime, plus docker from backlog 3.12 and temperature, smart, raid from backlog 3.9; one package each), plus
 // the five synthetic plugins the manager probes with (backlog 3.13,
 // internal/probe: icmp.go, tcp.go, http.go, tls.go, dns.go) — cross-check
 // any edit here against those files, not the other way around.
@@ -80,6 +80,25 @@ func Catalogue() map[string]CatalogueEntry {
 		"docker.exit_code":          {CheckKey: "docker", Kind: MetricNumeric},
 		"docker.containers_running": {CheckKey: "docker", Kind: MetricNumeric},
 		"docker.containers_total":   {CheckKey: "docker", Kind: MetricNumeric},
+
+		"temp.celsius":                   {CheckKey: "temperature", Kind: MetricNumeric},
+		"temp.high_celsius":              {CheckKey: "temperature", Kind: MetricNumeric},
+		"temp.critical_celsius":          {CheckKey: "temperature", Kind: MetricNumeric},
+		"smart.passed":                   {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.temperature_celsius":      {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.power_on_hours":           {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.reallocated_sectors":      {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.pending_sectors":          {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.offline_uncorrectable":    {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.nvme_percentage_used":     {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.nvme_available_spare_pct": {CheckKey: "smart", Kind: MetricNumeric},
+		"smart.nvme_media_errors":        {CheckKey: "smart", Kind: MetricNumeric},
+		"raid.state":                     {CheckKey: "raid", Kind: MetricDiscrete},
+		"raid.devices_total":             {CheckKey: "raid", Kind: MetricNumeric},
+		"raid.devices_active":            {CheckKey: "raid", Kind: MetricNumeric},
+		"raid.devices_failed":            {CheckKey: "raid", Kind: MetricNumeric},
+		"raid.sync_pct":                  {CheckKey: "raid", Kind: MetricNumeric},
+		"raid.arrays":                    {CheckKey: "raid", Kind: MetricNumeric},
 	}
 }
 

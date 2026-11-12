@@ -69,6 +69,26 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"docker.exit_code":          {CheckKey: "docker", Kind: rules.MetricNumeric},
 		"docker.containers_running": {CheckKey: "docker", Kind: rules.MetricNumeric},
 		"docker.containers_total":   {CheckKey: "docker", Kind: rules.MetricNumeric},
+
+		// Backlog 3.9: the hardware plugins (temperature, smart, raid).
+		"temp.celsius":                   {CheckKey: "temperature", Kind: rules.MetricNumeric},
+		"temp.high_celsius":              {CheckKey: "temperature", Kind: rules.MetricNumeric},
+		"temp.critical_celsius":          {CheckKey: "temperature", Kind: rules.MetricNumeric},
+		"smart.passed":                   {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.temperature_celsius":      {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.power_on_hours":           {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.reallocated_sectors":      {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.pending_sectors":          {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.offline_uncorrectable":    {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.nvme_percentage_used":     {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.nvme_available_spare_pct": {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"smart.nvme_media_errors":        {CheckKey: "smart", Kind: rules.MetricNumeric},
+		"raid.state":                     {CheckKey: "raid", Kind: rules.MetricDiscrete},
+		"raid.devices_total":             {CheckKey: "raid", Kind: rules.MetricNumeric},
+		"raid.devices_active":            {CheckKey: "raid", Kind: rules.MetricNumeric},
+		"raid.devices_failed":            {CheckKey: "raid", Kind: rules.MetricNumeric},
+		"raid.sync_pct":                  {CheckKey: "raid", Kind: rules.MetricNumeric},
+		"raid.arrays":                    {CheckKey: "raid", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -110,6 +130,9 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"tls":     "tls",
 		"dns":     "dns",
 		"docker":  "docker",
+		"temp":    "temperature",
+		"smart":   "smart",
+		"raid":    "raid",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")
