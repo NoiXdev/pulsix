@@ -145,6 +145,17 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.2, 3.3, 3.8, agents for Windows and macOS:** the manager serves a new
+  `GET /install.ps1` and the agent token response gains `install_command_windows`
+  (both additive; an older SPA ignores the field). The manager image grows by
+  about 60 MB, the four agent binaries for darwin and windows (amd64, arm64) it
+  now embeds. Linux agents need no update. The default agent name is now the
+  hostname lower-cased, without a trailing `.local`, other characters replaced
+  by `-`; it applies to new enrollments only, enrolled agents keep their name.
+  The agent gains the flags `--env-file` and `--log-file` (additive; the
+  Windows and macOS services use them, the systemd unit does not). The seeded
+  `sshd` service check reads unknown on macOS and on Windows without OpenSSH
+  server and raises no alert.
 - **3.13, synthetic checks:** the `icmp`, `tcp`, `http`, `tls` and `dns`
   plugins are new and run on the manager, not on agents, so agents need no
   update and nothing is seeded into existing organizations. The manager
