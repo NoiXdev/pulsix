@@ -133,7 +133,7 @@ export const enChecks = {
       tooMany: (max: number) => `must have at most ${max} entries`,
       tooLong: (max: number) => `every entry must be at most ${max} bytes`,
       control: 'entries must not contain control characters',
-      device: 'every entry must start with /dev/ and contain only letters, digits and . _ / , : + @ -',
+      device: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
     },
   },
   /** The synthetic plugins' parameter fields (backlog 3.13), shared by the

@@ -127,7 +127,7 @@ export const deChecks: Messages['checks'] = {
       tooMany: (max: number) => `darf höchstens ${max} Einträge haben`,
       tooLong: (max: number) => `jeder Eintrag darf höchstens ${max} Byte lang sein`,
       control: 'Einträge dürfen keine Steuerzeichen enthalten',
-      device: 'jeder Eintrag muss mit /dev/ beginnen und darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten',
+      device: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
     },
   },
   synthetic: {

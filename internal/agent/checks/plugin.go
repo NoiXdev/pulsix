@@ -2,10 +2,10 @@
 // check plugins implement, the Observation they report and the helpers they
 // share to build one (observe.go), the scheduler that runs them and the
 // buffer that holds results while the agent is disconnected (v0.3b plan,
-// Tasks 7 and 8). The plugins themselves (processor, memory, disk,
-// service, network, uptime and Docker container state) live one package
-// each under plugins/, and plugins.Registry wires them; they import this
-// package, so it never imports them.
+// Tasks 7 and 8). The plugins themselves live one package each under
+// plugins/ (plugins.Registry wires them and is the list of record): cpu,
+// memory, disk, service, network, uptime, docker, temperature, smart and
+// raid. They import this package, so it never imports them.
 //
 // A plugin's only job is to observe — it never buffers, schedules or ships
 // anything, and it never judges whether an observation is good or bad. The
@@ -35,9 +35,9 @@ import "context"
 // Observation is the smallest unit a plugin reports: one item (the empty
 // string for a whole-host metric, a mount point or a unit name otherwise),
 // one metric name, and exactly one of a numeric Value, a Label or an Err
-// — never two of the three, never none. The service plugin is the only
-// one that reports a label today (the unit's state); cpu, memory and disk
-// are all numeric.
+// — never two of the three, never none. Labels are states: service's
+// unit state, docker's container state and health, raid's array state;
+// every other metric is numeric.
 //
 // Err is set when THIS specific item/metric could not be collected this
 // tick, even though the plugin call itself is advisory-tolerant overall

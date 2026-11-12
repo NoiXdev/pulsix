@@ -30,9 +30,10 @@ type CatalogueEntry struct {
 //
 // OBLIGATION: a new plugin metric is added here in the same change that
 // adds the plugin, or no rule can ever name it. The entries below are
-// exactly what the agent's seven check plugins emit today
-// (internal/agent/checks/plugins/: cpu, memory, disk, service, network,
-// uptime, plus docker from backlog 3.12 and temperature, smart, raid from backlog 3.9; one package each), plus
+// exactly what the agent's check plugins emit today
+// (internal/agent/checks/plugins/, one package each: cpu, memory, disk,
+// service, network, uptime, docker from backlog 3.12, and temperature,
+// smart, raid from backlog 3.9), plus
 // the five synthetic plugins the manager probes with (backlog 3.13,
 // internal/probe: icmp.go, tcp.go, http.go, tls.go, dns.go) — cross-check
 // any edit here against those files, not the other way around.
@@ -84,6 +85,8 @@ func Catalogue() map[string]CatalogueEntry {
 		"temp.celsius":                   {CheckKey: "temperature", Kind: MetricNumeric},
 		"temp.high_celsius":              {CheckKey: "temperature", Kind: MetricNumeric},
 		"temp.critical_celsius":          {CheckKey: "temperature", Kind: MetricNumeric},
+		"temp.sensors":                   {CheckKey: "temperature", Kind: MetricNumeric},
+		"smart.devices":                  {CheckKey: "smart", Kind: MetricNumeric},
 		"smart.passed":                   {CheckKey: "smart", Kind: MetricNumeric},
 		"smart.temperature_celsius":      {CheckKey: "smart", Kind: MetricNumeric},
 		"smart.power_on_hours":           {CheckKey: "smart", Kind: MetricNumeric},

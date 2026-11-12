@@ -37,6 +37,10 @@ describe('hardwareErrors', () => {
     ['just /dev/ fails', 'smart', '/dev/', true],
     ['a second bad line fails', 'smart', '/dev/sda\nnvme0', true],
     ['a 256-byte device fails', 'smart', `/dev/${'a'.repeat(251)}`, true],
+    ['a .. segment fails', 'smart', '/dev/../x', true],
+    ['a trailing .. segment fails', 'smart', '/dev/disk/..', true],
+    ['dots inside a name pass', 'smart', '/dev/disk/by-id/nvme-eui.00..25', false],
+    ['multibyte over 255 bytes fails', 'smart', `/dev/${'ä'.repeat(126)}`, true],
   ])('%s', (_n, plugin, text, bad) => {
     const errs = hardwareErrors(plugin as 'raid', text, en);
     expect(Object.keys(errs).length > 0).toBe(bad);

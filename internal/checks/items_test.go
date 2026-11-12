@@ -41,6 +41,27 @@ func TestDefinitionAsksForItem(t *testing.T) {
 		{"http asks for its whole-host item", PluginHTTP, map[string]any{"url": "https://{address}/"}, "", true},
 		{"tls asks for its whole-host item", PluginTLS, nil, "", true},
 		{"dns asks for its whole-host item", PluginDNS, map[string]any{"name": "example.com"}, "", true},
+		// The hardware plugins (backlog 3.9) bound their items by their
+		// list, but also report a whole-host count on item "" (and their
+		// host-level errors there), which every list still asks for.
+		{"temperature asks for a sensor on its list", PluginTemperature, map[string]any{"sensors": []any{"coretemp_core_0"}}, "coretemp_core_0", true},
+		{"temperature stopped asking for a sensor off its list", PluginTemperature, map[string]any{"sensors": []any{"coretemp_core_0"}}, "nvme_composite", false},
+		{"temperature with a list still asks for its whole-host item", PluginTemperature, map[string]any{"sensors": []any{"coretemp_core_0"}}, "", true},
+		{"temperature without a list asks for every sensor", PluginTemperature, nil, "nvme_composite", true},
+		{"smart asks for a device on its list", PluginSmart, map[string]any{"devices": []any{"/dev/sda"}}, "/dev/sda", true},
+		{"smart stopped asking for a device off its list", PluginSmart, map[string]any{"devices": []any{"/dev/sda"}}, "/dev/sdb", false},
+		{"smart with a list still asks for its whole-host item", PluginSmart, map[string]any{"devices": []any{"/dev/sda"}}, "", true},
+		// A disk behind a RAID controller is "<path> [<type>]"; the list
+		// cannot name it, so its path on the list counts as asking.
+		{"smart asks for a controller disk whose path is listed", PluginSmart, map[string]any{"devices": []any{"/dev/bus/0"}}, "/dev/bus/0 [megaraid,1]", true},
+		{"smart stopped asking for a controller disk whose path is not listed", PluginSmart, map[string]any{"devices": []any{"/dev/sda"}}, "/dev/bus/0 [megaraid,1]", false},
+		{"smart does not match a path that only starts the same", PluginSmart, map[string]any{"devices": []any{"/dev/bus/0"}}, "/dev/bus/01 [megaraid,1]", false},
+		{"raid asks for an array on its list", PluginRaid, map[string]any{"arrays": []any{"md0"}}, "md0", true},
+		{"raid stopped asking for an array off its list", PluginRaid, map[string]any{"arrays": []any{"md0"}}, "md1", false},
+		{"raid with a list still asks for its whole-host item", PluginRaid, map[string]any{"arrays": []any{"md0"}}, "", true},
+		// disk and network report no whole-host item, so "" is only
+		// asked when nothing bounds them.
+		{"disk with a list does not ask for item \"\"", PluginDisk, map[string]any{"mounts": []string{"/"}}, "", false},
 		// JSON round-trips a params list as []any, which is what the
 		// store hands back — the same list must still match.
 		{"a list decoded from JSON matches too", PluginService, map[string]any{"units": []any{"sshd"}}, "sshd", true},

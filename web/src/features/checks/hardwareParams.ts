@@ -50,6 +50,6 @@ export function hardwareErrors(plugin: HardwarePlugin, text: string, t: Messages
   if (list.length > MAX_ENTRIES) error = msg.tooMany(MAX_ENTRIES);
   else if (list.some((e) => byteLen(e) > MAX_BYTES)) error = msg.tooLong(MAX_BYTES);
   else if (list.some((e) => CONTROL.test(e))) error = msg.control;
-  else if (plugin === 'smart' && list.some((e) => !DEVICE.test(e))) error = msg.device;
+  else if (plugin === 'smart' && list.some((e) => !DEVICE.test(e) || e.split('/').includes('..'))) error = msg.device;
   return error ? { [HARDWARE_PARAM[plugin]]: error } : {};
 }

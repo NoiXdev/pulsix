@@ -3,6 +3,7 @@ package checks
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -18,7 +19,8 @@ const (
 // smartDevicePattern is the shape of a device path smartctl is handed:
 // always under /dev/ (smartctl names devices /dev/sdX, /dev/nvmeN, /dev/pdN
 // and /dev/csmiN,M on Windows as well) and limited to characters that carry
-// no meaning to a shell, an option parser or a path separator trick.
+// no meaning to a shell or an option parser. A ".." segment, which would
+// lead out of /dev/, is refused separately (validateHardwareEntry).
 var smartDevicePattern = regexp.MustCompile(`^/dev/[A-Za-z0-9._/,:+@-]+$`)
 
 // validateHardwareParams checks the temperature (sensors), smart (devices)
@@ -63,6 +65,9 @@ func validateHardwareEntry(plugin, param, e string) error {
 	}
 	if plugin == PluginSmart && !smartDevicePattern.MatchString(e) {
 		return fmt.Errorf("%w: smart: devices entries must start with /dev/ and contain only letters, digits and . _ / , : + @ -", ErrInvalidInput)
+	}
+	if plugin == PluginSmart && slices.Contains(strings.Split(e, "/"), "..") {
+		return fmt.Errorf("%w: smart: devices entries must not contain a .. path segment", ErrInvalidInput)
 	}
 	return nil
 }

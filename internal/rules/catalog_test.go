@@ -74,6 +74,8 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"temp.celsius":                   {CheckKey: "temperature", Kind: rules.MetricNumeric},
 		"temp.high_celsius":              {CheckKey: "temperature", Kind: rules.MetricNumeric},
 		"temp.critical_celsius":          {CheckKey: "temperature", Kind: rules.MetricNumeric},
+		"temp.sensors":                   {CheckKey: "temperature", Kind: rules.MetricNumeric},
+		"smart.devices":                  {CheckKey: "smart", Kind: rules.MetricNumeric},
 		"smart.passed":                   {CheckKey: "smart", Kind: rules.MetricNumeric},
 		"smart.temperature_celsius":      {CheckKey: "smart", Kind: rules.MetricNumeric},
 		"smart.power_on_hours":           {CheckKey: "smart", Kind: rules.MetricNumeric},
