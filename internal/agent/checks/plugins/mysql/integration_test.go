@@ -26,6 +26,10 @@ type flavor struct {
 	startReplica  string
 	stopReplica   string
 	resetReplica  string
+	// namedSource, startNamed, stopNamed and resetNamed drive a named
+	// replication connection (MariaDB multi-source); empty where the server
+	// has none. Plain SHOW SLAVE STATUS shows only the default connection.
+	namedSource, startNamed, stopNamed, resetNamed string
 }
 
 var flavors = []flavor{
@@ -40,6 +44,8 @@ var flavors = []flavor{
 		grants:        "REPLICA MONITOR",
 		pointAtSource: "CHANGE MASTER TO MASTER_HOST='127.0.0.1', MASTER_PORT=1, MASTER_USER='nobody', MASTER_PASSWORD='x', MASTER_CONNECT_RETRY=1",
 		startReplica:  "START SLAVE", stopReplica: "STOP SLAVE", resetReplica: "RESET SLAVE ALL",
+		namedSource: "CHANGE MASTER 'named' TO MASTER_HOST='127.0.0.1', MASTER_PORT=1, MASTER_USER='nobody', MASTER_PASSWORD='x', MASTER_CONNECT_RETRY=1",
+		startNamed:  "START SLAVE 'named'", stopNamed: "STOP SLAVE 'named'", resetNamed: "RESET SLAVE 'named' ALL",
 	},
 }
 
@@ -162,7 +168,7 @@ func TestAgainstARealServer(t *testing.T) {
 			})
 
 			t.Run("every TLS mode the server can answer", func(t *testing.T) {
-				for _, mode := range []string{"preferred", "skip-verify"} {
+				for _, mode := range []string{"false", "preferred", "skip-verify"} {
 					obs, err := p.CollectWithSecret(ctx, nil, fields(map[string]string{"tls": mode}))
 					if err != nil {
 						t.Fatal(err)
@@ -275,6 +281,39 @@ func TestAgainstARealServer(t *testing.T) {
 				mustErr(t, o, "", "mysql.replication_lag_seconds", "mysql: replication is not running")
 				noSecretIn(t, o, nil)
 				exec(fl.resetReplica)
+				o, _ = p.CollectWithSecret(ctx, nil, fields(nil))
+				mustLabel(t, o, "", "mysql.replication_state", "none")
+			})
+
+			t.Run("a named replication connection", func(t *testing.T) {
+				if fl.namedSource == "" {
+					t.Skip("no named connections on this server")
+				}
+				exec(fl.namedSource)
+				exec(fl.startNamed)
+				deadline := time.Now().Add(30 * time.Second)
+				for {
+					o, err := p.CollectWithSecret(ctx, nil, fields(nil))
+					if err != nil {
+						t.Fatal(err)
+					}
+					s, _ := find(o, "", "mysql.replication_state")
+					if s.Label != nil && *s.Label == "none" {
+						t.Fatal("a configured named connection reads as none")
+					}
+					if s.Label != nil && *s.Label == "connecting" {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("state %+v after 30 s, want connecting", s.Label)
+					}
+					time.Sleep(500 * time.Millisecond)
+				}
+				exec(fl.stopNamed)
+				o, _ := p.CollectWithSecret(ctx, nil, fields(nil))
+				mustLabel(t, o, "", "mysql.replication_state", "stopped")
+				mustErr(t, o, "", "mysql.replication_lag_seconds", "mysql: replication is not running")
+				exec(fl.resetNamed)
 				o, _ = p.CollectWithSecret(ctx, nil, fields(nil))
 				mustLabel(t, o, "", "mysql.replication_state", "none")
 			})

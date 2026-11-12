@@ -132,6 +132,8 @@ func TestInstancesDoNotShareTheCounter(t *testing.T) {
 	c := &clock{t: time.Unix(1000, 0)}
 	proto := newTestPlugin(&fakeSession{stats: healthy}, nil, nil)
 	proto.now = c.now
+	// The prototype collects first: instances must not inherit its baseline.
+	_, _ = proto.CollectWithSecret(context.Background(), nil, goodFields)
 	a := proto.NewInstance().(*plugin)
 	b := proto.NewInstance().(*plugin)
 	_, _ = a.CollectWithSecret(context.Background(), nil, goodFields)
@@ -159,7 +161,10 @@ func TestReplicationStates(t *testing.T) {
 		{"both stopped NULL lag", []replicaChannel{{IO: "No", SQL: "No"}}, "stopped", nil},
 		{"connecting with sql stopped", []replicaChannel{{IO: "Connecting", SQL: "No"}}, "stopped", nil},
 		{"mariadb preparing", []replicaChannel{{IO: "Preparing", SQL: "Yes", Lag: f64(1)}}, "stopped", f64(1)},
-		{"running NULL lag counts as 0", []replicaChannel{{IO: "Yes", SQL: "Yes"}}, "running", f64(0)},
+		{"running NULL lag is unknown, never 0", []replicaChannel{{IO: "Yes", SQL: "Yes"}}, "running", nil},
+		{"not running wins the wording", []replicaChannel{{IO: "Yes", SQL: "Yes"}, {IO: "No", SQL: "No"}}, "stopped", nil},
+		{"only group replication channels", []replicaChannel{{Name: "group_replication_applier", IO: "No", SQL: "Yes"}, {Name: "group_replication_recovery", IO: "No", SQL: "No"}}, "none", f64(0)},
+		{"group replication channels are skipped", []replicaChannel{{Name: "group_replication_applier", IO: "No", SQL: "No"}, {Name: "src", IO: "Yes", SQL: "Yes", Lag: f64(2)}}, "running", f64(2)},
 		{"worst state wins", []replicaChannel{
 			{IO: "Yes", SQL: "Yes", Lag: f64(1)},
 			{IO: "Connecting", SQL: "Yes", Lag: f64(4)},
@@ -188,7 +193,11 @@ func TestReplicationStates(t *testing.T) {
 			}
 			mustLabel(t, obs, "", "mysql.replication_state", tc.state)
 			if tc.lag == nil {
-				mustErr(t, obs, "", "mysql.replication_lag_seconds", "mysql: replication is not running")
+				want := "mysql: replication is not running"
+				if tc.name == "running NULL lag is unknown, never 0" {
+					want = "mysql: replication lag is unknown"
+				}
+				mustErr(t, obs, "", "mysql.replication_lag_seconds", want)
 			} else {
 				mustValue(t, obs, "", "mysql.replication_lag_seconds", *tc.lag)
 			}
@@ -287,4 +296,26 @@ func TestNoSecretInAnyFailure(t *testing.T) {
 		obs, err := collect(t, p, goodFields)
 		noSecretIn(t, obs, err)
 	}
+}
+
+// A server restart resets Slow_queries; Uptime falling is the signal, even
+// when the counter has already climbed past its old value.
+func TestUptimeDropResetsTheSlowQueryBaseline(t *testing.T) {
+	c := &clock{t: time.Unix(1000, 0)}
+	sess := &fakeSession{stats: healthy}
+	sess.stats.Uptime = 1000
+	p := newTestPlugin(sess, nil, nil)
+	p.now = c.now
+	_, _ = collect(t, p, goodFields)
+	// Restarted, and 500 slow queries since: higher than before the restart.
+	sess.stats.Uptime, sess.stats.SlowQueries = 10, 600
+	c.t = c.t.Add(10 * time.Second)
+	obs, _ := collect(t, p, goodFields)
+	if _, ok := find(obs, "", "mysql.slow_queries_per_s"); ok {
+		t.Fatal("a rate across a restart")
+	}
+	sess.stats.Uptime, sess.stats.SlowQueries = 20, 630
+	c.t = c.t.Add(10 * time.Second)
+	obs, _ = collect(t, p, goodFields)
+	mustValue(t, obs, "", "mysql.slow_queries_per_s", 3)
 }

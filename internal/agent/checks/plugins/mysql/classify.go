@@ -22,7 +22,7 @@ func classify(err error) string {
 	if errors.As(err, &me) {
 		n := strconv.Itoa(int(me.Number))
 		switch me.Number {
-		case 1044, 1045, 1698:
+		case 1044, 1045, 1130, 1698, 1820, 1862:
 			return "authentication failed (error " + n + ")"
 		case 1142, 1143, 1227, 1370:
 			return "permission denied (error " + n + ")"

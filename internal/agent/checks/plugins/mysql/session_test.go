@@ -84,7 +84,7 @@ func (f *fakeRows) Next(dest []driver.Value) error {
 
 func statusResult(conns, slow string) fakeResult {
 	return fakeResult{cols: []string{"Variable_name", "Value"}, rows: [][]any{
-		{"Slow_queries", slow}, {"Threads_connected", conns},
+		{"Slow_queries", slow}, {"Threads_connected", conns}, {"Uptime", "5000"},
 	}}
 }
 
@@ -119,12 +119,12 @@ func replicaRow(io, sqlr string, lag any, channel string) []any {
 }
 
 func TestServerReadsStatusAndNoReplication(t *testing.T) {
-	s, f := newFakeSession(t, map[string]fakeResult{replicaQuery: {cols: newCols}})
+	s, f := newFakeSession(t, map[string]fakeResult{allReplicasQuery: {cols: newCols}})
 	st, err := s.Server(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Connections != 7 || st.MaxConnections != 151 || st.SlowQueries != 42 || len(st.Replicas) != 0 {
+	if st.Connections != 7 || st.MaxConnections != 151 || st.SlowQueries != 42 || st.Uptime != 5000 || len(st.Replicas) != 0 {
 		t.Fatalf("stats %+v", st)
 	}
 	if slices.Contains(f.seen, slaveQuery) {
@@ -135,7 +135,7 @@ func TestServerReadsStatusAndNoReplication(t *testing.T) {
 func TestReplicaStatusBothSpellings(t *testing.T) {
 	for name, cols := range map[string][]string{"replica": newCols, "legacy": legacyCols} {
 		t.Run(name, func(t *testing.T) {
-			s, _ := newFakeSession(t, map[string]fakeResult{replicaQuery: {cols: cols, rows: [][]any{
+			s, _ := newFakeSession(t, map[string]fakeResult{allReplicasQuery: {cols: cols, rows: [][]any{
 				replicaRow("Yes", "Yes", "12", "a"),
 			}}})
 			st, err := s.Server(context.Background())
@@ -154,7 +154,7 @@ func TestReplicaStatusBothSpellings(t *testing.T) {
 }
 
 func TestReplicaStatusNullAndMultipleChannels(t *testing.T) {
-	s, _ := newFakeSession(t, map[string]fakeResult{replicaQuery: {cols: newCols, rows: [][]any{
+	s, _ := newFakeSession(t, map[string]fakeResult{allReplicasQuery: {cols: newCols, rows: [][]any{
 		replicaRow("Yes", "Yes", "3", "a"),
 		replicaRow("Yes", "No", nil, "b"),
 	}}})
@@ -165,16 +165,18 @@ func TestReplicaStatusNullAndMultipleChannels(t *testing.T) {
 	if len(st.Replicas) != 2 || st.Replicas[0].Lag == nil || st.Replicas[1].Lag != nil || st.Replicas[1].SQL != "No" {
 		t.Fatalf("replicas %+v", st.Replicas)
 	}
-	state, lag, unknown := replication(st.Replicas)
-	if state != "stopped" || lag != 3 || !unknown {
-		t.Fatalf("state %q lag %v unknown %v", state, lag, unknown)
+	state, lag, lagErr := replication(st.Replicas)
+	if state != "stopped" || lag != 3 || lagErr != "mysql: replication is not running" {
+		t.Fatalf("state %q lag %v err %q", state, lag, lagErr)
 	}
 }
 
 func TestFallbackToShowSlaveStatusOnSyntaxError(t *testing.T) {
 	s, f := newFakeSession(t, map[string]fakeResult{
-		replicaQuery: {err: &mysql.MySQLError{Number: 1064, Message: "You have an error in your SQL syntax"}},
-		slaveQuery:   {cols: legacyCols, rows: [][]any{replicaRow("Yes", "Yes", "0", "")}},
+		allReplicasQuery: {err: &mysql.MySQLError{Number: 1064, Message: "You have an error in your SQL syntax"}},
+		replicaQuery:     {err: &mysql.MySQLError{Number: 1064}},
+		allSlavesQuery:   {err: &mysql.MySQLError{Number: 1064}},
+		slaveQuery:       {cols: legacyCols, rows: [][]any{replicaRow("Yes", "Yes", "0", "")}},
 	})
 	st, err := s.Server(context.Background())
 	if err != nil {
@@ -183,28 +185,72 @@ func TestFallbackToShowSlaveStatusOnSyntaxError(t *testing.T) {
 	if len(st.Replicas) != 1 {
 		t.Fatalf("replicas %+v", st.Replicas)
 	}
-	if !slices.Contains(f.seen, slaveQuery) {
-		t.Fatalf("statements %v", f.seen)
+	want := []string{statusQuery, maxConnsQuery, allReplicasQuery, replicaQuery, allSlavesQuery, slaveQuery}
+	if !slices.Equal(f.seen, want) {
+		t.Fatalf("statements %v, want %v", f.seen, want)
 	}
+}
+
+// Each step of the chain is the one a given server knows: MySQL 8.0.22+
+// answers the second, older MariaDB the third.
+func TestFallbackChainStopsAtTheFirstAnswer(t *testing.T) {
+	syntax := fakeResult{err: &mysql.MySQLError{Number: 1064}}
+	ok := fakeResult{cols: legacyCols, rows: [][]any{replicaRow("Yes", "Yes", "0", "")}}
+	tests := []struct {
+		name    string
+		results map[string]fakeResult
+		last    string
+	}{
+		{"mariadb 10.5.1+", map[string]fakeResult{allReplicasQuery: ok}, allReplicasQuery},
+		{"mysql 8.0.22+", map[string]fakeResult{allReplicasQuery: syntax, replicaQuery: ok}, replicaQuery},
+		{"older mariadb", map[string]fakeResult{allReplicasQuery: syntax, replicaQuery: syntax, allSlavesQuery: ok}, allSlavesQuery},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, f := newFakeSession(t, tc.results)
+			st, err := s.Server(context.Background())
+			if err != nil || len(st.Replicas) != 1 {
+				t.Fatalf("replicas %+v, err %v", st.Replicas, err)
+			}
+			if f.seen[len(f.seen)-1] != tc.last {
+				t.Fatalf("statements %v, want the last to be %s", f.seen, tc.last)
+			}
+		})
+	}
+}
+
+// The connection name of MariaDB's multi-source output is never read; the
+// channel name only to skip Group Replication's internal channels.
+func TestChannelNamesAreReadForGroupReplicationOnly(t *testing.T) {
+	cols := append(slices.Clone(legacyCols), "Connection_name")
+	row := append(replicaRow("Yes", "Yes", "1", "group_replication_applier"), plantedUser)
+	s, _ := newFakeSession(t, map[string]fakeResult{allReplicasQuery: {cols: cols, rows: [][]any{row}}})
+	st, err := s.Server(context.Background())
+	if err != nil || len(st.Replicas) != 1 || st.Replicas[0].Name != "group_replication_applier" {
+		t.Fatalf("%+v %v", st.Replicas, err)
+	}
+	noSecretIn(t, observe(st, 0, false), nil)
 }
 
 func TestNoFallbackOnOtherErrors(t *testing.T) {
 	s, f := newFakeSession(t, map[string]fakeResult{
-		replicaQuery: {err: &mysql.MySQLError{Number: 1227, Message: "Access denied"}},
+		allReplicasQuery: {err: &mysql.MySQLError{Number: 1227, Message: "Access denied"}},
 	})
 	_, err := s.Server(context.Background())
 	if got := classify(err); got != "permission denied (error 1227)" {
 		t.Fatalf("classify = %q (err %v)", got, err)
 	}
-	if slices.Contains(f.seen, slaveQuery) {
+	if slices.Contains(f.seen, replicaQuery) || slices.Contains(f.seen, slaveQuery) {
 		t.Fatal("fell back on a permission error")
 	}
 }
 
 func TestFallbackFailureIsReported(t *testing.T) {
 	s, _ := newFakeSession(t, map[string]fakeResult{
-		replicaQuery: {err: &mysql.MySQLError{Number: 1064}},
-		slaveQuery:   {err: &mysql.MySQLError{Number: 1227}},
+		allReplicasQuery: {err: &mysql.MySQLError{Number: 1064}},
+		replicaQuery:     {err: &mysql.MySQLError{Number: 1064}},
+		allSlavesQuery:   {err: &mysql.MySQLError{Number: 1064}},
+		slaveQuery:       {err: &mysql.MySQLError{Number: 1227}},
 	})
 	_, err := s.Server(context.Background())
 	if got := classify(err); got != "permission denied (error 1227)" {
@@ -214,14 +260,14 @@ func TestFallbackFailureIsReported(t *testing.T) {
 
 func TestUnreadableResultsAreRefused(t *testing.T) {
 	tests := map[string]map[string]fakeResult{
-		"no thread columns": {replicaQuery: {cols: []string{"Something"}, rows: [][]any{{"x"}}}},
+		"no thread columns": {allReplicasQuery: {cols: []string{"Something"}, rows: [][]any{{"x"}}}},
 		"status row missing": {
-			statusQuery:  {cols: []string{"Variable_name", "Value"}, rows: [][]any{{"Threads_connected", "3"}}},
-			replicaQuery: {cols: newCols},
+			statusQuery:      {cols: []string{"Variable_name", "Value"}, rows: [][]any{{"Threads_connected", "3"}}},
+			allReplicasQuery: {cols: newCols},
 		},
 		"status not a number": {
-			statusQuery:  statusResult("many", "1"),
-			replicaQuery: {cols: newCols},
+			statusQuery:      statusResult("many", "1"),
+			allReplicasQuery: {cols: newCols},
 		},
 	}
 	for name, results := range tests {
@@ -238,7 +284,7 @@ func TestUnreadableResultsAreRefused(t *testing.T) {
 // The error and host columns are never read into the stats: planting
 // secrets in them must not change what the channel holds.
 func TestSensitiveReplicaColumnsAreNotRead(t *testing.T) {
-	s, _ := newFakeSession(t, map[string]fakeResult{replicaQuery: {cols: newCols, rows: [][]any{
+	s, _ := newFakeSession(t, map[string]fakeResult{allReplicasQuery: {cols: newCols, rows: [][]any{
 		replicaRow("Yes", "Yes", "1", "a"),
 	}}})
 	st, _ := s.Server(context.Background())

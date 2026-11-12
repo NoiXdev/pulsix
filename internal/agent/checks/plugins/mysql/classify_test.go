@@ -21,6 +21,9 @@ func TestClassify(t *testing.T) {
 	}{
 		{"access denied", myErr(1045, "Access denied for user '"+plantedUser+"'@'"+plantedHost+"' (using password: YES)"), "authentication failed (error 1045)"},
 		{"db access denied", myErr(1044, "x"), "authentication failed (error 1044)"},
+		{"host not allowed", myErr(1130, "Host '"+plantedHost+"' is not allowed to connect"), "authentication failed (error 1130)"},
+		{"password expired", myErr(1820, "x"), "authentication failed (error 1820)"},
+		{"password expired, no change allowed", myErr(1862, "x"), "authentication failed (error 1862)"},
 		{"auth plugin", myErr(1698, "x"), "authentication failed (error 1698)"},
 		{"command denied", myErr(1227, "Access denied; you need the PROCESS privilege"), "permission denied (error 1227)"},
 		{"table denied", myErr(1142, "x"), "permission denied (error 1142)"},

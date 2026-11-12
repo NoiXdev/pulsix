@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	"github.com/go-sql-driver/mysql"
 	"strings"
 	"testing"
 	"time"
@@ -94,8 +95,8 @@ func TestBuildConfigIPv6AndSocket(t *testing.T) {
 // must carry a silent one.
 func TestBuildConfigSilencesTheDriverLogger(t *testing.T) {
 	cfg := buildConfig(connSettings{host: "h", port: "1"})
-	if cfg.Logger == nil {
-		t.Fatal("no logger set: the driver would use its stderr default")
+	if _, ok := cfg.Logger.(*mysql.NopLogger); !ok {
+		t.Fatalf("logger is %T, want *mysql.NopLogger: the driver's default writes to stderr", cfg.Logger)
 	}
 	cfg.Logger.Print("must not print anywhere")
 }

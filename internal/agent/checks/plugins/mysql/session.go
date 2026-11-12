@@ -15,6 +15,8 @@ import (
 // the thread states and the lag are read: the error and host columns can
 // quote statements, data and credentials' owners, so they are never read.
 type replicaChannel struct {
+	// Name is the channel name; read only to skip Group Replication's.
+	Name    string
 	IO, SQL string
 	// Lag is nil when the server reports NULL.
 	Lag *float64
@@ -25,7 +27,9 @@ type replicaChannel struct {
 type serverStats struct {
 	Connections, MaxConnections int64
 	SlowQueries                 uint64
-	Replicas                    []replicaChannel
+	// Uptime is the server's seconds since start; a fall means a restart.
+	Uptime   uint64
+	Replicas []replicaChannel
 }
 
 // session is one open connection. The plugin never sees the driver; tests
@@ -71,11 +75,16 @@ const (
 	closeFloor = 100 * time.Millisecond
 	closeCap   = 2 * time.Second
 
-	statusQuery   = `SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected','Slow_queries')`
+	statusQuery   = `SHOW GLOBAL STATUS WHERE Variable_name IN ('Threads_connected','Slow_queries','Uptime')`
 	maxConnsQuery = `SELECT @@GLOBAL.max_connections`
 
-	replicaQuery = `SHOW REPLICA STATUS`
-	slaveQuery   = `SHOW SLAVE STATUS`
+	// The statements that read replication, newest first. The ALL forms are
+	// MariaDB's: plain SHOW REPLICA/SLAVE STATUS shows only its default
+	// connection, so a broken named one would read as no replication.
+	allReplicasQuery = `SHOW ALL REPLICAS STATUS` // MariaDB 10.5.1+
+	replicaQuery     = `SHOW REPLICA STATUS`      // MySQL 8.0.22+
+	allSlavesQuery   = `SHOW ALL SLAVES STATUS`   // older MariaDB
+	slaveQuery       = `SHOW SLAVE STATUS`        // older MySQL
 
 	// errSyntax is the server error for a statement it does not know: SHOW
 	// REPLICA STATUS on MySQL before 8.0.22.
@@ -103,7 +112,7 @@ func (s *mysqlSession) status(ctx context.Context, st *serverStats) error {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	var haveConns, haveSlow bool
+	var haveConns, haveSlow, haveUptime bool
 	for rows.Next() {
 		var name, value string
 		if err := rows.Scan(&name, &value); err != nil {
@@ -118,23 +127,32 @@ func (s *mysqlSession) status(ctx context.Context, st *serverStats) error {
 			st.Connections, haveConns = int64(n), true
 		case "Slow_queries":
 			st.SlowQueries, haveSlow = n, true
+		case "Uptime":
+			st.Uptime, haveUptime = n, true
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if !haveConns || !haveSlow {
+	if !haveConns || !haveSlow || !haveUptime {
 		return errUnexpectedResult
 	}
 	return nil
 }
 
-// replicas reads the replication status, newest syntax first.
+// replicas reads the replication status with the newest statement the
+// server knows: each syntax error (1064) moves to the next of the chain.
 func (s *mysqlSession) replicas(ctx context.Context) ([]replicaChannel, error) {
-	rows, err := s.conn.QueryContext(ctx, replicaQuery)
-	var me *mysql.MySQLError
-	if errors.As(err, &me) && me.Number == errSyntax {
-		rows, err = s.conn.QueryContext(ctx, slaveQuery)
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	for _, q := range []string{allReplicasQuery, replicaQuery, allSlavesQuery, slaveQuery} {
+		rows, err = s.conn.QueryContext(ctx, q)
+		var me *mysql.MySQLError
+		if !errors.As(err, &me) || me.Number != errSyntax {
+			break
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -176,6 +194,8 @@ func channelFromRow(cols []string, vals []sql.RawBytes) (replicaChannel, error) 
 			ch.IO, haveIO = string(vals[i]), true
 		case "replica_sql_running", "slave_sql_running":
 			ch.SQL, haveSQL = string(vals[i]), true
+		case "channel_name":
+			ch.Name = string(vals[i])
 		case "seconds_behind_source", "seconds_behind_master":
 			if vals[i] != nil {
 				if f, err := strconv.ParseFloat(string(vals[i]), 64); err == nil && f >= 0 {

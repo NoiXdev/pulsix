@@ -47,6 +47,8 @@ type plugin struct {
 	// slow turns Slow_queries into a rate. One instance per check key, and
 	// the scheduler collects an instance from one goroutine only.
 	slow dbcheck.Counter
+	// uptime is the previous round's; a lower one is a restart.
+	uptime uint64
 }
 
 // New returns the mysql plugin wired to the MySQL driver. It is a
@@ -121,6 +123,11 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 	if perr := ctx.Err(); perr != nil {
 		return nil, perr
 	}
+	if stats.Uptime < p.uptime {
+		// Restarted: the counter began again, possibly past its old value.
+		p.slow = dbcheck.Counter{}
+	}
+	p.uptime = stats.Uptime
 	rate, haveRate := p.slow.Rate(p.now(), stats.SlowQueries)
 	return observe(stats, rate, haveRate), nil
 }
@@ -138,10 +145,10 @@ func observe(st serverStats, slowRate float64, haveRate bool) []checks.Observati
 	} else {
 		obs = append(obs, checks.ErrObservation("", "mysql.connections_pct", errors.New("mysql: max_connections is not positive")))
 	}
-	state, lag, lagUnknown := replication(st.Replicas)
+	state, lag, lagErr := replication(st.Replicas)
 	obs = append(obs, checks.LabelObservation("", "mysql.replication_state", state))
-	if lagUnknown {
-		obs = append(obs, checks.ErrObservation("", "mysql.replication_lag_seconds", errors.New("mysql: replication is not running")))
+	if lagErr != "" {
+		obs = append(obs, checks.ErrObservation("", "mysql.replication_lag_seconds", errors.New(lagErr)))
 	} else {
 		obs = append(obs, checks.ValueObservation("", "mysql.replication_lag_seconds", lag))
 	}
@@ -166,15 +173,24 @@ func rank(state string) int {
 	return 0
 }
 
+// groupReplicationPrefix starts the names of MySQL Group Replication's
+// internal channels, which are not replication from a source.
+const groupReplicationPrefix = "group_replication_"
+
 // replication reduces the channels to the worst state and the largest lag.
-// lagUnknown is set when a channel that is not running reports no lag: the
-// server then has nothing to measure.
-func replication(chs []replicaChannel) (state string, lag float64, lagUnknown bool) {
-	if len(chs) == 0 {
-		return stateNone, 0, false
-	}
-	state = stateRunning
+// lagErr is set instead of a lag when a channel reports none: a channel that
+// is not running has nothing to measure; a running one with a NULL lag is
+// unknown. An unknown lag is never reported as 0.
+func replication(chs []replicaChannel) (state string, lag float64, lagErr string) {
+	state = stateNone
+	unknown := false
 	for _, ch := range chs {
+		if strings.HasPrefix(ch.Name, groupReplicationPrefix) {
+			continue
+		}
+		if state == stateNone {
+			state = stateRunning
+		}
 		s := stateStopped
 		switch {
 		case threadsYes(ch.IO) && threadsYes(ch.SQL):
@@ -189,10 +205,15 @@ func replication(chs []replicaChannel) (state string, lag float64, lagUnknown bo
 		case ch.Lag != nil:
 			lag = max(lag, *ch.Lag)
 		case s != stateRunning:
-			lagUnknown = true
+			lagErr = "mysql: replication is not running"
+		case lagErr == "":
+			unknown = true
 		}
 	}
-	return state, lag, lagUnknown
+	if lagErr == "" && unknown {
+		lagErr = "mysql: replication lag is unknown"
+	}
+	return state, lag, lagErr
 }
 
 var (
