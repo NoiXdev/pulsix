@@ -13,17 +13,18 @@ import (
 // agent's effective user (root under systemd and launchd) and nobody else
 // may read or write it. Directories are never reported: the agent creates
 // its data directory 0700 and writes every file in it 0600, so the
-// directory's own mode was never a gate and stays that way.
+// directory's own mode was never a gate and stays that way — also when
+// the data directory is a symlink to a directory elsewhere (inspect).
 type unixProtector struct{ euid int }
 
 func newProtector() protector { return unixProtector{euid: os.Geteuid()} }
 
 func (u unixProtector) Loose(path string) (string, error) {
-	fi, err := os.Lstat(path)
+	fi, dir, err := inspect(path)
 	if err != nil {
-		return "", fmt.Errorf("inspect %s: %w", path, err)
+		return "", err
 	}
-	if fi.IsDir() {
+	if dir {
 		return "", nil
 	}
 	var found []string
@@ -40,14 +41,31 @@ func (u unixProtector) Loose(path string) (string, error) {
 // a gate on Unix) and reports a file's owner when it is not the agent's
 // effective user.
 func (u unixProtector) ForeignOwner(path string) (string, error) {
-	fi, err := os.Lstat(path)
+	fi, dir, err := inspect(path)
 	if err != nil {
-		return "", fmt.Errorf("inspect %s: %w", path, err)
+		return "", err
 	}
-	if fi.IsDir() {
+	if dir {
 		return "", nil
 	}
 	return u.fileOwner(fi), nil
+}
+
+// inspect returns path's own (Lstat) info and whether path is a
+// directory, following a symlink for that decision only: a data directory
+// linked to another disk is still a directory, while a symlinked file
+// keeps the link's own view (CheckEnvFile refuses that link outright).
+func inspect(path string) (os.FileInfo, bool, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect %s: %w", path, err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return fi, fi.IsDir(), nil
+	}
+	// A dangling link is not a directory; the link itself is judged.
+	target, statErr := os.Stat(path)
+	return fi, statErr == nil && target.IsDir(), nil
 }
 
 func (u unixProtector) fileOwner(fi os.FileInfo) string {
@@ -67,12 +85,12 @@ func (unixProtector) LooseEntry(string) (string, error) { return "", nil }
 // Protect drops every group and other bit: 0700 for a directory, 0600 for
 // a file (a secret file has no business being executable).
 func (unixProtector) Protect(path string) error {
-	fi, err := os.Lstat(path)
+	_, dir, err := inspect(path)
 	if err != nil {
-		return fmt.Errorf("inspect %s: %w", path, err)
+		return err
 	}
 	mode := os.FileMode(0o600)
-	if fi.IsDir() {
+	if dir {
 		mode = 0o700
 	}
 	if err := os.Chmod(path, mode); err != nil {

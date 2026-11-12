@@ -122,3 +122,79 @@ func TestUnixEnsureDataDirIgnoresEntries(t *testing.T) {
 		t.Fatalf("ensureDataDir = %v, want nil", err)
 	}
 }
+
+// TestUnixEnsureDataDirFollowsASymlinkedDir: a data directory that is a
+// symlink to a directory elsewhere (another disk) passes as before, for the
+// default and a custom directory alike, and its target's mode is untouched.
+func TestUnixEnsureDataDirFollowsASymlinkedDir(t *testing.T) {
+	for _, isDefault := range []bool{true, false} {
+		root := t.TempDir()
+		target := filepath.Join(root, "target")
+		if err := os.Mkdir(target, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(root, "pulsix")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureDataDir(newProtector(), link, isDefault, quietLogger()); err != nil {
+			t.Errorf("ensureDataDir(symlink, isDefault=%v) = %v, want nil", isDefault, err)
+		}
+		fi, err := os.Stat(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode().Perm(); got != 0o755 {
+			t.Errorf("target mode after ensureDataDir(isDefault=%v) = %04o, want 0755", isDefault, got)
+		}
+	}
+}
+
+// TestUnixProtectorSymlinkedDir: a symlink to a directory is a directory
+// for Loose, ForeignOwner and Protect (0700 on the target), while a
+// symlinked file keeps the link's own (Lstat) view.
+func TestUnixProtectorSymlinkedDir(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	p := newProtector()
+	if got, err := p.Loose(link); err != nil || got != "" {
+		t.Errorf("Loose(dir link) = %q, %v; want empty", got, err)
+	}
+	if got, err := p.ForeignOwner(link); err != nil || got != "" {
+		t.Errorf("ForeignOwner(dir link) = %q, %v; want empty", got, err)
+	}
+	if err := p.Protect(link); err != nil {
+		t.Fatalf("Protect(dir link) = %v", err)
+	}
+	if fi, err := os.Stat(target); err != nil {
+		t.Fatal(err)
+	} else if got := fi.Mode().Perm(); got != 0o700 {
+		t.Errorf("target after Protect(dir link) = %04o, want 0700", got)
+	}
+
+	file := filepath.Join(root, "agent.env")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fileLink := filepath.Join(root, "agent.env.link")
+	if err := os.Symlink(file, fileLink); err != nil {
+		t.Fatal(err)
+	}
+	// The link's own mode (0755 on macOS, 0777 on Linux) still counts.
+	if got, err := p.Loose(fileLink); err != nil || got == "" {
+		t.Errorf("Loose(file link) = %q, %v; want the link's mode", got, err)
+	}
+}
