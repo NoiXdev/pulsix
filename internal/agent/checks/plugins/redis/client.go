@@ -51,11 +51,13 @@ func dial(ctx context.Context, s settings) (*client, error) {
 	return &client{conn: conn, r: bufio.NewReaderSize(conn, maxLine), stop: stop}, nil
 }
 
-// Close ends the connection. Its writes are bounded by the deadline set in
-// dial, so it cannot hold the round.
+// Close ends the connection, then stops the cancellation watcher. The
+// watcher stays armed during the close so a caller's cancel still closes the
+// raw connection under a TLS close_notify (which sets its own 5 s write
+// deadline); the round's deadline on the connection bounds it as well.
 func (c *client) Close() {
-	c.stop()
 	_ = c.conn.Close()
+	c.stop()
 }
 
 // do sends one command and reads its reply.

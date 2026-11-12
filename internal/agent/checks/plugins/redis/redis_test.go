@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,12 +170,17 @@ func TestInfoParsingToleratesNoise(t *testing.T) {
 		"used_memory:1000\r\nmaxmemory:2000\r\nconnected_clients:2\r\nrole:master\r\nevicted_keys:0\r\n" +
 		"used_memory:2000\r\n" // the last duplicate wins
 	s := serve(t, nil, bulk(text))
-	p, _ := newTestPlugin()
+	p, clk := newTestPlugin()
 	obs := collect(t, p, fieldsFor(s, nil))
 	mustValue(t, obs, "redis.memory_used_bytes", 2000)
 	mustValue(t, obs, "redis.memory_pct", 100)
-	// uptime_in_seconds absent: the rate still works
+	// uptime_in_seconds absent: the first round has no rate yet, and a
+	// second one still yields it.
 	mustAbsent(t, obs, "redis.evicted_keys_per_s")
+	clk.t = clk.t.Add(10 * time.Second)
+	text2 := strings.Replace(text, "evicted_keys:0", "evicted_keys:30", 1)
+	s = serve(t, nil, bulk(text2))
+	mustValue(t, collect(t, p, fieldsFor(s, nil)), "redis.evicted_keys_per_s", 3)
 }
 
 func TestEvictionRate(t *testing.T) {

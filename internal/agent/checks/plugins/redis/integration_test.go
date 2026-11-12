@@ -142,10 +142,9 @@ func TestAgainstARealServer(t *testing.T) {
 		}
 	})
 
-	t.Run("a user without the INFO permission", func(t *testing.T) {
-		// default user with the password may INFO; use the ACL user on a
-		// command it lacks through a direct client to confirm the mapping
-		// against a real -NOPERM.
+	t.Run("a command the ACL user lacks is permission denied", func(t *testing.T) {
+		// The ACL user may only INFO and AUTH: FLUSHALL through a direct
+		// client confirms the mapping against a real -NOPERM.
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		cl, err := dial(cctx, settings{network: "tcp", addr: host + ":" + port, host: host, tls: "false"})
