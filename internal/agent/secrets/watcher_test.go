@@ -2,7 +2,6 @@ package secrets
 
 import (
 	"bytes"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,45 +11,30 @@ import (
 	"time"
 )
 
-// fakeInfo is the part of a FileInfo the watcher compares.
-type fakeInfo struct {
-	size  int64
-	mtime time.Time
-	mode  fs.FileMode
-}
-
-func (f fakeInfo) Name() string       { return "agent.yaml" }
-func (f fakeInfo) Size() int64        { return f.size }
-func (f fakeInfo) Mode() fs.FileMode  { return f.mode }
-func (f fakeInfo) ModTime() time.Time { return f.mtime }
-func (f fakeInfo) IsDir() bool        { return false }
-func (f fakeInfo) Sys() any           { return nil }
-
-// watchFixture drives a Watcher with a fake clock and a fake stat over a
-// real file: the test decides what the stat reports, so it can change the
-// file's content without the watcher noticing, or the other way round.
+// watchFixture drives a Watcher with a fake clock over a real file.
 type watchFixture struct {
 	t     *testing.T
 	path  string
 	mu    sync.Mutex
 	now   time.Time
-	info  *fakeInfo // nil: the file does not exist
-	stats int
 	check *markerCheck
 	log   bytes.Buffer
 	w     *Watcher
 }
 
 func newWatchFixture(t *testing.T) *watchFixture {
+	return newWatchFixtureAt(t, filepath.Join(t.TempDir(), "agent.yaml"))
+}
+
+func newWatchFixtureAt(t *testing.T, path string) *watchFixture {
 	f := &watchFixture{
 		t:     t,
-		path:  filepath.Join(t.TempDir(), "agent.yaml"),
+		path:  path,
 		now:   time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC),
 		check: &markerCheck{},
 	}
 	f.w = NewWatcher(f.path, f.checkFile,
 		WithClock(f.clock),
-		WithStat(f.stat),
 		WithLogger(slog.New(slog.NewTextHandler(&f.log, nil))))
 	return f
 }
@@ -61,33 +45,21 @@ func (f *watchFixture) clock() time.Time {
 	return f.now
 }
 
-func (f *watchFixture) stat(path string) (fs.FileInfo, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.stats++
-	if path != f.path {
-		f.t.Errorf("stat(%q), want %q", path, f.path)
-	}
-	if f.info == nil {
-		return nil, &fs.PathError{Op: "lstat", Path: path, Err: fs.ErrNotExist}
-	}
-	return *f.info, nil
-}
-
 func (f *watchFixture) checkFile(path string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.check.check(path)
 }
 
-// write puts content on disk and reports the given size and mtime offset
-// (seconds after the fixture's start) through the fake stat.
-func (f *watchFixture) write(content string, size int64, mtime int) {
+// write puts content on disk with a fixed modification time, so two
+// writes of the same size look alike to anything comparing size and time.
+func (f *watchFixture) write(content string) {
 	f.t.Helper()
 	writeFile(f.t, f.path, content)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.info = &fakeInfo{size: size, mtime: time.Date(2026, 11, 12, 9, 0, mtime, 0, time.UTC), mode: 0o600}
+	mtime := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(f.path, mtime, mtime); err != nil {
+		f.t.Fatal(err)
+	}
 }
 
 func (f *watchFixture) remove() {
@@ -95,9 +67,6 @@ func (f *watchFixture) remove() {
 	if err := os.Remove(f.path); err != nil {
 		f.t.Fatal(err)
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.info = nil
 }
 
 func (f *watchFixture) advance(d time.Duration) {
@@ -110,12 +79,6 @@ func (f *watchFixture) checks() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.check.calls
-}
-
-func (f *watchFixture) statCalls() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.stats
 }
 
 // expect asserts the watcher's current names and state; a state starting
@@ -142,7 +105,7 @@ func (f *watchFixture) expect(names, state string) {
 
 func TestWatcherLoadsAtStart(t *testing.T) {
 	f := newWatchFixture(t)
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  pg:\n    a: b\n")
 	f.expect("pg", "ok")
 	if f.checks() != 1 {
 		t.Fatalf("checks = %d, want 1", f.checks())
@@ -156,40 +119,30 @@ func TestWatcherAbsentFile(t *testing.T) {
 
 func TestWatcherChecksAtMostOncePerMinute(t *testing.T) {
 	f := newWatchFixture(t)
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  pg:\n    a: b\n")
 	f.expect("pg", "ok")
-	f.write("secrets:\n  other:\n    a: b\n", 25, 5)
+	f.write("secrets:\n  other:\n    a: b\n")
 	f.advance(59 * time.Second)
 	f.expect("pg", "ok")
-	if f.statCalls() != 1 || f.checks() != 1 {
-		t.Fatalf("within the minute: stats = %d, checks = %d; want 1 and 1", f.statCalls(), f.checks())
+	if f.checks() != 1 {
+		t.Fatalf("within the minute: checks = %d, want 1", f.checks())
 	}
 	f.advance(time.Second)
 	f.expect("other", "ok")
-	if f.statCalls() != 2 {
-		t.Fatalf("stats = %d, want 2", f.statCalls())
+	if f.checks() != 2 {
+		t.Fatalf("checks = %d, want 2", f.checks())
 	}
 }
 
-func TestWatcherRereadsOnlyWhenTheFileChanged(t *testing.T) {
+// TestWatcherRereadsOnEveryLook: the file is read again every minute, even
+// when its size and modification time did not change.
+func TestWatcherRereadsOnEveryLook(t *testing.T) {
 	f := newWatchFixture(t)
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
-	f.expect("pg", "ok")
-
-	// Content changed on disk, but size and mtime as before: not re-read.
-	f.write("secrets:\n  xx:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  aa:\n    a: b\n")
+	f.expect("aa", "ok")
+	f.write("secrets:\n  bb:\n    a: b\n") // same size, same mtime
 	f.advance(time.Minute)
-	f.expect("pg", "ok")
-
-	// The modification time changed: re-read.
-	f.write("secrets:\n  mt:\n    a: b\n", 20, 1)
-	f.advance(time.Minute)
-	f.expect("mt", "ok")
-
-	// Only the size changed: re-read.
-	f.write("secrets:\n  sz:\n    a: b\n", 21, 1)
-	f.advance(time.Minute)
-	f.expect("sz", "ok")
+	f.expect("bb", "ok")
 }
 
 // TestWatcherRechecksProtectionWhenUnchanged: chmod and an access-list
@@ -197,17 +150,17 @@ func TestWatcherRereadsOnlyWhenTheFileChanged(t *testing.T) {
 // minute anyway, and a file that lost it drops every secret.
 func TestWatcherRechecksProtectionWhenUnchanged(t *testing.T) {
 	f := newWatchFixture(t)
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  pg:\n    a: b\n")
 	f.expect("pg", "ok")
-	// The marker makes the check refuse; the stat reports no change.
-	f.write(looseMarker+"secrets:\n  pg:\n    a: b\n", 20, 0)
+	// The marker makes the check refuse.
+	f.write(looseMarker + "secrets:\n  pg:\n    a: b\n")
 	f.advance(time.Minute)
 	f.expect("", "!mode 0644")
 	if f.checks() != 2 {
 		t.Fatalf("checks = %d, want 2", f.checks())
 	}
 	// Fixed (protection restored, nothing else changed): reloaded.
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  pg:\n    a: b\n")
 	f.advance(time.Minute)
 	f.expect("pg", "ok")
 }
@@ -215,15 +168,15 @@ func TestWatcherRechecksProtectionWhenUnchanged(t *testing.T) {
 // TestWatcherBrokenFileDropsAllSecrets: never the last good set.
 func TestWatcherBrokenFileDropsAllSecrets(t *testing.T) {
 	f := newWatchFixture(t)
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  pg:\n    a: b\n")
 	f.expect("pg", "ok")
-	f.write("secrets:\n  pg:\n    a: "+secretValue+": x\n", 30, 1)
+	f.write("secrets:\n  pg:\n    a: " + secretValue + ": x\n")
 	f.advance(time.Minute)
 	f.expect("", "!line 3: not valid YAML")
 	// Still broken a minute later, nothing changed: still nothing.
 	f.advance(time.Minute)
 	f.expect("", "!line 3")
-	f.write("secrets:\n  fixed:\n    a: b\n", 31, 2)
+	f.write("secrets:\n  fixed:\n    a: b\n")
 	f.advance(time.Minute)
 	f.expect("fixed", "ok")
 }
@@ -231,7 +184,7 @@ func TestWatcherBrokenFileDropsAllSecrets(t *testing.T) {
 func TestWatcherFileAppearsAndDisappears(t *testing.T) {
 	f := newWatchFixture(t)
 	f.expect("", "absent")
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  pg:\n    a: b\n")
 	f.advance(time.Minute)
 	f.expect("pg", "ok")
 	f.remove()
@@ -241,11 +194,11 @@ func TestWatcherFileAppearsAndDisappears(t *testing.T) {
 
 func TestWatcherLogsChangesWithoutValues(t *testing.T) {
 	f := newWatchFixture(t)
-	f.write("secrets:\n  pg:\n    password: "+secretValue+"\n", 20, 0)
+	f.write("secrets:\n  pg:\n    password: " + secretValue + "\n")
 	f.expect("pg", "ok")
 	f.advance(time.Minute)
 	f.expect("pg", "ok") // unchanged: no second line
-	f.write("secrets:\n  pg:\n    password: "+secretValue+": x\n", 30, 1)
+	f.write("secrets:\n  pg:\n    password: " + secretValue + ": x\n")
 	f.advance(time.Minute)
 	f.expect("", "!line 3")
 	log := f.log.String()
@@ -264,7 +217,7 @@ func TestWatcherLogsChangesWithoutValues(t *testing.T) {
 // watcher from their own goroutines (run with -race).
 func TestWatcherConcurrentReaders(t *testing.T) {
 	f := newWatchFixture(t)
-	f.write("secrets:\n  pg:\n    a: b\n", 20, 0)
+	f.write("secrets:\n  pg:\n    a: b\n")
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)

@@ -3,9 +3,7 @@ package secrets
 import (
 	"errors"
 	"io"
-	"io/fs"
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 )
@@ -24,32 +22,27 @@ const (
 // checkInterval is how often, at most, the watcher looks at the file.
 const checkInterval = time.Minute
 
-// Watcher holds the secrets of one configuration file and re-reads it when
-// it changes. It looks at the file on the first Current and then at most
+// Watcher holds the secrets of one configuration file and reads it again
+// on every look. It looks at the file on the first Current and then at most
 // once per checkInterval, on the Current that finds the interval over: no
 // goroutine of its own. It is safe for concurrent use.
+//
+// Every look is a full Load — protection check, read and parse — whether
+// or not the file's size, time or mode changed. The file is at most 1 MiB
+// and read at most once a minute, and no stat-based shortcut can see every
+// change that matters (an access-list edit, a rewrite within one timestamp
+// tick, a path the agent can no longer look at).
 type Watcher struct {
 	path  string
 	check Check
 	now   func() time.Time
-	stat  func(string) (fs.FileInfo, error)
 	log   *slog.Logger
 
-	mu      sync.Mutex
-	looked  bool
-	lastAt  time.Time
-	last    fingerprint
-	set     Set
-	state   State
-	healthy bool // the last look loaded the file or found it absent
-}
-
-// fingerprint is what tells the watcher the file changed.
-type fingerprint struct {
-	exists bool
-	size   int64
-	mtime  time.Time
-	mode   fs.FileMode
+	mu     sync.Mutex
+	looked bool
+	lastAt time.Time
+	set    Set
+	state  State
 }
 
 // Option configures a Watcher.
@@ -57,12 +50,6 @@ type Option func(*Watcher)
 
 // WithClock replaces the wall clock.
 func WithClock(now func() time.Time) Option { return func(w *Watcher) { w.now = now } }
-
-// WithStat replaces os.Lstat, which tells the watcher whether the file
-// changed.
-func WithStat(stat func(string) (fs.FileInfo, error)) Option {
-	return func(w *Watcher) { w.stat = stat }
-}
 
 // WithLogger logs every change of the loaded names or the state.
 func WithLogger(log *slog.Logger) Option { return func(w *Watcher) { w.log = log } }
@@ -73,7 +60,6 @@ func NewWatcher(path string, check Check, opts ...Option) *Watcher {
 		path:  path,
 		check: check,
 		now:   time.Now,
-		stat:  os.Lstat,
 		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	for _, o := range opts {
@@ -85,12 +71,11 @@ func NewWatcher(path string, check Check, opts ...Option) *Watcher {
 // Path is the watched file.
 func (w *Watcher) Path() string { return w.path }
 
-// Current returns the secrets and the file's state, looking at the file
-// first when it has not done so for checkInterval. The file is re-read
-// when its size, modification time or mode changed, when it appeared or
-// disappeared, and after a failed read; otherwise only its protection is
-// checked again (an access-list change leaves size and time alone). Any
-// failure leaves no secrets at all, never the last good ones.
+// Current returns the secrets and the file's state, reading the file
+// first when it has not done so for checkInterval. Only a file that does
+// not exist is StateAbsent; any other failure, a path the agent cannot
+// look at included, is an error state. Any failure leaves no secrets at
+// all, never the last good ones.
 func (w *Watcher) Current() (Set, State) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -102,43 +87,24 @@ func (w *Watcher) Current() (Set, State) {
 	return w.set, w.state
 }
 
-// look runs one check of the file; w.mu is held.
+// look reads the file once; w.mu is held.
 func (w *Watcher) look() {
-	fp := w.fingerprint()
-	if w.looked && w.healthy && fp == w.last {
-		if !fp.exists {
-			return
-		}
-		if err := w.check(w.path); err != nil {
-			w.update(fp, Set{}, State(err.Error()), false)
-		}
-		return
-	}
 	set, err := Load(w.path, w.check)
 	switch {
 	case err == nil:
-		w.update(fp, set, StateOK, true)
+		w.update(set, StateOK)
 	case errors.Is(err, ErrAbsent):
-		w.update(fp, Set{}, StateAbsent, true)
+		w.update(Set{}, StateAbsent)
 	default:
-		w.update(fp, Set{}, State(err.Error()), false)
+		w.update(Set{}, State(err.Error()))
 	}
-}
-
-func (w *Watcher) fingerprint() fingerprint {
-	fi, err := w.stat(w.path)
-	if err != nil {
-		// Missing or unreadable: Load tells which.
-		return fingerprint{}
-	}
-	return fingerprint{exists: true, size: fi.Size(), mtime: fi.ModTime(), mode: fi.Mode()}
 }
 
 // update stores a look's outcome and logs it when the names or the state
 // changed.
-func (w *Watcher) update(fp fingerprint, set Set, state State, healthy bool) {
+func (w *Watcher) update(set Set, state State) {
 	changed := !w.looked || state != w.state || !equalNames(set.Names(), w.set.Names())
-	w.last, w.set, w.state, w.healthy = fp, set, state, healthy
+	w.set, w.state = set, state
 	if !changed {
 		return
 	}

@@ -52,6 +52,12 @@ func errAt(n *yaml.Node, reason string) error {
 // namePattern; duplicate keys, aliases, nulls, nested values and a second
 // document are refused. A scalar value is taken as written, so an unquoted
 // number or boolean (port: 5432, tls: true) is the text "5432" or "true".
+//
+// Explicit YAML tags are refused, wherever they stand, with the fixed
+// reason badTagReason — except !!str on a single value (a key or a field
+// value), which only says what every value already is. A tag such as
+// !!binary, !!int or a custom !vault would otherwise suggest a decoding
+// this format never does.
 func parse(data []byte) (Set, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
@@ -75,6 +81,9 @@ func parse(data []byte) (Set, error) {
 			return Set{}, nil
 		}
 		root = root.Content[0]
+	}
+	if err := checkTags(root); err != nil {
+		return Set{}, err
 	}
 	if isNull(root) {
 		return Set{}, nil
@@ -166,6 +175,23 @@ func parseFields(name, n *yaml.Node) (map[string]string, error) {
 		out[key.Value] = val.Value
 	}
 	return out, nil
+}
+
+// badTagReason is the fixed reason for an explicit tag parse refuses.
+const badTagReason = "YAML tags are not supported, except !!str on a value"
+
+// checkTags refuses the first explicit tag, in document order, that is not
+// !!str on a scalar.
+func checkTags(n *yaml.Node) error {
+	if n.Style&yaml.TaggedStyle != 0 && (n.Kind != yaml.ScalarNode || n.ShortTag() != "!!str") {
+		return errAt(n, badTagReason)
+	}
+	for _, c := range n.Content {
+		if err := checkTags(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkKey refuses a key that is not a plain name.

@@ -61,7 +61,7 @@ func loadOnce(path string, check Check) (Set, error) {
 		}
 		return Set{}, fmt.Errorf("%s is not a regular file", path)
 	}
-	f, err := os.Open(path) // #nosec G304 -- the operator names the file
+	f, err := openFile(path)
 	if err != nil {
 		return Set{}, fmt.Errorf("open %s: %w", path, err)
 	}

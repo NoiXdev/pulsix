@@ -133,6 +133,28 @@ func TestParseRefusesWithoutQuotingTheFile(t *testing.T) {
 			"not valid YAML (an alias refers to an unknown anchor)"},
 		{"syntax: unterminated quote", "secrets:\n  pg:\n    password: \"" + secretValue + "\n",
 			"line 3: not valid YAML (found unexpected end of stream)"},
+		// A problem not on the allowlist keeps its line and nothing else.
+		{"syntax: unlisted problem", "secrets:\n  pg:\n    password: |0\n      " + secretValue + "\n",
+			"line 3: not valid YAML"},
+		{"syntax: unlisted problem without a line", "%FOO " + secretValue + "\n---\nsecrets: {}\n",
+			"not valid YAML"},
+		// Explicit tags: only !!str on a value, which changes nothing.
+		{"tag: binary", "secrets:\n  pg:\n    password: !!binary " + secretValue + "\n",
+			"line 3, column 15: " + badTag},
+		{"tag: custom", "secrets:\n  pg:\n    password: !vault " + secretValue + "\n",
+			"line 3, column 15: " + badTag},
+		{"tag: int", "secrets:\n  pg:\n    port: !!int 5432\n",
+			"line 3, column 11: " + badTag},
+		{"tag: null", "secrets:\n  pg:\n    password: !!null\n",
+			"line 3, column 15: " + badTag},
+		{"tag: on a secret", "secrets:\n  pg: !!map\n    password: " + secretValue + "\n",
+			"line 2, column 7: " + badTag},
+		{"tag: str on a secret", "secrets:\n  pg: !!str\n    password: " + secretValue + "\n",
+			"line 2, column 7: " + badTag},
+		{"tag: on a secret name", "secrets:\n  !!int 5:\n    password: " + secretValue + "\n",
+			"line 2, column 3: " + badTag},
+		{"tag: on the file", "!!map\nsecrets:\n  pg:\n    password: " + secretValue + "\n",
+			"line 1, column 1: " + badTag},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -147,6 +169,19 @@ func TestParseRefusesWithoutQuotingTheFile(t *testing.T) {
 				t.Fatalf("error = %q, want %q", err, tt.want)
 			}
 		})
+	}
+}
+
+// badTag is the reason given for an explicit tag other than !!str.
+const badTag = "YAML tags are not supported, except !!str on a value"
+
+func TestParseAcceptsTheStrTag(t *testing.T) {
+	set, err := parse([]byte("secrets:\n  !!str pg:\n    !!str port: !!str 5432\n    tls: ! true\n"))
+	if err != nil {
+		t.Fatalf("parse = %v", err)
+	}
+	if f, ok := set.Fields("pg"); !ok || !reflect.DeepEqual(f, map[string]string{"port": "5432", "tls": "true"}) {
+		t.Fatalf("Fields(pg) = %v, %v", f, ok)
 	}
 }
 

@@ -1,6 +1,6 @@
 // Package secrets reads the named secrets an operator keeps in the agent's
 // local configuration file (agent.yaml): it checks the file's protection,
-// parses it strictly and re-reads it when it changes. Field values never
+// parses it strictly and reads it again once a minute. Field values never
 // leave this package except through Set.Fields; every error, state and
 // printed form names secrets and file positions only.
 package secrets
