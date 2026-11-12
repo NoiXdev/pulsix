@@ -49,6 +49,20 @@ func reportableItem(item string) bool {
 	}) < 0
 }
 
+// maxLabelLen is the manager's bound on an observation's label
+// (internal/checks.MaxLabelLen; a test keeps the two equal).
+const maxLabelLen = 512
+
+// reportableLabel reports whether the check-results contract accepts label:
+// at most maxLabelLen bytes and no NUL byte (internal/checks.withinContract,
+// backlog 7.110 and 7.115), and valid UTF-8, because the label is a proto3
+// string gRPC refuses to encode otherwise (backlog 7.52). The built-in
+// plugins name their labels from fixed sets; this guards one that relays a
+// string someone else chose (docker's state and health).
+func reportableLabel(label string) bool {
+	return len(label) <= maxLabelLen && utf8.ValidString(label) && !strings.ContainsRune(label, 0)
+}
+
 // partitionLister is the disk.Partitions probe (the mounted filesystem
 // list disk discovery walks when no "mounts" allow-list is configured).
 type partitionLister interface {

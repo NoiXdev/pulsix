@@ -24,6 +24,11 @@ type fakeDockerEngine struct {
 	peak         atomic.Int32
 	// blockUntilDone makes List wait for ctx.
 	blockUntilDone bool
+	// blockInspect makes Inspect wait for ctx; inspecting is closed once
+	// the first Inspect is in.
+	blockInspect bool
+	inspecting   chan struct{}
+	once         sync.Once
 }
 
 func (f *fakeDockerEngine) List(ctx context.Context, labelFilter string) ([]containerSummary, error) {
@@ -52,6 +57,11 @@ func (f *fakeDockerEngine) Inspect(ctx context.Context, id string) (containerDet
 	}
 	if f.inspectDelay > 0 {
 		time.Sleep(f.inspectDelay)
+	}
+	if f.blockInspect {
+		f.once.Do(func() { close(f.inspecting) })
+		<-ctx.Done()
+		return containerDetail{}, ctx.Err()
 	}
 	if err := f.inspectErr[id]; err != nil {
 		return containerDetail{}, err
@@ -113,8 +123,10 @@ func TestDockerAllSelection(t *testing.T) {
 	if v := findObs(t, obs, "web", "docker.restart_count").Value; v == nil || *v != 0 {
 		t.Errorf("web restarts = %v", v)
 	}
-	if hasObs(obs, "web", "docker.exit_code") {
-		t.Error("running container has exit_code")
+	// The engine's last exit code is reported whatever the state, so a
+	// restarted container does not keep a stale one.
+	if v := findObs(t, obs, "web", "docker.exit_code").Value; v == nil || *v != 0 {
+		t.Errorf("web exit = %v", v)
 	}
 	if l := findObs(t, obs, "job", "docker.state").Label; l == nil || *l != "exited" {
 		t.Errorf("job state = %v", l)
@@ -342,4 +354,104 @@ func TestDockerCollectIsBounded(t *testing.T) {
 		t.Errorf("Collect took %v", d)
 	}
 	assertEngineDown(t, obs, err)
+}
+
+func TestDockerDeadContainerReportsItsExitCode(t *testing.T) {
+	f := &fakeDockerEngine{
+		containers: []containerSummary{{ID: "d", Name: "zombie", State: "dead"}},
+		details:    map[string]containerDetail{"d": {Health: "none", ExitCode: 137}},
+	}
+	obs, err := newTestDocker(f, nil).Collect(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := findObs(t, obs, "zombie", "docker.exit_code").Value; v == nil || *v != 137 {
+		t.Errorf("exit = %v, want 137", v)
+	}
+}
+
+// TestDockerInspectErrorNamesTheContainerOnce: the client's error already
+// says "docker: inspect container: ..."; the observation names the
+// container instead of repeating the prefix.
+func TestDockerInspectErrorNamesTheContainerOnce(t *testing.T) {
+	f := basicDockerFake()
+	f.inspectErr = map[string]error{"a": opError("inspect container", errors.New("status 500"))}
+	obs, err := newTestDocker(f, nil).Collect(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := findObs(t, obs, "web", "docker.state").Err, "docker: inspect web: status 500"; got != want {
+		t.Errorf("Err = %q, want %q", got, want)
+	}
+}
+
+// TestDockerBareLabelKeyIsTheOptOutKey: a label without "=" is the opt-out
+// key itself in "all" mode.
+func TestDockerBareLabelKeyIsTheOptOutKey(t *testing.T) {
+	f := &fakeDockerEngine{
+		containers: []containerSummary{
+			{ID: "x", Name: "x", State: "running", Labels: map[string]string{"watch": "false"}},
+			{ID: "y", Name: "y", State: "running", Labels: map[string]string{"pulsix.monitor": "false"}},
+		},
+		details: map[string]containerDetail{"x": {Health: "none"}, "y": {Health: "none"}},
+	}
+	obs, err := newTestDocker(f, nil).Collect(context.Background(), map[string]any{"label": "watch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasObs(obs, "x", "docker.state") || !hasObs(obs, "y", "docker.state") {
+		t.Errorf("bare opt-out key not honoured: %+v", obs)
+	}
+}
+
+// TestDockerParentCancelledDuringList: the agent shutting down (the
+// caller's context ending, not the plugin's own deadline) fails Collect
+// outright, per the Plugin contract, with no error observations.
+func TestDockerParentCancelledDuringList(t *testing.T) {
+	f := &fakeDockerEngine{blockUntilDone: true}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	obs, err := newTestDocker(f, nil).Collect(ctx, nil)
+	if obs != nil || !errors.Is(err, context.Canceled) {
+		t.Errorf("obs %+v err %v, want nil and context.Canceled", obs, err)
+	}
+}
+
+func TestDockerParentCancelledDuringInspect(t *testing.T) {
+	f := basicDockerFake()
+	f.blockInspect = true
+	f.inspecting = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-f.inspecting
+		cancel()
+	}()
+	obs, err := newTestDocker(f, nil).Collect(ctx, nil)
+	if obs != nil || !errors.Is(err, context.Canceled) {
+		t.Errorf("obs %+v err %v, want nil and context.Canceled", obs, err)
+	}
+}
+
+// TestDockerLocalTimeoutDuringInspectStillReports: the plugin's own
+// deadline firing mid-inspect is not a shutdown; what was gathered is
+// reported, the unanswered inspects as error observations.
+func TestDockerLocalTimeoutDuringInspectStillReports(t *testing.T) {
+	f := basicDockerFake()
+	f.blockInspect = true
+	f.inspecting = make(chan struct{})
+	p := newTestDocker(f, nil)
+	p.timeout = 100 * time.Millisecond
+	obs, err := p.Collect(context.Background(), nil)
+	if err == nil {
+		t.Error("want an advisory error")
+	}
+	if o := findObs(t, obs, "web", "docker.state"); o.Err == "" {
+		t.Errorf("web state = %+v, want an Err observation", o)
+	}
+	if v := findObs(t, obs, "", "docker.containers_total").Value; v == nil || *v != 2 {
+		t.Errorf("total = %v", v)
+	}
 }

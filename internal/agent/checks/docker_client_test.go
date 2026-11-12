@@ -50,7 +50,7 @@ func engineFor(t *testing.T, h http.Handler) dockerEngine {
 
 func TestClientListsAllContainers(t *testing.T) {
 	e := engineFor(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/v1.41/containers/json" {
+		if r.Method != http.MethodGet || r.URL.Path != "/containers/json" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		q := r.URL.Query()
@@ -114,11 +114,11 @@ func TestClientInspects(t *testing.T) {
 			t.Errorf("method %s", r.Method)
 		}
 		switch r.URL.Path {
-		case "/v1.41/containers/c1/json":
+		case "/containers/c1/json":
 			_, _ = w.Write([]byte(`{"RestartCount":4,"State":{"ExitCode":137,"Health":{"Status":"unhealthy"}},"Config":{"Env":["SECRET=x"]}}`))
-		case "/v1.41/containers/c2/json":
+		case "/containers/c2/json":
 			_, _ = w.Write([]byte(`{"RestartCount":0,"State":{"ExitCode":0}}`))
-		case "/v1.41/containers/c3/json":
+		case "/containers/c3/json":
 			_, _ = w.Write([]byte(`{"State":{"Health":{"Status":""}}}`))
 		default:
 			t.Errorf("path %s", r.URL.Path)
@@ -162,6 +162,25 @@ func TestClientNeverQuotesTheBody(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "500") || strings.Contains(err.Error(), "TOPSECRET") {
 			t.Errorf("err = %v", err)
 		}
+	}
+}
+
+// TestClientExplainsARefusedRequest: an engine that does not serve the
+// request at all (an API it no longer supports, for one) answers 400. The
+// error says so in plain words and, like every other status, never quotes
+// the body.
+func TestClientExplainsARefusedRequest(t *testing.T) {
+	e := engineFor(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte("client version 1.41 is too old TOPSECRET"))
+	}))
+	_, err := e.List(context.Background(), "")
+	if err == nil || err.Error() != "docker: list containers: engine refused the request (status 400)" {
+		t.Errorf("list err = %v", err)
+	}
+	_, err = e.Inspect(context.Background(), "x")
+	if err == nil || !strings.Contains(err.Error(), "engine refused the request (status 400)") || strings.Contains(err.Error(), "TOPSECRET") {
+		t.Errorf("inspect err = %v", err)
 	}
 }
 

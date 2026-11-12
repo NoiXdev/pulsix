@@ -15,11 +15,18 @@ import (
 // The docker check reads container state from the Docker Engine API over a
 // local socket with plain GETs; no SDK is involved.
 //
-// apiPrefix pins API v1.41 (Docker 20.10+). Podman's Docker-compatible API
-// serves it too, and a pinned version keeps the answer shape stable across
-// engine upgrades.
+// The paths carry no API version ("/containers/json", not
+// "/v1.41/containers/json"): an unversioned request is served at the
+// engine's own current API version. A pinned version breaks as soon as an
+// engine drops it — Docker Engine 29.0 to 29.2 refuse anything below 1.44
+// with a 400 — and the four fields read (Id, Names, State and Labels from
+// the list; RestartCount, State.ExitCode and State.Health.Status from the
+// inspect) have kept their shape across every version since. Podman's
+// Docker-compatible API serves the unversioned paths too.
 const (
-	apiPrefix = "/v1.41"
+	// opList and opInspect name the client's two requests in its errors.
+	opList    = "list containers"
+	opInspect = "inspect container"
 
 	// maxListBody and maxInspectBody bound what is read from the socket, so
 	// something that is not Docker (or a runaway engine) cannot exhaust memory.
@@ -28,6 +35,19 @@ const (
 
 	shortIDLen = 12
 )
+
+// engineError is the client's failure: its text reads "docker: <op>:
+// <cause>". The op stays separate so a caller that names the container
+// itself can report the cause without repeating the step.
+type engineError struct {
+	op  string
+	err error
+}
+
+func (e *engineError) Error() string { return "docker: " + e.op + ": " + e.err.Error() }
+func (e *engineError) Unwrap() error { return e.err }
+
+func opError(op string, err error) error { return &engineError{op: op, err: err} }
 
 // errContainerGone is Inspect's answer to a 404: the container vanished
 // between the list and the inspect.
@@ -72,7 +92,7 @@ func newDockerEngine(socket string) (dockerEngine, error) {
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			c, err := dialDocker(ctx, socket)
 			if err != nil {
-				return nil, fmt.Errorf("docker: cannot reach %s: %w", socket, err)
+				return nil, opError("cannot reach "+socket, err)
 			}
 			return c, nil
 		},
@@ -91,11 +111,11 @@ func (c *dockerClient) List(ctx context.Context, labelFilter string) ([]containe
 	if labelFilter != "" {
 		f, err := json.Marshal(map[string][]string{"label": {labelFilter}})
 		if err != nil {
-			return nil, fmt.Errorf("docker: list containers: %w", err)
+			return nil, opError(opList, err)
 		}
 		q.Set("filters", string(f))
 	}
-	body, err := c.get(ctx, "/containers/json?"+q.Encode(), maxListBody, "list containers")
+	body, err := c.get(ctx, "/containers/json?"+q.Encode(), maxListBody, opList)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +126,7 @@ func (c *dockerClient) List(ctx context.Context, labelFilter string) ([]containe
 		Labels map[string]string
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, errors.New("docker: list containers: malformed response")
+		return nil, opError(opList, errors.New("malformed response"))
 	}
 	out := make([]containerSummary, 0, len(raw))
 	for _, r := range raw {
@@ -134,7 +154,7 @@ func containerName(id string, names []string) string {
 }
 
 func (c *dockerClient) Inspect(ctx context.Context, id string) (containerDetail, error) {
-	body, err := c.get(ctx, "/containers/"+url.PathEscape(id)+"/json", maxInspectBody, "inspect container")
+	body, err := c.get(ctx, "/containers/"+url.PathEscape(id)+"/json", maxInspectBody, opInspect)
 	if err != nil {
 		return containerDetail{}, err
 	}
@@ -147,7 +167,7 @@ func (c *dockerClient) Inspect(ctx context.Context, id string) (containerDetail,
 		}
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return containerDetail{}, errors.New("docker: inspect container: malformed response")
+		return containerDetail{}, opError(opInspect, errors.New("malformed response"))
 	}
 	health := "none"
 	if raw.State.Health != nil && raw.State.Health.Status != "" {
@@ -158,10 +178,10 @@ func (c *dockerClient) Inspect(ctx context.Context, id string) (containerDetail,
 
 // get performs one GET and returns the body, refusing one over limit. Errors
 // name the status, never the body.
-func (c *dockerClient) get(ctx context.Context, path string, limit int64, what string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+apiPrefix+path, nil)
+func (c *dockerClient) get(ctx context.Context, path string, limit int64, op string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker"+path, nil)
 	if err != nil {
-		return nil, fmt.Errorf("docker: %s: %w", what, err)
+		return nil, opError(op, err)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -169,24 +189,28 @@ func (c *dockerClient) get(ctx context.Context, path string, limit int64, what s
 		if errors.As(err, &ue) {
 			err = ue.Err // drop the URL; the dial error already names the socket
 		}
-		if strings.HasPrefix(err.Error(), "docker: ") {
-			return nil, err
+		if ee := (*engineError)(nil); errors.As(err, &ee) {
+			return nil, ee // the dial failure, already "docker: cannot reach ..."
 		}
-		return nil, fmt.Errorf("docker: %s: %w", what, err)
+		return nil, opError(op, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusNotFound && what == "inspect container" {
+	switch {
+	case resp.StatusCode == http.StatusNotFound && op == opInspect:
 		return nil, errContainerGone
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("docker: %s: status %d", what, resp.StatusCode)
+	case resp.StatusCode == http.StatusBadRequest:
+		// The engine refused the request as such, typically an API it does
+		// not serve; the body would say which, but it is never quoted.
+		return nil, opError(op, errors.New("engine refused the request (status 400)"))
+	case resp.StatusCode != http.StatusOK:
+		return nil, opError(op, fmt.Errorf("status %d", resp.StatusCode))
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("docker: %s: read response: %w", what, err)
+		return nil, opError(op, fmt.Errorf("read response: %w", err))
 	}
 	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("docker: %s: response over %d bytes", what, limit)
+		return nil, opError(op, fmt.Errorf("response over %d bytes", limit))
 	}
 	return body, nil
 }

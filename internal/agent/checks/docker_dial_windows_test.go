@@ -20,7 +20,7 @@ func TestClientOverNamedPipe(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1.41/containers/json" {
+		if r.URL.Path != "/containers/json" {
 			t.Errorf("path %s", r.URL.Path)
 		}
 		_, _ = w.Write([]byte(`[{"Id":"aaaaaaaaaaaaaaaa","Names":["/web"],"State":"running"}]`))
