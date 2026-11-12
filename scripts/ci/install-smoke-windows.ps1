@@ -104,18 +104,23 @@ function Assert-OnlyAdmins([string]$Path, [switch]$Protected) {
 }
 
 # Assert-Installed waits for the service to run and for the agent to have
-# logged at least $WantStarts starts, checks that it stays up, and checks
-# every file the installer wrote.
+# logged exactly $WantStarts starts, checks that it stays up, and checks
+# every file the installer wrote. Any start beyond $WantStarts means the
+# agent exited and the service's recovery started it again, which a
+# running service alone would hide.
 function Assert-Installed([int]$WantStarts) {
 	$deadline = (Get-Date).AddSeconds(30)
 	while ($true) {
 		$status = Get-ServiceStatus
 		$starts = Get-StartCount
-		if (($status -eq 'Running') -and ($starts -ge $WantStarts)) {
+		if ($starts -gt $WantStarts) {
+			Fail "'pulsix-agent starting' was logged $starts times, want exactly $WantStarts: the agent exited and was started again"
+		}
+		if (($status -eq 'Running') -and ($starts -eq $WantStarts)) {
 			break
 		}
 		if ((Get-Date) -gt $deadline) {
-			Fail "after 30 s the service is $status and 'pulsix-agent starting' was logged $starts times (want at least $WantStarts)"
+			Fail "after 30 s the service is $status and 'pulsix-agent starting' was logged $starts times (want exactly $WantStarts)"
 		}
 		Start-Sleep -Seconds 1
 	}
@@ -220,8 +225,9 @@ try {
 	Assert-Installed 1
 
 	Write-Host 'install-smoke: upgrade over the running agent under PowerShell 7'
+	$previousStarts = Get-StartCount
 	Invoke-Installer 'pwsh'
-	Assert-Installed 2
+	Assert-Installed ($previousStarts + 1)
 
 	Write-Host 'install-smoke: PASS'
 } catch {

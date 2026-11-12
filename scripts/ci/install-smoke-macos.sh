@@ -70,8 +70,10 @@ starts_logged() {
 	sudo grep -c 'pulsix-agent starting' "$LOG_FILE" 2> /dev/null || true
 }
 
-# assert_installed N: the daemon runs and has logged at least N starts, and
-# every file the installer wrote carries its protection.
+# assert_installed N: the daemon runs and has logged exactly N starts, and
+# every file the installer wrote carries its protection. Any start beyond N
+# means the agent exited and launchd started it again, which a running
+# daemon alone would hide.
 assert_installed() {
 	want_starts="$1"
 	tries=0
@@ -82,11 +84,13 @@ assert_installed() {
 		fi
 		starts="$(starts_logged)"
 		[ -n "$starts" ] || starts=0
-		if [ "$running" = yes ] && [ "$starts" -ge "$want_starts" ]; then
+		[ "$starts" -le "$want_starts" ] ||
+			fail "'pulsix-agent starting' logged $starts times, want exactly $want_starts: the agent exited and was started again"
+		if [ "$running" = yes ] && [ "$starts" -eq "$want_starts" ]; then
 			break
 		fi
 		tries=$((tries + 1))
-		[ "$tries" -le 30 ] || fail "after 30 s: running=$running, 'pulsix-agent starting' logged $starts times (want at least $want_starts)"
+		[ "$tries" -le 30 ] || fail "after 30 s: running=$running, 'pulsix-agent starting' logged $starts times (want exactly $want_starts)"
 		sleep 1
 	done
 	# Longer than the plist's ThrottleInterval (5 s), so an agent that
@@ -126,7 +130,8 @@ install_agent
 assert_installed 1
 
 echo "install-smoke: upgrade over the running agent"
+previous_starts="$(starts_logged)"
 install_agent
-assert_installed 2
+assert_installed $((previous_starts + 1))
 
 echo "install-smoke: PASS"
