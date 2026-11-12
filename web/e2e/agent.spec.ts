@@ -46,7 +46,7 @@ test('an operator enrols an agent and the host it creates starts reporting', asy
     // the same on the API).
     const token = (await page.getByLabel('Enrollment token').textContent())?.trim() ?? '';
     expect(token).toMatch(/^pxa1\./);
-    const command = page.getByLabel('Install command');
+    const command = page.getByLabel('Linux and macOS', { exact: true });
     await expect(command).toContainText('/install.sh');
     await expect(command).not.toContainText(token);
     await expect(command).not.toContainText('--token ');
