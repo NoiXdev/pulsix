@@ -156,6 +156,18 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.12b, forgetting items that are gone:** new setting `PULSIX_ITEM_EXPIRY`
+  (duration, at least `1h`, `0` turns it off, default `168h`): an item that
+  delivered nothing for that long while its host kept reporting is forgotten, by
+  an hourly round on one manager (the first one hour after the server starts).
+  Migration `00085` widens the alert close reasons with `forgotten` (additive; a
+  client that switches on the reason should accept it, and notifications treat it
+  like a resolve). **The first round after the upgrade can forget many items at
+  once** on a long-running installation, because items that went quiet long ago
+  qualify immediately: their current values, rule states and state history go
+  and their open alerts close as `forgotten`; graphs stay until retention. Set
+  `PULSIX_ITEM_EXPIRY=0` before upgrading to opt out. New endpoint `DELETE
+  /api/v1/orgs/{org}/hosts/{host}/items` (additive).
 - **3.50, agent token name hint:** the API now refuses an agent enrollment
   token whose `name_hint` is not a valid host name (lower-case letters, digits,
   dots and hyphens, not starting or ending with a dot or hyphen, at most 64
