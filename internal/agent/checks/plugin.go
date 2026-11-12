@@ -1,5 +1,5 @@
 // Package checks collects the raw measurements the Pulsix agent's check
-// plugins produce: processor, memory, disk, service, network and uptime state (v0.3b plan,
+// plugins produce: processor, memory, disk, service, network, uptime and Docker container state (v0.3b plan,
 // Task 7). A plugin's only job is to observe — it never buffers, schedules
 // or ships anything, and it never judges whether an observation is good or
 // bad. The scheduler (Task 8) calls Registry's plugins on their configured
@@ -100,6 +100,7 @@ func Registry() map[string]Plugin {
 		"service": newServicePlugin(),
 		"network": newNetworkPlugin(),
 		"uptime":  newUptimePlugin(),
+		"docker":  newDockerPlugin(),
 	}
 }
 
