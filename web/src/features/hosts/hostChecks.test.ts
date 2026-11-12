@@ -94,6 +94,24 @@ describe('isGraphable', () => {
       value({ item: 'nginx.service', metric: 'state', error: 'dbus: connection refused' }),
       false,
     ],
+    [
+      'a failed docker.state reading is discrete: the metrics route 400s on a label metric',
+      check({ plugin: 'docker' }),
+      value({ item: 'web', metric: 'docker.state', error: 'inspect web: not found' }),
+      false,
+    ],
+    [
+      'a failed docker.health reading is discrete too',
+      check({ plugin: 'docker' }),
+      value({ item: 'web', metric: 'docker.health', error: 'inspect web: not found' }),
+      false,
+    ],
+    [
+      'a failed docker.restart_count keeps its graph: it is a number',
+      check({ plugin: 'docker' }),
+      value({ item: 'web', metric: 'docker.restart_count', error: 'inspect web: not found' }),
+      true,
+    ],
   ])('%s', (_name, c, v, expected) => {
     expect(isGraphable(c, v)).toBe(expected);
   });

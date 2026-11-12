@@ -29,13 +29,13 @@ export function formatNumber(value: number): string {
 }
 
 /**
- * NUMERIC_PLUGIN says which plugins measure numbers. Only the service
- * plugin reports a label (the unit's state) — cpu, memory, disk, network
- * and uptime report numbers, and every one of them reports an error the
- * same way (internal/agent/checks: labelObservation is called from
- * service.go alone). The synthetic plugins the manager probes with (icmp,
- * tcp, http, tls, dns; internal/probe) report numbers only, their 1/0
- * flags included. It is a total map over the generated plugin union
+ * NUMERIC_PLUGIN says which plugins measure numbers. The service plugin
+ * reports only labels (the unit's state), so it has no series at all.
+ * cpu, memory, disk, network and uptime report numbers, and every one of
+ * them reports an error the same way. The synthetic plugins the manager
+ * probes with (icmp, tcp, http, tls, dns; internal/probe) report numbers
+ * only, their 1/0 flags included. docker mixes both kinds: see
+ * DISCRETE_METRICS. It is a total map over the generated plugin union
  * rather than a list of exceptions, so a new plugin fails to compile here
  * until somebody decides which side of the line it is on.
  */
@@ -46,8 +46,8 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
   service: false,
   network: true,
   uptime: true,
-  // docker mixes labels (state, health: caught by the per-value label
-  // test above) with numbers (restart_count, containers_running, ...).
+  // docker mixes labels with numbers (restart_count, containers_running,
+  // ...); its label metrics are listed in DISCRETE_METRICS.
   docker: true,
   icmp: true,
   tcp: true,
@@ -55,6 +55,16 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
   tls: true,
   dns: true,
 };
+
+/**
+ * DISCRETE_METRICS are the metrics that only ever carry a label. A failed
+ * reading of one has no `label` (an error row has neither value nor
+ * label), so the per-value test in isGraphable cannot see it is discrete;
+ * a plugin that mixes labels and numbers needs the answer per metric.
+ * internal/agent/checks: service.go and docker.go call labelObservation
+ * for exactly these.
+ */
+const DISCRETE_METRICS: ReadonlySet<string> = new Set(['service.state', 'docker.state', 'docker.health']);
 
 /**
  * isGraphable reports whether a graph may be offered for one of a check's
@@ -74,7 +84,7 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
  * time.
  */
 export function isGraphable(check: HostCheck, v: HostCheckValue): boolean {
-  if (v.label !== undefined) return false;
+  if (v.label !== undefined || DISCRETE_METRICS.has(v.metric)) return false;
   return NUMERIC_PLUGIN[check.plugin];
 }
 
