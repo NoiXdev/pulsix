@@ -40,6 +40,12 @@ func TestParseMdstat(t *testing.T) {
 			{name: "md0", state: "resyncing", total: 2, active: 2},
 		}},
 		{"empty.txt", nil},
+		{"imsm.txt", []array{{name: "md126", state: "clean", total: 2, active: 2}}},
+		{"ddf.txt", nil},
+		{"repair.txt", []array{{name: "md0", state: "checking", total: 2, active: 2, syncPct: 3, hasPct: true}}},
+		{"inactive_member.txt", []array{{name: "md0", state: "inactive", total: 2, active: 1}}},
+		{"write_mostly.txt", []array{{name: "md0", state: "clean", total: 2, active: 2}}},
+		{"truncated.txt", []array{{name: "md1", state: "clean", total: 2, active: 2}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {

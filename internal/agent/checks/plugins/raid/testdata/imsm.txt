@@ -1,0 +1,8 @@
+Personalities : [raid1]
+md126 : active raid1 sda[1] sdb[0]
+      468857856 blocks super external:/md127/0 [2/2] [UU]
+
+md127 : inactive sdb[1](S) sda[0](S)
+      5552 blocks super external:imsm
+
+unused devices: <none>

@@ -1,0 +1,5 @@
+Personalities :
+md127 : inactive sdb[1](S) sda[0](S)
+      65536 blocks super external:ddf
+
+unused devices: <none>

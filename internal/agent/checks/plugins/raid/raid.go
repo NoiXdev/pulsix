@@ -19,6 +19,13 @@
 // devices_failed counts members marked (F). Spares (S) count toward neither
 // active nor failed.
 //
+// A failed spare (F) marks the array degraded even when [n/n] shows every
+// slot up. Write-mostly (W) members count as normal members. An external-
+// metadata container (Intel RST/VROC "super external:imsm", DDF) is inactive
+// by design and is skipped: it is neither an item nor counted in
+// raid.arrays; its subarrays ("super external:/md127/0") are reported
+// normally. A header cut off after the name ("md0 :") is skipped.
+//
 // raid.arrays on item "" is the number of arrays reported this round, after
 // the "arrays" filter; it is emitted on every run, including 0, so a rule
 // can notice an array that vanished. A host without /proc/mdstat (no md

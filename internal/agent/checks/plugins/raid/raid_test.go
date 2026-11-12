@@ -132,3 +132,16 @@ func TestName(t *testing.T) {
 		t.Fatal("name")
 	}
 }
+
+func TestCollectIMSMCountsOnlySubarray(t *testing.T) {
+	obs, err := raidPlugin{Source: fakeSource{data: load(t, "imsm.txt")}}.Collect(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if find(obs, "md127", "raid.state") != nil || find(obs, "md126", "raid.state") == nil {
+		t.Fatalf("obs = %+v", obs)
+	}
+	if o := find(obs, "", "raid.arrays"); o == nil || *o.Value != 1 {
+		t.Fatalf("arrays = %+v", o)
+	}
+}

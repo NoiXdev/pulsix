@@ -40,6 +40,10 @@ var (
 	slotsRe = regexp.MustCompile(`\[[U_]+\]`)
 	// "recovery = 12.3%".
 	syncPctRe = regexp.MustCompile(`\b(recovery|resync|check|reshape|repair)\s*=\s*(\d+(?:\.\d+)?)%`)
+	// "super external:imsm" (a metadata container) vs "super external:/md127/0" (a subarray).
+	containerRe = regexp.MustCompile(`super external:[^/\s]`)
+	// A header cut off after the name ("md0 :").
+	bareHeaderRe = regexp.MustCompile(`^\S+ :\s*$`)
 	// "resync=PENDING" / "resync=DELAYED" — queued, no percentage yet.
 	syncQueuedRe = regexp.MustCompile(`\b(recovery|resync|check|reshape|repair)\s*=\s*(?:PENDING|DELAYED)\b`)
 )
@@ -61,7 +65,9 @@ func parseMdstat(data []byte) []array {
 	)
 	flush := func() {
 		if cur != nil {
-			out = append(out, cur.finish())
+			if !cur.container {
+				out = append(out, cur.finish())
+			}
 			cur = nil
 		}
 	}
@@ -82,6 +88,10 @@ func parseMdstat(data []byte) []array {
 			flush()
 			continue
 		}
+		if bareHeaderRe.MatchString(line) {
+			flush()
+			continue
+		}
 		if cur != nil {
 			cur.addLine(line)
 		}
@@ -94,6 +104,7 @@ func parseMdstat(data []byte) []array {
 type block struct {
 	name       string
 	inactive   bool
+	container  bool
 	members    int
 	failed     int
 	spare      int
@@ -126,6 +137,9 @@ func newBlock(name, rest string) *block {
 }
 
 func (b *block) addLine(line string) {
+	if containerRe.MatchString(line) {
+		b.container = true
+	}
 	if m := countsRe.FindStringSubmatch(line); m != nil && !b.haveCounts {
 		n, err1 := strconv.Atoi(m[1])
 		w, err2 := strconv.Atoi(m[2])
