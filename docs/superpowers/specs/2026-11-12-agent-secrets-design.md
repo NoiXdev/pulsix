@@ -48,9 +48,16 @@ defined in the GUI refers to one by name.
   (backlog 3.2/3.3 `CheckEnvFile`): owned by root (Unix) or by SYSTEM or the
   Administrators group (Windows), and not readable or writable by anyone
   else. A file that fails the rule is not read at all; the agent keeps
-  running without secrets and reports why.
-- Reload: the agent re-reads the file when its modification time or size
-  changes, checked at most once a minute and at start. A broken file
+  running without secrets and reports why. On Windows the agent also
+  checks every entry of its data directory at start and refuses to start
+  over a foreign one; the secrets file is exempt from that pass (changed
+  during implementation), because its own check runs on every read, and
+  the installer likewise skips `agent.yaml` when it checks the directory.
+- Reload (changed during implementation): the agent reads the file in full
+  — protection check, read and parse — at start and on every look after
+  that, at most once a minute, whether or not its modification time or
+  size changed; no stat-based shortcut sees an access-list edit or a
+  rewrite within one timestamp tick. A broken file
   (unparsable, too open, a secret with a bad name) drops all secrets and
   reports the error, so a fix shows at once and nobody runs on a stale
   credential they believe they removed.

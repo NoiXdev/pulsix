@@ -15,7 +15,7 @@
 - File `agent.yaml` in the agent data dir (`/etc/pulsix`, `/Library/Application Support/Pulsix`, `%ProgramData%\Pulsix`); `--config` overrides; optional.
 - Format: top-level `secrets:` only (unknown top-level keys refused); secret name `^[A-Za-z0-9_.-]{1,64}$`; each secret a map of string fields; ≤ 1 MiB file, ≤ 256 secrets, each value ≤ 4 KiB.
 - Protection: exactly the agent's existing env-file rule (`internal/agent/protect*.go` `CheckEnvFile` — reuse, don't copy); a failing file is not read.
-- Reload: at start and when mtime or size changed, checked at most once a minute. A broken file → no secrets + error state (never the last good set).
+- Reload (changed during implementation): at start and then a full re-read on every look, at most once a minute, whether or not mtime or size changed. A broken file → no secrets + error state (never the last good set).
 - Never send, log or include in any error a field value. Parser errors reduced to line/column.
 - Heartbeat: `repeated string secret_names`, `string secrets_state` (`absent` | `ok` | error text). Old agents send neither → manager shows "unknown (agent too old)".
 - Migration additive: `host_agents.secret_names text[]`, `host_agents.secrets_state text`.
@@ -35,7 +35,7 @@
 
 ### Task 1: `internal/agent/secrets` — load, protect, watch
 
-Package with: `Load(path string, p protector) (Set, error)` (Set = names → fields; error states as values), a `Watcher` that re-reads on mtime/size change at most once a minute (injectable clock and stat), default path per OS (reuse the agent's data-dir helper), the `--config` flag wiring in cmd/agent. Tests: format, limits, unknown keys, bad names, protection refusal (reuse fakes from protect tests), parse errors without values, reload semantics, broken file drops all.
+Package with: `Load(path string, p protector) (Set, error)` (Set = names → fields; error states as values), a `Watcher` that re-reads in full at most once a minute (changed during implementation: no mtime/size shortcut; injectable clock), default path per OS (reuse the agent's data-dir helper), the `--config` flag wiring in cmd/agent. Tests: format, limits, unknown keys, bad names, protection refusal (reuse fakes from protect tests), parse errors without values, reload semantics, broken file drops all.
 
 ### Task 2: Heartbeat fields and scheduler resolution
 
