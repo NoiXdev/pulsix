@@ -101,8 +101,9 @@ func (f Format) problem(s string) string {
 }
 
 // secretNamePattern is the shape of a secret's name in agent.yaml; the
-// agent (internal/agent's secrets file) and the manager's heartbeat store
-// (internal/agents) refuse every other name with the same rule.
+// agent (internal/agent's secrets file) refuses every other name with the
+// same rule, and the manager's heartbeat store (internal/agents) applies
+// this format to the names an agent reports.
 var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 func hasControl(s string) bool { return strings.ContainsFunc(s, unicode.IsControl) }

@@ -1,11 +1,12 @@
 package agents
 
 import (
-	"regexp"
 	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // Bounds on what one heartbeat may store about the agent's local secrets
@@ -20,10 +21,6 @@ const (
 	// MaxSecretsStateBytes bounds the state text, cut on a rune boundary.
 	MaxSecretsStateBytes = 2048
 )
-
-// secretNamePattern is a secret's name in agent.yaml, the same rule as the
-// agent's own and checkplugins' secretName format.
-var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 // SecretsReport is what an agent last said about its local secrets file:
 // the names of the secrets it loaded (never a value) and the file's state
@@ -47,7 +44,8 @@ type SecretsReport struct {
 // older one sends none. An empty state is therefore "unknown", whatever
 // names ride along.
 //
-// Names that do not match the secret-name rule are dropped, duplicates
+// Names that fail checkplugins' secretName format (the agent's own rule
+// for a secret's name in agent.yaml) are dropped, duplicates
 // kept once, the rest sorted and capped at MaxSecretNames. The state is
 // made valid UTF-8 (invalid bytes become U+FFFD), its control characters
 // become spaces (Postgres text refuses NUL, and the GUI shows one line),
@@ -58,7 +56,7 @@ func secretsReportOf(names []string, state string) SecretsReport {
 	}
 	kept := make([]string, 0, min(len(names), MaxSecretNames))
 	for _, n := range names {
-		if secretNamePattern.MatchString(n) {
+		if checkplugins.FormatSecretName.Valid(n) {
 			kept = append(kept, n)
 		}
 	}
