@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"io/fs"
@@ -10,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"text/template"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,10 +36,6 @@ const (
 	installRateLimit  = 60
 	installRateWindow = time.Minute
 )
-
-// unitHeredocDelimiter is the quoted heredoc delimiter install.sh writes
-// the systemd unit with; see renderInstallScript for why it is checked.
-const unitHeredocDelimiter = "PULSIX_UNIT_EOF"
 
 // agentTargetPart is the shape a GOOS or GOARCH word has. The binary route
 // builds a filename from the two path parameters, so they are validated
@@ -73,7 +67,7 @@ func registerInstallRoutes(r chi.Router, deps Deps) error {
 		lim: clientip.NewLimiter(installRateLimit, installRateWindow, time.Now),
 	}
 	if deps.PublicURL != "" {
-		script, err := renderInstallScript(agentdist.InstallScript(), agentdist.Unit(), deps.PublicURL)
+		script, err := agentdist.RenderShellInstaller(deps.PublicURL)
 		if err != nil {
 			return fmt.Errorf("render install.sh: %w", err)
 		}
@@ -82,44 +76,6 @@ func registerInstallRoutes(r chi.Router, deps Deps) error {
 	r.Get("/install.sh", s.serveScript)
 	r.Get("/agents/bin/{os}/{arch}", s.serveBinary)
 	return nil
-}
-
-// renderInstallScript fills the embedded installer template with this
-// manager's base URL and the systemd unit.
-//
-// The unit is inlined into a quoted heredoc, so a unit whose own text
-// carried the heredoc delimiter on a line of its own would close the
-// heredoc early and hand everything after it to the installing host's
-// shell as commands. Both inputs are ours (the unit is embedded from
-// deploy/, the URL is configuration), so this cannot happen today — the
-// check is here so it cannot start happening silently either.
-func renderInstallScript(script, unit []byte, publicURL string) ([]byte, error) {
-	// The trailing newline is the template line's own: install.sh has
-	// {{.Unit}} on a line between the heredoc delimiters.
-	unitText := strings.TrimRight(string(unit), "\n")
-	for _, line := range strings.Split(unitText, "\n") {
-		if strings.TrimSpace(line) == unitHeredocDelimiter {
-			return nil, fmt.Errorf("the systemd unit contains the heredoc delimiter %q on its own line", unitHeredocDelimiter)
-		}
-	}
-	tmpl, err := template.New("install.sh").Parse(string(script))
-	if err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
-	}
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, struct {
-		BaseURL string
-		Unit    string
-	}{
-		// Trailing slashes are trimmed so the URLs the script builds
-		// ("$BASE_URL/agents/bin/...") never carry a double slash: some
-		// proxies answer those differently from the canonical path.
-		BaseURL: strings.TrimRight(publicURL, "/"),
-		Unit:    unitText,
-	}); err != nil {
-		return nil, fmt.Errorf("execute: %w", err)
-	}
-	return buf.Bytes(), nil
 }
 
 func (s *installServer) serveScript(w http.ResponseWriter, r *http.Request) {

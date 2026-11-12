@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/noixdev/pulsix/internal/agentdist"
 	"github.com/noixdev/pulsix/internal/clientip"
 )
 
@@ -69,9 +68,10 @@ func TestInstallScriptIsRenderedWithTheManagerURL(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		`BASE_URL="https://manager.example"`,
-		"$BASE_URL/agents/bin/linux/$PULSIX_ARCH",
+		"$BASE_URL/agents/bin/$PULSIX_OS/$PULSIX_ARCH",
 		"ExecStart=/usr/local/bin/pulsix-agent",
 		"EnvironmentFile=/etc/pulsix/agent.env",
+		"<string>dev.noix.pulsix-agent</string>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the served script must contain %q", want)
@@ -94,20 +94,6 @@ func TestInstallScriptWithoutPublicURL(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "PULSIX_PUBLIC_URL") {
 		t.Errorf("the refusal must name the setting to fix: %s", rec.Body.String())
-	}
-}
-
-// TestRenderInstallScriptRefusesAUnitThatBreaksTheHeredoc: the unit is
-// inlined into a quoted heredoc, so a unit carrying the delimiter on its
-// own line would end the heredoc early and hand the rest of itself to the
-// shell as commands. The renderer refuses that instead of emitting it.
-func TestRenderInstallScriptRefusesAUnitThatBreaksTheHeredoc(t *testing.T) {
-	hostile := []byte("[Service]\nPULSIX_UNIT_EOF\nrm -rf /\n")
-	if _, err := renderInstallScript(agentdist.InstallScript(), hostile, "https://manager.example"); err == nil {
-		t.Fatal("render accepted a unit that closes the heredoc, want an error")
-	}
-	if _, err := renderInstallScript(agentdist.InstallScript(), agentdist.Unit(), "https://manager.example"); err != nil {
-		t.Fatalf("render of the real unit failed: %v", err)
 	}
 }
 

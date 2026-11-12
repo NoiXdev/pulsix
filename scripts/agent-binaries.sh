@@ -16,6 +16,9 @@
 #   internal/agentdist/dist/pulsix-agent-linux-amd64.sha256
 #   internal/agentdist/dist/pulsix-agent-linux-arm64
 #   internal/agentdist/dist/pulsix-agent-linux-arm64.sha256
+#   ... and the same pair for windows/amd64, windows/arm64, darwin/amd64
+#   and darwin/arm64. Windows binaries are named without ".exe" (the
+#   install script saves them with the extension).
 #
 # The checksum file is what install.sh verifies the download against
 # before installing it, so it is written from the same bytes in the same
@@ -45,9 +48,10 @@ else
 fi
 
 # Every target the agent ships for. install.sh maps uname -m (x86_64,
-# aarch64/arm64) onto exactly these two; adding one here is all it takes
-# to serve it, since the route builds its lookup from the request.
-targets="linux/amd64 linux/arm64"
+# aarch64/arm64) and install.ps1 maps the processor architecture onto
+# these; adding one here is all it takes to serve it, since the route
+# builds its lookup from the request.
+targets="linux/amd64 linux/arm64 windows/amd64 windows/arm64 darwin/amd64 darwin/arm64"
 
 # Clear previous output so a target dropped from the list above cannot
 # keep being served, and so a stale binary can never outlive the source

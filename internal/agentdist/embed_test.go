@@ -5,6 +5,8 @@
 package agentdist
 
 import (
+	"encoding/xml"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
@@ -18,6 +20,7 @@ import (
 const (
 	deployInstallScript = "../../deploy/install.sh"
 	deployUnit          = "../../deploy/agent/systemd/pulsix-agent.service"
+	deployPlist         = "../../deploy/agent/launchd/dev.noix.pulsix-agent.plist"
 )
 
 func TestEmbeddedFilesMatchDeploySources(t *testing.T) {
@@ -28,6 +31,7 @@ func TestEmbeddedFilesMatchDeploySources(t *testing.T) {
 	}{
 		{"install.sh", deployInstallScript, InstallScript()},
 		{"pulsix-agent.service", deployUnit, Unit()},
+		{"dev.noix.pulsix-agent.plist", deployPlist, Plist()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			canon, err := os.ReadFile(tt.path)
@@ -44,7 +48,7 @@ func TestEmbeddedFilesMatchDeploySources(t *testing.T) {
 
 func TestInstallScriptTemplate(t *testing.T) {
 	script := string(InstallScript())
-	for _, want := range []string{"{{.BaseURL}}", "{{.Unit}}"} {
+	for _, want := range []string{"{{.BaseURL}}", "{{.Unit}}", "{{.Plist}}"} {
 		if !strings.Contains(script, want) {
 			t.Errorf("the template must carry %s", want)
 		}
@@ -54,7 +58,7 @@ func TestInstallScriptTemplate(t *testing.T) {
 		t.Fatalf("parse install.sh template: %v", err)
 	}
 	var sb strings.Builder
-	if err := tmpl.Execute(&sb, map[string]any{"BaseURL": "https://manager.example", "Unit": "unit-text-marker"}); err != nil {
+	if err := tmpl.Execute(&sb, map[string]any{"BaseURL": "https://manager.example", "Unit": "unit-text-marker", "Plist": "plist-text-marker"}); err != nil {
 		t.Fatalf("execute install.sh template: %v", err)
 	}
 	rendered := sb.String()
@@ -65,8 +69,8 @@ func TestInstallScriptTemplate(t *testing.T) {
 	}
 	for _, want := range []string{
 		`BASE_URL="https://manager.example"`,
-		"$BASE_URL/agents/bin/linux/$PULSIX_ARCH",
-		"$BASE_URL/agents/bin/linux/$PULSIX_ARCH.sha256",
+		"$BASE_URL/agents/bin/$PULSIX_OS/$PULSIX_ARCH",
+		"$BASE_URL/agents/bin/$PULSIX_OS/$PULSIX_ARCH.sha256",
 		`BIN_DIR="/usr/local/bin"`,
 		"$BIN_DIR/pulsix-agent",
 		"/etc/pulsix/agent.env",
@@ -79,6 +83,7 @@ func TestInstallScriptTemplate(t *testing.T) {
 		"PULSIX_MANAGER_SERVER_NAME=$PULSIX_SERVER_NAME",
 		"--server-name",
 		"unit-text-marker",
+		"plist-text-marker",
 		"systemctl enable --now",
 		"sha256sum",
 		"--token", "--manager", "--name",
@@ -88,6 +93,39 @@ func TestInstallScriptTemplate(t *testing.T) {
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the rendered install script must contain %q", want)
+		}
+	}
+}
+
+func TestPlistContent(t *testing.T) {
+	plist := string(Plist())
+	for _, want := range []string{
+		`<?xml version="1.0" encoding="UTF-8"?>`,
+		"<!DOCTYPE plist PUBLIC",
+		`<plist version="1.0">`,
+		"<key>Label</key>\n\t<string>dev.noix.pulsix-agent</string>",
+		"<string>/usr/local/bin/pulsix-agent</string>",
+		"<string>--env-file</string>",
+		"<string>/Library/Application Support/Pulsix/agent.env</string>",
+		"<string>--log-file</string>",
+		"<string>/Library/Logs/Pulsix/agent.log</string>",
+		"<key>RunAtLoad</key>\n\t<true/>",
+		"<key>SuccessfulExit</key>\n\t\t<false/>",
+		"<key>ThrottleInterval</key>\n\t<integer>5</integer>",
+		"<key>ProcessType</key>\n\t<string>Background</string>",
+	} {
+		if !strings.Contains(plist, want) {
+			t.Errorf("the launchd plist must contain %q:\n%s", want, plist)
+		}
+	}
+	// Well-formed XML all the way through.
+	dec := xml.NewDecoder(strings.NewReader(plist))
+	dec.Strict = true
+	for {
+		if _, err := dec.Token(); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatalf("the plist is not well-formed XML: %v", err)
 		}
 	}
 }
@@ -179,6 +217,10 @@ func TestAgentBinariesScriptFillsThisDist(t *testing.T) {
 		// The targets install.sh's uname mapping can ask for.
 		"linux/amd64",
 		"linux/arm64",
+		"windows/amd64",
+		"windows/arm64",
+		"darwin/amd64",
+		"darwin/arm64",
 		// The agent's own build stamp (cmd/agent/main.go's version var).
 		"main.version=",
 	} {

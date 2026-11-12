@@ -1,6 +1,6 @@
 // Package agentdist embeds the agent distribution the manager serves:
 // the cross-compiled agent binaries (`make agent-binaries`, gitignored),
-// the install script template and the systemd unit — canonical sources
+// the install script template, the systemd unit and the launchd plist — canonical sources
 // live in deploy/ and are guarded against drift by a test here.
 //
 // A plain dev build (`go build`/`go test` without make agent-binaries)
@@ -43,7 +43,10 @@ func InstallScript() []byte { return mustRead("files/install.sh") }
 // Unit returns the systemd unit text embedded into the install script.
 func Unit() []byte { return mustRead("files/pulsix-agent.service") }
 
-// mustRead reads one embedded file. The embed guarantees both files
+// Plist returns the launchd plist text embedded into the install script.
+func Plist() []byte { return mustRead("files/dev.noix.pulsix-agent.plist") }
+
+// mustRead reads one embedded file. The embed guarantees files
 // exist, so a failure here is a build wiring bug — a panic at startup,
 // not an empty script served to a host that pipes it into a shell.
 func mustRead(name string) []byte {

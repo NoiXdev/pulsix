@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The Pulsix agent's launchd daemon. The install script (deploy/install.sh,
+     served by the manager at GET /install.sh) writes this file verbatim to
+     /Library/LaunchDaemons/dev.noix.pulsix-agent.plist, so the manager embeds
+     a copy (internal/agentdist) and a drift test keeps the two in lockstep.
+     launchd has no EnvironmentFile: the agent reads its settings from the
+     root-owned env file named below and logs to its own rotated file. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>dev.noix.pulsix-agent</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/pulsix-agent</string>
+		<string>--env-file</string>
+		<string>/Library/Application Support/Pulsix/agent.env</string>
+		<string>--log-file</string>
+		<string>/Library/Logs/Pulsix/agent.log</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>ProcessType</key>
+	<string>Background</string>
+</dict>
+</plist>
