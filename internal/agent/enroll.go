@@ -14,7 +14,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"google.golang.org/grpc/codes"
@@ -51,8 +50,11 @@ func (l *Loop) enroll(ctx context.Context, existing *Identity) (*Identity, error
 	}
 	// The token is at most a handful of uses: check the data dir can
 	// actually be written BEFORE spending an attempt on it.
-	if err := os.MkdirAll(l.cfg.DataDir, 0o700); err != nil {
-		return nil, fmt.Errorf("%w: create data dir %s: %v", ErrSetupFailed, l.cfg.DataDir, err)
+	// The directory is also where the private key goes: on Windows its
+	// access list is checked (and, for a directory the agent owns,
+	// protected) before the key is written.
+	if err := ensureDataDir(newProtector(), l.cfg.DataDir, l.cfg.DataDirIsDefault, l.log); err != nil {
+		return nil, err
 	}
 	if err := probeWritable(l.cfg.DataDir); err != nil {
 		return nil, fmt.Errorf("%w: data dir %s is read-only (mount it writable): %v", ErrSetupFailed, l.cfg.DataDir, err)
