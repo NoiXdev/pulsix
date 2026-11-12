@@ -78,7 +78,12 @@ func newDockerEngine(socket string) (dockerEngine, error) {
 		},
 		DisableKeepAlives: true,
 	}
-	return &dockerClient{socket: socket, http: &http.Client{Transport: tr}}, nil
+	return &dockerClient{socket: socket, http: &http.Client{
+		Transport: tr,
+		// Only the two GET endpoints are ever requested: a 3xx from whatever
+		// listens at the socket becomes a plain status error.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}, nil
 }
 
 func (c *dockerClient) List(ctx context.Context, labelFilter string) ([]containerSummary, error) {

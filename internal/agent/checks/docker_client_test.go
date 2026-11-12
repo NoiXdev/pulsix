@@ -165,30 +165,58 @@ func TestClientNeverQuotesTheBody(t *testing.T) {
 	}
 }
 
-func bigBody(n int) http.Handler {
+// objectBody answers 200 with a JSON object of n bytes (braces around spaces),
+// which decodes cleanly into an inspect, so only the cap can refuse it.
+func objectBody(n int) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`[`))
-		chunk := []byte(strings.Repeat(" ", 1<<20))
-		for sent := 0; sent < n; sent += len(chunk) {
-			if _, err := w.Write(chunk); err != nil {
-				return
-			}
-		}
-		_, _ = w.Write([]byte(`]`))
+		_, _ = w.Write([]byte(`{`))
+		_, _ = w.Write([]byte(strings.Repeat(" ", n-2)))
+		_, _ = w.Write([]byte(`}`))
 	})
 }
 
 func TestClientCapsTheListBody(t *testing.T) {
-	e := engineFor(t, bigBody(17<<20))
-	if _, err := e.List(context.Background(), ""); err == nil {
-		t.Error("expected an error for a 17 MiB list")
+	// A JSON array that would decode cleanly without the cap.
+	e := engineFor(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[`))
+		_, _ = w.Write([]byte(strings.Repeat(" ", 17<<20)))
+		_, _ = w.Write([]byte(`]`))
+	}))
+	_, err := e.List(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "over") {
+		t.Errorf("err = %v", err)
 	}
 }
 
 func TestClientCapsTheInspectBody(t *testing.T) {
-	e := engineFor(t, bigBody(5<<20))
-	if _, err := e.Inspect(context.Background(), "x"); err == nil {
-		t.Error("expected an error for a 5 MiB inspect")
+	e := engineFor(t, objectBody(5<<20))
+	_, err := e.Inspect(context.Background(), "x")
+	if err == nil || !strings.Contains(err.Error(), "over") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestClientAcceptsAnInspectBodyJustUnderTheCap(t *testing.T) {
+	e := engineFor(t, objectBody(4<<20))
+	got, err := e.Inspect(context.Background(), "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Health != "none" {
+		t.Errorf("got %+v", got)
+	}
+}
+
+func TestClientDoesNotFollowRedirects(t *testing.T) {
+	e := engineFor(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/other" {
+			t.Error("redirect was followed")
+		}
+		http.Redirect(w, r, "/other", http.StatusFound)
+	}))
+	_, err := e.List(context.Background(), "")
+	if err == nil || !strings.Contains(err.Error(), "status 302") {
+		t.Errorf("err = %v", err)
 	}
 }
 
