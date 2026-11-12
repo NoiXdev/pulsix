@@ -179,6 +179,19 @@ describe('HostAgentCard', () => {
       expect(await screen.findByText('agent.yaml: line 3: bad indent')).toBeInTheDocument();
     });
 
+    it('wraps a long error text and long names instead of overflowing a phone screen', async () => {
+      const path = 'C:\\ProgramData\\Pulsix\\' + 'x'.repeat(120) + '\\agent.yaml';
+      withSecrets({ secrets_state: `configuration file ${path} holds secrets but is accessible to owner PC\\mallory; restrict it`, secret_names: [] });
+      renderCard();
+      expect(await screen.findByRole('alert')).toHaveClass('wrap-anywhere');
+    });
+
+    it('lets a long secret name wrap', async () => {
+      withSecrets({ secrets_state: 'ok', secret_names: ['n'.repeat(64)] });
+      renderCard();
+      expect(await screen.findByText('n'.repeat(64))).toHaveClass('break-all');
+    });
+
     it('says it is unknown when the agent has not reported', async () => {
       withSecrets({ secrets_state: null, secret_names: null });
       renderCard();

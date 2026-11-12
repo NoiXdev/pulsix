@@ -88,12 +88,12 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
             {agent.secrets_state === 'ok' && (agent.secret_names ?? []).length > 0 && (
               <ul className="flex flex-wrap justify-end gap-1">
                 {(agent.secret_names ?? []).map((n) => (
-                  <li key={n} className="font-mono text-[11px] text-muted-foreground">{n}</li>
+                  <li key={n} className="font-mono text-[11px] break-all text-muted-foreground">{n}</li>
                 ))}
               </ul>
             )}
             {agent.secrets_state != null && agent.secrets_state !== 'ok' && agent.secrets_state !== 'absent' && (
-              <p role="alert" className="text-[var(--px-warn)]">{agent.secrets_state}</p>
+              <p role="alert" className="wrap-anywhere text-[var(--px-warn)]">{agent.secrets_state}</p>
             )}
             {agent.secrets_state == null && <p className="text-muted-foreground">{t.hosts.agent.secretsUnknown}</p>}
           </div>
