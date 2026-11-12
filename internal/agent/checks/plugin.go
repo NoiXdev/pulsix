@@ -1,11 +1,17 @@
-// Package checks collects the raw measurements the Pulsix agent's check
-// plugins produce: processor, memory, disk, service, network, uptime and Docker container state (v0.3b plan,
-// Task 7). A plugin's only job is to observe — it never buffers, schedules
-// or ships anything, and it never judges whether an observation is good or
-// bad. The scheduler (Task 8) calls Registry's plugins on their configured
-// interval, stamps each Observation with the check key and a timestamp
-// (its own Result type, deliberately not defined here) and hands the batch
-// to the sender.
+// Package checks is the agent's check engine: the Plugin contract its
+// check plugins implement, the Observation they report and the helpers they
+// share to build one (observe.go), the scheduler that runs them and the
+// buffer that holds results while the agent is disconnected (v0.3b plan,
+// Tasks 7 and 8). The plugins themselves (processor, memory, disk,
+// service, network, uptime and Docker container state) live one package
+// each under plugins/, and plugins.Registry wires them; they import this
+// package, so it never imports them.
+//
+// A plugin's only job is to observe — it never buffers, schedules or ships
+// anything, and it never judges whether an observation is good or bad. The
+// scheduler calls the registry's plugins on their configured interval,
+// stamps each Observation with the check key and a timestamp (its own
+// Result type, scheduler.go) and hands the batch to the sender.
 //
 // A type named Observation already exists on the manager side
 // (internal/checks) carrying a host and a timestamp; that one groups
@@ -73,29 +79,11 @@ type Plugin interface {
 }
 
 // StatefulPlugin is a Plugin that keeps state between calls (network: each
-// interface's previous counters, to turn them into rates). Its Registry
-// value is only a prototype: the scheduler asks it for a fresh instance per
+// interface's previous counters, to turn them into rates). Its registry
+// value (plugins.Registry) is only a prototype: the scheduler asks it for a fresh instance per
 // check key (NewInstance), so two keys never share — or race over — that
 // state, and one instance is only ever collected by its own key's goroutine.
 type StatefulPlugin interface {
 	Plugin
 	NewInstance() Plugin
-}
-
-// Registry returns one instance of every check plugin the agent ships,
-// wired to the real providers (gopsutil, and systemd over D-Bus on Linux —
-// service_stub.go's placeholder everywhere else). It is a func, not a
-// package var, so every caller gets its own plugin values. The stateless
-// plugins are shared by every tick and every check key using them; a
-// StatefulPlugin (network) is a prototype the scheduler clones per key.
-func Registry() map[string]Plugin {
-	return map[string]Plugin{
-		"cpu":     newCPUPlugin(),
-		"memory":  newMemoryPlugin(),
-		"disk":    newDiskPlugin(),
-		"service": newServicePlugin(),
-		"network": newNetworkPlugin(),
-		"uptime":  newUptimePlugin(),
-		"docker":  newDockerPlugin(),
-	}
 }

@@ -10,14 +10,15 @@ import (
 )
 
 // TestCatalogueMatchesShippedPlugins pins the catalogue against the exact
-// metrics v0.3b-1's four plugins emit (internal/agent/checks/{cpu,memory,
-// disk,service}.go), cross-checked against the brief: an entry missing
+// metrics v0.3b-1's four plugins emit (internal/agent/checks/plugins/{cpu,
+// memory,disk,service}/), cross-checked against the brief: an entry missing
 // here is a metric no rule could ever be written against; an entry that
 // doesn't match the plugin's own reality is a silently wrong type check.
 //
-// cpu.load1/5/15 (internal/agent/checks/cpu.go:74-82) were missing from
-// the plan's original eight-entry list — a controller-confirmed omission,
-// not a deliberate cut (the architecture spec's own flagship rule example,
+// cpu.load1/5/15 (internal/agent/checks/plugins/cpu/cpu.go, Collect) were
+// missing from the plan's original eight-entry list — a
+// controller-confirmed omission, not a deliberate cut (the architecture
+// spec's own flagship rule example,
 // avg(cpu.load5, 10m) > fact("cpu_count") * 0.8, is unwritable without
 // cpu.load5 in the catalogue) — so the table below carries eleven entries.
 func TestCatalogueMatchesShippedPlugins(t *testing.T) {
@@ -34,7 +35,7 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"disk.inodes_used_pct": {CheckKey: "disk", Kind: rules.MetricNumeric},
 		"service.state":        {CheckKey: "service", Kind: rules.MetricDiscrete},
 		// Backlog 3.7: the network and uptime plugins
-		// (internal/agent/checks/network.go, uptime.go).
+		// (internal/agent/checks/plugins/network/, uptime/).
 		"net.rx_bytes_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
 		"net.tx_bytes_per_s":  {CheckKey: "network", Kind: rules.MetricNumeric},
 		"net.rx_errors_per_s": {CheckKey: "network", Kind: rules.MetricNumeric},
@@ -61,7 +62,7 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"dns.up":               {CheckKey: "dns", Kind: rules.MetricNumeric},
 		"dns.resolve_ms":       {CheckKey: "dns", Kind: rules.MetricNumeric},
 		"dns.answer_match":     {CheckKey: "dns", Kind: rules.MetricNumeric},
-		// Backlog 3.12: the docker plugin (internal/agent/checks/docker.go).
+		// Backlog 3.12: the docker plugin (internal/agent/checks/plugins/docker/).
 		"docker.state":              {CheckKey: "docker", Kind: rules.MetricDiscrete},
 		"docker.health":             {CheckKey: "docker", Kind: rules.MetricDiscrete},
 		"docker.restart_count":      {CheckKey: "docker", Kind: rules.MetricNumeric},

@@ -31,7 +31,7 @@ var itemParam = map[string]string{
 // network check with no `interfaces` list, every interface it does not
 // filter out). Only an explicit, non-empty list bounds anything — which is
 // also what the disk and network plugins themselves do with the parameter
-// (internal/agent/checks/disk.go, network.go).
+// (internal/agent/checks/plugins/disk/, network/).
 //
 // Samples are untouched either way: a graph of a mount dropped last week
 // is still a real graph, and GET /hosts/{id}/metrics still serves it.

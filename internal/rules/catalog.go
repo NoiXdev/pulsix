@@ -30,9 +30,9 @@ type CatalogueEntry struct {
 //
 // OBLIGATION: a new plugin metric is added here in the same change that
 // adds the plugin, or no rule can ever name it. The entries below are
-// exactly what internal/agent/checks's seven plugins emit today
-// (cpu.go, memory.go, disk.go, service.go, network.go, uptime.go, plus
-// docker.go from backlog 3.12), plus
+// exactly what the agent's seven check plugins emit today
+// (internal/agent/checks/plugins/: cpu, memory, disk, service, network,
+// uptime, plus docker from backlog 3.12; one package each), plus
 // the five synthetic plugins the manager probes with (backlog 3.13,
 // internal/probe: icmp.go, tcp.go, http.go, tls.go, dns.go) — cross-check
 // any edit here against those files, not the other way around.

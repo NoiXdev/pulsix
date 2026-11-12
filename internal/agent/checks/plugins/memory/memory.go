@@ -1,0 +1,93 @@
+// Package memory is the agent's memory check plugin: mem.used_pct,
+// mem.available_bytes and swap.used_pct for the whole host. The Plugin
+// contract and the shared observation helpers it builds on are in
+// internal/agent/checks.
+package memory
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/shirou/gopsutil/v4/mem"
+
+	"github.com/noixdev/pulsix/internal/agent/checks"
+)
+
+// virtualMemoryStater is the mem.VirtualMemory probe (RAM usage).
+type virtualMemoryStater interface {
+	VirtualMemory(ctx context.Context) (*mem.VirtualMemoryStat, error)
+}
+
+// swapMemoryStater is the mem.SwapMemory probe.
+type swapMemoryStater interface {
+	SwapMemory(ctx context.Context) (*mem.SwapMemoryStat, error)
+}
+
+type gopsutilVirtualMemory struct{}
+
+func (gopsutilVirtualMemory) VirtualMemory(ctx context.Context) (*mem.VirtualMemoryStat, error) {
+	return mem.VirtualMemoryWithContext(ctx)
+}
+
+type gopsutilSwapMemory struct{}
+
+func (gopsutilSwapMemory) SwapMemory(ctx context.Context) (*mem.SwapMemoryStat, error) {
+	return mem.SwapMemoryWithContext(ctx)
+}
+
+// memoryPlugin reports whole-host memory metrics (item ""): mem.used_pct
+// and mem.available_bytes share the one VirtualMemory call; swap.used_pct
+// comes from a separate SwapMemory call, so a host with no swap (or a
+// platform fault reading it) never costs the RAM numbers.
+type memoryPlugin struct {
+	Memory virtualMemoryStater
+	Swap   swapMemoryStater
+}
+
+// New returns the memory plugin wired to gopsutil.
+func New() checks.Plugin {
+	return memoryPlugin{Memory: gopsutilVirtualMemory{}, Swap: gopsutilSwapMemory{}}
+}
+
+func (memoryPlugin) Name() string { return "memory" }
+
+// Collect ignores params — memory takes none (internal/checks.validateParams
+// rejects any at definition time).
+func (p memoryPlugin) Collect(ctx context.Context, _ map[string]any) ([]checks.Observation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var obs []checks.Observation
+	var errs []error
+
+	if p.Memory != nil {
+		if vm, err := p.Memory.VirtualMemory(ctx); err != nil {
+			wrapped := fmt.Errorf("memory: virtual memory: %w", err)
+			errs = append(errs, wrapped)
+			obs = append(obs,
+				checks.ErrObservation("", "mem.used_pct", wrapped),
+				checks.ErrObservation("", "mem.available_bytes", wrapped),
+			)
+		} else if vm != nil {
+			obs = append(obs,
+				checks.ValueObservation("", "mem.used_pct", vm.UsedPercent),
+				checks.ValueObservation("", "mem.available_bytes", float64(vm.Available)),
+			)
+		}
+	}
+
+	if p.Swap != nil {
+		if sw, err := p.Swap.SwapMemory(ctx); err != nil {
+			wrapped := fmt.Errorf("memory: swap: %w", err)
+			errs = append(errs, wrapped)
+			obs = append(obs, checks.ErrObservation("", "swap.used_pct", wrapped))
+		} else if sw != nil {
+			obs = append(obs, checks.ValueObservation("", "swap.used_pct", sw.UsedPercent))
+		}
+	}
+
+	return obs, errors.Join(errs...)
+}
+
+var _ checks.Plugin = memoryPlugin{}

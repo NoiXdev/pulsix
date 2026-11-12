@@ -61,8 +61,8 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
  * reading of one has no `label` (an error row has neither value nor
  * label), so the per-value test in isGraphable cannot see it is discrete;
  * a plugin that mixes labels and numbers needs the answer per metric.
- * internal/agent/checks: service.go and docker.go call labelObservation
- * for exactly these.
+ * internal/agent/checks/plugins: service and docker call
+ * checks.LabelObservation for exactly these.
  */
 const DISCRETE_METRICS: ReadonlySet<string> = new Set(['service.state', 'docker.state', 'docker.health']);
 

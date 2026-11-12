@@ -1,7 +1,6 @@
-// package checks: the shared helper's own unit tests (unexported by
-// design, exactly the facts_internal_test.go convention this package
-// mirrors) plus a check that Registry wires all four plugins under the
-// names the manager expects.
+// package checks: the shared helpers' own unit tests. The check that the
+// registry wires every plugin under the names the manager expects lives
+// with the registry, in plugins/registry_test.go.
 package checks
 
 import (
@@ -175,29 +174,5 @@ func TestErrObservationCutsToTheManagersBound(t *testing.T) {
 	}
 	if o := ErrObservation("", "m", fmt.Errorf("permission denied")); o.Err != "permission denied" {
 		t.Fatalf("a short error was altered: %q", o.Err)
-	}
-}
-
-// TestRegistryWiresEveryPlugin pins the seven names Task 8's scheduler and
-// the manager's plugin validation (internal/checks.supportedPlugins) agree
-// on; a typo'd registry key would silently orphan a plugin from every
-// check definition that names it.
-func TestRegistryWiresEveryPlugin(t *testing.T) {
-	reg := Registry()
-	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker"}
-	if len(reg) != len(want) {
-		t.Fatalf("Registry() has %d plugins, want %d: %v", len(reg), len(want), reg)
-	}
-	for _, name := range want {
-		p, ok := reg[name]
-		if !ok {
-			t.Fatalf("Registry() is missing plugin %q", name)
-		}
-		if p == nil {
-			t.Fatalf("Registry()[%q] is nil", name)
-		}
-		if p.Name() != name {
-			t.Errorf("Registry()[%q].Name() = %q, want %q", name, p.Name(), name)
-		}
 	}
 }

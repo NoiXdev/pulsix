@@ -1,0 +1,166 @@
+// Package disk is the agent's disk check plugin: usage, free space and
+// inode use per mount, plus the per-system rules for which mounts it
+// discovers by default (platform.go, drive_*.go). The Plugin contract and
+// the shared observation helpers it builds on are in internal/agent/checks.
+package disk
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"runtime"
+	"sort"
+
+	"github.com/shirou/gopsutil/v4/disk"
+
+	"github.com/noixdev/pulsix/internal/agent/checks"
+)
+
+// pseudoFilesystems are skipped from the discovered mount set by default —
+// a full tmpfs/devtmpfs/overlay/squashfs is not news, and reporting them
+// unasked would just be a full /dev on every host. An explicit "mounts"
+// allow-list bypasses this: naming a mount is an explicit request to watch
+// it, pseudo or not.
+var pseudoFilesystems = map[string]bool{
+	"tmpfs":    true,
+	"devtmpfs": true,
+	"overlay":  true,
+	"squashfs": true,
+}
+
+// partitionLister is the disk.Partitions probe (the mounted filesystem
+// list disk discovery walks when no "mounts" allow-list is configured).
+type partitionLister interface {
+	Partitions(ctx context.Context, all bool) ([]disk.PartitionStat, error)
+}
+
+// usageStater is the disk.Usage probe, one mount point at a time — this is
+// the per-item call whose fault must not cost any other mount.
+type usageStater interface {
+	Usage(ctx context.Context, path string) (*disk.UsageStat, error)
+}
+
+type gopsutilPartitions struct{}
+
+func (gopsutilPartitions) Partitions(ctx context.Context, all bool) ([]disk.PartitionStat, error) {
+	return disk.PartitionsWithContext(ctx, all)
+}
+
+type gopsutilUsage struct{}
+
+func (gopsutilUsage) Usage(ctx context.Context, path string) (*disk.UsageStat, error) {
+	return disk.UsageWithContext(ctx, path)
+}
+
+// diskPlugin reports per-mount metrics (item = mount point): disk.used_pct,
+// disk.free_bytes, disk.inodes_used_pct.
+type diskPlugin struct {
+	Partitions partitionLister
+	Usage      usageStater
+	// GOOS selects the platform rules; empty means runtime.GOOS.
+	GOOS string
+	// DriveKind classifies a Windows drive ("fixed", "removable", "remote",
+	// "cdrom", "other"). Nil on Windows keeps no discovered mount.
+	DriveKind func(mount string) string
+}
+
+// New returns the disk plugin wired to gopsutil and this system's drive
+// classification.
+func New() checks.Plugin {
+	return diskPlugin{Partitions: gopsutilPartitions{}, Usage: gopsutilUsage{}, DriveKind: driveKindOf}
+}
+
+func (diskPlugin) Name() string { return "disk" }
+
+// Collect resolves the mount set — the "mounts" param verbatim when given
+// (bypassing the pseudo-filesystem filter, an explicit ask), otherwise
+// every distinct mount point disk.Partitions reports with the pseudo types
+// filtered out — then reads each mount's usage independently: one
+// unreadable mount becomes that mount's own three error observations
+// (disk.used_pct, disk.free_bytes, disk.inodes_used_pct) plus its share of
+// the joined error, never the whole plugin's — the other mounts are
+// unaffected either way.
+func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if p.Usage == nil {
+		return nil, nil
+	}
+
+	goos := p.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	inodes := reportsInodes(goos)
+
+	mounts, explicit, err := checks.ParamStrings(params, "mounts")
+	if err != nil {
+		return nil, fmt.Errorf("disk: %w", err)
+	}
+
+	var candidates []string
+	var errs []error
+	if explicit {
+		for _, mp := range mounts {
+			if !checks.ReportableItem(mp) {
+				errs = append(errs, fmt.Errorf("disk: mount %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", mp, checks.MaxItemLen))
+				continue
+			}
+			candidates = append(candidates, mp)
+		}
+	} else {
+		if p.Partitions == nil {
+			return nil, nil
+		}
+		parts, err := p.Partitions.Partitions(ctx, true)
+		if err != nil {
+			return nil, fmt.Errorf("disk: partitions: %w", err)
+		}
+		seen := make(map[string]bool, len(parts))
+		for _, part := range parts {
+			if !discoveredMount(goos, part, p.DriveKind) || seen[part.Mountpoint] || !checks.ReportableItem(part.Mountpoint) {
+				continue
+			}
+			seen[part.Mountpoint] = true
+			candidates = append(candidates, part.Mountpoint)
+		}
+		sort.Strings(candidates)
+	}
+
+	var obs []checks.Observation
+	for _, mp := range candidates {
+		usage, err := p.Usage.Usage(ctx, mp)
+		if err != nil {
+			wrapped := fmt.Errorf("disk: mount %q: %w", mp, err)
+			errs = append(errs, wrapped)
+			// This mount's own three metrics could not be read: report
+			// each as its own error observation, item-attributed, rather
+			// than only folding the fault into the aggregate error —
+			// otherwise the manager keeps showing this mount's last good
+			// numbers as though they were still current.
+			obs = append(obs,
+				checks.ErrObservation(mp, "disk.used_pct", wrapped),
+				checks.ErrObservation(mp, "disk.free_bytes", wrapped),
+			)
+			if inodes {
+				obs = append(obs, checks.ErrObservation(mp, "disk.inodes_used_pct", wrapped))
+			}
+			continue
+		}
+		if usage == nil {
+			continue
+		}
+		obs = append(obs,
+			checks.ValueObservation(mp, "disk.used_pct", usage.UsedPercent),
+			checks.ValueObservation(mp, "disk.free_bytes", float64(usage.Free)),
+		)
+		if inodes {
+			obs = append(obs, checks.ValueObservation(mp, "disk.inodes_used_pct", usage.InodesUsedPercent))
+		}
+	}
+
+	return obs, errors.Join(errs...)
+}
+
+var _ checks.Plugin = diskPlugin{}

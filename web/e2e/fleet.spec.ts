@@ -142,7 +142,7 @@ async function createHostRule(page: Page, hostName: string, severity: 'warn' | '
  * only other tuples are ok, so the roll-up followed disk into unknown
  * instead. This test is about what the rule engine concludes from
  * cpu.used_pct; disk and service (whose own state is "not supported on
- * this platform" on a non-Linux runner, per service_stub.go — harmless, but
+ * this platform" on a non-Linux runner, per service/stub.go — harmless, but
  * also not this test's business) are switched off everywhere so nothing
  * else can cast a vote in the roll-up this spec reads. A disabled check
  * resolves no interval, so its tuple is excluded from evaluation entirely

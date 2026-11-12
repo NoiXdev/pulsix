@@ -8,7 +8,8 @@ import (
 )
 
 // Bounds of the docker plugin's parameters (backlog 3.12). The agent trusts
-// params that pass here, so these and internal/agent/checks/docker.go agree.
+// params that pass here, so these and internal/agent/checks/plugins/docker/
+// agree.
 const (
 	maxDockerLabelKeyLen   = 255
 	maxDockerLabelValueLen = 255

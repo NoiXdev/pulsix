@@ -106,7 +106,7 @@ type Scheduler struct {
 	wg       sync.WaitGroup
 }
 
-// NewScheduler wires a Scheduler against reg (ordinarily checks.Registry(),
+// NewScheduler wires a Scheduler against reg (ordinarily plugins.Registry(),
 // fixtures in tests), an injected clock (Result.At, never a ticker's own
 // reported time, so a fake clock and a fake ticker can be driven
 // independently in tests) and a ticker factory (the loop's own, real or

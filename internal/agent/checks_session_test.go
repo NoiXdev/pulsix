@@ -126,7 +126,7 @@ func TestLoopAppliedCheckFiresAndResultsReachTheStream(t *testing.T) {
 	cancel, done := runLoop(t, l)
 	waitFor(t, 2*time.Second, func() bool { return len(stream.sentMessages()) > 0 })
 
-	// Push a real "cpu" check (the loop wires checks.Registry()'s real
+	// Push a real "cpu" check (the loop wires plugins.Registry()'s real
 	// plugins — cpu.Collect works against the real host on every OS this
 	// suite runs on, the same trust boundary internal/agent/facts' own
 	// gopsutil calls already cross in production, never faked here).

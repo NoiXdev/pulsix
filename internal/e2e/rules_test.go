@@ -23,9 +23,9 @@
 //     that unknown eventually appears.
 //
 // How the crossing and the recovery are driven, and why not otherwise:
-// internal/agent/checks.Registry wires the agent's own, real cpu plugin
-// with no seam for a synthetic reading (the same "nothing is faked on
-// either side" posture agent_test.go's own header states), so the value
+// internal/agent/checks/plugins.Registry wires the agent's own, real cpu
+// plugin with no seam for a synthetic reading (the same "nothing is faked
+// on either side" posture agent_test.go's own header states), so the value
 // this scenario judges is always this machine's genuine, gopsutil-reported
 // cpu.used_pct — never a fake. What the test drives is which side of it
 // the rule's own threshold sits on, the same lever an operator has:

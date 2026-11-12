@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
@@ -190,7 +191,7 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 	for _, o := range opts {
 		o(l)
 	}
-	l.scheduler = checks.NewScheduler(checks.Registry(), l.now, l.checksTicker)
+	l.scheduler = checks.NewScheduler(plugins.Registry(), l.now, l.checksTicker)
 	l.buffer = checks.NewBuffer(bufferWindow, l.now)
 	return l
 }
