@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -46,22 +47,41 @@ func allowedSIDs() (system, admins *windows.SID, err error) {
 	return system, admins, nil
 }
 
-// Loose lists the trustees of allow entries beyond SYSTEM and
-// Administrators that grant any of accessRights. A directory must also
-// have its list protected (inheritance off); a file need not, because the
-// entries it inherits from the protected directory name only those two.
+// Loose reports what lets anyone beyond SYSTEM and Administrators reach
+// path:
+//   - path itself being a link (symlink, junction or other reparse point),
+//     whose target is not inspected;
+//   - an owner other than those two, because the owner implicitly holds
+//     READ_CONTROL and WRITE_DAC whatever the access list says;
+//   - allow entries for anyone else that grant any of accessRights;
+//   - for a directory, an unprotected list (it inherits its parent's).
+//
+// A file need not have a protected list, because the entries it inherits
+// from the protected directory name only the two allowed principals.
 func (windowsProtector) Loose(path string) (string, error) {
-	fi, err := os.Stat(path)
+	fi, link, err := lstatLink(path)
 	if err != nil {
-		return "", fmt.Errorf("inspect %s: %w", path, err)
+		return "", err
+	}
+	if link {
+		return "whoever its target admits (it is a link: a symlink or junction)", nil
 	}
 	system, admins, err := allowedSIDs()
 	if err != nil {
 		return "", err
 	}
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil {
-		return "", fmt.Errorf("read the access list of %s: %w", path, err)
+		return "", fmt.Errorf("read the security descriptor of %s: %w", path, err)
+	}
+	var found findings
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return "", fmt.Errorf("read the owner of %s: %w", path, err)
+	}
+	if owner == nil || (!owner.Equals(system) && !owner.Equals(admins)) {
+		found.add("owner " + trusteeName(owner))
 	}
 	control, _, err := sd.Control()
 	if err != nil {
@@ -69,18 +89,11 @@ func (windowsProtector) Loose(path string) (string, error) {
 	}
 	dacl, _, err := sd.DACL()
 	if errors.Is(err, windows.ERROR_OBJECT_NOT_FOUND) || (err == nil && dacl == nil) {
-		return "everyone (it has no access list)", nil
+		found.add("everyone (it has no access list)")
+		return found.String(), nil
 	}
 	if err != nil {
 		return "", fmt.Errorf("read the access list of %s: %w", path, err)
-	}
-	var found []string
-	seen := make(map[string]bool)
-	add := func(s string) {
-		if !seen[s] {
-			seen[s] = true
-			found = append(found, s)
-		}
 	}
 	for i := uint32(0); i < uint32(dacl.AceCount); i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -92,7 +105,7 @@ func (windowsProtector) Loose(path string) (string, error) {
 			continue
 		case windows.ACCESS_ALLOWED_ACE_TYPE:
 		default:
-			add(fmt.Sprintf("an access entry of type %d", ace.Header.AceType))
+			found.add(fmt.Sprintf("an access entry of type %d", ace.Header.AceType))
 			continue
 		}
 		if ace.Mask&accessRights == 0 {
@@ -102,16 +115,51 @@ func (windowsProtector) Loose(path string) (string, error) {
 		if sid.Equals(system) || sid.Equals(admins) {
 			continue
 		}
-		add(trusteeName(sid))
+		found.add(trusteeName(sid))
 	}
 	if fi.IsDir() && control&windows.SE_DACL_PROTECTED == 0 {
-		add("whoever its parent's access list admits (it inherits that list)")
+		found.add("whoever its parent's access list admits (it inherits that list)")
 	}
-	return strings.Join(found, ", "), nil
+	return found.String(), nil
+}
+
+// findings collects distinct findings in the order they were found.
+type findings []string
+
+func (f *findings) add(s string) {
+	for _, have := range *f {
+		if have == s {
+			return
+		}
+	}
+	*f = append(*f, s)
+}
+
+func (f findings) String() string { return strings.Join(f, ", ") }
+
+// lstatLink stats path without following it and says whether path itself
+// is a reparse point (a symlink, a junction or anything else Windows would
+// redirect through).
+func lstatLink(path string) (os.FileInfo, bool, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect %s: %w", path, err)
+	}
+	if fi.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 {
+		return fi, true, nil
+	}
+	if attr, ok := fi.Sys().(*syscall.Win32FileAttributeData); ok &&
+		attr.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return fi, true, nil
+	}
+	return fi, false, nil
 }
 
 // trusteeName is DOMAIN\account when the SID resolves, else the SID string.
 func trusteeName(sid *windows.SID) string {
+	if sid == nil {
+		return "nobody (none is set)"
+	}
 	account, domain, _, err := sid.LookupAccount("")
 	switch {
 	case err != nil || account == "":
@@ -123,10 +171,22 @@ func trusteeName(sid *windows.SID) string {
 	}
 }
 
-// Protect replaces path's access list with a protected one (inheritance
-// off) granting full control to SYSTEM and Administrators only, inherited
-// by everything created beneath it.
+// Protect makes Administrators the owner of path and replaces its access
+// list with a protected one (inheritance off) granting full control to
+// SYSTEM and Administrators only, inherited by everything created beneath
+// it. It refuses a link: the access list it would rewrite is the
+// target's, and the target is wherever the link's author pointed it.
+// Taking a directory over from a hostile owner whose list shuts out
+// Administrators needs privileges the agent does not enable, so that case
+// fails rather than succeeds partly.
 func (windowsProtector) Protect(path string) error {
+	_, link, err := lstatLink(path)
+	if err != nil {
+		return err
+	}
+	if link {
+		return fmt.Errorf("refusing to change the access of %s: it is a link (symlink or junction)", path)
+	}
 	system, admins, err := allowedSIDs()
 	if err != nil {
 		return err
@@ -137,10 +197,10 @@ func (windowsProtector) Protect(path string) error {
 		return fmt.Errorf("build the access list for %s: %w", path, err)
 	}
 	err = windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil, nil, acl, nil)
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		admins, nil, acl, nil)
 	if err != nil {
-		return fmt.Errorf("set the access list of %s: %w", path, err)
+		return fmt.Errorf("set the owner and access list of %s: %w", path, err)
 	}
 	return nil
 }
