@@ -1,0 +1,21 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 3],
+    "svn_revision": "5338",
+    "platform_info": "x86_64-linux-6.1.0-26-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "--json", "-a", "-n", "standby", "-d", "scsi", "/dev/sda"],
+    "exit_status": 0
+  },
+  "device": {"name": "/dev/sda", "info_name": "/dev/sda", "type": "scsi", "protocol": "SCSI"},
+  "scsi_vendor": "QEMU",
+  "scsi_product": "QEMU HARDDISK",
+  "scsi_model_name": "QEMU QEMU HARDDISK",
+  "scsi_revision": "2.5+",
+  "scsi_version": "SPC-3",
+  "user_capacity": {"blocks": 83886080, "bytes": 42949672960},
+  "logical_block_size": 512,
+  "rotation_rate": 0,
+  "smart_support": {"available": false}
+}

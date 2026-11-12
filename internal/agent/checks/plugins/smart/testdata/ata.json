@@ -1,0 +1,54 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 3],
+    "svn_revision": "5338",
+    "platform_info": "x86_64-linux-6.1.0-26-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "--json", "-a", "-n", "standby", "-d", "sat", "/dev/sda"],
+    "exit_status": 0
+  },
+  "local_time": {"time_t": 1794470400, "asctime": "Thu Nov 12 10:00:00 2026 CET"},
+  "device": {"name": "/dev/sda", "info_name": "/dev/sda [SAT]", "type": "sat", "protocol": "ATA"},
+  "model_family": "Samsung based SSDs",
+  "model_name": "Samsung SSD 860 EVO 500GB",
+  "serial_number": "S3Z1NB0K000000X",
+  "wwn": {"naa": 5, "oui": 9528, "id": 61817240000},
+  "firmware_version": "RVT04B6Q",
+  "user_capacity": {"blocks": 976773168, "bytes": 500107862016},
+  "logical_block_size": 512,
+  "physical_block_size": 512,
+  "rotation_rate": 0,
+  "trim": {"supported": true, "deterministic": true, "zeroed": false},
+  "in_smartctl_database": true,
+  "ata_version": {"string": "ACS-4 T13/BSR INCITS 529 revision 5", "major_value": 2556, "minor_value": 94},
+  "sata_version": {"string": "SATA 3.2", "value": 255},
+  "interface_speed": {
+    "max": {"sata_value": 14, "string": "6.0 Gb/s", "units_per_second": 60, "bits_per_unit": 100000000},
+    "current": {"sata_value": 3, "string": "6.0 Gb/s", "units_per_second": 60, "bits_per_unit": 100000000}
+  },
+  "smart_support": {"available": true, "enabled": true},
+  "smart_status": {"passed": true},
+  "ata_smart_data": {
+    "offline_data_collection": {"status": {"value": 0, "string": "was never started"}, "completion_seconds": 0},
+    "self_test": {"status": {"value": 0, "string": "completed without error", "passed": true}, "polling_minutes": {"short": 2, "extended": 85}},
+    "capabilities": {"values": [83, 3], "exec_offline_immediate_supported": true, "self_tests_supported": true, "error_logging_supported": true}
+  },
+  "ata_smart_attributes": {
+    "revision": 1,
+    "table": [
+      {"id": 5, "name": "Reallocated_Sector_Ct", "value": 99, "worst": 99, "thresh": 10, "when_failed": "", "flags": {"value": 51, "string": "PO--CK ", "prefailure": true, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 3, "string": "3"}},
+      {"id": 9, "name": "Power_On_Hours", "value": 95, "worst": 95, "thresh": 0, "when_failed": "", "flags": {"value": 50, "string": "-O--CK ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 21843, "string": "21843"}},
+      {"id": 12, "name": "Power_Cycle_Count", "value": 99, "worst": 99, "thresh": 0, "when_failed": "", "flags": {"value": 50, "string": "-O--CK ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 112, "string": "112"}},
+      {"id": 190, "name": "Airflow_Temperature_Cel", "value": 66, "worst": 50, "thresh": 0, "when_failed": "", "flags": {"value": 50, "string": "-O--CK ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 34, "string": "34"}},
+      {"id": 197, "name": "Current_Pending_Sector", "value": 100, "worst": 100, "thresh": 0, "when_failed": "", "flags": {"value": 50, "string": "-O--CK ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 1, "string": "1"}},
+      {"id": 198, "name": "Offline_Uncorrectable", "value": 100, "worst": 100, "thresh": 0, "when_failed": "", "flags": {"value": 48, "string": "----CK ", "prefailure": false, "updated_online": false, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 0, "string": "0"}},
+      {"id": 241, "name": "Total_LBAs_Written", "value": 99, "worst": 99, "thresh": 0, "when_failed": "", "flags": {"value": 50, "string": "-O--CK ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 82710399154, "string": "82710399154"}}
+    ]
+  },
+  "power_on_time": {"hours": 21843},
+  "power_cycle_count": 112,
+  "temperature": {"current": 34},
+  "ata_smart_error_log": {"summary": {"revision": 1, "count": 0}},
+  "ata_smart_self_test_log": {"standard": {"revision": 1, "count": 0}}
+}

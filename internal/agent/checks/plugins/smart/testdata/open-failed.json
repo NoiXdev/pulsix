@@ -1,0 +1,15 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 3],
+    "svn_revision": "5338",
+    "platform_info": "x86_64-linux-6.1.0-26-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "--json", "-a", "-n", "standby", "-d", "sat", "/dev/sde"],
+    "messages": [
+      {"string": "Smartctl open device: /dev/sde [SAT] failed: No such device", "severity": "error"}
+    ],
+    "exit_status": 2
+  },
+  "device": {"name": "/dev/sde", "info_name": "/dev/sde [SAT]", "type": "sat", "protocol": "ATA"}
+}

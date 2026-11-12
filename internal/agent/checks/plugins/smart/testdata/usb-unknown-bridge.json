@@ -1,0 +1,15 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 3],
+    "svn_revision": "5338",
+    "platform_info": "x86_64-linux-6.1.0-26-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "--json", "-a", "-n", "standby", "/dev/sdf"],
+    "messages": [
+      {"string": "/dev/sdf: Unknown USB bridge [0x152d:0x0578 (0x508)]", "severity": "error"},
+      {"string": "Please specify device type with the -d option.", "severity": "error"}
+    ],
+    "exit_status": 1
+  }
+}

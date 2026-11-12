@@ -1,0 +1,37 @@
+{
+  "json_format_version": [1, 0],
+  "smartctl": {
+    "version": [7, 3],
+    "svn_revision": "5338",
+    "platform_info": "x86_64-linux-6.1.0-26-amd64",
+    "build_info": "(local build)",
+    "argv": ["smartctl", "--json", "-a", "-n", "standby", "-d", "sat", "/dev/sdc"],
+    "messages": [
+      {"string": "Warning: This result is based on an Attribute check.", "severity": "warning"}
+    ],
+    "exit_status": 88
+  },
+  "device": {"name": "/dev/sdc", "info_name": "/dev/sdc [SAT]", "type": "sat", "protocol": "ATA"},
+  "model_family": "Western Digital Red",
+  "model_name": "WDC WD40EFRX-68N32N0",
+  "serial_number": "WD-WCC7K0000000",
+  "firmware_version": "82.00A82",
+  "rotation_rate": 5400,
+  "smart_support": {"available": true, "enabled": true},
+  "smart_status": {"passed": false},
+  "ata_smart_attributes": {
+    "revision": 16,
+    "table": [
+      {"id": 1, "name": "Raw_Read_Error_Rate", "value": 1, "worst": 1, "thresh": 51, "when_failed": "now", "flags": {"value": 47, "string": "POSR-K ", "prefailure": true, "updated_online": true, "performance": true, "error_rate": true, "event_count": false, "auto_keep": true}, "raw": {"value": 48211, "string": "48211"}},
+      {"id": 5, "name": "Reallocated_Sector_Ct", "value": 140, "worst": 140, "thresh": 140, "when_failed": "now", "flags": {"value": 51, "string": "PO--CK ", "prefailure": true, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 1832, "string": "1832"}},
+      {"id": 9, "name": "Power_On_Hours", "value": 31, "worst": 31, "thresh": 0, "when_failed": "", "flags": {"value": 50, "string": "-O--CK ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 50512, "string": "50512"}},
+      {"id": 194, "name": "Temperature_Celsius", "value": 112, "worst": 98, "thresh": 0, "when_failed": "", "flags": {"value": 34, "string": "-O---K ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": false, "auto_keep": true}, "raw": {"value": 38, "string": "38"}},
+      {"id": 197, "name": "Current_Pending_Sector", "value": 200, "worst": 197, "thresh": 0, "when_failed": "", "flags": {"value": 50, "string": "-O--CK ", "prefailure": false, "updated_online": true, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 46, "string": "46"}},
+      {"id": 198, "name": "Offline_Uncorrectable", "value": 200, "worst": 198, "thresh": 0, "when_failed": "", "flags": {"value": 48, "string": "----CK ", "prefailure": false, "updated_online": false, "performance": false, "error_rate": false, "event_count": true, "auto_keep": true}, "raw": {"value": 17, "string": "17"}}
+    ]
+  },
+  "power_on_time": {"hours": 50512},
+  "power_cycle_count": 64,
+  "temperature": {"current": 38},
+  "ata_smart_error_log": {"summary": {"revision": 1, "count": 412}}
+}

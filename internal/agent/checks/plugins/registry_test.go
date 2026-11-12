@@ -12,7 +12,7 @@ import (
 // check definition that names it.
 func TestRegistryWiresEveryPlugin(t *testing.T) {
 	reg := Registry()
-	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature"}
+	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature", "smart"}
 	if len(reg) != len(want) {
 		t.Fatalf("Registry() has %d plugins, want %d: %v", len(reg), len(want), reg)
 	}
