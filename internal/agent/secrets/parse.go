@@ -49,15 +49,20 @@ func errAt(n *yaml.Node, reason string) error {
 //	    <field>: <value>
 //
 // strictly: the only top-level key is secrets; names and field names match
-// namePattern; duplicate keys, aliases, nulls, nested values and a second
-// document are refused. A scalar value is taken as written, so an unquoted
-// number or boolean (port: 5432, tls: true) is the text "5432" or "true".
+// namePattern; duplicate keys, anchors (and so aliases), nulls, nested
+// values and a second document are refused. A scalar value is taken as
+// written, so an unquoted number or boolean (port: 5432, tls: true) is the
+// text "5432" or "true".
 //
 // Explicit YAML tags are refused, wherever they stand, with the fixed
 // reason badTagReason — except !!str on a single value (a key or a field
 // value), which only says what every value already is. A tag such as
 // !!binary, !!int or a custom !vault would otherwise suggest a decoding
 // this format never does.
+//
+// Anchors are refused wherever they stand, with the fixed reason
+// badAnchorReason, whether or not an alias uses them. An alias needs an
+// anchor before it, so no alias reaches the decoding below.
 func parse(data []byte) (Set, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
@@ -82,7 +87,7 @@ func parse(data []byte) (Set, error) {
 		}
 		root = root.Content[0]
 	}
-	if err := checkTags(root); err != nil {
+	if err := checkNodes(root); err != nil {
 		return Set{}, err
 	}
 	if isNull(root) {
@@ -141,9 +146,6 @@ func parseSecrets(n *yaml.Node) (Set, error) {
 // parseFields decodes one secret's field mapping; name is the secret's name
 // node, where a missing mapping is reported.
 func parseFields(name, n *yaml.Node) (map[string]string, error) {
-	if n.Kind == yaml.AliasNode {
-		return nil, errAt(n, "aliases are not supported")
-	}
 	if n.Kind != yaml.MappingNode {
 		at := n
 		if isNull(n) {
@@ -163,8 +165,6 @@ func parseFields(name, n *yaml.Node) (map[string]string, error) {
 		}
 		lines[key.Value] = key.Line
 		switch {
-		case val.Kind == yaml.AliasNode:
-			return nil, errAt(val, "aliases are not supported")
 		case val.Kind != yaml.ScalarNode:
 			return nil, errAt(val, "a field value must be a single value, not a list or mapping")
 		case isNull(val):
@@ -177,17 +177,24 @@ func parseFields(name, n *yaml.Node) (map[string]string, error) {
 	return out, nil
 }
 
-// badTagReason is the fixed reason for an explicit tag parse refuses.
-const badTagReason = "YAML tags are not supported, except !!str on a value"
+// The fixed reasons for the node properties parse refuses.
+const (
+	badTagReason    = "YAML tags are not supported, except !!str on a value"
+	badAnchorReason = "YAML anchors and aliases are not supported"
+)
 
-// checkTags refuses the first explicit tag, in document order, that is not
-// !!str on a scalar.
-func checkTags(n *yaml.Node) error {
+// checkNodes refuses the first node, in document order, that carries an
+// anchor or an explicit tag other than !!str on a scalar. Neither reason
+// quotes the anchor's name or the tag.
+func checkNodes(n *yaml.Node) error {
+	if n.Anchor != "" {
+		return errAt(n, badAnchorReason)
+	}
 	if n.Style&yaml.TaggedStyle != 0 && (n.Kind != yaml.ScalarNode || n.ShortTag() != "!!str") {
 		return errAt(n, badTagReason)
 	}
 	for _, c := range n.Content {
-		if err := checkTags(c); err != nil {
+		if err := checkNodes(c); err != nil {
 			return err
 		}
 	}
@@ -196,9 +203,6 @@ func checkTags(n *yaml.Node) error {
 
 // checkKey refuses a key that is not a plain name.
 func checkKey(key *yaml.Node, reason string) error {
-	if key.Kind == yaml.AliasNode {
-		return errAt(key, "aliases are not supported")
-	}
 	if key.Kind != yaml.ScalarNode || !namePattern.MatchString(key.Value) {
 		return errAt(key, reason)
 	}

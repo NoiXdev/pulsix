@@ -111,8 +111,18 @@ func TestParseRefusesWithoutQuotingTheFile(t *testing.T) {
 			"line 4, column 7: a field value must be a single value, not a list or mapping"},
 		{"field a list", "secrets:\n  pg:\n    password: [" + secretValue + "]\n",
 			"line 3, column 15: a field value must be a single value, not a list or mapping"},
+		// Anchors are refused wherever they stand, with or without an
+		// alias that uses them, and the anchor's name is never quoted.
 		{"alias", "secrets:\n  pg:\n    a: &x " + secretValue + "\n    b: *x\n",
-			"line 4, column 8: aliases are not supported"},
+			"line 3, column 8: " + badAnchor},
+		{"anchor on a value", "secrets:\n  pg:\n    password: &" + secretValue + " x\n",
+			"line 3, column 15: " + badAnchor},
+		{"anchor on a secret", "secrets:\n  pg: &" + secretValue + "\n    password: x\n",
+			"line 2, column 7: " + badAnchor},
+		{"anchor on a secret name", "secrets:\n  &" + secretValue + " pg:\n    password: x\n",
+			"line 2, column 3: " + badAnchor},
+		{"anchor on the file", "&" + secretValue + "\nsecrets:\n  pg:\n    password: x\n",
+			"line 1, column 1: " + badAnchor},
 		{"value too long", "secrets:\n  pg:\n    password: " + long + "\n",
 			"line 3, column 15: a field value is longer than 4096 bytes"},
 		{"complex key", "secrets:\n  ? [a, b]\n  : x\n",
@@ -174,6 +184,9 @@ func TestParseRefusesWithoutQuotingTheFile(t *testing.T) {
 
 // badTag is the reason given for an explicit tag other than !!str.
 const badTag = "YAML tags are not supported, except !!str on a value"
+
+// badAnchor is the reason given for any anchor (and so for any alias).
+const badAnchor = "YAML anchors and aliases are not supported"
 
 func TestParseAcceptsTheStrTag(t *testing.T) {
 	set, err := parse([]byte("secrets:\n  !!str pg:\n    !!str port: !!str 5432\n    tls: ! true\n"))
