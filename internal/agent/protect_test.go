@@ -15,11 +15,14 @@ import (
 // models an access list the system refused to change.
 type fakeProtector struct {
 	loose     map[string]string
+	owner     map[string]string
 	sticky    bool
 	protected []string
 }
 
 func (f *fakeProtector) Loose(path string) (string, error) { return f.loose[path], nil }
+
+func (f *fakeProtector) ForeignOwner(path string) (string, error) { return f.owner[path], nil }
 
 func (f *fakeProtector) Protect(path string) error {
 	f.protected = append(f.protected, path)
@@ -82,6 +85,64 @@ func TestEnsureDataDirProtectsACustomDirItCreated(t *testing.T) {
 	}
 	if len(p.protected) != 1 || p.protected[0] != dir {
 		t.Errorf("Protect calls = %v, want exactly [%s]", p.protected, dir)
+	}
+}
+
+// TestEnsureDataDirTightensAnExistingDefault: the default directory is
+// already there with an allowed owner (the install script made it) but a
+// loose list, and the agent replaces the list.
+func TestEnsureDataDirTightensAnExistingDefault(t *testing.T) {
+	dir := t.TempDir()
+	p := &fakeProtector{loose: map[string]string{dir: `BUILTIN\Users`}}
+
+	if err := ensureDataDir(p, dir, true, quietLogger()); err != nil {
+		t.Fatalf("ensureDataDir = %v, want nil", err)
+	}
+	if len(p.protected) != 1 || p.protected[0] != dir {
+		t.Errorf("Protect calls = %v, want exactly [%s]", p.protected, dir)
+	}
+}
+
+// TestEnsureDataDirRefusesAForeignOwner: whoever owns the directory can
+// reopen it to change its list at any time and keeps what it planted
+// inside, so no takeover is attempted — not for the default, not for an
+// operator's directory, and not for one that appeared under a race after
+// the agent found the path free.
+func TestEnsureDataDirRefusesAForeignOwner(t *testing.T) {
+	tests := []struct {
+		name      string
+		isDefault bool
+		existing  bool
+	}{
+		{"existing default", true, true},
+		{"existing custom", false, true},
+		{"raced while created", true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "Pulsix")
+			if tt.existing {
+				if err := os.Mkdir(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			p := &fakeProtector{
+				loose: map[string]string{dir: `owner PC\mallory, BUILTIN\Users`},
+				owner: map[string]string{dir: `owner PC\mallory`},
+			}
+			err := ensureDataDir(p, dir, tt.isDefault, quietLogger())
+			if !errors.Is(err, ErrSetupFailed) {
+				t.Fatalf("ensureDataDir = %v, want ErrSetupFailed", err)
+			}
+			for _, want := range []string{dir, `PC\mallory`, "remove it"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+			if len(p.protected) != 0 {
+				t.Errorf("Protect calls = %v, want none on a foreign-owned directory", p.protected)
+			}
+		})
 	}
 }
 

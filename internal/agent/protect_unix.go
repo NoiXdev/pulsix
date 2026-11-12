@@ -27,13 +27,34 @@ func (u unixProtector) Loose(path string) (string, error) {
 		return "", nil
 	}
 	var found []string
-	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int64(st.Uid) != int64(u.euid) {
-		found = append(found, fmt.Sprintf("owner uid %d", st.Uid))
+	if owner := u.fileOwner(fi); owner != "" {
+		found = append(found, owner)
 	}
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 		found = append(found, fmt.Sprintf("mode %04o", perm))
 	}
 	return strings.Join(found, ", "), nil
+}
+
+// ForeignOwner is "" for a directory (the data directory's owner was never
+// a gate on Unix) and reports a file's owner when it is not the agent's
+// effective user.
+func (u unixProtector) ForeignOwner(path string) (string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect %s: %w", path, err)
+	}
+	if fi.IsDir() {
+		return "", nil
+	}
+	return u.fileOwner(fi), nil
+}
+
+func (u unixProtector) fileOwner(fi os.FileInfo) string {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok && int64(st.Uid) != int64(u.euid) {
+		return fmt.Sprintf("owner uid %d", st.Uid)
+	}
+	return ""
 }
 
 // Protect drops every group and other bit: 0700 for a directory, 0600 for

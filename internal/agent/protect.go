@@ -16,6 +16,10 @@ import (
 type protector interface {
 	// Loose reports who besides the allowed principals can access path; "" means none.
 	Loose(path string) (string, error)
+	// ForeignOwner reports path's owner when it is not an allowed
+	// principal (or that path is a link, whose owner it does not
+	// inspect); "" means the owner is allowed.
+	ForeignOwner(path string) (string, error)
 	// Protect makes path accessible to the allowed principals only.
 	Protect(path string) error
 }
@@ -63,16 +67,30 @@ func LoadEnvFile(path string) (map[string]string, error) {
 }
 
 // ensureDataDir creates the data directory and makes sure only the allowed
-// principals can reach it. A loose directory the agent may own — the
-// default one, or one this call just created — is tightened and logged; a
-// loose directory the operator chose and created is left alone, because a
-// rewritten access list cannot be undone and the directory may be shared.
+// principals can reach it.
+//
+//   - A directory owned by anyone else is refused, whether it already
+//     existed or appeared under a race: its owner can reopen it with
+//     WRITE_DAC at any time, and whatever it planted inside would be kept.
+//   - A loose directory the agent may own — the default one, or one this
+//     call just created — is tightened and logged.
+//   - A loose directory the operator chose and created is left alone,
+//     because a rewritten access list cannot be undone and the directory
+//     may be shared.
+//
 // Every failure is ErrSetupFailed: no manager retry fixes it.
 func ensureDataDir(p protector, dir string, isDefault bool, log *slog.Logger) error {
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, fs.ErrNotExist)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("%w: create data dir %s: %v", ErrSetupFailed, dir, err)
+	}
+	owner, err := p.ForeignOwner(dir)
+	if err != nil {
+		return fmt.Errorf("%w: check data dir %s owner: %v", ErrSetupFailed, dir, err)
+	}
+	if owner != "" {
+		return fmt.Errorf("%w: data directory %s is owned by %s; remove it (or have it owned by Administrators) and start the agent again", ErrSetupFailed, dir, owner)
 	}
 	found, err := p.Loose(dir)
 	if err != nil {

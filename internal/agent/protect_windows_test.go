@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,9 @@ func TestWindowsProtector(t *testing.T) {
 	}
 	if found, err := p.Loose(dir); err != nil || found != "" {
 		t.Fatalf("Loose(protected dir) = %q, %v; want empty", found, err)
+	}
+	if owner, err := p.ForeignOwner(dir); err != nil || owner != "" {
+		t.Fatalf("ForeignOwner(protected dir) = %q, %v; want empty", owner, err)
 	}
 	assertOwnerIsAdministrators(t, dir)
 
@@ -92,6 +96,35 @@ func TestWindowsProtectorReportsAnOwner(t *testing.T) {
 	}
 }
 
+// TestWindowsEnsureDataDirRefusesAUserOwnedDir: a default data directory
+// that already exists and belongs to an ordinary user (a squatter under
+// ProgramData) is refused, not taken over.
+func TestWindowsEnsureDataDirRefusesAUserOwnedDir(t *testing.T) {
+	user := currentUserSID(t)
+	system, admins, err := allowedSIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.Equals(system) || user.Equals(admins) {
+		t.Skip("the test runs as an allowed owner")
+	}
+	dir := filepath.Join(t.TempDir(), "Pulsix")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION, user, nil, nil, nil); err != nil {
+		t.Fatalf("set the owner to the test user: %v", err)
+	}
+	err = ensureDataDir(newProtector(), dir, true, quietLogger())
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "owner "+trusteeName(user)) {
+		t.Fatalf("ensureDataDir(user-owned default dir) = %v, want ErrSetupFailed naming the owner", err)
+	}
+	if owner, err := newProtector().ForeignOwner(dir); err != nil || owner == "" {
+		t.Fatalf("ForeignOwner after the refusal = %q, %v; want the user still reported (nothing changed)", owner, err)
+	}
+}
+
 func TestWindowsProtectorRefusesALink(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target")
@@ -106,6 +139,9 @@ func TestWindowsProtectorRefusesALink(t *testing.T) {
 	found, err := p.Loose(link)
 	if err != nil || !strings.Contains(found, "link") {
 		t.Fatalf("Loose(link) = %q, %v; want it reported as a link", found, err)
+	}
+	if owner, err := p.ForeignOwner(link); err != nil || !strings.Contains(owner, "link") {
+		t.Fatalf("ForeignOwner(link) = %q, %v; want it reported as a link", owner, err)
 	}
 	if err := p.Protect(link); err == nil {
 		t.Fatal("Protect(link) = nil, want a refusal")

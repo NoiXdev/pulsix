@@ -88,3 +88,21 @@ func TestLoadEnvFile(t *testing.T) {
 		t.Errorf("LoadEnvFile(0644) = %v, want an error naming the path and the mode", err)
 	}
 }
+
+// TestUnixProtectorForeignOwner: a directory's owner is never a finding on
+// Unix, and a file the agent's own user created has an allowed owner.
+func TestUnixProtectorForeignOwner(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "agent.env")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{dir, file} {
+		if got, err := newProtector().ForeignOwner(path); err != nil || got != "" {
+			t.Errorf("ForeignOwner(%s) = %q, %v; want empty", path, got, err)
+		}
+	}
+	if _, err := newProtector().ForeignOwner(filepath.Join(dir, "nope")); err == nil {
+		t.Error("ForeignOwner(missing) = nil error, want one")
+	}
+}

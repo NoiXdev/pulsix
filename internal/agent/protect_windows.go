@@ -76,12 +76,12 @@ func (windowsProtector) Loose(path string) (string, error) {
 		return "", fmt.Errorf("read the security descriptor of %s: %w", path, err)
 	}
 	var found findings
-	owner, _, err := sd.Owner()
+	owner, err := ownerFinding(path, sd, system, admins)
 	if err != nil {
-		return "", fmt.Errorf("read the owner of %s: %w", path, err)
+		return "", err
 	}
-	if owner == nil || (!owner.Equals(system) && !owner.Equals(admins)) {
-		found.add("owner " + trusteeName(owner))
+	if owner != "" {
+		found.add(owner)
 	}
 	control, _, err := sd.Control()
 	if err != nil {
@@ -121,6 +121,40 @@ func (windowsProtector) Loose(path string) (string, error) {
 		found.add("whoever its parent's access list admits (it inherits that list)")
 	}
 	return found.String(), nil
+}
+
+// ForeignOwner reports path's owner unless it is SYSTEM or Administrators.
+// A link is reported as such: GetNamedSecurityInfo would read its target.
+func (windowsProtector) ForeignOwner(path string) (string, error) {
+	_, link, err := lstatLink(path)
+	if err != nil {
+		return "", err
+	}
+	if link {
+		return "whoever made the link (it is a symlink or junction)", nil
+	}
+	system, admins, err := allowedSIDs()
+	if err != nil {
+		return "", err
+	}
+	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return "", fmt.Errorf("read the owner of %s: %w", path, err)
+	}
+	return ownerFinding(path, sd, system, admins)
+}
+
+// ownerFinding is "owner DOMAIN\user" when sd's owner is neither allowed
+// principal (a missing owner included), else "".
+func ownerFinding(path string, sd *windows.SECURITY_DESCRIPTOR, system, admins *windows.SID) (string, error) {
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return "", fmt.Errorf("read the owner of %s: %w", path, err)
+	}
+	if owner != nil && (owner.Equals(system) || owner.Equals(admins)) {
+		return "", nil
+	}
+	return "owner " + trusteeName(owner), nil
 }
 
 // findings collects distinct findings in the order they were found.
@@ -176,9 +210,9 @@ func trusteeName(sid *windows.SID) string {
 // SYSTEM and Administrators only, inherited by everything created beneath
 // it. It refuses a link: the access list it would rewrite is the
 // target's, and the target is wherever the link's author pointed it.
-// Taking a directory over from a hostile owner whose list shuts out
-// Administrators needs privileges the agent does not enable, so that case
-// fails rather than succeeds partly.
+// ensureDataDir never calls it on a directory with a foreign owner: that
+// owner could hold a WRITE_DAC handle open across the change and keep
+// whatever it planted inside, so such a directory is refused instead.
 func (windowsProtector) Protect(path string) error {
 	_, link, err := lstatLink(path)
 	if err != nil {
