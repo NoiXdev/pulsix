@@ -42,11 +42,18 @@ func TestGet(t *testing.T) {
 	}
 }
 
-// TestGetEveryName: Get's switch and Names' list are two spellings of the
-// same set, so every listed name must lead to the descriptor carrying it
-// (a case wired to the wrong constructor would otherwise go unnoticed).
+// TestGetEveryName: the registry spells each plugin's name next to its
+// constructor, so every listed name must lead to the descriptor carrying it
+// (an entry wired to the wrong constructor, or a constructor whose Name
+// differs from its entry, would otherwise go unnoticed), and no name may
+// be listed twice (Get would never reach the second entry).
 func TestGetEveryName(t *testing.T) {
+	seen := map[string]bool{}
 	for _, name := range checkplugins.Names() {
+		if seen[name] {
+			t.Errorf("%q is registered twice", name)
+		}
+		seen[name] = true
 		d, ok := checkplugins.Get(name)
 		if !ok || d.Name != name {
 			t.Errorf("Get(%q) = %q, %v", name, d.Name, ok)
