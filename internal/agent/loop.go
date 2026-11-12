@@ -225,7 +225,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// Nothing is read from the data directory before it passes: on
 	// Windows a directory someone else owns, or files planted in it, must
 	// stop the agent rather than become its identity and trusted CA.
-	if err := ensureDataDir(l.protect, l.cfg.DataDir, l.cfg.DataDirIsDefault, l.log); err != nil {
+	if err := ensureDataDir(l.protect, l.cfg.DataDir, l.cfg.DataDirIsDefault, l.cfg.SecretsPath, l.log); err != nil {
 		return err
 	}
 	id, why, err := LoadIdentityDetail(l.cfg.DataDir)

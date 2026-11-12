@@ -130,6 +130,49 @@ func TestLoopHeartbeatReportsARefusedSecretsFile(t *testing.T) {
 	assertNothingSent(t, stream, lt.logText())
 }
 
+// TestLoopStartsWithARefusedSecretsFileInTheDataDir: where the protector
+// checks every entry of the data directory (Windows), the secrets file is
+// left to its watcher, which applies the full rule on every read. A
+// too-open or user-owned agent.yaml must not stop the agent — neither at
+// start nor on the enrollment path — it keeps running without secrets
+// and reports why.
+func TestLoopStartsWithARefusedSecretsFileInTheDataDir(t *testing.T) {
+	for _, enrolled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("enrolled=%v", enrolled), func(t *testing.T) {
+			lt := newLoopTest(t)
+			if enrolled {
+				lt.withIdentity()
+			} else {
+				caInst := newTestCA(t)
+				lt.withToken(caInst)
+				lt.dialer.enrollConn = &fakeEnrollConn{respond: enrollResponder(caInst, nil, nil)}
+			}
+			writeSecretsFile(t, lt.cfg.SecretsPath, twoSecrets)
+			stream := newFakeStream()
+			lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
+			p := &fakeProtector{
+				entries: true,
+				loose:   map[string]string{lt.cfg.SecretsPath: `owner PC\mallory, BUILTIN\Users`},
+				owner:   map[string]string{lt.cfg.SecretsPath: `owner PC\mallory`},
+			}
+			opts := append(lt.options(), withProtector(p))
+
+			cancel, done := runLoop(t, NewLoop(lt.cfg, lt.dialer, lt.facts, opts...))
+			waitFor(t, 2*time.Second, func() bool { return len(heartbeats(stream)) > 0 })
+			hb := heartbeats(stream)[0]
+			want := "configuration file " + lt.cfg.SecretsPath + ` holds secrets but is accessible to owner PC\mallory, BUILTIN\Users; restrict it`
+			if len(hb.GetSecretNames()) != 0 || hb.GetSecretsState() != want {
+				t.Errorf("heartbeat = %v, want no names and state %q", hb, want)
+			}
+			cancel()
+			if err := <-done; err != nil {
+				t.Errorf("Run = %v", err)
+			}
+			assertNothingSent(t, stream, lt.logText())
+		})
+	}
+}
+
 // TestLoopRereadsTheSecretsFileOnTheHeartbeat: a heartbeat a minute later
 // reports the file as it is now.
 func TestLoopRereadsTheSecretsFileOnTheHeartbeat(t *testing.T) {

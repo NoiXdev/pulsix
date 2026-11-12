@@ -116,7 +116,7 @@ func TestWindowsEnsureDataDirRefusesAUserOwnedDir(t *testing.T) {
 		windows.OWNER_SECURITY_INFORMATION, user, nil, nil, nil); err != nil {
 		t.Fatalf("set the owner to the test user: %v", err)
 	}
-	err = ensureDataDir(newProtector(), dir, true, quietLogger())
+	err = ensureDataDir(newProtector(), dir, true, "", quietLogger())
 	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "owner "+trusteeName(user)) {
 		t.Fatalf("ensureDataDir(user-owned default dir) = %v, want ErrSetupFailed naming the owner", err)
 	}
@@ -137,7 +137,7 @@ func TestWindowsEnsureDataDirRefusesAPlantedFile(t *testing.T) {
 	if err := p.Protect(dir); err != nil {
 		t.Fatalf("Protect = %v", err)
 	}
-	if err := ensureDataDir(p, dir, true, quietLogger()); err != nil {
+	if err := ensureDataDir(p, dir, true, "", quietLogger()); err != nil {
 		t.Fatalf("ensureDataDir(clean protected dir) = %v, want nil", err)
 	}
 
@@ -171,7 +171,7 @@ func TestWindowsEnsureDataDirRefusesAPlantedFile(t *testing.T) {
 		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION, admins, nil, acl, nil); err != nil {
 		t.Fatalf("plant the Users entry: %v", err)
 	}
-	err = ensureDataDir(p, dir, true, quietLogger())
+	err = ensureDataDir(p, dir, true, "", quietLogger())
 	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.ca.pem") || !strings.Contains(err.Error(), trusteeName(users)) {
 		t.Fatalf("ensureDataDir with a planted file = %v, want ErrSetupFailed naming the file and Users", err)
 	}

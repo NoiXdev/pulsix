@@ -47,7 +47,7 @@ func TestEnsureDataDirTightensTheDefault(t *testing.T) {
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 
-	if err := ensureDataDir(p, dir, true, log); err != nil {
+	if err := ensureDataDir(p, dir, true, "", log); err != nil {
 		t.Fatalf("ensureDataDir = %v, want nil", err)
 	}
 	if len(p.protected) != 1 || p.protected[0] != dir {
@@ -68,7 +68,7 @@ func TestEnsureDataDirRefusesALooseCustomDir(t *testing.T) {
 	dir := t.TempDir() // the operator's directory, already there
 	p := &fakeProtector{loose: map[string]string{dir: `BUILTIN\Users`}}
 
-	err := ensureDataDir(p, dir, false, quietLogger())
+	err := ensureDataDir(p, dir, false, "", quietLogger())
 	if !errors.Is(err, ErrSetupFailed) {
 		t.Fatalf("ensureDataDir = %v, want ErrSetupFailed", err)
 	}
@@ -89,7 +89,7 @@ func TestEnsureDataDirProtectsACustomDirItCreated(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "custom")
 	p := &fakeProtector{loose: map[string]string{dir: `BUILTIN\Users`}}
 
-	if err := ensureDataDir(p, dir, false, quietLogger()); err != nil {
+	if err := ensureDataDir(p, dir, false, "", quietLogger()); err != nil {
 		t.Fatalf("ensureDataDir = %v, want nil", err)
 	}
 	if len(p.protected) != 1 || p.protected[0] != dir {
@@ -104,7 +104,7 @@ func TestEnsureDataDirTightensAnExistingDefault(t *testing.T) {
 	dir := t.TempDir()
 	p := &fakeProtector{loose: map[string]string{dir: `BUILTIN\Users`}}
 
-	if err := ensureDataDir(p, dir, true, quietLogger()); err != nil {
+	if err := ensureDataDir(p, dir, true, "", quietLogger()); err != nil {
 		t.Fatalf("ensureDataDir = %v, want nil", err)
 	}
 	if len(p.protected) != 1 || p.protected[0] != dir {
@@ -139,7 +139,7 @@ func TestEnsureDataDirRefusesAForeignOwner(t *testing.T) {
 				loose: map[string]string{dir: `owner PC\mallory, BUILTIN\Users`},
 				owner: map[string]string{dir: `owner PC\mallory`},
 			}
-			err := ensureDataDir(p, dir, tt.isDefault, quietLogger())
+			err := ensureDataDir(p, dir, tt.isDefault, "", quietLogger())
 			if !errors.Is(err, ErrSetupFailed) {
 				t.Fatalf("ensureDataDir = %v, want ErrSetupFailed", err)
 			}
@@ -159,7 +159,7 @@ func TestEnsureDataDirFailsWhenProtectDidNotStick(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "Pulsix")
 	p := &fakeProtector{loose: map[string]string{dir: `BUILTIN\Users`}, sticky: true}
 
-	err := ensureDataDir(p, dir, true, quietLogger())
+	err := ensureDataDir(p, dir, true, "", quietLogger())
 	if !errors.Is(err, ErrSetupFailed) {
 		t.Fatalf("ensureDataDir = %v, want ErrSetupFailed", err)
 	}
@@ -172,7 +172,7 @@ func TestEnsureDataDirLeavesATightDirAlone(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "Pulsix")
 	p := &fakeProtector{loose: map[string]string{}}
 
-	if err := ensureDataDir(p, dir, true, quietLogger()); err != nil {
+	if err := ensureDataDir(p, dir, true, "", quietLogger()); err != nil {
 		t.Fatalf("ensureDataDir = %v, want nil", err)
 	}
 	if len(p.protected) != 0 {
@@ -185,7 +185,7 @@ func TestEnsureDataDirReportsAnUncreatableDir(t *testing.T) {
 	if err := os.WriteFile(notADir, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := ensureDataDir(&fakeProtector{}, notADir, true, quietLogger())
+	err := ensureDataDir(&fakeProtector{}, notADir, true, "", quietLogger())
 	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "create data dir") {
 		t.Fatalf("ensureDataDir on a file path = %v, want ErrSetupFailed naming the create", err)
 	}
@@ -330,7 +330,7 @@ func TestEnsureDataDirChecksEntries(t *testing.T) {
 				loose:   map[string]string{planted: tt.loose},
 				owner:   map[string]string{planted: tt.owner},
 			}
-			err := ensureDataDir(p, dir, true, quietLogger())
+			err := ensureDataDir(p, dir, true, "", quietLogger())
 			if tt.wantErr == nil {
 				if err != nil {
 					t.Fatalf("ensureDataDir = %v, want nil", err)
@@ -349,6 +349,47 @@ func TestEnsureDataDirChecksEntries(t *testing.T) {
 	}
 }
 
+// TestEnsureDataDirLeavesTheSecretsFileToItsWatcher: the secrets file
+// (agent.yaml) is the one entry the operator writes by hand, and its
+// watcher applies the full rule on every read; the entry pass skips it,
+// so a too-open or user-owned one does not stop the agent. Every other
+// entry is still checked.
+func TestEnsureDataDirLeavesTheSecretsFileToItsWatcher(t *testing.T) {
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "agent.yaml")
+	if err := os.WriteFile(secretsPath, []byte("secrets: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakeProtector{
+		entries: true,
+		loose:   map[string]string{secretsPath: `BUILTIN\Users`},
+		owner:   map[string]string{secretsPath: `owner PC\mallory`},
+	}
+	if err := ensureDataDir(p, dir, true, secretsPath, quietLogger()); err != nil {
+		t.Fatalf("ensureDataDir with a refused secrets file = %v, want nil", err)
+	}
+
+	planted := filepath.Join(dir, "agent.key")
+	if err := os.WriteFile(planted, []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p.owner[planted] = `owner PC\mallory`
+	err := ensureDataDir(p, dir, true, secretsPath, quietLogger())
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.key") {
+		t.Fatalf("ensureDataDir = %v, want ErrSetupFailed naming the planted key", err)
+	}
+
+	// A secrets file outside the data directory exempts nothing in it.
+	elsewhere := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.Remove(planted); err != nil {
+		t.Fatal(err)
+	}
+	err = ensureDataDir(p, dir, true, elsewhere, quietLogger())
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.yaml") {
+		t.Fatalf("ensureDataDir (secrets file elsewhere) = %v, want ErrSetupFailed naming the data dir's agent.yaml", err)
+	}
+}
+
 // TestEnsureDataDirChecksEntriesAfterTightening: the entry pass also runs
 // on a directory this call just tightened — that is exactly the window
 // in which a file could have been planted.
@@ -359,7 +400,7 @@ func TestEnsureDataDirChecksEntriesAfterTightening(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := &fakeProtector{entries: true, loose: map[string]string{dir: `BUILTIN\Users`, planted: `owner PC\mallory`}}
-	err := ensureDataDir(p, dir, true, quietLogger())
+	err := ensureDataDir(p, dir, true, "", quietLogger())
 	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.ca.pem") {
 		t.Fatalf("ensureDataDir = %v, want ErrSetupFailed naming the planted file", err)
 	}

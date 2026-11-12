@@ -53,7 +53,7 @@ func (l *Loop) enroll(ctx context.Context, existing *Identity) (*Identity, error
 	// The directory is also where the private key goes: on Windows its
 	// access list is checked (and, for a directory the agent owns,
 	// protected) before the key is written.
-	if err := ensureDataDir(l.protect, l.cfg.DataDir, l.cfg.DataDirIsDefault, l.log); err != nil {
+	if err := ensureDataDir(l.protect, l.cfg.DataDir, l.cfg.DataDirIsDefault, l.cfg.SecretsPath, l.log); err != nil {
 		return nil, err
 	}
 	if err := probeWritable(l.cfg.DataDir); err != nil {

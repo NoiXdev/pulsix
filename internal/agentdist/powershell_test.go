@@ -129,6 +129,9 @@ func TestInstallPs1Shape(t *testing.T) {
 		"reset= 86400 actions= restart/5000/restart/5000/restart/5000",
 		"failureflag",
 		"Start-Service",
+		// The secrets file is the agent's to check (on every read): an
+		// operator's agent.yaml must not stop an upgrade.
+		"Where-Object { $_.Name -ne 'agent.yaml' } | ForEach-Object { Assert-OnlyAdmins $_.FullName }",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("install.ps1 must contain %q", want)

@@ -108,9 +108,13 @@ func LoadEnvFile(path string) (map[string]string, error) {
 //   - Where the protector checks entries (Windows), every entry directly
 //     inside must pass as well: until the directory was protected anyone
 //     could add files to it, and a planted key or CA would be trusted.
+//     The one exception is the secrets file (secretsPath, agent.yaml,
+//     when it lies in dir): the operator writes it by hand, and its
+//     watcher applies the full rule on every read, so a refused one
+//     leaves the agent running without secrets rather than stopped.
 //
 // Every failure is ErrSetupFailed: no manager retry fixes it.
-func ensureDataDir(p protector, dir string, isDefault bool, log *slog.Logger) error {
+func ensureDataDir(p protector, dir string, isDefault bool, secretsPath string, log *slog.Logger) error {
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, fs.ErrNotExist)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -127,7 +131,7 @@ func ensureDataDir(p protector, dir string, isDefault bool, log *slog.Logger) er
 		return err
 	}
 	if p.checksEntries() {
-		return checkDataDirEntries(p, dir)
+		return checkDataDirEntries(p, dir, secretsPath)
 	}
 	return nil
 }
@@ -161,13 +165,20 @@ func restrictDataDir(p protector, dir string, mayProtect bool, log *slog.Logger)
 
 // checkDataDirEntries refuses the first entry directly inside dir (a file
 // or a subdirectory; not recursive) with a foreign owner or a loose list.
-func checkDataDirEntries(p protector, dir string) error {
+// The entry that is the secrets file is skipped: the watcher checks it.
+func checkDataDirEntries(p protector, dir, secretsPath string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("%w: list data dir %s: %v", ErrSetupFailed, dir, err)
 	}
+	secrets := lstatOrNil(secretsPath)
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
+		if secrets != nil {
+			if fi := lstatOrNil(path); fi != nil && os.SameFile(fi, secrets) {
+				continue
+			}
+		}
 		found, err := p.ForeignOwner(path)
 		if err == nil && found == "" {
 			found, err = p.LooseEntry(path)
@@ -180,4 +191,17 @@ func checkDataDirEntries(p protector, dir string) error {
 		}
 	}
 	return nil
+}
+
+// lstatOrNil is path's own file info (a link is not followed), or nil when
+// path is empty or cannot be inspected.
+func lstatOrNil(path string) fs.FileInfo {
+	if path == "" {
+		return nil
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil
+	}
+	return fi
 }

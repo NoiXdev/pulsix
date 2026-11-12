@@ -118,7 +118,7 @@ func TestUnixEnsureDataDirIgnoresEntries(t *testing.T) {
 	if err := os.Chmod(file, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := ensureDataDir(newProtector(), dir, false, quietLogger()); err != nil {
+	if err := ensureDataDir(newProtector(), dir, false, "", quietLogger()); err != nil {
 		t.Fatalf("ensureDataDir = %v, want nil", err)
 	}
 }
@@ -140,7 +140,7 @@ func TestUnixEnsureDataDirFollowsASymlinkedDir(t *testing.T) {
 		if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
-		if err := ensureDataDir(newProtector(), link, isDefault, quietLogger()); err != nil {
+		if err := ensureDataDir(newProtector(), link, isDefault, "", quietLogger()); err != nil {
 			t.Errorf("ensureDataDir(symlink, isDefault=%v) = %v, want nil", isDefault, err)
 		}
 		fi, err := os.Stat(target)

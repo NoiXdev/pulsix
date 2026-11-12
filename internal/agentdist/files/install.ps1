@@ -71,6 +71,9 @@ function Test-ReparsePoint([string]$Path) {
 # nobody else has an allow entry on it. The agent checks exactly this for
 # its data directory and everything directly inside it, and refuses to
 # start otherwise; checking it here shows the problem at install time.
+# The one exception is agent.yaml, the secrets file the operator writes by
+# hand: the agent checks it on every read and keeps running without
+# secrets when it fails, so it does not stop an upgrade here either.
 function Assert-OnlyAdmins([string]$Path) {
 	if (Test-ReparsePoint $Path) {
 		Stop-Install "$Path is a link (symlink or junction); remove it and run the installer again"
@@ -300,7 +303,7 @@ if (Test-Path -LiteralPath $EnvFile) {
 	Remove-Item -LiteralPath $EnvFile -Force
 }
 Assert-OnlyAdmins $DataDir
-Get-ChildItem -LiteralPath $DataDir -Force | ForEach-Object { Assert-OnlyAdmins $_.FullName }
+Get-ChildItem -LiteralPath $DataDir -Force | Where-Object { $_.Name -ne 'agent.yaml' } | ForEach-Object { Assert-OnlyAdmins $_.FullName }
 
 # UTF-8 without a byte order mark, LF line endings.
 $lines = @("PULSIX_MANAGER_ADDR=$Manager", "PULSIX_ENROLL_TOKEN=$Token")
