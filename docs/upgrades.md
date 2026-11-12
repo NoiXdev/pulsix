@@ -552,8 +552,8 @@ A manager whose `PULSIX_PUBLIC_URL` carries user info (`user:pass@`), a query, a
 fragment, an upper-case scheme (`HTTPS://`) or any other refused character now
 refuses to start, with an error naming the variable and the character. The rule:
 the value starts with lower-case `http://` or `https://`, has a host, and every
-character is one of `A-Z a-z 0-9 . _ ~ : / % + = , -` or `[` `]` (for an IPv6
-host such as `http://[2001:db8::1]:8080`). Fix the value in `.env` before
+character is one of `A-Z a-z 0-9 . _ ~ : / % + = , -` or `[` `]`, the brackets only around an
+IPv6 host such as `http://[2001:db8::1]:8080` (never in the path). Fix the value in `.env` before
 upgrading.
 
 ## Downgrading

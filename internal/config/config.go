@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
@@ -339,24 +340,38 @@ func fmtHours(d time.Duration) string {
 // validatePublicURL enforces the PULSIX_PUBLIC_URL rule. The value is
 // pasted into the agent install commands an administrator runs, so it is
 // held to a small safe alphabet: absolute lower-case http(s), a host, no
-// user info, query or fragment (@ ? # are outside the alphabet), and only [A-Za-z0-9._~:/%+=,-] plus the
-// brackets of an IPv6 literal.
+// user info, query or fragment (@ ? # are outside the alphabet), and only
+// [A-Za-z0-9._~:/%+=,-] plus the brackets of an IPv6 host literal. Errors
+// name the character and its position, never the value: a refused
+// user:pass@host must not put the password into the startup log.
 func validatePublicURL(raw string) error {
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
-		return fmt.Errorf("PULSIX_PUBLIC_URL %q must be an absolute URL starting with http:// or https:// (lower-case)", raw)
+		return errors.New("PULSIX_PUBLIC_URL must be an absolute URL starting with http:// or https:// (lower-case)")
 	}
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
-		case strings.IndexByte("._~:/%+=,-[]", c) >= 0:
-		default:
-			return fmt.Errorf("PULSIX_PUBLIC_URL %q contains %q, which is not allowed (only letters, digits and . _ ~ : / %% + = , - [ ])", raw, string(rune(c)))
+	for i, r := range raw {
+		if r < utf8.RuneSelf && (r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+			strings.ContainsRune("._~:/%+=,-[]", r)) {
+			continue
 		}
+		return fmt.Errorf("PULSIX_PUBLIC_URL contains %q at byte %d, which is not allowed (only letters, digits and . _ ~ : / %% + = , - and [ ] around an IPv6 host)", r, i)
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || u.Hostname() == "" {
-		return fmt.Errorf("PULSIX_PUBLIC_URL %q must be an absolute URL with a host", raw)
+	if err != nil || u.Hostname() == "" {
+		return errors.New("PULSIX_PUBLIC_URL must be an absolute URL with a host")
+	}
+	// Brackets belong to an IPv6 host literal only; curl would glob them
+	// in a path.
+	rest := raw[strings.Index(raw, "://")+3:]
+	if strings.ContainsAny(rest, "[]") {
+		host, path, _ := strings.Cut(rest, "/")
+		bracketed := strings.HasPrefix(host, "[")
+		if strings.ContainsAny(path, "[]") || !bracketed {
+			return errors.New("PULSIX_PUBLIC_URL may use [ ] only around an IPv6 host")
+		}
+		addr, err := netip.ParseAddr(u.Hostname())
+		if err != nil || !addr.Is6() || !strings.HasPrefix(host, "["+u.Hostname()+"]") {
+			return errors.New("PULSIX_PUBLIC_URL may use [ ] only around an IPv6 host")
+		}
 	}
 	return nil
 }

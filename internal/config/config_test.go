@@ -610,7 +610,8 @@ func TestLoadPublicURLRule(t *testing.T) {
 		"ftp://x", "HTTPS://x", "https://u:p@x", "https://x/?a=1", "https://x/#f",
 		"https://x/;id", "https://x/$(id)", "https://x/a b", "https://x/a|b",
 		"https://x/a&b", "https://x/`", "https://x/'q'", `https://x/"q"`,
-		`https://x/\`, "https:///path",
+		`https://x/\`, "https:///path", "https://x/[a]", "https://x/a]b", "https://x[1]/",
+		"https://exämple.com", "http://:8080", "http://[::1", "http://[1.2.3.4]:80/",
 	} {
 		err := load(bad)
 		if err == nil {
@@ -624,7 +625,24 @@ func TestLoadPublicURLRule(t *testing.T) {
 	if err := load("HTTPS://x"); err == nil || !strings.Contains(err.Error(), "lower-case") {
 		t.Errorf("upper-case scheme error should say lower-case, got %v", err)
 	}
-	if err := load("https://x/a b"); err == nil || !strings.Contains(err.Error(), `contains " "`) {
+	if err := load("https://x/a b"); err == nil || !strings.Contains(err.Error(), `contains ' ' at byte 11`) {
 		t.Errorf("offending character not named, got %v", err)
+	}
+}
+
+func TestLoadPublicURLErrorHidesValueAndDecodesRunes(t *testing.T) {
+	load := func(raw string) error {
+		_, err := config.Load(env(map[string]string{
+			"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+			"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+			"PULSIX_PUBLIC_URL":   raw,
+		}))
+		return err
+	}
+	if err := load("https://user:hunter2@host"); err == nil || strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("error must not echo the value, got %v", err)
+	}
+	if err := load("https://exämple.com"); err == nil || !strings.Contains(err.Error(), `'ä'`) {
+		t.Errorf("want the decoded rune named, got %v", err)
 	}
 }
