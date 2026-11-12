@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/config"
 )
 
@@ -528,7 +529,8 @@ func TestNotifyNAT64Prefixes(t *testing.T) {
 // TestItemExpiry: PULSIX_ITEM_EXPIRY is how long a check's item may stay
 // silent, while its host keeps reporting, before it is forgotten; the
 // default is 168h, 0 switches the expiry off, and anything else must be a
-// Go duration of at least one hour.
+// Go duration of at least 48h — twice the longest check interval, so a
+// check that reports once a day is never forgotten between two reports.
 func TestItemExpiry(t *testing.T) {
 	base := map[string]string{
 		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
@@ -543,10 +545,12 @@ func TestItemExpiry(t *testing.T) {
 		{raw: "", want: 168 * time.Hour},
 		{raw: "0", want: 0},
 		{raw: "0s", want: 0},
-		{raw: "1h", want: time.Hour},
+		{raw: "48h", want: 48 * time.Hour},
 		{raw: "72h", want: 72 * time.Hour},
+		{raw: "47h", wantErr: true},
+		{raw: "47h59m59s", wantErr: true},
+		{raw: "1h", wantErr: true},
 		{raw: "30m", wantErr: true},
-		{raw: "59m59s", wantErr: true},
 		{raw: "-2h", wantErr: true},
 		{raw: "a week", wantErr: true},
 		{raw: "7", wantErr: true},
@@ -558,13 +562,25 @@ func TestItemExpiry(t *testing.T) {
 		}
 		cfg, err := config.Load(env(m))
 		if c.wantErr {
-			if err == nil || !strings.Contains(err.Error(), "PULSIX_ITEM_EXPIRY") {
-				t.Errorf("PULSIX_ITEM_EXPIRY=%q: want an error naming the variable, got %v", c.raw, err)
+			if err == nil || !strings.Contains(err.Error(), "PULSIX_ITEM_EXPIRY") || !strings.Contains(err.Error(), "48h") {
+				t.Errorf("PULSIX_ITEM_EXPIRY=%q: want an error naming the variable and its minimum, got %v", c.raw, err)
 			}
 			continue
 		}
 		if err != nil || cfg.ItemExpiry != c.want {
 			t.Errorf("PULSIX_ITEM_EXPIRY=%q: got %v, %v; want %v", c.raw, cfg.ItemExpiry, err, c.want)
 		}
+	}
+}
+
+// TestMinItemExpiryCoversTheLongestCheckInterval pins the relation the
+// minimum exists for: at least two of the longest check interval, so an
+// item of a once-a-day check is never forgotten between two reports.
+func TestMinItemExpiryCoversTheLongestCheckInterval(t *testing.T) {
+	if config.MinItemExpiry < 2*checks.MaxInterval {
+		t.Fatalf("MinItemExpiry = %v, want at least 2 × the longest check interval (%v)", config.MinItemExpiry, checks.MaxInterval)
+	}
+	if config.DefaultItemExpiry < config.MinItemExpiry {
+		t.Fatalf("DefaultItemExpiry %v is below MinItemExpiry %v", config.DefaultItemExpiry, config.MinItemExpiry)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/probe"
@@ -59,8 +60,8 @@ type Config struct {
 	RetestInterval time.Duration
 	// ItemExpiry is how long a check's item may stay silent, while its host
 	// keeps reporting, before the manager forgets it (PULSIX_ITEM_EXPIRY, a
-	// Go duration of at least 1h; the default 168h; 0 switches the automatic
-	// expiry off).
+	// Go duration of at least MinItemExpiry, 48h; the default 168h; 0
+	// switches the automatic expiry off).
 	ItemExpiry time.Duration
 	// JobMaxAttempts is how often a job may be claimed before the reaper
 	// fails a stale claim instead of requeuing it (PULSIX_JOB_MAX_ATTEMPTS,
@@ -119,11 +120,13 @@ type Config struct {
 }
 
 // DefaultItemExpiry is the default PULSIX_ITEM_EXPIRY; MinItemExpiry is the
-// shortest period accepted (a shorter one would forget an item that merely
-// skipped a few reports).
+// shortest period accepted: twice the longest check interval (48h), so an
+// item of a check that reports once a day is never forgotten between two
+// reports — or after missing one — and then rediscovered, with its alerts
+// closed and reopened, every day.
 const (
 	DefaultItemExpiry = 168 * time.Hour
-	MinItemExpiry     = time.Hour
+	MinItemExpiry     = 2 * checks.MaxInterval
 )
 
 // DefaultRetestInterval is the connection re-test scheduler's pass period.
@@ -202,7 +205,7 @@ func Load(getenv func(string) string) (Config, error) {
 	if raw := getenv("PULSIX_ITEM_EXPIRY"); raw != "" {
 		d, err := time.ParseDuration(raw)
 		if err != nil || d < 0 || (d != 0 && d < MinItemExpiry) {
-			return cfg, errors.New("PULSIX_ITEM_EXPIRY must be a duration of at least 1h (e.g. 72h, 168h) or 0 to disable")
+			return cfg, fmt.Errorf("PULSIX_ITEM_EXPIRY must be a duration of at least %s (e.g. 72h, 168h) or 0 to disable", fmtHours(MinItemExpiry))
 		}
 		cfg.ItemExpiry = d
 	}
@@ -325,4 +328,10 @@ func defaultGRPCPublicAddr(publicURL, listen string) string {
 		return ""
 	}
 	return net.JoinHostPort(u.Hostname(), port)
+}
+
+// fmtHours renders a whole number of hours the way the setting is written
+// ("48h"), not time.Duration's "48h0m0s".
+func fmtHours(d time.Duration) string {
+	return strconv.FormatInt(int64(d/time.Hour), 10) + "h"
 }

@@ -83,7 +83,11 @@ const (
 	// produce observations, which internal/agentapi's per-stream ingest
 	// budget uses as its refill period (backlog 7.111).
 	MinInterval = 10 * time.Second
-	maxInterval = 24 * time.Hour
+	// MaxInterval is the longest check interval a definition may carry.
+	// It is exported because internal/config derives the shortest item
+	// expiry period from it (backlog 3.12b): an item must never be
+	// forgotten between two reports of its check.
+	MaxInterval = 24 * time.Hour
 )
 
 // Definition is a plugin bound to a scope. Samples (a later task) are keyed
@@ -240,8 +244,8 @@ func ValidateDefinitionShape(plugin, key string, params map[string]any, interval
 	if !keyPattern.MatchString(normalizedKey) {
 		return "", fmt.Errorf("%w: key must match %s", ErrInvalidInput, keyPattern.String())
 	}
-	if interval < MinInterval || interval > maxInterval {
-		return "", fmt.Errorf("%w: interval must be between %s and %s", ErrInvalidInput, MinInterval, maxInterval)
+	if interval < MinInterval || interval > MaxInterval {
+		return "", fmt.Errorf("%w: interval must be between %s and %s", ErrInvalidInput, MinInterval, MaxInterval)
 	}
 	if err := validateParams(plugin, params); err != nil {
 		return "", err

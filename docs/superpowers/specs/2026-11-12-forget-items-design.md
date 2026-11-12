@@ -79,8 +79,12 @@ Samples (`check_samples`) are untouched.
   deleted or unbound from the host: its tuples stop arriving while other
   checks continue).
 - Period: 7 days by default; the instance setting
-  `PULSIX_ITEM_EXPIRY` (a Go duration, at least `1h`; `0` disables the
-  automatic expiry) changes it. **(Claude's call.)**
+  `PULSIX_ITEM_EXPIRY` (a Go duration, at least `48h`; `0` disables the
+  automatic expiry) changes it. **(Claude's call;** the minimum was raised
+  from `1h` after the final review: it is twice the longest check interval,
+  24 h, so an item of a once-a-day check is never forgotten between two
+  reports and rediscovered — with its alerts closed, reopened and notified —
+  every day. `internal/config` derives it from `checks.MaxInterval`.)
 - It runs as a manager loop every hour, bounded per round (at most a few
   thousand items per round, in batches), under a session advisory lock so
   that exactly one manager runs it, the pattern of the retention and
@@ -97,7 +101,7 @@ Samples (`check_samples`) are untouched.
   If it reports again it comes back.").
   **(Claude's call:** a fresh item is not offered the action — forgetting it
   would undo itself within one interval and only confuse.)
-- API: `DELETE /api/v1/orgs/{org}/hosts/{host}/items` with `check_key` and
+- API: `DELETE /api/v1/orgs/{org}/hosts/{id}/items` with `check_key` and
   `item` in the query (the item name may contain any characters, so not in
   the path). 204 on success, 404 when nothing matched. Role: the same role
   that may write item decisions. **(Claude's call.)**

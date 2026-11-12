@@ -68,7 +68,7 @@ x-manager-base: &manager-base
     # default: include the subnet when you override it.
     PULSIX_PROBE_DENY_CIDRS: "${PULSIX_PROBE_DENY_CIDRS:-${PULSIX_NETWORK_SUBNET:-10.213.73.0/24}}"
     # How long a quiet item may stay silent before it is forgotten (Go
-    # duration, at least 1h; 0 switches the expiry off). Unset: 168h.
+    # duration, at least 48h; 0 switches the expiry off). Unset: 168h.
     PULSIX_ITEM_EXPIRY: "${PULSIX_ITEM_EXPIRY:-168h}"
   volumes:
     # The backup folder (README.md, "Backup and restore"): where backups
