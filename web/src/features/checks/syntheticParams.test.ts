@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { en } from '../../i18n/en/index.ts';
 import {
+  hasFieldTable,
   isSynthetic,
   keyAfterPluginChange,
   syntheticParams,
   syntheticValuesFrom,
   validateSynthetic,
-  type SyntheticPlugin,
+  type FieldPlugin,
   type SyntheticValues,
 } from './syntheticParams.ts';
 
@@ -17,8 +18,14 @@ describe('isSynthetic', () => {
   ])('%s → %s', (plugin, want) => expect(isSynthetic(plugin)).toBe(want));
 });
 
+describe('hasFieldTable', () => {
+  it.each([['icmp', true], ['dns', true], ['docker', true], ['cpu', false], ['', false]])('%s → %s', (plugin, want) =>
+    expect(hasFieldTable(plugin)).toBe(want));
+  it('keeps docker out of isSynthetic', () => expect(isSynthetic('docker')).toBe(false));
+});
+
 describe('syntheticParams', () => {
-  it.each<[string, SyntheticPlugin, SyntheticValues, Record<string, unknown>]>([
+  it.each<[string, FieldPlugin, SyntheticValues, Record<string, unknown>]>([
     ['nothing set sends nothing', 'icmp', {}, {}],
     ['blank fields are left out', 'tcp', { port: '22', send: '', expect: '', timeout_s: '' }, { port: 22 }],
     ['numbers are sent as numbers', 'icmp', { count: '5', timeout_s: '10' }, { count: 5, timeout_s: 10 }],
@@ -82,7 +89,28 @@ function dnsName(n: number): string {
 describe('validateSynthetic', () => {
   const t = en;
   const range = (lo: number, hi: number) => t.checks.synthetic.errors.wholeRange(lo, hi);
-  it.each<[string, SyntheticPlugin, SyntheticValues, Record<string, string>]>([
+  it.each<[string, FieldPlugin, SyntheticValues, Record<string, string>]>([
+    ['docker with nothing set is fine', 'docker', {}, {}],
+    ['docker label key only', 'docker', { label: 'pulsix.monitor' }, {}],
+    ['docker label key=value', 'docker', { label: 'com.example/x-y_z=true' }, {}],
+    ['docker label splits at the first =', 'docker', { label: 'k=a=b' }, {}],
+    ['docker label empty value', 'docker', { label: 'k=' }, {}],
+    ['docker label value of 255 bytes', 'docker', { label: `k=${'a'.repeat(255)}` }, {}],
+    ['docker label key of 255 bytes', 'docker', { label: 'a'.repeat(255) }, {}],
+    ['docker label key of 256 bytes', 'docker', { label: 'a'.repeat(256) }, { label: t.checks.synthetic.errors.dockerLabel }],
+    ['docker label with a space', 'docker', { label: 'bad key' }, { label: t.checks.synthetic.errors.dockerLabel }],
+    ['docker label with an empty key', 'docker', { label: '=x' }, { label: t.checks.synthetic.errors.dockerLabel }],
+    ['docker label value of 256 bytes', 'docker', { label: `k=${'a'.repeat(256)}` }, { label: t.checks.synthetic.errors.dockerLabel }],
+    ['docker label value of 128 two-byte characters', 'docker', { label: `k=${'ä'.repeat(128)}` }, { label: t.checks.synthetic.errors.dockerLabel }],
+    ['docker label value with a control character', 'docker', { label: 'k=a\u0001b' }, { label: t.checks.synthetic.errors.dockerLabel }],
+    ['docker socket path', 'docker', { socket: '/var/run/docker.sock' }, {}],
+    ['docker socket pipe', 'docker', { socket: 'npipe:////./pipe/docker_engine' }, {}],
+    ['docker socket relative', 'docker', { socket: 'docker.sock' }, { socket: t.checks.synthetic.errors.dockerSocket }],
+    ['docker socket tcp', 'docker', { socket: 'tcp://127.0.0.1:2375' }, { socket: t.checks.synthetic.errors.dockerSocket }],
+    ['docker socket pipe without a name', 'docker', { socket: 'npipe:////./pipe/' }, { socket: t.checks.synthetic.errors.dockerSocket }],
+    ['docker socket of 255 bytes', 'docker', { socket: `/${'a'.repeat(254)}` }, {}],
+    ['docker socket of 256 bytes', 'docker', { socket: `/${'a'.repeat(255)}` }, { socket: t.checks.synthetic.errors.dockerSocket }],
+    ['docker socket with a control character', 'docker', { socket: '/x\u0000y' }, { socket: t.checks.synthetic.errors.dockerSocket }],
     ['icmp with nothing set is fine', 'icmp', {}, {}],
     ['icmp count above 10', 'icmp', { count: '11' }, { count: range(1, 10) }],
     ['icmp count not whole', 'icmp', { count: '1.5' }, { count: range(1, 10) }],

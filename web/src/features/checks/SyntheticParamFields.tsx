@@ -3,11 +3,11 @@ import { Input } from '../../ui/input.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
-import { SYNTHETIC_FIELDS, type SyntheticField, type SyntheticPlugin, type SyntheticValues } from './syntheticParams.ts';
+import { isSynthetic, SYNTHETIC_FIELDS, type FieldPlugin, type SyntheticField, type SyntheticPlugin, type SyntheticValues } from './syntheticParams.ts';
 
 /**
- * SyntheticParamFields edits a synthetic check's parameters (backlog
- * 3.13), for both the organization's check dialog and the instance's
+ * SyntheticParamFields edits the parameters of a check with a field table (backlog
+ * 3.13) or a docker check's (3.12), for both the organization's check dialog and the instance's
  * shared check form. A field the user never touched holds no value, shows
  * the server's default and is not sent (syntheticParams).
  */
@@ -21,7 +21,7 @@ export function SyntheticParamFields({
 }: {
   /** Prefixes every input's id, so two forms never share one. */
   idPrefix: string;
-  plugin: SyntheticPlugin;
+  plugin: FieldPlugin;
   values: SyntheticValues;
   errors: Record<string, string>;
   disabled?: boolean;
@@ -69,7 +69,7 @@ export function SyntheticParamFields({
             id={id}
             disabled={disabled}
             invalid={!!errors[field.name]}
-            options={field.options.map((o) => ({ value: o, label: o }))}
+            options={field.options.map((o) => ({ value: o, label: field.optionLabels ? s.options[field.optionLabels[o]] : o }))}
             value={typeof value === 'string' ? value : field.default}
             onChange={(v) => set(field.name, v)}
           />
@@ -81,7 +81,7 @@ export function SyntheticParamFields({
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[11px] text-muted-foreground">{s.runsFromServer}</p>
+      {isSynthetic(plugin) && <p className="text-[11px] text-muted-foreground">{s.runsFromServer}</p>}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {inputs.map((field) => {
           const id = `${idPrefix}-${field.name}`;

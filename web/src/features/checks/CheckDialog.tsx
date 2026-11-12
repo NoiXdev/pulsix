@@ -11,12 +11,12 @@ import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlug
 import { HostPicker } from './HostPicker.tsx';
 import { SyntheticKeyHint, SyntheticParamFields } from './SyntheticParamFields.tsx';
 import {
-  isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
+  hasFieldTable, isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
 } from './syntheticParams.ts';
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
-const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'icmp', 'tcp', 'http', 'tls', 'dns'];
+const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'icmp', 'tcp', 'http', 'tls', 'dns'];
 
 /** lines turns a textarea's content into the string list the API takes,
  * dropping blank lines so a trailing newline is not a parameter. */
@@ -103,7 +103,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   }
 
   function params(): Record<string, unknown> {
-    if (isSynthetic(plugin)) return syntheticParams(plugin, synthetic);
+    if (hasFieldTable(plugin)) return syntheticParams(plugin, synthetic);
     if (plugin === 'service') return { units: lines(units) };
     if (plugin === 'disk') {
       const list = lines(mounts);
@@ -143,7 +143,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const refused = isSynthetic(plugin) ? validateSynthetic(plugin, synthetic, t) : {};
+    const refused = hasFieldTable(plugin) ? validateSynthetic(plugin, synthetic, t) : {};
     setFieldErrors(refused);
     if (Object.keys(refused).length > 0) return;
     try {
@@ -260,7 +260,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             <p id="check-interfaces-hint" className="text-[11px] text-muted-foreground">{t.checks.dialog.interfacesHint}</p>
           </>
         )}
-        {isSynthetic(plugin) && (
+        {hasFieldTable(plugin) && (
           <SyntheticParamFields
             idPrefix="check-param"
             plugin={plugin}

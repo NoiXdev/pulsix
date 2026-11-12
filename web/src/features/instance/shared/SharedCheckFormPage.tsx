@@ -17,7 +17,7 @@ import type { CheckDefinitionDef, CheckDefinitionDefInput } from '../../../api/t
 import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx';
 import { SyntheticKeyHint, SyntheticParamFields } from '../../checks/SyntheticParamFields.tsx';
 import {
-  isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
+  hasFieldTable, isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
 } from '../../checks/syntheticParams.ts';
 
 /**
@@ -57,7 +57,7 @@ interface CheckDefinitionFormValues {
   synthetic: SyntheticValues;
 }
 
-const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'icmp', 'tcp', 'http', 'tls', 'dns'] as const;
+const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'icmp', 'tcp', 'http', 'tls', 'dns'] as const;
 
 /** lines turns a textarea's content into the string list the API takes —
  * CheckDialog.tsx's own helper, duplicated rather than imported: that
@@ -119,7 +119,7 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
   }
 
   function params(): Record<string, unknown> {
-    if (isSynthetic(values.plugin)) return syntheticParams(values.plugin, values.synthetic);
+    if (hasFieldTable(values.plugin)) return syntheticParams(values.plugin, values.synthetic);
     if (values.plugin === 'service') return { units: lines(values.units) };
     // disk's allow-list is optional and an empty one means every mount
     // (CheckDialog.tsx keeps the same contract for an organization's own
@@ -146,7 +146,7 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
   async function submit(): Promise<boolean> {
     setFormError(null);
     const fieldErrors = validateCheckDefinitionInput(values, t);
-    const refused = isSynthetic(values.plugin) ? validateSynthetic(values.plugin, values.synthetic, t) : {};
+    const refused = hasFieldTable(values.plugin) ? validateSynthetic(values.plugin, values.synthetic, t) : {};
     setErrors(fieldErrors);
     setSyntheticErrors(refused);
     if (Object.keys(fieldErrors).length > 0 || Object.keys(refused).length > 0) return false;
@@ -219,7 +219,7 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
             <FieldError>{errors.intervalSeconds}</FieldError>
           </div>
         </div>
-        {isSynthetic(values.plugin) && (
+        {hasFieldTable(values.plugin) && (
           <SyntheticParamFields
             idPrefix="check-def-param"
             plugin={values.plugin}

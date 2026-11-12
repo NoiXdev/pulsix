@@ -128,6 +128,7 @@ export const deInstance: Messages['instance'] = {
         http: 'HTTP(S)',
         tls: 'TLS-Zertifikat',
         dns: 'DNS',
+        docker: 'Docker-Container',
       },
       mounts: 'Einhängepunkte (einer pro Zeile, leer bedeutet jeden Einhängepunkt)',
       interfaces: 'Schnittstellen (eine pro Zeile, leer bedeutet jede echte Schnittstelle)',

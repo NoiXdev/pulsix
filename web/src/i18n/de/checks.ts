@@ -89,6 +89,7 @@ export const deChecks: Messages['checks'] = {
       http: 'HTTP(S)',
       tls: 'TLS-Zertifikat',
       dns: 'DNS',
+      docker: 'Docker-Container',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -126,6 +127,13 @@ export const deChecks: Messages['checks'] = {
       type: 'Record-Typ',
       server: 'DNS-Server',
       answer: 'Erwartete Antwort',
+      selection: 'Container',
+      label: 'Label',
+      socket: 'Docker-Socket',
+    },
+    options: {
+      all: 'Alle Container',
+      labeled: 'Nur Container mit Label',
     },
     hints: {
       expect: 'Wird in den ersten 4 KiB gesucht, die der Server sendet.',
@@ -136,12 +144,16 @@ export const deChecks: Messages['checks'] = {
       name: 'Leer bedeutet die Adresse des Hosts; {address} wird durch sie ersetzt.',
       server: 'Eine IP-Adresse mit optionalem Port, eine IPv6-Adresse mit Port in eckigen Klammern. Leer bedeutet den eigenen Resolver des Pulsix-Servers.',
       answer: 'Eine Antwort muss genau so lauten; Groß- und Kleinschreibung und ein abschließender Punkt zählen nicht.',
+      label: 'Ein Label-Schlüssel oder Schlüssel=Wert. Leer bedeutet pulsix.monitor=true. Werden alle Container geprüft, wird ein Container ausgelassen, dessen Label mit diesem Schlüssel auf false steht.',
+      socket: 'Ein absoluter Pfad oder eine Windows-Pipe. Leer bedeutet den Standard der Plattform: /var/run/docker.sock, unter Windows npipe:////./pipe/docker_engine.',
     },
     errors: {
       wholeRange: (min: number, max: number) => `muss eine ganze Zahl zwischen ${min} und ${max} sein`,
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       server: 'muss eine IP-Adresse sein, optional mit Port',
       name: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
+      dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
+      dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },
   },
   groups: {

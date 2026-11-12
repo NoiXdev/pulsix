@@ -46,6 +46,9 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
   service: false,
   network: true,
   uptime: true,
+  // docker mixes labels (state, health: caught by the per-value label
+  // test above) with numbers (restart_count, containers_running, ...).
+  docker: true,
   icmp: true,
   tcp: true,
   http: true,

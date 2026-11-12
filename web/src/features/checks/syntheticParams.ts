@@ -16,6 +16,15 @@ import type { Messages } from '../../i18n/types.ts';
 export const SYNTHETIC_PLUGINS = ['icmp', 'tcp', 'http', 'tls', 'dns'] as const;
 export type SyntheticPlugin = (typeof SYNTHETIC_PLUGINS)[number];
 
+/** The plugins that edit their parameters through the field table: the
+ * synthetic five and docker, which the host's agent runs (backlog 3.12). */
+export const FIELD_PLUGINS = [...SYNTHETIC_PLUGINS, 'docker'] as const;
+export type FieldPlugin = (typeof FIELD_PLUGINS)[number];
+
+export function hasFieldTable(plugin: string): plugin is FieldPlugin {
+  return (FIELD_PLUGINS as readonly string[]).includes(plugin);
+}
+
 export function isSynthetic(plugin: string): plugin is SyntheticPlugin {
   return (SYNTHETIC_PLUGINS as readonly string[]).includes(plugin);
 }
@@ -26,6 +35,7 @@ export type SyntheticValues = Record<string, string | boolean>;
 
 type Label = keyof Messages['checks']['synthetic']['fields'];
 type Hint = keyof Messages['checks']['synthetic']['hints'];
+type OptionLabel = keyof Messages['checks']['synthetic']['options'];
 
 interface Base {
   /** The parameter's name in the API. */
@@ -40,7 +50,7 @@ export type SyntheticField =
   | (Base & { kind: 'number'; min: number; max: number; placeholder?: string; required?: boolean })
   | (Base & {
       kind: 'text';
-      check?: 'url' | 'server' | 'dnsName';
+      check?: 'url' | 'server' | 'dnsName' | 'dockerLabel' | 'dockerSocket';
       trim?: boolean;
       /** The field takes \r, \n, \t and \\ escapes (a single-line input
        * cannot hold a line break): decoded on save, encoded on load. */
@@ -48,7 +58,13 @@ export type SyntheticField =
       placeholder?: string;
       required?: boolean;
     })
-  | (Base & { kind: 'select'; options: readonly string[]; default: string })
+  | (Base & {
+      kind: 'select';
+      options: readonly string[];
+      default: string;
+      /** Messages for options whose value is no text to show. */
+      optionLabels?: Record<string, OptionLabel>;
+    })
   | (Base & { kind: 'bool'; default: boolean });
 
 const timeout = (max: number, dflt: number): SyntheticField => ({
@@ -56,7 +72,7 @@ const timeout = (max: number, dflt: number): SyntheticField => ({
 });
 
 /** The spec's Plugins table, in the order the form shows the fields. */
-export const SYNTHETIC_FIELDS: Record<SyntheticPlugin, readonly SyntheticField[]> = {
+export const SYNTHETIC_FIELDS: Record<FieldPlugin, readonly SyntheticField[]> = {
   icmp: [
     { name: 'count', label: 'count', kind: 'number', min: 1, max: 10, placeholder: '3' },
     timeout(30, 5),
@@ -86,6 +102,14 @@ export const SYNTHETIC_FIELDS: Record<SyntheticPlugin, readonly SyntheticField[]
     { name: 'server', label: 'server', hint: 'server', kind: 'text', check: 'server', trim: true },
     { name: 'expect', label: 'answer', hint: 'answer', kind: 'text' },
     timeout(30, 5),
+  ],
+  docker: [
+    {
+      name: 'selection', label: 'selection', kind: 'select', options: ['all', 'labeled'], default: 'all',
+      optionLabels: { all: 'all', labeled: 'labeled' },
+    },
+    { name: 'label', label: 'label', hint: 'label', kind: 'text', check: 'dockerLabel', trim: true, placeholder: 'pulsix.monitor=true' },
+    { name: 'socket', label: 'socket', hint: 'socket', kind: 'text', check: 'dockerSocket', trim: true, placeholder: '/var/run/docker.sock' },
   ],
 };
 
@@ -119,7 +143,7 @@ function textOf(field: SyntheticField, value: string | boolean | undefined): str
 /** syntheticParams builds the params object a save sends: only the fields
  * the form holds a value for, a blank text or number field counting as
  * not set. */
-export function syntheticParams(plugin: SyntheticPlugin, values: SyntheticValues): Record<string, unknown> {
+export function syntheticParams(plugin: FieldPlugin, values: SyntheticValues): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const field of SYNTHETIC_FIELDS[plugin]) {
     const value = values[field.name];
@@ -150,7 +174,7 @@ export function syntheticParams(plugin: SyntheticPlugin, values: SyntheticValues
  * are dropped: the server refuses both anyway. */
 export function syntheticValuesFrom(plugin: string, params: Record<string, unknown> | undefined): SyntheticValues {
   const out: SyntheticValues = {};
-  if (!isSynthetic(plugin) || !params) return out;
+  if (!hasFieldTable(plugin) || !params) return out;
   for (const field of SYNTHETIC_FIELDS[plugin]) {
     const value = params[field.name];
     if (field.kind === 'number' && typeof value === 'number') out[field.name] = String(value);
@@ -223,9 +247,33 @@ export function isDNSName(s: string): boolean {
   return name.split('.').every((label) => /^[A-Za-z0-9_-]{1,63}$/.test(label));
 }
 
+const byteLen = (s: string) => new TextEncoder().encode(s).length;
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+
+/** isDockerLabel mirrors validateDockerLabel: a key (1–255 bytes of
+ * letters, digits, '.', '_', '/', '-') with an optional =value, split at
+ * the first '=', the value at most 255 bytes without control characters
+ * and possibly empty. */
+export function isDockerLabel(s: string): boolean {
+  const i = s.indexOf('=');
+  const key = i < 0 ? s : s.slice(0, i);
+  const value = i < 0 ? '' : s.slice(i + 1);
+  return /^[A-Za-z0-9._/-]{1,255}$/.test(key) && byteLen(value) <= 255 && !CONTROL.test(value);
+}
+
+const PIPE_PREFIX = 'npipe:////./pipe/';
+
+/** isDockerSocket mirrors validateDockerSocket: at most 255 bytes, no
+ * control characters, an absolute path or a Windows named pipe. */
+export function isDockerSocket(s: string): boolean {
+  if (byteLen(s) > 255 || CONTROL.test(s)) return false;
+  return s.startsWith('/') || (s.startsWith(PIPE_PREFIX) && s.length > PIPE_PREFIX.length);
+}
+
 /** validateSynthetic returns one message per refused field, keyed by the
  * parameter's name; an empty object means the values may be sent. */
-export function validateSynthetic(plugin: SyntheticPlugin, values: SyntheticValues, t: Messages): Record<string, string> {
+export function validateSynthetic(plugin: FieldPlugin, values: SyntheticValues, t: Messages): Record<string, string> {
   const errors: Record<string, string> = {};
   const msg = t.checks.synthetic.errors;
   for (const field of SYNTHETIC_FIELDS[plugin]) {
@@ -249,6 +297,10 @@ export function validateSynthetic(plugin: SyntheticPlugin, values: SyntheticValu
         errors[field.name] = msg.server;
       } else if (field.check === 'dnsName' && !isDNSName(text)) {
         errors[field.name] = msg.name;
+      } else if (field.check === 'dockerLabel' && !isDockerLabel(text)) {
+        errors[field.name] = msg.dockerLabel;
+      } else if (field.check === 'dockerSocket' && !isDockerSocket(text)) {
+        errors[field.name] = msg.dockerSocket;
       }
     }
   }

@@ -126,6 +126,7 @@ export const enInstance = {
         http: 'HTTP(S)',
         tls: 'TLS certificate',
         dns: 'DNS',
+        docker: 'Docker containers',
       },
       mounts: 'Mounts (one per line, empty means every mount)',
       interfaces: 'Interfaces (one per line, empty means every real interface)',

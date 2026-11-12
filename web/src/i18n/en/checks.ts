@@ -93,6 +93,7 @@ export const enChecks = {
       http: 'HTTP(S)',
       tls: 'TLS certificate',
       dns: 'DNS',
+      docker: 'Docker containers',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -132,6 +133,13 @@ export const enChecks = {
       type: 'Record type',
       server: 'DNS server',
       answer: 'Expected answer',
+      selection: 'Containers',
+      label: 'Label',
+      socket: 'Docker socket',
+    },
+    options: {
+      all: 'All containers',
+      labeled: 'Only labeled containers',
     },
     hints: {
       expect: 'Looked for in the first 4 KiB the server sends.',
@@ -142,12 +150,16 @@ export const enChecks = {
       name: 'Empty means the host’s address; {address} is replaced with it.',
       server: 'An IP address with an optional port, an IPv6 address with a port in brackets. Empty means the Pulsix server’s own resolver.',
       answer: 'One answer must equal this, ignoring case and a trailing dot.',
+      label: 'A label key, or key=value. Empty means pulsix.monitor=true. When all containers are checked, a container with this label’s key set to false is left out.',
+      socket: 'An absolute path or a Windows pipe. Empty means the platform default: /var/run/docker.sock, on Windows npipe:////./pipe/docker_engine.',
     },
     errors: {
       wholeRange: (min: number, max: number) => `must be a whole number between ${min} and ${max}`,
       url: 'must be an http:// or https:// URL without a user name or password',
       server: 'must be an IP address, optionally with a port',
       name: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
+      dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
+      dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',
     },
   },
   groups: {
