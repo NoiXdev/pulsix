@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 )
 
 func readFile(t *testing.T, path string) []byte {
@@ -192,23 +193,87 @@ func TestWriteAfterCloseFails(t *testing.T) {
 	}
 }
 
-func TestAFailedRotationKeepsTheWriterUsable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "agent.log")
-	// A non-empty directory at path.1 makes both Remove and Rename fail.
+// blockRotation puts a non-empty directory at path.1, which makes both the
+// removal of the old rotation and the rename onto it fail — as a log tailer
+// holding path.1 open does on Windows.
+func blockRotation(t *testing.T, path string) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Join(path+".1", "keep"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+}
+
+const rotationNotice = "log rotation failed"
+
+// TestAFailedRotationKeepsTheWriterUsable: the line that triggered the
+// failed rotation still lands, in the current file, after a notice that
+// says why the file grows past its limit; so do the lines after it.
+func TestAFailedRotationKeepsTheWriterUsable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.log")
+	blockRotation(t, path)
 	w, err := Open(path, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = w.Close() })
-	mustWrite(t, w, bytes.Repeat([]byte("a"), 60))
-	if _, err := w.Write(bytes.Repeat([]byte("b"), 60)); err == nil {
-		t.Fatal("want an error when rotation fails")
+	first, second := bytes.Repeat([]byte("a"), 60), bytes.Repeat([]byte("b"), 60)
+	mustWrite(t, w, first)
+	mustWrite(t, w, second) // past the limit: the rotation fails
+	got := readFile(t, path)
+	if !bytes.HasPrefix(got, first) || !bytes.HasSuffix(got, second) {
+		t.Fatalf("path = %q, want the first write, then the second", got)
+	}
+	if n := bytes.Count(got, []byte(rotationNotice)); n != 1 {
+		t.Errorf("path carries %d rotation notices, want 1: %q", n, got)
 	}
 	mustWrite(t, w, []byte("c"))
 	if got := readFile(t, path); !bytes.HasSuffix(got, []byte("c")) {
 		t.Errorf("path = %q, want the later write appended", got)
+	}
+}
+
+// TestAFailedRotationIsRetriedAfterTheInterval: after a failed rotation the
+// writer does not retry on every line, only once the retry interval has
+// passed, and rotates normally once the cause is gone.
+func TestAFailedRotationIsRetriedAfterTheInterval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.log")
+	blockRotation(t, path)
+	w, err := Open(path, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.Close() })
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	w.now = func() time.Time { return now }
+	notices := func() int { return bytes.Count(readFile(t, path), []byte(rotationNotice)) }
+
+	mustWrite(t, w, bytes.Repeat([]byte("a"), 120)) // a fresh file: no rotation
+	mustWrite(t, w, []byte("b\n"))                  // fails, retry in an interval
+	for i := 0; i < 5; i++ {
+		now = now.Add(rotationRetryInterval / 10)
+		mustWrite(t, w, []byte("b\n"))
+	}
+	if n := notices(); n != 1 {
+		t.Fatalf("%d rotation notices within the retry interval, want 1", n)
+	}
+
+	now = now.Add(rotationRetryInterval)
+	mustWrite(t, w, []byte("b\n")) // retried, fails again
+	if n := notices(); n != 2 {
+		t.Fatalf("%d rotation notices after the retry interval, want 2", n)
+	}
+
+	if err := os.RemoveAll(path + ".1"); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(rotationRetryInterval)
+	last := []byte("z\n")
+	mustWrite(t, w, last) // the cause is gone: the rotation succeeds
+	if got := readFile(t, path); !bytes.Equal(got, last) {
+		t.Errorf("path = %q, want only the write after the rotation", got)
+	}
+	rotated := readFile(t, path+".1")
+	if !bytes.HasPrefix(rotated, bytes.Repeat([]byte("a"), 120)) || bytes.Count(rotated, []byte("b\n")) != 7 {
+		t.Errorf("path.1 = %q, want every earlier write", rotated)
 	}
 }

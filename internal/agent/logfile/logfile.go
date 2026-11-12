@@ -3,14 +3,26 @@
 package logfile
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // DefaultMaxBytes is the size at which the agent log rotates.
 const DefaultMaxBytes = 10 << 20
+
+// rotationRetryInterval is how long the writer goes on appending to the
+// current file after a failed rotation before it tries to rotate again. A
+// rotation fails while something holds the log open without sharing
+// deletion — on Windows, a log tailer such as Get-Content -Wait — and
+// retrying on every line would only repeat the failure for as long as the
+// tailer runs.
+const rotationRetryInterval = time.Minute
 
 // Writer appends to a log file and rotates it once it would exceed maxBytes.
 // It is safe for concurrent use.
@@ -18,11 +30,15 @@ type Writer struct {
 	path     string
 	maxBytes int64
 	openFile func(path string) (*os.File, error)
+	now      func() time.Time
 
 	mu   sync.Mutex
 	f    *os.File // nil while closed or after a failed reopen
 	size int64
 	done bool // set by Close; later writes fail instead of reopening
+	// retryRotationAt is when a rotation may be tried again after one
+	// failed; zero while none has.
+	retryRotationAt time.Time
 }
 
 // Open creates the parent directory (0o700), opens path in append mode and
@@ -31,7 +47,7 @@ func Open(path string, maxBytes int64) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create log directory: %w", err)
 	}
-	w := &Writer{path: path, maxBytes: maxBytes, openFile: openAppend}
+	w := &Writer{path: path, maxBytes: maxBytes, openFile: openAppend, now: time.Now}
 	if err := w.open(); err != nil {
 		return nil, err
 	}
@@ -58,6 +74,11 @@ func (w *Writer) open() error {
 
 // Write appends p, rotating first when the file would grow past the limit. A
 // write larger than the limit still lands whole in a fresh file.
+//
+// A failed rotation does not lose p: it goes to the current file, past the
+// limit, after a warning that says why, and the rotation is tried again
+// once rotationRetryInterval has passed. Write fails only when no file can
+// be opened at all.
 func (w *Writer) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -69,10 +90,20 @@ func (w *Writer) Write(p []byte) (int, error) {
 			return 0, err
 		}
 	}
-	if w.size > 0 && w.size+int64(len(p)) > w.maxBytes {
-		if err := w.rotate(); err != nil {
-			return 0, err
+	var rotateErr error
+	if w.size > 0 && w.size+int64(len(p)) > w.maxBytes && !w.now().Before(w.retryRotationAt) {
+		rotateErr = w.rotate()
+		if rotateErr != nil {
+			w.retryRotationAt = w.now().Add(rotationRetryInterval)
 		}
+		if w.f == nil { // rotate could not reopen; one more try
+			if err := w.open(); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if rotateErr != nil {
+		w.warnRotationFailed(rotateErr)
 	}
 	n, err := w.f.Write(p)
 	w.size += int64(n)
@@ -80,7 +111,8 @@ func (w *Writer) Write(p []byte) (int, error) {
 }
 
 // rotate closes the file before renaming it, because Windows cannot rename an
-// open file. On failure w.f stays nil so the next Write reopens.
+// open file. When the rename fails it reopens the old file; w.f is nil only
+// when no file could be reopened.
 func (w *Writer) rotate() error {
 	err := w.f.Close()
 	w.f = nil
@@ -97,6 +129,17 @@ func (w *Writer) rotate() error {
 		return fmt.Errorf("rotate log: %w", err)
 	}
 	return w.open()
+}
+
+// warnRotationFailed writes a warning line in the agent's own log format
+// into the current file, so an operator sees why it grows past its limit.
+func (w *Writer) warnRotationFailed(err error) {
+	r := slog.NewRecord(w.now(), slog.LevelWarn, "log rotation failed; writing on to the current file", 0)
+	r.AddAttrs(slog.String("err", err.Error()), slog.Duration("retry_in", rotationRetryInterval))
+	var line bytes.Buffer
+	_ = slog.NewTextHandler(&line, nil).Handle(context.Background(), r)
+	n, _ := w.f.Write(line.Bytes())
+	w.size += int64(n)
 }
 
 // Close closes the file. Writes after Close fail with os.ErrClosed.
