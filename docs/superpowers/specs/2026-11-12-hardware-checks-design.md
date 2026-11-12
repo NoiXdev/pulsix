@@ -52,14 +52,24 @@ a temperature that climbs, an array that runs degraded.
   shell command: it executes the binary directly with a fixed argument list,
   and device names come only from `smartctl --scan --json` or from the
   `devices` parameter, which the manager validates as device paths.
-- `smartctl` is looked up on the agent's PATH and in the standard install
-  locations (`/usr/sbin`, `/usr/local/sbin`, `/opt/homebrew/bin`,
-  `C:\Program Files\smartmontools\bin`). When it is missing, the check
+- `smartctl` is looked up in the standard install locations first
+  (`/usr/sbin`, `/usr/local/sbin`, `/opt/homebrew/sbin`, `/opt/homebrew/bin`,
+  `/usr/local/bin`; on Windows `%ProgramFiles%\smartmontools\bin\smartctl.exe`),
+  and on the agent's PATH only as the fallback. The path found must be
+  absolute, and on Windows an `.exe` (never a `.bat`, `.cmd` or `.com`).
+  **(Claude's call, added after review)** When it is missing, the check
   reports one collection error on item `""` that says to install
   smartmontools.
-- It passes `-n standby` so that a sleeping disk is not spun up: a disk in
-  standby reports nothing that round (its values turn stale, not errors).
-- One item per device, named by its path (`/dev/sda`, `/dev/nvme0`, …).
+- It passes `-n standby,0` so that a sleeping disk is not spun up: smartctl
+  then exits 0 without data for it, so a disk in standby reports nothing
+  that round (its values turn stale, not errors).
+- One item per device, named by its path (`/dev/sda`, `/dev/nvme0`, …). A
+  disk behind a RAID controller — a scanned `-d` type whose family (the text
+  before the first comma) is `megaraid`, `sat+megaraid`, `cciss`, `3ware`,
+  `areca`, `aacraid`, `sssraid` or `hpt` — shares its path with its
+  siblings and is named `<path> [<type>]` (`/dev/bus/0 [megaraid,1]`),
+  whether or not it has siblings, so its item does not change when one
+  comes or goes. **(Claude's call, added after review)**
 - Metrics (each only when the device reports it):
   - `smart.passed` — 1 when the overall health self-assessment passed, else 0;
   - `smart.temperature_celsius`;

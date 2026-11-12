@@ -5,7 +5,7 @@
     "svn_revision": "5338",
     "platform_info": "x86_64-linux-6.1.0-26-amd64",
     "build_info": "(local build)",
-    "argv": ["smartctl", "--json", "-a", "-n", "standby", "-d", "sat", "/dev/sdc"],
+    "argv": ["smartctl", "--json", "-a", "-n", "standby,0", "-d", "sat", "/dev/sdc"],
     "messages": [
       {"string": "Warning: This result is based on an Attribute check.", "severity": "warning"}
     ],

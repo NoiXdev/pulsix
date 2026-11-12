@@ -55,7 +55,7 @@ func TestSmartScansAndReportsEveryDevice(t *testing.T) {
 	if !slices.Equal(calls[0], []string{"--scan", "--json"}) {
 		t.Errorf("scan argv = %q", calls[0])
 	}
-	wantArgv := []string{"--json", "-a", "-n", "standby", "-d", "sat", "/dev/sda"}
+	wantArgv := []string{"--json", "-a", "-n", "standby,0", "-d", "sat", "/dev/sda"}
 	if !slices.ContainsFunc(calls, func(c []string) bool { return slices.Equal(c, wantArgv) }) {
 		t.Errorf("calls = %q, want one with argv %q", calls, wantArgv)
 	}
@@ -124,34 +124,45 @@ func TestSmartFailingDiskExitBitsAreData(t *testing.T) {
 	}
 }
 
-// TestSmartStandbyReportsNothing: -n standby makes smartctl leave a
-// sleeping disk alone and exit with bit 1. That disk reports nothing this
-// round — no reading, no error — and the others still report.
+// TestSmartStandbyReportsNothing: -n standby,0 makes smartctl leave a
+// sleeping disk alone and exit 0 with JSON that carries no data blocks.
+// That disk reports nothing this round — no reading, no error — and the
+// others still report.
 func TestSmartStandbyReportsNothing(t *testing.T) {
-	for _, tc := range []struct {
-		desc   string
-		stdout []byte
-	}{
-		{"json message", fixture(t, "standby.json")},
-		{"plain text", []byte("smartctl 7.3 2022-02-28 r5338\nDevice is in STANDBY mode, exit(2)\n")},
-		{"sleep mode", []byte(`{"smartctl":{"messages":[{"string":"Device is in SLEEP mode, exit(2)","severity":"information"}],"exit_status":2}}`)},
+	f := newFakeRunner(t, map[string]reply{
+		"/dev/sdd": {stdout: fixture(t, "standby.json")},
+		"/dev/sda": {stdout: fixture(t, "ata.json")},
+	})
+	obs, err := plugin(f).Collect(context.Background(), map[string]any{"devices": []any{"/dev/sdd", "/dev/sda"}})
+	if err != nil {
+		t.Fatalf("Collect error = %v", err)
+	}
+	for _, c := range f.callArgs() {
+		if i := slices.Index(c, "-n"); i < 0 || c[i+1] != "standby,0" {
+			t.Errorf("argv %q: want -n standby,0", c)
+		}
+	}
+	if got := itemObs(obs, "/dev/sdd"); len(got) != 0 {
+		t.Errorf("standby disk reported %+v, want nothing", got)
+	}
+	if got := value(t, obs, "/dev/sda", "smart.passed"); got != 1 {
+		t.Errorf("/dev/sda passed = %v", got)
+	}
+}
+
+// TestSmartBitOneIsAlwaysAnError: with -n standby,0 a sleeping disk never
+// sets bit 1, so bit 1 is "device not opened" whatever the messages say.
+func TestSmartBitOneIsAlwaysAnError(t *testing.T) {
+	for _, stdout := range [][]byte{
+		[]byte(`{"smartctl":{"messages":[{"string":"Device is in STANDBY mode, exit(2)","severity":"information"}],"exit_status":2}}`),
+		[]byte("Device is in STANDBY mode, exit(2)\n"),
 	} {
-		t.Run(tc.desc, func(t *testing.T) {
-			f := newFakeRunner(t, map[string]reply{
-				"/dev/sdd": {stdout: tc.stdout, exit: 2},
-				"/dev/sda": {stdout: fixture(t, "ata.json")},
-			})
-			obs, err := plugin(f).Collect(context.Background(), map[string]any{"devices": []any{"/dev/sdd", "/dev/sda"}})
-			if err != nil {
-				t.Fatalf("Collect error = %v", err)
-			}
-			if got := itemObs(obs, "/dev/sdd"); len(got) != 0 {
-				t.Errorf("standby disk reported %+v, want nothing", got)
-			}
-			if got := value(t, obs, "/dev/sda", "smart.passed"); got != 1 {
-				t.Errorf("/dev/sda passed = %v", got)
-			}
-		})
+		f := newFakeRunner(t, map[string]reply{"/dev/sdd": {stdout: stdout, exit: 2}})
+		obs, err := plugin(f).Collect(context.Background(), map[string]any{"devices": []string{"/dev/sdd"}})
+		if err == nil {
+			t.Fatalf("%s: Collect error = nil", stdout)
+		}
+		onlyErr(t, obs, "/dev/sdd", "could not open the device")
 	}
 }
 
@@ -417,24 +428,94 @@ func TestSmartOddDeviceNames(t *testing.T) {
 }
 
 // TestSmartBadScanType: a device type that is not a plain smartctl type
-// name is not passed on.
+// name is not passed on; "/" after the first character is (areca, hpt).
 func TestSmartBadScanType(t *testing.T) {
-	scan := []byte(`{"devices":[{"name":"/dev/sda","type":"-x"},{"name":"/dev/sdb","type":"sat\u0000"},{"name":"/dev/sdc","type":"sat,12"}]}`)
+	scan := []byte(`{"devices":[
+		{"name":"/dev/sda","type":"-x"},
+		{"name":"/dev/sdb","type":"sat\u0000"},
+		{"name":"/dev/sdd","type":"/sat"},
+		{"name":"/dev/sdc","type":"sat,12"},
+		{"name":"/dev/arcmsr0","type":"areca,3/1"},
+		{"name":"/dev/sde","type":"hpt,1/1/2"}
+	]}`)
 	f := newFakeRunner(t, map[string]reply{
-		"scan":               {stdout: scan},
-		"/dev/sdc -d sat,12": {stdout: fixture(t, "ata.json")},
+		"scan":                      {stdout: scan},
+		"/dev/sdc -d sat,12":        {stdout: fixture(t, "ata.json")},
+		"/dev/arcmsr0 -d areca,3/1": {stdout: fixture(t, "ata.json")},
+		"/dev/sde -d hpt,1/1/2":     {stdout: fixture(t, "ata.json")},
 	})
 	obs, err := plugin(f).Collect(context.Background(), nil)
-	if err == nil || !strings.Contains(err.Error(), "/dev/sda") || !strings.Contains(err.Error(), "/dev/sdb") {
-		t.Fatalf("Collect error = %v, want /dev/sda and /dev/sdb named", err)
+	for _, n := range []string{"/dev/sda", "/dev/sdb", "/dev/sdd"} {
+		if err == nil || !strings.Contains(err.Error(), n) {
+			t.Fatalf("Collect error = %v, want %s named", err, n)
+		}
 	}
-	if got := items(obs); !slices.Equal(got, []string{"/dev/sdc"}) {
-		t.Fatalf("items = %q", got)
+	want := []string{"/dev/arcmsr0 [areca,3/1]", "/dev/sdc", "/dev/sde [hpt,1/1/2]"}
+	if got := items(obs); !slices.Equal(got, want) {
+		t.Fatalf("items = %q, want %q", got, want)
+	}
+}
+
+// TestSmartControllerDiskItems: a disk behind a RAID controller (its -d
+// type's family names one) is "<name> [<type>]"; any other disk is its
+// name. The item depends on the entry alone.
+func TestSmartControllerDiskItems(t *testing.T) {
+	for _, tc := range []struct{ typ, want string }{
+		{"megaraid,0", "/dev/x [megaraid,0]"},
+		{"MegaRAID,4", "/dev/x [MegaRAID,4]"},
+		{"sat+megaraid,2", "/dev/x [sat+megaraid,2]"},
+		{"cciss,1", "/dev/x [cciss,1]"},
+		{"3ware,0", "/dev/x [3ware,0]"},
+		{"areca,3/1", "/dev/x [areca,3/1]"},
+		{"aacraid,0,0,1", "/dev/x [aacraid,0,0,1]"},
+		{"sssraid,0,1", "/dev/x [sssraid,0,1]"},
+		{"hpt,1/1", "/dev/x [hpt,1/1]"},
+		{"sat", "/dev/x"},
+		{"sat,12", "/dev/x"},
+		{"nvme", "/dev/x"},
+		{"usbjmicron,0", "/dev/x"},
+		{"", "/dev/x"},
+	} {
+		if got := scanItem("/dev/x", tc.typ); got != tc.want {
+			t.Errorf("scanItem(%q) = %q, want %q", tc.typ, got, tc.want)
+		}
+	}
+}
+
+// TestSmartControllerItemsAreStable: a controller disk alone gets the
+// suffix too, and siblings coming or going do not rename it.
+func TestSmartControllerItemsAreStable(t *testing.T) {
+	scanOf := func(types ...string) []byte {
+		var devs []map[string]string
+		for _, typ := range types {
+			devs = append(devs, map[string]string{"name": "/dev/bus/0", "type": typ})
+		}
+		b, _ := json.Marshal(map[string]any{"devices": devs})
+		return b
+	}
+	for _, types := range [][]string{{"megaraid,1"}, {"megaraid,0", "megaraid,1"}, {"megaraid,1", "megaraid,2", "megaraid,1"}} {
+		replies := map[string]reply{"scan": {stdout: scanOf(types...)}}
+		for _, typ := range types {
+			replies["/dev/bus/0 -d "+typ] = reply{stdout: fixture(t, "ata.json")}
+		}
+		f := newFakeRunner(t, replies)
+		obs, err := plugin(f).Collect(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("%q: Collect error = %v", types, err)
+		}
+		if got := value(t, obs, "/dev/bus/0 [megaraid,1]", "smart.passed"); got != 1 {
+			t.Fatalf("%q: megaraid,1 passed = %v", types, got)
+		}
+		if n, want := len(f.callArgs()), 1+len(slices.Compact(slices.Sorted(slices.Values(types)))); n != want {
+			t.Errorf("%q: %d smartctl calls, want %d (a repeated entry once)", types, n, want)
+		}
 	}
 }
 
 // TestSmartRepeatedScanNamesStayDistinct: disks behind one RAID controller
-// share a device name and differ by type; each keeps its own item.
+// share a device name and differ by type; each keeps its own item. Two
+// entries that would share an item otherwise do not collide silently: the
+// later one is left out and named.
 func TestSmartRepeatedScanNamesStayDistinct(t *testing.T) {
 	f := newFakeRunner(t, map[string]reply{
 		"scan":                     {stdout: fixture(t, "scan-megaraid.json")},
@@ -454,6 +535,47 @@ func TestSmartRepeatedScanNamesStayDistinct(t *testing.T) {
 	}
 	if got := value(t, obs, "/dev/bus/0 [megaraid,1]", "smart.passed"); got != 0 {
 		t.Errorf("megaraid,1 passed = %v", got)
+	}
+
+	scan := []byte(`{"devices":[{"name":"/dev/sda","type":"sat"},{"name":"/dev/sda","type":"scsi"}]}`)
+	f = newFakeRunner(t, map[string]reply{"scan": {stdout: scan}, "/dev/sda -d sat": {stdout: fixture(t, "ata.json")}})
+	obs, err = plugin(f).Collect(context.Background(), nil)
+	if err == nil || !strings.Contains(err.Error(), `"scsi"`) {
+		t.Fatalf("Collect error = %v, want the -d scsi entry named", err)
+	}
+	if got := items(obs); !slices.Equal(got, []string{"/dev/sda"}) || value(t, obs, "/dev/sda", "smart.passed") != 1 {
+		t.Fatalf("observations = %+v", obs)
+	}
+}
+
+// TestSmartEveryDeviceRefused: when no device is left to query, the
+// reasons show on item "" instead of the check reporting nothing.
+func TestSmartEveryDeviceRefused(t *testing.T) {
+	for _, tc := range []struct {
+		desc   string
+		params map[string]any
+		scan   []byte
+		want   []string
+	}{
+		{"configured", map[string]any{"devices": []string{"-x", "/dev/a\nb"}}, nil, []string{`"-x"`, `"/dev/a\nb"`}},
+		{"scanned", nil, []byte(`{"devices":[{"name":"-x"},{"name":"/dev/sda","type":"-d"}]}`), []string{`"-x"`, `"/dev/sda"`}},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			f := newFakeRunner(t, map[string]reply{"scan": {stdout: tc.scan}})
+			obs, err := plugin(f).Collect(context.Background(), tc.params)
+			if err == nil {
+				t.Fatal("Collect error = nil")
+			}
+			if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "smart.passed" {
+				t.Fatalf("observations = %+v, want one error on item \"\"", obs)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(obs[0].Err, w) {
+					t.Errorf("error %q does not name %s", obs[0].Err, w)
+				}
+			}
+			encodesAsCheckResult(t, obs[0])
+		})
 	}
 }
 

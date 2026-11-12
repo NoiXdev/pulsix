@@ -7,11 +7,12 @@
 //
 // smartctl is executed directly with a fixed argument list (runner.go),
 // never through a shell: `smartctl --scan --json` lists the devices unless
-// the devices parameter names them, then `smartctl --json -a -n standby
+// the devices parameter names them, then `smartctl --json -a -n standby,0
 // [-d <type>] <device>` reads each one. One item per device, named by the
-// path as configured or scanned (devices.go for the one exception, disks
-// sharing a path behind a RAID controller). A disk in standby is left
-// asleep and reports nothing that round.
+// path as configured or scanned — except a disk behind a RAID controller
+// (a megaraid, cciss, 3ware, areca, aacraid, sssraid or hpt -d type, where
+// disks share one path), which is named "<path> [<type>]" (devices.go). A
+// disk in standby is left asleep and reports nothing that round.
 //
 // Bounds: at most maxParallel devices are queried at once, each within
 // deviceTimeout, the whole collection within collectTimeout; a device
@@ -25,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 
@@ -53,7 +55,8 @@ type smartPlugin struct {
 func New() checks.Plugin {
 	busy := newInflight()
 	return smartPlugin{smartctl: func() (runner, error) {
-		path, err := findSmartctl(exec.LookPath, smartctlCandidates(runtime.GOOS, os.Getenv))
+		l := locator{goos: runtime.GOOS, getenv: os.Getenv, lookPath: exec.LookPath, isAbs: filepath.IsAbs}
+		path, err := l.find()
 		if err != nil {
 			return nil, err
 		}
@@ -115,6 +118,10 @@ func (p smartPlugin) Collect(ctx context.Context, params map[string]any) ([]chec
 		if len(devs) == 0 && len(errs) == 0 {
 			return hostError(errors.New("smart: smartctl --scan found no devices"))
 		}
+	}
+	if len(devs) == 0 {
+		// Every device was refused: say why where the check shows it.
+		return hostError(errors.Join(errs...))
 	}
 
 	outcomes := queryAll(ctx, run, devs, deviceTimeout, collectTimeout)

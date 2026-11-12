@@ -2,41 +2,59 @@ package smart
 
 import (
 	"errors"
-	"slices"
+	"strings"
 )
 
 var errNotFound = errors.New("smartctl not found; install smartmontools")
 
-// smartctlCandidates lists the standard install locations, in the order
-// they are tried after the agent's PATH: the distribution packages
-// (/usr/sbin), a source build (/usr/local/sbin), Homebrew on Apple silicon
-// and Intel Macs, and the Windows installer's directory.
-func smartctlCandidates(goos string, getenv func(string) string) []string {
-	if goos == "windows" {
-		const rel = `\smartmontools\bin\smartctl.exe`
-		out := []string{`C:\Program Files` + rel}
-		if pf := getenv("ProgramFiles"); pf != "" && pf+rel != out[0] {
-			out = slices.Insert(out, 0, pf+rel)
+// locator finds the smartctl binary. The agent runs it as root or SYSTEM,
+// so the standard install locations — absolute paths only root can write —
+// are tried before the agent's PATH, which is only the fallback.
+type locator struct {
+	goos     string
+	getenv   func(string) string
+	lookPath func(string) (string, error) // exec.LookPath
+	isAbs    func(string) bool            // filepath.IsAbs
+}
+
+// candidates lists the standard install locations in the order they are
+// tried: the distribution packages (/usr/sbin), a source build
+// (/usr/local/sbin), Homebrew on Apple silicon and Intel Macs, and on
+// Windows the installer's directory under %ProgramFiles%.
+func (l locator) candidates() []string {
+	if l.goos == "windows" {
+		pf := l.getenv("ProgramFiles")
+		if pf == "" {
+			pf = `C:\Program Files`
 		}
-		return out
+		return []string{strings.TrimRight(pf, `\`) + `\smartmontools\bin\smartctl.exe`}
 	}
 	return []string{
 		"/usr/sbin/smartctl",
 		"/usr/local/sbin/smartctl",
-		"/opt/homebrew/bin/smartctl",
 		"/opt/homebrew/sbin/smartctl",
+		"/opt/homebrew/bin/smartctl",
 		"/usr/local/bin/smartctl",
 	}
 }
 
-// findSmartctl returns the smartctl to run: the one on PATH, else the first
-// candidate that is an executable file. lookPath is exec.LookPath, which
-// for an absolute candidate only checks that file.
-func findSmartctl(lookPath func(string) (string, error), candidates []string) (string, error) {
-	for _, name := range append([]string{"smartctl"}, candidates...) {
-		if p, err := lookPath(name); err == nil {
+// find returns the smartctl to run: the first standard location that holds
+// an executable, else the one on PATH. lookPath checks an absolute
+// candidate in place. Whatever is found must be an absolute path and, on
+// Windows, an .exe — never a .bat, .cmd or .com that PATHEXT would also
+// accept, which would run through the command interpreter.
+func (l locator) find() (string, error) {
+	for _, name := range append(l.candidates(), "smartctl") {
+		if p, err := l.lookPath(name); err == nil && l.acceptable(p) {
 			return p, nil
 		}
 	}
 	return "", errNotFound
+}
+
+func (l locator) acceptable(path string) bool {
+	if !l.isAbs(path) {
+		return false
+	}
+	return l.goos != "windows" || strings.HasSuffix(strings.ToLower(path), ".exe")
 }

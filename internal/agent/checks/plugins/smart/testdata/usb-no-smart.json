@@ -5,7 +5,7 @@
     "svn_revision": "5338",
     "platform_info": "x86_64-linux-6.1.0-26-amd64",
     "build_info": "(local build)",
-    "argv": ["smartctl", "--json", "-a", "-n", "standby", "-d", "scsi", "/dev/sdb"],
+    "argv": ["smartctl", "--json", "-a", "-n", "standby,0", "-d", "scsi", "/dev/sdb"],
     "exit_status": 4
   },
   "device": {"name": "/dev/sdb", "info_name": "/dev/sdb", "type": "scsi", "protocol": "SCSI"},

@@ -3,58 +3,85 @@ package smart
 import (
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 )
 
 func TestSmartctlCandidates(t *testing.T) {
-	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	unix := []string{"/usr/sbin/smartctl", "/usr/local/sbin/smartctl", "/opt/homebrew/sbin/smartctl", "/opt/homebrew/bin/smartctl", "/usr/local/bin/smartctl"}
 	for _, tc := range []struct {
 		goos string
 		env  map[string]string
 		want []string
 	}{
-		{"linux", nil, []string{"/usr/sbin/smartctl", "/usr/local/sbin/smartctl", "/opt/homebrew/bin/smartctl", "/opt/homebrew/sbin/smartctl", "/usr/local/bin/smartctl"}},
-		{"darwin", nil, []string{"/usr/sbin/smartctl", "/usr/local/sbin/smartctl", "/opt/homebrew/bin/smartctl", "/opt/homebrew/sbin/smartctl", "/usr/local/bin/smartctl"}},
+		{"linux", nil, unix},
+		{"darwin", nil, unix},
 		{"windows", nil, []string{`C:\Program Files\smartmontools\bin\smartctl.exe`}},
 		{"windows", map[string]string{"ProgramFiles": `C:\Program Files`}, []string{`C:\Program Files\smartmontools\bin\smartctl.exe`}},
-		{"windows", map[string]string{"ProgramFiles": `D:\Apps`}, []string{`D:\Apps\smartmontools\bin\smartctl.exe`, `C:\Program Files\smartmontools\bin\smartctl.exe`}},
+		{"windows", map[string]string{"ProgramFiles": `D:\Apps\`}, []string{`D:\Apps\smartmontools\bin\smartctl.exe`}},
 	} {
-		if got := smartctlCandidates(tc.goos, env(tc.env)); !slices.Equal(got, tc.want) {
+		l := locator{goos: tc.goos, getenv: func(k string) string { return tc.env[k] }}
+		if got := l.candidates(); !slices.Equal(got, tc.want) {
 			t.Errorf("%s %v: %q, want %q", tc.goos, tc.env, got, tc.want)
 		}
 	}
 }
 
-// TestFindSmartctl: PATH first, then the install locations in order; none
-// is the install hint.
-func TestFindSmartctl(t *testing.T) {
-	look := func(found ...string) func(string) (string, error) {
-		return func(name string) (string, error) {
-			if slices.Contains(found, name) {
-				if name == "smartctl" {
-					return "/bin/from-path/smartctl", nil
-				}
-				return name, nil
+// fakeLocator finds exactly the names in found; "smartctl" (the PATH
+// lookup) resolves to fromPath.
+func fakeLocator(goos, fromPath string, found ...string) locator {
+	return locator{
+		goos:   goos,
+		getenv: func(string) string { return "" },
+		lookPath: func(name string) (string, error) {
+			if !slices.Contains(found, name) {
+				return "", errors.New("not found")
 			}
-			return "", errors.New("not found")
-		}
+			if name == "smartctl" {
+				return fromPath, nil
+			}
+			return name, nil
+		},
+		isAbs: func(p string) bool {
+			return strings.HasPrefix(p, "/") || (len(p) > 2 && p[1] == ':' && p[2] == '\\')
+		},
 	}
-	cands := []string{"/a/smartctl", "/b/smartctl"}
+}
+
+// TestFindSmartctl: the standard locations first, in order, PATH only as
+// the fallback; nothing usable is the install hint.
+func TestFindSmartctl(t *testing.T) {
+	const winStd = `C:\Program Files\smartmontools\bin\smartctl.exe`
 	for _, tc := range []struct {
-		found []string
-		want  string
+		desc     string
+		goos     string
+		fromPath string
+		found    []string
+		want     string // "" means errNotFound
 	}{
-		{[]string{"smartctl", "/a/smartctl"}, "/bin/from-path/smartctl"},
-		{[]string{"/b/smartctl"}, "/b/smartctl"},
-		{[]string{"/a/smartctl", "/b/smartctl"}, "/a/smartctl"},
+		{"standard before PATH", "linux", "/home/u/bin/smartctl", []string{"smartctl", "/usr/local/sbin/smartctl"}, "/usr/local/sbin/smartctl"},
+		{"standard order", "linux", "", []string{"/usr/local/bin/smartctl", "/usr/sbin/smartctl"}, "/usr/sbin/smartctl"},
+		{"homebrew sbin before bin", "darwin", "", []string{"/opt/homebrew/bin/smartctl", "/opt/homebrew/sbin/smartctl"}, "/opt/homebrew/sbin/smartctl"},
+		{"PATH fallback", "linux", "/srv/tools/smartctl", []string{"smartctl"}, "/srv/tools/smartctl"},
+		{"relative PATH result", "linux", "bin/smartctl", []string{"smartctl"}, ""},
+		{"nothing", "linux", "", nil, ""},
+		{"windows standard", "windows", `C:\tools\smartctl.exe`, []string{"smartctl", winStd}, winStd},
+		{"windows PATH exe", "windows", `C:\tools\SMARTCTL.EXE`, []string{"smartctl"}, `C:\tools\SMARTCTL.EXE`},
+		{"windows PATH bat", "windows", `C:\tools\smartctl.bat`, []string{"smartctl"}, ""},
+		{"windows PATH cmd", "windows", `C:\tools\smartctl.cmd`, []string{"smartctl"}, ""},
+		{"windows PATH com", "windows", `C:\tools\smartctl.com`, []string{"smartctl"}, ""},
+		{"windows relative", "windows", `tools\smartctl.exe`, []string{"smartctl"}, ""},
 	} {
-		got, err := findSmartctl(look(tc.found...), cands)
-		if err != nil || got != tc.want {
-			t.Errorf("found %q: %q, %v; want %q", tc.found, got, err, tc.want)
+		got, err := fakeLocator(tc.goos, tc.fromPath, tc.found...).find()
+		if tc.want == "" {
+			if !errors.Is(err, errNotFound) {
+				t.Errorf("%s: %q, %v; want errNotFound", tc.desc, got, err)
+			}
+			continue
 		}
-	}
-	if _, err := findSmartctl(look(), cands); !errors.Is(err, errNotFound) {
-		t.Fatalf("nothing found: %v, want errNotFound", err)
+		if err != nil || got != tc.want {
+			t.Errorf("%s: %q, %v; want %q", tc.desc, got, err, tc.want)
+		}
 	}
 	if errNotFound.Error() != "smartctl not found; install smartmontools" {
 		t.Fatalf("errNotFound = %q", errNotFound)

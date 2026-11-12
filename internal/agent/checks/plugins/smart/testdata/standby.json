@@ -5,11 +5,11 @@
     "svn_revision": "5338",
     "platform_info": "x86_64-linux-6.1.0-26-amd64",
     "build_info": "(local build)",
-    "argv": ["smartctl", "--json", "-a", "-n", "standby", "-d", "sat", "/dev/sdd"],
+    "argv": ["smartctl", "--json", "-a", "-n", "standby,0", "-d", "sat", "/dev/sdd"],
     "messages": [
-      {"string": "Device is in STANDBY mode, exit(2)", "severity": "information"}
+      {"string": "Device is in STANDBY mode, exit(0)", "severity": "information"}
     ],
-    "exit_status": 2
+    "exit_status": 0
   },
   "device": {"name": "/dev/sdd", "info_name": "/dev/sdd [SAT]", "type": "sat", "protocol": "ATA"}
 }

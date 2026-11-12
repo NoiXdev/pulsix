@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -15,11 +14,13 @@ import (
 
 // smartctl's exit status is a bit mask (smartctl(8), EXIT STATUS). Bit 0:
 // the command line did not parse. Bit 1: the device could not be opened,
-// or (with -n) it is in a low-power mode and was left alone. Bit 2: a SMART
-// or other command to the disk failed, or a SMART data structure had a
-// checksum error. Bits 3–7 are SMART findings — disk failing, prefail or
-// usage attributes at or past their threshold now or in the past, error
-// log entries, self-test errors — and are data: the JSON is read as usual.
+// or (with a plain -n) it was in a low-power mode; the plugin passes
+// -n standby,0, so a skipped disk exits 0 and bit 1 always means "not
+// opened". Bit 2: a SMART or other command to the disk failed, or a SMART
+// data structure had a checksum error. Bits 3–7 are SMART findings — disk
+// failing, prefail or usage attributes at or past their threshold now or
+// in the past, error log entries, self-test errors — and are data: the
+// JSON is read as usual.
 const (
 	exitCommandLine = 1 << 0
 	exitOpenFailed  = 1 << 1
@@ -82,15 +83,12 @@ type smartctlBlock struct {
 	} `json:"messages"`
 }
 
-// standbyMessage is what smartctl says when -n left a disk alone:
-// "Device is in STANDBY mode, exit(2)" (or SLEEP).
-var standbyMessage = regexp.MustCompile(`(?i)\bdevice is in [a-z_ ]+ mode\b`)
-
-// interpret turns one device's smartctl run into observations. It returns
-// nothing at all for a disk in standby; one error observation on
-// smart.passed when the run failed (command line refused, device not
-// opened, no JSON); otherwise every metric the JSON states, plus an
-// advisory error when a field had an unexpected type.
+// interpret turns one device's smartctl run into observations: one error
+// observation on smart.passed when the run failed (command line refused,
+// device not opened, no JSON); otherwise every metric the JSON states, plus
+// an advisory error when a field had an unexpected type. A disk in standby
+// needs no case of its own: -n standby,0 makes smartctl exit 0 with JSON
+// that carries no data blocks, so it reports nothing.
 func interpret(d device, res runResult) ([]checks.Observation, error) {
 	isJSON := isJSONObject(res.stdout)
 	var rep report
@@ -106,9 +104,6 @@ func interpret(d device, res runResult) ([]checks.Observation, error) {
 		}
 	}
 
-	if res.exitCode&exitOpenFailed != 0 && rep.Smartctl.standby(isJSON, res.stdout) {
-		return nil, nil
-	}
 	var fail error
 	switch {
 	case res.exitCode&exitCommandLine != 0:
@@ -226,21 +221,6 @@ func (o *optBool) UnmarshalJSON(b []byte) error {
 	}
 	o.ok = true
 	return nil
-}
-
-// standby reports whether smartctl's output says -n left the disk alone.
-// Without JSON the plain text is searched, in case smartctl printed the
-// notice before it switched to JSON.
-func (b smartctlBlock) standby(isJSON bool, stdout []byte) bool {
-	if !isJSON {
-		return standbyMessage.Match(stdout)
-	}
-	for _, m := range b.Messages {
-		if standbyMessage.MatchString(m.String) {
-			return true
-		}
-	}
-	return false
 }
 
 // maxDetail bounds how much of smartctl's own messages an error quotes.

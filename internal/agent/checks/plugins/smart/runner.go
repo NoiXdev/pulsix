@@ -29,7 +29,7 @@ type runner interface {
 
 var (
 	errOutputTooLarge = errors.New("smartctl output exceeds 1 MiB")
-	errStillRunning   = errors.New("an earlier smartctl run on this device has not exited yet")
+	errStillRunning   = errors.New("an earlier smartctl run that was stopped has not exited yet")
 )
 
 const (
@@ -50,9 +50,10 @@ const (
 type execRunner struct {
 	path string
 	// busy is shared by every run of one plugin instance: a smartctl the
-	// kill could not stop (in the kernel, waiting on a hung disk) keeps its
-	// arguments marked until it exits, so each tick does not pile another
-	// stuck process onto the same device.
+	// kill could not stop (in the kernel, waiting on a hung disk) marks its
+	// arguments when Run gives up on it, until it exits, so each tick does
+	// not pile another stuck process onto the same device. Runs that are
+	// merely concurrent (two checks with the same devices) never mark it.
 	busy *inflight
 	// reapGrace overrides defaultReapGrace; zero means the default.
 	reapGrace time.Duration
@@ -63,7 +64,7 @@ type execRunner struct {
 
 func (r execRunner) Run(ctx context.Context, args []string) (runResult, error) {
 	key := strings.Join(args, "\x00")
-	if !r.busy.acquire(key) {
+	if r.busy.stuck(key) {
 		return runResult{}, errStillRunning
 	}
 	out := &cappedWriter{max: maxOutput}
@@ -75,13 +76,13 @@ func (r execRunner) Run(ctx context.Context, args []string) (runResult, error) {
 		cmd.WaitDelay = 0
 	}
 	if err := cmd.Start(); err != nil {
-		r.busy.release(key)
 		return runResult{}, fmt.Errorf("start smartctl: %w", err)
 	}
+	st := &runState{}
 	done := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
-		r.busy.release(key)
+		r.busy.exited(key, st)
 		done <- err
 	}()
 
@@ -96,6 +97,7 @@ func (r execRunner) Run(ctx context.Context, args []string) (runResult, error) {
 		select {
 		case werr = <-done:
 		case <-time.After(grace):
+			r.busy.giveUp(key, st)
 			return runResult{}, fmt.Errorf("smartctl did not exit when stopped: %w", ctx.Err())
 		}
 	}
@@ -135,26 +137,46 @@ func (w *cappedWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// inflight is the set of argument lists with a smartctl still running.
+// inflight counts, per argument list, the smartctl processes Run gave up
+// on that have not exited yet.
 type inflight struct {
 	mu      sync.Mutex
-	running map[string]bool
+	running map[string]int
 }
 
-func newInflight() *inflight { return &inflight{running: map[string]bool{}} }
+// runState is one run's standing in its inflight set, guarded by its mutex.
+type runState struct {
+	exited, givenUp bool
+}
 
-func (g *inflight) acquire(key string) bool {
+func newInflight() *inflight { return &inflight{running: map[string]int{}} }
+
+// stuck reports whether a process Run gave up on still runs with key.
+func (g *inflight) stuck(key string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.running[key] {
-		return false
+	return g.running[key] > 0
+}
+
+// giveUp marks key while the run's process has not exited.
+func (g *inflight) giveUp(key string, st *runState) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !st.exited && !st.givenUp {
+		st.givenUp = true
+		g.running[key]++
 	}
-	g.running[key] = true
-	return true
 }
 
-func (g *inflight) release(key string) {
+// exited records that the run's process is gone and unmarks key if the
+// run had been given up on.
+func (g *inflight) exited(key string, st *runState) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.running, key)
+	st.exited = true
+	if st.givenUp {
+		if g.running[key]--; g.running[key] <= 0 {
+			delete(g.running, key)
+		}
+	}
 }

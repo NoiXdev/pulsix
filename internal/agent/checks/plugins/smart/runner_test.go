@@ -160,14 +160,60 @@ func TestExecRunnerStuckProcess(t *testing.T) {
 	}
 }
 
+// TestExecRunnerConcurrentSameArgs: two checks querying the same device at
+// the same time both run; only a run given up on marks the device.
+func TestExecRunnerConcurrentSameArgs(t *testing.T) {
+	r := helperRunner(t, "sleep:300")
+	args := []string{"--json", "-a", "/dev/sda"}
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			_, err := r.Run(context.Background(), args)
+			errs <- err
+		}()
+	}
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+}
+
+// TestInflight: giveUp marks a key only while that run's process has not
+// exited, whichever of the two happens first, and each given-up run counts.
+func TestInflight(t *testing.T) {
+	g := newInflight()
+	a, b, c := &runState{}, &runState{}, &runState{}
+
+	g.exited("k", a) // exited before Run gave up: never marked
+	g.giveUp("k", a)
+	if g.stuck("k") {
+		t.Fatal("a run that had exited marked its key")
+	}
+	g.giveUp("k", b)
+	g.giveUp("k", b) // idempotent
+	g.giveUp("k", c)
+	if !g.stuck("k") || g.stuck("other") {
+		t.Fatal("given-up runs not marked, or the mark leaked to another key")
+	}
+	g.exited("k", b)
+	if !g.stuck("k") {
+		t.Fatal("one exit cleared the mark while another given-up run lives")
+	}
+	g.exited("k", c)
+	if g.stuck("k") {
+		t.Fatal("mark kept after every given-up run exited")
+	}
+}
+
 func TestExecRunnerStartFailure(t *testing.T) {
 	r := execRunner{path: filepath.Join(t.TempDir(), "no-smartctl"), busy: newInflight()}
 	if _, err := r.Run(context.Background(), []string{"--scan"}); err == nil {
 		t.Fatal("Run error = nil")
 	}
-	// The failed start released its slot.
-	if _, err := r.Run(context.Background(), []string{"--scan"}); errors.Is(err, errStillRunning) {
-		t.Fatal("a failed start kept the device busy")
+	// A failed start marks nothing.
+	if r.busy.stuck("--scan") {
+		t.Fatal("a failed start marked the device")
 	}
 }
 
