@@ -87,6 +87,125 @@ jobs:
         run: |
           scripts/agent-binaries.sh
           go test -count=1 ./internal/agentdist/...
+
+  # The agent on the two systems the go job cannot run it on (spec
+  # 2026-11-12 "Build, release and CI"). Each job runs the agent's unit
+  # tests and lint on that system, which is where the thin
+  # _windows.go/_darwin.go system calls are exercised at all, then installs
+  # the agent with the real installer against installstub, a stand-in for
+  # the manager's distribution routes, and removes it again. The installed
+  # agent points at 127.0.0.1:1 and keeps retrying its enrollment, which is
+  # enough to show it runs as a service. No coverage floor here: every
+  # decision the platform code makes is in files the Linux gate counts.
+  # None of the agent packages needs Postgres (their integration test runs
+  # the manager surface in-process over bufconn), so nothing is excluded.
+  agent-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      # The runner's Git checks files out with CRLF line endings, which
+      # golangci-lint's gofmt reports on every file. LF, as committed.
+      - name: Keep LF line endings on checkout
+        run: git config --global core.autocrlf false
+      # Pinned like the go job (see its pin table).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version: "1.27.3" }
+      # -race needs cgo, which uses the runner's preinstalled MinGW gcc.
+      - name: Agent unit tests
+        run: go test -race -timeout 900s ./internal/agent/... ./cmd/agent/...
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          args: ./internal/agent/... ./cmd/agent/...
+      # The binary under the name the manager serves it by (no .exe), with
+      # the "<hash>  <name>" checksum scripts/agent-binaries.sh writes. A
+      # pwsh step only fails on the LAST native exit code, hence the checks.
+      - name: Build the agent and the install stub
+        run: |
+          $arch = go env GOARCH
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $name = "pulsix-agent-windows-$arch"
+          $dist = Join-Path $PWD 'dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $env:CGO_ENABLED = '0'
+          go build -trimpath -ldflags "-s -w -X main.version=ci-smoke" -o (Join-Path $dist $name) ./cmd/agent
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $dist $name)).Hash.ToLower()
+          [IO.File]::WriteAllText((Join-Path $dist "$name.sha256"), "$hash  $name`n")
+          go build -o (Join-Path $env:RUNNER_TEMP 'installstub.exe') ./internal/agentdist/cmd/installstub
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem $dist
+      - name: Install smoke
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'installstub.out'
+          $err = Join-Path $env:RUNNER_TEMP 'installstub.err'
+          $stub = Start-Process -FilePath (Join-Path $env:RUNNER_TEMP 'installstub.exe') `
+            -ArgumentList '-dist', (Join-Path $PWD 'dist') `
+            -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow -PassThru
+          $code = 1
+          try {
+            $deadline = (Get-Date).AddSeconds(30)
+            while (-not ((Get-Content -LiteralPath $out -ErrorAction SilentlyContinue) -contains 'ready')) {
+              if ($stub.HasExited -or ((Get-Date) -gt $deadline)) {
+                Get-Content -LiteralPath $out, $err -ErrorAction SilentlyContinue
+                throw 'installstub did not get ready'
+              }
+              Start-Sleep -Milliseconds 200
+            }
+            pwsh -NoProfile -File scripts/ci/install-smoke-windows.ps1 -BaseUrl 'http://127.0.0.1:18080'
+            $code = $LASTEXITCODE
+          } finally {
+            Stop-Process -Id $stub.Id -Force -ErrorAction SilentlyContinue
+          }
+          exit $code
+
+  agent-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      # Pinned like the go job (see its pin table).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version: "1.27.3" }
+      - name: Agent unit tests
+        run: go test -race -timeout 900s ./internal/agent/... ./cmd/agent/...
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+          args: ./internal/agent/... ./cmd/agent/...
+      # The binary for the runner's own arch under the name the manager
+      # serves it by, with its checksum, the way scripts/agent-binaries.sh
+      # writes them.
+      - name: Build the agent and the install stub
+        run: |
+          name="pulsix-agent-darwin-$(go env GOARCH)"
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=ci-smoke" -o "dist/$name" ./cmd/agent
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+          go build -o "$RUNNER_TEMP/installstub" ./internal/agentdist/cmd/installstub
+          ls -l dist
+      - name: Install smoke
+        run: |
+          log="$RUNNER_TEMP/installstub.log"
+          "$RUNNER_TEMP/installstub" -dist "$PWD/dist" > "$log" 2>&1 &
+          stub=$!
+          trap 'kill "$stub" 2> /dev/null || true' EXIT
+          for _ in $(seq 1 150); do
+            grep -qx ready "$log" && break
+            kill -0 "$stub" 2> /dev/null || break
+            sleep 0.2
+          done
+          if ! grep -qx ready "$log"; then
+            echo "::error::installstub did not get ready"
+            cat "$log"
+            exit 1
+          fi
+          scripts/ci/install-smoke-macos.sh http://127.0.0.1:18080
+
   proto:
     runs-on: ubuntu-latest
     steps:
