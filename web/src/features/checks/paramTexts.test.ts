@@ -57,4 +57,15 @@ describe.each([
     const used = CHECK_PLUGINS.flatMap((p) => p.params.flatMap((s) => (s.format ? [s.format] : [])));
     expect(used.filter((f) => !formats[f])).toEqual([]);
   });
+
+  it('says in every secret hint that the secret lives in agent.yaml (safety precondition 4)', () => {
+    const bad = CHECK_PLUGINS.flatMap((p) =>
+      p.params
+        .filter((s) => s.name === 'secret')
+        .filter((s) => !paramText(t, p.name, s.name)?.hint?.includes('agent.yaml'))
+        .map((s) => `${p.name}.${s.name}`),
+    );
+    expect(bad).toEqual([]);
+    expect(CHECK_PLUGINS.some((p) => p.params.some((s) => s.name === 'secret'))).toBe(true);
+  });
 });
