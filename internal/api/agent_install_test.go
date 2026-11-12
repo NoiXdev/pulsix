@@ -38,6 +38,21 @@ func TestAgentDistributionIsPublicOnTheRealRouter(t *testing.T) {
 		}
 	})
 
+	t.Run("install.ps1", func(t *testing.T) {
+		resp, err := http.Get(s.HTTP.URL + "/install.ps1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if want := "$BaseUrl = '" + s.HTTP.URL + "'"; !strings.Contains(string(body), want) {
+			t.Errorf("the served script must be templated with the manager's own URL (%s)", want)
+		}
+	})
+
 	t.Run("binary", func(t *testing.T) {
 		resp, err := http.Get(s.HTTP.URL + "/agents/bin/linux/amd64")
 		if err != nil {

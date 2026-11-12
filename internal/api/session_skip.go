@@ -18,8 +18,8 @@ import (
 // /login, /o/{org}/hosts, ...), its embedded assets (/assets/*,
 // /robots.txt, any other embedded file, and any non-API path that 404s),
 // plus /healthz, whose handler reads no principal, and the public agent
-// distribution (/install.sh, /agents/bin/...), which a host being
-// installed fetches with curl before it has any credential at all. The
+// distribution (/install.sh, /install.ps1, /agents/bin/...), which a host
+// being installed fetches before it has any credential at all. The
 // principal the session cookie resolves to is read exclusively under
 // /api — every handler operation lives under /api/v1, and
 // requireMFAForExplorer gates /api/explorer and /api/openapi — so no

@@ -215,3 +215,142 @@ func TestInstallRoutesAreRateLimitedPerAddress(t *testing.T) {
 		t.Errorf("another address = %d, want 200", rec.Code)
 	}
 }
+
+// TestInstallPs1IsRenderedWithTheManagerURL: the Windows installer is
+// served like install.sh — templated with this manager's public URL — as
+// plain text, since PowerShell reads it into a script block rather than
+// saving it.
+func TestInstallPs1IsRenderedWithTheManagerURL(t *testing.T) {
+	h := installRouter(t, installTestDeps("https://manager.example/", nil))
+	rec := getFrom(t, h, "/install.ps1", "")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/plain; charset=utf-8", ct)
+	}
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got, want := rec.Header().Get("Content-Length"), strconv.Itoa(rec.Body.Len()); got != want {
+		t.Errorf("Content-Length = %q, want %q", got, want)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"$BaseUrl = 'https://manager.example'", "PulsixAgent"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the served script must contain %q", want)
+		}
+	}
+	if strings.Contains(body, "{{") || strings.Contains(body, "}}") {
+		t.Error("the served script still carries template syntax")
+	}
+}
+
+func TestInstallPs1WithoutPublicURL(t *testing.T) {
+	h := installRouter(t, installTestDeps("", nil))
+	rec := getFrom(t, h, "/install.ps1", "")
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "PULSIX_PUBLIC_URL") {
+		t.Errorf("the refusal must name the setting to fix: %s", rec.Body.String())
+	}
+}
+
+// A public URL the PowerShell installer cannot carry safely is a
+// configuration the manager refuses to start with, not one it serves a
+// broken (or injectable) script for.
+func TestInstallRoutesRefuseAPublicURLThePowerShellScriptCannotCarry(t *testing.T) {
+	r := chi.NewRouter()
+	if err := registerInstallRoutes(r, installTestDeps("https://manager.example/it's", nil)); err == nil {
+		t.Fatal("registerInstallRoutes accepted a public URL with a single quote")
+	}
+}
+
+// TestInstallPs1SharesTheRateLimit: the Windows script spends the same
+// per-address budget as the other distribution routes.
+func TestInstallPs1SharesTheRateLimit(t *testing.T) {
+	h := installRouter(t, installTestDeps("https://manager.example", nil))
+
+	const flooder = "203.0.113.9:54321"
+	for i := range installRateLimit {
+		if rec := getFrom(t, h, "/install.sh", flooder); rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200", i+1, rec.Code)
+		}
+	}
+	rec := getFrom(t, h, "/install.ps1", flooder)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("install.ps1 after the budget = %d, want 429", rec.Code)
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Error("a 429 must carry Retry-After")
+	}
+	if rec := getFrom(t, h, "/install.ps1", "198.51.100.4:40000"); rec.Code != http.StatusOK {
+		t.Errorf("another address = %d, want 200", rec.Code)
+	}
+}
+
+// TestAgentInstallCommandWindows pins the PowerShell line the Add-agent
+// dialog shows, built from the same parts as the shell command.
+func TestAgentInstallCommandWindows(t *testing.T) {
+	const prefix = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((irm "
+	for _, tt := range []struct {
+		name     string
+		deps     Deps
+		nameHint string
+		want     string
+	}{
+		{
+			name: "plain",
+			deps: Deps{PublicURL: "https://manager.example/", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444", ServerName: "manager.example"}},
+			want: prefix + "https://manager.example/install.ps1))) -Manager manager.example:8444",
+		},
+		{
+			name: "server name differs from the dialed host",
+			deps: Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "10.0.0.5:8444", ServerName: "grpc.manager.example"}},
+			want: prefix + "https://manager.example/install.ps1))) -Manager '10.0.0.5:8444' -ServerName grpc.manager.example",
+		},
+		{
+			name:     "name hint",
+			deps:     Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}},
+			nameHint: "edge-1",
+			want:     prefix + "https://manager.example/install.ps1))) -Manager manager.example:8444 -Name edge-1",
+		},
+		{
+			name:     "server name and name hint",
+			deps:     Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "10.0.0.5:8444", ServerName: "grpc.manager.example"}},
+			nameHint: "edge-1",
+			want:     prefix + "https://manager.example/install.ps1))) -Manager '10.0.0.5:8444' -ServerName grpc.manager.example -Name edge-1",
+		},
+		{
+			name: "fallbacks without a public URL or endpoint",
+			deps: Deps{},
+			// < and > are redirections in PowerShell: the placeholder is quoted.
+			want: prefix + "https://<manager>/install.ps1))) -Manager '<manager>:8444'",
+		},
+		{
+			// PowerShell would read a bare 007 as the number 7.
+			name:     "a hint that starts with a digit is quoted",
+			deps:     Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}},
+			nameHint: "007",
+			want:     prefix + "https://manager.example/install.ps1))) -Manager manager.example:8444 -Name '007'",
+		},
+		{
+			// The hint is free text an operator typed: anything beyond a
+			// plain word is quoted so it stays one argument and is never
+			// run as code in an administrator's PowerShell.
+			name:     "a hint that is not a plain word is quoted",
+			deps:     Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}},
+			nameHint: "it's $(Remove-Item C:\\) \u2019x",
+			want:     prefix + "https://manager.example/install.ps1))) -Manager manager.example:8444 -Name 'it''s $(Remove-Item C:\\) \u2019\u2019x'",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := agentInstallCommandWindows(tt.deps, tt.nameHint); got != tt.want {
+				t.Errorf("agentInstallCommandWindows() =\n  %s\nwant\n  %s", got, tt.want)
+			}
+		})
+	}
+}

@@ -438,9 +438,10 @@ func New(deps Deps) (http.Handler, error) {
 		}{Status: "ok", Version: healthzVersion})
 	})
 
-	// The public agent distribution (GET /install.sh, GET /agents/bin/...):
-	// outside /api on purpose — an installing host fetches them with curl
-	// before it has any credential at all. See agent_install.go.
+	// The public agent distribution (GET /install.sh, GET /install.ps1,
+	// GET /agents/bin/...): outside /api on purpose — an installing host
+	// fetches them with curl or PowerShell before it has any credential at
+	// all. See agent_install.go.
 	if err := registerInstallRoutes(r, deps); err != nil {
 		return nil, err
 	}

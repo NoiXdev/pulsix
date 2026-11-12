@@ -1,6 +1,7 @@
 // Package agentdist embeds the agent distribution the manager serves:
 // the cross-compiled agent binaries (`make agent-binaries`, gitignored),
-// the install script template, the systemd unit and the launchd plist — canonical sources
+// the install script templates (install.sh, and install.ps1 for Windows),
+// the systemd unit and the launchd plist — canonical sources
 // live in deploy/ and are guarded against drift by a test here.
 //
 // A plain dev build (`go build`/`go test` without make agent-binaries)
@@ -39,6 +40,10 @@ const ChecksumSuffix = ".sha256"
 // InstallScript returns the raw install script TEMPLATE (the manager's
 // route executes it with the base URL and the unit).
 func InstallScript() []byte { return mustRead("files/install.sh") }
+
+// PowerShellInstallScript returns the raw Windows install script TEMPLATE
+// (the manager's route executes it with the base URL).
+func PowerShellInstallScript() []byte { return mustRead("files/install.ps1") }
 
 // Unit returns the systemd unit text embedded into the install script.
 func Unit() []byte { return mustRead("files/pulsix-agent.service") }

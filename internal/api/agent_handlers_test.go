@@ -114,7 +114,8 @@ func TestAgentTokenIsShownOnceAndDrivesTheInstallCommand(t *testing.T) {
 			NameHint string `json:"name_hint"`
 			MaxUses  int    `json:"max_uses"`
 		} `json:"token_record"`
-		InstallCommand string `json:"install_command"`
+		InstallCommand        string `json:"install_command"`
+		InstallCommandWindows string `json:"install_command_windows"`
 	}
 	decodeInto(t, resp, &created)
 	if !strings.HasPrefix(created.Token, "pxa1.") {
@@ -132,6 +133,16 @@ func TestAgentTokenIsShownOnceAndDrivesTheInstallCommand(t *testing.T) {
 	// arguments; the installer asks for it on the terminal instead.
 	if strings.Contains(created.InstallCommand, created.Token) || strings.Contains(created.InstallCommand, "--token ") {
 		t.Fatalf("the install command carries the token: %q", created.InstallCommand)
+	}
+	// The Windows line is built from the same parts, and keeps the token
+	// off the command line the same way.
+	if !strings.Contains(created.InstallCommandWindows, "/install.ps1") ||
+		!strings.Contains(created.InstallCommandWindows, "-Manager localhost:8444") ||
+		!strings.Contains(created.InstallCommandWindows, "-Name edge-1") {
+		t.Fatalf("windows install command = %q", created.InstallCommandWindows)
+	}
+	if strings.Contains(created.InstallCommandWindows, created.Token) || strings.Contains(created.InstallCommandWindows, "-Token ") {
+		t.Fatalf("the windows install command carries the token: %q", created.InstallCommandWindows)
 	}
 
 	// The pending list names the token, never its secret.

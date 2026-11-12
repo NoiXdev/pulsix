@@ -3196,6 +3196,8 @@ export interface components {
             readonly $schema?: string;
             /** @description Run this on the host to install and enrol the agent */
             install_command: string;
+            /** @description Run this in PowerShell as administrator on a Windows host */
+            install_command_windows: string;
             /** @description Shown once — the manager stores only its hash */
             token: string;
             token_record: components["schemas"]["AgentTokenDTO"];

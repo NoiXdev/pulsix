@@ -30,6 +30,7 @@ func TestSkipsSessionLookup(t *testing.T) {
 		// Public and principal-free.
 		{"/healthz", true},
 		{"/install.sh", true},
+		{"/install.ps1", true},
 		{"/agents/bin/linux/amd64", true},
 		{"/agents/bin/linux/amd64.sha256", true},
 		// API territory: the session principal is consulted here.

@@ -21,6 +21,7 @@ const (
 	deployInstallScript = "../../deploy/install.sh"
 	deployUnit          = "../../deploy/agent/systemd/pulsix-agent.service"
 	deployPlist         = "../../deploy/agent/launchd/dev.noix.pulsix-agent.plist"
+	deployPowerShell    = "../../deploy/agent/windows/install.ps1"
 )
 
 func TestEmbeddedFilesMatchDeploySources(t *testing.T) {
@@ -32,6 +33,7 @@ func TestEmbeddedFilesMatchDeploySources(t *testing.T) {
 		{"install.sh", deployInstallScript, InstallScript()},
 		{"pulsix-agent.service", deployUnit, Unit()},
 		{"dev.noix.pulsix-agent.plist", deployPlist, Plist()},
+		{"install.ps1", deployPowerShell, PowerShellInstallScript()},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			canon, err := os.ReadFile(tt.path)

@@ -17,8 +17,9 @@ import (
 	"github.com/noixdev/pulsix/internal/clientip"
 )
 
-// The agent distribution's two public routes: GET /install.sh hands a host
-// the installer templated with this manager's own public URL, and
+// The agent distribution's public routes: GET /install.sh (Linux and macOS)
+// and GET /install.ps1 (Windows) hand a host the installer templated with
+// this manager's own public URL, and
 // GET /agents/bin/{os}/{arch}[.sha256] hands it the binary that installer
 // downloads plus the checksum it verifies against. Both are reachable
 // without a session — a host being installed has no credential yet, and
@@ -43,15 +44,17 @@ const (
 // case, nothing a path could be escaped with.
 var agentTargetPart = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
 
-// installServer serves the agent distribution. script is rendered once at
-// construction (both inputs are static: the embedded template and the
-// configured public URL), nil when the manager has no public URL to name;
-// bin is nil in a build without agent binaries — see Deps.AgentBinaries.
+// installServer serves the agent distribution. script and psScript are
+// rendered once at construction (both inputs are static: the embedded
+// templates and the configured public URL), nil when the manager has no
+// public URL to name; bin is nil in a build without agent binaries — see
+// Deps.AgentBinaries.
 type installServer struct {
-	script []byte
-	bin    fs.FS
-	lim    *clientip.Limiter
-	ip     *clientip.Resolver
+	script   []byte
+	psScript []byte
+	bin      fs.FS
+	lim      *clientip.Limiter
+	ip       *clientip.Resolver
 }
 
 // registerInstallRoutes mounts the distribution routes on the root router
@@ -59,7 +62,10 @@ type installServer struct {
 // the API client, and the SPA never calls them). It fails only when the
 // embedded install script cannot be rendered at all, which is a build
 // wiring bug — api.New refuses to hand back a handler for it rather than
-// discovering it on the first install.
+// discovering it on the first install. The PowerShell installer also
+// refuses a public URL with a single quote in it (it would end the string
+// the script carries the URL in), so such a URL stops the manager at
+// startup rather than serving an injectable script.
 func registerInstallRoutes(r chi.Router, deps Deps) error {
 	s := &installServer{
 		bin: deps.AgentBinaries,
@@ -72,24 +78,41 @@ func registerInstallRoutes(r chi.Router, deps Deps) error {
 			return fmt.Errorf("render install.sh: %w", err)
 		}
 		s.script = script
+		psScript, err := agentdist.RenderPowerShellInstaller(deps.PublicURL)
+		if err != nil {
+			return fmt.Errorf("render install.ps1: %w", err)
+		}
+		s.psScript = psScript
 	}
 	r.Get("/install.sh", s.serveScript)
+	r.Get("/install.ps1", s.servePowerShellScript)
 	r.Get("/agents/bin/{os}/{arch}", s.serveBinary)
 	return nil
 }
 
 func (s *installServer) serveScript(w http.ResponseWriter, r *http.Request) {
+	s.writeScript(w, r, s.script, "text/x-shellscript; charset=utf-8")
+}
+
+// servePowerShellScript serves install.ps1 as plain text: PowerShell reads
+// it into a script block (irm) rather than saving it, so no script type is
+// needed, and a browser shows it instead of offering a download.
+func (s *installServer) servePowerShellScript(w http.ResponseWriter, r *http.Request) {
+	s.writeScript(w, r, s.psScript, "text/plain; charset=utf-8")
+}
+
+func (s *installServer) writeScript(w http.ResponseWriter, r *http.Request, script []byte, contentType string) {
 	if !s.allow(w, r) {
 		return
 	}
-	if s.script == nil {
+	if script == nil {
 		http.Error(w, "this manager does not know its own public URL (set PULSIX_PUBLIC_URL); the install script cannot name the host to download the agent from", http.StatusServiceUnavailable)
 		return
 	}
-	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Length", strconv.Itoa(len(s.script)))
-	_, _ = w.Write(s.script)
+	w.Header().Set("Content-Length", strconv.Itoa(len(script)))
+	_, _ = w.Write(script)
 }
 
 func (s *installServer) serveBinary(w http.ResponseWriter, r *http.Request) {
