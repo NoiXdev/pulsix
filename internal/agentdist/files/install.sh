@@ -241,7 +241,7 @@ Darwin)
 	# directory is made here so it exists with the right owner.
 	mkdir -p "$LOG_DIR"
 	chown root:wheel "$LOG_DIR"
-	chmod 755 "$LOG_DIR"
+	chmod 700 "$LOG_DIR"
 
 	# The plist is written verbatim, like the systemd unit.
 	cat > "$PLIST_PATH" <<'PULSIX_PLIST_EOF'
@@ -252,8 +252,17 @@ PULSIX_PLIST_EOF
 	chmod 644 "$PLIST_PATH"
 
 	# A re-run upgrades: unload the running daemon (if any), then load.
-	launchctl bootout system/dev.noix.pulsix-agent 2> /dev/null || true
-	launchctl bootstrap system "$PLIST_PATH"
+	# bootout can return before the job is gone (the agent is still handling
+	# SIGTERM), and bootstrapping a label that is still loaded fails, so wait
+	# for the job to disappear first.
+	launchctl bootout "system/$LAUNCHD_LABEL" 2> /dev/null || true
+	tries=0
+	while launchctl print "system/$LAUNCHD_LABEL" > /dev/null 2>&1; do
+		tries=$((tries + 1))
+		[ "$tries" -le 20 ] || die "the running $LAUNCHD_LABEL did not stop within 20 seconds; run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"
+		sleep 1
+	done
+	launchctl bootstrap system "$PLIST_PATH" || die "launchctl bootstrap failed; check 'launchctl print system/$LAUNCHD_LABEL' and $LOG_DIR/agent.log"
 
 	echo "pulsix-agent: installed and started ($LAUNCHD_LABEL)"
 	echo "pulsix-agent: identity lives in $DATA_DIR — the enrollment token is spent on first start"
