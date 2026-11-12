@@ -323,6 +323,68 @@
       ]
     },
     {
+      "name": "postgres",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "secret",
+          "type": "string",
+          "required": true,
+          "example": "db-main",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        },
+        {
+          "name": "databases",
+          "type": "list",
+          "max_entries": 64,
+          "max_bytes": 63,
+          "format": "noControl"
+        }
+      ],
+      "item_param": "databases",
+      "host_item_always_asked": true,
+      "metrics": [
+        {
+          "name": "pg.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.connections",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.max_connections",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.connections_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.in_recovery",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replication_lag_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.replication_lag_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.oldest_xact_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.database_size_bytes",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

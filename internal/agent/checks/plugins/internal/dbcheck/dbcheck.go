@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"time"
 
@@ -54,10 +55,17 @@ func Parse(fields map[string]string, spec []Field) (map[string]string, error) {
 		}
 		out[f.Name] = v
 	}
+	// The first unknown name in sorted order, so the same file always reads
+	// the same error.
+	var unknown []string
 	for name := range fields {
 		if _, ok := known[name]; !ok {
-			return nil, errors.New("secret field `" + name + "` is not known")
+			unknown = append(unknown, name)
 		}
+	}
+	if len(unknown) > 0 {
+		slices.Sort(unknown)
+		return nil, errors.New("secret field `" + unknown[0] + "` is not known")
 	}
 	return out, nil
 }

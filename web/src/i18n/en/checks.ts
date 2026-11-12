@@ -109,6 +109,7 @@ export const enChecks = {
       temperature: 'Temperature',
       smart: 'SMART disk health',
       raid: 'RAID arrays',
+      postgres: 'PostgreSQL',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -185,6 +186,18 @@ export const enChecks = {
         label: 'Arrays (one per line, empty means every array)',
         hint: 'Array names such as md0; empty means every array. Linux software RAID only.',
         placeholder: 'md0\nmd1',
+      },
+    },
+    postgres: {
+      secret: {
+        label: 'Secret',
+        hint: 'Name of a secret in agent.yaml on each host: it holds the server address and login. The value never leaves the host.',
+        placeholder: 'db-main',
+      },
+      databases: {
+        label: 'Databases (one per line, empty means every database)',
+        hint: 'Databases whose size to report; empty means every database that accepts connections and is not a template.',
+        placeholder: 'app\nanalytics',
       },
     },
     icmp: {

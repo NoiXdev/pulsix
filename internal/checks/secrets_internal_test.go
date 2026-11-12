@@ -51,12 +51,16 @@ func TestMissingSecret(t *testing.T) {
 }
 
 // TestMissingSecretUsesTheRegistry: the exported form reads the real
-// descriptors, none of which takes a secret yet — so it never warns.
+// descriptors: it warns for exactly the plugins that take a secret.
 func TestMissingSecretUsesTheRegistry(t *testing.T) {
 	for _, name := range checkplugins.Names() {
 		d := Definition{Key: name, Plugin: name, Enabled: true, Params: map[string]any{"secret": "redis"}}
-		if got := MissingSecret(d, AgentSecrets{Known: true, Names: []string{}}); got != "" {
-			t.Errorf("%s: MissingSecret = %q, want none (no plugin takes a secret yet)", name, got)
+		want := ""
+		if desc, _ := checkplugins.Get(name); desc.UsesSecret() {
+			want = "redis"
+		}
+		if got := MissingSecret(d, AgentSecrets{Known: true, Names: []string{}}); got != want {
+			t.Errorf("%s: MissingSecret = %q, want %q", name, got, want)
 		}
 	}
 }

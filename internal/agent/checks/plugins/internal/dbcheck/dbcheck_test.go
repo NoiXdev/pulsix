@@ -58,6 +58,17 @@ func TestParse(t *testing.T) {
 	}
 }
 
+func TestParseNamesTheFirstUnknownFieldDeterministically(t *testing.T) {
+	spec := []Field{{Name: "host"}}
+	fields := map[string]string{"host": "h", "zeta": "1", "alpha": "2", "mid": "3"}
+	for range 50 {
+		_, err := Parse(fields, spec)
+		if err == nil || err.Error() != "secret field `alpha` is not known" {
+			t.Fatalf("err = %v, want the alphabetically first unknown field", err)
+		}
+	}
+}
+
 func TestParseErrorNeverCarriesValue(t *testing.T) {
 	_, err := Parse(map[string]string{"port": "hunter2-secret"}, []Field{{Name: "port", Valid: Port, Want: "a valid port"}})
 	if err == nil || strings.Contains(err.Error(), "hunter2") {

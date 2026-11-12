@@ -96,6 +96,17 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"raid.devices_failed":            {CheckKey: "raid", Kind: rules.MetricNumeric},
 		"raid.sync_pct":                  {CheckKey: "raid", Kind: rules.MetricNumeric},
 		"raid.arrays":                    {CheckKey: "raid", Kind: rules.MetricNumeric},
+
+		// Backlog 3.10: the database plugins (postgres here; mysql, redis follow).
+		"pg.up":                      {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.connections":             {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.max_connections":         {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.connections_pct":         {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.in_recovery":             {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.replication_lag_seconds": {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.replication_lag_bytes":   {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.oldest_xact_seconds":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.database_size_bytes":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -140,6 +151,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"temp":    "temperature",
 		"smart":   "smart",
 		"raid":    "raid",
+		"pg":      "postgres",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")

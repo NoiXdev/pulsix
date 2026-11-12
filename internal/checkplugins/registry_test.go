@@ -13,7 +13,7 @@ import (
 // SharedCheckFormPage.tsx offered the plugins in before the descriptors.
 func TestNamesInTheSPAsOrder(t *testing.T) {
 	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker",
-		"temperature", "smart", "raid", "icmp", "tcp", "http", "tls", "dns"}
+		"temperature", "smart", "raid", "postgres", "icmp", "tcp", "http", "tls", "dns"}
 	if got := checkplugins.Names(); !slices.Equal(got, want) {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}

@@ -30,9 +30,12 @@ func TestUsesSecret(t *testing.T) {
 	if !withSecret().UsesSecret() {
 		t.Fatal("a descriptor with the secret parameter must use a secret")
 	}
+	// The plugins that take a secret (backlog 3.10); add each database
+	// plugin here as it lands.
+	want := map[string]bool{"postgres": true}
 	for _, d := range checkplugins.All() {
-		if d.UsesSecret() {
-			t.Errorf("%s uses a secret; no plugin does before 3.10 — update this test when one does", d.Name)
+		if d.UsesSecret() != want[d.Name] {
+			t.Errorf("%s: UsesSecret = %v, want %v", d.Name, d.UsesSecret(), want[d.Name])
 		}
 	}
 	// A parameter merely called "secret" but not of the shared shape is

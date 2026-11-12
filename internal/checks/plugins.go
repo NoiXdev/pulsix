@@ -26,6 +26,7 @@ const (
 	PluginTemperature = "temperature"
 	PluginSmart       = "smart"
 	PluginRaid        = "raid"
+	PluginPostgres    = "postgres"
 
 	PluginICMP = "icmp"
 	PluginTCP  = "tcp"

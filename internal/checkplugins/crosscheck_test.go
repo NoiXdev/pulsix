@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/noixdev/pulsix/internal/agent/checks"
 	agentplugins "github.com/noixdev/pulsix/internal/agent/checks/plugins"
 	"github.com/noixdev/pulsix/internal/checkplugins"
 )
@@ -32,5 +33,35 @@ func TestAgentPluginsMatchDescriptors(t *testing.T) {
 	agent := slices.Sorted(maps.Keys(agentplugins.Registry()))
 	if !slices.Equal(described, agent) {
 		t.Fatalf("agent descriptors %v, agent registry %v", described, agent)
+	}
+}
+
+// TestSecretPluginsAreExactlyTheDescriptorsThatTakeASecret (backlog 3.10,
+// precondition 2): an agent plugin is a checks.SecretPlugin exactly when its
+// descriptor takes the secret parameter, and the metric a missing secret is
+// reported on is one the descriptor declares. Without the first half a plugin
+// that ignored its secret would run with nil fields; without the second a
+// missing-secret error would land on a metric no rule or graph knows.
+func TestSecretPluginsAreExactlyTheDescriptorsThatTakeASecret(t *testing.T) {
+	for name, plugin := range agentplugins.Registry() {
+		d, ok := checkplugins.Get(name)
+		if !ok {
+			t.Fatalf("agent plugin %q has no descriptor", name)
+		}
+		sp, isSecret := plugin.(checks.SecretPlugin)
+		if isSecret != d.UsesSecret() {
+			t.Errorf("%s: SecretPlugin = %v, descriptor UsesSecret = %v", name, isSecret, d.UsesSecret())
+		}
+		if !isSecret {
+			continue
+		}
+		metric := sp.SecretErrorMetric()
+		found := false
+		for _, m := range d.Metrics {
+			found = found || m.Name == metric
+		}
+		if !found {
+			t.Errorf("%s: SecretErrorMetric %q is not one of the descriptor's metrics", name, metric)
+		}
 	}
 }
