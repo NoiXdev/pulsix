@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -10,6 +10,9 @@ import { AddAgentDialog } from './AddAgentDialog.tsx';
 import { clippedElements } from '../../test/clipped.ts';
 import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
+
+vi.mock('../../lib/clipboard.ts', () => ({ copyText: vi.fn(async () => true) }));
+import { copyText } from '../../lib/clipboard.ts';
 
 const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', role, created_at: '' } });
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
@@ -238,7 +241,7 @@ describe('AgentsPage', () => {
     await user.type(screen.getByLabelText('Agents this token may enrol'), '2');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
-    expect(await screen.findByLabelText('Install command')).toHaveTextContent('--manager pulsix.example:8444');
+    expect(await screen.findByLabelText('Linux and macOS')).toHaveTextContent('--manager pulsix.example:8444');
     expect(screen.getByLabelText('Enrollment token')).toHaveTextContent('pxa1.aaa.bbb.ccc');
     expect(posted).toMatchObject({ zone_id: 'z1', name_hint: 'edge-1', max_uses: 2, expires_in_minutes: 60 });
   });
@@ -360,5 +363,47 @@ describe('AgentsPage', () => {
 
     expect(await screen.findByText(/lowercase letters, digits and hyphens/)).toBeInTheDocument();
     expect(calls).toBe(0);
+  });
+
+  it('shows the Linux/macOS and Windows commands, each with its own copy button', async () => {
+    const user = userEvent.setup();
+    const win = 'iex "& { $(irm https://pulsix.example/install.ps1) } -Manager pulsix.example:8444"';
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/agents': { agents: [] },
+      'GET /api/v1/orgs/acme/agents/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/zones': { zones: [{ id: 'z1', org_id: 'o', slug: 'hel', name: 'Helsinki' }] },
+      'POST /api/v1/orgs/acme/agents/tokens': () => ({
+        token: 'pxa1.aaa.bbb.ccc', token_record: {}, install_command: 'curl unix', install_command_windows: win,
+      }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /Enrol agent/ }));
+    await user.click(screen.getByRole('button', { name: 'Create token' }));
+
+    expect(await screen.findByLabelText('Linux and macOS')).toHaveTextContent('curl unix');
+    expect(screen.getByLabelText('Windows (PowerShell as administrator)')).toHaveTextContent('install.ps1');
+    await user.click(screen.getByRole('button', { name: 'Copy the Windows command' }));
+    expect(copyText).toHaveBeenLastCalledWith(win);
+    await user.click(screen.getByRole('button', { name: 'Copy the Linux and macOS command' }));
+    expect(copyText).toHaveBeenLastCalledWith('curl unix');
+  });
+
+  it('hides the Windows block when an older manager sends no Windows command', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/agents': { agents: [] },
+      'GET /api/v1/orgs/acme/agents/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/zones': { zones: [{ id: 'z1', org_id: 'o', slug: 'hel', name: 'Helsinki' }] },
+      'POST /api/v1/orgs/acme/agents/tokens': () => ({ token: 'x', token_record: {}, install_command: 'curl unix' }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /Enrol agent/ }));
+    await user.click(screen.getByRole('button', { name: 'Create token' }));
+
+    expect(await screen.findByLabelText('Linux and macOS')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Windows (PowerShell as administrator)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy the Windows command' })).not.toBeInTheDocument();
   });
 });

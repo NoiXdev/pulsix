@@ -16,6 +16,7 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 interface Created {
   token: string;
   command: string;
+  windowsCommand?: string;
 }
 
 /** AddAgentDialog creates an enrollment token and shows it once, with the
@@ -52,7 +53,7 @@ export function AddAgentDialog({ org, host, onClose }: { org: string; host?: { i
         expires_in_minutes: minutes,
         ...(host ? { host_id: host.id } : nameHint ? { name_hint: nameHint } : {}),
       });
-      setCreated({ token: res.token, command: res.install_command });
+      setCreated({ token: res.token, command: res.install_command, windowsCommand: res.install_command_windows });
     } catch (err) {
       setError(err instanceof Error ? err.message : t.agents.dialog.createFailed);
     }
@@ -65,9 +66,10 @@ export function AddAgentDialog({ org, host, onClose }: { org: string; host?: { i
           <p className="text-xs text-muted-foreground">
             {t.agents.dialog.instructions(t.agents.dialog.agentCount(maxUses), minutes)}
           </p>
-          <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px]" aria-label={t.agents.dialog.installCommand}>
-            {created.command}
-          </pre>
+          <CommandBlock label={t.agents.dialog.commandUnix} copyLabel={t.agents.dialog.copyCommandUnix} command={created.command} onCopy={(c) => void copy(c)} />
+          {created.windowsCommand && (
+            <CommandBlock label={t.agents.dialog.commandWindows} copyLabel={t.agents.dialog.copyCommandWindows} command={created.windowsCommand} onCopy={(c) => void copy(c)} />
+          )}
           <div className="flex items-center gap-2">
             <code className="flex-1 truncate rounded-md border border-border bg-background px-2 py-1.5 font-mono text-xs" aria-label={t.agents.dialog.tokenLabel}>
               {created.token}
@@ -77,9 +79,6 @@ export function AddAgentDialog({ org, host, onClose }: { org: string; host?: { i
             </Button>
           </div>
           <div className="flex justify-end gap-2">
-            <Button type="button" variant="ghost" aria-label={t.agents.dialog.copyCommand} onClick={() => void copy(created.command)}>
-              <Copy size={13} /> {t.agents.dialog.copy}
-            </Button>
             <Button type="button" variant="primary" onClick={onClose}>
               {t.agents.dialog.done}
             </Button>
@@ -135,5 +134,21 @@ export function AddAgentDialog({ org, host, onClose }: { org: string; host?: { i
         />
       )}
     </Dialog>
+  );
+}
+
+function CommandBlock({ label, copyLabel, command, onCopy }: { label: string; copyLabel: string; command: string; onCopy: (command: string) => void }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium">{label}</span>
+        <Button type="button" variant="ghost" aria-label={copyLabel} onClick={() => onCopy(command)}>
+          <Copy size={13} />
+        </Button>
+      </div>
+      <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 font-mono text-[11px]" aria-label={label}>
+        {command}
+      </pre>
+    </div>
   );
 }

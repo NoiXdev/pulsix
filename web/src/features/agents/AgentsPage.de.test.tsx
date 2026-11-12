@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
@@ -53,5 +54,26 @@ describe('AgentsPage in German', () => {
 
     expect(await screen.findByText(/^2 von 3 melden sich · /)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Agents' })).toBeInTheDocument();
+  });
+
+  it('labels the two install commands in German', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': { org: { ...org.org, role: 'operator' } },
+      'GET /api/v1/orgs/acme/agents': { agents: [] },
+      'GET /api/v1/orgs/acme/agents/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/zones': { zones: [{ id: 'z1', org_id: 'o', slug: 'hel', name: 'Helsinki' }] },
+      'POST /api/v1/orgs/acme/agents/tokens': () => ({
+        token: 'x', token_record: {}, install_command: 'curl unix', install_command_windows: 'iex win',
+      }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /Agent registrieren/ }));
+    await user.click(await screen.findByRole('button', { name: 'Token erstellen' }));
+
+    expect(await screen.findByLabelText('Linux und macOS')).toHaveTextContent('curl unix');
+    expect(screen.getByLabelText('Windows (PowerShell als Administrator)')).toHaveTextContent('iex win');
+    expect(screen.getByRole('button', { name: 'Befehl für Linux und macOS kopieren' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Befehl für Windows kopieren' })).toBeInTheDocument();
   });
 });

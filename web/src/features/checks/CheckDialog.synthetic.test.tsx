@@ -139,4 +139,12 @@ describe('CheckDialog — synthetic plugins', () => {
     expect(put).toMatchObject({ key: 'http', plugin: 'http' });
     expect(put?.params).toEqual(params);
   });
+
+  it('hints at the unit naming of all three systems on the service plugin', async () => {
+    const user = userEvent.setup();
+    await openNew(user, 'service');
+    expect(
+      screen.getByText('systemd units on Linux, service names on Windows, launchd labels on macOS — one per line'),
+    ).toBeInTheDocument();
+  });
 });

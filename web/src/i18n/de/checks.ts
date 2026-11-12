@@ -99,6 +99,7 @@ export const deChecks: Messages['checks'] = {
     copyNote:
       'Eine Kopie braucht entweder einen eigenen Schlüssel oder eine engere Bindung als die Zeile, von der sie stammt: Ein engerer Geltungsbereich mit demselben Schlüssel überschreibt diesen Check für die betroffenen Hosts.',
     units: 'Units (eine pro Zeile)',
+    unitsHint: 'systemd-Units unter Linux, Dienstnamen unter Windows, launchd-Labels unter macOS – einer pro Zeile',
     mounts: 'Einhängepunkte (einer pro Zeile, leer bedeutet jeden Einhängepunkt)',
     interfaces: 'Schnittstellen (eine pro Zeile, leer bedeutet jede echte Schnittstelle)',
     interfacesHint: 'Loopback sowie Container- und virtuelle Schnittstellen werden standardmäßig übersprungen. Eine hier genannte Schnittstelle wird immer gemessen.',

@@ -229,6 +229,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               placeholder="sshd"
               onChange={(e) => setUnits(e.target.value)}
             />
+            <p className="text-[11px] text-muted-foreground">{t.checks.dialog.unitsHint}</p>
           </>
         )}
         {plugin === 'disk' && (
