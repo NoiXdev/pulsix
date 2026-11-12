@@ -121,3 +121,23 @@ func TestHeartbeatBoundsTheState(t *testing.T) {
 		})
 	}
 }
+
+// TestSecretsByHost: the host page's read of the report. A host without an
+// agent has no report — unknown, not an error.
+func TestSecretsByHost(t *testing.T) {
+	svc, _, _, _ := newService(t)
+	org, host := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if got, err := svc.SecretsByHost(ctx, org, host); err != nil || got.Known {
+		t.Fatalf("no agent: %+v, %v; want unknown, nil", got, err)
+	}
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-h")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Heartbeat(ctx, "serial-h", "v1", []string{"api"}, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.SecretsByHost(ctx, org, host)
+	if err != nil || !got.Known || !slices.Equal(got.Names, []string{"api"}) {
+		t.Fatalf("reported: %+v, %v; want known [api]", got, err)
+	}
+}

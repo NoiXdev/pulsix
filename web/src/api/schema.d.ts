@@ -3145,6 +3145,10 @@ export interface components {
             host_name: string;
             /** Format: date-time */
             last_seen?: string;
+            /** @description The names of the secrets the agent loaded from its agent.yaml, sorted; null when unknown (an agent too old to report them, or no heartbeat yet) */
+            secret_names: string[] | null;
+            /** @description The state of the agent's agent.yaml: absent, ok, or the error that made the agent drop every secret; null when unknown */
+            secrets_state: string | null;
             /**
              * @description online = a heartbeat within three heartbeat intervals
              * @enum {string}
@@ -4592,6 +4596,8 @@ export interface components {
             /** Format: int64 */
             interval_seconds: number;
             key: string;
+            /** @description The secret this check's secret parameter names that the host's agent did not report in its last heartbeat; the agent fails the check with "secret <name> is not defined in agent.yaml" until it is added. Absent when the check names no secret, the agent reported it, or the agent's report is unknown */
+            missing_secret?: string;
             /** @enum {string} */
             origin: "seed" | "custom" | "shared";
             params: {

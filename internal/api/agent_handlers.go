@@ -45,6 +45,13 @@ type agentDTO struct {
 	LastSeen      *time.Time `json:"last_seen,omitempty"`
 	CertExpiresAt *time.Time `json:"cert_expires_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
+	// SecretNames and SecretsState are the agent's last report on its
+	// local configuration file (backlog 3.5): never a value, only names.
+	// Both are null when the agent has not reported — an agent older than
+	// agent.yaml, or one that has not sent a heartbeat since it enrolled —
+	// which is not the same as an empty list ("no secrets").
+	SecretNames  []string `json:"secret_names" nullable:"true" doc:"The names of the secrets the agent loaded from its agent.yaml, sorted; null when unknown (an agent too old to report them, or no heartbeat yet)"`
+	SecretsState *string  `json:"secrets_state" nullable:"true" doc:"The state of the agent's agent.yaml: absent, ok, or the error that made the agent drop every secret; null when unknown"`
 }
 
 type agentTokenDTO struct {
@@ -123,6 +130,13 @@ func toAgentDTO(v agents.View, managerVersion string) agentDTO {
 	}
 	if v.Online {
 		dto.Status = "online"
+	}
+	if v.Secrets.Known {
+		state := v.Secrets.State
+		dto.SecretNames, dto.SecretsState = v.Secrets.Names, &state
+		if dto.SecretNames == nil {
+			dto.SecretNames = []string{}
+		}
 	}
 	return dto
 }

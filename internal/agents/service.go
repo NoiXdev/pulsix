@@ -587,6 +587,20 @@ func isOnline(lastSeen *time.Time, now time.Time) bool {
 	return lastSeen != nil && now.Sub(*lastSeen) < StaleAfter
 }
 
+// SecretsByHost is the host's agent's latest secrets report, for the host
+// page's missing-secret warnings: a host without an agent has no report,
+// which is "unknown", not an error.
+func (s *Service) SecretsByHost(ctx context.Context, orgID, hostID uuid.UUID) (SecretsReport, error) {
+	a, err := s.store.GetByHost(ctx, orgID, hostID)
+	if errors.Is(err, ErrNotFound) {
+		return SecretsReport{}, nil
+	}
+	if err != nil {
+		return SecretsReport{}, err
+	}
+	return a.Secrets, nil
+}
+
 // GetByHost is the host detail card's read: the host's active agent, or
 // ErrNotFound when it runs none — a host of another organization is
 // invisible the same way.

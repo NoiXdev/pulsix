@@ -149,6 +149,9 @@ type hostCheckDTO struct {
 	SourceID        string              `json:"source_id,omitempty" doc:"The group or host it is bound to; absent for an organization-bound check"`
 	SourceName      string              `json:"source_name,omitempty"`
 	Values          []hostCheckValueDTO `json:"values"`
+	// MissingSecret is checks.MissingSecret's warning (backlog 3.5): the
+	// secret this check names that the host's agent did not report.
+	MissingSecret string `json:"missing_secret,omitempty" doc:"The secret this check's secret parameter names that the host's agent did not report in its last heartbeat; the agent fails the check with \"secret <name> is not defined in agent.yaml\" until it is added. Absent when the check names no secret, the agent reported it, or the agent's report is unknown"`
 }
 
 type hostChecksOutput struct {
@@ -254,6 +257,11 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
+		reported, err := deps.Agents.SecretsByHost(ctx, scope.OrgID, hostID)
+		if err != nil {
+			return nil, mapAgentsErr(ctx, err)
+		}
+		agentSecrets := checks.AgentSecrets{Known: reported.Known, Names: reported.Names}
 
 		out := &hostChecksOutput{}
 		out.Body.HostID = hostID.String()
@@ -266,7 +274,9 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		byKey := currentByKey(current)
 		now := time.Now()
 		for _, d := range effective {
-			out.Body.Checks = append(out.Body.Checks, toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored))
+			dto := toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
+			dto.MissingSecret = checks.MissingSecret(d, agentSecrets)
+			out.Body.Checks = append(out.Body.Checks, dto)
 		}
 		return out, nil
 	})
