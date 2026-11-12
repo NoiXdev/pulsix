@@ -163,6 +163,16 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.5, agent secrets:** the agent's heartbeat gains two fields
+  (`secret_names`, `secrets_state`; additive, no proto break) with the names
+  of the secrets in its optional local `agent.yaml` and the file's state,
+  never a value. Migration 00086 adds the nullable columns `secret_names` and
+  `secrets_state` to `host_agents` (catalog-only, no rewrite). An agent older
+  than this change sends no state, so the manager stores nothing and the host
+  page shows the secrets as unknown; the same holds for a registration that
+  has not sent a heartbeat yet. Re-registering an agent resets its report to
+  unknown until its next heartbeat. An older manager ignores the new fields.
+  Nothing is seeded and no existing check uses a secret.
 - **3.54, check plugin descriptors:** new route `GET /api/v1/check-plugins`
   (additive; a signed-in session only, no API token, no org in its path) serves
   every check plugin's descriptor: where it runs, its parameters with their
