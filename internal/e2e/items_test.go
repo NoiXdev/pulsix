@@ -71,8 +71,8 @@
 // any rule — unknown outranks ok in the roll-up (states.go's Worse), so a
 // service check nothing here is about would otherwise push the host's
 // roll-up to unknown right under this gate's own feet the moment sshd's
-// first tick landed. internal/agent/checks' own disk_test.go and
-// service_test.go already cover that failure mode in isolation; this gate
+// first tick landed. internal/agent/checks/plugins/disk and
+// plugins/service's own tests already cover that failure mode in isolation; this gate
 // has no claim that needs it turned on.
 package e2e
 

@@ -78,8 +78,9 @@ func ParamStrings(params map[string]any, key string) (values []string, present b
 	}
 }
 
-// MaxItemLen is the manager's bound on an observation's item
-// (internal/checks.MaxItemLen; a test keeps the two equal).
+// MaxItemLen is the agent's copy of the manager's bound on an observation's
+// item (internal/checks.MaxItemLen); a test in this package keeps the two
+// equal.
 const MaxItemLen = 512
 
 // ReportableItem reports whether the manager's check-results contract
@@ -102,8 +103,9 @@ func ReportableItem(item string) bool {
 	}) < 0
 }
 
-// MaxLabelLen is the manager's bound on an observation's label
-// (internal/checks.MaxLabelLen; a test keeps the two equal).
+// MaxLabelLen is the agent's copy of the manager's bound on an observation's
+// label (internal/checks.MaxLabelLen); a test in this package keeps the two
+// equal.
 const MaxLabelLen = 512
 
 // ReportableLabel reports whether the check-results contract accepts label:

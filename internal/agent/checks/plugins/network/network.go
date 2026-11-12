@@ -220,4 +220,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]c
 	return obs, errors.Join(errs...)
 }
 
-var _ checks.Plugin = (*networkPlugin)(nil)
+var (
+	_ checks.Plugin         = (*networkPlugin)(nil)
+	_ checks.StatefulPlugin = (*networkPlugin)(nil)
+)

@@ -46,28 +46,6 @@ func TestDiskSkipsMountsTheManagerWouldRefuse(t *testing.T) {
 	}
 }
 
-// TestReportableItemMatchesTheManagersContract keeps the agent's copy of
-// the item bound on the manager's.
-func TestReportableItemMatchesTheManagersContract(t *testing.T) {
-	if checks.MaxItemLen != managerchecks.MaxItemLen {
-		t.Fatalf("MaxItemLen = %d, the manager's contract says %d", checks.MaxItemLen, managerchecks.MaxItemLen)
-	}
-	for item, want := range map[string]bool{
-		"/":                      true,
-		"/srv/data":              true,
-		strings.Repeat("a", 512): true,
-		strings.Repeat("a", 513): false,
-		"/a\tb":                  false,
-		"/a\nb":                  false,
-		"/a b":                   false,
-		"/a\x7fb":                false,
-	} {
-		if got := checks.ReportableItem(item); got != want {
-			t.Errorf("ReportableItem(%q) = %v, want %v", item, got, want)
-		}
-	}
-}
-
 // TestReportableItemRefusesInvalidUTF8 is backlog 7.52. The item travels
 // as a proto3 string, and gRPC refuses to marshal one that is not valid
 // UTF-8 before anything reaches the wire, tearing the stream down — so a

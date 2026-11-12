@@ -1,6 +1,7 @@
-// package checks: the shared helpers' own unit tests. The check that the
-// registry wires every plugin under the names the manager expects lives
-// with the registry, in plugins/registry_test.go.
+// package checks: the observation helpers' (observe.go) own unit tests,
+// including the pins that keep their bounds equal to the manager's. The
+// check that the registry wires every plugin under the names the manager
+// expects lives with the registry, in plugins/registry_test.go.
 package checks
 
 import (
@@ -174,5 +175,48 @@ func TestErrObservationCutsToTheManagersBound(t *testing.T) {
 	}
 	if o := ErrObservation("", "m", fmt.Errorf("permission denied")); o.Err != "permission denied" {
 		t.Fatalf("a short error was altered: %q", o.Err)
+	}
+}
+
+// TestReportableItemMatchesTheManagersContract keeps the agent's copy of
+// the item bound on the manager's.
+func TestReportableItemMatchesTheManagersContract(t *testing.T) {
+	if MaxItemLen != managerchecks.MaxItemLen {
+		t.Fatalf("MaxItemLen = %d, the manager's contract says %d", MaxItemLen, managerchecks.MaxItemLen)
+	}
+	for item, want := range map[string]bool{
+		"/":                      true,
+		"/srv/data":              true,
+		strings.Repeat("a", 512): true,
+		strings.Repeat("a", 513): false,
+		"/a\tb":                  false,
+		"/a\nb":                  false,
+		"/a b":                   false,
+		"/a\x7fb":                false,
+	} {
+		if got := ReportableItem(item); got != want {
+			t.Errorf("ReportableItem(%q) = %v, want %v", item, got, want)
+		}
+	}
+}
+
+// TestReportableLabelMatchesTheManagersContract keeps the agent's copy of
+// the label bound on the manager's (internal/withinContract).
+func TestReportableLabelMatchesTheManagersContract(t *testing.T) {
+	if MaxLabelLen != managerchecks.MaxLabelLen {
+		t.Fatalf("MaxLabelLen = %d, the manager's contract says %d", MaxLabelLen, managerchecks.MaxLabelLen)
+	}
+	for label, want := range map[string]bool{
+		"running":                true,
+		"":                       true,
+		"données":                true,
+		strings.Repeat("a", 512): true,
+		strings.Repeat("a", 513): false,
+		"a\x00b":                 false,
+		"a\xffb":                 false,
+	} {
+		if got := ReportableLabel(label); got != want {
+			t.Errorf("ReportableLabel(%q) = %v, want %v", label, got, want)
+		}
 	}
 }

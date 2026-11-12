@@ -10,7 +10,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
-	managerchecks "github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
 
@@ -125,26 +124,5 @@ func TestDockerRefusesLabelsTheManagerWouldRefuse(t *testing.T) {
 				encodesAsCheckResult(t, o)
 			}
 		})
-	}
-}
-
-// TestReportableLabelMatchesTheManagersContract keeps the agent's copy of
-// the label bound on the manager's (internal/checks.withinContract).
-func TestReportableLabelMatchesTheManagersContract(t *testing.T) {
-	if checks.MaxLabelLen != managerchecks.MaxLabelLen {
-		t.Fatalf("MaxLabelLen = %d, the manager's contract says %d", checks.MaxLabelLen, managerchecks.MaxLabelLen)
-	}
-	for label, want := range map[string]bool{
-		"running":                true,
-		"":                       true,
-		"données":                true,
-		strings.Repeat("a", 512): true,
-		strings.Repeat("a", 513): false,
-		"a\x00b":                 false,
-		"a\xffb":                 false,
-	} {
-		if got := checks.ReportableLabel(label); got != want {
-			t.Errorf("ReportableLabel(%q) = %v, want %v", label, got, want)
-		}
 	}
 }

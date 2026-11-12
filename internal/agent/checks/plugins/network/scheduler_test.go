@@ -182,7 +182,7 @@ func TestSchedulerNetworkKeysOnOneInterfaceEachReportTheirOwnRate(t *testing.T) 
 	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 2 })
 
 	got := sink.all()
-	checks := []struct {
+	cases := []struct {
 		key, metric string
 		want        float64
 	}{
@@ -191,7 +191,7 @@ func TestSchedulerNetworkKeysOnOneInterfaceEachReportTheirOwnRate(t *testing.T) 
 		{"net-b", "net.rx_bytes_per_s", 1000},
 		{"net-b", "net.rx_drops_per_s", 1.0 / 60},
 	}
-	for _, tc := range checks {
+	for _, tc := range cases {
 		r := resultFor(t, got, tc.key, tc.metric)
 		if r.Value == nil {
 			t.Errorf("%s %s has no value: %+v", tc.key, tc.metric, r)

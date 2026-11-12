@@ -31,10 +31,9 @@ func TestRegistryWiresEveryPlugin(t *testing.T) {
 }
 
 // TestRegistryNetworkIsStateful: the scheduler recognises a plugin that
-// must be cloned per check key only through checks.StatefulPlugin. Now
-// that network lives in its own package, a method set that drifted from
-// the interface would make every network key share one baseline without
-// a compile error, so the registry pins it.
+// must be cloned per check key only through checks.StatefulPlugin.
+// network.go asserts the interface at compile time; this test pins it as
+// the registry hands the plugin out, and that no other plugin keeps state.
 func TestRegistryNetworkIsStateful(t *testing.T) {
 	reg := Registry()
 	if _, ok := reg["network"].(checks.StatefulPlugin); !ok {
