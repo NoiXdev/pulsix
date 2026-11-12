@@ -45,3 +45,13 @@ func TestRegistryNetworkIsStateful(t *testing.T) {
 		}
 	}
 }
+
+// TestRegistrySecretPluginsNameAnErrorMetric: the scheduler reports a
+// missing secret on SecretErrorMetric, so it must never be empty.
+func TestRegistrySecretPluginsNameAnErrorMetric(t *testing.T) {
+	for name, p := range Registry() {
+		if sp, ok := p.(checks.SecretPlugin); ok && sp.SecretErrorMetric() == "" {
+			t.Errorf("Registry()[%q] has an empty SecretErrorMetric()", name)
+		}
+	}
+}

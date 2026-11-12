@@ -69,7 +69,20 @@ func (s *Scheduler) collect(ctx context.Context, plugin Plugin, params map[strin
 	if err != nil {
 		return []Observation{ErrObservation("", sp.SecretErrorMetric(), err)}
 	}
-	obs, _ := sp.CollectWithSecret(ctx, params, fields)
+	return collectSecret(ctx, sp, params, fields)
+}
+
+// collectSecret calls sp.CollectWithSecret and turns a panic into one fixed
+// error observation. The panic value and stack are dropped on purpose: a
+// plugin holding credentials may have them in either, and nothing here
+// logs or reports them.
+func collectSecret(ctx context.Context, sp SecretPlugin, params map[string]any, fields map[string]string) (obs []Observation) {
+	defer func() {
+		if recover() != nil {
+			obs = []Observation{ErrObservation("", sp.SecretErrorMetric(), errors.New(sp.Name()+": collection failed unexpectedly"))}
+		}
+	}()
+	obs, _ = sp.CollectWithSecret(ctx, params, fields)
 	return obs
 }
 

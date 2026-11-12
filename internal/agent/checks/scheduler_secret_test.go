@@ -284,3 +284,27 @@ func TestSchedulerStatefulSecretPlugin(t *testing.T) {
 		t.Fatalf("instance calls = %d, fields = %v", calls, fields)
 	}
 }
+
+// panicSecretPlugin panics in CollectWithSecret with a planted value.
+type panicSecretPlugin struct{ fakeSecretPlugin }
+
+func (p *panicSecretPlugin) CollectWithSecret(context.Context, map[string]any, map[string]string) ([]Observation, error) {
+	panic("boom " + secretValue)
+}
+
+func TestSecretPluginPanicIsRecovered(t *testing.T) {
+	fs := &fakeSecrets{}
+	fs.set("main", map[string]string{"password": secretValue})
+	tick := secretRun(t, &panicSecretPlugin{}, map[string]any{SecretParam: "main"}, WithSecrets(fs))
+	res := tick()
+	if len(res) != 1 {
+		t.Fatalf("got %d results, want 1: %+v", len(res), res)
+	}
+	r := res[0]
+	if r.Item != "" || r.Metric != "db.up" || r.Err != "db: collection failed unexpectedly" {
+		t.Errorf("result = %+v", r)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", res), secretValue) {
+		t.Error("panic value leaked into the result")
+	}
+}
