@@ -584,3 +584,47 @@ func TestMinItemExpiryCoversTheLongestCheckInterval(t *testing.T) {
 		t.Fatalf("DefaultItemExpiry %v is below MinItemExpiry %v", config.DefaultItemExpiry, config.MinItemExpiry)
 	}
 }
+
+func TestLoadPublicURLRule(t *testing.T) {
+	load := func(raw string) error {
+		_, err := config.Load(env(map[string]string{
+			"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+			"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+			"PULSIX_PUBLIC_URL":   raw,
+		}))
+		return err
+	}
+	for _, ok := range []string{
+		"https://pulsix.example.com",
+		"https://pulsix.example.com/",
+		"https://pulsix.example.com:8443/base",
+		"http://10.0.0.5:8080",
+		"http://[2001:db8::1]:8080",
+		"https://host/a%20b",
+	} {
+		if err := load(ok); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{
+		"ftp://x", "HTTPS://x", "https://u:p@x", "https://x/?a=1", "https://x/#f",
+		"https://x/;id", "https://x/$(id)", "https://x/a b", "https://x/a|b",
+		"https://x/a&b", "https://x/`", "https://x/'q'", `https://x/"q"`,
+		`https://x/\`, "https:///path",
+	} {
+		err := load(bad)
+		if err == nil {
+			t.Errorf("%q accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "PULSIX_PUBLIC_URL") {
+			t.Errorf("%q: error %q does not name the variable", bad, err)
+		}
+	}
+	if err := load("HTTPS://x"); err == nil || !strings.Contains(err.Error(), "lower-case") {
+		t.Errorf("upper-case scheme error should say lower-case, got %v", err)
+	}
+	if err := load("https://x/a b"); err == nil || !strings.Contains(err.Error(), `contains " "`) {
+		t.Errorf("offending character not named, got %v", err)
+	}
+}

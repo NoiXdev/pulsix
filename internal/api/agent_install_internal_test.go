@@ -328,7 +328,17 @@ func TestAgentInstallCommandWindows(t *testing.T) {
 			name: "fallbacks without a public URL or endpoint",
 			deps: Deps{},
 			// < and > are redirections in PowerShell: the placeholder is quoted.
-			want: prefix + "https://<manager>/install.ps1))) -Manager '<manager>:8444'",
+			want: prefix + "'https://<manager>/install.ps1'))) -Manager '<manager>:8444'",
+		},
+		{
+			name: "IPv6 base is quoted",
+			deps: Deps{PublicURL: "http://[2001:db8::1]:8080", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}},
+			want: prefix + "'http://[2001:db8::1]:8080/install.ps1'))) -Manager manager.example:8444",
+		},
+		{
+			name: "hostile base is one string",
+			deps: Deps{PublicURL: "https://x/$(id)", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}},
+			want: prefix + "'https://x/$(id)/install.ps1'))) -Manager manager.example:8444",
 		},
 		{
 			// PowerShell would read a bare 007 as the number 7.
@@ -378,6 +388,7 @@ func TestShellArg(t *testing.T) {
 
 func TestAgentInstallCommandQuotesWhatItInterpolates(t *testing.T) {
 	const prefix = "curl -fsSL https://manager.example/install.sh | sudo sh -s -- "
+	const quotedPrefix = "curl -fsSL 'https://<manager>/install.sh' | sudo sh -s -- "
 	deps := Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}}
 	for _, tt := range []struct {
 		name     string
@@ -386,6 +397,19 @@ func TestAgentInstallCommandQuotesWhatItInterpolates(t *testing.T) {
 		want     string
 	}{
 		{"plain", deps, "", prefix + "--manager manager.example:8444"},
+		{"no public URL quotes the placeholder", Deps{}, "", quotedPrefix + "--manager '<manager>:8444'"},
+		{
+			"IPv6 base is quoted",
+			Deps{PublicURL: "http://[2001:db8::1]:8080", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}},
+			"",
+			"curl -fsSL 'http://[2001:db8::1]:8080/install.sh' | sudo sh -s -- --manager manager.example:8444",
+		},
+		{
+			"hostile base is one word",
+			Deps{PublicURL: "https://x/$(id)", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}},
+			"",
+			"curl -fsSL 'https://x/$(id)/install.sh' | sudo sh -s -- --manager manager.example:8444",
+		},
 		{"plain hint", deps, "edge-1", prefix + "--manager manager.example:8444 --name edge-1"},
 		{
 			"server name differs",
@@ -409,5 +433,20 @@ func TestAgentInstallCommandQuotesWhatItInterpolates(t *testing.T) {
 				t.Errorf("agentInstallCommand() =\n  %s\nwant\n  %s", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestPowerShellArgKeepsPlainURLsBare pins that a plain https URL (letters,
+// digits, dot, colon, slash, dash) stays unquoted, as the dialog always showed it.
+func TestPowerShellArgKeepsPlainURLsBare(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"https://manager.example/install.ps1", "https://manager.example/install.ps1"},
+		{"https://m.example:8443/base/install.ps1", "https://m.example:8443/base/install.ps1"},
+		{"http://[2001:db8::1]:8080/install.ps1", "'http://[2001:db8::1]:8080/install.ps1'"},
+		{"https://x/a,b", "'https://x/a,b'"},
+	} {
+		if got := powerShellArg(tt.in); got != tt.want {
+			t.Errorf("powerShellArg(%q) = %s, want %s", tt.in, got, tt.want)
+		}
 	}
 }

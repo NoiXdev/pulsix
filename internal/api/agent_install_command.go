@@ -24,7 +24,7 @@ func agentInstallCommand(deps Deps, nameHint string) string {
 	// the root installer is in the process list, readable by every local
 	// user of the host while the install runs. install.sh asks for it on
 	// the terminal instead, and the dialog shows it to copy from.
-	cmd := fmt.Sprintf("curl -fsSL %s/install.sh | sudo sh -s -- --manager %s", base, shellArg(addr))
+	cmd := fmt.Sprintf("curl -fsSL %s | sudo sh -s -- --manager %s", shellArg(base+"/install.sh"), shellArg(addr))
 	if name := agentInstallServerName(deps, addr); name != "" {
 		cmd += " --server-name " + shellArg(name)
 	}
@@ -44,7 +44,7 @@ func agentInstallCommand(deps Deps, nameHint string) string {
 func agentInstallCommandWindows(deps Deps, nameHint string) string {
 	base, addr := agentInstallParts(deps)
 	cmd := "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; " +
-		"& ([scriptblock]::Create((irm " + base + "/install.ps1))) -Manager " + powerShellArg(addr)
+		"& ([scriptblock]::Create((irm " + powerShellArg(base+"/install.ps1") + "))) -Manager " + powerShellArg(addr)
 	if name := agentInstallServerName(deps, addr); name != "" {
 		cmd += " -ServerName " + powerShellArg(name)
 	}
@@ -99,8 +99,9 @@ func shellArg(s string) string {
 // plainPowerShellArg is what PowerShell takes as one literal string
 // argument without quotes. It starts with a letter because PowerShell reads
 // a bare argument that starts with a digit as a number when it can (007 is
-// 7, 1kb is 1024) and one that starts with a dash as a parameter name.
-var plainPowerShellArg = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:-]*$`)
+// 7, 1kb is 1024) and one that starts with a dash as a parameter name. The
+// slash is literal in argument mode and keeps a plain https URL bare.
+var plainPowerShellArg = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._:/-]*$`)
 
 // powerShellArg returns s as one literal PowerShell argument: bare when it
 // is a plain word (the common case, and what the dialog reads best as),

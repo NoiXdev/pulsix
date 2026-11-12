@@ -9,6 +9,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/checks"
@@ -159,9 +160,8 @@ func Load(getenv func(string) string) (Config, error) {
 		return cfg, errors.New("PULSIX_DATABASE_URL is required")
 	}
 	cfg.PublicURL = getenv("PULSIX_PUBLIC_URL")
-	u, err := url.Parse(cfg.PublicURL)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return cfg, errors.New("PULSIX_PUBLIC_URL must be an absolute URL")
+	if err := validatePublicURL(cfg.PublicURL); err != nil {
+		return cfg, err
 	}
 	cfg.StatusDomain = getenv("PULSIX_STATUS_DOMAIN")
 	cfg.GRPCListen = getenv("PULSIX_GRPC_LISTEN") // empty = the gRPC endpoint stays disabled
@@ -334,4 +334,29 @@ func defaultGRPCPublicAddr(publicURL, listen string) string {
 // ("48h"), not time.Duration's "48h0m0s".
 func fmtHours(d time.Duration) string {
 	return strconv.FormatInt(int64(d/time.Hour), 10) + "h"
+}
+
+// validatePublicURL enforces the PULSIX_PUBLIC_URL rule. The value is
+// pasted into the agent install commands an administrator runs, so it is
+// held to a small safe alphabet: absolute lower-case http(s), a host, no
+// user info, query or fragment (@ ? # are outside the alphabet), and only [A-Za-z0-9._~:/%+=,-] plus the
+// brackets of an IPv6 literal.
+func validatePublicURL(raw string) error {
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		return fmt.Errorf("PULSIX_PUBLIC_URL %q must be an absolute URL starting with http:// or https:// (lower-case)", raw)
+	}
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case strings.IndexByte("._~:/%+=,-[]", c) >= 0:
+		default:
+			return fmt.Errorf("PULSIX_PUBLIC_URL %q contains %q, which is not allowed (only letters, digits and . _ ~ : / %% + = , - [ ])", raw, string(rune(c)))
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Hostname() == "" {
+		return fmt.Errorf("PULSIX_PUBLIC_URL %q must be an absolute URL with a host", raw)
+	}
+	return nil
 }
