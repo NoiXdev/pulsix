@@ -4,7 +4,10 @@
 package agent
 
 import (
+	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +17,12 @@ func TestLoad(t *testing.T) {
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
 		t.Skipf("no usable OS hostname: %v", err)
+	}
+	// Load derives the default name from the normalized OS hostname; a
+	// hostname that normalizes to nothing cannot satisfy the defaults case.
+	hostname, ok := normalizeAgentName(hostname)
+	if !ok {
+		t.Skipf("OS hostname %q has no usable normalized form", hostname)
 	}
 	tests := []struct {
 		name    string
@@ -57,13 +66,13 @@ func TestLoad(t *testing.T) {
 			want: Config{
 				ManagerAddr:       "manager.example:8444",
 				AgentName:         hostname,
-				DataDir:           "/etc/pulsix",
+				DataDir:           DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")),
 				HeartbeatInterval: 30 * time.Second,
 				FactsInterval:     6 * time.Hour,
 				ConfigInterval:    60 * time.Second,
-				CertPath:          "/etc/pulsix/agent.crt",
-				KeyPath:           "/etc/pulsix/agent.key",
-				MetaPath:          "/etc/pulsix/agent.json",
+				CertPath:          filepath.Join(DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")), "agent.crt"),
+				KeyPath:           filepath.Join(DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")), "agent.key"),
+				MetaPath:          filepath.Join(DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")), "agent.json"),
 			},
 		},
 		{
@@ -229,5 +238,67 @@ func TestLoadInvalidTokenIsKeptVerbatim(t *testing.T) {
 	}
 	if cfg.EnrollToken != "not-a-token" {
 		t.Fatalf("EnrollToken = %q, want the value verbatim", cfg.EnrollToken)
+	}
+}
+
+func envWithAddr(extra ...string) []string {
+	return append([]string{"PULSIX_MANAGER_ADDR=manager.example:8444"}, extra...)
+}
+
+func fixedHostname(name string) func() (string, error) {
+	return func() (string, error) { return name, nil }
+}
+
+func TestLoadDefaultNameIsNormalizedHostname(t *testing.T) {
+	cfg, err := loadWith(envWithAddr(), fixedHostname("WIN-SRV01"), "windows", `C:\ProgramData`)
+	if err != nil {
+		t.Fatalf("loadWith: %v", err)
+	}
+	if cfg.AgentName != "win-srv01" {
+		t.Errorf("AgentName = %q, want win-srv01", cfg.AgentName)
+	}
+	if want := `C:\ProgramData\Pulsix`; cfg.DataDir != want {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, want)
+	}
+}
+
+func TestLoadExplicitNameIsKeptVerbatim(t *testing.T) {
+	cfg, err := loadWith(envWithAddr("PULSIX_AGENT_NAME=Mixed_Case"), fixedHostname("WIN-SRV01"), "linux", "")
+	if err != nil {
+		t.Fatalf("loadWith: %v", err)
+	}
+	if cfg.AgentName != "Mixed_Case" {
+		t.Errorf("AgentName = %q, want Mixed_Case", cfg.AgentName)
+	}
+}
+
+func TestLoadUnusableHostnameAsksForExplicitName(t *testing.T) {
+	for name, fn := range map[string]func() (string, error){
+		"normalizes to nothing": fixedHostname("---"),
+		"lookup fails":          func() (string, error) { return "", errors.New("boom") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := loadWith(envWithAddr(), fn, "linux", "")
+			if err == nil || !strings.Contains(err.Error(), "set the agent name explicitly") {
+				t.Fatalf("err = %v, want the explicit-name error", err)
+			}
+		})
+	}
+}
+
+func TestLoadDataDirIsDefault(t *testing.T) {
+	cfg, err := loadWith(envWithAddr(), fixedHostname("h"), "darwin", "")
+	if err != nil {
+		t.Fatalf("loadWith: %v", err)
+	}
+	if !cfg.DataDirIsDefault || cfg.DataDir != "/Library/Application Support/Pulsix" {
+		t.Errorf("DataDirIsDefault = %v, DataDir = %q", cfg.DataDirIsDefault, cfg.DataDir)
+	}
+	cfg, err = loadWith(envWithAddr("PULSIX_DATA_DIR=/srv/x"), fixedHostname("h"), "darwin", "")
+	if err != nil {
+		t.Fatalf("loadWith: %v", err)
+	}
+	if cfg.DataDirIsDefault || cfg.DataDir != "/srv/x" {
+		t.Errorf("DataDirIsDefault = %v, DataDir = %q", cfg.DataDirIsDefault, cfg.DataDir)
 	}
 }

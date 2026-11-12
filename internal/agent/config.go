@@ -19,6 +19,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -35,15 +36,13 @@ const (
 	envConfigInterval    = "PULSIX_CONFIG_INTERVAL"
 )
 
-// Defaults and clamps. PULSIX_DATA_DIR defaults to /etc/pulsix (the agent
-// writes only its identity files there — agent.crt, agent.key, agent.ca.pem
+// Defaults and clamps. PULSIX_DATA_DIR defaults to the system's usual place
+// (DefaultDataDir; /etc/pulsix on Linux — the agent writes only its identity files there — agent.crt, agent.key, agent.ca.pem
 // and agent.json — unlike the worker's richer scratch layout), and the two
 // intervals are clamped, not rejected: an operator's typo'd "5" (Go reads a
 // bare number as nanoseconds) must not turn a heartbeat off or into a
 // busy loop.
 const (
-	defaultDataDir = "/etc/pulsix"
-
 	minHeartbeatInterval = 5 * time.Second
 	maxHeartbeatInterval = 10 * time.Minute
 
@@ -89,6 +88,9 @@ type Config struct {
 	// DataDir is where the identity lives (PULSIX_DATA_DIR, default
 	// /etc/pulsix): agent.crt, agent.key, agent.ca.pem and agent.json.
 	DataDir string
+	// DataDirIsDefault is true when PULSIX_DATA_DIR was unset and DataDir is
+	// the system's default.
+	DataDirIsDefault bool
 	// CertPath, KeyPath, MetaPath are the identity file paths, derived
 	// from DataDir.
 	CertPath string
@@ -118,6 +120,12 @@ type Config struct {
 // Load parses and validates the given environment (os.Environ() in the
 // binary; explicit slices in tests). Unknown variables are ignored.
 func Load(env []string) (Config, error) {
+	return loadWith(env, os.Hostname, runtime.GOOS, os.Getenv("ProgramData"))
+}
+
+// loadWith is Load with the system lookups injected: the hostname source,
+// the OS name and the Windows ProgramData directory.
+func loadWith(env []string, hostname func() (string, error), goos, programData string) (Config, error) {
 	vals := make(map[string]string, len(env))
 	for _, kv := range env {
 		k, v, _ := strings.Cut(kv, "=")
@@ -135,11 +143,15 @@ func Load(env []string) (Config, error) {
 
 	cfg.AgentName = vals[envAgentName]
 	if cfg.AgentName == "" {
-		hostname, err := os.Hostname()
-		if err != nil || hostname == "" {
+		raw, err := hostname()
+		if err != nil {
 			return cfg, fmt.Errorf("%s is unset and the OS hostname is unusable (%v) — set the agent name explicitly", envAgentName, err)
 		}
-		cfg.AgentName = hostname
+		name, ok := normalizeAgentName(raw)
+		if !ok {
+			return cfg, fmt.Errorf("%s is unset and the OS hostname %q has no usable form as a host name — set the agent name explicitly", envAgentName, raw)
+		}
+		cfg.AgentName = name
 	}
 	// The name goes behind the certificate's "pulsix-agent " common name
 	// (the same 1-64-rune shape every enrollment path enforces); refusing
@@ -151,7 +163,8 @@ func Load(env []string) (Config, error) {
 
 	cfg.DataDir = vals[envDataDir]
 	if cfg.DataDir == "" {
-		cfg.DataDir = defaultDataDir
+		cfg.DataDir = DefaultDataDir(goos, programData)
+		cfg.DataDirIsDefault = true
 	}
 	cfg.CertPath = filepath.Join(cfg.DataDir, certFileName)
 	cfg.KeyPath = filepath.Join(cfg.DataDir, keyFileName)
