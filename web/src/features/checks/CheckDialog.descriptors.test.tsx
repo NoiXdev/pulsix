@@ -5,7 +5,7 @@ import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { pickOption } from '../../test/pickOption.ts';
 import { CHECK_PLUGINS } from '../../test/checkPlugins.ts';
 import { en } from '../../i18n/en/index.ts';
-import { check, GROUPS, org, renderPage } from './checksPageTestKit.tsx';
+import { check, chooseFromMenu, GROUPS, org, renderPage } from './checksPageTestKit.tsx';
 
 /** The check dialog builds its plugin list and fields from GET
  * /check-plugins (backlog 3.54). */
@@ -91,5 +91,36 @@ describe('CheckDialog — from the plugin descriptors', () => {
     expect(await screen.findByText('required')).toBeInTheDocument();
     expect(screen.getByLabelText('Units (one per line)')).toHaveAttribute('aria-invalid', 'true');
     expect(posted).toHaveLength(0);
+  });
+
+  // A shared definition's parameters are the installation's (sharedNote):
+  // every field the descriptors render — list, string, enum, integer and
+  // bool — is read-only when editing one, while its values still show.
+  it('disables every parameter field of a shared definition', async () => {
+    const user = userEvent.setup();
+    mock({
+      'GET /api/v1/orgs/acme/checks': {
+        checks: [
+          check({
+            id: 'c20', key: 'http-shop', plugin: 'http', origin: 'shared', shared_definition_id: 'sd2',
+            params: { url: 'https://{address}/', method: 'HEAD', timeout_s: 5, verify_tls: false },
+          }),
+          check({ id: 'c21', key: 'disk-shared', plugin: 'disk', origin: 'shared', shared_definition_id: 'sd1', params: { mounts: ['/'] } }),
+        ],
+      },
+    });
+    renderPage();
+
+    await chooseFromMenu(user, 'http-shop (Organization)', 'Edit');
+    for (const label of ['URL', 'Body contains', 'Timeout (seconds)', 'Method', 'Follow redirects (up to 10)', 'Verify the TLS certificate']) {
+      expect(screen.getByLabelText(label)).toBeDisabled();
+    }
+    expect(screen.getByLabelText('URL')).toHaveValue('https://{address}/');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    await chooseFromMenu(user, 'disk-shared (Organization)', 'Edit');
+    const mounts = screen.getByLabelText('Mounts (one per line, empty means every mount)');
+    expect(mounts).toBeDisabled();
+    expect(mounts).toHaveValue('/');
   });
 });
