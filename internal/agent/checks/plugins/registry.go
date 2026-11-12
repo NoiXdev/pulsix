@@ -5,17 +5,40 @@
 // here rather than in checks because checks importing the plugins would
 // close an import cycle.
 //
-// Adding a plugin: create plugins/<name>/ exporting only New(), and add it to
-// Registry() and to the want list in registry_test.go. Then add ONE descriptor
-// file in internal/checkplugins (params, metrics, item param, formats) and
-// register it there; the manager's validation, items, rules catalogue and API
-// enums derive from it. Regenerate the SPA fixture (go test
-// ./internal/checkplugins -run TestSPAFixtureIsCurrent -update-spa-fixture)
-// and schema.d.ts if needed, add en/de texts for the plugin name and each
-// param (the i18n completeness test enforces it), and update the golden table
-// in internal/rules/catalog_test.go. A server-run plugin also needs its case
-// in internal/probe's Run (the probe pin test checks it). Finally update the
-// end-user docs in the noix-docs repo.
+// Adding a plugin, everything one change must touch:
+//
+//   - Agent side (an agent plugin only): create plugins/<name>/ exporting
+//     only New(), add it to Registry() and to the want list of
+//     TestRegistryWiresEveryPlugin (registry_test.go).
+//   - Descriptor: add ONE file in internal/checkplugins (params, metrics,
+//     item param, formats) and register it with one entry in that package's
+//     constructor list (registry() in registry.go); Names, Get and All read
+//     only that list. The manager's validation, items, rules catalogue and
+//     API enums derive from it. TestAgentPluginsMatchDescriptors keeps the
+//     agent's Registry and the descriptors with Runs = Agent in step, and
+//     TestListParamsAreItemParams wants every list parameter to be the
+//     ItemParam.
+//   - Literal golden tests, each updated by hand: TestNamesInTheSPAsOrder
+//     and TestRuns (internal/checkplugins/registry_test.go); a new
+//     checks.PluginX constant (internal/checks/plugins.go) and
+//     TestPluginConstantsAreTheDescriptors; the plugin list in
+//     TestUnsupportedPluginMessage (internal/checks/plugins_test.go); the
+//     golden metric table of TestCatalogueMatchesShippedPlugins
+//     (internal/rules/catalog_test.go).
+//   - A server-run plugin also needs its case in internal/probe's Run (the
+//     probe pin test TestRunKnowsExactlyTheServerPlugins checks it).
+//   - SPA: regenerate the descriptor fixture (go test ./internal/checkplugins
+//     -run TestSPAFixtureIsCurrent -update-spa-fixture) and ALWAYS
+//     regenerate src/api/schema.d.ts with web/scripts/api-gen.sh (the
+//     plugin enums are in it; the script may need web/node_modules/.bin on
+//     PATH for openapi-typescript). Add the en and de plugin names to both
+//     picker maps, checks.dialog.plugins and instance.shared.checks.plugins,
+//     and the texts of each parameter under checks.params
+//     (web/src/features/checks/paramTexts.test.ts enforces them).
+//   - Docs: for an agent plugin, a paragraph under "Version skew between
+//     the manager, workers and agents" in docs/upgrades.md (an older agent
+//     skips the check, warns on every configuration push and shows no
+//     readings until updated); the end-user docs in the noix-docs repo.
 package plugins
 
 import (
