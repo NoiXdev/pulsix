@@ -117,6 +117,14 @@ describe('AlertRow', () => {
     expect(screen.getByTestId('alert-open')).toHaveTextContent(/closed · forgotten/i);
   });
 
+  it('shows a close reason it has no label for as it came, rather than dropping it', () => {
+    // A newer server may close with a reason this build does not know yet;
+    // the raw reason is better than a bare "Closed" or "Closed · undefined".
+    const unknownReason = 'superseded' as AlertRowAlert['closedReason'];
+    render(<AlertRow alert={{ ...open, closedAt: '2026-10-02T00:00:00Z', closedReason: unknownReason }} />);
+    expect(screen.getByTestId('alert-open')).toHaveTextContent(/^closed · superseded$/i);
+  });
+
   it('reads "Closed" once closedAt is set, never "Open"', () => {
     render(<AlertRow alert={{ ...open, closedAt: '2026-10-02T00:00:00Z', closedReason: 'resolved' }} />);
     const openCell = screen.getByTestId('alert-open');

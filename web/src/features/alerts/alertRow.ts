@@ -133,6 +133,15 @@ export function subjectLabel(a: AlertRowAlert, t: Messages): string {
   return [a.checkKey, a.item, a.metric].filter((p) => p !== '').join(' · ');
 }
 
+/** closeReasonLabel is the label of a closed alert's reason, '' when it
+ * has none. A reason this build has no label for — a newer server's —
+ * is shown as it came rather than dropped or rendered as "undefined". */
+export function closeReasonLabel(reason: AlertCloseReason | '', t: Messages): string {
+  if (reason === '') return '';
+  const labels: Partial<Record<string, string>> = t.alerts.closeReason;
+  return labels[reason] ?? reason;
+}
+
 /** muteLabel explains why an alert is currently muted, and until when — or
  * null when it is not muted at all. A snooze with no `mutedUntil` is the
  * unbounded "until the alert's severity next changes" shape (Snooze's own
