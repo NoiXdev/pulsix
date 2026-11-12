@@ -199,13 +199,15 @@ func TestReceiveMessagesSendFaultEndsTheLoop(t *testing.T) {
 	}
 }
 
-// TestEnrollOverlongHintRefusesPreClaim: a hint the CA cannot put behind
-// the pulsix-agent common name (past 64 runes) is refused by the claim
-// itself — before the use is consumed, before a host is created, before
-// anything is flipped.
+// TestEnrollOverlongHintRefusesPreClaim: a token already stored with a hint
+// the CA cannot put behind the pulsix-agent common name (past 64 runes) — one
+// minted before CreateToken validated hints, so it is planted in the store —
+// is refused by the claim itself: before the use is consumed, before a host is
+// created, before anything is flipped.
 func TestEnrollOverlongHintRefusesPreClaim(t *testing.T) {
 	h := newHarness(t)
-	tok := h.enrollToken(testOrg, tokenInput(strings.Repeat("a", 65)))
+	tok := h.enrollToken(testOrg, tokenInput("short-hint"))
+	h.store.setNameHint(tok.parsed.ID, strings.Repeat("a", 65))
 	_, csr := newKeyAndCSR(t)
 	if _, err := h.enroll(tok.raw, csr, "short"); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("overlong hint: %v, want InvalidArgument", err)

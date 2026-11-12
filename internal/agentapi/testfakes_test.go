@@ -380,6 +380,16 @@ func (f *fakeAgentStore) useOf(id uuid.UUID) (uses int, used bool) {
 	return t.Uses, t.UsedAt != nil
 }
 
+// setNameHint overwrites a stored token's hint, the way a token minted before
+// CreateToken validated hints (backlog 3.50) can hold one it would refuse now.
+func (f *fakeAgentStore) setNameHint(id uuid.UUID, hint string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t := f.tokens[id]
+	t.NameHint = hint
+	f.tokens[id] = t
+}
+
 // armRevokeAfterLookup arms the post-track re-check race: the next
 // GetBySerial still succeeds and then revokes the serial.
 func (f *fakeAgentStore) armRevokeAfterLookup(serial string) {
