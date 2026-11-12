@@ -105,6 +105,42 @@ func TestDescriptorsAreWellFormed(t *testing.T) {
 	}
 }
 
+// listParamsNotItems are the "<plugin>.<param>" list parameters that do
+// not enumerate their plugin's items. Empty today: every list parameter
+// names the items its plugin reports on. A plugin whose list parameter
+// really is something else (a list of headers, say) adds it here with a
+// comment saying why; otherwise the list must be the plugin's ItemParam.
+var listParamsNotItems = map[string]bool{}
+
+// TestListParamsAreItemParams: a list parameter left out of ItemParam makes
+// AsksForItem answer true for every item, so an item the operator removed
+// from the list still reads as asked for rather than "you stopped asking"
+// (backlog 3.28) — the itemParam entries backlog 3.9 missed, which no test
+// caught. Every list parameter must be its descriptor's ItemParam unless
+// listParamsNotItems names it.
+func TestListParamsAreItemParams(t *testing.T) {
+	for _, d := range checkplugins.All() {
+		for _, p := range d.Params {
+			if p.Type != checkplugins.TypeList || listParamsNotItems[d.Name+"."+p.Name] {
+				continue
+			}
+			if d.ItemParam != p.Name {
+				t.Errorf("%s: list parameter %q is not its ItemParam (%q); set ItemParam or add %s.%s to listParamsNotItems",
+					d.Name, p.Name, d.ItemParam, d.Name, p.Name)
+			}
+		}
+	}
+	for key := range listParamsNotItems {
+		plugin, param, _ := strings.Cut(key, ".")
+		d, ok := checkplugins.Get(plugin)
+		if !ok || !slices.ContainsFunc(d.Params, func(p checkplugins.ParamSpec) bool {
+			return p.Name == param && p.Type == checkplugins.TypeList
+		}) {
+			t.Errorf("listParamsNotItems names %s, which is not a list parameter", key)
+		}
+	}
+}
+
 func checkSpec(t *testing.T, plugin string, p checkplugins.ParamSpec) {
 	t.Helper()
 	switch p.Type {
