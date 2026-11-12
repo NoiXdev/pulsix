@@ -163,6 +163,26 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.54, check plugin descriptors:** new route `GET /api/v1/check-plugins`
+  (additive; a signed-in session only, no API token, no org in its path) serves
+  every check plugin's descriptor: where it runs, its parameters with their
+  constraints, the parameter that lists its items and its metrics with their
+  kind. Check parameters are now refused by one validator built from those
+  descriptors: the status codes are unchanged (400 for refused parameters), but
+  some 400 texts are worded differently. For example, a `service` check without
+  units now reads `service: units is required` and one with an empty list
+  `service: units must have at least one entry` (one combined sentence before),
+  and a synthetic check (`icmp`, `tcp`, `http`, `tls`, `dns`) with an unknown
+  parameter now names that parameter even when a required one is missing too (it
+  named the missing one before). An API client that matched on the exact text
+  must follow; one that checked the status code is unaffected. **Mixed versions
+  during a rolling upgrade:** a new SPA, served by an upgraded manager, whose
+  request reaches an older manager behind the same load balancer gets 404 on
+  `/check-plugins`. Until its request lands on an upgraded manager, the check
+  dialog and the shared check form say the plugins failed to load ("Could not
+  load the check plugins.") and offer no form, and the host page shows graph
+  buttons on the error rows of discrete metrics (which have no graph) meanwhile.
+  An old SPA on a new manager works fully: it never asks the new route.
 - **3.12b, forgetting items that are gone:** new setting `PULSIX_ITEM_EXPIRY`
   (duration, at least `48h` — twice the longest check interval — `0` turns it
   off, default `168h`; a value below `48h` refuses startup): an item that

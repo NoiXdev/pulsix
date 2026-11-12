@@ -55,7 +55,9 @@ func TestValidateMessages(t *testing.T) {
 		{"icmp", map[string]any{"timeout_s": 0.0, "count": 0.0}, "icmp: count must be a whole number between 1 and 10"},
 		// An unknown key is named before a missing required one: a typo of
 		// the required key ("unit" for "units") says what was mistyped
-		// rather than only what is missing, as before the descriptors.
+		// rather than only what is missing, as service did before the
+		// descriptors. The synthetic plugins named the missing key first
+		// then; they follow the same rule now (docs/upgrades.md, 3.54).
 		{"service", map[string]any{"unit": []any{"sshd"}}, `service: unknown parameter "unit"`},
 		{"tcp", map[string]any{"prot": 22.0}, `tcp: unknown parameter "prot"`},
 	}
