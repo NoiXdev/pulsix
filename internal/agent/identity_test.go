@@ -50,6 +50,11 @@ func TestSaveEnrollmentAndLoadIdentityRoundTrip(t *testing.T) {
 
 	// Owner-only permissions are part of the contract, pinned by test:
 	// the data dir carries a long-lived private key and the CA chain.
+	// Windows has no mode bits to check: the data directory's DACL is the
+	// protection there.
+	if !unixFileModes() {
+		return
+	}
 	for _, name := range []string{certFileName, keyFileName, caFileName, metaFileName} {
 		info, err := os.Stat(filepath.Join(dir, name))
 		if err != nil {

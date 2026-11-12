@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,24 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
 
+// unixFileModes reports whether this system enforces Unix file modes. On
+// Windows os.Chmod only sets the read-only attribute, which does not stop
+// creating files in a directory, and Mode().Perm() reports 0666 for any
+// writable file; the data directory's DACL is the protection there,
+// covered by protect_windows_test.go.
+func unixFileModes() bool {
+	return runtime.GOOS != "windows"
+}
+
+// skipWithoutUnixFileModes skips a test that needs chmod to make a
+// directory read-only.
+func skipWithoutUnixFileModes(t *testing.T) {
+	t.Helper()
+	if !unixFileModes() {
+		t.Skip("needs Unix file modes: chmod 0555 does not make a directory read-only on Windows")
+	}
+}
+
 // TestWriteFileAtomicFailures pins the atomic write's error paths: a
 // directory path that is a file, and a read-only directory.
 func TestWriteFileAtomicFailures(t *testing.T) {
@@ -30,6 +49,9 @@ func TestWriteFileAtomicFailures(t *testing.T) {
 	}
 	if err := writeFileAtomic(blocker, "f", []byte("x"), 0o600); err == nil {
 		t.Fatal("writeFileAtomic into a file path = nil error, want an error")
+	}
+	if !unixFileModes() {
+		return // the read-only half needs Unix file modes
 	}
 	ro := filepath.Join(dir, "readonly")
 	if err := os.Mkdir(ro, 0o700); err != nil {
@@ -45,6 +67,7 @@ func TestWriteFileAtomicFailures(t *testing.T) {
 }
 
 func TestSaveEnrollmentRefusesReadOnlyDataDir(t *testing.T) {
+	skipWithoutUnixFileModes(t)
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatal(err)
@@ -58,6 +81,7 @@ func TestSaveEnrollmentRefusesReadOnlyDataDir(t *testing.T) {
 }
 
 func TestEnrollRefusesReadOnlyDataDir(t *testing.T) {
+	skipWithoutUnixFileModes(t)
 	lt := newLoopTest(t)
 	caInst := newTestCA(t)
 	lt.withToken(caInst)

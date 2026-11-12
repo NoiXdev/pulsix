@@ -70,11 +70,13 @@ func TestLoadOrGenerateKeyGeneratesOnce(t *testing.T) {
 	// The freshly generated key is persisted owner-only BEFORE the caller
 	// spends the enrollment round trip, so a crash can never orphan a
 	// certificate whose key is gone.
+	// (Windows has no mode bits to check: the data directory's DACL is
+	// the protection there.)
 	info, err := os.Stat(keyPath)
 	if err != nil {
 		t.Fatalf("stat key: %v", err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if unixFileModes() && info.Mode().Perm() != 0o600 {
 		t.Errorf("key file mode = %o, want 600", info.Mode().Perm())
 	}
 

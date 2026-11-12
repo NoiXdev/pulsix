@@ -39,6 +39,7 @@ func TestLoadOrGenerateKeyUnreadableFile(t *testing.T) {
 }
 
 func TestLoadOrGenerateKeyPersistFailsReadOnly(t *testing.T) {
+	skipWithoutUnixFileModes(t)
 	dir := t.TempDir()
 	ro := filepath.Join(dir, "data")
 	if err := os.Mkdir(ro, 0o700); err != nil {

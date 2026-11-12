@@ -96,9 +96,11 @@ func TestLoad(t *testing.T) {
 				FactsInterval:     12 * time.Hour,
 				ConfigInterval:    90 * time.Second,
 				EnrollToken:       "pxa1.abc.def.ghi",
-				CertPath:          "/var/lib/pulsix-agent/agent.crt",
-				KeyPath:           "/var/lib/pulsix-agent/agent.key",
-				MetaPath:          "/var/lib/pulsix-agent/agent.json",
+				// filepath.Join, as Load does: on Windows the separators
+				// come out as backslashes.
+				CertPath: filepath.Join("/var/lib/pulsix-agent", "agent.crt"),
+				KeyPath:  filepath.Join("/var/lib/pulsix-agent", "agent.key"),
+				MetaPath: filepath.Join("/var/lib/pulsix-agent", "agent.json"),
 			},
 		},
 		{
