@@ -116,6 +116,12 @@ push (the manager re-pushes on every heartbeat while the agent has not
 converged, so about one warning every 30 seconds at the default heartbeat
 interval), and keeps running the rest until it is updated.
 
+An agent that predates the `docker` check plugin (backlog 3.12) reports "unknown plugin" for a
+`docker` check and runs the rest. A `docker` check therefore needs an agent at the version that
+ships the plugin or later. The manager does not gate on this: the check can be bound to any host,
+and the host shows the error until its agent is updated. Nothing is seeded into organizations, so
+no existing host gains the check by itself, and there is no schema change.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
