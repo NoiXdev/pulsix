@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // MetricKind reports what a metric name carries: a number a threshold can
@@ -24,85 +26,33 @@ type CatalogueEntry struct {
 }
 
 // Catalogue is the set of metric names the shipped plugins report, with
-// the check key each belongs to. It is a table in code for the same
-// reason the plugin list in internal/checks is: an unknown metric must be
-// refused when the rule is written, not silently never match.
+// the check key each belongs to. It is a table rather than free-form names
+// for the same reason the plugin list in internal/checks is: an unknown
+// metric must be refused when the rule is written, not silently never
+// match.
 //
-// OBLIGATION: a new plugin metric is added here in the same change that
-// adds the plugin, or no rule can ever name it. The entries below are
-// exactly what the agent's check plugins emit today
-// (internal/agent/checks/plugins/, one package each: cpu, memory, disk,
-// service, network, uptime, docker from backlog 3.12, and temperature,
-// smart, raid from backlog 3.9), plus
-// the five synthetic plugins the manager probes with (backlog 3.13,
-// internal/probe: icmp.go, tcp.go, http.go, tls.go, dns.go) — cross-check
-// any edit here against those files, not the other way around.
+// It is built from the plugins' descriptors (internal/checkplugins, backlog
+// 3.54): every descriptor's metrics, under the plugin's name as the check
+// key. OBLIGATION: a plugin's metrics are added to its descriptor in the
+// same change that adds the plugin or the metric, or no rule can ever name
+// it — exactly what the agent's check plugins
+// (internal/agent/checks/plugins/) and the synthetic probes
+// (internal/probe) emit; cross-check any edit there against those files,
+// not the other way around. catalog_test.go pins the result against a
+// literal table, so a descriptor edit that drops or re-kinds a metric
+// fails there too.
 func Catalogue() map[string]CatalogueEntry {
-	return map[string]CatalogueEntry{
-		"cpu.used_pct":         {CheckKey: "cpu", Kind: MetricNumeric},
-		"cpu.load1":            {CheckKey: "cpu", Kind: MetricNumeric},
-		"cpu.load5":            {CheckKey: "cpu", Kind: MetricNumeric},
-		"cpu.load15":           {CheckKey: "cpu", Kind: MetricNumeric},
-		"mem.used_pct":         {CheckKey: "memory", Kind: MetricNumeric},
-		"mem.available_bytes":  {CheckKey: "memory", Kind: MetricNumeric},
-		"swap.used_pct":        {CheckKey: "memory", Kind: MetricNumeric},
-		"disk.used_pct":        {CheckKey: "disk", Kind: MetricNumeric},
-		"disk.free_bytes":      {CheckKey: "disk", Kind: MetricNumeric},
-		"disk.inodes_used_pct": {CheckKey: "disk", Kind: MetricNumeric},
-		"service.state":        {CheckKey: "service", Kind: MetricDiscrete},
-		"net.rx_bytes_per_s":   {CheckKey: "network", Kind: MetricNumeric},
-		"net.tx_bytes_per_s":   {CheckKey: "network", Kind: MetricNumeric},
-		"net.rx_errors_per_s":  {CheckKey: "network", Kind: MetricNumeric},
-		"net.tx_errors_per_s":  {CheckKey: "network", Kind: MetricNumeric},
-		"net.rx_drops_per_s":   {CheckKey: "network", Kind: MetricNumeric},
-		"net.tx_drops_per_s":   {CheckKey: "network", Kind: MetricNumeric},
-		"uptime.seconds":       {CheckKey: "uptime", Kind: MetricNumeric},
-		"icmp.up":              {CheckKey: "icmp", Kind: MetricNumeric},
-		"icmp.loss_pct":        {CheckKey: "icmp", Kind: MetricNumeric},
-		"icmp.rtt_ms":          {CheckKey: "icmp", Kind: MetricNumeric},
-		"tcp.up":               {CheckKey: "tcp", Kind: MetricNumeric},
-		"tcp.connect_ms":       {CheckKey: "tcp", Kind: MetricNumeric},
-		"tcp.banner_match":     {CheckKey: "tcp", Kind: MetricNumeric},
-		"http.up":              {CheckKey: "http", Kind: MetricNumeric},
-		"http.status_code":     {CheckKey: "http", Kind: MetricNumeric},
-		"http.response_ms":     {CheckKey: "http", Kind: MetricNumeric},
-		"http.body_match":      {CheckKey: "http", Kind: MetricNumeric},
-		"tls.up":               {CheckKey: "tls", Kind: MetricNumeric},
-		"tls.handshake_ms":     {CheckKey: "tls", Kind: MetricNumeric},
-		"tls.cert_valid":       {CheckKey: "tls", Kind: MetricNumeric},
-		"tls.cert_expiry_days": {CheckKey: "tls", Kind: MetricNumeric},
-		"dns.up":               {CheckKey: "dns", Kind: MetricNumeric},
-		"dns.resolve_ms":       {CheckKey: "dns", Kind: MetricNumeric},
-		"dns.answer_match":     {CheckKey: "dns", Kind: MetricNumeric},
-
-		"docker.state":              {CheckKey: "docker", Kind: MetricDiscrete},
-		"docker.health":             {CheckKey: "docker", Kind: MetricDiscrete},
-		"docker.restart_count":      {CheckKey: "docker", Kind: MetricNumeric},
-		"docker.exit_code":          {CheckKey: "docker", Kind: MetricNumeric},
-		"docker.containers_running": {CheckKey: "docker", Kind: MetricNumeric},
-		"docker.containers_total":   {CheckKey: "docker", Kind: MetricNumeric},
-
-		"temp.celsius":                   {CheckKey: "temperature", Kind: MetricNumeric},
-		"temp.high_celsius":              {CheckKey: "temperature", Kind: MetricNumeric},
-		"temp.critical_celsius":          {CheckKey: "temperature", Kind: MetricNumeric},
-		"temp.sensors":                   {CheckKey: "temperature", Kind: MetricNumeric},
-		"smart.devices":                  {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.passed":                   {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.temperature_celsius":      {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.power_on_hours":           {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.reallocated_sectors":      {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.pending_sectors":          {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.offline_uncorrectable":    {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.nvme_percentage_used":     {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.nvme_available_spare_pct": {CheckKey: "smart", Kind: MetricNumeric},
-		"smart.nvme_media_errors":        {CheckKey: "smart", Kind: MetricNumeric},
-		"raid.state":                     {CheckKey: "raid", Kind: MetricDiscrete},
-		"raid.devices_total":             {CheckKey: "raid", Kind: MetricNumeric},
-		"raid.devices_active":            {CheckKey: "raid", Kind: MetricNumeric},
-		"raid.devices_failed":            {CheckKey: "raid", Kind: MetricNumeric},
-		"raid.sync_pct":                  {CheckKey: "raid", Kind: MetricNumeric},
-		"raid.arrays":                    {CheckKey: "raid", Kind: MetricNumeric},
+	kinds := map[checkplugins.MetricKind]MetricKind{
+		checkplugins.Numeric:  MetricNumeric,
+		checkplugins.Discrete: MetricDiscrete,
 	}
+	out := map[string]CatalogueEntry{}
+	for _, d := range checkplugins.All() {
+		for _, m := range d.Metrics {
+			out[m.Name] = CatalogueEntry{CheckKey: d.Name, Kind: kinds[m.Kind]}
+		}
+	}
+	return out
 }
 
 // The rule language's window bounds: below MinWindow a window is not worth

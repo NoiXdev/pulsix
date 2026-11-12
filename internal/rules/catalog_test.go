@@ -21,6 +21,11 @@ import (
 // spec's own flagship rule example,
 // avg(cpu.load5, 10m) > fact("cpu_count") * 0.8, is unwritable without
 // cpu.load5 in the catalogue) — so the table below carries eleven entries.
+//
+// Since backlog 3.54 Catalogue() is derived from internal/checkplugins'
+// descriptors; this literal table is the independent golden list it is
+// pinned against, so a descriptor edit that drops, renames or re-kinds a
+// metric fails here rather than silently unmaking every rule naming it.
 func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 	want := map[string]rules.CatalogueEntry{
 		"cpu.used_pct":         {CheckKey: "cpu", Kind: rules.MetricNumeric},

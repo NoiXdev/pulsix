@@ -9,6 +9,12 @@ import (
 	"github.com/noixdev/pulsix/internal/checks"
 )
 
+// The accept/refuse tables below predate internal/checkplugins (backlog
+// 3.54) and still run through ValidateDefinitionShape, the public path
+// every definition write takes: they are what keeps the descriptors'
+// declarative rules from silently weakening what the hand-written
+// validators of each plugin used to refuse.
+
 // TestSyntheticParamsAccepted: every parameter set the spec's Plugins table
 // allows passes, starting with each plugin's defaults spelled out (the
 // numbers as a JSON body decodes them, float64) and an empty set wherever
@@ -162,18 +168,147 @@ func dnsName(n int) string {
 	return b.String()
 }
 
-// TestIsSynthetic: the five probe plugins run on the manager, everything
-// else on the host's agent.
-func TestIsSynthetic(t *testing.T) {
-	for _, p := range []string{checks.PluginICMP, checks.PluginTCP, checks.PluginHTTP, checks.PluginTLS, checks.PluginDNS} {
-		if !checks.IsSynthetic(p) {
-			t.Errorf("IsSynthetic(%q) = false, want true", p)
-		}
+// TestValidateDockerParams pins the docker plugin's parameter shape
+// (backlog 3.12): selection, label and socket, nothing else. The opt-out
+// semantics of label under selection "all" belong to the agent; the manager
+// only validates shape, so a label next to "all" is accepted.
+func TestValidateDockerParams(t *testing.T) {
+	accepted := []struct {
+		name   string
+		params map[string]any
+	}{
+		{"empty", map[string]any{}},
+		{"nil", nil},
+		{"all", map[string]any{"selection": "all"}},
+		{"labeled", map[string]any{"selection": "labeled"}},
+		{"labeled with key only", map[string]any{"selection": "labeled", "label": "pulsix.monitor"}},
+		{"slash in key", map[string]any{"label": "com.example/watch=yes"}},
+		{"all with a label (opt-out key)", map[string]any{"selection": "all", "label": "pulsix.monitor=true"}},
+		{"empty value after =", map[string]any{"label": "k="}},
+		{"max key", map[string]any{"label": strings.Repeat("k", 255)}},
+		{"max value", map[string]any{"label": "k=" + strings.Repeat("v", 255)}},
+		{"unix socket", map[string]any{"socket": "/var/run/docker.sock"}},
+		{"podman socket", map[string]any{"socket": "/run/podman/podman.sock"}},
+		{"named pipe", map[string]any{"socket": "npipe:////./pipe/docker_engine"}},
 	}
-	for _, p := range []string{checks.PluginCPU, checks.PluginMemory, checks.PluginDisk, checks.PluginService,
-		checks.PluginNetwork, checks.PluginUptime, "", "snmp"} {
-		if checks.IsSynthetic(p) {
-			t.Errorf("IsSynthetic(%q) = true, want false", p)
-		}
+	for _, tc := range accepted {
+		t.Run("accepts "+tc.name, func(t *testing.T) {
+			if _, err := checks.ValidateDefinitionShape("docker", "docker", tc.params, time.Minute); err != nil {
+				t.Fatalf("ValidateDefinitionShape(docker, %v) = %v, want nil", tc.params, err)
+			}
+		})
+	}
+	refused := []struct {
+		name   string
+		params map[string]any
+	}{
+		{"unknown selection", map[string]any{"selection": "some"}},
+		{"selection not a string", map[string]any{"selection": 1}},
+		{"empty label", map[string]any{"label": ""}},
+		{"label not a string", map[string]any{"label": 1}},
+		{"empty key", map[string]any{"label": "=x"}},
+		{"space in key", map[string]any{"label": "bad key=x"}},
+		{"long value", map[string]any{"label": "k=" + strings.Repeat("v", 256)}},
+		{"control in value", map[string]any{"label": "k=a\nb"}},
+		{"long key", map[string]any{"label": strings.Repeat("k", 256)}},
+		{"empty socket", map[string]any{"socket": ""}},
+		{"socket not a string", map[string]any{"socket": 1}},
+		{"relative socket", map[string]any{"socket": "docker.sock"}},
+		{"tcp socket", map[string]any{"socket": "tcp://10.0.0.1:2375"}},
+		{"pipe without name", map[string]any{"socket": "npipe:////./pipe/"}},
+		{"nul in socket", map[string]any{"socket": "/a\x00b"}},
+		{"long socket", map[string]any{"socket": "/" + strings.Repeat("s", 255)}},
+		{"unknown parameter", map[string]any{"units": []any{"x"}}},
+	}
+	for _, tc := range refused {
+		t.Run("refuses "+tc.name, func(t *testing.T) {
+			_, err := checks.ValidateDefinitionShape("docker", "docker", tc.params, time.Minute)
+			if !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("ValidateDefinitionShape(docker, %v) = %v, want ErrInvalidInput", tc.params, err)
+			}
+		})
+	}
+}
+
+func anyList(n int, entry string) []any {
+	out := make([]any, n)
+	for i := range out {
+		out[i] = entry
+	}
+	return out
+}
+
+// TestValidateHardwareParams pins the temperature, smart and raid parameter
+// shapes (backlog 3.9): one optional list of strings each, nothing else.
+func TestValidateHardwareParams(t *testing.T) {
+	type tc struct {
+		name   string
+		plugin string
+		params map[string]any
+		ok     bool
+	}
+	cases := []tc{
+		{"temperature empty", "temperature", map[string]any{}, true},
+		{"temperature nil", "temperature", nil, true},
+		{"temperature sensors", "temperature", map[string]any{"sensors": []any{"coretemp_core_0", "nvme_composite"}}, true},
+		{"temperature []string", "temperature", map[string]any{"sensors": []string{"a"}}, true},
+		{"temperature 64 entries", "temperature", map[string]any{"sensors": anyList(64, "s")}, true},
+		{"temperature 65 entries", "temperature", map[string]any{"sensors": anyList(65, "s")}, false},
+		{"temperature max entry", "temperature", map[string]any{"sensors": []any{strings.Repeat("s", 255)}}, true},
+		{"temperature long entry", "temperature", map[string]any{"sensors": []any{strings.Repeat("s", 256)}}, false},
+		{"temperature empty entry", "temperature", map[string]any{"sensors": []any{""}}, false},
+		{"temperature control char", "temperature", map[string]any{"sensors": []any{"a\nb"}}, false},
+		{"temperature not a list", "temperature", map[string]any{"sensors": "a"}, false},
+		{"temperature non-string entry", "temperature", map[string]any{"sensors": []any{1}}, false},
+		{"temperature unknown param", "temperature", map[string]any{"devices": []any{"/dev/sda"}}, false},
+
+		{"smart empty", "smart", map[string]any{}, true},
+		{"smart sata", "smart", map[string]any{"devices": []any{"/dev/sda", "/dev/sdb"}}, true},
+		{"smart nvme", "smart", map[string]any{"devices": []any{"/dev/nvme0", "/dev/nvme0n1"}}, true},
+		{"smart by-id", "smart", map[string]any{"devices": []any{"/dev/disk/by-id/ata-WDC_WD10-1.0:x+y@z"}}, true},
+		{"smart megaraid comma", "smart", map[string]any{"devices": []any{"/dev/csmi0,1"}}, true},
+		{"smart windows pd", "smart", map[string]any{"devices": []any{"/dev/pd0"}}, true},
+		{"smart 64 entries", "smart", map[string]any{"devices": anyList(64, "/dev/sda")}, true},
+		{"smart 65 entries", "smart", map[string]any{"devices": anyList(65, "/dev/sda")}, false},
+		{"smart relative", "smart", map[string]any{"devices": []any{"sda"}}, false},
+		{"smart windows backslash path", "smart", map[string]any{"devices": []any{`\\.\PhysicalDrive0`}}, false},
+		{"smart option-like", "smart", map[string]any{"devices": []any{"-a"}}, false},
+		{"smart space", "smart", map[string]any{"devices": []any{"/dev/my disk"}}, false},
+		{"smart shell metachar", "smart", map[string]any{"devices": []any{"/dev/sda;rm"}}, false},
+		{"smart control char", "smart", map[string]any{"devices": []any{"/dev/sda\n"}}, false},
+		{"smart empty entry", "smart", map[string]any{"devices": []any{""}}, false},
+		{"smart long entry", "smart", map[string]any{"devices": []any{"/dev/" + strings.Repeat("s", 251)}}, false},
+		{"smart max entry", "smart", map[string]any{"devices": []any{"/dev/" + strings.Repeat("s", 250)}}, true},
+		{"smart bare /dev/", "smart", map[string]any{"devices": []any{"/dev/"}}, false},
+		{"smart parent segment", "smart", map[string]any{"devices": []any{"/dev/../etc/shadow"}}, false},
+		{"smart parent segment short", "smart", map[string]any{"devices": []any{"/dev/../x"}}, false},
+		{"smart trailing parent segment", "smart", map[string]any{"devices": []any{"/dev/disk/.."}}, false},
+		{"smart inner parent segment", "smart", map[string]any{"devices": []any{"/dev/disk/../sda"}}, false},
+		{"smart dots inside a name", "smart", map[string]any{"devices": []any{"/dev/disk/by-id/nvme-eui.00..25"}}, true},
+		{"smart current segment", "smart", map[string]any{"devices": []any{"/dev/./sda"}}, true},
+		{"temperature multibyte over 255 bytes", "temperature", map[string]any{"sensors": []any{strings.Repeat("ä", 128)}}, false},
+		{"smart multibyte over 255 bytes", "smart", map[string]any{"devices": []any{"/dev/" + strings.Repeat("ä", 126)}}, false},
+		{"smart not a list", "smart", map[string]any{"devices": "/dev/sda"}, false},
+		{"smart unknown param", "smart", map[string]any{"arrays": []any{"md0"}}, false},
+
+		{"raid empty", "raid", map[string]any{}, true},
+		{"raid arrays", "raid", map[string]any{"arrays": []any{"md0", "md127"}}, true},
+		{"raid 65 entries", "raid", map[string]any{"arrays": anyList(65, "md0")}, false},
+		{"raid empty entry", "raid", map[string]any{"arrays": []any{""}}, false},
+		{"raid long entry", "raid", map[string]any{"arrays": []any{strings.Repeat("a", 256)}}, false},
+		{"raid control char", "raid", map[string]any{"arrays": []any{"md\x000"}}, false},
+		{"raid not a list", "raid", map[string]any{"arrays": 3}, false},
+		{"raid unknown param", "raid", map[string]any{"sensors": []any{"x"}}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := checks.ValidateDefinitionShape(c.plugin, c.plugin, c.params, time.Minute)
+			if c.ok && err != nil {
+				t.Fatalf("ValidateDefinitionShape(%s, %v) = %v, want nil", c.plugin, c.params, err)
+			}
+			if !c.ok && !errors.Is(err, checks.ErrInvalidInput) {
+				t.Fatalf("ValidateDefinitionShape(%s, %v) = %v, want ErrInvalidInput", c.plugin, c.params, err)
+			}
+		})
 	}
 }

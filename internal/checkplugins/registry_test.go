@@ -42,6 +42,18 @@ func TestGet(t *testing.T) {
 	}
 }
 
+// TestGetEveryName: Get's switch and Names' list are two spellings of the
+// same set, so every listed name must lead to the descriptor carrying it
+// (a case wired to the wrong constructor would otherwise go unnoticed).
+func TestGetEveryName(t *testing.T) {
+	for _, name := range checkplugins.Names() {
+		d, ok := checkplugins.Get(name)
+		if !ok || d.Name != name {
+			t.Errorf("Get(%q) = %q, %v", name, d.Name, ok)
+		}
+	}
+}
+
 // TestAllIsFreshEveryCall: a caller changing what All returns changes
 // nothing for the next caller.
 func TestAllIsFreshEveryCall(t *testing.T) {

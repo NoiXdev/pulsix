@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // BindingKind names the scope a check definition applies at.
@@ -42,41 +44,6 @@ const (
 	originCustom = "custom"
 	originShared = "shared"
 )
-
-// The plugins a definition may name. The host-local ones run on the
-// host's agent: the four v0.3b shipped (spec's Decisions table: "Plugin
-// set") plus network and uptime (backlog 3.7). The synthetic ones (backlog
-// 3.13) are probed by the manager and never pushed to an agent
-// (IsSynthetic). A table in code rather than a free-form string so an
-// unknown plugin is refused at write time instead of silently never
-// running — there is no other plugin anything could execute even if a
-// definition named one.
-const (
-	PluginCPU     = "cpu"
-	PluginMemory  = "memory"
-	PluginDisk    = "disk"
-	PluginService = "service"
-	PluginNetwork = "network"
-	PluginUptime  = "uptime"
-	PluginDocker  = "docker" // backlog 3.12: container state via the local engine socket
-	// Backlog 3.9: hardware checks run by the agent.
-	PluginTemperature = "temperature"
-	PluginSmart       = "smart"
-	PluginRaid        = "raid"
-
-	PluginICMP = "icmp"
-	PluginTCP  = "tcp"
-	PluginHTTP = "http"
-	PluginTLS  = "tls"
-	PluginDNS  = "dns"
-)
-
-var supportedPlugins = map[string]bool{
-	PluginCPU: true, PluginMemory: true, PluginDisk: true, PluginService: true,
-	PluginNetwork: true, PluginUptime: true, PluginDocker: true,
-	PluginTemperature: true, PluginSmart: true, PluginRaid: true,
-	PluginICMP: true, PluginTCP: true, PluginHTTP: true, PluginTLS: true, PluginDNS: true,
-}
 
 // keyPattern is the same shape a plugin name itself always satisfies, so a
 // key left to default to the plugin name never fails this check.
@@ -132,101 +99,6 @@ type DefinitionInput struct {
 	GroupID, HostID *uuid.UUID
 }
 
-// stringList reads a []string out of a value that may be either — a
-// literal []string (a Go caller, or SeedDefinitions' own literals) or a
-// []any of strings (what encoding/json decodes a JSON array into, which is
-// what every params value coming off the wire actually is).
-func stringList(v any) ([]string, bool) {
-	switch vv := v.(type) {
-	case []string:
-		return vv, true
-	case []any:
-		out := make([]string, len(vv))
-		for i, e := range vv {
-			s, ok := e.(string)
-			if !ok {
-				return nil, false
-			}
-			out[i] = s
-		}
-		return out, true
-	default:
-		return nil, false
-	}
-}
-
-// validateParams checks params against plugin's own schema: disk takes an
-// optional mount allow-list ("mounts"), network an optional interface list
-// ("interfaces"), service a required non-empty unit list ("units"), cpu,
-// memory and uptime take no parameters at all, and the synthetic plugins
-// follow synthetic_params.go's table. Rejecting
-// unknown keys (rather than ignoring them) is deliberate — a typo'd
-// parameter name must fail loudly at write time, not be silently dropped
-// and discovered missing at the agent weeks later.
-func validateParams(plugin string, params map[string]any) error {
-	switch plugin {
-	case PluginCPU, PluginMemory, PluginUptime:
-		if len(params) > 0 {
-			return fmt.Errorf("%w: plugin %q takes no parameters", ErrInvalidInput, plugin)
-		}
-	case PluginDisk, PluginNetwork:
-		return validateOptionalList(plugin, itemParam[plugin], params)
-	case PluginService:
-		for k := range params {
-			if k != "units" {
-				return fmt.Errorf("%w: service: unknown parameter %q", ErrInvalidInput, k)
-			}
-		}
-		units, ok := stringList(params["units"])
-		if !ok || len(units) == 0 {
-			return fmt.Errorf("%w: service: units is required and must be a non-empty list of strings", ErrInvalidInput)
-		}
-		for _, u := range units {
-			if strings.TrimSpace(u) == "" {
-				return fmt.Errorf("%w: service: units must not contain an empty entry", ErrInvalidInput)
-			}
-		}
-	case PluginDocker:
-		return validateDockerParams(params)
-	case PluginTemperature, PluginSmart, PluginRaid:
-		return validateHardwareParams(plugin)(params)
-	case PluginICMP, PluginTCP, PluginHTTP, PluginTLS, PluginDNS:
-		return validateSyntheticParams(plugin, params)
-	default:
-		// Reachable only if a caller adds a plugin constant without
-		// adding it to supportedPlugins and this switch — normalizeDefinition
-		// itself already refuses an unsupported plugin before this runs.
-		return fmt.Errorf("%w: unsupported plugin %q", ErrInvalidInput, plugin)
-	}
-	return nil
-}
-
-// validateOptionalList checks the params of a plugin whose only parameter
-// is an optional list of the items it watches — disk's mounts, network's
-// interfaces: no other key, and when the list is given, strings that are
-// not blank.
-func validateOptionalList(plugin, param string, params map[string]any) error {
-	for k := range params {
-		if k != param {
-			return fmt.Errorf("%w: %s: unknown parameter %q", ErrInvalidInput, plugin, k)
-		}
-	}
-	v, ok := params[param]
-	if !ok {
-		return nil
-	}
-	list, ok := stringList(v)
-	if !ok {
-		return fmt.Errorf("%w: %s: %s must be a list of strings", ErrInvalidInput, plugin, param)
-	}
-	for _, e := range list {
-		if strings.TrimSpace(e) == "" {
-			return fmt.Errorf("%w: %s: %s must not contain an empty entry", ErrInvalidInput, plugin, param)
-		}
-	}
-	return nil
-}
-
 // ValidateDefinitionShape validates and normalizes the four columns spec
 // decision 2 gives a check definition's installation-owned half — plugin,
 // key, params and interval — independently of any binding. normalizeDefinition
@@ -241,8 +113,8 @@ func validateOptionalList(plugin, param string, params map[string]any) error {
 // the three — "Reuse, do not copy" (task-7-brief).
 func ValidateDefinitionShape(plugin, key string, params map[string]any, interval time.Duration) (normalizedKey string, err error) {
 	plugin = strings.TrimSpace(plugin)
-	if !supportedPlugins[plugin] {
-		return "", fmt.Errorf("%w: plugin must be one of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, icmp, tcp, http, tls, dns, got %q", ErrInvalidInput, plugin)
+	if _, ok := checkplugins.Get(plugin); !ok {
+		return "", fmt.Errorf("%w: plugin must be one of %s, got %q", ErrInvalidInput, strings.Join(checkplugins.Names(), ", "), plugin)
 	}
 	normalizedKey = strings.TrimSpace(key)
 	if normalizedKey == "" {
