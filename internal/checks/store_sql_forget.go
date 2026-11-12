@@ -71,7 +71,10 @@ func forgetItem(ctx context.Context, tx pgx.Tx, ref ItemRef, steps ForgetSteps) 
 		if err != nil {
 			return fmt.Errorf("read item newest: %w", err)
 		}
-		if !steps.Proceed(ItemNewest{Rows: int(n.ItemRows), Item: n.ItemNewest, Host: n.HostNewest}) {
+		if !steps.Proceed(ItemNewest{
+			Rows: int(n.ItemRows), Item: n.ItemNewest, Key: n.KeyNewest, Host: n.HostNewest,
+			HasAgent: n.HasAgent, AgentSeen: n.AgentSeen,
+		}) {
 			return errForgetDeclined
 		}
 	}

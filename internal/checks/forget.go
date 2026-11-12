@@ -7,8 +7,9 @@ package checks
 // and those rows count against MaxTuplesPerHost. Forgetting the item
 // removes, for every metric of it, its current values, its rule states and
 // their state-change history, and its discovery row (check_items), and
-// closes every open alert on it with the reason forgotten. Samples (graphs) and item decisions are untouched. An
-// item that reports again afterwards simply appears again, like a new one.
+// closes every open alert on it with the reason forgotten. Samples
+// (graphs) and item decisions are untouched. An item that reports again
+// afterwards simply appears again, like a new one.
 
 import (
 	"context"
@@ -42,12 +43,35 @@ type ItemRef struct {
 
 // ItemNewest is what the store reads about an item inside its forget
 // transaction, after the host's evaluation lock: how many current rows the
-// item has, its newest reading (over all of its metrics) and the host's
-// newest reading (over all of its items). Item and Host are meaningless
-// when Rows is 0.
+// item has, its newest reading (over all of its metrics), the newest
+// reading of its check key on the host (over all of the key's items), the
+// host's newest reading (over all of its checks), whether the host has an
+// agent, and when that agent was last seen (zero or the epoch when never).
+// The times are meaningless when Rows is 0.
 type ItemNewest struct {
-	Rows       int
-	Item, Host time.Time
+	Rows            int
+	Item, Key, Host time.Time
+	HasAgent        bool
+	AgentSeen       time.Time
+}
+
+// lastSignOfLife is the latest moment the host is known to have kept
+// reporting, as far as this item is concerned: the newest reading of the
+// item's own check key, or — whichever is later — the agent's heartbeat
+// on a host with an agent, or any reading of a host without one. The
+// manager's probes write under the host they check, so on a host with an
+// agent the host's newest reading says nothing about the agent; counting
+// it would forget every item of an offline agent while the server's own
+// checks of the host keep running.
+func (n ItemNewest) lastSignOfLife() time.Time {
+	other := n.Host
+	if n.HasAgent {
+		other = n.AgentSeen
+	}
+	if n.Key.After(other) {
+		return n.Key
+	}
+	return other
 }
 
 // ForgetSteps are the service's two say-sos inside the store's forget
@@ -62,15 +86,16 @@ type ForgetSteps struct {
 
 // itemExpired is the automatic expiry's rule (ListExpiredItems is the same
 // rule in SQL, for the selection): the item's newest reading is older than
-// now - period, and its host has a reading newer than that plus the
-// period — the host kept reporting for the whole period without the item.
-// A host that stopped reporting altogether never satisfies the second
-// half, so an offline host keeps every value. Both comparisons are strict.
+// now - period, and the host kept reporting after that newest reading plus
+// the period (lastSignOfLife) — it went on for the whole period without
+// the item. A host that stopped reporting altogether, or whose agent is
+// offline, never satisfies the second half for its agent's items, so it
+// keeps their values. Both comparisons are strict.
 func itemExpired(n ItemNewest, now time.Time, period time.Duration) bool {
 	if n.Rows == 0 {
 		return false
 	}
-	return n.Item.Before(now.Add(-period)) && n.Host.After(n.Item.Add(period))
+	return n.Item.Before(now.Add(-period)) && n.lastSignOfLife().After(n.Item.Add(period))
 }
 
 // errNoAlertCloser is what ForgetItem and ForgetExpired return on a
@@ -108,7 +133,7 @@ func (s *Service) ForgetItem(ctx context.Context, orgID, hostID uuid.UUID, check
 
 // ForgetExpired forgets up to limit items, across every organization, that
 // have delivered no reading for period while their host kept reporting
-// (itemExpired). Each item is forgotten in a transaction of its own, and
+// (itemExpired, lastSignOfLife). Each item is forgotten in a transaction of its own, and
 // the rule is checked again inside it, after the host's evaluation lock: an
 // item that reported again between the selection and its forget is left
 // alone. It returns how many items it forgot per organization.

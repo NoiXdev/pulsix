@@ -286,6 +286,23 @@ func TestForgetExpiredRecheckBoundaries(t *testing.T) {
 			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Host: cutoff.Add(-time.Hour).Add(period + time.Second)}, true},
 		{"offline host: its newest is the item's own", checks.ItemNewest{Rows: 1, Item: now.Add(-30 * 24 * time.Hour), Host: now.Add(-30 * 24 * time.Hour)}, false},
 		{"no rows left", checks.ItemNewest{Rows: 0, Item: time.Unix(0, 0), Host: now}, false},
+		// A host with an agent: its other checks' readings (the server's
+		// probes) do not count, its agent's heartbeat and the item's own
+		// check key do.
+		{"offline agent, fresh probe elsewhere",
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour)}, false},
+		{"agent never seen, fresh probe elsewhere",
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true}, false},
+		{"agent seen exactly item + period is not due",
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour).Add(period)}, false},
+		{"agent seen a second later is due",
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour).Add(period + time.Second)}, true},
+		{"offline agent, a sibling item of the same check key still reports",
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: now, Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour)}, true},
+		{"agentless: the same check key exactly item + period is not due, the host decides",
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour).Add(period), Host: cutoff.Add(-time.Hour).Add(period)}, false},
+		{"still due only when the item itself is past the period",
+			checks.ItemNewest{Rows: 1, Item: cutoff, Key: now, Host: now, HasAgent: true, AgentSeen: now}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

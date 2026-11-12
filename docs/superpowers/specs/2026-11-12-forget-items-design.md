@@ -59,11 +59,22 @@ Samples (`check_samples`) are untouched.
 ## Automatic expiry
 
 - An item is due when its newest reading (max `at` over its metrics in
-  `check_current`) is older than the expiry period **and** the same host has
-  a reading newer than that item's newest reading plus the expiry period —
-  i.e. the host kept reporting for at least the whole period without this
-  item. A host whose agent is offline therefore keeps all its last values,
-  however long it is offline. **(Claude's call.)**
+  `check_current`) is older than the expiry period **and** its host kept
+  reporting after T = that newest reading plus the period, which holds when
+  any of these does: (a) the item's own check key on that host has a reading
+  (any metric, any item, value or error) newer than T — a sibling item such
+  as another mount still reports; (b) the host has an agent whose last
+  heartbeat (`host_agents.last_seen`) is newer than T — the check was
+  removed, the agent is alive; (c) the host has no agent and any reading of
+  it is newer than T. The manager's own checks (probes) write their results
+  under the host they check, so on a host with an agent its newest reading
+  says nothing about the agent: a host whose agent is offline keeps all its
+  last values, however long it is offline, even while checks from the server
+  keep running against it. A host that stopped reporting altogether keeps
+  everything too. The selection and the re-check inside each forget apply
+  the same rule. **(Claude's call, changed after the final review:** the
+  first version counted any reading of the host, so a probe result kept an
+  offline agent's host "reporting" and its agent's items were forgotten.)
 - The whole-host item `""` follows the same rule (it covers a check that was
   deleted or unbound from the host: its tuples stop arriving while other
   checks continue).

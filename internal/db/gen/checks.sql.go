@@ -388,8 +388,15 @@ const itemNewest = `-- name: ItemNewest :one
 SELECT
   count(*) AS item_rows,
   COALESCE(max(c.at), 'epoch')::timestamptz AS item_newest,
+  (SELECT COALESCE(max(k.at), 'epoch') FROM check_current k
+   WHERE k.org_id = $1 AND k.host_id = $2
+     AND k.check_key = $3)::timestamptz AS key_newest,
   (SELECT COALESCE(max(h.at), 'epoch') FROM check_current h
-   WHERE h.org_id = $1 AND h.host_id = $2)::timestamptz AS host_newest
+   WHERE h.org_id = $1 AND h.host_id = $2)::timestamptz AS host_newest,
+  EXISTS (SELECT 1 FROM host_agents a
+          WHERE a.org_id = $1 AND a.host_id = $2) AS has_agent,
+  (SELECT COALESCE(max(a.last_seen), 'epoch') FROM host_agents a
+   WHERE a.org_id = $1 AND a.host_id = $2)::timestamptz AS agent_seen
 FROM check_current c
 WHERE c.org_id = $1 AND c.host_id = $2
   AND c.check_key = $3 AND c.item = $4
@@ -405,13 +412,20 @@ type ItemNewestParams struct {
 type ItemNewestRow struct {
 	ItemRows   int64     `json:"item_rows"`
 	ItemNewest time.Time `json:"item_newest"`
+	KeyNewest  time.Time `json:"key_newest"`
 	HostNewest time.Time `json:"host_newest"`
+	HasAgent   bool      `json:"has_agent"`
+	AgentSeen  time.Time `json:"agent_seen"`
 }
 
 // The expiry's re-check inside the forget transaction, after the cursor
-// lock: how many current rows the item has, its newest reading and the
-// host's newest reading. 'epoch' stands in for "no reading" so the
-// generated scan never meets a NULL; item_rows says whether it is real.
+// lock: how many current rows the item has, its newest reading, the newest
+// reading of its check key on the host (any item), the host's newest
+// reading (any check), and whether the host has an agent and when that
+// agent was last seen. checks.itemExpired applies ListExpiredItems' rule
+// to them. 'epoch' stands in for "no reading" and "never seen" so the
+// generated scan never meets a NULL; item_rows and has_agent say whether
+// they are real.
 func (q *Queries) ItemNewest(ctx context.Context, arg ItemNewestParams) (ItemNewestRow, error) {
 	row := q.db.QueryRow(ctx, itemNewest,
 		arg.OrgID,
@@ -420,7 +434,14 @@ func (q *Queries) ItemNewest(ctx context.Context, arg ItemNewestParams) (ItemNew
 		arg.Item,
 	)
 	var i ItemNewestRow
-	err := row.Scan(&i.ItemRows, &i.ItemNewest, &i.HostNewest)
+	err := row.Scan(
+		&i.ItemRows,
+		&i.ItemNewest,
+		&i.KeyNewest,
+		&i.HostNewest,
+		&i.HasAgent,
+		&i.AgentSeen,
+	)
 	return i, err
 }
 
@@ -512,14 +533,19 @@ WITH items AS (
   SELECT org_id, host_id, check_key, item, max(at) AS newest
   FROM check_current
   GROUP BY org_id, host_id, check_key, item
+), key_newest AS (
+  SELECT host_id, check_key, max(newest) AS newest FROM items GROUP BY host_id, check_key
 ), host_newest AS (
-  SELECT host_id, max(newest) AS newest FROM items GROUP BY host_id
+  SELECT host_id, max(newest) AS newest FROM key_newest GROUP BY host_id
 )
 SELECT i.org_id, i.host_id, i.check_key, i.item
 FROM items i
+JOIN key_newest k ON k.host_id = i.host_id AND k.check_key = i.check_key
 JOIN host_newest h ON h.host_id = i.host_id
+LEFT JOIN host_agents a ON a.host_id = i.host_id
 WHERE i.newest < $1::timestamptz
-  AND h.newest > i.newest + make_interval(secs => $2::double precision)
+  AND GREATEST(k.newest, CASE WHEN a.host_id IS NULL THEN h.newest ELSE a.last_seen END)
+      > i.newest + make_interval(secs => $2::double precision)
 ORDER BY i.newest, i.org_id, i.host_id, i.check_key, i.item
 LIMIT $3
 `
@@ -541,13 +567,25 @@ type ListExpiredItemsRow struct {
 // organization — it runs unscoped on the bare pool, like the alert sweep.
 // An item is due when its newest reading (max at over its metrics, so one
 // fresh metric keeps the whole item) is older than cutoff (now - period)
-// AND its host has a reading newer than that item's newest plus the
-// period: the host kept reporting for the whole period without the item.
-// A host that stopped reporting altogether has no such reading, so it
-// keeps every value however long it is offline. Both comparisons are
-// strict. Oldest first, so a backlog drains from the longest-gone end.
-// checks.itemExpired is the same rule in Go, for the re-check inside each
-// item's own forget transaction.
+// AND its host kept reporting after T = that newest + the period, which is
+// the host's last sign of life after T:
+//
+//	(a) its check key on the host has a reading after T (a sibling item,
+//	    say another mount, still reports), or
+//	(b) the host has an agent last seen after T (the check itself was
+//	    removed, the agent is alive), or
+//	(c) the host has no agent and any reading of it is after T.
+//
+// The manager's own probes write under the host too, so for a host with
+// an agent only (a) and (b) count: an offline agent's items keep their
+// values however long the server's checks of the host keep running. A
+// host that stopped reporting altogether has no sign of life after T, so
+// it keeps every value. GREATEST ignores the NULL of an agent never seen.
+// Every comparison is strict. Oldest first, so a backlog drains from the
+// longest-gone end. One pass over check_current, aggregated by item, then
+// by check key and by host; host_agents joins on its primary key.
+// checks.itemExpired is the same rule in Go, over ItemNewest, for the
+// re-check inside each item's own forget transaction.
 func (q *Queries) ListExpiredItems(ctx context.Context, arg ListExpiredItemsParams) ([]ListExpiredItemsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredItems, arg.Cutoff, arg.PeriodSeconds, arg.Lim)
 	if err != nil {
