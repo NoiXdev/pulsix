@@ -929,8 +929,10 @@ func TestRevokeEndsStreams(t *testing.T) {
 }
 
 // TestClaimRefusesOverlongNames: the resolved host/agent name must fit the
-// certificate's 1-64-rune common name, and the refusal happens inside the
-// claim — before the host is created and before the use is consumed.
+// certificate's 1-64-rune common name. A new token's hint is refused when the
+// token is created; the claim refuses a stored over-long hint (a token from
+// before 3.50) and an over-long presented name, before the host is created and
+// before the use is consumed.
 func TestClaimRefusesOverlongNames(t *testing.T) {
 	svc, st, p, now := newService(t)
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
@@ -939,6 +941,24 @@ func TestClaimRefusesOverlongNames(t *testing.T) {
 	// the claim keeps its own check for the presented name below.
 	if _, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: strings.Repeat("a", 65), MaxUses: 1, ExpiresAt: now.Add(time.Hour)}); !errors.Is(err, agents.ErrInvalidInput) {
 		t.Fatalf("overlong hint at creation: %v, want ErrInvalidInput", err)
+	}
+
+	// A token minted before the create-time check can hold a bad hint.
+	legacy, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := st.tokens[legacy.ID]
+	stored.NameHint = strings.Repeat("a", 65)
+	st.tokens[legacy.ID] = stored
+	if _, err := svc.ClaimToken(ctx, org, legacy, "short"); !errors.Is(err, agents.ErrInvalidInput) {
+		t.Fatalf("stored overlong hint: %v, want ErrInvalidInput", err)
+	}
+	if got := st.tokens[legacy.ID]; got.Uses != 0 || got.UsedAt != nil {
+		t.Fatalf("the refused claim burned a use: uses=%d used=%v", got.Uses, got.UsedAt != nil)
+	}
+	if len(p.hosts[org]) != 0 || len(p.monitored) != 0 {
+		t.Fatalf("the refused claim touched hosts: %v / %v", p.hosts[org], p.monitored)
 	}
 
 	blank, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})

@@ -246,6 +246,38 @@ describe('AgentsPage', () => {
     expect(posted).toMatchObject({ zone_id: 'z1', name_hint: 'edge-1', max_uses: 2, expires_in_minutes: 60 });
   });
 
+  it('validates the host name hint like the server: dots allowed, no trailing hyphen', async () => {
+    const user = userEvent.setup();
+    const posts: Record<string, unknown>[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/agents': { agents: [] },
+      'GET /api/v1/orgs/acme/agents/tokens': { tokens: [] },
+      'GET /api/v1/orgs/acme/zones': { zones: [{ id: 'z1', org_id: 'o', slug: 'hel', name: 'Helsinki' }] },
+      'POST /api/v1/orgs/acme/agents/tokens': (req: MockRequest) => {
+        posts.push(req.body as Record<string, unknown>);
+        return {
+          token: 'pxa1.aaa.bbb.ccc',
+          token_record: { id: 't1', zone_id: 'z1', name_hint: 'db.example.com', max_uses: 1, uses: 0, expires_at: inDays(1), created_at: '' },
+          install_command: 'curl -fsSL https://pulsix.example/install.sh | sudo sh -s -- --manager pulsix.example:8444',
+        };
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /Enrol agent/ }));
+    await user.type(screen.getByLabelText('Host name (optional)'), 'x-');
+    await user.click(screen.getByRole('button', { name: 'Create token' }));
+    expect(await screen.findByText(/lowercase letters, digits, dots and hyphens/)).toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+
+    await user.clear(screen.getByLabelText('Host name (optional)'));
+    await user.type(screen.getByLabelText('Host name (optional)'), 'db.example.com');
+    await user.click(screen.getByRole('button', { name: 'Create token' }));
+    expect(await screen.findByLabelText('Linux and macOS')).toBeInTheDocument();
+    expect(posts[0]).toMatchObject({ name_hint: 'db.example.com' });
+  });
+
   it('binds the token to a given host: sends host_id, no name_hint, names the host', async () => {
     const user = userEvent.setup();
     let posted: Record<string, unknown> | undefined;
@@ -361,7 +393,7 @@ describe('AgentsPage', () => {
     await user.type(screen.getByLabelText('Host name (optional)'), 'Not A Host Name');
     await user.click(screen.getByRole('button', { name: 'Create token' }));
 
-    expect(await screen.findByText(/lowercase letters, digits and hyphens/)).toBeInTheDocument();
+    expect(await screen.findByText(/lowercase letters, digits, dots and hyphens/)).toBeInTheDocument();
     expect(calls).toBe(0);
   });
 

@@ -39,7 +39,7 @@ export const deAgents: Messages['agents'] = {
     title: 'Agent registrieren',
     titleHost: (n: string) => `Agent auf ${n} registrieren`,
     hostIntro: (n: string) => `Das Token ist an ${n} gebunden: Der Agent, der es einlöst, wird diesem Host zugeordnet – Inventar, Variablen und Ausführungsverlauf bleiben erhalten – und der Host wird danach überwacht.`,
-    nameRule: 'Nur Kleinbuchstaben, Ziffern und Bindestriche verwenden; der Name beginnt mit einem Buchstaben oder einer Ziffer.',
+    nameRule: 'Nur Kleinbuchstaben, Ziffern, Punkte und Bindestriche verwenden (bis zu 64 Zeichen); der Name beginnt und endet mit einem Buchstaben oder einer Ziffer.',
     createFailed: 'Das Token konnte nicht erstellt werden',
     instructions: (agents: string, minutes: number) =>
       `Dies auf dem Host als root ausführen und das Token unten einfügen, sobald der Installer danach fragt – so bleibt es außerhalb der Befehlszeile, wo andere Benutzer des Hosts es lesen könnten. Der Agent lädt sich von diesem Manager herunter, registriert sich mit dem Token und erscheint hier. Das Token wird nur jetzt angezeigt – es lässt ${agents} zu und läuft in ${minutes === 1 ? '1 Minute' : `${minutes} Minuten`} ab.`,

@@ -79,7 +79,9 @@ func agentInstallServerName(deps Deps, addr string) string {
 }
 
 // plainShellArg is what a POSIX shell takes as one literal word without
-// quotes. A leading dash is excluded separately: it would read as an option.
+// quotes. A leading dash is excluded separately and quoted only so the line reads
+// unambiguously; quoting does not stop option parsing, and the installer takes
+// the next word as the value anyway.
 var plainShellArg = regexp.MustCompile(`^[A-Za-z0-9._:/@%+=,-]+$`)
 
 // shellArg returns s as one literal POSIX shell word: bare when it is plain

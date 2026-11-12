@@ -11,7 +11,7 @@ import { useCreateAgentToken } from '../../api/hooks/useAgents.ts';
 import { ZoneDialog } from '../hosts/ZoneDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 
-const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const NAME_RE = /^[a-z0-9]([a-z0-9.-]{0,62}[a-z0-9])?$/;
 
 interface Created {
   token: string;

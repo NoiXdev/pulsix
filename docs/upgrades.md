@@ -159,7 +159,8 @@ repositories as before. An older worker never asks.
 - **3.50, agent token name hint:** the API now refuses an agent enrollment
   token whose `name_hint` is not a valid host name (lower-case letters, digits,
   dots and hyphens, not starting or ending with a dot or hyphen, at most 64
-  characters) with HTTP 400. An API client that sent upper-case or free text
+  characters) with HTTP 400; a hint over 64 characters is still answered 422 by
+  the request schema's `maxLength`, as before. An API client that sent upper-case or free text
   must change what it sends; an empty hint is still fine. Tokens created
   earlier are not changed.
 - **3.2, 3.3, 3.8, agents for Windows and macOS:** the manager serves a new
