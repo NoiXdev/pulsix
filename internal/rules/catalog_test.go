@@ -97,7 +97,7 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"raid.sync_pct":                  {CheckKey: "raid", Kind: rules.MetricNumeric},
 		"raid.arrays":                    {CheckKey: "raid", Kind: rules.MetricNumeric},
 
-		// Backlog 3.10: the database plugins (postgres here; mysql, redis follow).
+		// Backlog 3.10: the database plugins (postgres, mysql; redis follows).
 		"pg.up":                      {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.connections":             {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.max_connections":         {CheckKey: "postgres", Kind: rules.MetricNumeric},
@@ -107,6 +107,14 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"pg.replication_lag_bytes":   {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.oldest_xact_seconds":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.database_size_bytes":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
+
+		"mysql.up":                      {CheckKey: "mysql", Kind: rules.MetricNumeric},
+		"mysql.connections":             {CheckKey: "mysql", Kind: rules.MetricNumeric},
+		"mysql.max_connections":         {CheckKey: "mysql", Kind: rules.MetricNumeric},
+		"mysql.connections_pct":         {CheckKey: "mysql", Kind: rules.MetricNumeric},
+		"mysql.replication_state":       {CheckKey: "mysql", Kind: rules.MetricDiscrete},
+		"mysql.replication_lag_seconds": {CheckKey: "mysql", Kind: rules.MetricNumeric},
+		"mysql.slow_queries_per_s":      {CheckKey: "mysql", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -152,6 +160,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"smart":   "smart",
 		"raid":    "raid",
 		"pg":      "postgres",
+		"mysql":   "mysql",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")

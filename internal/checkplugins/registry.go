@@ -27,6 +27,7 @@ func registry() []plugin {
 		{"smart", smartPlugin},
 		{"raid", raidPlugin},
 		{"postgres", postgresPlugin},
+		{"mysql", mysqlPlugin},
 		{"icmp", icmpPlugin},
 		{"tcp", tcpPlugin},
 		{"http", httpPlugin},

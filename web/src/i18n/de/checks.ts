@@ -94,6 +94,7 @@ export const deChecks: Messages['checks'] = {
       smart: 'SMART-Festplattenzustand',
       raid: 'RAID-Arrays',
       postgres: 'PostgreSQL',
+      mysql: 'MySQL / MariaDB',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -173,6 +174,13 @@ export const deChecks: Messages['checks'] = {
         label: 'Datenbanken (eine pro Zeile, leer bedeutet jede Datenbank)',
         hint: 'Datenbanken, deren Größe gemeldet wird; leer bedeutet jede Datenbank, die Verbindungen annimmt und keine Vorlage ist.',
         placeholder: 'app\nanalytics',
+      },
+    },
+    mysql: {
+      secret: {
+        label: 'Secret',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält Serveradresse und Login. Der Wert verlässt den Host nie.',
+        placeholder: 'db-main',
       },
     },
     icmp: {

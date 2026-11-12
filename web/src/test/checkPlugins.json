@@ -385,6 +385,51 @@
       ]
     },
     {
+      "name": "mysql",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "secret",
+          "type": "string",
+          "required": true,
+          "example": "db-main",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        }
+      ],
+      "metrics": [
+        {
+          "name": "mysql.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.connections",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.max_connections",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.connections_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.replication_state",
+          "kind": "discrete"
+        },
+        {
+          "name": "mysql.replication_lag_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "mysql.slow_queries_per_s",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

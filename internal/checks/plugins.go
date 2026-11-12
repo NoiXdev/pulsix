@@ -27,6 +27,7 @@ const (
 	PluginSmart       = "smart"
 	PluginRaid        = "raid"
 	PluginPostgres    = "postgres"
+	PluginMySQL       = "mysql"
 
 	PluginICMP = "icmp"
 	PluginTCP  = "tcp"

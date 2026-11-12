@@ -12,7 +12,7 @@ import (
 // check definition that names it.
 func TestRegistryWiresEveryPlugin(t *testing.T) {
 	reg := Registry()
-	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature", "smart", "raid", "postgres"}
+	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature", "smart", "raid", "postgres", "mysql"}
 	if len(reg) != len(want) {
 		t.Fatalf("Registry() has %d plugins, want %d: %v", len(reg), len(want), reg)
 	}
@@ -30,18 +30,23 @@ func TestRegistryWiresEveryPlugin(t *testing.T) {
 	}
 }
 
-// TestRegistryNetworkIsStateful: the scheduler recognises a plugin that
-// must be cloned per check key only through checks.StatefulPlugin.
-// network.go asserts the interface at compile time; this test pins it as
-// the registry hands the plugin out, and that no other plugin keeps state.
-func TestRegistryNetworkIsStateful(t *testing.T) {
+// TestRegistryStatefulPlugins: the scheduler recognises a plugin that must
+// be cloned per check key only through checks.StatefulPlugin. network.go and
+// mysql.go assert the interface at compile time; this test pins it as the
+// registry hands the plugins out, and that no other plugin keeps state
+// (network keeps interface counters, mysql the slow-query counter; redis
+// joins them in backlog 3.10).
+func TestRegistryStatefulPlugins(t *testing.T) {
 	reg := Registry()
-	if _, ok := reg["network"].(checks.StatefulPlugin); !ok {
-		t.Fatalf("Registry()[network] = %T, want a checks.StatefulPlugin", reg["network"])
+	stateful := map[string]bool{"network": true, "mysql": true}
+	for name := range stateful {
+		if _, ok := reg[name].(checks.StatefulPlugin); !ok {
+			t.Fatalf("Registry()[%s] = %T, want a checks.StatefulPlugin", name, reg[name])
+		}
 	}
 	for name, p := range reg {
-		if _, ok := p.(checks.StatefulPlugin); ok && name != "network" {
-			t.Errorf("Registry()[%q] is a checks.StatefulPlugin; only network keeps state", name)
+		if _, ok := p.(checks.StatefulPlugin); ok && !stateful[name] {
+			t.Errorf("Registry()[%q] is a checks.StatefulPlugin; only network and mysql keep state", name)
 		}
 	}
 }

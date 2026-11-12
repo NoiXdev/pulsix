@@ -140,6 +140,12 @@ it is updated, and the manager does not gate on it. The check also needs the
 host's `agent.yaml` secret it names (backlog 3.5), which only an agent that
 reads that file can resolve. Nothing is seeded and there is no schema change.
 
+The same holds for the `mysql` plugin (backlog 3.10, MySQL and MariaDB): an
+older agent skips a `mysql` check, warns on every configuration push and shows
+no readings until it is updated, and the manager does not gate on it. It needs
+the host's `agent.yaml` secret it names (backlog 3.5) as `postgres` does.
+Nothing is seeded and there is no schema change.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
