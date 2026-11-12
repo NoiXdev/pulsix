@@ -24,9 +24,9 @@ func refuse(format string, args ...any) error {
 	return &paramsError{msg: fmt.Sprintf(format, args...)}
 }
 
-// Validate checks params against plugin's descriptor: no unknown key, every
-// required key present, every value valid for its spec, and then the
-// plugin's Check hook. Rejecting unknown keys rather than ignoring them is
+// Validate checks params against plugin's descriptor, in this order: no
+// unknown key, every required key present, every value valid for its spec,
+// and then the plugin's Check hook. Rejecting unknown keys rather than ignoring them is
 // deliberate — a typo'd parameter must fail at write time, not be dropped
 // and discovered missing at the agent weeks later. Keys are visited in
 // sorted order so the same bad input always names the same parameter.
@@ -45,16 +45,22 @@ func (d Descriptor) validate(params map[string]any) error {
 	specs := make(map[string]ParamSpec, len(d.Params))
 	for _, p := range d.Params {
 		specs[p.Name] = p
+	}
+	keys := slices.Sorted(maps.Keys(params))
+	// Unknown keys first: a typo of a required key ("unit" for "units")
+	// names the typo rather than only the key it left missing.
+	for _, k := range keys {
+		if _, ok := specs[k]; !ok {
+			return refuse("%s: unknown parameter %q", d.Name, k)
+		}
+	}
+	for _, p := range d.Params {
 		if _, ok := params[p.Name]; p.Required && !ok {
 			return refuse("%s: %s is required", d.Name, p.Name)
 		}
 	}
-	for _, k := range slices.Sorted(maps.Keys(params)) {
-		p, ok := specs[k]
-		if !ok {
-			return refuse("%s: unknown parameter %q", d.Name, k)
-		}
-		if problem := p.problem(params[k]); problem != "" {
+	for _, k := range keys {
+		if problem := specs[k].problem(params[k]); problem != "" {
 			return refuse("%s: %s %s", d.Name, k, problem)
 		}
 	}
