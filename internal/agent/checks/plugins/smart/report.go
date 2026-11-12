@@ -48,8 +48,12 @@ const (
 // encoding/json allocates a pointer before it finds the value has the wrong
 // type — a "passed": "yes" would read as a failed disk.
 type report struct {
-	Smartctl    smartctlBlock `json:"smartctl"`
-	SmartStatus struct {
+	Smartctl smartctlBlock `json:"smartctl"`
+	// SmartSupport is only read for its presence: smartctl prints it once
+	// it has identified the device, which it does not do for a disk it
+	// leaves in standby (see interpret).
+	SmartSupport json.RawMessage `json:"smart_support"`
+	SmartStatus  struct {
 		Passed optBool `json:"passed"`
 	} `json:"smart_status"`
 	Temperature struct {
@@ -83,13 +87,31 @@ type smartctlBlock struct {
 	} `json:"messages"`
 }
 
+// answer is how one device answered, for the host-level verdict in
+// Collect: readings, asleep, no SMART data, or a failure (which carries its
+// own error observation on the device's item).
+type answer int
+
+const (
+	answerFailed answer = iota
+	answerData
+	answerStandby
+	answerNoData
+)
+
 // interpret turns one device's smartctl run into observations: one error
 // observation on smart.passed when the run failed (command line refused,
 // device not opened, no JSON); otherwise every metric the JSON states, plus
-// an advisory error when a field had an unexpected type. A disk in standby
-// needs no case of its own: -n standby,0 makes smartctl exit 0 with JSON
-// that carries no data blocks, so it reports nothing.
-func interpret(d device, res runResult) ([]checks.Observation, error) {
+// an advisory error when a field had an unexpected type.
+//
+// A run that states no metric is either a disk in standby or a device
+// without SMART data, told apart without reading smartctl's messages:
+// with -n standby,0 smartctl exits 0 for a sleeping disk before it
+// identifies it, so that JSON has no smart_support block, while a device
+// smartctl did identify (a virtual disk, a USB bridge without SMART
+// pass-through) has one, typically {"available": false}. Neither reports
+// anything for the device itself.
+func interpret(d device, res runResult) ([]checks.Observation, answer, error) {
 	isJSON := isJSONObject(res.stdout)
 	var rep report
 	var typeErr error
@@ -119,10 +141,22 @@ func interpret(d device, res runResult) ([]checks.Observation, error) {
 		} else if res.exitCode&exitCommandLine != 0 {
 			fail = fmt.Errorf("%w: no JSON output (smartmontools 7.0 or later is needed)", fail)
 		}
-		return []checks.Observation{checks.ErrObservation(d.item, "smart.passed", fail)}, fail
+		return []checks.Observation{checks.ErrObservation(d.item, "smart.passed", fail)}, answerFailed, fail
 	}
 	obs, badErr := rep.observations(d.item)
-	return obs, errors.Join(typeErr, badErr)
+	err := errors.Join(typeErr, badErr)
+	switch {
+	case len(obs) > 0:
+		return obs, answerData, err
+	case err == nil && !present(rep.SmartSupport):
+		return nil, answerStandby, nil
+	}
+	return obs, answerNoData, err
+}
+
+// present reports whether a JSON field was there with a non-null value.
+func present(raw json.RawMessage) bool {
+	return len(raw) > 0 && string(raw) != "null"
 }
 
 // observations reports every metric whose field is present, and names in

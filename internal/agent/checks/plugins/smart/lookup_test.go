@@ -49,7 +49,8 @@ func fakeLocator(goos, fromPath string, found ...string) locator {
 }
 
 // TestFindSmartctl: the standard locations first, in order, PATH only as
-// the fallback; nothing usable is the install hint.
+// the fallback off Windows; on Windows only the installer's location
+// counts. Nothing usable is the install hint.
 func TestFindSmartctl(t *testing.T) {
 	const winStd = `C:\Program Files\smartmontools\bin\smartctl.exe`
 	for _, tc := range []struct {
@@ -66,7 +67,7 @@ func TestFindSmartctl(t *testing.T) {
 		{"relative PATH result", "linux", "bin/smartctl", []string{"smartctl"}, ""},
 		{"nothing", "linux", "", nil, ""},
 		{"windows standard", "windows", `C:\tools\smartctl.exe`, []string{"smartctl", winStd}, winStd},
-		{"windows PATH exe", "windows", `C:\tools\SMARTCTL.EXE`, []string{"smartctl"}, `C:\tools\SMARTCTL.EXE`},
+		{"windows PATH exe is not used", "windows", `C:\tools\SMARTCTL.EXE`, []string{"smartctl"}, ""},
 		{"windows PATH bat", "windows", `C:\tools\smartctl.bat`, []string{"smartctl"}, ""},
 		{"windows PATH cmd", "windows", `C:\tools\smartctl.cmd`, []string{"smartctl"}, ""},
 		{"windows PATH com", "windows", `C:\tools\smartctl.com`, []string{"smartctl"}, ""},
@@ -82,6 +83,20 @@ func TestFindSmartctl(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("%s: %q, %v; want %q", tc.desc, got, err, tc.want)
 		}
+	}
+	// On Windows the PATH is never even asked: the agent runs smartctl as
+	// SYSTEM, and a folder on the machine-wide PATH may be writable by
+	// users who are not administrators.
+	l := fakeLocator("windows", `C:\tools\smartctl.exe`, "smartctl")
+	asked := l.lookPath
+	l.lookPath = func(name string) (string, error) {
+		if name == "smartctl" {
+			t.Errorf("windows: PATH lookup for %q", name)
+		}
+		return asked(name)
+	}
+	if _, err := l.find(); !errors.Is(err, errNotFound) {
+		t.Errorf("windows without the standard location: %v, want errNotFound", err)
 	}
 	if errNotFound.Error() != "smartctl not found; install smartmontools" {
 		t.Fatalf("errNotFound = %q", errNotFound)

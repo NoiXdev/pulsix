@@ -89,6 +89,7 @@ func TestSmartScansAndReportsEveryDevice(t *testing.T) {
 	if got := itemObs(obs, "/dev/sdb"); len(got) != 0 {
 		t.Errorf("/dev/sdb (no SMART) reported %+v, want nothing", got)
 	}
+	deviceCount(t, obs, 3)
 	for _, o := range obs {
 		encodesAsCheckResult(t, o)
 	}
@@ -117,9 +118,10 @@ func TestSmartFailingDiskExitBitsAreData(t *testing.T) {
 					t.Errorf("%s = %v, want %v", metric, got, want)
 				}
 			}
-			if len(obs) != 6 {
-				t.Errorf("got %d observations, want 6: %+v", len(obs), obs)
+			if n := len(itemObs(obs, "/dev/sdc")); n != 6 {
+				t.Errorf("got %d observations for /dev/sdc, want 6: %+v", n, obs)
 			}
+			deviceCount(t, obs, 1)
 		})
 	}
 }
@@ -148,6 +150,7 @@ func TestSmartStandbyReportsNothing(t *testing.T) {
 	if got := value(t, obs, "/dev/sda", "smart.passed"); got != 1 {
 		t.Errorf("/dev/sda passed = %v", got)
 	}
+	deviceCount(t, obs, 2)
 }
 
 // TestSmartBitOneIsAlwaysAnError: with -n standby,0 a sleeping disk never
@@ -168,7 +171,9 @@ func TestSmartBitOneIsAlwaysAnError(t *testing.T) {
 
 // TestSmartNoSMARTBlocksReportsNothing is Review Focus 1: valid JSON
 // without the blocks the metrics come from (a USB stick, a virtual disk)
-// is not a failure. The device reports only what it states, here nothing.
+// is not a failure of that device. The device reports only what it states,
+// here nothing; the host-level count still says it was found, as long as
+// another device has SMART data or is asleep.
 func TestSmartNoSMARTBlocksReportsNothing(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -176,14 +181,92 @@ func TestSmartNoSMARTBlocksReportsNothing(t *testing.T) {
 	}{
 		{"usb-no-smart.json", 4},
 		{"virtual-disk.json", 0},
-		{"standby.json", 0}, // a device block and nothing else
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFakeRunner(t, map[string]reply{"/dev/sdx": {stdout: fixture(t, tc.name), exit: tc.exit}})
-			obs, err := plugin(f).Collect(context.Background(), map[string]any{"devices": []string{"/dev/sdx"}})
-			if err != nil || len(obs) != 0 {
-				t.Fatalf("Collect = %+v, %v; want nothing and no error", obs, err)
+			f := newFakeRunner(t, map[string]reply{
+				"/dev/sdx": {stdout: fixture(t, tc.name), exit: tc.exit},
+				"/dev/sda": {stdout: fixture(t, "ata.json")},
+			})
+			obs, err := plugin(f).Collect(context.Background(), map[string]any{"devices": []string{"/dev/sdx", "/dev/sda"}})
+			if err != nil {
+				t.Fatalf("Collect error = %v", err)
 			}
+			if got := itemObs(obs, "/dev/sdx"); len(got) != 0 {
+				t.Fatalf("/dev/sdx reported %+v, want nothing", got)
+			}
+			deviceCount(t, obs, 2)
+		})
+	}
+}
+
+// TestSmartNoDeviceWithSMARTData: a virtual machine's disks (virtio-scsi
+// shows them as QEMU disks without SMART) answer with valid JSON and no
+// readings. Reporting nothing at all would leave the check silent, so
+// when no device has SMART data and none is asleep, smart.devices carries
+// the error instead of the count and nothing else is reported.
+func TestSmartNoDeviceWithSMARTData(t *testing.T) {
+	vmScan := []byte(`{"devices":[{"name":"/dev/sda","type":"scsi"},{"name":"/dev/sdb","type":"scsi"}]}`)
+	noData := []byte(`{"smartctl":{"exit_status":0},"device":{"name":"/dev/sdx","type":"sat"},"smart_support":{"available":true,"enabled":false}}`)
+	for _, tc := range []struct {
+		desc    string
+		params  map[string]any
+		replies map[string]reply
+	}{
+		{"virtio-scsi disks", nil, map[string]reply{
+			"scan":             {stdout: vmScan},
+			"/dev/sda -d scsi": {stdout: fixture(t, "virtual-disk.json")},
+			"/dev/sdb -d scsi": {stdout: fixture(t, "virtual-disk.json")},
+		}},
+		{"USB stick without SMART", map[string]any{"devices": []string{"/dev/sdx"}}, map[string]reply{
+			"/dev/sdx": {stdout: fixture(t, "usb-no-smart.json"), exit: 4},
+		}},
+		{"SMART disabled, no data blocks", map[string]any{"devices": []string{"/dev/sdx"}}, map[string]reply{
+			"/dev/sdx": {stdout: noData},
+		}},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			obs, err := plugin(newFakeRunner(t, tc.replies)).Collect(context.Background(), tc.params)
+			if err == nil || !strings.Contains(err.Error(), "no device with SMART data") {
+				t.Fatalf("Collect error = %v, want no device with SMART data", err)
+			}
+			if len(obs) != 1 {
+				t.Fatalf("observations = %+v, want only the error on smart.devices", obs)
+			}
+			hostErr(t, obs, "no device with SMART data")
+			encodesAsCheckResult(t, obs[0])
+		})
+	}
+}
+
+// TestSmartStandbyIsNotNoSMART: a disk in standby answers without a
+// smart_support block (smartctl stops before identifying it); a disk
+// without SMART answers with one that says unavailable. Asleep is not a
+// fault, so a host whose disks all sleep reports the count and nothing
+// else, and one sleeping disk is enough to keep the error away.
+func TestSmartStandbyIsNotNoSMART(t *testing.T) {
+	for _, tc := range []struct {
+		desc    string
+		replies map[string]reply
+		want    float64
+	}{
+		{"all asleep", map[string]reply{
+			"/dev/sda": {stdout: fixture(t, "standby.json")},
+			"/dev/sdb": {stdout: fixture(t, "standby.json")},
+		}, 2},
+		{"asleep and virtual", map[string]reply{
+			"/dev/sda": {stdout: fixture(t, "standby.json")},
+			"/dev/sdb": {stdout: fixture(t, "virtual-disk.json")},
+		}, 2},
+	} {
+		t.Run(tc.desc, func(t *testing.T) {
+			obs, err := plugin(newFakeRunner(t, tc.replies)).Collect(context.Background(), map[string]any{"devices": []string{"/dev/sda", "/dev/sdb"}})
+			if err != nil {
+				t.Fatalf("Collect error = %v", err)
+			}
+			if len(obs) != 1 {
+				t.Fatalf("observations = %+v, want only smart.devices", obs)
+			}
+			deviceCount(t, obs, tc.want)
 		})
 	}
 }
@@ -203,9 +286,10 @@ func TestSmartPartialReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Collect error = %v", err)
 	}
-	if len(obs) != 3 {
+	if len(itemObs(obs, "/dev/sdx")) != 3 {
 		t.Fatalf("got %+v, want temperature, pending sectors and media errors only", obs)
 	}
+	deviceCount(t, obs, 1)
 	for metric, want := range map[string]float64{
 		"smart.temperature_celsius": 29,
 		"smart.pending_sectors":     4,
@@ -249,7 +333,7 @@ func TestSmartWrongFieldTypeIsAdvisory(t *testing.T) {
 	if err == nil {
 		t.Fatal("Collect error = nil, want the type mismatch named")
 	}
-	if len(obs) != 1 || value(t, obs, "/dev/sdx", "smart.temperature_celsius") != 31 {
+	if len(itemObs(obs, "/dev/sdx")) != 1 || value(t, obs, "/dev/sdx", "smart.temperature_celsius") != 31 {
 		t.Fatalf("observations = %+v, want only the temperature", obs)
 	}
 }
@@ -289,6 +373,7 @@ func TestSmartDeviceFailures(t *testing.T) {
 			if got := value(t, obs, "/dev/sda", "smart.passed"); got != 1 {
 				t.Errorf("/dev/sda passed = %v", got)
 			}
+			deviceCount(t, obs, 2)
 			for _, o := range obs {
 				encodesAsCheckResult(t, o)
 			}
@@ -315,7 +400,7 @@ func TestSmartMissingSmartctl(t *testing.T) {
 	if err == nil {
 		t.Fatal("Collect error = nil")
 	}
-	if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "smart.passed" || obs[0].Err != "smartctl not found; install smartmontools" {
+	if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "smart.devices" || obs[0].Err != "smartctl not found; install smartmontools" {
 		t.Fatalf("observations = %+v, want one install hint on item \"\"", obs)
 	}
 }
@@ -340,7 +425,7 @@ func TestSmartScanFailures(t *testing.T) {
 			if err == nil {
 				t.Fatal("Collect error = nil")
 			}
-			if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "smart.passed" || !strings.Contains(obs[0].Err, tc.want) {
+			if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "smart.devices" || !strings.Contains(obs[0].Err, tc.want) {
 				t.Fatalf("observations = %+v, want one error on item \"\" containing %q", obs, tc.want)
 			}
 		})
@@ -370,6 +455,7 @@ func TestSmartDevicesParamSkipsScan(t *testing.T) {
 	if got := items(obs); !slices.Equal(got, []string{"/dev/nvme0", "/dev/sda"}) {
 		t.Errorf("items = %q", got)
 	}
+	deviceCount(t, obs, 2)
 }
 
 func TestSmartBadParams(t *testing.T) {
@@ -422,6 +508,7 @@ func TestSmartOddDeviceNames(t *testing.T) {
 	if got := items(obs); !slices.Equal(got, want) {
 		t.Errorf("items = %q, want %q", got, want)
 	}
+	deviceCount(t, obs, float64(len(good)))
 	for _, o := range obs {
 		encodesAsCheckResult(t, o)
 	}
@@ -566,7 +653,7 @@ func TestSmartEveryDeviceRefused(t *testing.T) {
 			if err == nil {
 				t.Fatal("Collect error = nil")
 			}
-			if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "smart.passed" {
+			if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "smart.devices" {
 				t.Fatalf("observations = %+v, want one error on item \"\"", obs)
 			}
 			for _, w := range tc.want {
@@ -655,6 +742,7 @@ func TestSmartCollectionDeadline(t *testing.T) {
 			t.Errorf("%s: %+v, want one error", d, got)
 		}
 	}
+	hostErr(t, obs, "no device with SMART data")
 }
 
 // TestSmartRunnerIgnoringTheDeadline: even a runner that does not return
@@ -703,3 +791,15 @@ func TestSmartCallerCancels(t *testing.T) {
 }
 
 var _ checks.Plugin = smartPlugin{}
+
+// TestSmartDevicesCountsOnlyQueriedDevices: smart.devices counts the
+// devices found or configured that were not refused; a refused entry is
+// named in the advisory error and not counted.
+func TestSmartDevicesCountsOnlyQueriedDevices(t *testing.T) {
+	f := newFakeRunner(t, map[string]reply{"/dev/sda": {stdout: fixture(t, "ata.json")}})
+	obs, err := plugin(f).Collect(context.Background(), map[string]any{"devices": []string{"-x", "/dev/sda"}})
+	if err == nil || !strings.Contains(err.Error(), `"-x"`) {
+		t.Fatalf("Collect error = %v, want the refused entry named", err)
+	}
+	deviceCount(t, obs, 1)
+}

@@ -9,7 +9,10 @@ var errNotFound = errors.New("smartctl not found; install smartmontools")
 
 // locator finds the smartctl binary. The agent runs it as root or SYSTEM,
 // so the standard install locations — absolute paths only root can write —
-// are tried before the agent's PATH, which is only the fallback.
+// are tried before the agent's PATH, which is only the fallback, and on
+// Windows is not used at all: a folder on the machine-wide PATH may be
+// writable by users who are not administrators, and SYSTEM would run
+// whatever they put there.
 type locator struct {
 	goos     string
 	getenv   func(string) string
@@ -39,12 +42,16 @@ func (l locator) candidates() []string {
 }
 
 // find returns the smartctl to run: the first standard location that holds
-// an executable, else the one on PATH. lookPath checks an absolute
-// candidate in place. Whatever is found must be an absolute path and, on
+// an executable, else (not on Windows) the one on PATH. lookPath checks an
+// absolute candidate in place. Whatever is found must be an absolute path and, on
 // Windows, an .exe — never a .bat, .cmd or .com that PATHEXT would also
 // accept, which would run through the command interpreter.
 func (l locator) find() (string, error) {
-	for _, name := range append(l.candidates(), "smartctl") {
+	names := l.candidates()
+	if l.goos != "windows" {
+		names = append(names, "smartctl")
+	}
+	for _, name := range names {
 		if p, err := l.lookPath(name); err == nil && l.acceptable(p) {
 			return p, nil
 		}

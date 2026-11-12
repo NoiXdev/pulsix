@@ -14,6 +14,16 @@
 // disks share one path), which is named "<path> [<type>]" (devices.go). A
 // disk in standby is left asleep and reports nothing that round.
 //
+// Item "" carries smart.devices on every collection that got as far as
+// querying: the number of devices found (or configured) and not refused.
+// Everything that concerns no single device is an error on that metric
+// instead, so the next good round replaces it: smartctl missing, the scan
+// failing or finding nothing, every device refused, and no device with
+// SMART data — every device answered without readings (a virtual
+// machine's disks, a USB stick) and none of them is asleep. In that last
+// case nothing else is reported either, apart from each failed device's
+// own error.
+//
 // Bounds: at most maxParallel devices are queried at once, each within
 // deviceTimeout, the whole collection within collectTimeout; a device
 // still running or not yet started when that ends gets an error. Output
@@ -129,18 +139,31 @@ func (p smartPlugin) Collect(ctx context.Context, params map[string]any) ([]chec
 		return nil, perr
 	}
 	var obs []checks.Observation
+	var someAnswer bool // a device had data or is asleep
 	for _, o := range outcomes {
 		obs = append(obs, o.obs...)
 		if o.err != nil {
 			errs = append(errs, o.err)
 		}
+		someAnswer = someAnswer || o.answer == answerData || o.answer == answerStandby
 	}
+	if !someAnswer {
+		err := errors.New("smart: no device with SMART data")
+		errs = append(errs, err)
+		obs = append(obs, checks.ErrObservation("", devicesMetric, err))
+		return obs, errors.Join(errs...)
+	}
+	obs = append(obs, checks.ValueObservation("", devicesMetric, float64(len(devs))))
 	return obs, errors.Join(errs...)
 }
 
+// devicesMetric is the host-level count on item "" that also carries every
+// failure concerning no single device.
+const devicesMetric = "smart.devices"
+
 // hostError reports a failure that concerns no single device on item "".
 func hostError(err error) ([]checks.Observation, error) {
-	return []checks.Observation{checks.ErrObservation("", "smart.passed", err)}, err
+	return []checks.Observation{checks.ErrObservation("", devicesMetric, err)}, err
 }
 
 // scan lists the devices with `smartctl --scan --json`.
@@ -155,8 +178,9 @@ func scan(ctx context.Context, run runner, deviceTimeout, collectTimeout time.Du
 }
 
 type outcome struct {
-	obs []checks.Observation
-	err error
+	obs    []checks.Observation
+	answer answer
+	err    error
 }
 
 // queryAll queries devs with at most maxParallel runs at once and returns
@@ -180,8 +204,8 @@ func queryAll(ctx context.Context, run runner, devs []device, deviceTimeout, col
 			}
 			go func() {
 				defer func() { <-sem }()
-				obs, err := query(ctx, run, d, deviceTimeout, collectTimeout)
-				results <- indexed{i, outcome{obs, err}}
+				obs, ans, err := query(ctx, run, d, deviceTimeout, collectTimeout)
+				results <- indexed{i, outcome{obs, ans, err}}
 			}()
 		}
 	}()
@@ -210,20 +234,20 @@ wait:
 	for i, d := range devs {
 		if !answered[i] {
 			err := fmt.Errorf("smart: %s: no answer within the check's %s time limit", d.item, collectTimeout)
-			out[i] = outcome{[]checks.Observation{checks.ErrObservation(d.item, "smart.passed", err)}, err}
+			out[i] = outcome{[]checks.Observation{checks.ErrObservation(d.item, "smart.passed", err)}, answerFailed, err}
 		}
 	}
 	return out
 }
 
 // query runs smartctl for one device within deviceTimeout.
-func query(ctx context.Context, run runner, d device, deviceTimeout, collectTimeout time.Duration) ([]checks.Observation, error) {
+func query(ctx context.Context, run runner, d device, deviceTimeout, collectTimeout time.Duration) ([]checks.Observation, answer, error) {
 	dctx, cancel := context.WithTimeout(ctx, deviceTimeout)
 	defer cancel()
 	res, err := run.Run(dctx, d.args())
 	if err != nil {
 		err = runError("smart: "+d.item, err, ctx, dctx, deviceTimeout, collectTimeout)
-		return []checks.Observation{checks.ErrObservation(d.item, "smart.passed", err)}, err
+		return []checks.Observation{checks.ErrObservation(d.item, "smart.passed", err)}, answerFailed, err
 	}
 	return interpret(d, res)
 }

@@ -145,10 +145,12 @@ func itemObs(obs []checks.Observation, item string) []checks.Observation {
 	return out
 }
 
+// items lists the device items reported, sorted; the host-level item ""
+// (smart.devices) is left out.
 func items(obs []checks.Observation) []string {
 	var out []string
 	for _, o := range obs {
-		if !slices.Contains(out, o.Item) {
+		if o.Item != "" && !slices.Contains(out, o.Item) {
 			out = append(out, o.Item)
 		}
 	}
@@ -166,6 +168,28 @@ func onlyErr(t *testing.T, obs []checks.Observation, item, want string) {
 	}
 	if !strings.Contains(got[0].Err, want) {
 		t.Fatalf("%s: error %q does not contain %q", item, got[0].Err, want)
+	}
+}
+
+// hostErr asserts that the only observation on item "" is an error on
+// smart.devices containing want.
+func hostErr(t *testing.T, obs []checks.Observation, want string) {
+	t.Helper()
+	got := itemObs(obs, "")
+	if len(got) != 1 || got[0].Metric != "smart.devices" || got[0].Err == "" || got[0].Value != nil {
+		t.Fatalf("item \"\": observations = %+v, want one error on smart.devices", got)
+	}
+	if !strings.Contains(got[0].Err, want) {
+		t.Fatalf("item \"\": error %q does not contain %q", got[0].Err, want)
+	}
+}
+
+// deviceCount asserts that item "" carries exactly smart.devices = want.
+func deviceCount(t *testing.T, obs []checks.Observation, want float64) {
+	t.Helper()
+	got := itemObs(obs, "")
+	if len(got) != 1 || got[0].Metric != "smart.devices" || got[0].Value == nil || *got[0].Value != want {
+		t.Fatalf("item \"\": observations = %+v, want smart.devices = %v", got, want)
 	}
 }
 
