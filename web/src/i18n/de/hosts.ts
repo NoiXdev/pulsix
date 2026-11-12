@@ -229,6 +229,10 @@ export const deHosts: Messages['hosts'] = {
     enrol: 'Agent registrieren',
     name: 'Name',
     revoked: 'Agent widerrufen',
+    secrets: 'Secrets',
+    secretsOk: (n: number) => `agent.yaml: ${n} ${n === 1 ? 'Secret' : 'Secrets'}`,
+    secretsAbsent: 'Keine agent.yaml',
+    secretsUnknown: 'Unbekannt – der Agent hat es noch nicht gemeldet (er ist älter als diese Version oder hat seit dem Verbinden noch keinen Heartbeat gesendet)',
   },
   inventory: {
     needsManaged: 'Inventargruppen setzen die Fähigkeit „Verwaltet“ voraus.',
@@ -283,6 +287,7 @@ export const deHosts: Messages['hosts'] = {
     every: (interval: string) => `alle ${interval}`,
     disabled: 'deaktiviert',
     noReading: 'Noch kein Messwert.',
+    missingSecret: (name: string) => `Das Secret ${name} ist in der agent.yaml auf diesem Host nicht definiert.`,
   },
   value: {
     sinceTitle: (age: string) => `Zustand eingetreten ${age}`,

@@ -231,6 +231,7 @@ export const enChecks = {
       notBlank: 'must not be blank',
       noControl: 'entries must not contain control characters',
       devicePath: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
+      secretName: 'must be 1 to 64 characters: letters, digits and . _ -',
       url: 'must be an http:// or https:// URL without a user name or password',
       dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
       server: 'must be an IP address, optionally with a port',

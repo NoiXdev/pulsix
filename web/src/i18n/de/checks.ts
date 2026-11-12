@@ -210,6 +210,7 @@ export const deChecks: Messages['checks'] = {
       notBlank: 'darf nicht leer sein',
       noControl: 'Einträge dürfen keine Steuerzeichen enthalten',
       devicePath: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
+      secretName: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       server: 'muss eine IP-Adresse sein, optional mit Port',

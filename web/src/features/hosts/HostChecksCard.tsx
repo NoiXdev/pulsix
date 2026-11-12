@@ -126,6 +126,11 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                   <span className="text-[11px] text-muted-foreground">{t.hosts.checks.every(intervalLabel(c.interval_seconds, t))}</span>
                   {!c.enabled && <Pill tone="unknown">{t.hosts.checks.disabled}</Pill>}
                 </div>
+                {c.missing_secret && (
+                  <p role="alert" className="mt-2 text-xs text-[var(--px-warn)]">
+                    {t.hosts.checks.missingSecret(c.missing_secret)}
+                  </p>
+                )}
                 {monitored && (
                   <ul className="mt-2 flex flex-col gap-1.5">
                     {(c.values ?? []).map((v) => (

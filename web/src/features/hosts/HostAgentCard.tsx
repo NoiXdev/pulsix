@@ -79,6 +79,24 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
               {expiryLabel(agent.cert_expires_at, now, t)}
             </span>
           </div>
+          <div className="flex flex-col gap-1">
+            <div className="flex justify-between gap-2">
+              <span className="text-muted-foreground">{t.hosts.agent.secrets}</span>
+              {agent.secrets_state === 'absent' && <span>{t.hosts.agent.secretsAbsent}</span>}
+              {agent.secrets_state === 'ok' && <span>{t.hosts.agent.secretsOk((agent.secret_names ?? []).length)}</span>}
+            </div>
+            {agent.secrets_state === 'ok' && (agent.secret_names ?? []).length > 0 && (
+              <ul className="flex flex-wrap justify-end gap-1">
+                {(agent.secret_names ?? []).map((n) => (
+                  <li key={n} className="font-mono text-[11px] text-muted-foreground">{n}</li>
+                ))}
+              </ul>
+            )}
+            {agent.secrets_state != null && agent.secrets_state !== 'ok' && agent.secrets_state !== 'absent' && (
+              <p role="alert" className="text-[var(--px-warn)]">{agent.secrets_state}</p>
+            )}
+            {agent.secrets_state == null && <p className="text-muted-foreground">{t.hosts.agent.secretsUnknown}</p>}
+          </div>
           {canWrite && (
             <div className="mt-1 flex justify-end">
               <Button type="button" variant="destructive" aria-label={t.agents.revokeLabel(agent.host_name)} onClick={() => void onRevoke()}>

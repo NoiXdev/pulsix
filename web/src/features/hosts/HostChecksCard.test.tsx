@@ -129,6 +129,20 @@ describe('HostChecksCard', () => {
     expect(row('nginx', 'nginx.service state').getByText('active')).toBeInTheDocument();
   });
 
+  it('warns on a check whose secret the agent did not report, and only on that one', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [check({ key: 'mysql', missing_secret: 'db-prod' }), check({ definition_id: 'd2', key: 'disk' })],
+      },
+    });
+    renderCard();
+    expect(await screen.findByRole('heading', { name: 'mysql' })).toBeInTheDocument();
+    expect(block('mysql').getByText('Secret db-prod is not defined in agent.yaml on this host.')).toBeInTheDocument();
+    expect(block('disk').queryByText(/is not defined in agent.yaml/)).not.toBeInTheDocument();
+  });
+
   it('offers a graph for numeric metrics only', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,

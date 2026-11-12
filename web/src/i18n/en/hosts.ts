@@ -230,6 +230,10 @@ export const enHosts = {
     enrol: 'Enrol agent',
     name: 'Name',
     revoked: 'Agent revoked',
+    secrets: 'Secrets',
+    secretsOk: (n: number) => `agent.yaml: ${n} ${n === 1 ? 'secret' : 'secrets'}`,
+    secretsAbsent: 'No agent.yaml',
+    secretsUnknown: 'Unknown — the agent has not reported it yet (it is older than this version, or has not sent a heartbeat since it connected)',
   },
   inventory: {
     needsManaged: 'Inventory groups need the Managed capability.',
@@ -281,6 +285,7 @@ export const enHosts = {
     every: (interval: string) => `every ${interval}`,
     disabled: 'disabled',
     noReading: 'No reading yet.',
+    missingSecret: (name: string) => `Secret ${name} is not defined in agent.yaml on this host.`,
   },
   value: {
     sinceTitle: (age: string) => `in this state since ${age}`,

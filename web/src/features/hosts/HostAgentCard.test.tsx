@@ -147,4 +147,42 @@ describe('HostAgentCard', () => {
     expect(await screen.findByText('online')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Enrol agent' })).not.toBeInTheDocument();
   });
+
+  describe('secrets report', () => {
+    const withSecrets = (over: Record<string, unknown>) =>
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/agent': {
+          agent: {
+            host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online',
+            last_seen: new Date().toISOString(), version: 'v0.3a', created_at: '', ...over,
+          },
+        },
+      });
+
+    it('lists the secret names when agent.yaml loaded', async () => {
+      withSecrets({ secrets_state: 'ok', secret_names: ['db', 'mysql-prod'] });
+      renderCard();
+      expect(await screen.findByText('agent.yaml: 2 secrets')).toBeInTheDocument();
+      expect(screen.getByText('db')).toBeInTheDocument();
+      expect(screen.getByText('mysql-prod')).toBeInTheDocument();
+    });
+
+    it('says when there is no agent.yaml', async () => {
+      withSecrets({ secrets_state: 'absent', secret_names: [] });
+      renderCard();
+      expect(await screen.findByText('No agent.yaml')).toBeInTheDocument();
+    });
+
+    it('warns with the error text when agent.yaml is broken', async () => {
+      withSecrets({ secrets_state: 'agent.yaml: line 3: bad indent', secret_names: [] });
+      renderCard();
+      expect(await screen.findByText('agent.yaml: line 3: bad indent')).toBeInTheDocument();
+    });
+
+    it('says it is unknown when the agent has not reported', async () => {
+      withSecrets({ secrets_state: null, secret_names: null });
+      renderCard();
+      expect(await screen.findByText(/Unknown — the agent has not reported it yet/)).toBeInTheDocument();
+    });
+  });
 });
