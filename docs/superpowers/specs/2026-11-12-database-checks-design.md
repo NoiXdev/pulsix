@@ -83,7 +83,7 @@ metric strands when a server changes role.
 | `pg.in_recovery` | numeric | 1 on a standby, 0 on a primary |
 | `pg.replication_lag_seconds` | numeric | standby: 0 when everything received is replayed, else now − last replayed transaction; primary: 0 |
 | `pg.replication_lag_bytes` | numeric | standby: received − replayed WAL; primary: 0 |
-| `pg.oldest_xact_seconds` | numeric | age of the oldest open transaction of any other backend; 0 when none |
+| `pg.oldest_xact_seconds` | numeric | age of the oldest open transaction of any other client backend, autovacuum and other workers not counted (changed during implementation); 0 when none |
 | `pg.database_size_bytes` | numeric | per database, item = database name |
 
 At most 256 databases are reported; the rest are named in the advisory
