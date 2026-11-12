@@ -12,6 +12,11 @@
 // the next free number). The "sensors" filter matches these final
 // names. The order is the platform's enumeration order, so a hardware change
 // that reorders sensors can move readings between the "#n" items.
+//
+// Item "" carries temp.sensors: the number of sensors reported this round,
+// after the filter, on every run that reported at least one. A run that
+// reported none puts "no temperature sensors found" on that metric
+// instead, so the next good run replaces the error with the count.
 package temperature
 
 import (
@@ -83,6 +88,7 @@ func (p temperaturePlugin) Collect(ctx context.Context, params map[string]any) (
 	}
 
 	var obs []checks.Observation
+	n := 0
 	for i, st := range disambiguate(stats) {
 		if st.name == "" {
 			errs = append(errs, fmt.Errorf("temperature: sensor %d has no key and cannot be reported", i))
@@ -99,6 +105,7 @@ func (p temperaturePlugin) Collect(ctx context.Context, params map[string]any) (
 			errs = append(errs, fmt.Errorf("temperature: sensor %q has no finite reading", st.name))
 			continue
 		}
+		n++
 		obs = append(obs, checks.ValueObservation(st.name, "temp.celsius", st.Temperature))
 		for _, lim := range []struct {
 			metric string
@@ -114,11 +121,12 @@ func (p temperaturePlugin) Collect(ctx context.Context, params map[string]any) (
 		}
 	}
 
-	if len(obs) == 0 {
-		msg := errors.New(noSensors)
-		errs = append(errs, msg)
-		return []checks.Observation{checks.ErrObservation("", "temp.celsius", errors.Join(errs...))}, errors.Join(errs...)
+	if n == 0 {
+		errs = append(errs, errors.New(noSensors))
+		err := errors.Join(errs...)
+		return []checks.Observation{checks.ErrObservation("", "temp.sensors", err)}, err
 	}
+	obs = append(obs, checks.ValueObservation("", "temp.sensors", float64(n)))
 	return obs, errors.Join(errs...)
 }
 

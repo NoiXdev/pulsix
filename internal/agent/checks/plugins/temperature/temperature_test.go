@@ -42,9 +42,10 @@ func TestAllSensorsWithLimits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
-	if len(obs) != 4 {
-		t.Fatalf("got %d observations, want 4: %+v", len(obs), obs)
+	if len(obs) != 5 {
+		t.Fatalf("got %d observations, want 5: %+v", len(obs), obs)
 	}
+	sensorCount(t, obs, 2)
 	if o := findObs(t, obs, "coretemp_core_0", "temp.celsius"); o.Value == nil || *o.Value != 54.5 {
 		t.Errorf("temp.celsius = %v", o.Value)
 	}
@@ -86,16 +87,18 @@ func TestSensorsFilter(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(obs) != 2 || hasObs(obs, "a", "temp.celsius") {
+			if len(obs) != 3 || hasObs(obs, "a", "temp.celsius") {
 				t.Fatalf("got %+v", obs)
 			}
+			sensorCount(t, obs, 2)
 		})
 	}
 	// Empty list means all.
 	obs, _ := collect(t, f, map[string]any{"sensors": []string{}})
-	if len(obs) != 3 {
+	if len(obs) != 4 {
 		t.Errorf("empty filter: %+v", obs)
 	}
+	sensorCount(t, obs, 3)
 }
 
 func TestFilterMatchesNothing(t *testing.T) {
@@ -104,8 +107,8 @@ func TestFilterMatchesNothing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no temperature sensors found") {
 		t.Fatalf("err = %v", err)
 	}
-	o := findObs(t, obs, "", "temp.celsius")
-	if o.Err == "" {
+	o := findObs(t, obs, "", "temp.sensors")
+	if o.Err == "" || len(obs) != 1 {
 		t.Errorf("want error observation: %+v", o)
 	}
 }
@@ -120,7 +123,7 @@ func TestNoSensors(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "no temperature sensors found") {
 				t.Fatalf("err = %v", err)
 			}
-			if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "temp.celsius" || obs[0].Err == "" {
+			if len(obs) != 1 || obs[0].Item != "" || obs[0].Metric != "temp.sensors" || obs[0].Err == "" {
 				t.Fatalf("obs = %+v", obs)
 			}
 		})
@@ -171,7 +174,7 @@ func TestDuplicateKeysAreDisambiguated(t *testing.T) {
 	}
 	// The filter matches the disambiguated names.
 	obs, _ = collect(t, f, map[string]any{"sensors": []string{"coretemp_core_0#2"}})
-	if len(obs) != 1 || *obs[0].Value != 60 {
+	if len(obs) != 2 || *findObs(t, obs, "coretemp_core_0#2", "temp.celsius").Value != 60 {
 		t.Errorf("filter on disambiguated name: %+v", obs)
 	}
 }
@@ -197,7 +200,7 @@ func TestUnreportableAndNonFiniteAreSkippedAndNamed(t *testing.T) {
 		t.Errorf("ok sensor missing: %+v", obs)
 	}
 	for _, o := range obs {
-		if o.Item == "bad\nname" || o.Item == "nan" || o.Item == "inf" || o.Item == "" {
+		if o.Item == "bad\nname" || o.Item == "nan" || o.Item == "inf" || (o.Item == "" && o.Metric != "temp.sensors") {
 			t.Errorf("unreportable item leaked: %+v", o)
 		}
 		if o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0)) {
@@ -210,11 +213,12 @@ func TestUnreportableAndNonFiniteAreSkippedAndNamed(t *testing.T) {
 	if hasObs(obs, "badhigh", "temp.high_celsius") {
 		t.Errorf("non-finite limit must be dropped")
 	}
+	sensorCount(t, obs, 2)
 }
 
 func TestOnlyUnreportableSensorsIsNoSensors(t *testing.T) {
 	obs, err := collect(t, fixtureSensors{stats: []sensors.TemperatureStat{{SensorKey: "nan", Temperature: math.NaN()}}}, nil)
-	if err == nil || !hasObs(obs, "", "temp.celsius") {
+	if err == nil || !hasObs(obs, "", "temp.sensors") || hasObs(obs, "", "temp.celsius") {
 		t.Fatalf("obs=%+v err=%v", obs, err)
 	}
 }
@@ -231,5 +235,25 @@ func TestCancelledContext(t *testing.T) {
 	cancel()
 	if _, err := (temperaturePlugin{Sensors: fixtureSensors{}}).Collect(ctx, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestSensorCountReplacesTheError: temp.sensors on item "" carries the
+// number of sensors reported on every good run and the "no temperature
+// sensors found" error otherwise, so the error is replaced by the next
+// good run instead of standing on a metric that is never sent again.
+func TestSensorCountReplacesTheError(t *testing.T) {
+	obs, err := collect(t, fixtureSensors{}, nil)
+	if err == nil {
+		t.Fatal("want error")
+	}
+	bad := findObs(t, obs, "", "temp.sensors")
+	obs, err = collect(t, fixtureSensors{stats: []sensors.TemperatureStat{{SensorKey: "a", Temperature: 40}}, err: errors.New("one unreadable")}, nil)
+	if err == nil {
+		t.Fatal("want the warning as an advisory error")
+	}
+	good := findObs(t, obs, "", "temp.sensors")
+	if bad.Item != good.Item || bad.Metric != good.Metric || bad.Err == "" || good.Value == nil || *good.Value != 1 {
+		t.Fatalf("bad = %+v, good = %+v", bad, good)
 	}
 }
