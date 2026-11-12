@@ -76,8 +76,8 @@ func (s *Scheduler) collect(ctx context.Context, plugin Plugin, params map[strin
 // error observation. The panic value and stack are dropped on purpose: a
 // plugin holding credentials may have them in either, and nothing here
 // logs or reports them. The recovery covers the plugin's own goroutine only:
-// goroutines a driver starts internally are not covered (they hold no field
-// values).
+// a panic in a goroutine a driver starts internally ends the agent, and the
+// runtime's panic output prints no field values.
 func collectSecret(ctx context.Context, sp SecretPlugin, params map[string]any, fields map[string]string) (obs []Observation) {
 	defer func() {
 		if recover() != nil {

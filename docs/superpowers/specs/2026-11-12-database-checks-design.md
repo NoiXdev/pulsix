@@ -92,7 +92,7 @@ observation on its item ("no privilege to read the size"). A database name
 the manager's item contract refuses (`checks.ReportableItem`) is skipped and
 named, as docker does.
 
-**mysql** (MySQL 8.0+, MariaDB 10.5+; older versions best effort)
+**mysql** (MySQL 8.0+, MariaDB 10.5.9+ (changed during implementation: the documented grant `REPLICA MONITOR` exists from 10.5.9); older versions best effort)
 
 | Metric | Kind | Value |
 |---|---|---|

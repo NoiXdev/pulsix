@@ -51,9 +51,10 @@ var errInvalidSettings = errors.New("invalid connection settings")
 // fields, never by formatting or parsing a DSN, so no value can inject an
 // option. No ReadTimeout or WriteTimeout is set: the driver would report one
 // as an invalid connection and hide that the server was too slow; the round
-// and per-statement contexts bound every wait instead. TLS is one of the driver's built-in names; no custom CA is
-// registered. The driver's logger is replaced by a silent one in this
-// configuration only: it would otherwise print server details to stderr.
+// and per-statement contexts bound every wait instead. TLS is one of the
+// driver's built-in names; no custom CA is registered. The driver's logger
+// is replaced by a silent one in this configuration only: it would
+// otherwise print server details to stderr.
 // AllowCleartextPasswords, AllowOldPasswords and AllowAllFiles stay at the
 // driver's default, false.
 func buildConfig(s connSettings) *mysql.Config {
