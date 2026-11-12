@@ -38,6 +38,7 @@ export const enAlerts = {
   closeReason: {
     resolved: 'resolved',
     stale: 'stale',
+    forgotten: 'forgotten',
   },
   row: {
     open: 'Open',
@@ -75,6 +76,7 @@ export const enAlerts = {
     unsnoozed: 'Snooze cancelled',
     closedStale: 'Closed — stale (its subject no longer exists)',
     closedResolved: 'Closed — resolved (the tuple is healthy again)',
+    closedForgotten: 'Closed — forgotten (the item stopped reporting and was forgotten)',
     escalatedTo: (position: number) => `Escalated to step ${position}`,
     escalated: 'Escalated',
     unknownEvent: 'Unknown event',

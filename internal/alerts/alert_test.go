@@ -59,6 +59,23 @@ func TestEventKindsMatchTheSchema(t *testing.T) {
 	}
 }
 
+// TestCloseReasonsMatchTheSchema pins the CloseReason constants to the
+// alerts.closed_reason CHECK list, the same way TestEventKindsMatchTheSchema
+// pins EventKind: 00085 widened 00049's two reasons by 'forgotten' (backlog
+// 3.12b), and the store marshals these values straight into the column.
+func TestCloseReasonsMatchTheSchema(t *testing.T) {
+	want := checkListIn(t, "../db/migrations/00085_alert_closed_reason_forgotten.sql", "alerts", "closed_reason")
+	got := []CloseReason{Resolved, Stale, Forgotten}
+	if len(got) != len(want) {
+		t.Fatalf("alerts.closed_reason lists %v, the constants are %v", want, got)
+	}
+	for i := range want {
+		if string(got[i]) != want[i] {
+			t.Errorf("close reason %d = %q, want %q (alerts.closed_reason)", i, got[i], want[i])
+		}
+	}
+}
+
 // assertKindsMatch checks that want — one table's own CHECK list, in
 // schema order — equals gotKinds exactly, and that ParseEventKind accepts
 // every literal in it. Factored out of TestEventKindsMatchTheSchema so

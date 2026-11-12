@@ -148,6 +148,12 @@ type Store interface {
 	// row no longer exists, across every organization, and reports how
 	// many it closed.
 	Sweep(ctx context.Context, now time.Time) (int, error)
+	// CloseForgotten closes, inside tx, every open tuple-scope alert of
+	// orgID/hostID's item (checkKey, item) — one per metric — with reason
+	// Forgotten at now, writing each one's 'closed' event, and reports how
+	// many it closed. tx is the forget's own (backlog 3.12b), so the
+	// closes commit with the item's deletes or not at all.
+	CloseForgotten(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item string, now time.Time) (int, error)
 
 	// GetAlert returns one alert by id, org-scoped, with its host's name
 	// (query-joined — see the ListAlerts SQL's own doc comment on why the

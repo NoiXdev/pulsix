@@ -39,13 +39,20 @@ type Subject struct {
 	CheckKey, Item, Metric string
 }
 
-// CloseReason is why an alert closed. The two literals match the alerts
-// table's own CHECK on closed_reason.
+// CloseReason is why an alert closed. The literals match the alerts
+// table's own CHECK on closed_reason (00049's two, widened by 00085), and
+// TestCloseReasonsMatchTheSchema holds them to it.
 type CloseReason string
 
 const (
 	Resolved CloseReason = "resolved"
 	Stale    CloseReason = "stale"
+	// Forgotten closes an alert whose item was forgotten (backlog 3.12b):
+	// it stopped reporting and its current values and rule state were
+	// removed. Not "resolved" — nothing says the problem was fixed — and
+	// not "stale", which is the sweep's "data stopped". Notification
+	// routes treat it like any other close: the same 'closed' event.
+	Forgotten CloseReason = "forgotten"
 )
 
 // Alert is one durable episode (design decision 1): opened once, closed

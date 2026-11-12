@@ -7,8 +7,8 @@ import type { AlertCloseReason, AlertNotificationHold, AlertTimelineEntry } from
 export interface AlertTimelineProps {
   entries: AlertTimelineEntry[];
   /** The alert's own `closed_reason` — `''` while the alert is still open.
-   * The only place a `closed` entry's wording can tell `resolved` and
-   * `stale` apart (alertTimeline.ts's own closedEventLabel): the event
+   * The only place a `closed` entry's wording can tell `resolved`,
+   * `stale` and `forgotten` apart (alertTimeline.ts's own closedEventLabel): the event
    * row itself carries no payload to read that off. */
   closedReason: AlertCloseReason | '';
   /** The alert's own `notification_hold` (v0.4c Task 11) — `''` or absent
@@ -41,9 +41,9 @@ export interface AlertTimelineProps {
  * there is nothing missing, there is simply nothing more to show.
  *
  * `closed` is the one event kind whose label depends on more than the
- * event itself: `closed_reason` ('resolved' vs 'stale') is read off the
- * alert, not the event row (see closedReason's own doc comment above) —
- * design decision 5's whole point is that those two must never collapse
+ * event itself: `closed_reason` ('resolved', 'stale' or 'forgotten') is
+ * read off the alert, not the event row (see closedReason's own doc
+ * comment above) — design decision 5's whole point is that they must never collapse
  * into one undifferentiated "closed".
  *
  * Above the timeline itself, one more line answers a question the

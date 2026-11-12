@@ -112,6 +112,11 @@ describe('AlertRow', () => {
     expect(marker.title.toLowerCase()).not.toContain('is still flapping');
   });
 
+  it('names a forgotten alert\'s reason on its closed pill', () => {
+    render(<AlertRow alert={{ ...open, closedAt: '2026-10-02T00:00:00Z', closedReason: 'forgotten' }} />);
+    expect(screen.getByTestId('alert-open')).toHaveTextContent(/closed · forgotten/i);
+  });
+
   it('reads "Closed" once closedAt is set, never "Open"', () => {
     render(<AlertRow alert={{ ...open, closedAt: '2026-10-02T00:00:00Z', closedReason: 'resolved' }} />);
     const openCell = screen.getByTestId('alert-open');

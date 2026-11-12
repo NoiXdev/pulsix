@@ -3246,7 +3246,7 @@ export interface components {
             /** Format: date-time */
             closed_at?: string;
             /** @enum {string} */
-            closed_reason?: "resolved" | "stale";
+            closed_reason?: "resolved" | "stale" | "forgotten";
             host_id: string;
             host_name: string;
             id: string;
@@ -3286,7 +3286,7 @@ export interface components {
             /** Format: date-time */
             closed_at?: string;
             /** @enum {string} */
-            closed_reason?: "resolved" | "stale";
+            closed_reason?: "resolved" | "stale" | "forgotten";
             host_id: string;
             host_name: string;
             id: string;

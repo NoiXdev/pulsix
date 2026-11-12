@@ -145,6 +145,21 @@ func (s *Service) Sweep(ctx context.Context, now time.Time) error {
 	return err
 }
 
+// CloseForgotten closes every open alert on one item — (hostID, checkKey,
+// item), all of its metrics — with reason Forgotten, on the caller's tx:
+// the forget's own (backlog 3.12b), which deletes the item's current
+// values and rule state in the same transaction. Each closed alert gets
+// the same 'closed' event Apply and Sweep write, so notification routes
+// treat it exactly as a resolve. It reports how many it closed; zero is
+// not an error (an item with no open alert is the common case).
+func (s *Service) CloseForgotten(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item string, now time.Time) (int, error) {
+	n, err := s.store.CloseForgotten(ctx, tx, orgID, hostID, checkKey, item, now)
+	if err != nil {
+		return 0, fmt.Errorf("close forgotten %s/%q on host %s: %w", checkKey, item, hostID, err)
+	}
+	return n, nil
+}
+
 // suppression computes Mute's verdict for one alert, fetching the windows
 // that cover its host right now — or, when cache is non-nil, reusing a
 // prior fetch for the same host within this same call. Get passes a nil

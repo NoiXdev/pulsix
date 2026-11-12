@@ -84,6 +84,56 @@ func (q *Queries) CloseAlert(ctx context.Context, arg CloseAlertParams) (int64, 
 	return result.RowsAffected(), nil
 }
 
+const closeForgottenAlerts = `-- name: CloseForgottenAlerts :execrows
+WITH forgotten AS (
+  UPDATE alerts a SET closed_at = $1, closed_reason = 'forgotten'
+  WHERE a.org_id = $2 AND a.host_id = $3 AND a.scope = 'tuple'
+    AND a.check_key = $4 AND a.item = $5 AND a.closed_at IS NULL
+  RETURNING id, org_id
+)
+INSERT INTO alert_events (org_id, alert_id, at, kind)
+SELECT org_id, id, $1, 'closed' FROM forgotten
+`
+
+type CloseForgottenAlertsParams struct {
+	Now      time.Time `json:"now"`
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+// Forgetting an item (backlog 3.12b) closes every open alert on it, one
+// per metric, with closed_reason 'forgotten' — inside the forget's own
+// transaction, the caller's, which also deletes the item's current values
+// and rule state. The shape is SweepStaleAlerts': the UPDATE and its
+// 'closed' events are one statement, so a closed row never lacks its
+// event, and the event is the very one the notification follower reads
+// for every other close — routes hear a forget exactly as a resolve.
+//
+// closed_at IS NULL is what keeps a forget from ending an episode a
+// second time when it races the evaluator closing the same alert: under
+// READ COMMITTED the UPDATE waits for the other transaction's row lock
+// and re-checks the predicate on the committed row, so the loser matches
+// nothing and writes no second event. scope = 'tuple' keeps a host-scope
+// alert — whose check_key and item are empty too — out of the whole-host
+// item "". The caller's transaction is unscoped like the evaluator's, so
+// org_id is named here rather than left to RLS. :execrows counts the
+// INSERT, one row per closed alert.
+func (q *Queries) CloseForgottenAlerts(ctx context.Context, arg CloseForgottenAlertsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, closeForgottenAlerts,
+		arg.Now,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getAlert = `-- name: GetAlert :one
 
 SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name

@@ -92,6 +92,10 @@ type fakeStore struct {
 	snoozeErr     error
 	unsnoozeCalls []uuid.UUID
 	unsnoozeErr   error
+
+	forgetCalls []forgetCall // service_forget_test.go
+	forgetN     int
+	forgetErr   error
 }
 
 func newFakeStore() *fakeStore {

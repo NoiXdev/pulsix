@@ -149,6 +149,13 @@ describe('timelineEntryLabel', () => {
     expect(label).not.toMatch(/resolved/i);
   });
 
+  it('a closed entry reads "forgotten" when the alert\'s item was forgotten, never "resolved" or "stale"', () => {
+    const label = timelineEntryLabel(closed('t'), 'forgotten', en).label;
+    expect(label).toMatch(/forgotten/i);
+    expect(label).not.toMatch(/resolved/i);
+    expect(label).not.toMatch(/stale/i);
+  });
+
   it('a closed entry reads "resolved" when the alert closed resolved, never mentioning "stale"', () => {
     const label = timelineEntryLabel(closed('t'), 'resolved', en).label;
     expect(label).toMatch(/resolved/i);

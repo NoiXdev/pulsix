@@ -60,6 +60,11 @@ function closedEventLabel(closedReason: AlertCloseReason | '', t: Messages): Tim
   if (closedReason === 'stale') {
     return { label: t.alerts.timeline.closedStale, tone: 'unknown' };
   }
+  // 'forgotten' (backlog 3.12b): the item stopped reporting and was
+  // forgotten — neither a fixed problem nor the sweep's "data stopped".
+  if (closedReason === 'forgotten') {
+    return { label: t.alerts.timeline.closedForgotten, tone: 'unknown' };
+  }
   // 'resolved', or — defensively, should the store ever write a `closed`
   // event without closed_reason set in the same statement, which
   // migration 00049's own "set together or not at all" rules out — reads

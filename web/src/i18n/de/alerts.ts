@@ -34,6 +34,7 @@ export const deAlerts: Messages['alerts'] = {
   closeReason: {
     resolved: 'behoben',
     stale: 'veraltet',
+    forgotten: 'vergessen',
   },
   row: {
     open: 'Offen',
@@ -71,6 +72,7 @@ export const deAlerts: Messages['alerts'] = {
     unsnoozed: 'Zurückstellung aufgehoben',
     closedStale: 'Geschlossen – veraltet (das überwachte Objekt existiert nicht mehr)',
     closedResolved: 'Geschlossen – behoben (das Tupel ist wieder in Ordnung)',
+    closedForgotten: 'Geschlossen – vergessen (das Element meldet nicht mehr und wurde vergessen)',
     escalatedTo: (position: number) => `Auf Stufe ${position} eskaliert`,
     escalated: 'Eskaliert',
     unknownEvent: 'Unbekanntes Ereignis',

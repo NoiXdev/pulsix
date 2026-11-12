@@ -224,6 +224,33 @@ WITH swept AS (
 INSERT INTO alert_events (org_id, alert_id, at, kind)
 SELECT org_id, id, @now, 'closed' FROM swept;
 
+-- name: CloseForgottenAlerts :execrows
+-- Forgetting an item (backlog 3.12b) closes every open alert on it, one
+-- per metric, with closed_reason 'forgotten' — inside the forget's own
+-- transaction, the caller's, which also deletes the item's current values
+-- and rule state. The shape is SweepStaleAlerts': the UPDATE and its
+-- 'closed' events are one statement, so a closed row never lacks its
+-- event, and the event is the very one the notification follower reads
+-- for every other close — routes hear a forget exactly as a resolve.
+--
+-- closed_at IS NULL is what keeps a forget from ending an episode a
+-- second time when it races the evaluator closing the same alert: under
+-- READ COMMITTED the UPDATE waits for the other transaction's row lock
+-- and re-checks the predicate on the committed row, so the loser matches
+-- nothing and writes no second event. scope = 'tuple' keeps a host-scope
+-- alert — whose check_key and item are empty too — out of the whole-host
+-- item "". The caller's transaction is unscoped like the evaluator's, so
+-- org_id is named here rather than left to RLS. :execrows counts the
+-- INSERT, one row per closed alert.
+WITH forgotten AS (
+  UPDATE alerts a SET closed_at = @now, closed_reason = 'forgotten'
+  WHERE a.org_id = @org_id AND a.host_id = @host_id AND a.scope = 'tuple'
+    AND a.check_key = @check_key AND a.item = @item AND a.closed_at IS NULL
+  RETURNING id, org_id
+)
+INSERT INTO alert_events (org_id, alert_id, at, kind)
+SELECT org_id, id, @now, 'closed' FROM forgotten;
+
 -- Task 6, spec docs/superpowers/specs/2026-10-06-v0.4a-alerts-design.md,
 -- "Suppression": the read and operator-action statements alerts.Service
 -- issues directly on the bare pool (never the evaluator's tx above) —

@@ -49,7 +49,7 @@ type AlertDTO struct {
 	Peak     string    `json:"peak_severity" enum:"warn,crit,unknown"`
 
 	ClosedAt     *time.Time `json:"closed_at,omitempty"`
-	ClosedReason string     `json:"closed_reason,omitempty" enum:"resolved,stale"`
+	ClosedReason string     `json:"closed_reason,omitempty" enum:"resolved,stale,forgotten"`
 
 	AckAt       *time.Time `json:"ack_at,omitempty"`
 	AckBy       string     `json:"ack_by,omitempty"`

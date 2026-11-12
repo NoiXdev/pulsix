@@ -189,6 +189,20 @@ func (s *SQLStore) close(ctx context.Context, q *gen.Queries, orgID uuid.UUID, a
 	return q.InsertAlertEvent(ctx, gen.InsertAlertEventParams{OrgID: orgID, AlertID: a.AlertID, At: a.At, Kind: eventClosed})
 }
 
+// CloseForgotten implements Store. Like OpenForHost and Execute it runs
+// on the caller's transaction, never its own; the statement itself
+// (queries/alerts.sql's CloseForgottenAlerts) closes the rows and writes
+// their 'closed' events together, as SweepStaleAlerts does.
+func (s *SQLStore) CloseForgotten(ctx context.Context, tx pgx.Tx, orgID, hostID uuid.UUID, checkKey, item string, now time.Time) (int, error) {
+	n, err := gen.New(tx).CloseForgottenAlerts(ctx, gen.CloseForgottenAlertsParams{
+		Now: now, OrgID: orgID, HostID: hostID, CheckKey: checkKey, Item: item,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("close forgotten alerts: %w", err)
+	}
+	return int(n), nil
+}
+
 // Sweep implements Store. It runs in its own transaction on the bare
 // pool — never the pgx.Tx OpenForHost and Execute take — because it is
 // not scoped to one host or one organization (design doc "The sweep"): it
