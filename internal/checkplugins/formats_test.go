@@ -41,23 +41,21 @@ func TestFormatVectors(t *testing.T) {
 	}
 }
 
-// TestFormatVectorsCoverEveryFormat: every format a descriptor uses has at
-// least one accepted and one refused vector, and no vector names a format
-// no descriptor uses (a stale row would test nothing the SPA renders).
+// TestFormatVectorsCoverEveryFormat: every format a validator knows has at
+// least one accepted and one refused vector — the SPA's parity test asserts
+// a TypeScript twin for every format the file names, so this is what makes
+// a new format need one — and no vector names a format Formats does not
+// list (a stale row would test nothing).
 func TestFormatVectorsCoverEveryFormat(t *testing.T) {
-	used := map[checkplugins.Format]bool{}
-	for _, d := range checkplugins.All() {
-		for _, p := range d.Params {
-			if p.Format != "" {
-				used[p.Format] = true
-			}
-		}
+	known := map[checkplugins.Format]bool{}
+	for _, f := range checkplugins.Formats() {
+		known[f] = true
 	}
 	type seen struct{ valid, invalid bool }
 	covered := map[checkplugins.Format]*seen{}
 	for _, v := range readFormatVectors(t) {
-		if !used[v.Format] {
-			t.Errorf("vector %q names format %q, which no descriptor uses", v.Input, v.Format)
+		if !known[v.Format] {
+			t.Errorf("vector %q names format %q, which Formats does not list", v.Input, v.Format)
 			continue
 		}
 		if covered[v.Format] == nil {
@@ -69,9 +67,38 @@ func TestFormatVectorsCoverEveryFormat(t *testing.T) {
 			covered[v.Format].invalid = true
 		}
 	}
-	for f := range used {
+	for f := range known {
 		if c := covered[f]; c == nil || !c.valid || !c.invalid {
 			t.Errorf("format %q needs at least one valid and one invalid vector, got %+v", f, c)
+		}
+	}
+}
+
+// TestFormatsAreExactlyTheUsedOnes: Formats lists every format a
+// descriptor uses, and only those — a format no parameter names would be a
+// validator, a TypeScript twin and an API phrase kept for nothing.
+func TestFormatsAreExactlyTheUsedOnes(t *testing.T) {
+	used := map[checkplugins.Format]bool{}
+	for _, d := range checkplugins.All() {
+		for _, p := range d.Params {
+			if p.Format != "" {
+				used[p.Format] = true
+			}
+		}
+	}
+	listed := map[checkplugins.Format]bool{}
+	for _, f := range checkplugins.Formats() {
+		if listed[f] {
+			t.Errorf("Formats lists %q twice", f)
+		}
+		listed[f] = true
+		if !used[f] {
+			t.Errorf("Formats lists %q, which no descriptor uses", f)
+		}
+	}
+	for f := range used {
+		if !listed[f] {
+			t.Errorf("a descriptor uses format %q, which Formats does not list", f)
 		}
 	}
 }

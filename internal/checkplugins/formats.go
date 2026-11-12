@@ -40,6 +40,16 @@ const (
 	FormatDockerSocket Format = "dockerSocket"
 )
 
+// Formats returns every format a validator knows, in declaration order.
+// Tests pin that each one has a vector in testdata/formats.json (and so a
+// TypeScript twin) and a phrase in the API's params doc.
+func Formats() []Format {
+	return []Format{
+		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL,
+		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
+	}
+}
+
 // Valid reports whether s passes the format. An unknown format accepts
 // nothing.
 func (f Format) Valid(s string) bool { return f.problem(s) == "" }

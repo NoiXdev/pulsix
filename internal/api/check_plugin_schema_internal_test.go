@@ -140,3 +140,17 @@ func TestCheckPluginSchemaEnumsCoverTheDescriptors(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryCheckFormatHasAPhrase: the params doc says in words what each
+// format accepts; a format without a phrase would fall back to its bare
+// name ("format x") in the API document.
+func TestEveryCheckFormatHasAPhrase(t *testing.T) {
+	for _, f := range checkplugins.Formats() {
+		if checkFormatPhrases[f] == "" {
+			t.Errorf("format %q has no phrase in checkFormatPhrases", f)
+		}
+	}
+	if len(checkFormatPhrases) != len(checkplugins.Formats()) {
+		t.Errorf("checkFormatPhrases has %d entries, checkplugins.Formats() %d", len(checkFormatPhrases), len(checkplugins.Formats()))
+	}
+}

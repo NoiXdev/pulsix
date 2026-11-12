@@ -1,0 +1,572 @@
+{
+  "plugins": [
+    {
+      "name": "cpu",
+      "runs": "agent",
+      "params": [],
+      "metrics": [
+        {
+          "name": "cpu.used_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "cpu.load1",
+          "kind": "numeric"
+        },
+        {
+          "name": "cpu.load5",
+          "kind": "numeric"
+        },
+        {
+          "name": "cpu.load15",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "memory",
+      "runs": "agent",
+      "params": [],
+      "metrics": [
+        {
+          "name": "mem.used_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "mem.available_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "swap.used_pct",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "disk",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "mounts",
+          "type": "list",
+          "format": "notBlank"
+        }
+      ],
+      "item_param": "mounts",
+      "metrics": [
+        {
+          "name": "disk.used_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "disk.free_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "disk.inodes_used_pct",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "service",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "units",
+          "type": "list",
+          "required": true,
+          "non_empty": true,
+          "format": "notBlank"
+        }
+      ],
+      "item_param": "units",
+      "metrics": [
+        {
+          "name": "service.state",
+          "kind": "discrete"
+        }
+      ]
+    },
+    {
+      "name": "network",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "interfaces",
+          "type": "list",
+          "format": "notBlank"
+        }
+      ],
+      "item_param": "interfaces",
+      "metrics": [
+        {
+          "name": "net.rx_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "net.tx_bytes_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "net.rx_errors_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "net.tx_errors_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "net.rx_drops_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "net.tx_drops_per_s",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "uptime",
+      "runs": "agent",
+      "params": [],
+      "metrics": [
+        {
+          "name": "uptime.seconds",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "docker",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "selection",
+          "type": "enum",
+          "default": "all",
+          "options": [
+            "all",
+            "labeled"
+          ]
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "default": "pulsix.monitor=true",
+          "format": "dockerLabel"
+        },
+        {
+          "name": "socket",
+          "type": "string",
+          "default": "/var/run/docker.sock",
+          "max_bytes": 255,
+          "format": "dockerSocket"
+        }
+      ],
+      "metrics": [
+        {
+          "name": "docker.state",
+          "kind": "discrete"
+        },
+        {
+          "name": "docker.health",
+          "kind": "discrete"
+        },
+        {
+          "name": "docker.restart_count",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.exit_code",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.containers_running",
+          "kind": "numeric"
+        },
+        {
+          "name": "docker.containers_total",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "temperature",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "sensors",
+          "type": "list",
+          "max_entries": 64,
+          "max_bytes": 255,
+          "format": "noControl"
+        }
+      ],
+      "item_param": "sensors",
+      "host_item_always_asked": true,
+      "metrics": [
+        {
+          "name": "temp.celsius",
+          "kind": "numeric"
+        },
+        {
+          "name": "temp.high_celsius",
+          "kind": "numeric"
+        },
+        {
+          "name": "temp.critical_celsius",
+          "kind": "numeric"
+        },
+        {
+          "name": "temp.sensors",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "smart",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "devices",
+          "type": "list",
+          "max_entries": 64,
+          "max_bytes": 255,
+          "format": "devicePath"
+        }
+      ],
+      "item_param": "devices",
+      "host_item_always_asked": true,
+      "metrics": [
+        {
+          "name": "smart.devices",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.passed",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.temperature_celsius",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.power_on_hours",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.reallocated_sectors",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.pending_sectors",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.offline_uncorrectable",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.nvme_percentage_used",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.nvme_available_spare_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "smart.nvme_media_errors",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "raid",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "arrays",
+          "type": "list",
+          "max_entries": 64,
+          "max_bytes": 255,
+          "format": "noControl"
+        }
+      ],
+      "item_param": "arrays",
+      "host_item_always_asked": true,
+      "metrics": [
+        {
+          "name": "raid.state",
+          "kind": "discrete"
+        },
+        {
+          "name": "raid.devices_total",
+          "kind": "numeric"
+        },
+        {
+          "name": "raid.devices_active",
+          "kind": "numeric"
+        },
+        {
+          "name": "raid.devices_failed",
+          "kind": "numeric"
+        },
+        {
+          "name": "raid.sync_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "raid.arrays",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "icmp",
+      "runs": "server",
+      "params": [
+        {
+          "name": "count",
+          "type": "integer",
+          "default": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "timeout_s",
+          "type": "integer",
+          "default": 5,
+          "min": 1,
+          "max": 30
+        }
+      ],
+      "metrics": [
+        {
+          "name": "icmp.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "icmp.loss_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "icmp.rtt_ms",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "tcp",
+      "runs": "server",
+      "params": [
+        {
+          "name": "port",
+          "type": "integer",
+          "required": true,
+          "min": 1,
+          "max": 65535
+        },
+        {
+          "name": "send",
+          "type": "string",
+          "max_bytes": 500
+        },
+        {
+          "name": "expect",
+          "type": "string",
+          "max_bytes": 500,
+          "non_empty": true
+        },
+        {
+          "name": "timeout_s",
+          "type": "integer",
+          "default": 5,
+          "min": 1,
+          "max": 30
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tcp.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "tcp.connect_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "tcp.banner_match",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "http",
+      "runs": "server",
+      "params": [
+        {
+          "name": "url",
+          "type": "string",
+          "required": true,
+          "example": "https://{address}/",
+          "max_bytes": 500,
+          "format": "url"
+        },
+        {
+          "name": "method",
+          "type": "enum",
+          "default": "GET",
+          "options": [
+            "GET",
+            "HEAD"
+          ]
+        },
+        {
+          "name": "body_contains",
+          "type": "string",
+          "max_bytes": 500,
+          "non_empty": true
+        },
+        {
+          "name": "timeout_s",
+          "type": "integer",
+          "default": 10,
+          "min": 1,
+          "max": 60
+        },
+        {
+          "name": "follow_redirects",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "verify_tls",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "metrics": [
+        {
+          "name": "http.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.status_code",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.response_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.body_match",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "tls",
+      "runs": "server",
+      "params": [
+        {
+          "name": "port",
+          "type": "integer",
+          "default": 443,
+          "min": 1,
+          "max": 65535
+        },
+        {
+          "name": "server_name",
+          "type": "string",
+          "max_bytes": 500,
+          "format": "notBlank"
+        },
+        {
+          "name": "timeout_s",
+          "type": "integer",
+          "default": 10,
+          "min": 1,
+          "max": 30
+        }
+      ],
+      "metrics": [
+        {
+          "name": "tls.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "tls.handshake_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "tls.cert_valid",
+          "kind": "numeric"
+        },
+        {
+          "name": "tls.cert_expiry_days",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
+      "name": "dns",
+      "runs": "server",
+      "params": [
+        {
+          "name": "name",
+          "type": "string",
+          "default": "{address}",
+          "max_bytes": 500,
+          "format": "dnsName"
+        },
+        {
+          "name": "type",
+          "type": "enum",
+          "default": "A",
+          "options": [
+            "A",
+            "AAAA",
+            "CNAME",
+            "MX",
+            "TXT",
+            "NS"
+          ]
+        },
+        {
+          "name": "server",
+          "type": "string",
+          "max_bytes": 500,
+          "format": "server"
+        },
+        {
+          "name": "expect",
+          "type": "string",
+          "max_bytes": 500,
+          "non_empty": true
+        },
+        {
+          "name": "timeout_s",
+          "type": "integer",
+          "default": 5,
+          "min": 1,
+          "max": 30
+        }
+      ],
+      "metrics": [
+        {
+          "name": "dns.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "dns.resolve_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "dns.answer_match",
+          "kind": "numeric"
+        }
+      ]
+    }
+  ]
+}
