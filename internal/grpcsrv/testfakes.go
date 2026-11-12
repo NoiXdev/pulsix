@@ -389,6 +389,9 @@ func (f *fakeAgentStore) Renew(ctx context.Context, a agents.Agent, fromSerial s
 }
 
 func (f *fakeAgentStore) Touch(context.Context, string, string) error { return nil }
+func (f *fakeAgentStore) Heartbeat(context.Context, string, string, agents.SecretsReport) error {
+	return nil
+}
 
 func (f *fakeAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }
 

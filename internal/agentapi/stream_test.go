@@ -147,6 +147,44 @@ func TestHeartbeatUpdatesLastSeen(t *testing.T) {
 	}
 }
 
+// TestHeartbeatStoresTheSecretsReport: a heartbeat's secret names and
+// file state reach the registry with its last_seen, bounded by the
+// agents service (an invalid name never lands); a heartbeat without a
+// state — an agent older than agent.yaml — is stored as unknown, not as
+// "no secrets"; the stream's open-touch stores no report at all.
+func TestHeartbeatStoresTheSecretsReport(t *testing.T) {
+	h := newHarness(t)
+	_, client := enrollAnAgent(t, h, "web-1")
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hb := range []*agentpb.Heartbeat{
+		{Version: "v1", SecretNames: []string{"mysql-prod", "bad name", "api"}, SecretsState: "ok"},
+		{Version: "v1"},
+	} {
+		if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: hb}}); err != nil {
+			t.Fatal(err)
+		}
+		if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
+			t.Fatalf("heartbeat ack = %+v, %v", ack, err)
+		}
+	}
+	reports := h.store.secretsReports()
+	if len(reports) != 2 {
+		t.Fatalf("reports = %+v, want one per heartbeat (none for the open-touch)", reports)
+	}
+	if r := reports[0]; !r.Known || r.State != "ok" || len(r.Names) != 2 || r.Names[0] != "api" || r.Names[1] != "mysql-prod" {
+		t.Fatalf("first report = %+v, want known, ok, [api mysql-prod]", r)
+	}
+	if r := reports[1]; r.Known || r.Names != nil {
+		t.Fatalf("report without a state = %+v, want unknown", r)
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestFactsFlowToSink: facts land on the sink with the authenticated
 // agent's org and host, and the message is acknowledged.
 func TestFactsFlowToSink(t *testing.T) {

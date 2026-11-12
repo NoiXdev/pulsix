@@ -79,6 +79,9 @@ type Agent struct {
 	// HostName is the host's name, read along with the agent so the
 	// Agents page can name its rows without resolving every host id.
 	HostName string
+	// Secrets is the agent's latest report on its local secrets file,
+	// written by Heartbeat; reads fill it, Register ignores it.
+	Secrets SecretsReport
 }
 
 // Registration is one enrollment's or renewal's identity as the registry
@@ -226,8 +229,14 @@ type Store interface {
 	// ErrNotFound. a carries the org, agent name, serial, validity window
 	// and key fingerprint; host and version come from the locked row.
 	AdoptCertificate(ctx context.Context, a Agent, allow func(AdoptionState) error) (AgentIdentity, error)
-	// Touch records a heartbeat by serial, org-unscoped.
+	// Touch records a heartbeat by serial, org-unscoped, leaving the
+	// stored secrets report as it is (the stream's open and ingest pacing
+	// carry none).
 	Touch(ctx context.Context, serial, version string) error
+	// Heartbeat is Touch for a heartbeat message: last_seen, version and
+	// the secrets report in one statement, org-unscoped. A report that is
+	// not Known stores "unknown" (NULL), replacing any earlier one.
+	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport) error
 	List(ctx context.Context, orgID uuid.UUID) ([]Agent, error)
 	// GetByHost is one host's active agent, org-scoped; ErrNotFound when
 	// the host runs none (never enrolled, or revoked).
@@ -522,6 +531,16 @@ func (s *Service) GetBySerial(ctx context.Context, serial string) (AgentIdentity
 // self-reported build.
 func (s *Service) Touch(ctx context.Context, serial, version string) error {
 	return s.store.Touch(ctx, serial, version)
+}
+
+// Heartbeat records a heartbeat message: last_seen becomes now, version
+// the agent's self-reported build, and the secret names and file state it
+// reported replace the stored ones — bounded first (secretsReportOf), so
+// whatever the agent sent, only well-formed names and one bounded line of
+// state are stored. An agent that sends no state (older than agent.yaml)
+// is stored as unknown.
+func (s *Service) Heartbeat(ctx context.Context, serial, version string, secretNames []string, secretsState string) error {
+	return s.store.Heartbeat(ctx, serial, version, secretsReportOf(secretNames, secretsState))
 }
 
 // List returns orgID's agents ordered by agent name.

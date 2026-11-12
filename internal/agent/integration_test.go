@@ -211,6 +211,12 @@ func (f *integAgentStore) Touch(_ context.Context, serial, version string) error
 	return nil
 }
 
+// Heartbeat records like Touch: this harness asserts that heartbeats
+// arrive, not what they report about the secrets file.
+func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string, _ agents.SecretsReport) error {
+	return f.Touch(ctx, serial, version)
+}
+
 func (f *integAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }
 
 // GetByHost belongs to the API's host card, which this harness does not

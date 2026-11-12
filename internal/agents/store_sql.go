@@ -226,6 +226,25 @@ func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 	return s.q.TouchAgentBySerial(ctx, gen.TouchAgentBySerialParams{Serial: serial, Version: version})
 }
 
+// Heartbeat writes last_seen, version and the secrets report in one
+// statement. An unknown report writes NULL to both columns; a known one
+// writes its names as a (possibly empty, never NULL) array.
+func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport) error {
+	p := gen.RecordAgentHeartbeatParams{Serial: serial, Version: version}
+	if secrets.Known {
+		names := secrets.Names
+		if names == nil {
+			names = []string{}
+		}
+		state := secrets.State
+		p.SecretNames, p.SecretsState = names, &state
+	}
+	if err := s.q.RecordAgentHeartbeat(ctx, p); err != nil {
+		return fmt.Errorf("record agent heartbeat: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 	rows, err := s.q.ListHostAgents(ctx, orgID)
 	if err != nil {
@@ -250,7 +269,22 @@ func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) 
 		t := certNotAfter.Time
 		a.CertNotAfter = &t
 	}
+	a.Secrets = secretsFromRow(h.SecretNames, h.SecretsState)
 	return a
+}
+
+// secretsFromRow reads the two report columns: the state decides whether
+// there is a report at all (Heartbeat writes both or neither), and a known
+// report's names are never nil — the GUI tells "none" from "unknown" by
+// that.
+func secretsFromRow(names []string, state *string) SecretsReport {
+	if state == nil {
+		return SecretsReport{}
+	}
+	if names == nil {
+		names = []string{}
+	}
+	return SecretsReport{Known: true, Names: names, State: *state}
 }
 
 // GetByHost is one host's active agent, with its certificate's expiry.

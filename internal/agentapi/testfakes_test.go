@@ -120,7 +120,8 @@ type fakeAgentStore struct {
 	agentsR           []agents.Agent
 	certs             map[string]agents.AgentIdentity // serial → identity
 	revokedC          map[string]bool
-	touched           []string // "serial:version" per Touch call
+	touched           []string               // "serial:version" per Touch or Heartbeat call
+	reports           []agents.SecretsReport // per Heartbeat call
 	touchErr          error
 	lookupErr         error
 	revokeAfterLookup string
@@ -308,6 +309,30 @@ func (f *fakeAgentStore) Touch(_ context.Context, serial, version string) error 
 		}
 	}
 	return nil
+}
+
+// Heartbeat is Touch plus the secrets report, which it records and
+// stores on the agent row the way the SQL store does.
+func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, secrets agents.SecretsReport) error {
+	if err := f.Touch(ctx, serial, version); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reports = append(f.reports, secrets)
+	for i := range f.agentsR {
+		if f.agentsR[i].CertSerial == serial {
+			f.agentsR[i].Secrets = secrets
+		}
+	}
+	return nil
+}
+
+// secretsReports returns every Heartbeat call's report.
+func (f *fakeAgentStore) secretsReports() []agents.SecretsReport {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]agents.SecretsReport(nil), f.reports...)
 }
 
 func (f *fakeAgentStore) List(_ context.Context, orgID uuid.UUID) ([]agents.Agent, error) {

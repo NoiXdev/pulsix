@@ -316,6 +316,21 @@ func (f *fakeStore) Touch(_ context.Context, serial, version string) error {
 	return nil
 }
 
+func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets agents.SecretsReport) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.touched = append(f.touched, serial+":"+version)
+	for i := range f.agentsR {
+		if f.agentsR[i].CertSerial == serial {
+			now := time.Now()
+			f.agentsR[i].LastSeen = &now
+			f.agentsR[i].Version = version
+			f.agentsR[i].Secrets = secrets
+		}
+	}
+	return nil
+}
+
 func (f *fakeStore) List(_ context.Context, orgID uuid.UUID) ([]agents.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -61,18 +61,33 @@ ORDER BY h.agent_name;
 -- The active agent of a host: re-enrollment replaces the row in place
 -- (ON CONFLICT on the host primary key), so exactly one agent row exists
 -- per host at any time. agent_certificates carries the previous serials —
--- the service marks the old one revoked in the same transaction.
+-- the service marks the old one revoked in the same transaction. Like
+-- last_seen, the secrets report (00086) starts over: the new registration
+-- has not reported yet.
 INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES (sqlc.arg(host_id), sqlc.arg(org_id), sqlc.arg(agent_name), sqlc.arg(cert_serial), sqlc.arg(version))
 ON CONFLICT (host_id) DO UPDATE
 SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
-    version = EXCLUDED.version, last_seen = NULL, created_at = now()
+    version = EXCLUDED.version, last_seen = NULL, created_at = now(),
+    secret_names = NULL, secrets_state = NULL
 RETURNING *;
 
 -- name: TouchAgentBySerial :exec
 -- Org-unscoped heartbeat by serial: the gRPC stream has no org context
--- (the serial is the secret and is globally unique).
+-- (the serial is the secret and is globally unique). The stream's open and
+-- ingest pacing touch with this; they carry no secrets report, so the
+-- stored one stays.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version)
+WHERE cert_serial = sqlc.arg(serial);
+
+-- name: RecordAgentHeartbeat :exec
+-- A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
+-- last_seen, the build version and the agent's secrets report in one
+-- statement. Both report columns are NULL together for an agent that
+-- sends no report (older than agent.yaml), so a downgrade reads as
+-- unknown rather than keeping what a newer build said.
+UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
+  secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state)
 WHERE cert_serial = sqlc.arg(serial);
 
 -- name: DeleteHostAgent :execrows
