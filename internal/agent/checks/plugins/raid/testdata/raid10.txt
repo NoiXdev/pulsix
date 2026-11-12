@@ -1,0 +1,5 @@
+Personalities : [raid10]
+md4 : active raid10 sdd1[3] sdc1[2] sdb1[1] sda1[0]
+      2093056 blocks super 1.2 512K chunks 2 near-copies [4/4] [UUUU]
+
+unused devices: <none>

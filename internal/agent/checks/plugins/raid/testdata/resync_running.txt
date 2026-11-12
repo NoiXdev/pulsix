@@ -1,0 +1,6 @@
+Personalities : [raid1]
+md1 : active raid1 sdb2[1] sda2[0]
+      1048512 blocks super 1.2 [2/2] [UU]
+      [====>................]  resync = 25.5% (267264/1048512) finish=3.0min speed=43000K/sec
+
+unused devices: <none>

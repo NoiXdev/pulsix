@@ -1,0 +1,5 @@
+Personalities : [raid0]
+md0 : active raid0 sdb1[1](F) sda1[0]
+      2097152 blocks super 1.2 512k chunks
+
+unused devices: <none>
