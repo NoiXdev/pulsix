@@ -22,6 +22,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/agent/secrets"
 )
 
 // Environment variable names.
@@ -96,6 +98,10 @@ type Config struct {
 	CertPath string
 	KeyPath  string
 	MetaPath string
+	// SecretsPath is the configuration file holding the agent's named
+	// secrets (backlog 3.5): agent.yaml in DataDir; cmd/agent's --config
+	// flag replaces it. The file is optional.
+	SecretsPath string
 	// HeartbeatInterval is the AgentStream heartbeat cadence
 	// (PULSIX_HEARTBEAT_INTERVAL, default 30 s, clamped into
 	// [5 s, 10 min]).
@@ -169,6 +175,7 @@ func loadWith(env []string, hostname func() (string, error), goos, programData s
 	cfg.CertPath = filepath.Join(cfg.DataDir, certFileName)
 	cfg.KeyPath = filepath.Join(cfg.DataDir, keyFileName)
 	cfg.MetaPath = filepath.Join(cfg.DataDir, metaFileName)
+	cfg.SecretsPath = filepath.Join(cfg.DataDir, secrets.FileName)
 
 	cfg.HeartbeatInterval, err = clampedInterval(envHeartbeatInterval, vals[envHeartbeatInterval],
 		30*time.Second, minHeartbeatInterval, maxHeartbeatInterval)

@@ -73,6 +73,7 @@ func TestLoad(t *testing.T) {
 				CertPath:          filepath.Join(DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")), "agent.crt"),
 				KeyPath:           filepath.Join(DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")), "agent.key"),
 				MetaPath:          filepath.Join(DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")), "agent.json"),
+				SecretsPath:       filepath.Join(DefaultDataDir(runtime.GOOS, os.Getenv("ProgramData")), "agent.yaml"),
 			},
 		},
 		{
@@ -98,9 +99,10 @@ func TestLoad(t *testing.T) {
 				EnrollToken:       "pxa1.abc.def.ghi",
 				// filepath.Join, as Load does: on Windows the separators
 				// come out as backslashes.
-				CertPath: filepath.Join("/var/lib/pulsix-agent", "agent.crt"),
-				KeyPath:  filepath.Join("/var/lib/pulsix-agent", "agent.key"),
-				MetaPath: filepath.Join("/var/lib/pulsix-agent", "agent.json"),
+				CertPath:    filepath.Join("/var/lib/pulsix-agent", "agent.crt"),
+				KeyPath:     filepath.Join("/var/lib/pulsix-agent", "agent.key"),
+				MetaPath:    filepath.Join("/var/lib/pulsix-agent", "agent.json"),
+				SecretsPath: filepath.Join("/var/lib/pulsix-agent", "agent.yaml"),
 			},
 		},
 		{
@@ -212,6 +214,7 @@ func TestLoad(t *testing.T) {
 			pin(got.CertPath, tt.want.CertPath, "CertPath")
 			pin(got.KeyPath, tt.want.KeyPath, "KeyPath")
 			pin(got.MetaPath, tt.want.MetaPath, "MetaPath")
+			pin(got.SecretsPath, tt.want.SecretsPath, "SecretsPath")
 			if got.EnrollToken != tt.want.EnrollToken {
 				t.Errorf("EnrollToken = %q, want %q", got.EnrollToken, tt.want.EnrollToken)
 			}

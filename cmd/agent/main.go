@@ -21,6 +21,9 @@
 //	--env-file <path>  read KEY=VALUE configuration from a file; the process
 //	                   environment wins over the file
 //	--log-file <path>  write the log to a size-rotated file instead of stderr
+//	--config <path>    the configuration file holding the agent's named
+//	                   secrets (default: agent.yaml in the data directory;
+//	                   optional, see internal/agent/secrets)
 //
 // Exit codes: 2 on a configuration error (the operator must act — a bad
 // config value, a missing token where none is on disk, a refused
@@ -87,6 +90,7 @@ func runWithContext(ctx context.Context, args, env []string) int {
 	fs.SetOutput(io.Discard)
 	envFile := fs.String("env-file", "", "read configuration from this KEY=VALUE file")
 	logPath := fs.String("log-file", "", "write the log to this file instead of stderr")
+	configPath := fs.String("config", "", "read the agent's secrets from this file (default: agent.yaml in the data directory)")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintln(os.Stderr, "pulsix-agent:", err)
 		return 2
@@ -122,6 +126,9 @@ func runWithContext(ctx context.Context, args, env []string) int {
 		logger.Error("configuration error", "err", err)
 		return 2
 	}
+	if *configPath != "" {
+		cfg.SecretsPath = *configPath
+	}
 	cfg.Version = version
 	facts.AgentVersion = version
 
@@ -131,7 +138,7 @@ func runWithContext(ctx context.Context, args, env []string) int {
 // runAgent runs the loop until ctx ends and maps the outcome to the exit
 // code: 0 clean, 1 failure, 2 operator action needed.
 func runAgent(ctx context.Context, cfg agent.Config, logger *slog.Logger) int {
-	logger.Info("pulsix-agent starting", "manager", cfg.ManagerAddr, "data_dir", cfg.DataDir)
+	logger.Info("pulsix-agent starting", "manager", cfg.ManagerAddr, "data_dir", cfg.DataDir, "secrets_file", cfg.SecretsPath)
 	loop := agent.NewLoop(cfg, agent.NewDialer(cfg), collector{}, agent.WithLogger(logger))
 	if err := loop.Run(ctx); err != nil {
 		// Both enrollment sentinels carry the remediation ("create a new

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -60,5 +61,35 @@ func TestRunUnknownFlag(t *testing.T) {
 	}
 	if code := run([]string{"stray"}, nil); code != 2 {
 		t.Fatalf("stray arg: code = %d, want 2", code)
+	}
+}
+
+// TestRunConfigFlagNamesTheSecretsFile: the secrets file defaults to
+// agent.yaml in the data directory and --config replaces it. The context
+// is already cancelled: the agent stops right after it logs its start.
+func TestRunConfigFlagNamesTheSecretsFile(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := filepath.Join(dir, "data")
+	env := []string{"PULSIX_MANAGER_ADDR=manager.example:8444", "PULSIX_DATA_DIR=" + dataDir}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	defaultLog := filepath.Join(dir, "default.log")
+	runWithContext(ctx, []string{"--log-file", defaultLog}, env)
+	if got, want := readLog(t, defaultLog), filepath.Join(dataDir, "agent.yaml"); !strings.Contains(got, "secrets_file="+want) {
+		t.Fatalf("log = %q, want secrets_file=%s", got, want)
+	}
+
+	custom := filepath.Join(dir, "custom.yaml")
+	customLog := filepath.Join(dir, "custom.log")
+	runWithContext(ctx, []string{"--config", custom, "--log-file", customLog}, env)
+	if got := readLog(t, customLog); !strings.Contains(got, "secrets_file="+custom) {
+		t.Fatalf("log = %q, want secrets_file=%s", got, custom)
+	}
+}
+
+func TestRunConfigFlagNeedsAValue(t *testing.T) {
+	if code := run([]string{"--config"}, nil); code != 2 {
+		t.Fatalf("code = %d, want 2", code)
 	}
 }

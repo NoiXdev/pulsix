@@ -1,0 +1,234 @@
+package secrets
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Limits of the file format.
+const (
+	maxFileBytes  = 1 << 20 // the whole file, refused before parsing
+	maxSecrets    = 256
+	maxValueBytes = 4096 // one field value
+)
+
+// namePattern is what a secret name and a field name may look like.
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+
+const (
+	badSecretName = "a secret name is 1 to 64 characters of A-Z a-z 0-9 _ . -"
+	badFieldName  = "a field name is 1 to 64 characters of A-Z a-z 0-9 _ . -"
+)
+
+// positionError is a problem at a place in the file. Its text names the
+// line and column and a fixed reason — never anything read from the file.
+type positionError struct {
+	line, column int
+	reason       string
+}
+
+func (e *positionError) Error() string {
+	return fmt.Sprintf("line %d, column %d: %s", e.line, e.column, e.reason)
+}
+
+func errAt(n *yaml.Node, reason string) error {
+	return &positionError{line: n.Line, column: n.Column, reason: reason}
+}
+
+// parse decodes the file format:
+//
+//	secrets:
+//	  <name>:
+//	    <field>: <value>
+//
+// strictly: the only top-level key is secrets; names and field names match
+// namePattern; duplicate keys, aliases, nulls, nested values and a second
+// document are refused. A scalar value is taken as written, so an unquoted
+// number or boolean (port: 5432, tls: true) is the text "5432" or "true".
+func parse(data []byte) (Set, error) {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var doc yaml.Node
+	if err := dec.Decode(&doc); err != nil {
+		if errors.Is(err, io.EOF) {
+			return Set{}, nil // empty, or comments only
+		}
+		return Set{}, syntaxError(err)
+	}
+	var extra yaml.Node
+	switch err := dec.Decode(&extra); {
+	case errors.Is(err, io.EOF):
+	case err != nil:
+		return Set{}, syntaxError(err)
+	default:
+		return Set{}, errAt(&extra, "the file holds more than one YAML document")
+	}
+	root := &doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return Set{}, nil
+		}
+		root = root.Content[0]
+	}
+	if isNull(root) {
+		return Set{}, nil
+	}
+	if root.Kind != yaml.MappingNode {
+		return Set{}, errAt(root, "the file must be a mapping with a secrets key")
+	}
+	var secrets *yaml.Node
+	seen := map[string]int{}
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		key := root.Content[i]
+		if key.Kind != yaml.ScalarNode || key.Value != "secrets" {
+			return Set{}, errAt(key, "unknown top-level key; only secrets is allowed")
+		}
+		if line, dup := seen[key.Value]; dup {
+			return Set{}, errAt(key, "secrets is already set at line "+strconv.Itoa(line))
+		}
+		seen[key.Value] = key.Line
+		secrets = root.Content[i+1]
+	}
+	if secrets == nil || isNull(secrets) {
+		return Set{}, nil
+	}
+	return parseSecrets(secrets)
+}
+
+// parseSecrets decodes the mapping under secrets.
+func parseSecrets(n *yaml.Node) (Set, error) {
+	if n.Kind != yaml.MappingNode {
+		return Set{}, errAt(n, "secrets must map secret names to their fields")
+	}
+	out := make(map[string]map[string]string, len(n.Content)/2)
+	lines := map[string]int{}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		key, val := n.Content[i], n.Content[i+1]
+		if err := checkKey(key, badSecretName); err != nil {
+			return Set{}, err
+		}
+		if line, dup := lines[key.Value]; dup {
+			return Set{}, errAt(key, "this secret is already defined at line "+strconv.Itoa(line))
+		}
+		lines[key.Value] = key.Line
+		if len(out) == maxSecrets {
+			return Set{}, errAt(key, "more than "+strconv.Itoa(maxSecrets)+" secrets")
+		}
+		fields, err := parseFields(key, val)
+		if err != nil {
+			return Set{}, err
+		}
+		out[key.Value] = fields
+	}
+	return Set{secrets: out}, nil
+}
+
+// parseFields decodes one secret's field mapping; name is the secret's name
+// node, where a missing mapping is reported.
+func parseFields(name, n *yaml.Node) (map[string]string, error) {
+	if n.Kind == yaml.AliasNode {
+		return nil, errAt(n, "aliases are not supported")
+	}
+	if n.Kind != yaml.MappingNode {
+		at := n
+		if isNull(n) {
+			at = name // an empty value sits after the key; point at the key
+		}
+		return nil, errAt(at, "a secret must map field names to values")
+	}
+	out := make(map[string]string, len(n.Content)/2)
+	lines := map[string]int{}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		key, val := n.Content[i], n.Content[i+1]
+		if err := checkKey(key, badFieldName); err != nil {
+			return nil, err
+		}
+		if line, dup := lines[key.Value]; dup {
+			return nil, errAt(key, "this field is already set at line "+strconv.Itoa(line))
+		}
+		lines[key.Value] = key.Line
+		switch {
+		case val.Kind == yaml.AliasNode:
+			return nil, errAt(val, "aliases are not supported")
+		case val.Kind != yaml.ScalarNode:
+			return nil, errAt(val, "a field value must be a single value, not a list or mapping")
+		case isNull(val):
+			return nil, errAt(val, `a field has no value; write "" for an empty one`)
+		case len(val.Value) > maxValueBytes:
+			return nil, errAt(val, "a field value is longer than "+strconv.Itoa(maxValueBytes)+" bytes")
+		}
+		out[key.Value] = val.Value
+	}
+	return out, nil
+}
+
+// checkKey refuses a key that is not a plain name.
+func checkKey(key *yaml.Node, reason string) error {
+	if key.Kind == yaml.AliasNode {
+		return errAt(key, "aliases are not supported")
+	}
+	if key.Kind != yaml.ScalarNode || !namePattern.MatchString(key.Value) {
+		return errAt(key, reason)
+	}
+	return nil
+}
+
+// isNull reports an empty or explicit null scalar ("", ~, null) that was
+// not quoted.
+func isNull(n *yaml.Node) bool {
+	return n.Kind == yaml.ScalarNode && n.ShortTag() == "!!null"
+}
+
+// yamlLine matches yaml's syntax error text: "yaml: line N: <problem>".
+var yamlLine = regexp.MustCompile(`^yaml: (?:line (\d+): )?(.*)$`)
+
+// knownProblems are yaml syntax problems kept in the reduced error: fixed
+// strings from the scanner and parser that quote nothing from the file.
+// Every other problem is dropped, because some (an unknown anchor's) quote
+// the file.
+var knownProblems = map[string]bool{
+	"mapping values are not allowed in this context":               true,
+	"did not find expected key":                                    true,
+	"did not find expected node content":                           true,
+	"did not find expected '-' indicator":                          true,
+	"did not find expected ',' or ']'":                             true,
+	"did not find expected ',' or '}'":                             true,
+	"found character that cannot start any token":                  true,
+	"found unexpected end of stream":                               true,
+	"found a tab character that violates indentation":              true,
+	"found a tab character where an indentation space is expected": true,
+	"could not find expected ':'":                                  true,
+	"block sequence entries are not allowed in this context":       true,
+	"found unknown escape character":                               true,
+	"found unexpected document indicator":                          true,
+	"control characters are not allowed":                           true,
+	"invalid leading UTF-8 octet":                                  true,
+	"incomplete UTF-8 octet sequence":                              true,
+	"invalid trailing UTF-8 octet":                                 true,
+	"invalid Unicode character":                                    true,
+}
+
+// syntaxError reduces a yaml syntax error to its line and, when it is one
+// of knownProblems, its reason.
+func syntaxError(err error) error {
+	m := yamlLine.FindStringSubmatch(err.Error())
+	msg := "not valid YAML"
+	switch {
+	case m == nil:
+	case knownProblems[m[2]]:
+		msg += " (" + m[2] + ")"
+	case strings.HasPrefix(m[2], "unknown anchor "):
+		// "unknown anchor '<name>' referenced" quotes the file.
+		msg += " (an alias refers to an unknown anchor)"
+	}
+	if m != nil && m[1] != "" {
+		return errors.New("line " + m[1] + ": " + msg)
+	}
+	return errors.New(msg)
+}

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -228,6 +229,70 @@ func TestCheckEnvFile(t *testing.T) {
 				t.Fatalf("CheckEnvFile = %v, want an error naming %s and %q", err, tt.path, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestCheckConfigFile: agent.yaml gets exactly the env file's rule, in
+// words that name what the file holds and the flag that points at it.
+func TestCheckConfigFile(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "agent.yaml")
+	if err := os.WriteFile(file, []byte("secrets: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link.yaml")
+	symlinkErr := os.Symlink(file, link) // needs a privilege on Windows
+
+	tests := []struct {
+		name    string
+		path    string
+		loose   string
+		wantErr string
+	}{
+		{"directory", root, "", "configuration file " + root + " is not a regular file"},
+		{"symlink", link, "", "configuration file " + link + " is a symlink; point --config at the file itself"},
+		{"loose", file, "mode 0644", "configuration file " + file + " holds secrets but is accessible to mode 0644; restrict it"},
+		{"foreign owner", file, `owner PC\alice`, `configuration file ` + file + ` holds secrets but is accessible to owner PC\alice; restrict it`},
+		{"tight", file, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.path == link && symlinkErr != nil {
+				t.Skipf("symlinks unavailable: %v", symlinkErr)
+			}
+			p := &fakeProtector{loose: map[string]string{tt.path: tt.loose}}
+			err := checkConfigFile(p, tt.path)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("checkConfigFile = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("checkConfigFile = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestCheckConfigFileUsesThePlatformRule: the exported check is the real
+// protector's rule (a 0600 file of the test user passes on Unix).
+func TestCheckConfigFileUsesThePlatformRule(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the Windows rule needs an Administrators-owned file; protect_windows_test covers the protector")
+	}
+	file := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(file, []byte("secrets: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckConfigFile(file); err != nil {
+		t.Fatalf("CheckConfigFile(0600) = %v", err)
+	}
+	if err := os.Chmod(file, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckConfigFile(file); err == nil || !strings.Contains(err.Error(), "mode 0644") {
+		t.Fatalf("CheckConfigFile(0644) = %v, want a refusal naming the mode", err)
 	}
 }
 

@@ -32,26 +32,46 @@ type protector interface {
 	LooseEntry(path string) (string, error)
 }
 
+// privateFile names a file the agent's file rule protects, for the
+// rule's messages: what it is, what it holds and the flag that names it.
+type privateFile struct{ kind, holds, flag string }
+
+var (
+	envFile    = privateFile{kind: "env file", holds: "the enrollment token", flag: "--env-file"}
+	configFile = privateFile{kind: "configuration file", holds: "secrets", flag: "--config"}
+)
+
 // CheckEnvFile refuses an env file another user could read or change: it
 // must be a regular file (not a directory, device or symlink) and p must
 // report nobody beyond the allowed principals.
-func CheckEnvFile(p protector, path string) error {
+func CheckEnvFile(p protector, path string) error { return checkPrivateFile(p, path, envFile) }
+
+// CheckConfigFile applies CheckEnvFile's rule, with this platform's
+// protector, to the configuration file that holds the agent's secrets
+// (agent.yaml). Its error text is reported to the manager as the file's
+// state, so it names the path and the finding only.
+func CheckConfigFile(path string) error { return checkConfigFile(newProtector(), path) }
+
+func checkConfigFile(p protector, path string) error { return checkPrivateFile(p, path, configFile) }
+
+// checkPrivateFile is the rule behind CheckEnvFile and CheckConfigFile.
+func checkPrivateFile(p protector, path string, f privateFile) error {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return fmt.Errorf("env file %s: %w", path, err)
+		return fmt.Errorf("%s %s: %w", f.kind, path, err)
 	}
 	if fi.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("env file %s is a symlink; point --env-file at the file itself", path)
+		return fmt.Errorf("%s %s is a symlink; point %s at the file itself", f.kind, path, f.flag)
 	}
 	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("env file %s is not a regular file", path)
+		return fmt.Errorf("%s %s is not a regular file", f.kind, path)
 	}
 	found, err := p.Loose(path)
 	if err != nil {
-		return fmt.Errorf("env file %s: check access: %w", path, err)
+		return fmt.Errorf("%s %s: check access: %w", f.kind, path, err)
 	}
 	if found != "" {
-		return fmt.Errorf("env file %s holds the enrollment token but is accessible to %s; restrict it", path, found)
+		return fmt.Errorf("%s %s holds %s but is accessible to %s; restrict it", f.kind, path, f.holds, found)
 	}
 	return nil
 }
