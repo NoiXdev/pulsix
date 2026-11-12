@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -13,16 +14,23 @@ import (
 // fakeProtector reports a loose string per path and records Protect
 // calls. Protect clears the path's entry unless sticky is set, which
 // models an access list the system refused to change.
+// entries switches the entry pass on, as the Windows protector does;
+// LooseEntry answers from the same loose map as Loose.
 type fakeProtector struct {
 	loose     map[string]string
 	owner     map[string]string
 	sticky    bool
+	entries   bool
 	protected []string
 }
 
 func (f *fakeProtector) Loose(path string) (string, error) { return f.loose[path], nil }
 
+func (f *fakeProtector) LooseEntry(path string) (string, error) { return f.loose[path], nil }
+
 func (f *fakeProtector) ForeignOwner(path string) (string, error) { return f.owner[path], nil }
+
+func (f *fakeProtector) checksEntries() bool { return f.entries }
 
 func (f *fakeProtector) Protect(path string) error {
 	f.protected = append(f.protected, path)
@@ -220,5 +228,96 @@ func TestCheckEnvFile(t *testing.T) {
 				t.Fatalf("CheckEnvFile = %v, want an error naming %s and %q", err, tt.path, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestEnsureDataDirChecksEntries: on Windows a data directory that passes
+// can still hold files someone planted before it was protected (a fresh
+// directory under ProgramData lets every user add files until then), and
+// a planted agent.key or agent.ca.pem would be trusted. Every entry
+// directly inside has to pass too; a protector without the entry pass
+// (Unix) ignores them.
+func TestEnsureDataDirChecksEntries(t *testing.T) {
+	tests := []struct {
+		name    string
+		checks  bool
+		owner   string
+		loose   string
+		wantErr []string
+	}{
+		{"foreign owner", true, `owner PC\mallory`, `owner PC\mallory`, []string{"agent.key", `PC\mallory`, "remove it"}},
+		{"loose list", true, "", `BUILTIN\Users`, []string{"agent.key", `BUILTIN\Users`, "remove it"}},
+		{"clean", true, "", "", nil},
+		{"no entry pass", false, `owner PC\mallory`, `BUILTIN\Users`, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			planted := filepath.Join(dir, "agent.key")
+			if err := os.WriteFile(planted, []byte("k"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(filepath.Join(dir, "logs"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			p := &fakeProtector{
+				entries: tt.checks,
+				loose:   map[string]string{planted: tt.loose},
+				owner:   map[string]string{planted: tt.owner},
+			}
+			err := ensureDataDir(p, dir, true, quietLogger())
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("ensureDataDir = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrSetupFailed) {
+				t.Fatalf("ensureDataDir = %v, want ErrSetupFailed", err)
+			}
+			for _, want := range tt.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestEnsureDataDirChecksEntriesAfterTightening: the entry pass also runs
+// on a directory this call just tightened — that is exactly the window
+// in which a file could have been planted.
+func TestEnsureDataDirChecksEntriesAfterTightening(t *testing.T) {
+	dir := t.TempDir()
+	planted := filepath.Join(dir, "agent.ca.pem")
+	if err := os.WriteFile(planted, []byte("ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &fakeProtector{entries: true, loose: map[string]string{dir: `BUILTIN\Users`, planted: `owner PC\mallory`}}
+	err := ensureDataDir(p, dir, true, quietLogger())
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.ca.pem") {
+		t.Fatalf("ensureDataDir = %v, want ErrSetupFailed naming the planted file", err)
+	}
+	if len(p.protected) != 1 {
+		t.Errorf("Protect calls = %v, want the directory tightened first", p.protected)
+	}
+}
+
+// TestRunChecksTheDataDirBeforeLoadingTheIdentity: a complete identity
+// already in the directory must not be loaded (and dialled with) when the
+// directory itself fails the check — a planted agent.ca.pem would make the
+// agent trust a stranger's manager.
+func TestRunChecksTheDataDirBeforeLoadingTheIdentity(t *testing.T) {
+	lt := newLoopTest(t)
+	lt.withIdentity()
+	p := &fakeProtector{owner: map[string]string{lt.dir: `owner PC\mallory`}}
+	l := NewLoop(lt.cfg, lt.dialer, lt.facts, append(lt.options(), withProtector(p))...)
+
+	err := l.Run(context.Background())
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), `PC\mallory`) {
+		t.Fatalf("Run = %v, want ErrSetupFailed naming the owner", err)
+	}
+	if lt.dialer.agentDials != 0 || lt.dialer.enrollDials != 0 {
+		t.Errorf("dials = agent %d, enroll %d; want none before the data dir passes", lt.dialer.agentDials, lt.dialer.enrollDials)
 	}
 }

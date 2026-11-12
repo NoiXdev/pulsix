@@ -58,7 +58,11 @@ func allowedSIDs() (system, admins *windows.SID, err error) {
 //
 // A file need not have a protected list, because the entries it inherits
 // from the protected directory name only the two allowed principals.
-func (windowsProtector) Loose(path string) (string, error) {
+func (w windowsProtector) Loose(path string) (string, error) { return w.loose(path, true) }
+
+// loose is Loose; protectedDir says whether a directory must have its
+// list protected (the data directory) or may inherit (an entry in it).
+func (windowsProtector) loose(path string, protectedDir bool) (string, error) {
 	fi, link, err := lstatLink(path)
 	if err != nil {
 		return "", err
@@ -117,11 +121,15 @@ func (windowsProtector) Loose(path string) (string, error) {
 		}
 		found.add(trusteeName(sid))
 	}
-	if fi.IsDir() && control&windows.SE_DACL_PROTECTED == 0 {
+	if protectedDir && fi.IsDir() && control&windows.SE_DACL_PROTECTED == 0 {
 		found.add("whoever its parent's access list admits (it inherits that list)")
 	}
 	return found.String(), nil
 }
+
+// LooseEntry is Loose without the protected-list rule for a directory:
+// an entry inside the protected data directory may inherit its list.
+func (w windowsProtector) LooseEntry(path string) (string, error) { return w.loose(path, false) }
 
 // ForeignOwner reports path's owner unless it is SYSTEM or Administrators.
 // A link is reported as such: GetNamedSecurityInfo would read its target.
@@ -156,6 +164,10 @@ func ownerFinding(path string, sd *windows.SECURITY_DESCRIPTOR, system, admins *
 	}
 	return "owner " + trusteeName(owner), nil
 }
+
+// checksEntries is true: until the data directory was protected it
+// inherited a list that lets every user add files to it.
+func (windowsProtector) checksEntries() bool { return true }
 
 // findings collects distinct findings in the order they were found.
 type findings []string

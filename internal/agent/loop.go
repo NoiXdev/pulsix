@@ -129,6 +129,8 @@ type Loop struct {
 	// rand returns a value in [0,1) and is the reconnect backoff's
 	// jitter source, injected so the cadence tests stay deterministic.
 	rand func() float64
+	// protect guards the data directory (ensureDataDir).
+	protect protector
 
 	scheduler *checks.Scheduler
 	buffer    *checks.Buffer
@@ -165,20 +167,25 @@ func WithTicker(fn tickerFactory) LoopOption { return func(l *Loop) { l.ticker =
 // production uses math/rand/v2).
 func WithRand(fn func() float64) LoopOption { return func(l *Loop) { l.rand = fn } }
 
+// withProtector replaces the data directory's protector (tests: the
+// Windows protector would refuse a temp dir the test user owns).
+func withProtector(p protector) LoopOption { return func(l *Loop) { l.protect = p } }
+
 // NewLoop wires the loop. No connection is opened here — Run dials. The
 // scheduler and buffer are built AFTER options are applied, so they use
 // whatever clock and ticker factory the caller (or a test) installed via
 // WithNow/WithTicker rather than the defaults.
 func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop {
 	l := &Loop{
-		cfg:    cfg,
-		dial:   dial,
-		facts:  facts,
-		now:    time.Now,
-		sleep:  interruptibleSleep,
-		ticker: newWallTicker,
-		rand:   rand.Float64,
-		log:    slog.Default(),
+		cfg:     cfg,
+		dial:    dial,
+		facts:   facts,
+		now:     time.Now,
+		sleep:   interruptibleSleep,
+		ticker:  newWallTicker,
+		rand:    rand.Float64,
+		protect: newProtector(),
+		log:     slog.Default(),
 	}
 	for _, o := range opts {
 		o(l)
@@ -199,6 +206,12 @@ func (l *Loop) checksTicker(d time.Duration) checks.Ticker { return l.ticker(d) 
 // and then holds the stream; an invalid or missing identity enrolls (the
 // token is the credential) or fails with the remediation error.
 func (l *Loop) Run(ctx context.Context) error {
+	// Nothing is read from the data directory before it passes: on
+	// Windows a directory someone else owns, or files planted in it, must
+	// stop the agent rather than become its identity and trusted CA.
+	if err := ensureDataDir(l.protect, l.cfg.DataDir, l.cfg.DataDirIsDefault, l.log); err != nil {
+		return err
+	}
 	id, why, err := LoadIdentityDetail(l.cfg.DataDir)
 	if err != nil {
 		return fmt.Errorf("load agent identity from %s: %w", l.cfg.DataDir, err)

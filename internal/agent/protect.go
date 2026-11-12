@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 )
 
 // protector inspects and restricts who can access a path.
@@ -22,6 +23,13 @@ type protector interface {
 	ForeignOwner(path string) (string, error)
 	// Protect makes path accessible to the allowed principals only.
 	Protect(path string) error
+	// checksEntries reports whether every entry directly inside the data
+	// directory must pass LooseEntry too (Windows: files could have been
+	// planted before the directory was protected). Unix never checks them.
+	checksEntries() bool
+	// LooseEntry is Loose for an entry inside the protected data
+	// directory: inheriting that directory's list is fine.
+	LooseEntry(path string) (string, error)
 }
 
 // CheckEnvFile refuses an env file another user could read or change: it
@@ -67,7 +75,7 @@ func LoadEnvFile(path string) (map[string]string, error) {
 }
 
 // ensureDataDir creates the data directory and makes sure only the allowed
-// principals can reach it.
+// principals can reach it. Run calls it before it reads anything there.
 //
 //   - A directory owned by anyone else is refused, whether it already
 //     existed or appeared under a race: its owner can reopen it with
@@ -77,6 +85,9 @@ func LoadEnvFile(path string) (map[string]string, error) {
 //   - A loose directory the operator chose and created is left alone,
 //     because a rewritten access list cannot be undone and the directory
 //     may be shared.
+//   - Where the protector checks entries (Windows), every entry directly
+//     inside must pass as well: until the directory was protected anyone
+//     could add files to it, and a planted key or CA would be trusted.
 //
 // Every failure is ErrSetupFailed: no manager retry fixes it.
 func ensureDataDir(p protector, dir string, isDefault bool, log *slog.Logger) error {
@@ -92,6 +103,18 @@ func ensureDataDir(p protector, dir string, isDefault bool, log *slog.Logger) er
 	if owner != "" {
 		return fmt.Errorf("%w: data directory %s is owned by %s; remove it (or have it owned by Administrators) and start the agent again", ErrSetupFailed, dir, owner)
 	}
+	if err := restrictDataDir(p, dir, isDefault || created, log); err != nil {
+		return err
+	}
+	if p.checksEntries() {
+		return checkDataDirEntries(p, dir)
+	}
+	return nil
+}
+
+// restrictDataDir tightens a loose directory when mayProtect, and refuses
+// it otherwise.
+func restrictDataDir(p protector, dir string, mayProtect bool, log *slog.Logger) error {
 	found, err := p.Loose(dir)
 	if err != nil {
 		return fmt.Errorf("%w: check data dir %s access: %v", ErrSetupFailed, dir, err)
@@ -99,7 +122,7 @@ func ensureDataDir(p protector, dir string, isDefault bool, log *slog.Logger) er
 	if found == "" {
 		return nil
 	}
-	if !isDefault && !created {
+	if !mayProtect {
 		return fmt.Errorf("%w: data directory %s is accessible to %s; restrict it or unset PULSIX_DATA_DIR", ErrSetupFailed, dir, found)
 	}
 	if err := p.Protect(dir); err != nil {
@@ -113,5 +136,28 @@ func ensureDataDir(p protector, dir string, isDefault bool, log *slog.Logger) er
 		return fmt.Errorf("%w: data directory %s is still accessible to %s after restricting it", ErrSetupFailed, dir, still)
 	}
 	log.Info("tightened the data directory's access", "dir", dir, "found", found)
+	return nil
+}
+
+// checkDataDirEntries refuses the first entry directly inside dir (a file
+// or a subdirectory; not recursive) with a foreign owner or a loose list.
+func checkDataDirEntries(p protector, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("%w: list data dir %s: %v", ErrSetupFailed, dir, err)
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		found, err := p.ForeignOwner(path)
+		if err == nil && found == "" {
+			found, err = p.LooseEntry(path)
+		}
+		if err != nil {
+			return fmt.Errorf("%w: check %s in the data directory: %v", ErrSetupFailed, path, err)
+		}
+		if found != "" {
+			return fmt.Errorf("%w: data directory %s holds %s, which is not the agent's own (%s); remove it and start the agent again", ErrSetupFailed, dir, path, found)
+		}
+	}
 	return nil
 }

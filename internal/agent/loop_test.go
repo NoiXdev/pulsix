@@ -122,6 +122,9 @@ func (lt *loopTest) options() []LoopOption {
 		WithLogger(slog.New(slog.NewTextHandler(&lt.logs, nil))),
 		WithTicker(lt.ticks.factory()),
 		WithRand(lt.jitter),
+		// Permissive: on Windows the real protector refuses a temp dir
+		// the test user owns. The data dir rules have their own tests.
+		withProtector(&fakeProtector{}),
 	}
 }
 

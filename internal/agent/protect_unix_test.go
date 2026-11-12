@@ -106,3 +106,19 @@ func TestUnixProtectorForeignOwner(t *testing.T) {
 		t.Error("ForeignOwner(missing) = nil error, want one")
 	}
 }
+
+// TestUnixEnsureDataDirIgnoresEntries: Unix gains no refusal for what sits
+// in the data directory, however loose a file in it is.
+func TestUnixEnsureDataDirIgnoresEntries(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "agent.key")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(file, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureDataDir(newProtector(), dir, false, quietLogger()); err != nil {
+		t.Fatalf("ensureDataDir = %v, want nil", err)
+	}
+}

@@ -125,6 +125,58 @@ func TestWindowsEnsureDataDirRefusesAUserOwnedDir(t *testing.T) {
 	}
 }
 
+// TestWindowsEnsureDataDirRefusesAPlantedFile: a protected, admin-owned
+// data directory still fails when a file inside carries an explicit entry
+// for Users (planted before the directory was protected).
+func TestWindowsEnsureDataDirRefusesAPlantedFile(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "Pulsix")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := newProtector()
+	if err := p.Protect(dir); err != nil {
+		t.Fatalf("Protect = %v", err)
+	}
+	if err := ensureDataDir(p, dir, true, quietLogger()); err != nil {
+		t.Fatalf("ensureDataDir(clean protected dir) = %v, want nil", err)
+	}
+
+	planted := filepath.Join(dir, "agent.ca.pem")
+	if err := os.WriteFile(planted, []byte("ca"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, admins, err := allowedSIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	users, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{{
+		AccessPermissions: windows.FILE_GENERIC_READ,
+		AccessMode:        windows.GRANT_ACCESS,
+		Trustee: windows.TRUSTEE{
+			TrusteeForm:  windows.TRUSTEE_IS_SID,
+			TrusteeType:  windows.TRUSTEE_IS_WELL_KNOWN_GROUP,
+			TrusteeValue: windows.TrusteeValueFromSID(users),
+		},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Owner Administrators, so only the explicit entry can be the finding;
+	// an unprotected DACL keeps the inherited entries next to it.
+	if err := windows.SetNamedSecurityInfo(planted, windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION, admins, nil, acl, nil); err != nil {
+		t.Fatalf("plant the Users entry: %v", err)
+	}
+	err = ensureDataDir(p, dir, true, quietLogger())
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.ca.pem") || !strings.Contains(err.Error(), trusteeName(users)) {
+		t.Fatalf("ensureDataDir with a planted file = %v, want ErrSetupFailed naming the file and Users", err)
+	}
+}
+
 func TestWindowsProtectorRefusesALink(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target")

@@ -478,7 +478,9 @@ func TestLoopEnrollsStreamsAndRenewsAgainstRealManager(t *testing.T) {
 
 	dir := t.TempDir()
 	cfg := h.agentConfig(dir, token)
-	l := NewLoop(cfg, h.dialer(cfg), &factsCollector{}, WithLogger(quietLogger()))
+	// The permissive protector keeps this test about the manager contract:
+	// on Windows the real one refuses a temp dir the test user owns.
+	l := NewLoop(cfg, h.dialer(cfg), &factsCollector{}, WithLogger(quietLogger()), withProtector(&fakeProtector{}))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- l.Run(ctx) }()
@@ -517,7 +519,7 @@ func TestLoopEnrollsStreamsAndRenewsAgainstRealManager(t *testing.T) {
 	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
 	renewNow := func() time.Time { return leaf.NotBefore.Add(2*lifetime/3 + time.Hour) }
 	l2 := NewLoop(renewCfg, h.dialer(renewCfg), &factsCollector{},
-		WithLogger(quietLogger()), WithNow(renewNow))
+		WithLogger(quietLogger()), WithNow(renewNow), withProtector(&fakeProtector{}))
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	done2 := make(chan error, 1)
 	go func() { done2 <- l2.Run(ctx2) }()

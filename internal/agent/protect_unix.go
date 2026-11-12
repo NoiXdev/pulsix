@@ -57,6 +57,13 @@ func (u unixProtector) fileOwner(fi os.FileInfo) string {
 	return ""
 }
 
+// checksEntries is false: what sits in a 0700 directory was never a gate
+// on Unix, and the agent writes its own files 0600.
+func (unixProtector) checksEntries() bool { return false }
+
+// LooseEntry is never consulted on Unix (checksEntries is false).
+func (unixProtector) LooseEntry(string) (string, error) { return "", nil }
+
 // Protect drops every group and other bit: 0700 for a directory, 0600 for
 // a file (a secret file has no business being executable).
 func (unixProtector) Protect(path string) error {
