@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"unicode"
@@ -77,10 +78,15 @@ func (gopsutilUsage) Usage(ctx context.Context, path string) (*disk.UsageStat, e
 type diskPlugin struct {
 	Partitions partitionLister
 	Usage      usageStater
+	// GOOS selects the platform rules; empty means runtime.GOOS.
+	GOOS string
+	// DriveKind classifies a Windows drive ("fixed", "removable", "remote",
+	// "cdrom", "other"). Nil on Windows keeps no discovered mount.
+	DriveKind func(mount string) string
 }
 
 func newDiskPlugin() Plugin {
-	return diskPlugin{Partitions: gopsutilPartitions{}, Usage: gopsutilUsage{}}
+	return diskPlugin{Partitions: gopsutilPartitions{}, Usage: gopsutilUsage{}, DriveKind: driveKindOf}
 }
 
 func (diskPlugin) Name() string { return "disk" }
@@ -100,6 +106,12 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 	if p.Usage == nil {
 		return nil, nil
 	}
+
+	goos := p.GOOS
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	inodes := reportsInodes(goos)
 
 	mounts, explicit, err := paramStrings(params, "mounts")
 	if err != nil {
@@ -126,7 +138,7 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 		}
 		seen := make(map[string]bool, len(parts))
 		for _, part := range parts {
-			if part.Mountpoint == "" || pseudoFilesystems[part.Fstype] || seen[part.Mountpoint] || !reportableItem(part.Mountpoint) {
+			if !discoveredMount(goos, part, p.DriveKind) || seen[part.Mountpoint] || !reportableItem(part.Mountpoint) {
 				continue
 			}
 			seen[part.Mountpoint] = true
@@ -149,8 +161,10 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 			obs = append(obs,
 				errObservation(mp, "disk.used_pct", wrapped),
 				errObservation(mp, "disk.free_bytes", wrapped),
-				errObservation(mp, "disk.inodes_used_pct", wrapped),
 			)
+			if inodes {
+				obs = append(obs, errObservation(mp, "disk.inodes_used_pct", wrapped))
+			}
 			continue
 		}
 		if usage == nil {
@@ -159,8 +173,10 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 		obs = append(obs,
 			valueObservation(mp, "disk.used_pct", usage.UsedPercent),
 			valueObservation(mp, "disk.free_bytes", float64(usage.Free)),
-			valueObservation(mp, "disk.inodes_used_pct", usage.InodesUsedPercent),
 		)
+		if inodes {
+			obs = append(obs, valueObservation(mp, "disk.inodes_used_pct", usage.InodesUsedPercent))
+		}
 	}
 
 	return obs, errors.Join(errs...)

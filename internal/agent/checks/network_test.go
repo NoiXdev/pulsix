@@ -51,6 +51,7 @@ var netMetrics = []string{
 func newTestNetwork(c *fixtureNetCounters, ifs fixtureNetInterfaces, clock *fakeNow) *networkPlugin {
 	p := newNetworkPlugin().(*networkPlugin)
 	p.Counters, p.Interfaces, p.Now = c, ifs, clock.now
+	p.ExcludedPrefixes = excludedInterfacePrefixesFor("linux") // the fixtures are Linux names, whatever system runs the test
 	return p
 }
 

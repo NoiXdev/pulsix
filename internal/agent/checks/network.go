@@ -4,22 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/net"
 )
-
-// excludedInterfacePrefixes are skipped from the discovered interface set
-// by default: virtual and overlay devices (containers, bridges, tunnels,
-// VM taps such as libvirt's vnet, Podman, LXC and LXD bridges) are churn,
-// not host network health. An explicit "interfaces" list
-// bypasses this, like disk's "mounts" does for pseudo filesystems.
-var excludedInterfacePrefixes = []string{
-	"veth", "docker", "br-", "virbr", "cni", "flannel", "cali", "vxlan", "kube-", "tun", "tap",
-	"vnet", "podman", "lxcbr", "lxdbr",
-}
 
 // netCounterReader is the net.IOCounters probe (per-interface counters).
 type netCounterReader interface {
@@ -71,6 +62,9 @@ type networkPlugin struct {
 	Counters   netCounterReader
 	Interfaces netInterfaceLister
 	Now        func() time.Time
+	// ExcludedPrefixes are the virtual-interface name prefixes the default
+	// interface set skips. An explicit "interfaces" list bypasses them.
+	ExcludedPrefixes []string
 
 	prev map[string]netSample
 }
@@ -80,17 +74,22 @@ func newNetworkPlugin() Plugin {
 		Counters:   gopsutilNetCounters{},
 		Interfaces: gopsutilNetInterfaces{},
 		Now:        time.Now,
+
+		ExcludedPrefixes: excludedInterfacePrefixesFor(runtime.GOOS),
 	}
 }
 
 // newInstance returns a plugin with the same providers and no baselines.
 func (p *networkPlugin) newInstance() Plugin {
-	return &networkPlugin{Counters: p.Counters, Interfaces: p.Interfaces, Now: p.Now}
+	return &networkPlugin{Counters: p.Counters, Interfaces: p.Interfaces, Now: p.Now, ExcludedPrefixes: p.ExcludedPrefixes}
 }
 
 func (*networkPlugin) Name() string { return "network" }
 
-func discoveredInterface(s net.InterfaceStat) bool {
+// discoveredInterface reports whether s is in the default interface set:
+// up, not loopback and not named with one of the excluded prefixes. The
+// prefixes are those of the system (excludedInterfacePrefixesFor).
+func discoveredInterface(s net.InterfaceStat, excluded []string) bool {
 	up, loopback := false, false
 	for _, f := range s.Flags {
 		switch f {
@@ -103,7 +102,7 @@ func discoveredInterface(s net.InterfaceStat) bool {
 	if !up || loopback {
 		return false
 	}
-	for _, p := range excludedInterfacePrefixes {
+	for _, p := range excluded {
 		if strings.HasPrefix(s.Name, p) {
 			return false
 		}
@@ -151,7 +150,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 			return nil, fmt.Errorf("network: interfaces: %w", err)
 		}
 		for _, s := range list {
-			if discoveredInterface(s) && reportableItem(s.Name) {
+			if discoveredInterface(s, p.ExcludedPrefixes) && reportableItem(s.Name) {
 				candidates = append(candidates, s.Name)
 			}
 		}

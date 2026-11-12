@@ -24,6 +24,7 @@ func TestDiskSkipsMountsTheManagerWouldRefuse(t *testing.T) {
 	long := "/mnt/" + strings.Repeat("d", managerchecks.MaxItemLen)
 	usage := &disk.UsageStat{UsedPercent: 10, Free: 1, InodesUsedPercent: 2}
 	p := diskPlugin{
+		GOOS: "linux",
 		Partitions: fixturePartitions{parts: []disk.PartitionStat{
 			{Mountpoint: "/", Fstype: "ext4"},
 			{Mountpoint: long, Fstype: "fuse.sshfs"},
@@ -93,6 +94,7 @@ func TestDiskCollectSkipsInvalidUTF8Mount(t *testing.T) {
 	bad := "/home/u/q\"\xffz"
 	usage := &disk.UsageStat{UsedPercent: 10, Free: 1, InodesUsedPercent: 2}
 	p := diskPlugin{
+		GOOS: "linux",
 		Partitions: fixturePartitions{parts: []disk.PartitionStat{
 			{Mountpoint: "/", Fstype: "ext4"},
 			{Mountpoint: bad, Fstype: "fuse.sshfs"},
@@ -120,7 +122,7 @@ func TestDiskCollectSkipsInvalidUTF8Mount(t *testing.T) {
 func TestDiskCollectExplicitInvalidUTF8MountIsAnErrorNotAnItem(t *testing.T) {
 	bad := "/home/u/q\"\xffz"
 	usage := &disk.UsageStat{UsedPercent: 10, Free: 1, InodesUsedPercent: 2}
-	p := diskPlugin{Usage: fixtureUsage{byMount: map[string]diskUsageResult{"/": {stat: usage}, bad: {stat: usage}}}}
+	p := diskPlugin{GOOS: "linux", Usage: fixtureUsage{byMount: map[string]diskUsageResult{"/": {stat: usage}, bad: {stat: usage}}}}
 
 	obs, err := p.Collect(context.Background(), map[string]any{"mounts": []string{"/", bad}})
 	if err == nil || !strings.Contains(err.Error(), "UTF-8") {

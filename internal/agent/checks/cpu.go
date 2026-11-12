@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
@@ -51,8 +52,16 @@ type cpuPlugin struct {
 	Interval time.Duration
 }
 
-func newCPUPlugin() Plugin {
-	return cpuPlugin{Load: gopsutilLoad{}, Percent: gopsutilCPUPercent{}, Interval: defaultCPUSampleInterval}
+func newCPUPlugin() Plugin { return newCPUPluginFor(runtime.GOOS) }
+
+// newCPUPluginFor builds the plugin for goos. Windows has no load average,
+// so there the plugin has no load probe and reports only cpu.used_pct.
+func newCPUPluginFor(goos string) cpuPlugin {
+	p := cpuPlugin{Load: gopsutilLoad{}, Percent: gopsutilCPUPercent{}, Interval: defaultCPUSampleInterval}
+	if goos == "windows" {
+		p.Load = nil
+	}
+	return p
 }
 
 func (cpuPlugin) Name() string { return "cpu" }

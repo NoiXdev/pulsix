@@ -54,6 +54,7 @@ func metricItems(obs []Observation, metric string) []string {
 
 func TestDiskCollectDiscoveryFiltersPseudoFilesystems(t *testing.T) {
 	p := diskPlugin{
+		GOOS: "linux",
 		Partitions: fixturePartitions{parts: []disk.PartitionStat{
 			{Mountpoint: "/", Fstype: "ext4"},
 			{Mountpoint: "/data", Fstype: "xfs"},
@@ -89,6 +90,7 @@ func TestDiskCollectDiscoveryFiltersPseudoFilesystems(t *testing.T) {
 func TestDiskCollectPartitionsFaultFailsTheWholePlugin(t *testing.T) {
 	boom := errors.New("boom")
 	p := diskPlugin{
+		GOOS:       "linux",
 		Partitions: fixturePartitions{err: boom},
 		Usage:      fixtureUsage{byMount: map[string]diskUsageResult{}},
 	}
@@ -111,6 +113,7 @@ func TestDiskCollectPartitionsFaultFailsTheWholePlugin(t *testing.T) {
 func TestDiskCollectOneUnreadableMountDoesNotLoseTheOthers(t *testing.T) {
 	boom := errors.New("permission denied")
 	p := diskPlugin{
+		GOOS: "linux",
 		Usage: fixtureUsage{byMount: map[string]diskUsageResult{
 			"/":       {stat: &disk.UsageStat{UsedPercent: 33, Free: 999, InodesUsedPercent: 4}},
 			"/broken": {err: boom},
@@ -152,6 +155,7 @@ func TestDiskCollectExplicitMountsBypassesDiscoveryAndPseudoFilter(t *testing.T)
 	// Partitions is armed to fail — proof the explicit allow-list path never
 	// consults it at all.
 	p := diskPlugin{
+		GOOS:       "linux",
 		Partitions: fixturePartitions{err: errors.New("must not be called")},
 		Usage: fixtureUsage{byMount: map[string]diskUsageResult{
 			"/dev/shm": {stat: &disk.UsageStat{UsedPercent: 1, Free: 2, InodesUsedPercent: 3}},
@@ -169,6 +173,7 @@ func TestDiskCollectExplicitMountsBypassesDiscoveryAndPseudoFilter(t *testing.T)
 
 func TestDiskCollectExplicitEmptyMountsCollectsNothing(t *testing.T) {
 	p := diskPlugin{
+		GOOS:       "linux",
 		Partitions: fixturePartitions{err: errors.New("must not be called")},
 		Usage:      fixtureUsage{byMount: map[string]diskUsageResult{}},
 	}
@@ -183,6 +188,7 @@ func TestDiskCollectExplicitEmptyMountsCollectsNothing(t *testing.T) {
 
 func TestDiskCollectAcceptsJSONRoundTripMountsShape(t *testing.T) {
 	p := diskPlugin{
+		GOOS: "linux",
 		Usage: fixtureUsage{byMount: map[string]diskUsageResult{
 			"/": {stat: &disk.UsageStat{UsedPercent: 1, Free: 2, InodesUsedPercent: 3}},
 		}},
@@ -195,7 +201,7 @@ func TestDiskCollectAcceptsJSONRoundTripMountsShape(t *testing.T) {
 }
 
 func TestDiskCollectMalformedMountsParamIsAnError(t *testing.T) {
-	p := diskPlugin{Usage: fixtureUsage{byMount: map[string]diskUsageResult{}}}
+	p := diskPlugin{GOOS: "linux", Usage: fixtureUsage{byMount: map[string]diskUsageResult{}}}
 	_, err := p.Collect(context.Background(), map[string]any{"mounts": 5})
 	if err == nil {
 		t.Fatal("a malformed mounts param must be an error")
@@ -216,6 +222,7 @@ func TestDiskCollectContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	p := diskPlugin{
+		GOOS:       "linux",
 		Partitions: fixturePartitions{},
 		Usage:      fixtureUsage{byMount: map[string]diskUsageResult{}},
 	}
