@@ -140,7 +140,7 @@ type hostCheckDTO struct {
 	// behind it at all, which the latest value cannot answer while
 	// collection is failing — an error row carries neither value nor
 	// label (migration 00044's CHECK).
-	Plugin          string              `json:"plugin" enum:"cpu,memory,disk,service,network,uptime,docker,temperature,smart,raid,icmp,tcp,http,tls,dns"`
+	Plugin          checkPluginName     `json:"plugin"`
 	Params          map[string]any      `json:"params"`
 	IntervalSeconds int                 `json:"interval_seconds"`
 	Enabled         bool                `json:"enabled" doc:"false means the winning scope turned this check off; it is listed so the GUI can show where"`
@@ -418,7 +418,7 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 		params = map[string]any{}
 	}
 	dto := hostCheckDTO{
-		DefinitionID: d.ID.String(), Key: d.Key, Plugin: d.Plugin, Params: params,
+		DefinitionID: d.ID.String(), Key: d.Key, Plugin: checkPluginName(d.Plugin), Params: params,
 		IntervalSeconds: int(d.Interval / time.Second), Enabled: d.Enabled, Origin: d.Origin,
 		Source: string(d.BindingKind),
 	}

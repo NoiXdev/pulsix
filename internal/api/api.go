@@ -554,6 +554,10 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	// bearer credential: a token is scoped to the one org it was minted
 	// for, not to "everything its owner can see".
 	registerMyActivityRoute(hapi, deps)
+	// GET /check-plugins: the static plugin descriptors, for any signed-in
+	// session — no org in its path and, like the two above, no bearer
+	// credential.
+	registerCheckPluginRoutes(hapi)
 
 	// Everything below takes an org in its path and resolves it through
 	// requireOrg, which consults auth.TokenScopeFromContext — this is the

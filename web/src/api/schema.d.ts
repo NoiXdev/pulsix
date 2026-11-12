@@ -714,6 +714,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/check-plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 check plugins */
+        get: operations["get-api-v1-check-plugins"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -3831,7 +3848,7 @@ export interface components {
             interval_seconds: number;
             /** @description Lower-case identifier a narrower scope overrides on. Defaults to the plugin name on create; an update must name it, since defaulting it on a full replace would silently rename the definition */
             key?: string;
-            /** @description disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none. docker: selection (all or labeled), label (key or key=value, default pulsix.monitor=true), socket (an absolute path or npipe:////./pipe/name). temperature: optional sensors list (sensor names). smart: optional devices list (/dev/... paths). raid: optional arrays list (array names). icmp: count, timeout_s. tcp: port (required), send, expect, timeout_s. http: url (required, http or https, may contain {address}), method (GET or HEAD), follow_redirects, verify_tls, body_contains, timeout_s. tls: port, server_name, timeout_s. dns: name, type (A, AAAA, CNAME, MX, TXT, NS), server (an IP with an optional port), expect, timeout_s */
+            /** @description Each parameter is optional unless marked required. cpu, memory and uptime take none. disk: mounts (list; each not blank). service: units (required; list; not empty; each not blank). network: interfaces (list; each not blank). docker: selection (all or labeled; default all), label (key or key=value; default pulsix.monitor=true), socket (at most 255 bytes; an absolute path or npipe:////./pipe/name; default /var/run/docker.sock). temperature: sensors (list; at most 64 entries; each at most 255 bytes; each without control characters). smart: devices (list; at most 64 entries; each at most 255 bytes; each a /dev/... path). raid: arrays (list; at most 64 entries; each at most 255 bytes; each without control characters). icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5). tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5). http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET or HEAD; default GET), body_contains (not empty; at most 500 bytes), timeout_s (1 to 60; default 10), follow_redirects (true or false; default true), verify_tls (true or false; default true). tls: port (1 to 65535; default 443), server_name (at most 500 bytes; not blank), timeout_s (1 to 30; default 10). dns: name (at most 500 bytes; a DNS name that may contain {address}; default {address}), type (A, AAAA, CNAME, MX, TXT or NS; default A), server (at most 500 bytes; an IP address with an optional port), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5). */
             params?: {
                 [key: string]: unknown;
             };
@@ -3881,7 +3898,7 @@ export interface components {
             interval_seconds: number;
             /** @description Lower-case identifier a narrower scope overrides on inside every organization. Defaults to the plugin name on create. */
             key?: string;
-            /** @description disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none. docker: selection (all or labeled), label (key or key=value, default pulsix.monitor=true), socket (an absolute path or npipe:////./pipe/name). temperature: optional sensors list (sensor names). smart: optional devices list (/dev/... paths). raid: optional arrays list (array names). icmp: count, timeout_s. tcp: port (required), send, expect, timeout_s. http: url (required, http or https, may contain {address}), method (GET or HEAD), follow_redirects, verify_tls, body_contains, timeout_s. tls: port, server_name, timeout_s. dns: name, type (A, AAAA, CNAME, MX, TXT, NS), server (an IP with an optional port), expect, timeout_s */
+            /** @description Each parameter is optional unless marked required. cpu, memory and uptime take none. disk: mounts (list; each not blank). service: units (required; list; not empty; each not blank). network: interfaces (list; each not blank). docker: selection (all or labeled; default all), label (key or key=value; default pulsix.monitor=true), socket (at most 255 bytes; an absolute path or npipe:////./pipe/name; default /var/run/docker.sock). temperature: sensors (list; at most 64 entries; each at most 255 bytes; each without control characters). smart: devices (list; at most 64 entries; each at most 255 bytes; each a /dev/... path). raid: arrays (list; at most 64 entries; each at most 255 bytes; each without control characters). icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5). tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5). http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET or HEAD; default GET), body_contains (not empty; at most 500 bytes), timeout_s (1 to 60; default 10), follow_redirects (true or false; default true), verify_tls (true or false; default true). tls: port (1 to 65535; default 443), server_name (at most 500 bytes; not blank), timeout_s (1 to 30; default 10). dns: name (at most 500 bytes; a DNS name that may contain {address}; default {address}), type (A, AAAA, CNAME, MX, TXT or NS; default A), server (at most 500 bytes; an IP address with an optional port), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5). */
             params?: {
                 [key: string]: unknown;
             };
@@ -3935,6 +3952,77 @@ export interface components {
              */
             readonly $schema?: string;
             check: components["schemas"]["CheckDefinitionDTO"];
+        };
+        CheckPluginDTO: {
+            /** @description The plugin also reports on the whole-host item whatever its item list says */
+            host_item_always_asked?: boolean;
+            /** @description The list parameter that enumerates the plugin's items, if any */
+            item_param?: string;
+            metrics: components["schemas"]["CheckPluginMetricDTO"][];
+            /** @enum {string} */
+            name: "cpu" | "memory" | "disk" | "service" | "network" | "uptime" | "docker" | "temperature" | "smart" | "raid" | "icmp" | "tcp" | "http" | "tls" | "dns";
+            /** @description In the order a form shows them; empty for a plugin that takes none */
+            params: components["schemas"]["CheckPluginParamDTO"][];
+            /**
+             * @description agent plugins run on the host's agent, server ones are probed from the manager
+             * @enum {string}
+             */
+            runs: "agent" | "server";
+        };
+        CheckPluginListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/CheckPluginListOutputBody.json
+             */
+            readonly $schema?: string;
+            /** @description Every check plugin, in the order a form offers them */
+            plugins: components["schemas"]["CheckPluginDTO"][];
+        };
+        CheckPluginMetricDTO: {
+            /**
+             * @description numeric metrics carry a number a threshold compares against, discrete ones a state label
+             * @enum {string}
+             */
+            kind: "numeric" | "discrete";
+            name: string;
+        };
+        CheckPluginParamDTO: {
+            /** @description What the plugin applies when the parameter is absent; documentation only, the manager stores exactly what was sent */
+            default?: string | number | boolean;
+            /** @description A sample value for a parameter without a default */
+            example?: string;
+            /** @description A named validator a string, or each list entry, must also pass */
+            format?: string;
+            /**
+             * Format: int64
+             * @description An integer's upper bound, inclusive
+             */
+            max?: number;
+            /**
+             * Format: int64
+             * @description A string's, or each list entry's, maximum length in bytes; absent means unbounded
+             */
+            max_bytes?: number;
+            /**
+             * Format: int64
+             * @description A list's maximum length; absent means unbounded
+             */
+            max_entries?: number;
+            /**
+             * Format: int64
+             * @description An integer's lower bound, inclusive
+             */
+            min?: number;
+            name: string;
+            /** @description The empty string, or the empty list, is refused */
+            non_empty?: boolean;
+            /** @description An enum's allowed values, in the order a form offers them */
+            options?: string[];
+            /** @description Absent means the parameter is optional */
+            required?: boolean;
+            /** @enum {string} */
+            type: "string" | "integer" | "bool" | "enum" | "list";
         };
         CodeInputBody: {
             /**
@@ -8931,6 +9019,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionUpgradeOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-check-plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckPluginListOutputBody"];
                 };
             };
             /** @description Error */

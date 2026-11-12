@@ -399,11 +399,11 @@ func registerSharedTemplateRoutes(hapi huma.API, deps Deps) {
 // already taken by check_handlers.go's own organization-scoped DTO for a
 // very different shape (it carries a binding; this one never does).
 type checkDefinitionDefDTO struct {
-	ID              string         `json:"id"`
-	Key             string         `json:"key"`
-	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service,network,uptime,docker,temperature,smart,raid,icmp,tcp,http,tls,dns"`
-	Params          map[string]any `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
-	IntervalSeconds int            `json:"interval_seconds"`
+	ID              string          `json:"id"`
+	Key             string          `json:"key"`
+	Plugin          checkPluginName `json:"plugin"`
+	Params          map[string]any  `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
+	IntervalSeconds int             `json:"interval_seconds"`
 }
 
 func toCheckDefinitionDefDTO(d shared.CheckDefinition) checkDefinitionDefDTO {
@@ -412,7 +412,7 @@ func toCheckDefinitionDefDTO(d shared.CheckDefinition) checkDefinitionDefDTO {
 		params = map[string]any{}
 	}
 	return checkDefinitionDefDTO{
-		ID: d.ID.String(), Key: d.Key, Plugin: d.Plugin, Params: params,
+		ID: d.ID.String(), Key: d.Key, Plugin: checkPluginName(d.Plugin), Params: params,
 		IntervalSeconds: int(d.Interval / time.Second),
 	}
 }
@@ -444,11 +444,12 @@ type checkDefinitionDefDetailOutput struct {
 // the plugin name, same as an organization's own) but — like
 // check_handlers.go's own body — not defaulted away on an update by this
 // schema; shared.Service.UpdateCheckDefinition enforces that the same way
-// checks.Service.UpdateDefinition already does.
+// checks.Service.UpdateDefinition already does. Its plugin and params doc
+// strings come from the plugin registry, like checkDefinitionBody's.
 type checkDefinitionDefBody struct {
 	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on inside every organization. Defaults to the plugin name on create."`
-	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"`
-	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none. docker: selection (all or labeled), label (key or key=value, default pulsix.monitor=true), socket (an absolute path or npipe:////./pipe/name). temperature: optional sensors list (sensor names). smart: optional devices list (/dev/... paths). raid: optional arrays list (array names). icmp: count, timeout_s. tcp: port (required), send, expect, timeout_s. http: url (required, http or https, may contain {address}), method (GET or HEAD), follow_redirects, verify_tls, body_contains, timeout_s. tls: port, server_name, timeout_s. dns: name, type (A, AAAA, CNAME, MX, TXT, NS), server (an IP with an optional port), expect, timeout_s"`
+	Plugin          string         `json:"plugin"`
+	Params          map[string]any `json:"params,omitempty"`
 	IntervalSeconds int            `json:"interval_seconds" doc:"How often the check runs, between 10 and 86400 seconds"`
 }
 

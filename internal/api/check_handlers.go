@@ -66,17 +66,17 @@ type CheckConfigPusher interface {
 const pushTimeout = 30 * time.Second
 
 type checkDefinitionDTO struct {
-	ID              string         `json:"id"`
-	Key             string         `json:"key"`
-	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service,network,uptime,docker,temperature,smart,raid,icmp,tcp,http,tls,dns"`
-	Params          map[string]any `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
-	IntervalSeconds int            `json:"interval_seconds"`
-	Enabled         bool           `json:"enabled"`
-	Origin          string         `json:"origin" enum:"seed,custom,shared" doc:"seed rows ship with every organization; shared rows are a projection of an installation-owned definition (spec v0.2f) — both fix key, plugin, params and interval, copy it (seed) or ask an instance admin to edit the definition (shared) to change them"`
-	BindingKind     string         `json:"binding_kind" enum:"org,group,host"`
-	GroupID         string         `json:"group_id,omitempty"`
-	HostID          string         `json:"host_id,omitempty"`
-	HostName        string         `json:"host_name,omitempty" doc:"The bound host's name, for a host-bound definition; absent otherwise, and absent for a host this organization can no longer read"`
+	ID              string          `json:"id"`
+	Key             string          `json:"key"`
+	Plugin          checkPluginName `json:"plugin"`
+	Params          map[string]any  `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
+	IntervalSeconds int             `json:"interval_seconds"`
+	Enabled         bool            `json:"enabled"`
+	Origin          string          `json:"origin" enum:"seed,custom,shared" doc:"seed rows ship with every organization; shared rows are a projection of an installation-owned definition (spec v0.2f) — both fix key, plugin, params and interval, copy it (seed) or ask an instance admin to edit the definition (shared) to change them"`
+	BindingKind     string          `json:"binding_kind" enum:"org,group,host"`
+	GroupID         string          `json:"group_id,omitempty"`
+	HostID          string          `json:"host_id,omitempty"`
+	HostName        string          `json:"host_name,omitempty" doc:"The bound host's name, for a host-bound definition; absent otherwise, and absent for a host this organization can no longer read"`
 	// SharedDefinitionID is set when this row is a projection of an
 	// installation-owned definition (spec v0.2f decisions 1, 2;
 	// checks.Definition.SharedDefinitionID), absent for an ordinary seed or
@@ -100,11 +100,13 @@ type checkDefinitionDTO struct {
 // interval bounds, per-plugin parameter schema, binding consistency), and
 // duplicating those bounds here would make the same bad input answer 422
 // with huma's generic wording on one field and 400 with the service's
-// specific message on the next. One validator, one message.
+// specific message on the next. One validator, one message. The plugin and
+// params doc strings come from the plugin registry (TransformSchema,
+// check_plugin_schema.go).
 type checkDefinitionBody struct {
 	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on. Defaults to the plugin name on create; an update must name it, since defaulting it on a full replace would silently rename the definition"`
-	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"`
-	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none. docker: selection (all or labeled), label (key or key=value, default pulsix.monitor=true), socket (an absolute path or npipe:////./pipe/name). temperature: optional sensors list (sensor names). smart: optional devices list (/dev/... paths). raid: optional arrays list (array names). icmp: count, timeout_s. tcp: port (required), send, expect, timeout_s. http: url (required, http or https, may contain {address}), method (GET or HEAD), follow_redirects, verify_tls, body_contains, timeout_s. tls: port, server_name, timeout_s. dns: name, type (A, AAAA, CNAME, MX, TXT, NS), server (an IP with an optional port), expect, timeout_s"`
+	Plugin          string         `json:"plugin"`
+	Params          map[string]any `json:"params,omitempty"`
 	IntervalSeconds int            `json:"interval_seconds" doc:"How often the check runs, between 10 and 86400 seconds"`
 	Enabled         *bool          `json:"enabled,omitempty" doc:"Defaults to true; false keeps the row but stops the check at this scope"`
 	BindingKind     string         `json:"binding_kind" doc:"One of org, group, host"`
@@ -153,7 +155,7 @@ func toCheckDefinitionDTO(d checks.Definition) checkDefinitionDTO {
 		params = map[string]any{}
 	}
 	dto := checkDefinitionDTO{
-		ID: d.ID.String(), Key: d.Key, Plugin: d.Plugin, Params: params,
+		ID: d.ID.String(), Key: d.Key, Plugin: checkPluginName(d.Plugin), Params: params,
 		IntervalSeconds: int(d.Interval / time.Second), Enabled: d.Enabled, Origin: d.Origin,
 		BindingKind: string(d.BindingKind), CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
 	}
