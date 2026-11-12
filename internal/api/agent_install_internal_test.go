@@ -354,3 +354,60 @@ func TestAgentInstallCommandWindows(t *testing.T) {
 		})
 	}
 }
+
+// TestShellArg pins the exact quoting of the Linux/macOS install line: plain
+// words stay bare, everything else becomes one single-quoted word. The
+// strings are asserted, never executed.
+func TestShellArg(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"edge-1", "edge-1"},
+		{"manager.example:8444", "manager.example:8444"},
+		{"a/b@c%d+e=f,g_h", "a/b@c%d+e=f,g_h"},
+		{"x; rm -rf /", "'x; rm -rf /'"},
+		{"$(id)", "'$(id)'"},
+		{"a'b", `'a'\''b'`},
+		{"-x", "'-x'"},
+		{"<manager>:8444", "'<manager>:8444'"},
+		{"", "''"},
+	} {
+		if got := shellArg(tt.in); got != tt.want {
+			t.Errorf("shellArg(%q) = %s, want %s", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestAgentInstallCommandQuotesWhatItInterpolates(t *testing.T) {
+	const prefix = "curl -fsSL https://manager.example/install.sh | sudo sh -s -- "
+	deps := Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "manager.example:8444"}}
+	for _, tt := range []struct {
+		name     string
+		deps     Deps
+		nameHint string
+		want     string
+	}{
+		{"plain", deps, "", prefix + "--manager manager.example:8444"},
+		{"plain hint", deps, "edge-1", prefix + "--manager manager.example:8444 --name edge-1"},
+		{
+			"server name differs",
+			Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "10.0.0.5:8444", ServerName: "grpc.manager.example"}},
+			"edge-1",
+			prefix + "--manager 10.0.0.5:8444 --server-name grpc.manager.example --name edge-1",
+		},
+		{"hostile hint", deps, "x; rm -rf /", prefix + "--manager manager.example:8444 --name 'x; rm -rf /'"},
+		{"substitution", deps, "$(id)", prefix + "--manager manager.example:8444 --name '$(id)'"},
+		{"apostrophe", deps, "a'b", prefix + `--manager manager.example:8444 --name 'a'\''b'`},
+		{"leading dash", deps, "-x", prefix + "--manager manager.example:8444 --name '-x'"},
+		{
+			"hostile config values",
+			Deps{PublicURL: "https://manager.example", WorkerEndpoint: WorkerEndpoint{Addr: "a b:8444", ServerName: "$(id)"}},
+			"",
+			prefix + "--manager 'a b:8444' --server-name '$(id)'",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := agentInstallCommand(tt.deps, tt.nameHint); got != tt.want {
+				t.Errorf("agentInstallCommand() =\n  %s\nwant\n  %s", got, tt.want)
+			}
+		})
+	}
+}

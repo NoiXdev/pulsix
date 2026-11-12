@@ -24,12 +24,12 @@ func agentInstallCommand(deps Deps, nameHint string) string {
 	// the root installer is in the process list, readable by every local
 	// user of the host while the install runs. install.sh asks for it on
 	// the terminal instead, and the dialog shows it to copy from.
-	cmd := fmt.Sprintf("curl -fsSL %s/install.sh | sudo sh -s -- --manager %s", base, addr)
+	cmd := fmt.Sprintf("curl -fsSL %s/install.sh | sudo sh -s -- --manager %s", base, shellArg(addr))
 	if name := agentInstallServerName(deps, addr); name != "" {
-		cmd += " --server-name " + name
+		cmd += " --server-name " + shellArg(name)
 	}
 	if nameHint != "" {
-		cmd += " --name " + nameHint
+		cmd += " --name " + shellArg(nameHint)
 	}
 	return cmd
 }
@@ -76,6 +76,22 @@ func agentInstallServerName(deps Deps, addr string) string {
 		return name
 	}
 	return ""
+}
+
+// plainShellArg is what a POSIX shell takes as one literal word without
+// quotes. A leading dash is excluded separately: it would read as an option.
+var plainShellArg = regexp.MustCompile(`^[A-Za-z0-9._:/@%+=,-]+$`)
+
+// shellArg returns s as one literal POSIX shell word: bare when it is plain
+// (the common case), single-quoted otherwise with each apostrophe
+// written as quote, backslash, quote, quote.
+// The line runs as root once an administrator pastes it, so nothing an
+// operator typed may be read as shell syntax.
+func shellArg(s string) string {
+	if plainShellArg.MatchString(s) && !strings.HasPrefix(s, "-") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // plainPowerShellArg is what PowerShell takes as one literal string

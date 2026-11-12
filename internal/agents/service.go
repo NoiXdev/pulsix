@@ -311,8 +311,15 @@ func (s *Service) CreateToken(ctx context.Context, orgID uuid.UUID, in TokenInpu
 	if !in.ExpiresAt.After(s.now()) {
 		return enrolltoken.Token{}, fmt.Errorf("%w: expires_at must be in the future", ErrInvalidInput)
 	}
-	if len(in.NameHint) > 253 {
-		return enrolltoken.Token{}, fmt.Errorf("%w: name_hint too long", ErrInvalidInput)
+	// The hint becomes the host's name at claim time and is printed into the
+	// install command, so it must satisfy both rules up front (backlog 3.50).
+	if in.NameHint != "" {
+		if !hosts.ValidName(in.NameHint) {
+			return enrolltoken.Token{}, fmt.Errorf("%w: name_hint must be a valid host name (lower-case letters, digits, dots and hyphens; not starting or ending with a dot or hyphen)", ErrInvalidInput)
+		}
+		if err := ca.CheckAgentName(in.NameHint); err != nil {
+			return enrolltoken.Token{}, fmt.Errorf("%w: name_hint must be 1-64 characters", ErrInvalidInput)
+		}
 	}
 	secret := make([]byte, 32)
 	if _, err := io.ReadFull(s.rand, secret); err != nil {

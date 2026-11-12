@@ -62,6 +62,11 @@ var (
 // an Ansible inventory hostname or a DNS label component.
 var hostNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]{0,252}[a-z0-9])?$`)
 
+// ValidName reports whether name is a valid host name (hostNamePattern), for
+// callers outside the package that must refuse a name before a host is created
+// from it, such as an enrollment token's name hint.
+func ValidName(name string) bool { return hostNamePattern.MatchString(name) }
+
 // zoneSlugPattern mirrors the organization slug rule (org_handlers.go):
 // lowercase letters, digits and single hyphens between segments.
 var zoneSlugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)

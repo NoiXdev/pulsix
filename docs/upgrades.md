@@ -156,6 +156,12 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.50, agent token name hint:** the API now refuses an agent enrollment
+  token whose `name_hint` is not a valid host name (lower-case letters, digits,
+  dots and hyphens, not starting or ending with a dot or hyphen, at most 64
+  characters) with HTTP 400. An API client that sent upper-case or free text
+  must change what it sends; an empty hint is still fine. Tokens created
+  earlier are not changed.
 - **3.2, 3.3, 3.8, agents for Windows and macOS:** the manager serves a new
   `GET /install.ps1` and the agent token response gains `install_command_windows`
   (both additive; an older SPA ignores the field). The manager image grows by

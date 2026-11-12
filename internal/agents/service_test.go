@@ -935,18 +935,10 @@ func TestClaimRefusesOverlongNames(t *testing.T) {
 	svc, st, p, now := newService(t)
 	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 
-	hinted, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: strings.Repeat("a", 65), MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.ClaimToken(ctx, org, hinted, "short"); !errors.Is(err, agents.ErrInvalidInput) {
-		t.Fatalf("overlong hint: %v, want ErrInvalidInput", err)
-	}
-	if got := st.tokens[hinted.ID]; got.Uses != 0 || got.UsedAt != nil {
-		t.Fatalf("the refused claim burned a use: uses=%d used=%v", got.Uses, got.UsedAt != nil)
-	}
-	if len(p.hosts[org]) != 0 || len(p.monitored) != 0 {
-		t.Fatalf("the refused claim touched hosts: %v / %v", p.hosts[org], p.monitored)
+	// An overlong hint is refused when the token is created (backlog 3.50);
+	// the claim keeps its own check for the presented name below.
+	if _, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: strings.Repeat("a", 65), MaxUses: 1, ExpiresAt: now.Add(time.Hour)}); !errors.Is(err, agents.ErrInvalidInput) {
+		t.Fatalf("overlong hint at creation: %v, want ErrInvalidInput", err)
 	}
 
 	blank, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
@@ -982,5 +974,47 @@ func TestGetBySerialCarriesSerial(t *testing.T) {
 	id, err := svc.GetBySerial(ctx, "serial-x")
 	if err != nil || id.Serial != "serial-x" {
 		t.Fatalf("identity = %+v, %v", id, err)
+	}
+}
+
+// The name hint ends up in a root shell command and becomes the host's name
+// at claim time, so CreateToken refuses anything that is not a valid host
+// name and a valid agent certificate name (backlog 3.50).
+func TestCreateTokenValidatesTheNameHint(t *testing.T) {
+	svc, _, _, now := newService(t)
+	org, zone := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	for _, tt := range []struct {
+		name    string
+		hint    string
+		wantErr bool
+	}{
+		{"empty is allowed", "", false},
+		{"plain", "web-01", false},
+		{"dotted", "db.example.com", false},
+		{"64 characters", strings.Repeat("a", 64), false},
+		{"upper case", "Web-01", true},
+		{"leading hyphen", "-x", true},
+		{"trailing hyphen", "x-", true},
+		{"shell metacharacters", "x;rm -rf /", true},
+		{"space", "a b", true},
+		{"command substitution", "$(id)", true},
+		{"65 characters", strings.Repeat("a", 65), true},
+		{"non-ASCII", "ü", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := svc.CreateToken(ctx, org, agents.TokenInput{ZoneID: zone, NameHint: tt.hint, MaxUses: 1, ExpiresAt: now.Add(time.Hour)})
+			if tt.wantErr {
+				if !errors.Is(err, agents.ErrInvalidInput) {
+					t.Fatalf("hint %q: err = %v, want ErrInvalidInput", tt.hint, err)
+				}
+				if !strings.Contains(err.Error(), "name_hint") {
+					t.Errorf("hint %q: message %q does not name the field", tt.hint, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("hint %q: %v", tt.hint, err)
+			}
+		})
 	}
 }
