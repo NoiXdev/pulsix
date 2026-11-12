@@ -114,3 +114,46 @@ export function useHostItems(org: string, hostId: string, enabled = true) {
     enabled: !!org && !!hostId && enabled,
   });
 }
+
+/** What useForgetItem's mutation takes: one item of the hook's host. `item`
+ * may be '' — the whole-host item — and is sent as `item=` then, never
+ * left out (the server refuses a request without it). */
+export interface ForgetItemInput {
+  checkKey: string;
+  item: string;
+}
+
+/**
+ * useForgetItem forgets one item of a host at once
+ * (DELETE /hosts/{id}/items, backlog 3.12b): its current values, rule
+ * states, discovery row and open alerts, which close as forgotten. Its
+ * graphs stay. checks.write, like an item decision.
+ *
+ * The item travels in the query, URL-encoded — its name comes from an agent
+ * and may contain any character.
+ *
+ * onSuccess waits for the host page's own reads to be invalidated, so a
+ * caller's mutateAsync resolves once the row is gone, not before: the
+ * values (host-checks), the discovered items and the rules on removed
+ * items (both read the discovery row the forget deleted), and the alert
+ * lists the closed alerts were on.
+ */
+export function useForgetItem(org: string, hostId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ checkKey, item }: ForgetItemInput) =>
+      unwrap(
+        api.DELETE('/api/v1/orgs/{org}/hosts/{id}/items', {
+          params: { path: { org, id: hostId }, query: { check_key: checkKey, item } },
+        }),
+      ),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['host-checks', org, hostId] }),
+        qc.invalidateQueries({ queryKey: ['host-items', org, hostId] }),
+        qc.invalidateQueries({ queryKey: ['host-effective-rules', org, hostId] }),
+        qc.invalidateQueries({ queryKey: ['alerts', org] }),
+        qc.invalidateQueries({ queryKey: ['alert', org] }),
+      ]),
+  });
+}

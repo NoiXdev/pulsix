@@ -10,8 +10,9 @@ import { Pill } from '../../ui/badge.tsx';
 import { Button } from '../../ui/button.tsx';
 import { type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { seenLabel } from '../workers/expiry.ts';
-import { decisionOriginLabel, formatNumber, isGraphable, metricLabel, verdictLabel, type TupleKey } from './hostChecks.ts';
+import { decisionOriginLabel, formatNumber, isGraphable, metricLabel, offersForget, verdictLabel, type TupleKey } from './hostChecks.ts';
 import { EffectiveRuleEntries } from './EffectiveRulesPanel.tsx';
+import { ForgetItemButton } from './ForgetItemButton.tsx';
 import { ItemDecisionButton } from './ItemDecisionButton.tsx';
 import { MetricGraphPanel } from './MetricGraphPanel.tsx';
 import { importMetricChart } from './metricChartImport.ts';
@@ -69,6 +70,10 @@ export function HostCheckValueRow({
   const decidedBy = value.decided_by;
 
   const st = verdictLabel(value.state, value.ignored, t);
+  // Backlog 3.12b: a stale item can be forgotten from here (offersForget
+  // says which rows; items the check no longer asks for never reach this
+  // card, so they are left to the automatic expiry).
+  const forgettable = offersForget(value, canWrite);
 
   // The entries GET /hosts/{id}/effective-rules returns for exactly this
   // tuple — up to two (warn and crit are resolved independently). Every
@@ -177,6 +182,7 @@ export function HostCheckValueRow({
                 decidedBy={decidedBy}
               />
             )}
+            {forgettable && <ForgetItemButton org={org} hostId={hostId} checkKey={check.key} item={value.item} />}
             {rulesForTuple.length > 0 && (
               <Button
                 type="button"

@@ -599,6 +599,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerHostCheckRoutes(orgScoped, deps)       // GET /orgs/{org}/hosts/{id}/checks, .../metrics
 	registerRuleRoutes(orgScoped, deps)            // /orgs/{org}/rules..., GET /orgs/{org}/hosts/{id}/effective-rules
 	registerItemRoutes(orgScoped, deps)            // /orgs/{org}/items, /orgs/{org}/item-decisions..., GET /orgs/{org}/hosts/{id}/items
+	registerItemForgetRoute(orgScoped, deps)       // DELETE /orgs/{org}/hosts/{id}/items — forget one item
 	registerFleetRoutes(orgScoped, deps)           // GET /orgs/{org}/fleet
 	registerNotifyChannelRoutes(orgScoped, deps)   // /orgs/{org}/notification-channels...
 	registerMaintenanceRoutes(orgScoped, deps)     // /orgs/{org}/maintenance-windows...

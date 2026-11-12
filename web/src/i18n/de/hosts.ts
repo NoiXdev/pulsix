@@ -323,6 +323,15 @@ export const deHosts: Messages['hosts'] = {
     watchLabel: (key: string, item: string) => `${key} ${item} überwachen`,
     failed: 'Diese Entscheidung konnte nicht gespeichert werden',
   },
+  forget: {
+    forget: 'Vergessen',
+    label: (key: string, item: string) => `${key} ${item} vergessen`,
+    confirmTitle: (item: string) => `${item} vergessen?`,
+    confirmBody:
+      'Seine aktuellen Werte und offenen Alarme werden entfernt; seine Diagramme bleiben. Meldet es sich wieder, erscheint es erneut.',
+    done: (item: string) => `${item} vergessen`,
+    failed: 'Dieses Element konnte nicht vergessen werden',
+  },
   graph: {
     ranges: {
       '1h': '1 Std.',

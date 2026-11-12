@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { HostChecksCard, ManageChecksLink } from './HostChecksCard.tsx';
 
@@ -84,7 +85,9 @@ function renderCard(canRead = true, canWrite = true, retry: number | boolean = f
   return render(
     <QueryClientProvider client={qc}>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -204,6 +207,86 @@ describe('HostChecksCard', () => {
     // and a graph opened on one has nothing to draw.
     expect(await screen.findByText('collection failed')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Graph/ })).not.toBeInTheDocument();
+  });
+
+  // Backlog 3.12b: a stale item row offers Forget; a fresh one does not
+  // (forgetting it would undo itself within one interval). Whole-host
+  // metrics are not items and carry no row action; a viewer has no
+  // checks.write to spend on it. Items the check no longer asks for never
+  // reach the card (the server's stillAsked), so stale is the only case.
+  it('offers Forget on stale item rows only, and only with checks.write', async () => {
+    const STALE_AND_FRESH = {
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check({ values: [{ item: '', metric: 'usage_percent', value: 1, at: NOW, stale: true, state: null, flapping: false }] }),
+          check({
+            definition_id: 'd2',
+            key: 'disk',
+            plugin: 'disk',
+            values: [
+              { item: '/old', metric: 'used_percent', value: 5, at: NOW, stale: true, state: null, flapping: false },
+              { item: '/var', metric: 'used_percent', value: 6, at: NOW, stale: false, state: null, flapping: false },
+            ],
+          }),
+        ],
+      },
+    };
+    mockApi(STALE_AND_FRESH);
+    const first = renderCard();
+
+    expect(await screen.findByRole('heading', { name: 'disk' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Forget disk /old' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Forget disk /var' })).not.toBeInTheDocument();
+    expect(row('cpu', 'usage_percent').queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
+    first.unmount();
+
+    renderCard(true, false);
+    expect(await screen.findByRole('heading', { name: 'disk' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
+  });
+
+  it('forgets after confirmation and reads the host checks again', async () => {
+    const user = userEvent.setup();
+    let forgotten = false;
+    let reads = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': () => {
+        reads++;
+        return {
+          host_id: 'h1',
+          monitored: true,
+          checks: [
+            check({
+              definition_id: 'd2',
+              key: 'disk',
+              plugin: 'disk',
+              values: forgotten ? [] : [{ item: '/old', metric: 'used_percent', value: 5, at: NOW, stale: true, state: null, flapping: false }],
+            }),
+          ],
+        };
+      },
+      'DELETE /api/v1/orgs/acme/hosts/h1/items': (req: MockRequest) => {
+        forgotten = req.search.get('check_key') === 'disk' && req.search.get('item') === '/old';
+        return new Response(null, { status: 204 });
+      },
+    });
+    renderCard();
+
+    await user.click(await screen.findByRole('button', { name: 'Forget disk /old' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Forget /old?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Forget' }));
+
+    await waitFor(() => expect(screen.queryByText('/old used_percent')).not.toBeInTheDocument());
+    expect(forgotten).toBe(true);
+    expect(reads).toBeGreaterThanOrEqual(2);
   });
 
   it('marks exactly what the server calls stale, never what the timestamps suggest', async () => {

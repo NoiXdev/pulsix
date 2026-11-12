@@ -321,6 +321,14 @@ export const enHosts = {
     watchLabel: (key: string, item: string) => `Watch ${key} ${item}`,
     failed: 'Saving this decision failed',
   },
+  forget: {
+    forget: 'Forget',
+    label: (key: string, item: string) => `Forget ${key} ${item}`,
+    confirmTitle: (item: string) => `Forget ${item}?`,
+    confirmBody: 'Its current values and open alerts are removed; its graphs stay. If it reports again it comes back.',
+    done: (item: string) => `${item} forgotten`,
+    failed: 'Forgetting this item failed',
+  },
   graph: {
     ranges: {
       '1h': '1 h',

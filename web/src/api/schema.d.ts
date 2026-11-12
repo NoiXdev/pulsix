@@ -1462,7 +1462,8 @@ export interface paths {
         get: operations["get-api-v1-orgs-by-org-hosts-by-id-items"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete API v1 orgs by org hosts by ID items */
+        delete: operations["forgetHostItem"];
         options?: never;
         head?: never;
         patch?: never;
@@ -11161,6 +11162,41 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HostItemsOutputBody"];
                 };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    forgetHostItem: {
+        parameters: {
+            query?: {
+                /** @description Required: the check the item belongs to */
+                check_key?: string;
+                /** @description Required, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item */
+                item?: string;
+            };
+            header?: never;
+            path: {
+                org: string;
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Error */
             default: {

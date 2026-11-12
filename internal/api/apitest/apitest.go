@@ -463,7 +463,16 @@ func New(t *testing.T, opts ...Option) *Server {
 	// WithHostRoster) without which Preview and the resolver refuse to
 	// run — the check routes call both, so a fixture missing them would
 	// pass tests the real manager could not.
+	// The alert lifecycle's own service (v0.4a Task 8), built here, ahead
+	// of s.Checks, exactly like production (internal/app.Build): the same
+	// instance is s.Checks' alert closer for forgotten items (backlog
+	// 3.12b) and, further down, Deps.Alerts. Store plus clock, nothing
+	// else — Apply and Sweep are driven by the evaluation ticker, not
+	// exercised here, the same way the schedule/notification tickers below
+	// are not started either.
+	s.Alerts = alerts.NewService(alerts.NewSQLStore(d), time.Now)
 	s.Checks = checks.NewService(checks.NewSQLStore(d),
+		checks.WithAlertCloser(s.Alerts),
 		checks.WithMatcher(app.NewChecksHostMatcher(hostsSvc)),
 		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)))
 	// The rule engine (v0.3b-2): SeedForOrg is wired into the hook right
@@ -600,12 +609,6 @@ func New(t *testing.T, opts ...Option) *Server {
 	// (internal/app.Build).
 	maintenanceSvc := maintenance.NewService(maintenance.NewSQLStore(d), app.NewGroupHosts(resolver), time.Now, rand.Reader, nil)
 	schedulesSvc.SetMaintenance(maintenanceSvc)
-	// The alert lifecycle's own service (v0.4a Task 8), wired exactly like
-	// production (internal/app.Build): store plus clock, nothing else —
-	// Apply and Sweep are driven by the evaluation ticker, not exercised
-	// here, the same way the schedule/notification tickers above are not
-	// started either.
-	s.Alerts = alerts.NewService(alerts.NewSQLStore(d), time.Now)
 	// The alert-route surface (v0.4b Task 10), wired exactly like
 	// production (internal/app.Build): GroupsForHost comes from the same
 	// checksSvc instance through app.NewAlertRouteGroups, the identical

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as checks from './hostChecks.ts';
-import { formatNumber, isGraphable, metricLabel } from './hostChecks.ts';
+import { formatNumber, isGraphable, metricLabel, offersForget } from './hostChecks.ts';
 import { en } from '../../i18n/en/index.ts';
 import { de } from '../../i18n/de/index.ts';
 import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
@@ -114,6 +114,22 @@ describe('isGraphable', () => {
     ],
   ])('%s', (_name, c, v, expected) => {
     expect(isGraphable(c, v)).toBe(expected);
+  });
+});
+
+describe('offersForget', () => {
+  // Backlog 3.12b: only a stale item row offers Forget. A fresh item would
+  // come straight back; a whole-host metric is not an item; a viewer has
+  // no checks.write. Items the check stopped asking for never reach the
+  // card at all (the server's stillAsked), so there is no row for them.
+  it.each([
+    ['a stale item with checks.write', value({ item: '/old', stale: true }), true, true],
+    ['a fresh item', value({ item: '/var', stale: false }), true, false],
+    ['a stale whole-host metric', value({ item: '', stale: true }), true, false],
+    ['a stale item without checks.write', value({ item: '/old', stale: true }), false, false],
+    ['a stale item whose last reading failed', value({ item: '/old', stale: true, error: 'gone' }), true, true],
+  ])('%s', (_name, v, canWrite, want) => {
+    expect(offersForget(v, canWrite)).toBe(want);
   });
 });
 

@@ -89,6 +89,26 @@ export function isGraphable(check: HostCheck, v: HostCheckValue): boolean {
 }
 
 /**
+ * offersForget says whether a value's row offers **Forget** (backlog 3.12b,
+ * spec "Manual forget"): only when the server calls the reading stale, it
+ * belongs to a named item, and the viewer may write checks.
+ *
+ *  - Fresh items are not offered it: forgetting one would undo itself
+ *    within one interval and only confuse (the API does not refuse it).
+ *  - A whole-host metric (item '') is not an item and carries no row action,
+ *    like the Ignore/Watch button; the automatic expiry covers it.
+ *  - The spec also names rows "whose check no longer asks for" the item.
+ *    Those never reach this card: GET /hosts/{id}/checks drops them
+ *    (stillAsked, internal/api/host_check_handlers.go), so stale is the
+ *    only case here, and not-asked items are left to the automatic expiry.
+ *
+ * `stale` is the server's answer and is not recomputed (see HostChecksCard).
+ */
+export function offersForget(v: HostCheckValue, canWrite: boolean): boolean {
+  return canWrite && v.item !== '' && v.stale;
+}
+
+/**
  * CLOCK_SKEW_FLOOR is where a difference between the host's clock and the
  * manager's stops being explicable by anything else. Below half a minute
  * it is collection and delivery timing; above it, it is a clock, and the
