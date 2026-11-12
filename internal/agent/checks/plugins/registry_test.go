@@ -6,13 +6,13 @@ import (
 	"github.com/noixdev/pulsix/internal/agent/checks"
 )
 
-// TestRegistryWiresEveryPlugin pins the seven names Task 8's scheduler and
+// TestRegistryWiresEveryPlugin pins the plugin names Task 8's scheduler and
 // the manager's plugin validation (internal/checks.supportedPlugins) agree
 // on; a typo'd registry key would silently orphan a plugin from every
 // check definition that names it.
 func TestRegistryWiresEveryPlugin(t *testing.T) {
 	reg := Registry()
-	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker"}
+	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature"}
 	if len(reg) != len(want) {
 		t.Fatalf("Registry() has %d plugins, want %d: %v", len(reg), len(want), reg)
 	}
