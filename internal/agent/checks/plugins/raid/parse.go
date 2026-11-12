@@ -20,13 +20,14 @@ const (
 
 // array is one md device as /proc/mdstat describes it.
 type array struct {
-	name    string
-	state   string
-	total   int
-	active  int
-	failed  int
+	name   string
+	state  string
+	total  int
+	active int
+	failed int
+	// syncPct is the running sync's progress, 0 while one is queued and
+	// 100 when none runs (see the package doc).
 	syncPct float64
-	hasPct  bool
 }
 
 var (
@@ -160,7 +161,13 @@ func (b *block) addLine(line string) {
 }
 
 func (b *block) finish() array {
-	a := array{name: b.name, failed: b.failed}
+	a := array{name: b.name, failed: b.failed, syncPct: 100}
+	switch {
+	case b.hasPct:
+		a.syncPct = b.pct
+	case b.syncState != "":
+		a.syncPct = 0 // queued: PENDING or DELAYED
+	}
 	if b.haveCounts {
 		a.total, a.active = b.total, b.working
 	} else {
@@ -172,7 +179,6 @@ func (b *block) finish() array {
 		a.state = stateInactive
 	case b.syncState != "":
 		a.state = b.syncState
-		a.syncPct, a.hasPct = b.pct, b.hasPct
 	case b.slotsLost || (b.haveCounts && b.working < b.total) || b.failed > 0:
 		a.state = stateDegraded
 	default:

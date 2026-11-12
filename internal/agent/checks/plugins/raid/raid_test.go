@@ -47,11 +47,36 @@ func TestCollectRecovering(t *testing.T) {
 	}
 }
 
-func TestCollectNoSyncPctWhenPending(t *testing.T) {
-	p := raidPlugin{Source: fakeSource{data: load(t, "resync_pending.txt")}}
-	obs, _ := p.Collect(context.Background(), nil)
-	if find(obs, "md1", "raid.sync_pct") != nil {
-		t.Fatal("sync_pct must be absent while pending")
+// TestCollectSyncPctEveryRun: raid.sync_pct is reported on every run for
+// every array, so its value never turns stale once a sync ends: the
+// running operation's progress, 0 while one is queued (PENDING/DELAYED),
+// 100 when none runs.
+func TestCollectSyncPctEveryRun(t *testing.T) {
+	for _, tc := range []struct {
+		file, item string
+		want       float64
+	}{
+		{"recovering.txt", "md0", 12.3},
+		{"check.txt", "md0", 30},
+		{"resync_pending.txt", "md1", 0},
+		{"resync_delayed.txt", "md1", 0},
+		{"clean_raid1.txt", "md0", 100},
+		{"degraded_raid1.txt", "md0", 100},
+		{"inactive.txt", "md0", 100},
+		{"raid0.txt", "md0", 100},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			obs, err := raidPlugin{Source: fakeSource{data: load(t, tc.file)}}.Collect(context.Background(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o := find(obs, tc.item, "raid.sync_pct"); o == nil || o.Value == nil || *o.Value != tc.want {
+				t.Fatalf("sync_pct = %+v, want %v", o, tc.want)
+			}
+			if n := len(obs); n != 6 {
+				t.Fatalf("got %d observations, want five for the array plus raid.arrays: %+v", n, obs)
+			}
+		})
 	}
 }
 

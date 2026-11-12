@@ -2,9 +2,15 @@
 // read from /proc/mdstat. One item per array (md0, md127, …) with raid.state
 // (a label: clean, degraded, resyncing, recovering, checking, reshaping or
 // inactive), raid.devices_total, raid.devices_active, raid.devices_failed
-// and, only while a resync, recovery, check or reshape reports a
-// percentage, raid.sync_pct. The Plugin contract and the shared observation
-// helpers it builds on are in internal/agent/checks.
+// and raid.sync_pct. The Plugin contract and the shared observation helpers
+// it builds on are in internal/agent/checks.
+//
+// raid.sync_pct is reported on every run for every array, never only while
+// a sync runs: a value the agent stops sending turns stale and leaves the
+// host unknown, so a metric that came and went with each resync or check
+// would do that after the first one. It is the running resync, recovery,
+// check, repair or reshape's progress; 0 while one is queued
+// (resync=PENDING or DELAYED); 100 when none runs.
 //
 // State: inactive wins; else a running or queued (PENDING/DELAYED) sync
 // names the state (recovery is recovering, resync resyncing, check and
@@ -114,10 +120,8 @@ func (p raidPlugin) Collect(ctx context.Context, params map[string]any) ([]check
 			checks.ValueObservation(a.name, "raid.devices_total", float64(a.total)),
 			checks.ValueObservation(a.name, "raid.devices_active", float64(a.active)),
 			checks.ValueObservation(a.name, "raid.devices_failed", float64(a.failed)),
+			checks.ValueObservation(a.name, "raid.sync_pct", a.syncPct),
 		)
-		if a.hasPct {
-			obs = append(obs, checks.ValueObservation(a.name, "raid.sync_pct", a.syncPct))
-		}
 	}
 	obs = append(obs, checks.ValueObservation("", "raid.arrays", float64(n)))
 	return obs, errors.Join(errs...)
