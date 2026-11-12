@@ -27,7 +27,7 @@ type CatalogueEntry struct {
 
 // Catalogue is the set of metric names the shipped plugins report, with
 // the check key each belongs to. It is a table rather than free-form names
-// for the same reason the plugin list in internal/checks is: an unknown
+// for the same reason the plugin list in internal/checkplugins is: an unknown
 // metric must be refused when the rule is written, not silently never
 // match.
 //
