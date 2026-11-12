@@ -379,14 +379,43 @@ func TestEnsureDataDirLeavesTheSecretsFileToItsWatcher(t *testing.T) {
 		t.Fatalf("ensureDataDir = %v, want ErrSetupFailed naming the planted key", err)
 	}
 
-	// A secrets file outside the data directory exempts nothing in it.
+	// A secrets file outside the data directory exempts nothing in it,
+	// even one that exists under the same name.
 	elsewhere := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(elsewhere, []byte("secrets: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(planted); err != nil {
 		t.Fatal(err)
 	}
 	err = ensureDataDir(p, dir, true, elsewhere, quietLogger())
 	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.yaml") {
 		t.Fatalf("ensureDataDir (secrets file elsewhere) = %v, want ErrSetupFailed naming the data dir's agent.yaml", err)
+	}
+}
+
+// TestEnsureDataDirExemptsTheSecretsFileByNameOnly: a squatter who
+// planted one file under two names — agent.yaml and a hard link as
+// agent.key — must not get the key past the entry pass because it is the
+// same file as the exempt agent.yaml. Only the entry named like the
+// secrets file is skipped.
+func TestEnsureDataDirExemptsTheSecretsFileByNameOnly(t *testing.T) {
+	dir := t.TempDir()
+	secretsPath := filepath.Join(dir, "agent.yaml")
+	if err := os.WriteFile(secretsPath, []byte("secrets: {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.Join(dir, "agent.key")
+	if err := os.Link(secretsPath, key); err != nil {
+		t.Skipf("no hard links here: %v", err)
+	}
+	p := &fakeProtector{
+		entries: true,
+		owner:   map[string]string{secretsPath: `owner PC\mallory`, key: `owner PC\mallory`},
+	}
+	err := ensureDataDir(p, dir, true, secretsPath, quietLogger())
+	if !errors.Is(err, ErrSetupFailed) || !strings.Contains(err.Error(), "agent.key") {
+		t.Fatalf("ensureDataDir = %v, want ErrSetupFailed naming the hard-linked agent.key", err)
 	}
 }
 

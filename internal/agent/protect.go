@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // protector inspects and restricts who can access a path.
@@ -166,6 +167,9 @@ func restrictDataDir(p protector, dir string, mayProtect bool, log *slog.Logger)
 // checkDataDirEntries refuses the first entry directly inside dir (a file
 // or a subdirectory; not recursive) with a foreign owner or a loose list.
 // The entry that is the secrets file is skipped: the watcher checks it.
+// It must be both the same file and under the secrets file's name: a
+// hard link to agent.yaml planted as agent.key is still checked, or one
+// foreign file under two names would get past the pass as the identity.
 func checkDataDirEntries(p protector, dir, secretsPath string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -174,7 +178,7 @@ func checkDataDirEntries(p protector, dir, secretsPath string) error {
 	secrets := lstatOrNil(secretsPath)
 	for _, e := range entries {
 		path := filepath.Join(dir, e.Name())
-		if secrets != nil {
+		if secrets != nil && strings.EqualFold(e.Name(), filepath.Base(secretsPath)) {
 			if fi := lstatOrNil(path); fi != nil && os.SameFile(fi, secrets) {
 				continue
 			}
