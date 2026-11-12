@@ -54,7 +54,8 @@ describe.each(CASES)('CheckDialog — $plugin plugin', ({ plugin, required, labe
       const posted = await openNew(user);
       await user.click(screen.getByRole('button', { name: 'Save' }));
       await waitFor(() => expect(posted).toHaveLength(1));
-      expect(posted[0]).toMatchObject({ plugin, params: {} });
+      expect(posted[0]).toMatchObject({ plugin });
+      expect(posted[0].params).toEqual({});
     });
   }
 

@@ -56,7 +56,8 @@ describe.each(CASES)('SharedCheckFormPage — $plugin plugin', ({ plugin, requir
       const posted = await openNew();
       await user.click(screen.getByRole('button', { name: 'Create definition' }));
       await waitFor(() => expect(posted).toHaveLength(1));
-      expect(posted[0]).toMatchObject({ plugin, params: {} });
+      expect(posted[0]).toMatchObject({ plugin });
+      expect(posted[0].params).toEqual({});
     });
   }
 
