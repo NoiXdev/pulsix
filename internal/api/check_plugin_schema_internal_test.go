@@ -11,7 +11,7 @@ import (
 // TestCheckPluginFieldDoc: the write bodies' plugin doc string, built from
 // the registry, reads exactly as the literal it replaced.
 func TestCheckPluginFieldDoc(t *testing.T) {
-	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"
+	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"
 	if got := checkPluginFieldDoc(); got != want {
 		t.Fatalf("checkPluginFieldDoc() =\n%s\nwant\n%s", got, want)
 	}
@@ -34,6 +34,7 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"postgres: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"databases (list; at most 64 entries; each at most 63 bytes; each without control characters). " +
 		"mysql: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +
+		"redis: secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5). " +
 		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5). " +
 		"http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET or HEAD; default GET), " +

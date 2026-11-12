@@ -97,7 +97,7 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"raid.sync_pct":                  {CheckKey: "raid", Kind: rules.MetricNumeric},
 		"raid.arrays":                    {CheckKey: "raid", Kind: rules.MetricNumeric},
 
-		// Backlog 3.10: the database plugins (postgres, mysql; redis follows).
+		// Backlog 3.10: the database plugins (postgres, mysql, redis).
 		"pg.up":                      {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.connections":             {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.max_connections":         {CheckKey: "postgres", Kind: rules.MetricNumeric},
@@ -115,6 +115,16 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"mysql.replication_state":       {CheckKey: "mysql", Kind: rules.MetricDiscrete},
 		"mysql.replication_lag_seconds": {CheckKey: "mysql", Kind: rules.MetricNumeric},
 		"mysql.slow_queries_per_s":      {CheckKey: "mysql", Kind: rules.MetricNumeric},
+
+		"redis.up":                      {CheckKey: "redis", Kind: rules.MetricNumeric},
+		"redis.memory_used_bytes":       {CheckKey: "redis", Kind: rules.MetricNumeric},
+		"redis.memory_max_bytes":        {CheckKey: "redis", Kind: rules.MetricNumeric},
+		"redis.memory_pct":              {CheckKey: "redis", Kind: rules.MetricNumeric},
+		"redis.clients":                 {CheckKey: "redis", Kind: rules.MetricNumeric},
+		"redis.role":                    {CheckKey: "redis", Kind: rules.MetricDiscrete},
+		"redis.replication_link":        {CheckKey: "redis", Kind: rules.MetricDiscrete},
+		"redis.replication_lag_seconds": {CheckKey: "redis", Kind: rules.MetricNumeric},
+		"redis.evicted_keys_per_s":      {CheckKey: "redis", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -161,6 +171,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"raid":    "raid",
 		"pg":      "postgres",
 		"mysql":   "mysql",
+		"redis":   "redis",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")

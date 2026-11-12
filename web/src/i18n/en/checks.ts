@@ -111,6 +111,7 @@ export const enChecks = {
       raid: 'RAID arrays',
       postgres: 'PostgreSQL',
       mysql: 'MySQL / MariaDB',
+      redis: 'Redis / Valkey',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -205,6 +206,13 @@ export const enChecks = {
       secret: {
         label: 'Secret',
         hint: 'Name of a secret in agent.yaml on each host: it holds the server address and login. The value never leaves the host.',
+        placeholder: 'db-main',
+      },
+    },
+    redis: {
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name of a secret in agent.yaml on each host: it holds the server address and login. The value never leaves the host. Without one, the check reads 127.0.0.1:6379 without logging in.',
         placeholder: 'db-main',
       },
     },

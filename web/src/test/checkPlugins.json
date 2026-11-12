@@ -430,6 +430,58 @@
       ]
     },
     {
+      "name": "redis",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "secret",
+          "type": "string",
+          "example": "db-main",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        }
+      ],
+      "metrics": [
+        {
+          "name": "redis.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.memory_used_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.memory_max_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.memory_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.clients",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.role",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.replication_link",
+          "kind": "discrete"
+        },
+        {
+          "name": "redis.replication_lag_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "redis.evicted_keys_per_s",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

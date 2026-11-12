@@ -50,7 +50,7 @@ func TestPluginConstantsAreTheDescriptors(t *testing.T) {
 	constants := []string{
 		checks.PluginCPU, checks.PluginMemory, checks.PluginDisk, checks.PluginService,
 		checks.PluginNetwork, checks.PluginUptime, checks.PluginDocker,
-		checks.PluginTemperature, checks.PluginSmart, checks.PluginRaid, checks.PluginPostgres, checks.PluginMySQL,
+		checks.PluginTemperature, checks.PluginSmart, checks.PluginRaid, checks.PluginPostgres, checks.PluginMySQL, checks.PluginRedis,
 		checks.PluginICMP, checks.PluginTCP, checks.PluginHTTP, checks.PluginTLS, checks.PluginDNS,
 	}
 	if names := checkplugins.Names(); !slices.Equal(constants, names) {
@@ -66,7 +66,7 @@ func TestUnsupportedPluginMessage(t *testing.T) {
 	if !errors.Is(err, checks.ErrInvalidInput) {
 		t.Fatalf("ValidateDefinitionShape(snmp) = %v, want ErrInvalidInput", err)
 	}
-	const want = `invalid input: plugin must be one of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, icmp, tcp, http, tls, dns, got "snmp"`
+	const want = `invalid input: plugin must be one of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, icmp, tcp, http, tls, dns, got "snmp"`
 	if err.Error() != want {
 		t.Fatalf("ValidateDefinitionShape(snmp) = %q, want %q", err.Error(), want)
 	}

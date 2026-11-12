@@ -95,6 +95,7 @@ export const deChecks: Messages['checks'] = {
       raid: 'RAID-Arrays',
       postgres: 'PostgreSQL',
       mysql: 'MySQL / MariaDB',
+      redis: 'Redis / Valkey',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -180,6 +181,13 @@ export const deChecks: Messages['checks'] = {
       secret: {
         label: 'Secret',
         hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält Serveradresse und Login. Der Wert verlässt den Host nie.',
+        placeholder: 'db-main',
+      },
+    },
+    redis: {
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält Serveradresse und Login. Der Wert verlässt den Host nie. Ohne Secret liest der Check 127.0.0.1:6379 ohne Login.',
         placeholder: 'db-main',
       },
     },
