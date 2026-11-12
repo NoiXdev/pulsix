@@ -43,8 +43,14 @@ a temperature that climbs, an array that runs degraded.
   only when the sensor states such a limit (a non-zero value).
 - Parameter: `sensors` (optional list): report only these sensor keys; empty
   means all.
-- A platform or host with no readable sensor reports a collection error
-  "no temperature sensors found" on item `""`, metric `temp.celsius`.
+- `temp.sensors` on item `""`: the number of sensors reported this round,
+  after the filter, sent on every run that reported at least one.
+  **(final review ruling)**
+- A platform or host with no readable sensor (or a `sensors` list that
+  matches none) reports a collection error "no temperature sensors found" on
+  item `""`, metric `temp.sensors` — so the next good run replaces the error
+  with the count. **(final review ruling; it was `temp.celsius`, which no
+  good run sends for item `""`, so the error stood for ever)**
 
 ## Plugin `smart`
 
@@ -54,15 +60,30 @@ a temperature that climbs, an array that runs degraded.
   `devices` parameter, which the manager validates as device paths.
 - `smartctl` is looked up in the standard install locations first
   (`/usr/sbin`, `/usr/local/sbin`, `/opt/homebrew/sbin`, `/opt/homebrew/bin`,
-  `/usr/local/bin`; on Windows `%ProgramFiles%\smartmontools\bin\smartctl.exe`),
-  and on the agent's PATH only as the fallback. The path found must be
-  absolute, and on Windows an `.exe` (never a `.bat`, `.cmd` or `.com`).
-  **(Claude's call, added after review)** When it is missing, the check
-  reports one collection error on item `""` that says to install
+  `/usr/local/bin`), and on the agent's PATH only as the fallback. On
+  Windows the agent uses only `%ProgramFiles%\smartmontools\bin\smartctl.exe`
+  and never searches PATH: it runs smartctl as SYSTEM, and a folder on the
+  machine-wide PATH may be writable by users who are not administrators.
+  **(final review ruling)** The path found must be absolute, and on Windows
+  an `.exe` (never a `.bat`, `.cmd` or `.com`). **(Claude's call, added
+  after review)** When it is missing, the check reports one collection
+  error on item `""`, metric `smart.devices`, that says to install
   smartmontools.
 - It passes `-n standby,0` so that a sleeping disk is not spun up: smartctl
   then exits 0 without data for it, so a disk in standby reports nothing
-  that round (its values turn stale, not errors).
+  that round. Its values turn stale and, like every value the agent stops
+  sending, read unknown after three intervals (the host turns unknown with
+  a host-scope alert) for as long as the disk sleeps; after the item-expiry
+  period (`PULSIX_ITEM_EXPIRY`, seven days by default, backlog 3.12b) a disk
+  that never wakes is forgotten together with its open alerts. Operators
+  with disks that spin down list only the always-on disks in `devices`, or
+  ignore the sleeping ones; an opt-in wake or a standby-aware state is
+  backlog **3.9b**. **(final review ruling)**
+- Standby and "no SMART" are told apart without reading smartctl's message
+  text: with `-n standby,0` smartctl stops before it identifies a sleeping
+  disk, so that JSON has no `smart_support` block, while a device it did
+  identify (a virtual disk, a USB bridge without SMART pass-through) has one,
+  typically `{"available": false}`. **(final review ruling)**
 - One item per device, named by its path (`/dev/sda`, `/dev/nvme0`, …). A
   disk behind a RAID controller — a scanned `-d` type whose family (the text
   before the first comma) is `megaraid`, `sat+megaraid`, `cciss`, `3ware`,
@@ -78,8 +99,20 @@ a temperature that climbs, an array that runs degraded.
     (197), `smart.offline_uncorrectable` (198) — raw values;
   - NVMe: `smart.nvme_percentage_used`, `smart.nvme_available_spare_pct`,
     `smart.nvme_media_errors`.
+- `smart.devices` on item `""`: the number of devices found by the scan (or
+  configured) and not refused, sent on every run that got as far as querying
+  them. Every failure that concerns no single device is an error on this
+  metric instead, so the next good run replaces it: smartctl missing, the
+  scan failing or finding nothing, every device refused, and **no device
+  with SMART data** — every device answered without readings and none of
+  them is asleep (a virtual machine's disks, a USB stick), or every device
+  failed. In that last case nothing else is reported apart from each failed
+  device's own error, so such a host is never silent. **(final review
+  ruling)**
 - Parameter: `devices` (optional list of device paths; empty means every
-  device `--scan` finds).
+  device `--scan` finds). A list replaces the scan: the devices are queried
+  as given, without a `-d` type, so a disk behind a RAID controller cannot
+  be addressed through it.
 - Bounds: at most 4 devices queried at once, 20 s per device, the whole
   collection within 60 s; output read is capped (1 MiB per device).
 - smartctl's exit status is a bit mask; bits that only report SMART findings
@@ -97,7 +130,14 @@ a temperature that climbs, an array that runs degraded.
   - `raid.state` (label): `clean`, `degraded`, `resyncing`, `recovering`,
     `checking`, `reshaping`, `inactive`;
   - `raid.devices_total`, `raid.devices_active`, `raid.devices_failed`;
-  - `raid.sync_pct` — only while a resync, recovery, check or reshape runs.
+  - `raid.sync_pct` — on every run for every array: the running resync,
+    recovery, check, repair or reshape's progress; 0 while one is queued
+    (`PENDING`/`DELAYED`); 100 when none runs. **(final review ruling; sent
+    only during a sync, the value went stale after the first one ended and
+    left the host unknown for good)**
+- `recovering` means degraded and rebuilding — a member is being rebuilt,
+  for example after a hot spare took over a failed disk; a running or queued
+  sync names the state before `degraded` does.
 - Parameter: `arrays` (optional list; empty means every array found).
 - No array at all is not an error: the check reports
   `raid.arrays = 0` on item `""` (and that metric with the count whenever it
@@ -107,15 +147,23 @@ a temperature that climbs, an array that runs degraded.
 
 - The manager accepts the three plugins with their parameters (unknown
   parameters refused; list entries non-empty, at most 64 entries, each at
-  most 255 bytes; `devices` entries must be absolute device paths — `/dev/…`
-  on Unix or `\\.\…`/`/dev/…` forms smartctl accepts on Windows).
+  most 255 bytes; `devices` entries must start with `/dev/` on every platform
+  — smartctl names Windows disks `/dev/sda`, `/dev/pd0`, `/dev/csmi0,1` too —
+  contain only letters, digits and `. _ / , : + @ -`, and have no `..` path
+  segment). **(amended after review: the `\\.\…` forms are refused)**
+- A check with a list asks only for the items on it (backlog 3.28,
+  `Definition.AsksForItem`): `sensors`, `devices` and `arrays` bound the
+  items like `mounts` does, but the whole-host item `""` (`temp.sensors`,
+  `smart.devices`, `raid.arrays` and the host-level errors) is always asked,
+  and a smart item `<path> [<type>]` counts as asked when its `<path>` is
+  listed. **(final review ruling)**
 - The rules catalogue gets every metric above (check keys `temperature`,
   `smart`, `raid`); `raid.state` is discrete.
 - The SPA offers the three plugins with their list parameters (the same
   multi-line list field the disk plugin uses), marks `raid.state` as a label
   metric (not graphable), and the docs give example rules:
   `smart.passed == 0`, `smart.reallocated_sectors > 0`,
-  `raid.state == "degraded"`, `temp.celsius > 85`.
+  `raid.state == "degraded"`, `raid.devices_failed > 0`, `temp.celsius > 85`.
 
 ## Older agents and versions
 
@@ -133,7 +181,8 @@ readings until the agent is updated (the same wording as 3.12's).
 
 ## Documentation
 
-- `docs/BACKLOG.md`: 3.9 done; new row 3.9a (ZFS pool health).
+- `docs/BACKLOG.md`: 3.9 done; new rows 3.9a (ZFS pool health) and 3.9b
+  (smart: opt-in waking or a standby-aware state for disks that spin down).
 - `docs/upgrades.md`: the new plugins; agents need an update; smartmontools
   must be installed for `smart`.
 - End-user docs (noix-docs): the three plugins, their parameters and metrics,
