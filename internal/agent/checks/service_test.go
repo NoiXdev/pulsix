@@ -11,23 +11,23 @@ import (
 )
 
 type fixtureUnitLister struct {
-	states []unitState
-	err    error
-	called bool
+	results map[string]unitResult
+	err     error
+	called  bool
 }
 
-func (f *fixtureUnitLister) ListUnits(_ context.Context, units []string) ([]unitState, error) {
+func (f *fixtureUnitLister) States(_ context.Context, _ []string) (map[string]unitResult, error) {
 	f.called = true
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.states, nil
+	return f.results, nil
 }
 
 func TestServiceCollectHappyPath(t *testing.T) {
-	lister := &fixtureUnitLister{states: []unitState{
-		{Name: "sshd", LoadState: "loaded", ActiveState: "active"},
-		{Name: "cron", LoadState: "loaded", ActiveState: "failed"},
+	lister := &fixtureUnitLister{results: map[string]unitResult{
+		"sshd": {Label: "active"},
+		"cron": {Label: "failed"},
 	}}
 	p := servicePlugin{Lister: lister}
 	obs, err := p.Collect(context.Background(), map[string]any{"units": []string{"sshd", "cron"}})
@@ -79,8 +79,8 @@ func TestServiceCollectEmptyUnitsListCollectsNothing(t *testing.T) {
 // case the brief calls out: a unit the lister never resolved is a valid
 // observation ("unknown"), never an error.
 func TestServiceCollectUnknownUnitReportsUnknownLabel(t *testing.T) {
-	lister := &fixtureUnitLister{states: []unitState{
-		{Name: "sshd", LoadState: "loaded", ActiveState: "active"},
+	lister := &fixtureUnitLister{results: map[string]unitResult{
+		"sshd": {Label: "active"},
 		// "ghost" is deliberately absent from the response.
 	}}
 	p := servicePlugin{Lister: lister}
@@ -96,38 +96,40 @@ func TestServiceCollectUnknownUnitReportsUnknownLabel(t *testing.T) {
 	}
 }
 
-// TestServiceCollectNotFoundLoadStateReportsUnknown: systemd itself can
-// answer a query for a made-up unit with a synthesized entry (LoadState
-// "not-found") rather than omitting it — that must map to "unknown" too.
-func TestServiceCollectNotFoundLoadStateReportsUnknown(t *testing.T) {
-	lister := &fixtureUnitLister{states: []unitState{
-		{Name: "ghost.service", LoadState: "not-found", ActiveState: "inactive"},
+func TestServiceCollectPerUnitError(t *testing.T) {
+	lister := &fixtureUnitLister{results: map[string]unitResult{
+		"a": {Label: "active"},
+		"b": {Err: errors.New("access denied")},
 	}}
 	p := servicePlugin{Lister: lister}
-	obs, err := p.Collect(context.Background(), map[string]any{"units": []string{"ghost.service"}})
+	obs, err := p.Collect(context.Background(), map[string]any{"units": []string{"a", "b", "c"}})
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
-	if o := findObs(t, obs, "ghost.service", "service.state"); o.Label == nil || *o.Label != "unknown" {
-		t.Errorf("label = %v, want unknown", o.Label)
+	if len(obs) != 3 {
+		t.Fatalf("obs = %+v, want 3", obs)
+	}
+	if o := findObs(t, obs, "a", "service.state"); o.Label == nil || *o.Label != "active" {
+		t.Errorf("a = %+v, want active", o)
+	}
+	o := findObs(t, obs, "b", "service.state")
+	if o.Err == "" || o.Label != nil || !strings.Contains(o.Err, "access denied") {
+		t.Errorf("b = %+v, want an error observation carrying access denied", o)
+	}
+	if o := findObs(t, obs, "c", "service.state"); o.Label == nil || *o.Label != "unknown" {
+		t.Errorf("c = %+v, want unknown", o)
 	}
 }
 
-// TestServiceCollectUnrecognizedActiveStateReportsUnknown: an ActiveState
-// outside the plugin's known four (e.g. systemd's transient
-// "deactivating") is not a judgement call the agent makes — it collapses
-// to "unknown" like any other state it does not recognize.
-func TestServiceCollectUnrecognizedActiveStateReportsUnknown(t *testing.T) {
-	lister := &fixtureUnitLister{states: []unitState{
-		{Name: "sshd", LoadState: "loaded", ActiveState: "deactivating"},
-	}}
+func TestServiceCollectKeepsTheRequestedName(t *testing.T) {
+	lister := &fixtureUnitLister{results: map[string]unitResult{"W3svc": {Label: "active"}}}
 	p := servicePlugin{Lister: lister}
-	obs, err := p.Collect(context.Background(), map[string]any{"units": []string{"sshd"}})
+	obs, err := p.Collect(context.Background(), map[string]any{"units": []string{"W3svc"}})
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
-	if o := findObs(t, obs, "sshd", "service.state"); o.Label == nil || *o.Label != "unknown" {
-		t.Errorf("label = %v, want unknown", o.Label)
+	if o := findObs(t, obs, "W3svc", "service.state"); o.Label == nil || *o.Label != "active" {
+		t.Errorf("W3svc = %+v, want active", o)
 	}
 }
 
@@ -188,24 +190,21 @@ func TestServiceCollectContextCancelled(t *testing.T) {
 	}
 }
 
-func TestServiceStateLabel(t *testing.T) {
+func TestSystemdLabel(t *testing.T) {
 	cases := []struct {
-		name string
-		in   unitState
-		want string
+		name, load, active, want string
 	}{
-		{name: "active", in: unitState{Name: "a", LoadState: "loaded", ActiveState: "active"}, want: "active"},
-		{name: "inactive", in: unitState{Name: "a", LoadState: "loaded", ActiveState: "inactive"}, want: "inactive"},
-		{name: "failed", in: unitState{Name: "a", LoadState: "loaded", ActiveState: "failed"}, want: "failed"},
-		{name: "activating", in: unitState{Name: "a", LoadState: "loaded", ActiveState: "activating"}, want: "activating"},
-		{name: "not-found", in: unitState{Name: "a", LoadState: "not-found", ActiveState: "inactive"}, want: "unknown"},
-		{name: "zero value (never resolved)", in: unitState{}, want: "unknown"},
-		{name: "unrecognized active state", in: unitState{Name: "a", LoadState: "loaded", ActiveState: "reloading"}, want: "unknown"},
+		{"active", "loaded", "active", "active"},
+		{"inactive", "loaded", "inactive", "inactive"},
+		{"failed", "loaded", "failed", "failed"},
+		{"activating", "loaded", "activating", "activating"},
+		{"not-found", "not-found", "inactive", "unknown"},
+		{"unrecognized active state", "loaded", "reloading", "unknown"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := serviceStateLabel(tc.in); got != tc.want {
-				t.Errorf("serviceStateLabel(%+v) = %q, want %q", tc.in, got, tc.want)
+			if got := systemdLabel(tc.load, tc.active); got != tc.want {
+				t.Errorf("systemdLabel(%q, %q) = %q, want %q", tc.load, tc.active, got, tc.want)
 			}
 		})
 	}

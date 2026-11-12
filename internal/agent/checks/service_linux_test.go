@@ -9,9 +9,9 @@ import "testing"
 // exercising ListUnits against a live systemd is the v0.3a e2e gate's job
 // (agent container on Linux, Task 11), not a unit test's.
 func TestNewSystemdListerIsTheDBusAdapterOnLinux(t *testing.T) {
-	lister := newSystemdLister()
+	lister := newUnitLister()
 	if _, ok := lister.(dbusLister); !ok {
-		t.Fatalf("newSystemdLister() = %T, want dbusLister", lister)
+		t.Fatalf("newUnitLister() = %T, want dbusLister", lister)
 	}
 }
 

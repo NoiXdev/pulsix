@@ -48,7 +48,7 @@ import (
 // "collection failed" rather than a stale number that looks fresh. A
 // plugin that cannot attribute a fault to a specific item/metric (a
 // probe that is genuinely one indivisible round trip for everything it
-// was asked, e.g. service's batched ListUnits) still reports one Err
+// was asked, e.g. service's batched States) still reports one Err
 // observation per item/metric that call would have produced — not
 // nothing, and not one combined-but-unattributed error.
 type Observation struct {

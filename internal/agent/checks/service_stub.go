@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !windows && !darwin
 
 package checks
 
@@ -7,16 +7,15 @@ import (
 	"errors"
 )
 
-// ErrServiceUnsupported is what a non-Linux build reports for every unit
-// lookup: systemd over D-Bus is Linux-only (service_linux.go); a
-// misconfigured host on any other platform gets a plain, explicit reason
-// rather than a silent no-op or a build failure.
+// ErrServiceUnsupported is what a build for a platform without a supported
+// service manager reports for every lookup: a misconfigured host gets a
+// plain, explicit reason rather than a silent no-op or a build failure.
 var ErrServiceUnsupported = errors.New("service checks are not supported on this platform")
 
 type stubLister struct{}
 
-func newSystemdLister() unitLister { return stubLister{} }
+func newUnitLister() unitLister { return stubLister{} }
 
-func (stubLister) ListUnits(context.Context, []string) ([]unitState, error) {
+func (stubLister) States(context.Context, []string) (map[string]unitResult, error) {
 	return nil, ErrServiceUnsupported
 }

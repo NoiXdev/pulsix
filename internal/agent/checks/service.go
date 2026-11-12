@@ -5,22 +5,22 @@ import (
 	"fmt"
 )
 
-// unitState is the minimal systemd unit state the service plugin needs —
-// package-local so this shared file never imports the platform-specific
-// D-Bus client (service_linux.go does that; service_stub.go doesn't need
-// it at all), keeping the plugin's logic testable on every platform.
-type unitState struct {
-	Name        string
-	LoadState   string
-	ActiveState string
+// unitResult is one unit's outcome: its label, or the error that kept it
+// from being looked up. Per-unit so a platform whose service manager is
+// queried unit by unit (Windows) can fail one name without the others.
+type unitResult struct {
+	Label string
+	Err   error
 }
 
-// unitLister is the narrow provider seam over systemd unit lookups — the
-// facts-style seam for D-Bus. service_linux.go wires the real systemd
-// connection; service_stub.go wires a stub that always errors; tests
-// inject a fixture.
+// unitLister is the narrow provider seam over the platform's service
+// manager. The per-platform files (service_linux.go, service_windows.go,
+// service_darwin.go, service_stub.go) wire the real adapter; tests inject a
+// fixture.
 type unitLister interface {
-	ListUnits(ctx context.Context, units []string) ([]unitState, error)
+	// States looks every unit up; a whole-lookup failure is the error, a
+	// per-unit failure is that unit's Err. Keys are the names as requested.
+	States(ctx context.Context, units []string) (map[string]unitResult, error)
 }
 
 // servicePlugin reports one label observation per requested unit (item =
@@ -33,7 +33,7 @@ type servicePlugin struct {
 }
 
 func newServicePlugin() Plugin {
-	return servicePlugin{Lister: newSystemdLister()}
+	return servicePlugin{Lister: newUnitLister()}
 }
 
 func (servicePlugin) Name() string { return "service" }
@@ -41,8 +41,8 @@ func (servicePlugin) Name() string { return "service" }
 // Collect reads the "units" param (required by internal/checks.
 // validateParams, but this plugin stays defensive: an absent or empty list
 // just means nothing to check, not an error). Every requested unit is
-// looked up in one batched call — a fault there (no systemd, no D-Bus, the
-// non-Linux stub) fails every unit together, since it is genuinely one
+// looked up in one call — a fault there (no systemd, no D-Bus, no service
+// manager, an unsupported platform) fails every unit together, since it is genuinely one
 // round trip, and is reported as each requested unit's own service.state
 // error observation rather than nothing at all; a unit the call didn't
 // return anything for (the lister itself succeeded) reports "unknown"
@@ -63,7 +63,7 @@ func (p servicePlugin) Collect(ctx context.Context, params map[string]any) ([]Ob
 		return nil, fmt.Errorf("service: no unit lister configured")
 	}
 
-	states, err := p.Lister.ListUnits(ctx, units)
+	states, err := p.Lister.States(ctx, units)
 	if err != nil {
 		wrapped := fmt.Errorf("service: %w", err)
 		// One D-Bus round trip covers every requested unit, so a fault
@@ -80,34 +80,19 @@ func (p servicePlugin) Collect(ctx context.Context, params map[string]any) ([]Ob
 		return obs, wrapped
 	}
 
-	byName := make(map[string]unitState, len(states))
-	for _, s := range states {
-		byName[s.Name] = s
-	}
-
 	obs := make([]Observation, 0, len(units))
 	for _, u := range units {
-		obs = append(obs, labelObservation(u, "service.state", serviceStateLabel(byName[u])))
+		r, ok := states[u]
+		switch {
+		case !ok:
+			obs = append(obs, labelObservation(u, "service.state", "unknown"))
+		case r.Err != nil:
+			obs = append(obs, errObservation(u, "service.state", fmt.Errorf("service: %w", r.Err)))
+		default:
+			obs = append(obs, labelObservation(u, "service.state", r.Label))
+		}
 	}
 	return obs, nil
-}
-
-// serviceStateLabel maps a raw systemd unit state to the plugin's fixed
-// label set. A unit the lister never resolved (name absent from the
-// response, or explicitly not-found — what a made-up unit name reports)
-// and any ActiveState outside the four systemd states this plugin knows
-// both collapse to "unknown", never an error: an unrecognized state is
-// itself the observation.
-func serviceStateLabel(s unitState) string {
-	if s.Name == "" || s.LoadState == "not-found" {
-		return "unknown"
-	}
-	switch s.ActiveState {
-	case "active", "inactive", "failed", "activating":
-		return s.ActiveState
-	default:
-		return "unknown"
-	}
 }
 
 var _ Plugin = servicePlugin{}

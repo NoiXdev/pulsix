@@ -15,9 +15,9 @@ import (
 // keeping a stale bus session open between runs.
 type dbusLister struct{}
 
-func newSystemdLister() unitLister { return dbusLister{} }
+func newUnitLister() unitLister { return dbusLister{} }
 
-func (dbusLister) ListUnits(ctx context.Context, units []string) ([]unitState, error) {
+func (dbusLister) States(ctx context.Context, units []string) (map[string]unitResult, error) {
 	conn, err := dbus.NewSystemConnectionContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("connect to systemd: %w", err)
@@ -29,9 +29,9 @@ func (dbusLister) ListUnits(ctx context.Context, units []string) ([]unitState, e
 		return nil, fmt.Errorf("list units: %w", err)
 	}
 
-	out := make([]unitState, 0, len(statuses))
+	out := make(map[string]unitResult, len(statuses))
 	for _, s := range statuses {
-		out = append(out, unitState{Name: s.Name, LoadState: s.LoadState, ActiveState: s.ActiveState})
+		out[s.Name] = unitResult{Label: systemdLabel(s.LoadState, s.ActiveState)}
 	}
 	return out, nil
 }
