@@ -48,8 +48,8 @@ func TestDiskSkipsMountsTheManagerWouldRefuse(t *testing.T) {
 // TestReportableItemMatchesTheManagersContract keeps the agent's copy of
 // the item bound on the manager's.
 func TestReportableItemMatchesTheManagersContract(t *testing.T) {
-	if maxItemLen != managerchecks.MaxItemLen {
-		t.Fatalf("maxItemLen = %d, the manager's contract says %d", maxItemLen, managerchecks.MaxItemLen)
+	if MaxItemLen != managerchecks.MaxItemLen {
+		t.Fatalf("MaxItemLen = %d, the manager's contract says %d", MaxItemLen, managerchecks.MaxItemLen)
 	}
 	for item, want := range map[string]bool{
 		"/":                      true,
@@ -61,8 +61,8 @@ func TestReportableItemMatchesTheManagersContract(t *testing.T) {
 		"/a b":                   false,
 		"/a\x7fb":                false,
 	} {
-		if got := reportableItem(item); got != want {
-			t.Errorf("reportableItem(%q) = %v, want %v", item, got, want)
+		if got := ReportableItem(item); got != want {
+			t.Errorf("ReportableItem(%q) = %v, want %v", item, got, want)
 		}
 	}
 }
@@ -73,14 +73,14 @@ func TestReportableItemMatchesTheManagersContract(t *testing.T) {
 // mount point that is not valid UTF-8 is outside the contract as surely as
 // one carrying a control character.
 func TestReportableItemRefusesInvalidUTF8(t *testing.T) {
-	if reportableItem("/home/u/q\"\xffz") {
-		t.Error("reportableItem accepted a mount point that is not valid UTF-8")
+	if ReportableItem("/home/u/q\"\xffz") {
+		t.Error("ReportableItem accepted a mount point that is not valid UTF-8")
 	}
-	if !reportableItem("/home/u/ok") {
-		t.Error("reportableItem refused a plain mount point")
+	if !ReportableItem("/home/u/ok") {
+		t.Error("ReportableItem refused a plain mount point")
 	}
-	if !reportableItem("/mnt/données") {
-		t.Error("reportableItem refused a mount point that is valid non-ASCII UTF-8")
+	if !ReportableItem("/mnt/données") {
+		t.Error("ReportableItem refused a mount point that is valid non-ASCII UTF-8")
 	}
 }
 

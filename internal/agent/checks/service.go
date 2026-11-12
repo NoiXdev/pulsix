@@ -52,7 +52,7 @@ func (p servicePlugin) Collect(ctx context.Context, params map[string]any) ([]Ob
 		return nil, err
 	}
 
-	units, _, err := paramStrings(params, "units")
+	units, _, err := ParamStrings(params, "units")
 	if err != nil {
 		return nil, fmt.Errorf("service: %w", err)
 	}
@@ -75,7 +75,7 @@ func (p servicePlugin) Collect(ctx context.Context, params map[string]any) ([]Ob
 		// them at its last-known (possibly long stale) state.
 		obs := make([]Observation, 0, len(units))
 		for _, u := range units {
-			obs = append(obs, errObservation(u, "service.state", wrapped))
+			obs = append(obs, ErrObservation(u, "service.state", wrapped))
 		}
 		return obs, wrapped
 	}
@@ -85,11 +85,11 @@ func (p servicePlugin) Collect(ctx context.Context, params map[string]any) ([]Ob
 		r, ok := states[u]
 		switch {
 		case !ok:
-			obs = append(obs, labelObservation(u, "service.state", "unknown"))
+			obs = append(obs, LabelObservation(u, "service.state", "unknown"))
 		case r.Err != nil:
-			obs = append(obs, errObservation(u, "service.state", fmt.Errorf("service: %w", r.Err)))
+			obs = append(obs, ErrObservation(u, "service.state", fmt.Errorf("service: %w", r.Err)))
 		default:
-			obs = append(obs, labelObservation(u, "service.state", r.Label))
+			obs = append(obs, LabelObservation(u, "service.state", r.Label))
 		}
 	}
 	return obs, nil

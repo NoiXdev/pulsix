@@ -72,7 +72,7 @@ type scheduledCheck struct {
 	stop   chan struct{}
 	// plugin is what this check collects with: the registry's own value
 	// for a stateless plugin, a fresh per-check instance for a
-	// statefulPlugin, nil for a plugin this build does not have.
+	// StatefulPlugin, nil for a plugin this build does not have.
 	plugin Plugin
 	// spawned records whether a goroutine actually owns this check. Only
 	// a spawned check's ticker is stopped by that goroutine's own defer;
@@ -211,7 +211,7 @@ func (s *Scheduler) startLocked(spec Spec) {
 	}
 }
 
-// pluginFor resolves the plugin one check collects with. A statefulPlugin
+// pluginFor resolves the plugin one check collects with. A StatefulPlugin
 // yields a fresh instance on every call, and startLocked is the only caller:
 // a new key, and a key Apply restarts because its definition changed, both
 // start with empty state. For network that means fresh baselines — the old
@@ -223,8 +223,8 @@ func (s *Scheduler) pluginFor(name string) Plugin {
 	if !ok {
 		return nil
 	}
-	if sp, ok := p.(statefulPlugin); ok {
-		return sp.newInstance()
+	if sp, ok := p.(StatefulPlugin); ok {
+		return sp.NewInstance()
 	}
 	return p
 }

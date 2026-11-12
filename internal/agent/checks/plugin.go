@@ -24,11 +24,7 @@
 // still returned.
 package checks
 
-import (
-	"context"
-	"fmt"
-	"unicode/utf8"
-)
+import "context"
 
 // Observation is the smallest unit a plugin reports: one item (the empty
 // string for a whole-host metric, a mount point or a unit name otherwise),
@@ -76,14 +72,14 @@ type Plugin interface {
 	Collect(ctx context.Context, params map[string]any) ([]Observation, error)
 }
 
-// statefulPlugin is a Plugin that keeps state between calls (network: each
+// StatefulPlugin is a Plugin that keeps state between calls (network: each
 // interface's previous counters, to turn them into rates). Its Registry
 // value is only a prototype: the scheduler asks it for a fresh instance per
-// check key (newInstance), so two keys never share — or race over — that
+// check key (NewInstance), so two keys never share — or race over — that
 // state, and one instance is only ever collected by its own key's goroutine.
-type statefulPlugin interface {
+type StatefulPlugin interface {
 	Plugin
-	newInstance() Plugin
+	NewInstance() Plugin
 }
 
 // Registry returns one instance of every check plugin the agent ships,
@@ -91,7 +87,7 @@ type statefulPlugin interface {
 // service_stub.go's placeholder everywhere else). It is a func, not a
 // package var, so every caller gets its own plugin values. The stateless
 // plugins are shared by every tick and every check key using them; a
-// statefulPlugin (network) is a prototype the scheduler clones per key.
+// StatefulPlugin (network) is a prototype the scheduler clones per key.
 func Registry() map[string]Plugin {
 	return map[string]Plugin{
 		"cpu":     newCPUPlugin(),
@@ -101,76 +97,5 @@ func Registry() map[string]Plugin {
 		"network": newNetworkPlugin(),
 		"uptime":  newUptimePlugin(),
 		"docker":  newDockerPlugin(),
-	}
-}
-
-// valueObservation builds a numeric Observation; v is copied so the
-// caller's loop variable is never aliased into the returned slice.
-func valueObservation(item, metric string, v float64) Observation {
-	return Observation{Item: item, Metric: metric, Value: &v}
-}
-
-// labelObservation builds a label Observation (service.state today).
-func labelObservation(item, metric, label string) Observation {
-	return Observation{Item: item, Metric: metric, Label: &label}
-}
-
-// maxErrLen is the manager's bound on an observation's error text
-// (internal/checks.MaxErrLen; a test keeps the two equal). The manager cuts
-// a longer one itself (backlog 7.110); the agent cuts first so a fault that
-// quotes a long mount point never travels the wire at full length.
-const maxErrLen = 2048
-
-// errObservation builds an error Observation: collection failed for this
-// exact item/metric, so no sample should be stored and the manager's
-// current value shows the failure text instead of a stale reading. The
-// text is cut at maxErrLen on a UTF-8 boundary.
-func errObservation(item, metric string, err error) Observation {
-	return Observation{Item: item, Metric: metric, Err: cutErrText(err.Error())}
-}
-
-// cutErrText cuts s to maxErrLen bytes, dropping a rune that would
-// straddle the bound rather than splitting it.
-func cutErrText(s string) string {
-	if len(s) <= maxErrLen {
-		return s
-	}
-	n := maxErrLen
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
-	}
-	return s[:n]
-}
-
-// paramStrings reads params[key] as a list of strings. present is false
-// only when the key is absent or nil — the caller decides what "absent"
-// means (disk: watch every non-pseudo mount; service: nothing to check).
-// Both shapes a caller can reasonably hand in are accepted: []string, built
-// directly (tests, and internal/checks' own in-process callers), and
-// []any with string elements, the shape a JSON/JSONB round trip produces
-// (internal/checks.Resolved.Params after a store read) — anything else is
-// a plugin-level error, since the manager's own validation
-// (internal/checks.validateParams) means this plugin should never actually
-// see one.
-func paramStrings(params map[string]any, key string) (values []string, present bool, err error) {
-	v, ok := params[key]
-	if !ok || v == nil {
-		return nil, false, nil
-	}
-	switch vv := v.(type) {
-	case []string:
-		return append([]string(nil), vv...), true, nil
-	case []any:
-		out := make([]string, len(vv))
-		for i, e := range vv {
-			s, ok := e.(string)
-			if !ok {
-				return nil, true, fmt.Errorf("param %q: element %d is not a string", key, i)
-			}
-			out[i] = s
-		}
-		return out, true, nil
-	default:
-		return nil, true, fmt.Errorf("param %q: must be a list of strings", key)
 	}
 }

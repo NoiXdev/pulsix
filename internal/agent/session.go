@@ -503,7 +503,7 @@ func (l *Loop) decodeCheckConfig(cc *agentpb.CheckConfig) checks.Config {
 
 // decodeParamsJSON parses a CheckSpec's canonical params_json back into a
 // map[string]any; "" and "{}" both decode to a nil map, matching how an
-// empty params map already reads on the agent side (paramStrings treats
+// empty params map already reads on the agent side (checks.ParamStrings treats
 // an absent key exactly like a nil one).
 func decodeParamsJSON(raw string) (map[string]any, error) {
 	if raw == "" || raw == "{}" {

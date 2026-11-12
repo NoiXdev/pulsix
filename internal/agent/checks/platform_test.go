@@ -163,7 +163,7 @@ func TestExcludedInterfacesPerSystem(t *testing.T) {
 func TestNewInstanceKeepsExcludedPrefixes(t *testing.T) {
 	p := newNetworkPlugin().(*networkPlugin)
 	p.ExcludedPrefixes = []string{"x"}
-	if got := p.newInstance().(*networkPlugin).ExcludedPrefixes; !strings.EqualFold(strings.Join(got, ","), "x") {
+	if got := p.NewInstance().(*networkPlugin).ExcludedPrefixes; !strings.EqualFold(strings.Join(got, ","), "x") {
 		t.Errorf("instance prefixes = %v", got)
 	}
 }

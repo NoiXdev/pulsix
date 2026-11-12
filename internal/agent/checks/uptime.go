@@ -39,9 +39,9 @@ func (p uptimePlugin) Collect(ctx context.Context, _ map[string]any) ([]Observat
 	secs, err := p.Uptime.Uptime(ctx)
 	if err != nil {
 		wrapped := fmt.Errorf("uptime: %w", err)
-		return []Observation{errObservation("", "uptime.seconds", wrapped)}, wrapped
+		return []Observation{ErrObservation("", "uptime.seconds", wrapped)}, wrapped
 	}
-	return []Observation{valueObservation("", "uptime.seconds", float64(secs))}, nil
+	return []Observation{ValueObservation("", "uptime.seconds", float64(secs))}, nil
 }
 
 var _ Plugin = uptimePlugin{}

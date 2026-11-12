@@ -70,7 +70,7 @@ func TestParamStrings(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			values, present, err := paramStrings(tc.params, tc.key)
+			values, present, err := ParamStrings(tc.params, tc.key)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatal("expected an error")
@@ -78,7 +78,7 @@ func TestParamStrings(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("paramStrings: %v", err)
+				t.Fatalf("ParamStrings: %v", err)
 			}
 			if present != tc.wantPresent {
 				t.Errorf("present = %v, want %v", present, tc.wantPresent)
@@ -97,13 +97,13 @@ func TestParamStrings(t *testing.T) {
 
 // TestParamStringsCopiesNativeSlice: a caller mutating the map's backing
 // slice after the call must never observe it through the returned value —
-// paramStrings copies rather than aliasing.
+// ParamStrings copies rather than aliasing.
 func TestParamStringsCopiesNativeSlice(t *testing.T) {
 	src := []string{"/"}
 	params := map[string]any{"mounts": src}
-	values, _, err := paramStrings(params, "mounts")
+	values, _, err := ParamStrings(params, "mounts")
 	if err != nil {
-		t.Fatalf("paramStrings: %v", err)
+		t.Fatalf("ParamStrings: %v", err)
 	}
 	src[0] = "/mutated"
 	if values[0] != "/" {
@@ -112,7 +112,7 @@ func TestParamStringsCopiesNativeSlice(t *testing.T) {
 }
 
 func TestValueObservation(t *testing.T) {
-	o := valueObservation("/", "disk.used_pct", 42.5)
+	o := ValueObservation("/", "disk.used_pct", 42.5)
 	if o.Item != "/" || o.Metric != "disk.used_pct" {
 		t.Fatalf("observation = %+v", o)
 	}
@@ -128,7 +128,7 @@ func TestValueObservation(t *testing.T) {
 }
 
 func TestLabelObservation(t *testing.T) {
-	o := labelObservation("sshd", "service.state", "active")
+	o := LabelObservation("sshd", "service.state", "active")
 	if o.Item != "sshd" || o.Metric != "service.state" {
 		t.Fatalf("observation = %+v", o)
 	}
@@ -144,7 +144,7 @@ func TestLabelObservation(t *testing.T) {
 }
 
 func TestErrObservation(t *testing.T) {
-	o := errObservation("/data", "disk.used_pct", fmt.Errorf("permission denied"))
+	o := ErrObservation("/data", "disk.used_pct", fmt.Errorf("permission denied"))
 	if o.Item != "/data" || o.Metric != "disk.used_pct" {
 		t.Fatalf("observation = %+v", o)
 	}
@@ -165,15 +165,15 @@ func TestErrObservationCutsToTheManagersBound(t *testing.T) {
 	if maxErrLen != managerchecks.MaxErrLen {
 		t.Fatalf("maxErrLen = %d, the manager's contract says %d", maxErrLen, managerchecks.MaxErrLen)
 	}
-	long := errObservation("/data", "disk.used_pct", fmt.Errorf("%s", strings.Repeat("e", 1<<20)))
+	long := ErrObservation("/data", "disk.used_pct", fmt.Errorf("%s", strings.Repeat("e", 1<<20)))
 	if len(long.Err) != maxErrLen {
 		t.Fatalf("1 MiB error = %d bytes, want %d", len(long.Err), maxErrLen)
 	}
-	split := errObservation("", "m", fmt.Errorf("%s", strings.Repeat("e", maxErrLen-1)+"€€"))
+	split := ErrObservation("", "m", fmt.Errorf("%s", strings.Repeat("e", maxErrLen-1)+"€€"))
 	if len(split.Err) > maxErrLen || !utf8.ValidString(split.Err) || split.Err != strings.Repeat("e", maxErrLen-1) {
 		t.Fatalf("a rune on the boundary: %d bytes, valid UTF-8 = %v", len(split.Err), utf8.ValidString(split.Err))
 	}
-	if o := errObservation("", "m", fmt.Errorf("permission denied")); o.Err != "permission denied" {
+	if o := ErrObservation("", "m", fmt.Errorf("permission denied")); o.Err != "permission denied" {
 		t.Fatalf("a short error was altered: %q", o.Err)
 	}
 }

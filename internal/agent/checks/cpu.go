@@ -80,15 +80,15 @@ func (p cpuPlugin) Collect(ctx context.Context, _ map[string]any) ([]Observation
 			wrapped := fmt.Errorf("cpu: load average: %w", err)
 			errs = append(errs, wrapped)
 			obs = append(obs,
-				errObservation("", "cpu.load1", wrapped),
-				errObservation("", "cpu.load5", wrapped),
-				errObservation("", "cpu.load15", wrapped),
+				ErrObservation("", "cpu.load1", wrapped),
+				ErrObservation("", "cpu.load5", wrapped),
+				ErrObservation("", "cpu.load15", wrapped),
 			)
 		} else if avg != nil {
 			obs = append(obs,
-				valueObservation("", "cpu.load1", avg.Load1),
-				valueObservation("", "cpu.load5", avg.Load5),
-				valueObservation("", "cpu.load15", avg.Load15),
+				ValueObservation("", "cpu.load1", avg.Load1),
+				ValueObservation("", "cpu.load5", avg.Load5),
+				ValueObservation("", "cpu.load15", avg.Load15),
 			)
 		}
 	}
@@ -97,9 +97,9 @@ func (p cpuPlugin) Collect(ctx context.Context, _ map[string]any) ([]Observation
 		if pct, err := p.Percent.Percent(ctx, p.Interval, false); err != nil {
 			wrapped := fmt.Errorf("cpu: used percent: %w", err)
 			errs = append(errs, wrapped)
-			obs = append(obs, errObservation("", "cpu.used_pct", wrapped))
+			obs = append(obs, ErrObservation("", "cpu.used_pct", wrapped))
 		} else if len(pct) > 0 {
-			obs = append(obs, valueObservation("", "cpu.used_pct", pct[0]))
+			obs = append(obs, ValueObservation("", "cpu.used_pct", pct[0]))
 		}
 	}
 

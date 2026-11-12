@@ -397,7 +397,7 @@ func TestNetworkExplicitMissingNameIsDeletedFromBaselines(t *testing.T) {
 	}
 }
 
-// newInstance keeps the providers and starts with no baselines: a fresh
+// NewInstance keeps the providers and starts with no baselines: a fresh
 // key's first collect reports nothing even when the prototype's would.
 func TestNetworkNewInstanceKeepsProvidersAndStartsEmpty(t *testing.T) {
 	clock := &fakeNow{t: time.Unix(1000, 0)}
@@ -405,11 +405,11 @@ func TestNetworkNewInstanceKeepsProvidersAndStartsEmpty(t *testing.T) {
 	proto := newTestNetwork(c, upIfaces("eth0"), clock)
 	_, _ = proto.Collect(context.Background(), nil)
 
-	inst, ok := Plugin(proto).(statefulPlugin)
+	inst, ok := Plugin(proto).(StatefulPlugin)
 	if !ok {
-		t.Fatal("the network plugin must be a statefulPlugin")
+		t.Fatal("the network plugin must be a StatefulPlugin")
 	}
-	fresh := inst.newInstance()
+	fresh := inst.NewInstance()
 	clock.t = clock.t.Add(10 * time.Second)
 	c.stats = []net.IOCountersStat{counters("eth0", 20)}
 	if obs, err := fresh.Collect(context.Background(), nil); err != nil || len(obs) != 0 {

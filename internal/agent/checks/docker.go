@@ -126,22 +126,22 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]Obs
 		if d.err != nil {
 			e := inspectError(c.Name, d.err)
 			for _, m := range []string{"docker.state", "docker.health", "docker.restart_count", "docker.exit_code"} {
-				obs = append(obs, errObservation(c.Name, m, e))
+				obs = append(obs, ErrObservation(c.Name, m, e))
 			}
 			continue
 		}
 		obs = append(obs,
 			dockerLabel(c.Name, "docker.state", "state", c.State),
 			dockerLabel(c.Name, "docker.health", "health", d.detail.Health),
-			valueObservation(c.Name, "docker.restart_count", float64(d.detail.RestartCount)),
+			ValueObservation(c.Name, "docker.restart_count", float64(d.detail.RestartCount)),
 			// The engine's last exit code, whatever the state: reported
 			// always, so a restarted container does not keep a stale one.
-			valueObservation(c.Name, "docker.exit_code", float64(d.detail.ExitCode)),
+			ValueObservation(c.Name, "docker.exit_code", float64(d.detail.ExitCode)),
 		)
 	}
 	obs = append(obs,
-		valueObservation("", "docker.containers_running", running),
-		valueObservation("", "docker.containers_total", total),
+		ValueObservation("", "docker.containers_running", running),
+		ValueObservation("", "docker.containers_total", total),
 	)
 	if err := ctx.Err(); err != nil {
 		// The deadline hit mid-inspect: what was gathered is still reported.
@@ -151,7 +151,7 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]Obs
 }
 
 // reportableContainers drops the containers whose name the manager's
-// check-results contract would refuse as an item (reportableItem): one such
+// check-results contract would refuse as an item (ReportableItem): one such
 // item makes the manager refuse the whole batch and end the host's stream
 // (backlog 7.40), and a container name is whatever whoever can start a
 // container chose. Each one left out is named, quoted, in the returned
@@ -160,8 +160,8 @@ func reportableContainers(cs []containerSummary) ([]containerSummary, []error) {
 	out := make([]containerSummary, 0, len(cs))
 	var errs []error
 	for _, c := range cs {
-		if !reportableItem(c.Name) {
-			errs = append(errs, fmt.Errorf("docker: container %q cannot be reported: name longer than %d bytes, not valid UTF-8 or carrying a control character", c.Name, maxItemLen))
+		if !ReportableItem(c.Name) {
+			errs = append(errs, fmt.Errorf("docker: container %q cannot be reported: name longer than %d bytes, not valid UTF-8 or carrying a control character", c.Name, MaxItemLen))
 			continue
 		}
 		out = append(out, c)
@@ -170,12 +170,12 @@ func reportableContainers(cs []containerSummary) ([]containerSummary, []error) {
 }
 
 // dockerLabel reports an engine-supplied state as a label, or as an error
-// observation when the manager's contract would refuse it (reportableLabel).
+// observation when the manager's contract would refuse it (ReportableLabel).
 func dockerLabel(item, metric, what, label string) Observation {
-	if !reportableLabel(label) {
-		return errObservation(item, metric, fmt.Errorf("docker: %s of %s cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a NUL byte", what, item, maxLabelLen))
+	if !ReportableLabel(label) {
+		return ErrObservation(item, metric, fmt.Errorf("docker: %s of %s cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a NUL byte", what, item, MaxLabelLen))
 	}
-	return labelObservation(item, metric, label)
+	return LabelObservation(item, metric, label)
 }
 
 // inspectError names the container in a failed inspect. The client's error
@@ -195,8 +195,8 @@ func inspectError(name string, err error) error {
 // dockerDown reports an unreachable engine on the two host-level metrics.
 func dockerDown(err error) ([]Observation, error) {
 	return []Observation{
-		errObservation("", "docker.containers_running", err),
-		errObservation("", "docker.containers_total", err),
+		ErrObservation("", "docker.containers_running", err),
+		ErrObservation("", "docker.containers_total", err),
 	}, err
 }
 

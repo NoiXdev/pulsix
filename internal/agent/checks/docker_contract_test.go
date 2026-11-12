@@ -130,8 +130,8 @@ func TestDockerRefusesLabelsTheManagerWouldRefuse(t *testing.T) {
 // TestReportableLabelMatchesTheManagersContract keeps the agent's copy of
 // the label bound on the manager's (internal/checks.withinContract).
 func TestReportableLabelMatchesTheManagersContract(t *testing.T) {
-	if maxLabelLen != managerchecks.MaxLabelLen {
-		t.Fatalf("maxLabelLen = %d, the manager's contract says %d", maxLabelLen, managerchecks.MaxLabelLen)
+	if MaxLabelLen != managerchecks.MaxLabelLen {
+		t.Fatalf("MaxLabelLen = %d, the manager's contract says %d", MaxLabelLen, managerchecks.MaxLabelLen)
 	}
 	for label, want := range map[string]bool{
 		"running":                true,
@@ -142,8 +142,8 @@ func TestReportableLabelMatchesTheManagersContract(t *testing.T) {
 		"a\x00b":                 false,
 		"a\xffb":                 false,
 	} {
-		if got := reportableLabel(label); got != want {
-			t.Errorf("reportableLabel(%q) = %v, want %v", label, got, want)
+		if got := ReportableLabel(label); got != want {
+			t.Errorf("ReportableLabel(%q) = %v, want %v", label, got, want)
 		}
 	}
 }

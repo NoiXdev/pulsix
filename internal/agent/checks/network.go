@@ -54,8 +54,8 @@ func sampleOf(s net.IOCountersStat, at time.Time) netSample {
 // networkPlugin reports per-interface rates (item = interface name). The
 // kernel only exposes monotonic counters, so the plugin keeps the previous
 // sample of every interface between calls and reports delta / elapsed. It
-// is a statefulPlugin: every check key collects with its own instance
-// (newInstance), so the baselines are always this key's own previous
+// is a StatefulPlugin: every check key collects with its own instance
+// (NewInstance), so the baselines are always this key's own previous
 // collect, taken one interval ago — never another key's. An instance is
 // collected by its key's one goroutine only, so it holds no lock.
 type networkPlugin struct {
@@ -79,8 +79,8 @@ func newNetworkPlugin() Plugin {
 	}
 }
 
-// newInstance returns a plugin with the same providers and no baselines.
-func (p *networkPlugin) newInstance() Plugin {
+// NewInstance returns a plugin with the same providers and no baselines.
+func (p *networkPlugin) NewInstance() Plugin {
 	return &networkPlugin{Counters: p.Counters, Interfaces: p.Interfaces, Now: p.Now, ExcludedPrefixes: p.ExcludedPrefixes}
 }
 
@@ -129,7 +129,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 		return nil, nil
 	}
 
-	names, explicit, err := paramStrings(params, "interfaces")
+	names, explicit, err := ParamStrings(params, "interfaces")
 	if err != nil {
 		return nil, fmt.Errorf("network: %w", err)
 	}
@@ -138,8 +138,8 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 	var candidates []string
 	if explicit {
 		for _, n := range names {
-			if !reportableItem(n) {
-				errs = append(errs, fmt.Errorf("network: interface %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", n, maxItemLen))
+			if !ReportableItem(n) {
+				errs = append(errs, fmt.Errorf("network: interface %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", n, MaxItemLen))
 				continue
 			}
 			candidates = append(candidates, n)
@@ -150,7 +150,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 			return nil, fmt.Errorf("network: interfaces: %w", err)
 		}
 		for _, s := range list {
-			if discoveredInterface(s, p.ExcludedPrefixes) && reportableItem(s.Name) {
+			if discoveredInterface(s, p.ExcludedPrefixes) && ReportableItem(s.Name) {
 				candidates = append(candidates, s.Name)
 			}
 		}
@@ -177,7 +177,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 				wrapped := fmt.Errorf("network: interface %q: not found in the interface counters", name)
 				errs = append(errs, wrapped)
 				for _, m := range networkMetrics {
-					obs = append(obs, errObservation(name, m, wrapped))
+					obs = append(obs, ErrObservation(name, m, wrapped))
 				}
 			}
 			continue
@@ -202,7 +202,7 @@ func (p *networkPlugin) Collect(ctx context.Context, params map[string]any) ([]O
 			continue
 		}
 		for i, m := range networkMetrics {
-			obs = append(obs, valueObservation(name, m, float64(cur.counters[i]-old.counters[i])/elapsed))
+			obs = append(obs, ValueObservation(name, m, float64(cur.counters[i]-old.counters[i])/elapsed))
 		}
 	}
 	p.prev = next

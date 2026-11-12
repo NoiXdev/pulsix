@@ -59,13 +59,13 @@ func (p memoryPlugin) Collect(ctx context.Context, _ map[string]any) ([]Observat
 			wrapped := fmt.Errorf("memory: virtual memory: %w", err)
 			errs = append(errs, wrapped)
 			obs = append(obs,
-				errObservation("", "mem.used_pct", wrapped),
-				errObservation("", "mem.available_bytes", wrapped),
+				ErrObservation("", "mem.used_pct", wrapped),
+				ErrObservation("", "mem.available_bytes", wrapped),
 			)
 		} else if vm != nil {
 			obs = append(obs,
-				valueObservation("", "mem.used_pct", vm.UsedPercent),
-				valueObservation("", "mem.available_bytes", float64(vm.Available)),
+				ValueObservation("", "mem.used_pct", vm.UsedPercent),
+				ValueObservation("", "mem.available_bytes", float64(vm.Available)),
 			)
 		}
 	}
@@ -74,9 +74,9 @@ func (p memoryPlugin) Collect(ctx context.Context, _ map[string]any) ([]Observat
 		if sw, err := p.Swap.SwapMemory(ctx); err != nil {
 			wrapped := fmt.Errorf("memory: swap: %w", err)
 			errs = append(errs, wrapped)
-			obs = append(obs, errObservation("", "swap.used_pct", wrapped))
+			obs = append(obs, ErrObservation("", "swap.used_pct", wrapped))
 		} else if sw != nil {
-			obs = append(obs, valueObservation("", "swap.used_pct", sw.UsedPercent))
+			obs = append(obs, ValueObservation("", "swap.used_pct", sw.UsedPercent))
 		}
 	}
 

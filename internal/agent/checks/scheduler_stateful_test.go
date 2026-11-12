@@ -154,7 +154,7 @@ func (p *fakeStatefulPlugin) Collect(context.Context, map[string]any) ([]Observa
 	return []Observation{{Metric: "m", Value: floatPtr(1)}}, nil
 }
 
-func (p *fakeStatefulPlugin) newInstance() Plugin {
+func (p *fakeStatefulPlugin) NewInstance() Plugin {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	fp := &fakePlugin{obs: []Observation{{Metric: "m", Value: floatPtr(1)}}}

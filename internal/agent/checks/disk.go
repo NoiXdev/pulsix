@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
-	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/shirou/gopsutil/v4/disk"
 )
@@ -23,44 +20,6 @@ var pseudoFilesystems = map[string]bool{
 	"devtmpfs": true,
 	"overlay":  true,
 	"squashfs": true,
-}
-
-// maxItemLen is the manager's bound on an observation's item
-// (internal/checks.MaxItemLen; a test keeps the two equal).
-const maxItemLen = 512
-
-// reportableItem reports whether the manager's check-results contract
-// accepts item: at most maxItemLen bytes, valid UTF-8, and no control
-// character or line separator (internal/checks.withinContract). The
-// manager refuses a whole batch, and ends the stream, for one item that
-// breaks it (backlog 7.40), and a mount point is a path whoever can mount
-// something chooses, FUSE through a setuid helper included; one the agent
-// cannot name inside the contract is left out rather than cost every other
-// mount its report.
-//
-// Valid UTF-8 is not the manager's rule alone (backlog 7.52): the item is
-// a proto3 string, and gRPC refuses to encode one that is not, on this
-// side, before anything reaches the wire. gopsutil hands such a path over
-// raw — it unescapes a mountinfo field through strconv.Unquote and returns
-// the input unchanged when that fails, which a '"' in the path makes it do.
-func reportableItem(item string) bool {
-	return len(item) <= maxItemLen && utf8.ValidString(item) && strings.IndexFunc(item, func(r rune) bool {
-		return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
-	}) < 0
-}
-
-// maxLabelLen is the manager's bound on an observation's label
-// (internal/checks.MaxLabelLen; a test keeps the two equal).
-const maxLabelLen = 512
-
-// reportableLabel reports whether the check-results contract accepts label:
-// at most maxLabelLen bytes and no NUL byte (internal/checks.withinContract,
-// backlog 7.110 and 7.115), and valid UTF-8, because the label is a proto3
-// string gRPC refuses to encode otherwise (backlog 7.52). The built-in
-// plugins name their labels from fixed sets; this guards one that relays a
-// string someone else chose (docker's state and health).
-func reportableLabel(label string) bool {
-	return len(label) <= maxLabelLen && utf8.ValidString(label) && !strings.ContainsRune(label, 0)
 }
 
 // partitionLister is the disk.Partitions probe (the mounted filesystem
@@ -127,7 +86,7 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 	}
 	inodes := reportsInodes(goos)
 
-	mounts, explicit, err := paramStrings(params, "mounts")
+	mounts, explicit, err := ParamStrings(params, "mounts")
 	if err != nil {
 		return nil, fmt.Errorf("disk: %w", err)
 	}
@@ -136,8 +95,8 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 	var errs []error
 	if explicit {
 		for _, mp := range mounts {
-			if !reportableItem(mp) {
-				errs = append(errs, fmt.Errorf("disk: mount %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", mp, maxItemLen))
+			if !ReportableItem(mp) {
+				errs = append(errs, fmt.Errorf("disk: mount %q cannot be reported: longer than %d bytes, not valid UTF-8 or carrying a control character", mp, MaxItemLen))
 				continue
 			}
 			candidates = append(candidates, mp)
@@ -152,7 +111,7 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 		}
 		seen := make(map[string]bool, len(parts))
 		for _, part := range parts {
-			if !discoveredMount(goos, part, p.DriveKind) || seen[part.Mountpoint] || !reportableItem(part.Mountpoint) {
+			if !discoveredMount(goos, part, p.DriveKind) || seen[part.Mountpoint] || !ReportableItem(part.Mountpoint) {
 				continue
 			}
 			seen[part.Mountpoint] = true
@@ -173,11 +132,11 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 			// otherwise the manager keeps showing this mount's last good
 			// numbers as though they were still current.
 			obs = append(obs,
-				errObservation(mp, "disk.used_pct", wrapped),
-				errObservation(mp, "disk.free_bytes", wrapped),
+				ErrObservation(mp, "disk.used_pct", wrapped),
+				ErrObservation(mp, "disk.free_bytes", wrapped),
 			)
 			if inodes {
-				obs = append(obs, errObservation(mp, "disk.inodes_used_pct", wrapped))
+				obs = append(obs, ErrObservation(mp, "disk.inodes_used_pct", wrapped))
 			}
 			continue
 		}
@@ -185,11 +144,11 @@ func (p diskPlugin) Collect(ctx context.Context, params map[string]any) ([]Obser
 			continue
 		}
 		obs = append(obs,
-			valueObservation(mp, "disk.used_pct", usage.UsedPercent),
-			valueObservation(mp, "disk.free_bytes", float64(usage.Free)),
+			ValueObservation(mp, "disk.used_pct", usage.UsedPercent),
+			ValueObservation(mp, "disk.free_bytes", float64(usage.Free)),
 		)
 		if inodes {
-			obs = append(obs, valueObservation(mp, "disk.inodes_used_pct", usage.InodesUsedPercent))
+			obs = append(obs, ValueObservation(mp, "disk.inodes_used_pct", usage.InodesUsedPercent))
 		}
 	}
 
