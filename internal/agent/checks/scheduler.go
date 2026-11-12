@@ -87,9 +87,10 @@ type scheduledCheck struct {
 // Apply installs or updates the running configuration; Run drives every
 // check's timer until its context ends.
 type Scheduler struct {
-	reg    map[string]Plugin
-	now    func() time.Time
-	ticker func(time.Duration) Ticker
+	reg     map[string]Plugin
+	now     func() time.Time
+	ticker  func(time.Duration) Ticker
+	secrets Secrets // SecretPlugins' secrets (secret.go); nil knows none
 
 	mu      sync.Mutex
 	version string
@@ -110,14 +111,18 @@ type Scheduler struct {
 // fixtures in tests), an injected clock (Result.At, never a ticker's own
 // reported time, so a fake clock and a fake ticker can be driven
 // independently in tests) and a ticker factory (the loop's own, real or
-// faked).
-func NewScheduler(reg map[string]Plugin, now func() time.Time, ticker func(time.Duration) Ticker) *Scheduler {
-	return &Scheduler{
+// faked). WithSecrets is where SecretPlugins' secrets come from.
+func NewScheduler(reg map[string]Plugin, now func() time.Time, ticker func(time.Duration) Ticker, opts ...SchedulerOption) *Scheduler {
+	s := &Scheduler{
 		reg:    reg,
 		now:    now,
 		ticker: ticker,
 		checks: make(map[string]*scheduledCheck),
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Version reports the configuration version currently applied — what the
@@ -280,10 +285,9 @@ func (s *Scheduler) runCheck(ctx context.Context, key string, plugin Plugin, sc 
 			return
 		case <-sc.ticker.C():
 			at := s.now()
-			obs, err := plugin.Collect(ctx, sc.spec.Params)
+			obs := s.collect(ctx, plugin, sc.spec.Params)
 			if len(obs) == 0 {
-				_ = err // advisory, like facts.Collect and Plugin.Collect: nothing usable this tick
-				continue
+				continue // nothing usable this tick
 			}
 			results := make([]Result, 0, len(obs))
 			for _, o := range obs {

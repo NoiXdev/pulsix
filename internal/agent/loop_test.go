@@ -94,6 +94,7 @@ func newLoopTest(t *testing.T) *loopTest {
 		CertPath:       filepath.Join(dir, certFileName),
 		KeyPath:        filepath.Join(dir, keyFileName),
 		MetaPath:       filepath.Join(dir, metaFileName),
+		SecretsPath:    filepath.Join(dir, "agent.yaml"),
 	}
 	return &loopTest{
 		t: t, dir: dir, cfg: cfg, dialer: &fakeDialer{},

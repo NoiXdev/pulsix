@@ -30,6 +30,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins"
+	"github.com/noixdev/pulsix/internal/agent/secrets"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
@@ -133,6 +134,13 @@ type Loop struct {
 	// protect guards the data directory (ensureDataDir).
 	protect protector
 
+	// registry is the check plugins the scheduler runs (plugins.Registry;
+	// tests inject fakes).
+	registry map[string]checks.Plugin
+	// secrets is the configuration file's watcher: every heartbeat reports
+	// its names and state, and the scheduler hands its fields to the
+	// plugins that ask (secrets_wiring.go).
+	secrets   *secrets.Watcher
 	scheduler *checks.Scheduler
 	buffer    *checks.Buffer
 
@@ -172,26 +180,33 @@ func WithRand(fn func() float64) LoopOption { return func(l *Loop) { l.rand = fn
 // Windows protector would refuse a temp dir the test user owns).
 func withProtector(p protector) LoopOption { return func(l *Loop) { l.protect = p } }
 
+// withRegistry replaces the check plugins (tests: a fake SecretPlugin).
+func withRegistry(reg map[string]checks.Plugin) LoopOption {
+	return func(l *Loop) { l.registry = reg }
+}
+
 // NewLoop wires the loop. No connection is opened here — Run dials. The
-// scheduler and buffer are built AFTER options are applied, so they use
-// whatever clock and ticker factory the caller (or a test) installed via
-// WithNow/WithTicker rather than the defaults.
+// secrets watcher, scheduler and buffer are built AFTER options are
+// applied, so they use whatever clock, ticker factory and protector the
+// caller (or a test) installed rather than the defaults.
 func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop {
 	l := &Loop{
-		cfg:     cfg,
-		dial:    dial,
-		facts:   facts,
-		now:     time.Now,
-		sleep:   interruptibleSleep,
-		ticker:  newWallTicker,
-		rand:    rand.Float64,
-		protect: newProtector(),
-		log:     slog.Default(),
+		cfg:      cfg,
+		dial:     dial,
+		facts:    facts,
+		now:      time.Now,
+		sleep:    interruptibleSleep,
+		ticker:   newWallTicker,
+		rand:     rand.Float64,
+		protect:  newProtector(),
+		log:      slog.Default(),
+		registry: plugins.Registry(),
 	}
 	for _, o := range opts {
 		o(l)
 	}
-	l.scheduler = checks.NewScheduler(plugins.Registry(), l.now, l.checksTicker)
+	l.secrets = l.newSecretsWatcher()
+	l.scheduler = checks.NewScheduler(l.registry, l.now, l.checksTicker, checks.WithSecrets(secretsSource{l.secrets}))
 	l.buffer = checks.NewBuffer(bufferWindow, l.now)
 	return l
 }
@@ -221,6 +236,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		"data_dir", l.cfg.DataDir, "agent_name", l.cfg.AgentName, "version", l.cfg.Version,
 		"heartbeat_interval", l.cfg.HeartbeatInterval, "facts_interval", l.cfg.FactsInterval,
 		"config_interval", l.cfg.ConfigInterval)
+	// The first look at the secrets file, so its outcome is logged at
+	// start rather than with the first heartbeat or check that needs it.
+	l.secrets.Current()
 	if !id.Valid(l.now()) {
 		// why says WHICH of the two unusable cases this is (backlog
 		// 2.103). Both re-enrol, so the agent behaves the same either

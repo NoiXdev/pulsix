@@ -309,10 +309,18 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 // sendHeartbeat sends the agent's build version and the scheduler's
 // currently-applied configuration version — what agentapi's
 // processHeartbeat compares against the set it resolves, to decide
-// whether to push.
+// whether to push — and the secrets file's names and state, never a
+// field. Asking the watcher here is also what makes it read the file
+// again, at most once a minute.
 func (l *Loop) sendHeartbeat(sender *streamSender) error {
+	set, state := l.secrets.Current()
 	return sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{
-		Heartbeat: &agentpb.Heartbeat{Version: l.cfg.Version, ConfigVersion: l.scheduler.Version()},
+		Heartbeat: &agentpb.Heartbeat{
+			Version:       l.cfg.Version,
+			ConfigVersion: l.scheduler.Version(),
+			SecretNames:   set.Names(),
+			SecretsState:  reportedSecretsState(state),
+		},
 	}})
 }
 
