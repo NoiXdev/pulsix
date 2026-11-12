@@ -43,7 +43,10 @@ func parseSettings(fields map[string]string) (settings, error) {
 	if err != nil {
 		return settings{}, err
 	}
-	s := settings{host: v["host"], user: v["user"], password: v["password"], tls: v["tls"]}
+	// One surrounding pair of brackets is an IPv6 literal written the URL
+	// way; JoinHostPort adds its own.
+	host := strings.TrimSuffix(strings.TrimPrefix(v["host"], "["), "]")
+	s := settings{host: host, user: v["user"], password: v["password"], tls: v["tls"]}
 	if s.user != "" && s.password == "" {
 		return settings{}, errors.New("secret field `password` is required")
 	}

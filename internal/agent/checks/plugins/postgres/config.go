@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"crypto/x509"
 	"errors"
 	"os"
 	"strconv"
@@ -46,20 +47,27 @@ func parseSettings(fields map[string]string) (connSettings, error) {
 	}, nil
 }
 
-// errRootCert is a CA file the agent cannot read.
-var errRootCert = errors.New("sslrootcert cannot be read")
+// errRootCert is a CA file the agent cannot read; errNotCAFile one it can
+// read that holds no PEM certificate.
+var (
+	errRootCert  = errors.New("sslrootcert cannot be read")
+	errNotCAFile = errors.New("sslrootcert is not a CA file")
+)
 
 // checkRootCert reports whether the CA file named by sslrootcert (when it
-// names a file) can be opened. It never returns the path.
+// names a file) can be read and holds at least one PEM certificate. It
+// never returns the path.
 func checkRootCert(s connSettings) error {
 	if s.sslrootcert == "" || s.sslrootcert == "system" {
 		return nil
 	}
-	f, err := os.Open(s.sslrootcert)
+	pem, err := os.ReadFile(s.sslrootcert)
 	if err != nil {
 		return errRootCert
 	}
-	_ = f.Close()
+	if !x509.NewCertPool().AppendCertsFromPEM(pem) {
+		return errNotCAFile
+	}
 	return nil
 }
 
@@ -111,7 +119,8 @@ func quote(v string) string {
 // missing, which fails the round as "connection failed".
 func buildConfig(s connSettings) (*pgx.ConnConfig, error) {
 	kv := [][2]string{
-		{"host", s.host},
+		// pgx joins host and port itself, so an IPv6 address is the bare one.
+		{"host", strings.TrimSuffix(strings.TrimPrefix(s.host, "["), "]")},
 		{"port", s.port},
 		{"user", s.user},
 		{"password", s.password},

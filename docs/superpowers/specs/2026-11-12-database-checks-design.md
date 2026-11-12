@@ -139,8 +139,16 @@ can quote statements and data).
   host or, in a parse error, the connection settings; a code cannot. A bad
   secret field reads "secret field `port` is not a valid port".
 - One collection is bounded to 10 s in total (connect, TLS and queries), the
-  minimum check interval; queries run with a 5 s server-side timeout where
-  the server has one. One connection per round, closed afterwards.
+  minimum check interval. Per statement: postgres sets a 5 s server-side
+  `statement_timeout` (SQLSTATE 57014 reads "timed out"), mysql runs each
+  query under a 5 s context (the driver has no read timeout, which it would
+  report as a failed connection), redis has the round's 10 s only. A hung
+  query reads "timed out". One connection per round, closed afterwards.
+- A postgres user without `pg_read_all_stats` cannot see other roles'
+  sessions: `pg.connections`, `pg.connections_pct` and `pg.oldest_xact_seconds`
+  are error observations ("no privilege to see other sessions"). A
+  `sslrootcert` that is not PEM reads "is not a CA file". IPv6 hosts may be
+  given with or without brackets.
 
 ### Safety preconditions from 3.5 (backlog 3.10 row)
 

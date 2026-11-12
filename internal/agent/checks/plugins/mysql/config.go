@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 
@@ -14,6 +15,8 @@ import (
 // how to log in. It holds credentials, so nothing formats it.
 type connSettings struct {
 	host, port, socket, user, password, tls string
+	// queryTimeout is set by the plugin, never read from the secret.
+	queryTimeout time.Duration
 }
 
 func noNUL(s string) bool { return !strings.ContainsRune(s, 0) }
@@ -46,7 +49,9 @@ var errInvalidSettings = errors.New("invalid connection settings")
 
 // buildConfig turns the settings into a driver configuration by setting its
 // fields, never by formatting or parsing a DSN, so no value can inject an
-// option. TLS is one of the driver's built-in names; no custom CA is
+// option. No ReadTimeout or WriteTimeout is set: the driver would report one
+// as an invalid connection and hide that the server was too slow; the round
+// and per-statement contexts bound every wait instead. TLS is one of the driver's built-in names; no custom CA is
 // registered. The driver's logger is replaced by a silent one in this
 // configuration only: it would otherwise print server details to stderr.
 // AllowCleartextPasswords, AllowOldPasswords and AllowAllFiles stay at the
@@ -58,12 +63,10 @@ func buildConfig(s connSettings) *mysql.Config {
 	if s.socket != "" {
 		cfg.Net, cfg.Addr = "unix", s.socket
 	} else {
-		cfg.Net, cfg.Addr = "tcp", net.JoinHostPort(s.host, s.port)
+		cfg.Net, cfg.Addr = "tcp", net.JoinHostPort(strings.TrimSuffix(strings.TrimPrefix(s.host, "["), "]"), s.port)
 	}
 	cfg.TLSConfig = s.tls
 	cfg.Timeout = dbcheck.CollectTimeout
-	cfg.ReadTimeout = dbcheck.QueryTimeout
-	cfg.WriteTimeout = dbcheck.QueryTimeout
 	cfg.ParseTime = false
 	cfg.AllowNativePasswords = true
 	cfg.Logger = &mysql.NopLogger{}

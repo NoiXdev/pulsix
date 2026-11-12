@@ -177,3 +177,15 @@ func TestSSLModes(t *testing.T) {
 		t.Errorf("verify-full does not verify: %+v", cfg.TLSConfig)
 	}
 }
+
+func TestBuildConfigIPv6HostWithAndWithoutBrackets(t *testing.T) {
+	for _, host := range []string{"::1", "[::1]"} {
+		cfg, err := buildConfig(connSettings{host: host, port: "5432", user: "u", sslmode: "disable"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Host != "::1" {
+			t.Errorf("host %q: pgx host %q, want ::1", host, cfg.Host)
+		}
+	}
+}

@@ -14,6 +14,10 @@ type serverStats struct {
 	InRecovery                  bool
 	LagSeconds, LagBytes        float64
 	OldestXactSeconds           float64
+	// LimitedView is true when the user lacks pg_read_all_stats: other
+	// roles' sessions then show no backend type or transaction start, so
+	// Connections and OldestXactSeconds would read silently low.
+	LimitedView bool
 }
 
 // database is one row of the size listing; Size is nil when the user may
@@ -64,8 +68,9 @@ func connect(ctx context.Context, s connSettings) (session, error) {
 // replayed, else the time since the last replayed transaction. On a primary
 // both are 0. The oldest transaction counts client backends only, other
 // than this one (autovacuum and other workers are not what a rule on
-// "stuck transaction" is after); a user without pg_monitor sees no
-// transaction start of other users' sessions and reads 0.
+// "stuck transaction" is after). The last column is true for a user without
+// pg_read_all_stats, who cannot see other roles' sessions properly: the plugin
+// then reports the two session-based metrics as errors, not as low numbers.
 const serverQuery = `SELECT
   (SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'client backend')::bigint,
   current_setting('max_connections')::bigint,
@@ -80,12 +85,13 @@ const serverQuery = `SELECT
    ELSE 0 END)::float8,
   COALESCE((SELECT EXTRACT(EPOCH FROM now() - min(xact_start))
               FROM pg_stat_activity
-             WHERE pid <> pg_backend_pid() AND backend_type = 'client backend' AND xact_start IS NOT NULL), 0)::float8`
+             WHERE pid <> pg_backend_pid() AND backend_type = 'client backend' AND xact_start IS NOT NULL), 0)::float8,
+  NOT pg_has_role('pg_read_all_stats', 'USAGE')`
 
 func (s pgxSession) Server(ctx context.Context) (serverStats, error) {
 	var st serverStats
 	err := s.conn.QueryRow(ctx, serverQuery).Scan(
-		&st.Connections, &st.MaxConnections, &st.InRecovery, &st.LagSeconds, &st.LagBytes, &st.OldestXactSeconds)
+		&st.Connections, &st.MaxConnections, &st.InRecovery, &st.LagSeconds, &st.LagBytes, &st.OldestXactSeconds, &st.LimitedView)
 	return st, err
 }
 

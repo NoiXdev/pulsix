@@ -43,7 +43,9 @@ type plugin struct {
 	connect func(ctx context.Context, s connSettings) (session, error)
 	// timeout overrides dbcheck.CollectTimeout; zero means the default.
 	timeout time.Duration
-	now     func() time.Time
+	// queryTimeout overrides dbcheck.QueryTimeout; zero means the default.
+	queryTimeout time.Duration
+	now          func() time.Time
 	// slow turns Slow_queries into a rate. One instance per check key, and
 	// the scheduler collects an instance from one goroutine only.
 	slow dbcheck.Counter
@@ -58,7 +60,7 @@ func New() checks.Plugin { return &plugin{connect: connect, now: time.Now} }
 
 // NewInstance returns a plugin with the same providers and no baseline.
 func (p *plugin) NewInstance() checks.Plugin {
-	return &plugin{connect: p.connect, timeout: p.timeout, now: p.now}
+	return &plugin{connect: p.connect, timeout: p.timeout, queryTimeout: p.queryTimeout, now: p.now}
 }
 
 func (*plugin) Name() string { return "mysql" }
@@ -92,6 +94,7 @@ func (p *plugin) CollectWithSecret(ctx context.Context, _ map[string]any, fields
 		return errObs(fmt.Errorf("mysql: %w", err)), nil
 	}
 
+	settings.queryTimeout = p.queryTimeout
 	timeout := p.timeout
 	if timeout <= 0 {
 		timeout = dbcheck.CollectTimeout

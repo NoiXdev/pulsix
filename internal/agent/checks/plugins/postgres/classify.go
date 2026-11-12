@@ -22,6 +22,9 @@ func classify(err error) string {
 			return "server error"
 		case strings.HasPrefix(code, "28"):
 			return "authentication failed (SQLSTATE " + code + ")"
+		case code == "57014":
+			// query_canceled: the statement_timeout this plugin sets.
+			return "timed out"
 		case code == "42501":
 			return "permission denied (SQLSTATE " + code + ")"
 		default:

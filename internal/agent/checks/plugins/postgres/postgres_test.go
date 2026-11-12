@@ -2,8 +2,15 @@ package postgres
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,7 +170,7 @@ func TestFieldsReachTheConnection(t *testing.T) {
 	var got connSettings
 	sess := &fakeSession{stats: serverStats{MaxConnections: 1}}
 	ca := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(ca, []byte("x"), 0o600); err != nil {
+	if err := os.WriteFile(ca, testCAPEM(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	fields := map[string]string{"host": "/var/run/postgresql", "port": "5433", "user": "u", "password": "p", "database": "d", "sslmode": "require", "sslrootcert": ca}
@@ -243,6 +250,7 @@ func TestFailureClasses(t *testing.T) {
 		{"other code", pgErr("53300", "too many"), "server error (SQLSTATE 53300)"},
 		{"hostile code", pgErr("28P01\nrm -rf", "x"), "server error"},
 		{"timeout", fmt.Errorf("x %s: %w", plantedHost, context.DeadlineExceeded), "timed out"},
+		{"statement timeout", pgErr("57014", "canceling statement due to statement timeout"), "timed out"},
 		{"tls refused", errors.New("server refused TLS connection to " + plantedHost), "TLS handshake failed"},
 		{"other", errors.New("dial " + plantedHost + " " + plantedPassword), "connection failed"},
 	}
@@ -331,4 +339,52 @@ func TestBadDatabasesParam(t *testing.T) {
 func TestZeroMaxConnectionsDoesNotDivide(t *testing.T) {
 	obs, _ := collect(t, newTestPlugin(&fakeSession{stats: serverStats{Connections: 3}}, nil, nil), nil, goodFields)
 	mustErr(t, obs, "", "pg.connections_pct", "postgres: max_connections is not positive")
+}
+
+func TestNotACAFileIsNamedWithoutThePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), plantedHost+".pem")
+	if err := os.WriteFile(path, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	obs, err := collect(t, newTestPlugin(&fakeSession{}, nil, nil), nil, map[string]string{"user": "u", "sslrootcert": path})
+	if len(obs) != 1 {
+		t.Fatalf("obs = %+v", obs)
+	}
+	mustErr(t, obs, "", "pg.up", "postgres: secret field `sslrootcert` is not a CA file")
+	noSecretIn(t, obs, err)
+}
+
+// Without pg_read_all_stats other roles' sessions are invisible, so the
+// connection count and the oldest transaction would read low without saying so.
+func TestLimitedViewReportsTheSessionMetricsAsErrors(t *testing.T) {
+	sess := &fakeSession{stats: serverStats{Connections: 3, MaxConnections: 100, LimitedView: true}}
+	obs, err := collect(t, newTestPlugin(sess, nil, nil), nil, goodFields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustValue(t, obs, "", "pg.up", 1)
+	mustValue(t, obs, "", "pg.max_connections", 100)
+	mustValue(t, obs, "", "pg.in_recovery", 0)
+	for _, m := range []string{"pg.connections", "pg.connections_pct", "pg.oldest_xact_seconds"} {
+		mustErr(t, obs, "", m, "postgres: no privilege to see other sessions")
+	}
+}
+
+// testCAPEM returns a self-signed CA certificate in PEM.
+func testCAPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test ca"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }

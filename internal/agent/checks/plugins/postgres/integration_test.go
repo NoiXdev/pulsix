@@ -112,6 +112,12 @@ func TestAgainstARealServer(t *testing.T) {
 		}
 		mustValue(t, obs, "", "pg.up", 1)
 		mustErr(t, obs, "walled_db", "pg.database_size_bytes", "postgres: no privilege to read the size")
+		for _, m := range []string{"pg.connections", "pg.connections_pct", "pg.oldest_xact_seconds"} {
+			mustErr(t, obs, "", m, "postgres: no privilege to see other sessions")
+		}
+		if o, ok := find(obs, "", "pg.max_connections"); !ok || o.Value == nil {
+			t.Errorf("max_connections = %+v", o)
+		}
 		if o, ok := find(obs, "sized_db", "pg.database_size_bytes"); !ok || o.Value == nil {
 			t.Errorf("sized_db = %+v", o)
 		}

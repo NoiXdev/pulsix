@@ -78,6 +78,9 @@ func (p plugin) CollectWithSecret(ctx context.Context, params map[string]any, fi
 		return errObs(fmt.Errorf("postgres: %w", err)), nil
 	}
 	if err := checkRootCert(settings); err != nil {
+		if errors.Is(err, errNotCAFile) {
+			return errObs(errors.New("postgres: secret field `sslrootcert` is not a CA file")), nil
+		}
 		return errObs(errors.New("postgres: secret field `sslrootcert` cannot be read")), nil
 	}
 	filter, _, err := checks.ParamStrings(params, "databases")
@@ -134,22 +137,32 @@ func b2f(b bool) float64 {
 // observe maps the rows to observations.
 func observe(st serverStats, dbs []database, filter []string) ([]checks.Observation, error) {
 	obs := make([]checks.Observation, 0, 8+len(dbs))
-	obs = append(obs,
-		checks.ValueObservation("", metricUp, 1),
-		checks.ValueObservation("", "pg.connections", float64(st.Connections)),
-		checks.ValueObservation("", "pg.max_connections", float64(st.MaxConnections)),
-	)
-	if st.MaxConnections > 0 {
-		obs = append(obs, checks.ValueObservation("", "pg.connections_pct", float64(st.Connections)/float64(st.MaxConnections)*100))
+	errNoSessions := errors.New("postgres: no privilege to see other sessions")
+	obs = append(obs, checks.ValueObservation("", metricUp, 1))
+	if st.LimitedView {
+		obs = append(obs, checks.ErrObservation("", "pg.connections", errNoSessions))
 	} else {
+		obs = append(obs, checks.ValueObservation("", "pg.connections", float64(st.Connections)))
+	}
+	obs = append(obs, checks.ValueObservation("", "pg.max_connections", float64(st.MaxConnections)))
+	switch {
+	case st.LimitedView:
+		obs = append(obs, checks.ErrObservation("", "pg.connections_pct", errNoSessions))
+	case st.MaxConnections > 0:
+		obs = append(obs, checks.ValueObservation("", "pg.connections_pct", float64(st.Connections)/float64(st.MaxConnections)*100))
+	default:
 		obs = append(obs, checks.ErrObservation("", "pg.connections_pct", errors.New("postgres: max_connections is not positive")))
 	}
 	obs = append(obs,
 		checks.ValueObservation("", "pg.in_recovery", b2f(st.InRecovery)),
 		checks.ValueObservation("", "pg.replication_lag_seconds", st.LagSeconds),
 		checks.ValueObservation("", "pg.replication_lag_bytes", st.LagBytes),
-		checks.ValueObservation("", "pg.oldest_xact_seconds", st.OldestXactSeconds),
 	)
+	if st.LimitedView {
+		obs = append(obs, checks.ErrObservation("", "pg.oldest_xact_seconds", errNoSessions))
+	} else {
+		obs = append(obs, checks.ValueObservation("", "pg.oldest_xact_seconds", st.OldestXactSeconds))
+	}
 
 	var errs []error
 	seen := make(map[string]struct{}, len(dbs))

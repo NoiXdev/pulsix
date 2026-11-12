@@ -73,7 +73,7 @@ func TestBuildConfigTCP(t *testing.T) {
 	if cfg.AllowCleartextPasswords || cfg.AllowOldPasswords || cfg.AllowAllFiles || cfg.ParseTime || !cfg.AllowNativePasswords {
 		t.Errorf("unsafe or unexpected switches: %+v", cfg)
 	}
-	if cfg.Timeout != dbcheck.CollectTimeout || cfg.ReadTimeout != dbcheck.QueryTimeout || cfg.WriteTimeout != dbcheck.QueryTimeout {
+	if cfg.Timeout != dbcheck.CollectTimeout || cfg.ReadTimeout != 0 || cfg.WriteTimeout != 0 {
 		t.Errorf("timeouts %v %v %v", cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout)
 	}
 	if cfg.Timeout > 10*time.Second {
@@ -99,4 +99,14 @@ func TestBuildConfigSilencesTheDriverLogger(t *testing.T) {
 		t.Fatalf("logger is %T, want *mysql.NopLogger: the driver's default writes to stderr", cfg.Logger)
 	}
 	cfg.Logger.Print("must not print anywhere")
+}
+
+func TestHostBracketsAreStripped(t *testing.T) {
+	for host, want := range map[string]string{
+		"[::1]": "[::1]:3306", "::1": "[::1]:3306", "db.local": "db.local:3306", "127.0.0.1": "127.0.0.1:3306",
+	} {
+		if got := buildConfig(connSettings{host: host, port: "3306"}).Addr; got != want {
+			t.Errorf("host %q: addr %q, want %q", host, got, want)
+		}
+	}
 }

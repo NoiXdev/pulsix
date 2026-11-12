@@ -73,3 +73,15 @@ func TestParseSettingsErrorsNameTheFieldNeverTheValue(t *testing.T) {
 		})
 	}
 }
+
+func TestIPv6HostWithAndWithoutBrackets(t *testing.T) {
+	for _, host := range []string{"::1", "[::1]"} {
+		s, err := parseSettings(map[string]string{"host": host, "port": "6380"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.addr != "[::1]:6380" || s.host != "::1" {
+			t.Errorf("host %q: addr %q host %q", host, s.addr, s.host)
+		}
+	}
+}
