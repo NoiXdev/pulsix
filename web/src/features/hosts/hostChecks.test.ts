@@ -118,18 +118,29 @@ describe('isGraphable', () => {
 });
 
 describe('offersForget', () => {
-  // Backlog 3.12b: only a stale item row offers Forget. A fresh item would
-  // come straight back; a whole-host metric is not an item; a viewer has
-  // no checks.write. Items the check stopped asking for never reach the
-  // card at all (the server's stillAsked), so there is no row for them.
+  // Backlog 3.12b: Forget acts on the whole item, so it is offered only
+  // when EVERY value of (check, item) is stale — one dropped or renamed
+  // metric on a live item must not offer it — and once per item, on the
+  // item's first row in render order. A whole-host metric is not an item;
+  // a viewer has no checks.write. Items the check stopped asking for never
+  // reach the card at all (the server's stillAsked).
+  const old1 = value({ item: '/old', metric: 'used_percent', stale: true });
+  const old2 = value({ item: '/old', metric: 'free_bytes', stale: true, error: 'gone' });
+  const mixedStale = value({ item: '/mix', metric: 'used_percent', stale: true });
+  const mixedFresh = value({ item: '/mix', metric: 'free_bytes', stale: false });
+  const fresh = value({ item: '/var', stale: false });
+  const wholeHost = value({ item: '', stale: true });
+  const disk = check({ key: 'disk', plugin: 'disk', values: [old1, mixedStale, old2, mixedFresh, fresh, wholeHost] });
   it.each([
-    ['a stale item with checks.write', value({ item: '/old', stale: true }), true, true],
-    ['a fresh item', value({ item: '/var', stale: false }), true, false],
-    ['a stale whole-host metric', value({ item: '', stale: true }), true, false],
-    ['a stale item without checks.write', value({ item: '/old', stale: true }), false, false],
-    ['a stale item whose last reading failed', value({ item: '/old', stale: true, error: 'gone' }), true, true],
+    ["the first row of an item whose every value is stale", old1, true, true],
+    ['a later row of the same item (one button per item)', old2, true, false],
+    ['an item with one stale and one fresh metric', mixedStale, true, false],
+    ['the fresh metric of that item', mixedFresh, true, false],
+    ['a fresh item', fresh, true, false],
+    ['a stale whole-host metric', wholeHost, true, false],
+    ['a stale item without checks.write', old1, false, false],
   ])('%s', (_name, v, canWrite, want) => {
-    expect(offersForget(v, canWrite)).toBe(want);
+    expect(offersForget(disk, v, canWrite)).toBe(want);
   });
 });
 

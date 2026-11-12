@@ -109,6 +109,52 @@ func TestForgetItemRoute(t *testing.T) {
 		}
 	})
 
+	// A real host of another organization, with a reading of the same
+	// check and item, addressed through this organization's URL: nothing
+	// matched here, and the other organization keeps its rows.
+	t.Run("another organization's host is 404 and keeps its rows", func(t *testing.T) {
+		otherOwner := f.s.SeedUser("forget-item-other-owner@example.test", "correct horse battery")
+		other := f.s.SeedOrg("forget-item-other", otherOwner)
+		scoped := db.WithOrgScope(context.Background(), other)
+		zones, err := f.s.Deps.Hosts.ListZones(scoped, other)
+		if err != nil || len(zones) == 0 {
+			t.Fatalf("zones: %v", err)
+		}
+		foreign := seedCheckHost(t, f.s, scoped, other, zones[0].ID, "foreign-1", "10.9.0.1", true, "")
+		if res, err := f.s.Checks.RecordObservations(scoped, other, []checks.Observation{
+			{HostID: foreign, CheckKey: "disk", Item: odd, Metric: "used_percent", At: at, Value: floatPtr(50)},
+		}); err != nil || res.Accepted != 1 {
+			t.Fatalf("record on the other organization's host: %+v, %v", res, err)
+		}
+		resp := requestJSON(t, f.operatorC, http.MethodDelete, forgetURL(f.hostURL(foreign), "disk", odd, true), nil)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("forget on another organization's host = %d %s, want 404", resp.StatusCode, mustReadBody(t, resp))
+		}
+		if n := currentRows(t, f, foreign, "disk", odd); n != 1 {
+			t.Fatalf("the other organization's rows after the refused forget = %d, want 1", n)
+		}
+	})
+
+	// A repeated parameter is ambiguous — which item was meant? — and is
+	// refused rather than resolved to whichever one the decoder keeps.
+	t.Run("a repeated item or check_key is 400", func(t *testing.T) {
+		for _, q := range []string{
+			"check_key=disk&item=" + url.QueryEscape(odd) + "&item=%2F",
+			"check_key=disk&check_key=cpu&item=" + url.QueryEscape(odd),
+		} {
+			resp := requestJSON(t, f.operatorC, http.MethodDelete, host+"/items?"+q, nil)
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("forget with %q = %d %s, want 400", q, resp.StatusCode, mustReadBody(t, resp))
+			}
+		}
+		if n := currentRows(t, f, f.web, "disk", odd); n != 2 {
+			t.Fatalf("current rows after refused forgets = %d, want 2", n)
+		}
+		if n := currentRows(t, f, f.web, "disk", "/"); n != 1 {
+			t.Fatalf("'/' rows after refused forgets = %d, want 1", n)
+		}
+	})
+
 	t.Run("an operator forgets an item with any characters in its name", func(t *testing.T) {
 		resp := requestJSON(t, f.operatorC, http.MethodDelete, forgetURL(host, "disk", odd, true), nil)
 		if resp.StatusCode != http.StatusNoContent {

@@ -70,10 +70,11 @@ export function HostCheckValueRow({
   const decidedBy = value.decided_by;
 
   const st = verdictLabel(value.state, value.ignored, t);
-  // Backlog 3.12b: a stale item can be forgotten from here (offersForget
-  // says which rows; items the check no longer asks for never reach this
-  // card, so they are left to the automatic expiry).
-  const forgettable = offersForget(value, canWrite);
+  // Backlog 3.12b: an item whose every value is stale can be forgotten,
+  // from its first row only (offersForget). Whole-host rows (item '') never
+  // carry it — the automatic expiry handles a removed check's values — and
+  // items the check no longer asks for never reach this card.
+  const forgettable = offersForget(check, value, canWrite);
 
   // The entries GET /hosts/{id}/effective-rules returns for exactly this
   // tuple — up to two (warn and crit are resolved independently). Every

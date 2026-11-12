@@ -132,11 +132,14 @@ export interface ForgetItemInput {
  * The item travels in the query, URL-encoded — its name comes from an agent
  * and may contain any character.
  *
- * onSuccess waits for the host page's own reads to be invalidated, so a
- * caller's mutateAsync resolves once the row is gone, not before: the
+ * onSettled waits for the host page's own reads to be invalidated, so a
+ * caller's mutateAsync settles once the row is gone, not before: the
  * values (host-checks), the discovered items and the rules on removed
  * items (both read the discovery row the forget deleted), and the alert
- * lists the closed alerts were on.
+ * lists the closed alerts were on. onSettled, not onSuccess: a failure —
+ * most often a 404 because the hourly expiry forgot the item first — still
+ * re-reads, so a row already gone on the server leaves the page too; the
+ * caller still sees the error.
  */
 export function useForgetItem(org: string, hostId: string) {
   const qc = useQueryClient();
@@ -147,7 +150,7 @@ export function useForgetItem(org: string, hostId: string) {
           params: { path: { org, id: hostId }, query: { check_key: checkKey, item } },
         }),
       ),
-    onSuccess: () =>
+    onSettled: () =>
       Promise.all([
         qc.invalidateQueries({ queryKey: ['host-checks', org, hostId] }),
         qc.invalidateQueries({ queryKey: ['host-items', org, hostId] }),

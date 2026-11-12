@@ -214,7 +214,7 @@ describe('HostChecksCard', () => {
   // metrics are not items and carry no row action; a viewer has no
   // checks.write to spend on it. Items the check no longer asks for never
   // reach the card (the server's stillAsked), so stale is the only case.
-  it('offers Forget on stale item rows only, and only with checks.write', async () => {
+  it('offers Forget once per item, only when every value of it is stale, and only with checks.write', async () => {
     const STALE_AND_FRESH = {
       'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
       'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
@@ -230,6 +230,9 @@ describe('HostChecksCard', () => {
             plugin: 'disk',
             values: [
               { item: '/old', metric: 'used_percent', value: 5, at: NOW, stale: true, state: null, flapping: false },
+              { item: '/old', metric: 'free_bytes', value: 9, at: NOW, stale: true, state: null, flapping: false },
+              { item: '/mix', metric: 'used_percent', value: 7, at: NOW, stale: true, state: null, flapping: false },
+              { item: '/mix', metric: 'free_bytes', value: 8, at: NOW, stale: false, state: null, flapping: false },
               { item: '/var', metric: 'used_percent', value: 6, at: NOW, stale: false, state: null, flapping: false },
             ],
           }),
@@ -240,7 +243,12 @@ describe('HostChecksCard', () => {
     const first = renderCard();
 
     expect(await screen.findByRole('heading', { name: 'disk' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Forget disk /old' })).toBeInTheDocument();
+    // One button for the whole item, on its first row, though both of its
+    // metrics are stale.
+    expect(screen.getAllByRole('button', { name: 'Forget disk /old' })).toHaveLength(1);
+    expect(row('disk', '/old used_percent').getByRole('button', { name: 'Forget disk /old' })).toBeInTheDocument();
+    // One stale metric of a live item does not make the item gone.
+    expect(screen.queryByRole('button', { name: 'Forget disk /mix' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Forget disk /var' })).not.toBeInTheDocument();
     expect(row('cpu', 'usage_percent').queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
     first.unmount();

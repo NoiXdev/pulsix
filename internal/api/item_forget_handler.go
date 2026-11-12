@@ -17,18 +17,23 @@ import (
 // whole-host item "". Resolve records whether item was sent at all, so a
 // client that left it out is refused instead of wiping the host-wide
 // values by accident; a missing check_key is the service's own
-// ErrInvalidInput.
+// ErrInvalidInput. Resolve also records a repeated check_key or item: the
+// request is ambiguous, and huma would quietly keep just one of them, so
+// it is refused rather than forgetting whichever item the decoder picked.
 type forgetItemInput struct {
 	Org      string `path:"org"`
 	ID       string `path:"id"`
-	CheckKey string `query:"check_key" doc:"Required: the check the item belongs to"`
-	Item     string `query:"item" doc:"Required, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item"`
+	CheckKey string `query:"check_key" doc:"Required, once: the check the item belongs to"`
+	Item     string `query:"item" doc:"Required, once, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item"`
 	itemSet  bool
+	repeated bool
 }
 
 func (in *forgetItemInput) Resolve(ctx huma.Context) []error {
 	u := ctx.URL()
-	in.itemSet = u.Query().Has("item")
+	q := u.Query()
+	in.itemSet = q.Has("item")
+	in.repeated = len(q["item"]) > 1 || len(q["check_key"]) > 1
 	return nil
 }
 
@@ -59,6 +64,9 @@ func registerItemForgetRoute(hapi huma.API, deps Deps) {
 		hostID, err := parseUUID(in.ID, "host id")
 		if err != nil {
 			return nil, err
+		}
+		if in.repeated {
+			return nil, huma.Error400BadRequest("check_key and item may each be sent only once")
 		}
 		if !in.itemSet {
 			return nil, huma.Error400BadRequest("item is required; send item= (empty) for the whole-host item")

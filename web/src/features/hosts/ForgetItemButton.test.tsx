@@ -90,18 +90,23 @@ describe('ForgetItemButton', () => {
     expect(seen!.search.get('item')).toBe('');
   });
 
-  it('says so when the forget fails', async () => {
+  // A 404 most likely means the hourly expiry forgot the item first: the
+  // error is still said, and the host page is still read again, so the
+  // row that is already gone on the server leaves the page too.
+  it('says so when the forget fails, and still refreshes the host page', async () => {
     const user = userEvent.setup();
     mockApi({
       'DELETE /api/v1/orgs/acme/hosts/h1/items': () =>
         new Response(JSON.stringify({ detail: 'not found' }), { status: 404, headers: { 'Content-Type': 'application/problem+json' } }),
     });
-    renderButton('/mnt/old');
+    const { invalidate } = renderButton('/mnt/old');
 
     await user.click(screen.getByRole('button', { name: 'Forget disk /mnt/old' }));
     const dialog = await confirmDialog('/mnt/old');
     await user.click(within(dialog).getByRole('button', { name: 'Forget' }));
 
     expect(await screen.findByText('not found')).toBeInTheDocument();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['host-checks', 'acme', 'h1'] });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['host-items', 'acme', 'h1'] });
   });
 });

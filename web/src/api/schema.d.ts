@@ -11177,9 +11177,9 @@ export interface operations {
     forgetHostItem: {
         parameters: {
             query?: {
-                /** @description Required: the check the item belongs to */
+                /** @description Required, once: the check the item belongs to */
                 check_key?: string;
-                /** @description Required, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item */
+                /** @description Required, once, may be empty: the item's name, URL-encoded; item= (empty) is the whole-host item */
                 item?: string;
             };
             header?: never;

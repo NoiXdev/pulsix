@@ -89,23 +89,33 @@ export function isGraphable(check: HostCheck, v: HostCheckValue): boolean {
 }
 
 /**
- * offersForget says whether a value's row offers **Forget** (backlog 3.12b,
- * spec "Manual forget"): only when the server calls the reading stale, it
- * belongs to a named item, and the viewer may write checks.
+ * offersForget says whether a value's row carries the item's **Forget**
+ * action (backlog 3.12b, spec "Manual forget"). Forget acts on the whole
+ * item — every metric of `(check.key, v.item)` — so the row offers it only
+ * when:
  *
- *  - Fresh items are not offered it: forgetting one would undo itself
- *    within one interval and only confuse (the API does not refuse it).
- *  - A whole-host metric (item '') is not an item and carries no row action,
- *    like the Ignore/Watch button; the automatic expiry covers it.
- *  - The spec also names rows "whose check no longer asks for" the item.
- *    Those never reach this card: GET /hosts/{id}/checks drops them
- *    (stillAsked, internal/api/host_check_handlers.go), so stale is the
- *    only case here, and not-asked items are left to the automatic expiry.
+ *  - the viewer may write checks;
+ *  - the value belongs to a named item. A whole-host metric (item '') is
+ *    not an item and carries no row action, like the Ignore/Watch button;
+ *    a removed check's whole-host values are the automatic expiry's;
+ *  - EVERY value of that item on this check is stale (the server's `stale`,
+ *    never recomputed — see HostChecksCard). One stale metric of a live
+ *    item (a metric dropped or renamed) does not make the item gone, and
+ *    forgetting it would close and then reopen its live alerts. A fresh
+ *    item would come back within one interval anyway; the API does not
+ *    refuse that, the page simply does not offer it;
+ *  - this is the item's first value in render order — one button per item,
+ *    not one per stale metric that would each forget the same item.
  *
- * `stale` is the server's answer and is not recomputed (see HostChecksCard).
+ * The spec also names rows "whose check no longer asks for" the item.
+ * Those never reach this card: GET /hosts/{id}/checks drops them
+ * (stillAsked, internal/api/host_check_handlers.go), so they are left to
+ * the automatic expiry.
  */
-export function offersForget(v: HostCheckValue, canWrite: boolean): boolean {
-  return canWrite && v.item !== '' && v.stale;
+export function offersForget(check: HostCheck, v: HostCheckValue, canWrite: boolean): boolean {
+  if (!canWrite || v.item === '') return false;
+  const ofItem = (check.values ?? []).filter((x) => x.item === v.item);
+  return ofItem.length > 0 && ofItem[0].metric === v.metric && ofItem.every((x) => x.stale);
 }
 
 /**
