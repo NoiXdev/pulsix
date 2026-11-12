@@ -85,7 +85,7 @@ Docker's leading slash.
 | `docker.state` | container | label | the engine's state: `created`, `running`, `paused`, `restarting`, `removing`, `exited`, `dead` |
 | `docker.health` | container | label | `healthy`, `unhealthy`, `starting`, or `none` when the container has no health check |
 | `docker.restart_count` | container | numeric | the engine's restart count for the container |
-| `docker.exit_code` | container | numeric | the last exit code; reported only while the state is `exited` or `dead` |
+| `docker.exit_code` | container | numeric | the engine's last exit code, reported for every container whatever its state, so a restarted container does not keep a stale value **(Claude's call, changed after the final review;** it was reported only while `exited` or `dead`) |
 | `docker.containers_running` | `""` | numeric | how many watched containers are running |
 | `docker.containers_total` | `""` | numeric | how many containers are watched |
 
@@ -99,6 +99,13 @@ Docker's leading slash.
   round, not reported as an error.
 - An inspect that fails for another reason reports a collection error on
   that container's four metrics; the others are still reported.
+- A container whose name the manager's check-results contract would refuse
+  as an item (over 512 bytes, not valid UTF-8, a control character) is left
+  out, not counted, and named in the plugin's advisory error, the way disk
+  treats such a mount (backlog 7.40); a state or health label the contract
+  would refuse (over 512 bytes, a NUL byte, not valid UTF-8) becomes a
+  collection error on that metric. **(Claude's call, changed after the final
+  review.)**
 - The rules catalogue gets all six metrics (check key `docker`), so rules
   such as `docker.state == "exited"`, `docker.health == "unhealthy"` or a
   windowed rise of `docker.restart_count` can be written.
@@ -111,9 +118,13 @@ Docker's leading slash.
   each selected container for its health, restart count and exit code.
   **(Claude's call:** no Docker SDK dependency. The named pipe uses
   `github.com/Microsoft/go-winio`, already in the module graph.)
-- It uses a fixed API version path that Docker 20.10 and later and
-  Podman's Docker-compatible API all serve. **(Claude's call;** the builder
-  picks the exact version and records why.)
+- It requests the unversioned paths (`/containers/json`,
+  `/containers/{id}/json`), which the engine serves at its own current API
+  version. **(Claude's call, changed after the final review:** a pinned
+  `/v1.41` was refused with HTTP 400 by Docker Engine 29.0 to 29.2, whose
+  minimum API was 1.44; the fields read have been stable across every API
+  version since.) A 400 becomes a collection error that says the engine
+  refused the request, without quoting the body.
 - Only GET requests to the list and inspect endpoints. Never exec, logs,
   stats or anything that writes.
 - Bounds: the whole collection runs within the check's own timeout; at
@@ -127,10 +138,14 @@ Docker's leading slash.
 
 ## Older agents
 
-An agent that predates 3.12 does not know the plugin and reports its usual
-"unknown plugin" error for the check. `docs/upgrades.md` says a `docker`
-check needs an agent at this version or later. No manager-side gating.
-**(Claude's call.)**
+An agent that predates 3.12 does not know the plugin: its scheduler skips
+the check, the agent logs a warning per configuration push (roughly every
+heartbeat, because it does not report that configuration as converged) and
+runs the rest, and the check shows no readings on the host page until the
+agent is updated. `docs/upgrades.md` says a `docker` check needs an agent
+at this version or later. No manager-side gating. **(Claude's call;** the
+description of the older agent's behaviour was corrected after the final
+review — it never reported "unknown plugin".)
 
 ## GUI
 
@@ -166,5 +181,5 @@ check needs an agent at this version or later. No manager-side gating.
 - The package layout inside `internal/agent/checks` (suggested:
   `docker.go` for the plugin, `docker_client.go` for the HTTP client,
   `docker_dial_{unix,windows}.go` for the transport).
-- The exact API version, the inspect concurrency mechanism and the error
+- The inspect concurrency mechanism and the error
   wording, within the bounds above.
