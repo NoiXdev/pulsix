@@ -15,6 +15,8 @@ import { useT } from '../../../i18n/useT.ts';
 import type { Messages } from '../../../i18n/types.ts';
 import type { CheckDefinitionDef, CheckDefinitionDefInput } from '../../../api/types.ts';
 import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx';
+import { HardwareListField } from '../../checks/HardwareListField.tsx';
+import { HARDWARE_PARAM, hardwareErrors, hardwareParams, isHardwarePlugin } from '../../checks/hardwareParams.ts';
 import { SyntheticKeyHint, SyntheticParamFields } from '../../checks/SyntheticParamFields.tsx';
 import {
   hasFieldTable, isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
@@ -54,10 +56,12 @@ interface CheckDefinitionFormValues {
   units: string;
   mounts: string;
   interfaces: string;
+  /** The temperature, smart or raid list, whichever the plugin is. */
+  hardware: string;
   synthetic: SyntheticValues;
 }
 
-const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'icmp', 'tcp', 'http', 'tls', 'dns'] as const;
+const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'temperature', 'smart', 'raid', 'icmp', 'tcp', 'http', 'tls', 'dns'] as const;
 
 /** lines turns a textarea's content into the string list the API takes —
  * CheckDialog.tsx's own helper, duplicated rather than imported: that
@@ -84,6 +88,13 @@ function validateCheckDefinitionInput(
   return errors;
 }
 
+/** hardwareText reads the temperature, smart or raid list back as the
+ * textarea's lines. */
+function hardwareText(params: Record<string, unknown> | undefined): string {
+  const list = params?.sensors ?? params?.devices ?? params?.arrays;
+  return Array.isArray(list) ? (list as string[]).join('\n') : '';
+}
+
 function CheckForm({ org, definition }: { org: string; definition?: CheckDefinitionDef }) {
   const t = useT();
   const toast = useToast();
@@ -96,9 +107,10 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
           units: Array.isArray(definition.params?.units) ? (definition.params.units as string[]).join('\n') : '',
           mounts: Array.isArray(definition.params?.mounts) ? (definition.params.mounts as string[]).join('\n') : '',
           interfaces: Array.isArray(definition.params?.interfaces) ? (definition.params.interfaces as string[]).join('\n') : '',
+          hardware: hardwareText(definition.params),
           synthetic: syntheticValuesFrom(definition.plugin, definition.params),
         }
-      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '', interfaces: '', synthetic: {} },
+      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '', interfaces: '', hardware: '', synthetic: {} },
   );
   const [values, setValues] = useState<CheckDefinitionFormValues>(initial);
   const [errors, setErrors] = useState<Partial<Record<keyof CheckDefinitionFormValues, string>>>({});
@@ -114,12 +126,14 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
       // rules match its metrics on); an existing one's key is never
       // renamed behind the user's back.
       key: definition ? cur.key : keyAfterPluginChange(cur.key, cur.plugin, next),
+      hardware: definition && next === definition.plugin ? hardwareText(definition.params) : '',
       synthetic: definition && next === definition.plugin ? syntheticValuesFrom(next, definition.params) : {},
     }));
   }
 
   function params(): Record<string, unknown> {
     if (hasFieldTable(values.plugin)) return syntheticParams(values.plugin, values.synthetic);
+    if (isHardwarePlugin(values.plugin)) return hardwareParams(values.plugin, values.hardware);
     if (values.plugin === 'service') return { units: lines(values.units) };
     // disk's allow-list is optional and an empty one means every mount
     // (CheckDialog.tsx keeps the same contract for an organization's own
@@ -146,7 +160,9 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
   async function submit(): Promise<boolean> {
     setFormError(null);
     const fieldErrors = validateCheckDefinitionInput(values, t);
-    const refused = hasFieldTable(values.plugin) ? validateSynthetic(values.plugin, values.synthetic, t) : {};
+    const refused = hasFieldTable(values.plugin)
+      ? validateSynthetic(values.plugin, values.synthetic, t)
+      : isHardwarePlugin(values.plugin) ? hardwareErrors(values.plugin, values.hardware, t) : {};
     setErrors(fieldErrors);
     setSyntheticErrors(refused);
     if (Object.keys(fieldErrors).length > 0 || Object.keys(refused).length > 0) return false;
@@ -226,6 +242,15 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
             values={values.synthetic}
             errors={syntheticErrors}
             onChange={(synthetic) => setValues((cur) => ({ ...cur, synthetic }))}
+          />
+        )}
+        {isHardwarePlugin(values.plugin) && (
+          <HardwareListField
+            idPrefix="check-def"
+            plugin={values.plugin}
+            value={values.hardware}
+            error={syntheticErrors[HARDWARE_PARAM[values.plugin]]}
+            onChange={(hardware) => setValues((cur) => ({ ...cur, hardware }))}
           />
         )}
         {values.plugin === 'disk' && (

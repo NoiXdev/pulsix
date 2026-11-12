@@ -112,6 +112,24 @@ describe('isGraphable', () => {
       value({ item: 'web', metric: 'docker.restart_count', error: 'inspect web: not found' }),
       true,
     ],
+    [
+      'a failed raid.state reading is discrete',
+      check({ plugin: 'raid' }),
+      value({ item: 'md0', metric: 'raid.state', error: 'read /proc/mdstat: denied' }),
+      false,
+    ],
+    [
+      'a raid.sync_pct reading keeps its graph',
+      check({ plugin: 'raid' }),
+      value({ item: 'md0', metric: 'raid.sync_pct', error: 'read /proc/mdstat: denied' }),
+      true,
+    ],
+    [
+      'temperature and smart readings are graphable',
+      check({ plugin: 'smart' }),
+      value({ item: '/dev/sda', metric: 'smart.temperature_celsius', error: 'smartctl failed' }),
+      true,
+    ],
   ])('%s', (_name, c, v, expected) => {
     expect(isGraphable(c, v)).toBe(expected);
   });

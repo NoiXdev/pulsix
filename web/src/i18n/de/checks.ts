@@ -90,6 +90,9 @@ export const deChecks: Messages['checks'] = {
       tls: 'TLS-Zertifikat',
       dns: 'DNS',
       docker: 'Docker-Container',
+      temperature: 'Temperatur',
+      smart: 'SMART-Festplattenzustand',
+      raid: 'RAID-Arrays',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -106,6 +109,26 @@ export const deChecks: Messages['checks'] = {
     interfacesHint: 'Loopback sowie Container- und virtuelle Schnittstellen werden standardmäßig übersprungen. Eine hier genannte Schnittstelle wird immer gemessen.',
     bindsTo: 'Gebunden an',
     interval: 'Intervall (Sekunden)',
+  },
+  hardware: {
+    sensors: {
+      label: 'Sensoren (einer pro Zeile, leer bedeutet jeden Sensor)',
+      hint: 'Sensornamen, wie der Host sie meldet; leer bedeutet jeden Sensor.',
+    },
+    devices: {
+      label: 'Geräte (eines pro Zeile, leer bedeutet jede Platte)',
+      hint: 'Gerätepfade wie /dev/sda oder /dev/nvme0; leer bedeutet jede Platte, die smartctl findet. Benötigt smartmontools auf dem Host.',
+    },
+    arrays: {
+      label: 'Arrays (eines pro Zeile, leer bedeutet jedes Array)',
+      hint: 'Array-Namen wie md0; leer bedeutet jedes Array. Nur Linux-Software-RAID.',
+    },
+    errors: {
+      tooMany: (max: number) => `darf höchstens ${max} Einträge haben`,
+      tooLong: (max: number) => `jeder Eintrag darf höchstens ${max} Byte lang sein`,
+      control: 'Einträge dürfen keine Steuerzeichen enthalten',
+      device: 'jeder Eintrag muss mit /dev/ beginnen und darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten',
+    },
   },
   synthetic: {
     pluginHint: 'läuft auf dem Pulsix-Server',

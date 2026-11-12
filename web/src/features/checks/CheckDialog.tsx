@@ -9,6 +9,8 @@ import { useT } from '../../i18n/useT.ts';
 import { useCreateCheck, useUpdateCheck } from '../../api/hooks/useChecks.ts';
 import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlugin, MonitoringGroup } from '../../api/types.ts';
 import { HostPicker } from './HostPicker.tsx';
+import { HardwareListField } from './HardwareListField.tsx';
+import { HARDWARE_PARAM, hardwareErrors, hardwareParams, isHardwarePlugin } from './hardwareParams.ts';
 import { SyntheticKeyHint, SyntheticParamFields } from './SyntheticParamFields.tsx';
 import {
   hasFieldTable, isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
@@ -16,7 +18,7 @@ import {
 
 const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
 
-const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'icmp', 'tcp', 'http', 'tls', 'dns'];
+const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'temperature', 'smart', 'raid', 'icmp', 'tcp', 'http', 'tls', 'dns'];
 
 /** lines turns a textarea's content into the string list the API takes,
  * dropping blank lines so a trailing newline is not a parameter. */
@@ -86,6 +88,9 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   const [units, setUnits] = useState(stringList(check?.params?.units).join('\n'));
   const [mounts, setMounts] = useState(stringList(check?.params?.mounts).join('\n'));
   const [interfaces, setInterfaces] = useState(stringList(check?.params?.interfaces).join('\n'));
+  const [hardware, setHardware] = useState(
+    stringList(check?.params?.sensors ?? check?.params?.devices ?? check?.params?.arrays).join('\n'),
+  );
   const [synthetic, setSynthetic] = useState<SyntheticValues>(() => syntheticValuesFrom(check?.plugin ?? '', check?.params));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -98,12 +103,14 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
     // Another plugin's values would mostly be refused by this one; going
     // back to the stored plugin restores what is saved.
     setSynthetic(next === check?.plugin ? syntheticValuesFrom(next, check.params) : {});
+    setHardware(next === check?.plugin ? stringList(check.params?.sensors ?? check.params?.devices ?? check.params?.arrays).join('\n') : '');
     setFieldErrors({});
     setPlugin(next);
   }
 
   function params(): Record<string, unknown> {
     if (hasFieldTable(plugin)) return syntheticParams(plugin, synthetic);
+    if (isHardwarePlugin(plugin)) return hardwareParams(plugin, hardware);
     if (plugin === 'service') return { units: lines(units) };
     if (plugin === 'disk') {
       const list = lines(mounts);
@@ -143,7 +150,9 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const refused = hasFieldTable(plugin) ? validateSynthetic(plugin, synthetic, t) : {};
+    const refused = hasFieldTable(plugin)
+      ? validateSynthetic(plugin, synthetic, t)
+      : isHardwarePlugin(plugin) ? hardwareErrors(plugin, hardware, t) : {};
     setFieldErrors(refused);
     if (Object.keys(refused).length > 0) return;
     try {
@@ -259,6 +268,16 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
             />
             <p id="check-interfaces-hint" className="text-[11px] text-muted-foreground">{t.checks.dialog.interfacesHint}</p>
           </>
+        )}
+        {isHardwarePlugin(plugin) && (
+          <HardwareListField
+            idPrefix="check"
+            plugin={plugin}
+            value={hardware}
+            error={fieldErrors[HARDWARE_PARAM[plugin]]}
+            disabled={shared}
+            onChange={setHardware}
+          />
         )}
         {hasFieldTable(plugin) && (
           <SyntheticParamFields

@@ -94,6 +94,9 @@ export const enChecks = {
       tls: 'TLS certificate',
       dns: 'DNS',
       docker: 'Docker containers',
+      temperature: 'Temperature',
+      smart: 'SMART disk health',
+      raid: 'RAID arrays',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -110,6 +113,28 @@ export const enChecks = {
     interfacesHint: 'Loopback and container or virtual interfaces are skipped by default. An interface named here is always measured.',
     bindsTo: 'Binds to',
     interval: 'Interval (seconds)',
+  },
+  /** The hardware plugins' list fields (backlog 3.9), shared by the check
+   * dialog and the instance's shared check form. */
+  hardware: {
+    sensors: {
+      label: 'Sensors (one per line, empty means every sensor)',
+      hint: 'Sensor names as the host reports them; empty means every sensor.',
+    },
+    devices: {
+      label: 'Devices (one per line, empty means every disk)',
+      hint: 'Device paths such as /dev/sda or /dev/nvme0; empty means every disk smartctl finds. Needs smartmontools on the host.',
+    },
+    arrays: {
+      label: 'Arrays (one per line, empty means every array)',
+      hint: 'Array names such as md0; empty means every array. Linux software RAID only.',
+    },
+    errors: {
+      tooMany: (max: number) => `must have at most ${max} entries`,
+      tooLong: (max: number) => `every entry must be at most ${max} bytes`,
+      control: 'entries must not contain control characters',
+      device: 'every entry must start with /dev/ and contain only letters, digits and . _ / , : + @ -',
+    },
   },
   /** The synthetic plugins' parameter fields (backlog 3.13), shared by the
    * check dialog and the instance's shared check form. */

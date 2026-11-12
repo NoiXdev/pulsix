@@ -49,6 +49,11 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
   // docker mixes labels with numbers (restart_count, containers_running,
   // ...); its label metrics are listed in DISCRETE_METRICS.
   docker: true,
+  // temperature, smart and raid are numbers apart from raid.state, the
+  // one label metric (DISCRETE_METRICS).
+  temperature: true,
+  smart: true,
+  raid: true,
   icmp: true,
   tcp: true,
   http: true,
@@ -64,7 +69,7 @@ const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
  * internal/agent/checks/plugins: service and docker call
  * checks.LabelObservation for exactly these.
  */
-const DISCRETE_METRICS: ReadonlySet<string> = new Set(['service.state', 'docker.state', 'docker.health']);
+const DISCRETE_METRICS: ReadonlySet<string> = new Set(['service.state', 'docker.state', 'docker.health', 'raid.state']);
 
 /**
  * isGraphable reports whether a graph may be offered for one of a check's
