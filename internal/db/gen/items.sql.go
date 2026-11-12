@@ -124,7 +124,9 @@ type InsertCheckItemsParams struct {
 
 // Discovery (v0.3b-3 design, "Discovery and evaluation"): one row per
 // (host, check_key, item), written at most once in its life — a whole
-// host's items in ONE statement.
+// host's items in ONE statement. Forgetting the item (backlog 3.12b,
+// checks.sql's DeleteItemCheckItem) deletes the row, so an item that
+// reports again afterwards is discovered anew, with a new first_seen.
 //
 // One statement, not one per item (the shape this replaced): Discover runs
 // for every host of every evaluation batch, for ever, so twenty mounts on

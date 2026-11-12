@@ -24,6 +24,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
+	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -179,6 +180,39 @@ func waitBlockedBy(t *testing.T, d *db.DB, pid int32) {
 	t.Fatalf("nothing came to wait on backend %d", pid)
 }
 
+// firstSeen reads the item's check_items row; ok is false when it has none.
+func firstSeen(t *testing.T, d *db.DB, host uuid.UUID, key, item string) (time.Time, bool) {
+	t.Helper()
+	var at time.Time
+	err := d.Pool().QueryRow(ctx,
+		`SELECT first_seen FROM check_items WHERE host_id = $1 AND check_key = $2 AND item = $3`, host, key, item).Scan(&at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return at, true
+}
+
+// noChecks is a HostChecks with nothing resolved: enough for the
+// evaluator's Load to read a host's tuples and run its discovery.
+type noChecks struct{}
+
+func (noChecks) ContextForHost(context.Context, uuid.UUID, uuid.UUID) (rules.CheckContext, error) {
+	return rules.CheckContext{}, nil
+}
+
+// loadHost runs the evaluator's own Load for host, which is where items
+// are discovered into check_items.
+func loadHost(t *testing.T, d *db.DB, org, host uuid.UUID) {
+	t.Helper()
+	if _, err := rules.NewEvalSQLStore(d, noChecks{}, items.NewSQLStore(d), nil).
+		Load(ctx, rules.Due{OrgID: org, HostID: host}); err != nil {
+		t.Fatalf("evaluator load: %v", err)
+	}
+}
+
 // asyncForget runs ForgetItem on its own goroutine.
 func asyncForget(svc *checks.Service, org, host uuid.UUID, key, item string) <-chan error {
 	done := make(chan error, 1)
@@ -214,6 +248,16 @@ func TestForgetItemRemovesOneItemOnly(t *testing.T) {
 		putRuleState(t, q, org, host, tu[0], tu[1], tu[2])
 	}
 	putRuleState(t, q, org, other, "disk", "/mnt/old", "used_pct")
+	loadHost(t, d, org, host)
+	loadHost(t, d, org, other)
+	for _, it := range []struct {
+		host uuid.UUID
+		item string
+	}{{host, "/mnt/old"}, {host, "/"}, {other, "/mnt/old"}} {
+		if _, ok := firstSeen(t, d, it.host, "disk", it.item); !ok {
+			t.Fatalf("setup: %q was not discovered", it.item)
+		}
+	}
 	forgotten := openAlertCommitted(t, d, org, host, "disk", "/mnt/old", "used_pct")
 	sibling := openAlertCommitted(t, d, org, host, "disk", "/", "used_pct")
 	dirtyBefore, _ := cursorDirtyAt(t, d, host)
@@ -245,6 +289,15 @@ func TestForgetItemRemovesOneItemOnly(t *testing.T) {
 	if n := ruleRows(t, d, other, "disk", "/mnt/old"); n != 2 {
 		t.Errorf("same item on another host has %d rule rows, want 2", n)
 	}
+	if _, ok := firstSeen(t, d, host, "disk", "/mnt/old"); ok {
+		t.Errorf("forgotten item keeps its check_items row")
+	}
+	if _, ok := firstSeen(t, d, host, "disk", "/"); !ok {
+		t.Errorf("sibling item lost its check_items row")
+	}
+	if _, ok := firstSeen(t, d, other, "disk", "/mnt/old"); !ok {
+		t.Errorf("same item on another host lost its check_items row")
+	}
 	if reason, events := alertClose(t, d, forgotten); reason != string(alerts.Forgotten) || events != 1 {
 		t.Errorf("forgotten item's alert: reason %q with %d closed events, want forgotten with 1", reason, events)
 	}
@@ -253,6 +306,42 @@ func TestForgetItemRemovesOneItemOnly(t *testing.T) {
 	}
 	if after, _ := cursorDirtyAt(t, d, host); !after.After(dirtyBefore) {
 		t.Errorf("dirty_at = %v, want it moved past %v so the roll-up is re-evaluated", after, dirtyBefore)
+	}
+}
+
+// TestForgottenItemIsDiscoveredAgain: an item that reports again after a
+// forget is a new item — once the host is evaluated, check_items has it
+// with a new first_seen, not the one from before the forget.
+func TestForgottenItemIsDiscoveredAgain(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-forget-rediscover")
+	host := seedHost(t, d, org, "forget-rediscover-host")
+	now := time.Now().UTC().Truncate(time.Second)
+	svc := newForgetService(d, now)
+	scoped := db.WithOrgScope(ctx, org)
+	obs := []checks.Observation{{HostID: host, CheckKey: "docker", Item: "build-9", Metric: "running", At: now, Value: f64(1)}}
+
+	if _, err := svc.RecordObservations(scoped, org, obs); err != nil {
+		t.Fatal(err)
+	}
+	loadHost(t, d, org, host)
+	before, ok := firstSeen(t, d, host, "docker", "build-9")
+	if !ok {
+		t.Fatal("setup: the item was not discovered")
+	}
+	if err := svc.ForgetItem(scoped, org, host, "docker", "build-9"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RecordObservations(scoped, org, obs); err != nil {
+		t.Fatal(err)
+	}
+	loadHost(t, d, org, host)
+	after, ok := firstSeen(t, d, host, "docker", "build-9")
+	if !ok {
+		t.Fatal("the item that reported again was not discovered again")
+	}
+	if !after.After(before) {
+		t.Fatalf("first_seen = %v after the reappearance, want later than the forgotten item's %v", after, before)
 	}
 }
 
@@ -557,6 +646,10 @@ func TestExpiredItemsBoundaries(t *testing.T) {
 	}{
 		{"exactly at the period", []reading{{"c", "m", cutoff}, {"live", "m", now}}, map[string]bool{"c": false, "live": false}},
 		{"a second past the period", []reading{{"c", "m", cutoff.Add(-sec)}, {"live", "m", now}}, map[string]bool{"c": true}},
+		// The host's newest reading lies an hour in the future, so the
+		// second half holds either way and only the first half decides.
+		{"first half alone, exactly at the period", []reading{{"c", "m", cutoff}, {"live", "m", now.Add(time.Hour)}}, map[string]bool{"c": false}},
+		{"first half alone, a second past it", []reading{{"c", "m", cutoff.Add(-sec)}, {"live", "m", now.Add(time.Hour)}}, map[string]bool{"c": true}},
 		{"host newest exactly item + period", []reading{{"c", "m", cutoff.Add(-time.Hour)}, {"live", "m", cutoff.Add(-time.Hour).Add(period)}}, map[string]bool{"c": false}},
 		{"host newest a second later", []reading{{"c", "m", cutoff.Add(-time.Hour)}, {"live", "m", cutoff.Add(-time.Hour).Add(period + sec)}}, map[string]bool{"c": true}},
 		// Every reading stopped together, 40 days ago: the host went offline,

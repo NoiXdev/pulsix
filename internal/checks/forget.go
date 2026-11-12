@@ -6,8 +6,8 @@ package checks
 // its last values in check_current for ever (Current's own doc comment),
 // and those rows count against MaxTuplesPerHost. Forgetting the item
 // removes, for every metric of it, its current values, its rule states and
-// their state-change history, and closes every open alert on it with the
-// reason forgotten. Samples (graphs) and item decisions are untouched. An
+// their state-change history, and its discovery row (check_items), and
+// closes every open alert on it with the reason forgotten. Samples (graphs) and item decisions are untouched. An
 // item that reports again afterwards simply appears again, like a new one.
 
 import (
@@ -84,7 +84,10 @@ var errNoAlertCloser = errors.New("checks: forgetting an item needs an alert clo
 // one transaction. ErrNotFound means the item has no current value to
 // forget (never reported, already forgotten, or every row of it being
 // written by an ingest at this very moment, which then lands after the
-// forget anyway). item may be "", the whole-host item.
+// forget anyway). item may be "", the whole-host item. If such an ingest,
+// whose row the forget skipped, then rolls back instead of committing, its
+// old reading survives while the item's states, alerts and discovery row
+// are gone; the next expiry round or a second forget removes it.
 func (s *Service) ForgetItem(ctx context.Context, orgID, hostID uuid.UUID, checkKey, item string) error {
 	if s.alerts == nil {
 		return errNoAlertCloser

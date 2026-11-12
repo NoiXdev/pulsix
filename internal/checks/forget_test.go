@@ -276,6 +276,10 @@ func TestForgetExpiredRecheckBoundaries(t *testing.T) {
 	}{
 		{"exactly at the period is not yet due", checks.ItemNewest{Rows: 1, Item: cutoff, Host: now}, false},
 		{"a second past the period is due", checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Second), Host: now}, true},
+		// A host newest in the future satisfies the second half either way,
+		// so only the first half decides.
+		{"first half alone, exactly at the period", checks.ItemNewest{Rows: 1, Item: cutoff, Host: now.Add(time.Hour)}, false},
+		{"first half alone, a second past it", checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Second), Host: now.Add(time.Hour)}, true},
 		{"host newest exactly item + period is not due",
 			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Host: cutoff.Add(-time.Hour).Add(period)}, false},
 		{"host newest a second later is due",

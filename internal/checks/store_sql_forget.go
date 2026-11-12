@@ -39,7 +39,8 @@ var errForgetDeclined = errors.New("forget declined")
 //     would be a deadlock. Nothing deleted means nothing to forget.
 //  4. The item's states and state-change history: only the evaluator
 //     writes them, and only under the lock held since step 1, so no
-//     orphan state can appear behind this.
+//     orphan state can appear behind this. Then its check_items row,
+//     which only the evaluator's discovery writes, under the same lock.
 //  5. MarkHostDirtyNow, so the host's roll-up is re-evaluated without the
 //     forgotten item.
 //  6. steps.Within — the alert close — on the same transaction.
@@ -92,6 +93,11 @@ func forgetItem(ctx context.Context, tx pgx.Tx, ref ItemRef, steps ForgetSteps) 
 		OrgID: ref.OrgID, HostID: ref.HostID, CheckKey: ref.CheckKey, Item: ref.Item,
 	}); err != nil {
 		return fmt.Errorf("delete item state changes: %w", err)
+	}
+	if err := q.DeleteItemCheckItem(ctx, gen.DeleteItemCheckItemParams{
+		OrgID: ref.OrgID, HostID: ref.HostID, CheckKey: ref.CheckKey, Item: ref.Item,
+	}); err != nil {
+		return fmt.Errorf("delete discovered item: %w", err)
 	}
 	if err := q.MarkHostDirtyNow(ctx, gen.MarkHostDirtyNowParams{OrgID: ref.OrgID, HostID: ref.HostID}); err != nil {
 		return fmt.Errorf("mark host dirty: %w", err)

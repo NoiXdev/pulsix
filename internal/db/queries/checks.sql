@@ -209,6 +209,18 @@ DELETE FROM check_state_changes
 WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
   AND check_key = sqlc.arg(check_key) AND item = sqlc.arg(item);
 
+-- name: DeleteItemCheckItem :exec
+-- The item's discovery row (check_items, migration 00048), so a forgotten
+-- item leaves the rule-item suggestions and decision previews too, and a
+-- reappearance is discovered again with a new first_seen. check_items owns
+-- no row for the whole-host item "" (00048's CHECK), so for "" this
+-- deletes nothing. The table belongs to internal/items; a forget is the
+-- one writer outside it, because the delete must share the forget's
+-- transaction.
+DELETE FROM check_items
+WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
+  AND check_key = sqlc.arg(check_key) AND item = sqlc.arg(item);
+
 -- name: ListExpiredItems :many
 -- The automatic expiry's selection (backlog 3.12b), across every
 -- organization — it runs unscoped on the bare pool, like the alert sweep.

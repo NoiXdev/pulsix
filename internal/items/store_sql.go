@@ -26,7 +26,10 @@ var ErrNotFound = errors.New("not found")
 // the machine found"). Name holds what the database column `item` holds:
 // the column keeps that name because it is the word the spec, the schema
 // and the operator use, while Go calls the field Name so that View, which
-// embeds Item, never reads as View.Item.Item.
+// embeds Item, never reads as View.Item.Item. A row lives until its host
+// is deleted or the item is forgotten (backlog 3.12b: checks.SQLStore's
+// ForgetItem deletes it in the forget's own transaction), after which a
+// reappearance is discovered again with a new FirstSeen.
 type Item struct {
 	OrgID, HostID  uuid.UUID
 	CheckKey, Name string

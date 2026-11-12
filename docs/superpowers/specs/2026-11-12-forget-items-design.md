@@ -36,6 +36,14 @@ that item:
 - its current values (`check_current`);
 - its rule states (`check_states`) and their state-change history used for
   flapping (`check_state_changes`), so a later reappearance starts fresh;
+- its discovery row (`check_items`), so it leaves the rule-item suggestions
+  and decision previews, and a reappearance is discovered again with a new
+  `first_seen`. The whole-host item `""` has no such row. **(Claude's call,
+  added after review:** otherwise a forgotten item stays in those lists for
+  ever with its original `first_seen`, and on hosts with many short-lived
+  containers the list keeps growing. Migration files are immutable, so
+  00048's comment is not edited; the code that documents `check_items` says
+  it now.)
 - any open alert on it, which is closed with the new closed reason
   `forgotten` and an alert event saying so. Notification routes treat it like
   a resolve. **(Claude's call:** an open alert on something that no longer

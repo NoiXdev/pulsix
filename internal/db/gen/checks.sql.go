@@ -145,6 +145,36 @@ func (q *Queries) DeleteCheckDefinition(ctx context.Context, arg DeleteCheckDefi
 	return result.RowsAffected(), nil
 }
 
+const deleteItemCheckItem = `-- name: DeleteItemCheckItem :exec
+DELETE FROM check_items
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = $3 AND item = $4
+`
+
+type DeleteItemCheckItemParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+// The item's discovery row (check_items, migration 00048), so a forgotten
+// item leaves the rule-item suggestions and decision previews too, and a
+// reappearance is discovered again with a new first_seen. check_items owns
+// no row for the whole-host item "" (00048's CHECK), so for "" this
+// deletes nothing. The table belongs to internal/items; a forget is the
+// one writer outside it, because the delete must share the forget's
+// transaction.
+func (q *Queries) DeleteItemCheckItem(ctx context.Context, arg DeleteItemCheckItemParams) error {
+	_, err := q.db.Exec(ctx, deleteItemCheckItem,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	return err
+}
+
 const deleteItemCurrent = `-- name: DeleteItemCurrent :execrows
 DELETE FROM check_current c
 USING (
