@@ -50,6 +50,13 @@ message AgentMessage {
 message Heartbeat {
   string version = 1; // agent build version
   string config_version = 2; // what the agent is currently running
+  // The names of the secrets in the agent's local configuration file
+  // (agent.yaml), sorted; never a secret's fields.
+  repeated string secret_names = 3;
+  // The configuration file's state: "absent", "ok" or the error that made
+  // the agent drop every secret (it never quotes the file). Empty from an
+  // agent older than the file.
+  string secrets_state = 4;
 }
 
 message Facts {

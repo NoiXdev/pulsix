@@ -296,6 +296,13 @@ type Heartbeat struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`                                  // agent build version
 	ConfigVersion string                 `protobuf:"bytes,2,opt,name=config_version,json=configVersion,proto3" json:"config_version,omitempty"` // what the agent is currently running
+	// The names of the secrets in the agent's local configuration file
+	// (agent.yaml), sorted; never a secret's fields.
+	SecretNames []string `protobuf:"bytes,3,rep,name=secret_names,json=secretNames,proto3" json:"secret_names,omitempty"`
+	// The configuration file's state: "absent", "ok" or the error that made
+	// the agent drop every secret (it never quotes the file). Empty from an
+	// agent older than the file.
+	SecretsState  string `protobuf:"bytes,4,opt,name=secrets_state,json=secretsState,proto3" json:"secrets_state,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -340,6 +347,20 @@ func (x *Heartbeat) GetVersion() string {
 func (x *Heartbeat) GetConfigVersion() string {
 	if x != nil {
 		return x.ConfigVersion
+	}
+	return ""
+}
+
+func (x *Heartbeat) GetSecretNames() []string {
+	if x != nil {
+		return x.SecretNames
+	}
+	return nil
+}
+
+func (x *Heartbeat) GetSecretsState() string {
+	if x != nil {
+		return x.SecretsState
 	}
 	return ""
 }
@@ -754,10 +775,12 @@ const file_pulsix_agent_v1_agent_proto_rawDesc = "" +
 	"\theartbeat\x18\x01 \x01(\v2\x1a.pulsix.agent.v1.HeartbeatH\x00R\theartbeat\x12.\n" +
 	"\x05facts\x18\x02 \x01(\v2\x16.pulsix.agent.v1.FactsH\x00R\x05facts\x12D\n" +
 	"\rcheck_results\x18\x03 \x01(\v2\x1d.pulsix.agent.v1.CheckResultsH\x00R\fcheckResultsB\x06\n" +
-	"\x04body\"L\n" +
+	"\x04body\"\x94\x01\n" +
 	"\tHeartbeat\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12%\n" +
-	"\x0econfig_version\x18\x02 \x01(\tR\rconfigVersion\"~\n" +
+	"\x0econfig_version\x18\x02 \x01(\tR\rconfigVersion\x12!\n" +
+	"\fsecret_names\x18\x03 \x03(\tR\vsecretNames\x12#\n" +
+	"\rsecrets_state\x18\x04 \x01(\tR\fsecretsState\"~\n" +
 	"\x05Facts\x12:\n" +
 	"\x06values\x18\x01 \x03(\v2\".pulsix.agent.v1.Facts.ValuesEntryR\x06values\x1a9\n" +
 	"\vValuesEntry\x12\x10\n" +
