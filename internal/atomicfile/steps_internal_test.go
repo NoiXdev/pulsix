@@ -70,3 +70,53 @@ func TestWriteStopsAtTheFirstFailingStep(t *testing.T) {
 		})
 	}
 }
+
+// fakeDir is a directory handle whose flush fails or succeeds on demand,
+// and which records that it was closed.
+type fakeDir struct {
+	syncErr error
+	closed  bool
+}
+
+func (d *fakeDir) Sync() error  { return d.syncErr }
+func (d *fakeDir) Close() error { d.closed = true; return nil }
+
+// TestSyncDirIsANoOpOnWindows: a directory handle on Windows is read-only,
+// and flushing one fails with access denied — after the rename has already
+// put the file in place. Windows must not even open the directory.
+func TestSyncDirIsANoOpOnWindows(t *testing.T) {
+	err := syncDirOn("windows", t.TempDir(), func(string) (dirHandle, error) {
+		t.Fatal("the directory was opened on Windows")
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("syncDirOn(windows) = %v, want nil", err)
+	}
+}
+
+// TestSyncDirFlushesElsewhere: on Unix the directory is flushed, a failed
+// flush is reported, and the handle is closed either way; a directory that
+// cannot be opened is not an error.
+func TestSyncDirFlushesElsewhere(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin", "freebsd"} {
+		t.Run(goos, func(t *testing.T) {
+			ok := &fakeDir{}
+			if err := syncDirOn(goos, "d", func(string) (dirHandle, error) { return ok, nil }); err != nil {
+				t.Fatalf("a good flush = %v, want nil", err)
+			}
+			if !ok.closed {
+				t.Error("the directory handle was not closed")
+			}
+			bad := &fakeDir{syncErr: errStep}
+			if err := syncDirOn(goos, "d", func(string) (dirHandle, error) { return bad, nil }); !errors.Is(err, errStep) {
+				t.Fatalf("a failed flush = %v, want the failure", err)
+			}
+			if !bad.closed {
+				t.Error("the directory handle was not closed after a failed flush")
+			}
+			if err := syncDirOn(goos, "d", func(string) (dirHandle, error) { return nil, os.ErrPermission }); err != nil {
+				t.Fatalf("an unopenable directory = %v, want nil", err)
+			}
+		})
+	}
+}
