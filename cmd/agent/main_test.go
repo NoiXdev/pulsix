@@ -23,6 +23,7 @@ func TestRunReadsTheEnvFile(t *testing.T) {
 	if err := os.WriteFile(envFile, []byte("PULSIX_MANAGER_ADDR=http://x\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	protectEnvFile(t, envFile)
 	logPath := filepath.Join(dir, "agent.log")
 	if code := run([]string{"--env-file", envFile, "--log-file", logPath}, nil); code != 2 {
 		t.Fatalf("code = %d, want 2", code)

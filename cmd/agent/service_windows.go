@@ -56,9 +56,11 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 		case svcRunning:
 			current = svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 		case svcStopPending:
-			current = svc.Status{State: svc.StopPending}
+			current = svc.Status{State: svc.StopPending, WaitHint: uint32((serviceStopWait + 5*time.Second).Milliseconds())}
 		case svcStopped:
-			current = svc.Status{State: svc.Stopped}
+			// Not forwarded: svc.Run reports Stopped with the exit code
+			// once Execute returns; sending it here would record success.
+			return
 		}
 		status <- current
 	}
@@ -90,5 +92,7 @@ func (h *handler) Execute(_ []string, requests <-chan svc.ChangeRequest, status 
 		return runWithContext(ctx, h.args, h.env)
 	}, serviceStopWait)
 	close(finished)
-	return false, h.code
+	// A failure is a service-specific exit code (2 or 1, as on Linux), so
+	// the SCM shows it and applies the recovery actions.
+	return h.code != 0, h.code
 }
