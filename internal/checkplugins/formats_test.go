@@ -76,9 +76,12 @@ func TestFormatVectorsCoverEveryFormat(t *testing.T) {
 
 // TestFormatsAreExactlyTheUsedOnes: Formats lists every format a
 // descriptor uses, and only those — a format no parameter names would be a
-// validator, a TypeScript twin and an API phrase kept for nothing.
+// validator, a TypeScript twin and an API phrase kept for nothing. The
+// shared secret parameter (SecretParam) counts as used: it is the one
+// spelling every plugin that takes a secret embeds, so its format is
+// needed before the first such plugin exists (backlog 3.5, 3.10).
 func TestFormatsAreExactlyTheUsedOnes(t *testing.T) {
-	used := map[checkplugins.Format]bool{}
+	used := map[checkplugins.Format]bool{checkplugins.SecretParam().Format: true}
 	for _, d := range checkplugins.All() {
 		for _, p := range d.Params {
 			if p.Format != "" {

@@ -186,5 +186,22 @@
   {"format": "dockerSocket", "input": "/x\u0000y", "valid": false},
   {"format": "dockerSocket", "input": "/a\nb", "valid": false},
   {"format": "dockerSocket", "input": "npipe://./pipe/x", "valid": false},
-  {"format": "dockerSocket", "input": "unix:///var/run/docker.sock", "valid": false}
+  {"format": "dockerSocket", "input": "unix:///var/run/docker.sock", "valid": false},
+  {"format": "secretName", "input": "db", "valid": true},
+  {"format": "secretName", "input": "mysql-prod", "valid": true},
+  {"format": "secretName", "input": "a.b_c-1", "valid": true},
+  {"format": "secretName", "input": "A", "valid": true},
+  {"format": "secretName", "input": "_", "valid": true},
+  {"format": "secretName", "input": "..", "valid": true},
+  {"format": "secretName", "input": "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss", "valid": true},
+  {"format": "secretName", "input": "", "valid": false},
+  {"format": "secretName", "input": "sssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss", "valid": false},
+  {"format": "secretName", "input": "a b", "valid": false},
+  {"format": "secretName", "input": "a/b", "valid": false},
+  {"format": "secretName", "input": "a:b", "valid": false},
+  {"format": "secretName", "input": "\u00e4", "valid": false},
+  {"format": "secretName", "input": "db\n", "valid": false},
+  {"format": "secretName", "input": "{address}", "valid": false},
+  {"format": "secretName", "input": "a=b", "valid": false},
+  {"format": "secretName", "input": " db", "valid": false}
 ]

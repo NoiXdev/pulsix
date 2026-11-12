@@ -299,6 +299,12 @@ function dockerSocket(s: string): boolean {
   return s.startsWith('/') || (s.startsWith(PIPE_PREFIX) && s.length > PIPE_PREFIX.length);
 }
 
+/** secretName: the name of a secret in the agent's agent.yaml — 1 to 64
+ * letters, digits, '_', '.' or '-'. */
+function secretName(s: string): boolean {
+  return /^[A-Za-z0-9_.-]{1,64}$/.test(s);
+}
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -309,6 +315,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   server,
   dockerLabel,
   dockerSocket,
+  secretName,
 };
 
 /** formatValid reports whether s passes the named format. An unknown

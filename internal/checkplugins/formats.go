@@ -38,6 +38,11 @@ const (
 	FormatDockerLabel Format = "dockerLabel"
 	// FormatDockerSocket: an absolute path or a Windows named pipe.
 	FormatDockerSocket Format = "dockerSocket"
+	// FormatSecretName: the name of a secret in the agent's local
+	// configuration file (agent.yaml, backlog 3.5) — 1 to 64 letters,
+	// digits, '_', '.' or '-', the agent's own rule for the names it
+	// loads.
+	FormatSecretName Format = "secretName"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -47,6 +52,7 @@ func Formats() []Format {
 	return []Format{
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
+		FormatSecretName,
 	}
 }
 
@@ -84,11 +90,20 @@ func (f Format) problem(s string) string {
 		return dockerLabelProblem(s)
 	case FormatDockerSocket:
 		return dockerSocketProblem(s)
+	case FormatSecretName:
+		if !secretNamePattern.MatchString(s) {
+			return "must be 1 to 64 letters, digits, '_', '.' or '-'"
+		}
 	default:
 		return "uses a format no validator knows: " + string(f)
 	}
 	return ""
 }
+
+// secretNamePattern is the shape of a secret's name in agent.yaml; the
+// agent (internal/agent's secrets file) and the manager's heartbeat store
+// (internal/agents) refuse every other name with the same rule.
+var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 func hasControl(s string) bool { return strings.ContainsFunc(s, unicode.IsControl) }
 
