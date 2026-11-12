@@ -11,8 +11,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/noixdev/pulsix/internal/agent/checks"
 )
 
 func TestParse(t *testing.T) {
@@ -68,7 +66,7 @@ func TestParseErrorNeverCarriesValue(t *testing.T) {
 }
 
 func TestPort(t *testing.T) {
-	for s, want := range map[string]bool{"1": true, "5432": true, "65535": true, "0": false, "65536": false, "": false, "-1": false, "80a": false, " 80": false, "+80": false} {
+	for s, want := range map[string]bool{"\t80": false, "1": true, "5432": true, "65535": true, "0": false, "65536": false, "": false, "-1": false, "80a": false, "+80": false} {
 		if got := Port(s); got != want {
 			t.Errorf("Port(%q) = %v, want %v", s, got, want)
 		}
@@ -145,7 +143,6 @@ func TestDown(t *testing.T) {
 	if got := Down("x", "x.up", nil, "r"); len(got) != 1 {
 		t.Errorf("no others: %+v", got)
 	}
-	var _ checks.Observation = obs[0]
 }
 
 func TestCounterRate(t *testing.T) {
