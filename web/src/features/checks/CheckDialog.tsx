@@ -6,31 +6,17 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
+import type { Messages } from '../../i18n/types.ts';
 import { useCreateCheck, useUpdateCheck } from '../../api/hooks/useChecks.ts';
-import type { CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlugin, MonitoringGroup } from '../../api/types.ts';
+import { useCheckPlugins } from '../../api/hooks/useCheckPlugins.ts';
+import type {
+  CheckBindingKind, CheckDefinition, CheckDefinitionInput, CheckPlugin, CheckPluginDescriptor, MonitoringGroup,
+} from '../../api/types.ts';
 import { HostPicker } from './HostPicker.tsx';
-import { HardwareListField } from './HardwareListField.tsx';
-import { HARDWARE_PARAM, hardwareErrors, hardwareParams, isHardwarePlugin } from './hardwareParams.ts';
-import { SyntheticKeyHint, SyntheticParamFields } from './SyntheticParamFields.tsx';
+import { ParamFields, PluginsPending, ServerKeyHint } from './ParamFields.tsx';
 import {
-  hasFieldTable, isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
-} from './syntheticParams.ts';
-
-const TEXTAREA = 'min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs';
-
-const PLUGINS: CheckPlugin[] = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'temperature', 'smart', 'raid', 'icmp', 'tcp', 'http', 'tls', 'dns'];
-
-/** lines turns a textarea's content into the string list the API takes,
- * dropping blank lines so a trailing newline is not a parameter. */
-function lines(text: string): string[] {
-  return text.split('\n').map((l) => l.trim()).filter(Boolean);
-}
-
-/** stringList reads a list parameter back out of a stored definition,
- * whose params are typed as unknown values. */
-function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
-}
+  findPlugin, keyAfterPluginChange, paramsFrom, paramValuesFrom, runsOnServer, validateParams, type ParamValues,
+} from './paramForm.ts';
 
 export interface CheckDialogProps {
   org: string;
@@ -66,7 +52,36 @@ export interface CheckDialogProps {
  * right here, the OPPOSITE split from a repository or job template, where
  * the binding is what gets disabled.
  */
-export function CheckDialog({ org, check, copy = false, groups, onClose }: CheckDialogProps) {
+export function CheckDialog(props: CheckDialogProps) {
+  const t = useT();
+  // The plugin list and every plugin's fields come from the descriptors
+  // (backlog 3.54); the form waits for them, read once per session.
+  const plugins = useCheckPlugins();
+  if (!plugins.data) {
+    const { check, copy = false, onClose } = props;
+    return (
+      <Dialog open onClose={onClose} title={dialogTitle(t, check, copy)} size="wide">
+        <div className="flex flex-col gap-3">
+          <PluginsPending failed={plugins.isError} error={plugins.error} />
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {t.common.cancel}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
+  return <CheckForm {...props} plugins={plugins.data} />;
+}
+
+function dialogTitle(t: Messages, check: CheckDefinition | undefined, copy: boolean): string {
+  if (check && !copy) return t.checks.dialog.editTitle(check.key);
+  if (check && copy) return t.checks.dialog.copyTitle(check.key);
+  return t.checks.dialog.newTitle;
+}
+
+function CheckForm({ org, check, copy = false, groups, onClose, plugins }: CheckDialogProps & { plugins: CheckPluginDescriptor[] }) {
   const t = useT();
   const editing = !!check && !copy;
   const seeded = editing && check.origin === 'seed';
@@ -85,13 +100,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   const [bindingKind, setBindingKind] = useState<CheckBindingKind>(check?.binding_kind ?? 'org');
   const [groupId, setGroupId] = useState(check?.group_id ?? groups[0]?.id ?? '');
   const [hostId, setHostId] = useState(check?.host_id ?? '');
-  const [units, setUnits] = useState(stringList(check?.params?.units).join('\n'));
-  const [mounts, setMounts] = useState(stringList(check?.params?.mounts).join('\n'));
-  const [interfaces, setInterfaces] = useState(stringList(check?.params?.interfaces).join('\n'));
-  const [hardware, setHardware] = useState(
-    stringList(check?.params?.sensors ?? check?.params?.devices ?? check?.params?.arrays).join('\n'),
-  );
-  const [synthetic, setSynthetic] = useState<SyntheticValues>(() => syntheticValuesFrom(check?.plugin ?? '', check?.params));
+  const [values, setValues] = useState<ParamValues>(() => paramValuesFrom(findPlugin(plugins, check?.plugin ?? ''), check?.params));
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
@@ -99,28 +108,22 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
     // Only a new definition (or a copy) gets its key filled in: on an edit
     // the key is the identifier the override precedence keys on, and
     // changing it is a rename the user has to mean.
-    if (!editing) setKey(keyAfterPluginChange(key, plugin, next));
+    if (!editing) setKey(keyAfterPluginChange(key, plugin, next, plugins));
     // Another plugin's values would mostly be refused by this one; going
     // back to the stored plugin restores what is saved.
-    setSynthetic(next === check?.plugin ? syntheticValuesFrom(next, check.params) : {});
-    setHardware(next === check?.plugin ? stringList(check.params?.sensors ?? check.params?.devices ?? check.params?.arrays).join('\n') : '');
+    setValues(next === check?.plugin ? paramValuesFrom(findPlugin(plugins, next), check.params) : {});
     setFieldErrors({});
     setPlugin(next);
   }
 
+  const descriptor = findPlugin(plugins, plugin);
+  const onServer = runsOnServer(plugins, plugin);
+
   function params(): Record<string, unknown> {
-    if (hasFieldTable(plugin)) return syntheticParams(plugin, synthetic);
-    if (isHardwarePlugin(plugin)) return hardwareParams(plugin, hardware);
-    if (plugin === 'service') return { units: lines(units) };
-    if (plugin === 'disk') {
-      const list = lines(mounts);
-      return list.length > 0 ? { mounts: list } : {};
-    }
-    if (plugin === 'network') {
-      const list = lines(interfaces);
-      return list.length > 0 ? { interfaces: list } : {};
-    }
-    return {};
+    if (descriptor) return paramsFrom(descriptor, values);
+    // A stored plugin the descriptors do not list has no fields to edit:
+    // what is saved goes back unchanged rather than being dropped.
+    return check && plugin === check.plugin ? (check.params ?? {}) : {};
   }
 
   function body(): CheckDefinitionInput {
@@ -150,9 +153,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   async function submit(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    const refused = hasFieldTable(plugin)
-      ? validateSynthetic(plugin, synthetic, t)
-      : isHardwarePlugin(plugin) ? hardwareErrors(plugin, hardware, t) : {};
+    const refused = descriptor ? validateParams(descriptor, values, t) : {};
     setFieldErrors(refused);
     if (Object.keys(refused).length > 0) return;
     try {
@@ -171,19 +172,18 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
   // binding names a group this page has not been told about. Either way the
   // definition's own binding stays selectable and savable.
   const currentGroupMissing = groupId !== '' && !groups.some((g) => g.id === groupId);
-  const title = editing ? t.checks.dialog.editTitle(check.key) : copy && check ? t.checks.dialog.copyTitle(check.key) : t.checks.dialog.newTitle;
   return (
-    <Dialog open onClose={onClose} title={title} size="wide">
+    <Dialog open onClose={onClose} title={dialogTitle(t, check, copy)} size="wide">
       <form className="flex flex-col gap-3" onSubmit={(e) => void submit(e)}>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-plugin">{t.checks.dialog.plugin}</Label>
             <Select
               id="check-plugin"
-              options={PLUGINS.map((value) => ({
-                value,
-                label: t.checks.dialog.plugins[value],
-                ...(isSynthetic(value) ? { hint: t.checks.synthetic.pluginHint } : {}),
+              options={plugins.map((p) => ({
+                value: p.name,
+                label: t.checks.dialog.plugins[p.name],
+                ...(p.runs === 'server' ? { hint: t.checks.synthetic.pluginHint } : {}),
               }))}
               value={plugin}
               disabled={sharedOrSeeded}
@@ -206,7 +206,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               title={t.checks.dialog.keyTitle}
               placeholder={plugin}
               maxLength={63}
-              aria-describedby={isSynthetic(plugin) ? 'check-key-hint' : undefined}
+              aria-describedby={onServer ? 'check-key-hint' : undefined}
               // Trimmed as it is typed, so `pattern` judges exactly the
               // string body() sends. No valid key contains whitespace at
               // all, and leaving the two out of step made the browser
@@ -214,7 +214,7 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
               // "disk-a" (review round 3, nit 4).
               onChange={(e) => setKey(e.target.value.trim())}
             />
-            {isSynthetic(plugin) && <SyntheticKeyHint id="check-key-hint" plugin={plugin} />}
+            {onServer && <ServerKeyHint id="check-key-hint" plugin={plugin} />}
           </div>
         </div>
         {seeded && (
@@ -226,67 +226,14 @@ export function CheckDialog({ org, check, copy = false, groups, onClose }: Check
         {copy && (
           <p className="text-[11px] text-muted-foreground">{t.checks.dialog.copyNote}</p>
         )}
-        {plugin === 'service' && (
-          <>
-            <Label htmlFor="check-units">{t.checks.dialog.units}</Label>
-            <textarea
-              id="check-units"
-              className={TEXTAREA}
-              value={units}
-              required
-              disabled={shared}
-              placeholder="sshd"
-              onChange={(e) => setUnits(e.target.value)}
-            />
-            <p className="text-[11px] text-muted-foreground">{t.checks.dialog.unitsHint}</p>
-          </>
-        )}
-        {plugin === 'disk' && (
-          <>
-            <Label htmlFor="check-mounts">{t.checks.dialog.mounts}</Label>
-            <textarea
-              id="check-mounts"
-              className={TEXTAREA}
-              value={mounts}
-              disabled={shared}
-              placeholder="/&#10;/var"
-              onChange={(e) => setMounts(e.target.value)}
-            />
-          </>
-        )}
-        {plugin === 'network' && (
-          <>
-            <Label htmlFor="check-interfaces">{t.checks.dialog.interfaces}</Label>
-            <textarea
-              id="check-interfaces"
-              className={TEXTAREA}
-              value={interfaces}
-              disabled={shared}
-              placeholder="eth0&#10;bond0"
-              aria-describedby="check-interfaces-hint"
-              onChange={(e) => setInterfaces(e.target.value)}
-            />
-            <p id="check-interfaces-hint" className="text-[11px] text-muted-foreground">{t.checks.dialog.interfacesHint}</p>
-          </>
-        )}
-        {isHardwarePlugin(plugin) && (
-          <HardwareListField
-            idPrefix="check"
-            plugin={plugin}
-            value={hardware}
-            error={fieldErrors[HARDWARE_PARAM[plugin]]}
-            disabled={shared}
-            onChange={setHardware}
-          />
-        )}
-        {hasFieldTable(plugin) && (
-          <SyntheticParamFields
+        {descriptor && (
+          <ParamFields
             idPrefix="check-param"
-            plugin={plugin}
-            values={synthetic}
+            plugin={descriptor}
+            values={values}
             errors={fieldErrors}
             disabled={shared}
-            onChange={setSynthetic}
+            onChange={setValues}
           />
         )}
         <div className="grid grid-cols-2 gap-3">

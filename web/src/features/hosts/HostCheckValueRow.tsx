@@ -10,7 +10,9 @@ import { Pill } from '../../ui/badge.tsx';
 import { Button } from '../../ui/button.tsx';
 import { type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { seenLabel } from '../workers/expiry.ts';
-import { decisionOriginLabel, formatNumber, isGraphable, metricLabel, offersForget, verdictLabel, type TupleKey } from './hostChecks.ts';
+import {
+  decisionOriginLabel, formatNumber, isGraphable, metricLabel, offersForget, verdictLabel, type MetricKinds, type TupleKey,
+} from './hostChecks.ts';
 import { EffectiveRuleEntries } from './EffectiveRulesPanel.tsx';
 import { ForgetItemButton } from './ForgetItemButton.tsx';
 import { ItemDecisionButton } from './ItemDecisionButton.tsx';
@@ -25,6 +27,7 @@ export function HostCheckValueRow({
   canWrite,
   check,
   value,
+  kinds,
   open,
   onOpen,
   effective,
@@ -40,6 +43,8 @@ export function HostCheckValueRow({
   canWrite: boolean;
   check: HostCheck;
   value: HostCheckValue;
+  /** What the check plugins' descriptors say about graphs (metricKinds). */
+  kinds: MetricKinds;
   open: MetricSelection | null;
   onOpen: (selection: MetricSelection | null) => void;
   effective: EffectiveRule[];
@@ -49,7 +54,7 @@ export function HostCheckValueRow({
 }) {
   const t = useT();
   const name = metricLabel(value);
-  const graphable = isGraphable(check, value);
+  const graphable = isGraphable(check, value, kinds);
   const isOpen = open !== null && open.check === check.key && open.item === value.item && open.metric === value.metric;
 
   // The decision governing this tuple, out of THIS value's own read:

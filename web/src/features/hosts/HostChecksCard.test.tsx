@@ -1305,3 +1305,19 @@ describe('HostChecksCard', () => {
     });
   });
 });
+
+describe('HostChecksCard — plugin descriptors', () => {
+  it('still renders the values when the descriptors cannot be read, judging graphs by the reading alone', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/check-plugins': () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }),
+    });
+    renderCard();
+
+    expect(await screen.findByRole('button', { name: 'Graph cpu usage_percent' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Graph nginx/ })).not.toBeInTheDocument();
+  });
+});

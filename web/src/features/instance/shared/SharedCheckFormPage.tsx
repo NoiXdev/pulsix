@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { FormPage } from '../../../ui/form-page.tsx';
 import { Input } from '../../../ui/input.tsx';
@@ -11,16 +11,15 @@ import {
   useCreateCheckDefinition,
   useUpdateCheckDefinition,
 } from '../../../api/hooks/useSharedCheckDefinitions.ts';
+import { useCheckPlugins } from '../../../api/hooks/useCheckPlugins.ts';
 import { useT } from '../../../i18n/useT.ts';
 import type { Messages } from '../../../i18n/types.ts';
-import type { CheckDefinitionDef, CheckDefinitionDefInput } from '../../../api/types.ts';
+import type { CheckDefinitionDef, CheckDefinitionDefInput, CheckPluginDescriptor } from '../../../api/types.ts';
 import { FIELD_GRID, FieldError, FormError, FormSection } from './formParts.tsx';
-import { HardwareListField } from '../../checks/HardwareListField.tsx';
-import { HARDWARE_PARAM, hardwareErrors, hardwareParams, isHardwarePlugin } from '../../checks/hardwareParams.ts';
-import { SyntheticKeyHint, SyntheticParamFields } from '../../checks/SyntheticParamFields.tsx';
+import { ParamFields, PluginsPending, ServerKeyHint } from '../../checks/ParamFields.tsx';
 import {
-  hasFieldTable, isSynthetic, keyAfterPluginChange, syntheticParams, syntheticValuesFrom, validateSynthetic, type SyntheticValues,
-} from '../../checks/syntheticParams.ts';
+  findPlugin, keyAfterPluginChange, paramsFrom, paramValuesFrom, runsOnServer, validateParams, type ParamValues,
+} from '../../checks/paramForm.ts';
 
 /**
  * SharedCheckFormPage creates (`…/checks/new`) or edits (`…/checks/$id`) one
@@ -28,53 +27,47 @@ import {
  * 2 keeps both on the projection, which the organization edits through its
  * own Checks page (CheckDialog.tsx), never here.
  *
- * Params editing covers the "service" plugin's units, the "disk" plugin's
- * mounts, the "network" plugin's interfaces and every parameter of the
- * synthetic plugins (SyntheticParamFields, the same fields CheckDialog.tsx
- * shows).
+ * The plugin list and every plugin's parameter fields come from the
+ * descriptors (GET /check-plugins, backlog 3.54) — ParamFields, the same
+ * fields CheckDialog.tsx shows; the form waits for them.
  */
 export function SharedCheckFormPage() {
   const { org, id } = useParams({ strict: false }) as { org: string; id?: string };
   if (!id) {
     return (
       <CreateGate>
-        <CheckForm org={org} />
+        <WithPlugins>{(plugins) => <CheckForm org={org} plugins={plugins} />}</WithPlugins>
       </CreateGate>
     );
   }
   return (
     <DefinitionLoader useDefinitions={useCheckDefinitions} id={id}>
-      {(definition) => <CheckForm org={org} definition={definition} />}
+      {(definition) => <WithPlugins>{(plugins) => <CheckForm org={org} definition={definition} plugins={plugins} />}</WithPlugins>}
     </DefinitionLoader>
   );
+}
+
+/** WithPlugins renders the form once the check plugins' descriptors have
+ * arrived, and their loading or failure until then. */
+function WithPlugins({ children }: { children: (plugins: CheckPluginDescriptor[]) => ReactNode }) {
+  const plugins = useCheckPlugins();
+  if (!plugins.data) return <PluginsPending failed={plugins.isError} error={plugins.error} />;
+  return <>{children(plugins.data)}</>;
 }
 
 interface CheckDefinitionFormValues {
   key: string;
   plugin: string;
   intervalSeconds: string;
-  units: string;
-  mounts: string;
-  interfaces: string;
-  /** The temperature, smart or raid list, whichever the plugin is. */
-  hardware: string;
-  synthetic: SyntheticValues;
-}
-
-const CHECK_PLUGINS = ['cpu', 'memory', 'disk', 'service', 'network', 'uptime', 'docker', 'temperature', 'smart', 'raid', 'icmp', 'tcp', 'http', 'tls', 'dns'] as const;
-
-/** lines turns a textarea's content into the string list the API takes —
- * CheckDialog.tsx's own helper, duplicated rather than imported: that
- * module's own export surface is the dialog component, not this one helper,
- * and the function is three lines. */
-function lines(text: string): string[] {
-  return text.split('\n').map((l) => l.trim()).filter(Boolean);
+  /** The plugin's parameter fields (ParamFields). */
+  params: ParamValues;
 }
 
 /** Mirrors checkDefinitionDefBody's own lack of format constraints
  * (internal/api/shared_handlers.go): checks.ValidateDefinitionShape is the
  * one validator every write funnels through, so this form only refuses what
- * would otherwise submit an empty, guaranteed-400 request. */
+ * would otherwise submit an empty, guaranteed-400 request. The parameters
+ * are validateParams' (the descriptor's constraints). */
 function validateCheckDefinitionInput(
   values: CheckDefinitionFormValues,
   t: Messages,
@@ -84,18 +77,10 @@ function validateCheckDefinitionInput(
   const interval = Number(values.intervalSeconds);
   if (!values.intervalSeconds || Number.isNaN(interval)) errors.intervalSeconds = t.validation.required;
   else if (interval < 10 || interval > 86400) errors.intervalSeconds = t.instance.shared.checks.intervalRange(10, 86400);
-  if (values.plugin === 'service' && lines(values.units).length === 0) errors.units = t.validation.required;
   return errors;
 }
 
-/** hardwareText reads the temperature, smart or raid list back as the
- * textarea's lines. */
-function hardwareText(params: Record<string, unknown> | undefined): string {
-  const list = params?.sensors ?? params?.devices ?? params?.arrays;
-  return Array.isArray(list) ? (list as string[]).join('\n') : '';
-}
-
-function CheckForm({ org, definition }: { org: string; definition?: CheckDefinitionDef }) {
+function CheckForm({ org, definition, plugins }: { org: string; definition?: CheckDefinitionDef; plugins: CheckPluginDescriptor[] }) {
   const t = useT();
   const toast = useToast();
   const create = useCreateCheckDefinition();
@@ -104,55 +89,39 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
     definition
       ? {
           key: definition.key, plugin: definition.plugin, intervalSeconds: String(definition.interval_seconds),
-          units: Array.isArray(definition.params?.units) ? (definition.params.units as string[]).join('\n') : '',
-          mounts: Array.isArray(definition.params?.mounts) ? (definition.params.mounts as string[]).join('\n') : '',
-          interfaces: Array.isArray(definition.params?.interfaces) ? (definition.params.interfaces as string[]).join('\n') : '',
-          hardware: hardwareText(definition.params),
-          synthetic: syntheticValuesFrom(definition.plugin, definition.params),
+          params: paramValuesFrom(findPlugin(plugins, definition.plugin), definition.params),
         }
-      : { key: '', plugin: 'cpu', intervalSeconds: '60', units: '', mounts: '', interfaces: '', hardware: '', synthetic: {} },
+      : { key: '', plugin: 'cpu', intervalSeconds: '60', params: {} },
   );
   const [values, setValues] = useState<CheckDefinitionFormValues>(initial);
   const [errors, setErrors] = useState<Partial<Record<keyof CheckDefinitionFormValues, string>>>({});
-  const [syntheticErrors, setSyntheticErrors] = useState<Record<string, string>>({});
+  const [paramErrors, setParamErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
 
   function choosePlugin(next: string) {
-    setSyntheticErrors({});
+    setParamErrors({});
     setValues((cur) => ({
       ...cur,
       plugin: next,
-      // A new definition's key follows a synthetic plugin (the key alert
+      // A new definition's key follows a server-run plugin (the key alert
       // rules match its metrics on); an existing one's key is never
       // renamed behind the user's back.
-      key: definition ? cur.key : keyAfterPluginChange(cur.key, cur.plugin, next),
-      hardware: definition && next === definition.plugin ? hardwareText(definition.params) : '',
-      synthetic: definition && next === definition.plugin ? syntheticValuesFrom(next, definition.params) : {},
+      key: definition ? cur.key : keyAfterPluginChange(cur.key, cur.plugin, next, plugins),
+      // Another plugin's values would mostly be refused by this one; going
+      // back to the stored plugin restores what is saved.
+      params: definition && next === definition.plugin ? paramValuesFrom(findPlugin(plugins, next), definition.params) : {},
     }));
   }
 
+  const descriptor = findPlugin(plugins, values.plugin);
+  const onServer = runsOnServer(plugins, values.plugin);
+
   function params(): Record<string, unknown> {
-    if (hasFieldTable(values.plugin)) return syntheticParams(values.plugin, values.synthetic);
-    if (isHardwarePlugin(values.plugin)) return hardwareParams(values.plugin, values.hardware);
-    if (values.plugin === 'service') return { units: lines(values.units) };
-    // disk's allow-list is optional and an empty one means every mount
-    // (CheckDialog.tsx keeps the same contract for an organization's own
-    // checks), so an empty textarea sends {} rather than an empty list.
-    if (values.plugin === 'disk') {
-      const list = lines(values.mounts);
-      return list.length > 0 ? { mounts: list } : {};
-    }
-    // network's interface list is optional the same way: empty means every
-    // real interface, so an empty textarea sends {}.
-    if (values.plugin === 'network') {
-      const list = lines(values.interfaces);
-      return list.length > 0 ? { interfaces: list } : {};
-    }
-    // cpu, memory and uptime take no params at all. Any plugin added later is
-    // still unrendered here, so its stored value round-trips unchanged
-    // while the plugin itself is unchanged — switching plugins away from
-    // what params() was written against would carry over a shape the new
-    // plugin's own validation refuses anyway, so {} is right there.
+    // Only the fields the form holds a value for, an empty optional list
+    // as {} (every mount, interface, sensor, …).
+    if (descriptor) return paramsFrom(descriptor, values.params);
+    // A stored plugin the descriptors do not list has no fields to edit:
+    // what is saved goes back unchanged rather than being dropped.
     if (definition && definition.plugin === values.plugin) return definition.params ?? {};
     return {};
   }
@@ -160,11 +129,9 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
   async function submit(): Promise<boolean> {
     setFormError(null);
     const fieldErrors = validateCheckDefinitionInput(values, t);
-    const refused = hasFieldTable(values.plugin)
-      ? validateSynthetic(values.plugin, values.synthetic, t)
-      : isHardwarePlugin(values.plugin) ? hardwareErrors(values.plugin, values.hardware, t) : {};
+    const refused = descriptor ? validateParams(descriptor, values.params, t) : {};
     setErrors(fieldErrors);
-    setSyntheticErrors(refused);
+    setParamErrors(refused);
     if (Object.keys(fieldErrors).length > 0 || Object.keys(refused).length > 0) return false;
     const body: CheckDefinitionDefInput = {
       ...(values.key !== '' ? { key: values.key } : {}),
@@ -198,10 +165,10 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
             <Label htmlFor="check-def-plugin">{t.instance.shared.checks.plugin}</Label>
             <Select
               id="check-def-plugin"
-              options={CHECK_PLUGINS.map((value) => ({
-                value,
-                label: t.instance.shared.checks.plugins[value],
-                ...(isSynthetic(value) ? { hint: t.checks.synthetic.pluginHint } : {}),
+              options={plugins.map((p) => ({
+                value: p.name,
+                label: t.instance.shared.checks.plugins[p.name],
+                ...(p.runs === 'server' ? { hint: t.checks.synthetic.pluginHint } : {}),
               }))}
               value={values.plugin}
               onChange={choosePlugin}
@@ -216,10 +183,10 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
               placeholder={values.plugin}
               onChange={(e) => setValues((cur) => ({ ...cur, key: e.target.value.trim() }))}
               aria-invalid={errors.key ? true : undefined}
-              aria-describedby={isSynthetic(values.plugin) ? 'check-def-key-hint' : undefined}
+              aria-describedby={onServer ? 'check-def-key-hint' : undefined}
             />
             <FieldError>{errors.key}</FieldError>
-            {isSynthetic(values.plugin) && <SyntheticKeyHint id="check-def-key-hint" plugin={values.plugin} />}
+            {onServer && <ServerKeyHint id="check-def-key-hint" plugin={values.plugin} />}
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="check-def-interval">{t.instance.shared.checks.intervalSeconds}</Label>
@@ -235,62 +202,14 @@ function CheckForm({ org, definition }: { org: string; definition?: CheckDefinit
             <FieldError>{errors.intervalSeconds}</FieldError>
           </div>
         </div>
-        {hasFieldTable(values.plugin) && (
-          <SyntheticParamFields
+        {descriptor && (
+          <ParamFields
             idPrefix="check-def-param"
-            plugin={values.plugin}
-            values={values.synthetic}
-            errors={syntheticErrors}
-            onChange={(synthetic) => setValues((cur) => ({ ...cur, synthetic }))}
+            plugin={descriptor}
+            values={values.params}
+            errors={paramErrors}
+            onChange={(params) => setValues((cur) => ({ ...cur, params }))}
           />
-        )}
-        {isHardwarePlugin(values.plugin) && (
-          <HardwareListField
-            idPrefix="check-def"
-            plugin={values.plugin}
-            value={values.hardware}
-            error={syntheticErrors[HARDWARE_PARAM[values.plugin]]}
-            onChange={(hardware) => setValues((cur) => ({ ...cur, hardware }))}
-          />
-        )}
-        {values.plugin === 'disk' && (
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="check-def-mounts">{t.instance.shared.checks.mounts}</Label>
-            <textarea
-              id="check-def-mounts"
-              className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
-              value={values.mounts}
-              placeholder="/&#10;/var"
-              onChange={(e) => setValues((cur) => ({ ...cur, mounts: e.target.value }))}
-            />
-          </div>
-        )}
-        {values.plugin === 'network' && (
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="check-def-interfaces">{t.instance.shared.checks.interfaces}</Label>
-            <textarea
-              id="check-def-interfaces"
-              className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
-              value={values.interfaces}
-              placeholder="eth0&#10;bond0"
-              aria-describedby="check-def-interfaces-hint"
-              onChange={(e) => setValues((cur) => ({ ...cur, interfaces: e.target.value }))}
-            />
-            <p id="check-def-interfaces-hint" className="text-[11px] text-muted-foreground">{t.instance.shared.checks.interfacesHint}</p>
-          </div>
-        )}
-        {values.plugin === 'service' && (
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="check-def-units">{t.instance.shared.checks.units}</Label>
-            <textarea
-              id="check-def-units"
-              className="min-h-20 w-full rounded-md border border-border bg-background p-2 font-mono text-xs"
-              value={values.units}
-              placeholder="sshd"
-              onChange={(e) => setValues((cur) => ({ ...cur, units: e.target.value }))}
-            />
-            <FieldError>{errors.units}</FieldError>
-          </div>
         )}
       </FormSection>
       <FormError>{formError}</FormError>

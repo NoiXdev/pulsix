@@ -314,3 +314,16 @@ describe('SharedCheckFormPage — create gate', () => {
     });
   });
 });
+
+describe('SharedCheckFormPage — plugin descriptors', () => {
+  it('says so when the check plugins cannot be read, and offers no form', async () => {
+    mockApi({
+      'GET /api/v1/auth/me': ADMIN,
+      'GET /api/v1/admin/checks/definitions': { definitions: [checkDef()] },
+      'GET /api/v1/check-plugins': () => new Response(JSON.stringify({ detail: 'boom' }), { status: 500 }),
+    });
+    renderPage(`${LIST}/c1`);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the check plugins.');
+    expect(screen.queryByLabelText('Key')).not.toBeInTheDocument();
+  });
+});

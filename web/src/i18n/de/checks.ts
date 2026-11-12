@@ -102,79 +102,117 @@ export const deChecks: Messages['checks'] = {
       'Dieser Check wird von der Installation verwaltet; Schlüssel, Plugin, Intervall und Parameter sind hier fest. Zum Ändern eine Kopie anlegen – Bindung und Aktivierung gehören dieser Organisation und lassen sich hier bearbeiten.',
     copyNote:
       'Eine Kopie braucht entweder einen eigenen Schlüssel oder eine engere Bindung als die Zeile, von der sie stammt: Ein engerer Geltungsbereich mit demselben Schlüssel überschreibt diesen Check für die betroffenen Hosts.',
-    units: 'Units (eine pro Zeile)',
-    unitsHint: 'systemd-Units unter Linux, Dienstnamen unter Windows, launchd-Labels unter macOS – einer pro Zeile',
-    mounts: 'Einhängepunkte (einer pro Zeile, leer bedeutet jeden Einhängepunkt)',
-    interfaces: 'Schnittstellen (eine pro Zeile, leer bedeutet jede echte Schnittstelle)',
-    interfacesHint: 'Loopback sowie Container- und virtuelle Schnittstellen werden standardmäßig übersprungen. Eine hier genannte Schnittstelle wird immer gemessen.',
     bindsTo: 'Gebunden an',
     interval: 'Intervall (Sekunden)',
   },
-  hardware: {
-    sensors: {
-      label: 'Sensoren (einer pro Zeile, leer bedeutet jeden Sensor)',
-      hint: 'Sensornamen, wie der Host sie meldet; leer bedeutet jeden Sensor.',
-    },
-    devices: {
-      label: 'Geräte (eines pro Zeile, leer bedeutet jede Platte)',
-      hint: 'Gerätepfade wie /dev/sda oder /dev/nvme0; leer bedeutet jede Platte, die smartctl findet. Benötigt smartmontools auf dem Host.',
-    },
-    arrays: {
-      label: 'Arrays (eines pro Zeile, leer bedeutet jedes Array)',
-      hint: 'Array-Namen wie md0; leer bedeutet jedes Array. Nur Linux-Software-RAID.',
-    },
-    errors: {
-      tooMany: (max: number) => `darf höchstens ${max} Einträge haben`,
-      tooLong: (max: number) => `jeder Eintrag darf höchstens ${max} Byte lang sein`,
-      control: 'Einträge dürfen keine Steuerzeichen enthalten',
-      device: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
-    },
-  },
+  pluginsLoading: 'Die Check-Plugins werden geladen…',
+  pluginsLoadFailed: 'Die Check-Plugins konnten nicht geladen werden.',
   synthetic: {
     pluginHint: 'läuft auf dem Pulsix-Server',
     runsFromServer: 'Läuft auf dem Pulsix-Server, nicht auf dem Host.',
     rulesKey: (plugin: string) => `Alarmregeln für ${plugin}.*-Metriken gelten nur für den Check mit dem Schlüssel „${plugin}“.`,
-    fields: {
-      count: 'Pings pro Durchlauf',
-      timeout_s: 'Timeout (Sekunden)',
-      port: 'Port',
-      send: 'Nach dem Verbinden senden',
-      expect: 'In der Antwort erwartet',
-      url: 'URL',
-      method: 'Methode',
-      follow_redirects: 'Weiterleitungen folgen (höchstens 10)',
-      verify_tls: 'TLS-Zertifikat prüfen',
-      body_contains: 'Inhalt enthält',
-      server_name: 'Servername (SNI)',
-      name: 'Aufzulösender Name',
-      type: 'Record-Typ',
-      server: 'DNS-Server',
-      answer: 'Erwartete Antwort',
-      selection: 'Container',
-      label: 'Label',
-      socket: 'Docker-Socket',
+  },
+  params: {
+    disk: {
+      mounts: { label: 'Einhängepunkte (einer pro Zeile, leer bedeutet jeden Einhängepunkt)', placeholder: '/\n/var' },
     },
-    options: {
-      all: 'Alle Container',
-      labeled: 'Nur Container mit Label',
+    service: {
+      units: {
+        label: 'Units (eine pro Zeile)',
+        hint: 'systemd-Units unter Linux, Dienstnamen unter Windows, launchd-Labels unter macOS – einer pro Zeile',
+        placeholder: 'sshd',
+      },
     },
-    hints: {
-      expect: 'Wird in den ersten 4 KiB gesucht, die der Server sendet.',
-      send: '\\r\\n steht für einen Zeilenumbruch, \\t für einen Tabulator und \\\\ für einen Backslash.',
-      url: '{address} wird durch die Adresse des Hosts ersetzt.',
-      body_contains: 'Wird im ersten MiB des Inhalts gesucht.',
-      server_name: 'Leer bedeutet die Adresse des Hosts.',
-      name: 'Leer bedeutet die Adresse des Hosts; {address} wird durch sie ersetzt.',
-      server: 'Eine IP-Adresse mit optionalem Port, eine IPv6-Adresse mit Port in eckigen Klammern. Leer bedeutet den eigenen Resolver des Pulsix-Servers.',
-      answer: 'Eine Antwort muss genau so lauten; Groß- und Kleinschreibung und ein abschließender Punkt zählen nicht.',
-      label: 'Ein Label-Schlüssel oder Schlüssel=Wert. Leer bedeutet pulsix.monitor=true. Werden alle Container geprüft, wird ein Container ausgelassen, dessen Label mit diesem Schlüssel auf false steht.',
-      socket: 'Ein absoluter Pfad oder eine Windows-Pipe. Leer bedeutet den Standard der Plattform: /var/run/docker.sock, unter Windows npipe:////./pipe/docker_engine.',
+    network: {
+      interfaces: {
+        label: 'Schnittstellen (eine pro Zeile, leer bedeutet jede echte Schnittstelle)',
+        hint: 'Loopback sowie Container- und virtuelle Schnittstellen werden standardmäßig übersprungen. Eine hier genannte Schnittstelle wird immer gemessen.',
+        placeholder: 'eth0\nbond0',
+      },
     },
-    errors: {
-      wholeRange: (min: number, max: number) => `muss eine ganze Zahl zwischen ${min} und ${max} sein`,
+    docker: {
+      selection: { label: 'Container', options: { all: 'Alle Container', labeled: 'Nur Container mit Label' } },
+      label: {
+        label: 'Label',
+        hint: 'Ein Label-Schlüssel oder Schlüssel=Wert. Leer bedeutet pulsix.monitor=true. Werden alle Container geprüft, wird ein Container ausgelassen, dessen Label mit diesem Schlüssel auf false steht.',
+      },
+      socket: {
+        label: 'Docker-Socket',
+        hint: 'Ein absoluter Pfad oder eine Windows-Pipe. Leer bedeutet den Standard der Plattform: /var/run/docker.sock, unter Windows npipe:////./pipe/docker_engine.',
+      },
+    },
+    temperature: {
+      sensors: {
+        label: 'Sensoren (einer pro Zeile, leer bedeutet jeden Sensor)',
+        hint: 'Sensornamen, wie der Host sie meldet; leer bedeutet jeden Sensor.',
+        placeholder: 'coretemp_core_0\nnvme_composite',
+      },
+    },
+    smart: {
+      devices: {
+        label: 'Geräte (eines pro Zeile, leer bedeutet jede Platte)',
+        hint: 'Gerätepfade wie /dev/sda oder /dev/nvme0; leer bedeutet jede Platte, die smartctl findet. Benötigt smartmontools auf dem Host.',
+        placeholder: '/dev/sda\n/dev/nvme0',
+      },
+    },
+    raid: {
+      arrays: {
+        label: 'Arrays (eines pro Zeile, leer bedeutet jedes Array)',
+        hint: 'Array-Namen wie md0; leer bedeutet jedes Array. Nur Linux-Software-RAID.',
+        placeholder: 'md0\nmd1',
+      },
+    },
+    icmp: {
+      count: { label: 'Pings pro Durchlauf' },
+      timeout_s: { label: 'Timeout (Sekunden)' },
+    },
+    tcp: {
+      port: { label: 'Port' },
+      send: {
+        label: 'Nach dem Verbinden senden',
+        hint: '\\r\\n steht für einen Zeilenumbruch, \\t für einen Tabulator und \\\\ für einen Backslash.',
+      },
+      expect: { label: 'In der Antwort erwartet', hint: 'Wird in den ersten 4 KiB gesucht, die der Server sendet.' },
+      timeout_s: { label: 'Timeout (Sekunden)' },
+    },
+    http: {
+      url: { label: 'URL', hint: '{address} wird durch die Adresse des Hosts ersetzt.' },
+      method: { label: 'Methode' },
+      body_contains: { label: 'Inhalt enthält', hint: 'Wird im ersten MiB des Inhalts gesucht.' },
+      timeout_s: { label: 'Timeout (Sekunden)' },
+      follow_redirects: { label: 'Weiterleitungen folgen (höchstens 10)' },
+      verify_tls: { label: 'TLS-Zertifikat prüfen' },
+    },
+    tls: {
+      port: { label: 'Port' },
+      server_name: { label: 'Servername (SNI)', hint: 'Leer bedeutet die Adresse des Hosts.' },
+      timeout_s: { label: 'Timeout (Sekunden)' },
+    },
+    dns: {
+      name: { label: 'Aufzulösender Name', hint: 'Leer bedeutet die Adresse des Hosts; {address} wird durch sie ersetzt.' },
+      type: { label: 'Record-Typ' },
+      server: {
+        label: 'DNS-Server',
+        hint: 'Eine IP-Adresse mit optionalem Port, eine IPv6-Adresse mit Port in eckigen Klammern. Leer bedeutet den eigenen Resolver des Pulsix-Servers.',
+      },
+      expect: {
+        label: 'Erwartete Antwort',
+        hint: 'Eine Antwort muss genau so lauten; Groß- und Kleinschreibung und ein abschließender Punkt zählen nicht.',
+      },
+      timeout_s: { label: 'Timeout (Sekunden)' },
+    },
+  },
+  paramErrors: {
+    wholeRange: (min: number, max: number) => `muss eine ganze Zahl zwischen ${min} und ${max} sein`,
+    tooMany: (max: number) => `darf höchstens ${max} Einträge haben`,
+    tooLong: (max: number) => `jeder Eintrag darf höchstens ${max} Byte lang sein`,
+    formats: {
+      notBlank: 'darf nicht leer sein',
+      noControl: 'Einträge dürfen keine Steuerzeichen enthalten',
+      devicePath: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
+      dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       server: 'muss eine IP-Adresse sein, optional mit Port',
-      name: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },

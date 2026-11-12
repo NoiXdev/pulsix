@@ -153,6 +153,13 @@ export type CheckDefinitionInput = components['schemas']['CheckDefinitionBody'];
 export type CheckPlugin = CheckDefinition['plugin'];
 export type CheckBindingKind = CheckDefinition['binding_kind'];
 
+// The check plugins as GET /check-plugins describes them (backlog 3.54):
+// where each runs, the parameters its form shows and how each is checked,
+// and the kind of every metric it reports.
+export type CheckPluginDescriptor = components['schemas']['CheckPluginDTO'];
+export type CheckPluginParam = components['schemas']['CheckPluginParamDTO'];
+export type CheckPluginMetric = components['schemas']['CheckPluginMetricDTO'];
+
 // CheckDefinitionDef is the installation-owned half of a shared check
 // definition (v0.2f Task 7, features/instance/shared): key, plugin, params and
 // interval — read-only inside every organization once projected

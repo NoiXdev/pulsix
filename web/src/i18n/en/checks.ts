@@ -5,6 +5,18 @@
  * keys. Enumerations the API sends (origin, severity, verdict, match kind)
  * are mapped to a label.
  */
+/** The texts of one parameter field (enChecks.params). */
+export interface ParamText {
+  label: string;
+  hint?: string;
+  /** Shown while the field is empty, where the parameter has no default
+   * to show instead (list fields). */
+  placeholder?: string;
+  /** Labels for an enum's options, by value; an option without one shows
+   * its value. */
+  options?: Readonly<Record<string, string>>;
+}
+
 export const enChecks = {
   title: 'Checks',
   tabs: {
@@ -106,83 +118,122 @@ export const enChecks = {
       "This check is managed by the installation; its key, plugin, interval and parameters are fixed here. Copy it to change any of them — its binding and enabled state are this organization's own and stay editable here.",
     copyNote:
       'A copy needs either a key of its own or a narrower binding than the row it came from: a narrower scope with the same key is what overrides that check for those hosts.',
-    units: 'Units (one per line)',
-    unitsHint: 'systemd units on Linux, service names on Windows, launchd labels on macOS — one per line',
-    mounts: 'Mounts (one per line, empty means every mount)',
-    interfaces: 'Interfaces (one per line, empty means every real interface)',
-    interfacesHint: 'Loopback and container or virtual interfaces are skipped by default. An interface named here is always measured.',
     bindsTo: 'Binds to',
     interval: 'Interval (seconds)',
   },
-  /** The hardware plugins' list fields (backlog 3.9), shared by the check
-   * dialog and the instance's shared check form. */
-  hardware: {
-    sensors: {
-      label: 'Sensors (one per line, empty means every sensor)',
-      hint: 'Sensor names as the host reports them; empty means every sensor.',
-    },
-    devices: {
-      label: 'Devices (one per line, empty means every disk)',
-      hint: 'Device paths such as /dev/sda or /dev/nvme0; empty means every disk smartctl finds. Needs smartmontools on the host.',
-    },
-    arrays: {
-      label: 'Arrays (one per line, empty means every array)',
-      hint: 'Array names such as md0; empty means every array. Linux software RAID only.',
-    },
-    errors: {
-      tooMany: (max: number) => `must have at most ${max} entries`,
-      tooLong: (max: number) => `every entry must be at most ${max} bytes`,
-      control: 'entries must not contain control characters',
-      device: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
-    },
-  },
-  /** The synthetic plugins' parameter fields (backlog 3.13), shared by the
-   * check dialog and the instance's shared check form. */
+  pluginsLoading: 'Loading the check plugins…',
+  pluginsLoadFailed: 'Could not load the check plugins.',
+  /** The markers of a plugin that runs on the Pulsix server rather than on
+   * the host (the synthetic probes, backlog 3.13; `runs: server` in GET
+   * /check-plugins). */
   synthetic: {
     pluginHint: 'runs from the Pulsix server',
     runsFromServer: 'Runs from the Pulsix server, not on the host.',
     rulesKey: (plugin: string) => `Alert rules on ${plugin}.* metrics apply only to the check with the key “${plugin}”.`,
-    fields: {
-      count: 'Pings per run',
-      timeout_s: 'Timeout (seconds)',
-      port: 'Port',
-      send: 'Send after connecting',
-      expect: 'Expected in the response',
-      url: 'URL',
-      method: 'Method',
-      follow_redirects: 'Follow redirects (up to 10)',
-      verify_tls: 'Verify the TLS certificate',
-      body_contains: 'Body contains',
-      server_name: 'Server name (SNI)',
-      name: 'Name to resolve',
-      type: 'Record type',
-      server: 'DNS server',
-      answer: 'Expected answer',
-      selection: 'Containers',
-      label: 'Label',
-      socket: 'Docker socket',
+  },
+  /** Every check plugin's parameter fields, keyed by plugin and parameter
+   * as GET /check-plugins names them (backlog 3.54), shared by the check
+   * dialog and the instance's shared check form. Every parameter a
+   * descriptor lists needs a label here (paramTexts.test.ts); a hint, a
+   * placeholder (list fields — the others show the default) and labels for
+   * enum options that are no text to show are optional. */
+  params: {
+    disk: {
+      mounts: { label: 'Mounts (one per line, empty means every mount)', placeholder: '/\n/var' },
     },
-    options: {
-      all: 'All containers',
-      labeled: 'Only labeled containers',
+    service: {
+      units: {
+        label: 'Units (one per line)',
+        hint: 'systemd units on Linux, service names on Windows, launchd labels on macOS — one per line',
+        placeholder: 'sshd',
+      },
     },
-    hints: {
-      expect: 'Looked for in the first 4 KiB the server sends.',
-      send: 'Use \\r\\n for a line break, \\t for a tab and \\\\ for a backslash.',
-      url: '{address} is replaced with the host’s address.',
-      body_contains: 'Looked for in the first 1 MiB of the body.',
-      server_name: 'Empty means the host’s address.',
-      name: 'Empty means the host’s address; {address} is replaced with it.',
-      server: 'An IP address with an optional port, an IPv6 address with a port in brackets. Empty means the Pulsix server’s own resolver.',
-      answer: 'One answer must equal this, ignoring case and a trailing dot.',
-      label: 'A label key, or key=value. Empty means pulsix.monitor=true. When all containers are checked, a container with this label’s key set to false is left out.',
-      socket: 'An absolute path or a Windows pipe. Empty means the platform default: /var/run/docker.sock, on Windows npipe:////./pipe/docker_engine.',
+    network: {
+      interfaces: {
+        label: 'Interfaces (one per line, empty means every real interface)',
+        hint: 'Loopback and container or virtual interfaces are skipped by default. An interface named here is always measured.',
+        placeholder: 'eth0\nbond0',
+      },
     },
-    errors: {
-      wholeRange: (min: number, max: number) => `must be a whole number between ${min} and ${max}`,
+    docker: {
+      selection: { label: 'Containers', options: { all: 'All containers', labeled: 'Only labeled containers' } },
+      label: {
+        label: 'Label',
+        hint: 'A label key, or key=value. Empty means pulsix.monitor=true. When all containers are checked, a container with this label’s key set to false is left out.',
+      },
+      socket: {
+        label: 'Docker socket',
+        hint: 'An absolute path or a Windows pipe. Empty means the platform default: /var/run/docker.sock, on Windows npipe:////./pipe/docker_engine.',
+      },
+    },
+    temperature: {
+      sensors: {
+        label: 'Sensors (one per line, empty means every sensor)',
+        hint: 'Sensor names as the host reports them; empty means every sensor.',
+        placeholder: 'coretemp_core_0\nnvme_composite',
+      },
+    },
+    smart: {
+      devices: {
+        label: 'Devices (one per line, empty means every disk)',
+        hint: 'Device paths such as /dev/sda or /dev/nvme0; empty means every disk smartctl finds. Needs smartmontools on the host.',
+        placeholder: '/dev/sda\n/dev/nvme0',
+      },
+    },
+    raid: {
+      arrays: {
+        label: 'Arrays (one per line, empty means every array)',
+        hint: 'Array names such as md0; empty means every array. Linux software RAID only.',
+        placeholder: 'md0\nmd1',
+      },
+    },
+    icmp: {
+      count: { label: 'Pings per run' },
+      timeout_s: { label: 'Timeout (seconds)' },
+    },
+    tcp: {
+      port: { label: 'Port' },
+      send: { label: 'Send after connecting', hint: 'Use \\r\\n for a line break, \\t for a tab and \\\\ for a backslash.' },
+      expect: { label: 'Expected in the response', hint: 'Looked for in the first 4 KiB the server sends.' },
+      timeout_s: { label: 'Timeout (seconds)' },
+    },
+    http: {
+      url: { label: 'URL', hint: '{address} is replaced with the host’s address.' },
+      method: { label: 'Method' },
+      body_contains: { label: 'Body contains', hint: 'Looked for in the first 1 MiB of the body.' },
+      timeout_s: { label: 'Timeout (seconds)' },
+      follow_redirects: { label: 'Follow redirects (up to 10)' },
+      verify_tls: { label: 'Verify the TLS certificate' },
+    },
+    tls: {
+      port: { label: 'Port' },
+      server_name: { label: 'Server name (SNI)', hint: 'Empty means the host’s address.' },
+      timeout_s: { label: 'Timeout (seconds)' },
+    },
+    dns: {
+      name: { label: 'Name to resolve', hint: 'Empty means the host’s address; {address} is replaced with it.' },
+      type: { label: 'Record type' },
+      server: {
+        label: 'DNS server',
+        hint: 'An IP address with an optional port, an IPv6 address with a port in brackets. Empty means the Pulsix server’s own resolver.',
+      },
+      expect: { label: 'Expected answer', hint: 'One answer must equal this, ignoring case and a trailing dot.' },
+      timeout_s: { label: 'Timeout (seconds)' },
+    },
+  } satisfies Readonly<Record<string, Readonly<Record<string, ParamText>>>>,
+  /** Why a parameter field is refused before the round trip: its bounds,
+   * and one message per format (internal/checkplugins formats.go). */
+  paramErrors: {
+    wholeRange: (min: number, max: number) => `must be a whole number between ${min} and ${max}`,
+    tooMany: (max: number) => `must have at most ${max} entries`,
+    tooLong: (max: number) => `every entry must be at most ${max} bytes`,
+    formats: {
+      notBlank: 'must not be blank',
+      noControl: 'entries must not contain control characters',
+      devicePath: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
       url: 'must be an http:// or https:// URL without a user name or password',
+      dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
       server: 'must be an IP address, optionally with a port',
-      name: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
       dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',
     },

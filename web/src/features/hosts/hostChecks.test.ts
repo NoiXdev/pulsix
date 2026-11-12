@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as checks from './hostChecks.ts';
-import { formatNumber, isGraphable, metricLabel, offersForget } from './hostChecks.ts';
+import { CHECK_PLUGINS } from '../../test/checkPlugins.ts';
+import { formatNumber, isGraphable, metricKinds, metricLabel, offersForget } from './hostChecks.ts';
 import { en } from '../../i18n/en/index.ts';
 import { de } from '../../i18n/de/index.ts';
 import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
@@ -131,7 +132,29 @@ describe('isGraphable', () => {
       true,
     ],
   ])('%s', (_name, c, v, expected) => {
-    expect(isGraphable(c, v)).toBe(expected);
+    expect(isGraphable(c, v, metricKinds(CHECK_PLUGINS))).toBe(expected);
+  });
+
+  it('reads the discrete metrics and the label-only plugins off the descriptors', () => {
+    const kinds = metricKinds(CHECK_PLUGINS);
+    expect([...kinds.discreteMetrics].sort()).toEqual(['docker.health', 'docker.state', 'raid.state', 'service.state']);
+    expect([...kinds.labelOnlyPlugins]).toEqual(['service']);
+  });
+
+  it('follows a plugin the descriptors add: all-discrete has no graph, a discrete metric of a mixed one neither', () => {
+    const kinds = metricKinds([
+      { name: 'cpu', runs: 'agent', params: [], metrics: [{ name: 'x.state', kind: 'discrete' }] },
+      { name: 'memory', runs: 'agent', params: [], metrics: [{ name: 'y.state', kind: 'discrete' }, { name: 'y.n', kind: 'numeric' }] },
+    ]);
+    expect(isGraphable(check({ plugin: 'cpu' }), value({ metric: 'x.other', error: 'e' }), kinds)).toBe(false);
+    expect(isGraphable(check({ plugin: 'memory' }), value({ metric: 'y.state', error: 'e' }), kinds)).toBe(false);
+    expect(isGraphable(check({ plugin: 'memory' }), value({ metric: 'y.n', error: 'e' }), kinds)).toBe(true);
+  });
+
+  it('judges by the reading alone without descriptors', () => {
+    const none = metricKinds(undefined);
+    expect(isGraphable(check({ plugin: 'service' }), value({ value: 1 }), none)).toBe(true);
+    expect(isGraphable(check({ plugin: 'service' }), value({ label: 'active' }), none)).toBe(false);
   });
 });
 

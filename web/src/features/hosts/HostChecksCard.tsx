@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { Card } from '../../ui/table.tsx';
 import { Pill, Tag } from '../../ui/badge.tsx';
 import { useHostChecks, useHostEffectiveRules, useMonitoringGroups, type MetricSelection } from '../../api/hooks/useChecks.ts';
+import { useCheckPlugins } from '../../api/hooks/useCheckPlugins.ts';
 import { intervalLabel } from '../checks/interval.ts';
-import { clockSkewLabel, sourceLabel, type TupleKey } from './hostChecks.ts';
+import { clockSkewLabel, metricKinds, sourceLabel, type TupleKey } from './hostChecks.ts';
 import { HostCheckValueRow } from './HostCheckValueRow.tsx';
 import { useT } from '../../i18n/useT.ts';
 
@@ -76,6 +77,13 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
   const groups = useMonitoringGroups(org, canRead);
   const effective = effectiveRules.data?.effective ?? [];
   const groupList = groups.data?.groups ?? [];
+  // Which metrics have a series is the descriptors' to say (backlog 3.54),
+  // so the values wait for them — a graph button that appears a moment
+  // later, or vanishes, would read as a glitch. Read once per session; if
+  // the read fails, isGraphable falls back to the reading alone.
+  const plugins = useCheckPlugins({ enabled: canRead });
+  const kinds = useMemo(() => metricKinds(plugins.data), [plugins.data]);
+  const pluginsSettled = plugins.isSuccess || plugins.isError;
 
   const monitored = query.data?.monitored ?? false;
   const checks = query.data?.checks ?? [];
@@ -91,9 +99,11 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
           {query.error instanceof Error ? query.error.message : t.hosts.checks.readFailed}
         </p>
       )}
-      {canRead && !query.data && !query.isError && <p className="text-xs text-muted-foreground">{t.common.loading}</p>}
+      {canRead && !query.isError && (!query.data || !pluginsSettled) && (
+        <p className="text-xs text-muted-foreground">{t.common.loading}</p>
+      )}
 
-      {canRead && query.data && (
+      {canRead && query.data && pluginsSettled && (
         <>
           {!monitored && (
             <p className="mb-3 text-xs text-[var(--px-warn)]">
@@ -126,6 +136,7 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                         canWrite={canWrite}
                         check={c}
                         value={v}
+                        kinds={kinds}
                         open={open}
                         onOpen={setOpen}
                         effective={effective}

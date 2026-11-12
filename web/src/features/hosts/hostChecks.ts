@@ -1,5 +1,5 @@
 import type { Tone } from '../../ui/badge.tsx';
-import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
+import type { CheckPluginDescriptor, HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 
 /**
@@ -29,47 +29,28 @@ export function formatNumber(value: number): string {
 }
 
 /**
- * NUMERIC_PLUGIN says which plugins measure numbers. The service plugin
- * reports only labels (the unit's state), so it has no series at all.
- * cpu, memory, disk, network and uptime report numbers, and every one of
- * them reports an error the same way. The synthetic plugins the manager
- * probes with (icmp, tcp, http, tls, dns; internal/probe) report numbers
- * only, their 1/0 flags included. docker mixes both kinds: see
- * DISCRETE_METRICS. It is a total map over the generated plugin union
- * rather than a list of exceptions, so a new plugin fails to compile here
- * until somebody decides which side of the line it is on.
+ * MetricKinds is what the check plugins' descriptors (GET /check-plugins,
+ * backlog 3.54) say about graphs: the metrics that only ever carry a label,
+ * and the plugins whose every metric does (service, today) — a check of
+ * such a plugin has no series at all.
  */
-const NUMERIC_PLUGIN: Record<HostCheck['plugin'], boolean> = {
-  cpu: true,
-  memory: true,
-  disk: true,
-  service: false,
-  network: true,
-  uptime: true,
-  // docker mixes labels with numbers (restart_count, containers_running,
-  // ...); its label metrics are listed in DISCRETE_METRICS.
-  docker: true,
-  // temperature, smart and raid are numbers apart from raid.state, the
-  // one label metric (DISCRETE_METRICS).
-  temperature: true,
-  smart: true,
-  raid: true,
-  icmp: true,
-  tcp: true,
-  http: true,
-  tls: true,
-  dns: true,
-};
+export interface MetricKinds {
+  discreteMetrics: ReadonlySet<string>;
+  labelOnlyPlugins: ReadonlySet<string>;
+}
 
-/**
- * DISCRETE_METRICS are the metrics that only ever carry a label. A failed
- * reading of one has no `label` (an error row has neither value nor
- * label), so the per-value test in isGraphable cannot see it is discrete;
- * a plugin that mixes labels and numbers needs the answer per metric.
- * internal/agent/checks/plugins: service and docker call
- * checks.LabelObservation for exactly these.
- */
-const DISCRETE_METRICS: ReadonlySet<string> = new Set(['service.state', 'docker.state', 'docker.health', 'raid.state']);
+/** metricKinds reads MetricKinds off the descriptors. Without them (the
+ * read failed) both sets are empty and isGraphable judges by the reading
+ * alone. */
+export function metricKinds(plugins: readonly CheckPluginDescriptor[] | undefined): MetricKinds {
+  const discreteMetrics = new Set<string>();
+  const labelOnlyPlugins = new Set<string>();
+  for (const p of plugins ?? []) {
+    for (const m of p.metrics) if (m.kind === 'discrete') discreteMetrics.add(m.name);
+    if (p.metrics.length > 0 && p.metrics.every((m) => m.kind === 'discrete')) labelOnlyPlugins.add(p.name);
+  }
+  return { discreteMetrics, labelOnlyPlugins };
+}
 
 /**
  * isGraphable reports whether a graph may be offered for one of a check's
@@ -83,14 +64,15 @@ const DISCRETE_METRICS: ReadonlySet<string> = new Set(['service.state', 'docker.
  * there, and that route answers it during the incident too.
  *
  * So: a value that carries a `label` is discrete and has no series (the
- * metrics route refuses it with a 400, naming the label), and a check
- * whose plugin only ever produces labels has none either, however its
- * latest reading happens to have failed. Everything else is a number over
- * time.
+ * metrics route refuses it with a 400, naming the label); a metric the
+ * descriptors call discrete has none either, however its latest reading
+ * happens to have failed (docker.state, raid.state, …); and a check whose
+ * plugin only ever produces labels has none at all. Everything else is a
+ * number over time.
  */
-export function isGraphable(check: HostCheck, v: HostCheckValue): boolean {
-  if (v.label !== undefined || DISCRETE_METRICS.has(v.metric)) return false;
-  return NUMERIC_PLUGIN[check.plugin];
+export function isGraphable(check: HostCheck, v: HostCheckValue, kinds: MetricKinds): boolean {
+  if (v.label !== undefined || kinds.discreteMetrics.has(v.metric)) return false;
+  return !kinds.labelOnlyPlugins.has(check.plugin);
 }
 
 /**
