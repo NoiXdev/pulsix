@@ -145,6 +145,96 @@ func (q *Queries) DeleteCheckDefinition(ctx context.Context, arg DeleteCheckDefi
 	return result.RowsAffected(), nil
 }
 
+const deleteItemCurrent = `-- name: DeleteItemCurrent :execrows
+DELETE FROM check_current c
+USING (
+  SELECT l.host_id, l.check_key, l.item, l.metric FROM check_current l
+  WHERE l.org_id = $1 AND l.host_id = $2
+    AND l.check_key = $3 AND l.item = $4
+  FOR UPDATE SKIP LOCKED
+) locked
+WHERE c.host_id = locked.host_id AND c.check_key = locked.check_key
+  AND c.item = locked.item AND c.metric = locked.metric
+`
+
+type DeleteItemCurrentParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+// Every current row of one item, all of its metrics. SKIP LOCKED is what
+// keeps the forget free of deadlocks with ingest: an ingest transaction
+// updates its check_current rows first and takes the cursor lock last
+// (MarkHostDirty), while the forget already holds the cursor. A row an
+// in-flight ingest holds is therefore one whose reading will commit after
+// the forget — it is left to land after it and re-create the item, which
+// is what a reading arriving during the forget may do. Waiting for it
+// instead would wait on a transaction that waits on this one.
+func (q *Queries) DeleteItemCurrent(ctx context.Context, arg DeleteItemCurrentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteItemCurrent,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteItemStateChanges = `-- name: DeleteItemStateChanges :exec
+DELETE FROM check_state_changes
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = $3 AND item = $4
+`
+
+type DeleteItemStateChangesParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+// One item's state-change history (the flapping count reads it), so a
+// reappearance starts fresh. check_state_changes_lookup_idx serves it.
+func (q *Queries) DeleteItemStateChanges(ctx context.Context, arg DeleteItemStateChangesParams) error {
+	_, err := q.db.Exec(ctx, deleteItemStateChanges,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	return err
+}
+
+const deleteItemStates = `-- name: DeleteItemStates :exec
+DELETE FROM check_states
+WHERE org_id = $1 AND host_id = $2
+  AND check_key = $3 AND item = $4
+`
+
+type DeleteItemStatesParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+// One item's rule states, every metric — only ever written by the
+// evaluator under the cursor lock the forget holds.
+func (q *Queries) DeleteItemStates(ctx context.Context, arg DeleteItemStatesParams) error {
+	_, err := q.db.Exec(ctx, deleteItemStates,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	return err
+}
+
 const deleteMonitoringGroup = `-- name: DeleteMonitoringGroup :execrows
 DELETE FROM monitoring_groups WHERE org_id = $1 AND id = $2
 `
@@ -264,6 +354,46 @@ func (q *Queries) InsertCheckSample(ctx context.Context, arg InsertCheckSamplePa
 	return err
 }
 
+const itemNewest = `-- name: ItemNewest :one
+SELECT
+  count(*) AS item_rows,
+  COALESCE(max(c.at), 'epoch')::timestamptz AS item_newest,
+  (SELECT COALESCE(max(h.at), 'epoch') FROM check_current h
+   WHERE h.org_id = $1 AND h.host_id = $2)::timestamptz AS host_newest
+FROM check_current c
+WHERE c.org_id = $1 AND c.host_id = $2
+  AND c.check_key = $3 AND c.item = $4
+`
+
+type ItemNewestParams struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+type ItemNewestRow struct {
+	ItemRows   int64     `json:"item_rows"`
+	ItemNewest time.Time `json:"item_newest"`
+	HostNewest time.Time `json:"host_newest"`
+}
+
+// The expiry's re-check inside the forget transaction, after the cursor
+// lock: how many current rows the item has, its newest reading and the
+// host's newest reading. 'epoch' stands in for "no reading" so the
+// generated scan never meets a NULL; item_rows says whether it is real.
+func (q *Queries) ItemNewest(ctx context.Context, arg ItemNewestParams) (ItemNewestRow, error) {
+	row := q.db.QueryRow(ctx, itemNewest,
+		arg.OrgID,
+		arg.HostID,
+		arg.CheckKey,
+		arg.Item,
+	)
+	var i ItemNewestRow
+	err := row.Scan(&i.ItemRows, &i.ItemNewest, &i.HostNewest)
+	return i, err
+}
+
 const listCheckCurrent = `-- name: ListCheckCurrent :many
 SELECT org_id, host_id, check_key, item, metric, value, label, at, error FROM check_current WHERE org_id = $1 AND host_id = $2
 ORDER BY check_key, item, metric
@@ -347,6 +477,72 @@ func (q *Queries) ListCheckDefinitions(ctx context.Context, orgID uuid.UUID) ([]
 	return items, nil
 }
 
+const listExpiredItems = `-- name: ListExpiredItems :many
+WITH items AS (
+  SELECT org_id, host_id, check_key, item, max(at) AS newest
+  FROM check_current
+  GROUP BY org_id, host_id, check_key, item
+), host_newest AS (
+  SELECT host_id, max(newest) AS newest FROM items GROUP BY host_id
+)
+SELECT i.org_id, i.host_id, i.check_key, i.item
+FROM items i
+JOIN host_newest h ON h.host_id = i.host_id
+WHERE i.newest < $1::timestamptz
+  AND h.newest > i.newest + make_interval(secs => $2::double precision)
+ORDER BY i.newest, i.org_id, i.host_id, i.check_key, i.item
+LIMIT $3
+`
+
+type ListExpiredItemsParams struct {
+	Cutoff        time.Time `json:"cutoff"`
+	PeriodSeconds float64   `json:"period_seconds"`
+	Lim           int32     `json:"lim"`
+}
+
+type ListExpiredItemsRow struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Item     string    `json:"item"`
+}
+
+// The automatic expiry's selection (backlog 3.12b), across every
+// organization — it runs unscoped on the bare pool, like the alert sweep.
+// An item is due when its newest reading (max at over its metrics, so one
+// fresh metric keeps the whole item) is older than cutoff (now - period)
+// AND its host has a reading newer than that item's newest plus the
+// period: the host kept reporting for the whole period without the item.
+// A host that stopped reporting altogether has no such reading, so it
+// keeps every value however long it is offline. Both comparisons are
+// strict. Oldest first, so a backlog drains from the longest-gone end.
+// checks.itemExpired is the same rule in Go, for the re-check inside each
+// item's own forget transaction.
+func (q *Queries) ListExpiredItems(ctx context.Context, arg ListExpiredItemsParams) ([]ListExpiredItemsRow, error) {
+	rows, err := q.db.Query(ctx, listExpiredItems, arg.Cutoff, arg.PeriodSeconds, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListExpiredItemsRow
+	for rows.Next() {
+		var i ListExpiredItemsRow
+		if err := rows.Scan(
+			&i.OrgID,
+			&i.HostID,
+			&i.CheckKey,
+			&i.Item,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMonitoringGroups = `-- name: ListMonitoringGroups :many
 SELECT id, org_id, name, selector, priority, created_at, updated_at FROM monitoring_groups WHERE org_id = $1 ORDER BY name
 `
@@ -377,6 +573,58 @@ func (q *Queries) ListMonitoringGroups(ctx context.Context, orgID uuid.UUID) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockHostEvalCursor = `-- name: LockHostEvalCursor :execrows
+SELECT host_id FROM check_eval_cursor
+WHERE org_id = $1 AND host_id = $2
+FOR UPDATE
+`
+
+type LockHostEvalCursorParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Forgetting an item (backlog 3.12b) starts here: it takes the row lock
+// on the host's evaluation cursor that the rule evaluator holds for the
+// whole of one host's evaluation (rules.sql's LockOneEvalCursor) and that
+// ingest takes last, in MarkHostDirty. Unlike the evaluator it WAITS
+// rather than skipping: a forget must not be abandoned because the host
+// is being evaluated right now, and the evaluator itself skips a locked
+// cursor, so it never waits on a forget in turn. Holding it for the rest
+// of the transaction is what keeps an evaluation from writing the item's
+// states or alerts in between the forget's deletes, and from closing or
+// reopening the same alerts while the forget closes them. 0 rows means
+// the host has no cursor, which only a host that never stored a reading
+// has — there is then no evaluation to serialise with.
+func (q *Queries) LockHostEvalCursor(ctx context.Context, arg LockHostEvalCursorParams) (int64, error) {
+	result, err := q.db.Exec(ctx, lockHostEvalCursor, arg.OrgID, arg.HostID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markHostDirtyNow = `-- name: MarkHostDirtyNow :exec
+UPDATE check_eval_cursor SET dirty_at = clock_timestamp()
+WHERE org_id = $1 AND host_id = $2
+`
+
+type MarkHostDirtyNowParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// The forget's own evaluation mark: the item's states are gone, so the
+// host's roll-up (check_host_states) is stale until the next evaluation.
+// clock_timestamp() rather than MarkHostDirty's now(): it runs after
+// LockHostEvalCursor may have waited for an evaluation, whose
+// evaluated_at is its own transaction's start — possibly later than this
+// transaction's now(), which would leave the host looking evaluated.
+func (q *Queries) MarkHostDirtyNow(ctx context.Context, arg MarkHostDirtyNowParams) error {
+	_, err := q.db.Exec(ctx, markHostDirtyNow, arg.OrgID, arg.HostID)
+	return err
 }
 
 const seriesForHost = `-- name: SeriesForHost :many

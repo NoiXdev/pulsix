@@ -159,6 +159,19 @@ type Store interface {
 	// SeriesForHost returns metric's samples for hostID's (checkKey, item)
 	// in [from, to), downsampled server-side into at most buckets points.
 	SeriesForHost(ctx context.Context, orgID, hostID uuid.UUID, checkKey, item, metric string, from, to time.Time, buckets int) (Series, error)
+
+	// ForgetItem (backlog 3.12b, forget.go) forgets ref in one transaction
+	// of its own: it takes the host's evaluation lock, asks steps.Proceed
+	// (when set), deletes the item's current values, rule states and
+	// state-change history for every metric, marks the host for
+	// re-evaluation and runs steps.Within on the same transaction. It
+	// reports false — with nothing changed — when Proceed declined or no
+	// current row was deleted.
+	ForgetItem(ctx context.Context, ref ItemRef, steps ForgetSteps) (bool, error)
+	// ExpiredItems lists up to limit items, across every organization,
+	// whose newest reading is older than cutoff while their host has a
+	// reading newer than that item's newest plus period — oldest first.
+	ExpiredItems(ctx context.Context, cutoff time.Time, period time.Duration, limit int) ([]ItemRef, error)
 }
 
 // Service manages monitoring groups. Later tasks (check definitions, the
@@ -172,6 +185,7 @@ type Service struct {
 	store      Store
 	matcher    HostMatcher
 	hostRoster HostRoster
+	alerts     AlertCloser
 	rand       io.Reader
 	now        func() time.Time
 	// offsets is what ingest learned about each host's clock, kept in
