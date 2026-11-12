@@ -30,8 +30,9 @@ type CatalogueEntry struct {
 //
 // OBLIGATION: a new plugin metric is added here in the same change that
 // adds the plugin, or no rule can ever name it. The entries below are
-// exactly what internal/agent/checks's six plugins emit today
-// (cpu.go, memory.go, disk.go, service.go, network.go, uptime.go), plus
+// exactly what internal/agent/checks's seven plugins emit today
+// (cpu.go, memory.go, disk.go, service.go, network.go, uptime.go, plus
+// docker.go from backlog 3.12), plus
 // the five synthetic plugins the manager probes with (backlog 3.13,
 // internal/probe: icmp.go, tcp.go, http.go, tls.go, dns.go) — cross-check
 // any edit here against those files, not the other way around.
@@ -72,6 +73,13 @@ func Catalogue() map[string]CatalogueEntry {
 		"dns.up":               {CheckKey: "dns", Kind: MetricNumeric},
 		"dns.resolve_ms":       {CheckKey: "dns", Kind: MetricNumeric},
 		"dns.answer_match":     {CheckKey: "dns", Kind: MetricNumeric},
+
+		"docker.state":              {CheckKey: "docker", Kind: MetricDiscrete},
+		"docker.health":             {CheckKey: "docker", Kind: MetricDiscrete},
+		"docker.restart_count":      {CheckKey: "docker", Kind: MetricNumeric},
+		"docker.exit_code":          {CheckKey: "docker", Kind: MetricNumeric},
+		"docker.containers_running": {CheckKey: "docker", Kind: MetricNumeric},
+		"docker.containers_total":   {CheckKey: "docker", Kind: MetricNumeric},
 	}
 }
 

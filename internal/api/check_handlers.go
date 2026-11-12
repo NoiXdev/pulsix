@@ -68,7 +68,7 @@ const pushTimeout = 30 * time.Second
 type checkDefinitionDTO struct {
 	ID              string         `json:"id"`
 	Key             string         `json:"key"`
-	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service,network,uptime,icmp,tcp,http,tls,dns"`
+	Plugin          string         `json:"plugin" enum:"cpu,memory,disk,service,network,uptime,docker,icmp,tcp,http,tls,dns"`
 	Params          map[string]any `json:"params" doc:"Plugin parameters; {} for a plugin that takes none"`
 	IntervalSeconds int            `json:"interval_seconds"`
 	Enabled         bool           `json:"enabled"`
@@ -103,8 +103,8 @@ type checkDefinitionDTO struct {
 // specific message on the next. One validator, one message.
 type checkDefinitionBody struct {
 	Key             string         `json:"key,omitempty" doc:"Lower-case identifier a narrower scope overrides on. Defaults to the plugin name on create; an update must name it, since defaulting it on a full replace would silently rename the definition"`
-	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service, network, uptime (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"`
-	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none. icmp: count, timeout_s. tcp: port (required), send, expect, timeout_s. http: url (required, http or https, may contain {address}), method (GET or HEAD), follow_redirects, verify_tls, body_contains, timeout_s. tls: port, server_name, timeout_s. dns: name, type (A, AAAA, CNAME, MX, TXT, NS), server (an IP with an optional port), expect, timeout_s"`
+	Plugin          string         `json:"plugin" doc:"One of cpu, memory, disk, service, network, uptime, docker (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"`
+	Params          map[string]any `json:"params,omitempty" doc:"disk takes an optional mounts list, network an optional interfaces list, service a required units list; cpu, memory and uptime take none. docker: selection (all or labeled), label (key or key=value, default pulsix.monitor=true), socket (an absolute path or npipe:////./pipe/name). icmp: count, timeout_s. tcp: port (required), send, expect, timeout_s. http: url (required, http or https, may contain {address}), method (GET or HEAD), follow_redirects, verify_tls, body_contains, timeout_s. tls: port, server_name, timeout_s. dns: name, type (A, AAAA, CNAME, MX, TXT, NS), server (an IP with an optional port), expect, timeout_s"`
 	IntervalSeconds int            `json:"interval_seconds" doc:"How often the check runs, between 10 and 86400 seconds"`
 	Enabled         *bool          `json:"enabled,omitempty" doc:"Defaults to true; false keeps the row but stops the check at this scope"`
 	BindingKind     string         `json:"binding_kind" doc:"One of org, group, host"`

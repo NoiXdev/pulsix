@@ -313,6 +313,26 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 		}
 	})
 
+	// The docker plugin (backlog 3.12) runs on the agent; its params are
+	// validated here with the same 400 every other plugin gets.
+	t.Run("accepts the docker plugin and refuses a TCP socket", func(t *testing.T) {
+		created := f.createCheck(t, f.operatorC, map[string]any{
+			"key": "docker", "plugin": "docker", "interval_seconds": 60, "binding_kind": "org",
+			"params": map[string]any{"selection": "labeled", "label": "pulsix.monitor=true"},
+		})
+		if created.Plugin != "docker" || created.Params["selection"] != "labeled" || created.Params["label"] != "pulsix.monitor=true" {
+			t.Fatalf("created = %+v, want the docker check with its params", created)
+		}
+		requestJSON(t, f.operatorC, http.MethodDelete, f.checksURL()+"/"+created.ID, nil)
+		resp := requestJSON(t, f.operatorC, http.MethodPost, f.checksURL(), map[string]any{
+			"key": "docker-bad", "plugin": "docker", "interval_seconds": 60, "binding_kind": "org",
+			"params": map[string]any{"socket": "tcp://x"},
+		})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("docker with a tcp socket = %d %s, want 400", resp.StatusCode, mustReadBody(t, resp))
+		}
+	})
+
 	// Who may do what: a viewer reads, an operator writes (checks.read /
 	// checks.write, mirroring agents.*), and somebody who is not a member
 	// of the organization at all sees nothing.

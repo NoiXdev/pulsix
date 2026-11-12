@@ -61,6 +61,13 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"dns.up":               {CheckKey: "dns", Kind: rules.MetricNumeric},
 		"dns.resolve_ms":       {CheckKey: "dns", Kind: rules.MetricNumeric},
 		"dns.answer_match":     {CheckKey: "dns", Kind: rules.MetricNumeric},
+		// Backlog 3.12: the docker plugin (internal/agent/checks/docker.go).
+		"docker.state":              {CheckKey: "docker", Kind: rules.MetricDiscrete},
+		"docker.health":             {CheckKey: "docker", Kind: rules.MetricDiscrete},
+		"docker.restart_count":      {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.exit_code":          {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.containers_running": {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.containers_total":   {CheckKey: "docker", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -101,6 +108,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"http":    "http",
 		"tls":     "tls",
 		"dns":     "dns",
+		"docker":  "docker",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")
@@ -162,6 +170,8 @@ func TestTypeCheckValid(t *testing.T) {
 		{"window over a network rate", compare(">", window("net.tx_bytes_per_s", "avg", 600), number(1e6))},
 		{"compare of uptime", compare("<", metric("uptime.seconds"), number(600))},
 		{"compare of a synthetic up", compare("==", metric("http.up"), number(0))},
+		{"label == on a container state", label("docker.state", "==", "exited")},
+		{"compare of a container's restart count", compare(">", metric("docker.restart_count"), number(3))},
 		{"compare of a certificate's days left", compare("<", metric("tls.cert_expiry_days"), number(14))},
 	}
 	for _, tc := range tests {
