@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 
@@ -43,6 +44,23 @@ func parseSettings(fields map[string]string) (connSettings, error) {
 		host: v["host"], port: v["port"], user: v["user"], password: v["password"],
 		database: v["database"], sslmode: v["sslmode"], sslrootcert: v["sslrootcert"],
 	}, nil
+}
+
+// errRootCert is a CA file the agent cannot read.
+var errRootCert = errors.New("sslrootcert cannot be read")
+
+// checkRootCert reports whether the CA file named by sslrootcert (when it
+// names a file) can be opened. It never returns the path.
+func checkRootCert(s connSettings) error {
+	if s.sslrootcert == "" || s.sslrootcert == "system" {
+		return nil
+	}
+	f, err := os.Open(s.sslrootcert)
+	if err != nil {
+		return errRootCert
+	}
+	_ = f.Close()
+	return nil
 }
 
 // errInvalidSettings is the only error buildConfig returns: pgx's own parse
@@ -133,8 +151,10 @@ func buildConfig(s connSettings) (*pgx.ConnConfig, error) {
 		"application_name":  applicationName,
 		"statement_timeout": statementTimeoutMS,
 	}
-	// One plain round trip per statement, no prepared statements: works
-	// behind connection poolers and leaves nothing on the server.
+	// One plain round trip per statement, no prepared statements, so nothing
+	// is left on the server. Behind a pooler such as PgBouncer the
+	// statement_timeout startup parameter above is refused unless the pooler
+	// lists it in ignore_startup_parameters.
 	cfg.DefaultQueryExecMode = pgx.QueryExecModeExec
 	return cfg, nil
 }

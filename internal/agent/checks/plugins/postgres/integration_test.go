@@ -176,6 +176,7 @@ func TestAgainstARealServer(t *testing.T) {
 			t.Fatal(err)
 		}
 		mustValue(t, obs, "", "pg.up", 0)
+		mustErr(t, obs, "", "pg.connections", "postgres: TLS handshake failed")
 		noSecretIn(t, obs, err)
 	})
 

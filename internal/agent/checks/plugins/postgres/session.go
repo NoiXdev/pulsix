@@ -35,7 +35,15 @@ type session interface {
 }
 
 // pgxSession is the production session.
-type pgxSession struct{ conn *pgx.Conn }
+type pgxSession struct {
+	conn     *pgx.Conn
+	deadline time.Time // the round's deadline, zero when it has none
+}
+
+const (
+	closeFloor = 100 * time.Millisecond
+	closeCap   = 2 * time.Second
+)
 
 // connect opens one connection under ctx's deadline.
 func connect(ctx context.Context, s connSettings) (session, error) {
@@ -47,7 +55,8 @@ func connect(ctx context.Context, s connSettings) (session, error) {
 	if err != nil {
 		return nil, err
 	}
-	return pgxSession{conn: conn}, nil
+	d, _ := ctx.Deadline()
+	return pgxSession{conn: conn, deadline: d}, nil
 }
 
 // serverQuery reads everything about the server in one statement. The lag
@@ -114,10 +123,15 @@ func (s pgxSession) Databases(ctx context.Context, names []string, limit int) ([
 	return out, rows.Err()
 }
 
-// Close ends the connection with a short, fresh deadline: the round's own
-// may be spent, and a hung server must not hold the close.
+// Close ends the connection within what remains of the round's deadline,
+// but never less than closeFloor (the round's own may be spent) and never
+// more than closeCap, so a hung server cannot stretch the round.
 func (s pgxSession) Close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	wait := closeCap
+	if !s.deadline.IsZero() {
+		wait = min(max(time.Until(s.deadline), closeFloor), closeCap)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	_ = s.conn.Close(ctx)
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -160,11 +162,15 @@ func TestUnreportableDatabaseNameIsSkippedAndNamed(t *testing.T) {
 func TestFieldsReachTheConnection(t *testing.T) {
 	var got connSettings
 	sess := &fakeSession{stats: serverStats{MaxConnections: 1}}
-	fields := map[string]string{"host": "/var/run/postgresql", "port": "5433", "user": "u", "password": "p", "database": "d", "sslmode": "require", "sslrootcert": "/ca.pem"}
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string]string{"host": "/var/run/postgresql", "port": "5433", "user": "u", "password": "p", "database": "d", "sslmode": "require", "sslrootcert": ca}
 	if _, err := collect(t, newTestPlugin(sess, nil, &got), nil, fields); err != nil {
 		t.Fatal(err)
 	}
-	want := connSettings{host: "/var/run/postgresql", port: "5433", user: "u", password: "p", database: "d", sslmode: "require", sslrootcert: "/ca.pem"}
+	want := connSettings{host: "/var/run/postgresql", port: "5433", user: "u", password: "p", database: "d", sslmode: "require", sslrootcert: ca}
 	if got != want {
 		t.Errorf("settings = %+v, want %+v", got, want)
 	}
@@ -202,6 +208,16 @@ func TestBadSecretFields(t *testing.T) {
 			noSecretIn(t, obs, err)
 		})
 	}
+}
+
+func TestUnreadableRootCertIsNamedWithoutThePath(t *testing.T) {
+	f := map[string]string{"user": "u", "sslrootcert": "/nonexistent/" + plantedHost + ".pem"}
+	obs, err := collect(t, newTestPlugin(&fakeSession{}, nil, nil), nil, f)
+	if len(obs) != 1 {
+		t.Fatalf("obs = %+v", obs)
+	}
+	mustErr(t, obs, "", "pg.up", "postgres: secret field `sslrootcert` cannot be read")
+	noSecretIn(t, obs, err)
 }
 
 func TestNilFieldsAreAConfigurationError(t *testing.T) {
