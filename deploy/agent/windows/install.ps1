@@ -45,9 +45,6 @@ $ServiceName = 'PulsixAgent'
 $SystemSid = 'S-1-5-18'
 $AdminsSid = 'S-1-5-32-544'
 $AllowedSids = @($SystemSid, $AdminsSid)
-# Everyone, Authenticated Users and Users: a token file any of them can
-# read is not a secret any more.
-$BroadReaderSids = @('S-1-1-0', 'S-1-5-11', 'S-1-5-32-545')
 
 # Stop-Install ends the script with an error. It throws rather than exits:
 # the script runs inside the administrator's own PowerShell window, which
@@ -94,18 +91,22 @@ function Assert-OnlyAdmins([string]$Path) {
 }
 
 # Read-TokenFile reads the token from the first line of a regular file that
-# Everyone, Authenticated Users and Users cannot read.
+# nobody but SYSTEM, Administrators and the file's owner can read: any
+# other allow entry with a read right stops the install. Deny entries are
+# not weighed; they cannot make a file readable.
 function Read-TokenFile([string]$Path) {
 	$item = Get-Item -LiteralPath $Path -Force
 	if ($item.PSIsContainer -or (Test-ReparsePoint $Path)) {
 		Stop-Install "token file $Path is not a regular file"
 	}
 	$acl = Get-Acl -LiteralPath $Path
+	$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+	$tokenReaders = @($AllowedSids) + $owner
 	foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
 		if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
 			continue
 		}
-		if ($BroadReaderSids -notcontains $rule.IdentityReference.Value) {
+		if ($tokenReaders -contains $rule.IdentityReference.Value) {
 			continue
 		}
 		# ReadData (0x1), GENERIC_ALL (0x10000000) or GENERIC_READ

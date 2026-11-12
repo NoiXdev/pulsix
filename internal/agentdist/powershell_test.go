@@ -96,10 +96,10 @@ func TestInstallPs1Shape(t *testing.T) {
 		"SecureStringToBSTR",
 		"PtrToStringBSTR",
 		"ZeroFreeBSTR",
-		// The token file's readers.
-		"S-1-1-0",
-		"S-1-5-11",
-		"S-1-5-32-545",
+		// The token file's readers: SYSTEM, Administrators and its owner,
+		// nobody else.
+		"$tokenReaders = @($AllowedSids) + $owner",
+		"$tokenReaders -contains $rule.IdentityReference.Value",
 		"PROCESSOR_ARCHITECTURE",
 		"ARM64",
 		"AMD64",
