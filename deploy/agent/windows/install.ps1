@@ -715,7 +715,7 @@ try {
 		if ($restartAgent) {
 			try {
 				Start-Service -Name $ServiceName
-				Write-Warning "pulsix-agent: the install failed; the $ServiceName service was started again"
+				Write-Warning "pulsix-agent: the install failed; the $ServiceName service was started again, check $LogFile in case the agent stopped at once"
 			} catch {
 				Write-Warning "pulsix-agent: the install failed and the $ServiceName service is stopped ($($_.Exception.Message)); start it (Start-Service $ServiceName) once the cause is fixed"
 			}

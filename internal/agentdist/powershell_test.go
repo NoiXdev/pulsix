@@ -252,7 +252,7 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		// and says whether it runs; neither may mask the failure.
 		"if ($restartAgent) {",
 		"try {\n\t\t\t\tStart-Service -Name $ServiceName\n",
-		"the $ServiceName service was started again",
+		"the $ServiceName service was started again, check $LogFile in case the agent stopped at once",
 		"} catch {\n\t\t\t\tWrite-Warning \"pulsix-agent: the install failed and the $ServiceName service is stopped",
 		"# 13. Start.",
 		"Start-Service -Name $ServiceName",
