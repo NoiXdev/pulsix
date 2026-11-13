@@ -81,10 +81,7 @@ func TestFormatVectorsCoverEveryFormat(t *testing.T) {
 // spelling every plugin that takes a secret embeds, so its format is
 // needed before the first such plugin exists (backlog 3.5, 3.10).
 func TestFormatsAreExactlyTheUsedOnes(t *testing.T) {
-	// FormatStatusURL is needed by the four web server checks (backlog 3.11),
-	// which land after the format; remove it from this seed once nginx is
-	// registered.
-	used := map[checkplugins.Format]bool{checkplugins.SecretParam().Format: true, checkplugins.FormatStatusURL: true}
+	used := map[checkplugins.Format]bool{checkplugins.SecretParam().Format: true}
 	for _, d := range checkplugins.All() {
 		for _, p := range d.Params {
 			if p.Format != "" {

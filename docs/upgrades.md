@@ -154,6 +154,14 @@ without logging in, and a check that names one needs the host's `agent.yaml`
 secret (backlog 3.5) as `postgres` does. Nothing is seeded and there is no
 schema change.
 
+The same holds for the `nginx` plugin (backlog 3.11, the first of the web
+server checks): an older agent skips an `nginx` check, warns on every
+configuration push and shows no readings until it is updated, and the manager
+does not gate on it. Its `secret` parameter is optional: a check without one
+sends no login, and a check that names one needs the host's `agent.yaml`
+secret (backlog 3.5) with the fields `basic_auth_user` and
+`basic_auth_password`. Nothing is seeded and there is no schema change.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.

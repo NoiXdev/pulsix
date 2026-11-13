@@ -125,6 +125,16 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"redis.replication_link":        {CheckKey: "redis", Kind: rules.MetricDiscrete},
 		"redis.replication_lag_seconds": {CheckKey: "redis", Kind: rules.MetricNumeric},
 		"redis.evicted_keys_per_s":      {CheckKey: "redis", Kind: rules.MetricNumeric},
+
+		// Backlog 3.11: the web server plugins (nginx; apache, caddy and phpfpm follow).
+		"nginx.up":                         {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"nginx.connections_active":         {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"nginx.connections_reading":        {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"nginx.connections_writing":        {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"nginx.connections_waiting":        {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"nginx.requests_per_s":             {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"nginx.connections_accepted_per_s": {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"nginx.connections_dropped_per_s":  {CheckKey: "nginx", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -172,6 +182,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"pg":      "postgres",
 		"mysql":   "mysql",
 		"redis":   "redis",
+		"nginx":   "nginx",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")

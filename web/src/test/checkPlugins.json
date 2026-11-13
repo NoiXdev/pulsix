@@ -482,6 +482,66 @@
       ]
     },
     {
+      "name": "nginx",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "url",
+          "type": "string",
+          "default": "http://127.0.0.1/nginx_status",
+          "max_bytes": 500,
+          "format": "statusURL"
+        },
+        {
+          "name": "secret",
+          "type": "string",
+          "example": "db-main",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        },
+        {
+          "name": "verify_tls",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "metrics": [
+        {
+          "name": "nginx.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.connections_active",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.connections_reading",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.connections_writing",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.connections_waiting",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.connections_accepted_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "nginx.connections_dropped_per_s",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

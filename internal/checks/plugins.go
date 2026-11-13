@@ -29,6 +29,7 @@ const (
 	PluginPostgres    = "postgres"
 	PluginMySQL       = "mysql"
 	PluginRedis       = "redis"
+	PluginNginx       = "nginx"
 
 	PluginICMP = "icmp"
 	PluginTCP  = "tcp"

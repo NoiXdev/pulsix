@@ -96,6 +96,7 @@ export const deChecks: Messages['checks'] = {
       postgres: 'PostgreSQL',
       mysql: 'MySQL / MariaDB',
       redis: 'Redis / Valkey',
+      nginx: 'nginx',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -191,6 +192,15 @@ export const deChecks: Messages['checks'] = {
         placeholder: 'db-main',
       },
     },
+    nginx: {
+      url: { label: 'URL der Status-Seite', hint: 'Die stub_status-Seite von nginx, die der Agent auf jedem Host liest. Ohne Wert liest der Check http://127.0.0.1/nginx_status.' },
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password). Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
+        placeholder: 'status-login',
+      },
+      verify_tls: { label: 'TLS-Zertifikat prüfen' },
+    },
     icmp: {
       count: { label: 'Pings pro Durchlauf' },
       timeout_s: { label: 'Timeout (Sekunden)' },
@@ -241,6 +251,7 @@ export const deChecks: Messages['checks'] = {
       devicePath: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
       secretName: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
+      statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       server: 'muss eine IP-Adresse sein, optional mit Port',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',

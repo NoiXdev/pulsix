@@ -112,6 +112,7 @@ export const enChecks = {
       postgres: 'PostgreSQL',
       mysql: 'MySQL / MariaDB',
       redis: 'Redis / Valkey',
+      nginx: 'nginx',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -216,6 +217,15 @@ export const enChecks = {
         placeholder: 'db-main',
       },
     },
+    nginx: {
+      url: { label: 'Status page URL', hint: 'The stub_status page of nginx, read by the agent on each host. Without a value the check reads http://127.0.0.1/nginx_status.' },
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name of a secret in agent.yaml on each host: it holds the HTTP basic-authentication login (basic_auth_user, basic_auth_password). The value never leaves the host. Without one, no login is sent.',
+        placeholder: 'status-login',
+      },
+      verify_tls: { label: 'Verify the TLS certificate' },
+    },
     icmp: {
       count: { label: 'Pings per run' },
       timeout_s: { label: 'Timeout (seconds)' },
@@ -262,6 +272,7 @@ export const enChecks = {
       devicePath: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
       secretName: 'must be 1 to 64 characters: letters, digits and . _ -',
       url: 'must be an http:// or https:// URL without a user name or password',
+      statusURL: 'must be an http:// or https:// URL without a user name, password or #fragment, and without {address}',
       dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
       server: 'must be an IP address, optionally with a port',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
