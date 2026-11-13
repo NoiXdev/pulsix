@@ -394,11 +394,12 @@ func Evaluate(s Snapshot) Result {
 		}
 	}
 
+	host := rollUp(states, s.Now, s.PreviousHost)
 	return Result{
 		States:     states,
 		Changes:    changes,
-		Host:       rollUp(states, s.Now, s.PreviousHost),
-		NextDue:    nextDue(pending, states, len(changes) > 0, s.Now),
+		Host:       host,
+		NextDue:    graceDue(host, s.Presence, s.Now, nextDue(pending, states, len(changes) > 0, s.Now)),
 		Dropped:    dropped,
 		Unmeasured: unmeasured,
 	}

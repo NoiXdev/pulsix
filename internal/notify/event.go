@@ -167,6 +167,10 @@ type AlertItem struct {
 	Event    string    `json:"event"`
 	At       time.Time `json:"at"`
 	URL      string    `json:"url,omitempty"`
+	// NotSeenSince is set on a client's open absent warning alone (backlog
+	// 3.57: the host-scope alert at severity warn): its agent's last
+	// contact, read when the message is built. Absent on every other item.
+	NotSeenSince *time.Time `json:"not_seen_since,omitempty"`
 }
 
 // runCategories maps a finished run group to the categories it belongs

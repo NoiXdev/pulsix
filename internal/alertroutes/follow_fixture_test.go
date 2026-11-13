@@ -46,7 +46,10 @@ type recordingEnqueuer struct {
 		count    int
 		items    int
 	}
-	fail error
+	// events is every enqueued message whole, in order, for a test that
+	// asserts on an item's own fields.
+	events []notify.Event
+	fail   error
 }
 
 func (r *recordingEnqueuer) Enqueue(_ context.Context, _ pgx.Tx, _ uuid.UUID, key string,
@@ -62,6 +65,7 @@ func (r *recordingEnqueuer) Enqueue(_ context.Context, _ pgx.Tx, _ uuid.UUID, ke
 		count    int
 		items    int
 	}{key, channels, ev.Alerts.Count, len(ev.Alerts.Items)})
+	r.events = append(r.events, ev)
 	return nil
 }
 

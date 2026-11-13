@@ -274,9 +274,18 @@ SELECT org_id, id, @now, 'closed' FROM forgotten;
 -- COALESCE is defensive, not load-bearing, the same posture
 -- GetMaintenanceWindow already takes for a target that in its case
 -- genuinely can be absent.
-SELECT a.*, COALESCE(h.name, '')::text AS host_name
+--
+-- agent_last_contact is the host's agent's last contact (backlog 3.57),
+-- read here — at display and notification time, not stored on the alert —
+-- for the absent warning's "not seen since …": last_seen, or the
+-- registration when the agent has not touched since, the same COALESCE
+-- rules.sql's GetHostPresence decides absence from. 'epoch' stands in
+-- for a host without an agent, as it does there.
+SELECT a.*, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
 WHERE a.org_id = @org_id AND a.id = @id;
 
 -- name: ListAlerts :many
@@ -317,9 +326,13 @@ WHERE a.org_id = @org_id AND a.id = @id;
 -- NULL now, where it once could not) — either way this ELSE 0 reads 0,
 -- below every real severity, so neither case can ever read as covered even
 -- without the explicit acknowledged_at IS NOT NULL alongside it.
-SELECT a.*, COALESCE(h.name, '')::text AS host_name
+--
+-- agent_last_contact is GetAlert's own (see there).
+SELECT a.*, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
 WHERE a.org_id = @org_id
   AND (sqlc.narg(open)::boolean IS NULL
        OR (sqlc.narg(open)::boolean AND a.closed_at IS NULL)

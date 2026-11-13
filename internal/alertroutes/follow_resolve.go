@@ -121,7 +121,7 @@ type resolution struct {
 	routes  []Route
 	groups  map[uuid.UUID][]uuid.UUID
 	windows map[uuid.UUID][]maintenance.Occurrence
-	alerts  map[uuid.UUID]alerts.Alert
+	alerts  map[uuid.UUID]alerts.AlertWithHost
 	oncall  map[uuid.UUID]uuid.UUID
 	gates   map[uuid.UUID]bool
 }
@@ -323,14 +323,9 @@ func (r *resolution) windowOpen(ctx context.Context, rt Route, severity rules.St
 // through alerts.Mute — a snooze on the alert itself, an operator silence
 // or a maintenance window, in that package's own order.
 func (r *resolution) muted(ctx context.Context, ev PendingEvent) (bool, error) {
-	a, ok := r.alerts[ev.AlertID]
-	if !ok {
-		got, err := r.f.mutes.GetAlert(ctx, r.orgID, ev.AlertID)
-		if err != nil {
-			return false, fmt.Errorf("get alert %s: %w", ev.AlertID, err)
-		}
-		a = got.Alert
-		r.alerts[ev.AlertID] = a
+	a, err := r.alert(ctx, ev.AlertID)
+	if err != nil {
+		return false, err
 	}
 	windows, ok := r.windows[ev.HostID]
 	if !ok {
@@ -341,5 +336,20 @@ func (r *resolution) muted(ctx context.Context, ev PendingEvent) (bool, error) {
 		}
 		r.windows[ev.HostID] = windows
 	}
-	return alerts.Mute(a, windows, r.now).Muted, nil
+	return alerts.Mute(a.Alert, windows, r.now).Muted, nil
+}
+
+// alert reads one alert as this tick sees it, once per tick: the mute
+// gate needs its snooze fields, and the message its agent's last contact
+// (alerts.NotSeenSince, backlog 3.57).
+func (r *resolution) alert(ctx context.Context, id uuid.UUID) (alerts.AlertWithHost, error) {
+	if a, ok := r.alerts[id]; ok {
+		return a, nil
+	}
+	a, err := r.f.mutes.GetAlert(ctx, r.orgID, id)
+	if err != nil {
+		return alerts.AlertWithHost{}, fmt.Errorf("get alert %s: %w", id, err)
+	}
+	r.alerts[id] = a
+	return a, nil
 }

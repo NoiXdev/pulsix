@@ -68,6 +68,13 @@ type AlertDTO struct {
 	MuteReason   string     `json:"mute_reason,omitempty" enum:"maintenance,silence,snooze"`
 	MutedUntil   *time.Time `json:"muted_until,omitempty" doc:"Absent for an unbounded snooze-until-change"`
 	MuteWindowID string     `json:"mute_window_id,omitempty" doc:"Set only when mute_reason is maintenance or silence"`
+
+	// NotSeenSince is alerts.NotSeenSince: on a client's open absent
+	// warning (backlog 3.57 — scope host at severity warn; the host-scope
+	// alert is otherwise always unknown) its agent's last contact, read
+	// now rather than stored on the alert. The GUI words "not seen since
+	// …" from it; the server builds no alert titles.
+	NotSeenSince *time.Time `json:"not_seen_since,omitempty" doc:"Set only on an open absent warning (scope host, severity warn): when the client's agent was last seen"`
 }
 
 // toAlertDTO flattens one alerts.Alert, its host's name and its
@@ -75,8 +82,9 @@ type AlertDTO struct {
 // answers with. hostName is a separate parameter rather than a field read
 // off alerts.Alert itself: the lifecycle's own Alert (Reconcile/Execute)
 // has no concept of a host name, only alerts.View/Detail do, once
-// Service.List/Get attach it from the store's own join.
-func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression) AlertDTO {
+// Service.List/Get attach it from the store's own join. notSeenSince is
+// View.NotSeenSince, for the same reason.
+func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression, notSeenSince *time.Time) AlertDTO {
 	dto := AlertDTO{
 		ID: a.ID.String(), HostID: a.Subject.HostID.String(), HostName: hostName, Scope: string(a.Subject.Scope),
 		CheckKey: a.Subject.CheckKey, Item: a.Subject.Item, Metric: a.Subject.Metric,
@@ -86,6 +94,7 @@ func toAlertDTO(a alerts.Alert, hostName string, sup alerts.Suppression) AlertDT
 		SnoozedUntil: a.SnoozedUntil, SnoozeUntilChange: a.SnoozeUntilChange,
 		WasFlapping: a.WasFlapping,
 		Muted:       sup.Muted, MuteReason: string(sup.Reason), MutedUntil: sup.Until,
+		NotSeenSince: notSeenSince,
 	}
 	if a.AckBy != nil {
 		dto.AckBy = a.AckBy.String()
@@ -165,7 +174,7 @@ type alertDetailDTO struct {
 
 func toAlertDetailDTO(d alerts.Detail) alertDetailDTO {
 	out := alertDetailDTO{
-		AlertDTO:         toAlertDTO(d.Alert, d.HostName, d.Suppression),
+		AlertDTO:         toAlertDTO(d.Alert, d.HostName, d.Suppression, d.NotSeenSince),
 		NotificationHold: d.NotificationHold,
 	}
 	out.Timeline = make([]alertTimelineEntryDTO, len(d.Timeline))
@@ -282,7 +291,7 @@ func registerAlertRoutes(hapi huma.API, deps Deps) {
 		out := &alertListOutput{}
 		out.Body.Alerts = make([]AlertDTO, len(list))
 		for i, v := range list {
-			out.Body.Alerts[i] = toAlertDTO(v.Alert, v.HostName, v.Suppression)
+			out.Body.Alerts[i] = toAlertDTO(v.Alert, v.HostName, v.Suppression, v.NotSeenSince)
 		}
 		out.Body.NextCursor = next
 		return out, nil

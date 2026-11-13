@@ -207,8 +207,9 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 }
 
 // presence reads the host's kind and its agent's presence (backlog 3.57).
-// The organization's absent threshold is read for a client with an agent
-// only — the one host it can matter to — so a server costs one statement
+// The organization's absent threshold is read, and the online window
+// (the unknown alert's grace) set, for a client with an agent only — the
+// one host either can matter to — so a server costs one statement
 // here, not two. GetOrgClientAbsentDays applies the default itself and
 // needs no organization scope, which this unscoped store does not have.
 func (s *EvalSQLStore) presence(ctx context.Context, q *gen.Queries, d Due) (HostPresence, error) {
@@ -231,6 +232,7 @@ func (s *EvalSQLStore) presence(ctx context.Context, q *gen.Queries, d Due) (Hos
 			return HostPresence{}, fmt.Errorf("get client absent days: %w", err)
 		}
 		p.AbsentAfter = time.Duration(days) * 24 * time.Hour
+		p.OnlineWindow = s.agentWindow
 	}
 	return p, nil
 }

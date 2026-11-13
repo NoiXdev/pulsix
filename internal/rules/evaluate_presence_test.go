@@ -256,3 +256,85 @@ func TestWindowRequestsFrozen(t *testing.T) {
 		t.Fatalf("window requests of an online client = %+v, want the rule's one", got)
 	}
 }
+
+// TestEvaluateWakesAnOnlineClientWhenItsUnknownGraceEnds (backlog 3.57,
+// the shutdown race): an online client's unknown roll-up opens a host
+// alert only once it has read unknown for the agents list's online window
+// (alerts.Reconcile, AlertInput.UnknownGrace) — by then a client that was
+// shutting down is frozen. The ticker must look again when that grace
+// ends, not on the five-minute silent heartbeat an all-unknown host
+// otherwise falls back to. The due time is only ever tightened: a
+// heartbeat that comes first stays.
+func TestEvaluateWakesAnOnlineClientWhenItsUnknownGraceEnds(t *testing.T) {
+	const window = 90 * time.Second
+	client := onClient(at(0))
+	client.OnlineWindow = window
+
+	// A 1-hour check last read before the online period began: stale at
+	// online start + 3 h = at(180).
+	silentPass := func(now time.Time, p rules.HostPresence) rules.Snapshot {
+		return rules.Snapshot{
+			Now:          now,
+			Tuples:       []rules.TupleSnapshot{snap(cpuT, 50, at(-1000), hour)},
+			Previous:     prev(was(cpuT, rules.StateUnknown, at(181))),
+			PreviousHost: &rules.HostState{State: rules.StateUnknown, Unknown: 1, Since: at(181), EvaluatedAt: at(181)},
+			Presence:     p,
+		}
+	}
+	silentResult := func(now time.Time, due time.Time) rules.Result {
+		return rules.Result{
+			States:  []rules.TupleState{{Tuple: cpuT, State: rules.StateUnknown, Since: at(181), LastValue: ptr(50.0), EvaluatedAt: now}},
+			Host:    rules.HostState{State: rules.StateUnknown, Unknown: 1, Since: at(181), EvaluatedAt: now},
+			NextDue: due,
+		}
+	}
+
+	cases := []struct {
+		name string
+		snap rules.Snapshot
+		want rules.Result
+	}{
+		{
+			// The pass that turns the roll-up unknown keeps its 15-second
+			// heartbeat: it comes before the grace's end.
+			name: "the pass that goes unknown keeps the heartbeat that comes first",
+			snap: rules.Snapshot{
+				Now:      at(181),
+				Tuples:   []rules.TupleSnapshot{snap(cpuT, 50, at(-1000), hour)},
+				Previous: prev(was(cpuT, rules.StateOK, at(-2000))),
+				Presence: client,
+			},
+			want: rules.Result{
+				States:  []rules.TupleState{{Tuple: cpuT, State: rules.StateUnknown, Since: at(181), LastValue: ptr(50.0), EvaluatedAt: at(181)}},
+				Changes: []rules.Change{{At: at(181), Tuple: cpuT, From: rules.StateOK, To: rules.StateUnknown, Value: ptr(50.0)}},
+				Host:    rules.HostState{State: rules.StateUnknown, Unknown: 1, Since: at(181), EvaluatedAt: at(181)},
+				NextDue: at(181).Add(15 * time.Second),
+			},
+		},
+		{
+			name: "a silent pass inside the grace is due when the grace ends, not on the silent heartbeat",
+			snap: silentPass(at(182), client),
+			want: silentResult(at(182), at(181).Add(window)),
+		},
+		{
+			name: "once the grace is over the silent heartbeat applies",
+			snap: silentPass(at(183), client),
+			want: silentResult(at(183), at(188)),
+		},
+		{
+			name: "a server has no grace and keeps the silent heartbeat",
+			snap: silentPass(at(182), rules.HostPresence{HasAgent: true, AgentOnline: true, AgentLastSeen: at(181)}),
+			want: silentResult(at(182), at(187)),
+		},
+		{
+			name: "a client without an agent has no grace and keeps the silent heartbeat",
+			snap: silentPass(at(182), rules.HostPresence{Client: true, OnlineWindow: window}),
+			want: silentResult(at(182), at(187)),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertResult(t, rules.Evaluate(tc.snap), tc.want)
+		})
+	}
+}

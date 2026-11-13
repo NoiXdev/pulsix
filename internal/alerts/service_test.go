@@ -72,6 +72,9 @@ type fakeStore struct {
 	// name could never actually have in Postgres but which lets most
 	// tests here ignore HostName entirely.
 	hostNames map[uuid.UUID]string
+	// agentContacts is keyed by host id, mirroring the same queries'
+	// join of host_agents (backlog 3.57) — absent reads as no agent.
+	agentContacts map[uuid.UUID]time.Time
 
 	events    map[uuid.UUID][]alerts.Event
 	eventsErr error
@@ -106,6 +109,8 @@ func newFakeStore() *fakeStore {
 		changes:   map[alerts.Subject][]alerts.StateChange{},
 		windows:   map[uuid.UUID][]maintenance.Occurrence{},
 		hostNames: map[uuid.UUID]string{},
+
+		agentContacts: map[uuid.UUID]time.Time{},
 	}
 }
 
@@ -136,7 +141,7 @@ func (f *fakeStore) GetAlert(_ context.Context, _, id uuid.UUID) (alerts.AlertWi
 	if !ok {
 		return alerts.AlertWithHost{}, alerts.ErrNotFound
 	}
-	return alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID]}, nil
+	return alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID], AgentLastContact: f.agentContacts[a.Subject.HostID]}, nil
 }
 
 // ListAlerts mirrors the real query's own contract closely enough that
@@ -180,7 +185,7 @@ func (f *fakeStore) ListAlerts(_ context.Context, _ uuid.UUID, filter alerts.Fil
 		if cursor != "" && !beforeKeyset(a, cursorAt, cursorID) {
 			continue
 		}
-		out = append(out, alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID]})
+		out = append(out, alerts.AlertWithHost{Alert: a, HostName: f.hostNames[a.Subject.HostID], AgentLastContact: f.agentContacts[a.Subject.HostID]})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].OpenedAt.Equal(out[j].OpenedAt) {

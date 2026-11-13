@@ -330,7 +330,8 @@ func (f *Follower) deliverEscalation(ctx context.Context, tx pgx.Tx, orgID uuid.
 		AlertID: d.chain.AlertID, HostID: d.alert.Subject.HostID, HostName: d.alert.HostName,
 		CheckKey: d.alert.Subject.CheckKey, Item: d.alert.Subject.Item, Metric: d.alert.Subject.Metric,
 		Severity: string(d.chain.Severity), Event: "escalated", At: now,
-		URL: base + "/alerts?host=" + d.alert.Subject.HostID.String(),
+		URL:          base + "/alerts?host=" + d.alert.Subject.HostID.String(),
+		NotSeenSince: alerts.NotSeenSince(d.alert),
 	}
 	ev := notify.Event{
 		Kind: notify.EventAlertBatch, At: now,

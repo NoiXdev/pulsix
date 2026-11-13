@@ -237,7 +237,7 @@ func (f *Follower) Tick(ctx context.Context, orgID uuid.UUID) error {
 	r := &resolution{f: f, tx: tx, orgID: orgID, now: now, routes: routes,
 		groups:  map[uuid.UUID][]uuid.UUID{},
 		windows: map[uuid.UUID][]maintenance.Occurrence{},
-		alerts:  map[uuid.UUID]alerts.Alert{},
+		alerts:  map[uuid.UUID]alerts.AlertWithHost{},
 		oncall:  map[uuid.UUID]uuid.UUID{},
 		gates:   map[uuid.UUID]bool{},
 	}
@@ -315,10 +315,15 @@ func (f *Follower) decide(ctx context.Context, tx pgx.Tx, r *resolution, b batch
 	if len(routed.channels) == 0 {
 		return f.record(ctx, tx, r, ev, StateDeferred)
 	}
+	a, err := r.alert(ctx, ev.AlertID)
+	if err != nil {
+		return err
+	}
 	b.add(routed.channels, ev.EventID, notify.AlertItem{
 		AlertID: ev.AlertID, HostID: ev.HostID, HostName: ev.HostName,
 		CheckKey: ev.CheckKey, Item: ev.Item, Metric: ev.Metric,
 		Severity: string(ev.Severity), Event: string(ev.Kind), At: ev.At,
+		NotSeenSince: alerts.NotSeenSince(a),
 	})
 	if err := f.claimBases(ctx, tx, r.orgID, ev.AlertID, routed.routeIDs, r.now); err != nil {
 		return err

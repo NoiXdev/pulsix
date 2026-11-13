@@ -186,6 +186,8 @@ type alertOut struct {
 	// is the other half of why nothing could catch a broken assignment:
 	// the field was not merely unasserted, it was not even decoded.
 	WasFlapping bool `json:"was_flapping"`
+	// NotSeenSince is the absent warning's agent last contact (3.57).
+	NotSeenSince *time.Time `json:"not_seen_since"`
 }
 
 type alertListOut struct {

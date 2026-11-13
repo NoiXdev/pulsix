@@ -38,6 +38,9 @@ type View struct {
 	Alert
 	HostName    string
 	Suppression Suppression
+	// NotSeenSince is NotSeenSince's answer for this alert: set on an
+	// open absent warning only (backlog 3.57).
+	NotSeenSince *time.Time
 }
 
 // Detail is View plus the alert's own timeline (timeline.go's
@@ -238,7 +241,7 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, f Filter, cursor st
 		if f.Muted != nil && *f.Muted != sup.Muted {
 			continue
 		}
-		out = append(out, View{Alert: a.Alert, HostName: a.HostName, Suppression: sup})
+		out = append(out, View{Alert: a.Alert, HostName: a.HostName, Suppression: sup, NotSeenSince: NotSeenSince(a)})
 	}
 	return out, next, nil
 }
@@ -284,7 +287,7 @@ func (s *Service) Get(ctx context.Context, orgID, id uuid.UUID) (Detail, error) 
 		}
 	}
 	return Detail{
-		View:     View{Alert: a.Alert, HostName: a.HostName, Suppression: sup},
+		View:     View{Alert: a.Alert, HostName: a.HostName, Suppression: sup, NotSeenSince: NotSeenSince(a)},
 		Timeline: mergeTimeline(events, changes), NotificationHold: hold,
 	}, nil
 }

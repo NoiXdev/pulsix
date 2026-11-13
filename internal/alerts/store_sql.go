@@ -335,7 +335,8 @@ func toAlertFromGetRow(r gen.GetAlertRow) AlertWithHost {
 
 			WasFlapping: r.WasFlapping,
 		},
-		HostName: r.HostName,
+		HostName:         r.HostName,
+		AgentLastContact: unlessEpoch(r.AgentLastContact),
 	}
 }
 
@@ -366,6 +367,17 @@ func toAlertFromListRow(r gen.ListAlertsRow) AlertWithHost {
 
 			WasFlapping: r.WasFlapping,
 		},
-		HostName: r.HostName,
+		HostName:         r.HostName,
+		AgentLastContact: unlessEpoch(r.AgentLastContact),
 	}
+}
+
+// unlessEpoch reads the 'epoch' GetAlert and ListAlerts substitute for a
+// host without an agent as the zero time — the same convention as
+// rules.sql's GetHostPresence (internal/rules' own unlessEpoch).
+func unlessEpoch(t time.Time) time.Time {
+	if t.Unix() == 0 {
+		return time.Time{}
+	}
+	return t
 }

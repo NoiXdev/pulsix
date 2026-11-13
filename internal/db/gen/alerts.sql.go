@@ -136,9 +136,11 @@ func (q *Queries) CloseForgottenAlerts(ctx context.Context, arg CloseForgottenAl
 
 const getAlert = `-- name: GetAlert :one
 
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
 WHERE a.org_id = $1 AND a.id = $2
 `
 
@@ -169,6 +171,7 @@ type GetAlertRow struct {
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	HostName             string             `json:"host_name"`
+	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
 
 // Task 6, spec docs/superpowers/specs/2026-10-06-v0.4a-alerts-design.md,
@@ -192,6 +195,13 @@ type GetAlertRow struct {
 // COALESCE is defensive, not load-bearing, the same posture
 // GetMaintenanceWindow already takes for a target that in its case
 // genuinely can be absent.
+//
+// agent_last_contact is the host's agent's last contact (backlog 3.57),
+// read here — at display and notification time, not stored on the alert —
+// for the absent warning's "not seen since …": last_seen, or the
+// registration when the agent has not touched since, the same COALESCE
+// rules.sql's GetHostPresence decides absence from. 'epoch' stands in
+// for a host without an agent, as it does there.
 func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow, error) {
 	row := q.db.QueryRow(ctx, getAlert, arg.OrgID, arg.ID)
 	var i GetAlertRow
@@ -217,6 +227,7 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow
 		&i.WasFlapping,
 		&i.SeverityChangedAt,
 		&i.HostName,
+		&i.AgentLastContact,
 	)
 	return i, err
 }
@@ -389,9 +400,11 @@ func (q *Queries) ListAlertEvents(ctx context.Context, arg ListAlertEventsParams
 }
 
 const listAlerts = `-- name: ListAlerts :many
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name,
+       COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
+LEFT JOIN host_agents ag ON ag.org_id = a.org_id AND ag.host_id = a.host_id
 WHERE a.org_id = $1
   AND ($2::boolean IS NULL
        OR ($2::boolean AND a.closed_at IS NULL)
@@ -449,6 +462,7 @@ type ListAlertsRow struct {
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
 	HostName             string             `json:"host_name"`
+	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
 
 // Service.List's own Filter, forwarded almost verbatim: each optional
@@ -488,6 +502,8 @@ type ListAlertsRow struct {
 // NULL now, where it once could not) — either way this ELSE 0 reads 0,
 // below every real severity, so neither case can ever read as covered even
 // without the explicit acknowledged_at IS NOT NULL alongside it.
+//
+// agent_last_contact is GetAlert's own (see there).
 // id breaks a tie between two alerts one Execute call opened at the
 // identical opened_at (review finding, Minor): without it, two runs of
 // this same query could disagree on which of the two comes first. It is
@@ -536,6 +552,7 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 			&i.WasFlapping,
 			&i.SeverityChangedAt,
 			&i.HostName,
+			&i.AgentLastContact,
 		); err != nil {
 			return nil, err
 		}

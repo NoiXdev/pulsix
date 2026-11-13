@@ -3311,6 +3311,11 @@ export interface components {
              * @description Absent for an unbounded snooze-until-change
              */
             muted_until?: string;
+            /**
+             * Format: date-time
+             * @description Set only on an open absent warning (scope host, severity warn): when the client's agent was last seen
+             */
+            not_seen_since?: string;
             /** Format: date-time */
             opened_at: string;
             /** @enum {string} */
@@ -3351,6 +3356,11 @@ export interface components {
              * @description Absent for an unbounded snooze-until-change
              */
             muted_until?: string;
+            /**
+             * Format: date-time
+             * @description Set only on an open absent warning (scope host, severity warn): when the client's agent was last seen
+             */
+            not_seen_since?: string;
             /** @enum {string} */
             notification_hold?: "deferred" | "suppressed";
             /** Format: date-time */

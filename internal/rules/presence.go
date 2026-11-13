@@ -40,6 +40,11 @@ type HostPresence struct {
 	// means the warning is off. Load fills it for a client with an agent
 	// only; nothing else reads it.
 	AbsentAfter time.Duration
+	// OnlineWindow is the agents list's online window (agents.StaleAfter,
+	// the window the store was built with). Load fills it for a client
+	// with an agent only: it is how long that client's unknown roll-up
+	// must stand before its host alert opens (unknownGrace).
+	OnlineWindow time.Duration
 }
 
 // frozen reports whether the evaluation must leave the host exactly as it
@@ -58,6 +63,32 @@ func (p HostPresence) stalenessAnchor() time.Time {
 		return time.Time{}
 	}
 	return p.AgentOnlineSince
+}
+
+// unknownGrace is how long the host's unknown roll-up must stand before
+// its host alert opens (AlertInput.UnknownGrace): the online window for a
+// client with an agent, zero for every other host.
+func (p HostPresence) unknownGrace() time.Duration {
+	if !p.Client || !p.HasAgent {
+		return 0
+	}
+	return p.OnlineWindow
+}
+
+// graceDue tightens due to the moment an unknown roll-up's grace ends, so
+// the ticker is back exactly when the host alert may open rather than on
+// the silent heartbeat. It only ever brings due forward: a grace that has
+// already ended, or ends after due, changes nothing — and a host with no
+// grace (a server) is never touched.
+func graceDue(host HostState, p HostPresence, now, due time.Time) time.Time {
+	grace := p.unknownGrace()
+	if grace <= 0 || host.State != StateUnknown {
+		return due
+	}
+	if end := host.Since.Add(grace); end.After(now) && end.Before(due) {
+		return end
+	}
+	return due
 }
 
 // absentDeadline is when a frozen client becomes absent, and whether the

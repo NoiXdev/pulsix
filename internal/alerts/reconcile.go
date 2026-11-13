@@ -161,22 +161,106 @@ func advance(at time.Time, ts rules.TupleState, existing Alert) []Action {
 // that is there"). That is a vanished subject, not a recovery, so it
 // closes `stale` for exactly the reason decision 5 gives: "closing those
 // as resolved would be a lie in the one table whose job is the record".
+//
+// Client hosts (backlog 3.57) put a second alert on the same subject: the
+// absent warning, severity warn, for a frozen client whose agent has not
+// been seen for the organization's threshold. Severity is the
+// discriminator — the host-scope alert is otherwise only ever unknown —
+// and the subject never holds both: hostWants decides which one (if any)
+// this evaluation wants, an open alert of the other kind is closed first,
+// and only then is the wanted one opened, so the one-open-per-subject
+// index never sees two. A server has no presence (never frozen, never
+// absent, no grace) and takes exactly the path it took before.
 func hostAction(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
 	sub := Subject{HostID: in.HostID, Scope: ScopeHost}
 	existing, found := bySubject[sub]
+	want := hostWants(in, found, existing)
 
-	if in.Host.State == rules.StateUnknown {
-		if found {
+	var out []Action
+	if found {
+		if existing.Severity == want {
 			return nil
 		}
-		return []Action{{Kind: ActionOpen, Subject: sub, At: in.Host.Since, Severity: rules.StateUnknown}}
+		out = append(out, Action{Kind: ActionClose, AlertID: existing.ID, At: in.At, Reason: hostCloseReason(in, existing)})
 	}
-	if !found {
-		return nil
+	switch want {
+	case rules.StateUnknown:
+		out = append(out, Action{Kind: ActionOpen, Subject: sub, At: in.Host.Since, Severity: rules.StateUnknown})
+	case rules.StateWarn:
+		out = append(out, Action{Kind: ActionOpen, Subject: sub, At: absentSince(in), Severity: rules.StateWarn})
 	}
-	reason := Resolved
-	if in.Host.State == "" {
-		reason = Stale
+	return out
+}
+
+// hostWants is the severity the host-scope alert should have after this
+// evaluation, or "" for none:
+//
+//   - A frozen client (spec item 1) never wants the unknown alert — its
+//     carried roll-up is not a verdict — and wants the absent warning
+//     exactly while it is absent (spec item 3).
+//   - Any other host wants the unknown alert while its roll-up reads
+//     unknown. A client with an agent (UnknownGrace > 0) waits out the
+//     grace from the roll-up's start first, so a client that is shutting
+//     down is frozen before its alert would open; one that already holds
+//     the unknown alert keeps it for as long as the roll-up stays unknown.
+func hostWants(in rules.AlertInput, found bool, existing Alert) rules.State {
+	if in.Frozen {
+		if in.Absent {
+			return rules.StateWarn
+		}
+		return ""
 	}
-	return []Action{{Kind: ActionClose, AlertID: existing.ID, At: in.At, Reason: reason}}
+	if in.Host.State != rules.StateUnknown {
+		return ""
+	}
+	if found && existing.Severity == rules.StateUnknown {
+		return rules.StateUnknown
+	}
+	if in.UnknownGrace > 0 && in.At.Before(in.Host.Since.Add(in.UnknownGrace)) {
+		return ""
+	}
+	return rules.StateUnknown
+}
+
+// hostCloseReason is why an open host-scope alert this evaluation no
+// longer wants closes.
+//
+//   - The unknown alert of a frozen client closes stale: the subject no
+//     longer applies (a server switched to a client while its agent was
+//     off, or a client that went off with its roll-up unknown) — nothing
+//     says it recovered.
+//   - The absent warning closes resolved only when the client is back: not
+//     frozen, and still a client with an agent (UnknownGrace > 0). While
+//     frozen it closes because the threshold was raised or the warning
+//     switched off, and on a host that is no longer a client with an
+//     agent because there is nothing left to be absent; neither is a
+//     return, so both are stale.
+//   - Anything else is the pre-3.57 rule: resolved, or stale for the zero
+//     roll-up of a host nothing judges any more.
+func hostCloseReason(in rules.AlertInput, existing Alert) CloseReason {
+	if existing.Severity == rules.StateWarn {
+		if !in.Frozen && in.UnknownGrace > 0 {
+			return Resolved
+		}
+		return Stale
+	}
+	if in.Frozen || in.Host.State == "" {
+		return Stale
+	}
+	return Resolved
+}
+
+// absentSince is when the absent warning's state began: the moment the
+// agent's last contact became AbsentAfter old, which is what a tuple
+// alert's open uses its state's Since for — a late tick does not move the
+// alert's history forward. Never later than this evaluation, and in.At
+// itself when either half is missing.
+func absentSince(in rules.AlertInput) time.Time {
+	if in.AgentLastSeen.IsZero() || in.AbsentAfter <= 0 {
+		return in.At
+	}
+	if since := in.AgentLastSeen.Add(in.AbsentAfter); since.Before(in.At) {
+		return since
+	}
+	return in.At
 }

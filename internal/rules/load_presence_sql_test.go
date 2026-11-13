@@ -83,7 +83,8 @@ func timeOf(p *time.Time) time.Time {
 // kind, whether it has an agent, the agents list's own online verdict
 // (last_seen within the window the store was built with), the agent's
 // last contact and the start of its online period, and — for a client with an agent —
-// the organization's absent threshold with the default applied.
+// the organization's absent threshold with the default applied and the
+// online window the store was built with (the unknown alert's grace).
 func TestLoadFillsTheHostsPresence(t *testing.T) {
 	d := testdb.Open(t)
 
@@ -114,6 +115,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		want := rules.HostPresence{
 			Client: true, HasAgent: true, AgentOnline: true,
 			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 7 * 24 * time.Hour,
+			OnlineWindow: testAgentWindow,
 		}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v", got, want)
@@ -128,6 +130,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		want := rules.HostPresence{
 			Client: true, HasAgent: true, AgentOnline: false,
 			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 14 * 24 * time.Hour,
+			OnlineWindow: testAgentWindow,
 		}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v", got, want)
@@ -140,7 +143,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		setKind(t, d, host, "client")
 		setAbsentDays(t, d, org, 0)
 		_, _, created := insertAgent(t, d, org, host, agentRow{})
-		want := rules.HostPresence{Client: true, HasAgent: true, AgentLastSeen: timeOf(created)}
+		want := rules.HostPresence{Client: true, HasAgent: true, AgentLastSeen: timeOf(created), OnlineWindow: testAgentWindow}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v (the warning off, the online start unknown)", got, want)
 		}
@@ -159,7 +162,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 func equalPresence(a, b rules.HostPresence) bool {
 	return a.Client == b.Client && a.HasAgent == b.HasAgent && a.AgentOnline == b.AgentOnline &&
 		a.AgentLastSeen.Equal(b.AgentLastSeen) && a.AgentOnlineSince.Equal(b.AgentOnlineSince) &&
-		a.AbsentAfter == b.AbsentAfter
+		a.AbsentAfter == b.AbsentAfter && a.OnlineWindow == b.OnlineWindow
 }
 
 // TestApplyOfAFrozenResultWritesOnlyTheCursor: a frozen evaluation keeps

@@ -113,6 +113,32 @@ type Alert struct {
 type AlertWithHost struct {
 	Alert
 	HostName string
+	// AgentLastContact is the host's agent's last contact as read now
+	// (last_seen, or its registration when it has not touched since),
+	// zero for a host without an agent. Read for NotSeenSince — the
+	// absent warning stores no date of its own (backlog 3.57).
+	AgentLastContact time.Time
+}
+
+// IsAbsentWarning reports whether a is a client's absent warning (backlog
+// 3.57): the host-scope alert at severity warn. The host-scope subject is
+// otherwise only ever unknown (Reconcile's hostAction), so severity is
+// the whole discriminator; no column marks it.
+func IsAbsentWarning(a Alert) bool {
+	return a.Subject.Scope == ScopeHost && a.Severity == rules.StateWarn
+}
+
+// NotSeenSince is the "not seen since …" moment of an open absent
+// warning: its host's agent's last contact. Nil for every other alert,
+// for a host without an agent, and for a closed warning — by then the
+// agent's last contact has moved on (the client came back), so it no
+// longer says when the client went away.
+func NotSeenSince(a AlertWithHost) *time.Time {
+	if !IsAbsentWarning(a.Alert) || a.ClosedAt != nil || a.AgentLastContact.IsZero() {
+		return nil
+	}
+	at := a.AgentLastContact
+	return &at
 }
 
 // ActionKind is what Reconcile decided must happen to one alert.

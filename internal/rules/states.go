@@ -145,6 +145,16 @@ type AlertInput struct {
 	// verdict was taken against (HostPresence.AbsentAfter; zero = off),
 	// for the warning's "not seen for N days" cause.
 	AbsentAfter time.Duration
+	// UnknownGrace is how long the roll-up must have read unknown (since
+	// Host.Since) before the host alert opens. It is the agents list's
+	// online window for a client with an agent, and zero — at once, as
+	// before client hosts existed — for every other host. A client that
+	// is shutting down can go unknown before its agent reads offline (a
+	// short-interval check goes stale, a ping of the notebook fails); by
+	// the time the grace has passed it is frozen instead, and no alert or
+	// notification is raised for an ordinary power-off. Positive exactly
+	// for a client with an agent, which is also what Reconcile reads it as.
+	UnknownGrace time.Duration
 }
 
 // FleetFilter narrows HostStates. The zero FleetFilter matches every host

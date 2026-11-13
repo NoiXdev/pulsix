@@ -224,16 +224,33 @@ func digestTruncationNote(d DigestSummary) string {
 func alertItemsText(items []AlertItem) string {
 	lines := make([]string, len(items))
 	for i, it := range items {
-		what := oneLine(it.CheckKey)
-		if it.Item != "" {
-			what += "/" + agentText(it.Item)
-		}
-		if it.Metric != "" {
-			what += " " + oneLine(it.Metric)
-		}
-		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", oneLine(it.Severity), oneLine(it.HostName), oneLine(it.Event), what)
+		lines[i] = fmt.Sprintf("%-8s %-20s %-8s %s", oneLine(it.Severity), oneLine(it.HostName), oneLine(it.Event), alertSubjectText(it))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// alertSubjectText is the last column of an alert's line: what the alert
+// is about. A tuple alert names its check, item and metric. A host-scope
+// alert has none (it carries no check key — the alerts table's own
+// CHECK), and the unknown one says nothing more, as it always has; the
+// client's absent warning (backlog 3.57: host scope at severity warn)
+// says that the client has not been seen, and since when while it is
+// open.
+func alertSubjectText(it AlertItem) string {
+	if it.CheckKey == "" && it.Severity == "warn" {
+		if it.NotSeenSince == nil {
+			return "not seen"
+		}
+		return "not seen since " + it.NotSeenSince.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	what := oneLine(it.CheckKey)
+	if it.Item != "" {
+		what += "/" + agentText(it.Item)
+	}
+	if it.Metric != "" {
+		what += " " + oneLine(it.Metric)
+	}
+	return what
 }
 
 // agentText is oneLine for a string a monitored host's agent chose — an
