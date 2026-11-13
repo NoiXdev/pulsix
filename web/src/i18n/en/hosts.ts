@@ -6,6 +6,16 @@
  * keys. Statuses and states the API sends are mapped to a label.
  */
 export const enHosts = {
+  // Backlog 3.57: a client whose agent is offline is "off" — frozen, not
+  // judged — wherever a host's state is shown.
+  presence: {
+    off: 'Off',
+    client: 'Client',
+    lastSeen: (ago: string) => `last seen ${ago}`,
+    lastState: (state: string) => `last state: ${state}`,
+    hostOff: 'This client is off: its agent is offline, so Pulsix does not judge it until the agent is back. What is shown is its state from before.',
+    checksFrozen: 'Not judged while the client is off: the readings and verdicts below are from before it went off.',
+  },
   scope: {
     thisHost: 'This host',
     monitoringGroup: 'Monitoring group',
@@ -80,6 +90,11 @@ export const enHosts = {
     jumpDirect: 'Direct, no jump host',
     jumpCreate: 'Create jump host…',
     tags: 'Tags',
+    kind: 'Kind',
+    kindServer: 'Server',
+    kindClient: 'Client',
+    kindHint: 'A server is expected to be on. A client (a notebook, a desktop) may be switched off: while its agent is offline it is not judged and raises no host alert.',
+    kindClientNoAgent: 'A client without an agent is treated like a server: nothing tells Pulsix it is switched off.',
     managedHint: 'Playbooks and ad-hoc commands run on this host over SSH.',
     monitoredHint: 'Checks and metrics are collected from this host.',
     create: 'Create host',

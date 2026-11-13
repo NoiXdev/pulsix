@@ -29,6 +29,8 @@ export type UiPermission =
   | 'channels.write'
   | 'maintenance.write'
   | 'org.manage'
+  | 'org.settings.read'
+  | 'org.settings.write'
   | 'members.manage';
 
 /** Minimum role per permission, exactly internal/tenancy/roles.go's matrix:
@@ -62,6 +64,11 @@ const MINIMUM_ROLE: Record<UiPermission, Role> = {
   'maintenance.write': 'operator',
   // Renaming the organization (internal/tenancy/roles.go PermOrgManage).
   'org.manage': 'admin',
+  // The organization's settings (PermOrgSettingsRead/Write): every member
+  // reads them, admins change them — today the monitoring setting
+  // (backlog 3.57).
+  'org.settings.read': 'viewer',
+  'org.settings.write': 'admin',
   // Changing a member's role or removing a member (PermMembersManage). The
   // owner rules on top (only an owner touches an owner, the last owner
   // stays) are the server's.

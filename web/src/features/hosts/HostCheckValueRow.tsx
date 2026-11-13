@@ -25,6 +25,7 @@ export function HostCheckValueRow({
   org,
   hostId,
   canWrite,
+  frozen = false,
   check,
   value,
   kinds,
@@ -41,6 +42,10 @@ export function HostCheckValueRow({
    * its origin are as much a `checks.read` fact as the state Pill beside
    * them. */
   canWrite: boolean;
+  /** The host is a client whose agent is offline (backlog 3.57): its
+   * verdicts are kept, not judged, so their age is no news and its items
+   * are quiet rather than gone — no stale-verdict marker, no Forget. */
+  frozen?: boolean;
   check: HostCheck;
   value: HostCheckValue;
   /** What the check plugins' descriptors say about graphs (metricKinds). */
@@ -79,7 +84,7 @@ export function HostCheckValueRow({
   // from its first row only (offersForget). Whole-host rows (item '') never
   // carry it — the automatic expiry handles a removed check's values — and
   // items the check no longer asks for never reach this card.
-  const forgettable = offersForget(check, value, canWrite);
+  const forgettable = !frozen && offersForget(check, value, canWrite);
 
   // The entries GET /hosts/{id}/effective-rules returns for exactly this
   // tuple — up to two (warn and crit are resolved independently). Every
@@ -140,7 +145,7 @@ export function HostCheckValueRow({
             is lost by hiding them: an ignored item is not being judged,
             so how old its last verdict is, and how often it used to
             change, are both answers to a question nobody is asking. */}
-        {!value.ignored && value.state !== null && value.state_stale && (
+        {!value.ignored && !frozen && value.state !== null && value.state_stale && (
           <span title={value.evaluated_at ? t.hosts.value.judged(seenLabel(value.evaluated_at, new Date(), t)) : undefined}>
             <Pill tone="warn">{t.hosts.value.staleVerdict}</Pill>
           </span>

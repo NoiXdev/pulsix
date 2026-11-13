@@ -55,6 +55,10 @@ export interface AlertRowAlert {
   muted: boolean;
   muteReason: AlertMuteReason | '';
   mutedUntil: string | null;
+
+  /** Backlog 3.57: when the client's agent was last seen, set by the server
+   * only on an open absent warning (scope host, severity warn). */
+  notSeenSince: string | null;
 }
 
 /** alertToRowAlert flattens one Alert (the wire DTO) into the camelCase
@@ -85,6 +89,7 @@ export function alertToRowAlert(a: Alert): AlertRowAlert {
     muted: a.muted,
     muteReason: a.mute_reason ?? '',
     mutedUntil: a.muted_until ?? null,
+    notSeenSince: a.not_seen_since ?? null,
   };
 }
 
@@ -127,9 +132,18 @@ export function isAckCovering(a: AlertRowAlert): boolean {
  * own CHECK forbids it — so it reads as "Host" rather than an empty
  * string; a tuple-scope alert names its check, then its item and metric
  * when they are not empty (a whole-host metric has no item name, v0.3b-3's
- * own "items with an empty name are not rows at all"). */
-export function subjectLabel(a: AlertRowAlert, t: Messages): string {
-  if (a.scope === 'host') return t.alerts.row.subjectHost;
+ * own "items with an empty name are not rows at all").
+ *
+ * A host-scope alert with severity warn is the absent warning (backlog
+ * 3.57): a client host not seen for days. It says since when, from the
+ * server's own `notSeenSince` (set only while it is open); without that it
+ * says only "Not seen" — no date is worked out from anything else. */
+export function subjectLabel(a: AlertRowAlert, t: Messages, fmt: Format): string {
+  if (a.scope === 'host') {
+    if (a.severity !== 'warn') return t.alerts.row.subjectHost;
+    if (a.notSeenSince) return t.alerts.row.subjectNotSeenSince(fmt.dateTime(a.notSeenSince, { dateStyle: 'medium', timeStyle: 'short' }));
+    return t.alerts.row.subjectNotSeen;
+  }
   return [a.checkKey, a.item, a.metric].filter((p) => p !== '').join(' · ');
 }
 

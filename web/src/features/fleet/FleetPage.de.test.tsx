@@ -48,4 +48,26 @@ describe('FleetPage in German', () => {
     );
     expect(screen.getByText('Keine Hosts in dieser Ansicht.')).toBeInTheDocument();
   });
+  it('says Aus for an offline client and when it was last seen', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org,
+      'GET /api/v1/orgs/acme/zones': { zones: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/fleet': {
+        hosts: [{ host_id: 'h1', name: 'laptop-1', zone_id: 'z1', state: 'crit', crit: 1, warn: 0, unknown: 0, all_ignored: false, kind: 'client' }],
+        totals: { crit: 1, warn: 0, unknown: 0, ok: 0, no_data: 0, all_ignored: 0 },
+      },
+      'GET /api/v1/orgs/acme/agents': {
+        agents: [{
+          host_id: 'h1', host_name: 'laptop-1', agent_name: 'laptop-1', status: 'offline', last_seen: new Date(Date.now() - 3 * 3600_000).toISOString(),
+          created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null, version_status: 'current',
+        }],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Aus')).toBeInTheDocument();
+    expect(screen.getByText('zuletzt gesehen vor 3 Std.')).toBeInTheDocument();
+    expect(screen.getByTitle('letzter Zustand: kritisch')).toBeInTheDocument();
+  });
 });

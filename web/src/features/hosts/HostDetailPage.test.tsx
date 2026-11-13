@@ -3,7 +3,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient } from '@tanstack/react-query';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
-import { alertBody, check, HOST, hostRoutes, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
+import { agentBody, alertBody, check, HOST, hostRoutes, orgBody, reading, renderAt } from '../../test/hostDetail.tsx';
 import { clippedElements } from '../../test/clipped.ts';
 import { HostDetailPage } from './HostDetailPage.tsx';
 import { acceptConfirm } from '../../test/confirmDialog.ts';
@@ -383,5 +383,76 @@ describe('HostDetailPage', () => {
     renderPage();
 
     expect(await screen.findByText('Not found')).toBeInTheDocument();
+  });
+  // Backlog 3.57: a client whose agent is offline is frozen by the manager.
+  // The page says it is off and when its agent was last seen, keeps its last
+  // state readable but muted, and the checks card does not call every
+  // verdict stale or offer to forget items that are only quiet because the
+  // client is off.
+  describe('client hosts', () => {
+    const threeHoursAgo = () => new Date(Date.now() - 3 * 3600_000).toISOString();
+    const FROZEN_CHECKS = {
+      host_id: 'h1',
+      monitored: true,
+      checks: [
+        check('cpu', 'cpu', [reading('cpu.used_pct', 97, { state: 'crit', stale: true, state_stale: true })]),
+        check('disk', 'disk', [reading('used_percent', 40, { item: '/data', stale: true, state_stale: true })]),
+      ],
+    };
+    function routes(kind: 'server' | 'client', status: 'online' | 'offline') {
+      return hostRoutes(
+        { host: { monitored: true, kind } },
+        {
+          'GET /api/v1/orgs/acme/hosts/h1/checks': FROZEN_CHECKS,
+          'GET /api/v1/orgs/acme/hosts/h1/agent': agentBody(status, status === 'online' ? new Date().toISOString() : threeHoursAgo()),
+          'GET /api/v1/orgs/acme/alerts': { alerts: [alertBody('a1', 'warn'), alertBody('a2', 'warn')], next_cursor: '' },
+          'GET /api/v1/orgs/acme/hosts/h1/metrics': { points: [] },
+        },
+      );
+    }
+
+    it('says an offline client is off, when it was last seen, and its last state muted', async () => {
+      mockApi(routes('client', 'offline'));
+      renderPage();
+
+      expect(await screen.findByText('Off')).toBeInTheDocument();
+      expect(screen.getByText('last seen 3 h ago')).toBeInTheDocument();
+      expect(await screen.findByText('last state: 2 warnings')).toBeInTheDocument();
+      expect(screen.queryByText('2 warnings')).not.toBeInTheDocument();
+      expect(screen.getByText(/This client is off/)).toBeInTheDocument();
+    });
+
+    it('does not call a frozen client\'s verdicts stale, mutes its tiles and offers no Forget', async () => {
+      mockApi(routes('client', 'offline'));
+      renderPage();
+
+      expect(await screen.findByText(/Not judged while the client is off/)).toBeInTheDocument();
+      expect(screen.queryByText('stale verdict')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Forget/ })).not.toBeInTheDocument();
+      await waitFor(() => expect(document.querySelector('[data-tile]')).not.toBeNull());
+      for (const tile of document.querySelectorAll('[data-tile]')) expect(tile).toHaveAttribute('data-tone', 'unknown');
+    });
+
+    it('tags an online client and judges it like a server', async () => {
+      mockApi(routes('client', 'online'));
+      renderPage();
+
+      expect(await screen.findByText('Client')).toBeInTheDocument();
+      expect(screen.queryByText('Off')).not.toBeInTheDocument();
+      expect(await screen.findByText('2 warnings')).toBeInTheDocument();
+      expect(screen.getAllByText('stale verdict').length).toBeGreaterThan(0);
+      expect(screen.queryByText(/Not judged while the client is off/)).not.toBeInTheDocument();
+    });
+
+    it('leaves a server with an offline agent as it was', async () => {
+      mockApi(routes('server', 'offline'));
+      renderPage();
+
+      expect(await screen.findByText('2 warnings')).toBeInTheDocument();
+      expect(screen.queryByText('Off')).not.toBeInTheDocument();
+      expect(screen.queryByText('Client')).not.toBeInTheDocument();
+      expect(screen.getAllByText('stale verdict').length).toBeGreaterThan(0);
+      expect(screen.getByRole('button', { name: 'Forget disk /data' })).toBeInTheDocument();
+    });
   });
 });

@@ -40,6 +40,8 @@ export const deAlerts: Messages['alerts'] = {
     open: 'Offen',
     closed: (reason: string) => (reason === '' ? 'Geschlossen' : `Geschlossen · ${reason}`),
     subjectHost: 'Host',
+    subjectNotSeenSince: (when: string) => `Seit ${when} nicht gesehen`,
+    subjectNotSeen: 'Nicht gesehen',
     flapping: 'instabil',
     flapped: 'war instabil',
     flappingTitle:

@@ -59,4 +59,22 @@ describe('HostsListPage in German', () => {
 
     expect(await screen.findByText('1 Host')).toBeInTheDocument();
   });
+  it('says Aus and when an offline client was last seen, and tags an online one', async () => {
+    const agent = (hostId: string, status: 'online' | 'offline', lastSeen: string) => ({
+      host_id: hostId, host_name: hostId, agent_name: hostId, status, last_seen: lastSeen, created_at: '2026-01-01T00:00:00Z',
+      secret_names: null, secrets_state: null, version_status: 'current',
+    });
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts': { hosts: [{ ...host('h1', 'laptop-1'), kind: 'client' }, { ...host('h2', 'laptop-2'), kind: 'client' }] },
+      'GET /api/v1/orgs/acme/zones': ZONES,
+      'GET /api/v1/orgs/acme/agents': {
+        agents: [agent('h1', 'offline', new Date(Date.now() - 3 * 3600_000).toISOString()), agent('h2', 'online', new Date().toISOString())],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByText('Aus')).toBeInTheDocument();
+    expect(screen.getByText('zuletzt gesehen vor 3 Std.')).toBeInTheDocument();
+    expect(screen.getByText('Client')).toBeInTheDocument();
+  });
 });

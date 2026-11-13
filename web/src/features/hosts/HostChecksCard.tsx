@@ -17,6 +17,11 @@ export interface HostChecksCardProps {
   /** `checks.write` — an operator's; it offers the per-value item
    * decisions (the way to the editor is ManageChecksLink's). */
   canWrite: boolean;
+  /** A client whose agent is offline (backlog 3.57): the manager keeps its
+   * verdicts without judging them, so every one of them would read as a
+   * stale verdict and every item as forgettable. The card says why instead,
+   * and the rows leave both out. */
+  frozen?: boolean;
 }
 
 /**
@@ -56,7 +61,7 @@ export interface HostChecksCardProps {
  *    clock that disagrees with the manager's, which marks every reading
  *    stale for ever while the agent is healthy (see clockSkewLabel).
  */
-export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCardProps) {
+export function HostChecksCard({ org, hostId, canRead, canWrite, frozen = false }: HostChecksCardProps) {
   const t = useT();
   const query = useHostChecks(org, hostId, canRead);
   // One graph open at a time: these are the only reads on this page that
@@ -110,6 +115,11 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
               {t.hosts.checks.notMonitored}
             </p>
           )}
+          {monitored && frozen && (
+            <p className="mb-3 text-xs text-muted-foreground">
+              {t.hosts.presence.checksFrozen}
+            </p>
+          )}
           {skew && (
             <p className="mb-3 text-xs text-[var(--px-warn)]">
               {t.hosts.checks.clockSkew(skew)}
@@ -139,6 +149,7 @@ export function HostChecksCard({ org, hostId, canRead, canWrite }: HostChecksCar
                         org={org}
                         hostId={hostId}
                         canWrite={canWrite}
+                        frozen={frozen}
                         check={c}
                         value={v}
                         kinds={kinds}

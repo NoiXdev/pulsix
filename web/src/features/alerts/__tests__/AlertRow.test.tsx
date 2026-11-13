@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { en } from '../../../i18n/en/index.ts';
+import { de } from '../../../i18n/de/index.ts';
 import { formatter } from '../../../i18n/format.ts';
 import { AlertRow } from '../AlertRow.tsx';
 import { alertToRowAlert, isAckCovering, muteLabel, severityRank, subjectLabel, type AlertRowAlert } from '../alertRow.ts';
@@ -30,6 +31,7 @@ const open: AlertRowAlert = {
   muted: false,
   muteReason: '',
   mutedUntil: null,
+  notSeenSince: null,
 };
 
 describe('AlertRow', () => {
@@ -305,15 +307,54 @@ describe('alertRow pure helpers', () => {
   });
 
   it('subjectLabel names a host-scope alert "Host", carrying no check/item/metric', () => {
-    expect(subjectLabel({ ...open, scope: 'host', checkKey: '', item: '', metric: '' }, en)).toBe('Host');
+    expect(subjectLabel({ ...open, scope: 'host', severity: 'unknown', checkKey: '', item: '', metric: '' }, en, formatter('en'))).toBe('Host');
   });
 
   it('subjectLabel joins check, item and metric for a tuple-scope alert', () => {
-    expect(subjectLabel(open, en)).toBe('disk · /var · use_pct');
+    expect(subjectLabel(open, en, formatter('en'))).toBe('disk · /var · use_pct');
   });
 
   it('subjectLabel skips an empty item (a whole-host metric)', () => {
-    expect(subjectLabel({ ...open, item: '' }, en)).toBe('disk · use_pct');
+    expect(subjectLabel({ ...open, item: '' }, en, formatter('en'))).toBe('disk · use_pct');
+  });
+
+  // Backlog 3.57: a host-scope alert with severity warn is the absent
+  // warning — a client not seen for days — not the unknown host alert. It
+  // says since when, from the server's own not_seen_since; a closed one (or
+  // one without the field) says only that it was not seen, never a date
+  // worked out from anything else.
+  describe('the absent warning', () => {
+    const absent: AlertRowAlert = { ...open, scope: 'host', severity: 'warn', peakSeverity: 'warn', checkKey: '', item: '', metric: '', notSeenSince: '2026-10-29T06:42:00Z' };
+    const when = (locale: 'en' | 'de') => formatter(locale).dateTime('2026-10-29T06:42:00Z', { dateStyle: 'medium', timeStyle: 'short' });
+
+    it('reads "Not seen since <time>" while open', () => {
+      expect(subjectLabel(absent, en, formatter('en'))).toBe(`Not seen since ${when('en')}`);
+      expect(subjectLabel(absent, de, formatter('de'))).toBe(`Seit ${when('de')} nicht gesehen`);
+    });
+
+    it('reads "Not seen" without a time', () => {
+      const closed = { ...absent, closedAt: '2026-11-01T00:00:00Z', closedReason: 'resolved' as const, notSeenSince: null };
+      expect(subjectLabel(closed, en, formatter('en'))).toBe('Not seen');
+      expect(subjectLabel(closed, de, formatter('de'))).toBe('Nicht gesehen');
+    });
+
+    it('leaves the unknown host alert as "Host"', () => {
+      expect(subjectLabel({ ...absent, severity: 'unknown', peakSeverity: 'unknown', notSeenSince: null }, en, formatter('en'))).toBe('Host');
+    });
+
+    it('is what the row shows under the host name', () => {
+      render(<AlertRow alert={absent} />);
+      expect(screen.getByTestId('alert-host')).toHaveTextContent(`Not seen since ${when('en')}`);
+    });
+
+    it('alertToRowAlert carries not_seen_since, and null when it is absent', () => {
+      const dto: Alert = {
+        id: 'a1', host_id: 'h1', host_name: 'laptop-1', scope: 'host', opened_at: '2026-11-12T00:00:00Z', severity: 'warn', peak_severity: 'warn',
+        snooze_until_change: false, was_flapping: false, muted: false, not_seen_since: '2026-10-29T06:42:00Z',
+      };
+      expect(alertToRowAlert(dto).notSeenSince).toBe('2026-10-29T06:42:00Z');
+      expect(alertToRowAlert({ ...dto, not_seen_since: undefined }).notSeenSince).toBeNull();
+    });
   });
 
   it('muteLabel is null when the alert is not muted', () => {

@@ -222,4 +222,59 @@ describe('FleetPage', () => {
     expect(await screen.findByText(/visible to members/)).toBeInTheDocument();
     expect(fleetAsked).toBe(false);
   });
+  // Backlog 3.57: a client whose agent is offline is frozen, so its roll-up
+  // is not current. The state cell says "Off" in the neutral tone, the last
+  // state stays readable but muted, and the since column says when the
+  // agent was last seen. A server whose agent is offline is shown as before.
+  describe('client hosts', () => {
+    const agent = (hostId: string, status: 'online' | 'offline', lastSeen: string) => ({
+      host_id: hostId, host_name: hostId, agent_name: hostId, status, last_seen: lastSeen, created_at: '2026-01-01T00:00:00Z',
+      secret_names: null, secrets_state: null, version_status: 'current',
+    });
+    const threeHoursAgo = () => new Date(Date.now() - 3 * 3600_000).toISOString();
+    function routes() {
+      return {
+        'GET /api/v1/orgs/acme': org('viewer'),
+        'GET /api/v1/orgs/acme/zones': ZONES,
+        'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+        'GET /api/v1/orgs/acme/fleet': {
+          hosts: [
+            host({ host_id: 'h-off', name: 'laptop-1', state: 'crit', crit: 2, kind: 'client' }),
+            host({ host_id: 'h-srv', name: 'web-1', state: 'warn', warn: 1, kind: 'server' }),
+            host({ host_id: 'h-on', name: 'laptop-2', state: 'ok', kind: 'client' }),
+          ],
+          totals: { crit: 1, warn: 1, unknown: 0, ok: 1, no_data: 0, all_ignored: 0 },
+        },
+        'GET /api/v1/orgs/acme/agents': {
+          agents: [agent('h-off', 'offline', threeHoursAgo()), agent('h-srv', 'offline', threeHoursAgo()), agent('h-on', 'online', new Date().toISOString())],
+        },
+      };
+    }
+    const row = (name: string) => screen.getByRole('link', { name });
+
+    it('shows an offline client as Off, its last state muted, and when it was last seen', async () => {
+      mockApi(routes());
+      renderPage();
+      await screen.findByRole('link', { name: 'laptop-1' });
+
+      await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
+      expect(within(row('laptop-1')).queryByText('crit')).not.toBeInTheDocument();
+      expect(within(row('laptop-1')).getByTitle('last state: crit')).toBeInTheDocument();
+      expect(within(row('laptop-1')).getByText('last seen 3 h ago')).toBeInTheDocument();
+    });
+
+    it('leaves a server with an offline agent alone and tags an online client', async () => {
+      mockApi(routes());
+      renderPage();
+      await screen.findByRole('link', { name: 'laptop-1' });
+      await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
+
+      expect(within(row('web-1')).getByText('warn')).toBeInTheDocument();
+      expect(within(row('web-1')).queryByText('Off')).not.toBeInTheDocument();
+      expect(within(row('web-1')).queryByText('Client')).not.toBeInTheDocument();
+      expect(within(row('laptop-2')).getByText('ok')).toBeInTheDocument();
+      expect(within(row('laptop-2')).getByText('Client')).toBeInTheDocument();
+      expect(within(row('laptop-2')).queryByText('Off')).not.toBeInTheDocument();
+    });
+  });
 });

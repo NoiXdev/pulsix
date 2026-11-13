@@ -84,7 +84,7 @@ export function AlertRow({ alert, canWrite = false, onAcknowledge, onUnacknowled
       </span>
       <span className="flex min-w-0 flex-col" title={alert.hostId} data-testid="alert-host">
         <span className="truncate text-[13px] font-medium">{alert.hostName}</span>
-        <span className="truncate text-[11px] text-muted-foreground">{subjectLabel(alert, t)}</span>
+        <span className="truncate text-[11px] text-muted-foreground">{subjectLabel(alert, t, fmt)}</span>
       </span>
       <span data-testid="alert-peak">
         <Pill tone={SEVERITY_TONE[alert.peakSeverity] ?? 'unknown'}>{t.alerts.severity[alert.peakSeverity]}</Pill>

@@ -31,6 +31,7 @@ export const HOST = {
   created_at: '2026-01-01T00:00:00Z',
   last_seen_at: '2026-03-01T00:00:00Z',
   facts: { os: 'linux', os_version: 'debian 13' } as Record<string, unknown>,
+  kind: 'server' as 'server' | 'client',
 };
 
 export type HostFixture = typeof HOST;
@@ -59,6 +60,16 @@ export function check(key: string, plugin: string, values: unknown[], over: Reco
     source: 'org',
     values,
     ...over,
+  };
+}
+
+/** An agent as GET /hosts/{id}/agent returns it. */
+export function agentBody(status: 'online' | 'offline', lastSeen: string) {
+  return {
+    agent: {
+      agent_name: 'a', host_id: 'h1', host_name: 'web-04.fra', status, last_seen: lastSeen, version: '1.0.0', version_status: 'current',
+      created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null,
+    },
   };
 }
 

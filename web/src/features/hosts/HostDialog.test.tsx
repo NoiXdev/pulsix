@@ -379,4 +379,114 @@ describe('HostDialog', () => {
     await user.click(screen.getByLabelText('Zone'));
     expect(screen.getByRole('option', { name: /New zone/ })).toBeInTheDocument();
   });
+  // Backlog 3.57: a host is a server or a client. New hosts are servers
+  // unless the form says otherwise; an edit sends the kind only when it
+  // changed. A client without an agent is judged like a server, and the
+  // form says so as soon as Client is chosen for such a host.
+  describe('kind', () => {
+    const NO_AGENT_HINT = 'A client without an agent is treated like a server: nothing tells Pulsix it is switched off.';
+    const AGENT = {
+      agent: {
+        agent_name: 'a', host_id: 'h1', host_name: 'web-04.fra', status: 'online', last_seen: '2026-11-13T10:00:00Z', version_status: 'current',
+        created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null,
+      },
+    };
+
+    it('creates a server by default', async () => {
+      const user = userEvent.setup();
+      let body: unknown;
+      mockApi({
+        ...baseRoutes(),
+        'POST /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+          body = req.body;
+          return { host: HOST };
+        },
+      });
+      renderDialog();
+
+      await user.type(await screen.findByLabelText('Name'), 'web-09.fra');
+      await pickOption(screen, 'Zone', { value: 'z1' });
+      expect(screen.getByLabelText('Kind')).toHaveValue('Server');
+      await user.click(screen.getByRole('button', { name: 'Create host' }));
+
+      await waitFor(() => expect(body).toMatchObject({ kind: 'server' }));
+    });
+
+    it('creates a client, and says a client without an agent is judged like a server', async () => {
+      const user = userEvent.setup();
+      let body: unknown;
+      mockApi({
+        ...baseRoutes(),
+        'POST /api/v1/orgs/acme/hosts': (req: MockRequest) => {
+          body = req.body;
+          return { host: { ...HOST, kind: 'client' } };
+        },
+      });
+      renderDialog();
+
+      await user.type(await screen.findByLabelText('Name'), 'laptop-1');
+      await pickOption(screen, 'Zone', { value: 'z1' });
+      expect(screen.queryByText(NO_AGENT_HINT)).not.toBeInTheDocument();
+      await pickOption(screen, 'Kind', 'Client');
+      expect(screen.getByText(NO_AGENT_HINT)).toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Create host' }));
+
+      await waitFor(() => expect(body).toMatchObject({ kind: 'client' }));
+    });
+
+    it('edits the kind of a host with an agent without the hint, and sends it', async () => {
+      const user = userEvent.setup();
+      let patch: MockRequest | undefined;
+      mockApi({
+        ...baseRoutes(),
+        'GET /api/v1/orgs/acme/hosts/h1/agent': AGENT,
+        'PATCH /api/v1/orgs/acme/hosts/h1': (req: MockRequest) => {
+          patch = req;
+          return { host: { ...HOST, kind: 'client', revision: 8 } };
+        },
+      });
+      renderDialog({ host: HOST });
+
+      await screen.findByText('env=prod');
+      await pickOption(screen, 'Kind', 'Client');
+      expect(screen.queryByText(NO_AGENT_HINT)).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Save host' }));
+
+      await waitFor(() => expect(patch).toBeDefined());
+      expect(patch?.body).toMatchObject({ kind: 'client' });
+    });
+
+    it('shows the hint when the edited host has no agent', async () => {
+      mockApi({
+        ...baseRoutes(),
+        'GET /api/v1/orgs/acme/hosts/h1/agent': () => problem(404, 'no agent'),
+      });
+      renderDialog({ host: HOST });
+
+      await screen.findByText('env=prod');
+      await pickOption(screen, 'Kind', 'Client');
+      expect(screen.getByText(NO_AGENT_HINT)).toBeInTheDocument();
+    });
+
+    it('prefills a client and leaves an unchanged kind out of the PATCH', async () => {
+      const user = userEvent.setup();
+      let patch: MockRequest | undefined;
+      mockApi({
+        ...baseRoutes(),
+        'GET /api/v1/orgs/acme/hosts/h1/agent': AGENT,
+        'PATCH /api/v1/orgs/acme/hosts/h1': (req: MockRequest) => {
+          patch = req;
+          return { host: { ...HOST, kind: 'client', revision: 8 } };
+        },
+      });
+      renderDialog({ host: { ...HOST, kind: 'client' } });
+
+      await screen.findByText('env=prod');
+      expect(screen.getByLabelText('Kind')).toHaveValue('Client');
+      await user.click(screen.getByRole('button', { name: 'Save host' }));
+
+      await waitFor(() => expect(patch).toBeDefined());
+      expect(patch?.body).not.toHaveProperty('kind');
+    });
+  });
 });

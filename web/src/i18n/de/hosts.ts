@@ -1,6 +1,14 @@
 import type { Messages } from '../types.ts';
 
 export const deHosts: Messages['hosts'] = {
+  presence: {
+    off: 'Aus',
+    client: 'Client',
+    lastSeen: (ago: string) => `zuletzt gesehen ${ago}`,
+    lastState: (state: string) => `letzter Zustand: ${state}`,
+    hostOff: 'Dieser Client ist aus: Sein Agent ist offline, deshalb bewertet Pulsix ihn erst wieder, wenn der Agent zurück ist. Angezeigt wird sein Zustand von davor.',
+    checksFrozen: 'Wird nicht bewertet, solange der Client aus ist: Die Werte und Bewertungen unten stammen von davor.',
+  },
   scope: {
     thisHost: 'Dieser Host',
     monitoringGroup: 'Überwachungsgruppe',
@@ -76,6 +84,11 @@ export const deHosts: Messages['hosts'] = {
     jumpDirect: 'Direkt, ohne Sprunghost',
     jumpCreate: 'Sprunghost erstellen…',
     tags: 'Tags',
+    kind: 'Art',
+    kindServer: 'Server',
+    kindClient: 'Client',
+    kindHint: 'Ein Server soll eingeschaltet sein. Ein Client (ein Notebook, ein Desktop) darf ausgeschaltet sein: Solange sein Agent offline ist, wird er nicht bewertet und löst keinen Host-Alarm aus.',
+    kindClientNoAgent: 'Ein Client ohne Agent wird wie ein Server behandelt: Nichts teilt Pulsix mit, dass er ausgeschaltet ist.',
     managedHint: 'Playbooks und Ad-hoc-Befehle laufen über SSH auf diesem Host.',
     monitoredHint: 'Prüfungen und Messwerte werden von diesem Host gesammelt.',
     create: 'Host erstellen',

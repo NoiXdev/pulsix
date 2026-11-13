@@ -19,6 +19,8 @@ import { BastionDialog } from '../credentials/BastionDialog.tsx';
 import { parseTagChip, type ParsedTag } from './selectorInput.ts';
 import { ZoneDialog } from './ZoneDialog.tsx';
 
+type HostKind = Host['kind'];
+
 /** The two jump choices that are not a jump host. A bastion id is a uuid,
  * so neither can collide with one. */
 export const INHERIT = 'inherit';
@@ -38,13 +40,16 @@ export interface HostFormProps {
   initialJump: string;
   /** The host's resolved jump chain from the inventory preview, when known. */
   resolvedChain?: string[];
+  /** Whether the edited host has an agent (a new host never has). A client
+   * without one is judged like a server, which the form says (backlog 3.57). */
+  hasAgent?: boolean;
 }
 
 function tagsKey(tags: readonly ParsedTag[]): string {
   return JSON.stringify([...tags].map((tag) => [tag.key, tag.value]).sort());
 }
 
-export function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zones, bastions, credentials, initialTags, initialJump, resolvedChain }: HostFormProps) {
+export function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zones, bastions, credentials, initialTags, initialJump, resolvedChain, hasAgent = false }: HostFormProps) {
   const t = useT();
   const toast = useToast();
   const isEdit = !!host;
@@ -56,7 +61,7 @@ export function HostForm({ org, host, onClose, onReload, canJump, canCreateBasti
   // refetch brought in since. The resolved chain is deliberately not in it:
   // it only feeds a label, and the inventory preview may well land after the
   // form has mounted.
-  const [initial] = useState({ tags: initialTags, jump: initialJump, zoneId: host?.zone_id ?? '' });
+  const [initial] = useState({ tags: initialTags, jump: initialJump, zoneId: host?.zone_id ?? '', kind: host?.kind ?? 'server' });
 
   const { hostFormSchema } = useMemo(() => schemas(t), [t]);
   const form = useForm<HostFormValues>({
@@ -72,6 +77,9 @@ export function HostForm({ org, host, onClose, onReload, canJump, canCreateBasti
   const zoneId = useWatch({ control: form.control, name: 'zone_id' });
 
   const [jump, setJump] = useState(initialJump);
+  // Server unless the host already is a client (backlog 3.57); a host an
+  // agent enrolled is a server until someone changes it here.
+  const [kind, setKind] = useState<HostKind>(initial.kind);
   const [tags, setTags] = useState<ParsedTag[]>(initialTags);
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState<string | null>(null);
@@ -136,6 +144,8 @@ export function HostForm({ org, host, onClose, onReload, canJump, canCreateBasti
       body.jump = jump === INHERIT || jump === DIRECT ? { mode: jump } : { mode: 'explicit', bastion_id: jump };
     }
     if (tagsKey(finalTags) !== tagsKey(initial.tags)) body.tags = finalTags;
+    // Always on create; on edit only when it changed, like jump and tags.
+    if (!isEdit || kind !== initial.kind) body.kind = kind;
 
     try {
       if (host) {
@@ -206,6 +216,20 @@ export function HostForm({ org, host, onClose, onReload, canJump, canCreateBasti
             {showInheritHint && <span className="text-[11px] text-muted-foreground">{t.hosts.dialog.jumpInheritedHint}</span>}
           </div>
         )}
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="host_kind">{t.hosts.dialog.kind}</Label>
+          <Select
+            id="host_kind"
+            options={[
+              { value: 'server', label: t.hosts.dialog.kindServer },
+              { value: 'client', label: t.hosts.dialog.kindClient },
+            ]}
+            value={kind}
+            onChange={(value) => setKind(value === 'client' ? 'client' : 'server')}
+          />
+          <span className="text-[11px] text-muted-foreground">{t.hosts.dialog.kindHint}</span>
+          {kind === 'client' && !hasAgent && <span className="text-[11px] text-[var(--px-warn)]">{t.hosts.dialog.kindClientNoAgent}</span>}
+        </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="host_tags">{t.hosts.dialog.tags}</Label>
           {tags.length > 0 && (

@@ -32,6 +32,13 @@ describe('may', () => {
     expect(may('owner', 'members.manage')).toBe(true);
   });
 
+  it('lets every member read the organization settings and admins change them', () => {
+    expect(may('viewer', 'org.settings.read')).toBe(true);
+    expect(may('operator', 'org.settings.write')).toBe(false);
+    expect(may('admin', 'org.settings.write')).toBe(true);
+    expect(may('owner', 'org.settings.write')).toBe(true);
+  });
+
   it('fails closed for an unknown role or permission', () => {
     expect(may('superuser', 'repos.write')).toBe(false);
     expect(may(undefined, 'repos.write')).toBe(false);

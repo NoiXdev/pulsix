@@ -16,7 +16,7 @@ import { HostRow } from './HostRow.tsx';
 import { HostDialog } from './HostDialog.tsx';
 import { ZoneDialog } from './ZoneDialog.tsx';
 
-const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 120px 120px 70px 40px';
+const HOSTS_COLUMNS = '20px 170px 110px minmax(0, 1fr) 120px 120px 100px 40px';
 
 export function HostsListPage() {
   const { org } = useParams({ strict: false }) as { org: string };
@@ -73,7 +73,7 @@ export function HostsListPage() {
   // One query for the whole page rather than one per row: the list shows
   // each host's agent as its status dot, and the agents read is org-wide
   // anyway (v0.3a, spec §8).
-  const agentStatusByHost = new Map((agents.data?.agents ?? []).map((a) => [a.host_id, a.status]));
+  const agentByHost = new Map((agents.data?.agents ?? []).map((a) => [a.host_id, a]));
 
   const hostsGuard = useQueryGuard(hosts, { enabled: !selectorActive });
   if (hostsGuard) return hostsGuard;
@@ -172,7 +172,7 @@ export function HostsListPage() {
           </GridRow>
         )}
         {displayedHosts.map((h) => (
-          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} agentStatus={agentStatusByHost.get(h.id)} role={role} />
+          <HostRow key={h.id} org={org} host={h} columns={HOSTS_COLUMNS} zoneName={zoneSlugById.get(h.zone_id)} agent={agentByHost.get(h.id)} role={role} />
         ))}
       </Card>
       {!selectorActive && hosts.hasNextPage && (

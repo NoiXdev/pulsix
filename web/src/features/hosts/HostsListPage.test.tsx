@@ -456,4 +456,52 @@ describe('host rows', () => {
     await settled();
     expect(deleted).toBe(false);
   });
+  // Backlog 3.57: a client whose agent is offline is frozen by the manager,
+  // so the list says "Off" with when it was last seen; an online client is
+  // a server plus a small "Client" tag; a server stays exactly as it was,
+  // its offline agent included.
+  describe('client hosts', () => {
+    const hostOf = (id: string, name: string, kind: 'server' | 'client') => ({ ...SECOND_PAGE_HOST, id, name, kind, monitored: true });
+    const agent = (hostId: string, status: 'online' | 'offline', lastSeen: string) => ({
+      host_id: hostId, host_name: hostId, agent_name: hostId, status, last_seen: lastSeen, created_at: '2026-01-01T00:00:00Z',
+      secret_names: null, secrets_state: null, version_status: 'current',
+    });
+    const threeHoursAgo = () => new Date(Date.now() - 3 * 3600_000).toISOString();
+
+    function routes() {
+      return {
+        'GET /api/v1/orgs/acme/hosts': {
+          hosts: [hostOf('h-off', 'laptop-1', 'client'), hostOf('h-on', 'laptop-2', 'client'), hostOf('h-srv', 'web-1', 'server')],
+        },
+        'GET /api/v1/orgs/acme/zones': ZONES,
+        'GET /api/v1/orgs/acme/agents': {
+          agents: [agent('h-off', 'offline', threeHoursAgo()), agent('h-on', 'online', new Date().toISOString()), agent('h-srv', 'offline', threeHoursAgo())],
+        },
+      };
+    }
+    const row = (name: string) => screen.getByRole('link', { name });
+
+    it('shows an offline client as Off with when it was last seen', async () => {
+      mockApi(routes());
+      renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+      await screen.findByRole('link', { name: 'laptop-1' });
+
+      await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
+      expect(within(row('laptop-1')).getByText('last seen 3 h ago')).toBeInTheDocument();
+      expect(within(row('laptop-1')).queryByText('Client')).not.toBeInTheDocument();
+    });
+
+    it('tags an online client and leaves a server with an offline agent alone', async () => {
+      mockApi(routes());
+      renderPage(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+      await screen.findByRole('link', { name: 'laptop-1' });
+      await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
+
+      expect(within(row('laptop-2')).getByText('Client')).toBeInTheDocument();
+      expect(within(row('laptop-2')).queryByText('Off')).not.toBeInTheDocument();
+      expect(within(row('web-1')).queryByText('Off')).not.toBeInTheDocument();
+      expect(within(row('web-1')).queryByText('Client')).not.toBeInTheDocument();
+      expect(within(row('web-1')).queryByText(/last seen/)).not.toBeInTheDocument();
+    });
+  });
 });

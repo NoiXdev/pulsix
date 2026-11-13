@@ -6,6 +6,9 @@ import { useHostTags } from '../../api/hooks/useTags.ts';
 import type { Host } from '../../api/types.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useT } from '../../i18n/useT.ts';
+import { seenLabel } from '../workers/expiry.ts';
+import { HostPresenceBadge } from './HostPresenceBadge.tsx';
+import { hostPresence, type AgentPresence } from './presence.ts';
 
 function timeAgo(iso: string | null | undefined, t: Messages): string {
   if (!iso) return '—';
@@ -21,7 +24,7 @@ export function HostRow({
   host,
   columns,
   zoneName,
-  agentStatus,
+  agent,
   role,
 }: {
   org: string;
@@ -31,11 +34,11 @@ export function HostRow({
    * already loads the org's zones for the "Add host" dialog) — cheap fix,
    * task-15a-report.md fix round 1: this used to show a raw UUID prefix. */
   zoneName?: string;
-  /** The status of this host's agent, resolved by the caller from its one
-   * org-wide agents query (v0.3a). Undefined means the host runs no agent
-   * — which is what the dot showed for every host before there was any
-   * monitoring backend at all. */
-  agentStatus?: string;
+  /** This host's agent (its status and last heartbeat), resolved by the
+   * caller from its one org-wide agents query (v0.3a). Undefined means the
+   * host runs no agent — which is what the dot showed for every host
+   * before there was any monitoring backend at all. */
+  agent?: AgentPresence;
   /** The caller's role in the org, read once by the list; undefined
    * until it is known. */
   role?: string;
@@ -43,7 +46,13 @@ export function HostRow({
   const t = useT();
   const tags = useHostTags(org, host.id);
   const actions = useHostActions(org, host, role);
+  const agentStatus = agent?.status;
   const agentStatusLabel = agentStatus && agentStatus in t.agents.status ? t.agents.status[agentStatus as keyof typeof t.agents.status] : (agentStatus ?? '');
+  // Backlog 3.57: an offline client is off, not a host whose agent went
+  // quiet — its dot is the neutral colour and the row says when it was
+  // last seen.
+  const presence = hostPresence(host.kind, agent);
+  const off = presence.kind === 'off';
 
   return (
     <>
@@ -82,10 +91,13 @@ export function HostRow({
            (v0.3b) are what will speak for those. */}
         <span
           className="h-2 w-2 rounded-full"
-          style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus ? 'var(--px-warn)' : 'var(--px-unknown)' }}
+          style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus && !off ? 'var(--px-warn)' : 'var(--px-unknown)' }}
           title={agentStatus ? t.hosts.row.agentTitle(agentStatusLabel) : t.hosts.row.unknown}
         />
-        <ListRowName className="truncate font-mono text-xs font-semibold text-foreground">{host.name}</ListRowName>
+        <span className="flex min-w-0 items-center gap-1.5">
+          <ListRowName className="truncate font-mono text-xs font-semibold text-foreground">{host.name}</ListRowName>
+          <HostPresenceBadge presence={presence} />
+        </span>
         <span className="truncate font-mono text-xs text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>
         <div className="flex flex-wrap gap-1">
           {(tags.data?.tags ?? []).map((tag) => (
@@ -96,7 +108,11 @@ export function HostRow({
         </div>
         <CapabilityCell kind="managed" on={host.managed} />
         <CapabilityCell kind="monitored" on={host.monitored} />
-        <span className="font-mono text-[11px] text-muted-foreground">{timeAgo(host.last_seen_at, t)}</span>
+        {presence.kind === 'off' ? (
+          <span className="text-[11px] text-muted-foreground">{t.hosts.presence.lastSeen(seenLabel(presence.lastSeen, new Date(), t))}</span>
+        ) : (
+          <span className="font-mono text-[11px] text-muted-foreground">{timeAgo(host.last_seen_at, t)}</span>
+        )}
         {/* The menu sits over this cell, outside the anchor. */}
         <span />
       </ListRow>

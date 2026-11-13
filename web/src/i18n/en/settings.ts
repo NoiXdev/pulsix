@@ -35,4 +35,18 @@ export const enSettings = {
     saved: 'Organization saved',
     saveFailed: 'Failed to save the organization',
   },
+  // Backlog 3.57: the organization's monitoring settings, on the General page.
+  monitoring: {
+    title: 'Monitoring',
+    clientAbsentDays: 'Warn after N days without contact (0 = off)',
+    clientAbsentDaysHint:
+      'For client hosts with an agent: when a client has not been in contact for this many days, a warning opens. It closes when the client is back. 0 switches it off.',
+    invalid: 'Enter a whole number of days from 0 to 365.',
+    readOnlyHint: 'Only owners and admins can change the monitoring settings.',
+    save: 'Save',
+    saveLabel: 'Save monitoring settings',
+    saved: 'Monitoring settings saved',
+    saveFailed: 'Failed to save the monitoring settings',
+    loadFailed: 'Failed to load the monitoring settings',
+  },
 };

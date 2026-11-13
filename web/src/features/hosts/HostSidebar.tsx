@@ -18,6 +18,9 @@ import { HostTagsEditor } from './HostTagsEditor.tsx';
 import { systemLabel } from './hostOverview.ts';
 import { useHostAlertSummary } from './useHostAlertSummary.ts';
 import type { HostActions } from './useHostActions.tsx';
+import { seenLabel } from '../workers/expiry.ts';
+import { HostPresenceBadge } from './HostPresenceBadge.tsx';
+import { hostPresence } from './presence.ts';
 
 const NONE = '—';
 
@@ -84,10 +87,17 @@ export function HostSidebar({ org, host, role, actions }: { org: string; host: H
 
 /** The name with a status dot and the state pill. The state is the open
  * alerts' (crit over warn over OK); a host nobody monitors has none, and
- * its pill says so rather than "OK". */
+ * its pill says so rather than "OK".
+ *
+ * A client whose agent is offline (backlog 3.57) is off: the pill says so
+ * in the neutral tone, with when the agent was last seen and its last
+ * state below it, muted — the alerts behind that state are frozen, not
+ * current. An online client keeps its state pill and gets a "Client" tag. */
 function HostHeading({ org, host, canRead }: { org: string; host: Host; canRead: boolean }) {
   const t = useT();
   const summary = useHostAlertSummary(org, host.id, canRead);
+  const agent = useHostAgent(org, host.id);
+  const presence = hostPresence(host.kind, agent.data?.agent);
   let tone: Tone = 'unknown';
   let label: string | null = null;
   if (!host.monitored) {
@@ -102,12 +112,30 @@ function HostHeading({ org, host, canRead }: { org: string; host: Host; canRead:
           : t.hosts.detail.health.ok;
   }
 
+  if (presence.kind === 'off') {
+    return (
+      <SidebarHeading title={host.name} mono dot={{ tone: 'unknown', label: t.hosts.presence.off }} pill={<HostPresenceBadge presence={presence} />}>
+        <span className="flex flex-col">
+          <span>{t.hosts.presence.lastSeen(seenLabel(presence.lastSeen, new Date(), t))}</span>
+          {host.monitored && label && <span>{t.hosts.presence.lastState(label)}</span>}
+        </span>
+      </SidebarHeading>
+    );
+  }
+
   return (
     <SidebarHeading
       title={host.name}
       mono
       dot={{ tone, label: label ?? t.hosts.detail.health.unknown }}
-      pill={label ? <Pill tone={tone}>{label}</Pill> : undefined}
+      pill={
+        label || presence.kind === 'client' ? (
+          <span className="flex flex-wrap items-center gap-1.5">
+            {label && <Pill tone={tone}>{label}</Pill>}
+            <HostPresenceBadge presence={presence} />
+          </span>
+        ) : undefined
+      }
     />
   );
 }

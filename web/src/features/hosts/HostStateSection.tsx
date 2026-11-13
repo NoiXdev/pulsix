@@ -22,17 +22,22 @@ const TONE: Record<TileTone, string> = {
  * sparkline and the colour of the reading's current verdict. It reads the
  * same host-checks query the checks section reads, and one 24 h series per
  * tile. Rendered only for a monitored host.
+ *
+ * `frozen` is a client whose agent is offline (backlog 3.57): the section
+ * says the host is off, and the tiles keep their last readings in the
+ * neutral colour, since nothing is judging them.
  */
-export function HostStateSection({ org, hostId, canRead }: { org: string; hostId: string; canRead: boolean }) {
+export function HostStateSection({ org, hostId, canRead, frozen = false }: { org: string; hostId: string; canRead: boolean; frozen?: boolean }) {
   const t = useT();
   return (
     <Section id="state" title={t.hosts.detail.section.state}>
-      <StateTiles org={org} hostId={hostId} canRead={canRead} />
+      {frozen && <p className="text-xs text-muted-foreground">{t.hosts.presence.hostOff}</p>}
+      <StateTiles org={org} hostId={hostId} canRead={canRead} frozen={frozen} />
     </Section>
   );
 }
 
-function StateTiles({ org, hostId, canRead }: { org: string; hostId: string; canRead: boolean }) {
+function StateTiles({ org, hostId, canRead, frozen }: { org: string; hostId: string; canRead: boolean; frozen: boolean }) {
   const t = useT();
   const query = useHostChecks(org, hostId, canRead);
 
@@ -46,7 +51,7 @@ function StateTiles({ org, hostId, canRead }: { org: string; hostId: string; can
   }
   if (!query.data) return <p className="text-xs text-muted-foreground">{t.common.loading}</p>;
 
-  const tiles = stateTiles(query.data.checks ?? []);
+  const tiles = stateTiles(query.data.checks ?? []).map((tile) => (frozen ? { ...tile, tone: 'unknown' as const } : tile));
   if (tiles.length === 0) {
     return <p className="rounded-[10px] border border-border bg-card px-4 py-3 text-[13px] text-muted-foreground">{t.hosts.detail.tile.noReadings}</p>;
   }

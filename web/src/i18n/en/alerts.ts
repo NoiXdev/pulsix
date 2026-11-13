@@ -44,6 +44,10 @@ export const enAlerts = {
     open: 'Open',
     closed: (reason: string) => (reason === '' ? 'Closed' : `Closed · ${reason}`),
     subjectHost: 'Host',
+    // Backlog 3.57: the absent warning (a host-scope warn alert) on a
+    // client not seen for days.
+    subjectNotSeenSince: (when: string) => `Not seen since ${when}`,
+    subjectNotSeen: 'Not seen',
     flapping: 'flapping',
     flapped: 'flapped',
     flappingTitle:

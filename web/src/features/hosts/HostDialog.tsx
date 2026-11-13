@@ -5,6 +5,7 @@ import { useBastions, useHostSSH } from '../../api/hooks/useSsh.ts';
 import { useCredentials } from '../../api/hooks/useCredentials.ts';
 import { useHostInventoryPreview } from '../../api/hooks/useInventory.ts';
 import { useHostTags } from '../../api/hooks/useTags.ts';
+import { useHostAgent } from '../../api/hooks/useAgents.ts';
 import type { Host } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -25,9 +26,9 @@ export interface HostDialogProps {
 
 /**
  * HostDialog adds a host or edits one — the same fields either way: name,
- * address, zone, jump host, tags and the two capabilities. The jump host
- * and the tags travel in the same request as the host itself, so a new host
- * is never saved half-configured.
+ * address, zone, kind (server or client), jump host, tags and the two
+ * capabilities. The jump host and the tags travel in the same request as
+ * the host itself, so a new host is never saved half-configured.
  *
  * The body is mounted only while the dialog is open (ui/dialog.tsx keeps its
  * children mounted), so every opening starts from a fresh form and no query
@@ -60,6 +61,9 @@ function HostDialogLoader({ org, role, host, onClose }: { org: string; role: str
   const ssh = useHostSSH(org, editId);
   const preview = useHostInventoryPreview(org, editId);
   const reload = useReloadHost(org, hostId);
+  // Whether the host has an agent decides the kind hint (a client without
+  // one is judged like a server). A 404 is "no agent", not a failure.
+  const agent = useHostAgent(org, hostId, !!host);
 
   // The host the form edits, and the key that remounts the form onto a
   // reloaded one. A stale host is replaced, never merged into.
@@ -74,7 +78,7 @@ function HostDialogLoader({ org, role, host, onClose }: { org: string; role: str
   // No role (still loading, or the caller's read of the organization
   // failed) means no jump host field; the server has the last word on every
   // write either way.
-  const pending = zones.isPending || (!!host && (tags.isPending || (canJump && ssh.isPending)));
+  const pending = zones.isPending || (!!host && (tags.isPending || agent.isPending || (canJump && ssh.isPending)));
   if (pending) return <p className="text-xs text-muted-foreground">{t.common.loading}</p>;
   if (zones.isError || (host && (tags.isError || (canJump && ssh.isError)))) {
     return (
@@ -104,6 +108,7 @@ function HostDialogLoader({ org, role, host, onClose }: { org: string; role: str
       initialJump={initialJump}
       // A connection with a null chain is a resolved direct route, not an unknown one.
       resolvedChain={preview.data?.connection ? (preview.data.connection.bastions ?? []) : undefined}
+      hasAgent={!!agent.data?.agent}
     />
   );
 }

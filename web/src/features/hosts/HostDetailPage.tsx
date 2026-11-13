@@ -7,6 +7,7 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useHost } from '../../api/hooks/useHosts.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useHostChecks } from '../../api/hooks/useChecks.ts';
+import { useHostAgent } from '../../api/hooks/useAgents.ts';
 import type { Host } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -23,6 +24,7 @@ import { HostStateSection } from './HostStateSection.tsx';
 import { HostRunsSection } from './HostRunsSection.tsx';
 import { useHostActions, type HostActions } from './useHostActions.tsx';
 import { useHostAlertSummary } from './useHostAlertSummary.ts';
+import { hostPresence } from './presence.ts';
 
 /**
  * HostDetailPage is one host on one page (layout B of the host-view
@@ -66,6 +68,11 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
   const canWrite = may(role, 'inventory.write');
   const alerts = useHostAlertSummary(org, host.id, canReadChecks);
   const checks = useHostChecks(org, host.id, canReadChecks && host.monitored);
+  // Backlog 3.57: a client whose agent is offline is frozen — the manager
+  // keeps its last verdicts without judging them — so the sections below
+  // show them muted and say why. The same read HostAgentCard makes.
+  const agent = useHostAgent(org, host.id);
+  const frozen = hostPresence(host.kind, agent.data?.agent).kind === 'off';
   const s = t.hosts.detail.section;
 
   // Counts only while the host is monitored: with nothing measured, a
@@ -89,13 +96,13 @@ function HostDetail({ org, host, role }: { org: string; host: Host; role: string
       <DetailLayout sidebar={<HostSidebar org={org} host={host} role={role} actions={actions} />} nav={nav} navLabel={t.common.sections}>
         {host.monitored ? (
           <>
-            <HostStateSection org={org} hostId={host.id} canRead={canReadChecks} />
+            <HostStateSection org={org} hostId={host.id} canRead={canReadChecks} frozen={frozen} />
             <Section id="alerts" title={s.alerts} actions={<HostAlertsHistoryLink org={org} hostId={host.id} canRead={canReadChecks} />}>
               <HostAlertsCard org={org} hostId={host.id} canRead={canReadChecks} canWrite={may(role, 'checks.write')} />
               <HostAlertRoutesCard org={org} hostId={host.id} canRead={may(role, 'channels.read')} />
             </Section>
             <Section id="checks" title={s.checks} actions={<ManageChecksLink org={org} canWrite={may(role, 'checks.write')} />}>
-              <HostChecksCard org={org} hostId={host.id} canRead={canReadChecks} canWrite={may(role, 'checks.write')} />
+              <HostChecksCard org={org} hostId={host.id} canRead={canReadChecks} canWrite={may(role, 'checks.write')} frozen={frozen} />
               <EffectiveRulesPanel org={org} hostId={host.id} canRead={canReadChecks} />
             </Section>
           </>

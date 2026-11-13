@@ -107,4 +107,79 @@ describe('OrgGeneralPage', () => {
     expect(input).toHaveAttribute('readonly');
     expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
   });
+  // Backlog 3.57: the organization's monitoring setting, beside its name.
+  // The absent warning for client hosts fires after this many days without
+  // contact; 0 switches it off; the server takes 0..365.
+  describe('monitoring', () => {
+    const LABEL = 'Warn after N days without contact (0 = off)';
+    function routes(role: string, days = 14, onPut?: (req: MockRequest) => void) {
+      let current = days;
+      return {
+        'GET /api/v1/orgs/acme': org(role),
+        'GET /api/v1/orgs/acme/settings/monitoring': () => ({ settings: { client_absent_days: current } }),
+        'PUT /api/v1/orgs/acme/settings/monitoring': (req: MockRequest) => {
+          onPut?.(req);
+          current = (req.body as { client_absent_days: number }).client_absent_days;
+          return { settings: { client_absent_days: current } };
+        },
+      };
+    }
+
+    it('shows the stored value and saves a new one', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', 14, (req) => puts.push(req.body)));
+      renderPage();
+
+      const input = await screen.findByLabelText(LABEL);
+      await waitFor(() => expect(input).toHaveValue(14));
+      await user.clear(input);
+      await user.type(input, '0');
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 0 }]));
+      expect(await screen.findByText('Monitoring settings saved')).toBeInTheDocument();
+    });
+
+    it.each([['366'], ['-1'], ['1.5'], ['']])('refuses %j without asking the server', async (typed) => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', 14, (req) => puts.push(req.body)));
+      renderPage();
+
+      const input = await screen.findByLabelText(LABEL);
+      await waitFor(() => expect(input).toHaveValue(14));
+      await user.clear(input);
+      if (typed !== '') await user.type(input, typed);
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+
+      expect(await screen.findByText('Enter a whole number of days from 0 to 365.')).toBeInTheDocument();
+      expect(puts).toEqual([]);
+    });
+
+    it('accepts both ends of the range', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('owner', 14, (req) => puts.push(req.body)));
+      renderPage();
+
+      const input = await screen.findByLabelText(LABEL);
+      await waitFor(() => expect(input).toHaveValue(14));
+      await user.clear(input);
+      await user.type(input, '365');
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 365 }]));
+    });
+
+    it('is read-only below admin', async () => {
+      mockApi(routes('operator', 7));
+      renderPage();
+
+      const input = await screen.findByLabelText(LABEL);
+      await waitFor(() => expect(input).toHaveValue(7));
+      expect(input).toHaveAttribute('readonly');
+      expect(screen.queryByRole('button', { name: 'Save monitoring settings' })).not.toBeInTheDocument();
+      expect(screen.getByText('Only owners and admins can change the monitoring settings.')).toBeInTheDocument();
+    });
+  });
 });
