@@ -4,7 +4,7 @@
 
 **Goal:** A host can be a server or a client; a client whose agent is off is frozen (no unknown, no host alert, alerts kept), judged normally once back, with an optional "not seen for N days" warning.
 
-**Architecture:** `hosts.kind` (additive migration) through the hosts service/API/SPA; `org_monitoring_settings.client_absent_days` (new org-scoped table) with service/API/SPA; the rules loader passes kind, agent `last_seen` and `connected_since` into the snapshot; `rules.Evaluate` freezes an offline client and anchors staleness at `max(reading, connected_since)` for an online one; `alerts.Reconcile` opens/closes the absent warning (host-scope, severity `warn`) and closes an unknown host alert as stale when a host freezes.
+**Architecture:** `hosts.kind` (additive migration) through the hosts service/API/SPA; `org_monitoring_settings.client_absent_days` (new org-scoped table) with service/API/SPA; the rules loader passes kind, agent `last_seen` and `online_since` into the snapshot; `rules.Evaluate` freezes an offline client and anchors staleness at `max(reading, online_since)` for an online one; `alerts.Reconcile` opens/closes the absent warning (host-scope, severity `warn`) and closes an unknown host alert as stale when a host freezes.
 
 **Tech Stack:** Go, PostgreSQL migrations + sqlc (v1.31.1 binary at `/private/tmp/claude-501/-Users-noidee--dev-pulsix/76b69f36-5040-49f9-a80e-08a1ef63bcdb/scratchpad/bin/sqlc`, `<path> generate` from the repo root), huma OpenAPI + `cd web && PATH=$PWD/node_modules/.bin:$PATH bash scripts/api-gen.sh`, React/TypeScript.
 
@@ -22,7 +22,7 @@
 
 1. A server host behaves exactly as before in every path (Evaluate, Reconcile, due times) — the change is gated on kind = client with an agent.
 2. A frozen client never writes a state change, a `stale` close of a tuple alert, or a notification; buffered results arriving on reconnect are judged after unfreeze, not lost.
-3. On reconnect a long-interval tuple read before the outage is not unknown until `connected_since` + 3×interval; a NULL `connected_since` falls back to the reading time (today's rule).
+3. On reconnect a long-interval tuple read before the outage is not unknown until `online_since` + 3×interval; a NULL `online_since` falls back to the reading time (today's rule).
 4. Absent warning: opens once after the threshold, never while online, closes resolved on return, setting changes take effect at the next evaluation; it does not collide with an unknown host alert (same subject).
 5. Kind changes mark the host dirty; server→client while off closes an open unknown host alert as stale; client→server while off goes unknown normally.
 
@@ -36,11 +36,11 @@
 
 ### Task 2: Freeze and the staleness anchor (rules)
 
-**Files:** `internal/rules/load_sql.go` (+ the query feeding it: host kind, agent last_seen/connected_since, absent days), `internal/rules/ticker.go` (`HostLoad`), `internal/rules/evaluate.go` (`Snapshot` gains e.g. `Client bool`, `AgentOnline bool`, `AgentConnected time.Time`, `AgentLastSeen time.Time`, `AbsentAfter time.Duration`; frozen path; `staleAt` anchor; `nextDue` absent deadline), tests (pure Evaluate tables + DB-backed Load).
+**Files:** `internal/rules/load_sql.go` (+ the query feeding it: host kind, agent last_seen/online_since, absent days), `internal/rules/ticker.go` (`HostLoad`), `internal/rules/evaluate.go` (`Snapshot` gains e.g. `Client bool`, `AgentOnline bool`, `AgentOnlineSince time.Time`, `AgentLastSeen time.Time`, `AbsentAfter time.Duration`; frozen path; `staleAt` anchor; `nextDue` absent deadline), tests (pure Evaluate tables + DB-backed Load).
 
 **Produces:** the snapshot fields above and a `Result` flag Task 3 reads (e.g. `Result.Frozen bool`, `Result.Absent bool` with the absent-since time) — name them in the report.
 
-- [ ] Tests first: frozen client → no state changes, roll-up unchanged, nothing unmeasured/closed, next due = absent deadline or silent heartbeat; online client with tuple read before `connected_since` not stale until `connected_since`+3×interval; NULL/zero connected → today's rule; server and client-without-agent unchanged (table rows mirroring existing tests); Load fills the fields from the DB. RED → GREEN → lint → `./internal/rules/...`, `./internal/app/...` → commit `feat(rules): freeze a client host while its agent is off`.
+- [ ] Tests first: frozen client → no state changes, roll-up unchanged, nothing unmeasured/closed, next due = absent deadline or silent heartbeat; online client with tuple read before `online_since` not stale until `online_since`+3×interval; NULL/zero connected → today's rule; server and client-without-agent unchanged (table rows mirroring existing tests); Load fills the fields from the DB. RED → GREEN → lint → `./internal/rules/...`, `./internal/app/...` → commit `feat(rules): freeze a client host while its agent is off`.
 
 ### Task 3: Absent warning and alert handling
 

@@ -36,7 +36,15 @@ Let *online* be the agents list's own definition (`agents.isOnline`:
 1. **Off (agent not online): the host is frozen.** The evaluation leaves
    every tuple state, the roll-up and every open alert exactly as they are:
    no transition to unknown, no host alert, no `stale` close, no
-   notification. Synthetic (manager-probed) checks of the host are frozen
+   notification. **(amended after review)** One exception: an open unknown
+   host alert closes as `stale` only when the absence caused it, that is
+   when the roll-up went unknown at or after the agent's last contact (a
+   kind switch while off, a shutdown past the grace). An unknown alert from
+   while the client was on stays open, and acknowledged, through the
+   shutdown and the reboot; a certificate renewal keeps it too. Once the
+   absent warning is due it replaces an open unknown alert (the unknown
+   closes `stale`; one alert per host subject). Escalation chains on open
+   alerts keep running while a client is off (a full disk stays full). Synthetic (manager-probed) checks of the host are frozen
    too — a ping to a notebook that is off is expected to fail. Reported
    results that still arrive (buffered agent results on reconnect) are
    stored as always; they are judged once the host is no longer frozen.
@@ -110,14 +118,14 @@ marks the host dirty for evaluation.
 
 - Rules (pure Evaluate): frozen client keeps states/roll-up/alerts and
   produces no changes; online client with a long-interval tuple read
-  before the reconnect is not stale until `connected_since` + 3×interval;
+  before the reconnect is not stale until `online_since` + 3×interval;
   server unchanged; client without agent unchanged; next due = absent
   deadline.
 - Alerts: absent warning opens after `client_absent_days`, carries its own
   cause, closes resolved when online; setting 0 never opens it; no unknown
   host alert for a frozen client; server→client closes an open unknown
   host alert as stale.
-- DB-backed Load: kind, agent last_seen and connected_since reach the
+- DB-backed Load: kind, agent last_seen and online_since reach the
   snapshot; changing the kind marks the host dirty.
 - API (apitest): host create/update/read with `kind`, invalid kind 422;
   org setting read/write with bounds.

@@ -94,7 +94,6 @@ an operator can count on. The operator's steps are in
   rule: an older manager that still handles an agent neither records the
   comparison nor resets it on re-enrollment, so the badge can be stale or absent
   until the new manager has handled that agent.
-
 - **Migrations 00090 to 00092 add client hosts (3.57).** 00090 adds
   `hosts.kind` (`server` or `client`, default `server`, a CHECK; the constant
   default makes it a catalog change and every existing host reads `server`).
@@ -110,7 +109,9 @@ an operator can count on. The operator's steps are in
   server, so it turns unknown and alerts while its agent is off, and an older
   manager that handles an agent's heartbeats leaves its online period start
   stale or unset, so a returning client's long-interval checks can go unknown
-  too early. It also does not mark a host for evaluation when its kind changes.
+  too early. These effects touch only hosts marked client during an overlap,
+  and a stale online start heals at that agent's next gap of more than 90
+  seconds.
 
 ## A database newer than the binary is refused
 
@@ -271,7 +272,8 @@ repositories as before. An older worker never asks.
   form or `kind` in the API, which gains the field on hosts, the fleet overview
   and the host query) whose agent is offline (no contact for 90 s) is frozen:
   its states and alerts stay as they are, no unknown host alert opens, and an
-  open one closes as `stale`. A client without an agent behaves like a server.
+  open one closes as `stale` only when the absence caused it (an unknown from
+  while the client was on stays open). A client without an agent behaves like a server.
   After a reconnect a client is judged from the start of its current online
   period, and a client shutting down gets 90 s before an unknown host alert.
   A new organization setting `client_absent_days` (default 14, 0 off) opens a
