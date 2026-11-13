@@ -113,6 +113,33 @@ func TestItemCheckKeyIsTrimmedStoredAndReadBack(t *testing.T) {
 		}
 	})
 
+	t.Run("the plugin's own key is stored as empty", func(t *testing.T) {
+		in := itemForm(host)
+		in.ItemCheckKey = " disk "
+		r, err := svc.Create(ctx, org, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.ItemCheckKey != "" {
+			t.Fatalf("ItemCheckKey = %q, want empty: one spelling for the plugin's key", r.ItemCheckKey)
+		}
+		if got, err := svc.Get(ctx, org, r.ID); err != nil || got.ItemCheckKey != "" {
+			t.Fatalf("read back = %+v, %v; want an empty ItemCheckKey", got, err)
+		}
+		updated, err := svc.Update(ctx, org, r.ID, in)
+		if err != nil || updated.ItemCheckKey != "" {
+			t.Fatalf("Update = %+v, %v; want an empty ItemCheckKey", updated, err)
+		}
+	})
+
+	t.Run("the plugin's own key on another scope is still refused", func(t *testing.T) {
+		in := hostForm(host)
+		in.ItemCheckKey = "cpu"
+		if _, err := svc.Create(ctx, org, in); !errors.Is(err, rules.ErrInvalidInput) {
+			t.Fatalf("Create = %v, want ErrInvalidInput: only item rules name a check key", err)
+		}
+	})
+
 	t.Run("a blank key is accepted on another scope", func(t *testing.T) {
 		in := hostForm(host)
 		in.ItemCheckKey = " "

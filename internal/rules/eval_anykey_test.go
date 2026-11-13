@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/items"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -73,5 +76,61 @@ func TestOneOrgRuleJudgesTwoChecksOfAPluginIndependently(t *testing.T) {
 	changes := sink.calls[0].Changes
 	if len(changes) != 1 || changes[0].Tuple != data || changes[0].To != rules.StateCrit {
 		t.Fatalf("changes = %+v, want exactly disk-data's move to crit", changes)
+	}
+}
+
+// TestDecisionsOnANonDefaultKeySuppressItsTuples (backlog 3.13e): once org
+// rules judge a check under any key, an operator must be able to ignore
+// that check's items too. Decisions on "disk-data" — one org-scoped, one
+// host-scoped — are accepted by the items service and take exactly their
+// tuples out of the evaluation, leaving the "disk" check's item of the
+// same name judged.
+func TestDecisionsOnANonDefaultKeySuppressItsTuples(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "any-key-decisions")
+	host := seedHost(t, d, org, "h")
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	itemsSvc := items.NewService(items.NewSQLStore(d))
+	for _, in := range []items.DecisionInput{
+		{Scope: items.ScopeOrg, CheckKey: "disk-data", MatchKind: items.MatchExact, Pattern: "/data", Verdict: items.Ignore},
+		{Scope: items.ScopeHost, HostID: &host, CheckKey: "disk-data", MatchKind: items.MatchExact, Pattern: "/backup", Verdict: items.Ignore},
+	} {
+		if _, err := itemsSvc.CreateDecision(scoped, org, uuid.Must(uuid.NewV7()), in); err != nil {
+			t.Fatalf("decision %+v: %v", in, err)
+		}
+	}
+
+	dataData := rules.Tuple{CheckKey: "disk-data", Item: "/data", Metric: "disk.used_pct"}
+	dataBackup := rules.Tuple{CheckKey: "disk-data", Item: "/backup", Metric: "disk.used_pct"}
+	plainData := rules.Tuple{CheckKey: "disk", Item: "/data", Metric: "disk.used_pct"}
+	for _, tu := range []rules.Tuple{dataData, dataBackup, plainData} {
+		insertCurrent(t, d, org, host, tu, ptr(97.0), nil, now.Add(-10*time.Second), "")
+	}
+	rule := hostRule(org, host)
+	rule.Scope, rule.HostID = rules.ScopeOrg, nil
+	rule.CheckKey, rule.Metric, rule.Severity, rule.For = "disk", "disk.used_pct", rules.SeverityCrit, 0
+	rule.Trigger = compare(">=", metric("disk.used_pct"), number(95))
+	rule.Source = "disk.used_pct >= 95"
+	if err := rules.NewSQLStore(d).Create(context.Background(), rule); err != nil {
+		t.Fatal(err)
+	}
+	markDirty(t, d, org, host)
+
+	checks := fixedChecks{intervals: map[string]time.Duration{"disk": time.Minute, "disk-data": time.Minute}}
+	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), discard())
+	tk := rules.NewTicker(store, &fakeSink{},
+		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
+	if n, err := tk.Tick(context.Background()); err != nil || n != 1 {
+		t.Fatalf("Tick = %d, %v; want one host evaluated", n, err)
+	}
+
+	states, err := rules.NewSQLStore(d).StatesForHost(context.Background(), org, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 1 || states[0].Tuple != plainData || states[0].State != rules.StateCrit {
+		t.Fatalf("states = %+v, want only disk:/data, crit — both disk-data items are ignored", states)
 	}
 }

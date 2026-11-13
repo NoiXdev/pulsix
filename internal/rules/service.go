@@ -146,8 +146,10 @@ func validateScope(in RuleInput) error {
 // 3.13e): only an item-scoped rule names a check key of its own, and the
 // key must have the shape every check definition's key has. It need not
 // exist on the host — the item need not either; Resolve shows such a rule
-// as unobserved. Blank is the plugin's key, on any scope.
-func normalizeItemCheckKey(in RuleInput) (string, error) {
+// as unobserved. Blank is the plugin's key, on any scope, and so is
+// pluginKey itself: it is stored as "", so the plugin's key has exactly one
+// spelling (the one every rule written before the field existed has).
+func normalizeItemCheckKey(in RuleInput, pluginKey string) (string, error) {
 	key := strings.TrimSpace(in.ItemCheckKey)
 	if key == "" {
 		return "", nil
@@ -157,6 +159,9 @@ func normalizeItemCheckKey(in RuleInput) (string, error) {
 	}
 	if !checkplugins.ValidCheckKey(key) {
 		return "", invalidf("item_check_key must match %s", checkplugins.CheckKeyPattern)
+	}
+	if key == pluginKey {
+		return "", nil
 	}
 	return key, nil
 }
@@ -242,7 +247,7 @@ func (s *Service) buildRule(in RuleInput) (Rule, int, error) {
 	if err := validateScope(in); err != nil {
 		return Rule{}, 0, err
 	}
-	itemCheckKey, err := normalizeItemCheckKey(in)
+	itemCheckKey, err := normalizeItemCheckKey(in, entry.CheckKey)
 	if err != nil {
 		return Rule{}, 0, err
 	}

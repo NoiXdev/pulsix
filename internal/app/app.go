@@ -129,13 +129,10 @@ type App struct {
 	// waiting for the probes in flight (whose results it discards) and
 	// releasing its advisory lock.
 	stopProbes func()
-	// items is the discovery and decisions service (v0.3b-3). Wired here
-	// because its constructor's check-key set is derived from
-	// rules.Catalogue() (ItemCheckKeys, rules_ports.go), and this package
-	// is the only one that may import both internal/rules and
-	// internal/items. The same instance also backs api.Deps.Items
-	// (registerItemRoutes); this field itself is kept only because nothing
-	// else in this package needs to read it back out of App.
+	// items is the discovery and decisions service (v0.3b-3). The same
+	// instance also backs api.Deps.Items (registerItemRoutes); this field
+	// itself is kept only because nothing else in this package needs to
+	// read it back out of App.
 	items *items.Service
 	// background is the account service's work that outlives a request:
 	// the reset links an accepted forgot-password request still has to
@@ -350,11 +347,9 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// itemsStore is also what the evaluation ticker's own EvalSQLStore
 	// discovers items and resolves decisions through (see evalTicker
 	// below), and itemsSvc is the validating, previewing surface wired into
-	// the API below (Items, api.Deps). Both are built here because this is
-	// the only package allowed to import both internal/rules (for
-	// ItemCheckKeys, just below) and internal/items.
+	// the API below (Items, api.Deps).
 	itemsStore := items.NewSQLStore(appDB)
-	itemsSvc := items.NewService(itemsStore, ItemCheckKeys)
+	itemsSvc := items.NewService(itemsStore)
 	// Every organization gets its "default" zone, its "Linux base" check
 	// definitions, its five-row starter rule set and a projection of every
 	// installation-owned repository, job template AND check definition

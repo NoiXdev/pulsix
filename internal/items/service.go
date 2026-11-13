@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // maxNoteRunes bounds Decision.Note: long enough for an operator's reason,
@@ -50,16 +52,10 @@ type Preview struct {
 // rules.Service, Store.CreateDecision/UpdateDecision never hand a
 // database-stamped row back — the timestamps a caller sees are exactly the
 // ones this Service stamped before calling the store.
-//
-// It also carries checkKeys rather than knowing the metric catalogue
-// itself: this package must stay a leaf (see this package's own doc
-// comment for why), so the set of valid check keys is supplied by
-// whoever constructs the Service, not looked up here.
 type Service struct {
-	store     Store
-	checkKeys func() map[string]struct{}
-	rand      io.Reader
-	now       func() time.Time
+	store Store
+	rand  io.Reader
+	now   func() time.Time
 }
 
 // Option configures a Service.
@@ -72,20 +68,9 @@ func WithRand(r io.Reader) Option { return func(s *Service) { s.rand = r } }
 // against; time.Now is the default. Tests pin timestamps exactly.
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
 
-// NewService wires store and checkKeys, the set of check_key values a
-// decision may name. checkKeys is a required positional argument, not an
-// Option: forgetting it is then a compile error at every construction
-// site, rather than a Service that silently accepts a check key naming no
-// real metric at whichever call site someone forgot it. It is a function,
-// not a snapshot, so it reflects the catalogue at call time — the moment a
-// decision is written or previewed — rather than at wiring time.
-//
-// internal/items must not import internal/rules (see this package's own
-// doc comment), so the real catalogue lives at the wiring point that may
-// import both — internal/app, supplying rules.Catalogue()'s check keys —
-// not here.
-func NewService(store Store, checkKeys func() map[string]struct{}, opts ...Option) *Service {
-	s := &Service{store: store, checkKeys: checkKeys, rand: rand.Reader, now: time.Now}
+// NewService wires store.
+func NewService(store Store, opts ...Option) *Service {
+	s := &Service{store: store, rand: rand.Reader, now: time.Now}
 	for _, o := range opts {
 		o(s)
 	}
@@ -113,9 +98,11 @@ func invalidf(format string, args ...any) error {
 // would this pattern match", and Verdict or Note cannot change that
 // answer, so neither belongs in the validation a preview runs.
 //
-// CheckKey is checked against s.checkKeys(), called fresh here rather than
-// once at construction, so a plugin added to the catalogue after this
-// Service was built is already a valid check_key on the next call.
+// CheckKey may be any well-formed check key (checkplugins.ValidCheckKey),
+// not only a plugin's name (backlog 3.13e): alert rules judge a check under
+// whatever key it runs, so an item of a second disk check ("disk-data")
+// must be ignorable as well. Like the pattern, the key need not name a
+// check that exists yet — a decision may be written ahead of a rollout.
 func (s *Service) validateMatch(in DecisionInput) (Decision, error) {
 	switch in.Scope {
 	case ScopeOrg:
@@ -130,8 +117,8 @@ func (s *Service) validateMatch(in DecisionInput) (Decision, error) {
 		return Decision{}, invalidf("scope must be %q or %q", ScopeOrg, ScopeHost)
 	}
 
-	if _, ok := s.checkKeys()[in.CheckKey]; !ok {
-		return Decision{}, invalidf("unknown check key %q", in.CheckKey)
+	if !checkplugins.ValidCheckKey(in.CheckKey) {
+		return Decision{}, invalidf("check key %q must match %s", in.CheckKey, checkplugins.CheckKeyPattern)
 	}
 
 	switch in.MatchKind {

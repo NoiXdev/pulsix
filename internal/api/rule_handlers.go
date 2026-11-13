@@ -96,7 +96,7 @@ type ruleBody struct {
 type ruleListInput struct {
 	Org   string `path:"org"`
 	Scope string `query:"scope" doc:"Filter by scope: org, group, host or item"`
-	Check string `query:"check" doc:"Filter by check key"`
+	Check string `query:"check" doc:"Filter by the plugin's check key (check_key)"`
 	Host  string `query:"host" doc:"Filter by host id"`
 }
 
@@ -168,7 +168,7 @@ type effectiveRuleDTO struct {
 	Severity string    `json:"severity" enum:"warn,crit"`
 	Winner   ruleDTO   `json:"winner"`
 	Shadowed []ruleDTO `json:"shadowed"`
-	Observed bool      `json:"observed" doc:"False when an item-scoped rule names an item the host no longer reports"`
+	Observed bool      `json:"observed" doc:"False when an item-scoped rule names a tuple (check key and item) the host does not report"`
 }
 
 type effectiveRulesOutput struct {

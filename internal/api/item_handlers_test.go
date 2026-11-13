@@ -346,8 +346,8 @@ func TestItemDecisionRoutes(t *testing.T) {
 				"scope": "host", "check_key": "disk",
 				"match_kind": "exact", "pattern": "/var", "decision": "ignore",
 			},
-			"unknown check key": {
-				"scope": "org", "check_key": "no-such-check",
+			"malformed check key": {
+				"scope": "org", "check_key": "No Such Check",
 				"match_kind": "glob", "pattern": "*", "decision": "ignore",
 			},
 			"exact pattern must not contain a star": {

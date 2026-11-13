@@ -75,6 +75,21 @@ func TestRuleItemCheckKeyRoundTripsThroughTheAPI(t *testing.T) {
 		t.Fatalf("update answer %s still names item_check_key, want it omitted once empty", body)
 	}
 
+	t.Run("the plugin's own key reads back absent", func(t *testing.T) {
+		resp := postJSON(t, f.operatorC, f.rulesURL(), itemDiskRuleBody(host, "disk"))
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		created := decodeRule(t, resp)
+		resp = requestJSON(t, f.viewerC, http.MethodGet, f.rulesURL()+"/"+created.ID, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("get = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+		if body := mustReadBody(t, resp); strings.Contains(body, "item_check_key") {
+			t.Fatalf("read back %s names item_check_key, want it absent for the plugin's own key", body)
+		}
+	})
+
 	t.Run("refused on a non-item scope", func(t *testing.T) {
 		b := map[string]any{
 			"name": "host disk", "scope": "host", "host_id": host, "item_check_key": "disk-data",
@@ -159,5 +174,21 @@ func TestEffectiveRulesJudgeEveryKeyOfAPlugin(t *testing.T) {
 	}
 	if plain := warnOn(effective(t), "disk"); plain != nil {
 		t.Fatalf("an effective for disk:/data = %+v, want none: the item rule names disk-data and the host reports no /data under disk", plain)
+	}
+}
+
+// TestItemDecisionsAcceptAnyCheckKey (backlog 3.13e): rules judge a check
+// under any key, so an item of such a check must be ignorable too — at
+// org and at host scope.
+func TestItemDecisionsAcceptAnyCheckKey(t *testing.T) {
+	f := newItemsFixture(t, "items-any-key")
+	for _, body := range []map[string]any{
+		{"scope": "org", "check_key": "disk-data", "match_kind": "exact", "pattern": "/data", "decision": "ignore"},
+		{"scope": "host", "host_id": f.web.String(), "check_key": "disk-data", "match_kind": "glob", "pattern": "/backup*", "decision": "ignore"},
+	} {
+		resp := postJSON(t, f.operatorC, f.decisionsURL(), body)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("decision %v = %d %s, want 201", body, resp.StatusCode, mustReadBody(t, resp))
+		}
 	}
 }

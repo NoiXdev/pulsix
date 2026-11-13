@@ -486,11 +486,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	// deliberately narrower than the Store s.Rules already holds.
 	ruleStates := rules.NewSQLStore(d)
 	// Discovery and item decisions (v0.3b-3), wired exactly like production
-	// wiring (internal/app.Build): the check-key set comes from the same
-	// app.ItemCheckKeys adapter over rules.Catalogue(), so a test can never
-	// validate a decision against a different check-key universe than the
-	// manager actually runs.
-	s.Items = items.NewService(items.NewSQLStore(d), app.ItemCheckKeys)
+	// wiring (internal/app.Build).
+	s.Items = items.NewService(items.NewSQLStore(d))
 	s.Push = &PushRecorder{}
 	// Installation-owned repository definitions (v0.2f), wired exactly like
 	// production (internal/app.Build): sharedSvc needs no org-scoped ports

@@ -29,7 +29,6 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
-	"github.com/noixdev/pulsix/internal/rules"
 	"github.com/noixdev/pulsix/internal/templates"
 )
 
@@ -213,34 +212,6 @@ func TestAlertRouteGroupsPropagatesFailure(t *testing.T) {
 	got, err := alertRouteGroups{checks: &fakeCheckResolver{groupsErr: boom}}.GroupsForHost(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
 	if !errors.Is(err, boom) || got != nil {
 		t.Fatalf("GroupsForHost = %v, %v, want nil and the resolver's error", got, err)
-	}
-}
-
-// TestItemCheckKeys: the key set is the distinct check keys of the rule
-// catalogue — one entry per key however many metrics share it, and every
-// catalogue entry's key is present.
-func TestItemCheckKeys(t *testing.T) {
-	keys := ItemCheckKeys()
-	entries := rules.Catalogue()
-	if len(entries) == 0 || len(keys) == 0 {
-		t.Fatalf("catalogue has %d entries, key set %d", len(entries), len(keys))
-	}
-	distinct := map[string]struct{}{}
-	for _, e := range entries {
-		if _, ok := keys[e.CheckKey]; !ok {
-			t.Fatalf("check key %q missing from the set", e.CheckKey)
-		}
-		distinct[e.CheckKey] = struct{}{}
-	}
-	if len(keys) != len(distinct) {
-		t.Fatalf("key set has %d keys, catalogue has %d distinct", len(keys), len(distinct))
-	}
-	// Backlog 3.7: the network check reports per-interface items, so
-	// item decisions must accept its key; uptime's key comes along too.
-	for _, key := range []string{"network", "uptime"} {
-		if _, ok := keys[key]; !ok {
-			t.Errorf("check key %q missing from the set", key)
-		}
 	}
 }
 

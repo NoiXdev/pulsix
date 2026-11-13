@@ -83,7 +83,7 @@ func newLifecycleRig(t *testing.T) *lifecycleRig {
 		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)))
 	rulesSvc := rules.NewService(rules.NewSQLStore(d))
 	itemsStore := items.NewSQLStore(d)
-	itemsSvc := items.NewService(itemsStore, app.ItemCheckKeys)
+	itemsSvc := items.NewService(itemsStore)
 
 	r := &lifecycleRig{
 		d: d, org: org, host: host,

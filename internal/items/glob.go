@@ -11,11 +11,9 @@
 // the edge internal/rules -> internal/items must stay free to exist. A
 // leaf both of them may depend on is what makes that possible; the moment
 // this package imports either, it stops being a leaf and that edge
-// becomes a cycle the compiler refuses. This is also why Service does not
-// know the metric catalogue itself: the set of valid check keys a
-// decision's check_key may name is a required constructor argument
-// (NewService's own doc comment), supplied by whoever wires this package
-// up — internal/app, from rules.Catalogue() — not looked up here.
+// becomes a cycle the compiler refuses. It may import the leaf
+// internal/checkplugins, which imports neither: a decision's check_key is
+// checked against the check key format defined there.
 package items
 
 import (

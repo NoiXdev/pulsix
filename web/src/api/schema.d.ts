@@ -4185,7 +4185,7 @@ export interface components {
             check_key: string;
             item?: string;
             metric: string;
-            /** @description False when an item-scoped rule names an item the host no longer reports */
+            /** @description False when an item-scoped rule names a tuple (check key and item) the host does not report */
             observed: boolean;
             /** @enum {string} */
             severity: "warn" | "crit";
@@ -14470,7 +14470,7 @@ export interface operations {
             query?: {
                 /** @description Filter by scope: org, group, host or item */
                 scope?: string;
-                /** @description Filter by check key */
+                /** @description Filter by the plugin's check key (check_key) */
                 check?: string;
                 /** @description Filter by host id */
                 host?: string;

@@ -106,9 +106,8 @@ type Service struct {
 func (s *Service) SetNotifyLedger(l NotifyLedger) { s.ledger = l }
 
 // NewService wires store and clock. clock is a required positional
-// argument, not an Option — the same ruling internal/items' checkKeys and
-// internal/maintenance's GroupHosts each got (their own doc comments say
-// why): every timestamp this Service stamps or compares against comes
+// argument, not an Option — the same ruling internal/maintenance's
+// GroupHosts got (its own doc comment says why): every timestamp this Service stamps or compares against comes
 // from here, never an ad hoc time.Now, so a test can pin it exactly.
 func NewService(store Store, clock func() time.Time) *Service {
 	return &Service{store: store, clock: clock}
