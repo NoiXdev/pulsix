@@ -14,19 +14,36 @@ type status struct {
 
 var errFormat = errors.New("unexpected response format")
 
+// maxPage bounds what parseStatus looks at: a real page is about 120 bytes.
+const maxPage = 4 << 10
+
 // parseStatus reads the stub_status page strictly: four non-empty lines in
 // the module's fixed layout, every number a base-10 uint64. Whitespace
-// between and around the tokens is free; anything else is a format error,
-// as is handled above accepts (the server never handles what it did not
-// accept).
+// between and around the tokens is free; anything else is a format error.
+// handled above accepts is not one: nginx reads its counters without a lock
+// while workers keep counting, so a busy server can print it (nothing was
+// dropped then, see dropped).
 func parseStatus(body []byte) (status, error) {
-	var lines [][]string
-	for _, l := range strings.Split(string(body), "\n") {
-		if f := strings.Fields(l); len(f) > 0 {
-			lines = append(lines, f)
-		}
+	if len(body) > maxPage {
+		return status{}, errFormat
 	}
-	if len(lines) != 4 {
+	rest := string(body)
+	var lines [4][]string
+	n := 0
+	for rest != "" {
+		var l string
+		l, rest, _ = strings.Cut(rest, "\n")
+		f := strings.Fields(l)
+		if len(f) == 0 {
+			continue
+		}
+		if n == len(lines) {
+			return status{}, errFormat
+		}
+		lines[n] = f
+		n++
+	}
+	if n != len(lines) {
 		return status{}, errFormat
 	}
 	var s status
@@ -44,14 +61,20 @@ func parseStatus(body []byte) (status, error) {
 		{&s.active, a[2]}, {&s.accepts, c[0]}, {&s.handled, c[1]}, {&s.requests, c[2]},
 		{&s.reading, r[1]}, {&s.writing, r[3]}, {&s.waiting, r[5]},
 	} {
-		n, err := strconv.ParseUint(f.src, 10, 64)
+		v, err := strconv.ParseUint(f.src, 10, 64)
 		if err != nil {
 			return status{}, errFormat
 		}
-		*f.dst = n
-	}
-	if s.handled > s.accepts {
-		return status{}, errFormat
+		*f.dst = v
 	}
 	return s, nil
+}
+
+// dropped is accepts - handled, or 0 when the racing read shows handled
+// above accepts.
+func (s status) dropped() uint64 {
+	if s.handled > s.accepts {
+		return 0
+	}
+	return s.accepts - s.handled
 }

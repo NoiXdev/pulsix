@@ -116,6 +116,9 @@ func noSecretIn(t *testing.T, srv *statusServer, obs []checks.Observation, err e
 	var all []string
 	for _, o := range obs {
 		all = append(all, o.Item, o.Metric, o.Err)
+		if o.Label != nil {
+			all = append(all, *o.Label)
+		}
 	}
 	if err != nil {
 		all = append(all, err.Error())
@@ -213,7 +216,8 @@ func TestUnexpectedFormat(t *testing.T) {
 		{"wrong header line", strings.Replace(good, "server accepts handled requests", "server handled accepts requests", 1)},
 		{"misspelled label", strings.Replace(good, "Waiting", "Waitin", 1)},
 		{"trailing garbage", good + "extra\n"},
-		{"handled above accepts", page(1, 5, 6, 10, 0, 1, 0)},
+		{"too long", good + strings.Repeat(" ", 8<<10)},
+		{"fifth line", good + "x\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -228,11 +232,69 @@ func TestUnexpectedFormat(t *testing.T) {
 	}
 }
 
+// nginx reads its counters without a lock while workers keep counting, so a
+// busy server can print handled above accepts: the page is valid and nothing
+// was dropped.
+func TestHandledAboveAcceptsIsNotAnError(t *testing.T) {
+	srv := newStatusServer(t, page(1, 5, 6, 10, 0, 1, 0))
+	p, clk := newTestPlugin()
+	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
+		t.Fatal(err)
+	}
+	clk.t = clk.t.Add(10 * time.Second)
+	srv.set(200, page(1, 25, 27, 50, 0, 1, 0))
+	obs, err := p.Collect(t.Context(), params(srv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustValue(t, obs, "nginx.up", 1)
+	mustValue(t, obs, "nginx.connections_dropped_per_s", 0)
+	mustValue(t, obs, "nginx.connections_accepted_per_s", 2)
+}
+
+// A failed round leaves the baselines alone: the next good round computes its
+// rate against the last good one, over the whole elapsed time.
+func TestBaselineSurvivesAFailedRound(t *testing.T) {
+	srv := newStatusServer(t, page(1, 100, 100, 1000, 0, 1, 0))
+	p, clk := newTestPlugin()
+	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
+		t.Fatal(err)
+	}
+	clk.t = clk.t.Add(10 * time.Second)
+	srv.set(500, "")
+	obs, _ := p.Collect(t.Context(), params(srv))
+	mustDown(t, obs, "HTTP status 500")
+	clk.t = clk.t.Add(10 * time.Second)
+	srv.set(200, page(1, 140, 140, 1400, 0, 1, 0))
+	obs, _ = p.Collect(t.Context(), params(srv))
+	mustValue(t, obs, "nginx.requests_per_s", 20)
+	mustValue(t, obs, "nginx.connections_accepted_per_s", 2)
+}
+
+func TestInstancesKeepSeparateBaselines(t *testing.T) {
+	srv := newStatusServer(t, page(1, 100, 100, 1000, 0, 1, 0))
+	clk := &clock{t: time.Unix(1_000_000, 0)}
+	proto := &plugin{now: clk.now}
+	a, b := proto.NewInstance(), proto.NewInstance()
+	if _, err := a.Collect(t.Context(), params(srv)); err != nil {
+		t.Fatal(err)
+	}
+	clk.t = clk.t.Add(10 * time.Second)
+	srv.set(200, page(1, 200, 200, 2000, 0, 1, 0))
+	obs, _ := b.Collect(t.Context(), params(srv))
+	mustAbsent(t, obs, "nginx.requests_per_s") // b's first round
+	obs, _ = a.Collect(t.Context(), params(srv))
+	mustValue(t, obs, "nginx.requests_per_s", 100)
+}
+
 func TestToleratesExtraWhitespace(t *testing.T) {
 	body := "\n  Active connections:   3\r\n server accepts handled requests \r\n\t4  4   9\r\n Reading: 0   Writing: 1  Waiting: 2\r\n\r\n"
 	srv := newStatusServer(t, body)
 	p, _ := newTestPlugin()
-	obs, _ := p.Collect(t.Context(), params(srv))
+	obs, err := p.Collect(t.Context(), params(srv))
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustValue(t, obs, "nginx.up", 1)
 	mustValue(t, obs, "nginx.connections_active", 3)
 	mustValue(t, obs, "nginx.connections_waiting", 2)
@@ -279,7 +341,10 @@ func TestConnectionRefused(t *testing.T) {
 func TestOversizedBody(t *testing.T) {
 	srv := newStatusServer(t, strings.Repeat("x", 4<<20+10))
 	p, _ := newTestPlugin()
-	obs, _ := p.Collect(t.Context(), params(srv))
+	obs, err := p.Collect(t.Context(), params(srv))
+	if err != nil {
+		t.Fatal(err)
+	}
 	mustDown(t, obs, "response too large")
 }
 
@@ -297,8 +362,9 @@ func TestBasicAuthSentExactlyWithASecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustValue(t, obs, "nginx.up", 1)
-	if !strings.HasPrefix(srv.auth[1], "Basic ") {
-		t.Fatalf("Authorization = %q, want Basic", srv.auth[1])
+	r := &http.Request{Header: http.Header{"Authorization": {srv.auth[1]}}}
+	if u, pw, ok := r.BasicAuth(); !ok || u != plantUser || pw != plantPass {
+		t.Fatalf("Authorization = %q, want basic auth of the planted login", srv.auth[1])
 	}
 }
 
@@ -354,15 +420,42 @@ func TestCallerContextEnding(t *testing.T) {
 	}
 }
 
-func TestDefaultURLAndParams(t *testing.T) {
-	if defaultURL != "http://127.0.0.1/nginx_status" {
-		t.Fatalf("defaultURL = %q", defaultURL)
+// The default is asserted without a request: nothing here may dial
+// 127.0.0.1:80.
+func TestDefaultURL(t *testing.T) {
+	if got := statusURL(nil); got != "http://127.0.0.1/nginx_status" {
+		t.Fatalf("statusURL(nil) = %q", got)
 	}
-	// An unreachable default must still read as one fixed failure text.
+	if got := statusURL(map[string]any{"url": ""}); got != defaultURL {
+		t.Fatalf("statusURL(empty) = %q", got)
+	}
+	if got := statusURL(map[string]any{"url": "http://h/s"}); got != "http://h/s" {
+		t.Fatalf("statusURL(given) = %q", got)
+	}
+}
+
+func TestHungServerTimesOut(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for the 5 s request deadline")
+	}
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
 	p, _ := newTestPlugin()
-	obs, err := p.Collect(t.Context(), nil)
-	if err != nil || len(obs) != 8 {
-		t.Fatalf("Collect(nil) = %+v, %v", obs, err)
+	start := time.Now()
+	obs, err := p.Collect(t.Context(), map[string]any{"url": srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustDown(t, obs, "timed out")
+	if d := time.Since(start); d > 6*time.Second {
+		t.Fatalf("took %v", d)
 	}
 }
 

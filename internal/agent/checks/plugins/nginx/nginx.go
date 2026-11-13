@@ -74,7 +74,7 @@ func (p *plugin) CollectWithSecret(ctx context.Context, params map[string]any, f
 	if err != nil {
 		return down(err.Error())
 	}
-	url := webcheck.URLParam(params, "url", defaultURL)
+	url := statusURL(params)
 
 	cctx, cancel := context.WithTimeout(ctx, dbcheck.CollectTimeout)
 	defer cancel()
@@ -91,6 +91,9 @@ func (p *plugin) CollectWithSecret(ctx context.Context, params map[string]any, f
 	}
 	return p.observe(url, s), nil
 }
+
+// statusURL is the page to fetch: the url parameter, else the local default.
+func statusURL(params map[string]any) string { return webcheck.URLParam(params, "url", defaultURL) }
 
 // observe maps the page to observations and moves the rate baselines.
 func (p *plugin) observe(url string, s status) []checks.Observation {
@@ -116,7 +119,7 @@ func (p *plugin) observe(url string, s status) []checks.Observation {
 	}{
 		{"nginx.requests_per_s", &p.requests, s.requests},
 		{"nginx.connections_accepted_per_s", &p.accepts, s.accepts},
-		{"nginx.connections_dropped_per_s", &p.dropped, s.accepts - s.handled},
+		{"nginx.connections_dropped_per_s", &p.dropped, s.dropped()},
 	} {
 		if rate, ok := r.c.Rate(at, r.v); ok {
 			obs = append(obs, checks.ValueObservation("", r.metric, rate))
