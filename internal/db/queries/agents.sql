@@ -84,7 +84,8 @@ RETURNING *;
 -- after enrollment (last_seen NULL) or when it is unknown (NULL, as every
 -- row is right after the upgrade). The SET list reads the row as it was
 -- before this update, so last_seen here is the previous touch. The item
--- expiry counts the agent only after checks.MaxInterval connected.
+-- expiry counts the agent only after checks.MaxInterval plus a 30-minute
+-- margin connected.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   connected_since = CASE
     WHEN last_seen IS NULL OR connected_since IS NULL

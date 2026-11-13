@@ -226,7 +226,8 @@ func toIdentity(row gen.LookupAgentSerialRow) AgentIdentity {
 // connected without a break: a touch or heartbeat that follows the
 // previous one by more than this starts a new connection
 // (host_agents.connected_since, backlog 3.12c), which the item expiry
-// counts only after checks.MaxInterval. Three times the longest heartbeat
+// counts only after checks.MaxInterval plus a margin (internal/checks'
+// agentCountsAfter). Three times the longest heartbeat
 // interval an agent accepts (PULSIX_HEARTBEAT_INTERVAL is clamped to
 // 10 min in internal/agent), so a slow but steady agent never resets it.
 const reconnectGap = 30 * time.Minute

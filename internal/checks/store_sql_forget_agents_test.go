@@ -6,7 +6,7 @@
 // T = the item's newest reading + the period, the host counts as having
 // kept reporting after T when its item's own check key has a reading after
 // T, when it has an agent last seen after T that has been connected for
-// checks.MaxInterval by then (backlog 3.12c), or — only when it has no
+// checks.MaxInterval plus 30 minutes by then (backlog 3.12c), or — only when it has no
 // agent — when any of its readings is after T.
 //
 // Each scenario is pinned twice: on the selection (ListExpiredItems) and,
@@ -84,6 +84,7 @@ func TestExpiryWithAgentsAndProbes(t *testing.T) {
 	steady := ago(60 * 24 * time.Hour) // connected long before any of this
 	seen := now.Add(-30 * time.Second) // an online agent's last heartbeat
 	before := func(at time.Time, d time.Duration) *time.Time { b := at.Add(-d); return &b }
+	countsAfter := checks.MaxInterval + 30*time.Minute // the agent counts from here on
 
 	type reading struct {
 		key, item string
@@ -132,13 +133,20 @@ func TestExpiryWithAgentsAndProbes(t *testing.T) {
 			due:      map[item]bool{{"backup", "nightly"}: false, {"cpu", ""}: false},
 		},
 		{
-			name: "agent connected a second short of MaxInterval", agent: true, lastSeen: &seen, connected: before(seen, checks.MaxInterval-time.Second),
+			// The first collect of a 24 h check lands one full interval
+			// after its ticker starts, a little after the connection.
+			name: "agent connected exactly MaxInterval", agent: true, lastSeen: &seen, connected: before(seen, checks.MaxInterval),
 			readings: []reading{{"backup", "nightly", quiet}},
 			due:      map[item]bool{{"backup", "nightly"}: false},
 		},
 		{
-			// A day connected: the check has had its chance to report.
-			name: "agent connected exactly MaxInterval", agent: true, lastSeen: &seen, connected: before(seen, checks.MaxInterval),
+			name: "agent connected a second short of MaxInterval + 30 min", agent: true, lastSeen: &seen, connected: before(seen, countsAfter-time.Second),
+			readings: []reading{{"backup", "nightly", quiet}},
+			due:      map[item]bool{{"backup", "nightly"}: false},
+		},
+		{
+			// A day and the margin connected: the check has had its chance.
+			name: "agent connected exactly MaxInterval + 30 min", agent: true, lastSeen: &seen, connected: before(seen, countsAfter),
 			readings: []reading{{"backup", "nightly", quiet}},
 			due:      map[item]bool{{"backup", "nightly"}: true},
 		},
@@ -255,12 +263,24 @@ func TestForgetItemProceedSeesTheAgent(t *testing.T) {
 	}
 }
 
+// setConnectedFor makes host's agent connected for exactly d at its last
+// heartbeat.
+func setConnectedFor(t *testing.T, d *db.DB, host uuid.UUID, dur time.Duration) {
+	t.Helper()
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE host_agents SET connected_since = last_seen - make_interval(secs => $2::float8) WHERE host_id = $1`,
+		host, dur.Seconds()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestExpiryAfterAnAgentOutage is backlog 3.12c end to end, with the
 // agent's reconnect written by the agents store's own heartbeat: an agent
 // offline for longer than the period comes back before its nightly check
 // has run again; neither the selection nor the forget's re-check takes
-// that check's item for gone. Once the agent has been connected for
-// checks.MaxInterval and the item still has not reported, it expires.
+// that check's item for gone, nor does it after exactly checks.MaxInterval
+// connected. Once the agent has been connected for MaxInterval plus
+// 30 minutes and the item still has not reported, it expires.
 func TestExpiryAfterAnAgentOutage(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "checks-expiry-outage")
@@ -289,16 +309,23 @@ func TestExpiryAfterAnAgentOutage(t *testing.T) {
 		t.Fatalf("item has %d current rows after the reconnect, want 1", n)
 	}
 
-	// A day later, still connected, the item has not come back: gone.
-	if _, err := d.Pool().Exec(ctx,
-		`UPDATE host_agents SET connected_since = last_seen - make_interval(secs => $2::float8) WHERE host_id = $1`,
-		host, checks.MaxInterval.Seconds()); err != nil {
-		t.Fatal(err)
+	// Exactly a day later the first collect of a 24 h check may still be
+	// on its way: kept.
+	setConnectedFor(t, d, host, checks.MaxInterval)
+	if expiredSet(t, d, now.Add(-period), period, 100)[ref] {
+		t.Fatal("selected after exactly MaxInterval connected, want kept for the margin")
 	}
+	if counts, err := svc.ForgetExpired(ctx, period, 100); err != nil || counts[org] != 0 {
+		t.Fatalf("ForgetExpired after exactly MaxInterval connected = %v, %v; want nothing forgotten", counts, err)
+	}
+
+	// A day and the margin later, still connected, the item has not come
+	// back: gone.
+	setConnectedFor(t, d, host, checks.MaxInterval+30*time.Minute)
 	if !expiredSet(t, d, now.Add(-period), period, 100)[ref] {
-		t.Fatal("not selected after a day connected, want it due")
+		t.Fatal("not selected after MaxInterval + 30 min connected, want it due")
 	}
 	if counts, err := svc.ForgetExpired(ctx, period, 100); err != nil || counts[org] != 1 {
-		t.Fatalf("ForgetExpired after a day connected = %v, %v; want the item forgotten", counts, err)
+		t.Fatalf("ForgetExpired after MaxInterval + 30 min connected = %v, %v; want the item forgotten", counts, err)
 	}
 }

@@ -328,15 +328,18 @@ func TestForgetExpiredRecheckBoundaries(t *testing.T) {
 // TestForgetExpiredAgentCountsAfterADayConnected (backlog 3.12c): an
 // agent back from an outage heartbeats at once, before a check with a long
 // interval has run again, so its heartbeat says nothing about that check's
-// items until it has been connected for checks.MaxInterval — every check
-// has reported at least once by then. Before that the agent contributes
-// nothing; the item's own check key still does. An agent whose connection
-// start is unknown (zero or the epoch: never seen since the upgrade, or
-// re-enrolled) contributes nothing either.
+// items until it has been connected for checks.MaxInterval plus a
+// 30-minute margin — every check has reported at least once by then, the
+// first collect of a 24 h check landing one full interval after its
+// ticker starts, a little after the connection. Before that the agent
+// contributes nothing; the item's own check key still does. An agent
+// whose connection start is unknown (zero or the epoch: never seen since
+// the upgrade, or re-enrolled) contributes nothing either.
 func TestForgetExpiredAgentCountsAfterADayConnected(t *testing.T) {
 	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
 	period := 48 * time.Hour
 	gone := now.Add(-period - 72*time.Hour) // the item's newest reading, long before the outage ended
+	countsAfter := checks.MaxInterval + 30*time.Minute
 	agent := func(connected time.Time) checks.ItemNewest {
 		return checks.ItemNewest{Rows: 1, Item: gone, Key: gone, Host: now, HasAgent: true, AgentSeen: now, AgentConnected: connected}
 	}
@@ -346,8 +349,9 @@ func TestForgetExpiredAgentCountsAfterADayConnected(t *testing.T) {
 		want   bool
 	}{
 		{"reconnected a minute ago", agent(now.Add(-time.Minute)), false},
-		{"connected a second short of MaxInterval", agent(now.Add(-checks.MaxInterval + time.Second)), false},
-		{"connected exactly MaxInterval", agent(now.Add(-checks.MaxInterval)), true},
+		{"connected exactly MaxInterval: the first 24 h collect may not have landed", agent(now.Add(-checks.MaxInterval)), false},
+		{"connected a second short of MaxInterval + 30 min", agent(now.Add(-countsAfter + time.Second)), false},
+		{"connected exactly MaxInterval + 30 min", agent(now.Add(-countsAfter)), true},
 		{"connected for a month", agent(now.Add(-30 * 24 * time.Hour)), true},
 		{"connection start unknown (zero)", agent(time.Time{}), false},
 		{"connection start unknown (epoch)", agent(time.Unix(0, 0).UTC()), false},

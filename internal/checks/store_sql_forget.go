@@ -118,11 +118,11 @@ func forgetItem(ctx context.Context, tx pgx.Tx, ref ItemRef, steps ForgetSteps) 
 // org_isolation_bypass policy applies — the posture alerts' Sweep and the
 // evaluator's claim take for the same reason. Each item it returns names
 // its own organization, which ForgetItem then binds. An agent counts as
-// the host's sign of life only after MaxInterval connected, the same
+// the host's sign of life only after agentCountsAfter connected, the same
 // bound itemExpired's agentCounts applies.
 func (s *SQLStore) ExpiredItems(ctx context.Context, cutoff time.Time, period time.Duration, limit int) ([]ItemRef, error) {
 	rows, err := gen.New(s.d.Pool()).ListExpiredItems(ctx, gen.ListExpiredItemsParams{
-		Cutoff: cutoff, PeriodSeconds: period.Seconds(), ConnectedSeconds: MaxInterval.Seconds(),
+		Cutoff: cutoff, PeriodSeconds: period.Seconds(), AgentCountsAfterSeconds: agentCountsAfter.Seconds(),
 		Lim: int32(min(limit, maxExpiredBatch)), //nolint:gosec // bounded by maxExpiredBatch
 	})
 	if err != nil {

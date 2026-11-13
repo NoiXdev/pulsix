@@ -83,19 +83,29 @@ func (n ItemNewest) lastSignOfLife() time.Time {
 	return other
 }
 
+// agentCountsAfter is how long an agent must have been connected before
+// its heartbeat counts for the item expiry (backlog 3.12c): MaxInterval,
+// so every check has had its longest interval to report, plus a margin.
+// The agent's first collect of a check lands one full interval after the
+// check's ticker starts, which is after the configuration is applied, a
+// little after the connection began; without the margin an expiry round
+// (hourly) could land in between for a 24 h check. ExpiredItems passes
+// the same duration to ListExpiredItems.
+const agentCountsAfter = MaxInterval + 30*time.Minute
+
 // agentCounts says whether the agent's heartbeat is a sign of life for
 // the host's items (backlog 3.12c): only once it has been connected for
-// MaxInterval, last seen at or after connected + MaxInterval. An agent
-// back from an outage heartbeats at once, before a check with a long
-// interval has run again; counting that heartbeat would forget the check's
-// items once and rediscover them a little later. After MaxInterval every
+// agentCountsAfter, last seen at or after connected + agentCountsAfter.
+// An agent back from an outage heartbeats at once, before a check with a
+// long interval has run again; counting that heartbeat would forget the
+// check's items once and rediscover them a little later. By then every
 // check, however long its interval, has reported at least once. An
 // unknown connection start (zero or the epoch) never counts.
 func (n ItemNewest) agentCounts() bool {
 	if !n.AgentConnected.After(time.Unix(0, 0)) {
 		return false
 	}
-	return !n.AgentSeen.Before(n.AgentConnected.Add(MaxInterval))
+	return !n.AgentSeen.Before(n.AgentConnected.Add(agentCountsAfter))
 }
 
 // ForgetSteps are the service's two say-sos inside the store's forget
@@ -113,7 +123,7 @@ type ForgetSteps struct {
 // now - period, and the host kept reporting after that newest reading plus
 // the period (lastSignOfLife) — it went on for the whole period without
 // the item. A host that stopped reporting altogether, or whose agent is
-// offline or connected for less than MaxInterval, never satisfies the
+// offline or connected for less than agentCountsAfter, never satisfies the
 // second half through the agent, so its agent's items keep their values
 // unless their own check key still reports. Both comparisons are strict.
 func itemExpired(n ItemNewest, now time.Time, period time.Duration) bool {

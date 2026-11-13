@@ -570,7 +570,8 @@ type TouchAgentBySerialParams struct {
 // after enrollment (last_seen NULL) or when it is unknown (NULL, as every
 // row is right after the upgrade). The SET list reads the row as it was
 // before this update, so last_seen here is the previous touch. The item
-// expiry counts the agent only after checks.MaxInterval connected.
+// expiry counts the agent only after checks.MaxInterval plus a 30-minute
+// margin connected.
 func (q *Queries) TouchAgentBySerial(ctx context.Context, arg TouchAgentBySerialParams) error {
 	_, err := q.db.Exec(ctx, touchAgentBySerial, arg.Version, arg.ReconnectGapSeconds, arg.Serial)
 	return err

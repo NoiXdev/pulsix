@@ -561,10 +561,10 @@ LIMIT $4
 `
 
 type ListExpiredItemsParams struct {
-	Cutoff           time.Time `json:"cutoff"`
-	ConnectedSeconds float64   `json:"connected_seconds"`
-	PeriodSeconds    float64   `json:"period_seconds"`
-	Lim              int32     `json:"lim"`
+	Cutoff                  time.Time `json:"cutoff"`
+	AgentCountsAfterSeconds float64   `json:"agent_counts_after_seconds"`
+	PeriodSeconds           float64   `json:"period_seconds"`
+	Lim                     int32     `json:"lim"`
 }
 
 type ListExpiredItemsRow struct {
@@ -585,20 +585,22 @@ type ListExpiredItemsRow struct {
 //	    say another mount, still reports), or
 //	(b) the host has an agent last seen after T (the check itself was
 //	    removed, the agent is alive) that had been connected for
-//	    connected_seconds (checks.MaxInterval) when it was last seen, or
+//	    agent_counts_after_seconds (checks.MaxInterval plus a 30-minute
+//	    margin, checks.agentCountsAfter) when it was last seen, or
 //	(c) the host has no agent and any reading of it is after T.
 //
 // The manager's own probes write under the host too, so for a host with
 // an agent only (a) and (b) count: an offline agent's items keep their
 // values however long the server's checks of the host keep running. An
 // agent back from an outage heartbeats before a long-interval check runs
-// again, so (b) waits until every check has had MaxInterval to report
-// (backlog 3.12c); until then, and while connected_since is unknown
-// (NULL), the CASE yields NULL and only (a) is left. A host that stopped
-// reporting altogether has no sign of life after T, so it keeps every
-// value. GREATEST ignores the NULL of an agent never seen or not counted
-// yet. Every comparison against T and cutoff is strict; the connected
-// one is not (last_seen >= connected_since + MaxInterval). Oldest first, so a backlog drains from the
+// again, so (b) waits until every check has had MaxInterval and the
+// margin to report (backlog 3.12c); until then, and while
+// connected_since is unknown (NULL), the CASE yields NULL and only (a) is
+// left. A host that stopped reporting altogether has no sign of life
+// after T, so it keeps every value. GREATEST ignores the NULL of an agent
+// never seen or not counted yet. Every comparison against T and cutoff
+// is strict; the connected one is not (last_seen >= connected_since +
+// agent_counts_after_seconds). Oldest first, so a backlog drains from the
 // longest-gone end. One pass over check_current, aggregated by item, then
 // by check key and by host; host_agents joins on its primary key.
 // checks.itemExpired is the same rule in Go, over ItemNewest, for the
@@ -606,7 +608,7 @@ type ListExpiredItemsRow struct {
 func (q *Queries) ListExpiredItems(ctx context.Context, arg ListExpiredItemsParams) ([]ListExpiredItemsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredItems,
 		arg.Cutoff,
-		arg.ConnectedSeconds,
+		arg.AgentCountsAfterSeconds,
 		arg.PeriodSeconds,
 		arg.Lim,
 	)
