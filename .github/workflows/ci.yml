@@ -93,7 +93,8 @@ jobs:
   # tests and lint on that system, which is where the thin
   # _windows.go/_darwin.go system calls are exercised at all, then installs
   # the agent with the real installer against installstub, a stand-in for
-  # the manager's distribution routes, and removes it again. The installed
+  # the manager's distribution routes, upgrades it and removes it again
+  # with the installer's own uninstall (backlog 3.49). The installed
   # agent points at 127.0.0.1:1 and keeps retrying its enrollment, which is
   # enough to show it runs as a service. No coverage floor here: every
   # decision the platform code makes is in files the Linux gate counts.
@@ -205,6 +206,48 @@ jobs:
             exit 1
           fi
           scripts/ci/install-smoke-macos.sh http://127.0.0.1:18080
+
+  # The Linux install smoke (backlog 3.49): install, upgrade (which must
+  # restart the agent), uninstall with and without --keep-data and the
+  # uninstall again, with the real installer against installstub, like
+  # the two jobs above. No unit tests or lint here: the go job runs them
+  # on Linux already. ubuntu-latest has systemd and passwordless sudo.
+  agent-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # Pinned like the go job (see its pin table).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with: { go-version: "1.27.3" }
+      # The binary for the runner's own arch under the name the manager
+      # serves it by, with its checksum, the way scripts/agent-binaries.sh
+      # writes them.
+      - name: Build the agent and the install stub
+        run: |
+          name="pulsix-agent-linux-$(go env GOARCH)"
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=ci-smoke" -o "dist/$name" ./cmd/agent
+          (cd dist && sha256sum "$name" > "$name.sha256")
+          go build -o "$RUNNER_TEMP/installstub" ./internal/agentdist/cmd/installstub
+          ls -l dist
+      - name: Install smoke
+        run: |
+          log="$RUNNER_TEMP/installstub.log"
+          "$RUNNER_TEMP/installstub" -dist "$PWD/dist" > "$log" 2>&1 &
+          stub=$!
+          trap 'kill "$stub" 2> /dev/null || true' EXIT
+          for _ in $(seq 1 150); do
+            grep -qx ready "$log" && break
+            kill -0 "$stub" 2> /dev/null || break
+            sleep 0.2
+          done
+          if ! grep -qx ready "$log"; then
+            echo "::error::installstub did not get ready"
+            cat "$log"
+            exit 1
+          fi
+          scripts/ci/install-smoke-linux.sh http://127.0.0.1:18080
 
   proto:
     runs-on: ubuntu-latest

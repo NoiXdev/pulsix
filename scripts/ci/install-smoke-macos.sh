@@ -13,7 +13,11 @@
 # retrying its enrollment, which is enough to show that it runs as a
 # daemon. It installs twice, a fresh install and then an upgrade over the
 # running agent, and checks the daemon, the file protection and the log
-# after each.
+# after each. Then it removes the agent with the installer's own
+# --uninstall and checks that daemon, plist, binary, logs and data
+# directory are gone, and runs the uninstall again, which finds nothing
+# and still succeeds. The cleanup trap removes the agent by hand as a
+# fallback, whatever step failed.
 #
 # Usage: scripts/ci/install-smoke-macos.sh [base URL]  (default http://127.0.0.1:18080)
 
@@ -114,11 +118,16 @@ assert_installed() {
 	echo "install-smoke: install $want_starts OK (running, protected, $starts start(s) logged)"
 }
 
-# install_agent: the documented `sh -s --` invocation, with the token from
-# the file. The script is downloaded first rather than piped, so a failed
-# download fails here instead of feeding sh an empty script.
-install_agent() {
+# fetch_installer: the script is downloaded first rather than piped, so a
+# failed download fails here instead of feeding sh an empty script.
+fetch_installer() {
 	curl -fsSL -o "$WORK/install.sh" "$BASE_URL/install.sh" || fail "downloading $BASE_URL/install.sh failed"
+}
+
+# install_agent: the documented `sh -s --` invocation, with the token from
+# the file.
+install_agent() {
+	fetch_installer
 	# The redirect is the runner user's on purpose: it reads its own download.
 	# shellcheck disable=SC2024
 	sudo sh -s -- --manager 127.0.0.1:1 --name ci-smoke --token-file "$TOKEN_FILE" < "$WORK/install.sh" ||
@@ -133,5 +142,34 @@ echo "install-smoke: upgrade over the running agent"
 previous_starts="$(starts_logged)"
 install_agent
 assert_installed $((previous_starts + 1))
+
+# uninstall_agent: the documented `sh -s -- --uninstall` invocation. Its
+# output is echoed and kept in UNINSTALL_OUT.
+uninstall_agent() {
+	fetch_installer
+	# shellcheck disable=SC2024
+	UNINSTALL_OUT="$(sudo sh -s -- --uninstall < "$WORK/install.sh")" ||
+		fail "install.sh --uninstall failed: $UNINSTALL_OUT"
+	printf '%s\n' "$UNINSTALL_OUT"
+}
+
+# assert_output TEXT: the last uninstall printed the line TEXT.
+assert_output() {
+	printf '%s\n' "$UNINSTALL_OUT" | grep -qxF "$1" || fail "the uninstall did not print '$1'"
+}
+
+echo "install-smoke: uninstall"
+uninstall_agent
+assert_output "pulsix-agent: the agent is still registered in Pulsix; revoke or delete it on the Agents page"
+if sudo launchctl print "system/$LABEL" > /dev/null 2>&1; then
+	fail "launchd still knows system/$LABEL after the uninstall"
+fi
+for path in "$PLIST" "$BIN" "$LOG_DIR" "$DATA_DIR"; do
+	sudo test ! -e "$path" || fail "$path is still there after the uninstall"
+done
+
+echo "install-smoke: uninstall again, with nothing installed"
+uninstall_agent
+assert_output "pulsix-agent: nothing to remove"
 
 echo "install-smoke: PASS"

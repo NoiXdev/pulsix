@@ -1,7 +1,7 @@
 // Command installstub is a test-only stand-in for the manager's agent
-// distribution routes, for CI's install smoke on the Windows and macOS
-// runners (scripts/ci/install-smoke-*.{sh,ps1}). It serves GET /install.sh
-// and GET /install.ps1 rendered with its own address, and
+// distribution routes, for CI's install smoke on the Linux, Windows and
+// macOS runners (scripts/ci/install-smoke-*.{sh,ps1}). It serves
+// GET /install.sh and GET /install.ps1 rendered with its own address, and
 // GET /agents/bin/{os}/{arch}[.sha256] from a directory of binaries built
 // for the runner. Nothing else: no enrollment, no rate limit, no session.
 //
