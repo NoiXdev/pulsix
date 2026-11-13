@@ -1,0 +1,31 @@
+# Synthetic: two servers (srv0, srv1) with three handlers each. Handler values differ, the
+# largest is the outermost one. srv0 has 5xx on two handlers and several 5xx codes.
+# HELP caddy_http_requests_in_flight Number of requests currently handled by this server.
+# TYPE caddy_http_requests_in_flight gauge
+caddy_http_requests_in_flight{handler="subroute",server="srv0"} 4
+caddy_http_requests_in_flight{handler="reverse_proxy",server="srv0"} 3
+caddy_http_requests_in_flight{handler="headers",server="srv0"} 1
+caddy_http_requests_in_flight{handler="subroute",server="srv1"} 2
+caddy_http_requests_in_flight{handler="file_server",server="srv1"} 2
+caddy_http_requests_in_flight{handler="encode",server="srv1"} 0
+# TYPE caddy_http_requests_total counter
+caddy_http_requests_total{handler="subroute",server="srv0"} 1000
+caddy_http_requests_total{handler="reverse_proxy",server="srv0"} 900
+caddy_http_requests_total{handler="headers",server="srv0"} 1000
+caddy_http_requests_total{handler="subroute",server="srv1"} 200
+caddy_http_requests_total{handler="file_server",server="srv1"} 150
+caddy_http_requests_total{handler="encode",server="srv1"} 200
+# TYPE caddy_http_request_duration_seconds histogram
+caddy_http_request_duration_seconds_bucket{code="200",handler="subroute",method="GET",server="srv0",le="0.005"} 10
+caddy_http_request_duration_seconds_sum{code="200",handler="subroute",method="GET",server="srv0"} 12.5
+caddy_http_request_duration_seconds_count{code="200",handler="subroute",method="GET",server="srv0"} 900
+caddy_http_request_duration_seconds_count{code="500",handler="subroute",method="GET",server="srv0"} 10
+caddy_http_request_duration_seconds_count{code="502",handler="subroute",method="POST",server="srv0"} 5
+caddy_http_request_duration_seconds_count{code="404",handler="subroute",method="GET",server="srv0"} 70
+caddy_http_request_duration_seconds_count{code="500",handler="reverse_proxy",method="GET",server="srv0"} 4
+caddy_http_request_duration_seconds_count{code="599",handler="headers",method="GET",server="srv0"} 1
+caddy_http_request_duration_seconds_count{code="200",handler="subroute",method="GET",server="srv1"} 200
+caddy_http_request_duration_seconds_count{code="503",handler="file_server",method="GET",server="srv1"} 7
+caddy_http_request_duration_seconds_count{code="600",handler="file_server",method="GET",server="srv1"} 99
+# TYPE go_goroutines gauge
+go_goroutines 12

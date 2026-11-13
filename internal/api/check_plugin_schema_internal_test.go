@@ -11,7 +11,7 @@ import (
 // TestCheckPluginFieldDoc: the write bodies' plugin doc string, built from
 // the registry, reads exactly as the literal it replaced.
 func TestCheckPluginFieldDoc(t *testing.T) {
-	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"
+	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache, caddy (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"
 	if got := checkPluginFieldDoc(); got != want {
 		t.Fatalf("checkPluginFieldDoc() =\n%s\nwant\n%s", got, want)
 	}
@@ -39,6 +39,9 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"apache: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1/server-status?auto), " +
+		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
+		"verify_tls (true or false; default true). " +
+		"caddy: url (at most 500 bytes; an http or https URL without user info or fragment; default http://127.0.0.1:2019/metrics), " +
 		"secret (not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"verify_tls (true or false; default true). " +
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5). " +

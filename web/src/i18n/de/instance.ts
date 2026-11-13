@@ -137,6 +137,7 @@ export const deInstance: Messages['instance'] = {
         redis: 'Redis / Valkey',
         nginx: 'nginx',
         apache: 'Apache httpd',
+        caddy: 'Caddy',
       },
       hint: 'Wird in jede Organisation mit der Standardbindung für die ganze Organisation und aktiviert projiziert — jede Organisation kann sie auf ihrer eigenen Check-Seite an eine Überwachungsgruppe oder einen Host binden oder deaktivieren; beides wird hier nicht festgelegt.',
       saved: (plugin: string) => `Check-Definition ${plugin} gespeichert`,

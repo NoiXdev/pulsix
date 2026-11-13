@@ -594,6 +594,50 @@
       ]
     },
     {
+      "name": "caddy",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "url",
+          "type": "string",
+          "default": "http://127.0.0.1:2019/metrics",
+          "max_bytes": 500,
+          "format": "statusURL"
+        },
+        {
+          "name": "secret",
+          "type": "string",
+          "example": "db-main",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        },
+        {
+          "name": "verify_tls",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "metrics": [
+        {
+          "name": "caddy.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.requests_in_flight",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "caddy.errors_5xx_per_s",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

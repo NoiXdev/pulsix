@@ -12,7 +12,7 @@ import (
 // check definition that names it.
 func TestRegistryWiresEveryPlugin(t *testing.T) {
 	reg := Registry()
-	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache"}
+	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy"}
 	if len(reg) != len(want) {
 		t.Fatalf("Registry() has %d plugins, want %d: %v", len(reg), len(want), reg)
 	}
@@ -35,10 +35,10 @@ func TestRegistryWiresEveryPlugin(t *testing.T) {
 // mysql.go assert the interface at compile time; this test pins it as the
 // registry hands the plugins out, and that no other plugin keeps state
 // (network keeps interface counters, mysql the slow-query counter, redis the
-// eviction counter, nginx and apache the request counters).
+// eviction counter, nginx, apache and caddy the request counters).
 func TestRegistryStatefulPlugins(t *testing.T) {
 	reg := Registry()
-	stateful := map[string]bool{"network": true, "mysql": true, "redis": true, "nginx": true, "apache": true}
+	stateful := map[string]bool{"network": true, "mysql": true, "redis": true, "nginx": true, "apache": true, "caddy": true}
 	for name := range stateful {
 		if _, ok := reg[name].(checks.StatefulPlugin); !ok {
 			t.Fatalf("Registry()[%s] = %T, want a checks.StatefulPlugin", name, reg[name])
@@ -46,7 +46,7 @@ func TestRegistryStatefulPlugins(t *testing.T) {
 	}
 	for name, p := range reg {
 		if _, ok := p.(checks.StatefulPlugin); ok && !stateful[name] {
-			t.Errorf("Registry()[%q] is a checks.StatefulPlugin; only network, mysql, redis, nginx and apache keep state", name)
+			t.Errorf("Registry()[%q] is a checks.StatefulPlugin; only network, mysql, redis, nginx, apache and caddy keep state", name)
 		}
 	}
 }

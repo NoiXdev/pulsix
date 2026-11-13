@@ -98,6 +98,7 @@ export const deChecks: Messages['checks'] = {
       redis: 'Redis / Valkey',
       nginx: 'nginx',
       apache: 'Apache httpd',
+      caddy: 'Caddy',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -204,6 +205,15 @@ export const deChecks: Messages['checks'] = {
     },
     apache: {
       url: { label: 'URL der Status-Seite', hint: 'Die mod_status-Seite des Apache httpd, die der Agent auf jedem Host liest; fehlt der Query-Schlüssel auto, hängt der Agent ?auto an. Ohne Wert liest der Check http://127.0.0.1/server-status?auto.' },
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password). Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
+        placeholder: 'status-login',
+      },
+      verify_tls: { label: 'TLS-Zertifikat prüfen' },
+    },
+    caddy: {
+      url: { label: 'URL der Metriken', hint: 'Die Prometheus-Metrikseite von Caddy, die der Agent auf jedem Host liest: der Admin-Endpunkt oder ein metrics-Handler auf einer Site. Die HTTP-Metriken müssen in Caddy eingeschaltet sein (die globale Option metrics). Ohne Wert liest der Check http://127.0.0.1:2019/metrics.' },
       secret: {
         label: 'Secret (optional)',
         hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password). Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
