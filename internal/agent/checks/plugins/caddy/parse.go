@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck"
 )
 
 // metrics is what the page says of Caddy's HTTP handling, aggregated as the
@@ -22,8 +24,6 @@ type metrics struct {
 	errs5xx uint64
 	have5xx bool
 }
-
-var errFormat = errors.New("unexpected response format")
 
 const (
 	// maxLine bounds one line of the page. Caddy's lines are short (a
@@ -75,14 +75,14 @@ func parseMetrics(body []byte) (metrics, error) {
 		}
 		end := strings.IndexAny(line, " \t{")
 		if end < 0 || !validName(line[:end]) {
-			return metrics{}, errFormat
+			return metrics{}, webcheck.ErrFormat
 		}
 		samples++
 		name := line[:end]
 		if name != famInflight && name != famRequests && name != famDuration {
 			after, ok := skipLabels(strings.TrimLeft(line[end:], " \t"))
 			if !ok {
-				return metrics{}, errFormat
+				return metrics{}, webcheck.ErrFormat
 			}
 			if _, err := parseValue(after); err != nil {
 				return metrics{}, err
@@ -90,14 +90,14 @@ func parseMetrics(body []byte) (metrics, error) {
 			continue
 		}
 		if len(line) > maxLine {
-			return metrics{}, errFormat
+			return metrics{}, webcheck.ErrFormat
 		}
 		if err := a.add(name, line[end:]); err != nil {
 			return metrics{}, err
 		}
 	}
 	if samples == 0 {
-		return metrics{}, errFormat
+		return metrics{}, webcheck.ErrFormat
 	}
 	return a.fold(), nil
 }
@@ -128,16 +128,16 @@ func skipLabels(s string) (rest string, ok bool) {
 func parseValue(s string) (float64, error) {
 	val, tail, _ := cutField(s)
 	if val == "" {
-		return 0, errFormat
+		return 0, webcheck.ErrFormat
 	}
 	if ts, more, _ := cutField(tail); ts != "" {
 		if _, err := strconv.ParseInt(ts, 10, 64); err != nil || strings.TrimSpace(more) != "" {
-			return 0, errFormat
+			return 0, webcheck.ErrFormat
 		}
 	}
 	v, err := strconv.ParseFloat(val, 64)
 	if err != nil && !errors.Is(err, strconv.ErrRange) {
-		return 0, errFormat
+		return 0, webcheck.ErrFormat
 	}
 	return v, nil
 }
@@ -238,22 +238,22 @@ func parseLabels(s string) (server, handler, code, rest string, err error) {
 	for {
 		s = strings.TrimLeft(s, " \t")
 		if s == "" {
-			return "", "", "", "", errFormat
+			return "", "", "", "", webcheck.ErrFormat
 		}
 		if s[0] == '}' {
 			return server, handler, code, s[1:], nil
 		}
 		eq := strings.IndexByte(s, '=')
 		if eq <= 0 {
-			return "", "", "", "", errFormat
+			return "", "", "", "", webcheck.ErrFormat
 		}
 		label := strings.TrimSpace(s[:eq])
 		if !validLabelName(label) {
-			return "", "", "", "", errFormat
+			return "", "", "", "", webcheck.ErrFormat
 		}
 		s = strings.TrimLeft(s[eq+1:], " \t")
 		if s == "" || s[0] != '"' {
-			return "", "", "", "", errFormat
+			return "", "", "", "", webcheck.ErrFormat
 		}
 		var val string
 		if val, s, err = parseQuoted(s[1:]); err != nil {
@@ -273,7 +273,7 @@ func parseLabels(s string) (server, handler, code, rest string, err error) {
 			s = s[1:]
 		case s != "" && s[0] == '}':
 		default:
-			return "", "", "", "", errFormat
+			return "", "", "", "", webcheck.ErrFormat
 		}
 	}
 }
@@ -289,7 +289,7 @@ func parseQuoted(s string) (val, rest string, err error) {
 		case '\\':
 			i++
 			if i >= len(s) {
-				return "", "", errFormat
+				return "", "", webcheck.ErrFormat
 			}
 			switch s[i] {
 			case '\\':
@@ -299,13 +299,13 @@ func parseQuoted(s string) (val, rest string, err error) {
 			case 'n':
 				b.WriteByte('\n')
 			default:
-				return "", "", errFormat
+				return "", "", webcheck.ErrFormat
 			}
 		default:
 			b.WriteByte(c)
 		}
 	}
-	return "", "", errFormat
+	return "", "", webcheck.ErrFormat
 }
 
 // validLabelName reports whether s is a Prometheus label name.

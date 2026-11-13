@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck"
 )
 
 func fixture(t *testing.T, name string) string {
@@ -71,8 +73,8 @@ func TestParseRefusesWhatIsNotTheFormat(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := parseStatus([]byte(tt.body)); err != errFormat {
-				t.Fatalf("parseStatus = %v, want errFormat", err)
+			if _, err := parseStatus([]byte(tt.body)); err != webcheck.ErrFormat {
+				t.Fatalf("parseStatus = %v, want webcheck.ErrFormat", err)
 			}
 		})
 	}
@@ -87,8 +89,8 @@ func TestParseNeedsEveryRequiredKey(t *testing.T) {
 			if renamed == good {
 				t.Fatalf("fixture has no %q", key)
 			}
-			if _, err := parseStatus([]byte(renamed)); err != errFormat {
-				t.Fatalf("parseStatus without %q = %v, want errFormat", key, err)
+			if _, err := parseStatus([]byte(renamed)); err != webcheck.ErrFormat {
+				t.Fatalf("parseStatus without %q = %v, want webcheck.ErrFormat", key, err)
 			}
 		})
 	}

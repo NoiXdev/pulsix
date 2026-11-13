@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck"
 )
 
 func fixture(t *testing.T, name string) string {
@@ -106,8 +108,8 @@ func TestParseMetricsFormatErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := parseMetrics([]byte(tt.body)); err != errFormat {
-				t.Fatalf("parseMetrics err = %v, want %v", err, errFormat)
+			if _, err := parseMetrics([]byte(tt.body)); err != webcheck.ErrFormat {
+				t.Fatalf("parseMetrics err = %v, want %v", err, webcheck.ErrFormat)
 			}
 		})
 	}

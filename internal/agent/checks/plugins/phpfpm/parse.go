@@ -2,12 +2,10 @@ package phpfpm
 
 import (
 	"encoding/json"
-	"errors"
 	"strconv"
-)
 
-// errFormat is the failure of any page that is not PHP-FPM's ?json status.
-var errFormat = errors.New("unexpected response format")
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck"
+)
 
 // maxPage bounds a pool's page. Without the query key full the page is one
 // small object (under 400 bytes for PHP 7.4 to 8.4); with full, which an
@@ -36,11 +34,11 @@ type count struct {
 
 func (c *count) UnmarshalJSON(b []byte) error {
 	if len(b) == 0 || b[0] < '0' || b[0] > '9' {
-		return errFormat
+		return webcheck.ErrFormat
 	}
 	v, err := strconv.ParseUint(string(b), 10, 64)
 	if err != nil {
-		return errFormat
+		return webcheck.ErrFormat
 	}
 	c.v, c.set = v, true
 	return nil
@@ -69,16 +67,16 @@ type fpmPage struct {
 
 // parseStatus reads a pool's page. It keeps no state, so it may run for
 // several pools at once. The keys the metrics need must be present; any
-// other shape is errFormat.
+// other shape is webcheck.ErrFormat.
 func parseStatus(body []byte) (status, error) {
 	var p fpmPage
 	if err := json.Unmarshal(body, &p); err != nil {
-		return status{}, errFormat
+		return status{}, webcheck.ErrFormat
 	}
 	for _, c := range []count{p.StartTime, p.AcceptedConn, p.ListenQueue, p.IdleProcesses, p.ActiveProcesses,
 		p.TotalProcesses, p.MaxChildrenReached, p.SlowRequests} {
 		if !c.set {
-			return status{}, errFormat
+			return status{}, webcheck.ErrFormat
 		}
 	}
 	return status{

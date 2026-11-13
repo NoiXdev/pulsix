@@ -1,9 +1,10 @@
 package nginx
 
 import (
-	"errors"
 	"strconv"
 	"strings"
+
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck"
 )
 
 // status is what stub_status reports.
@@ -11,8 +12,6 @@ type status struct {
 	active, accepts, handled, requests uint64
 	reading, writing, waiting          uint64
 }
-
-var errFormat = errors.New("unexpected response format")
 
 // maxPage bounds what parseStatus looks at: a real page is about 120 bytes.
 const maxPage = 4 << 10
@@ -25,7 +24,7 @@ const maxPage = 4 << 10
 // dropped then, see dropped).
 func parseStatus(body []byte) (status, error) {
 	if len(body) > maxPage {
-		return status{}, errFormat
+		return status{}, webcheck.ErrFormat
 	}
 	rest := string(body)
 	var lines [4][]string
@@ -38,13 +37,13 @@ func parseStatus(body []byte) (status, error) {
 			continue
 		}
 		if n == len(lines) {
-			return status{}, errFormat
+			return status{}, webcheck.ErrFormat
 		}
 		lines[n] = f
 		n++
 	}
 	if n != len(lines) {
-		return status{}, errFormat
+		return status{}, webcheck.ErrFormat
 	}
 	var s status
 	a, h, c, r := lines[0], lines[1], lines[2], lines[3]
@@ -52,7 +51,7 @@ func parseStatus(body []byte) (status, error) {
 		strings.Join(h, " ") != "server accepts handled requests" ||
 		len(c) != 3 || len(r) != 6 ||
 		r[0] != "Reading:" || r[2] != "Writing:" || r[4] != "Waiting:" {
-		return status{}, errFormat
+		return status{}, webcheck.ErrFormat
 	}
 	for _, f := range []struct {
 		dst *uint64
@@ -63,7 +62,7 @@ func parseStatus(body []byte) (status, error) {
 	} {
 		v, err := strconv.ParseUint(f.src, 10, 64)
 		if err != nil {
-			return status{}, errFormat
+			return status{}, webcheck.ErrFormat
 		}
 		*f.dst = v
 	}

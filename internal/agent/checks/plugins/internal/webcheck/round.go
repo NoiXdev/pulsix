@@ -27,12 +27,14 @@ type Outcome[S any] struct {
 // Caller-context contract (checks.Plugin): a context that has ended, before
 // or during the round (the secret's failure included), returns nil
 // outcomes and ctx.Err() and nothing else; the round's own deadline is a
-// server that did not answer, so that page's reason is "timed out". parse runs concurrently, once per page, and must
-// not touch plugin state: a caller observes the outcomes (and moves its
-// rate baselines) only after Round returned without an error, so a
-// cancelled round leaves the baselines alone. A panic while fetching or
-// parsing a page is raised again on the caller's goroutine, after every
-// page is done, as a fixed value (see fetchAll).
+// server that did not answer, so that page's reason is "timed out". parse
+// runs concurrently, once per page, and must not touch plugin state: a
+// caller observes the outcomes (and moves its rate baselines) only after
+// Round returned without an error, so a cancelled round leaves the
+// baselines alone. A panic while fetching or parsing a page is raised again
+// on the caller's goroutine, after every page is done, as a fixed value
+// (see fetchAll); it takes precedence over a cancelled caller context, as
+// the re-panic happens before the context is checked.
 func Round[S any](ctx context.Context, rawURLs []string, maxBody int, params map[string]any, fields map[string]string,
 	parse func(body []byte) (S, error)) ([]Outcome[S], error) {
 	if err := ctx.Err(); err != nil {

@@ -39,6 +39,7 @@ type plugin struct {
 	// instance per check key, collected from one goroutine only.
 	url                        string
 	lastAccepts, lastRequests  uint64
+	lastDropped                uint64
 	requests, accepts, dropped dbcheck.Counter
 }
 
@@ -80,8 +81,16 @@ func (p *plugin) observe(url string, s status) []checks.Observation {
 	if url != p.url || s.accepts < p.lastAccepts || s.requests < p.lastRequests {
 		p.url = url
 		p.requests, p.accepts, p.dropped = dbcheck.Counter{}, dbcheck.Counter{}, dbcheck.Counter{}
+		p.lastDropped = 0
 	}
 	p.lastAccepts, p.lastRequests = s.accepts, s.requests
+	// stub_status reads accepts before handled, so accepts - handled can
+	// fall by a few on a busy server. Within a baseline the dropped counter
+	// never falls (a real reset is caught above), or dbcheck.Counter would
+	// take the fall for a restart and the next round would report a
+	// phantom rate.
+	dropped := max(s.dropped(), p.lastDropped)
+	p.lastDropped = dropped
 	obs := []checks.Observation{
 		checks.ValueObservation("", metricUp, 1),
 		checks.ValueObservation("", "nginx.connections_active", float64(s.active)),
@@ -97,7 +106,7 @@ func (p *plugin) observe(url string, s status) []checks.Observation {
 	}{
 		{"nginx.requests_per_s", &p.requests, s.requests},
 		{"nginx.connections_accepted_per_s", &p.accepts, s.accepts},
-		{"nginx.connections_dropped_per_s", &p.dropped, s.dropped()},
+		{"nginx.connections_dropped_per_s", &p.dropped, dropped},
 	} {
 		if rate, ok := r.c.Rate(at, r.v); ok {
 			obs = append(obs, checks.ValueObservation("", r.metric, rate))

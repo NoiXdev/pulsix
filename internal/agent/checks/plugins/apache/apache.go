@@ -98,7 +98,7 @@ func (p *plugin) observe(url string, s status) []checks.Observation {
 		checks.ValueObservation("", "apache.workers_idle", float64(s.idle)),
 	}
 	if total := s.busy + s.idle; total == 0 || total < s.busy {
-		obs = append(obs, checks.ErrObservation("", "apache.workers_busy_pct", errors.New("apache: "+errFormat.Error())))
+		obs = append(obs, checks.ErrObservation("", "apache.workers_busy_pct", errors.New("apache: "+webcheck.ErrFormat.Error())))
 	} else {
 		obs = append(obs, checks.ValueObservation("", "apache.workers_busy_pct", float64(s.busy)/float64(total)*100))
 	}

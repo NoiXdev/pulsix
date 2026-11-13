@@ -383,3 +383,30 @@ func TestPrototypeAndInstances(t *testing.T) {
 		t.Fatal("instance has no clock")
 	}
 }
+
+// TestDroppedRateIgnoresARacingRead: stub_status reads accepts before
+// handled, so accepts - handled can fall by a few while nothing was undone.
+// The fall must not look like a reset and give the next round a phantom rate.
+func TestDroppedRateIgnoresARacingRead(t *testing.T) {
+	srv := newStatusServer(t, page(1, 100, 95, 1000, 0, 1, 0)) // dropped 5
+	p, clk := newTestPlugin()
+	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
+		t.Fatal(err)
+	}
+	for i, tt := range []struct {
+		accepts, handled int
+		want             float64
+	}{
+		{101, 98, 0},   // dropped 3: a racing read
+		{102, 97, 0},   // dropped 5
+		{103, 97, 0.1}, // dropped 6
+	} {
+		clk.Advance(10 * time.Second)
+		srv.Set(200, page(1, tt.accepts, tt.handled, 1000+10*(i+1), 0, 1, 0))
+		obs, err := p.Collect(t.Context(), params(srv))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustValue(t, obs, "nginx.connections_dropped_per_s", tt.want)
+	}
+}

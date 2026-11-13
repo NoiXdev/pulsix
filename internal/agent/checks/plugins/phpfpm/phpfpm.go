@@ -177,7 +177,7 @@ func (p *plugin) observePool(item string, s status, at time.Time) []checks.Obser
 		checks.ValueObservation(item, "phpfpm.processes_total", float64(s.total)),
 	}
 	if s.total == 0 {
-		obs = append(obs, checks.ErrObservation(item, "phpfpm.processes_busy_pct", errors.New("phpfpm: "+errFormat.Error())))
+		obs = append(obs, checks.ErrObservation(item, "phpfpm.processes_busy_pct", errors.New("phpfpm: "+webcheck.ErrFormat.Error())))
 	} else {
 		obs = append(obs, checks.ValueObservation(item, "phpfpm.processes_busy_pct", float64(s.active)/float64(s.total)*100))
 	}

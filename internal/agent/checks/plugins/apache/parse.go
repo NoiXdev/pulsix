@@ -1,9 +1,10 @@
 package apache
 
 import (
-	"errors"
 	"strconv"
 	"strings"
+
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck"
 )
 
 // status is what the mod_status ?auto page reports. extended is true when
@@ -13,8 +14,6 @@ type status struct {
 	accesses, kbytes uint64
 	extended         bool
 }
-
-var errFormat = errors.New("unexpected response format")
 
 const (
 	// maxPage bounds what parseStatus looks at. A real page is a few KB
@@ -34,7 +33,7 @@ const (
 // a format error.
 func parseStatus(body []byte) (status, error) {
 	if len(body) > maxPage {
-		return status{}, errFormat
+		return status{}, webcheck.ErrFormat
 	}
 	var s status
 	var haveBusy, haveIdle, haveAcc, haveKB bool
@@ -65,12 +64,12 @@ func parseStatus(body []byte) (status, error) {
 		}
 		v, err := strconv.ParseUint(strings.TrimSpace(val), 10, 64)
 		if err != nil {
-			return status{}, errFormat
+			return status{}, webcheck.ErrFormat
 		}
 		*dst, *seen = v, true
 	}
 	if !haveBusy || !haveIdle {
-		return status{}, errFormat
+		return status{}, webcheck.ErrFormat
 	}
 	s.extended = haveAcc && haveKB
 	if !s.extended {

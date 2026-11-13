@@ -27,6 +27,10 @@ const (
 	UserAgent = "pulsix-agent"
 )
 
+// ErrFormat is the failure of a page that is not the status page of the
+// plugin's server, the same text for all four plugins.
+var ErrFormat = errors.New("unexpected response format")
+
 // Auth is the optional basic-authentication credential of a secret.
 type Auth struct {
 	User, Password string
