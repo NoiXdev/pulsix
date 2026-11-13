@@ -58,18 +58,26 @@ WHERE h.org_id = sqlc.arg(org_id)
 ORDER BY h.agent_name;
 
 -- name: UpsertHostAgent :one
--- The active agent of a host: re-enrollment replaces the row in place
--- (ON CONFLICT on the host primary key), so exactly one agent row exists
--- per host at any time. agent_certificates carries the previous serials —
--- the service marks the old one revoked in the same transaction. Like
--- last_seen, the secrets report (00086), the connection start (00088) and
--- the configuration check (00089) start over: the new registration has
--- neither reported, connected nor been compared yet.
+-- The active agent of a host: re-enrollment and certificate renewal both
+-- replace the row in place (ON CONFLICT on the host primary key), so
+-- exactly one agent row exists per host at any time. agent_certificates
+-- carries the previous serials — the service marks the old one revoked in
+-- the same transaction. Like last_seen, the secrets report (00086) and the
+-- configuration check (00089) start over: the new registration has
+-- neither reported nor been compared yet. The connection start (00088,
+-- backlog 3.12c) is kept when the previous registration was last seen
+-- within the reconnect gap — a renewal happens on a live connection, every
+-- ~60 days, and must not restart the item expiry's wait — and otherwise
+-- becomes NULL, so the first touch sets it (TouchAgentBySerial). The SET
+-- list reads the row as it was before this update.
 INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES (sqlc.arg(host_id), sqlc.arg(org_id), sqlc.arg(agent_name), sqlc.arg(cert_serial), sqlc.arg(version))
 ON CONFLICT (host_id) DO UPDATE
 SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
-    version = EXCLUDED.version, last_seen = NULL, connected_since = NULL, created_at = now(),
+    version = EXCLUDED.version, last_seen = NULL, created_at = now(),
+    connected_since = CASE
+      WHEN host_agents.last_seen >= now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
+      THEN host_agents.connected_since END,
     secret_names = NULL, secrets_state = NULL,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING *;
@@ -82,16 +90,19 @@ RETURNING *;
 --
 -- connected_since (00088, backlog 3.12c) is when the agent's current
 -- connection began: kept while each touch follows the previous one within
--- the reconnect gap, set to now() on the first touch after a longer gap,
--- after enrollment (last_seen NULL) or when it is unknown (NULL, as every
--- row is right after the upgrade). The SET list reads the row as it was
--- before this update, so last_seen here is the previous touch. The item
--- expiry counts the agent only after checks.MaxInterval plus a 30-minute
--- margin connected.
+-- the reconnect gap (agents' reconnectGap, 24 h), set to now() on the
+-- first touch after a longer gap or when it is unknown (NULL: after an
+-- enrollment, a registration after a longer gap — UpsertHostAgent — and
+-- on every row right after the upgrade). A NULL last_seen with a known
+-- start is a certificate renewal within the gap, which keeps it. The SET
+-- list reads the row as it was before this update, so last_seen here is
+-- the previous touch. The item expiry counts the agent only after
+-- checks.MaxInterval plus a 30-minute margin connected.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   connected_since = CASE
-    WHEN last_seen IS NULL OR connected_since IS NULL
-      OR last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
+    WHEN connected_since IS NULL
+      OR (last_seen IS NOT NULL
+          AND last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision))
     THEN now() ELSE connected_since END
 WHERE cert_serial = sqlc.arg(serial);
 
@@ -105,8 +116,9 @@ WHERE cert_serial = sqlc.arg(serial);
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state),
   connected_since = CASE
-    WHEN last_seen IS NULL OR connected_since IS NULL
-      OR last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
+    WHEN connected_since IS NULL
+      OR (last_seen IS NOT NULL
+          AND last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision))
     THEN now() ELSE connected_since END
 WHERE cert_serial = sqlc.arg(serial);
 

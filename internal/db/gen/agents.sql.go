@@ -544,8 +544,9 @@ const recordAgentHeartbeat = `-- name: RecordAgentHeartbeat :exec
 UPDATE host_agents SET last_seen = now(), version = $1,
   secret_names = $2::text[], secrets_state = $3,
   connected_since = CASE
-    WHEN last_seen IS NULL OR connected_since IS NULL
-      OR last_seen < now() - make_interval(secs => $4::double precision)
+    WHEN connected_since IS NULL
+      OR (last_seen IS NOT NULL
+          AND last_seen < now() - make_interval(secs => $4::double precision))
     THEN now() ELSE connected_since END
 WHERE cert_serial = $5
 `
@@ -594,8 +595,9 @@ func (q *Queries) RevokeAgentCertificates(ctx context.Context, arg RevokeAgentCe
 const touchAgentBySerial = `-- name: TouchAgentBySerial :exec
 UPDATE host_agents SET last_seen = now(), version = $1,
   connected_since = CASE
-    WHEN last_seen IS NULL OR connected_since IS NULL
-      OR last_seen < now() - make_interval(secs => $2::double precision)
+    WHEN connected_since IS NULL
+      OR (last_seen IS NOT NULL
+          AND last_seen < now() - make_interval(secs => $2::double precision))
     THEN now() ELSE connected_since END
 WHERE cert_serial = $3
 `
@@ -613,12 +615,14 @@ type TouchAgentBySerialParams struct {
 //
 // connected_since (00088, backlog 3.12c) is when the agent's current
 // connection began: kept while each touch follows the previous one within
-// the reconnect gap, set to now() on the first touch after a longer gap,
-// after enrollment (last_seen NULL) or when it is unknown (NULL, as every
-// row is right after the upgrade). The SET list reads the row as it was
-// before this update, so last_seen here is the previous touch. The item
-// expiry counts the agent only after checks.MaxInterval plus a 30-minute
-// margin connected.
+// the reconnect gap (agents' reconnectGap, 24 h), set to now() on the
+// first touch after a longer gap or when it is unknown (NULL: after an
+// enrollment, a registration after a longer gap — UpsertHostAgent — and
+// on every row right after the upgrade). A NULL last_seen with a known
+// start is a certificate renewal within the gap, which keeps it. The SET
+// list reads the row as it was before this update, so last_seen here is
+// the previous touch. The item expiry counts the agent only after
+// checks.MaxInterval plus a 30-minute margin connected.
 func (q *Queries) TouchAgentBySerial(ctx context.Context, arg TouchAgentBySerialParams) error {
 	_, err := q.db.Exec(ctx, touchAgentBySerial, arg.Version, arg.ReconnectGapSeconds, arg.Serial)
 	return err
@@ -664,27 +668,36 @@ INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (host_id) DO UPDATE
 SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
-    version = EXCLUDED.version, last_seen = NULL, connected_since = NULL, created_at = now(),
+    version = EXCLUDED.version, last_seen = NULL, created_at = now(),
+    connected_since = CASE
+      WHEN host_agents.last_seen >= now() - make_interval(secs => $6::double precision)
+      THEN host_agents.connected_since END,
     secret_names = NULL, secrets_state = NULL,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at
 `
 
 type UpsertHostAgentParams struct {
-	HostID     uuid.UUID `json:"host_id"`
-	OrgID      uuid.UUID `json:"org_id"`
-	AgentName  string    `json:"agent_name"`
-	CertSerial string    `json:"cert_serial"`
-	Version    string    `json:"version"`
+	HostID              uuid.UUID `json:"host_id"`
+	OrgID               uuid.UUID `json:"org_id"`
+	AgentName           string    `json:"agent_name"`
+	CertSerial          string    `json:"cert_serial"`
+	Version             string    `json:"version"`
+	ReconnectGapSeconds float64   `json:"reconnect_gap_seconds"`
 }
 
-// The active agent of a host: re-enrollment replaces the row in place
-// (ON CONFLICT on the host primary key), so exactly one agent row exists
-// per host at any time. agent_certificates carries the previous serials —
-// the service marks the old one revoked in the same transaction. Like
-// last_seen, the secrets report (00086), the connection start (00088) and
-// the configuration check (00089) start over: the new registration has
-// neither reported, connected nor been compared yet.
+// The active agent of a host: re-enrollment and certificate renewal both
+// replace the row in place (ON CONFLICT on the host primary key), so
+// exactly one agent row exists per host at any time. agent_certificates
+// carries the previous serials — the service marks the old one revoked in
+// the same transaction. Like last_seen, the secrets report (00086) and the
+// configuration check (00089) start over: the new registration has
+// neither reported nor been compared yet. The connection start (00088,
+// backlog 3.12c) is kept when the previous registration was last seen
+// within the reconnect gap — a renewal happens on a live connection, every
+// ~60 days, and must not restart the item expiry's wait — and otherwise
+// becomes NULL, so the first touch sets it (TouchAgentBySerial). The SET
+// list reads the row as it was before this update.
 func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams) (HostAgent, error) {
 	row := q.db.QueryRow(ctx, upsertHostAgent,
 		arg.HostID,
@@ -692,6 +705,7 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		arg.AgentName,
 		arg.CertSerial,
 		arg.Version,
+		arg.ReconnectGapSeconds,
 	)
 	var i HostAgent
 	err := row.Scan(

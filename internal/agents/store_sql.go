@@ -178,6 +178,7 @@ func (s *SQLStore) Renew(ctx context.Context, a Agent, fromSerial string) error 
 func (s *SQLStore) register(ctx context.Context, a Agent) error {
 	if _, err := s.q.UpsertHostAgent(ctx, gen.UpsertHostAgentParams{
 		HostID: a.HostID, OrgID: a.OrgID, AgentName: a.AgentName, CertSerial: a.CertSerial, Version: a.Version,
+		ReconnectGapSeconds: reconnectGap.Seconds(),
 	}); err != nil {
 		return fmt.Errorf("upsert agent: %w", err)
 	}
@@ -227,10 +228,14 @@ func toIdentity(row gen.LookupAgentSerialRow) AgentIdentity {
 // previous one by more than this starts a new connection
 // (host_agents.connected_since, backlog 3.12c), which the item expiry
 // counts only after checks.MaxInterval plus a margin (internal/checks'
-// agentCountsAfter). Three times the longest heartbeat
-// interval an agent accepts (PULSIX_HEARTBEAT_INTERVAL is clamped to
-// 10 min in internal/agent), so a slow but steady agent never resets it.
-const reconnectGap = 30 * time.Minute
+// agentCountsAfter); a registration (renewal or re-enrollment) within it
+// keeps the start. It equals checks.MaxInterval (24 h). A shorter gap
+// would reset the start of a host that is silent for a while every day —
+// powered off at night, say — so its agent would never count and a quiet
+// check key's items would never expire. The 3.12c bug needs an outage
+// longer than PULSIX_ITEM_EXPIRY, whose minimum is 48 h, so a 24 h gap
+// still resets the start for it.
+const reconnectGap = 24 * time.Hour
 
 func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 	return s.q.TouchAgentBySerial(ctx, gen.TouchAgentBySerialParams{

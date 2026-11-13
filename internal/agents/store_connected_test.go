@@ -8,11 +8,13 @@ import (
 // TestConnectedSinceTracksTheConnection walks one agent through the
 // connection start the item expiry reads (backlog 3.12c): NULL after
 // enrollment, set by the first touch, kept by every touch that follows the
-// previous one within the 30-minute reconnect gap, set again after a
-// longer gap, set by the first touch after the upgrade on a row that has a
-// recent last_seen but no start yet, and NULL again after a
-// re-enrollment. Touch (stream open, ingest pacing) and Heartbeat both
-// write it.
+// previous one within the 24-hour reconnect gap — a host powered off for
+// 8 hours every night never resets it — set again after a longer gap, set
+// by the first touch after the upgrade on a row that has a recent
+// last_seen but no start yet, kept across a certificate renewal (and the
+// touch after it) within the gap, and NULL after a re-enrollment that
+// follows a longer gap, until the first touch sets it. Touch (stream
+// open, ingest pacing) and Heartbeat both write it.
 func TestConnectedSinceTracksTheConnection(t *testing.T) {
 	svc, _, d, org, zone := newAgentWorld(t, "agent-connected")
 	h := createHost(t, d, org, zone, "db-1")
@@ -46,6 +48,15 @@ func TestConnectedSinceTracksTheConnection(t *testing.T) {
 			return time.Time{}
 		}
 		return *connected
+	}
+	// silentFor moves last_seen back by ago and leaves connected_since.
+	silentFor := func(ago time.Duration) {
+		t.Helper()
+		if _, err := d.Pool().Exec(ctx,
+			`UPDATE host_agents SET last_seen = now() - make_interval(secs => $2::float8) WHERE host_id = $1`,
+			h.ID, ago.Seconds()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	touch := func() {
 		t.Helper()
@@ -82,19 +93,31 @@ func TestConnectedSinceTracksTheConnection(t *testing.T) {
 	touch()
 	startsNow("first touch")
 
-	start := rewind(29*time.Minute, 2*time.Hour)
+	start := rewind(23*time.Hour, 50*time.Hour)
 	touch()
-	kept("touch 29 min after the last one", start)
-	start = rewind(29*time.Minute, 3*time.Hour)
+	kept("touch 23 h after the last one", start)
+	start = rewind(23*time.Hour, 60*time.Hour)
 	heartbeat()
-	kept("heartbeat 29 min after the last one", start)
+	kept("heartbeat 23 h after the last one", start)
 
-	rewind(31*time.Minute, 5*time.Hour)
+	rewind(25*time.Hour, 50*time.Hour)
 	touch()
-	startsNow("touch after a 31 min gap")
-	rewind(31*time.Minute, 5*time.Hour)
+	startsNow("touch after a 25 h gap")
+	rewind(25*time.Hour, 50*time.Hour)
 	heartbeat()
-	startsNow("heartbeat after a 31 min gap")
+	startsNow("heartbeat after a 25 h gap")
+
+	// A host powered off for 8 hours every night stays one connection.
+	start = rewind(time.Minute, 10*24*time.Hour)
+	for night := range 4 {
+		silentFor(8 * time.Hour)
+		if night%2 == 0 {
+			touch()
+		} else {
+			heartbeat()
+		}
+		kept("back from a nightly 8 h power-off", start)
+	}
 
 	// The upgrade: the column arrives NULL on a row whose agent is online.
 	rewind(time.Minute, -1)
@@ -104,14 +127,30 @@ func TestConnectedSinceTracksTheConnection(t *testing.T) {
 	touch()
 	startsNow("first touch after the upgrade")
 
-	// A re-enrollment is a new agent: not connected yet.
-	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-a", "v2", "9302")); err != nil {
+	// A certificate renewal of a connected agent (every ~60 days) keeps
+	// the start, and so does the first touch under the new serial, which
+	// follows a last_seen the renewal reset to NULL.
+	start = rewind(time.Minute, 10*24*time.Hour)
+	if err := svc.Renew(ctx, registrationOf(org, h.ID, "agent-a", "v1", "9302"), "9301"); err != nil {
+		t.Fatal(err)
+	}
+	if c, s := read(); s != nil || c == nil || !c.Equal(start) {
+		t.Fatalf("after a renewal: connected_since = %v, last_seen = %v; want the start %v kept, last_seen NULL", c, s, start)
+	}
+	if err := svc.Touch(ctx, "9302", "v1"); err != nil {
+		t.Fatal(err)
+	}
+	kept("first touch after a renewal", start)
+
+	// A re-enrollment after a longer gap is not connected yet.
+	rewind(25*time.Hour, 10*24*time.Hour)
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-a", "v2", "9303")); err != nil {
 		t.Fatal(err)
 	}
 	if c, s := read(); c != nil || s != nil {
-		t.Fatalf("after re-enrollment: connected_since = %v, last_seen = %v; want both NULL", c, s)
+		t.Fatalf("after a re-enrollment 25 h later: connected_since = %v, last_seen = %v; want both NULL", c, s)
 	}
-	if err := svc.Touch(ctx, "9302", "v2"); err != nil {
+	if err := svc.Touch(ctx, "9303", "v2"); err != nil {
 		t.Fatal(err)
 	}
 	startsNow("first touch after re-enrollment")

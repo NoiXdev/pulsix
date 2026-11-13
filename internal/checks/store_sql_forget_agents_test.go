@@ -6,8 +6,8 @@
 // T = the item's newest reading + the period, the host counts as having
 // kept reporting after T when its item's own check key has a reading after
 // T, when it has an agent last seen after T that has been connected for
-// checks.MaxInterval plus 30 minutes by then (backlog 3.12c), or — only when it has no
-// agent — when any of its readings is after T.
+// checks.MaxInterval plus 30 minutes by then (backlog 3.12c), or — only
+// when it has no agent — when any of its readings is after T.
 //
 // Each scenario is pinned twice: on the selection (ListExpiredItems) and,
 // through a store that hands every item to the service, on the re-check
@@ -327,5 +327,46 @@ func TestExpiryAfterAnAgentOutage(t *testing.T) {
 	}
 	if counts, err := svc.ForgetExpired(ctx, period, 100); err != nil || counts[org] != 1 {
 		t.Fatalf("ForgetExpired after MaxInterval + 30 min connected = %v, %v; want the item forgotten", counts, err)
+	}
+}
+
+// TestExpiryAcrossACertificateRenewal: a steady agent that renews its
+// certificate (every ~60 days, through the same upsert as a re-enrollment)
+// keeps its connection start, so it keeps counting for the expiry and a
+// gone item of it is still forgotten right after the renewal.
+func TestExpiryAcrossACertificateRenewal(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-expiry-renewal")
+	host := seedHost(t, d, org, "expiry-renewal-host")
+	now := time.Now().UTC().Truncate(time.Second)
+	period := 48 * time.Hour
+	gone := now.Add(-period - 72*time.Hour)
+	store := agents.NewSQLStore(d)
+	agent := agents.Agent{OrgID: org, HostID: host, AgentName: "renewing", CertSerial: "r-1", Version: "test", CertNotBefore: now}
+	if err := store.Register(ctx, agent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx,
+		`UPDATE host_agents SET last_seen = now() - interval '1 minute', connected_since = now() - interval '30 days' WHERE host_id = $1`,
+		host); err != nil {
+		t.Fatal(err)
+	}
+	putCurrent(t, d, org, host, "docker", "removed", "up", gone)
+	ref := checks.ItemRef{OrgID: org, HostID: host, CheckKey: "docker", Item: "removed"}
+
+	agent.CertSerial = "r-2"
+	if err := store.Renew(ctx, agent, "r-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Touch(ctx, "r-2", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if !expiredSet(t, d, now.Add(-period), period, 100)[ref] {
+		t.Fatal("not selected right after a renewal, want the agent still counting")
+	}
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(now),
+		checks.WithAlertCloser(alerts.NewService(alerts.NewSQLStore(d), func() time.Time { return now })))
+	if counts, err := svc.ForgetExpired(ctx, period, 100); err != nil || counts[org] != 1 {
+		t.Fatalf("ForgetExpired right after a renewal = %v, %v; want the item forgotten", counts, err)
 	}
 }

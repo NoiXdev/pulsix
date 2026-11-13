@@ -6,7 +6,9 @@
 -- 30-minute margin, so an agent back from a long outage does not make a
 -- long-interval check's items look gone before that check has run again.
 -- Every write that sets last_seen keeps it, or sets it to now() after a
--- gap (agents.sql); a re-enrollment resets it to NULL with last_seen.
+-- gap of more than 24 hours (agents.sql, agents' reconnectGap). A
+-- registration — certificate renewal or re-enrollment — keeps it when the
+-- agent was last seen within that gap, and resets it to NULL otherwise.
 --
 -- NULL means unknown, and an unknown start never counts, so the column
 -- needs no backfill: every existing row reads as unknown until its agent's
