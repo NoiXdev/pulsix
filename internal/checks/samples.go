@@ -277,8 +277,8 @@ func breaksLine(s string) bool {
 // error alongside a value/label) cannot be represented by either table's
 // own CHECK constraint and is rejected rather than attempted. A value
 // ValueProblem refuses is rejected too (backlog 3.11c): the database would
-// store ±Inf, NaN or 1e308, but JSON has no spelling for the first two and
-// its aggregates overflow on the last; a current agent reports such a
+// store ±Inf, NaN or 1e200, but JSON has no spelling for the first two and
+// its averages overflow on the last; a current agent reports such a
 // value as an error instead.
 func wellShaped(o Observation) bool {
 	if o.Err != "" {

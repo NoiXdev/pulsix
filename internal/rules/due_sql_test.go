@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
@@ -1888,5 +1889,43 @@ func TestHostPastItsOwnDeadlineIsPostponedAndTheBatchGoesOn(t *testing.T) {
 	}
 	if stillDue(t, d, healthy) {
 		t.Fatal("the healthy host is still due; the slow host's deadline must not end the batch")
+	}
+}
+
+// TestWindowStatementSurvivesValuesAtTheIngestBound (backlog 3.11c): ingest
+// accepts any value within ±checks.MaxAbsValue, so a window full of them
+// must still aggregate. PostgreSQL's avg over float8 squares a scaled
+// difference as it goes, which overflows long before the sum does; the
+// bound is chosen so that it cannot.
+func TestWindowStatementSurvivesValuesAtTheIngestBound(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "windows-bound")
+	host := seedHost(t, d, org, "bound-host")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	for i := range 200 {
+		v := checks.MaxAbsValue
+		if i%2 == 1 {
+			v = -checks.MaxAbsValue
+		}
+		insertSample(t, d, org, host, cpu, now.Add(-time.Duration(i+1)*time.Second), ptr(v), nil)
+	}
+	insertSample(t, d, org, host, cpu, now.Add(-300*time.Second), ptr(0.0), nil)
+
+	key := rules.ItemKey{CheckKey: "cpu"}
+	var reqs []rules.WindowRequest
+	for _, agg := range []string{"avg", "min", "max", "rate"} {
+		reqs = append(reqs, rules.WindowRequest{Key: key, Metric: "cpu.used_pct", Agg: agg, Seconds: 600})
+	}
+	got, err := store.Windows(context.Background(), rules.Due{OrgID: org, HostID: host}, reqs, now)
+	if err != nil {
+		t.Fatalf("Windows over values at the ingest bound: %v", err)
+	}
+	for _, req := range reqs {
+		if v, ok := got[req]; !ok || math.IsNaN(v) || math.IsInf(v, 0) {
+			t.Errorf("%s = %v (present %v), want a finite value", req.Agg, v, ok)
+		}
 	}
 }

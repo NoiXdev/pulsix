@@ -12,8 +12,8 @@ import (
 // TestSchedulerTurnsNonFiniteValuesIntoErrors (backlog 3.11c): a plugin bug
 // that yields ±Inf or NaN must not reach the manager as a value — the
 // manager would store it and the host's checks could no longer be encoded
-// as JSON — and neither may one beyond ±1e300, which overflows the
-// manager's aggregates. The scheduler reports such a value as an error on the same item
+// as JSON — and neither may one beyond ±1e100, which can overflow the
+// manager's averages. The scheduler reports such a value as an error on the same item
 // and metric, so the bug stays visible, and every finite value of the
 // batch still goes out.
 func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
@@ -22,9 +22,9 @@ func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
 		{Item: "a", Metric: "x.v", Value: floatPtr(math.Inf(1))},
 		{Item: "b", Metric: "x.v", Value: floatPtr(math.Inf(-1))},
 		{Item: "c", Metric: "x.v", Value: floatPtr(math.NaN())},
-		{Item: "d", Metric: "x.v", Value: floatPtr(1.5e300)},
+		{Item: "d", Metric: "x.v", Value: floatPtr(1.5e100)},
 		{Item: "e", Metric: "x.v", Value: floatPtr(-math.MaxFloat64)},
-		{Item: "f", Metric: "x.v", Value: floatPtr(-1e300)},
+		{Item: "f", Metric: "x.v", Value: floatPtr(-1e100)},
 		{Item: "", Metric: "x.state", Label: strPtr("running")},
 	}}
 	ticks := &fakeTickers{}
@@ -60,8 +60,8 @@ func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
 			t.Errorf("item %q = %+v, want only the error %q", item, r, want)
 		}
 	}
-	if edge := findResult(t, batch, "f", "x.v"); edge.Value == nil || *edge.Value != -1e300 || edge.Err != "" {
-		t.Errorf("value at the bound = %+v, want -1e300 unchanged", edge)
+	if edge := findResult(t, batch, "f", "x.v"); edge.Value == nil || *edge.Value != -1e100 || edge.Err != "" {
+		t.Errorf("value at the bound = %+v, want -1e100 unchanged", edge)
 	}
 
 	cancel()
@@ -83,8 +83,8 @@ func TestMaxAbsValueMatchesTheManagersContract(t *testing.T) {
 // TestValueErrorsMatchTheManagers keeps the agent's error texts on the
 // manager's, which the host page shows for a value stored before the bound.
 func TestValueErrorsMatchTheManagers(t *testing.T) {
-	if errNotFinite != managerchecks.ErrValueNotFinite || errOutOfRange != managerchecks.ErrValueOutOfRange {
+	if errNotFinite != managerchecks.ValueNotFiniteText || errOutOfRange != managerchecks.ValueOutOfRangeText {
 		t.Fatalf("agent texts %q, %q differ from the manager's %q, %q",
-			errNotFinite, errOutOfRange, managerchecks.ErrValueNotFinite, managerchecks.ErrValueOutOfRange)
+			errNotFinite, errOutOfRange, managerchecks.ValueNotFiniteText, managerchecks.ValueOutOfRangeText)
 	}
 }

@@ -52,7 +52,7 @@ type hostCheckValueDTO struct {
 	Metric string    `json:"metric"`
 	Value  *float64  `json:"value,omitempty" doc:"Set for a numeric metric"`
 	Label  string    `json:"label,omitempty" doc:"Set for a discrete metric, e.g. a service state"`
-	Error  string    `json:"error,omitempty" doc:"Set when collection failed, or when a stored value is not a finite number within ±1e300 (it is then left out); value and label are then both absent"`
+	Error  string    `json:"error,omitempty" doc:"Set when collection failed, or when a stored value is not a finite number within ±1e100 (it is then left out); value and label are then both absent"`
 	At     time.Time `json:"at" doc:"When this reading was taken: the agent's own timestamp for a check the agent runs, the Pulsix server's clock for a synthetic check the server probes itself"`
 	Stale  bool      `json:"stale" doc:"No reading for more than three of the check's intervals"`
 	// State, Since and Flapping are the rule engine's own verdict on this

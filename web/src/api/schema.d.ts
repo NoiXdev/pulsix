@@ -4623,7 +4623,7 @@ export interface components {
             at: string;
             /** @description The decision that produced ignored; absent when none matched */
             decided_by?: components["schemas"]["ItemDecisionDTO"];
-            /** @description Set when collection failed, or when a stored value is not a finite number within ±1e300 (it is then left out); value and label are then both absent */
+            /** @description Set when collection failed, or when a stored value is not a finite number within ±1e100 (it is then left out); value and label are then both absent */
             error?: string;
             /**
              * Format: date-time
