@@ -26,6 +26,7 @@ export const deAgents: Messages['agents'] = {
     outdated: 'Konfiguration veraltet',
     detail: (running: string, expected: string) => `Agent läuft mit ${running} · Manager erwartet ${expected}`,
     none: 'keiner',
+    checkedAt: (when: string) => `geprüft ${when}`,
   },
   boundToHost: 'an einen Host',
   boundNewHost: 'neuer Host',

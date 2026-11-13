@@ -91,7 +91,28 @@ describe('HostAgentCard', () => {
     renderCard();
 
     expect(await screen.findByText(label)).toBeInTheDocument();
-    expect(screen.getByTitle(detail)).toBeInTheDocument();
+    expect(screen.getByTitle((title) => title.startsWith(`${detail} · checked `))).toBeInTheDocument();
+    // The card has the room to show the versions of an outdated agent as
+    // text; a current one needs no detail.
+    if (label === 'Config outdated') expect(screen.getByText(detail)).toBeInTheDocument();
+    else expect(screen.queryByText(detail)).toBeNull();
+  });
+
+  it('wraps the version row when both badges show', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/agent': {
+        agent: {
+          host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online', last_seen: new Date().toISOString(),
+          version: 'v1.1.0', version_status: 'update_required', cert_expires_at: inDays(60), created_at: '',
+          config_version: 'aaaaaaaa', config_expected: 'bbbbbbbb', config_checked_at: new Date().toISOString(),
+        },
+      },
+    });
+    renderCard();
+
+    const cell = (await screen.findByText('Update required')).closest('span.flex');
+    expect(cell).toContainElement(screen.getByText('Config outdated'));
+    expect(cell).toHaveClass('flex-wrap');
   });
 
   it('shows no configuration badge before the manager has compared', async () => {

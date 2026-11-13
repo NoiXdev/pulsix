@@ -28,6 +28,7 @@ export const enAgents = {
     outdated: 'Config outdated',
     detail: (running: string, expected: string) => `Agent runs ${running} · manager expects ${expected}`,
     none: 'none',
+    checkedAt: (when: string) => `checked ${when}`,
   },
   boundToHost: 'to a host',
   boundNewHost: 'new host',

@@ -69,10 +69,10 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
           </div>
           <div className="flex justify-between gap-2">
             <span className="text-muted-foreground">{t.agents.columns.version}</span>
-            <span className="flex min-w-0 items-center gap-2">
+            <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
               <span className="font-mono">{agent.version || '—'}</span>
               <VersionSkewBadge status={agent.version_status} />
-              <ConfigVersionBadge reported={agent.config_version} expected={agent.config_expected} />
+              <ConfigVersionBadge reported={agent.config_version} expected={agent.config_expected} checkedAt={agent.config_checked_at} detail />
             </span>
           </div>
           <div className="flex justify-between gap-2">

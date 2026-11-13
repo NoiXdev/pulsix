@@ -6,13 +6,15 @@ import { ConfigVersionBadge } from './ConfigVersionBadge.tsx';
 const A = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const B = 'fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210';
 
-function renderBadge(locale: 'en' | 'de', reported?: string, expected?: string) {
+function renderBadge(locale: 'en' | 'de', reported?: string, expected?: string, extra: { checkedAt?: string; detail?: boolean } = {}) {
   return render(
     <I18nProvider locale={locale}>
-      <ConfigVersionBadge reported={reported} expected={expected} />
+      <ConfigVersionBadge reported={reported} expected={expected} {...extra} />
     </I18nProvider>,
   );
 }
+
+const AT = '2026-11-13T14:05:00Z';
 
 describe('ConfigVersionBadge', () => {
   it.each([
@@ -30,6 +32,28 @@ describe('ConfigVersionBadge', () => {
     renderBadge(locale, A, B);
     expect(screen.getByText(label)).toBeInTheDocument();
     expect(screen.getByTitle(detail)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['en', 'Agent runs 01234567 · manager expects fedcba98 · checked ', 'en'],
+    ['de', 'Agent läuft mit 01234567 · Manager erwartet fedcba98 · geprüft ', 'de'],
+  ] as const)('adds when the check was made to the %s tooltip', (locale, prefix, tag) => {
+    renderBadge(locale, A, B, { checkedAt: AT });
+    expect(screen.getByTitle(prefix + new Date(AT).toLocaleString(tag))).toBeInTheDocument();
+  });
+
+  it('shows both versions as text when asked to and outdated, and not when current', () => {
+    const { unmount } = renderBadge('en', A, B, { detail: true });
+    expect(screen.getByText('Agent runs 01234567 · manager expects fedcba98')).toBeInTheDocument();
+    unmount();
+    renderBadge('en', A, A, { detail: true });
+    expect(screen.getByText('Config current')).toBeInTheDocument();
+    expect(screen.queryByText(/^Agent runs/)).toBeNull();
+  });
+
+  it('keeps the versions in the tooltip alone without detail', () => {
+    renderBadge('en', A, B);
+    expect(screen.queryByText(/^Agent runs/)).toBeNull();
   });
 
   it('names an agent that has applied no configuration yet', () => {

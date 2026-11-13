@@ -82,7 +82,10 @@ describe('AgentsPage', () => {
     expect(await screen.findByRole('link', { name: 'web-current' })).toBeInTheDocument();
     expect(screen.getAllByText('Config current')).toHaveLength(1);
     expect(screen.getAllByText('Config outdated')).toHaveLength(1);
-    expect(within(screen.getByRole('link', { name: 'web-outdated' })).getByTitle('Agent runs aaaaaaaa · manager expects bbbbbbbb')).toBeInTheDocument();
+    const outdated = within(screen.getByRole('link', { name: 'web-outdated' }));
+    expect(outdated.getByTitle((title) => title.startsWith('Agent runs aaaaaaaa · manager expects bbbbbbbb · checked '))).toBeInTheDocument();
+    // The list keeps the versions in the tooltip; only the host card spells them out.
+    expect(outdated.queryByText(/^Agent runs/)).toBeNull();
     expect(within(screen.getByRole('link', { name: 'web-unknown' })).queryByText(/^Config /)).toBeNull();
   });
 
@@ -205,7 +208,15 @@ describe('AgentsPage', () => {
   it('no clipped cards', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),
-      'GET /api/v1/orgs/acme/agents': { agents: [agent()] },
+      'GET /api/v1/orgs/acme/agents': {
+        agents: [
+          agent(),
+          agent({
+            host_id: 'h2', host_name: 'web-2', agent_name: 'web-2', version: 'v1.1.0', version_status: 'update_required',
+            config_version: 'aaaaaaaa', config_expected: 'bbbbbbbb', config_checked_at: new Date().toISOString(),
+          }),
+        ],
+      },
       'GET /api/v1/orgs/acme/agents/tokens': {
         tokens: [{ id: 't1', zone_id: 'z1', name_hint: 'edge-1', max_uses: 3, uses: 1, expires_at: inDays(0.02), created_at: '' }],
       },
@@ -214,6 +225,11 @@ describe('AgentsPage', () => {
     await screen.findByRole('link', { name: 'web-1' });
     await screen.findByText('edge-1');
     expect(clippedElements(container)).toEqual([]);
+    // Two badges outgrow a narrow Version column: the cell wraps them onto
+    // a second line rather than spilling into the Certificate column.
+    const cell = screen.getByText('Update required').closest('span.flex');
+    expect(cell).toContainElement(screen.getByText('Config outdated'));
+    expect(cell).toHaveClass('flex-wrap');
   });
 
   it('shows a viewer the fleet but no write actions', async () => {

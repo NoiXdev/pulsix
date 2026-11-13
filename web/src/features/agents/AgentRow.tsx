@@ -50,10 +50,10 @@ export function AgentRow({
         <Pill tone={a.status === 'online' ? 'ok' : 'warn'}>{statusLabel}</Pill>
       </span>
       <span className={`text-xs ${a.status === 'online' ? 'text-muted-foreground' : 'text-[var(--px-warn)]'}`}>{seenLabel(a.last_seen, now, t)}</span>
-      <span className="flex min-w-0 items-center gap-2 text-xs">
+      <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
         <span className="truncate font-mono">{a.version || '—'}</span>
         <VersionSkewBadge status={a.version_status} />
-        <ConfigVersionBadge reported={a.config_version} expected={a.config_expected} />
+        <ConfigVersionBadge reported={a.config_version} expected={a.config_expected} checkedAt={a.config_checked_at} />
       </span>
       <span className={`text-xs ${expiring ? 'font-semibold text-[var(--px-warn)]' : 'text-muted-foreground'}`} data-expiring={expiring || undefined}>
         {expiryLabel(a.cert_expires_at, now, t)}
