@@ -390,6 +390,8 @@ func TestRecordObservationsMalformedShapeRejected(t *testing.T) {
 // its own, like any other shape no correct agent sends, so it never
 // reaches the store (whose rows the host's checks are encoded from as
 // JSON, which has no spelling for it) and the rest of the batch is kept.
+// A value beyond ±MaxAbsValue is refused the same way: the database's
+// aggregates over two of them overflow and fail the graph and the rules.
 func TestRecordObservationsCountsNonFiniteValuesAsMalformed(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "checks-samples-nonfinite")
@@ -403,13 +405,15 @@ func TestRecordObservationsCountsNonFiniteValuesAsMalformed(t *testing.T) {
 		{HostID: host, CheckKey: "cpu", Metric: "plus-inf", At: now, Value: f64(math.Inf(1))},
 		{HostID: host, CheckKey: "cpu", Metric: "minus-inf", At: now, Value: f64(math.Inf(-1))},
 		{HostID: host, CheckKey: "cpu", Metric: "nan", At: now, Value: f64(math.NaN())},
+		{HostID: host, CheckKey: "cpu", Metric: "huge", At: now, Value: f64(-1.5e300)},
+		{HostID: host, CheckKey: "cpu", Metric: "at-the-bound", At: now, Value: f64(1e300)},
 	}
 	res, err := svc.RecordObservations(scoped, org, obs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Accepted != 1 || res.Malformed != 3 || res.Implausible != 0 {
-		t.Fatalf("ingest = %+v, want 1 accepted and 3 malformed", res)
+	if res.Accepted != 2 || res.Malformed != 4 || res.Implausible != 0 {
+		t.Fatalf("ingest = %+v, want 2 accepted and 4 malformed", res)
 	}
 }
 

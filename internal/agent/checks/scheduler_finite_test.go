@@ -5,12 +5,15 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	managerchecks "github.com/noixdev/pulsix/internal/checks"
 )
 
 // TestSchedulerTurnsNonFiniteValuesIntoErrors (backlog 3.11c): a plugin bug
 // that yields ±Inf or NaN must not reach the manager as a value — the
 // manager would store it and the host's checks could no longer be encoded
-// as JSON. The scheduler reports such a value as an error on the same item
+// as JSON — and neither may one beyond ±1e300, which overflows the
+// manager's aggregates. The scheduler reports such a value as an error on the same item
 // and metric, so the bug stays visible, and every finite value of the
 // batch still goes out.
 func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
@@ -19,6 +22,9 @@ func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
 		{Item: "a", Metric: "x.v", Value: floatPtr(math.Inf(1))},
 		{Item: "b", Metric: "x.v", Value: floatPtr(math.Inf(-1))},
 		{Item: "c", Metric: "x.v", Value: floatPtr(math.NaN())},
+		{Item: "d", Metric: "x.v", Value: floatPtr(1.5e300)},
+		{Item: "e", Metric: "x.v", Value: floatPtr(-math.MaxFloat64)},
+		{Item: "f", Metric: "x.v", Value: floatPtr(-1e300)},
 		{Item: "", Metric: "x.state", Label: strPtr("running")},
 	}}
 	ticks := &fakeTickers{}
@@ -36,8 +42,8 @@ func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
 	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 1 })
 
 	batch := sink.all()[0]
-	if len(batch) != 5 {
-		t.Fatalf("batch = %+v, want all 5 observations", batch)
+	if len(batch) != 8 {
+		t.Fatalf("batch = %+v, want all 8 observations", batch)
 	}
 	if good := findResult(t, batch, "", "x.good"); good.Value == nil || *good.Value != 1.5 || good.Err != "" {
 		t.Errorf("finite value = %+v, want 1.5 unchanged", good)
@@ -45,11 +51,17 @@ func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
 	if state := findResult(t, batch, "", "x.state"); state.Label == nil || *state.Label != "running" {
 		t.Errorf("label = %+v, want it unchanged", state)
 	}
-	for _, item := range []string{"a", "b", "c"} {
+	for item, want := range map[string]string{
+		"a": "value is not a finite number", "b": "value is not a finite number", "c": "value is not a finite number",
+		"d": "value is out of range", "e": "value is out of range",
+	} {
 		r := findResult(t, batch, item, "x.v")
-		if r.Value != nil || r.Label != nil || r.Err != "value is not a finite number" {
-			t.Errorf("item %q = %+v, want only the error %q", item, r, "value is not a finite number")
+		if r.Value != nil || r.Label != nil || r.Err != want {
+			t.Errorf("item %q = %+v, want only the error %q", item, r, want)
 		}
+	}
+	if edge := findResult(t, batch, "f", "x.v"); edge.Value == nil || *edge.Value != -1e300 || edge.Err != "" {
+		t.Errorf("value at the bound = %+v, want -1e300 unchanged", edge)
 	}
 
 	cancel()
@@ -59,3 +71,20 @@ func TestSchedulerTurnsNonFiniteValuesIntoErrors(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// TestMaxAbsValueMatchesTheManagersContract keeps the agent's copy of the
+// value bound on the manager's.
+func TestMaxAbsValueMatchesTheManagersContract(t *testing.T) {
+	if maxAbsValue != managerchecks.MaxAbsValue {
+		t.Fatalf("maxAbsValue = %g, the manager's contract says %g", maxAbsValue, managerchecks.MaxAbsValue)
+	}
+}
+
+// TestValueErrorsMatchTheManagers keeps the agent's error texts on the
+// manager's, which the host page shows for a value stored before the bound.
+func TestValueErrorsMatchTheManagers(t *testing.T) {
+	if errNotFinite != managerchecks.ErrValueNotFinite || errOutOfRange != managerchecks.ErrValueOutOfRange {
+		t.Fatalf("agent texts %q, %q differ from the manager's %q, %q",
+			errNotFinite, errOutOfRange, managerchecks.ErrValueNotFinite, managerchecks.ErrValueOutOfRange)
+	}
+}

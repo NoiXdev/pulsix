@@ -3,7 +3,6 @@ package checks
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 	"unicode"
@@ -276,15 +275,16 @@ func breaksLine(s string) bool {
 // label, or a value/label sample with no error and exactly one of the
 // two set. Any other combination (both value and label, neither, or an
 // error alongside a value/label) cannot be represented by either table's
-// own CHECK constraint and is rejected rather than attempted. A value of
-// ±Inf or NaN is rejected too (backlog 3.11c): the database would store
-// it, but JSON has no spelling for it, so one such value would break the
-// encoding of its host's checks; a current agent reports it as an error.
+// own CHECK constraint and is rejected rather than attempted. A value
+// ValueProblem refuses is rejected too (backlog 3.11c): the database would
+// store ±Inf, NaN or 1e308, but JSON has no spelling for the first two and
+// its aggregates overflow on the last; a current agent reports such a
+// value as an error instead.
 func wellShaped(o Observation) bool {
 	if o.Err != "" {
 		return o.Value == nil && o.Label == nil
 	}
-	if o.Value != nil && (math.IsNaN(*o.Value) || math.IsInf(*o.Value, 0)) {
+	if o.Value != nil && ValueProblem(*o.Value) != "" {
 		return false
 	}
 	return (o.Value != nil) != (o.Label != nil)
@@ -301,7 +301,7 @@ func wellShaped(o Observation) bool {
 //     CLOCK disagrees with the manager's. The remedy is NTP on that host.
 //   - Malformed: the observation is not a shape either table can store
 //     (a value and a label together, an error beside either, neither, or a
-//     value that is ±Inf or NaN).
+//     value that is ±Inf, NaN or beyond ±MaxAbsValue).
 //     No correct agent build produces one, so this means a broken or
 //     lying agent.
 //   - UnknownHost: the store recognised neither the host nor its

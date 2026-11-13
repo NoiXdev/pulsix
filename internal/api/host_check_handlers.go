@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -53,7 +52,7 @@ type hostCheckValueDTO struct {
 	Metric string    `json:"metric"`
 	Value  *float64  `json:"value,omitempty" doc:"Set for a numeric metric"`
 	Label  string    `json:"label,omitempty" doc:"Set for a discrete metric, e.g. a service state"`
-	Error  string    `json:"error,omitempty" doc:"Set when collection failed; value and label are then both absent — check_current stores an error row with neither"`
+	Error  string    `json:"error,omitempty" doc:"Set when collection failed, or when a stored value is not a finite number within ±1e300 (it is then left out); value and label are then both absent"`
 	At     time.Time `json:"at" doc:"When this reading was taken: the agent's own timestamp for a check the agent runs, the Pulsix server's clock for a synthetic check the server probes itself"`
 	Stale  bool      `json:"stale" doc:"No reading for more than three of the check's intervals"`
 	// State, Since and Flapping are the rule engine's own verdict on this
@@ -329,7 +328,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		out.Body.Range, out.Body.From, out.Body.To = in.Range, from, to
 		out.Body.Points = make([]metricPointDTO, 0, len(series.Points))
 		for _, p := range series.Points {
-			if !isFinite(p.Value) {
+			if checks.ValueProblem(p.Value) != "" {
 				continue // stored before ingest refused it (backlog 3.11c)
 			}
 			out.Body.Points = append(out.Body.Points, metricPointDTO{At: p.At, Value: p.Value})
@@ -453,8 +452,12 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 	dto.Values = make([]hostCheckValueDTO, len(values))
 	for i, c := range values {
 		v := hostCheckValueDTO{Item: c.Item, Metric: c.Metric, Value: c.Value, Error: c.Err, At: c.At}
-		if c.Value != nil && !isFinite(*c.Value) {
-			v.Value, v.Error = nil, nonFiniteValueErr
+		if c.Value != nil {
+			if problem := checks.ValueProblem(*c.Value); problem != "" {
+				// Stored before ingest refused it (backlog 3.11c): JSON has no
+				// spelling for ±Inf or NaN, so it reads as the error instead.
+				v.Value, v.Error = nil, problem
+			}
 		}
 		if c.Label != nil {
 			v.Label = *c.Label
@@ -631,11 +634,3 @@ func monitoringGroupNames(ctx context.Context, deps Deps, orgID uuid.UUID) (map[
 	}
 	return names, nil
 }
-
-// nonFiniteValueErr is what a stored ±Inf or NaN reads as. Ingest refuses
-// such a value (backlog 3.11c) and a current agent reports it as this same
-// error, but a manager that ran before the fix may hold one, and JSON has
-// no spelling for it: encoding it would fail the whole response.
-const nonFiniteValueErr = "value is not a finite number"
-
-func isFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
