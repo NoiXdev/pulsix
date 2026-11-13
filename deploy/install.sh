@@ -155,11 +155,17 @@ fi
 # wait_for_launchd_job_gone: bootout can return before the job is gone (the
 # agent is still handling SIGTERM), and bootstrapping a label that is still
 # loaded fails, so the upgrade and the uninstall wait for it to disappear.
+# An argument, if given, says what the timeout left untouched.
 wait_for_launchd_job_gone() {
 	tries=0
 	while launchctl print "system/$LAUNCHD_LABEL" > /dev/null 2>&1; do
 		tries=$((tries + 1))
-		[ "$tries" -le 20 ] || die "the running $LAUNCHD_LABEL did not stop within 20 seconds; run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"
+		if [ "$tries" -gt 20 ]; then
+			if [ -n "${1:-}" ]; then
+				die "the running $LAUNCHD_LABEL did not stop within 20 seconds; $1. Run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"
+			fi
+			die "the running $LAUNCHD_LABEL did not stop within 20 seconds; run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"
+		fi
 		sleep 1
 	done
 }
@@ -217,7 +223,7 @@ uninstall_linux() {
 uninstall_darwin() {
 	if launchctl print "system/$LAUNCHD_LABEL" > /dev/null 2>&1; then
 		launchctl bootout "system/$LAUNCHD_LABEL" 2> /dev/null || true
-		wait_for_launchd_job_gone
+		wait_for_launchd_job_gone "nothing was removed"
 		echo "pulsix-agent: stopped $LAUNCHD_LABEL"
 		REMOVED=1
 	fi

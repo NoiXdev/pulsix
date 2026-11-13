@@ -252,6 +252,23 @@ function Test-AgentServiceMarkedForDeletion {
 	return ($null -ne $entry) -and ($entry.DeleteFlag -eq 1)
 }
 
+# Get-AgentServiceStatus returns the PulsixAgent service's status, or
+# $null when there is none. It disposes the ServiceController it asks right
+# away: the script runs in the administrator's own session, and a handle
+# on the service still open there would keep a deleted service marked for
+# deletion, which a reinstall then refuses.
+function Get-AgentServiceStatus {
+	$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+	if ($null -eq $service) {
+		return $null
+	}
+	try {
+		return [string]$service.Status
+	} finally {
+		$service.Dispose()
+	}
+}
+
 # Stop-AgentService stops the PulsixAgent service, if there is one, and
 # waits until its process has exited, so its binary can be replaced or
 # removed (backlog 3.51). The service manager can report Stopped while the
@@ -263,66 +280,71 @@ function Test-AgentServiceMarkedForDeletion {
 # the service manager could restart an agent that exits with a failure
 # while it stops; the caller sets them again (Set-AgentRecovery) or deletes
 # the service. A stop that fails restores them itself and ends the script,
-# with $Unchanged saying what was left as it was.
+# with $Unchanged saying what was left as it was. Its ServiceController is
+# disposed whatever happens (see Get-AgentServiceStatus).
 function Stop-AgentService([string]$Unchanged) {
 	$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 	if ($null -eq $service) {
 		return
 	}
 	try {
-		$processId = 0
-		$entry = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
-		if ($null -ne $entry) {
-			$processId = [int]$entry.ProcessId
+		try {
+			$processId = 0
+			$entry = Get-CimInstance -ClassName Win32_Service -Filter "Name='$ServiceName'"
+			if ($null -ne $entry) {
+				$processId = [int]$entry.ProcessId
+			}
+		} catch {
+			Stop-Install "cannot read the process id of the $ServiceName service ($($_.Exception.Message)); $Unchanged"
 		}
-	} catch {
-		Stop-Install "cannot read the process id of the $ServiceName service ($($_.Exception.Message)); $Unchanged"
-	}
-	$process = $null
-	if ($processId -ne 0) {
-		# Already gone is fine: there is nothing to wait for.
-		$process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-		if ($null -ne $process) {
+		$process = $null
+		if ($processId -ne 0) {
+			# Already gone is fine: there is nothing to wait for.
+			$process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+			if ($null -ne $process) {
+				try {
+					[void]$process.Handle
+				} catch {
+					Write-Verbose "no handle on process $processId ($($_.Exception.Message)); WaitForExit opens its own"
+				}
+			}
+		}
+		Invoke-Sc ("failure $ServiceName " + 'reset= 0 actions= ""')
+		$problem = $null
+		if ($service.Status -ne 'Stopped') {
+			Write-Host "pulsix-agent: stopping the running $ServiceName service"
 			try {
-				[void]$process.Handle
+				if ($service.Status -ne 'StopPending') {
+					$service.Stop()
+				}
+				$service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
 			} catch {
-				Write-Verbose "no handle on process $processId ($($_.Exception.Message)); WaitForExit opens its own"
+				$problem = "the running $ServiceName service did not stop within 30 seconds; $Unchanged. Stop it (Stop-Service $ServiceName) and try again"
 			}
 		}
-	}
-	Invoke-Sc ("failure $ServiceName " + 'reset= 0 actions= ""')
-	$problem = $null
-	if ($service.Status -ne 'Stopped') {
-		Write-Host "pulsix-agent: stopping the running $ServiceName service"
-		try {
-			if ($service.Status -ne 'StopPending') {
-				$service.Stop()
+		if (($null -eq $problem) -and ($null -ne $process)) {
+			try {
+				$exited = $process.WaitForExit(30000)
+			} catch {
+				$exited = Wait-ProcessExit $processId 30
 			}
-			$service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
-		} catch {
-			$problem = "the running $ServiceName service did not stop within 30 seconds; $Unchanged. Stop it (Stop-Service $ServiceName) and try again"
+			if (-not $exited) {
+				$problem = "the $ServiceName process ($processId) did not exit within 30 seconds of the stop; $Unchanged. End it (Stop-Process -Id $processId) and try again"
+			}
 		}
-	}
-	if (($null -eq $problem) -and ($null -ne $process)) {
-		try {
-			$exited = $process.WaitForExit(30000)
-		} catch {
-			$exited = Wait-ProcessExit $processId 30
+		if ($null -ne $process) {
+			$process.Dispose()
 		}
-		if (-not $exited) {
-			$problem = "the $ServiceName process ($processId) did not exit within 30 seconds of the stop; $Unchanged. End it (Stop-Process -Id $processId) and try again"
+		if ($null -ne $problem) {
+			try {
+				Set-AgentRecovery
+			} catch {
+				Write-Warning "pulsix-agent: could not restore the recovery actions of $ServiceName ($($_.Exception.Message))"
+			}
+			Stop-Install $problem
 		}
-	}
-	if ($null -ne $process) {
-		$process.Dispose()
-	}
-	if ($null -ne $problem) {
-		try {
-			Set-AgentRecovery
-		} catch {
-			Write-Warning "pulsix-agent: could not restore the recovery actions of $ServiceName ($($_.Exception.Message))"
-		}
-		Stop-Install $problem
+	} finally {
+		$service.Dispose()
 	}
 }
 
@@ -358,22 +380,26 @@ function Assert-RemovableDataDir([string]$Path) {
 # Program Files, whose folders every user may read: read and execute
 # entries are fine there, and entries that only pass on to new items
 # (inherit-only, CREATOR OWNER) do not apply to the folder itself. The
-# install hands the folder to Administrators; one from before it did may
-# still be owned by the administrator who created it, so the account
-# running the uninstall may own it too.
+# install gives the folder an access list that passes (owner
+# Administrators; SYSTEM and Administrators full control, Users read and
+# execute). A folder from an older installer may still carry the entry
+# Program Files' CREATOR OWNER hands the account that created it; running
+# the installer once more replaces it. The binary must be a plain file:
+# Remove-Item on a directory junction asks before it recurses, and a yes
+# would delete inside the junction's target.
 function Assert-RemovableBinDir {
 	if (-not (Test-Path -LiteralPath $BinDir)) {
 		return
 	}
 	$fix = 'nothing was removed. Check the folder and remove it by hand'
+	$fixAccess = 'nothing was removed. Run the installer once more to reset its access list (an older installer left it this way), or check the folder and remove it by hand'
 	if (Test-ReparsePoint $BinDir) {
 		Stop-Install "$BinDir is a link (symlink or junction); $fix"
 	}
 	$acl = Get-Acl -LiteralPath $BinDir
 	$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-	$runner = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-	if (($BinDirWriters -notcontains $owner) -and ($owner -ne $runner)) {
-		Stop-Install "$BinDir is owned by $(Format-Sid $owner), not by SYSTEM, Administrators, TrustedInstaller or you; $fix"
+	if ($BinDirWriters -notcontains $owner) {
+		Stop-Install "$BinDir is owned by $(Format-Sid $owner), not by SYSTEM, Administrators or TrustedInstaller; $fixAccess"
 	}
 	foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
 		if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
@@ -386,15 +412,19 @@ function Assert-RemovableBinDir {
 			continue
 		}
 		if (([int]$rule.FileSystemRights -band $WriteRights) -ne 0) {
-			Stop-Install "$BinDir lets $(Format-Sid $rule.IdentityReference.Value) change its contents; $fix"
+			Stop-Install "$BinDir lets $(Format-Sid $rule.IdentityReference.Value) change its contents; $fixAccess"
 		}
+	}
+	if ((Test-Path -LiteralPath $BinPath) -and ((Get-Item -LiteralPath $BinPath -Force).PSIsContainer -or (Test-ReparsePoint $BinPath))) {
+		Stop-Install "$BinPath is not a plain file; $fix"
 	}
 }
 
 # Uninstall-Agent removes the agent (backlog 3.49): it stops the service
 # and waits for its process (Stop-AgentService), deletes the service, then
 # removes the binary, Program Files\Pulsix once it is empty, and the data
-# directory unless -KeepData keeps it. Both folders are checked before
+# directory unless -KeepData keeps it. A delete that fails restores the
+# recovery actions of the stopped service. Both folders are checked before
 # anything changes, and a service that does not stop ends the uninstall
 # before anything is removed. Every step tolerates its target being
 # absent, and a service an earlier run left marked for deletion is left to
@@ -411,15 +441,27 @@ function Uninstall-Agent {
 		Assert-RemovableDataDir $DataDir
 	}
 	$removed = $false
-	$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-	if (($null -ne $service) -and (Test-AgentServiceMarkedForDeletion)) {
-		if ($service.Status -ne 'Stopped') {
+	$status = Get-AgentServiceStatus
+	if (($null -ne $status) -and (Test-AgentServiceMarkedForDeletion)) {
+		if ($status -ne 'Stopped') {
 			Stop-Install "the $ServiceName service is marked for deletion but still running; nothing was removed. Stop it (Stop-Service $ServiceName) and try again"
 		}
 		Write-Host "pulsix-agent: the $ServiceName service is already marked for deletion; it disappears once programs holding it (such as the Services console) close"
-	} elseif ($null -ne $service) {
+	} elseif ($null -ne $status) {
 		Stop-AgentService 'nothing was removed'
-		Invoke-Sc "delete $ServiceName"
+		# A failed delete leaves the service there but stopped, with the
+		# recovery actions Stop-AgentService cleared: they come back.
+		try {
+			Invoke-Sc "delete $ServiceName"
+		} catch {
+			$message = ($_.Exception.Message -replace '^install\.ps1: ', '').TrimEnd('.', ' ')
+			try {
+				Set-AgentRecovery
+			} catch {
+				Write-Warning "pulsix-agent: could not restore the recovery actions of $ServiceName ($($_.Exception.Message))"
+			}
+			Stop-Install "$message; the $ServiceName service is stopped and nothing was removed. Start it again (Start-Service $ServiceName), or fix the cause and try again"
+		}
 		Write-Host "pulsix-agent: stopped and deleted the $ServiceName service"
 		$removed = $true
 	}
@@ -527,9 +569,13 @@ if (Test-AgentServiceMarkedForDeletion) {
 }
 
 # From the stop of a running agent on, a failure must not leave its
-# service without the recovery actions Stop-AgentService cleared: the
-# finally below sets them again.
+# service without the recovery actions Stop-AgentService cleared, nor
+# stopped: the recovery actions only restart an agent that failed, not one
+# that was stopped. The finally below sets them again and, once the agent
+# was stopped, starts it again, best effort, with the old binary or the
+# new one, whichever is in place.
 $restoreRecovery = $false
+$restartAgent = $false
 try {
 	$tmp = Join-Path ([IO.Path]::GetTempPath()) ('pulsix-install-' + [guid]::NewGuid().ToString('N'))
 	New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -563,14 +609,32 @@ try {
 
 		# 9. Stop a running agent and wait for its process, so its binary
 		# can be replaced.
-		if ($null -ne (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+		if ($null -ne (Get-AgentServiceStatus)) {
 			$restoreRecovery = $true
 			Stop-AgentService 'the binary was not replaced'
+			$restartAgent = $true
 		}
 
-		# 10. The binary. A virus scanner may hold the file for a moment
-		# after the download or the stop: up to 5 tries, 1 second apart.
+		# 10. The binary, in a folder with an access list of its own:
+		# SYSTEM and Administrators full control, Users read and execute,
+		# owned by Administrators. Nothing is inherited from Program Files:
+		# its CREATOR OWNER entry hands the account that creates the folder
+		# full control, and where an elevated administrator's new folders
+		# belong to the account itself, the uninstall would refuse a folder
+		# that account may change. Every run sets it, so an upgrade fixes an
+		# older install, and before the copy, so the binary inherits it.
 		New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+		& icacls.exe $BinDir /inheritance:r /grant:r "*S-1-5-18:(OI)(CI)F" "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-32-545:(OI)(CI)RX" | Out-Null
+		if ($LASTEXITCODE -ne 0) {
+			Stop-Install "icacls could not set the access list of $BinDir (exit code $LASTEXITCODE)"
+		}
+		# Not recursive: the binary needs no other owner.
+		& icacls.exe $BinDir /setowner "*S-1-5-32-544" | Out-Null
+		if ($LASTEXITCODE -ne 0) {
+			Stop-Install "icacls could not hand $BinDir to Administrators (exit code $LASTEXITCODE)"
+		}
+		# A virus scanner may hold the file for a moment after the download
+		# or the stop: up to 5 tries, 1 second apart.
 		for ($attempt = 1; $true; $attempt++) {
 			try {
 				Copy-Item -LiteralPath $downloaded -Destination $BinPath -Force
@@ -581,15 +645,6 @@ try {
 				}
 				Start-Sleep -Seconds 1
 			}
-		}
-		# Program Files\Pulsix belongs to Administrators, whoever created
-		# it: where an elevated administrator's new folders belong to the
-		# account itself, the uninstall would not take it otherwise. Every
-		# run sets it, so an upgrade fixes an older install. Not recursive:
-		# the binary needs no other owner.
-		& icacls.exe $BinDir /setowner "*S-1-5-32-544" | Out-Null
-		if ($LASTEXITCODE -ne 0) {
-			Stop-Install "icacls could not hand $BinDir to Administrators (exit code $LASTEXITCODE)"
 		}
 	} finally {
 		Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
@@ -642,7 +697,7 @@ try {
 	# 12. The service: created, or pointed at the new binary path if it
 	# exists, and its recovery actions.
 	$scArgs = 'binPath= "\"' + $BinPath + '\" --env-file \"' + $EnvFile + '\" --log-file \"' + $LogFile + '\"" start= delayed-auto DisplayName= "Pulsix agent"'
-	if ($null -ne (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+	if ($null -ne (Get-AgentServiceStatus)) {
 		$verb = 'config'
 	} else {
 		$verb = 'create'
@@ -656,6 +711,14 @@ try {
 			Set-AgentRecovery
 		} catch {
 			Write-Warning "pulsix-agent: could not restore the recovery actions of $ServiceName ($($_.Exception.Message)); run the installer again"
+		}
+		if ($restartAgent) {
+			try {
+				Start-Service -Name $ServiceName
+				Write-Warning "pulsix-agent: the install failed; the $ServiceName service was started again"
+			} catch {
+				Write-Warning "pulsix-agent: the install failed and the $ServiceName service is stopped ($($_.Exception.Message)); start it (Start-Service $ServiceName) once the cause is fixed"
+			}
 		}
 	}
 }

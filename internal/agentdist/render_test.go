@@ -177,8 +177,15 @@ func TestInstallScriptUninstallShape(t *testing.T) {
 	// The macOS uninstall waits for the job to go, like the upgrade.
 	assertInOrder(t, "uninstall_darwin", shellFunction(t, out, "uninstall_darwin"),
 		`launchctl bootout "system/$LAUNCHD_LABEL"`,
-		"wait_for_launchd_job_gone",
+		`wait_for_launchd_job_gone "nothing was removed"`,
 		`remove_path "$PLIST_PATH"`,
+	)
+	// Its timeout says, like Linux's, that nothing was removed; the
+	// upgrade's keeps its own wording.
+	assertInOrder(t, "wait_for_launchd_job_gone", shellFunction(t, out, "wait_for_launchd_job_gone"),
+		`if [ -n "${1:-}" ]; then`,
+		`die "the running $LAUNCHD_LABEL did not stop within 20 seconds; $1. Run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"`,
+		`die "the running $LAUNCHD_LABEL did not stop within 20 seconds; run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"`,
 	)
 	// remove_path refuses an empty or relative path before rm -rf sees it.
 	assertInOrder(t, "remove_path", shellFunction(t, out, "remove_path"),

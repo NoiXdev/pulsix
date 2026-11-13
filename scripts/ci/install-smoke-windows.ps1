@@ -24,8 +24,9 @@
 #   6. the uninstall again (5.1), which finds nothing and still succeeds.
 #
 # Every install is checked for the service, the start count, the access
-# lists and the recovery actions. Remove-Agent removes the agent by hand as
-# a fallback, whatever step failed.
+# lists (the program folder's and the data directory's) and the recovery
+# actions. Remove-Agent removes the agent by hand as a fallback, whatever
+# step failed.
 #
 # Usage: pwsh -File scripts/ci/install-smoke-windows.ps1 [-BaseUrl http://127.0.0.1:18080]
 # Exit code 0 on success, 1 on failure.
@@ -125,6 +126,44 @@ function Assert-OnlyAdmins([string]$Path, [switch]$Protected) {
 	}
 }
 
+# Assert-ProgramFolderAcl fails unless Program Files\Pulsix carries the
+# access list install.ps1 gives it: owned by Administrators, nothing
+# inherited from Program Files, and exactly SYSTEM and Administrators with
+# full control and Users with read and execute, each for the folder, its
+# subfolders and files. The uninstall refuses a program folder anyone else
+# may change; this catches a regression at the install instead.
+function Assert-ProgramFolderAcl {
+	$acl = Get-Acl -LiteralPath $BinDir
+	$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+	if ($owner -ne 'S-1-5-32-544') {
+		Fail "$BinDir is owned by $owner, want Administrators (S-1-5-32-544)"
+	}
+	if (-not $acl.AreAccessRulesProtected) {
+		Fail "$BinDir still inherits access rules from Program Files"
+	}
+	$want = @{
+		'S-1-5-18' = 'FullControl'
+		'S-1-5-32-544' = 'FullControl'
+		'S-1-5-32-545' = 'ReadAndExecute, Synchronize'
+	}
+	$inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+	$rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+	$seen = @()
+	foreach ($rule in $rules) {
+		$sid = $rule.IdentityReference.Value
+		$described = "$sid $($rule.AccessControlType) $($rule.FileSystemRights) ($($rule.InheritanceFlags); $($rule.PropagationFlags))"
+		$seen += $described
+		if (($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) -or (-not $want.ContainsKey($sid)) -or
+			([string]$rule.FileSystemRights -ne $want[$sid]) -or ($rule.InheritanceFlags -ne $inherit) -or
+			($rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None)) {
+			Fail "$BinDir has the access rule $described; want only SYSTEM and Administrators FullControl and Users ReadAndExecute, each for the folder, its subfolders and files"
+		}
+	}
+	if ($rules.Count -ne $want.Count) {
+		Fail "$BinDir has $($rules.Count) access rules, want $($want.Count): $($seen -join ', ')"
+	}
+}
+
 # Assert-Installed waits for the service to run and for the agent to have
 # logged exactly $WantStarts starts, checks that it stays up, and checks
 # every file the installer wrote. Any start beyond $WantStarts means the
@@ -156,6 +195,7 @@ function Assert-Installed([int]$WantStarts) {
 	if (-not (Test-Path -LiteralPath $BinPath -PathType Leaf)) {
 		Fail "$BinPath is missing"
 	}
+	Assert-ProgramFolderAcl
 	$config = (& sc.exe qc $ServiceName | Out-String)
 	if ($LASTEXITCODE -ne 0) {
 		Fail "sc.exe qc $ServiceName exited with $LASTEXITCODE"

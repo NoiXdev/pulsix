@@ -226,18 +226,19 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"if ($Uninstall) {",
 		"if (Test-AgentServiceMarkedForDeletion) {\n\tStop-Install \"the $ServiceName service is marked for deletion",
 		"restart Windows, then run the installer again",
-		"$restoreRecovery = $false\ntry {",
+		"$restoreRecovery = $false\n$restartAgent = $false\ntry {",
 	)
 
 	// The upgrade: the data directory is checked before the running agent
 	// is stopped, its recovery actions are restored in a finally, and the
 	// copy follows the wait for the process.
 	assertInOrder(t, "install.ps1", main,
-		"$restoreRecovery = $false\ntry {",
+		"$restoreRecovery = $false\n$restartAgent = $false\ntry {",
 		"Get-FileHash",
 		"if (Test-Path -LiteralPath $DataDir) {\n\t\t\tAssert-DataDirReusable\n",
 		"$restoreRecovery = $true",
 		"Stop-AgentService 'the binary was not replaced'",
+		"$restartAgent = $true",
 		"Copy-Item -LiteralPath $downloaded -Destination $BinPath -Force",
 		"Assert-DataDirReusable",
 		"/inheritance:r",
@@ -247,8 +248,18 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"} finally {",
 		"if ($restoreRecovery) {",
 		"Set-AgentRecovery",
-		"Start-Service",
+		// A failure after the stop starts the agent again, best effort,
+		// and says whether it runs; neither may mask the failure.
+		"if ($restartAgent) {",
+		"try {\n\t\t\t\tStart-Service -Name $ServiceName\n",
+		"the $ServiceName service was started again",
+		"} catch {\n\t\t\t\tWrite-Warning \"pulsix-agent: the install failed and the $ServiceName service is stopped",
+		"# 13. Start.",
+		"Start-Service -Name $ServiceName",
 	)
+	if !strings.Contains(main, "$restoreRecovery = $false\n$restartAgent = $false\ntry {") {
+		t.Error("install.ps1 must start with $restartAgent false next to $restoreRecovery")
+	}
 
 	// The shared stop: the process id read and the recovery actions
 	// cleared before the stop, then the status, then the process. A stop
@@ -265,13 +276,26 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"$service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))",
 		"$exited = $process.WaitForExit(30000)",
 		// Only when WaitForExit itself fails.
-		"} catch {\n\t\t\t$exited = Wait-ProcessExit $processId 30",
+		"} catch {\n\t\t\t\t$exited = Wait-ProcessExit $processId 30",
 		"if (-not $exited) {",
 		// The handle is let go once the wait is over.
 		"$process.Dispose()",
 		"Set-AgentRecovery",
 		"Stop-Install",
+		// Its ServiceController too, whatever happened.
+		"} finally {\n\t\t$service.Dispose()\n\t}",
 	)
+	// Every ServiceController the installer creates is disposed: a handle
+	// still open in the administrator's session would keep a deleted
+	// service marked for deletion. Only these two functions create one.
+	assertInOrder(t, "Get-AgentServiceStatus", psFunction(t, script, "Get-AgentServiceStatus"),
+		"$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue",
+		"return $null",
+		"try {\n\t\treturn [string]$service.Status\n\t} finally {\n\t\t$service.Dispose()\n\t}",
+	)
+	if n := strings.Count(script, "Get-Service -Name"); n != 2 {
+		t.Errorf("Get-Service must be called only in Get-AgentServiceStatus and Stop-AgentService, found %d calls", n)
+	}
 	assertInOrder(t, "Test-AgentServiceMarkedForDeletion", psFunction(t, script, "Test-AgentServiceMarkedForDeletion"),
 		`Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name DeleteFlag -ErrorAction SilentlyContinue`,
 		"return ($null -ne $entry) -and ($entry.DeleteFlag -eq 1)",
@@ -311,13 +335,18 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"if ($removeData) {\n\t\tAssert-RemovableDataDir $DataDir\n\t}",
 		// A service marked for deletion: refused while it runs, else left
 		// to go on its own, without sc.exe (error 1072).
-		"if (($null -ne $service) -and (Test-AgentServiceMarkedForDeletion)) {",
-		"if ($service.Status -ne 'Stopped') {",
+		"$status = Get-AgentServiceStatus",
+		"if (($null -ne $status) -and (Test-AgentServiceMarkedForDeletion)) {",
+		"if ($status -ne 'Stopped') {",
 		`Stop-Install "the $ServiceName service is marked for deletion but still running; nothing was removed.`,
 		"is already marked for deletion",
-		"} elseif ($null -ne $service) {",
+		"} elseif ($null -ne $status) {",
 		"Stop-AgentService 'nothing was removed'",
-		`Invoke-Sc "delete $ServiceName"`,
+		// A failed delete leaves the service stopped: its recovery
+		// actions come back, and the message says it is stopped.
+		"try {\n\t\t\tInvoke-Sc \"delete $ServiceName\"\n\t\t} catch {",
+		"Set-AgentRecovery",
+		"the $ServiceName service is stopped and nothing was removed",
 		"Remove-Item -LiteralPath $BinPath -Force",
 		"Remove-Item -LiteralPath $BinDir -Force",
 		"if ($KeepData) {",
@@ -329,10 +358,8 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 	if strings.Count(uninstall, "Assert-RemovableDataDir") != 1 || strings.Count(uninstall, "Directory]::Delete(") != 1 {
 		t.Error("Uninstall-Agent must check the data directory once and remove it once, both under $removeData")
 	}
-	for _, bad := range []string{"finally", "Set-AgentRecovery"} {
-		if strings.Contains(uninstall, bad) {
-			t.Errorf("Uninstall-Agent must not contain %q: it would set recovery actions on a deleted service", bad)
-		}
+	if strings.Contains(uninstall, "finally") || strings.Count(uninstall, "Set-AgentRecovery") != 1 {
+		t.Error("Uninstall-Agent may set recovery actions only when the delete failed, never in a finally")
 	}
 	// The data directory is removed only when nobody but SYSTEM and
 	// Administrators can create anything in it: every folder in the tree
@@ -360,31 +387,43 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"$AllowedSids -notcontains $rule.IdentityReference.Value",
 		"return $null",
 	)
-	// Program Files\Pulsix: the install hands it to Administrators, after
-	// the copy, on every install and upgrade (not recursively).
+	// Program Files\Pulsix gets an access list of its own, on every
+	// install and upgrade, before the binary is copied in so it inherits
+	// it: nothing inherited from Program Files (its CREATOR OWNER entry
+	// would hand the creating account full control), SYSTEM and
+	// Administrators full control, Users read and execute, owner
+	// Administrators. Each icacls call is checked.
 	assertInOrder(t, "install.ps1", main,
-		"Copy-Item -LiteralPath $downloaded -Destination $BinPath -Force",
+		"Stop-AgentService 'the binary was not replaced'",
+		"New-Item -ItemType Directory -Path $BinDir -Force | Out-Null\n",
+		"\t\t& icacls.exe $BinDir /inheritance:r /grant:r \"*S-1-5-18:(OI)(CI)F\" \"*S-1-5-32-544:(OI)(CI)F\" \"*S-1-5-32-545:(OI)(CI)RX\" | Out-Null\n\t\tif ($LASTEXITCODE -ne 0) {\n",
+		"Stop-Install \"icacls could not set the access list of $BinDir (exit code $LASTEXITCODE)\"",
 		"\t\t& icacls.exe $BinDir /setowner \"*S-1-5-32-544\" | Out-Null\n\t\tif ($LASTEXITCODE -ne 0) {\n",
 		"Stop-Install \"icacls could not hand $BinDir to Administrators (exit code $LASTEXITCODE)\"",
+		"Copy-Item -LiteralPath $downloaded -Destination $BinPath -Force",
 		"} finally {\n\t\tRemove-Item -LiteralPath $tmp",
 	)
-	// Program Files\Pulsix: the same rule, where every user may read. The
-	// owner may also be the administrator running the uninstall, for an
-	// install from before the folder was handed to Administrators; the
-	// write-rights check does not make that exception.
+	if n := strings.Count(script, "icacls.exe $BinDir"); n != 2 {
+		t.Errorf("install.ps1 must call icacls on $BinDir exactly twice (access list, owner), found %d", n)
+	}
+	// Program Files\Pulsix: the same rule as the data directory, where
+	// every user may read; the install's own access list passes it. The
+	// binary must be a plain file: Remove-Item on a directory junction
+	// can recurse into its target once someone confirms.
 	binDir := psFunction(t, script, "Assert-RemovableBinDir")
 	assertInOrder(t, "Assert-RemovableBinDir", binDir,
 		"if (Test-ReparsePoint $BinDir) {",
-		"$runner = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-		"if (($BinDirWriters -notcontains $owner) -and ($owner -ne $runner)) {",
+		"if ($BinDirWriters -notcontains $owner) {",
 		"$acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])",
 		"PropagationFlags]::InheritOnly",
 		"$BinDirWriters -contains $rule.IdentityReference.Value",
 		"([int]$rule.FileSystemRights -band $WriteRights) -ne 0",
 		"Stop-Install",
+		"if ((Test-Path -LiteralPath $BinPath) -and ((Get-Item -LiteralPath $BinPath -Force).PSIsContainer -or (Test-ReparsePoint $BinPath))) {",
+		"is not a plain file",
 	)
-	if n := strings.Count(binDir, "$runner"); n != 2 {
-		t.Errorf("Assert-RemovableBinDir must use $runner only in the owner check, found %d uses", n)
+	if strings.Contains(binDir, "$runner") || strings.Contains(binDir, "GetCurrent()") {
+		t.Error("Assert-RemovableBinDir must not make an exception for the account running it: the install sets the owner")
 	}
 	for _, want := range []string{
 		"$TrustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'",
@@ -434,4 +473,34 @@ func psFunction(t *testing.T, script, name string) string {
 		t.Fatalf("the function %s has no closing brace", name)
 	}
 	return body[:end]
+}
+
+// The Windows smoke checks the program folder's access list after every
+// install, so a regression fails there rather than at the uninstall.
+func TestInstallSmokeWindowsChecksTheProgramFolder(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "install-smoke-windows.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoke := string(raw)
+	for i, r := range smoke {
+		if r > 0x7e || (r < 0x20 && r != '\n' && r != '\r' && r != '\t') {
+			t.Fatalf("install-smoke-windows.ps1 has a non-ASCII or control character %U at byte %d", r, i)
+		}
+	}
+	assertInOrder(t, "Assert-ProgramFolderAcl", psFunction(t, smoke, "Assert-ProgramFolderAcl"),
+		"$acl = Get-Acl -LiteralPath $BinDir",
+		"$owner -ne 'S-1-5-32-544'",
+		"if (-not $acl.AreAccessRulesProtected) {",
+		"'S-1-5-18' = 'FullControl'",
+		"'S-1-5-32-544' = 'FullControl'",
+		"'S-1-5-32-545' = 'ReadAndExecute, Synchronize'",
+		"AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow",
+		"$rules.Count -ne $want.Count",
+	)
+	assertInOrder(t, "Assert-Installed", psFunction(t, smoke, "Assert-Installed"),
+		"Fail \"$BinPath is missing\"",
+		"Assert-ProgramFolderAcl",
+		"Assert-OnlyAdmins $DataDir -Protected",
+	)
 }
