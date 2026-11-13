@@ -32,6 +32,7 @@ func registry() []plugin {
 		{"nginx", nginxPlugin},
 		{"apache", apachePlugin},
 		{"caddy", caddyPlugin},
+		{"phpfpm", phpfpmPlugin},
 		{"icmp", icmpPlugin},
 		{"tcp", tcpPlugin},
 		{"http", httpPlugin},

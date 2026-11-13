@@ -99,6 +99,7 @@ export const deChecks: Messages['checks'] = {
       nginx: 'nginx',
       apache: 'Apache httpd',
       caddy: 'Caddy',
+      phpfpm: 'PHP-FPM',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -217,6 +218,18 @@ export const deChecks: Messages['checks'] = {
       secret: {
         label: 'Secret (optional)',
         hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password). Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
+        placeholder: 'status-login',
+      },
+      verify_tls: { label: 'TLS-Zertifikat prüfen' },
+    },
+    phpfpm: {
+      urls: {
+        label: 'URLs der Status-Seiten (eine pro Zeile, je ein Pool)',
+        hint: 'Die Status-Seite (pm.status_path) jedes PHP-FPM-Pools, ausgeliefert vom Webserver davor und gelesen vom Agent auf jedem Host; fehlt der Query-Schlüssel json, hängt der Agent ?json an. Jede URL ist ein Pool und benennt seine Messwerte. Leer heißt ein Pool unter http://127.0.0.1/status.',
+      },
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password), der an jeden Pool gesendet wird. Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
         placeholder: 'status-login',
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },

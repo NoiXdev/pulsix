@@ -638,6 +638,77 @@
       ]
     },
     {
+      "name": "phpfpm",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "urls",
+          "type": "list",
+          "example": "http://127.0.0.1/status",
+          "max_entries": 16,
+          "max_bytes": 500,
+          "format": "statusURL"
+        },
+        {
+          "name": "secret",
+          "type": "string",
+          "example": "db-main",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        },
+        {
+          "name": "verify_tls",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "item_param": "urls",
+      "host_item_always_asked": true,
+      "metrics": [
+        {
+          "name": "phpfpm.pools_down",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.processes_active",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.processes_idle",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.processes_total",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.processes_busy_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.listen_queue",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.max_children_reached_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "phpfpm.slow_requests_per_s",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

@@ -164,7 +164,7 @@ func TestCheckPluginEnumsNameEveryPlugin(t *testing.T) {
 	if err := json.Unmarshal(doc, &parsed); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "icmp", "tcp", "http", "tls", "dns"}
+	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker", "temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "phpfpm", "icmp", "tcp", "http", "tls", "dns"}
 	found := 0
 	for name, schema := range parsed.Components.Schemas {
 		plugin, ok := schema.Properties["plugin"]

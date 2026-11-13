@@ -32,6 +32,7 @@ const (
 	PluginNginx       = "nginx"
 	PluginApache      = "apache"
 	PluginCaddy       = "caddy"
+	PluginPHPFPM      = "phpfpm"
 
 	PluginICMP = "icmp"
 	PluginTCP  = "tcp"

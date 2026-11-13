@@ -178,6 +178,15 @@ format; Caddy must have its HTTP metrics switched on, otherwise the three
 metrics besides `caddy.up` report that they are not enabled. Nothing is seeded
 and there is no schema change.
 
+The `phpfpm` plugin (backlog 3.11) follows the same rule: an older agent skips
+a `phpfpm` check, warns on every configuration push and shows no readings until
+it is updated, and the manager does not gate on it. Its optional `secret` is
+the same basic-authentication login (`basic_auth_user`,
+`basic_auth_password`), sent to every pool. Each `urls` entry is one pool and
+the item its metrics are reported on (the agent adds the query key `json` when
+it is missing); item `""` carries `phpfpm.pools_down`, which is also where a
+missing secret is reported. Nothing is seeded and there is no schema change.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.

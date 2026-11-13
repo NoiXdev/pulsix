@@ -115,6 +115,7 @@ export const enChecks = {
       nginx: 'nginx',
       apache: 'Apache httpd',
       caddy: 'Caddy',
+      phpfpm: 'PHP-FPM',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -242,6 +243,18 @@ export const enChecks = {
       secret: {
         label: 'Secret (optional)',
         hint: 'Name of a secret in agent.yaml on each host: it holds the HTTP basic-authentication login (basic_auth_user, basic_auth_password). The value never leaves the host. Without one, no login is sent.',
+        placeholder: 'status-login',
+      },
+      verify_tls: { label: 'Verify the TLS certificate' },
+    },
+    phpfpm: {
+      urls: {
+        label: 'Status page URLs (one per line, one pool each)',
+        hint: 'The status page (pm.status_path) of each PHP-FPM pool, served by the web server in front of it and read by the agent on each host; the agent adds ?json when the URL has no such query key. Each URL is one pool and names its readings. Empty means one pool at http://127.0.0.1/status.',
+      },
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name of a secret in agent.yaml on each host: it holds the HTTP basic-authentication login (basic_auth_user, basic_auth_password), sent to every pool. The value never leaves the host. Without one, no login is sent.',
         placeholder: 'status-login',
       },
       verify_tls: { label: 'Verify the TLS certificate' },

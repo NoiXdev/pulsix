@@ -56,6 +56,12 @@ func TestAsksForItem(t *testing.T) {
 		{"raid asks for an array on its list", "raid", map[string]any{"arrays": []any{"md0"}}, "md0", true},
 		{"raid stopped asking for an array off its list", "raid", map[string]any{"arrays": []any{"md0"}}, "md1", false},
 		{"raid with a list still asks for its whole-host item", "raid", map[string]any{"arrays": []any{"md0"}}, "", true},
+		// phpfpm's items are its urls entries as written; item "" carries
+		// pools_down whatever the list says.
+		{"phpfpm asks for a pool on its list", "phpfpm", map[string]any{"urls": []any{"http://127.0.0.1/status", "http://127.0.0.1/b"}}, "http://127.0.0.1/b", true},
+		{"phpfpm stopped asking for a pool off its list", "phpfpm", map[string]any{"urls": []any{"http://127.0.0.1/status"}}, "http://127.0.0.1/b", false},
+		{"phpfpm with a list still asks for its whole-host item", "phpfpm", map[string]any{"urls": []any{"http://127.0.0.1/b"}}, "", true},
+		{"phpfpm without a list asks for the default pool", "phpfpm", nil, "http://127.0.0.1/status", true},
 		// disk and network report no whole-host item, so "" is only asked
 		// when nothing bounds them.
 		{"disk with a list does not ask for item \"\"", "disk", map[string]any{"mounts": []string{"/"}}, "", false},
