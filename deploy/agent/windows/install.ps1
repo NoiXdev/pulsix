@@ -57,6 +57,15 @@ $ServiceName = 'PulsixAgent'
 $SystemSid = 'S-1-5-18'
 $AdminsSid = 'S-1-5-32-544'
 $AllowedSids = @($SystemSid, $AdminsSid)
+# TrustedInstaller owns and may change what Windows ships under Program
+# Files; Program Files\Pulsix inherits its entry.
+$TrustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
+$BinDirWriters = @($SystemSid, $AdminsSid, $TrustedInstallerSid)
+# The rights to create, delete or re-permission entries in a folder:
+# CreateFiles (0x2), CreateDirectories (0x4), DeleteSubdirectoriesAndFiles
+# (0x40), Delete (0x10000), ChangePermissions (0x40000), TakeOwnership
+# (0x80000), GENERIC_ALL (0x10000000) and GENERIC_WRITE (0x40000000).
+$WriteRights = 0x500D0046
 
 # Stop-Install ends the script with an error. It throws rather than exits:
 # the script runs inside the administrator's own PowerShell window, which
@@ -79,31 +88,43 @@ function Test-ReparsePoint([string]$Path) {
 	return (Get-Item -LiteralPath $Path -Force).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)
 }
 
-# Assert-OnlyAdmins stops unless SYSTEM or Administrators own the path and
-# nobody else has an allow entry on it. The agent checks exactly this for
-# its data directory and everything directly inside it, and refuses to
-# start otherwise; checking it here shows the problem at install time.
-# The one exception is agent.yaml, the secrets file the operator writes by
-# hand: the agent checks it on every read and keeps running without
-# secrets when it fails, so it does not stop an upgrade here either.
-# -ExplicitOnly leaves inherited entries out, for the check before the
-# data directory is tightened, which drops them.
-function Assert-OnlyAdmins([string]$Path, [switch]$ExplicitOnly) {
+# Get-AdminsOnlyProblem says what is wrong with the path, or returns
+# $null when it is no link, SYSTEM or Administrators own it and nobody
+# else has an allow entry on it. -ExplicitOnly leaves inherited entries
+# out, for the check before the data directory is tightened, which drops
+# them.
+function Get-AdminsOnlyProblem([string]$Path, [switch]$ExplicitOnly) {
 	if (Test-ReparsePoint $Path) {
-		Stop-Install "$Path is a link (symlink or junction); remove it and run the installer again"
+		return "$Path is a link (symlink or junction)"
 	}
 	$acl = Get-Acl -LiteralPath $Path
 	$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
 	if ($AllowedSids -notcontains $owner) {
-		Stop-Install "$Path is owned by $(Format-Sid $owner), not by SYSTEM or Administrators; remove it and run the installer again"
+		return "$Path is owned by $(Format-Sid $owner), not by SYSTEM or Administrators"
 	}
 	foreach ($rule in $acl.GetAccessRules($true, (-not $ExplicitOnly), [Security.Principal.SecurityIdentifier])) {
 		if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
 			continue
 		}
 		if ($AllowedSids -notcontains $rule.IdentityReference.Value) {
-			Stop-Install "$Path grants access to $(Format-Sid $rule.IdentityReference.Value); remove it and run the installer again"
+			return "$Path grants access to $(Format-Sid $rule.IdentityReference.Value)"
 		}
+	}
+	return $null
+}
+
+# Assert-OnlyAdmins stops unless SYSTEM or Administrators own the path and
+# nobody else has an allow entry on it (Get-AdminsOnlyProblem). The agent
+# checks exactly this for its data directory and everything directly
+# inside it, and refuses to start otherwise; checking it here shows the
+# problem at install time. The one exception is agent.yaml, the secrets
+# file the operator writes by hand: the agent checks it on every read and
+# keeps running without secrets when it fails, so it does not stop an
+# upgrade here either.
+function Assert-OnlyAdmins([string]$Path, [switch]$ExplicitOnly) {
+	$problem = Get-AdminsOnlyProblem $Path -ExplicitOnly:$ExplicitOnly
+	if ($null -ne $problem) {
+		Stop-Install "$problem; remove it and run the installer again"
 	}
 }
 
@@ -209,7 +230,8 @@ function Set-AgentRecovery {
 }
 
 # Wait-ProcessExit waits up to $Seconds for the process $Id to exit and
-# says whether it did.
+# says whether it did. It goes by the id alone, so Stop-AgentService only
+# falls back to it when it cannot wait on the process itself.
 function Wait-ProcessExit([int]$Id, [int]$Seconds) {
 	$deadline = (Get-Date).AddSeconds($Seconds)
 	while ($null -ne (Get-Process -Id $Id -ErrorAction SilentlyContinue)) {
@@ -221,14 +243,26 @@ function Wait-ProcessExit([int]$Id, [int]$Seconds) {
 	return $true
 }
 
+# Test-AgentServiceMarkedForDeletion says whether sc.exe delete already ran
+# on the service while a program (the Services console, say) held it
+# open: the service then stays until they close or the machine restarts,
+# and sc.exe answers every change to it with error 1072.
+function Test-AgentServiceMarkedForDeletion {
+	$entry = Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name DeleteFlag -ErrorAction SilentlyContinue
+	return ($null -ne $entry) -and ($entry.DeleteFlag -eq 1)
+}
+
 # Stop-AgentService stops the PulsixAgent service, if there is one, and
 # waits until its process has exited, so its binary can be replaced or
 # removed (backlog 3.51). The service manager can report Stopped while the
-# process is still exiting, so the process id is read before the stop and
-# waited for after it. The recovery actions are cleared first, or the
-# service manager could restart an agent that exits with a failure while
-# it stops; the caller sets them again (Set-AgentRecovery) or deletes the
-# service. A stop that fails restores them itself and ends the script,
+# process is still exiting, so the process is taken before the stop and
+# waited for after it: the process object, not its id, which Windows may
+# hand to another process once the agent has exited. Reading its Handle
+# keeps that very process open; without the access for that, WaitForExit
+# opens a handle of its own. The recovery actions are cleared first, or
+# the service manager could restart an agent that exits with a failure
+# while it stops; the caller sets them again (Set-AgentRecovery) or deletes
+# the service. A stop that fails restores them itself and ends the script,
 # with $Unchanged saying what was left as it was.
 function Stop-AgentService([string]$Unchanged) {
 	$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -244,6 +278,18 @@ function Stop-AgentService([string]$Unchanged) {
 	} catch {
 		Stop-Install "cannot read the process id of the $ServiceName service ($($_.Exception.Message)); $Unchanged"
 	}
+	$process = $null
+	if ($processId -ne 0) {
+		# Already gone is fine: there is nothing to wait for.
+		$process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+		if ($null -ne $process) {
+			try {
+				[void]$process.Handle
+			} catch {
+				Write-Verbose "no handle on process $processId ($($_.Exception.Message)); WaitForExit opens its own"
+			}
+		}
+	}
 	Invoke-Sc ("failure $ServiceName " + 'reset= 0 actions= ""')
 	$problem = $null
 	if ($service.Status -ne 'Stopped') {
@@ -257,8 +303,15 @@ function Stop-AgentService([string]$Unchanged) {
 			$problem = "the running $ServiceName service did not stop within 30 seconds; $Unchanged. Stop it (Stop-Service $ServiceName) and try again"
 		}
 	}
-	if (($null -eq $problem) -and ($processId -ne 0) -and (-not (Wait-ProcessExit $processId 30))) {
-		$problem = "the $ServiceName process ($processId) did not exit within 30 seconds of the stop; $Unchanged. End it (Stop-Process -Id $processId) and try again"
+	if (($null -eq $problem) -and ($null -ne $process)) {
+		try {
+			$exited = $process.WaitForExit(30000)
+		} catch {
+			$exited = Wait-ProcessExit $processId 30
+		}
+		if (-not $exited) {
+			$problem = "the $ServiceName process ($processId) did not exit within 30 seconds of the stop; $Unchanged. End it (Stop-Process -Id $processId) and try again"
+		}
 	}
 	if ($null -ne $problem) {
 		try {
@@ -270,21 +323,63 @@ function Stop-AgentService([string]$Unchanged) {
 	}
 }
 
-# Assert-NoLink stops the uninstall, before anything is changed, when $Path
-# is a symlink or junction, and with -Below when anything inside it is:
-# Windows PowerShell 5.1's Remove-Item -Recurse can follow a junction into
-# its target and delete files outside the agent's folders. The walk does
-# not enter a link; it stops at the first one.
-function Assert-NoLink([string]$Path, [switch]$Below) {
-	if (-not (Test-Path -LiteralPath $Path)) {
+# Assert-RemovableDataDir stops the uninstall, before anything is changed,
+# unless nobody but SYSTEM and Administrators can create anything in the
+# data directory: it and every folder below it must be no link, owned by
+# SYSTEM or Administrators and grant nobody else access, inherited entries
+# included (Get-AdminsOnlyProblem), and no file in it may be a link. The
+# installer leaves the folder that way. One that someone else created, or
+# that was never tightened, could otherwise have a folder swapped for a
+# junction between this check and the removal, and the removal would then
+# delete the junction's target as administrator. Files are not checked
+# for owner and access: they cannot hold a junction, and agent.yaml is the
+# operator's.
+function Assert-RemovableDataDir([string]$Path) {
+	$problem = Get-AdminsOnlyProblem $Path
+	if ($null -ne $problem) {
+		Stop-Install "$problem, which is not how the installer leaves it; nothing was removed. Check the folder and remove it by hand, or run the uninstall with -KeepData"
+	}
+	foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force)) {
+		if ($child.PSIsContainer) {
+			Assert-RemovableDataDir $child.FullName
+		} elseif (Test-ReparsePoint $child.FullName) {
+			Stop-Install "$($child.FullName) is a link (symlink or junction); nothing was removed. Check the folder and remove it by hand, or run the uninstall with -KeepData"
+		}
+	}
+}
+
+# Assert-RemovableBinDir stops the uninstall, before anything is changed,
+# when Program Files\Pulsix is a link, or when anyone but SYSTEM,
+# Administrators and TrustedInstaller owns it or may create, delete or
+# re-permission entries in it. It is the data directory's rule adapted to
+# Program Files, whose folders every user may read: read and execute
+# entries are fine there, and entries that only pass on to new items
+# (inherit-only, CREATOR OWNER) do not apply to the folder itself.
+function Assert-RemovableBinDir {
+	if (-not (Test-Path -LiteralPath $BinDir)) {
 		return
 	}
-	if (Test-ReparsePoint $Path) {
-		Stop-Install "$Path is a link (symlink or junction); nothing was removed. Remove the link itself and run the uninstall again"
+	$fix = 'nothing was removed. Check the folder and remove it by hand'
+	if (Test-ReparsePoint $BinDir) {
+		Stop-Install "$BinDir is a link (symlink or junction); $fix"
 	}
-	if ($Below -and (Get-Item -LiteralPath $Path -Force).PSIsContainer) {
-		foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force)) {
-			Assert-NoLink $child.FullName -Below
+	$acl = Get-Acl -LiteralPath $BinDir
+	$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+	if ($BinDirWriters -notcontains $owner) {
+		Stop-Install "$BinDir is owned by $(Format-Sid $owner), not by SYSTEM, Administrators or TrustedInstaller; $fix"
+	}
+	foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+		if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
+			continue
+		}
+		if (($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -ne 0) {
+			continue
+		}
+		if ($BinDirWriters -contains $rule.IdentityReference.Value) {
+			continue
+		}
+		if (([int]$rule.FileSystemRights -band $WriteRights) -ne 0) {
+			Stop-Install "$BinDir lets $(Format-Sid $rule.IdentityReference.Value) change its contents; $fix"
 		}
 	}
 }
@@ -292,16 +387,26 @@ function Assert-NoLink([string]$Path, [switch]$Below) {
 # Uninstall-Agent removes the agent (backlog 3.49): it stops the service
 # and waits for its process (Stop-AgentService), deletes the service, then
 # removes the binary, Program Files\Pulsix once it is empty, and the data
-# directory unless -KeepData keeps it. A service that does not stop ends
-# the uninstall before anything is removed. Every step tolerates its
-# target being absent.
+# directory unless -KeepData keeps it. Both folders are checked before
+# anything changes, and a service that does not stop ends the uninstall
+# before anything is removed. Every step tolerates its target being
+# absent, and a service an earlier run left marked for deletion is left to
+# go on its own. The data directory is removed with .NET's
+# Directory.Delete, which deletes a junction or symlink it meets as the
+# link and never enters it; the check before makes sure there is none.
 function Uninstall-Agent {
-	Assert-NoLink $BinDir
-	if (-not $KeepData) {
-		Assert-NoLink $DataDir -Below
+	Assert-RemovableBinDir
+	if ((-not $KeepData) -and (Test-Path -LiteralPath $DataDir)) {
+		Assert-RemovableDataDir $DataDir
 	}
 	$removed = $false
-	if ($null -ne (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue)) {
+	$service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+	if (($null -ne $service) -and (Test-AgentServiceMarkedForDeletion)) {
+		if ($service.Status -ne 'Stopped') {
+			Stop-Install "the $ServiceName service is marked for deletion but still running; nothing was removed. Stop it (Stop-Service $ServiceName) and try again"
+		}
+		Write-Host "pulsix-agent: the $ServiceName service is already marked for deletion; it disappears once programs holding it (such as the Services console) close"
+	} elseif ($null -ne $service) {
 		Stop-AgentService 'nothing was removed'
 		Invoke-Sc "delete $ServiceName"
 		Write-Host "pulsix-agent: stopped and deleted the $ServiceName service"
@@ -322,7 +427,7 @@ function Uninstall-Agent {
 			Write-Host "pulsix-agent: kept $DataDir (-KeepData)"
 		}
 	} elseif (Test-Path -LiteralPath $DataDir) {
-		Remove-Item -LiteralPath $DataDir -Recurse -Force
+		[IO.Directory]::Delete($DataDir, $true)
 		Write-Host "pulsix-agent: removed $DataDir"
 		$removed = $true
 	}
@@ -400,6 +505,12 @@ switch ($arch) {
 	'AMD64' { $goArch = 'amd64' }
 	'ARM64' { $goArch = 'arm64' }
 	default { Stop-Install "unsupported architecture $arch (only AMD64 and ARM64 have agent binaries)" }
+}
+
+# A service an uninstall left marked for deletion can be neither changed
+# nor created again until it is gone.
+if (Test-AgentServiceMarkedForDeletion) {
+	Stop-Install "the $ServiceName service is marked for deletion and goes once no program holds it open; close the Services console (and any other program showing services) or restart Windows, then run the installer again"
 }
 
 # From the stop of a running agent on, a failure must not leave its

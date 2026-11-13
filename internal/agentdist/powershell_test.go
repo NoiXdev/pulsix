@@ -127,7 +127,12 @@ func TestInstallPs1Shape(t *testing.T) {
 		`reset= 0 actions= ""`,
 		// The uninstall: the service, the binary, the data directory.
 		`Invoke-Sc "delete $ServiceName"`,
-		"Remove-Item -LiteralPath $DataDir -Recurse -Force",
+		"[IO.Directory]::Delete($DataDir, $true)",
+		// A service an earlier uninstall left marked for deletion.
+		`HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName`,
+		"($entry.DeleteFlag -eq 1)",
+		// The wait holds the process itself, not just its id.
+		"$process.WaitForExit(30000)",
 		"pulsix-agent: kept $DataDir (-KeepData)",
 		"pulsix-agent: nothing to remove",
 		"pulsix-agent: the agent is still registered in Pulsix; revoke or delete it on the Agents page",
@@ -215,6 +220,15 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"Invoke-WebRequest",
 	)
 
+	// An install refuses a service marked for deletion before it
+	// downloads or stops anything.
+	assertInOrder(t, "install.ps1", main,
+		"if ($Uninstall) {",
+		"if (Test-AgentServiceMarkedForDeletion) {\n\tStop-Install \"the $ServiceName service is marked for deletion",
+		"restart Windows, then run the installer again",
+		"$restoreRecovery = $false\ntry {",
+	)
+
 	// The upgrade: the data directory is checked before the running agent
 	// is stopped, its recovery actions are restored in a finally, and the
 	// copy follows the wait for the process.
@@ -242,11 +256,27 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 	assertInOrder(t, "Stop-AgentService", psFunction(t, script, "Stop-AgentService"),
 		"Get-CimInstance -ClassName Win32_Service",
 		".ProcessId",
+		// The process object and a handle on it, taken before the stop:
+		// a reused id cannot fake or prolong the wait.
+		"$process = Get-Process -Id $processId -ErrorAction SilentlyContinue",
+		"[void]$process.Handle",
 		`Invoke-Sc ("failure $ServiceName " + 'reset= 0 actions= ""')`,
 		"$service.Stop()",
 		"$service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))",
-		"Wait-ProcessExit $processId 30",
+		"$exited = $process.WaitForExit(30000)",
+		// Only when WaitForExit itself fails.
+		"} catch {\n\t\t\t$exited = Wait-ProcessExit $processId 30",
+		"if (-not $exited) {",
 		"Set-AgentRecovery",
+		"Stop-Install",
+	)
+	assertInOrder(t, "Test-AgentServiceMarkedForDeletion", psFunction(t, script, "Test-AgentServiceMarkedForDeletion"),
+		`Get-ItemProperty -LiteralPath "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName" -Name DeleteFlag -ErrorAction SilentlyContinue`,
+		"return ($null -ne $entry) -and ($entry.DeleteFlag -eq 1)",
+	)
+	// The installer's own access checks share the full check.
+	assertInOrder(t, "Assert-OnlyAdmins", psFunction(t, script, "Assert-OnlyAdmins"),
+		"Get-AdminsOnlyProblem $Path -ExplicitOnly:$ExplicitOnly",
 		"Stop-Install",
 	)
 	assertInOrder(t, "Set-AgentRecovery", psFunction(t, script, "Set-AgentRecovery"),
@@ -272,14 +302,21 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 	// files. It never sets recovery actions on the service it deletes.
 	uninstall := psFunction(t, script, "Uninstall-Agent")
 	assertInOrder(t, "Uninstall-Agent", uninstall,
-		"Assert-NoLink $BinDir",
-		"Assert-NoLink $DataDir -Below",
+		"Assert-RemovableBinDir",
+		"Assert-RemovableDataDir $DataDir",
+		// A service marked for deletion: refused while it runs, else left
+		// to go on its own, without sc.exe (error 1072).
+		"if (($null -ne $service) -and (Test-AgentServiceMarkedForDeletion)) {",
+		"if ($service.Status -ne 'Stopped') {",
+		`Stop-Install "the $ServiceName service is marked for deletion but still running; nothing was removed.`,
+		"is already marked for deletion",
+		"} elseif ($null -ne $service) {",
 		"Stop-AgentService 'nothing was removed'",
 		`Invoke-Sc "delete $ServiceName"`,
 		"Remove-Item -LiteralPath $BinPath -Force",
 		"Remove-Item -LiteralPath $BinDir -Force",
 		"if ($KeepData) {",
-		"Remove-Item -LiteralPath $DataDir -Recurse -Force",
+		"[IO.Directory]::Delete($DataDir, $true)",
 		"pulsix-agent: nothing to remove",
 		"pulsix-agent: the agent is still registered in Pulsix; revoke or delete it on the Agents page",
 	)
@@ -288,22 +325,66 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 			t.Errorf("Uninstall-Agent must not contain %q: it would set recovery actions on a deleted service", bad)
 		}
 	}
-	assertInOrder(t, "Assert-NoLink", psFunction(t, script, "Assert-NoLink"),
-		"if (Test-ReparsePoint $Path) {",
+	// The data directory is removed only when nobody but SYSTEM and
+	// Administrators can create anything in it: every folder in the tree
+	// gets the full check (inherited entries included), every file the
+	// link check. Otherwise a folder could be swapped for a junction
+	// between the check and the removal.
+	removable := psFunction(t, script, "Assert-RemovableDataDir")
+	assertInOrder(t, "Assert-RemovableDataDir", removable,
+		"$problem = Get-AdminsOnlyProblem $Path\n",
 		"Stop-Install",
-		"Assert-NoLink $child.FullName -Below",
+		"nothing was removed. Check the folder and remove it by hand",
+		"foreach ($child in @(Get-ChildItem -LiteralPath $Path -Force)) {",
+		"if ($child.PSIsContainer) {\n\t\t\tAssert-RemovableDataDir $child.FullName",
+		"} elseif (Test-ReparsePoint $child.FullName) {",
+		"Stop-Install",
 	)
+	if strings.Contains(removable, "ExplicitOnly") {
+		t.Error("Assert-RemovableDataDir must weigh inherited entries too")
+	}
+	assertInOrder(t, "Get-AdminsOnlyProblem", psFunction(t, script, "Get-AdminsOnlyProblem"),
+		"if (Test-ReparsePoint $Path) {",
+		"GetOwner",
+		"$AllowedSids -notcontains $owner",
+		"$acl.GetAccessRules($true, (-not $ExplicitOnly), [Security.Principal.SecurityIdentifier])",
+		"$AllowedSids -notcontains $rule.IdentityReference.Value",
+		"return $null",
+	)
+	// Program Files\Pulsix: the same rule, where every user may read.
+	assertInOrder(t, "Assert-RemovableBinDir", psFunction(t, script, "Assert-RemovableBinDir"),
+		"if (Test-ReparsePoint $BinDir) {",
+		"$BinDirWriters -notcontains $owner",
+		"$acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])",
+		"PropagationFlags]::InheritOnly",
+		"$BinDirWriters -contains $rule.IdentityReference.Value",
+		"([int]$rule.FileSystemRights -band $WriteRights) -ne 0",
+		"Stop-Install",
+	)
+	for _, want := range []string{
+		"$TrustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'",
+		"$BinDirWriters = @($SystemSid, $AdminsSid, $TrustedInstallerSid)",
+		"$WriteRights = 0x500D0046",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("install.ps1 must contain %q", want)
+		}
+	}
 
-	// Only the data directory (after Assert-NoLink) and the download
-	// directory are removed recursively.
+	// Only the download directory goes through Remove-Item -Recurse; the
+	// data directory goes through Directory.Delete, which deletes a link
+	// as the link, once its tree has passed Assert-RemovableDataDir.
 	for _, line := range strings.Split(script, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "#") || !strings.Contains(line, "Remove-Item") || !strings.Contains(line, "-Recurse") {
+		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		if line != "Remove-Item -LiteralPath $DataDir -Recurse -Force" &&
+		if strings.Contains(line, "Remove-Item") && strings.Contains(line, "-Recurse") &&
 			line != "Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue" {
 			t.Errorf("unexpected recursive removal: %q", line)
+		}
+		if strings.Contains(line, "Directory]::Delete(") && line != "[IO.Directory]::Delete($DataDir, $true)" {
+			t.Errorf("unexpected Directory.Delete: %q", line)
 		}
 	}
 }
