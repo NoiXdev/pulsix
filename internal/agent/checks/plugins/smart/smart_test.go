@@ -16,7 +16,7 @@ import (
 // TestSmartNewFindsSmartctl: the wired plugin looks smartctl up and either
 // finds it or reports the install hint (smartctl is not run).
 func TestSmartNewFindsSmartctl(t *testing.T) {
-	r, err := New().(smartPlugin).smartctl()
+	r, err := New().(*smartPlugin).smartctl()
 	switch {
 	case errors.Is(err, errNotFound):
 	case err != nil:
@@ -742,7 +742,7 @@ func TestSmartCollectionDeadline(t *testing.T) {
 			t.Errorf("%s: %+v, want one error", d, got)
 		}
 	}
-	hostErr(t, obs, "no device with SMART data")
+	deviceCount(t, obs, 8) // the failures are on the devices' items
 }
 
 // TestSmartRunnerIgnoringTheDeadline: even a runner that does not return
@@ -790,7 +790,7 @@ func TestSmartCallerCancels(t *testing.T) {
 	})
 }
 
-var _ checks.Plugin = smartPlugin{}
+var _ checks.StatefulPlugin = (*smartPlugin)(nil)
 
 // TestSmartDevicesCountsOnlyQueriedDevices: smart.devices counts the
 // devices found or configured that were not refused; a refused entry is

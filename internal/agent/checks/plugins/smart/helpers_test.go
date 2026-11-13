@@ -111,8 +111,8 @@ func (f *fakeRunner) callArgs() [][]string {
 }
 
 // plugin builds the smart plugin around f with the default bounds.
-func plugin(f runner) smartPlugin {
-	return smartPlugin{smartctl: func() (runner, error) { return f, nil }}
+func plugin(f runner) *smartPlugin {
+	return &smartPlugin{smartctl: func() (runner, error) { return f, nil }}
 }
 
 func findObs(t *testing.T, obs []checks.Observation, item, metric string) checks.Observation {

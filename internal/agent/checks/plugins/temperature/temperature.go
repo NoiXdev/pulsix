@@ -17,6 +17,11 @@
 // after the filter, on every run that reported at least one. A run that
 // reported none puts "no temperature sensors found" on that metric
 // instead, so the next good run replaces the error with the count.
+//
+// A limit a sensor stated and no longer states while the sensor still
+// reads is reported as "<metric> is no longer reported" each round, for
+// up to 24 h (checks.VanishedMetrics, backlog 3.55); the plugin is a
+// checks.StatefulPlugin for that memory.
 package temperature
 
 import (
@@ -25,6 +30,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"time"
 
 	"github.com/shirou/gopsutil/v4/sensors"
 
@@ -45,20 +51,55 @@ func (gopsutilSensors) Temperatures(ctx context.Context) ([]sensors.TemperatureS
 }
 
 // temperaturePlugin reports per-sensor temperatures (item = sensor key).
+// It is a checks.StatefulPlugin: a sensor may state its limits one round
+// and not the next, so every check key collects with its own instance
+// (NewInstance), which remembers the limits each sensor stated
+// (checks.VanishedMetrics) and reports one it no longer states as an
+// error instead of leaving its last value standing (backlog 3.55). An
+// instance is collected by its key's one goroutine only, so it holds no
+// lock.
 type temperaturePlugin struct {
 	Sensors sensorReader
+	// now is the vanished-metric memory's clock; nil means time.Now.
+	now func() time.Time
+
+	vanished checks.VanishedMetrics
 }
 
-// New returns the temperature plugin wired to gopsutil.
+// New returns the temperature plugin wired to gopsutil. It is a
+// checks.StatefulPlugin prototype: the scheduler collects only the
+// instances NewInstance hands out, one per check key.
 func New() checks.Plugin {
-	return temperaturePlugin{Sensors: gopsutilSensors{}}
+	return &temperaturePlugin{Sensors: gopsutilSensors{}, now: time.Now}
 }
 
-func (temperaturePlugin) Name() string { return "temperature" }
+// NewInstance returns a plugin with the same provider and clock and an
+// empty memory.
+func (p *temperaturePlugin) NewInstance() checks.Plugin {
+	return &temperaturePlugin{Sensors: p.Sensors, now: p.now}
+}
+
+func (*temperaturePlugin) Name() string { return "temperature" }
 
 const noSensors = "no temperature sensors found"
 
-func (p temperaturePlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
+// Collect reads the sensors (collect) and adds, through the instance's
+// memory, an error for every limit a sensor that still reads no longer
+// states. Item "" goes through the memory too, to no effect: its one
+// metric, temp.sensors, is on every round as a count or an error.
+func (p *temperaturePlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
+	obs, err := p.collect(ctx, params)
+	if len(obs) == 0 {
+		return obs, err // a dead context, or nothing to remember
+	}
+	now := time.Now
+	if p.now != nil {
+		now = p.now
+	}
+	return p.vanished.Apply(now(), obs), err
+}
+
+func (p *temperaturePlugin) collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -162,4 +203,4 @@ func disambiguate(stats []sensors.TemperatureStat) []namedStat {
 
 func finite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }
 
-var _ checks.Plugin = temperaturePlugin{}
+var _ checks.StatefulPlugin = (*temperaturePlugin)(nil)

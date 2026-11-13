@@ -19,10 +19,17 @@
 // Everything that concerns no single device is an error on that metric
 // instead, so the next good round replaces it: smartctl missing, the scan
 // failing or finding nothing, every device refused, and no device with
-// SMART data — every device answered without readings (a virtual
-// machine's disks, a USB stick) and none of them is asleep. In that last
-// case nothing else is reported either, apart from each failed device's
-// own error.
+// SMART data — at least one device answered without readings (a virtual
+// machine's disks, a USB stick), and every other one failed: none had
+// readings and none is asleep. In that last case nothing else is reported
+// either, apart from each failed device's own error. A round in which
+// every device failed reports the count: the failures are on the
+// devices' own items (backlog 3.55).
+//
+// A field a device stated and no longer states (or states with another
+// type) while the device still reports is reported as "<metric> is no
+// longer reported" each round, for up to 24 h (checks.VanishedMetrics,
+// backlog 3.55); the plugin is a checks.StatefulPlugin for that memory.
 //
 // Bounds: at most maxParallel devices are queried at once, each within
 // deviceTimeout, the whole collection within collectTimeout; a device
@@ -59,24 +66,37 @@ type smartPlugin struct {
 	// the default.
 	deviceTimeout  time.Duration
 	collectTimeout time.Duration
+	// now is the vanished-metric memory's clock; nil means time.Now.
+	now func() time.Time
+
+	vanished checks.VanishedMetrics
 }
 
 // New returns the smart plugin wired to the smartctl found on the host.
 func New() checks.Plugin {
 	busy := newInflight()
-	return smartPlugin{smartctl: func() (runner, error) {
+	return &smartPlugin{smartctl: func() (runner, error) {
 		l := locator{goos: runtime.GOOS, getenv: os.Getenv, lookPath: exec.LookPath, isAbs: filepath.IsAbs}
 		path, err := l.find()
 		if err != nil {
 			return nil, err
 		}
 		return execRunner{path: path, busy: busy}, nil
-	}}
+	}, now: time.Now}
 }
 
-func (smartPlugin) Name() string { return "smart" }
+// NewInstance returns a plugin with the same smartctl, bounds and clock
+// and an empty memory. Every instance shares the prototype's smartctl and
+// with it its record of stuck runs (execRunner.busy), so a smartctl one
+// check key gave up on still keeps every key from starting another on the
+// same device.
+func (p *smartPlugin) NewInstance() checks.Plugin {
+	return &smartPlugin{smartctl: p.smartctl, deviceTimeout: p.deviceTimeout, collectTimeout: p.collectTimeout, now: p.now}
+}
 
-func (p smartPlugin) timeouts() (device, collect time.Duration) {
+func (*smartPlugin) Name() string { return "smart" }
+
+func (p *smartPlugin) timeouts() (device, collect time.Duration) {
 	device, collect = p.deviceTimeout, p.collectTimeout
 	if device <= 0 {
 		device = defaultDeviceTimeout
@@ -92,7 +112,24 @@ func (p smartPlugin) timeouts() (device, collect time.Duration) {
 // rest as error observations. The caller's context ending is the agent
 // shutting down: Collect then returns nothing but ctx.Err(), per the Plugin
 // contract.
-func (p smartPlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
+//
+// What was gathered goes through the instance's memory, which adds an
+// error for every field a device that still reports no longer states.
+// Item "" goes through it too, to no effect: its one metric,
+// smart.devices, is on every round as a count or an error.
+func (p *smartPlugin) Collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
+	obs, err := p.collect(ctx, params)
+	if len(obs) == 0 {
+		return obs, err // a dead context, or nothing to remember
+	}
+	now := time.Now
+	if p.now != nil {
+		now = p.now
+	}
+	return p.vanished.Apply(now(), obs), err
+}
+
+func (p *smartPlugin) collect(ctx context.Context, params map[string]any) ([]checks.Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -139,15 +176,16 @@ func (p smartPlugin) Collect(ctx context.Context, params map[string]any) ([]chec
 		return nil, perr
 	}
 	var obs []checks.Observation
-	var someAnswer bool // a device had data or is asleep
+	var someAnswer, someNoData bool // a device had data or is asleep; one answered without data
 	for _, o := range outcomes {
 		obs = append(obs, o.obs...)
 		if o.err != nil {
 			errs = append(errs, o.err)
 		}
 		someAnswer = someAnswer || o.answer == answerData || o.answer == answerStandby
+		someNoData = someNoData || o.answer == answerNoData
 	}
-	if !someAnswer {
+	if someNoData && !someAnswer {
 		err := errors.New("smart: no device with SMART data")
 		errs = append(errs, err)
 		obs = append(obs, checks.ErrObservation("", devicesMetric, err))
@@ -264,4 +302,4 @@ func runError(what string, err error, collect, run context.Context, deviceTimeou
 	return fmt.Errorf("%s: %w", what, err)
 }
 
-var _ checks.Plugin = smartPlugin{}
+var _ checks.StatefulPlugin = (*smartPlugin)(nil)

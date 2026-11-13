@@ -25,7 +25,7 @@ func (f fixtureSensors) Temperatures(context.Context) ([]sensors.TemperatureStat
 
 func collect(t *testing.T, f fixtureSensors, params map[string]any) ([]checks.Observation, error) {
 	t.Helper()
-	return temperaturePlugin{Sensors: f}.Collect(context.Background(), params)
+	return (&temperaturePlugin{Sensors: f}).Collect(context.Background(), params)
 }
 
 func TestName(t *testing.T) {
@@ -233,7 +233,7 @@ func TestBadParams(t *testing.T) {
 func TestCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := (temperaturePlugin{Sensors: fixtureSensors{}}).Collect(ctx, nil); !errors.Is(err, context.Canceled) {
+	if _, err := (&temperaturePlugin{Sensors: fixtureSensors{}}).Collect(ctx, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
 }

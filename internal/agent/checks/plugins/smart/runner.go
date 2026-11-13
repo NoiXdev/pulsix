@@ -49,7 +49,8 @@ const (
 // with --json smartctl puts its diagnostics into the JSON messages.
 type execRunner struct {
 	path string
-	// busy is shared by every run of one plugin instance: a smartctl the
+	// busy is shared by every run of one plugin (New's prototype and every
+	// instance it hands out, one per check key): a smartctl the
 	// kill could not stop (in the kernel, waiting on a hung disk) marks its
 	// arguments when Run gives up on it, until it exits, so each tick does
 	// not pile another stuck process onto the same device. Runs that are

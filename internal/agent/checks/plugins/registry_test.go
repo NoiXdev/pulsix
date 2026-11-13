@@ -35,10 +35,11 @@ func TestRegistryWiresEveryPlugin(t *testing.T) {
 // mysql.go assert the interface at compile time; this test pins it as the
 // registry hands the plugins out, and that no other plugin keeps state
 // (network keeps interface counters, mysql the slow-query counter, redis the
-// eviction counter, nginx, apache, caddy and phpfpm the request counters).
+// eviction counter, nginx, apache, caddy and phpfpm the request counters,
+// temperature and smart the metrics each item reported, backlog 3.55).
 func TestRegistryStatefulPlugins(t *testing.T) {
 	reg := Registry()
-	stateful := map[string]bool{"network": true, "mysql": true, "redis": true, "nginx": true, "apache": true, "caddy": true, "phpfpm": true}
+	stateful := map[string]bool{"network": true, "mysql": true, "redis": true, "nginx": true, "apache": true, "caddy": true, "phpfpm": true, "temperature": true, "smart": true}
 	for name := range stateful {
 		if _, ok := reg[name].(checks.StatefulPlugin); !ok {
 			t.Fatalf("Registry()[%s] = %T, want a checks.StatefulPlugin", name, reg[name])
@@ -46,7 +47,7 @@ func TestRegistryStatefulPlugins(t *testing.T) {
 	}
 	for name, p := range reg {
 		if _, ok := p.(checks.StatefulPlugin); ok && !stateful[name] {
-			t.Errorf("Registry()[%q] is a checks.StatefulPlugin; only network, mysql, redis, nginx, apache, caddy and phpfpm keep state", name)
+			t.Errorf("Registry()[%q] is a checks.StatefulPlugin; only network, mysql, redis, nginx, apache, caddy, phpfpm, temperature and smart keep state", name)
 		}
 	}
 }
