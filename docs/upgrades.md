@@ -113,6 +113,17 @@ an operator can count on. The operator's steps are in
   and a stale online start heals at that agent's next gap of more than 90
   seconds.
 
+- **Migration 00093 adds the retention choice per organization (3.15).** It adds
+  the nullable column `org_monitoring_settings.retention_days` (30, 90 or 365, a
+  CHECK; no default, so a catalog change). Null means no choice: every existing
+  organization keeps the instance maximum and the upgrade deletes nothing. An
+  older release ignores the column (it lists the columns it knows when it reads
+  and writes the table, and its write leaves the stored choice alone), so the
+  migration does not require stopping every manager instance; an older manager
+  that keeps running during the roll only never deletes for the per-organization
+  choice, which the new manager does. The new manager's start is the step that
+  matters (see "Behaviour changes").
+
 ## A database newer than the binary is refused
 
 goose does nothing for a database whose recorded version is above the newest
@@ -266,6 +277,32 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.15, retention per organization:** the new variable `PULSIX_SAMPLE_RETENTION`
+  (whole days, 7 to 365, default 90, the previous fixed value) is the longest time
+  measurements and state history (`check_samples`, `check_state_changes`) are
+  kept. Without it nothing changes. Every manager start sets the retention policy
+  of both tables to it (logged at info; a value outside the range, or a failed
+  sync, stops the start), and so does `restore`: it re-runs the old 90-day
+  migrations, then applies the value from its own environment, so give `restore`
+  the same value as the manager (in the compose stack `docker compose run --rm cli`
+  passes it from `.env`). **Lowering the value deletes the older rows**: the
+  database drops chunks older than the new maximum right after the next start (at
+  the latest within a day). Raising it does not bring deleted data back. Every
+  manager instance must use the same value, otherwise each start flips the
+  policy. An organization admin can choose 30, 90 or 365 days for the
+  organization (Settings, General, Monitoring, "Keep measurements for", and
+  `retention_days` in `PUT /api/v1/orgs/{org}/settings/monitoring`: omitted keeps,
+  null clears); the effective value is the smaller of the choice and the maximum,
+  and a choice above the maximum is stored and capped. A manager deletes the older
+  rows of every organization whose effective retention is below the maximum once
+  an hour (the first run an hour after start; advisory lock 8317, one manager at
+  a time), in batches of 10 000 rows with a 100 ms pause, at most two minutes per
+  run, so a large backlog drains over several runs; rows that arrive late and are
+  older than the drained mark go at the next daily full sweep. Alerts, alert
+  events, current values, items and the audit log are untouched. The API's
+  response gains `retention_days`, `retention_max_days` and
+  `retention_effective_days` (the request field is optional), and the host
+  metric graph accepts the ranges `30d` and `90d` (about 168 points each).
 - **3.57, client hosts:** nothing changes until a host is marked client: every
   existing and newly enrolled host is a server, and the evaluation, the alerts
   and the notifications of a server are unchanged. A host marked client (host

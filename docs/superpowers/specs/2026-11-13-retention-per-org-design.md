@@ -87,3 +87,26 @@ The item expiry (`PULSIX_ITEM_EXPIRY`) is independent of this retention.
 `docs/upgrades.md` (migration; the new variable; lowering deletes),
 noix-docs (configuration reference: `PULSIX_SAMPLE_RETENTION`; org
 settings: retention; monitoring graphs: new ranges; changelog).
+
+## Amendments (amended after review)
+
+- **Choice above the maximum:** the API stores it and caps it in the effective
+  value instead of refusing it, so lowering `PULSIX_SAMPLE_RETENTION` never
+  invalidates stored choices. The SPA still disables those options.
+- **Restore sync:** `restore` re-runs the 90-day migrations 00044/00046, so it
+  applies the retention policy again from its own environment right after the
+  data is restored; a failure there is reported and the manager's next start
+  sets it again. A failed sync at manager start is fatal.
+- **Purge details:** the ticker's first run is an hour after start. Rows are
+  deleted per hypertable chunk range (a ctid is only unique within a chunk), in
+  batches of 10 000 with a 100 ms pause and a 2-minute budget per run, advisory
+  lock 8317 (policy sync uses 8316). The purger keeps an in-memory mark per
+  organization and table of what it has drained, so a steady-state run touches
+  only newer chunk ranges; the marks are empty after a start and are cleared
+  every 24 hours (a full sweep that catches late rows older than a mark). The
+  list of organizations is narrowed in SQL and the effective value is computed
+  once in code.
+- **Graphs:** 30 d and 90 d use 168 buckets each (about 168 points, one more at
+  an epoch-aligned edge), so the response size equals the shorter ranges; the
+  query uses the lookup index on every chunk. Task 3 added the server ranges.
+- **Aggregate tiers:** the 5 m / 1 h tiers and 365-day graphs moved to 3.14a.
