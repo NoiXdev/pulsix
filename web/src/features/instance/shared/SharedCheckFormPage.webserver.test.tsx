@@ -17,6 +17,14 @@ const SECRET = /^Secret \(optional\)/;
 const LIST = 'Status page URLs (one per line, one pool each)';
 
 async function openNew(plugin: string) {
+  const posted = mockCreate();
+  renderAt('/o/acme/settings/shared/checks/new');
+  await screen.findByLabelText('Key');
+  await pickOption(screen, 'Plugin', { value: plugin });
+  return posted;
+}
+
+function mockCreate() {
   const posted: Record<string, unknown>[] = [];
   mockApi({
     'GET /api/v1/auth/me': ADMIN,
@@ -26,16 +34,18 @@ async function openNew(plugin: string) {
       return { definition: { id: 'c9', ...(req.body as Record<string, unknown>) } };
     },
   });
+  return posted;
+}
+
+function renderAt(path: string) {
   renderRoutes(
     [
       { path: '/settings/shared/checks', component: () => <div>the list</div> },
       { path: '/settings/shared/checks/new', component: SharedCheckFormPage },
+      { path: '/settings/shared/checks/$id', component: SharedCheckFormPage },
     ],
-    '/o/acme/settings/shared/checks/new',
+    path,
   );
-  await screen.findByLabelText('Key');
-  await pickOption(screen, 'Plugin', { value: plugin });
-  return posted;
 }
 
 async function create(user: ReturnType<typeof userEvent.setup>, posted: unknown[]) {
@@ -95,14 +105,55 @@ describe.each(SINGLE)('SharedCheckFormPage — $plugin status URL', ({ plugin, l
     expect(posted[0].params).toEqual({ url: 'https://status.example/x' });
   });
 
-  it.each(['ftp://x/', 'http://u:p@h/', 'http://{address}/'])('refuses %s and sends nothing', async (bad) => {
+  it.each(['ftp://x/', 'http://u:p@h/', 'http://{address}/', 'http://h/#frag'])('refuses %s and sends nothing', async (bad) => {
     const user = userEvent.setup();
     const posted = await openNew(plugin);
-    await user.type(screen.getByLabelText(label), bad);
+    await user.type(screen.getByLabelText(label), bad.replace(/\{/g, '{{'));
     await user.click(screen.getByRole('button', { name: 'Create definition' }));
     expect(await screen.findByText(/must be an http:\/\/ or https:\/\/ URL without a user name, password or #fragment/)).toBeInTheDocument();
     expect(screen.getByLabelText(label)).toHaveAttribute('aria-invalid', 'true');
     expect(posted).toHaveLength(0);
+  });
+});
+
+const def = (plugin: string, params: Record<string, unknown>) => ({ id: 'c1', key: plugin, plugin, params, interval_seconds: 60 });
+
+async function openEdit(definition: ReturnType<typeof def>) {
+  const puts: unknown[] = [];
+  mockApi({
+    'GET /api/v1/auth/me': ADMIN,
+    'GET /api/v1/admin/checks/definitions': { definitions: [definition] },
+    'PUT /api/v1/admin/checks/definitions/c1': (req: MockRequest) => {
+      puts.push(req.body);
+      return { definition };
+    },
+  });
+  renderAt('/o/acme/settings/shared/checks/c1');
+  return puts;
+}
+
+describe('SharedCheckFormPage — web server definitions on edit', () => {
+  it('prefills a phpfpm definition and saves it unchanged', async () => {
+    const user = userEvent.setup();
+    const params = { urls: ['http://127.0.0.1/status-a', 'http://127.0.0.1/status-b'], secret: 'status-login' };
+    const puts = await openEdit(def('phpfpm', params));
+    expect(await screen.findByLabelText(LIST)).toHaveValue('http://127.0.0.1/status-a\nhttp://127.0.0.1/status-b');
+    expect(screen.getByLabelText(SECRET)).toHaveValue('status-login');
+    await user.click(screen.getByRole('button', { name: 'Save definition' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).toEqual({ key: 'phpfpm', plugin: 'phpfpm', interval_seconds: 60, params });
+  });
+
+  it('prefills an nginx definition with secret and verify_tls and saves it unchanged', async () => {
+    const user = userEvent.setup();
+    const params = { url: 'https://status.example/x', secret: 'status-login', verify_tls: false };
+    const puts = await openEdit(def('nginx', params));
+    expect(await screen.findByLabelText('Status page URL')).toHaveValue('https://status.example/x');
+    expect(screen.getByLabelText(SECRET)).toHaveValue('status-login');
+    expect(screen.getByRole('switch', { name: 'Verify the TLS certificate' })).toHaveAttribute('aria-checked', 'false');
+    await user.click(screen.getByRole('button', { name: 'Save definition' }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0]).toEqual({ key: 'nginx', plugin: 'nginx', interval_seconds: 60, params });
   });
 });
 
@@ -123,10 +174,10 @@ describe('SharedCheckFormPage — phpfpm status URLs list', () => {
     expect(posted[0].params).toEqual({ urls: ['http://127.0.0.1/status-a', 'http://127.0.0.1/status-b'] });
   });
 
-  it('refuses an invalid line and sends nothing', async () => {
+  it.each(['ftp://x/', 'http://u:p@h/', 'http://{address}/'])('refuses %s among the lines and sends nothing', async (bad) => {
     const user = userEvent.setup();
     const posted = await openNew('phpfpm');
-    await user.type(screen.getByLabelText(LIST), 'ftp://x/');
+    await user.type(screen.getByLabelText(LIST), `http://127.0.0.1/status\n${bad.replace(/\{/g, '{{')}`);
     await user.click(screen.getByRole('button', { name: 'Create definition' }));
     expect(await screen.findByText(/must be an http:\/\/ or https:\/\/ URL without a user name, password or #fragment/)).toBeInTheDocument();
     expect(posted).toHaveLength(0);

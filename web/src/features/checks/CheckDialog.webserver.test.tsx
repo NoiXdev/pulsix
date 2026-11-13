@@ -94,7 +94,7 @@ describe.each(SINGLE)('CheckDialog — $plugin status URL', ({ plugin, label, ur
   it.each(['ftp://x/', 'http://u:p@h/', 'http://{address}/', 'http://h/#frag'])('refuses %s and sends nothing', async (bad) => {
     const user = userEvent.setup();
     const posted = await openNew(user, plugin);
-    await user.type(screen.getByLabelText(label), bad);
+    await user.type(screen.getByLabelText(label), bad.replace(/\{/g, '{{'));
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText(/must be an http:\/\/ or https:\/\/ URL without a user name, password or #fragment/)).toBeInTheDocument();
     expect(screen.getByLabelText(label)).toHaveAttribute('aria-invalid', 'true');
@@ -150,7 +150,7 @@ describe('CheckDialog — phpfpm status URLs list', () => {
   it.each(['ftp://x/', 'http://u:p@h/', 'http://{address}/'])('refuses %s among the lines and sends nothing', async (bad) => {
     const user = userEvent.setup();
     const posted = await openNew(user, 'phpfpm');
-    await user.type(screen.getByLabelText(LABEL), `http://127.0.0.1/status\n${bad}`);
+    await user.type(screen.getByLabelText(LABEL), `http://127.0.0.1/status\n${bad.replace(/\{/g, '{{')}`);
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByText(/must be an http:\/\/ or https:\/\/ URL without a user name, password or #fragment/)).toBeInTheDocument();
     expect(posted).toHaveLength(0);
