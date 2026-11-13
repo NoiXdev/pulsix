@@ -151,7 +151,7 @@ once per handler it passes. Per `server` label the plugin takes the
 every request), then sums the servers. For the 5xx rate the codes
 500–599 are summed within each (server, handler) pair first, then the
 largest handler per server is taken, then the servers are summed. Request metrics exist only when
-they are switched on in Caddy (the `metrics` global option); without any
+they are switched on in Caddy (`servers { metrics }` up to 2.8, the `metrics` global option from 2.9); without any
 `caddy_http_` series, `caddy.up` = 1 and the three others are error
 observations "HTTP metrics are not enabled in Caddy". The parser reads the
 text format line by line (comments skipped, at most 64 KiB per line,
@@ -176,7 +176,7 @@ written in `urls` (the default URL when the list is empty)
 
 A changed `start time` resets the pool's rate baselines. Rate state is
 kept per URL string, so editing or reordering `urls` keeps the baselines
-of entries that stay and drops those of removed ones. A URL listed twice
+of entries that stay and drops those of removed ones (changed during implementation: the agent's scheduler starts a fresh plugin instance whenever a check's parameters change, so no rate baseline survives an edit; the per-URL state only matters within one configuration). A URL listed twice
 is fetched and reported once. The pool's name
 from the page is not reported (the URL is the item, so the list in the GUI
 and the items agree for AsksForItem). An entry the item contract refuses

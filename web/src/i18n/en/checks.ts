@@ -239,7 +239,7 @@ export const enChecks = {
       verify_tls: { label: 'Verify the TLS certificate' },
     },
     caddy: {
-      url: { label: 'Metrics URL', hint: 'The Prometheus metrics page of Caddy, read by the agent on each host: the admin endpoint or a metrics handler on a site. The HTTP metrics must be switched on in Caddy (the metrics global option). Without a value the check reads http://127.0.0.1:2019/metrics.' },
+      url: { label: 'Metrics URL', hint: 'The Prometheus metrics page of Caddy, read by the agent on each host: the admin endpoint or a metrics handler on a site. The HTTP metrics must be switched on in Caddy. Without a value the check reads http://127.0.0.1:2019/metrics.' },
       secret: {
         label: 'Secret (optional)',
         hint: 'Name of a secret in agent.yaml on each host: it holds the HTTP basic-authentication login (basic_auth_user, basic_auth_password). The value never leaves the host. Without one, no login is sent.',

@@ -214,7 +214,7 @@ export const deChecks: Messages['checks'] = {
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
     },
     caddy: {
-      url: { label: 'URL der Metriken', hint: 'Die Prometheus-Metrikseite von Caddy, die der Agent auf jedem Host liest: der Admin-Endpunkt oder ein metrics-Handler auf einer Site. Die HTTP-Metriken müssen in Caddy eingeschaltet sein (die globale Option metrics). Ohne Wert liest der Check http://127.0.0.1:2019/metrics.' },
+      url: { label: 'URL der Metriken', hint: 'Die Prometheus-Metrikseite von Caddy, die der Agent auf jedem Host liest: der Admin-Endpunkt oder ein metrics-Handler auf einer Site. Die HTTP-Metriken von Caddy müssen eingeschaltet sein. Ohne Wert liest der Check http://127.0.0.1:2019/metrics.' },
       secret: {
         label: 'Secret (optional)',
         hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password). Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
