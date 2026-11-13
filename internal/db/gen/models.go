@@ -452,6 +452,7 @@ type HostAgent struct {
 	ConfigVersion   *string            `json:"config_version"`
 	ConfigExpected  *string            `json:"config_expected"`
 	ConfigCheckedAt pgtype.Timestamptz `json:"config_checked_at"`
+	OnlineSince     pgtype.Timestamptz `json:"online_since"`
 }
 
 type HostConnectionTest struct {

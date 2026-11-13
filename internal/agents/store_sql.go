@@ -237,18 +237,25 @@ func toIdentity(row gen.LookupAgentSerialRow) AgentIdentity {
 // still resets the start for it.
 const reconnectGap = 24 * time.Hour
 
+// Touch writes last_seen and version, the connection start (reconnectGap)
+// and the online period's start (StaleAfter, backlog 3.57).
 func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 	return s.q.TouchAgentBySerial(ctx, gen.TouchAgentBySerialParams{
 		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
+		OnlineWindowSeconds: StaleAfter.Seconds(),
 	})
 }
 
-// Heartbeat writes last_seen, version, the secrets report and the
-// connection start (Touch's rule, reconnectGap) in one statement. An
+// Heartbeat writes last_seen, version, the secrets report, the
+// connection start (Touch's rule, reconnectGap) and the online period's
+// start (Touch's rule, StaleAfter) in one statement. An
 // unknown report writes NULL to both report columns; a known one writes
 // its names as a (possibly empty, never NULL) array.
 func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport) error {
-	p := gen.RecordAgentHeartbeatParams{Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds()}
+	p := gen.RecordAgentHeartbeatParams{
+		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
+		OnlineWindowSeconds: StaleAfter.Seconds(),
+	}
 	if secrets.Known {
 		names := secrets.Names
 		if names == nil {

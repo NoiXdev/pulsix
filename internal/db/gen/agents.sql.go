@@ -162,7 +162,7 @@ func (q *Queries) GetAgentEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid
 }
 
 const getHostAgent = `-- name: GetHostAgent :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -199,6 +199,7 @@ func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (Get
 		&i.HostAgent.ConfigVersion,
 		&i.HostAgent.ConfigExpected,
 		&i.HostAgent.ConfigCheckedAt,
+		&i.HostAgent.OnlineSince,
 		&i.CertNotAfter,
 		&i.HostName,
 	)
@@ -236,7 +237,7 @@ func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCer
 }
 
 const listHostAgents = `-- name: ListHostAgents :many
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -276,6 +277,7 @@ func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHo
 			&i.HostAgent.ConfigVersion,
 			&i.HostAgent.ConfigExpected,
 			&i.HostAgent.ConfigCheckedAt,
+			&i.HostAgent.OnlineSince,
 			&i.CertNotAfter,
 			&i.HostName,
 		); err != nil {
@@ -363,7 +365,7 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 }
 
 const lockHostAgentsByName = `-- name: LockHostAgentsByName :many
-SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at FROM host_agents
+SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since FROM host_agents
 WHERE org_id = $1 AND agent_name = $2
 FOR UPDATE
 `
@@ -402,6 +404,7 @@ func (q *Queries) LockHostAgentsByName(ctx context.Context, arg LockHostAgentsBy
 			&i.ConfigVersion,
 			&i.ConfigExpected,
 			&i.ConfigCheckedAt,
+			&i.OnlineSince,
 		); err != nil {
 			return nil, err
 		}
@@ -438,7 +441,7 @@ func (q *Queries) LockLiveAgentCertificate(ctx context.Context, arg LockLiveAgen
 }
 
 const lookupAgentSerial = `-- name: LookupAgentSerial :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
 FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = $1
@@ -469,6 +472,7 @@ func (q *Queries) LookupAgentSerial(ctx context.Context, serial string) (LookupA
 		&i.HostAgent.ConfigVersion,
 		&i.HostAgent.ConfigExpected,
 		&i.HostAgent.ConfigCheckedAt,
+		&i.HostAgent.OnlineSince,
 		&i.CertSerialPresented,
 		&i.CertRevokedAt,
 	)
@@ -547,8 +551,12 @@ UPDATE host_agents SET last_seen = now(), version = $1,
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
           AND last_seen < now() - make_interval(secs => $4::double precision))
-    THEN now() ELSE connected_since END
-WHERE cert_serial = $5
+    THEN now() ELSE connected_since END,
+  online_since = CASE
+    WHEN last_seen IS NULL OR online_since IS NULL
+      OR last_seen < now() - make_interval(secs => $5::double precision)
+    THEN now() ELSE online_since END
+WHERE cert_serial = $6
 `
 
 type RecordAgentHeartbeatParams struct {
@@ -556,6 +564,7 @@ type RecordAgentHeartbeatParams struct {
 	SecretNames         []string `json:"secret_names"`
 	SecretsState        *string  `json:"secrets_state"`
 	ReconnectGapSeconds float64  `json:"reconnect_gap_seconds"`
+	OnlineWindowSeconds float64  `json:"online_window_seconds"`
 	Serial              string   `json:"serial"`
 }
 
@@ -564,13 +573,14 @@ type RecordAgentHeartbeatParams struct {
 // statement. Both report columns are NULL together for an agent that
 // sends no report (older than agent.yaml), so a downgrade reads as
 // unknown rather than keeping what a newer build said. connected_since
-// follows TouchAgentBySerial's rule, word for word.
+// and online_since follow TouchAgentBySerial's rules, word for word.
 func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeartbeatParams) error {
 	_, err := q.db.Exec(ctx, recordAgentHeartbeat,
 		arg.Version,
 		arg.SecretNames,
 		arg.SecretsState,
 		arg.ReconnectGapSeconds,
+		arg.OnlineWindowSeconds,
 		arg.Serial,
 	)
 	return err
@@ -598,13 +608,18 @@ UPDATE host_agents SET last_seen = now(), version = $1,
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
           AND last_seen < now() - make_interval(secs => $2::double precision))
-    THEN now() ELSE connected_since END
-WHERE cert_serial = $3
+    THEN now() ELSE connected_since END,
+  online_since = CASE
+    WHEN last_seen IS NULL OR online_since IS NULL
+      OR last_seen < now() - make_interval(secs => $3::double precision)
+    THEN now() ELSE online_since END
+WHERE cert_serial = $4
 `
 
 type TouchAgentBySerialParams struct {
 	Version             string  `json:"version"`
 	ReconnectGapSeconds float64 `json:"reconnect_gap_seconds"`
+	OnlineWindowSeconds float64 `json:"online_window_seconds"`
 	Serial              string  `json:"serial"`
 }
 
@@ -623,8 +638,19 @@ type TouchAgentBySerialParams struct {
 // list reads the row as it was before this update, so last_seen here is
 // the previous touch. The item expiry counts the agent only after
 // checks.MaxInterval plus a 30-minute margin connected.
+//
+// online_since (00092, backlog 3.57) is when the agent's current online
+// period began, which an online client host's staleness is measured from:
+// kept while the previous touch is within the agents list's online window
+// (agents.StaleAfter, online_window_seconds), set to now() after a longer
+// gap, after a registration (last_seen NULL) and when it is unknown.
 func (q *Queries) TouchAgentBySerial(ctx context.Context, arg TouchAgentBySerialParams) error {
-	_, err := q.db.Exec(ctx, touchAgentBySerial, arg.Version, arg.ReconnectGapSeconds, arg.Serial)
+	_, err := q.db.Exec(ctx, touchAgentBySerial,
+		arg.Version,
+		arg.ReconnectGapSeconds,
+		arg.OnlineWindowSeconds,
+		arg.Serial,
+	)
 	return err
 }
 
@@ -672,9 +698,10 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     connected_since = CASE
       WHEN host_agents.last_seen >= now() - make_interval(secs => $6::double precision)
       THEN host_agents.connected_since END,
+    online_since = NULL,
     secret_names = NULL, secrets_state = NULL,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
-RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at
+RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since
 `
 
 type UpsertHostAgentParams struct {
@@ -697,7 +724,9 @@ type UpsertHostAgentParams struct {
 // within the reconnect gap — a renewal happens on a live connection, every
 // ~60 days, and must not restart the item expiry's wait — and otherwise
 // becomes NULL, so the first touch sets it (TouchAgentBySerial). The SET
-// list reads the row as it was before this update.
+// list reads the row as it was before this update. The online period
+// (online_since, 00092, backlog 3.57) always starts over: last_seen is
+// NULL now, and the first touch under the new serial starts a new one.
 func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams) (HostAgent, error) {
 	row := q.db.QueryRow(ctx, upsertHostAgent,
 		arg.HostID,
@@ -722,6 +751,7 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		&i.ConfigVersion,
 		&i.ConfigExpected,
 		&i.ConfigCheckedAt,
+		&i.OnlineSince,
 	)
 	return i, err
 }

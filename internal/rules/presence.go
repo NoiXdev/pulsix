@@ -4,7 +4,7 @@
 // judged. A client — a notebook, a workstation — is expected to be off,
 // so while its agent is away the host is frozen rather than judged, and
 // once the agent is back each tuple's staleness is measured from the
-// later of its reading and the agent's connection start. A server, and a
+// later of its reading and the start of the agent's online period. A server, and a
 // client without an agent, are judged exactly as before.
 package rules
 
@@ -28,9 +28,13 @@ type HostPresence struct {
 	// enrollment or a certificate renewal) — the registration itself.
 	// Zero when the host has no agent.
 	AgentLastSeen time.Time
-	// AgentConnected is when the agent's current connection began
-	// (host_agents.connected_since, 00088), or zero when unknown.
-	AgentConnected time.Time
+	// AgentOnlineSince is when the agent's current online period began
+	// (host_agents.online_since, 00092: reset by the first touch after a
+	// gap longer than agents.StaleAfter), or zero when unknown. It is not
+	// connected_since (00088), which spans gaps of up to 24 hours — a
+	// notebook shut down overnight keeps that one, and its 1-hour checks
+	// would read unknown every morning.
+	AgentOnlineSince time.Time
 	// AbsentAfter is the organization's client absent threshold
 	// (org_monitoring_settings.client_absent_days, default applied); zero
 	// means the warning is off. Load fills it for a client with an agent
@@ -46,14 +50,14 @@ func (p HostPresence) frozen() bool {
 }
 
 // stalenessAnchor is the moment no tuple's staleness may be measured from
-// before (spec item 2): the online client's connection start. Zero — no
-// anchor, today's rule — for a server, a client without an agent and a
-// connection start that is unknown.
+// before (spec item 2): the start of the online client's online period.
+// Zero — no anchor, today's rule — for a server, a client without an
+// agent and an online start that is unknown.
 func (p HostPresence) stalenessAnchor() time.Time {
 	if !p.Client || !p.HasAgent || !p.AgentOnline {
 		return time.Time{}
 	}
-	return p.AgentConnected
+	return p.AgentOnlineSince
 }
 
 // absentDeadline is when a frozen client becomes absent, and whether the

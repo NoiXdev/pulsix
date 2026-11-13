@@ -224,7 +224,7 @@ func (s *EvalSQLStore) presence(ctx context.Context, q *gen.Queries, d Due) (Hos
 	}
 	p.AgentOnline = row.AgentOnline
 	p.AgentLastSeen = unlessEpoch(row.AgentLastContact)
-	p.AgentConnected = unlessEpoch(row.AgentConnected)
+	p.AgentOnlineSince = unlessEpoch(row.AgentOnlineSince)
 	if p.Client {
 		days, err := q.GetOrgClientAbsentDays(ctx, d.OrgID)
 		if err != nil {

@@ -249,14 +249,16 @@ SELECT facts FROM hosts WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(host_i
 -- transaction's now() — the clock that wrote last_seen. A NULL last_seen
 -- is not online. agent_last_contact is last_seen, or the registration
 -- (created_at, which UpsertHostAgent sets) when the agent has not touched
--- since. 'epoch' stands in for "no agent" and "connection start unknown"
--- so the generated scan never meets a NULL; has_agent says whether the
--- agent fields are real, and the Go side reads the epoch as unknown.
+-- since. agent_online_since is the start of the agent's current online
+-- period (00092). 'epoch' stands in for "no agent" and "online start
+-- unknown" so the generated scan never meets a NULL; has_agent says
+-- whether the agent fields are real, and the Go side reads the epoch as
+-- unknown.
 SELECT h.kind,
   (a.host_id IS NOT NULL)::boolean AS has_agent,
   COALESCE(a.last_seen > now() - make_interval(secs => sqlc.arg(online_window_seconds)::double precision), false)::boolean AS agent_online,
   COALESCE(a.last_seen, a.created_at, 'epoch')::timestamptz AS agent_last_contact,
-  COALESCE(a.connected_since, 'epoch')::timestamptz AS agent_connected
+  COALESCE(a.online_since, 'epoch')::timestamptz AS agent_online_since
 FROM hosts h
 LEFT JOIN host_agents a ON a.org_id = h.org_id AND a.host_id = h.id
 WHERE h.org_id = sqlc.arg(org_id) AND h.id = sqlc.arg(host_id);

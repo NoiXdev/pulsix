@@ -20,14 +20,14 @@ import (
 const testAgentWindow = 90 * time.Second
 
 // agentRow is a host_agents row written relative to the database's own
-// now(): lastSeen and connected are SQL interval texts ("10 seconds"), or
+// now(): lastSeen and online are SQL interval texts ("10 seconds"), or
 // "" for NULL. The timestamps actually stored are returned, so a test
 // compares against what the database holds rather than a Go clock.
 type agentRow struct {
-	lastSeen, connected string
+	lastSeen, online string
 }
 
-func insertAgent(t *testing.T, d *db.DB, org, host uuid.UUID, a agentRow) (lastSeen, connected, created *time.Time) {
+func insertAgent(t *testing.T, d *db.DB, org, host uuid.UUID, a agentRow) (lastSeen, online, created *time.Time) {
 	t.Helper()
 	ago := func(s string) any {
 		if s == "" {
@@ -36,15 +36,15 @@ func insertAgent(t *testing.T, d *db.DB, org, host uuid.UUID, a agentRow) (lastS
 		return s
 	}
 	err := d.Pool().QueryRow(context.Background(), `
-		INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, last_seen, connected_since)
+		INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, last_seen, online_since, connected_since)
 		VALUES ($1, $2, 'agent', $3,
-		        now() - $4::text::interval, now() - $5::text::interval)
-		RETURNING last_seen, connected_since, created_at`,
-		host, org, uuid.NewString(), ago(a.lastSeen), ago(a.connected)).Scan(&lastSeen, &connected, &created)
+		        now() - $4::text::interval, now() - $5::text::interval, now() - interval '30 days')
+		RETURNING last_seen, online_since, created_at`,
+		host, org, uuid.NewString(), ago(a.lastSeen), ago(a.online)).Scan(&lastSeen, &online, &created)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return lastSeen, connected, created
+	return lastSeen, online, created
 }
 
 func setKind(t *testing.T, d *db.DB, host uuid.UUID, kind string) {
@@ -82,7 +82,7 @@ func timeOf(p *time.Time) time.Time {
 // TestLoadFillsTheHostsPresence (backlog 3.57): Load reads the host's
 // kind, whether it has an agent, the agents list's own online verdict
 // (last_seen within the window the store was built with), the agent's
-// last contact and connection start, and — for a client with an agent —
+// last contact and the start of its online period, and — for a client with an agent —
 // the organization's absent threshold with the default applied.
 func TestLoadFillsTheHostsPresence(t *testing.T) {
 	d := testdb.Open(t)
@@ -98,8 +98,8 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 	t.Run("a server's agent is read but no threshold is", func(t *testing.T) {
 		org := seedOrg(t, d, "presence-server-agent")
 		host := seedHost(t, d, org, "h")
-		seen, conn, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "10 seconds", connected: "1 hour"})
-		want := rules.HostPresence{HasAgent: true, AgentOnline: true, AgentLastSeen: timeOf(seen), AgentConnected: timeOf(conn)}
+		seen, on, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "10 seconds", online: "1 hour"})
+		want := rules.HostPresence{HasAgent: true, AgentOnline: true, AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on)}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v", got, want)
 		}
@@ -110,10 +110,10 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		host := seedHost(t, d, org, "h")
 		setKind(t, d, host, "client")
 		setAbsentDays(t, d, org, 7)
-		seen, conn, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "10 seconds", connected: "1 hour"})
+		seen, on, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "10 seconds", online: "1 hour"})
 		want := rules.HostPresence{
 			Client: true, HasAgent: true, AgentOnline: true,
-			AgentLastSeen: timeOf(seen), AgentConnected: timeOf(conn), AbsentAfter: 7 * 24 * time.Hour,
+			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 7 * 24 * time.Hour,
 		}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v", got, want)
@@ -124,17 +124,17 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		org := seedOrg(t, d, "presence-offline")
 		host := seedHost(t, d, org, "h")
 		setKind(t, d, host, "client")
-		seen, conn, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "100 seconds", connected: "3 days"})
+		seen, on, _ := insertAgent(t, d, org, host, agentRow{lastSeen: "100 seconds", online: "3 days"})
 		want := rules.HostPresence{
 			Client: true, HasAgent: true, AgentOnline: false,
-			AgentLastSeen: timeOf(seen), AgentConnected: timeOf(conn), AbsentAfter: 14 * 24 * time.Hour,
+			AgentLastSeen: timeOf(seen), AgentOnlineSince: timeOf(on), AbsentAfter: 14 * 24 * time.Hour,
 		}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
 			t.Fatalf("presence = %+v, want %+v", got, want)
 		}
 	})
 
-	t.Run("an agent that never touched is not online and was last seen at its registration", func(t *testing.T) {
+	t.Run("an agent that never touched is not online, was last seen at its registration and has no online start", func(t *testing.T) {
 		org := seedOrg(t, d, "presence-never")
 		host := seedHost(t, d, org, "h")
 		setKind(t, d, host, "client")
@@ -142,7 +142,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 		_, _, created := insertAgent(t, d, org, host, agentRow{})
 		want := rules.HostPresence{Client: true, HasAgent: true, AgentLastSeen: timeOf(created)}
 		if got := loadPresence(t, d, org, host); !equalPresence(got, want) {
-			t.Fatalf("presence = %+v, want %+v (the warning off, the connection start unknown)", got, want)
+			t.Fatalf("presence = %+v, want %+v (the warning off, the online start unknown)", got, want)
 		}
 	})
 
@@ -158,7 +158,7 @@ func TestLoadFillsTheHostsPresence(t *testing.T) {
 
 func equalPresence(a, b rules.HostPresence) bool {
 	return a.Client == b.Client && a.HasAgent == b.HasAgent && a.AgentOnline == b.AgentOnline &&
-		a.AgentLastSeen.Equal(b.AgentLastSeen) && a.AgentConnected.Equal(b.AgentConnected) &&
+		a.AgentLastSeen.Equal(b.AgentLastSeen) && a.AgentOnlineSince.Equal(b.AgentOnlineSince) &&
 		a.AbsentAfter == b.AbsentAfter
 }
 

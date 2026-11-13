@@ -125,8 +125,8 @@ type Snapshot struct {
 	// Presence is the host's kind and its agent's presence (backlog 3.57;
 	// see HostPresence). A client whose agent is not online is frozen —
 	// Evaluate judges nothing and says so in Result.Frozen — and an online
-	// client's staleness is measured from no earlier than its agent's
-	// connection start. The zero value is a server without an agent, which
+	// client's staleness is measured from no earlier than the start of its
+	// agent's online period. The zero value is a server without an agent, which
 	// is judged exactly as before.
 	Presence HostPresence
 }
@@ -595,8 +595,8 @@ func measured(ts TupleSnapshot) bool { return ts.Interval > 0 }
 // check's intervals after it was measured. Only meaningful for a tuple
 // measured reports true for.
 //
-// For an online client the clock starts no earlier than its agent's
-// connection start (HostPresence.stalenessAnchor, backlog 3.57): a 24-hour
+// For an online client the clock starts no earlier than the start of its
+// agent's online period (HostPresence.stalenessAnchor, backlog 3.57): a
 // check that has not run since the notebook woke up is not unknown the
 // moment the agent reconnects. Every other host has no anchor, and the
 // reading alone decides — today's rule exactly.

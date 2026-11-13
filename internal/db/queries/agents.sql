@@ -69,7 +69,9 @@ ORDER BY h.agent_name;
 -- within the reconnect gap — a renewal happens on a live connection, every
 -- ~60 days, and must not restart the item expiry's wait — and otherwise
 -- becomes NULL, so the first touch sets it (TouchAgentBySerial). The SET
--- list reads the row as it was before this update.
+-- list reads the row as it was before this update. The online period
+-- (online_since, 00092, backlog 3.57) always starts over: last_seen is
+-- NULL now, and the first touch under the new serial starts a new one.
 INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES (sqlc.arg(host_id), sqlc.arg(org_id), sqlc.arg(agent_name), sqlc.arg(cert_serial), sqlc.arg(version))
 ON CONFLICT (host_id) DO UPDATE
@@ -78,6 +80,7 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     connected_since = CASE
       WHEN host_agents.last_seen >= now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
       THEN host_agents.connected_since END,
+    online_since = NULL,
     secret_names = NULL, secrets_state = NULL,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING *;
@@ -98,12 +101,22 @@ RETURNING *;
 -- list reads the row as it was before this update, so last_seen here is
 -- the previous touch. The item expiry counts the agent only after
 -- checks.MaxInterval plus a 30-minute margin connected.
+--
+-- online_since (00092, backlog 3.57) is when the agent's current online
+-- period began, which an online client host's staleness is measured from:
+-- kept while the previous touch is within the agents list's online window
+-- (agents.StaleAfter, online_window_seconds), set to now() after a longer
+-- gap, after a registration (last_seen NULL) and when it is unknown.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   connected_since = CASE
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
           AND last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision))
-    THEN now() ELSE connected_since END
+    THEN now() ELSE connected_since END,
+  online_since = CASE
+    WHEN last_seen IS NULL OR online_since IS NULL
+      OR last_seen < now() - make_interval(secs => sqlc.arg(online_window_seconds)::double precision)
+    THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
 
 -- name: RecordAgentHeartbeat :exec
@@ -112,14 +125,18 @@ WHERE cert_serial = sqlc.arg(serial);
 -- statement. Both report columns are NULL together for an agent that
 -- sends no report (older than agent.yaml), so a downgrade reads as
 -- unknown rather than keeping what a newer build said. connected_since
--- follows TouchAgentBySerial's rule, word for word.
+-- and online_since follow TouchAgentBySerial's rules, word for word.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state),
   connected_since = CASE
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
           AND last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision))
-    THEN now() ELSE connected_since END
+    THEN now() ELSE connected_since END,
+  online_since = CASE
+    WHEN last_seen IS NULL OR online_since IS NULL
+      OR last_seen < now() - make_interval(secs => sqlc.arg(online_window_seconds)::double precision)
+    THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
 
 -- name: RecordAgentConfigCheck :exec

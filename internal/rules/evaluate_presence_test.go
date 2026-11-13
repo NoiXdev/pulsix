@@ -10,7 +10,7 @@ import (
 // Client hosts (backlog 3.57, docs/superpowers/specs/2026-11-13-client-hosts-design.md,
 // "Evaluation"): a client whose agent is off is frozen — the evaluation
 // changes nothing — and a client whose agent is back is judged with each
-// tuple's staleness measured from max(reading, connection start). A server,
+// tuple's staleness measured from max(reading, online start). A server,
 // and a client without an agent, are judged exactly as before; the rows
 // below that say so mirror the table in evaluate_test.go.
 
@@ -24,16 +24,16 @@ const (
 func offClient(lastSeen time.Time, absentAfter time.Duration) rules.HostPresence {
 	return rules.HostPresence{
 		Client: true, HasAgent: true, AgentOnline: false,
-		AgentLastSeen: lastSeen, AgentConnected: lastSeen.Add(-day), AbsentAfter: absentAfter,
+		AgentLastSeen: lastSeen, AgentOnlineSince: lastSeen.Add(-day), AbsentAfter: absentAfter,
 	}
 }
 
-// onClient is a client whose agent is online and connected since connected
-// (zero = unknown).
-func onClient(connected time.Time) rules.HostPresence {
+// onClient is a client whose agent is online, in an online period that
+// began at onlineSince (zero = unknown).
+func onClient(onlineSince time.Time) rules.HostPresence {
 	return rules.HostPresence{
 		Client: true, HasAgent: true, AgentOnline: true,
-		AgentLastSeen: connected, AgentConnected: connected, AbsentAfter: 14 * day,
+		AgentLastSeen: onlineSince, AgentOnlineSince: onlineSince, AbsentAfter: 14 * day,
 	}
 }
 
@@ -122,24 +122,26 @@ func TestEvaluateClientPresence(t *testing.T) {
 			frozen: true, lastSeen: at(-400 * 24 * 60),
 		},
 		{
-			// Spec item 2: a 1-hour check read long before the outage is
-			// not unknown until three intervals after the agent connected.
-			name: "an online client's tuple read before the connection is stale from the connection start",
+			// Spec item 2, the overnight case: a 1-hour check last read
+			// ten hours ago, before the notebook was shut down, is not
+			// unknown until three intervals after the agent came back
+			// online at minute 0.
+			name: "an online client's tuple read before an overnight power-off is stale from the online start",
 			snap: rules.Snapshot{
 				Now:      at(30),
-				Tuples:   []rules.TupleSnapshot{snap(cpuT, 50, at(-1000), hour)},
+				Tuples:   []rules.TupleSnapshot{snap(cpuT, 50, at(-600), hour)},
 				Previous: prev(was(cpuT, rules.StateOK, at(-2000))),
 				Presence: onClient(at(0)),
 			},
 			want: rules.Result{
 				States: []rules.TupleState{{Tuple: cpuT, State: rules.StateOK, Since: at(-2000), LastValue: ptr(50.0), EvaluatedAt: at(30)}},
 				Host:   rules.HostState{State: rules.StateOK, Since: at(-2000), EvaluatedAt: at(30)},
-				// connected_since + 3 x 1 h.
+				// online_since + 3 x 1 h.
 				NextDue: at(180),
 			},
 		},
 		{
-			name: "an online client's tuple goes unknown three intervals after the connection start",
+			name: "an online client's tuple goes unknown three intervals after the online start",
 			snap: rules.Snapshot{
 				Now:      at(181),
 				Tuples:   []rules.TupleSnapshot{snap(cpuT, 50, at(-1000), hour)},
@@ -154,9 +156,9 @@ func TestEvaluateClientPresence(t *testing.T) {
 			},
 		},
 		{
-			// max, not the connection start alone: a reading after the
-			// connection is measured from itself.
-			name: "an online client's reading after the connection start is measured from the reading",
+			// max, not the online start alone: a reading after it is
+			// measured from itself.
+			name: "an online client's reading after the online start is measured from the reading",
 			snap: rules.Snapshot{
 				Now:      at(20),
 				Tuples:   []rules.TupleSnapshot{snap(cpuT, 50, at(10), oneMin)},
@@ -191,7 +193,7 @@ func TestEvaluateClientPresence(t *testing.T) {
 	}
 
 	// Today's rule, unchanged: the reading alone anchors staleness. The
-	// same inputs as the connection-start case above, under every
+	// same inputs as the online-start case above, under every
 	// presence that must not move the anchor or freeze anything.
 	todaysRule := rules.Result{
 		States:  []rules.TupleState{{Tuple: cpuT, State: rules.StateUnknown, Since: at(30), LastValue: ptr(50.0), EvaluatedAt: at(30)}},
@@ -204,10 +206,10 @@ func TestEvaluateClientPresence(t *testing.T) {
 		p    rules.HostPresence
 	}{
 		{"a server with no agent", rules.HostPresence{}},
-		{"a server whose agent is off", rules.HostPresence{HasAgent: true, AgentLastSeen: at(-1000), AgentConnected: at(0), AbsentAfter: day}},
-		{"a server whose agent is online", rules.HostPresence{HasAgent: true, AgentOnline: true, AgentLastSeen: at(29), AgentConnected: at(0)}},
+		{"a server whose agent is off", rules.HostPresence{HasAgent: true, AgentLastSeen: at(-1000), AgentOnlineSince: at(0), AbsentAfter: day}},
+		{"a server whose agent is online", rules.HostPresence{HasAgent: true, AgentOnline: true, AgentLastSeen: at(29), AgentOnlineSince: at(0)}},
 		{"a client without an agent", rules.HostPresence{Client: true, AbsentAfter: day}},
-		{"an online client whose connection start is unknown", onClient(time.Time{})},
+		{"an online client whose online start is unknown", onClient(time.Time{})},
 	}
 	for _, u := range unchanged {
 		cases = append(cases, presenceCase{
