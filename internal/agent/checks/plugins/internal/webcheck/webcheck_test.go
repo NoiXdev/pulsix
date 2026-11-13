@@ -144,6 +144,32 @@ func TestFetchBodyLimit(t *testing.T) {
 	}
 }
 
+// A plugin may bound its page tighter than MaxBody (phpfpm); a bound
+// above MaxBody is MaxBody.
+func TestFetchOwnBodyLimit(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		limit     int
+		size      int
+		wantLarge bool
+	}{
+		{"exactly the own limit", 100, 100, false},
+		{"one byte over the own limit", 100, 101, true},
+		{"a limit above MaxBody is MaxBody", webcheck.MaxBody * 2, webcheck.MaxBody + 1, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write([]byte(strings.Repeat("a", tt.size)))
+			}))
+			defer srv.Close()
+			body, reason := webcheck.Fetch(t.Context(), srv.URL, webcheck.Options{MaxBody: tt.limit})
+			if tt.wantLarge != (reason == "response too large") || (reason == "") != (len(body) == tt.size) {
+				t.Fatalf("Fetch = %d bytes, %q", len(body), reason)
+			}
+		})
+	}
+}
+
 func TestFetchSlowServerTimesOut(t *testing.T) {
 	if testing.Short() {
 		t.Skip("waits for the 5 s request deadline")

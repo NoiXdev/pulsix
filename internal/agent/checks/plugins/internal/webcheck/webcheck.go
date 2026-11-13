@@ -57,6 +57,18 @@ func ParseAuth(fields map[string]string) (Auth, error) {
 type Options struct {
 	VerifyTLS bool
 	Auth      Auth
+	// MaxBody bounds the page tighter than the package's MaxBody, for a
+	// plugin whose real page is small; 0, or a value above MaxBody, means
+	// MaxBody.
+	MaxBody int
+}
+
+// limit is the largest body a fetch with opt returns.
+func (opt Options) limit() int {
+	if opt.MaxBody > 0 && opt.MaxBody < MaxBody {
+		return opt.MaxBody
+	}
+	return MaxBody
 }
 
 // newClient builds a fresh client per call: no shared transport, no proxy
@@ -78,7 +90,7 @@ func newClient(opt Options) *http.Client {
 }
 
 // Fetch GETs rawURL and returns the body of a 200 response within MaxBody
-// bytes. Otherwise body is nil and reason is one fixed text. The request
+// bytes (or opt.MaxBody). Otherwise body is nil and reason is one fixed text. The request
 // takes at most dbcheck.QueryTimeout; the caller's context ending reads as
 // "timed out" too, and the plugin tells the two apart.
 func Fetch(ctx context.Context, rawURL string, opt Options) (body []byte, reason string) {
@@ -111,11 +123,12 @@ func Fetch(ctx context.Context, rawURL string, opt Options) (body []byte, reason
 	default:
 		return nil, "HTTP status " + strconv.Itoa(resp.StatusCode)
 	}
-	body, err = io.ReadAll(io.LimitReader(resp.Body, MaxBody+1))
+	limit := opt.limit()
+	body, err = io.ReadAll(io.LimitReader(resp.Body, int64(limit)+1))
 	if err != nil {
 		return nil, classify(err)
 	}
-	if len(body) > MaxBody {
+	if len(body) > limit {
 		return nil, "response too large"
 	}
 	return body, ""
