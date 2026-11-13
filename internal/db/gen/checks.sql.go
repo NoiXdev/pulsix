@@ -703,6 +703,11 @@ WHERE org_id = $2 AND host_id = $3 AND check_key = $4
   AND item = $5 AND metric = $6
   AND at >= $7 AND at < $8
   AND value IS NOT NULL
+  -- internal/checks.MaxAbsValue (backlog 3.11c): ingest refuses a value
+  -- beyond it, but one stored before may be NaN, ±Infinity or 1e200, and
+  -- avg() overflows on 1e200 next to any other sample, failing the route.
+  -- NaN sorts above every number in PostgreSQL, so BETWEEN leaves it out.
+  AND value BETWEEN -1e100 AND 1e100
 GROUP BY bucket
 ORDER BY bucket
 `

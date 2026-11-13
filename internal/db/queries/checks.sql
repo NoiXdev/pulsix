@@ -132,6 +132,11 @@ WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id) AND check_key = 
   AND item = sqlc.arg(item) AND metric = sqlc.arg(metric)
   AND at >= sqlc.arg(from_at) AND at < sqlc.arg(to_at)
   AND value IS NOT NULL
+  -- internal/checks.MaxAbsValue (backlog 3.11c): ingest refuses a value
+  -- beyond it, but one stored before may be NaN, ±Infinity or 1e200, and
+  -- avg() overflows on 1e200 next to any other sample, failing the route.
+  -- NaN sorts above every number in PostgreSQL, so BETWEEN leaves it out.
+  AND value BETWEEN -1e100 AND 1e100
 GROUP BY bucket
 ORDER BY bucket;
 

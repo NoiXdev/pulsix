@@ -63,6 +63,14 @@ import (
 // missing window exactly as it treats a missing metric. count(s.value)
 // rather than count(*) for the same reason a discrete metric's samples —
 // which carry a label and no value — contribute to nothing here.
+//
+// The BETWEEN leaves out a sample beyond ±WindowValueBound (backlog
+// 3.11c). Ingest refuses such a value now, but a manager that ran before
+// may hold NaN, ±Infinity or 1e200, and PostgreSQL's float8 average
+// overflows on 1e200 next to any other sample — failing this whole
+// statement and so postponing the host's every rule while it stays in
+// the window. NaN sorts above every number in PostgreSQL, so BETWEEN
+// leaves it out too.
 const windowStatement = `
 SELECT idx, value FROM (
   SELECT r.idx AS idx,
@@ -85,10 +93,16 @@ SELECT idx, value FROM (
     WHERE s.org_id = $1 AND s.host_id = $2
       AND s.check_key = r.check_key AND s.item = r.item AND s.metric = r.metric
       AND s.at >= r.from_at AND s.value IS NOT NULL
+      AND s.value BETWEEN -$9::double precision AND $9::double precision
   ) a
   WHERE a.samples > 0
 ) w
 WHERE value IS NOT NULL`
+
+// WindowValueBound is the largest magnitude of a sample the window
+// statement reads: internal/checks.MaxAbsValue, the ingest bound (a test
+// keeps the two equal; internal/rules never imports internal/checks).
+const WindowValueBound = 1e100
 
 // Windows implements EvalStore: every requested aggregate in one
 // statement, measured back from now — the same now the evaluation itself
@@ -131,7 +145,7 @@ func (s *EvalSQLStore) Windows(ctx context.Context, d Due, reqs []WindowRequest,
 	}
 
 	rows, err := s.conn(ctx).Query(ctx, windowStatement,
-		d.OrgID, d.HostID, checkKeys, items, metrics, aggs, froms, seconds)
+		d.OrgID, d.HostID, checkKeys, items, metrics, aggs, froms, seconds, WindowValueBound)
 	if err != nil {
 		return nil, fmt.Errorf("fetch window aggregates: %w", err)
 	}

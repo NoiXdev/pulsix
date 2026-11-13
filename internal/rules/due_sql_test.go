@@ -1929,3 +1929,47 @@ func TestWindowStatementSurvivesValuesAtTheIngestBound(t *testing.T) {
 		}
 	}
 }
+
+// TestWindowStatementSkipsValuesStoredBeyondTheBound (backlog 3.11c): a
+// manager that ran before ingest bounded values may hold samples of NaN,
+// ±Infinity or 1e200. PostgreSQL's float8 average overflows on 1e200 next
+// to 0, which failed the whole window statement and postponed the host's
+// rules for as long as the sample stayed in the window. The statement
+// leaves out every sample beyond ±checks.MaxAbsValue, so the window is
+// judged on the rest.
+func TestWindowStatementSkipsValuesStoredBeyondTheBound(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "windows-legacy")
+	host := seedHost(t, d, org, "legacy-host")
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
+	insertSample(t, d, org, host, cpu, now.Add(-5*time.Minute), ptr(10.0), nil)
+	insertSample(t, d, org, host, cpu, now.Add(-4*time.Minute), ptr(1e200), nil)
+	insertSample(t, d, org, host, cpu, now.Add(-3*time.Minute), ptr(math.Inf(1)), nil)
+	insertSample(t, d, org, host, cpu, now.Add(-2*time.Minute), ptr(math.NaN()), nil)
+	insertSample(t, d, org, host, cpu, now.Add(-1*time.Minute), ptr(30.0), nil)
+
+	key := rules.ItemKey{CheckKey: "cpu"}
+	avg := rules.WindowRequest{Key: key, Metric: "cpu.used_pct", Agg: "avg", Seconds: 600}
+	maxW := rules.WindowRequest{Key: key, Metric: "cpu.used_pct", Agg: "max", Seconds: 600}
+	rate := rules.WindowRequest{Key: key, Metric: "cpu.used_pct", Agg: "rate", Seconds: 600}
+	got, err := store.Windows(context.Background(), rules.Due{OrgID: org, HostID: host}, []rules.WindowRequest{avg, maxW, rate}, now)
+	if err != nil {
+		t.Fatalf("Windows over samples stored beyond the bound: %v", err)
+	}
+	for req, want := range map[rules.WindowRequest]float64{avg: 20, maxW: 30, rate: 20.0 / 600.0} {
+		if v, ok := got[req]; !ok || math.Abs(v-want) > 1e-9 {
+			t.Errorf("%s = %v (present %v), want %v from the in-range samples only", req.Agg, v, ok, want)
+		}
+	}
+}
+
+// TestWindowBoundIsTheIngestBound keeps the statement's bound on
+// checks.MaxAbsValue: a value ingest accepts must never be left out.
+func TestWindowBoundIsTheIngestBound(t *testing.T) {
+	if rules.WindowValueBound != checks.MaxAbsValue {
+		t.Fatalf("rules.WindowValueBound = %g, checks.MaxAbsValue = %g", rules.WindowValueBound, checks.MaxAbsValue)
+	}
+}

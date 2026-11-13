@@ -247,11 +247,10 @@ repositories as before. An older worker never asks.
   value as the error "value is not a finite number" or "value is out of range"
   on the same item and metric. An older agent with a plugin bug that yields one
   loses that reading instead of storing it. A current value stored before the
-  upgrade reads as that same error on the host page, and a graph leaves such a
-  point out. Values stored before the upgrade whose average overflows (for
-  example 1e200 and 0 in one graph bucket or rule window) can still fail that
-  graph or postpone that host's rules until retention removes them. No schema
-  change.
+  upgrade reads as that same error on the host page, and graphs and rule
+  windows leave out every stored sample beyond ±1e100 (NaN and ±Infinity
+  included), so one stored before the upgrade can no longer make an average
+  overflow and fail a graph or postpone a host's rules. No schema change.
 - **3.5, agent secrets:** the agent's heartbeat gains two fields
   (`secret_names`, `secrets_state`; additive, no proto break) with the names
   of the secrets in its optional local `agent.yaml` and the file's state,

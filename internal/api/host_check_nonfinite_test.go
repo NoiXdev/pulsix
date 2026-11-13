@@ -88,3 +88,35 @@ func TestHostMetricsSurviveValuesAtTheIngestBound(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 }
+
+// TestHostMetricsSkipValuesStoredBeyondTheBound (backlog 3.11c): samples a
+// manager stored before ingest bounded values — 1e200 next to a finite one
+// in the same bucket — made PostgreSQL's average overflow and the graph
+// route answer 500. The series leaves such samples out.
+func TestHostMetricsSkipValuesStoredBeyondTheBound(t *testing.T) {
+	f := newChecksFixture(t, "host-metrics-legacy")
+	now := time.Now()
+	f.record(t,
+		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now.Add(-90 * time.Second), Value: floatPtr(10)},
+		checks.Observation{HostID: f.web, CheckKey: "cpu", Metric: "usage_percent", At: now.Add(-80 * time.Second), Value: floatPtr(20)},
+	)
+	tag, err := f.s.DB.Pool().Exec(t.Context(),
+		`UPDATE check_samples SET value = 1e200 WHERE host_id = $1 AND check_key = 'cpu' AND metric = 'usage_percent' AND value = 20`, f.web)
+	if err != nil || tag.RowsAffected() != 1 {
+		t.Fatalf("plant a 1e200 sample: %v (%d rows)", err, tag.RowsAffected())
+	}
+	resp := requestJSON(t, f.viewerC, http.MethodGet,
+		f.hostURL(f.web)+"/metrics?check=cpu&metric=usage_percent&range=7d", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("metrics over a 1e200 sample = %d %s, want 200", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var out struct {
+		Points []struct {
+			Value float64 `json:"value"`
+		} `json:"points"`
+	}
+	decodeInto(t, resp, &out)
+	if len(out.Points) != 1 || out.Points[0].Value != 10 {
+		t.Fatalf("points = %+v, want one bucket averaging only the in-range sample 10", out.Points)
+	}
+}
