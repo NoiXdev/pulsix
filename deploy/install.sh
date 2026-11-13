@@ -18,6 +18,8 @@
 #     [--name <agent name>] [--server-name <manager certificate name>] \
 #     [--token-file <path> | --token pxa1.<id>.<secret>.<pin>]
 #
+#   curl -fsSL https://<manager>/install.sh | sudo sh -s -- --uninstall [--keep-data]
+#
 # The token and manager address are the two values the Agents page prints.
 # Without --token-file or --token the script asks for the token on the
 # terminal, without echoing it. That is the default on purpose (backlog
@@ -33,6 +35,16 @@
 # refuses an env file anyone else can read or write) and the agent
 # forgets it as soon as a valid identity exists (first start enrolls,
 # restarts reconnect).
+#
+# A re-run upgrades: it replaces the binary and restarts the service.
+#
+# --uninstall removes the agent from the host (backlog 3.49): it stops the
+# service and removes the service definition, the binary, the macOS log
+# directory and the data directory (identity, certificate, agent.env,
+# agent.yaml). --keep-data keeps the data directory, so a later install
+# reuses the identity. It needs no manager and no token, takes no install
+# flag, and removing something not installed succeeds quietly. The agent
+# stays registered in Pulsix: revoke or delete it on the Agents page.
 
 set -eu
 
@@ -45,6 +57,10 @@ PULSIX_TOKEN_FILE=""
 PULSIX_MANAGER=""
 PULSIX_NAME=""
 PULSIX_SERVER_NAME=""
+PULSIX_UNINSTALL=""
+PULSIX_KEEP_DATA=""
+# Set by any install flag, even one given an empty value: --uninstall takes none.
+PULSIX_INSTALL_FLAGS=""
 
 die() {
 	echo "install.sh: $1" >&2
@@ -53,6 +69,7 @@ die() {
 
 usage() {
 	echo "usage: install.sh --manager <manager>:8444 [--name <agent name>] [--server-name <manager certificate name>] [--token-file <path> | --token pxa1.<id>.<secret>.<pin>]" >&2
+	echo "       install.sh --uninstall [--keep-data]" >&2
 	exit 2
 }
 
@@ -61,27 +78,40 @@ while [ $# -gt 0 ]; do
 	--token)
 		[ $# -ge 2 ] || usage
 		PULSIX_TOKEN="$2"
+		PULSIX_INSTALL_FLAGS=1
 		shift 2
 		;;
 	--token-file)
 		[ $# -ge 2 ] || usage
 		PULSIX_TOKEN_FILE="$2"
+		PULSIX_INSTALL_FLAGS=1
 		shift 2
 		;;
 	--manager)
 		[ $# -ge 2 ] || usage
 		PULSIX_MANAGER="$2"
+		PULSIX_INSTALL_FLAGS=1
 		shift 2
 		;;
 	--name)
 		[ $# -ge 2 ] || usage
 		PULSIX_NAME="$2"
+		PULSIX_INSTALL_FLAGS=1
 		shift 2
 		;;
 	--server-name)
 		[ $# -ge 2 ] || usage
 		PULSIX_SERVER_NAME="$2"
+		PULSIX_INSTALL_FLAGS=1
 		shift 2
+		;;
+	--uninstall)
+		PULSIX_UNINSTALL=1
+		shift
+		;;
+	--keep-data)
+		PULSIX_KEEP_DATA=1
+		shift
 		;;
 	*)
 		usage
@@ -89,7 +119,12 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-[ -n "$PULSIX_MANAGER" ] || usage
+if [ -n "$PULSIX_UNINSTALL" ]; then
+	[ -z "$PULSIX_INSTALL_FLAGS" ] || usage
+else
+	[ -z "$PULSIX_KEEP_DATA" ] || usage
+	[ -n "$PULSIX_MANAGER" ] || usage
+fi
 
 # Per-system values. Linux keeps its systemd layout, macOS gets a launchd
 # daemon; anything else has no shell installer.
@@ -113,6 +148,89 @@ Darwin)
 esac
 
 [ "$(id -u)" = "0" ] || die "must run as root (e.g. curl ... | sudo sh -s -- --manager ...)"
+
+# wait_for_launchd_job_gone: bootout can return before the job is gone (the
+# agent is still handling SIGTERM), and bootstrapping a label that is still
+# loaded fails, so the upgrade and the uninstall wait for it to disappear.
+wait_for_launchd_job_gone() {
+	tries=0
+	while launchctl print "system/$LAUNCHD_LABEL" > /dev/null 2>&1; do
+		tries=$((tries + 1))
+		[ "$tries" -le 20 ] || die "the running $LAUNCHD_LABEL did not stop within 20 seconds; run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"
+		sleep 1
+	done
+}
+
+# remove_path PATH: removes PATH when it exists and says so. Only the
+# script's fixed absolute paths are passed; anything else (an empty or
+# relative path) is refused rather than handed to rm -rf. PATH never
+# carries a trailing slash, so a symlink is removed as the link, never
+# followed into its target.
+REMOVED=""
+remove_path() {
+	case "$1" in
+	/?*) ;;
+	*) die "refusing to remove '$1'" ;;
+	esac
+	if [ -e "$1" ] || [ -L "$1" ]; then
+		rm -rf -- "$1"
+		echo "pulsix-agent: removed $1"
+		REMOVED=1
+	fi
+}
+
+# remove_data_dir: the data directory, unless --keep-data keeps it as it is.
+remove_data_dir() {
+	if [ -z "$PULSIX_KEEP_DATA" ]; then
+		remove_path "$DATA_DIR"
+	elif [ -e "$DATA_DIR" ]; then
+		echo "pulsix-agent: kept $DATA_DIR (--keep-data)"
+	fi
+}
+
+# uninstall_linux: stop and disable the unit where systemd runs (a unit
+# that is not loaded is not an error), then remove the unit, the binary
+# and the data directory. Logs are in the journal; nothing to remove.
+uninstall_linux() {
+	if [ -d /run/systemd/system ] && [ -f "$UNIT_PATH" ]; then
+		systemctl disable --now "$SERVICE_NAME" 2> /dev/null || true
+		echo "pulsix-agent: stopped and disabled $SERVICE_NAME"
+	fi
+	remove_path "$UNIT_PATH"
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload || true
+	fi
+	remove_path "$BIN_DIR/pulsix-agent"
+	remove_data_dir
+}
+
+# uninstall_darwin: unload the daemon and wait for it to go, then remove
+# the plist, the binary, the logs and the data directory.
+uninstall_darwin() {
+	if launchctl print "system/$LAUNCHD_LABEL" > /dev/null 2>&1; then
+		launchctl bootout "system/$LAUNCHD_LABEL" 2> /dev/null || true
+		wait_for_launchd_job_gone
+		echo "pulsix-agent: stopped $LAUNCHD_LABEL"
+		REMOVED=1
+	fi
+	remove_path "$PLIST_PATH"
+	remove_path "$BIN_DIR/pulsix-agent"
+	remove_path "$LOG_DIR"
+	remove_data_dir
+}
+
+if [ -n "$PULSIX_UNINSTALL" ]; then
+	case "$SYSTEM" in
+	Linux) uninstall_linux ;;
+	Darwin) uninstall_darwin ;;
+	esac
+	if [ -z "$REMOVED" ]; then
+		echo "pulsix-agent: nothing to remove"
+		exit 0
+	fi
+	echo "pulsix-agent: the agent is still registered in Pulsix; revoke or delete it on the Agents page"
+	exit 0
+fi
 
 # read_token_file PATH: the token from a regular file root owns that no
 # group or other user may read or write, so the secret never passes
@@ -226,8 +344,11 @@ PULSIX_UNIT_EOF
 
 	chmod 644 "$UNIT_PATH"
 
+	# A re-run upgrades: enable --now would leave a running unit on the
+	# old binary, so the unit is restarted (which starts a stopped one).
 	systemctl daemon-reload
-	systemctl enable --now "$SERVICE_NAME"
+	systemctl enable "$SERVICE_NAME"
+	systemctl restart "$SERVICE_NAME"
 
 	echo "pulsix-agent: installed and started ($SERVICE_NAME)"
 	echo "pulsix-agent: identity lives in /etc/pulsix — the enrollment token is spent on first start"
@@ -251,17 +372,10 @@ PULSIX_PLIST_EOF
 	chown root:wheel "$PLIST_PATH"
 	chmod 644 "$PLIST_PATH"
 
-	# A re-run upgrades: unload the running daemon (if any), then load.
-	# bootout can return before the job is gone (the agent is still handling
-	# SIGTERM), and bootstrapping a label that is still loaded fails, so wait
-	# for the job to disappear first.
+	# A re-run upgrades: unload the running daemon (if any), wait for it
+	# to go, then load.
 	launchctl bootout "system/$LAUNCHD_LABEL" 2> /dev/null || true
-	tries=0
-	while launchctl print "system/$LAUNCHD_LABEL" > /dev/null 2>&1; do
-		tries=$((tries + 1))
-		[ "$tries" -le 20 ] || die "the running $LAUNCHD_LABEL did not stop within 20 seconds; run 'launchctl bootout system/$LAUNCHD_LABEL' and retry"
-		sleep 1
-	done
+	wait_for_launchd_job_gone
 	launchctl bootstrap system "$PLIST_PATH" || die "launchctl bootstrap failed; check 'launchctl print system/$LAUNCHD_LABEL' and $LOG_DIR/agent.log"
 
 	echo "pulsix-agent: installed and started ($LAUNCHD_LABEL)"

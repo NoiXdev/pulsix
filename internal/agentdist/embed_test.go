@@ -86,7 +86,9 @@ func TestInstallScriptTemplate(t *testing.T) {
 		"--server-name",
 		"unit-text-marker",
 		"plist-text-marker",
-		"systemctl enable --now",
+		// A re-run upgrades: enable alone leaves a running unit on the
+		// old binary, so the install restarts it (backlog 3.51).
+		`systemctl restart "$SERVICE_NAME"`,
 		"sha256sum",
 		"--token", "--manager", "--name",
 		// Backlog 7.30: the token can come from the terminal or a
