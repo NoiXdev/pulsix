@@ -1928,6 +1928,11 @@ func TestWindowStatementSurvivesValuesAtTheIngestBound(t *testing.T) {
 			t.Errorf("%s = %v (present %v), want a finite value", req.Agg, v, ok)
 		}
 	}
+	// The bound is inclusive: the samples at exactly ±MaxAbsValue are read,
+	// not left out by the statement's own range filter.
+	if got[reqs[1]] != -checks.MaxAbsValue || got[reqs[2]] != checks.MaxAbsValue {
+		t.Errorf("min, max = %v, %v, want the samples at ±%g", got[reqs[1]], got[reqs[2]], checks.MaxAbsValue)
+	}
 }
 
 // TestWindowStatementSkipsValuesStoredBeyondTheBound (backlog 3.11c): a

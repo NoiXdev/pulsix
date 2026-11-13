@@ -85,7 +85,18 @@ func TestHostMetricsSurviveValuesAtTheIngestBound(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("metrics (%s) over values at the bound = %d %s, want 200", r, resp.StatusCode, mustReadBody(t, resp))
 		}
-		_ = resp.Body.Close()
+		var out struct {
+			Points []struct {
+				Value float64 `json:"value"`
+			} `json:"points"`
+		}
+		decodeInto(t, resp, &out)
+		// The series' range filter is inclusive: the samples at exactly
+		// ±MaxAbsValue are averaged, not left out (a lower literal in
+		// SeriesForHost would empty the series here).
+		if len(out.Points) == 0 {
+			t.Fatalf("metrics (%s) = no points, want the samples at the bound", r)
+		}
 	}
 }
 
