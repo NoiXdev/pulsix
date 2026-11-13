@@ -71,6 +71,24 @@ an operator can count on. The operator's steps are in
   gives checks under other keys no org, group or host rule, so states and
   alerts can flap while both run, and an older manager that moves a keyed
   item rule to another scope hits the CHECK and answers 500.
+- **Migration 00088 adds the agent's connection start (3.12c).** It adds the
+  nullable column `host_agents.connected_since` (catalog only, nothing
+  backfilled, nothing rewritten); an existing row reads as unknown until that
+  agent's first heartbeat after the upgrade sets it. A heartbeat or touch that
+  follows a gap of more than 30 minutes resets it, and so does re-enrolling the
+  agent. An older release ignores the column, but an older manager that keeps
+  heartbeating alongside the new one does not reset it on a reconnect it
+  handles. Stop every manager instance before the new version starts, as for
+  00087: older releases read `host_agents` with all columns.
+- **Migration 00089 adds the agent's configuration check (3.13c).** It adds
+  three nullable columns to `host_agents`, `config_version`, `config_expected`
+  and `config_checked_at` (catalog only, nothing backfilled). A row reads as
+  not compared yet until the first heartbeat after the upgrade has been
+  compared, so the GUI shows no configuration badge until then. Re-enrolling an
+  agent or renewing its certificate resets the three columns. The manager writes
+  the check only when a version changes or the stored check is 10 minutes old.
+  Stop every manager instance before the new version starts, for the same
+  reason as 00088.
 
 ## A database newer than the binary is refused
 
@@ -642,6 +660,44 @@ repositories as before. An older worker never asks.
   requirements install (the first run or sync of a commit on a worker) runs
   galaxy as the worker's own uid, not isolated, and the worker log warns so
   for every `ansible-galaxy` command.
+- **3.12c, automatic item expiry pauses after an upgrade or an outage:** an
+  agent counts as a host's sign of life for the automatic item expiry
+  (`PULSIX_ITEM_EXPIRY`) only once it has been connected for `checks.MaxInterval`
+  plus a 30-minute margin, about 24.5 h. So the automatic expiry of agent items
+  pauses for about 24.5 h after the upgrade, and again after every reconnect that
+  follows more than 30 minutes of silence (a manager or agent restart that takes
+  longer counts too). Items whose own check still reports, and items of hosts
+  without an agent, are unaffected. Items that really vanished are forgotten that
+  much later.
+- **3.55, items taken off a check's list leave the evaluation:** when a mount,
+  interface, unit, database, sensor, device or array is removed from a check's
+  item list, the evaluation no longer judges its last reported values, as for a
+  removed or disabled check. It stops counting towards the host's state, and an
+  alert open on it closes as `stale` (with the usual notifications) on the first
+  evaluation after the upgrade. Its stored current values are kept until the item
+  expiry forgets them. Checks without an item list and the check-level item
+  (empty name) are judged as before. The effective rules view still lists rules
+  for such items (backlog 3.56).
+- **3.10c, new count metrics:** the `postgres` check reports
+  `pg.databases_unreported` and the `docker` check `docker.containers_unreported`
+  on every round, including failed ones (item with an empty name). They count the
+  databases or containers the plugin left out; a rule can alert on them. The agent
+  also logs a plugin's advisory error, once per change and again after an hour.
+  Older agents do not report the metrics.
+- **3.55, hardware metrics that vanish:** `temperature` and `smart` now report the
+  error "<metric> is no longer reported" for a metric that was reported before and
+  is gone, or changed type, while its item still reports other values (for example
+  a temperature limit a sensor stops stating). It is reported for at most 24 h
+  and is not remembered across an agent restart. `smart.devices` shows
+  "no device with SMART data" only when at least one device answered without SMART
+  data and none had data or is asleep; a round where every device failed shows the
+  device count again.
+- **3.13c, configuration badge:** the agent objects of the API gain
+  `config_version`, `config_expected` and `config_checked_at` (omitted until the
+  first comparison), and the Agents page and the host's agent card show whether
+  the agent runs the current configuration. Re-enrollment and certificate renewal
+  reset the check, so the badge is absent until the next comparison, normally
+  within seconds.
 
 ## Roll order
 
