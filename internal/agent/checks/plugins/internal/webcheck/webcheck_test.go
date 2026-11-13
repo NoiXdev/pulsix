@@ -247,6 +247,22 @@ func TestFetchHostNotFound(t *testing.T) {
 	}
 }
 
+// A URL with user info is refused without a request, so net/http never
+// derives an Authorization header from it.
+func TestFetchRefusesUserInfo(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	u := "http://" + plantUser + ":" + plantPass + "@" + strings.TrimPrefix(srv.URL, "http://") + "/s"
+	body, reason := webcheck.Fetch(t.Context(), u, webcheck.Options{})
+	if body != nil || reason != "connection failed" {
+		t.Fatalf("Fetch = %q, %q; want connection failed", body, reason)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("server was hit %d times", hits.Load())
+	}
+}
+
 func TestFetchBadURL(t *testing.T) {
 	_, reason := webcheck.Fetch(t.Context(), "http://bad\x7fhost/"+plantUser, webcheck.Options{})
 	if reason != "connection failed" {
@@ -313,6 +329,8 @@ func TestWithQueryKey(t *testing.T) {
 		{"key as a value is not a key", "http://h/s?x=auto", "auto", "http://h/s?x=auto&auto"},
 		{"json", "http://h/status", "json", "http://h/status?json"},
 		{"ipv6 and port", "https://[::1]:8443/status?full", "json", "https://[::1]:8443/status?full&json"},
+		{"trailing ampersand", "http://h/s?x=1&", "auto", "http://h/s?x=1&auto"},
+		{"only ampersand", "http://h/s?&", "auto", "http://h/s?&auto"},
 		{"fragment kept", "http://h/s#f", "auto", "http://h/s?auto#f"},
 	}
 	for _, tt := range tests {

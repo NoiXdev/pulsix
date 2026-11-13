@@ -88,6 +88,11 @@ func Fetch(ctx context.Context, rawURL string, opt Options) (body []byte, reason
 	if err != nil {
 		return nil, classify(err)
 	}
+	if req.URL.User != nil {
+		// FormatStatusURL refuses user info; this is the second layer, so
+		// net/http never derives a basic-auth header from the URL.
+		return nil, "connection failed"
+	}
 	req.Header.Set("User-Agent", UserAgent)
 	if opt.Auth.Set {
 		req.SetBasicAuth(opt.Auth.User, opt.Auth.Password)
@@ -150,7 +155,10 @@ func WithQueryKey(rawURL, key string) string {
 			return rawURL
 		}
 	}
-	return base + "?" + query + "&" + key + frag
+	if !strings.HasSuffix(query, "&") {
+		query += "&"
+	}
+	return base + "?" + query + key + frag
 }
 
 // URLParam reads a string parameter; absent, empty or not a string mean def.
