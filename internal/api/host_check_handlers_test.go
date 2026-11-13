@@ -309,12 +309,41 @@ func TestHostCheckRoutes(t *testing.T) {
 		}
 	})
 
-	// The window is one of three fixed choices, and anything else is
+	// Backlog 3.15: 30 d and 90 d join the windows, bucketed like 7 d, so a
+	// 90-day answer is no larger than a week's.
+	t.Run("metrics answer 30 and 90 days within the bucket cap", func(t *testing.T) {
+		for _, c := range []struct {
+			rng    string
+			window time.Duration
+		}{{"30d", 30 * 24 * time.Hour}, {"90d", 90 * 24 * time.Hour}} {
+			resp := requestJSON(t, f.viewerC, http.MethodGet, f.hostURL(f.web)+"/metrics?check=cpu&metric=usage_percent&range="+c.rng, nil)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("%s = %d %s", c.rng, resp.StatusCode, mustReadBody(t, resp))
+			}
+			var out struct {
+				Range  string     `json:"range"`
+				From   time.Time  `json:"from"`
+				To     time.Time  `json:"to"`
+				Points []struct{} `json:"points"`
+			}
+			decodeInto(t, resp, &out)
+			if out.Range != c.rng || out.To.Sub(out.From) != c.window {
+				t.Fatalf("%s window = %s..%s", c.rng, out.From, out.To)
+			}
+			// time_bucket aligns to the epoch, so a window can touch one
+			// bucket more than it is divided into.
+			if len(out.Points) > 169 {
+				t.Fatalf("%s points = %d, want at most 168 buckets (+1 for alignment)", c.rng, len(out.Points))
+			}
+		}
+	})
+
+	// The window is one of the fixed choices, and anything else is
 	// refused with the list of them rather than silently answered with a
 	// default.
 	t.Run("metrics refuse an unknown range", func(t *testing.T) {
 		base := f.hostURL(f.web) + "/metrics?check=cpu&metric=usage_percent"
-		for _, bad := range []string{"", "&range=", "&range=30m", "&range=1H", "&range=all"} {
+		for _, bad := range []string{"", "&range=", "&range=30m", "&range=1H", "&range=all", "&range=365d", "&range=60d"} {
 			resp := requestJSON(t, f.viewerC, http.MethodGet, base+bad, nil)
 			if resp.StatusCode != http.StatusBadRequest {
 				t.Fatalf("range %q = %d, want 400", bad, resp.StatusCode)
@@ -323,7 +352,7 @@ func TestHostCheckRoutes(t *testing.T) {
 				t.Fatalf("refusal %q does not name the ranges an operator may ask for", body)
 			}
 		}
-		for _, ok := range []string{"1h", "24h", "7d"} {
+		for _, ok := range []string{"1h", "24h", "7d", "30d", "90d"} {
 			if resp := requestJSON(t, f.viewerC, http.MethodGet, base+"&range="+ok, nil); resp.StatusCode != http.StatusOK {
 				t.Fatalf("range %q = %d, want 200", ok, resp.StatusCode)
 			}

@@ -1322,3 +1322,65 @@ func TestIngestRejectedCountsOverCap(t *testing.T) {
 		t.Fatalf("Rejected() = %d, want 14 (the over-cap observations included)", got)
 	}
 }
+
+// TestSeriesForHostNinetyDays pins what the 30 d / 90 d graph ranges rely on
+// (backlog 3.15): a 90-day window over dense samples still comes back as the
+// 168 requested buckets (time_bucket aligns to the epoch, so one more is
+// possible at the edge), and the statement reads check_samples through
+// check_samples_lookup_idx rather than scanning the hypertable. The EXPLAIN
+// runs the statement's own predicate, copied from queries/checks.sql.
+func TestSeriesForHostNinetyDays(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-ninety")
+	host := seedHost(t, d, org, "ninety-host")
+	other := seedHost(t, d, org, "ninety-other")
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	to := time.Now().UTC().Truncate(time.Hour)
+	from := to.Add(-90 * 24 * time.Hour)
+	err := d.WithOrg(context.Background(), org, func(tx pgx.Tx) error {
+		// One sample every 30 minutes for the host asked about, and noise
+		// on another host that must not be read.
+		for _, h := range []uuid.UUID{host, other} {
+			if _, err := tx.Exec(context.Background(), `
+				INSERT INTO check_samples (at, org_id, host_id, check_key, item, metric, value)
+				SELECT g, $1, $2, 'cpu', '', 'usage', 1 FROM generate_series($3::timestamptz, $4::timestamptz - interval '1 minute', interval '30 minutes') g`,
+				org, h, from, to); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(to))
+	series, err := svc.SeriesForHost(scoped, org, host, "cpu", "", "usage", from, to, 168)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(series.Points); n < 168 || n > 169 {
+		t.Fatalf("points = %d, want 168 buckets (+1 at the edge)", n)
+	}
+
+	err = d.WithOrg(context.Background(), org, func(tx pgx.Tx) error {
+		var raw []byte
+		if err := tx.QueryRow(context.Background(), `
+			EXPLAIN (FORMAT JSON)
+			SELECT time_bucket(make_interval(secs => $6::double precision), at)::timestamptz AS bucket, avg(value)::double precision
+			FROM check_samples
+			WHERE org_id = $1 AND host_id = $2 AND check_key = $3 AND item = $4 AND metric = $5
+			  AND at >= $7 AND at < $8 AND value IS NOT NULL AND value BETWEEN -1e100 AND 1e100
+			GROUP BY bucket ORDER BY bucket`,
+			org, host, "cpu", "", "usage", float64(90*24*3600/168), from, to).Scan(&raw); err != nil {
+			return err
+		}
+		if !strings.Contains(string(raw), "check_samples_lookup_idx") {
+			t.Fatalf("90-day series plan does not use check_samples_lookup_idx:\n%s", raw)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

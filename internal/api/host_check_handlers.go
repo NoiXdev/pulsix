@@ -41,11 +41,16 @@ var metricRanges = map[string]struct {
 	"1h":  {time.Hour, 60},
 	"24h": {24 * time.Hour, 144},
 	"7d":  {7 * 24 * time.Hour, 168},
+	// 30 d and 90 d (backlog 3.15) keep the week's bucket count, so a
+	// 90-day answer is no larger than a week's; the buckets are 4.3 h and
+	// 12.9 h wide. The graph offers them only within the org's retention.
+	"30d": {30 * 24 * time.Hour, 168},
+	"90d": {90 * 24 * time.Hour, 168},
 }
 
 // metricRangeNames lists the accepted ranges for a refusal message, in the
 // order an operator sees them in the GUI.
-var metricRangeNames = []string{"1h", "24h", "7d"}
+var metricRangeNames = []string{"1h", "24h", "7d", "30d", "90d"}
 
 type hostCheckValueDTO struct {
 	Item   string    `json:"item" doc:"The mount or unit this value is for; empty for a whole-host metric"`
@@ -194,7 +199,7 @@ type hostMetricsInput struct {
 	Check  string `query:"check" doc:"The check key, as reported by GET /hosts/{id}/checks"`
 	Item   string `query:"item" doc:"The mount or unit; omit for a whole-host metric"`
 	Metric string `query:"metric"`
-	Range  string `query:"range" doc:"One of 1h, 24h, 7d"`
+	Range  string `query:"range" doc:"One of 1h, 24h, 7d, 30d, 90d"`
 }
 
 type metricPointDTO struct {

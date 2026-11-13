@@ -11458,7 +11458,7 @@ export interface operations {
                 /** @description The mount or unit; omit for a whole-host metric */
                 item?: string;
                 metric?: string;
-                /** @description One of 1h, 24h, 7d */
+                /** @description One of 1h, 24h, 7d, 30d, 90d */
                 range?: string;
             };
             header?: never;
