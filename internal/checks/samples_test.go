@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -380,6 +381,35 @@ func TestRecordObservationsMalformedShapeRejected(t *testing.T) {
 	// agent build — never the clock, whatever their timestamps say.
 	if res.Accepted != 0 || res.Malformed != 4 || res.Rejected() != 4 {
 		t.Fatalf("ingest = %+v, want 4 rejected as malformed", res)
+	}
+}
+
+// TestRecordObservationsCountsNonFiniteValuesAsMalformed (backlog 3.11c):
+// a value of ±Inf or NaN is a broken or lying agent's — a current agent
+// reports it as an error instead. It is counted Malformed and dropped on
+// its own, like any other shape no correct agent sends, so it never
+// reaches the store (whose rows the host's checks are encoded from as
+// JSON, which has no spelling for it) and the rest of the batch is kept.
+func TestRecordObservationsCountsNonFiniteValuesAsMalformed(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "checks-samples-nonfinite")
+	host := seedHost(t, d, org, "nonfinite-host")
+	svc := checks.NewService(checks.NewSQLStore(d), fixedClock(time.Now()))
+	scoped := db.WithOrgScope(context.Background(), org)
+
+	now := time.Now()
+	obs := []checks.Observation{
+		{HostID: host, CheckKey: "cpu", Metric: "cpu.used_pct", At: now, Value: f64(12)},
+		{HostID: host, CheckKey: "cpu", Metric: "plus-inf", At: now, Value: f64(math.Inf(1))},
+		{HostID: host, CheckKey: "cpu", Metric: "minus-inf", At: now, Value: f64(math.Inf(-1))},
+		{HostID: host, CheckKey: "cpu", Metric: "nan", At: now, Value: f64(math.NaN())},
+	}
+	res, err := svc.RecordObservations(scoped, org, obs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Accepted != 1 || res.Malformed != 3 || res.Implausible != 0 {
+		t.Fatalf("ingest = %+v, want 1 accepted and 3 malformed", res)
 	}
 }
 

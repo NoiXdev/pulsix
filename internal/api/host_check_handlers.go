@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -326,9 +327,12 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		out := &hostMetricsOutput{}
 		out.Body.Check, out.Body.Item, out.Body.Metric = checkKey, in.Item, metric
 		out.Body.Range, out.Body.From, out.Body.To = in.Range, from, to
-		out.Body.Points = make([]metricPointDTO, len(series.Points))
-		for i, p := range series.Points {
-			out.Body.Points[i] = metricPointDTO{At: p.At, Value: p.Value}
+		out.Body.Points = make([]metricPointDTO, 0, len(series.Points))
+		for _, p := range series.Points {
+			if !isFinite(p.Value) {
+				continue // stored before ingest refused it (backlog 3.11c)
+			}
+			out.Body.Points = append(out.Body.Points, metricPointDTO{At: p.At, Value: p.Value})
 		}
 		return out, nil
 	})
@@ -449,6 +453,9 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 	dto.Values = make([]hostCheckValueDTO, len(values))
 	for i, c := range values {
 		v := hostCheckValueDTO{Item: c.Item, Metric: c.Metric, Value: c.Value, Error: c.Err, At: c.At}
+		if c.Value != nil && !isFinite(*c.Value) {
+			v.Value, v.Error = nil, nonFiniteValueErr
+		}
 		if c.Label != nil {
 			v.Label = *c.Label
 		}
@@ -624,3 +631,11 @@ func monitoringGroupNames(ctx context.Context, deps Deps, orgID uuid.UUID) (map[
 	}
 	return names, nil
 }
+
+// nonFiniteValueErr is what a stored ±Inf or NaN reads as. Ingest refuses
+// such a value (backlog 3.11c) and a current agent reports it as this same
+// error, but a manager that ran before the fix may hold one, and JSON has
+// no spelling for it: encoding it would fail the whole response.
+const nonFiniteValueErr = "value is not a finite number"
+
+func isFinite(v float64) bool { return !math.IsNaN(v) && !math.IsInf(v, 0) }

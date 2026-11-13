@@ -291,6 +291,7 @@ func (s *Scheduler) runCheck(ctx context.Context, key string, plugin Plugin, sc 
 			}
 			results := make([]Result, 0, len(obs))
 			for _, o := range obs {
+				o = finite(o)
 				results = append(results, Result{
 					CheckKey: key, Item: o.Item, Metric: o.Metric,
 					Value: o.Value, Label: o.Label, Err: o.Err, At: at,
