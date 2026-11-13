@@ -267,6 +267,24 @@ describe('OrgGeneralPage', () => {
       await waitFor(() => expect(puts).toEqual([{ client_absent_days: 14, retention_days: 30 }]));
     });
 
+    it('warns when lowering from the instance default to a shorter choice', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', { retention_days: null, retention_max_days: 365, retention_effective_days: 365 }, puts));
+      renderPage();
+
+      const box = await screen.findByRole('combobox', { name: SELECT });
+      await waitFor(() => expect(box).toHaveValue('Instance default (365 days)'));
+      await user.click(box);
+      await user.click(screen.getByRole('option', { name: /^30 days/ }));
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+
+      expect(await screen.findByText('Measurements and state history older than 30 days will be deleted within the hour.')).toBeInTheDocument();
+      expect(puts).toEqual([]);
+      await user.click(screen.getByRole('button', { name: 'Confirm' }));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 14, retention_days: 30 }]));
+    });
+
     it('saves nothing when the warning is cancelled', async () => {
       const user = userEvent.setup();
       const puts: unknown[] = [];

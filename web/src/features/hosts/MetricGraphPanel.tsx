@@ -43,11 +43,14 @@ export function MetricGraphPanel({
   onRange: (selection: MetricSelection) => void;
 }) {
   const t = useT();
-  const series = useHostMetric(org, hostId, selection);
   // Read by every member; while it loads, or if it fails, only the
   // always-available ranges are offered.
   const retention = useMonitoringSettings(org).data?.settings.retention_effective_days ?? 0;
   const ranges = [...RANGES, ...LONG_RANGES.filter(([, days]) => retention >= days).map(([range]) => range)];
+  // A long range stops being offered when the retention falls below it; the
+  // panel then shows (and asks for) 7 d rather than a window no button names.
+  const active: MetricSelection = ranges.includes(selection.range) ? selection : { ...selection, range: '7d' };
+  const series = useHostMetric(org, hostId, active);
 
   return (
     <div className="rounded-md border border-border p-2">
@@ -56,9 +59,9 @@ export function MetricGraphPanel({
           <Button
             key={value}
             type="button"
-            variant={value === selection.range ? 'primary' : 'ghost'}
-            aria-pressed={value === selection.range}
-            onClick={() => onRange({ ...selection, range: value })}
+            variant={value === active.range ? 'primary' : 'ghost'}
+            aria-pressed={value === active.range}
+            onClick={() => onRange({ ...active, range: value })}
           >
             {t.hosts.graph.ranges[value]}
           </Button>
@@ -79,7 +82,7 @@ export function MetricGraphPanel({
           // Stable by value, and it changes exactly when the operator asks
           // for a different series or window — so a chart that throws on
           // one input does not wedge the panel for the next.
-          resetKey={`${selection.check}:${selection.item}:${selection.metric}:${selection.range}`}
+          resetKey={`${selection.check}:${selection.item}:${selection.metric}:${active.range}`}
           fallback={
             <p role="alert" className="flex items-center justify-center text-xs text-muted-foreground" style={{ height: CHART_HEIGHT }}>
               {t.hosts.graph.chartFailed}
@@ -93,7 +96,7 @@ export function MetricGraphPanel({
               </p>
             }
           >
-            <MetricChart points={series.data.points ?? []} range={selection.range} label={label} height={CHART_HEIGHT} />
+            <MetricChart points={series.data.points ?? []} range={active.range} label={label} height={CHART_HEIGHT} />
           </Suspense>
         </ErrorBoundary>
       )}

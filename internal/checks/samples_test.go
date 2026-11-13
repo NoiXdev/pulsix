@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -1375,6 +1376,9 @@ func TestSeriesForHostNinetyDays(t *testing.T) {
 			org, host, "cpu", "", "usage", float64(90*24*3600/168), from, to).Scan(&raw); err != nil {
 			return err
 		}
+		if strings.Contains(string(raw), "Seq Scan") {
+			t.Fatalf("90-day series plan scans a chunk sequentially:\n%s", raw)
+		}
 		if !strings.Contains(string(raw), "check_samples_lookup_idx") {
 			t.Fatalf("90-day series plan does not use check_samples_lookup_idx:\n%s", raw)
 		}
@@ -1382,5 +1386,35 @@ func TestSeriesForHostNinetyDays(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestSeriesForHostPlanTestCopiesTheRealPredicate guards the EXPLAIN in
+// TestSeriesForHostNinetyDays: it runs a copy of the statement's WHERE
+// clause, so if the generated statement changes, this fails until the copy
+// is updated too.
+func TestSeriesForHostPlanTestCopiesTheRealPredicate(t *testing.T) {
+	src, err := os.ReadFile("../db/gen/checks.sql.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	start := strings.Index(text, "const seriesForHost = `")
+	if start < 0 {
+		t.Fatal("generated seriesForHost const not found")
+	}
+	stmt := strings.Join(strings.Fields(text[start:start+strings.Index(text[start+30:], "`")+30]), " ")
+	for _, fragment := range []string{
+		"FROM check_samples",
+		"org_id = $2 AND host_id = $3 AND check_key = $4",
+		"item = $5 AND metric = $6",
+		"at >= $7 AND at < $8",
+		"value IS NOT NULL",
+		"value BETWEEN -1e100 AND 1e100",
+		"GROUP BY bucket",
+	} {
+		if !strings.Contains(stmt, fragment) {
+			t.Errorf("seriesForHost no longer contains %q; update the EXPLAIN copy in TestSeriesForHostNinetyDays", fragment)
+		}
 	}
 }
