@@ -360,16 +360,32 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"$AllowedSids -notcontains $rule.IdentityReference.Value",
 		"return $null",
 	)
-	// Program Files\Pulsix: the same rule, where every user may read.
-	assertInOrder(t, "Assert-RemovableBinDir", psFunction(t, script, "Assert-RemovableBinDir"),
+	// Program Files\Pulsix: the install hands it to Administrators, after
+	// the copy, on every install and upgrade (not recursively).
+	assertInOrder(t, "install.ps1", main,
+		"Copy-Item -LiteralPath $downloaded -Destination $BinPath -Force",
+		"\t\t& icacls.exe $BinDir /setowner \"*S-1-5-32-544\" | Out-Null\n\t\tif ($LASTEXITCODE -ne 0) {\n",
+		"Stop-Install \"icacls could not hand $BinDir to Administrators (exit code $LASTEXITCODE)\"",
+		"} finally {\n\t\tRemove-Item -LiteralPath $tmp",
+	)
+	// Program Files\Pulsix: the same rule, where every user may read. The
+	// owner may also be the administrator running the uninstall, for an
+	// install from before the folder was handed to Administrators; the
+	// write-rights check does not make that exception.
+	binDir := psFunction(t, script, "Assert-RemovableBinDir")
+	assertInOrder(t, "Assert-RemovableBinDir", binDir,
 		"if (Test-ReparsePoint $BinDir) {",
-		"$BinDirWriters -notcontains $owner",
+		"$runner = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+		"if (($BinDirWriters -notcontains $owner) -and ($owner -ne $runner)) {",
 		"$acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])",
 		"PropagationFlags]::InheritOnly",
 		"$BinDirWriters -contains $rule.IdentityReference.Value",
 		"([int]$rule.FileSystemRights -band $WriteRights) -ne 0",
 		"Stop-Install",
 	)
+	if n := strings.Count(binDir, "$runner"); n != 2 {
+		t.Errorf("Assert-RemovableBinDir must use $runner only in the owner check, found %d uses", n)
+	}
 	for _, want := range []string{
 		"$TrustedInstallerSid = 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'",
 		"$BinDirWriters = @($SystemSid, $AdminsSid, $TrustedInstallerSid)",

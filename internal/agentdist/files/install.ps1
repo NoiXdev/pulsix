@@ -357,7 +357,10 @@ function Assert-RemovableDataDir([string]$Path) {
 # re-permission entries in it. It is the data directory's rule adapted to
 # Program Files, whose folders every user may read: read and execute
 # entries are fine there, and entries that only pass on to new items
-# (inherit-only, CREATOR OWNER) do not apply to the folder itself.
+# (inherit-only, CREATOR OWNER) do not apply to the folder itself. The
+# install hands the folder to Administrators; one from before it did may
+# still be owned by the administrator who created it, so the account
+# running the uninstall may own it too.
 function Assert-RemovableBinDir {
 	if (-not (Test-Path -LiteralPath $BinDir)) {
 		return
@@ -368,8 +371,9 @@ function Assert-RemovableBinDir {
 	}
 	$acl = Get-Acl -LiteralPath $BinDir
 	$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-	if ($BinDirWriters -notcontains $owner) {
-		Stop-Install "$BinDir is owned by $(Format-Sid $owner), not by SYSTEM, Administrators or TrustedInstaller; $fix"
+	$runner = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+	if (($BinDirWriters -notcontains $owner) -and ($owner -ne $runner)) {
+		Stop-Install "$BinDir is owned by $(Format-Sid $owner), not by SYSTEM, Administrators, TrustedInstaller or you; $fix"
 	}
 	foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
 		if ($rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow) {
@@ -577,6 +581,15 @@ try {
 				}
 				Start-Sleep -Seconds 1
 			}
+		}
+		# Program Files\Pulsix belongs to Administrators, whoever created
+		# it: where an elevated administrator's new folders belong to the
+		# account itself, the uninstall would not take it otherwise. Every
+		# run sets it, so an upgrade fixes an older install. Not recursive:
+		# the binary needs no other owner.
+		& icacls.exe $BinDir /setowner "*S-1-5-32-544" | Out-Null
+		if ($LASTEXITCODE -ne 0) {
+			Stop-Install "icacls could not hand $BinDir to Administrators (exit code $LASTEXITCODE)"
 		}
 	} finally {
 		Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
