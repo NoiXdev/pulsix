@@ -42,9 +42,18 @@ Let *online* be the agents list's own definition (`agents.isOnline`:
    stored as always; they are judged once the host is no longer frozen.
 2. **Back (agent online): judged normally**, with one change: the
    staleness deadline of a tuple is measured from
-   `max(tuple reading, agent connected_since)` (the column from 3.12c)
-   instead of from the reading alone, so a 24 h check that has not run
-   since boot is not unknown the moment the agent reconnects. Every other
+   `max(tuple reading, agent online_since)` instead of from the reading
+   alone, so a 24 h check that has not run since boot is not unknown the
+   moment the agent reconnects. **(amended after review)** The anchor is
+   the new column `host_agents.online_since` (migration 00092), the start
+   of the agent's current online period, which is reset after a gap longer
+   than the online window (90 s); `connected_since` (24 h gap) would have
+   left a client that is off overnight with 1 h checks unknown on boot, and
+   rules no longer use it. A registration (renewal, re-enrollment) resets it
+   to NULL; an unknown start anchors nothing. A client with an agent also
+   gets a grace: its unknown host alert opens only 90 s after the later of
+   the roll-up's unknown start and the online period's start, so a client
+   that is shutting down (still online for up to 90 s) does not alert. Every other
    rule (thresholds, hysteresis, flapping, maintenance) is unchanged.
 3. **Absent warning (optional).** An organization setting
    `client_absent_days` (integer, 0 = off, default 14, max 365), stored in
@@ -54,6 +63,10 @@ Let *online* be the agents list's own definition (`agents.isOnline`:
    add its retention setting to the same table. When a
    frozen client's agent was last seen longer ago than that, one host
    alert opens with severity `warn` and the cause "not seen for N days".
+   **(amended after review)** The wording is "not seen since <time>" (the
+   agent's last contact, read at display time); the alert is opened at the
+   tick when last contact + `client_absent_days` passes, and its
+   `opened_at` is that tick, not the historical time.
    It is the host-scope alert subject (scope `host`), which until now only
    ever carries severity `unknown`; severity `warn` on a host-scope alert
    is the discriminator, and the alert list, the alert page and the
@@ -68,7 +81,9 @@ Switching a host from client to server while its agent is off unfreezes
 it at the next evaluation (it then goes unknown as any server would);
 switching server to client while its agent is off freezes it and closes
 an open unknown host alert as `stale` (the subject no longer applies, it
-did not recover), without reopening anything. Changing the kind
+did not recover), without reopening anything. **(amended after review)**
+A server switched to client when the agent has already been absent past the
+threshold may open the absent warning in the same evaluation. Changing the kind
 marks the host dirty for evaluation.
 
 ## Display
@@ -77,6 +92,9 @@ marks the host dirty for evaluation.
   "Off" badge (de "Aus") with "last seen …" instead of its frozen roll-up
   colour; its last roll-up is shown muted. Online clients look like
   servers plus a small "Client" tag.
+- **(amended after review)** The Forget action is hidden for an off client
+  (its items are frozen, not gone); the host's checks page does not say
+  "verdict stale" for its frozen tuples.
 - The alert list shows frozen alerts unchanged (they are still true as of
   the last reading); the host page says the host is off.
 

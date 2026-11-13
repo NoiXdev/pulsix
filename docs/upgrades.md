@@ -95,6 +95,23 @@ an operator can count on. The operator's steps are in
   comparison nor resets it on re-enrollment, so the badge can be stale or absent
   until the new manager has handled that agent.
 
+- **Migrations 00090 to 00092 add client hosts (3.57).** 00090 adds
+  `hosts.kind` (`server` or `client`, default `server`, a CHECK; the constant
+  default makes it a catalog change and every existing host reads `server`).
+  00091 adds the table `org_monitoring_settings` (one row per organization, a
+  missing row meaning the defaults; row-level security as `org_job_settings`).
+  00092 adds the nullable column `host_agents.online_since` (catalog only,
+  nothing backfilled): the start of the agent's current online period, which
+  stays unknown until the agent's first touch after the upgrade. Stop every
+  manager instance before the new version starts. An older release ignores the
+  columns and the table (it lists the columns it knows) and creates hosts as
+  servers, but it neither freezes a client nor writes `online_since`: an older
+  manager that keeps evaluating alongside judges a host marked client as a
+  server, so it turns unknown and alerts while its agent is off, and an older
+  manager that handles an agent's heartbeats leaves its online period start
+  stale or unset, so a returning client's long-interval checks can go unknown
+  too early. It also does not mark a host for evaluation when its kind changes.
+
 ## A database newer than the binary is refused
 
 goose does nothing for a database whose recorded version is above the newest
@@ -248,6 +265,21 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.57, client hosts:** nothing changes until a host is marked client: every
+  existing and newly enrolled host is a server, and the evaluation, the alerts
+  and the notifications of a server are unchanged. A host marked client (host
+  form or `kind` in the API, which gains the field on hosts, the fleet overview
+  and the host query) whose agent is offline (no contact for 90 s) is frozen:
+  its states and alerts stay as they are, no unknown host alert opens, and an
+  open one closes as `stale`. A client without an agent behaves like a server.
+  After a reconnect a client is judged from the start of its current online
+  period, and a client shutting down gets 90 s before an unknown host alert.
+  A new organization setting `client_absent_days` (default 14, 0 off) opens a
+  host alert with severity `warn`, "not seen since <time>", for a client that
+  has been absent that long; the setting is under Settings → General →
+  Monitoring and in the API. Limitation: an agent whose heartbeat and config
+  interval are both about 90 s or longer reads offline between its contacts, so
+  a client like that is frozen most of the time (backlog 3.58).
 - **3.13e, rules for every check key:** every existing org, group and host
   rule, the seeded ones included, now judges all checks of its metric's plugin
   whatever their key, not only the check keyed with the plugin name. Checks
