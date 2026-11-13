@@ -9,6 +9,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/api/apitest"
@@ -245,5 +246,37 @@ func TestOrgMonitoringSettingsRetentionPermissionsAndIsolation(t *testing.T) {
 	}
 	if got := readRetention(t, viewerC, http.MethodGet, url, nil); got.choice != "30" {
 		t.Fatalf("first org after the other's attempt = %+v, want 30", got)
+	}
+}
+
+// TestOrgMonitoringSettingsAuditNamesTheRetentionChange: a write that
+// changes the retention says so in the audit summary (from → to, "the
+// instance default" for no choice); a write without retention_days, or
+// with the stored value, keeps the plain summary.
+func TestOrgMonitoringSettingsAuditNamesTheRetentionChange(t *testing.T) {
+	s, ownerC, _, _, url := seedMonitoringSettingsOrg(t, "monset-ret-audit")
+	puts := []map[string]any{
+		{"client_absent_days": 14, "retention_days": 30},
+		{"client_absent_days": 9},
+		{"client_absent_days": 9, "retention_days": 30},
+		{"client_absent_days": 9, "retention_days": nil},
+	}
+	for _, body := range puts {
+		readRetention(t, ownerC, http.MethodPut, url, body)
+	}
+	activity := decodeActivity(t, requestJSON(t, ownerC, http.MethodGet, s.HTTP.URL+"/api/v1/orgs/monset-ret-audit/activity", nil))
+	var summaries []string
+	for _, e := range activity.Items {
+		summaries = append(summaries, e.Summary)
+	}
+	slices.Reverse(summaries) // the activity lists the newest first
+	want := []string{
+		"updated the organization's monitoring settings; measurement retention from the instance default to 30 days",
+		"updated the organization's monitoring settings",
+		"updated the organization's monitoring settings",
+		"updated the organization's monitoring settings; measurement retention from 30 days to the instance default",
+	}
+	if !slices.Equal(summaries, want) {
+		t.Fatalf("audit summaries = %q, want %q", summaries, want)
 	}
 }

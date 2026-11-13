@@ -2,10 +2,12 @@ package monitorsettings
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
@@ -40,6 +42,19 @@ func (s *PurgeSQLStore) OrgsWithShorterRetention(ctx context.Context, maxDays in
 		out[i] = OrgRetention{OrgID: r.OrgID, Days: int(r.RetentionDays)}
 	}
 	return out, nil
+}
+
+// RetentionChoice implements PurgeStore: the stored choice, read inside the
+// organization's scope; no row is no choice (0).
+func (s *PurgeSQLStore) RetentionChoice(ctx context.Context, orgID uuid.UUID) (int, error) {
+	row, err := s.q.GetOrgMonitoringSettings(db.WithOrgScope(ctx, orgID), orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read the retention choice: %w", err)
+	}
+	return settingsOf(row.ClientAbsentDays, row.RetentionDays).RetentionDays, nil
 }
 
 // chunkRangesSQL reads a hypertable's chunk ranges from TimescaleDB's

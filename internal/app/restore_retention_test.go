@@ -20,9 +20,14 @@ func TestRunRestoreAppliesTheMeasurementRetention(t *testing.T) {
 	dir, name := takeBackup(t, cfg)
 	target := restoreTarget(t, cfg)
 	target.SampleRetentionDays = 30
+	target.SampleRetentionSet = true
 
-	if err := RunRestore(ctx, target, RestoreOptions{From: dir, Name: name}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	var stdout bytes.Buffer
+	if err := RunRestore(ctx, target, RestoreOptions{From: dir, Name: name}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("restore: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Measurement retention: 30 days (PULSIX_SAMPLE_RETENTION).") {
+		t.Errorf("restore output %q does not name the applied retention", stdout.String())
 	}
 	owner, err := db.Open(ctx, target.DatabaseURL)
 	if err != nil {
@@ -64,6 +69,24 @@ func TestSyncRetentionAfterRestore(t *testing.T) {
 	for _, want := range []string{"data is restored", "45 days", "boom", "Start the manager"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+}
+
+// TestPrintRetentionApplied: the restore says which retention it applied,
+// and says so plainly when it is the default because the variable is not
+// set in the restore's own environment.
+func TestPrintRetentionApplied(t *testing.T) {
+	var set bytes.Buffer
+	printRetentionApplied(&set, 365, true)
+	if got := set.String(); got != "Measurement retention: 365 days (PULSIX_SAMPLE_RETENTION).\n" {
+		t.Errorf("configured = %q", got)
+	}
+	var unset bytes.Buffer
+	printRetentionApplied(&unset, 90, false)
+	for _, want := range []string{"Measurement retention: 90 days", "default", "PULSIX_SAMPLE_RETENTION is not set", "older than 90 days"} {
+		if !strings.Contains(unset.String(), want) {
+			t.Errorf("default = %q, lacks %q", unset.String(), want)
 		}
 	}
 }

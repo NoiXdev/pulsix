@@ -50,9 +50,10 @@ type retentionPolicySQLTx struct{ tx pgx.Tx }
 
 // RetentionPolicy reads drop_after from timescaledb_information.jobs, in
 // seconds so the comparison does not depend on how the interval is
-// written. A hypertable has at most one retention policy.
+// written. A hypertable has at most one retention policy. A policy without
+// drop_after is an explained error.
 func (t retentionPolicySQLTx) RetentionPolicy(ctx context.Context, table string) (time.Duration, bool, error) {
-	var seconds int64
+	var seconds *int64
 	err := t.tx.QueryRow(ctx, `
 		SELECT EXTRACT(EPOCH FROM (config->>'drop_after')::interval)::bigint
 		FROM timescaledb_information.jobs
@@ -64,7 +65,15 @@ func (t retentionPolicySQLTx) RetentionPolicy(ctx context.Context, table string)
 	if err != nil {
 		return 0, false, err
 	}
-	return time.Duration(seconds) * time.Second, true, nil
+	if seconds == nil {
+		// A policy made by hand with drop_created_before has no drop_after.
+		// Not guessed at: replacing it could delete data the operator meant
+		// to keep, so the start stops and says how to fix it.
+		return 0, false, fmt.Errorf("the retention policy of %[1]s has no drop_after (it was set by hand, e.g. with drop_created_before): "+
+			"remove it in the database with SELECT remove_retention_policy('%[1]s'); and start the manager again, "+
+			"which sets the retention to PULSIX_SAMPLE_RETENTION", table)
+	}
+	return time.Duration(*seconds) * time.Second, true, nil
 }
 
 // SetRetentionPolicy removes the table's policy, if any, and adds one with

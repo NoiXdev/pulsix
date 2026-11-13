@@ -130,7 +130,7 @@ func TestSQLStoreRetentionKeepAndClear(t *testing.T) {
 		t.Fatalf("first Put without a choice = %+v, %v; want 5 and no choice", got, err)
 	}
 	got, err = store.Put(scoped, org, monitorsettings.Update{ClientAbsentDays: 5, RetentionDays: days(30)})
-	if err != nil || got.RetentionDays != 30 {
+	if err != nil || got.RetentionDays != 30 || got.PreviousRetentionDays != 0 {
 		t.Fatalf("Put(30) = %+v, %v", got, err)
 	}
 	got, err = store.Put(scoped, org, monitorsettings.Update{ClientAbsentDays: 9})
@@ -141,8 +141,8 @@ func TestSQLStoreRetentionKeepAndClear(t *testing.T) {
 		t.Fatalf("Get = %+v, ok=%v, %v; want 9 and 30", st, ok, err)
 	}
 	got, err = store.Put(scoped, org, monitorsettings.Update{ClientAbsentDays: 9, RetentionDays: days(0)})
-	if err != nil || got.RetentionDays != 0 {
-		t.Fatalf("Put(clear) = %+v, %v; want no choice", got, err)
+	if err != nil || got.RetentionDays != 0 || got.PreviousRetentionDays != 30 {
+		t.Fatalf("Put(clear) = %+v, %v; want no choice, replacing 30", got, err)
 	}
 	var stored *int32
 	if err := d.Pool().QueryRow(ctx, `SELECT retention_days FROM org_monitoring_settings WHERE org_id = $1`, org).Scan(&stored); err != nil || stored != nil {

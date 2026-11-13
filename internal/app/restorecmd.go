@@ -158,7 +158,26 @@ func RunRestore(ctx context.Context, cfg config.Config, opts RestoreOptions, std
 	if err := syncRetentionAfterRestore(ctx, sync, cfg.RetentionMaxDays()); err != nil {
 		return err
 	}
-	return printRestored(stdout, label, m)
+	if err := printRestored(stdout, label, m); err != nil {
+		return err
+	}
+	printRetentionApplied(stdout, cfg.RetentionMaxDays(), cfg.SampleRetentionSet)
+	return nil
+}
+
+// printRetentionApplied says which measurement retention the restore set,
+// and warns when it is the default only because PULSIX_SAMPLE_RETENTION is
+// missing from the restore's own environment: a backup of an installation
+// that kept longer would lose the older measurements at the database's
+// next retention run unless the managers start with their value first.
+func printRetentionApplied(stdout io.Writer, days int, configured bool) {
+	if configured {
+		_, _ = fmt.Fprintf(stdout, "Measurement retention: %d days (PULSIX_SAMPLE_RETENTION).\n", days)
+		return
+	}
+	_, _ = fmt.Fprintf(stdout, "Measurement retention: %d days, the default: PULSIX_SAMPLE_RETENTION is not set for this restore.\n"+
+		"If the managers keep measurements longer, start them now with their value: measurements older than %d days\n"+
+		"are deleted at the database's next retention run.\n", days, days)
 }
 
 // retentionSyncer is the one method syncRetentionAfterRestore needs:

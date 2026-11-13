@@ -36,7 +36,6 @@ package monitorsettings
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"time"
@@ -98,6 +97,9 @@ type PurgeStore interface {
 	// OrgsWithShorterRetention lists the organizations whose retention
 	// choice is below maxDays, ordered by id, across organizations.
 	OrgsWithShorterRetention(ctx context.Context, maxDays int) ([]OrgRetention, error)
+	// RetentionChoice reads one organization's current retention choice
+	// (0 = none), the re-check right before its rows are deleted.
+	RetentionChoice(ctx context.Context, orgID uuid.UUID) (int, error)
 	// ChunkRanges lists the time ranges of table's chunks that start
 	// before before, oldest first; each range is exactly one chunk.
 	ChunkRanges(ctx context.Context, table Table, before time.Time) ([]TimeRange, error)
@@ -269,10 +271,19 @@ func (p *Purger) purge(ctx context.Context, now, deadline time.Time) PurgeResult
 			res.Complete = false
 			return res
 		}
-		// One rule for what is kept: the settings API shows the same value.
-		days := EffectiveRetentionDays(o.Days, p.maxDays)
-		if days >= p.maxDays {
-			continue // TimescaleDB's policy already enforces the maximum
+		days, skip, err := p.recheck(ctx, o)
+		if err != nil {
+			if ctx.Err() != nil {
+				res.Complete = false
+				return res
+			}
+			res.Errors++
+			res.Complete = false
+			p.log.ErrorContext(ctx, "measurement retention purge failed for an organization", "org_id", o.OrgID, "err", err)
+			continue
+		}
+		if skip {
+			continue
 		}
 		cutoff := now.Add(-time.Duration(days) * 24 * time.Hour)
 		done, err := p.purgeOrg(ctx, o.OrgID, cutoff, deadline, ranges, &res)
@@ -290,6 +301,29 @@ func (p *Purger) purge(ctx context.Context, now, deadline time.Time) PurgeResult
 	}
 	p.resumeAfter = uuid.Nil
 	return res
+}
+
+// recheck reads the organization's current choice right before its rows
+// are deleted: the list is read once per round, and an admin may have
+// raised or cleared the choice since. One rule for what is kept, the one
+// the settings API shows (EffectiveRetentionDays). The org is skipped
+// this round when its retention is no longer below the maximum or its
+// cutoff moved earlier; a lowered choice still deletes only by the listed,
+// longer retention until the next round lists the new one.
+func (p *Purger) recheck(ctx context.Context, o OrgRetention) (days int, skip bool, err error) {
+	listed := EffectiveRetentionDays(o.Days, p.maxDays)
+	if listed >= p.maxDays {
+		return 0, true, nil // TimescaleDB's policy already enforces the maximum
+	}
+	choice, err := p.store.RetentionChoice(ctx, o.OrgID)
+	if err != nil {
+		return 0, false, err
+	}
+	current := EffectiveRetentionDays(choice, p.maxDays)
+	if current >= p.maxDays || current > listed {
+		return 0, true, nil
+	}
+	return listed, false, nil
 }
 
 // forgetUnlisted drops the drained marks of organizations no longer
@@ -318,72 +352,4 @@ func (p *Purger) rotate(orgs []OrgRetention) []OrgRetention {
 		}
 	}
 	return orgs
-}
-
-// purgeOrg deletes one organization's rows older than cutoff from both
-// tables, skipping what an earlier round already drained. done is false
-// when the budget ran out or ctx ended first.
-func (p *Purger) purgeOrg(ctx context.Context, org uuid.UUID, cutoff, deadline time.Time, ranges map[Table][]TimeRange, res *PurgeResult) (done bool, err error) {
-	for _, table := range purgeTables() {
-		key := drainKey{org: org, table: table}
-		from := p.drained[key]
-		for _, r := range ranges[table] { // oldest first
-			if !r.Start.Before(cutoff) {
-				break
-			}
-			if r.End.After(cutoff) {
-				r.End = cutoff
-			}
-			if !r.End.After(from) {
-				continue // drained by an earlier round
-			}
-			if r.Start.Before(from) {
-				r.Start = from // still inside the one chunk
-			}
-			finished, err := p.drainRange(ctx, table, org, r, deadline, res)
-			if err != nil || !finished {
-				return false, err
-			}
-			p.drained[key] = r.End
-		}
-	}
-	return true, nil
-}
-
-// drainRange deletes batches of org's rows in r until one comes back
-// short. finished is false when the budget ran out or ctx ended first.
-func (p *Purger) drainRange(ctx context.Context, table Table, org uuid.UUID, r TimeRange, deadline time.Time, res *PurgeResult) (finished bool, err error) {
-	for {
-		if ctx.Err() != nil || !p.now().Before(deadline) {
-			return false, nil
-		}
-		n, err := p.store.DeleteBatch(ctx, table, org, r, RetentionPurgeBatch)
-		if err != nil {
-			return false, fmt.Errorf("delete from %s: %w", table, err)
-		}
-		if table == TableCheckSamples {
-			res.Samples += n
-		} else {
-			res.StateChanges += n
-		}
-		if n > 0 {
-			sleep(ctx, p.pause)
-		}
-		if n < RetentionPurgeBatch {
-			return true, nil
-		}
-	}
-}
-
-// sleep waits d or until ctx ends.
-func sleep(ctx context.Context, d time.Duration) {
-	if d <= 0 {
-		return
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-	case <-t.C:
-	}
 }

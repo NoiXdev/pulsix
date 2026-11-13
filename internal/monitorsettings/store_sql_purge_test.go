@@ -330,3 +330,48 @@ func TestPurgeSQLSteadyStateIsCheap(t *testing.T) {
 	}
 	t.Logf("steady-state round: %v statements in %v", store.batches, time.Since(start))
 }
+
+// staleListStore answers the org list with a fixed, outdated list, like a
+// round that listed before an admin changed the choice.
+type staleListStore struct {
+	*monitorsettings.PurgeSQLStore
+	list []monitorsettings.OrgRetention
+}
+
+func (s staleListStore) OrgsWithShorterRetention(context.Context, int) ([]monitorsettings.OrgRetention, error) {
+	return s.list, nil
+}
+
+// TestPurgeSQLRechecksARaisedChoice: an org listed at 30 days that has
+// meanwhile been raised to 365 keeps its 40-day-old rows; RetentionChoice
+// reads the stored choice (0 without a row).
+func TestPurgeSQLRechecksARaisedChoice(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	now := time.Now().UTC()
+	org := seedOrg(t, q, "purge-raised")
+	settings := monitorsettings.NewSQLStore(d)
+	store := monitorsettings.NewPurgeSQLStore(d)
+	if days, err := store.RetentionChoice(ctx, org); err != nil || days != 0 {
+		t.Fatalf("RetentionChoice without a row = %d, %v; want 0", days, err)
+	}
+	year := 365
+	if _, err := settings.Put(db.WithOrgScope(ctx, org), org, monitorsettings.Update{ClientAbsentDays: 14, RetentionDays: &year}); err != nil {
+		t.Fatal(err)
+	}
+	if days, err := store.RetentionChoice(ctx, org); err != nil || days != 365 {
+		t.Fatalf("RetentionChoice = %d, %v; want 365", days, err)
+	}
+	host := seedHost(t, q, org, "raised")
+	seedSamples(t, d, org, host, now.AddDate(0, 0, -40), 5)
+
+	stale := staleListStore{PurgeSQLStore: store, list: []monitorsettings.OrgRetention{{OrgID: org, Days: 30}}}
+	p := monitorsettings.NewPurger(stale, nil, 365, 0, func() time.Time { return now }, nil)
+	p.SetBatchPause(0)
+	if res := p.Round(ctx); res.Samples != 0 || res.Errors != 0 {
+		t.Fatalf("result = %+v, want nothing deleted under the raised choice", res)
+	}
+	if older, _ := countRows(t, d, "check_samples", org, now.AddDate(0, 0, -30)); older != 5 {
+		t.Fatalf("older samples = %d, want all 5 kept", older)
+	}
+}

@@ -14,7 +14,17 @@ SELECT client_absent_days, retention_days FROM org_monitoring_settings WHERE org
 -- starts without one. One statement, so a concurrent write of the other
 -- setting is never lost to a read-modify-write. The table's CHECKs refuse
 -- client_absent_days outside 0..365 and retention_days outside
--- (30, 90, 365). Returns the row as stored.
+-- (30, 90, 365). Returns the row as stored and the retention choice it
+-- had before (NULL also when there was no row): the audit names a change.
+-- The CTE reads the statement's snapshot, so "before" is the row as it was
+-- when the statement started (a concurrent write committed in between is
+-- not reflected; it only words the audit line). No FOR UPDATE: the CTE is
+-- read after the upsert changed the row, and FOR UPDATE skips a row the
+-- same statement already updated.
+WITH prev AS (
+  SELECT p.retention_days FROM org_monitoring_settings p
+  WHERE p.org_id = sqlc.arg(org_id)
+)
 INSERT INTO org_monitoring_settings (org_id, client_absent_days, retention_days)
 VALUES (
   sqlc.arg(org_id), sqlc.arg(client_absent_days),
@@ -26,7 +36,8 @@ SET client_absent_days = EXCLUDED.client_absent_days,
                           THEN EXCLUDED.retention_days
                           ELSE org_monitoring_settings.retention_days END,
     updated_at = now()
-RETURNING client_absent_days, retention_days;
+RETURNING client_absent_days, retention_days,
+  (SELECT prev.retention_days FROM prev) AS previous_retention_days;
 
 -- name: GetOrgClientAbsentDays :one
 -- The evaluator's read (backlog 3.57): the organization's client absent

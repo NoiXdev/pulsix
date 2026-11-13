@@ -68,6 +68,21 @@ type View struct {
 	RetentionEffectiveDays int
 }
 
+// Stored is what the store reports for a write: the settings as stored
+// and the retention choice they replaced (0 = none, also for a new row).
+type Stored struct {
+	Settings
+	PreviousRetentionDays int
+}
+
+// Written is Set's result: the settings as stored, seen with the instance
+// maximum, and the retention choice the write replaced (0 = none), so the
+// audit can name a retention change.
+type Written struct {
+	View
+	PreviousRetentionDays int
+}
+
 // validate is the one range check of a write: the service refuses with
 // it, and the SQL store applies it before narrowing to the columns'
 // integer type. The table's CHECKs are the same bounds for other writers.
@@ -88,10 +103,11 @@ func Defaults() Settings {
 
 // Store persists the settings. Get reports ok false when the organization
 // has no row (the defaults apply); Put applies an Update (creating the
-// row when there is none) and returns the row as stored.
+// row when there is none) and returns the row as stored with the
+// retention choice it replaced.
 type Store interface {
 	Get(ctx context.Context, orgID uuid.UUID) (Settings, bool, error)
-	Put(ctx context.Context, orgID uuid.UUID, u Update) (Settings, error)
+	Put(ctx context.Context, orgID uuid.UUID, u Update) (Stored, error)
 }
 
 // Service reads and validates an organization's monitoring settings.
@@ -119,20 +135,21 @@ func (s *Service) Get(ctx context.Context, orgID uuid.UUID) (View, error) {
 	return s.view(st), nil
 }
 
-// Set validates and applies an update and returns the settings as stored.
+// Set validates and applies an update and returns the settings as stored
+// with the retention choice they replaced.
 // An out-of-range value is ErrInvalidInput and writes nothing. A retention
 // choice above the instance maximum is stored; the maximum caps it
 // (RetentionEffectiveDays), so lowering PULSIX_SAMPLE_RETENTION needs no
 // rewrite of the stored choices.
-func (s *Service) Set(ctx context.Context, orgID uuid.UUID, u Update) (View, error) {
+func (s *Service) Set(ctx context.Context, orgID uuid.UUID, u Update) (Written, error) {
 	if err := u.validate(); err != nil {
-		return View{}, err
+		return Written{}, err
 	}
 	st, err := s.store.Put(ctx, orgID, u)
 	if err != nil {
-		return View{}, fmt.Errorf("store monitoring settings: %w", err)
+		return Written{}, fmt.Errorf("store monitoring settings: %w", err)
 	}
-	return s.view(st), nil
+	return Written{View: s.view(st.Settings), PreviousRetentionDays: st.PreviousRetentionDays}, nil
 }
 
 func (s *Service) view(st Settings) View {

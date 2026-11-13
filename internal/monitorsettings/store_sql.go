@@ -36,11 +36,11 @@ func (s *SQLStore) Get(ctx context.Context, orgID uuid.UUID) (Settings, bool, er
 
 // Put implements Store: one upsert that replaces client_absent_days and
 // replaces the retention choice only when u carries one (0 stores NULL).
-func (s *SQLStore) Put(ctx context.Context, orgID uuid.UUID, u Update) (Settings, error) {
+func (s *SQLStore) Put(ctx context.Context, orgID uuid.UUID, u Update) (Stored, error) {
 	// The service's own check, repeated here only because it is what makes
 	// the narrowing to int32 below safe.
 	if err := u.validate(); err != nil {
-		return Settings{}, err
+		return Stored{}, err
 	}
 	params := gen.UpsertOrgMonitoringSettingsParams{
 		OrgID: orgID, ClientAbsentDays: int32(u.ClientAbsentDays), SetRetention: u.RetentionDays != nil,
@@ -51,9 +51,12 @@ func (s *SQLStore) Put(ctx context.Context, orgID uuid.UUID, u Update) (Settings
 	}
 	row, err := s.q.UpsertOrgMonitoringSettings(ctx, params)
 	if err != nil {
-		return Settings{}, fmt.Errorf("store org monitoring settings: %w", err)
+		return Stored{}, fmt.Errorf("store org monitoring settings: %w", err)
 	}
-	return settingsOf(row.ClientAbsentDays, row.RetentionDays), nil
+	return Stored{
+		Settings:              settingsOf(row.ClientAbsentDays, row.RetentionDays),
+		PreviousRetentionDays: settingsOf(0, row.PreviousRetentionDays).RetentionDays,
+	}, nil
 }
 
 // settingsOf converts a stored row; a NULL retention_days is no choice (0).

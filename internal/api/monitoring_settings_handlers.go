@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 
@@ -130,15 +131,35 @@ func registerMonitoringSettingsRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		v, err := deps.MonitorSettings.Set(ctx, scope.OrgID, in.Body.update())
+		w, err := deps.MonitorSettings.Set(ctx, scope.OrgID, in.Body.update())
 		if err != nil {
 			return nil, mapMonitoringSettingsErr(ctx, err)
 		}
-		setAuditObject(ctx, "", "updated the organization's monitoring settings")
+		setAuditObject(ctx, "", monitoringSettingsAuditSummary(in.Body.RetentionDays.Sent, w))
 		out := &orgMonitoringSettingsOutput{}
-		out.Body.Settings = toOrgMonitoringSettingsDTO(v)
+		out.Body.Settings = toOrgMonitoringSettingsDTO(w.View)
 		return out, nil
 	}, withAudit("updateOrgMonitoringSettings", "org"))
+}
+
+// monitoringSettingsAuditSummary is the audit line of a write. A retention
+// change deletes data when it lowers what is kept, so a write that sent
+// retention_days and changed it names the change.
+func monitoringSettingsAuditSummary(retentionSent bool, w monitorsettings.Written) string {
+	const summary = "updated the organization's monitoring settings"
+	if !retentionSent || w.PreviousRetentionDays == w.RetentionDays {
+		return summary
+	}
+	return fmt.Sprintf("%s; measurement retention from %s to %s", summary,
+		retentionAuditName(w.PreviousRetentionDays), retentionAuditName(w.RetentionDays))
+}
+
+// retentionAuditName names a retention choice; 0 is no choice.
+func retentionAuditName(days int) string {
+	if days == 0 {
+		return "the instance default"
+	}
+	return fmt.Sprintf("%d days", days)
 }
 
 // mapMonitoringSettingsErr converts the settings service's errors. The

@@ -37,7 +37,11 @@ type fakePurgeStore struct {
 	rows    map[monitorsettings.Table]map[uuid.UUID]map[time.Time]int64
 	listMax int
 	listErr error
-	delErr  map[uuid.UUID]error
+	// choices overrides what RetentionChoice reports for an org (the
+	// choice changed after the list); otherwise it reports the listed days.
+	choices   map[uuid.UUID]int
+	choiceErr error
+	delErr    map[uuid.UUID]error
 	// onDelete, when set, runs after every DeleteBatch (a test cancels its
 	// context there).
 	onDelete func()
@@ -67,6 +71,21 @@ func (f *fakePurgeStore) put(table monitorsettings.Table, org uuid.UUID, start t
 func (f *fakePurgeStore) OrgsWithShorterRetention(_ context.Context, maxDays int) ([]monitorsettings.OrgRetention, error) {
 	f.listMax = maxDays
 	return f.orgs, f.listErr
+}
+
+func (f *fakePurgeStore) RetentionChoice(_ context.Context, org uuid.UUID) (int, error) {
+	if f.choiceErr != nil {
+		return 0, f.choiceErr
+	}
+	if days, ok := f.choices[org]; ok {
+		return days, nil
+	}
+	for _, o := range f.orgs {
+		if o.OrgID == org {
+			return o.Days, nil
+		}
+	}
+	return 0, nil
 }
 
 func (f *fakePurgeStore) ChunkRanges(_ context.Context, table monitorsettings.Table, before time.Time) ([]monitorsettings.TimeRange, error) {

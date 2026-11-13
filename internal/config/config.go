@@ -73,6 +73,9 @@ type Config struct {
 	// start, and no organization keeps measurements longer. Read it through
 	// RetentionMaxDays, which also covers a hand-built Config.
 	SampleRetentionDays int
+	// SampleRetentionSet reports that PULSIX_SAMPLE_RETENTION was set
+	// (false: the default applies), so a restore can say which it applied.
+	SampleRetentionSet bool
 	// JobMaxAttempts is how often a job may be claimed before the reaper
 	// fails a stale claim instead of requeuing it (PULSIX_JOB_MAX_ATTEMPTS,
 	// a positive integer; default DefaultJobMaxAttempts). It stops a job
@@ -234,6 +237,7 @@ func Load(getenv func(string) string) (Config, error) {
 			return cfg, fmt.Errorf("PULSIX_SAMPLE_RETENTION must be a whole number of days from %d to %d (e.g. 30, 90, 365)", MinSampleRetentionDays, MaxSampleRetentionDays)
 		}
 		cfg.SampleRetentionDays = n
+		cfg.SampleRetentionSet = true
 	}
 	cfg.JobMaxAttempts = DefaultJobMaxAttempts
 	if raw := getenv("PULSIX_JOB_MAX_ATTEMPTS"); raw != "" {

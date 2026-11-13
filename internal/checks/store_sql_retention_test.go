@@ -39,7 +39,7 @@ type retentionJob struct {
 func retentionJobs(t *testing.T, d *db.DB, table string) []retentionJob {
 	t.Helper()
 	rows, err := d.Pool().Query(ctx, `
-		SELECT job_id, config->>'drop_after' FROM timescaledb_information.jobs
+		SELECT job_id, COALESCE(config->>'drop_after', '') FROM timescaledb_information.jobs
 		WHERE proc_name = 'policy_retention' AND hypertable_schema = 'public' AND hypertable_name = $1
 		ORDER BY job_id`, table)
 	if err != nil {
@@ -186,5 +186,35 @@ func TestRetentionSyncSQLConcurrentStarts(t *testing.T) {
 		if n := strings.Count(logs.String(), "table="+table+" "); n != 1 {
 			t.Errorf("%s was replaced %d times, want once: %s", table, n, logs.String())
 		}
+	}
+}
+
+// TestRetentionSyncSQLExplainsAPolicyWithoutDropAfter: a policy made by
+// hand with drop_created_before has no drop_after. The sync does not
+// guess: it fails with a message naming the table and how to fix it,
+// not a raw scan error, and leaves the policy alone.
+func TestRetentionSyncSQLExplainsAPolicyWithoutDropAfter(t *testing.T) {
+	d := retentionDB(t)
+	if _, err := d.Pool().Exec(ctx, `SELECT remove_retention_policy('check_state_changes')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Pool().Exec(ctx, `SELECT add_retention_policy('check_state_changes', drop_created_before => INTERVAL '90 days')`); err != nil {
+		t.Fatal(err)
+	}
+	before := onlyJob(t, d, "check_state_changes")
+	err := checks.NewRetentionSync(checks.NewRetentionPolicySQLStore(d), slog.New(slog.DiscardHandler)).Sync(ctx, 30)
+	if err == nil {
+		t.Fatal("Sync succeeded over a policy without drop_after, want an explained error")
+	}
+	for _, want := range []string{"check_state_changes", "drop_after", "remove_retention_policy('check_state_changes')", "start the manager again"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "cannot scan") {
+		t.Errorf("error %q is a raw scan error", err)
+	}
+	if got := onlyJob(t, d, "check_state_changes"); got != before {
+		t.Errorf("check_state_changes job = %+v, want it untouched (%+v)", got, before)
 	}
 }

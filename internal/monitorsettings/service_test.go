@@ -34,18 +34,19 @@ func (f *fakeStore) Get(_ context.Context, orgID uuid.UUID) (monitorsettings.Set
 	return st, ok, nil
 }
 
-func (f *fakeStore) Put(_ context.Context, orgID uuid.UUID, u monitorsettings.Update) (monitorsettings.Settings, error) {
+func (f *fakeStore) Put(_ context.Context, orgID uuid.UUID, u monitorsettings.Update) (monitorsettings.Stored, error) {
 	f.putRuns++
 	if f.putErr != nil {
-		return monitorsettings.Settings{}, f.putErr
+		return monitorsettings.Stored{}, f.putErr
 	}
 	st := f.rows[orgID]
+	prev := st.RetentionDays
 	st.ClientAbsentDays = u.ClientAbsentDays
 	if u.RetentionDays != nil {
 		st.RetentionDays = *u.RetentionDays
 	}
 	f.rows[orgID] = st
-	return st, nil
+	return monitorsettings.Stored{Settings: st, PreviousRetentionDays: prev}, nil
 }
 
 func intp(n int) *int { return &n }
@@ -155,7 +156,7 @@ func TestSetRetentionChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RetentionDays != 365 || got.RetentionEffectiveDays != 90 {
+	if got.RetentionDays != 365 || got.RetentionEffectiveDays != 90 || got.PreviousRetentionDays != 30 {
 		t.Fatalf("Set(365) under max 90 = %+v, want choice 365, effective 90", got)
 	}
 	// 0 clears the choice back to the instance maximum.

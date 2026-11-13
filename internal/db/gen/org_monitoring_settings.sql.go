@@ -52,6 +52,10 @@ func (q *Queries) GetOrgMonitoringSettings(ctx context.Context, orgID uuid.UUID)
 }
 
 const upsertOrgMonitoringSettings = `-- name: UpsertOrgMonitoringSettings :one
+WITH prev AS (
+  SELECT p.retention_days FROM org_monitoring_settings p
+  WHERE p.org_id = $1
+)
 INSERT INTO org_monitoring_settings (org_id, client_absent_days, retention_days)
 VALUES (
   $1, $2,
@@ -63,7 +67,8 @@ SET client_absent_days = EXCLUDED.client_absent_days,
                           THEN EXCLUDED.retention_days
                           ELSE org_monitoring_settings.retention_days END,
     updated_at = now()
-RETURNING client_absent_days, retention_days
+RETURNING client_absent_days, retention_days,
+  (SELECT prev.retention_days FROM prev) AS previous_retention_days
 `
 
 type UpsertOrgMonitoringSettingsParams struct {
@@ -74,8 +79,9 @@ type UpsertOrgMonitoringSettingsParams struct {
 }
 
 type UpsertOrgMonitoringSettingsRow struct {
-	ClientAbsentDays int32  `json:"client_absent_days"`
-	RetentionDays    *int32 `json:"retention_days"`
+	ClientAbsentDays      int32  `json:"client_absent_days"`
+	RetentionDays         *int32 `json:"retention_days"`
+	PreviousRetentionDays *int32 `json:"previous_retention_days"`
 }
 
 // Writes the settings; the row is created when the organization has none.
@@ -85,7 +91,13 @@ type UpsertOrgMonitoringSettingsRow struct {
 // starts without one. One statement, so a concurrent write of the other
 // setting is never lost to a read-modify-write. The table's CHECKs refuse
 // client_absent_days outside 0..365 and retention_days outside
-// (30, 90, 365). Returns the row as stored.
+// (30, 90, 365). Returns the row as stored and the retention choice it
+// had before (NULL also when there was no row): the audit names a change.
+// The CTE reads the statement's snapshot, so "before" is the row as it was
+// when the statement started (a concurrent write committed in between is
+// not reflected; it only words the audit line). No FOR UPDATE: the CTE is
+// read after the upsert changed the row, and FOR UPDATE skips a row the
+// same statement already updated.
 func (q *Queries) UpsertOrgMonitoringSettings(ctx context.Context, arg UpsertOrgMonitoringSettingsParams) (UpsertOrgMonitoringSettingsRow, error) {
 	row := q.db.QueryRow(ctx, upsertOrgMonitoringSettings,
 		arg.OrgID,
@@ -94,6 +106,6 @@ func (q *Queries) UpsertOrgMonitoringSettings(ctx context.Context, arg UpsertOrg
 		arg.RetentionDays,
 	)
 	var i UpsertOrgMonitoringSettingsRow
-	err := row.Scan(&i.ClientAbsentDays, &i.RetentionDays)
+	err := row.Scan(&i.ClientAbsentDays, &i.RetentionDays, &i.PreviousRetentionDays)
 	return i, err
 }

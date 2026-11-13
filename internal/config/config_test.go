@@ -694,6 +694,11 @@ func TestSampleRetention(t *testing.T) {
 		if err != nil || cfg.SampleRetentionDays != c.want || cfg.RetentionMaxDays() != c.want {
 			t.Errorf("PULSIX_SAMPLE_RETENTION=%q: got %d (max %d), %v; want %d", c.raw, cfg.SampleRetentionDays, cfg.RetentionMaxDays(), err, c.want)
 		}
+		// SampleRetentionSet tells a configured value from the default, so
+		// a restore can say it fell back to 90 days.
+		if want := c.raw != ""; cfg.SampleRetentionSet != want {
+			t.Errorf("PULSIX_SAMPLE_RETENTION=%q: SampleRetentionSet = %v, want %v", c.raw, cfg.SampleRetentionSet, want)
+		}
 	}
 }
 
