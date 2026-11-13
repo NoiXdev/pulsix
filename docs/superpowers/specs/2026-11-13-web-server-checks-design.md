@@ -175,9 +175,11 @@ written in `urls` (the default URL when the list is empty)
 | `phpfpm.slow_requests_per_s` | numeric | rate of `slow requests` |
 
 A changed `start time` resets the pool's rate baselines. Rate state is
-kept per URL string, so editing or reordering `urls` keeps the baselines
-of entries that stay and drops those of removed ones (changed during implementation: the agent's scheduler starts a fresh plugin instance whenever a check's parameters change, so no rate baseline survives an edit; the per-URL state only matters within one configuration). A URL listed twice
-is fetched and reported once. The pool's name
+kept per URL string (changed during implementation: the agent's scheduler
+starts a fresh plugin instance whenever a check's parameters change, so no
+rate baseline survives an edit of `urls`; the per-URL state only matters
+within one configuration). A URL listed twice is fetched and reported
+once. The pool's name
 from the page is not reported (the URL is the item, so the list in the GUI
 and the items agree for AsksForItem). An entry the item contract refuses
 cannot occur (500 bytes, `statusURL` has no control characters).
