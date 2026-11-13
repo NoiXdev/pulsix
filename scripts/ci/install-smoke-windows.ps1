@@ -200,15 +200,23 @@ function Assert-Recovery {
 	Write-Host 'install-smoke: recovery actions OK (3 x restart after 5000 ms, reset after 86400 s, failureflag 1)'
 }
 
-# Assert-Uninstalled waits for the service to go (sc.exe delete only marks
-# it while a program holds it open) and fails unless the binary and its
-# folder are gone too, and the data directory is gone or, with -KeepData,
-# still there with agent.env, private to SYSTEM and Administrators.
+# Assert-Uninstalled waits for the service to go, both from the service
+# manager and its registry key (sc.exe delete only marks it, DeleteFlag 1,
+# while a program holds it open, and the installer refuses to install over
+# such a service), and fails unless the binary and its folder are gone
+# too, and the data directory is gone or, with -KeepData, still there with
+# agent.env, private to SYSTEM and Administrators.
 function Assert-Uninstalled([switch]$KeepData) {
+	$serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
 	$deadline = (Get-Date).AddSeconds(30)
-	while ((Get-ServiceStatus) -ne 'missing') {
+	while (((Get-ServiceStatus) -ne 'missing') -or (Test-Path -LiteralPath $serviceKey)) {
 		if ((Get-Date) -gt $deadline) {
-			Fail "30 s after the uninstall the $ServiceName service still exists ($(Get-ServiceStatus))"
+			$deleteFlag = 'none'
+			$entry = Get-ItemProperty -LiteralPath $serviceKey -Name DeleteFlag -ErrorAction SilentlyContinue
+			if ($null -ne $entry) {
+				$deleteFlag = [string]$entry.DeleteFlag
+			}
+			Fail "30 s after the uninstall the $ServiceName service still exists (status $(Get-ServiceStatus), registry key present: $(Test-Path -LiteralPath $serviceKey), DeleteFlag $deleteFlag)"
 		}
 		Start-Sleep -Seconds 1
 	}

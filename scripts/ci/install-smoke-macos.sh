@@ -134,15 +134,6 @@ install_agent() {
 		fail "install.sh failed"
 }
 
-echo "install-smoke: fresh install"
-install_agent
-assert_installed 1
-
-echo "install-smoke: upgrade over the running agent"
-previous_starts="$(starts_logged)"
-install_agent
-assert_installed $((previous_starts + 1))
-
 # uninstall_agent: the documented `sh -s -- --uninstall` invocation. Its
 # output is echoed and kept in UNINSTALL_OUT.
 uninstall_agent() {
@@ -157,6 +148,15 @@ uninstall_agent() {
 assert_output() {
 	printf '%s\n' "$UNINSTALL_OUT" | grep -qxF "$1" || fail "the uninstall did not print '$1'"
 }
+
+echo "install-smoke: fresh install"
+install_agent
+assert_installed 1
+
+echo "install-smoke: upgrade over the running agent"
+previous_starts="$(starts_logged)"
+install_agent
+assert_installed $((previous_starts + 1))
 
 echo "install-smoke: uninstall"
 uninstall_agent

@@ -17,7 +17,7 @@
 #   1. a fresh install, and a check that the unit's address-family filter
 #      lets a process read the network interfaces over netlink;
 #   2. an upgrade over the running agent, which must restart it: exactly
-#      one new start in the journal (backlog 3.49);
+#      one new start in the journal (backlog 3.51);
 #   3. an uninstall with --keep-data, which removes the unit and the
 #      binary but keeps /etc/pulsix;
 #   4. a reinstall over the kept data directory;
@@ -211,7 +211,7 @@ assert_installed $((base_starts + 1))
 assert_netlink_allowed
 
 # The re-run must restart the running agent on the new binary (backlog
-# 3.49): enable --now alone left the old process running.
+# 3.51): enable --now alone left the old process running.
 echo "install-smoke: upgrade over the running agent"
 previous_starts="$(starts_logged)"
 install_agent
@@ -221,6 +221,7 @@ echo "install-smoke: uninstall with --keep-data"
 uninstall_agent --keep-data
 assert_output "$HINT"
 assert_service_removed
+sudo test -d "$DATA_DIR" || fail "--keep-data removed $DATA_DIR"
 got="$(owner_mode "$DATA_DIR")"
 [ "$got" = "root 700" ] || fail "--keep-data left $DATA_DIR as '$got', want 'root 700'"
 sudo test -f "$ENV_FILE" || fail "--keep-data did not keep $ENV_FILE"
