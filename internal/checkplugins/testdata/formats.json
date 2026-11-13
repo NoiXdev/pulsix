@@ -203,5 +203,22 @@
   {"format": "secretName", "input": "db\n", "valid": false},
   {"format": "secretName", "input": "{address}", "valid": false},
   {"format": "secretName", "input": "a=b", "valid": false},
-  {"format": "secretName", "input": " db", "valid": false}
+  {"format": "secretName", "input": " db", "valid": false},
+  {"format": "statusURL", "input": "http://127.0.0.1/nginx_status", "valid": true},
+  {"format": "statusURL", "input": "http://127.0.0.1/server-status?auto", "valid": true},
+  {"format": "statusURL", "input": "http://127.0.0.1:2019/metrics", "valid": true},
+  {"format": "statusURL", "input": "http://127.0.0.1/status", "valid": true},
+  {"format": "statusURL", "input": "https://[::1]:8443/status?json", "valid": true},
+  {"format": "statusURL", "input": "HTTPS://example.org/status", "valid": true},
+  {"format": "statusURL", "input": "ftp://x/", "valid": false},
+  {"format": "statusURL", "input": "http:///x", "valid": false},
+  {"format": "statusURL", "input": "http://u:p@h/", "valid": false},
+  {"format": "statusURL", "input": "http://h/#f", "valid": false},
+  {"format": "statusURL", "input": "http://h/#", "valid": false},
+  {"format": "statusURL", "input": "http://{address}/", "valid": false},
+  {"format": "statusURL", "input": "http://h/{address}", "valid": false},
+  {"format": "statusURL", "input": "127.0.0.1/status", "valid": false},
+  {"format": "statusURL", "input": "", "valid": false},
+  {"format": "statusURL", "input": "http://h/\u0007x", "valid": false},
+  {"format": "statusURL", "input": "http://h/\nx", "valid": false}
 ]

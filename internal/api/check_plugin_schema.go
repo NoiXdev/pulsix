@@ -108,6 +108,7 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 	checkplugins.FormatNoControl:    "without control characters",
 	checkplugins.FormatDevicePath:   "a /dev/... path",
 	checkplugins.FormatURL:          "an http or https URL that may contain {address}",
+	checkplugins.FormatStatusURL:    "an http or https URL without user info or fragment",
 	checkplugins.FormatDNSName:      "a DNS name that may contain {address}",
 	checkplugins.FormatServer:       "an IP address with an optional port",
 	checkplugins.FormatDockerLabel:  "key or key=value",

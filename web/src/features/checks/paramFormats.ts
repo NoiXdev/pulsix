@@ -268,6 +268,12 @@ function probeURL(raw: string): boolean {
   return hostname(host) !== '';
 }
 
+/** statusURL: a probe URL fetched as written — no {address} placeholder and
+ * no '#' anywhere — validStatusURL. */
+function statusURL(s: string): boolean {
+  return !s.includes('{address}') && !s.includes('#') && probeURL(s);
+}
+
 // ---------------------------------------------------------------------------
 
 /** dnsName: dot-separated labels of letters, digits, '-' and '_', each
@@ -311,6 +317,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   noControl: (s) => !hasControl(s),
   devicePath,
   url: probeURL,
+  statusURL,
   dnsName,
   server,
   dockerLabel,

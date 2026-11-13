@@ -29,6 +29,10 @@ const (
 	// FormatURL: an http:// or https:// URL with a host and no user info,
 	// once {address} stands for a host name.
 	FormatURL Format = "url"
+	// FormatStatusURL: an http:// or https:// URL with a host, no user info,
+	// no fragment and no {address} placeholder — the agent fetches it as
+	// written (the web server status checks, backlog 3.11).
+	FormatStatusURL Format = "statusURL"
 	// FormatDNSName: a DNS name, once {address} stands for a label.
 	FormatDNSName Format = "dnsName"
 	// FormatServer: an IP address with an optional port, an IPv6 address
@@ -50,7 +54,7 @@ const (
 // TypeScript twin) and a phrase in the API's params doc.
 func Formats() []Format {
 	return []Format{
-		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL,
+		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
 		FormatSecretName,
 	}
@@ -77,6 +81,10 @@ func (f Format) problem(s string) string {
 	case FormatURL:
 		if !validProbeURL(s) {
 			return "must be an http:// or https:// URL with a host and no user info"
+		}
+	case FormatStatusURL:
+		if !validStatusURL(s) {
+			return "must be an http:// or https:// URL with a host, no user info and no fragment (it must not contain {address})"
 		}
 	case FormatDNSName:
 		if !validDNSName(strings.ReplaceAll(s, "{address}", dnsPlaceholderLabel)) {
@@ -136,6 +144,13 @@ const urlPlaceholderHost = "address.invalid"
 func validProbeURL(s string) bool {
 	u, err := url.Parse(strings.ReplaceAll(s, "{address}", urlPlaceholderHost))
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != "" && u.User == nil
+}
+
+// validStatusURL: a probe URL that is fetched as written, so no {address}
+// placeholder, and no '#' anywhere (a fragment is never sent and would only
+// hide a typo).
+func validStatusURL(s string) bool {
+	return !strings.Contains(s, "{address}") && !strings.Contains(s, "#") && validProbeURL(s)
 }
 
 // dnsPlaceholderLabel stands in for {address} while a DNS name is checked.
