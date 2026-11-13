@@ -201,9 +201,12 @@ func hostAction(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
 // hostWants is the severity the host-scope alert should have after this
 // evaluation, or "" for none:
 //
-//   - A frozen client (spec item 1) never wants the unknown alert — its
+//   - A frozen client (spec item 1) never opens the unknown alert — its
 //     carried roll-up is not a verdict — and wants the absent warning
-//     exactly while it is absent (spec item 3).
+//     exactly while it is absent (spec item 3). An unknown alert already
+//     open stays, as every open alert of a frozen client does, unless
+//     its absence caused it (absenceCaused); once due, the absent warning
+//     takes the subject from it either way.
 //   - Any other host wants the unknown alert while its roll-up reads
 //     unknown. A client with an agent waits out the grace first, counted
 //     from the later of the roll-up's start and its online period's
@@ -216,6 +219,9 @@ func hostWants(in rules.AlertInput, found bool, existing Alert) rules.State {
 	if in.Frozen {
 		if in.Absent {
 			return rules.StateWarn
+		}
+		if found && existing.Severity == rules.StateUnknown && !absenceCaused(in) {
+			return rules.StateUnknown
 		}
 		return ""
 	}
@@ -231,13 +237,30 @@ func hostWants(in rules.AlertInput, found bool, existing Alert) rules.State {
 	return rules.StateUnknown
 }
 
+// absenceCaused reports whether a frozen client's unknown roll-up is the
+// absence itself rather than a problem the client had while it was on:
+// it went unknown at or after the agent's last contact. That is the
+// server switched to a client while its agent was off, and a shutdown
+// that slipped past the grace; such an alert closes stale. An unknown
+// that began before the last contact was a real problem while the client
+// was on, and stays open through the freeze — no close, no notification,
+// its acknowledgement and any escalation untouched — so a client with a
+// genuine unknown does not close and reopen its alert at every power
+// cycle. A certificate renewal reads the agent as last seen at its
+// registration, which is later still, so it keeps the alert too. A
+// carried roll-up that no longer reads unknown has nothing to keep the
+// alert for.
+func absenceCaused(in rules.AlertInput) bool {
+	return in.Host.State != rules.StateUnknown || !in.Host.Since.Before(in.AgentLastSeen)
+}
+
 // hostCloseReason is why an open host-scope alert this evaluation no
 // longer wants closes.
 //
-//   - The unknown alert of a frozen client closes stale: the subject no
-//     longer applies (a server switched to a client while its agent was
-//     off, or a client that went off with its roll-up unknown) — nothing
-//     says it recovered.
+//   - The unknown alert of a frozen client closes stale — its absence
+//     caused it (a server switched to a client while its agent was off, a
+//     shutdown that slipped past the grace) or the absent warning takes
+//     the subject; nothing says it recovered.
 //   - The absent warning closes resolved only when the client is back: not
 //     frozen, and still a client with an agent (ClientWithAgent). While
 //     frozen it closes because the threshold was raised or the warning

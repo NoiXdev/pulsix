@@ -1,6 +1,6 @@
 // Package monitorsettings holds an organization's monitoring settings
 // (backlog 3.57): today client_absent_days, after how many days without
-// contact a client host's agent raises the "not seen for N days" warning.
+// contact a client host's agent raises the "not seen since …" warning.
 // The settings are stored on the org-keyed org_monitoring_settings table
 // (migration 00091); an organization without a row has every setting at
 // its default. Backlog 3.15 adds its retention setting here.

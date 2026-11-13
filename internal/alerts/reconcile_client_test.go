@@ -56,6 +56,13 @@ func frozen(host rules.HostState, absent bool, absentAfter time.Duration) rules.
 	}
 }
 
+// frozenSeen is frozen with the agent's last contact at seen.
+func frozenSeen(host rules.HostState, seen time.Time, absent bool) rules.AlertInput {
+	in := frozen(host, absent, absentIn)
+	in.AgentLastSeen = seen
+	return in
+}
+
 // onlineClient is an online client's judged input with roll-up host, in
 // an online period that began well before the roll-up did.
 func onlineClient(host rules.HostState) rules.AlertInput {
@@ -124,11 +131,49 @@ func TestReconcileClientHostAlert(t *testing.T) {
 		},
 		{
 			// The kind switch (server to client while the agent is off):
-			// the subject no longer applies, it did not recover.
-			name: "a frozen client closes an open unknown host alert as stale",
+			// the roll-up went unknown after the agent's last contact, so
+			// the absence caused it — the subject no longer applies, it
+			// did not recover.
+			name: "a frozen client closes an unknown host alert its absence caused as stale",
 			in:   frozen(unknownHost, false, absentIn),
 			open: []alerts.Alert{openUnknownHost()},
 			want: []alerts.Action{closeAction(unknownHostID, alerts.Stale)},
+		},
+		{
+			// A shutdown that slipped past the grace: unknown from the
+			// agent's last contact on — the boundary counts as caused.
+			name: "a frozen client closes an unknown host alert that began at its last contact as stale",
+			in:   frozenSeen(unknownSince(time.Hour), t0, false),
+			open: []alerts.Alert{openUnknownHost()},
+			want: []alerts.Action{closeAction(unknownHostID, alerts.Stale)},
+		},
+		{
+			// A real problem while the client was on: the unknown predates
+			// the agent's last contact, so it stays open through the
+			// freeze — no close, no notification, its acknowledgement and
+			// any escalation exactly as they were.
+			name: "a frozen client keeps an unknown host alert that predates its last contact",
+			in:   frozenSeen(unknownSince(time.Hour), t0.Add(30*time.Minute), false),
+			open: []alerts.Alert{openUnknownHost()},
+		},
+		{
+			// A certificate renewal reads the agent as last seen at its
+			// registration, i.e. just now: still not what caused the
+			// unknown, so the alert stays.
+			name: "a client frozen by a certificate renewal keeps its older unknown host alert",
+			in:   frozenSeen(unknownSince(time.Hour), t0.Add(time.Hour), false),
+			open: []alerts.Alert{openUnknownHost()},
+		},
+		{
+			// Once the warning is due it takes the one host-scope subject;
+			// the older unknown alert gives way to it.
+			name: "the absent warning replaces an unknown host alert that predates the last contact",
+			in:   frozenSeen(unknownSince(16*24*time.Hour), lastSeen, true),
+			open: []alerts.Alert{openUnknownHost()},
+			want: []alerts.Action{
+				closeAction(unknownHostID, alerts.Stale),
+				openHost(t0.Add(time.Hour), rules.StateWarn),
+			},
 		},
 		{
 			name: "a frozen client closes an open unknown host alert stale whatever its carried roll-up",

@@ -2,7 +2,7 @@
 -- Org-level monitoring settings (backlog 3.57). One row per organization,
 -- an absent row meaning every setting at its default. Today that is only
 -- client_absent_days: after how many days without contact a client host's
--- agent raises the "not seen for N days" warning (0 = never, default 14,
+-- agent raises the "not seen since …" warning (0 = never, default 14,
 -- at most 365). Backlog 3.15 adds its retention setting to this table.
 --
 -- The default lives in three places that must agree: the column default
