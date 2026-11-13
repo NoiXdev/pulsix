@@ -420,7 +420,6 @@ export const enChecks = {
     newTitle: 'New item decision',
     appliesTo: 'Applies to',
     check: 'Check',
-    noChecks: 'No checks yet',
     checkPlaceholder: 'disk, disk-data, …',
     checkInvalid: 'A check key uses lowercase letters, digits and hyphens only (up to 63 characters), e.g. disk-data.',
     matchKind: 'Match kind',

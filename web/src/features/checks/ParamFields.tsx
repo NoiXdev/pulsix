@@ -156,8 +156,8 @@ export function ParamFields({
 }
 
 /** ServerKeyHint sits under a check's key field while the plugin runs on
- * the Pulsix server: alert rules match these metrics only on the check
- * whose key is the plugin name. */
+ * the Pulsix server: alert rules apply to every check of the type,
+ * whatever its key. */
 export function ServerKeyHint({ id, plugin }: { id: string; plugin: string }) {
   const t = useT();
   return (

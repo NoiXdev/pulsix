@@ -79,9 +79,13 @@ export function EffectiveRulesPanel({ org, hostId, canRead }: EffectiveRulesPane
 
 /** tupleLabel names a tuple the way HostChecksCard's own metricLabel does:
  * the item first when there is one, the metric alone for a whole-host
- * reading. */
+ * reading, and the check key in parentheses when it differs from the
+ * winner rule's own check_key. */
 function tupleLabel(e: EffectiveRule): string {
-  return e.item ? `${e.item} ${e.metric}` : e.metric;
+  const label = e.item ? `${e.item} ${e.metric}` : e.metric;
+  // An item rule can name a check other than its metric's plugin key;
+  // say which, as RuleRow does.
+  return e.check_key !== e.winner.check_key ? `${label} (${e.check_key})` : label;
 }
 
 /** originChip renders a rule's scope as the provenance the spec asks for

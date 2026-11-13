@@ -322,7 +322,7 @@ describe('ItemDecisionDialog', () => {
     await user.type(screen.getByLabelText('Pattern'), '/data');
     await screen.findByText(/Matches no currently known item/);
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(posted).toMatchObject({ check_key: 'disk-data', pattern: '/data' }));
+    await waitFor(() => expect(posted).toEqual({ scope: 'org', check_key: 'disk-data', decision: 'ignore', match_kind: 'exact', pattern: '/data' }));
   });
 
   it('refuses a malformed check key before asking the server', async () => {

@@ -403,7 +403,6 @@ export const deChecks: Messages['checks'] = {
     newTitle: 'Neue Element-Entscheidung',
     appliesTo: 'Gilt für',
     check: 'Check',
-    noChecks: 'Noch keine Checks',
     checkPlaceholder: 'disk, disk-data, …',
     checkInvalid: 'Ein Check-Schlüssel besteht nur aus Kleinbuchstaben, Ziffern und Bindestrichen (bis zu 63 Zeichen), z. B. disk-data.',
     matchKind: 'Mustertyp',

@@ -355,7 +355,10 @@ describe('RuleDialog, item scope check', () => {
     await user.type(screen.getByLabelText('Value'), '90');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(posted).toBeDefined());
-    expect(posted).toMatchObject({ scope: 'item', host_id: 'h1', item: '/data', item_check_key: 'disk-data' });
+    expect(posted).toEqual({
+      name: 'Data mount', enabled: true, scope: 'item', host_id: 'h1', item: '/data', item_check_key: 'disk-data',
+      metric: 'disk.used_pct', severity: 'warn', mode: 'form', form: { metric: 'disk.used_pct', op: '>', value: 90 }, for_seconds: 0,
+    });
   });
 
   it('always sends item_check_key for an item rule, the plugin’s key when that is the choice', async () => {
@@ -372,7 +375,10 @@ describe('RuleDialog, item scope check', () => {
     await user.type(screen.getByLabelText('Value'), '90');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(posted).toBeDefined());
-    expect(posted).toMatchObject({ item_check_key: 'disk' });
+    expect(posted).toEqual({
+      name: 'Root', enabled: true, scope: 'item', host_id: 'h1', item: '/', item_check_key: 'disk',
+      metric: 'disk.used_pct', severity: 'warn', mode: 'form', form: { metric: 'disk.used_pct', op: '>', value: 90 }, for_seconds: 0,
+    });
   });
 
   it('falls back to the first check when the host has none under the plugin’s key', async () => {
@@ -401,6 +407,27 @@ describe('RuleDialog, item scope check', () => {
     await waitFor(() => expect(posted).toBeDefined());
     expect(posted).not.toHaveProperty('item_check_key');
     expect(posted).not.toHaveProperty('item');
+  });
+
+  it('drops item_check_key from the PUT body when an item rule is edited into host scope', async () => {
+    const user = userEvent.setup();
+    let put: Record<string, unknown> | undefined;
+    mockApi(routes({ 'PUT /api/v1/orgs/acme/rules/r7': (req: MockRequest) => ((put = req.body as Record<string, unknown>), { rule: { id: 'r7' } }) }));
+    renderDialog({
+      metrics: DISK_METRICS,
+      rule: expressionRule({
+        id: 'r7', name: 'Data mount', scope: 'item', host_id: 'h1', item: '/data', metric: 'disk.used_pct', check_key: 'disk',
+        item_check_key: 'disk-data', mode: 'form', form: { metric: 'disk.used_pct', op: '>=', value: 90 },
+      }),
+    });
+    await waitFor(() => expect(screen.getByLabelText('Check')).toHaveValue('disk-data'));
+    await pickOption(screen, 'Applies to', { value: 'host' });
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(put).toBeDefined());
+    expect(put).toEqual({
+      name: 'Data mount', enabled: true, scope: 'host', host_id: 'h1',
+      metric: 'disk.used_pct', severity: 'warn', mode: 'form', form: { metric: 'disk.used_pct', op: '>=', value: 90 }, for_seconds: 0,
+    });
   });
 
   it('prefills an edited item rule with its own check, or the plugin’s key when it has none', async () => {

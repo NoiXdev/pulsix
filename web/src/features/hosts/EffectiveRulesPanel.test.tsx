@@ -84,6 +84,32 @@ describe('EffectiveRulesPanel', () => {
   // v0.3b-3: first_seen and last_seen now exist (GET /hosts/{id}/items), so
   // "no longer observed" can finally say since when — "not reported since
   // 14 February" is actionable where the bare label was not.
+  it('names the check of an unobserved item rule that is not its metric\'s plugin key', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          {
+            check_key: 'disk-data',
+            item: '/data',
+            metric: 'disk.used_pct',
+            severity: 'crit',
+            observed: false,
+            winner: rule({
+              id: 'r6', name: 'Data mount critical', scope: 'item', host_id: 'h1', item: '/data',
+              check_key: 'disk', item_check_key: 'disk-data', metric: 'disk.used_pct', severity: 'crit',
+            }),
+            shadowed: [],
+          },
+        ],
+      },
+    });
+    renderPanel();
+
+    expect(await screen.findByText('/data disk.used_pct (disk-data)')).toBeInTheDocument();
+  });
+
   it('names the date an item was last reported, once GET /hosts/{id}/items knows it', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/items': {
