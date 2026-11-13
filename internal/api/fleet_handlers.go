@@ -68,6 +68,9 @@ type fleetHostDTO struct {
 	// AllIgnored is always false when State is non-nil. See this type's own
 	// doc comment for what distinguishes it from the plain "no data" case.
 	AllIgnored bool `json:"all_ignored" doc:"True when state is null because every item this host has discovered currently resolves to ignored, rather than because nothing has ever been measured"`
+	// Kind is the host's own (backlog 3.57), so the page can show a client
+	// whose agent is offline as off rather than in its frozen state.
+	Kind string `json:"kind" enum:"server,client" doc:"server: expected to be on; client: may be off and is not judged while its agent is offline"`
 }
 
 // fleetTotalsDTO counts HOSTS (not tuples) by roll-up state across the
@@ -133,7 +136,7 @@ type fleetOutput struct {
 // that case — a host with a real state keeps it regardless of what
 // allIgnored says (see fleetHostDTO.AllIgnored's own doc comment).
 func toFleetHostDTO(h hosts.Host, st rules.HostState, hasState, allIgnored bool) fleetHostDTO {
-	dto := fleetHostDTO{HostID: h.ID.String(), Name: h.Name, ZoneID: h.ZoneID.String()}
+	dto := fleetHostDTO{HostID: h.ID.String(), Name: h.Name, ZoneID: h.ZoneID.String(), Kind: string(h.Kind)}
 	if !hasState {
 		dto.AllIgnored = allIgnored
 		return dto

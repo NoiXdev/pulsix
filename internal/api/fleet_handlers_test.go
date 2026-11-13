@@ -18,6 +18,7 @@ import (
 	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/db/gen"
+	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/items"
 )
 
@@ -32,6 +33,7 @@ type fleetHostBody struct {
 	Since       *time.Time `json:"since"`
 	EvaluatedAt *time.Time `json:"evaluated_at"`
 	AllIgnored  bool       `json:"all_ignored"`
+	Kind        string     `json:"kind"`
 }
 
 type fleetBody struct {
@@ -193,6 +195,33 @@ func TestFleetRoutes(t *testing.T) {
 
 		if body.Totals.Crit != 1 || body.Totals.Warn != 1 || body.Totals.Unknown != 1 || body.Totals.OK != 1 || body.Totals.NoData != 1 || body.Totals.AllIgnored != 0 {
 			t.Fatalf("totals = %+v, want exactly one host per bucket and none in all_ignored", body.Totals)
+		}
+	})
+
+	// Backlog 3.57: the fleet page shows an offline client as "Off", so each
+	// row carries the host's kind; every host created without one is a
+	// server.
+	t.Run("every host carries its kind", func(t *testing.T) {
+		laptop, err := f.s.Deps.Hosts.CreateHost(scoped, f.orgID, hosts.HostInput{
+			Name: "fleet-laptop-1", Address: "10.1.0.9", ZoneID: zone, Monitored: true, Kind: hosts.KindClient,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Gone again before the next subtest, which counts the totals.
+		defer func() {
+			if err := f.s.Deps.Hosts.DeleteHost(scoped, f.orgID, laptop.ID); err != nil {
+				t.Error(err)
+			}
+		}()
+		body := f.fleet(t, f.viewerC, "")
+		if got := body.byHost(t, laptop.ID).Kind; got != "client" {
+			t.Fatalf("laptop kind = %q, want client", got)
+		}
+		for _, id := range []uuid.UUID{f.web, f.dbHost, f.cold, okHost} {
+			if got := body.byHost(t, id).Kind; got != "server" {
+				t.Fatalf("host %s kind = %q, want server", id, got)
+			}
 		}
 	})
 

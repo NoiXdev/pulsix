@@ -9,6 +9,7 @@ import (
 	"github.com/noixdev/pulsix/internal/db/gen"
 	"github.com/noixdev/pulsix/internal/db/testdb"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/hosts/selector"
 )
 
 // TestHostKindRoundTrip (backlog 3.57): a host is a server unless it is
@@ -81,6 +82,37 @@ func TestHostKindRoundTrip(t *testing.T) {
 		if h.Kind != hosts.KindServer {
 			t.Fatalf("listed %s kind %q, want server", h.Name, h.Kind)
 		}
+	}
+}
+
+// TestQueryHostsCarriesKind: the selector query is hand-written SQL with
+// its own column list, so it must select the kind like every generated
+// read does. The fleet overview and POST /hosts/query read hosts through
+// it.
+func TestQueryHostsCarriesKind(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	store := hosts.NewSQLStore(d)
+	org := seedOrg(t, q, "hostkind-query-org")
+	zone := seedZone(t, store, org, "fra")
+	for _, h := range []hosts.Host{
+		{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "srv", Facts: map[string]any{}},
+		{ID: uuid.Must(uuid.NewV7()), OrgID: org, ZoneID: zone.ID, Name: "laptop", Kind: hosts.KindClient, Facts: map[string]any{}},
+	} {
+		if _, err := store.CreateHostWith(ctx, h, hosts.HostExtras{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := store.QueryHosts(ctx, org, selector.Selector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]hosts.Kind{}
+	for _, h := range got {
+		kinds[h.Name] = h.Kind
+	}
+	if kinds["srv"] != hosts.KindServer || kinds["laptop"] != hosts.KindClient {
+		t.Fatalf("QueryHosts kinds = %v, want srv=server laptop=client", kinds)
 	}
 }
 

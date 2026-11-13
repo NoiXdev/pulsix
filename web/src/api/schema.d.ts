@@ -4379,6 +4379,11 @@ export interface components {
              */
             evaluated_at?: string;
             host_id: string;
+            /**
+             * @description server: expected to be on; client: may be off and is not judged while its agent is offline
+             * @enum {string}
+             */
+            kind: "server" | "client";
             name: string;
             /**
              * Format: date-time
