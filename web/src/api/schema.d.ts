@@ -5049,7 +5049,7 @@ export interface components {
              * @example https://example.com/schemas/ItemDecisionBody.json
              */
             readonly $schema?: string;
-            /** @description One of the check keys the organization's checks resolve */
+            /** @description The check key the decision applies to (lowercase letters, digits and hyphens, e.g. disk-data); it need not exist yet */
             check_key: string;
             /** @description ignore or watch; required for create/update, ignored by preview */
             decision?: string;

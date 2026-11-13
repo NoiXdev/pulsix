@@ -89,7 +89,7 @@ type itemDecisionDTO struct {
 type itemDecisionBody struct {
 	Scope     string `json:"scope" doc:"org or host"`
 	HostID    string `json:"host_id,omitempty" format:"uuid" doc:"Required for scope=host, forbidden otherwise"`
-	CheckKey  string `json:"check_key" doc:"One of the check keys the organization's checks resolve"`
+	CheckKey  string `json:"check_key" doc:"The check key the decision applies to (lowercase letters, digits and hyphens, e.g. disk-data); it need not exist yet"`
 	MatchKind string `json:"match_kind" doc:"exact or glob"`
 	Pattern   string `json:"pattern" doc:"A literal item name (exact) or a '*' glob (glob)"`
 	Verdict   string `json:"decision,omitempty" doc:"ignore or watch; required for create/update, ignored by preview"`
