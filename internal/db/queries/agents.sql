@@ -62,13 +62,13 @@ ORDER BY h.agent_name;
 -- (ON CONFLICT on the host primary key), so exactly one agent row exists
 -- per host at any time. agent_certificates carries the previous serials —
 -- the service marks the old one revoked in the same transaction. Like
--- last_seen, the secrets report (00086) starts over: the new registration
--- has not reported yet.
+-- last_seen, the secrets report (00086) and the connection start (00088)
+-- start over: the new registration has neither reported nor connected yet.
 INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES (sqlc.arg(host_id), sqlc.arg(org_id), sqlc.arg(agent_name), sqlc.arg(cert_serial), sqlc.arg(version))
 ON CONFLICT (host_id) DO UPDATE
 SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
-    version = EXCLUDED.version, last_seen = NULL, created_at = now(),
+    version = EXCLUDED.version, last_seen = NULL, connected_since = NULL, created_at = now(),
     secret_names = NULL, secrets_state = NULL
 RETURNING *;
 
@@ -77,7 +77,19 @@ RETURNING *;
 -- (the serial is the secret and is globally unique). The stream's open and
 -- ingest pacing touch with this; they carry no secrets report, so the
 -- stored one stays.
-UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version)
+--
+-- connected_since (00088, backlog 3.12c) is when the agent's current
+-- connection began: kept while each touch follows the previous one within
+-- the reconnect gap, set to now() on the first touch after a longer gap,
+-- after enrollment (last_seen NULL) or when it is unknown (NULL, as every
+-- row is right after the upgrade). The SET list reads the row as it was
+-- before this update, so last_seen here is the previous touch. The item
+-- expiry counts the agent only after checks.MaxInterval connected.
+UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
+  connected_since = CASE
+    WHEN last_seen IS NULL OR connected_since IS NULL
+      OR last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
+    THEN now() ELSE connected_since END
 WHERE cert_serial = sqlc.arg(serial);
 
 -- name: RecordAgentHeartbeat :exec
@@ -85,9 +97,14 @@ WHERE cert_serial = sqlc.arg(serial);
 -- last_seen, the build version and the agent's secrets report in one
 -- statement. Both report columns are NULL together for an agent that
 -- sends no report (older than agent.yaml), so a downgrade reads as
--- unknown rather than keeping what a newer build said.
+-- unknown rather than keeping what a newer build said. connected_since
+-- follows TouchAgentBySerial's rule, word for word.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
-  secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state)
+  secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state),
+  connected_since = CASE
+    WHEN last_seen IS NULL OR connected_since IS NULL
+      OR last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
+    THEN now() ELSE connected_since END
 WHERE cert_serial = sqlc.arg(serial);
 
 -- name: DeleteHostAgent :execrows

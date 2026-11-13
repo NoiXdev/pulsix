@@ -171,11 +171,13 @@ WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);
 -- The expiry's re-check inside the forget transaction, after the cursor
 -- lock: how many current rows the item has, its newest reading, the newest
 -- reading of its check key on the host (any item), the host's newest
--- reading (any check), and whether the host has an agent and when that
--- agent was last seen. checks.itemExpired applies ListExpiredItems' rule
--- to them. 'epoch' stands in for "no reading" and "never seen" so the
--- generated scan never meets a NULL; item_rows and has_agent say whether
--- they are real.
+-- reading (any check), and whether the host has an agent, when that agent
+-- was last seen and since when it has been connected (00088).
+-- checks.itemExpired applies ListExpiredItems' rule to them. 'epoch'
+-- stands in for "no reading", "never seen" and "connection start unknown"
+-- so the generated scan never meets a NULL; item_rows and has_agent say
+-- whether the first two are real, and the Go rule never counts an agent
+-- whose connection start is not after the epoch.
 SELECT
   count(*) AS item_rows,
   COALESCE(max(c.at), 'epoch')::timestamptz AS item_newest,
@@ -187,7 +189,9 @@ SELECT
   EXISTS (SELECT 1 FROM host_agents a
           WHERE a.org_id = sqlc.arg(org_id) AND a.host_id = sqlc.arg(host_id)) AS has_agent,
   (SELECT COALESCE(max(a.last_seen), 'epoch') FROM host_agents a
-   WHERE a.org_id = sqlc.arg(org_id) AND a.host_id = sqlc.arg(host_id))::timestamptz AS agent_seen
+   WHERE a.org_id = sqlc.arg(org_id) AND a.host_id = sqlc.arg(host_id))::timestamptz AS agent_seen,
+  (SELECT COALESCE(max(a.connected_since), 'epoch') FROM host_agents a
+   WHERE a.org_id = sqlc.arg(org_id) AND a.host_id = sqlc.arg(host_id))::timestamptz AS agent_connected
 FROM check_current c
 WHERE c.org_id = sqlc.arg(org_id) AND c.host_id = sqlc.arg(host_id)
   AND c.check_key = sqlc.arg(check_key) AND c.item = sqlc.arg(item);
@@ -247,14 +251,20 @@ WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id)
 --   (a) its check key on the host has a reading after T (a sibling item,
 --       say another mount, still reports), or
 --   (b) the host has an agent last seen after T (the check itself was
---       removed, the agent is alive), or
+--       removed, the agent is alive) that had been connected for
+--       connected_seconds (checks.MaxInterval) when it was last seen, or
 --   (c) the host has no agent and any reading of it is after T.
 -- The manager's own probes write under the host too, so for a host with
 -- an agent only (a) and (b) count: an offline agent's items keep their
--- values however long the server's checks of the host keep running. A
--- host that stopped reporting altogether has no sign of life after T, so
--- it keeps every value. GREATEST ignores the NULL of an agent never seen.
--- Every comparison is strict. Oldest first, so a backlog drains from the
+-- values however long the server's checks of the host keep running. An
+-- agent back from an outage heartbeats before a long-interval check runs
+-- again, so (b) waits until every check has had MaxInterval to report
+-- (backlog 3.12c); until then, and while connected_since is unknown
+-- (NULL), the CASE yields NULL and only (a) is left. A host that stopped
+-- reporting altogether has no sign of life after T, so it keeps every
+-- value. GREATEST ignores the NULL of an agent never seen or not counted
+-- yet. Every comparison against T and cutoff is strict; the connected
+-- one is not (last_seen >= connected_since + MaxInterval). Oldest first, so a backlog drains from the
 -- longest-gone end. One pass over check_current, aggregated by item, then
 -- by check key and by host; host_agents joins on its primary key.
 -- checks.itemExpired is the same rule in Go, over ItemNewest, for the
@@ -274,7 +284,11 @@ JOIN key_newest k ON k.host_id = i.host_id AND k.check_key = i.check_key
 JOIN host_newest h ON h.host_id = i.host_id
 LEFT JOIN host_agents a ON a.host_id = i.host_id
 WHERE i.newest < sqlc.arg(cutoff)::timestamptz
-  AND GREATEST(k.newest, CASE WHEN a.host_id IS NULL THEN h.newest ELSE a.last_seen END)
+  AND GREATEST(k.newest, CASE
+        WHEN a.host_id IS NULL THEN h.newest
+        WHEN a.last_seen >= a.connected_since + make_interval(secs => sqlc.arg(connected_seconds)::double precision)
+          THEN a.last_seen
+      END)
       > i.newest + make_interval(secs => sqlc.arg(period_seconds)::double precision)
 ORDER BY i.newest, i.org_id, i.host_id, i.check_key, i.item
 LIMIT sqlc.arg(lim);

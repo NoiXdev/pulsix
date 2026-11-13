@@ -162,7 +162,7 @@ func (q *Queries) GetAgentEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid
 }
 
 const getHostAgent = `-- name: GetHostAgent :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -195,6 +195,7 @@ func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (Get
 		&i.HostAgent.CreatedAt,
 		&i.HostAgent.SecretNames,
 		&i.HostAgent.SecretsState,
+		&i.HostAgent.ConnectedSince,
 		&i.CertNotAfter,
 		&i.HostName,
 	)
@@ -232,7 +233,7 @@ func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCer
 }
 
 const listHostAgents = `-- name: ListHostAgents :many
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -268,6 +269,7 @@ func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHo
 			&i.HostAgent.CreatedAt,
 			&i.HostAgent.SecretNames,
 			&i.HostAgent.SecretsState,
+			&i.HostAgent.ConnectedSince,
 			&i.CertNotAfter,
 			&i.HostName,
 		); err != nil {
@@ -355,7 +357,7 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 }
 
 const lockHostAgentsByName = `-- name: LockHostAgentsByName :many
-SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state FROM host_agents
+SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since FROM host_agents
 WHERE org_id = $1 AND agent_name = $2
 FOR UPDATE
 `
@@ -390,6 +392,7 @@ func (q *Queries) LockHostAgentsByName(ctx context.Context, arg LockHostAgentsBy
 			&i.CreatedAt,
 			&i.SecretNames,
 			&i.SecretsState,
+			&i.ConnectedSince,
 		); err != nil {
 			return nil, err
 		}
@@ -426,7 +429,7 @@ func (q *Queries) LockLiveAgentCertificate(ctx context.Context, arg LockLiveAgen
 }
 
 const lookupAgentSerial = `-- name: LookupAgentSerial :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
 FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = $1
@@ -453,6 +456,7 @@ func (q *Queries) LookupAgentSerial(ctx context.Context, serial string) (LookupA
 		&i.HostAgent.CreatedAt,
 		&i.HostAgent.SecretNames,
 		&i.HostAgent.SecretsState,
+		&i.HostAgent.ConnectedSince,
 		&i.CertSerialPresented,
 		&i.CertRevokedAt,
 	)
@@ -491,27 +495,34 @@ func (q *Queries) NewestAgentCertificate(ctx context.Context, arg NewestAgentCer
 
 const recordAgentHeartbeat = `-- name: RecordAgentHeartbeat :exec
 UPDATE host_agents SET last_seen = now(), version = $1,
-  secret_names = $2::text[], secrets_state = $3
-WHERE cert_serial = $4
+  secret_names = $2::text[], secrets_state = $3,
+  connected_since = CASE
+    WHEN last_seen IS NULL OR connected_since IS NULL
+      OR last_seen < now() - make_interval(secs => $4::double precision)
+    THEN now() ELSE connected_since END
+WHERE cert_serial = $5
 `
 
 type RecordAgentHeartbeatParams struct {
-	Version      string   `json:"version"`
-	SecretNames  []string `json:"secret_names"`
-	SecretsState *string  `json:"secrets_state"`
-	Serial       string   `json:"serial"`
+	Version             string   `json:"version"`
+	SecretNames         []string `json:"secret_names"`
+	SecretsState        *string  `json:"secrets_state"`
+	ReconnectGapSeconds float64  `json:"reconnect_gap_seconds"`
+	Serial              string   `json:"serial"`
 }
 
 // A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
 // last_seen, the build version and the agent's secrets report in one
 // statement. Both report columns are NULL together for an agent that
 // sends no report (older than agent.yaml), so a downgrade reads as
-// unknown rather than keeping what a newer build said.
+// unknown rather than keeping what a newer build said. connected_since
+// follows TouchAgentBySerial's rule, word for word.
 func (q *Queries) RecordAgentHeartbeat(ctx context.Context, arg RecordAgentHeartbeatParams) error {
 	_, err := q.db.Exec(ctx, recordAgentHeartbeat,
 		arg.Version,
 		arg.SecretNames,
 		arg.SecretsState,
+		arg.ReconnectGapSeconds,
 		arg.Serial,
 	)
 	return err
@@ -534,21 +545,34 @@ func (q *Queries) RevokeAgentCertificates(ctx context.Context, arg RevokeAgentCe
 }
 
 const touchAgentBySerial = `-- name: TouchAgentBySerial :exec
-UPDATE host_agents SET last_seen = now(), version = $1
-WHERE cert_serial = $2
+UPDATE host_agents SET last_seen = now(), version = $1,
+  connected_since = CASE
+    WHEN last_seen IS NULL OR connected_since IS NULL
+      OR last_seen < now() - make_interval(secs => $2::double precision)
+    THEN now() ELSE connected_since END
+WHERE cert_serial = $3
 `
 
 type TouchAgentBySerialParams struct {
-	Version string `json:"version"`
-	Serial  string `json:"serial"`
+	Version             string  `json:"version"`
+	ReconnectGapSeconds float64 `json:"reconnect_gap_seconds"`
+	Serial              string  `json:"serial"`
 }
 
 // Org-unscoped heartbeat by serial: the gRPC stream has no org context
 // (the serial is the secret and is globally unique). The stream's open and
 // ingest pacing touch with this; they carry no secrets report, so the
 // stored one stays.
+//
+// connected_since (00088, backlog 3.12c) is when the agent's current
+// connection began: kept while each touch follows the previous one within
+// the reconnect gap, set to now() on the first touch after a longer gap,
+// after enrollment (last_seen NULL) or when it is unknown (NULL, as every
+// row is right after the upgrade). The SET list reads the row as it was
+// before this update, so last_seen here is the previous touch. The item
+// expiry counts the agent only after checks.MaxInterval connected.
 func (q *Queries) TouchAgentBySerial(ctx context.Context, arg TouchAgentBySerialParams) error {
-	_, err := q.db.Exec(ctx, touchAgentBySerial, arg.Version, arg.Serial)
+	_, err := q.db.Exec(ctx, touchAgentBySerial, arg.Version, arg.ReconnectGapSeconds, arg.Serial)
 	return err
 }
 
@@ -592,9 +616,9 @@ INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (host_id) DO UPDATE
 SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
-    version = EXCLUDED.version, last_seen = NULL, created_at = now(),
+    version = EXCLUDED.version, last_seen = NULL, connected_since = NULL, created_at = now(),
     secret_names = NULL, secrets_state = NULL
-RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state
+RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since
 `
 
 type UpsertHostAgentParams struct {
@@ -609,8 +633,8 @@ type UpsertHostAgentParams struct {
 // (ON CONFLICT on the host primary key), so exactly one agent row exists
 // per host at any time. agent_certificates carries the previous serials —
 // the service marks the old one revoked in the same transaction. Like
-// last_seen, the secrets report (00086) starts over: the new registration
-// has not reported yet.
+// last_seen, the secrets report (00086) and the connection start (00088)
+// start over: the new registration has neither reported nor connected yet.
 func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams) (HostAgent, error) {
 	row := q.db.QueryRow(ctx, upsertHostAgent,
 		arg.HostID,
@@ -630,6 +654,7 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		&i.CreatedAt,
 		&i.SecretNames,
 		&i.SecretsState,
+		&i.ConnectedSince,
 	)
 	return i, err
 }

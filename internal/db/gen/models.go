@@ -438,15 +438,16 @@ type Host struct {
 }
 
 type HostAgent struct {
-	HostID       uuid.UUID          `json:"host_id"`
-	OrgID        uuid.UUID          `json:"org_id"`
-	AgentName    string             `json:"agent_name"`
-	CertSerial   string             `json:"cert_serial"`
-	LastSeen     pgtype.Timestamptz `json:"last_seen"`
-	Version      string             `json:"version"`
-	CreatedAt    time.Time          `json:"created_at"`
-	SecretNames  []string           `json:"secret_names"`
-	SecretsState *string            `json:"secrets_state"`
+	HostID         uuid.UUID          `json:"host_id"`
+	OrgID          uuid.UUID          `json:"org_id"`
+	AgentName      string             `json:"agent_name"`
+	CertSerial     string             `json:"cert_serial"`
+	LastSeen       pgtype.Timestamptz `json:"last_seen"`
+	Version        string             `json:"version"`
+	CreatedAt      time.Time          `json:"created_at"`
+	SecretNames    []string           `json:"secret_names"`
+	SecretsState   *string            `json:"secrets_state"`
+	ConnectedSince pgtype.Timestamptz `json:"connected_since"`
 }
 
 type HostConnectionTest struct {

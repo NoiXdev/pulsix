@@ -73,7 +73,7 @@ func forgetItem(ctx context.Context, tx pgx.Tx, ref ItemRef, steps ForgetSteps) 
 		}
 		if !steps.Proceed(ItemNewest{
 			Rows: int(n.ItemRows), Item: n.ItemNewest, Key: n.KeyNewest, Host: n.HostNewest,
-			HasAgent: n.HasAgent, AgentSeen: n.AgentSeen,
+			HasAgent: n.HasAgent, AgentSeen: n.AgentSeen, AgentConnected: n.AgentConnected,
 		}) {
 			return errForgetDeclined
 		}
@@ -117,10 +117,12 @@ func forgetItem(ctx context.Context, tx pgx.Tx, ref ItemRef, steps ForgetSteps) 
 // it runs on the bare pool with no organization bound — where the
 // org_isolation_bypass policy applies — the posture alerts' Sweep and the
 // evaluator's claim take for the same reason. Each item it returns names
-// its own organization, which ForgetItem then binds.
+// its own organization, which ForgetItem then binds. An agent counts as
+// the host's sign of life only after MaxInterval connected, the same
+// bound itemExpired's agentCounts applies.
 func (s *SQLStore) ExpiredItems(ctx context.Context, cutoff time.Time, period time.Duration, limit int) ([]ItemRef, error) {
 	rows, err := gen.New(s.d.Pool()).ListExpiredItems(ctx, gen.ListExpiredItemsParams{
-		Cutoff: cutoff, PeriodSeconds: period.Seconds(),
+		Cutoff: cutoff, PeriodSeconds: period.Seconds(), ConnectedSeconds: MaxInterval.Seconds(),
 		Lim: int32(min(limit, maxExpiredBatch)), //nolint:gosec // bounded by maxExpiredBatch
 	})
 	if err != nil {

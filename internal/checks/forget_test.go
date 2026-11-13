@@ -269,6 +269,7 @@ func TestForgetExpiredRecheckBoundaries(t *testing.T) {
 	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
 	period := 168 * time.Hour
 	cutoff := now.Add(-period)
+	steady := now.Add(-60 * 24 * time.Hour) // an agent connected for long before any of this
 	tests := []struct {
 		name   string
 		newest checks.ItemNewest
@@ -294,19 +295,70 @@ func TestForgetExpiredRecheckBoundaries(t *testing.T) {
 		{"agent never seen, fresh probe elsewhere",
 			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true}, false},
 		{"agent seen exactly item + period is not due",
-			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour).Add(period)}, false},
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour).Add(period), AgentConnected: steady}, false},
 		{"agent seen a second later is due",
-			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour).Add(period + time.Second)}, true},
+			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour), Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour).Add(period + time.Second), AgentConnected: steady}, true},
 		{"offline agent, a sibling item of the same check key still reports",
 			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: now, Host: now, HasAgent: true, AgentSeen: cutoff.Add(-time.Hour)}, true},
 		{"agentless: the same check key exactly item + period is not due, the host decides",
 			checks.ItemNewest{Rows: 1, Item: cutoff.Add(-time.Hour), Key: cutoff.Add(-time.Hour).Add(period), Host: cutoff.Add(-time.Hour).Add(period)}, false},
 		{"still due only when the item itself is past the period",
-			checks.ItemNewest{Rows: 1, Item: cutoff, Key: now, Host: now, HasAgent: true, AgentSeen: now}, false},
+			checks.ItemNewest{Rows: 1, Item: cutoff, Key: now, Host: now, HasAgent: true, AgentSeen: now, AgentConnected: steady}, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ref := checks.ItemRef{OrgID: uuid.New(), HostID: uuid.New(), CheckKey: "docker", Item: "c"}
+			st := newForgetStore()
+			st.expired = []checks.ItemRef{ref}
+			st.exists[ref] = true
+			st.newest[ref] = tc.newest
+			svc := checks.NewService(st, fixedClock(now), checks.WithAlertCloser(&fakeCloser{}))
+
+			counts, err := svc.ForgetExpired(ctx, period, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := counts[ref.OrgID] == 1; got != tc.want {
+				t.Fatalf("forgotten = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestForgetExpiredAgentCountsAfterADayConnected (backlog 3.12c): an
+// agent back from an outage heartbeats at once, before a check with a long
+// interval has run again, so its heartbeat says nothing about that check's
+// items until it has been connected for checks.MaxInterval — every check
+// has reported at least once by then. Before that the agent contributes
+// nothing; the item's own check key still does. An agent whose connection
+// start is unknown (zero or the epoch: never seen since the upgrade, or
+// re-enrolled) contributes nothing either.
+func TestForgetExpiredAgentCountsAfterADayConnected(t *testing.T) {
+	now := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	period := 48 * time.Hour
+	gone := now.Add(-period - 72*time.Hour) // the item's newest reading, long before the outage ended
+	agent := func(connected time.Time) checks.ItemNewest {
+		return checks.ItemNewest{Rows: 1, Item: gone, Key: gone, Host: now, HasAgent: true, AgentSeen: now, AgentConnected: connected}
+	}
+	tests := []struct {
+		name   string
+		newest checks.ItemNewest
+		want   bool
+	}{
+		{"reconnected a minute ago", agent(now.Add(-time.Minute)), false},
+		{"connected a second short of MaxInterval", agent(now.Add(-checks.MaxInterval + time.Second)), false},
+		{"connected exactly MaxInterval", agent(now.Add(-checks.MaxInterval)), true},
+		{"connected for a month", agent(now.Add(-30 * 24 * time.Hour)), true},
+		{"connection start unknown (zero)", agent(time.Time{}), false},
+		{"connection start unknown (epoch)", agent(time.Unix(0, 0).UTC()), false},
+		{"reconnected, but a sibling item of the same check key still reports",
+			checks.ItemNewest{Rows: 1, Item: gone, Key: now, Host: now, HasAgent: true, AgentSeen: now, AgentConnected: now.Add(-time.Minute)}, true},
+		{"no agent: the host's newest reading decides as before",
+			checks.ItemNewest{Rows: 1, Item: gone, Key: gone, Host: now}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ref := checks.ItemRef{OrgID: uuid.New(), HostID: uuid.New(), CheckKey: "backup", Item: "nightly"}
 			st := newForgetStore()
 			st.expired = []checks.ItemRef{ref}
 			st.exists[ref] = true

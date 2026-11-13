@@ -46,32 +46,56 @@ type ItemRef struct {
 // item has, its newest reading (over all of its metrics), the newest
 // reading of its check key on the host (over all of the key's items), the
 // host's newest reading (over all of its checks), whether the host has an
-// agent, and when that agent was last seen (zero or the epoch when never).
-// The times are meaningless when Rows is 0.
+// agent, when that agent was last seen (zero or the epoch when never) and
+// since when it has been connected without a gap (host_agents.
+// connected_since; zero or the epoch when unknown — never seen since it
+// enrolled or since the upgrade that added the column). The times are
+// meaningless when Rows is 0.
 type ItemNewest struct {
 	Rows            int
 	Item, Key, Host time.Time
 	HasAgent        bool
 	AgentSeen       time.Time
+	AgentConnected  time.Time
 }
 
 // lastSignOfLife is the latest moment the host is known to have kept
 // reporting, as far as this item is concerned: the newest reading of the
 // item's own check key, or — whichever is later — the agent's heartbeat
-// on a host with an agent, or any reading of a host without one. The
-// manager's probes write under the host they check, so on a host with an
-// agent the host's newest reading says nothing about the agent; counting
-// it would forget every item of an offline agent while the server's own
-// checks of the host keep running.
+// on a host with an agent (agentCounts), or any reading of a host without
+// one. The manager's probes write under the host they check, so on a host
+// with an agent the host's newest reading says nothing about the agent;
+// counting it would forget every item of an offline agent while the
+// server's own checks of the host keep running. An agent that does not
+// count yet contributes nothing, so the check key's newest reading alone
+// is left.
 func (n ItemNewest) lastSignOfLife() time.Time {
 	other := n.Host
 	if n.HasAgent {
-		other = n.AgentSeen
+		other = time.Time{}
+		if n.agentCounts() {
+			other = n.AgentSeen
+		}
 	}
 	if n.Key.After(other) {
 		return n.Key
 	}
 	return other
+}
+
+// agentCounts says whether the agent's heartbeat is a sign of life for
+// the host's items (backlog 3.12c): only once it has been connected for
+// MaxInterval, last seen at or after connected + MaxInterval. An agent
+// back from an outage heartbeats at once, before a check with a long
+// interval has run again; counting that heartbeat would forget the check's
+// items once and rediscover them a little later. After MaxInterval every
+// check, however long its interval, has reported at least once. An
+// unknown connection start (zero or the epoch) never counts.
+func (n ItemNewest) agentCounts() bool {
+	if !n.AgentConnected.After(time.Unix(0, 0)) {
+		return false
+	}
+	return !n.AgentSeen.Before(n.AgentConnected.Add(MaxInterval))
 }
 
 // ForgetSteps are the service's two say-sos inside the store's forget
@@ -89,8 +113,9 @@ type ForgetSteps struct {
 // now - period, and the host kept reporting after that newest reading plus
 // the period (lastSignOfLife) — it went on for the whole period without
 // the item. A host that stopped reporting altogether, or whose agent is
-// offline, never satisfies the second half for its agent's items, so it
-// keeps their values. Both comparisons are strict.
+// offline or connected for less than MaxInterval, never satisfies the
+// second half through the agent, so its agent's items keep their values
+// unless their own check key still reports. Both comparisons are strict.
 func itemExpired(n ItemNewest, now time.Time, period time.Duration) bool {
 	if n.Rows == 0 {
 		return false

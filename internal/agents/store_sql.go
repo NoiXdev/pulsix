@@ -222,15 +222,27 @@ func toIdentity(row gen.LookupAgentSerialRow) AgentIdentity {
 	}
 }
 
+// reconnectGap is how long an agent may stay silent and still count as
+// connected without a break: a touch or heartbeat that follows the
+// previous one by more than this starts a new connection
+// (host_agents.connected_since, backlog 3.12c), which the item expiry
+// counts only after checks.MaxInterval. Three times the longest heartbeat
+// interval an agent accepts (PULSIX_HEARTBEAT_INTERVAL is clamped to
+// 10 min in internal/agent), so a slow but steady agent never resets it.
+const reconnectGap = 30 * time.Minute
+
 func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
-	return s.q.TouchAgentBySerial(ctx, gen.TouchAgentBySerialParams{Serial: serial, Version: version})
+	return s.q.TouchAgentBySerial(ctx, gen.TouchAgentBySerialParams{
+		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
+	})
 }
 
-// Heartbeat writes last_seen, version and the secrets report in one
-// statement. An unknown report writes NULL to both columns; a known one
-// writes its names as a (possibly empty, never NULL) array.
+// Heartbeat writes last_seen, version, the secrets report and the
+// connection start (Touch's rule, reconnectGap) in one statement. An
+// unknown report writes NULL to both report columns; a known one writes
+// its names as a (possibly empty, never NULL) array.
 func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport) error {
-	p := gen.RecordAgentHeartbeatParams{Serial: serial, Version: version}
+	p := gen.RecordAgentHeartbeatParams{Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds()}
 	if secrets.Known {
 		names := secrets.Names
 		if names == nil {
