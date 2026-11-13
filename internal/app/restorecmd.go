@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/noixdev/pulsix/internal/backup"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/config"
 	"github.com/noixdev/pulsix/internal/db"
 )
@@ -148,7 +150,35 @@ func RunRestore(ctx context.Context, cfg config.Config, opts RestoreOptions, std
 	if err != nil {
 		return explainRestore(err, label, from, m)
 	}
+	// The restore re-ran migrations 00044 and 00046, which set the 90-day
+	// retention policy: set the configured maximum now, so the restored
+	// measurements do not wait for the next manager start with the wrong
+	// one (backlog 3.15). d is the owner connection the sync needs.
+	sync := checks.NewRetentionSync(checks.NewRetentionPolicySQLStore(d), slog.New(slog.NewTextHandler(stderr, nil)))
+	if err := syncRetentionAfterRestore(ctx, sync, cfg.RetentionMaxDays()); err != nil {
+		return err
+	}
 	return printRestored(stdout, label, m)
+}
+
+// retentionSyncer is the one method syncRetentionAfterRestore needs:
+// *checks.RetentionSync.
+type retentionSyncer interface {
+	Sync(ctx context.Context, days int) error
+}
+
+// syncRetentionAfterRestore sets the retention policies to days after a
+// restore. A failure leaves the restored data in place; the message says so
+// and that the manager sets the retention again when it starts.
+func syncRetentionAfterRestore(ctx context.Context, sync retentionSyncer, days int) error {
+	if err := sync.Sync(ctx, days); err != nil {
+		return explainedError{
+			msg: fmt.Sprintf("the backup's data is restored, but setting the measurement retention to %d days failed: %v. "+
+				"Start the manager: it sets the retention again when it starts", days, err),
+			cause: err,
+		}
+	}
+	return nil
 }
 
 // errNotEmpty is the refusal for a database with users or organizations.
