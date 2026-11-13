@@ -17,3 +17,17 @@ func TestParseStatus(t *testing.T) {
 		t.Fatalf("parseStatus(prefork) = %+v, %v", got, err)
 	}
 }
+
+// Only one of Total Accesses / Total kBytes counts as ExtendedStatus Off: a
+// rate needs both baselines.
+func TestParseStatusOneCounterOnly(t *testing.T) {
+	for _, body := range []string{
+		"BusyWorkers: 1\nIdleWorkers: 4\nTotal Accesses: 7\n",
+		"BusyWorkers: 1\nIdleWorkers: 4\nTotal kBytes: 7\n",
+	} {
+		got, err := parseStatus([]byte(body))
+		if err != nil || got != (status{busy: 1, idle: 4}) {
+			t.Fatalf("parseStatus(%q) = %+v, %v", body, got, err)
+		}
+	}
+}

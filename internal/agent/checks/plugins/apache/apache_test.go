@@ -265,23 +265,20 @@ func TestBusyPctFullAndEmpty(t *testing.T) {
 	}
 }
 
+// Either counter falling restarts both baselines (a restart; a graceful one
+// may keep or reset the counters).
 func TestRatesResetWhenCountersDrop(t *testing.T) {
-	srv := newStatusServer(t, eventPage(5000, 9000, 1, 5))
-	p, clk := newTestPlugin()
-	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
-		t.Fatal(err)
-	}
-	// Either counter falling restarts both (a restart; a graceful one may
-	// keep or reset them).
 	for name, page := range map[string]string{
 		"both":     eventPage(10, 20, 1, 5),
 		"accesses": eventPage(10, 9500, 1, 5),
 		"kbytes":   eventPage(5500, 20, 1, 5),
 	} {
 		t.Run(name, func(t *testing.T) {
+			srv := newStatusServer(t, eventPage(5000, 9000, 1, 5))
 			p, clk := newTestPlugin()
-			srv.set(200, eventPage(5000, 9000, 1, 5))
-			_, _ = p.Collect(t.Context(), params(srv))
+			if _, err := p.Collect(t.Context(), params(srv)); err != nil {
+				t.Fatal(err)
+			}
 			clk.t = clk.t.Add(10 * time.Second)
 			srv.set(200, page)
 			obs, err := p.Collect(t.Context(), params(srv))
@@ -293,15 +290,46 @@ func TestRatesResetWhenCountersDrop(t *testing.T) {
 			mustAbsent(t, obs, "apache.bytes_per_s")
 		})
 	}
-	// The new baseline works on the next round.
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, eventPage(10, 20, 1, 5))
-	_, _ = p.Collect(t.Context(), params(srv))
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, eventPage(110, 120, 1, 5))
+}
+
+func TestNewBaselineWorksAfterAReset(t *testing.T) {
+	srv := newStatusServer(t, eventPage(5000, 9000, 1, 5))
+	p, clk := newTestPlugin()
+	for _, page := range []string{eventPage(5000, 9000, 1, 5), eventPage(10, 20, 1, 5), eventPage(110, 120, 1, 5)} {
+		srv.set(200, page)
+		_, _ = p.Collect(t.Context(), params(srv))
+		clk.t = clk.t.Add(10 * time.Second)
+	}
+	srv.set(200, eventPage(210, 220, 1, 5))
 	obs, _ := p.Collect(t.Context(), params(srv))
 	mustValue(t, obs, "apache.requests_per_s", 10)
 	mustValue(t, obs, "apache.bytes_per_s", 10*1024)
+}
+
+// A page without the counters (ExtendedStatus switched Off) restarts the
+// baselines: the first On round after it has no rate.
+func TestPageWithoutCountersResetsTheBaselines(t *testing.T) {
+	srv := newStatusServer(t, eventPage(1000, 1000, 1, 5))
+	p, clk := newTestPlugin()
+	step := func(page string) []checks.Observation {
+		srv.set(200, page)
+		obs, err := p.Collect(t.Context(), params(srv))
+		if err != nil {
+			t.Fatal(err)
+		}
+		clk.t = clk.t.Add(10 * time.Second)
+		return obs
+	}
+	step(eventPage(1000, 1000, 1, 5))
+	obs := step(eventPage(1100, 1100, 1, 5))
+	mustValue(t, obs, "apache.requests_per_s", 10)
+	obs = step(preforkPage(1, 4))
+	mustErr(t, obs, "apache.requests_per_s", errExtended)
+	obs = step(eventPage(1200, 1200, 1, 5))
+	mustAbsent(t, obs, "apache.requests_per_s")
+	mustAbsent(t, obs, "apache.bytes_per_s")
+	obs = step(eventPage(1300, 1300, 1, 5))
+	mustValue(t, obs, "apache.requests_per_s", 10)
 }
 
 func TestChangedURLRestartsTheBaselines(t *testing.T) {
@@ -364,7 +392,6 @@ func TestUnexpectedFormat(t *testing.T) {
 		{"negative accesses", strings.Replace(good, "Total Accesses: 10", "Total Accesses: -1", 1)},
 		{"overflow kbytes", strings.Replace(good, "Total kBytes: 20", "Total kBytes: 99999999999999999999999", 1)},
 		{"malformed kbytes", strings.Replace(good, "Total kBytes: 20", "Total kBytes: 2.5.1", 1)},
-		{"huge line", good + "Scoreboard: " + strings.Repeat("_", 300<<10) + "\n"},
 		{"huge page", good + strings.Repeat("Key: value\n", 100<<10)},
 	}
 	for _, tt := range tests {
@@ -393,6 +420,20 @@ func TestLargeScoreboardAndCRLF(t *testing.T) {
 	}
 	mustValue(t, obs, "apache.up", 1)
 	mustValue(t, obs, "apache.workers_busy_pct", 20)
+}
+
+// A Scoreboard is ServerLimit x ThreadLimit characters; a big configuration
+// exceeds 256 KiB and must still read, as long as the page is within bounds.
+func TestHugeScoreboardWithinThePageBound(t *testing.T) {
+	body := eventPage(10, 20, 3, 72) + "Scoreboard: " + strings.Repeat("_", 600<<10) + "\n"
+	srv := newStatusServer(t, body)
+	p, _ := newTestPlugin()
+	obs, err := p.Collect(t.Context(), params(srv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustValue(t, obs, "apache.up", 1)
+	mustValue(t, obs, "apache.workers_busy", 3)
 }
 
 func TestFetchFailuresReportDown(t *testing.T) {

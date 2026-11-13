@@ -20,10 +20,10 @@ const (
 	// maxPage bounds what parseStatus looks at. A real page is a few KB
 	// besides the Scoreboard, which is ServerLimit x ThreadLimit characters
 	// (16 x 64 by default, tens of KB on a big configuration); 1 MiB leaves
-	// room for that and stays far below the 4 MiB the fetch allows.
+	// room for that and stays far below the 4 MiB the fetch allows. There is
+	// no per-line bound: the Scoreboard is never parsed, the page bound
+	// limits the work, and a valid big configuration must read.
 	maxPage = 1 << 20
-	// maxLine bounds one line, the Scoreboard being the longest by far.
-	maxLine = 256 << 10
 )
 
 // parseStatus reads the page by key: lines of "Key: value", unknown keys
@@ -42,9 +42,6 @@ func parseStatus(body []byte) (status, error) {
 	for rest != "" {
 		line, tail, _ := strings.Cut(rest, "\n")
 		rest = tail
-		if len(line) > maxLine {
-			return status{}, errFormat
-		}
 		key, val, ok := strings.Cut(line, ":")
 		if !ok {
 			continue
