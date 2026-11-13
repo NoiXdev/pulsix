@@ -28,6 +28,7 @@ type hostDTO struct {
 	LastSeenAt *string        `json:"last_seen_at,omitempty"`
 	CreatedAt  string         `json:"created_at"`
 	Revision   int64          `json:"revision"`
+	Kind       string         `json:"kind"`
 }
 
 func decodeZone(t *testing.T, resp *http.Response) zoneDTO {

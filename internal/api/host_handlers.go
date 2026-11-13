@@ -66,13 +66,14 @@ type hostDTO struct {
 	LastSeenAt *time.Time     `json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time      `json:"created_at"`
 	Revision   int64          `json:"revision" doc:"The host's revision; send it back as If-Match (quoted, like the ETag) on PATCH"`
+	Kind       string         `json:"kind" enum:"server,client" doc:"server: expected to be on; client: may be off (a notebook, a desktop) and is not judged while its agent is offline"`
 }
 
 func toHostDTO(h hosts.Host) hostDTO {
 	return hostDTO{
 		ID: h.ID.String(), ZoneID: h.ZoneID.String(), Name: h.Name, Address: h.Address,
 		Managed: h.Managed, Monitored: h.Monitored, Facts: h.Facts, LastSeenAt: h.LastSeenAt, CreatedAt: h.CreatedAt,
-		Revision: h.Revision,
+		Revision: h.Revision, Kind: string(h.Kind),
 	}
 }
 
@@ -101,6 +102,9 @@ type hostInputBody struct {
 	// hosts.write, the bar PUT /hosts/{id}/ssh sets.
 	Jump *hostJumpBody `json:"jump,omitempty" doc:"The host's jump host; omitted leaves it (create: inherit). Needs inventory.write."`
 	Tags *[]tagInput   `json:"tags,omitempty" doc:"Replaces the host's manual tags; omitted leaves them (create: none)."`
+	// Kind is optional for the same reason (backlog 3.57): a client that
+	// predates host kinds must not turn a client back into a server.
+	Kind string `json:"kind,omitempty" enum:"server,client" doc:"server or client; omitted leaves it (create: server)."`
 }
 
 // hostJumpBody is a host's jump-host choice on the wire.
@@ -114,7 +118,7 @@ func (b hostInputBody) toInput() (hosts.HostInput, error) {
 	if err != nil {
 		return hosts.HostInput{}, huma.Error400BadRequest("invalid zone_id")
 	}
-	in := hosts.HostInput{Name: b.Name, Address: b.Address, ZoneID: zoneID, Managed: b.Managed, Monitored: b.Monitored}
+	in := hosts.HostInput{Name: b.Name, Address: b.Address, ZoneID: zoneID, Managed: b.Managed, Monitored: b.Monitored, Kind: hosts.Kind(b.Kind)}
 	if b.Jump != nil {
 		bastionID, err := parseOptionalUUID(b.Jump.BastionID, "jump.bastion_id")
 		if err != nil {

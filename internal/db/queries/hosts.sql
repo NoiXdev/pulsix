@@ -13,8 +13,10 @@ SELECT * FROM zones WHERE id = $1 AND org_id = $2;
 SELECT * FROM zones WHERE org_id = $1 ORDER BY slug;
 
 -- name: CreateHost :one
-INSERT INTO hosts (id, org_id, zone_id, name, address, managed, monitored, facts)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+-- kind (backlog 3.57) is optional: NULL creates a server, the column's own
+-- default, so a caller that predates host kinds needs no change.
+INSERT INTO hosts (id, org_id, zone_id, name, address, managed, monitored, facts, kind)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE(sqlc.narg(kind)::text, 'server'))
 RETURNING *;
 
 -- name: GetHost :one
@@ -40,11 +42,36 @@ WHERE org_id = $1 AND id = ANY(sqlc.arg(host_ids)::uuid[]);
 -- the same optimistic-concurrency shape UpdateInventoryGroup uses. No row
 -- back means either a stale revision or an unknown host; the store tells
 -- the two apart so the API can answer 412 rather than 404 for the first.
+-- kind (backlog 3.57) is optional: NULL keeps the stored kind, so a
+-- client that does not send one cannot turn a client back into a server.
 UPDATE hosts
 SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7,
+    kind = COALESCE(sqlc.narg(kind)::text, kind),
     revision = revision + 1, updated_at = now()
 WHERE id = $1 AND org_id = $2 AND revision = @revision
 RETURNING *;
+
+-- name: LockHostKind :one
+-- Backlog 3.57: the host's kind before an update changes it, read under
+-- the row lock the update takes anyway (FOR NO KEY UPDATE is the lock an
+-- UPDATE that leaves the key alone takes), so the kind compared after the
+-- update is the one it replaced. No row means an unknown host, which the
+-- update itself then reports.
+SELECT kind FROM hosts WHERE id = @id AND org_id = @org_id FOR NO KEY UPDATE;
+
+-- name: MarkHostKindChanged :exec
+-- Backlog 3.57: a host whose kind changed is due for evaluation at once (a
+-- client turned server must be judged as one, a server turned client
+-- frozen). The same upsert as rules.sql's MarkHostDirty, run inside the
+-- host update's transaction, but stamped with clock_timestamp() AFTER the
+-- cursor's row lock is held, the reason MarkHostDirtyNow (checks.sql)
+-- gives: the update may have waited for an evaluation that read the old
+-- kind and stamps evaluated_at with its own transaction start, which can
+-- be later than this transaction's now(); now() here would leave the host
+-- looking evaluated. DO UPDATE's SET is evaluated once the lock is taken.
+INSERT INTO check_eval_cursor (org_id, host_id, dirty_at)
+VALUES (sqlc.arg(org_id), sqlc.arg(host_id), clock_timestamp())
+ON CONFLICT (host_id) DO UPDATE SET dirty_at = clock_timestamp();
 
 -- name: PatchHostCapabilities :one
 -- Expresses a partial capabilities update as one atomic statement — the

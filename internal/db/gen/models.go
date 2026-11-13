@@ -435,6 +435,7 @@ type Host struct {
 	CreatedAt  time.Time          `json:"created_at"`
 	UpdatedAt  time.Time          `json:"updated_at"`
 	Revision   int64              `json:"revision"`
+	Kind       string             `json:"kind"`
 }
 
 type HostAgent struct {
@@ -759,6 +760,12 @@ type OrgMembership struct {
 	UserID    uuid.UUID `json:"user_id"`
 	Role      OrgRole   `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+}
+
+type OrgMonitoringSetting struct {
+	OrgID            uuid.UUID `json:"org_id"`
+	ClientAbsentDays int32     `json:"client_absent_days"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 type Organization struct {

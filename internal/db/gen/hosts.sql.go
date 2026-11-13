@@ -40,9 +40,9 @@ func (q *Queries) BumpHostRevision(ctx context.Context, arg BumpHostRevisionPara
 }
 
 const createHost = `-- name: CreateHost :one
-INSERT INTO hosts (id, org_id, zone_id, name, address, managed, monitored, facts)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision
+INSERT INTO hosts (id, org_id, zone_id, name, address, managed, monitored, facts, kind)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::text, 'server'))
+RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind
 `
 
 type CreateHostParams struct {
@@ -54,8 +54,11 @@ type CreateHostParams struct {
 	Managed   bool      `json:"managed"`
 	Monitored bool      `json:"monitored"`
 	Facts     []byte    `json:"facts"`
+	Kind      *string   `json:"kind"`
 }
 
+// kind (backlog 3.57) is optional: NULL creates a server, the column's own
+// default, so a caller that predates host kinds needs no change.
 func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) (Host, error) {
 	row := q.db.QueryRow(ctx, createHost,
 		arg.ID,
@@ -66,6 +69,7 @@ func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) (Host, e
 		arg.Managed,
 		arg.Monitored,
 		arg.Facts,
+		arg.Kind,
 	)
 	var i Host
 	err := row.Scan(
@@ -81,6 +85,7 @@ func (q *Queries) CreateHost(ctx context.Context, arg CreateHostParams) (Host, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -133,7 +138,7 @@ func (q *Queries) DeleteHost(ctx context.Context, arg DeleteHostParams) (int64, 
 }
 
 const getHost = `-- name: GetHost :one
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts WHERE id = $1 AND org_id = $2
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind FROM hosts WHERE id = $1 AND org_id = $2
 `
 
 type GetHostParams struct {
@@ -160,6 +165,7 @@ func (q *Queries) GetHost(ctx context.Context, arg GetHostParams) (Host, error) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -232,7 +238,7 @@ func (q *Queries) GetZonesBySlug(ctx context.Context, slug string) ([]GetZonesBy
 }
 
 const listAllHosts = `-- name: ListAllHosts :many
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts WHERE org_id = $1 ORDER BY name
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind FROM hosts WHERE org_id = $1 ORDER BY name
 `
 
 // Every host of the organization, for the inventory renderer. Unpaginated on
@@ -260,6 +266,7 @@ func (q *Queries) ListAllHosts(ctx context.Context, orgID uuid.UUID) ([]Host, er
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -311,7 +318,7 @@ func (q *Queries) ListHostZones(ctx context.Context, arg ListHostZonesParams) ([
 }
 
 const listHosts = `-- name: ListHosts :many
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind FROM hosts
 WHERE org_id = $1
   AND ($2::uuid IS NULL OR zone_id = $2::uuid)
   AND ($3::boolean IS NULL OR managed = $3::boolean)
@@ -382,6 +389,7 @@ func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, e
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -394,7 +402,7 @@ func (q *Queries) ListHosts(ctx context.Context, arg ListHostsParams) ([]Host, e
 }
 
 const listHostsByIDs = `-- name: ListHostsByIDs :many
-SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision FROM hosts WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name
+SELECT id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind FROM hosts WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY name
 `
 
 type ListHostsByIDsParams struct {
@@ -430,6 +438,7 @@ func (q *Queries) ListHostsByIDs(ctx context.Context, arg ListHostsByIDsParams) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.Revision,
+			&i.Kind,
 		); err != nil {
 			return nil, err
 		}
@@ -470,6 +479,52 @@ func (q *Queries) ListZonesForOrg(ctx context.Context, orgID uuid.UUID) ([]Zone,
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockHostKind = `-- name: LockHostKind :one
+SELECT kind FROM hosts WHERE id = $1 AND org_id = $2 FOR NO KEY UPDATE
+`
+
+type LockHostKindParams struct {
+	ID    uuid.UUID `json:"id"`
+	OrgID uuid.UUID `json:"org_id"`
+}
+
+// Backlog 3.57: the host's kind before an update changes it, read under
+// the row lock the update takes anyway (FOR NO KEY UPDATE is the lock an
+// UPDATE that leaves the key alone takes), so the kind compared after the
+// update is the one it replaced. No row means an unknown host, which the
+// update itself then reports.
+func (q *Queries) LockHostKind(ctx context.Context, arg LockHostKindParams) (string, error) {
+	row := q.db.QueryRow(ctx, lockHostKind, arg.ID, arg.OrgID)
+	var kind string
+	err := row.Scan(&kind)
+	return kind, err
+}
+
+const markHostKindChanged = `-- name: MarkHostKindChanged :exec
+INSERT INTO check_eval_cursor (org_id, host_id, dirty_at)
+VALUES ($1, $2, clock_timestamp())
+ON CONFLICT (host_id) DO UPDATE SET dirty_at = clock_timestamp()
+`
+
+type MarkHostKindChangedParams struct {
+	OrgID  uuid.UUID `json:"org_id"`
+	HostID uuid.UUID `json:"host_id"`
+}
+
+// Backlog 3.57: a host whose kind changed is due for evaluation at once (a
+// client turned server must be judged as one, a server turned client
+// frozen). The same upsert as rules.sql's MarkHostDirty, run inside the
+// host update's transaction, but stamped with clock_timestamp() AFTER the
+// cursor's row lock is held, the reason MarkHostDirtyNow (checks.sql)
+// gives: the update may have waited for an evaluation that read the old
+// kind and stamps evaluated_at with its own transaction start, which can
+// be later than this transaction's now(); now() here would leave the host
+// looking evaluated. DO UPDATE's SET is evaluated once the lock is taken.
+func (q *Queries) MarkHostKindChanged(ctx context.Context, arg MarkHostKindChangedParams) error {
+	_, err := q.db.Exec(ctx, markHostKindChanged, arg.OrgID, arg.HostID)
+	return err
 }
 
 const orgsWithoutDefaultZone = `-- name: OrgsWithoutDefaultZone :many
@@ -514,7 +569,7 @@ SET managed = COALESCE($3::boolean, managed),
     monitored = COALESCE($4::boolean, monitored),
     revision = revision + 1, updated_at = now()
 WHERE id = $1 AND org_id = $2
-RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision
+RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind
 `
 
 type PatchHostCapabilitiesParams struct {
@@ -558,6 +613,7 @@ func (q *Queries) PatchHostCapabilities(ctx context.Context, arg PatchHostCapabi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Kind,
 	)
 	return i, err
 }
@@ -565,9 +621,10 @@ func (q *Queries) PatchHostCapabilities(ctx context.Context, arg PatchHostCapabi
 const updateHost = `-- name: UpdateHost :one
 UPDATE hosts
 SET zone_id = $3, name = $4, address = $5, managed = $6, monitored = $7,
+    kind = COALESCE($8::text, kind),
     revision = revision + 1, updated_at = now()
-WHERE id = $1 AND org_id = $2 AND revision = $8
-RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision
+WHERE id = $1 AND org_id = $2 AND revision = $9
+RETURNING id, org_id, zone_id, name, address, managed, monitored, facts, last_seen_at, created_at, updated_at, revision, kind
 `
 
 type UpdateHostParams struct {
@@ -578,6 +635,7 @@ type UpdateHostParams struct {
 	Address   string    `json:"address"`
 	Managed   bool      `json:"managed"`
 	Monitored bool      `json:"monitored"`
+	Kind      *string   `json:"kind"`
 	Revision  int64     `json:"revision"`
 }
 
@@ -589,6 +647,8 @@ type UpdateHostParams struct {
 // the same optimistic-concurrency shape UpdateInventoryGroup uses. No row
 // back means either a stale revision or an unknown host; the store tells
 // the two apart so the API can answer 412 rather than 404 for the first.
+// kind (backlog 3.57) is optional: NULL keeps the stored kind, so a
+// client that does not send one cannot turn a client back into a server.
 func (q *Queries) UpdateHost(ctx context.Context, arg UpdateHostParams) (Host, error) {
 	row := q.db.QueryRow(ctx, updateHost,
 		arg.ID,
@@ -598,6 +658,7 @@ func (q *Queries) UpdateHost(ctx context.Context, arg UpdateHostParams) (Host, e
 		arg.Address,
 		arg.Managed,
 		arg.Monitored,
+		arg.Kind,
 		arg.Revision,
 	)
 	var i Host
@@ -614,6 +675,7 @@ func (q *Queries) UpdateHost(ctx context.Context, arg UpdateHostParams) (Host, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.Revision,
+		&i.Kind,
 	)
 	return i, err
 }

@@ -226,7 +226,7 @@ func fromHostRow(r gen.Host) (Host, error) {
 		ID: r.ID, OrgID: r.OrgID, ZoneID: r.ZoneID, Name: r.Name, Address: r.Address,
 		Managed: r.Managed, Monitored: r.Monitored, Facts: facts,
 		LastSeenAt: fromPgTimestamptz(r.LastSeenAt), CreatedAt: r.CreatedAt,
-		Revision: r.Revision,
+		Revision: r.Revision, Kind: Kind(r.Kind),
 	}, nil
 }
 

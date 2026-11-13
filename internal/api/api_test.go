@@ -30,6 +30,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/playbooks"
@@ -220,7 +221,8 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		// -run-filtered test run names. That is twice now: Deps.RuleStates
 		// broke exactly these five tests the same way one milestone ago.
 		Items: &items.Service{}, EvalDirty: rules.NewDirtyMarker(nil),
-		Notify: &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
+		MonitorSettings: &monitorsettings.Service{},
+		Notify:          &notify.Service{}, Maintenance: &maintenance.Service{}, Calendar: &calendar.Service{},
 		// v0.4a's own required dependency (Task 8): the alert API. Zero-
 		// valued for the same reason every sibling on this line is — this
 		// fixture registers every route and drives none.
@@ -442,6 +444,13 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	noEvalDirty.EvalDirty = nil
 	if _, err := api.New(noEvalDirty); err == nil || !strings.Contains(err.Error(), "EvalDirty") {
 		t.Fatalf("api.New without EvalDirty = %v, want an error naming EvalDirty", err)
+	}
+	// The org monitoring settings (backlog 3.57): a nil service would
+	// panic on the settings routes.
+	noMonitorSettings := testDeps(t)
+	noMonitorSettings.MonitorSettings = nil
+	if _, err := api.New(noMonitorSettings); err == nil || !strings.Contains(err.Error(), "MonitorSettings") {
+		t.Fatalf("api.New without MonitorSettings = %v, want an error naming MonitorSettings", err)
 	}
 	// The alert API (v0.4a Task 8). This is the regression the design
 	// doc's own review focus calls out by name: the last two milestones

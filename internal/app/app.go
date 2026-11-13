@@ -46,6 +46,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/outbound"
@@ -636,6 +637,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// statement).
 		Items:     itemsSvc,
 		EvalDirty: rules.NewDirtyMarker(appDB),
+		// The org monitoring settings (backlog 3.57: client_absent_days).
+		MonitorSettings: monitorsettings.NewService(monitorsettings.NewSQLStore(appDB)),
 		// The public agent distribution: the install script is templated
 		// with this manager's own public URL, and the binaries it hands
 		// out are the ones embedded at build time — nil in a build made

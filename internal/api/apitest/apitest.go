@@ -47,6 +47,7 @@ import (
 	"github.com/noixdev/pulsix/internal/jobs"
 	"github.com/noixdev/pulsix/internal/mail"
 	"github.com/noixdev/pulsix/internal/maintenance"
+	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
 	"github.com/noixdev/pulsix/internal/outbound"
@@ -672,16 +673,18 @@ func New(t *testing.T, opts ...Option) *Server {
 		// routes' prompt-reevaluation effect is observable the same way
 		// production reports it (a dirty check_eval_cursor row), not a
 		// stand-in a test has to trust blindly.
-		Items:       s.Items,
-		EvalDirty:   rules.NewDirtyMarker(d),
-		AgentPush:   s.Push,
-		Notify:      notifySvc,
-		Maintenance: maintenanceSvc,
-		Calendar:    calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
-		Alerts:      s.Alerts,
-		AlertRoutes: s.AlertRoutes,
-		Oncall:      s.Oncall,
-		Backups:     s.newBackups(),
+		Items:     s.Items,
+		EvalDirty: rules.NewDirtyMarker(d),
+		// The org monitoring settings (backlog 3.57) on the test database.
+		MonitorSettings: monitorsettings.NewService(monitorsettings.NewSQLStore(d)),
+		AgentPush:       s.Push,
+		Notify:          notifySvc,
+		Maintenance:     maintenanceSvc,
+		Calendar:        calendar.NewService(schedulesSvc, jobsSvc, maintenanceSvc, time.Now),
+		Alerts:          s.Alerts,
+		AlertRoutes:     s.AlertRoutes,
+		Oncall:          s.Oncall,
+		Backups:         s.newBackups(),
 		// What an enrollment snippet names; tests that need the worker
 		// endpoint disabled clear it through an option.
 		WorkerEndpoint: api.WorkerEndpoint{Addr: "localhost:8444", ServerName: "pulsix-manager"},

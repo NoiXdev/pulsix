@@ -24,7 +24,7 @@ func (s *SQLStore) CreateHostWith(ctx context.Context, h Host, x HostExtras) (Ho
 		q := s.q.WithTx(tx)
 		row, err := q.CreateHost(ctx, gen.CreateHostParams{
 			ID: h.ID, OrgID: h.OrgID, ZoneID: h.ZoneID, Name: h.Name, Address: h.Address,
-			Managed: h.Managed, Monitored: h.Monitored, Facts: facts,
+			Managed: h.Managed, Monitored: h.Monitored, Facts: facts, Kind: kindParam(h.Kind),
 		})
 		if err != nil {
 			if isUniqueViolation(err) {
@@ -50,9 +50,13 @@ func (s *SQLStore) UpdateHostWith(ctx context.Context, h Host, x HostExtras) (Ho
 	var out Host
 	err := s.db.WithOrg(ctx, h.OrgID, func(tx pgx.Tx) error {
 		q := s.q.WithTx(tx)
+		prevKind, err := lockKindForChange(ctx, q, h)
+		if err != nil {
+			return err
+		}
 		row, err := q.UpdateHost(ctx, gen.UpdateHostParams{
 			ID: h.ID, OrgID: h.OrgID, ZoneID: h.ZoneID, Name: h.Name, Address: h.Address,
-			Managed: h.Managed, Monitored: h.Monitored, Revision: h.Revision,
+			Managed: h.Managed, Monitored: h.Monitored, Kind: kindParam(h.Kind), Revision: h.Revision,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return missingOrStale(ctx, q, h.OrgID, h.ID)
@@ -66,12 +70,35 @@ func (s *SQLStore) UpdateHostWith(ctx context.Context, h Host, x HostExtras) (Ho
 		if out, err = fromHostRow(row); err != nil {
 			return err
 		}
+		if prevKind != "" && out.Kind != prevKind {
+			if err := q.MarkHostKindChanged(ctx, gen.MarkHostKindChangedParams{OrgID: h.OrgID, HostID: h.ID}); err != nil {
+				return fmt.Errorf("mark host dirty after a kind change: %w", err)
+			}
+		}
 		return writeExtras(ctx, q, h.OrgID, h.ID, x)
 	})
 	if err != nil {
 		return Host{}, err
 	}
 	return out, nil
+}
+
+// lockKindForChange returns the host's stored kind, under the row lock the
+// update takes anyway, when h names a kind; "" when it names none (nothing
+// can change) or the host is unknown (the update reports that). A kind
+// change is what UpdateHostWith marks the host dirty for (backlog 3.57).
+func lockKindForChange(ctx context.Context, q *gen.Queries, h Host) (Kind, error) {
+	if h.Kind == "" {
+		return "", nil
+	}
+	prev, err := q.LockHostKind(ctx, gen.LockHostKindParams{ID: h.ID, OrgID: h.OrgID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lock host kind: %w", err)
+	}
+	return Kind(prev), nil
 }
 
 // writeExtras writes x's manual tags and jump host for the host, on q,

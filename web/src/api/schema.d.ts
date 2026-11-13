@@ -2712,6 +2712,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/settings/monitoring": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org settings monitoring */
+        get: operations["get-api-v1-orgs-by-org-settings-monitoring"];
+        /** Put API v1 orgs by org settings monitoring */
+        put: operations["updateOrgMonitoringSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/tags": {
         parameters: {
             query?: never;
@@ -4699,6 +4717,11 @@ export interface components {
                 [key: string]: unknown;
             };
             id: string;
+            /**
+             * @description server: expected to be on; client: may be off (a notebook, a desktop) and is not judged while its agent is offline
+             * @enum {string}
+             */
+            kind: "server" | "client";
             /** Format: date-time */
             last_seen_at?: string;
             managed: boolean;
@@ -4739,6 +4762,11 @@ export interface components {
             address?: string;
             /** @description The host's jump host; omitted leaves it (create: inherit). Needs inventory.write. */
             jump?: components["schemas"]["HostJumpBody"];
+            /**
+             * @description server or client; omitted leaves it (create: server).
+             * @enum {string}
+             */
+            kind?: "server" | "client";
             managed?: boolean;
             monitored?: boolean;
             name: string;
@@ -5909,6 +5937,28 @@ export interface components {
              */
             readonly $schema?: string;
             orgs: components["schemas"]["OrgDTO"][] | null;
+        };
+        OrgMonitoringSettingsDTO: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgMonitoringSettingsDTO.json
+             */
+            readonly $schema?: string;
+            /**
+             * Format: int64
+             * @description Days without contact after which a client host raises a warning; 0 = never
+             */
+            client_absent_days: number;
+        };
+        OrgMonitoringSettingsOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgMonitoringSettingsOutputBody.json
+             */
+            readonly $schema?: string;
+            settings: components["schemas"]["OrgMonitoringSettingsDTO"];
         };
         OrgOutputBody: {
             /**
@@ -15207,6 +15257,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrgJobSettingsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-settings-monitoring": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgMonitoringSettingsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    updateOrgMonitoringSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrgMonitoringSettingsDTO"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgMonitoringSettingsOutputBody"];
                 };
             };
             /** @description Error */

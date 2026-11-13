@@ -189,6 +189,9 @@ func (f *fakeHostStore) UpdateHostWith(_ context.Context, h hosts.Host, x hosts.
 	merged := existing
 	merged.ZoneID, merged.Name, merged.Address = h.ZoneID, h.Name, h.Address
 	merged.Managed, merged.Monitored = h.Managed, h.Monitored
+	if h.Kind != "" {
+		merged.Kind = h.Kind
+	}
 	f.list[h.ID] = merged
 	f.applyExtras(h.ID, x)
 	return merged, nil

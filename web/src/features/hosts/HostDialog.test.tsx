@@ -27,6 +27,7 @@ const HOST: Host = {
   facts: {},
   revision: 7,
   created_at: '2026-01-01T00:00:00Z',
+  kind: 'server',
 };
 const SSH = { ssh: { host_id: 'h1', port: 22, username: '', bastion_mode: 'inherit' } };
 const PREVIEW = { vars: {}, warnings: [], connection: { host_id: 'h1', bastion_source: 'zone', bastions: ['b3'] } };

@@ -107,6 +107,10 @@ type Host struct {
 	// update moves it, so a client holding an old one is told its view is
 	// stale rather than silently overwriting whoever moved it.
 	Revision int64
+	// Kind is server or client (backlog 3.57). On a write the empty kind
+	// means "not given": the store creates a server, or keeps the stored
+	// kind on an update.
+	Kind Kind
 }
 
 // HostInput is the caller-supplied shape for creating or fully replacing a
@@ -126,6 +130,9 @@ type HostInput struct {
 	Monitored bool
 	Jump      *Jump  // nil = leave unchanged (create: inherit)
 	Tags      *[]Tag // nil = leave unchanged (create: none)
+	// Kind is server or client; empty leaves it unchanged (create: server),
+	// so a caller that predates host kinds cannot reset a client.
+	Kind Kind
 }
 
 // ListFilter narrows ListHosts. A zero ListFilter matches every host in the
@@ -166,8 +173,10 @@ type Store interface {
 	// see EncodeCursor/DecodeCursor.
 	ListHosts(ctx context.Context, orgID uuid.UUID, f ListFilter, cursor string, limit int) ([]Host, string, error)
 	// UpdateHostWith persists every mutable field of h (ZoneID, Name,
-	// Address, Managed, Monitored) while h.Revision is still current, and
-	// writes x in the same transaction, returning the row as stored.
+	// Address, Managed, Monitored, and Kind unless it is empty) while
+	// h.Revision is still current, and writes x in the same transaction,
+	// returning the row as stored. A kind change marks the host due for
+	// evaluation in the same transaction (backlog 3.57).
 	// ErrNotFound if no host matches (h.ID, h.OrgID) or x names a jump host
 	// that does not exist in the organization, ErrRevisionMismatch if the
 	// revision moved; in every failure nothing is written.
@@ -407,6 +416,13 @@ func (s *Service) CreateHost(ctx context.Context, orgID uuid.UUID, in HostInput)
 	if !hostNamePattern.MatchString(in.Name) {
 		return Host{}, fmt.Errorf("%w: host name must match %s", ErrInvalidInput, hostNamePattern.String())
 	}
+	if err := validateKind(in.Kind); err != nil {
+		return Host{}, err
+	}
+	kind := in.Kind
+	if kind == "" {
+		kind = KindServer
+	}
 	extras, err := extrasFrom(in)
 	if err != nil {
 		return Host{}, err
@@ -421,7 +437,7 @@ func (s *Service) CreateHost(ctx context.Context, orgID uuid.UUID, in HostInput)
 	}
 	h := Host{
 		ID: uuid.Must(uuid.NewV7()), OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address,
-		Managed: in.Managed, Monitored: in.Monitored, Facts: map[string]any{}, CreatedAt: s.now(),
+		Managed: in.Managed, Monitored: in.Monitored, Facts: map[string]any{}, CreatedAt: s.now(), Kind: kind,
 	}
 	return s.store.CreateHostWith(ctx, h, extras)
 }
@@ -444,6 +460,9 @@ func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, rev int64
 	if !hostNamePattern.MatchString(in.Name) {
 		return Host{}, fmt.Errorf("%w: host name must match %s", ErrInvalidInput, hostNamePattern.String())
 	}
+	if err := validateKind(in.Kind); err != nil {
+		return Host{}, err
+	}
 	extras, err := extrasFrom(in)
 	if err != nil {
 		return Host{}, err
@@ -451,7 +470,7 @@ func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, rev int64
 	if _, err := s.store.GetZone(ctx, orgID, in.ZoneID); err != nil {
 		return Host{}, err
 	}
-	h := Host{ID: id, OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address, Managed: in.Managed, Monitored: in.Monitored, Revision: rev}
+	h := Host{ID: id, OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address, Managed: in.Managed, Monitored: in.Monitored, Revision: rev, Kind: in.Kind}
 	return s.store.UpdateHostWith(ctx, h, extras)
 }
 
