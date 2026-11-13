@@ -75,11 +75,14 @@ an operator can count on. The operator's steps are in
   nullable column `host_agents.connected_since` (catalog only, nothing
   backfilled, nothing rewritten); an existing row reads as unknown until that
   agent's first heartbeat after the upgrade sets it. A heartbeat or touch that
-  follows a gap of more than 30 minutes resets it, and so does re-enrolling the
-  agent. An older release ignores the column, but an older manager that keeps
-  heartbeating alongside the new one does not reset it on a reconnect it
-  handles. Stop every manager instance before the new version starts, as for
-  00087: older releases read `host_agents` with all columns.
+  follows more than 24 hours without contact resets it, and so does re-enrolling
+  an agent that was silent that long; a certificate renewal and shorter gaps (a
+  nightly power-off, a manager restart, a flaky link) keep it. An older release
+  never reads or writes the column (it lists the columns it knows). Stop every
+  manager instance before the new version starts anyway: an older manager that
+  still handles an agent's heartbeats neither sets the start nor resets it after
+  a long silence, so that agent keeps a stale start (or none) and can count for
+  the item expiry too early.
 - **Migration 00089 adds the agent's configuration check (3.13c).** It adds
   three nullable columns to `host_agents`, `config_version`, `config_expected`
   and `config_checked_at` (catalog only, nothing backfilled). A row reads as
@@ -87,8 +90,10 @@ an operator can count on. The operator's steps are in
   compared, so the GUI shows no configuration badge until then. Re-enrolling an
   agent or renewing its certificate resets the three columns. The manager writes
   the check only when a version changes or the stored check is 10 minutes old.
-  Stop every manager instance before the new version starts, for the same
-  reason as 00088.
+  An older release ignores the columns. There is no reason beyond the usual
+  rule: an older manager that still handles an agent neither records the
+  comparison nor resets it on re-enrollment, so the badge can be stale or absent
+  until the new manager has handled that agent.
 
 ## A database newer than the binary is refused
 
@@ -664,11 +669,15 @@ repositories as before. An older worker never asks.
   agent counts as a host's sign of life for the automatic item expiry
   (`PULSIX_ITEM_EXPIRY`) only once it has been connected for `checks.MaxInterval`
   plus a 30-minute margin, about 24.5 h. So the automatic expiry of agent items
-  pauses for about 24.5 h after the upgrade, and again after every reconnect that
-  follows more than 30 minutes of silence (a manager or agent restart that takes
-  longer counts too). Items whose own check still reports, and items of hosts
-  without an agent, are unaffected. Items that really vanished are forgotten that
-  much later.
+  pauses for about 24.5 h after the upgrade, after a re-enrollment that follows
+  more than 24 h without contact, and after any reconnect that follows more than
+  24 h of silence. A certificate renewal and shorter gaps (a nightly power-off, a
+  manager restart, a flaky link) do not restart it. Only items whose whole check
+  stopped reporting on a host with an agent are affected; items of hosts without
+  an agent and items with a still-reporting sibling are forgotten as usual. Items
+  that really vanished are forgotten that much later. A host that is silent for
+  more than 24 h at least once every 24.5 h never lets its agent count, so such
+  items are not forgotten automatically there (**Forget** still works).
 - **3.55, items taken off a check's list leave the evaluation:** when a mount,
   interface, unit, database, sensor, device or array is removed from a check's
   item list, the evaluation no longer judges its last reported values, as for a
@@ -680,7 +689,9 @@ repositories as before. An older worker never asks.
   for such items (backlog 3.56).
 - **3.10c, new count metrics:** the `postgres` check reports
   `pg.databases_unreported` and the `docker` check `docker.containers_unreported`
-  on every round, including failed ones (item with an empty name). They count the
+  on every collected round, including failed connections (item with an empty name);
+  a round whose secret cannot be resolved, or a plugin panic, reports only `pg.up`,
+  and the count keeps its last value. They count the
   databases or containers the plugin left out; a rule can alert on them. The agent
   also logs a plugin's advisory error, once per change and again after an hour.
   Older agents do not report the metrics.

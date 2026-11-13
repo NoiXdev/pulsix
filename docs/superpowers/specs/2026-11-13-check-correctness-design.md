@@ -54,13 +54,21 @@ rediscovered a little later.
   `last_seen`. The gap is 30 minutes: three times the longest heartbeat
   interval an agent accepts (10 min), so a slow but steady agent never
   resets it; a named Go constant passed as a query argument.
+  **(amended after review)** The gap is 24 hours instead: with 30 minutes a
+  host that is silent every day (powered off at night) would never count, so a
+  quiet check key's items would never expire, and the bug needs an outage longer
+  than `PULSIX_ITEM_EXPIRY` (minimum 48 h), which a 24 h gap still resets.
+  `UpsertHostAgent` keeps `connected_since` when the agent was last seen within
+  the gap, so a certificate renewal keeps the start; a re-enrollment after a
+  longer gap sets it to NULL, and the touch/heartbeat CASE no longer resets on
+  the NULL `last_seen` a renewal leaves.
 - The agent counts as a sign of life only when
-  `last_seen >= connected_since + checks.MaxInterval`; otherwise the
+  `last_seen >= connected_since + checks.MaxInterval` **(amended after review: plus a 30-minute margin, `checks.agentCountsAfter`, because the first collect of a 24 h check lands one full interval after its ticker starts)**; otherwise the
   agent contributes nothing (the item's own check key's newest reading
   still counts). Same rule in SQL (`ListExpiredItems`, the forget
   re-check query) and Go (`ItemNewest`, `itemExpired`).
 - Upgrade: rows have NULL `connected_since` until the first heartbeat
-  after the upgrade, so automatic expiry of agent items pauses for 24 h
+  after the upgrade, so automatic expiry of agent items pauses for 24 h **(amended after review: about 24.5 h)**
   after an upgrade. `docs/upgrades.md` says so.
 
 ## 3. Tuples nobody asks for (3.55)
@@ -86,7 +94,8 @@ rediscovered a little later.
    that remembers, per item, the metrics it reported with a value. In a
    round where the item reports at least one value, every remembered
    metric missing from it gets an error observation "<metric> is no
-   longer reported". The helper forgets a metric once it has been missing
+   longer reported". A metric that arrives as an error observation counts as
+   present **(amended after review)**. The helper forgets a metric once it has been missing
    for `MaxInterval` (24 h): from then on the tuple ages like any other,
    and the host page's Forget removes it for good. An item that reports
    nothing (or only errors) this round is left alone. The helper keeps no
