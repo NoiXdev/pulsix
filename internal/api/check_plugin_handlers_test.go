@@ -77,8 +77,8 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Plugins) != 19 {
-		t.Fatalf("%d plugins, want 19", len(body.Plugins))
+	if len(body.Plugins) != 20 {
+		t.Fatalf("%d plugins, want 20", len(body.Plugins))
 	}
 	for i, name := range checkplugins.Names() {
 		if body.Plugins[i].Name != name {
@@ -86,9 +86,9 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 		}
 	}
 
-	probe := body.Plugins[16]
+	probe := body.Plugins[17]
 	if probe.Name != "http" || probe.Runs != "server" {
-		t.Fatalf("plugins[16] = %s/%s, want http/server", probe.Name, probe.Runs)
+		t.Fatalf("plugins[17] = %s/%s, want http/server", probe.Name, probe.Runs)
 	}
 	url := probe.Params[0]
 	if url.Name != "url" || url.Type != "string" || !url.Required || url.MaxBytes != 500 ||

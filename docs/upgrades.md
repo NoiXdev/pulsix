@@ -162,6 +162,13 @@ sends no login, and a check that names one needs the host's `agent.yaml`
 secret (backlog 3.5) with the fields `basic_auth_user` and
 `basic_auth_password`. Nothing is seeded and there is no schema change.
 
+The `apache` plugin (backlog 3.11) follows the same rule: an older agent
+skips an `apache` check, warns on every configuration push and shows no
+readings until it is updated, and the manager does not gate on it. Its
+optional `secret` is the same basic-authentication login (`basic_auth_user`,
+`basic_auth_password`), and the agent adds the query key `auto` to the status
+URL when it is missing. Nothing is seeded and there is no schema change.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.

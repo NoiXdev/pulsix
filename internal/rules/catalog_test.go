@@ -126,7 +126,7 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"redis.replication_lag_seconds": {CheckKey: "redis", Kind: rules.MetricNumeric},
 		"redis.evicted_keys_per_s":      {CheckKey: "redis", Kind: rules.MetricNumeric},
 
-		// Backlog 3.11: the web server plugins (nginx; apache, caddy and phpfpm follow).
+		// Backlog 3.11: the web server plugins (nginx and apache; caddy and phpfpm follow).
 		"nginx.up":                         {CheckKey: "nginx", Kind: rules.MetricNumeric},
 		"nginx.connections_active":         {CheckKey: "nginx", Kind: rules.MetricNumeric},
 		"nginx.connections_reading":        {CheckKey: "nginx", Kind: rules.MetricNumeric},
@@ -135,6 +135,12 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"nginx.requests_per_s":             {CheckKey: "nginx", Kind: rules.MetricNumeric},
 		"nginx.connections_accepted_per_s": {CheckKey: "nginx", Kind: rules.MetricNumeric},
 		"nginx.connections_dropped_per_s":  {CheckKey: "nginx", Kind: rules.MetricNumeric},
+		"apache.up":                        {CheckKey: "apache", Kind: rules.MetricNumeric},
+		"apache.workers_busy":              {CheckKey: "apache", Kind: rules.MetricNumeric},
+		"apache.workers_idle":              {CheckKey: "apache", Kind: rules.MetricNumeric},
+		"apache.workers_busy_pct":          {CheckKey: "apache", Kind: rules.MetricNumeric},
+		"apache.requests_per_s":            {CheckKey: "apache", Kind: rules.MetricNumeric},
+		"apache.bytes_per_s":               {CheckKey: "apache", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -183,6 +189,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"mysql":   "mysql",
 		"redis":   "redis",
 		"nginx":   "nginx",
+		"apache":  "apache",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")

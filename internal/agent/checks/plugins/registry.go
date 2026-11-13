@@ -1,6 +1,6 @@
 // Package plugins wires the agent's check plugins together. Each plugin
 // lives in its own package below this one (cpu, memory, disk, network,
-// service, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx) and imports internal/agent/checks for the
+// service, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache) and imports internal/agent/checks for the
 // Plugin interface and the shared observation helpers; the registry lives
 // here rather than in checks because checks importing the plugins would
 // close an import cycle.
@@ -43,6 +43,7 @@ package plugins
 
 import (
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/apache"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins/cpu"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins/disk"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins/docker"
@@ -83,5 +84,6 @@ func Registry() map[string]checks.Plugin {
 		"mysql":       mysql.New(),
 		"redis":       redis.New(),
 		"nginx":       nginx.New(),
+		"apache":      apache.New(),
 	}
 }

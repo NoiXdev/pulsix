@@ -97,6 +97,7 @@ export const deChecks: Messages['checks'] = {
       mysql: 'MySQL / MariaDB',
       redis: 'Redis / Valkey',
       nginx: 'nginx',
+      apache: 'Apache httpd',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -194,6 +195,15 @@ export const deChecks: Messages['checks'] = {
     },
     nginx: {
       url: { label: 'URL der Status-Seite', hint: 'Die stub_status-Seite von nginx, die der Agent auf jedem Host liest. Ohne Wert liest der Check http://127.0.0.1/nginx_status.' },
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password). Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',
+        placeholder: 'status-login',
+      },
+      verify_tls: { label: 'TLS-Zertifikat prüfen' },
+    },
+    apache: {
+      url: { label: 'URL der Status-Seite', hint: 'Die mod_status-Seite des Apache httpd, die der Agent auf jedem Host liest; fehlt der Query-Schlüssel auto, hängt der Agent ?auto an. Ohne Wert liest der Check http://127.0.0.1/server-status?auto.' },
       secret: {
         label: 'Secret (optional)',
         hint: 'Name eines Secrets in der agent.yaml jedes Hosts: es enthält den HTTP-Basic-Auth-Login (basic_auth_user, basic_auth_password). Der Wert verlässt den Host nie. Ohne Secret wird kein Login gesendet.',

@@ -542,6 +542,58 @@
       ]
     },
     {
+      "name": "apache",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "url",
+          "type": "string",
+          "default": "http://127.0.0.1/server-status?auto",
+          "max_bytes": 500,
+          "format": "statusURL"
+        },
+        {
+          "name": "secret",
+          "type": "string",
+          "example": "db-main",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        },
+        {
+          "name": "verify_tls",
+          "type": "bool",
+          "default": true
+        }
+      ],
+      "metrics": [
+        {
+          "name": "apache.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "apache.workers_busy",
+          "kind": "numeric"
+        },
+        {
+          "name": "apache.workers_idle",
+          "kind": "numeric"
+        },
+        {
+          "name": "apache.workers_busy_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "apache.requests_per_s",
+          "kind": "numeric"
+        },
+        {
+          "name": "apache.bytes_per_s",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

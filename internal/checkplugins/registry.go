@@ -30,6 +30,7 @@ func registry() []plugin {
 		{"mysql", mysqlPlugin},
 		{"redis", redisPlugin},
 		{"nginx", nginxPlugin},
+		{"apache", apachePlugin},
 		{"icmp", icmpPlugin},
 		{"tcp", tcpPlugin},
 		{"http", httpPlugin},

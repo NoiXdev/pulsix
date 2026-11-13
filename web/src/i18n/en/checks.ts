@@ -113,6 +113,7 @@ export const enChecks = {
       mysql: 'MySQL / MariaDB',
       redis: 'Redis / Valkey',
       nginx: 'nginx',
+      apache: 'Apache httpd',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -219,6 +220,15 @@ export const enChecks = {
     },
     nginx: {
       url: { label: 'Status page URL', hint: 'The stub_status page of nginx, read by the agent on each host. Without a value the check reads http://127.0.0.1/nginx_status.' },
+      secret: {
+        label: 'Secret (optional)',
+        hint: 'Name of a secret in agent.yaml on each host: it holds the HTTP basic-authentication login (basic_auth_user, basic_auth_password). The value never leaves the host. Without one, no login is sent.',
+        placeholder: 'status-login',
+      },
+      verify_tls: { label: 'Verify the TLS certificate' },
+    },
+    apache: {
+      url: { label: 'Status page URL', hint: 'The mod_status page of Apache httpd, read by the agent on each host; the agent adds ?auto when the URL has no such query key. Without a value the check reads http://127.0.0.1/server-status?auto.' },
       secret: {
         label: 'Secret (optional)',
         hint: 'Name of a secret in agent.yaml on each host: it holds the HTTP basic-authentication login (basic_auth_user, basic_auth_password). The value never leaves the host. Without one, no login is sent.',
