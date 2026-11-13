@@ -62,6 +62,15 @@ an operator can count on. The operator's steps are in
   version still running while the new one migrates stores a repository saved
   through it as sent again; stop every manager instance before the new
   version starts.
+- **Migration 00087 adds the check key of an item rule (3.13e).** It adds the
+  nullable column `rules.item_check_key` and a CHECK that it is set only on
+  item-scope rules (`item_check_key IS NULL OR scope = 'item'`); nothing is
+  rewritten, and an older release ignores the column. Stop every manager
+  instance before the new version starts: an older manager that keeps
+  evaluating alongside judges keyed item rules against the plugin's key and
+  gives checks under other keys no org, group or host rule, so states and
+  alerts can flap while both run, and an older manager that moves a keyed
+  item rule to another scope hits the CHECK and answers 500.
 
 ## A database newer than the binary is refused
 
@@ -216,6 +225,15 @@ repositories as before. An older worker never asks.
 
 ## Behaviour changes to check after an upgrade
 
+- **3.13e, rules for every check key:** every existing org, group and host
+  rule, the seeded ones included, now judges all checks of its metric's plugin
+  whatever their key, not only the check keyed with the plugin name. Checks
+  under other keys (a copied disk check, a second http or nginx check) start
+  to be judged and can raise alerts they never raised before. Item decisions
+  (ignore, watch) now accept any well-formed check key, so such an item can be
+  ignored per item. The API's rule objects gain `item_check_key` (item scope
+  only; empty or absent means the plugin key); a rule update is a full replace,
+  so a client that omits it resets the rule to the plugin key.
 - **3.11c, non-finite and out-of-range values:** the manager's ingest now
   counts an observation whose value is ±Inf, NaN or beyond ±1e100 as malformed
   (`rejected_malformed` in the stream's log line) and drops it alone; the rest
