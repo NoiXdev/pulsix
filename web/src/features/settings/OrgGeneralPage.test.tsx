@@ -140,7 +140,10 @@ describe('OrgGeneralPage', () => {
       await user.type(input, '0');
       await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
 
-      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 0, retention_days: null }]));
+      // The retention select was not touched, so retention_days is left
+      // out and the server keeps the stored choice.
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 0 }]));
+      expect(puts[0]).not.toHaveProperty('retention_days');
       expect(await screen.findByText('Monitoring settings saved')).toBeInTheDocument();
     });
 
@@ -173,7 +176,8 @@ describe('OrgGeneralPage', () => {
       await user.clear(input);
       await user.type(input, '365');
       await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
-      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 365, retention_days: null }]));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 365 }]));
+      expect(puts[0]).not.toHaveProperty('retention_days');
     });
 
     it('is read-only below admin', async () => {
@@ -200,9 +204,11 @@ describe('OrgGeneralPage', () => {
         'GET /api/v1/orgs/acme/settings/monitoring': () => ({ settings: current }),
         'PUT /api/v1/orgs/acme/settings/monitoring': (req: MockRequest) => {
           puts.push(req.body);
-          const b = req.body as { client_absent_days: number; retention_days: number | null };
-          const eff = Math.min(b.retention_days ?? current.retention_max_days, current.retention_max_days);
-          current = { ...current, client_absent_days: b.client_absent_days, retention_days: b.retention_days, retention_effective_days: eff };
+          const b = req.body as { client_absent_days: number; retention_days?: number | null };
+          // The server keeps the stored choice when retention_days is left out.
+          const choice = 'retention_days' in b ? (b.retention_days ?? null) : current.retention_days;
+          const eff = Math.min(choice ?? current.retention_max_days, current.retention_max_days);
+          current = { ...current, client_absent_days: b.client_absent_days, retention_days: choice, retention_effective_days: eff };
           return { settings: current };
         },
       };
@@ -228,6 +234,26 @@ describe('OrgGeneralPage', () => {
       expect(options[2]).not.toHaveAttribute('aria-disabled', 'true');
       expect(options[3]).toHaveAttribute('aria-disabled', 'true');
       expect(options[3]).toHaveTextContent('The instance keeps at most 90 days');
+    });
+
+    it('leaves the stored choice alone when only the absent days change', async () => {
+      // Another admin may have changed the retention since this page was
+      // loaded; a save that did not touch the select must not send it back.
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', { retention_days: 30, retention_max_days: 365, retention_effective_days: 30 }, puts));
+      renderPage();
+
+      const input = await screen.findByLabelText('Warn after N days without contact (0 = off)');
+      await waitFor(() => expect(input).toHaveValue(14));
+      await user.clear(input);
+      await user.type(input, '7');
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+
+      await waitFor(() => expect(puts).toHaveLength(1));
+      expect(puts[0]).toEqual({ client_absent_days: 7 });
+      expect(puts[0]).not.toHaveProperty('retention_days');
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     });
 
     it('saves a choice together with the absent days and sends null for the default', async () => {

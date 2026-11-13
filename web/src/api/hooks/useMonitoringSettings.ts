@@ -17,19 +17,24 @@ export function useMonitoringSettings(org: string, enabled = true) {
   });
 }
 
-/** useUpdateMonitoringSettings replaces them (PUT, org.settings.write —
- * admins). The server takes 0..365 and answers 422 otherwise;
- * retention_days is always sent (null = the instance default). Resolves once
- * the fresh value is in the cache, so a form that drops its draft on
- * success never shows the old one again. */
+/** useUpdateMonitoringSettings writes them (PUT, org.settings.write —
+ * admins). The server takes client_absent_days 0..365 and answers 422
+ * otherwise. retentionDays is sent only when it is not undefined: left out,
+ * the server keeps the stored choice (so a save that did not touch the
+ * retention never overwrites another admin's newer choice); null resets it
+ * to the instance default. Resolves once the fresh value is in the cache,
+ * so a form that drops its draft on success never shows the old one again. */
 export function useUpdateMonitoringSettings(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { clientAbsentDays: number; retentionDays: RetentionChoice }) =>
+    mutationFn: (input: { clientAbsentDays: number; retentionDays?: RetentionChoice }) =>
       unwrap(
         api.PUT('/api/v1/orgs/{org}/settings/monitoring', {
           params: { path: { org } },
-          body: { client_absent_days: input.clientAbsentDays, retention_days: input.retentionDays },
+          body:
+            input.retentionDays === undefined
+              ? { client_absent_days: input.clientAbsentDays }
+              : { client_absent_days: input.clientAbsentDays, retention_days: input.retentionDays },
         }),
       ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['monitoring-settings', org] }),

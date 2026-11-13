@@ -80,10 +80,14 @@ export function OrgMonitoringCard({ org, canWrite }: { org: string; canWrite: bo
             return;
           }
           setInvalid(false);
-          const retentionDays = choiceOf(retentionValue);
+          // The retention is sent only when the select was changed: left
+          // out, the server keeps the stored choice, which another admin may
+          // have changed since this page loaded.
+          const retentionDays = retentionDraft === null ? undefined : choiceOf(retentionDraft);
           // Lowering what is kept deletes data, so it is asked first.
           const current = settings.data?.settings.retention_effective_days;
-          const next = maxDays === undefined ? undefined : Math.min(retentionDays ?? maxDays, maxDays);
+          const next =
+            maxDays === undefined || retentionDays === undefined ? undefined : Math.min(retentionDays ?? maxDays, maxDays);
           if (current !== undefined && next !== undefined && next < current) {
             const ok = await confirm({ title: m.retentionLowerTitle, message: m.retentionLowerWarning(next), destructive: true });
             if (!ok) return;
