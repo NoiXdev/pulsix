@@ -29,7 +29,10 @@ ReadWritePaths=/etc/pulsix
 ProtectHome=true
 PrivateTmp=true
 ProtectProc=invisible
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# AF_NETLINK: Go reads the network interfaces (the facts the agent reports,
+# the network check) over a netlink route socket, which the filter would
+# otherwise refuse.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictSUIDSGID=true
 
 [Install]

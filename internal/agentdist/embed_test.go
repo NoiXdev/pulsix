@@ -141,6 +141,9 @@ func TestUnitContent(t *testing.T) {
 		"ExecStart=/usr/local/bin/pulsix-agent",
 		"Restart=on-failure",
 		"WantedBy=multi-user.target",
+		// Go reads the network interfaces (facts, the network check) over
+		// a netlink route socket; without AF_NETLINK the filter refuses it.
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK\n",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("the systemd unit must contain %q:\n%s", want, unit)

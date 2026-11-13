@@ -14,7 +14,8 @@
 # retrying its enrollment, which is enough to show that it runs as a
 # service. The sequence:
 #
-#   1. a fresh install;
+#   1. a fresh install, and a check that the unit's address-family filter
+#      lets a process read the network interfaces over netlink;
 #   2. an upgrade over the running agent, which must restart it: exactly
 #      one new start in the journal (backlog 3.49);
 #   3. an uninstall with --keep-data, which removes the unit and the
@@ -145,6 +146,26 @@ assert_service_removed() {
 	[ ! -e "$BIN" ] || fail "$BIN is still there after the uninstall"
 }
 
+# assert_netlink_allowed: the unit's RestrictAddressFamilies, as systemd
+# loaded it, lets a process read the network interfaces. Go reads them
+# over a netlink route socket, as `ip` does, so `ip -br addr` in a
+# transient unit with the same filter stands in for the agent's facts and
+# its network check. The same command with AF_NETLINK left out must fail,
+# or the check would not tell the two apart.
+assert_netlink_allowed() {
+	families="$(systemctl show -p RestrictAddressFamilies --value "$SERVICE")"
+	case " $families " in
+	*" AF_NETLINK "*) ;;
+	*) fail "the unit's RestrictAddressFamilies is '$families', which leaves out AF_NETLINK" ;;
+	esac
+	sudo systemd-run --quiet --wait --pipe --collect -p "RestrictAddressFamilies=$families" ip -br addr ||
+		fail "'ip -br addr' failed under RestrictAddressFamilies=$families"
+	if sudo systemd-run --quiet --wait --pipe --collect -p "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6" ip -br addr > /dev/null 2>&1; then
+		fail "'ip -br addr' also ran without AF_NETLINK, so the netlink check proves nothing"
+	fi
+	echo "install-smoke: netlink OK (RestrictAddressFamilies=$families)"
+}
+
 # fetch_installer: the script is downloaded first rather than piped, so a
 # failed download fails here instead of feeding sh an empty script.
 fetch_installer() {
@@ -187,6 +208,7 @@ base_starts="$(starts_logged)"
 echo "install-smoke: fresh install"
 install_agent
 assert_installed $((base_starts + 1))
+assert_netlink_allowed
 
 # The re-run must restart the running agent on the new binary (backlog
 # 3.49): enable --now alone left the old process running.
