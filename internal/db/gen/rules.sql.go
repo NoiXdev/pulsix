@@ -423,6 +423,54 @@ func (q *Queries) GetHostFacts(ctx context.Context, arg GetHostFactsParams) ([]b
 	return facts, err
 }
 
+const getHostPresence = `-- name: GetHostPresence :one
+SELECT h.kind,
+  (a.host_id IS NOT NULL)::boolean AS has_agent,
+  COALESCE(a.last_seen > now() - make_interval(secs => $1::double precision), false)::boolean AS agent_online,
+  COALESCE(a.last_seen, a.created_at, 'epoch')::timestamptz AS agent_last_contact,
+  COALESCE(a.connected_since, 'epoch')::timestamptz AS agent_connected
+FROM hosts h
+LEFT JOIN host_agents a ON a.org_id = h.org_id AND a.host_id = h.id
+WHERE h.org_id = $2 AND h.id = $3
+`
+
+type GetHostPresenceParams struct {
+	OnlineWindowSeconds float64   `json:"online_window_seconds"`
+	OrgID               uuid.UUID `json:"org_id"`
+	HostID              uuid.UUID `json:"host_id"`
+}
+
+type GetHostPresenceRow struct {
+	Kind             string    `json:"kind"`
+	HasAgent         bool      `json:"has_agent"`
+	AgentOnline      bool      `json:"agent_online"`
+	AgentLastContact time.Time `json:"agent_last_contact"`
+	AgentConnected   time.Time `json:"agent_connected"`
+}
+
+// Backlog 3.57: the host's kind and its agent's presence, once per host per
+// evaluation (rules.HostPresence). agent_online is the agents list's own
+// verdict (agents.isOnline: last_seen within agents.StaleAfter, which the
+// caller passes as online_window_seconds), taken against this
+// transaction's now() — the clock that wrote last_seen. A NULL last_seen
+// is not online. agent_last_contact is last_seen, or the registration
+// (created_at, which UpsertHostAgent sets) when the agent has not touched
+// since. 'epoch' stands in for "no agent" and "connection start unknown"
+// so the generated scan never meets a NULL; has_agent says whether the
+// agent fields are real, and the Go side reads the epoch as unknown.
+func (q *Queries) GetHostPresence(ctx context.Context, arg GetHostPresenceParams) (GetHostPresenceRow, error) {
+	row := q.db.QueryRow(ctx, getHostPresence, arg.OnlineWindowSeconds, arg.OrgID, arg.HostID)
+	var i GetHostPresenceRow
+	err := row.Scan(
+		&i.Kind,
+		&i.HasAgent,
+		&i.AgentOnline,
+		&i.AgentLastContact,
+		&i.AgentConnected,
+	)
+	return i, err
+}
+
 const getRule = `-- name: GetRule :one
 SELECT id, org_id, name, enabled, origin, scope, group_id, host_id, item, check_key, metric, severity, mode, ast, clear_ast, source, for_duration, created_at, updated_at, item_check_key FROM check_rules WHERE org_id = $1 AND id = $2
 `

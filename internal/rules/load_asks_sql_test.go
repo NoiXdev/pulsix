@@ -39,7 +39,7 @@ func TestLoadLeavesItemsNobodyAsksForUnmeasured(t *testing.T) {
 			"disk": func(item string) bool { return item == "/" },
 		},
 	}
-	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
 		t.Fatalf("Load: %v", err)

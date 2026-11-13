@@ -122,6 +122,13 @@ type Snapshot struct {
 	// and names it in Result.Dropped when a previous state exists to
 	// delete.
 	Ignored map[ItemKey]bool
+	// Presence is the host's kind and its agent's presence (backlog 3.57;
+	// see HostPresence). A client whose agent is not online is frozen —
+	// Evaluate judges nothing and says so in Result.Frozen — and an online
+	// client's staleness is measured from no earlier than its agent's
+	// connection start. The zero value is a server without an agent, which
+	// is judged exactly as before.
+	Presence HostPresence
 }
 
 // Result is what one evaluation concluded: the new state of every tuple in
@@ -174,13 +181,30 @@ type Result struct {
 	// close on the second pass), and a once-only report would need state
 	// this pure function deliberately does not keep.
 	Unmeasured []Tuple
+	// Frozen reports that the host is a client whose agent is not online
+	// (backlog 3.57): nothing was judged. States, Changes, Dropped and
+	// Unmeasured are empty, Host is the previous roll-up carried as it is
+	// (zero when there is none), and the only thing the store writes is
+	// the cursor's advance — Apply leaves every state row and the roll-up
+	// exactly as they are. The alert sink must neither open, close nor
+	// re-date anything on a tuple's behalf; Absent is the one host-level
+	// decision it gets.
+	Frozen bool
+	// Absent reports, on a frozen result only, that the agent's last
+	// contact (AgentLastSeen) is at least the organization's client absent
+	// threshold ago — the input of the absent warning. Never set when the
+	// warning is off.
+	Absent bool
+	// AgentLastSeen is the agent's last contact (HostPresence.AgentLastSeen)
+	// on a frozen result, and zero otherwise.
+	AgentLastSeen time.Time
 }
 
 // WindowRequests is what the store must fetch before Evaluate can run: one
 // request per (item, window) that a winning rule's trigger or clear
 // condition names, deduplicated, in the order they are first needed.
 //
-// It reads only Tuples, Effective and Ignored, so the ticker calls it on a
+// It reads only Tuples, Effective, Ignored and Presence, so the ticker calls it on a
 // Snapshot whose Windows field is still nil and fills that field from the
 // result. Only rules judging a tuple Evaluate will actually judge
 // contribute — one the host reports, whose check still has a resolved
@@ -190,6 +214,11 @@ type Result struct {
 // stop paying for it must not keep paying for its window fetch forever on a
 // verdict nobody reads.
 func WindowRequests(s Snapshot) []WindowRequest {
+	// A frozen client judges nothing (Evaluate's first branch), so none of
+	// its windows would ever be read.
+	if s.Presence.frozen() {
+		return nil
+	}
 	reported := make(map[Tuple]bool, len(s.Tuples))
 	for _, ts := range s.Tuples {
 		if measured(ts) && !s.Ignored[itemKeyOf(ts.Tuple)] {
@@ -227,6 +256,11 @@ func WindowRequests(s Snapshot) []WindowRequest {
 // decision, per tuple" in that exact order — the order is the design, so
 // each step names the reason it sits where it does.
 func Evaluate(s Snapshot) Result {
+	// A client whose agent is off is expected to be silent: nothing about
+	// it is judged until the agent is back (backlog 3.57, HostPresence).
+	if s.Presence.frozen() {
+		return evaluateFrozen(s)
+	}
 	inputs := buildInputs(s)
 	byTuple := rulesPerTuple(s.Effective)
 
@@ -355,7 +389,7 @@ func Evaluate(s Snapshot) Result {
 		// A staleness deadline already behind us is not pending — the tuple
 		// is unknown already and rescheduling into the past would spin the
 		// ticker on this host every time it looked at it.
-		if deadline := staleAt(ts); deadline.After(s.Now) {
+		if deadline := staleAt(ts, s.Presence); deadline.After(s.Now) {
 			pending = append(pending, deadline)
 		}
 	}
@@ -386,7 +420,7 @@ func decide(s Snapshot, ts TupleSnapshot, in Input, bySeverity map[Severity]Rule
 	// about data that is not there, so this outranks every threshold, no
 	// clear condition holds a state against it, and a ripening candidate is
 	// discarded rather than left to ripen in the dark (review focus 3).
-	if ts.Err != "" || s.Now.After(staleAt(ts)) {
+	if ts.Err != "" || s.Now.After(staleAt(ts, s.Presence)) {
 		next.State = StateUnknown
 		return next, nil
 	}
@@ -560,8 +594,18 @@ func measured(ts TupleSnapshot) bool { return ts.Interval > 0 }
 // staleAt is the moment ts stops being evidence of anything: three of its
 // check's intervals after it was measured. Only meaningful for a tuple
 // measured reports true for.
-func staleAt(ts TupleSnapshot) time.Time {
-	return ts.At.Add(stalenessFactor * ts.Interval)
+//
+// For an online client the clock starts no earlier than its agent's
+// connection start (HostPresence.stalenessAnchor, backlog 3.57): a 24-hour
+// check that has not run since the notebook woke up is not unknown the
+// moment the agent reconnects. Every other host has no anchor, and the
+// reading alone decides — today's rule exactly.
+func staleAt(ts TupleSnapshot, p HostPresence) time.Time {
+	from := ts.At
+	if anchor := p.stalenessAnchor(); anchor.After(from) {
+		from = anchor
+	}
+	return from.Add(stalenessFactor * ts.Interval)
 }
 
 // nextDue is step 5: the earliest moment this host has a reason to be

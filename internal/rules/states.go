@@ -129,6 +129,22 @@ type AlertInput struct {
 	// cannot see, because the row it looks for is still there (v0.4a
 	// final review, Critical).
 	Unmeasured []Tuple
+	// Frozen is Result.Frozen (backlog 3.57): the host is a client whose
+	// agent is not online, and this evaluation judged nothing — Changes,
+	// States and Unmeasured are empty and Host is the previous roll-up
+	// carried as it is. No tuple alert may open, close or move on a
+	// frozen input, and an open unknown host alert is not "recovered".
+	Frozen bool
+	// Absent is Result.Absent: on a frozen input, the agent's last contact
+	// is at least AbsentAfter ago — the absent warning is due.
+	Absent bool
+	// AgentLastSeen is Result.AgentLastSeen: the agent's last contact on a
+	// frozen input (the "not seen since …" moment), zero otherwise.
+	AgentLastSeen time.Time
+	// AbsentAfter is the organization's client absent threshold the
+	// verdict was taken against (HostPresence.AbsentAfter; zero = off),
+	// for the warning's "not seen for N days" cause.
+	AbsentAfter time.Duration
 }
 
 // FleetFilter narrows HostStates. The zero FleetFilter matches every host

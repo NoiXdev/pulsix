@@ -48,14 +48,3 @@ func (s *SQLStore) Put(ctx context.Context, orgID uuid.UUID, st Settings) error 
 	}
 	return nil
 }
-
-// ClientAbsentDays is the evaluator's read: the organization's threshold
-// with the default applied (no row reads as DefaultClientAbsentDays; 0 =
-// off). It works inside an organization's scope and outside any.
-func (s *SQLStore) ClientAbsentDays(ctx context.Context, orgID uuid.UUID) (int, error) {
-	days, err := s.q.GetOrgClientAbsentDays(ctx, orgID)
-	if err != nil {
-		return 0, fmt.Errorf("get client absent days: %w", err)
-	}
-	return int(days), nil
-}

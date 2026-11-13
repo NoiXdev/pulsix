@@ -189,6 +189,11 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 		return HostLoad{}, err
 	}
 
+	presence, err := s.presence(ctx, q, d)
+	if err != nil {
+		return HostLoad{}, err
+	}
+
 	return HostLoad{
 		Tuples:       tuples,
 		Effective:    Resolve(orgRules, HostContext{HostID: d.HostID, Groups: checkCtx.Groups, Tuples: reported}),
@@ -197,7 +202,51 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 		Changes30:    changes30,
 		PreviousHost: previousHost,
 		Ignored:      ignored,
+		Presence:     presence,
 	}, nil
+}
+
+// presence reads the host's kind and its agent's presence (backlog 3.57).
+// The organization's absent threshold is read for a client with an agent
+// only — the one host it can matter to — so a server costs one statement
+// here, not two. GetOrgClientAbsentDays applies the default itself and
+// needs no organization scope, which this unscoped store does not have.
+func (s *EvalSQLStore) presence(ctx context.Context, q *gen.Queries, d Due) (HostPresence, error) {
+	row, err := q.GetHostPresence(ctx, gen.GetHostPresenceParams{
+		OrgID: d.OrgID, HostID: d.HostID, OnlineWindowSeconds: s.agentWindow.Seconds(),
+	})
+	if err != nil {
+		return HostPresence{}, fmt.Errorf("get host presence: %w", err)
+	}
+	p := HostPresence{Client: row.Kind == hostKindClient, HasAgent: row.HasAgent}
+	if !p.HasAgent {
+		return p, nil
+	}
+	p.AgentOnline = row.AgentOnline
+	p.AgentLastSeen = unlessEpoch(row.AgentLastContact)
+	p.AgentConnected = unlessEpoch(row.AgentConnected)
+	if p.Client {
+		days, err := q.GetOrgClientAbsentDays(ctx, d.OrgID)
+		if err != nil {
+			return HostPresence{}, fmt.Errorf("get client absent days: %w", err)
+		}
+		p.AbsentAfter = time.Duration(days) * 24 * time.Hour
+	}
+	return p, nil
+}
+
+// hostKindClient is hosts.kind's client value (hosts.KindClient; this
+// package does not import internal/hosts for one string the schema's own
+// CHECK already fixes).
+const hostKindClient = "client"
+
+// unlessEpoch reads the 'epoch' a query substitutes for NULL as unknown,
+// the zero time.
+func unlessEpoch(t time.Time) time.Time {
+	if t.Unix() == 0 {
+		return time.Time{}
+	}
+	return t
 }
 
 // facts reads hosts.facts. Facts are strings by contract — the agent

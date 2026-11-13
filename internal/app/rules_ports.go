@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/rules"
 )
 
@@ -25,6 +28,15 @@ type checkResolver interface {
 // internal/checks — the same reason rules.GroupRank is its own type rather
 // than checks.Group (see its doc comment).
 type rulesHostChecks struct{ checks checkResolver }
+
+// newEvalStore is the evaluator's store as Build wires it: the agents
+// list's own online window (agents.StaleAfter) is what decides whether a
+// client host's agent is off and the host frozen (backlog 3.57).
+// internal/rules never imports internal/agents, so this is the one place
+// the two meet; TestEvalStoreJudgesAgentsOnlineLikeTheAgentsList pins it.
+func newEvalStore(d *db.DB, hc rules.HostChecks, it rules.ItemStore) *rules.EvalSQLStore {
+	return rules.NewEvalSQLStore(d, hc, it, agents.StaleAfter, slog.Default())
+}
 
 // NewRulesHostChecks wires the adapter Build uses.
 func NewRulesHostChecks(svc *checks.Service) rules.HostChecks { return rulesHostChecks{checks: svc} }

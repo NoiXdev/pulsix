@@ -26,6 +26,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/checks"
@@ -96,7 +97,7 @@ func newLifecycleRig(t *testing.T) *lifecycleRig {
 	}
 	clock := func() time.Time { return r.now }
 	r.ticker = rules.NewTicker(
-		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), itemsStore, quiet),
+		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), itemsStore, agents.StaleAfter, quiet),
 		alerts.NewService(alerts.NewSQLStore(d), clock),
 		rules.WithTickerClock(clock),
 		rules.WithTickerLogger(quiet),

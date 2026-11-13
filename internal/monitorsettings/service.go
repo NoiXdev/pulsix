@@ -6,8 +6,9 @@
 // its default. Backlog 3.15 adds its retention setting here.
 //
 // The service is the API's read and write; the evaluation ticker reads the
-// threshold with the default applied through SQLStore.ClientAbsentDays (or
-// the generated GetOrgClientAbsentDays query it wraps).
+// threshold with the default applied through the generated
+// GetOrgClientAbsentDays query (internal/rules' Load), outside any
+// organization scope.
 package monitorsettings
 
 import (

@@ -724,7 +724,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// and the same ticker sweeps orphaned alerts once per tick. There is
 	// no second wire to forget — NewTicker panics at construction if this
 	// argument is ever left out.
-	evalTicker := rules.NewTicker(rules.NewEvalSQLStore(appDB, NewRulesHostChecks(checksSvc), itemsStore, slog.Default()), alertsSvc)
+	evalTicker := rules.NewTicker(newEvalStore(appDB, NewRulesHostChecks(checksSvc), itemsStore), alertsSvc)
 	evalStop := startLoop(func(ctx context.Context) { _ = evalTicker.Run(ctx) })
 
 	// The alert follower (v0.4b spec, "The follower"): one tick per

@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/app"
 	"github.com/noixdev/pulsix/internal/checks"
@@ -232,7 +233,7 @@ func TestProbeResultDrivesARule(t *testing.T) {
 	}()
 
 	ticker := rules.NewTicker(
-		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), items.NewSQLStore(d), quiet),
+		rules.NewEvalSQLStore(d, app.NewRulesHostChecks(checksSvc), items.NewSQLStore(d), agents.StaleAfter, quiet),
 		alerts.NewService(alerts.NewSQLStore(d), time.Now),
 		rules.WithTickerLogger(quiet),
 	)

@@ -102,6 +102,9 @@ type HostLoad struct {
 	// this tick's own decisions and this tick's own items (v0.3b-3). See
 	// that field's doc comment for why it is keyed by ItemKey.
 	Ignored map[ItemKey]bool
+	// Presence is Snapshot.Presence's own value: the host's kind and its
+	// agent's presence (backlog 3.57).
+	Presence HostPresence
 }
 
 // EvalStore is the ticker's store: the claim, the three reads one
@@ -346,6 +349,7 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 		Changes30:    load.Changes30,
 		PreviousHost: load.PreviousHost,
 		Ignored:      load.Ignored,
+		Presence:     load.Presence,
 	}
 	// WindowRequests reads only Tuples and Effective, so it is computed on
 	// the snapshot while Windows is still nil and fills that field from its
@@ -389,6 +393,8 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 		OrgID: d.OrgID, HostID: d.HostID, At: now,
 		Changes: res.Changes, States: res.States, Host: res.Host,
 		Unmeasured: res.Unmeasured,
+		Frozen:     res.Frozen, Absent: res.Absent,
+		AgentLastSeen: res.AgentLastSeen, AbsentAfter: snap.Presence.AbsentAfter,
 	}); err != nil {
 		t.log.ErrorContext(ctx, "apply alerts; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", err)

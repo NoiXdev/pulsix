@@ -236,7 +236,7 @@ func TestNewEvalSQLStoreRefusesANilItemStore(t *testing.T) {
 			t.Fatal("NewEvalSQLStore(nil items) returned a store, want a panic at construction")
 		}
 	}()
-	rules.NewEvalSQLStore(nil, cpuMinute(), nil, discard())
+	rules.NewEvalSQLStore(nil, cpuMinute(), nil, testAgentWindow, discard())
 }
 
 // TestWindowStatementOverASeededHypertable is review focus 2: every
@@ -249,7 +249,7 @@ func TestWindowStatementOverASeededHypertable(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "windows")
 	host := seedHost(t, d, org, "win-host")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
@@ -320,7 +320,7 @@ func TestWindowsWithNoRequestsCostsNoStatement(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "no-windows")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	got, err := store.Windows(context.Background(), rules.Due{OrgID: org, HostID: host}, nil, time.Now())
 	if err != nil {
 		t.Fatalf("Windows: %v", err)
@@ -336,7 +336,7 @@ func TestMarkHostDirtyMakesAHostDue(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "dirty")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 
 	if got := claimAll(t, store, 10); len(got) != 0 {
 		t.Fatalf("a host that never ingested was claimed: %+v", got)
@@ -369,7 +369,7 @@ func TestClaimTakesAHostWhoseNextDueHasPassed(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "overdue")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 
 	// Evaluated exactly as recently as it was marked, so the host is not
 	// dirty; only next_due_at, a minute in the past, can claim it.
@@ -386,7 +386,7 @@ func TestClaimTakesAHostWhoseNextDueHasPassed(t *testing.T) {
 func TestClaimBoundsItsBatch(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "batch")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 
 	oldest := seedHost(t, d, org, "oldest")
 	middle := seedHost(t, d, org, "middle")
@@ -449,7 +449,7 @@ func TestLoadGathersEveryInputTheSnapshotNeeds(t *testing.T) {
 	insertStateChange(t, d, org, host, now.Add(-40*time.Minute), cpu, rules.StateWarn, rules.StateOK)
 	insertHostState(t, d, org, host, rules.StateWarn, 0, 1, 0, now.Add(-time.Hour), now.Add(-time.Minute))
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -492,7 +492,7 @@ func TestLoadOfANeverEvaluatedHostCarriesNoPreviousRollUp(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "fresh")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -520,7 +520,7 @@ func TestLoadIgnoresAnotherOrganizationsRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: orgA, HostID: hostA})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -553,7 +553,7 @@ func TestLoadDiscoversNonEmptyItemsAndSkipsWholeHostChecks(t *testing.T) {
 	insertCurrent(t, d, org, host, varFree, ptr(1e9), nil, now, "")
 	insertCurrent(t, d, org, host, opt, ptr(60.0), nil, now, "")
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestLoadSeenItemsDropsEmptyAndDedupesDuplicates(t *testing.T) {
 	insertCurrent(t, d, org, host, opt, ptr(60.0), nil, now, "")
 
 	fake := &fakeItemStore{}
-	store := rules.NewEvalSQLStore(d, cpuMinute(), fake, discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), fake, testAgentWindow, discard())
 	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -651,7 +651,7 @@ func TestIgnoredResolvesPerTickEvenWhenTheDecisionPredatesTheItem(t *testing.T) 
 	disk := rules.Tuple{CheckKey: "disk", Item: "/data", Metric: "disk.used_pct"}
 	insertCurrent(t, d, org, host, disk, ptr(90.0), nil, now, "")
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -685,7 +685,7 @@ func TestIgnoredDoesNotLeakAcrossHosts(t *testing.T) {
 	disk := rules.Tuple{CheckKey: "disk", Item: "/data", Metric: "disk.used_pct"}
 	insertCurrent(t, d, org, host, disk, ptr(90.0), nil, now, "")
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	load, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host})
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -703,7 +703,7 @@ func TestApplyWritesEverythingInTheClaimsTransaction(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "apply")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	markDirty(t, d, org, host)
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
@@ -799,7 +799,7 @@ func TestApplyDeletesTheRollUpWhenNothingIsJudged(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "rollup-gone")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	markDirty(t, d, org, host)
 	insertHostState(t, d, org, host, rules.StateCrit, 1, 0, 0, now.Add(-time.Hour), now.Add(-time.Minute))
@@ -828,7 +828,7 @@ func TestApplyDropsAnIgnoredTuplesRowAndReWatchingStartsFresh(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "drop-and-rewatch")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 
 	diskVar := rules.Tuple{CheckKey: "disk", Item: "/var", Metric: "disk.used_pct"}
 	firstTick := time.Now().UTC().Truncate(time.Microsecond)
@@ -897,7 +897,7 @@ func TestAFailedHostLeavesNothingBehind(t *testing.T) {
 	org := seedOrg(t, d, "rollback")
 	good := seedHost(t, d, org, "good")
 	bad := seedHost(t, d, org, "bad")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// The bad host is claimed first (older next_due_at), so the good host's
 	// own transaction commits after the failure rather than before it.
@@ -955,7 +955,7 @@ func TestLoadFailureLeavesTheHostDue(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "load-fail")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, fixedChecks{err: errors.New("resolver down")}, items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, fixedChecks{err: errors.New("resolver down")}, items.NewSQLStore(d), testAgentWindow, discard())
 	if _, err := store.Load(context.Background(), rules.Due{OrgID: org, HostID: host}); err == nil {
 		t.Fatal("Load returned no error although the check pipeline failed")
 	}
@@ -1002,7 +1002,7 @@ func TestTwoTickersEvaluateOneDueHostExactlyOnce(t *testing.T) {
 	}
 	markDirty(t, d, org, host)
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	gate := &gateStore{EvalStore: store, entered: make(chan struct{}), release: make(chan struct{})}
 	opts := []rules.TickerOption{
 		rules.WithTickerClock(func() time.Time { return now }),
@@ -1107,7 +1107,7 @@ func TestTickerEvaluatesThroughTheRealStore(t *testing.T) {
 	}
 	markDirty(t, d, org, host)
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithTickerClock(func() time.Time { return now }),
 		rules.WithTickerLogger(discard()))
@@ -1165,7 +1165,7 @@ func TestEvaluateFeedsTheAlertSinkInTheHostTransaction(t *testing.T) {
 	}
 	markDirty(t, d, org, host)
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	// onApply reads check_states straight through the tx Apply was handed,
 	// rather than trusting that *some* pgx.Tx value arrived: the host's own
 	// write-back is still uncommitted at this point, so only the claimed
@@ -1243,7 +1243,7 @@ func TestSinkErrorRollsTheHostBack(t *testing.T) {
 	}
 	markDirty(t, d, org, host)
 
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	sink := &fakeSink{applyErr: errors.New("sink boom")}
 	log, buf := quietLogger()
 	tk := rules.NewTicker(store, sink,
@@ -1290,7 +1290,7 @@ func TestAPanickingHostLeavesTheBatchIntact(t *testing.T) {
 	org := seedOrg(t, d, "panicking-host")
 	bad := seedHost(t, d, org, "bad")
 	good := seedHost(t, d, org, "good")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	setCursor(t, d, org, bad, 0, -time.Hour, -2*time.Minute)
 	setCursor(t, d, org, good, 0, -time.Hour, -1*time.Minute)
@@ -1355,7 +1355,7 @@ func TestRunHostLogsWhatBecomesOfAFailedHost(t *testing.T) {
 			org := seedOrg(t, d, "failed-host-log")
 			host := seedHost(t, d, org, "h")
 			log, buf := quietLogger()
-			store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), log)
+			store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, log)
 			now := time.Now().UTC().Truncate(time.Microsecond)
 			setCursor(t, d, org, host, 0, -time.Hour, -time.Minute)
 
@@ -1393,7 +1393,7 @@ func TestRunHostLogsWhatBecomesOfAFailedHost(t *testing.T) {
 func TestABatchCutShortKeepsWhatItCommitted(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "batch-cut-short")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 
 	first := seedHost(t, d, org, "first")
@@ -1459,7 +1459,7 @@ func TestWindowsRefusesAnUnknownAggregate(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "unknown-agg")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	reqs := []rules.WindowRequest{
 		{Key: rules.ItemKey{CheckKey: "cpu"}, Metric: "cpu.used_pct", Agg: "avg", Seconds: 600},
 		{Key: rules.ItemKey{CheckKey: "cpu"}, Metric: "cpu.used_pct", Agg: "median", Seconds: 600},
@@ -1494,7 +1494,7 @@ func TestEvaluatingOneHostDoesNotBlockIngestForAnother(t *testing.T) {
 	org := seedOrg(t, d, "ingest-not-blocked")
 	held := seedHost(t, d, org, "held")
 	ingesting := seedHost(t, d, org, "ingesting")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	// The held host is claimed first (older next_due_at), so the other one
 	// is still in the batch, unevaluated, while the first one is paused.
@@ -1563,7 +1563,7 @@ func TestAnAlreadyEvaluatedHostIsSkippedBeforeItIsEvaluatedAgain(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "claim-race")
 	taken := seedHost(t, d, org, "taken")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	setCursor(t, d, org, taken, 0, -time.Hour, -time.Minute)
 
@@ -1653,7 +1653,7 @@ func TestEvaluateOneSetsStatementTimeout(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "statement-timeout")
 	host := seedHost(t, d, org, "h")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	setCursor(t, d, org, host, 0, -time.Hour, -time.Minute)
 
 	var inside string
@@ -1704,7 +1704,7 @@ func TestFailedHostIsPostponed(t *testing.T) {
 	org := seedOrg(t, d, "postpone-failed")
 	bad := seedHost(t, d, org, "bad")
 	good := seedHost(t, d, org, "good")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 	// The bad host is overdue and dirty. The healthy one is dirty only:
 	// its next_due_at is the staleness deadline three minutes ahead, which
 	// is where a live host's sits between samples.
@@ -1817,7 +1817,7 @@ func TestHostCutOffByTheBatchDeadlineIsPostponed(t *testing.T) {
 	setCursor(t, d, orgB, healthy, 0, -time.Hour, -time.Minute)
 	_, _, slowNextDue := cursorRow(t, d, slow)
 
-	store := rules.NewEvalSQLStore(d, blockingChecks{block: map[uuid.UUID]bool{slow: true}}, items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, blockingChecks{block: map[uuid.UUID]bool{slow: true}}, items.NewSQLStore(d), testAgentWindow, discard())
 	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithInterval(10*time.Millisecond), rules.WithBatchDeadlineFloor(time.Second),
 		rules.WithTickerLogger(discard()))
@@ -1874,7 +1874,7 @@ func TestHostPastItsOwnDeadlineIsPostponedAndTheBatchGoesOn(t *testing.T) {
 	setCursor(t, d, orgA, slow, 0, -time.Hour, -2*time.Minute)
 	setCursor(t, d, orgB, healthy, 0, -time.Hour, -time.Minute)
 
-	store := rules.NewEvalSQLStore(d, blockingChecks{block: map[uuid.UUID]bool{slow: true}}, items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, blockingChecks{block: map[uuid.UUID]bool{slow: true}}, items.NewSQLStore(d), testAgentWindow, discard())
 	store.SetHostDeadline(500 * time.Millisecond)
 	tk := rules.NewTicker(store, &fakeSink{}, rules.WithTickerLogger(discard()))
 
@@ -1902,7 +1902,7 @@ func TestWindowStatementSurvivesValuesAtTheIngestBound(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "windows-bound")
 	host := seedHost(t, d, org, "bound-host")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}
@@ -1947,7 +1947,7 @@ func TestWindowStatementSkipsValuesStoredBeyondTheBound(t *testing.T) {
 	d := testdb.Open(t)
 	org := seedOrg(t, d, "windows-legacy")
 	host := seedHost(t, d, org, "legacy-host")
-	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, cpuMinute(), items.NewSQLStore(d), testAgentWindow, discard())
 
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	cpu := rules.Tuple{CheckKey: "cpu", Metric: "cpu.used_pct"}

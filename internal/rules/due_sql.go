@@ -67,6 +67,10 @@ type EvalSQLStore struct {
 	checks HostChecks
 	items  ItemStore
 	log    *slog.Logger
+	// agentWindow is how recent an agent's last_seen must be for it to be
+	// online (agents.StaleAfter, passed in by internal/app, which this
+	// package never imports; a test there pins the two together).
+	agentWindow time.Duration
 
 	hostDeadline time.Duration
 }
@@ -82,14 +86,23 @@ type EvalSQLStore struct {
 // with the wiring mistake that caused it nowhere in the message. Refused
 // here, at the one moment a programmer can still see the call site that
 // made it.
-func NewEvalSQLStore(d *db.DB, checks HostChecks, items ItemStore, log *slog.Logger) *EvalSQLStore {
+//
+// agentWindow is the agents list's online window (agents.StaleAfter): an
+// agent whose last_seen is older is offline, which freezes a client host
+// (HostPresence). It is refused when not positive for the same reason as
+// a nil items: a zero window reads every agent as offline and freezes
+// every client for ever, with nothing in the logs to say why.
+func NewEvalSQLStore(d *db.DB, checks HostChecks, items ItemStore, agentWindow time.Duration, log *slog.Logger) *EvalSQLStore {
 	if items == nil {
 		panic("rules.NewEvalSQLStore: items must not be nil")
+	}
+	if agentWindow <= 0 {
+		panic("rules.NewEvalSQLStore: the agent online window must be positive")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &EvalSQLStore{d: d, checks: checks, items: items, log: log, hostDeadline: hostEvalDeadline}
+	return &EvalSQLStore{d: d, checks: checks, items: items, log: log, agentWindow: agentWindow, hostDeadline: hostEvalDeadline}
 }
 
 // evalTxKey is the context key evaluateOne binds one host's transaction
@@ -361,6 +374,15 @@ func (s *EvalSQLStore) Apply(ctx context.Context, d Due, res Result) error {
 	}
 	q := gen.New(tx)
 
+	// A frozen client (backlog 3.57, Result.Frozen) judged nothing, so
+	// nothing is written but the cursor: every state row and the roll-up
+	// stay exactly as the last real evaluation left them — not re-stamped,
+	// and not deleted, although a frozen host with no previous roll-up
+	// carries the zero Host that otherwise means "delete it".
+	if res.Frozen {
+		return advanceCursor(ctx, q, d, res.NextDue)
+	}
+
 	// Dropped rows go first, before the states that were actually produced:
 	// an ignored tuple's stored check_states row must not outlive this
 	// evaluation (see Result.Dropped's own doc comment). There is nothing
@@ -414,8 +436,13 @@ func (s *EvalSQLStore) Apply(ctx context.Context, d Due, res Result) error {
 		return err
 	}
 
+	return advanceCursor(ctx, q, d, res.NextDue)
+}
+
+// advanceCursor marks the host evaluated and due again at nextDue.
+func advanceCursor(ctx context.Context, q *gen.Queries, d Due, nextDue time.Time) error {
 	if err := q.AdvanceEvalCursor(ctx, gen.AdvanceEvalCursorParams{
-		OrgID: d.OrgID, HostID: d.HostID, NextDueAt: res.NextDue,
+		OrgID: d.OrgID, HostID: d.HostID, NextDueAt: nextDue,
 	}); err != nil {
 		return fmt.Errorf("advance evaluation cursor: %w", err)
 	}

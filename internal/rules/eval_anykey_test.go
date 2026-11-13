@@ -44,7 +44,7 @@ func TestOneOrgRuleJudgesTwoChecksOfAPluginIndependently(t *testing.T) {
 
 	checks := fixedChecks{intervals: map[string]time.Duration{"disk": time.Minute, "disk-data": time.Minute}}
 	sink := &fakeSink{}
-	tk := rules.NewTicker(rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), discard()), sink,
+	tk := rules.NewTicker(rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard()), sink,
 		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
 	if n, err := tk.Tick(context.Background()); err != nil || n != 1 {
 		t.Fatalf("Tick = %d, %v; want one host evaluated", n, err)
@@ -119,7 +119,7 @@ func TestDecisionsOnANonDefaultKeySuppressItsTuples(t *testing.T) {
 	markDirty(t, d, org, host)
 
 	checks := fixedChecks{intervals: map[string]time.Duration{"disk": time.Minute, "disk-data": time.Minute}}
-	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), discard())
+	store := rules.NewEvalSQLStore(d, checks, items.NewSQLStore(d), testAgentWindow, discard())
 	tk := rules.NewTicker(store, &fakeSink{},
 		rules.WithTickerClock(func() time.Time { return now }), rules.WithTickerLogger(discard()))
 	if n, err := tk.Tick(context.Background()); err != nil || n != 1 {

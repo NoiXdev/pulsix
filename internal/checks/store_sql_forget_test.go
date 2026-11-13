@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/noixdev/pulsix/internal/agents"
 	"github.com/noixdev/pulsix/internal/alerts"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
@@ -207,7 +208,7 @@ func (noChecks) ContextForHost(context.Context, uuid.UUID, uuid.UUID) (rules.Che
 // are discovered into check_items.
 func loadHost(t *testing.T, d *db.DB, org, host uuid.UUID) {
 	t.Helper()
-	if _, err := rules.NewEvalSQLStore(d, noChecks{}, items.NewSQLStore(d), nil).
+	if _, err := rules.NewEvalSQLStore(d, noChecks{}, items.NewSQLStore(d), agents.StaleAfter, nil).
 		Load(ctx, rules.Due{OrgID: org, HostID: host}); err != nil {
 		t.Fatalf("evaluator load: %v", err)
 	}

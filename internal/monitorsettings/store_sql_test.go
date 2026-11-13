@@ -90,8 +90,9 @@ func TestDefaultIsPinnedAcrossSchemaQueryAndCode(t *testing.T) {
 	store := monitorsettings.NewSQLStore(d)
 	org := seedOrg(t, q, "monset-default-org")
 
-	// No row: the evaluator's read applies the default.
-	days, err := store.ClientAbsentDays(ctx, org)
+	// No row: the evaluator's read (internal/rules' Load) applies the
+	// default.
+	days, err := q.GetOrgClientAbsentDays(ctx, org)
 	if err != nil || days != monitorsettings.DefaultClientAbsentDays {
 		t.Fatalf("ClientAbsentDays without a row = %d, %v; want %d", days, err, monitorsettings.DefaultClientAbsentDays)
 	}
@@ -107,7 +108,7 @@ func TestDefaultIsPinnedAcrossSchemaQueryAndCode(t *testing.T) {
 	if err := store.Put(db.WithOrgScope(ctx, org), org, monitorsettings.Settings{ClientAbsentDays: 0}); err != nil {
 		t.Fatal(err)
 	}
-	if days, err := store.ClientAbsentDays(ctx, org); err != nil || days != 0 {
+	if days, err := q.GetOrgClientAbsentDays(ctx, org); err != nil || days != 0 {
 		t.Fatalf("ClientAbsentDays after storing 0 = %d, %v; want 0", days, err)
 	}
 }
