@@ -35,6 +35,9 @@ var hostMetrics = []string{
 	"apache.requests_per_s", "apache.bytes_per_s",
 }
 
+// webPage is what webcheck.Collect needs to know of this plugin.
+var webPage = webcheck.Page{Name: "apache", Up: metricUp, Others: hostMetrics}
+
 type plugin struct {
 	now func() time.Time
 	// url is the page the counters belong to; another one starts over. One
@@ -63,39 +66,14 @@ func (p *plugin) Collect(ctx context.Context, params map[string]any) ([]checks.O
 	return p.CollectWithSecret(ctx, params, nil)
 }
 
-// CollectWithSecret fetches, parses and reports. A caller context that ends
-// returns nothing but its error (the Plugin contract); the plugin's own
-// deadline is a server that did not answer in time.
+// CollectWithSecret fetches, parses and reports through webcheck.Collect: a
+// caller context that ends returns nothing but its error (the Plugin
+// contract); the plugin's own deadline is a server that did not answer in
+// time.
 func (p *plugin) CollectWithSecret(ctx context.Context, params map[string]any, fields map[string]string) ([]checks.Observation, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	down := func(reason string) ([]checks.Observation, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		return dbcheck.Down("apache", metricUp, hostMetrics, reason), nil
-	}
-	auth, err := webcheck.ParseAuth(fields)
-	if err != nil {
-		return down(err.Error())
-	}
 	url := statusURL(params)
-
-	cctx, cancel := context.WithTimeout(ctx, dbcheck.CollectTimeout)
-	defer cancel()
-	body, reason := webcheck.Fetch(cctx, url, webcheck.Options{VerifyTLS: webcheck.VerifyTLS(params), Auth: auth})
-	if reason != "" {
-		return down(reason)
-	}
-	s, err := parseStatus(body)
-	if err != nil {
-		return down(err.Error())
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return p.observe(url, s), nil
+	return webcheck.Collect(ctx, webPage, url, params, fields, parseStatus,
+		func(s status) []checks.Observation { return p.observe(url, s) })
 }
 
 // statusURL is the page to fetch: the url parameter, else the local

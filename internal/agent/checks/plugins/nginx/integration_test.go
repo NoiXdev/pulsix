@@ -71,7 +71,7 @@ func TestAgainstARealServer(t *testing.T) {
 	mustAbsent(t, obs, "nginx.requests_per_s")
 
 	// Each fetch is itself a request and a connection.
-	clk.t = clk.t.Add(10 * time.Second)
+	clk.Advance(10 * time.Second)
 	obs, err = p.Collect(t.Context(), params)
 	if err != nil {
 		t.Fatal(err)

@@ -5,18 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
-)
-
-const (
-	plantUser = "plantuser-5e2"
-	plantPass = "plantpass-8b4"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck/webchecktest"
 )
 
 // page renders a stub_status page.
@@ -25,111 +19,37 @@ func page(active, accepts, handled, requests, reading, writing, waiting int) str
 		active, accepts, handled, requests, reading, writing, waiting)
 }
 
-// statusServer serves the page returned by body() with the given status.
-type statusServer struct {
-	*httptest.Server
-	mu     sync.Mutex
-	status int
-	body   string
-	auth   []string
+func newTestPlugin() (*plugin, *webchecktest.Clock) {
+	c := webchecktest.NewClock()
+	return &plugin{now: c.Now}, c
 }
 
-func newStatusServer(t *testing.T, body string) *statusServer {
-	t.Helper()
-	s := &statusServer{status: http.StatusOK, body: body}
-	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.auth = append(s.auth, r.Header.Get("Authorization"))
-		w.WriteHeader(s.status)
-		_, _ = w.Write([]byte(s.body))
-	}))
-	t.Cleanup(s.Close)
-	return s
-}
-
-func (s *statusServer) set(status int, body string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.status, s.body = status, body
-}
-
-type clock struct{ t time.Time }
-
-func (c *clock) now() time.Time { return c.t }
-
-func newTestPlugin() (*plugin, *clock) {
-	c := &clock{t: time.Unix(1_000_000, 0)}
-	return &plugin{now: c.now}, c
-}
-
-func params(s *statusServer) map[string]any { return map[string]any{"url": s.URL + "/nginx_status"} }
-
-func find(obs []checks.Observation, metric string) (checks.Observation, bool) {
-	for _, o := range obs {
-		if o.Metric == metric {
-			if o.Item != "" {
-				panic("item set: " + o.Item)
-			}
-			return o, true
-		}
-	}
-	return checks.Observation{}, false
-}
-
-func mustValue(t *testing.T, obs []checks.Observation, metric string, want float64) {
-	t.Helper()
-	o, ok := find(obs, metric)
-	if !ok {
-		t.Fatalf("no observation %q in %+v", metric, obs)
-	}
-	if o.Value == nil || *o.Value != want || o.Err != "" {
-		t.Fatalf("%q = %+v, want value %v", metric, o, want)
-	}
-}
-
-func mustAbsent(t *testing.T, obs []checks.Observation, metric string) {
-	t.Helper()
-	if o, ok := find(obs, metric); ok {
-		t.Fatalf("%q reported: %+v", metric, o)
-	}
+func params(s *webchecktest.Server) map[string]any {
+	return map[string]any{"url": s.URL + "/nginx_status"}
 }
 
 // mustDown asserts the whole down set: up 0 and the reason on the seven
 // other metrics.
 func mustDown(t *testing.T, obs []checks.Observation, reason string) {
 	t.Helper()
-	mustValue(t, obs, "nginx.up", 0)
-	if len(obs) != 1+len(hostMetrics) || len(hostMetrics) != 7 {
-		t.Fatalf("got %d observations, want 8: %+v", len(obs), obs)
+	if len(hostMetrics) != 7 {
+		t.Fatalf("%d host metrics, want 7", len(hostMetrics))
 	}
-	for _, m := range hostMetrics {
-		o, ok := find(obs, m)
-		if !ok || o.Value != nil || o.Label != nil || o.Err != "nginx: "+reason {
-			t.Fatalf("%q = %+v, want error %q", m, o, "nginx: "+reason)
-		}
-	}
+	webchecktest.MustDown(t, obs, "nginx", "nginx.up", hostMetrics, reason)
 }
 
-func noSecretIn(t *testing.T, srv *statusServer, obs []checks.Observation, err error) {
-	t.Helper()
-	var all []string
-	for _, o := range obs {
-		all = append(all, o.Item, o.Metric, o.Err)
-		if o.Label != nil {
-			all = append(all, *o.Label)
-		}
-	}
-	if err != nil {
-		all = append(all, err.Error())
-	}
-	text := strings.Join(all, "\n")
-	for _, s := range []string{plantUser, plantPass, strings.TrimPrefix(srv.URL, "http://")} {
-		if strings.Contains(text, s) {
-			t.Fatalf("%q leaked into %q", s, text)
-		}
-	}
-}
+var (
+	newStatusServer = webchecktest.NewServer
+	find            = webchecktest.Find
+	mustValue       = webchecktest.MustValue
+	mustAbsent      = webchecktest.MustAbsent
+	noSecretIn      = webchecktest.NoSecretIn
+)
+
+const (
+	plantUser = webchecktest.PlantUser
+	plantPass = webchecktest.PlantPass
+)
 
 func TestCollectReportsEveryMetric(t *testing.T) {
 	srv := newStatusServer(t, page(291, 16630948, 16630948, 31070465, 6, 179, 106))
@@ -151,8 +71,8 @@ func TestCollectReportsEveryMetric(t *testing.T) {
 		t.Fatalf("first round: %d observations, want 5: %+v", len(obs), obs)
 	}
 
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, page(300, 16630948+100, 16630948+90, 31070465+500, 1, 2, 3))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, page(300, 16630948+100, 16630948+90, 31070465+500, 1, 2, 3))
 	obs, err = p.Collect(t.Context(), params(srv))
 	if err != nil {
 		t.Fatal(err)
@@ -170,8 +90,8 @@ func TestRatesResetWhenCountersDrop(t *testing.T) {
 	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, page(1, 10, 10, 20, 0, 1, 0)) // nginx restarted
+	clk.Advance(10 * time.Second)
+	srv.Set(200, page(1, 10, 10, 20, 0, 1, 0)) // nginx restarted
 	obs, err := p.Collect(t.Context(), params(srv))
 	if err != nil {
 		t.Fatal(err)
@@ -181,8 +101,8 @@ func TestRatesResetWhenCountersDrop(t *testing.T) {
 		mustAbsent(t, obs, m)
 	}
 	// The new baseline works on the next round.
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, page(1, 30, 30, 120, 0, 1, 0))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, page(1, 30, 30, 120, 0, 1, 0))
 	obs, _ = p.Collect(t.Context(), params(srv))
 	mustValue(t, obs, "nginx.requests_per_s", 10)
 	mustValue(t, obs, "nginx.connections_accepted_per_s", 2)
@@ -194,7 +114,7 @@ func TestChangedURLRestartsTheBaselines(t *testing.T) {
 	b := newStatusServer(t, page(1, 900, 900, 900, 0, 1, 0))
 	p, clk := newTestPlugin()
 	_, _ = p.Collect(t.Context(), params(a))
-	clk.t = clk.t.Add(10 * time.Second)
+	clk.Advance(10 * time.Second)
 	obs, _ := p.Collect(t.Context(), params(b))
 	mustAbsent(t, obs, "nginx.requests_per_s")
 }
@@ -241,8 +161,8 @@ func TestHandledAboveAcceptsIsNotAnError(t *testing.T) {
 	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, page(1, 25, 27, 50, 0, 1, 0))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, page(1, 25, 27, 50, 0, 1, 0))
 	obs, err := p.Collect(t.Context(), params(srv))
 	if err != nil {
 		t.Fatal(err)
@@ -260,12 +180,12 @@ func TestBaselineSurvivesAFailedRound(t *testing.T) {
 	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(500, "")
+	clk.Advance(10 * time.Second)
+	srv.Set(500, "")
 	obs, _ := p.Collect(t.Context(), params(srv))
 	mustDown(t, obs, "HTTP status 500")
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, page(1, 140, 140, 1400, 0, 1, 0))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, page(1, 140, 140, 1400, 0, 1, 0))
 	obs, _ = p.Collect(t.Context(), params(srv))
 	mustValue(t, obs, "nginx.requests_per_s", 20)
 	mustValue(t, obs, "nginx.connections_accepted_per_s", 2)
@@ -273,14 +193,14 @@ func TestBaselineSurvivesAFailedRound(t *testing.T) {
 
 func TestInstancesKeepSeparateBaselines(t *testing.T) {
 	srv := newStatusServer(t, page(1, 100, 100, 1000, 0, 1, 0))
-	clk := &clock{t: time.Unix(1_000_000, 0)}
-	proto := &plugin{now: clk.now}
+	clk := webchecktest.NewClock()
+	proto := &plugin{now: clk.Now}
 	a, b := proto.NewInstance(), proto.NewInstance()
 	if _, err := a.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, page(1, 200, 200, 2000, 0, 1, 0))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, page(1, 200, 200, 2000, 0, 1, 0))
 	obs, _ := b.Collect(t.Context(), params(srv))
 	mustAbsent(t, obs, "nginx.requests_per_s") // b's first round
 	obs, _ = a.Collect(t.Context(), params(srv))
@@ -314,7 +234,7 @@ func TestFetchFailuresReportDown(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
 			srv := newStatusServer(t, "body "+plantPass)
-			srv.set(tt.status, "body "+plantPass)
+			srv.Set(tt.status, "body "+plantPass)
 			p, _ := newTestPlugin()
 			obs, err := p.CollectWithSecret(t.Context(), params(srv), map[string]string{"basic_auth_user": plantUser, "basic_auth_password": plantPass})
 			if err != nil {
@@ -354,17 +274,17 @@ func TestBasicAuthSentExactlyWithASecret(t *testing.T) {
 	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	if srv.auth[0] != "" {
-		t.Fatalf("Authorization sent without a secret: %q", srv.auth[0])
+	if srv.Auths()[0] != "" {
+		t.Fatalf("Authorization sent without a secret: %q", srv.Auths()[0])
 	}
 	obs, err := p.CollectWithSecret(t.Context(), params(srv), map[string]string{"basic_auth_user": plantUser, "basic_auth_password": plantPass})
 	if err != nil {
 		t.Fatal(err)
 	}
 	mustValue(t, obs, "nginx.up", 1)
-	r := &http.Request{Header: http.Header{"Authorization": {srv.auth[1]}}}
+	r := &http.Request{Header: http.Header{"Authorization": {srv.Auths()[1]}}}
 	if u, pw, ok := r.BasicAuth(); !ok || u != plantUser || pw != plantPass {
-		t.Fatalf("Authorization = %q, want basic auth of the planted login", srv.auth[1])
+		t.Fatalf("Authorization = %q, want basic auth of the planted login", srv.Auths()[1])
 	}
 }
 
@@ -390,21 +310,13 @@ func TestBadSecretFields(t *testing.T) {
 			noSecretIn(t, srv, obs, err)
 		})
 	}
-	if len(srv.auth) != 0 {
+	if len(srv.Auths()) != 0 {
 		t.Fatalf("a request was sent with bad secret fields")
 	}
 }
 
 func TestCallerContextEnding(t *testing.T) {
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
-	defer srv.Close()
-	defer close(release)
+	srv := webchecktest.NewHangingServer(t)
 
 	p, _ := newTestPlugin()
 	ctx, cancel := context.WithCancel(t.Context())
@@ -438,15 +350,7 @@ func TestHungServerTimesOut(t *testing.T) {
 	if testing.Short() {
 		t.Skip("waits for the 5 s request deadline")
 	}
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
-	defer srv.Close()
-	defer close(release)
+	srv := webchecktest.NewHangingServer(t)
 	p, _ := newTestPlugin()
 	start := time.Now()
 	obs, err := p.Collect(t.Context(), map[string]any{"url": srv.URL})

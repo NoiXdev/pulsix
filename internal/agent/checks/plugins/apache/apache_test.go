@@ -5,19 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck/webchecktest"
 )
 
 const (
-	plantUser = "plantuser-5e2"
-	plantPass = "plantpass-8b4"
-
 	errExtended = "not reported by the server (ExtendedStatus Off)"
 	errFormatTx = "unexpected response format"
 )
@@ -70,119 +66,42 @@ Scoreboard: W_____
 `, busy, idle)
 }
 
-type statusServer struct {
-	*httptest.Server
-	mu     sync.Mutex
-	status int
-	body   string
-	auth   []string
-	uris   []string
+func newTestPlugin() (*plugin, *webchecktest.Clock) {
+	c := webchecktest.NewClock()
+	return &plugin{now: c.Now}, c
 }
 
-func newStatusServer(t *testing.T, body string) *statusServer {
-	t.Helper()
-	s := &statusServer{status: http.StatusOK, body: body}
-	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		s.auth = append(s.auth, r.Header.Get("Authorization"))
-		s.uris = append(s.uris, r.URL.RequestURI())
-		w.WriteHeader(s.status)
-		_, _ = w.Write([]byte(s.body))
-	}))
-	t.Cleanup(s.Close)
-	return s
-}
-
-func (s *statusServer) set(status int, body string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.status, s.body = status, body
-}
-
-type clock struct{ t time.Time }
-
-func (c *clock) now() time.Time { return c.t }
-
-func newTestPlugin() (*plugin, *clock) {
-	c := &clock{t: time.Unix(1_000_000, 0)}
-	return &plugin{now: c.now}, c
-}
-
-func params(s *statusServer) map[string]any {
+func params(s *webchecktest.Server) map[string]any {
 	return map[string]any{"url": s.URL + "/server-status?auto"}
-}
-
-func find(obs []checks.Observation, metric string) (checks.Observation, bool) {
-	for _, o := range obs {
-		if o.Metric == metric {
-			if o.Item != "" {
-				panic("item set: " + o.Item)
-			}
-			return o, true
-		}
-	}
-	return checks.Observation{}, false
-}
-
-func mustValue(t *testing.T, obs []checks.Observation, metric string, want float64) {
-	t.Helper()
-	o, ok := find(obs, metric)
-	if !ok {
-		t.Fatalf("no observation %q in %+v", metric, obs)
-	}
-	if o.Value == nil || *o.Value != want || o.Err != "" {
-		t.Fatalf("%q = %+v, want value %v", metric, o, want)
-	}
 }
 
 func mustErr(t *testing.T, obs []checks.Observation, metric, reason string) {
 	t.Helper()
-	o, ok := find(obs, metric)
-	if !ok || o.Value != nil || o.Label != nil || o.Err != "apache: "+reason {
-		t.Fatalf("%q = %+v, want error %q", metric, o, "apache: "+reason)
-	}
-}
-
-func mustAbsent(t *testing.T, obs []checks.Observation, metric string) {
-	t.Helper()
-	if o, ok := find(obs, metric); ok {
-		t.Fatalf("%q reported: %+v", metric, o)
-	}
+	webchecktest.MustErr(t, obs, "apache", metric, reason)
 }
 
 // mustDown asserts the whole down set: up 0 and the reason on the five
 // other metrics.
 func mustDown(t *testing.T, obs []checks.Observation, reason string) {
 	t.Helper()
-	mustValue(t, obs, "apache.up", 0)
-	if len(obs) != 1+len(hostMetrics) || len(hostMetrics) != 5 {
-		t.Fatalf("got %d observations, want 6: %+v", len(obs), obs)
+	if len(hostMetrics) != 5 {
+		t.Fatalf("%d host metrics, want 5", len(hostMetrics))
 	}
-	for _, m := range hostMetrics {
-		mustErr(t, obs, m, reason)
-	}
+	webchecktest.MustDown(t, obs, "apache", "apache.up", hostMetrics, reason)
 }
 
-func noSecretIn(t *testing.T, srv *statusServer, obs []checks.Observation, err error) {
-	t.Helper()
-	var all []string
-	for _, o := range obs {
-		all = append(all, o.Item, o.Metric, o.Err)
-		if o.Label != nil {
-			all = append(all, *o.Label)
-		}
-	}
-	if err != nil {
-		all = append(all, err.Error())
-	}
-	text := strings.Join(all, "\n")
-	for _, s := range []string{plantUser, plantPass, strings.TrimPrefix(srv.URL, "http://")} {
-		if strings.Contains(text, s) {
-			t.Fatalf("%q leaked into %q", s, text)
-		}
-	}
-}
+var (
+	newStatusServer = webchecktest.NewServer
+	find            = webchecktest.Find
+	mustValue       = webchecktest.MustValue
+	mustAbsent      = webchecktest.MustAbsent
+	noSecretIn      = webchecktest.NoSecretIn
+)
+
+const (
+	plantUser = webchecktest.PlantUser
+	plantPass = webchecktest.PlantPass
+)
 
 func TestCollectReportsEveryMetric(t *testing.T) {
 	srv := newStatusServer(t, eventPage(1000, 500, 3, 72))
@@ -202,8 +121,8 @@ func TestCollectReportsEveryMetric(t *testing.T) {
 		t.Fatalf("first round: %d observations, want 4: %+v", len(obs), obs)
 	}
 
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, eventPage(1100, 520, 25, 25))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, eventPage(1100, 520, 25, 25))
 	obs, err = p.Collect(t.Context(), params(srv))
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +149,7 @@ func TestPreforkWithoutExtendedStatus(t *testing.T) {
 		if len(obs) != 6 {
 			t.Fatalf("%d observations, want 6: %+v", len(obs), obs)
 		}
-		clk.t = clk.t.Add(10 * time.Second)
+		clk.Advance(10 * time.Second)
 	}
 }
 
@@ -279,8 +198,8 @@ func TestRatesResetWhenCountersDrop(t *testing.T) {
 			if _, err := p.Collect(t.Context(), params(srv)); err != nil {
 				t.Fatal(err)
 			}
-			clk.t = clk.t.Add(10 * time.Second)
-			srv.set(200, page)
+			clk.Advance(10 * time.Second)
+			srv.Set(200, page)
 			obs, err := p.Collect(t.Context(), params(srv))
 			if err != nil {
 				t.Fatal(err)
@@ -296,11 +215,11 @@ func TestNewBaselineWorksAfterAReset(t *testing.T) {
 	srv := newStatusServer(t, eventPage(5000, 9000, 1, 5))
 	p, clk := newTestPlugin()
 	for _, page := range []string{eventPage(5000, 9000, 1, 5), eventPage(10, 20, 1, 5), eventPage(110, 120, 1, 5)} {
-		srv.set(200, page)
+		srv.Set(200, page)
 		_, _ = p.Collect(t.Context(), params(srv))
-		clk.t = clk.t.Add(10 * time.Second)
+		clk.Advance(10 * time.Second)
 	}
-	srv.set(200, eventPage(210, 220, 1, 5))
+	srv.Set(200, eventPage(210, 220, 1, 5))
 	obs, _ := p.Collect(t.Context(), params(srv))
 	mustValue(t, obs, "apache.requests_per_s", 10)
 	mustValue(t, obs, "apache.bytes_per_s", 10*1024)
@@ -312,12 +231,12 @@ func TestPageWithoutCountersResetsTheBaselines(t *testing.T) {
 	srv := newStatusServer(t, eventPage(1000, 1000, 1, 5))
 	p, clk := newTestPlugin()
 	step := func(page string) []checks.Observation {
-		srv.set(200, page)
+		srv.Set(200, page)
 		obs, err := p.Collect(t.Context(), params(srv))
 		if err != nil {
 			t.Fatal(err)
 		}
-		clk.t = clk.t.Add(10 * time.Second)
+		clk.Advance(10 * time.Second)
 		return obs
 	}
 	step(eventPage(1000, 1000, 1, 5))
@@ -337,7 +256,7 @@ func TestChangedURLRestartsTheBaselines(t *testing.T) {
 	b := newStatusServer(t, eventPage(900, 900, 1, 5))
 	p, clk := newTestPlugin()
 	_, _ = p.Collect(t.Context(), params(a))
-	clk.t = clk.t.Add(10 * time.Second)
+	clk.Advance(10 * time.Second)
 	obs, _ := p.Collect(t.Context(), params(b))
 	mustAbsent(t, obs, "apache.requests_per_s")
 }
@@ -348,12 +267,12 @@ func TestBaselineSurvivesAFailedRound(t *testing.T) {
 	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(500, "")
+	clk.Advance(10 * time.Second)
+	srv.Set(500, "")
 	obs, _ := p.Collect(t.Context(), params(srv))
 	mustDown(t, obs, "HTTP status 500")
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, eventPage(1400, 1200, 1, 5))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, eventPage(1400, 1200, 1, 5))
 	obs, _ = p.Collect(t.Context(), params(srv))
 	mustValue(t, obs, "apache.requests_per_s", 20)
 	mustValue(t, obs, "apache.bytes_per_s", 10*1024)
@@ -361,14 +280,14 @@ func TestBaselineSurvivesAFailedRound(t *testing.T) {
 
 func TestInstancesKeepSeparateBaselines(t *testing.T) {
 	srv := newStatusServer(t, eventPage(1000, 1000, 1, 5))
-	clk := &clock{t: time.Unix(1_000_000, 0)}
-	proto := &plugin{now: clk.now}
+	clk := webchecktest.NewClock()
+	proto := &plugin{now: clk.Now}
 	a, b := proto.NewInstance(), proto.NewInstance()
 	if _, err := a.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	clk.t = clk.t.Add(10 * time.Second)
-	srv.set(200, eventPage(2000, 2000, 1, 5))
+	clk.Advance(10 * time.Second)
+	srv.Set(200, eventPage(2000, 2000, 1, 5))
 	obs, _ := b.Collect(t.Context(), params(srv))
 	mustAbsent(t, obs, "apache.requests_per_s") // b's first round
 	obs, _ = a.Collect(t.Context(), params(srv))
@@ -450,7 +369,7 @@ func TestFetchFailuresReportDown(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.want, func(t *testing.T) {
 			srv := newStatusServer(t, "body "+plantPass)
-			srv.set(tt.status, "body "+plantUser+" "+plantPass)
+			srv.Set(tt.status, "body "+plantUser+" "+plantPass)
 			p, _ := newTestPlugin()
 			obs, err := p.CollectWithSecret(t.Context(), params(srv), map[string]string{"basic_auth_user": plantUser, "basic_auth_password": plantPass})
 			if err != nil {
@@ -490,17 +409,17 @@ func TestBasicAuthSentExactlyWithASecret(t *testing.T) {
 	if _, err := p.Collect(t.Context(), params(srv)); err != nil {
 		t.Fatal(err)
 	}
-	if srv.auth[0] != "" {
-		t.Fatalf("Authorization sent without a secret: %q", srv.auth[0])
+	if srv.Auths()[0] != "" {
+		t.Fatalf("Authorization sent without a secret: %q", srv.Auths()[0])
 	}
 	obs, err := p.CollectWithSecret(t.Context(), params(srv), map[string]string{"basic_auth_user": plantUser, "basic_auth_password": plantPass})
 	if err != nil {
 		t.Fatal(err)
 	}
 	mustValue(t, obs, "apache.up", 1)
-	r := &http.Request{Header: http.Header{"Authorization": {srv.auth[1]}}}
+	r := &http.Request{Header: http.Header{"Authorization": {srv.Auths()[1]}}}
 	if u, pw, ok := r.BasicAuth(); !ok || u != plantUser || pw != plantPass {
-		t.Fatalf("Authorization = %q, want basic auth of the planted login", srv.auth[1])
+		t.Fatalf("Authorization = %q, want basic auth of the planted login", srv.Auths()[1])
 	}
 }
 
@@ -526,7 +445,7 @@ func TestBadSecretFields(t *testing.T) {
 			noSecretIn(t, srv, obs, err)
 		})
 	}
-	if len(srv.auth) != 0 {
+	if len(srv.Auths()) != 0 {
 		t.Fatalf("a request was sent with bad secret fields")
 	}
 }
@@ -548,8 +467,8 @@ func TestRequestedURLHasAuto(t *testing.T) {
 				t.Fatal(err)
 			}
 			mustValue(t, obs, "apache.up", 1)
-			if len(srv.uris) != 1 || srv.uris[0] != tt.want {
-				t.Fatalf("requested %v, want %q", srv.uris, tt.want)
+			if len(srv.URIs()) != 1 || srv.URIs()[0] != tt.want {
+				t.Fatalf("requested %v, want %q", srv.URIs(), tt.want)
 			}
 		})
 	}
@@ -574,15 +493,7 @@ func TestDefaultURL(t *testing.T) {
 }
 
 func TestCallerContextEnding(t *testing.T) {
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
-	defer srv.Close()
-	defer close(release)
+	srv := webchecktest.NewHangingServer(t)
 
 	srv2 := newStatusServer(t, eventPage(1000, 1000, 1, 5))
 	p, clk := newTestPlugin()
@@ -600,8 +511,8 @@ func TestCallerContextEnding(t *testing.T) {
 		t.Fatalf("Collect with a dead context = %+v, %v", obs, err)
 	}
 	// Baselines untouched.
-	clk.t = clk.t.Add(10 * time.Second)
-	srv2.set(200, eventPage(1100, 1100, 1, 5))
+	clk.Advance(10 * time.Second)
+	srv2.Set(200, eventPage(1100, 1100, 1, 5))
 	obs, _ = p.Collect(t.Context(), params(srv2))
 	mustValue(t, obs, "apache.requests_per_s", 10)
 }
@@ -610,15 +521,7 @@ func TestHungServerTimesOut(t *testing.T) {
 	if testing.Short() {
 		t.Skip("waits for the 5 s request deadline")
 	}
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		select {
-		case <-release:
-		case <-r.Context().Done():
-		}
-	}))
-	defer srv.Close()
-	defer close(release)
+	srv := webchecktest.NewHangingServer(t)
 	p, _ := newTestPlugin()
 	start := time.Now()
 	obs, err := p.Collect(t.Context(), map[string]any{"url": srv.URL})
