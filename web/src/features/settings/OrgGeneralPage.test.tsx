@@ -153,7 +153,9 @@ describe('OrgGeneralPage', () => {
       if (typed !== '') await user.type(input, typed);
       await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
 
-      expect(await screen.findByText('Enter a whole number of days from 0 to 365.')).toBeInTheDocument();
+      // Announced, and tied to the field.
+      expect(await screen.findByRole('alert')).toHaveTextContent('Enter a whole number of days from 0 to 365.');
+      expect(screen.getByLabelText(LABEL)).toHaveAccessibleDescription(/Enter a whole number of days from 0 to 365\./);
       expect(puts).toEqual([]);
     });
 

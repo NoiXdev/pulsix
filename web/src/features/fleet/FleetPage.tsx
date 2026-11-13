@@ -147,7 +147,7 @@ export function FleetPage() {
  * A client whose agent is offline (backlog 3.57) is frozen: the manager
  * keeps its last roll-up but does not judge it, so the row says "Off" in
  * the neutral tone instead of that roll-up's colour, keeps the last state
- * as the pill's title and the counts muted, and shows when the agent was
+ * as a small muted label below it and the counts muted, and shows when the agent was
  * last seen where the others show since when their state holds. */
 function FleetRow({ org, host, zoneName, agent }: { org: string; host: FleetHost; zoneName: string | undefined; agent: AgentPresence | undefined }) {
   const t = useT();
@@ -158,8 +158,9 @@ function FleetRow({ org, host, zoneName, agent }: { org: string; host: FleetHost
   return (
     <ListRow to="/o/$org/hosts/$id" params={{ org, id: host.host_id }} columns={COLUMNS} label={host.name}>
       {off ? (
-        <span title={t.hosts.presence.lastState(st.label)}>
+        <span className="flex flex-col items-start gap-0.5">
           <Pill tone="unknown">{t.hosts.presence.off}</Pill>
+          <span className="text-[10px] leading-tight text-muted-foreground">{t.hosts.presence.lastState(st.label)}</span>
         </span>
       ) : (
         <span title={host.since ? t.fleet.sinceTitle(seenLabel(host.since, new Date(), t)) : undefined}>

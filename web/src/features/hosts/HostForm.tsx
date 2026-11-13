@@ -40,8 +40,10 @@ export interface HostFormProps {
   initialJump: string;
   /** The host's resolved jump chain from the inventory preview, when known. */
   resolvedChain?: string[];
-  /** Whether the edited host has an agent (a new host never has). A client
-   * without one is judged like a server, which the form says (backlog 3.57). */
+  /** Whether the edited host has an agent (a new host never has); undefined
+   * when that is not known (the read failed). A client without one is
+   * judged like a server, which the form says (backlog 3.57) — only when it
+   * is known to have none. */
   hasAgent?: boolean;
 }
 
@@ -49,7 +51,7 @@ function tagsKey(tags: readonly ParsedTag[]): string {
   return JSON.stringify([...tags].map((tag) => [tag.key, tag.value]).sort());
 }
 
-export function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zones, bastions, credentials, initialTags, initialJump, resolvedChain, hasAgent = false }: HostFormProps) {
+export function HostForm({ org, host, onClose, onReload, canJump, canCreateBastion, zones, bastions, credentials, initialTags, initialJump, resolvedChain, hasAgent }: HostFormProps) {
   const t = useT();
   const toast = useToast();
   const isEdit = !!host;
@@ -80,6 +82,7 @@ export function HostForm({ org, host, onClose, onReload, canJump, canCreateBasti
   // Server unless the host already is a client (backlog 3.57); a host an
   // agent enrolled is a server until someone changes it here.
   const [kind, setKind] = useState<HostKind>(initial.kind);
+  const noAgentHint = kind === 'client' && (isEdit ? hasAgent === false : true);
   const [tags, setTags] = useState<ParsedTag[]>(initialTags);
   const [tagInput, setTagInput] = useState('');
   const [tagError, setTagError] = useState<string | null>(null);
@@ -226,9 +229,14 @@ export function HostForm({ org, host, onClose, onReload, canJump, canCreateBasti
             ]}
             value={kind}
             onChange={(value) => setKind(value === 'client' ? 'client' : 'server')}
+            aria-describedby={noAgentHint ? 'host_kind_hint host_kind_no_agent' : 'host_kind_hint'}
           />
-          <span className="text-[11px] text-muted-foreground">{t.hosts.dialog.kindHint}</span>
-          {kind === 'client' && !hasAgent && <span className="text-[11px] text-[var(--px-warn)]">{t.hosts.dialog.kindClientNoAgent}</span>}
+          <span id="host_kind_hint" className="text-[11px] text-muted-foreground">{t.hosts.dialog.kindHint}</span>
+          {noAgentHint && (
+            <span id="host_kind_no_agent" className="text-[11px] text-[var(--px-warn)]">
+              {t.hosts.dialog.kindClientNoAgent}
+            </span>
+          )}
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="host_tags">{t.hosts.dialog.tags}</Label>

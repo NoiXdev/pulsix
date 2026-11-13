@@ -79,7 +79,7 @@ export function OrgMonitoringCard({ org, canWrite }: { org: string; canWrite: bo
               readOnly={!canWrite}
               disabled={settings.isPending}
               aria-invalid={invalid || undefined}
-              aria-describedby="client_absent_days_hint"
+              aria-describedby={invalid ? 'client_absent_days_hint client_absent_days_error' : 'client_absent_days_hint'}
               onChange={(e) => {
                 setDraft(e.target.value);
                 setInvalid(false);
@@ -88,7 +88,11 @@ export function OrgMonitoringCard({ org, canWrite }: { org: string; canWrite: bo
             <span id="client_absent_days_hint" className="text-xs text-muted-foreground">
               {m.clientAbsentDaysHint}
             </span>
-            {invalid && <span className="text-[11px] text-destructive">{m.invalid}</span>}
+            {invalid && (
+              <span id="client_absent_days_error" role="alert" className="text-[11px] text-destructive">
+                {m.invalid}
+              </span>
+            )}
             {!canWrite && <span className="text-xs text-muted-foreground">{m.readOnlyHint}</span>}
           </div>
         )}

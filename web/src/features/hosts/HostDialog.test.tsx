@@ -468,6 +468,28 @@ describe('HostDialog', () => {
       expect(screen.getByText(NO_AGENT_HINT)).toBeInTheDocument();
     });
 
+    it('does not claim there is no agent when the agent read failed for another reason', async () => {
+      mockApi({
+        ...baseRoutes(),
+        'GET /api/v1/orgs/acme/hosts/h1/agent': () => problem(500, 'boom'),
+      });
+      renderDialog({ host: HOST });
+
+      await screen.findByText('env=prod');
+      await pickOption(screen, 'Kind', 'Client');
+      expect(screen.queryByText(NO_AGENT_HINT)).not.toBeInTheDocument();
+    });
+
+    it('describes the kind select with its hints', async () => {
+      mockApi(baseRoutes());
+      renderDialog();
+
+      const select = await screen.findByLabelText('Kind');
+      expect(select).toHaveAccessibleDescription(/A server is expected to be on/);
+      await pickOption(screen, 'Kind', 'Client');
+      expect(screen.getByLabelText('Kind')).toHaveAccessibleDescription(/A client without an agent is treated like a server/);
+    });
+
     it('prefills a client and leaves an unchanged kind out of the PATCH', async () => {
       const user = userEvent.setup();
       let patch: MockRequest | undefined;

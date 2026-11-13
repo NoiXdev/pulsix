@@ -21,6 +21,8 @@ export interface SelectProps {
   placeholder?: string;
   id?: string;
   'aria-label'?: string;
+  /** Ids of the elements that describe the field (a hint below it). */
+  'aria-describedby'?: string;
   disabled?: boolean;
   /** Sets `aria-invalid` on the input and colours its border, mirroring a
    *  server-side validation problem shown at this field — the same signal
@@ -76,6 +78,7 @@ const CREATE = ' create';
 export function Select({
   options, value, onChange, placeholder, id, disabled, invalid, required, create,
   'aria-label': ariaLabel,
+  'aria-describedby': ariaDescribedBy,
 }: SelectProps) {
   const t = useT();
   const [filter, setFilter] = useState('');
@@ -194,6 +197,7 @@ export function Select({
         {...cb.getInputProps({
           id: inputId,
           'aria-label': ariaLabel,
+          'aria-describedby': ariaDescribedBy,
           // downshift's own default, when no aria-label is given, points
           // this at an internal label id (`${id}-label`) that Select never
           // renders an element for — getLabelProps is never called, since

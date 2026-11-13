@@ -94,8 +94,10 @@ export function HostRow({
           style={{ background: agentStatus === 'online' ? 'var(--px-ok)' : agentStatus && !off ? 'var(--px-warn)' : 'var(--px-unknown)' }}
           title={agentStatus ? t.hosts.row.agentTitle(agentStatusLabel) : t.hosts.row.unknown}
         />
-        <span className="flex min-w-0 items-center gap-1.5">
-          <ListRowName className="truncate font-mono text-xs font-semibold text-foreground">{host.name}</ListRowName>
+        {/* Wraps rather than squeezing the name: the badge moves below a
+            long name instead of truncating it earlier. */}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          <ListRowName className="max-w-full truncate font-mono text-xs font-semibold text-foreground">{host.name}</ListRowName>
           <HostPresenceBadge presence={presence} />
         </span>
         <span className="truncate font-mono text-xs text-muted-foreground">{zoneName ?? host.zone_id.slice(0, 8)}</span>

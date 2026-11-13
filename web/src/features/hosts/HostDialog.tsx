@@ -8,6 +8,7 @@ import { useHostTags } from '../../api/hooks/useTags.ts';
 import { useHostAgent } from '../../api/hooks/useAgents.ts';
 import type { Host } from '../../api/types.ts';
 import { may } from '../../lib/roles.ts';
+import { errorStatus } from '../../lib/apiError.ts';
 import { useT } from '../../i18n/useT.ts';
 import { manualTagPairs } from './tags.ts';
 import { HostForm, INHERIT } from './HostForm.tsx';
@@ -108,7 +109,9 @@ function HostDialogLoader({ org, role, host, onClose }: { org: string; role: str
       initialJump={initialJump}
       // A connection with a null chain is a resolved direct route, not an unknown one.
       resolvedChain={preview.data?.connection ? (preview.data.connection.bastions ?? []) : undefined}
-      hasAgent={!!agent.data?.agent}
+      // Only a 404 means "no agent"; any other failure leaves it unknown,
+      // and the form then makes no claim about it.
+      hasAgent={agent.data?.agent ? true : errorStatus(agent.error) === 404 ? false : undefined}
     />
   );
 }

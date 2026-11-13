@@ -259,7 +259,8 @@ describe('FleetPage', () => {
 
       await waitFor(() => expect(within(row('laptop-1')).getByText('Off')).toBeInTheDocument());
       expect(within(row('laptop-1')).queryByText('crit')).not.toBeInTheDocument();
-      expect(within(row('laptop-1')).getByTitle('last state: crit')).toBeInTheDocument();
+      // Visible, not only a tooltip: touch and screen-reader users read it too.
+      expect(within(row('laptop-1')).getByText('last state: crit')).toBeInTheDocument();
       expect(within(row('laptop-1')).getByText('last seen 3 h ago')).toBeInTheDocument();
     });
 
