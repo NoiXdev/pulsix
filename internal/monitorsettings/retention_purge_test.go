@@ -38,8 +38,11 @@ type fakePurgeStore struct {
 	listMax int
 	listErr error
 	delErr  map[uuid.UUID]error
-	calls   []purgeCall
-	befores []time.Time
+	// onDelete, when set, runs after every DeleteBatch (a test cancels its
+	// context there).
+	onDelete func()
+	calls    []purgeCall
+	befores  []time.Time
 }
 
 func newFakePurgeStore(clock *fakeClock) *fakePurgeStore {
@@ -83,10 +86,21 @@ func (f *fakePurgeStore) DeleteBatch(_ context.Context, table monitorsettings.Ta
 	if err := f.delErr[org]; err != nil {
 		return 0, err
 	}
-	left := f.rows[table][org][r.Start]
+	// Rows are kept per chunk; the purger may narrow a range inside its
+	// chunk, so look the chunk up by the range's start.
+	chunk := r.Start
+	for _, c := range f.ranges[table] {
+		if !r.Start.Before(c.Start) && r.Start.Before(c.End) {
+			chunk = c.Start
+		}
+	}
+	left := f.rows[table][org][chunk]
 	n := min(left, int64(limit))
 	if n > 0 {
-		f.rows[table][org][r.Start] = left - n
+		f.rows[table][org][chunk] = left - n
+	}
+	if f.onDelete != nil {
+		f.onDelete()
 	}
 	return n, nil
 }
@@ -118,7 +132,9 @@ func orgIDs(n int) []uuid.UUID {
 }
 
 func newTestPurger(store *fakePurgeStore, locker monitorsettings.Locker, maxDays int, log *slog.Logger) *monitorsettings.Purger {
-	return monitorsettings.NewPurger(store, locker, maxDays, 0, store.clock.Now, log)
+	p := monitorsettings.NewPurger(store, locker, maxDays, 0, store.clock.Now, log)
+	p.SetBatchPause(0)
+	return p
 }
 
 // TestPurgeDeletesOnlyOlderRowsInBatches: one org at 30 days under a 90-day
@@ -147,10 +163,10 @@ func TestPurgeDeletesOnlyOlderRowsInBatches(t *testing.T) {
 	if !res.Complete || res.Orgs != 1 || res.Samples != 35005 || res.StateChanges != 7 || res.Errors != 0 {
 		t.Fatalf("result = %+v, want complete, 1 org, 35005 samples, 7 state changes", res)
 	}
-	for _, b := range store.befores {
-		if !b.Equal(cutoff) {
-			t.Fatalf("ranges listed before %v, want the cutoff %v", b, cutoff)
-		}
+	// The chunks are listed once per table and round, up to the round's
+	// start; each org then stops at its own cutoff.
+	if len(store.befores) != 2 || !store.befores[0].Equal(purgeNow) || !store.befores[1].Equal(purgeNow) {
+		t.Fatalf("ranges listed before %v, want once per table before the round's start %v", store.befores, purgeNow)
 	}
 	var samples []purgeCall
 	for _, c := range store.calls {
@@ -315,5 +331,129 @@ func TestPurgeRunStopsWithItsContext(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after its context was cancelled")
+	}
+}
+
+// TestPurgeUsesTheEffectiveRetention: the purger deletes by
+// EffectiveRetentionDays, whatever the store lists: an org whose choice is
+// not below the maximum is left alone, a shorter one is cut at its choice.
+func TestPurgeUsesTheEffectiveRetention(t *testing.T) {
+	clock := &fakeClock{now: purgeNow}
+	store := newFakePurgeStore(clock)
+	ids := orgIDs(4)
+	// A stale or inconsistent list: 365 and 120 are not below the maximum
+	// 90, 0 is no choice; only the 30-day org has a shorter retention.
+	store.orgs = []monitorsettings.OrgRetention{{OrgID: ids[0], Days: 365}, {OrgID: ids[1], Days: 30}, {OrgID: ids[2], Days: 0}, {OrgID: ids[3], Days: 120}}
+	store.ranges[monitorsettings.TableCheckSamples] = []monitorsettings.TimeRange{dayRange(200), dayRange(60)}
+	for _, id := range ids {
+		store.put(monitorsettings.TableCheckSamples, id, day(200), 1)
+		store.put(monitorsettings.TableCheckSamples, id, day(60), 1)
+	}
+	res := newTestPurger(store, nil, 90, nil).Round(ctx)
+	for _, c := range store.calls {
+		if c.org != ids[1] {
+			t.Fatalf("deleted for org %v, want only the 30-day org", c.org)
+		}
+		if c.r.End.After(purgeNow.AddDate(0, 0, -30)) {
+			t.Fatalf("range %+v past the 30-day cutoff", c.r)
+		}
+	}
+	if res.Samples != 2 {
+		t.Fatalf("deleted %d samples, want the 30-day org's 2", res.Samples)
+	}
+}
+
+// TestPurgeRevisitsOnlyNewRangesUntilTheDailySweep: once an org's table is
+// drained to its cutoff, the next round (an hour later) only deletes
+// between the old and the new cutoff, one statement per table, instead of
+// one per old chunk; a day later a full sweep visits every old chunk again
+// (late rows with old timestamps, another manager's progress).
+func TestPurgeRevisitsOnlyNewRangesUntilTheDailySweep(t *testing.T) {
+	clock := &fakeClock{now: purgeNow}
+	store := newFakePurgeStore(clock)
+	org := uuid.Must(uuid.NewV7())
+	store.orgs = []monitorsettings.OrgRetention{{OrgID: org, Days: 30}}
+	var ranges []monitorsettings.TimeRange
+	for d := 90; d >= 0; d-- {
+		ranges = append(ranges, dayRange(d))
+	}
+	for _, tbl := range []monitorsettings.Table{monitorsettings.TableCheckSamples, monitorsettings.TableCheckStateChanges} {
+		store.ranges[tbl] = ranges
+	}
+	p := newTestPurger(store, nil, 90, nil)
+
+	p.Round(ctx)
+	if n := len(store.calls); n < 2*60 {
+		t.Fatalf("first round: %d calls, want one per old chunk and table (>= 120)", n)
+	}
+
+	store.calls = nil
+	oldCutoff := clock.now.AddDate(0, 0, -30)
+	clock.now = clock.now.Add(time.Hour)
+	newCutoff := clock.now.AddDate(0, 0, -30)
+	if res := p.Round(ctx); !res.Complete {
+		t.Fatalf("second round = %+v, want complete", res)
+	}
+	if len(store.calls) != 2 {
+		t.Fatalf("second round: %d calls (%+v), want one per table", len(store.calls), store.calls)
+	}
+	for _, c := range store.calls {
+		if !c.r.Start.Equal(oldCutoff) || !c.r.End.Equal(newCutoff) {
+			t.Fatalf("second round range %+v, want [%v, %v)", c.r, oldCutoff, newCutoff)
+		}
+	}
+
+	store.calls = nil
+	clock.now = clock.now.Add(monitorsettings.RetentionPurgeFullSweepInterval)
+	p.Round(ctx)
+	if n := len(store.calls); n < 2*60 {
+		t.Fatalf("round after a day: %d calls, want the full sweep again (>= 120)", n)
+	}
+}
+
+// TestPurgeStopsQuietlyOnShutdown: a context cancelled mid-round ends the
+// round without an error per remaining org.
+func TestPurgeStopsQuietlyOnShutdown(t *testing.T) {
+	clock := &fakeClock{now: purgeNow}
+	store := newFakePurgeStore(clock)
+	ids := orgIDs(5)
+	for _, id := range ids {
+		store.orgs = append(store.orgs, monitorsettings.OrgRetention{OrgID: id, Days: 30})
+		store.put(monitorsettings.TableCheckSamples, id, day(40), 50000)
+	}
+	store.ranges[monitorsettings.TableCheckSamples] = []monitorsettings.TimeRange{dayRange(40)}
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	store.onDelete = cancel
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+
+	res := newTestPurger(store, nil, 90, log).Round(rctx)
+	if res.Errors != 0 || res.Complete || len(store.calls) != 1 {
+		t.Fatalf("result = %+v after %d calls, want no errors, incomplete, one batch", res, len(store.calls))
+	}
+	if strings.Contains(buf.String(), "level=ERROR") {
+		t.Fatalf("log = %q, want no error on shutdown", buf.String())
+	}
+}
+
+// TestPurgePausesBetweenBatches: with a pause set, consecutive batches
+// that deleted rows are spaced by it.
+func TestPurgePausesBetweenBatches(t *testing.T) {
+	if monitorsettings.RetentionPurgeBatchPause != 100*time.Millisecond {
+		t.Fatalf("RetentionPurgeBatchPause = %v, want 100ms", monitorsettings.RetentionPurgeBatchPause)
+	}
+	clock := &fakeClock{now: purgeNow}
+	store := newFakePurgeStore(clock)
+	org := uuid.Must(uuid.NewV7())
+	store.orgs = []monitorsettings.OrgRetention{{OrgID: org, Days: 30}}
+	store.ranges[monitorsettings.TableCheckSamples] = []monitorsettings.TimeRange{dayRange(40)}
+	store.put(monitorsettings.TableCheckSamples, org, day(40), 30000) // 3 full batches and an empty one
+	p := monitorsettings.NewPurger(store, nil, 90, 0, clock.Now, nil)
+	p.SetBatchPause(20 * time.Millisecond)
+	start := time.Now()
+	p.Round(ctx)
+	if elapsed := time.Since(start); elapsed < 60*time.Millisecond {
+		t.Fatalf("round took %v, want at least 3 pauses of 20ms", elapsed)
 	}
 }

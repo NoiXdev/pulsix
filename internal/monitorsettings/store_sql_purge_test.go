@@ -2,6 +2,7 @@ package monitorsettings_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -111,7 +112,9 @@ func TestPurgeSQLDeletesOnlyTheShorterOrgsOlderRows(t *testing.T) {
 		t.Fatalf("OrgsWithShorterRetention(90) = %+v, %v; want only the 30-day org", orgs, err)
 	}
 
-	res := monitorsettings.NewPurger(store, nil, 90, 0, func() time.Time { return now }, nil).Round(ctx)
+	purger := monitorsettings.NewPurger(store, nil, 90, 0, func() time.Time { return now }, nil)
+	purger.SetBatchPause(0)
+	res := purger.Round(ctx)
 	if !res.Complete || res.Orgs != 1 || res.Samples != 25000 || res.StateChanges != 30 {
 		t.Fatalf("result = %+v, want complete, 1 org, 25000 samples, 30 state changes", res)
 	}
@@ -143,7 +146,8 @@ func TestPurgeSQLDeletesOnlyTheShorterOrgsOlderRows(t *testing.T) {
 		t.Errorf("untouched org samples = %d/%d, want 25000/100", older, newer)
 	}
 
-	// A second run has nothing left to delete.
+	// A second run (a fresh purger: a full sweep) has nothing left to
+	// delete.
 	res = monitorsettings.NewPurger(store, nil, 90, 0, func() time.Time { return now }, nil).Round(ctx)
 	if !res.Complete || res.Samples != 0 || res.StateChanges != 0 {
 		t.Fatalf("second run = %+v, want nothing deleted", res)
@@ -239,4 +243,90 @@ func TestPurgeSQLChunkRanges(t *testing.T) {
 			t.Fatalf("ranges = %+v, want oldest first", ranges)
 		}
 	}
+}
+
+// TestListOrgsMatchesTheEffectiveRetention ties the purge's SQL selection
+// to EffectiveRetentionDays: for every choice and several maxima, an
+// organization is listed exactly when its effective retention is below
+// the maximum, with the effective retention as its days.
+func TestListOrgsMatchesTheEffectiveRetention(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	settings := monitorsettings.NewSQLStore(d)
+	choices := map[uuid.UUID]int{}
+	for _, choice := range []int{0, 30, 90, 365} {
+		org := seedOrg(t, q, fmt.Sprintf("purge-list-%d", choice))
+		c := choice
+		if _, err := settings.Put(db.WithOrgScope(ctx, org), org, monitorsettings.Update{ClientAbsentDays: 14, RetentionDays: &c}); err != nil {
+			t.Fatal(err)
+		}
+		choices[org] = choice
+	}
+	store := monitorsettings.NewPurgeSQLStore(d)
+	for _, maxDays := range []int{7, 29, 30, 31, 89, 90, 91, 364, 365} {
+		listed, err := store.OrgsWithShorterRetention(ctx, maxDays)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := map[uuid.UUID]int{}
+		for _, o := range listed {
+			got[o.OrgID] = o.Days
+		}
+		for org, choice := range choices {
+			eff := monitorsettings.EffectiveRetentionDays(choice, maxDays)
+			days, ok := got[org]
+			if ok != (eff < maxDays) {
+				t.Errorf("max %d, choice %d: listed=%v, want listed=%v (effective %d)", maxDays, choice, ok, eff < maxDays, eff)
+			}
+			if ok && days != eff {
+				t.Errorf("max %d, choice %d: listed with %d days, want %d", maxDays, choice, days, eff)
+			}
+		}
+	}
+}
+
+// TestPurgeSQLSteadyStateIsCheap: an org with sixty populated old daily
+// chunks per table; the first round visits each of them, the next round an
+// hour later issues at most one DELETE per table (the range between the
+// two cutoffs) instead of one per old chunk.
+func TestPurgeSQLSteadyStateIsCheap(t *testing.T) {
+	d := testdb.Open(t)
+	q := gen.New(d.Pool())
+	now := time.Now().UTC()
+	org := seedOrg(t, q, "purge-steady")
+	thirty := 30
+	if _, err := monitorsettings.NewSQLStore(d).Put(db.WithOrgScope(ctx, org), org, monitorsettings.Update{ClientAbsentDays: 14, RetentionDays: &thirty}); err != nil {
+		t.Fatal(err)
+	}
+	host := seedHost(t, q, org, "steady")
+	for days := 31; days <= 90; days++ {
+		seedSamples(t, d, org, host, now.AddDate(0, 0, -days), 3)
+		seedStateChanges(t, d, org, host, now.AddDate(0, 0, -days), 1)
+	}
+	clock := now
+	store := &countingStore{PurgeSQLStore: monitorsettings.NewPurgeSQLStore(d), batches: map[monitorsettings.Table][]int64{}}
+	p := monitorsettings.NewPurger(store, nil, 90, 0, func() time.Time { return clock }, nil)
+	p.SetBatchPause(0)
+
+	start := time.Now()
+	res := p.Round(ctx)
+	first := len(store.batches[monitorsettings.TableCheckSamples]) + len(store.batches[monitorsettings.TableCheckStateChanges])
+	if !res.Complete || res.Samples != 180 || res.StateChanges != 60 || first < 120 {
+		t.Fatalf("first round = %+v with %d statements, want everything deleted, one statement per old chunk", res, first)
+	}
+	t.Logf("first round: %d DELETE statements in %v", first, time.Since(start))
+
+	store.batches = map[monitorsettings.Table][]int64{}
+	clock = clock.Add(time.Hour)
+	start = time.Now()
+	res = p.Round(ctx)
+	for table, b := range store.batches {
+		if len(b) > 1 {
+			t.Fatalf("steady-state round: %d %s statements, want at most one", len(b), table)
+		}
+	}
+	if !res.Complete {
+		t.Fatalf("steady-state round = %+v, want complete", res)
+	}
+	t.Logf("steady-state round: %v statements in %v", store.batches, time.Since(start))
 }

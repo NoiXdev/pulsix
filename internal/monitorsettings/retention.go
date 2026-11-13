@@ -18,9 +18,11 @@ func ValidRetentionDays(days int) bool {
 
 // EffectiveRetentionDays is how many days an organization keeps its
 // measurements: its choice when that is below the instance maximum, else
-// the maximum (choice 0 = no choice). The settings API shows it and the
-// Purger deletes by it; ListOrgsWithShorterRetention selects exactly the
-// organizations for which it is below the maximum.
+// the maximum (choice 0 = no choice). It is the one rule: the settings API
+// shows it, and the Purger computes its cutoff with it and skips every
+// organization for which it is not below the maximum. The SQL work list
+// (ListOrgsWithShorterRetention) only narrows the candidates; a store test
+// (TestListOrgsMatchesTheEffectiveRetention) pins it to this function.
 func EffectiveRetentionDays(choice, maxDays int) int {
 	if choice > 0 && choice < maxDays {
 		return choice

@@ -39,9 +39,12 @@ type DeleteOrgCheckSamplesBatchParams struct {
 // predicates repeat org and range, so even a range spanning several
 // chunks could only ever delete more of this organization's rows in the
 // range, never another organization's and never a newer one. Plan
-// (TimescaleDB 2.30, generic plan): the subquery is an index scan of the
-// chunk's check_samples_lookup_idx (org_id, ..., at) with org_id and the
-// range as index conditions, the delete a Tid Scan of the collected ctids.
+// (TimescaleDB 2.30, generic plan, 31 populated chunks): the subquery and
+// the delete each run a ChunkAppend with 30 of 31 chunks excluded at
+// startup, then an index scan of the one chunk's check_samples_lookup_idx
+// (org_id, ..., at) with org_id and the range as index conditions; with
+// many rows of the org in the chunk the delete becomes a Tid Scan of the
+// collected ctids instead. An empty range costs about half a millisecond.
 // Runs inside the organization's scope (row-level security as a second
 // fence).
 func (q *Queries) DeleteOrgCheckSamplesBatch(ctx context.Context, arg DeleteOrgCheckSamplesBatchParams) (int64, error) {
@@ -105,10 +108,12 @@ type ListOrgsWithShorterRetentionRow struct {
 
 // The retention purge's work list (backlog 3.15, monitorsettings.Purger):
 // every organization whose retention choice is below the instance maximum
-// (max_days, PULSIX_SAMPLE_RETENTION). Its effective retention is then
-// the choice itself; NULL (no choice) and a choice at or above the
-// maximum leave the organization to TimescaleDB's retention policy, so
-// they are not listed. Runs outside any organization scope (the bypass
+// (max_days, PULSIX_SAMPLE_RETENTION): exactly the organizations whose
+// monitorsettings.EffectiveRetentionDays is below the maximum, with the
+// choice as that value (TestListOrgsMatchesTheEffectiveRetention pins the
+// two together; the purger applies EffectiveRetentionDays again itself).
+// NULL (no choice) and a choice at or above the maximum leave the
+// organization to TimescaleDB's retention policy, so they are not listed. Runs outside any organization scope (the bypass
 // policy of org_monitoring_settings applies), like the other cross-org
 // tickers' reads.
 func (q *Queries) ListOrgsWithShorterRetention(ctx context.Context, maxDays int32) ([]ListOrgsWithShorterRetentionRow, error) {

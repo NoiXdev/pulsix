@@ -13,14 +13,25 @@ package monitorsettings
 // second manager instance skips instead of racing it; the key is
 // RetentionPurgeLockKey, next to the retention sync's 8316.
 //
-// One round walks the organizations, each one's tables, each table's
-// chunks older than the cutoff (oldest first), and deletes in batches of
-// RetentionPurgeBatch rows, each batch its own short transaction in the
-// organization's scope, until a batch comes back short. Between batches it
-// checks RetentionPurgeBudget: once spent the round stops, and the next
-// round starts with the organization after the interrupted one, so one
-// organization's large backlog cannot starve the others and drains over
-// several rounds.
+// One round lists both tables' chunks once, then walks the organizations,
+// each one's tables, each table's chunks older than the cutoff (oldest
+// first), and deletes in batches of RetentionPurgeBatch rows, each batch
+// its own short transaction in the organization's scope, until a batch
+// comes back short, pausing RetentionPurgeBatchPause after every batch
+// that deleted rows. Between batches it checks RetentionPurgeBudget: once
+// spent the round stops, and the next round starts with the organization
+// after the interrupted one, so one organization's large backlog cannot
+// starve the others and drains over several rounds.
+//
+// Steady state: the purger remembers, per organization and table, up to
+// which time it last drained (drained). A later round only visits the
+// part of the chunks after that mark, so an hour later it issues one
+// DELETE per table (two when the hour crosses a chunk boundary) instead
+// of one per old chunk. The memory is the manager's own: it is empty after
+// a start and cleared every RetentionPurgeFullSweepInterval, when a round
+// visits every old chunk again — that catches rows written late with old
+// timestamps and anything another manager left. Forgetting only costs
+// statements, never a missed row past the next full sweep.
 
 import (
 	"bytes"
@@ -49,6 +60,13 @@ const (
 	// Arbitrary but must never change; next to checks.RetentionSyncLockKey
 	// (8316).
 	RetentionPurgeLockKey = int64(8317)
+	// RetentionPurgeBatchPause is the pause after a batch that deleted
+	// rows, spreading a large backlog's write load (WAL, IO) so ingest on a
+	// small database keeps up. It counts against the budget.
+	RetentionPurgeBatchPause = 100 * time.Millisecond
+	// RetentionPurgeFullSweepInterval is how often a round forgets how far
+	// each organization was drained and visits every old chunk again.
+	RetentionPurgeFullSweepInterval = 24 * time.Hour
 )
 
 // Table is one of the two hypertables the retention covers.
@@ -117,10 +135,22 @@ type Purger struct {
 	interval time.Duration
 	now      func() time.Time
 	log      *slog.Logger
+	pause    time.Duration
 	// resumeAfter is the organization whose purge the budget interrupted
 	// in the previous round (uuid.Nil: none); the next round starts with
-	// the organization after it. Only Run's goroutine touches it.
+	// the organization after it. drained is, per organization and table,
+	// the time before which the purger last found nothing left to delete;
+	// sweptAt is when drained was last cleared. Only Run's goroutine (one
+	// round at a time) touches the three.
 	resumeAfter uuid.UUID
+	drained     map[drainKey]time.Time
+	sweptAt     time.Time
+}
+
+// drainKey is one organization's table.
+type drainKey struct {
+	org   uuid.UUID
+	table Table
 }
 
 // NewPurger wires the purge. maxDays is the instance maximum
@@ -137,8 +167,15 @@ func NewPurger(store PurgeStore, locker Locker, maxDays int, interval time.Durat
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Purger{store: store, locker: locker, maxDays: maxDays, interval: interval, now: now, log: log}
+	return &Purger{
+		store: store, locker: locker, maxDays: maxDays, interval: interval, now: now, log: log,
+		pause: RetentionPurgeBatchPause, drained: map[drainKey]time.Time{},
+	}
 }
+
+// SetBatchPause replaces RetentionPurgeBatchPause; tests set 0. Call it
+// before Run.
+func (p *Purger) SetBatchPause(d time.Duration) { p.pause = d }
 
 // Run does a round every interval until ctx is done. A failing round is
 // logged, never fatal; the next one retries.
@@ -197,19 +234,55 @@ func (p *Purger) Round(ctx context.Context) (res PurgeResult) {
 func (p *Purger) purge(ctx context.Context, now, deadline time.Time) PurgeResult {
 	orgs, err := p.store.OrgsWithShorterRetention(ctx, p.maxDays)
 	if err != nil {
+		if ctx.Err() != nil {
+			return PurgeResult{}
+		}
 		p.log.ErrorContext(ctx, "measurement retention purge: list organizations", "err", err)
 		return PurgeResult{Errors: 1}
 	}
+	if p.sweptAt.IsZero() || now.Sub(p.sweptAt) >= RetentionPurgeFullSweepInterval {
+		clear(p.drained)
+		p.sweptAt = now
+	}
+	p.forgetUnlisted(orgs)
 	res := PurgeResult{Orgs: len(orgs), Complete: true}
-	for _, o := range p.rotate(orgs) {
-		done, err := p.purgeOrg(ctx, o, now, deadline, &res)
+	if len(orgs) == 0 {
+		return res
+	}
+	// Every organization's cutoff is at or before now minus the shortest
+	// choice (30 days), so listing up to now covers them all; each org
+	// then skips the chunks past its own cutoff.
+	ranges := map[Table][]TimeRange{}
+	for _, table := range purgeTables() {
+		r, err := p.store.ChunkRanges(ctx, table, now)
 		if err != nil {
+			if ctx.Err() != nil {
+				return PurgeResult{Orgs: len(orgs)}
+			}
+			p.log.ErrorContext(ctx, "measurement retention purge: list chunks", "table", table, "err", err)
+			return PurgeResult{Orgs: len(orgs), Errors: 1}
+		}
+		ranges[table] = r
+	}
+	for _, o := range p.rotate(orgs) {
+		if ctx.Err() != nil { // shutting down: stop quietly
+			res.Complete = false
+			return res
+		}
+		// One rule for what is kept: the settings API shows the same value.
+		days := EffectiveRetentionDays(o.Days, p.maxDays)
+		if days >= p.maxDays {
+			continue // TimescaleDB's policy already enforces the maximum
+		}
+		cutoff := now.Add(-time.Duration(days) * 24 * time.Hour)
+		done, err := p.purgeOrg(ctx, o.OrgID, cutoff, deadline, ranges, &res)
+		if err != nil && ctx.Err() == nil {
 			res.Errors++
 			res.Complete = false
 			p.log.ErrorContext(ctx, "measurement retention purge failed for an organization", "org_id", o.OrgID, "err", err)
 			continue
 		}
-		if !done {
+		if !done || err != nil {
 			res.Complete = false
 			p.resumeAfter = o.OrgID
 			return res
@@ -217,6 +290,20 @@ func (p *Purger) purge(ctx context.Context, now, deadline time.Time) PurgeResult
 	}
 	p.resumeAfter = uuid.Nil
 	return res
+}
+
+// forgetUnlisted drops the drained marks of organizations no longer
+// listed, so the memory stays bounded by the current list.
+func (p *Purger) forgetUnlisted(orgs []OrgRetention) {
+	listed := make(map[uuid.UUID]bool, len(orgs))
+	for _, o := range orgs {
+		listed[o.OrgID] = true
+	}
+	for k := range p.drained {
+		if !listed[k.org] {
+			delete(p.drained, k)
+		}
+	}
 }
 
 // rotate orders orgs (sorted by id) to start with the first one after
@@ -233,40 +320,70 @@ func (p *Purger) rotate(orgs []OrgRetention) []OrgRetention {
 	return orgs
 }
 
-// purgeOrg deletes one organization's rows older than now minus its
-// retention from both tables. done is false when the budget ran out first.
-func (p *Purger) purgeOrg(ctx context.Context, o OrgRetention, now, deadline time.Time, res *PurgeResult) (done bool, err error) {
-	if o.Days <= 0 {
-		return true, nil // never delete by a non-positive retention
-	}
-	cutoff := now.Add(-time.Duration(o.Days) * 24 * time.Hour)
+// purgeOrg deletes one organization's rows older than cutoff from both
+// tables, skipping what an earlier round already drained. done is false
+// when the budget ran out or ctx ended first.
+func (p *Purger) purgeOrg(ctx context.Context, org uuid.UUID, cutoff, deadline time.Time, ranges map[Table][]TimeRange, res *PurgeResult) (done bool, err error) {
 	for _, table := range purgeTables() {
-		ranges, err := p.store.ChunkRanges(ctx, table, cutoff)
-		if err != nil {
-			return false, fmt.Errorf("list %s chunks: %w", table, err)
-		}
-		for _, r := range ranges {
+		key := drainKey{org: org, table: table}
+		from := p.drained[key]
+		for _, r := range ranges[table] { // oldest first
+			if !r.Start.Before(cutoff) {
+				break
+			}
 			if r.End.After(cutoff) {
 				r.End = cutoff
 			}
-			for {
-				if !p.now().Before(deadline) {
-					return false, nil
-				}
-				n, err := p.store.DeleteBatch(ctx, table, o.OrgID, r, RetentionPurgeBatch)
-				if err != nil {
-					return false, fmt.Errorf("delete from %s: %w", table, err)
-				}
-				if table == TableCheckSamples {
-					res.Samples += n
-				} else {
-					res.StateChanges += n
-				}
-				if n < RetentionPurgeBatch {
-					break
-				}
+			if !r.End.After(from) {
+				continue // drained by an earlier round
 			}
+			if r.Start.Before(from) {
+				r.Start = from // still inside the one chunk
+			}
+			finished, err := p.drainRange(ctx, table, org, r, deadline, res)
+			if err != nil || !finished {
+				return false, err
+			}
+			p.drained[key] = r.End
 		}
 	}
 	return true, nil
+}
+
+// drainRange deletes batches of org's rows in r until one comes back
+// short. finished is false when the budget ran out or ctx ended first.
+func (p *Purger) drainRange(ctx context.Context, table Table, org uuid.UUID, r TimeRange, deadline time.Time, res *PurgeResult) (finished bool, err error) {
+	for {
+		if ctx.Err() != nil || !p.now().Before(deadline) {
+			return false, nil
+		}
+		n, err := p.store.DeleteBatch(ctx, table, org, r, RetentionPurgeBatch)
+		if err != nil {
+			return false, fmt.Errorf("delete from %s: %w", table, err)
+		}
+		if table == TableCheckSamples {
+			res.Samples += n
+		} else {
+			res.StateChanges += n
+		}
+		if n > 0 {
+			sleep(ctx, p.pause)
+		}
+		if n < RetentionPurgeBatch {
+			return true, nil
+		}
+	}
+}
+
+// sleep waits d or until ctx ends.
+func sleep(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
 }
