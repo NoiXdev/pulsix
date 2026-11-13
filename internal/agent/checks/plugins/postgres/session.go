@@ -34,7 +34,7 @@ type session interface {
 	// Databases lists at most limit databases: the named ones when names is
 	// not empty, otherwise every non-template database that accepts
 	// connections. Ordered by name.
-	Databases(ctx context.Context, names []string, limit int) ([]database, error)
+	Databases(ctx context.Context, names []string, limit int) (dbs []database, total int, err error)
 	Close()
 }
 
@@ -97,14 +97,19 @@ func (s pgxSession) Server(ctx context.Context) (serverStats, error) {
 
 const (
 	allDatabasesQuery = `SELECT datname::text,
-  CASE WHEN has_database_privilege(datname, 'CONNECT') OR pg_has_role('pg_read_all_stats', 'USAGE') THEN pg_database_size(datname) END
+  CASE WHEN has_database_privilege(datname, 'CONNECT') OR pg_has_role('pg_read_all_stats', 'USAGE') THEN pg_database_size(datname) END,
+  count(*) OVER ()
   FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY datname LIMIT $1`
 	namedDatabasesQuery = `SELECT datname::text,
-  CASE WHEN has_database_privilege(datname, 'CONNECT') OR pg_has_role('pg_read_all_stats', 'USAGE') THEN pg_database_size(datname) END
+  CASE WHEN has_database_privilege(datname, 'CONNECT') OR pg_has_role('pg_read_all_stats', 'USAGE') THEN pg_database_size(datname) END,
+  count(*) OVER ()
   FROM pg_database WHERE datname = ANY($2::text[]) ORDER BY datname LIMIT $1`
 )
 
-func (s pgxSession) Databases(ctx context.Context, names []string, limit int) ([]database, error) {
+// Databases reads at most limit rows and reports in total how many the query
+// matches without its LIMIT (count(*) OVER (), the same statement, so the
+// two cannot disagree).
+func (s pgxSession) Databases(ctx context.Context, names []string, limit int) ([]database, int, error) {
 	var (
 		rows pgx.Rows
 		err  error
@@ -115,18 +120,21 @@ func (s pgxSession) Databases(ctx context.Context, names []string, limit int) ([
 		rows, err = s.conn.Query(ctx, allDatabasesQuery, limit)
 	}
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
-	var out []database
+	var (
+		out   []database
+		total int
+	)
 	for rows.Next() {
 		var d database
-		if err := rows.Scan(&d.Name, &d.Size); err != nil {
-			return nil, err
+		if err := rows.Scan(&d.Name, &d.Size, &total); err != nil {
+			return nil, 0, err
 		}
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
 // Close ends the connection within what remains of the round's deadline,

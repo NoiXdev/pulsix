@@ -402,3 +402,24 @@ func testCAPEM(t *testing.T) []byte {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
+
+// The count is exact beyond the rows the query reads: the server's own total
+// minus what was reported.
+func TestUnreportedIsExactBeyondTheReadWindow(t *testing.T) {
+	var dbs []database
+	for i := 0; i < databaseRowLimit; i++ {
+		dbs = append(dbs, database{Name: fmt.Sprintf("db%04d", i), Size: i64(1)})
+	}
+	total := 1000
+	sess := &fakeSession{stats: serverStats{MaxConnections: 1}, dbs: dbs, total: &total}
+	obs, _ := collect(t, newTestPlugin(sess, nil, nil), nil, goodFields)
+	mustValue(t, obs, "", "pg.databases_unreported", float64(1000-maxDatabases))
+}
+
+func TestFailedRoundsFailTheUnreportedCountToo(t *testing.T) {
+	sess := &fakeSession{stats: serverStats{MaxConnections: 1}, dbsErr: errors.New("boom")}
+	obs, _ := collect(t, newTestPlugin(sess, nil, nil), nil, goodFields)
+	if o, ok := find(obs, "", "pg.databases_unreported"); !ok || o.Err == "" {
+		t.Fatalf("pg.databases_unreported on a failed round = %+v, %v", o, ok)
+	}
+}

@@ -82,6 +82,9 @@ type scheduledCheck struct {
 	// starting anything) — has to have its ticker stopped explicitly, or
 	// nothing ever stops it.
 	spawned bool
+	// advisory logs the advisory errors of plain plugins (advisory.go); it
+	// lives and dies with this instance.
+	advisory *advisoryLog
 }
 
 // Scheduler holds one timer per check key. NewScheduler wires it;
@@ -93,8 +96,6 @@ type Scheduler struct {
 	ticker  func(time.Duration) Ticker
 	secrets Secrets // SecretPlugins' secrets (secret.go); nil knows none
 	log     *slog.Logger
-	// advisories logs the advisory errors of plain plugins (advisory.go).
-	advisories *advisoryLog
 
 	mu      sync.Mutex
 	version string
@@ -129,7 +130,6 @@ func NewScheduler(reg map[string]Plugin, now func() time.Time, ticker func(time.
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
-	s.advisories = newAdvisoryLog(s.log, now)
 	return s
 }
 
@@ -218,6 +218,7 @@ func specsEqual(a, b Spec) bool {
 // spawns it once it begins. Called with s.mu held.
 func (s *Scheduler) startLocked(spec Spec) {
 	sc := &scheduledCheck{spec: spec, ticker: s.ticker(spec.Interval), stop: make(chan struct{}), plugin: s.pluginFor(spec.Plugin)}
+	sc.advisory = newAdvisoryLog(s.log, s.now, spec.Key, spec.Plugin)
 	s.checks[spec.Key] = sc
 	if s.running {
 		s.spawnLocked(spec.Key, sc)
@@ -276,7 +277,6 @@ func (s *Scheduler) stopLocked(key string) {
 		sc.ticker.Stop()
 	}
 	delete(s.checks, key)
-	s.advisories.forget(key)
 }
 
 // runCheck is one check's whole lifetime: it fires on its own ticker,
@@ -295,7 +295,9 @@ func (s *Scheduler) runCheck(ctx context.Context, key string, plugin Plugin, sc 
 		case <-sc.ticker.C():
 			at := s.now()
 			obs, advisory := s.collect(ctx, plugin, sc.spec.Params)
-			s.advisories.note(key, plugin.Name(), advisory)
+			if ctx.Err() == nil { // a shutdown's "context canceled" is no advisory
+				sc.advisory.note(advisory)
+			}
 			if len(obs) == 0 {
 				continue // nothing usable this tick
 			}

@@ -10,48 +10,43 @@ import (
 // it is logged again.
 const advisoryRepeat = time.Hour
 
-// advisoryLog logs the advisory errors plugins return next to their
-// observations (Plugin.Collect), once per change and at most hourly while
-// the text stays the same, with state per check key. A nil error clears the
-// key's state without a line of its own. Only callers that know the plugin
-// is not a SecretPlugin may use it: the text is logged as it is.
+// advisoryLog logs the advisory errors one check's plugin returns next to
+// its observations (Plugin.Collect), once per change and at most hourly
+// while the text stays the same. A nil error clears the state without a line
+// of its own. It belongs to one scheduledCheck instance, so a check that is
+// retired or restarted takes its state with it and a goroutine that
+// finishes late can only touch the state of its own instance. Only callers
+// that know the plugin is not a SecretPlugin may use it: the text is logged
+// as it is.
 type advisoryLog struct {
-	log *slog.Logger
-	now func() time.Time
+	log    *slog.Logger
+	now    func() time.Time
+	key    string
+	plugin string
 
-	mu    sync.Mutex
-	state map[string]advisoryState
-}
-
-type advisoryState struct {
+	mu   sync.Mutex
+	have bool
 	text string
 	at   time.Time
 }
 
-func newAdvisoryLog(log *slog.Logger, now func() time.Time) *advisoryLog {
-	return &advisoryLog{log: log, now: now, state: make(map[string]advisoryState)}
+func newAdvisoryLog(log *slog.Logger, now func() time.Time, key, plugin string) *advisoryLog {
+	return &advisoryLog{log: log, now: now, key: key, plugin: plugin}
 }
 
-// note records the outcome of one round of check key: err is the plugin's
-// advisory error or nil.
-func (a *advisoryLog) note(key, plugin string, err error) {
+// note records the outcome of one round: err is the plugin's advisory error
+// or nil.
+func (a *advisoryLog) note(err error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if err == nil {
-		delete(a.state, key)
+		a.have = false
 		return
 	}
 	text, now := err.Error(), a.now()
-	if prev, ok := a.state[key]; ok && prev.text == text && now.Sub(prev.at) < advisoryRepeat {
+	if a.have && a.text == text && now.Sub(a.at) < advisoryRepeat {
 		return
 	}
-	a.state[key] = advisoryState{text: text, at: now}
-	a.log.Warn("check advisory", "check", key, "plugin", plugin, "advisory", text)
-}
-
-// forget drops key's state, for a check that is retired.
-func (a *advisoryLog) forget(key string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	delete(a.state, key)
+	a.have, a.text, a.at = true, text, now
+	a.log.Warn("check advisory", "check", a.key, "plugin", a.plugin, "advisory", text)
 }

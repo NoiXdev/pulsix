@@ -237,10 +237,10 @@ func assertEngineDown(t *testing.T, obs []checks.Observation, err error) {
 	if err == nil {
 		t.Error("want a non-nil error")
 	}
-	if len(obs) != 2 {
-		t.Fatalf("got %d observations, want 2: %+v", len(obs), obs)
+	if len(obs) != 3 {
+		t.Fatalf("got %d observations, want 3: %+v", len(obs), obs)
 	}
-	for _, m := range []string{"docker.containers_running", "docker.containers_total"} {
+	for _, m := range []string{"docker.containers_running", "docker.containers_total", "docker.containers_unreported"} {
 		if o := findObs(t, obs, "", m); o.Err == "" {
 			t.Errorf("%s has no Err", m)
 		}

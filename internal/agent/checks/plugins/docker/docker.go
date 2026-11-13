@@ -121,7 +121,7 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 		return nil, perr
 	}
 
-	obs := make([]checks.Observation, 0, len(selected)*4+2)
+	obs := make([]checks.Observation, 0, len(selected)*4+3)
 	var total, running float64
 	for i, c := range selected {
 		d := details[i]
@@ -202,11 +202,12 @@ func inspectError(name string, err error) error {
 	return fmt.Errorf("docker: inspect %s: %w", name, err)
 }
 
-// dockerDown reports an unreachable engine on the two host-level metrics.
+// dockerDown reports an unreachable engine on the three host-level metrics.
 func dockerDown(err error) ([]checks.Observation, error) {
 	return []checks.Observation{
 		checks.ErrObservation("", "docker.containers_running", err),
 		checks.ErrObservation("", "docker.containers_total", err),
+		checks.ErrObservation("", "docker.containers_unreported", err),
 	}, err
 }
 

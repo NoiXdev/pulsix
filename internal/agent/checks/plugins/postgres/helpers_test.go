@@ -21,6 +21,7 @@ type fakeSession struct {
 	stats     serverStats
 	statsErr  error
 	dbs       []database
+	total     *int // overrides the matched count; nil means len(dbs)
 	dbsErr    error
 	gotNames  []string
 	gotLimit  int
@@ -30,17 +31,21 @@ type fakeSession struct {
 
 func (f *fakeSession) Server(context.Context) (serverStats, error) { return f.stats, f.statsErr }
 
-func (f *fakeSession) Databases(_ context.Context, names []string, limit int) ([]database, error) {
+func (f *fakeSession) Databases(_ context.Context, names []string, limit int) ([]database, int, error) {
 	f.dbQueried = true
 	f.gotNames, f.gotLimit = names, limit
 	if f.dbsErr != nil {
-		return nil, f.dbsErr
+		return nil, 0, f.dbsErr
 	}
 	out := f.dbs
 	if len(out) > limit {
 		out = out[:limit]
 	}
-	return out, nil
+	// total is what the query matches before its LIMIT, like count(*) OVER ().
+	if f.total != nil {
+		return out, *f.total, nil
+	}
+	return out, len(f.dbs), nil
 }
 
 func (f *fakeSession) Close() { f.closed = true }

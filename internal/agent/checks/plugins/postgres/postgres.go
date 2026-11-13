@@ -35,10 +35,12 @@ const (
 
 // hostMetrics are the item-"" metrics besides up: all of them are reported
 // on every successful round (a standby promoted keeps reporting its lag as
-// 0) and all get the failure on a failed one.
+// 0; the unreported count is 0 when nothing is left out) and all get the
+// failure on a failed one.
 var hostMetrics = []string{
 	"pg.connections", "pg.max_connections", "pg.connections_pct", "pg.in_recovery",
 	"pg.replication_lag_seconds", "pg.replication_lag_bytes", "pg.oldest_xact_seconds",
+	metricUnreported,
 }
 
 type plugin struct {
@@ -119,14 +121,14 @@ func (p plugin) CollectWithSecret(ctx context.Context, params map[string]any, fi
 	if err != nil {
 		return down(err)
 	}
-	dbs, err := sess.Databases(cctx, filter, databaseRowLimit)
+	dbs, total, err := sess.Databases(cctx, filter, databaseRowLimit)
 	if err != nil {
 		return down(err)
 	}
 	if perr := ctx.Err(); perr != nil {
 		return nil, perr
 	}
-	obs, advisory := observe(stats, dbs, filter)
+	obs, advisory := observe(stats, dbs, total, filter)
 	return obs, advisory
 }
 
@@ -137,9 +139,10 @@ func b2f(b bool) float64 {
 	return 0
 }
 
-// observe maps the rows to observations.
-func observe(st serverStats, dbs []database, filter []string) ([]checks.Observation, error) {
-	obs := make([]checks.Observation, 0, 8+len(dbs))
+// observe maps the rows to observations. total is how many databases the
+// query matches in all, which may exceed len(dbs).
+func observe(st serverStats, dbs []database, total int, filter []string) ([]checks.Observation, error) {
+	obs := make([]checks.Observation, 0, 9+len(dbs))
 	errNoSessions := errors.New("postgres: no privilege to see other sessions")
 	obs = append(obs, checks.ValueObservation("", metricUp, 1))
 	if st.LimitedView {
@@ -170,10 +173,9 @@ func observe(st serverStats, dbs []database, filter []string) ([]checks.Observat
 	var errs []error
 	seen := make(map[string]struct{}, len(dbs))
 	var left []string
-	refused, reported := 0, 0
+	reported := 0
 	for _, d := range dbs {
 		if !checks.ReportableItem(d.Name) {
-			refused++
 			errs = append(errs, fmt.Errorf("postgres: database %q cannot be reported: name longer than %d bytes, not valid UTF-8 or carrying a control character", d.Name, checks.MaxItemLen))
 			continue
 		}
@@ -208,6 +210,9 @@ func observe(st serverStats, dbs []database, filter []string) ([]checks.Observat
 		}
 		errs = append(errs, fmt.Errorf("postgres: only %d databases are reported; left out: %s%s", maxDatabases, strings.Join(quoted, ", "), more))
 	}
-	obs = append(obs, checks.ValueObservation("", metricUnreported, float64(refused+len(left))))
+	// Exact however many rows the query matched beyond its read window:
+	// what the server has minus what this round reported (refused names and
+	// the ones beyond the cap are both in the difference).
+	obs = append(obs, checks.ValueObservation("", metricUnreported, float64(max(total-reported, 0))))
 	return obs, errors.Join(errs...)
 }
