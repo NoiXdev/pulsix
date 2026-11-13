@@ -80,3 +80,30 @@ func TestHostKindThroughTheAPI(t *testing.T) {
 		t.Fatalf("after a stale patch = %q, want server", got.Kind)
 	}
 }
+
+// TestHostQueryCarriesKind (backlog 3.57): POST /hosts/query reads hosts
+// through the hand-written selector query, which must carry the kind like
+// every other host read (the hosts list's selector mode shows it).
+func TestHostQueryCarriesKind(t *testing.T) {
+	f := newSSHFixture(t, "hostkind-query-api-org")
+
+	for _, h := range []map[string]any{
+		{"name": "laptop-q", "zone_id": f.zoneID, "kind": "client", "tags": []map[string]string{{"key": "role", "value": "kindq"}}},
+		{"name": "server-q", "zone_id": f.zoneID, "tags": []map[string]string{{"key": "role", "value": "kindq"}}},
+	} {
+		if resp := postJSON(t, f.c, f.org+"/hosts", h); resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create %v: %d %s", h["name"], resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+	var list struct {
+		Hosts []hostDTO `json:"hosts"`
+	}
+	decodeInto(t, requestJSON(t, f.c, http.MethodPost, f.org+"/hosts/query", map[string]any{"selector": "role = kindq"}), &list)
+	kinds := map[string]string{}
+	for _, h := range list.Hosts {
+		kinds[h.Name] = h.Kind
+	}
+	if len(kinds) != 2 || kinds["laptop-q"] != "client" || kinds["server-q"] != "server" {
+		t.Fatalf("queried kinds = %v, want laptop-q=client server-q=server", kinds)
+	}
+}
