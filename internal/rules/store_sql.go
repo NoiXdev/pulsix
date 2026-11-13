@@ -86,8 +86,8 @@ func toRule(r gen.CheckRule) (Rule, error) {
 	return Rule{
 		ID: r.ID, OrgID: r.OrgID, Name: r.Name, Enabled: r.Enabled, Origin: r.Origin,
 		Scope: Scope(r.Scope), GroupID: db.UUIDPtr(r.GroupID), HostID: db.UUIDPtr(r.HostID),
-		Item: r.Item, CheckKey: r.CheckKey, Metric: r.Metric, Severity: Severity(r.Severity),
-		Mode: r.Mode, Trigger: trigger, Clear: clear, Source: r.Source,
+		Item: r.Item, ItemCheckKey: textOf(r.ItemCheckKey), CheckKey: r.CheckKey, Metric: r.Metric,
+		Severity: Severity(r.Severity), Mode: r.Mode, Trigger: trigger, Clear: clear, Source: r.Source,
 		For: fromInterval(r.ForDuration), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}, nil
 }
@@ -104,9 +104,9 @@ func (s *SQLStore) Create(ctx context.Context, r Rule) error {
 	err = s.q.CreateRule(ctx, gen.CreateRuleParams{
 		ID: r.ID, OrgID: r.OrgID, Name: r.Name, Enabled: r.Enabled, Origin: r.Origin,
 		Scope: string(r.Scope), GroupID: db.NullUUID(r.GroupID), HostID: db.NullUUID(r.HostID),
-		Item: r.Item, CheckKey: r.CheckKey, Metric: r.Metric, Severity: string(r.Severity),
-		Mode: r.Mode, Ast: ast, ClearAst: clearAst, Source: r.Source, ForDuration: toInterval(r.For),
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		Item: r.Item, ItemCheckKey: nullableString(r.ItemCheckKey), CheckKey: r.CheckKey, Metric: r.Metric,
+		Severity: string(r.Severity), Mode: r.Mode, Ast: ast, ClearAst: clearAst, Source: r.Source,
+		ForDuration: toInterval(r.For), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	})
 	if err != nil {
 		if db.IsForeignKeyViolation(err) {
@@ -129,9 +129,9 @@ func (s *SQLStore) Update(ctx context.Context, r Rule) error {
 	n, err := s.q.UpdateRule(ctx, gen.UpdateRuleParams{
 		Name: r.Name, Enabled: r.Enabled, Scope: string(r.Scope),
 		GroupID: db.NullUUID(r.GroupID), HostID: db.NullUUID(r.HostID), Item: r.Item,
-		CheckKey: r.CheckKey, Metric: r.Metric, Severity: string(r.Severity),
-		Mode: r.Mode, Ast: ast, ClearAst: clearAst, Source: r.Source, ForDuration: toInterval(r.For),
-		UpdatedAt: r.UpdatedAt, OrgID: r.OrgID, ID: r.ID,
+		ItemCheckKey: nullableString(r.ItemCheckKey), CheckKey: r.CheckKey, Metric: r.Metric,
+		Severity: string(r.Severity), Mode: r.Mode, Ast: ast, ClearAst: clearAst, Source: r.Source,
+		ForDuration: toInterval(r.For), UpdatedAt: r.UpdatedAt, OrgID: r.OrgID, ID: r.ID,
 	})
 	if err != nil {
 		if db.IsForeignKeyViolation(err) {
@@ -167,8 +167,10 @@ func (s *SQLStore) Get(ctx context.Context, orgID, id uuid.UUID) (Rule, error) {
 	return toRule(row)
 }
 
-// nullableString adapts a Filter field ("" means unset) to the *string a
-// sqlc.narg text parameter takes.
+// nullableString adapts a Filter field or Rule.ItemCheckKey ("" means
+// unset) to the *string a sqlc.narg text parameter takes; item_check_key
+// stores the plugin's key — the empty one — as NULL, like every rule
+// written before the column existed.
 func nullableString(s string) *string {
 	if s == "" {
 		return nil

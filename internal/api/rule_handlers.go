@@ -41,26 +41,27 @@ type ruleFormDTO struct {
 // "form" and Expression exactly when Mode is "expression" — a rule is
 // never both, the same split rules.RuleInput itself enforces on the way in.
 type ruleDTO struct {
-	ID         string       `json:"id"`
-	Name       string       `json:"name"`
-	Enabled    bool         `json:"enabled"`
-	Origin     string       `json:"origin" enum:"seed,user"`
-	Scope      string       `json:"scope" enum:"org,group,host,item"`
-	GroupID    string       `json:"group_id,omitempty"`
-	GroupName  string       `json:"group_name,omitempty" doc:"The bound group's name, for a group-scoped rule; absent otherwise, and absent for a group this organization can no longer read"`
-	HostID     string       `json:"host_id,omitempty"`
-	HostName   string       `json:"host_name,omitempty" doc:"The bound host's name, for a host- or item-scoped rule; absent otherwise, and absent for a host this organization can no longer read"`
-	Item       string       `json:"item,omitempty"`
-	CheckKey   string       `json:"check_key" doc:"Derived from metric; the check this rule's metric belongs to"`
-	Metric     string       `json:"metric"`
-	Severity   string       `json:"severity" enum:"warn,crit"`
-	Mode       string       `json:"mode" enum:"form,expression"`
-	Form       *ruleFormDTO `json:"form,omitempty" doc:"Set when mode is form"`
-	Expression string       `json:"expression,omitempty" doc:"Set when mode is expression"`
-	Source     string       `json:"source" doc:"A rendered summary in form mode, the caller's own text in expression mode"`
-	ForSeconds int          `json:"for_seconds" doc:"How long a deterioration must hold before it counts"`
-	CreatedAt  time.Time    `json:"created_at"`
-	UpdatedAt  time.Time    `json:"updated_at"`
+	ID           string       `json:"id"`
+	Name         string       `json:"name"`
+	Enabled      bool         `json:"enabled"`
+	Origin       string       `json:"origin" enum:"seed,user"`
+	Scope        string       `json:"scope" enum:"org,group,host,item"`
+	GroupID      string       `json:"group_id,omitempty"`
+	GroupName    string       `json:"group_name,omitempty" doc:"The bound group's name, for a group-scoped rule; absent otherwise, and absent for a group this organization can no longer read"`
+	HostID       string       `json:"host_id,omitempty"`
+	HostName     string       `json:"host_name,omitempty" doc:"The bound host's name, for a host- or item-scoped rule; absent otherwise, and absent for a host this organization can no longer read"`
+	Item         string       `json:"item,omitempty"`
+	ItemCheckKey string       `json:"item_check_key,omitempty" doc:"The key of the check an item-scoped rule judges; absent means the plugin's key (check_key). Always absent on other scopes"`
+	CheckKey     string       `json:"check_key" doc:"Derived from metric; the plugin this rule's metric belongs to. Org, group and host rules judge every check of this plugin, whatever its key"`
+	Metric       string       `json:"metric"`
+	Severity     string       `json:"severity" enum:"warn,crit"`
+	Mode         string       `json:"mode" enum:"form,expression"`
+	Form         *ruleFormDTO `json:"form,omitempty" doc:"Set when mode is form"`
+	Expression   string       `json:"expression,omitempty" doc:"Set when mode is expression"`
+	Source       string       `json:"source" doc:"A rendered summary in form mode, the caller's own text in expression mode"`
+	ForSeconds   int          `json:"for_seconds" doc:"How long a deterioration must hold before it counts"`
+	CreatedAt    time.Time    `json:"created_at"`
+	UpdatedAt    time.Time    `json:"updated_at"`
 }
 
 // ruleBody is the create/update/validate write shape. It deliberately
@@ -71,19 +72,25 @@ type ruleDTO struct {
 // would make the same bad input answer 422 with huma's generic wording on
 // one field and the service's own specific message on the next — the same
 // tradeoff checkDefinitionBody documents for the checks routes.
+//
+// Create and update share it, and update is a full replace: a field left
+// out is stored as its zero value. item_check_key (backlog 3.13e) is no
+// exception — an update without it stores the empty key, so an item rule
+// judges the plugin's key again.
 type ruleBody struct {
-	Name       string       `json:"name"`
-	Enabled    *bool        `json:"enabled,omitempty" doc:"Defaults to true"`
-	Scope      string       `json:"scope" doc:"One of org, group, host, item"`
-	GroupID    string       `json:"group_id,omitempty" format:"uuid" doc:"Required for scope=group, forbidden otherwise"`
-	HostID     string       `json:"host_id,omitempty" format:"uuid" doc:"Required for scope=host or scope=item, forbidden otherwise"`
-	Item       string       `json:"item,omitempty" doc:"Required for scope=item, forbidden otherwise"`
-	Metric     string       `json:"metric" doc:"One of the metrics GET /rules/metrics lists"`
-	Severity   string       `json:"severity" doc:"warn or crit"`
-	Mode       string       `json:"mode" doc:"form or expression"`
-	Form       *ruleFormDTO `json:"form,omitempty" doc:"Required for mode=form, forbidden otherwise"`
-	Expression string       `json:"expression,omitempty" doc:"Required for mode=expression, forbidden otherwise"`
-	ForSeconds int          `json:"for_seconds,omitempty" doc:"How long a deterioration must hold before it counts, 0-86400 seconds"`
+	Name         string       `json:"name"`
+	Enabled      *bool        `json:"enabled,omitempty" doc:"Defaults to true"`
+	Scope        string       `json:"scope" doc:"One of org, group, host, item"`
+	GroupID      string       `json:"group_id,omitempty" format:"uuid" doc:"Required for scope=group, forbidden otherwise"`
+	HostID       string       `json:"host_id,omitempty" format:"uuid" doc:"Required for scope=host or scope=item, forbidden otherwise"`
+	Item         string       `json:"item,omitempty" doc:"Required for scope=item, forbidden otherwise"`
+	ItemCheckKey string       `json:"item_check_key,omitempty" doc:"For scope=item: the key of the check whose item this rule judges, e.g. nginx-internal; empty or absent means the plugin's key. Forbidden on other scopes. Update replaces the whole rule, so an update without it falls back to the plugin's key"`
+	Metric       string       `json:"metric" doc:"One of the metrics GET /rules/metrics lists"`
+	Severity     string       `json:"severity" doc:"warn or crit"`
+	Mode         string       `json:"mode" doc:"form or expression"`
+	Form         *ruleFormDTO `json:"form,omitempty" doc:"Required for mode=form, forbidden otherwise"`
+	Expression   string       `json:"expression,omitempty" doc:"Required for mode=expression, forbidden otherwise"`
+	ForSeconds   int          `json:"for_seconds,omitempty" doc:"How long a deterioration must hold before it counts, 0-86400 seconds"`
 }
 
 type ruleListInput struct {
@@ -155,7 +162,7 @@ type ruleMetricsOutput struct {
 // who won, who they shadowed, and whether the tuple is still one the host
 // actually reports.
 type effectiveRuleDTO struct {
-	CheckKey string    `json:"check_key"`
+	CheckKey string    `json:"check_key" doc:"The key of the check that reports this tuple, which may differ from the winner's check_key (the plugin's)"`
 	Item     string    `json:"item,omitempty"`
 	Metric   string    `json:"metric"`
 	Severity string    `json:"severity" enum:"warn,crit"`
@@ -183,7 +190,7 @@ func toRuleFormDTO(f rules.Form) ruleFormDTO {
 func toRuleDTO(r rules.Rule) ruleDTO {
 	dto := ruleDTO{
 		ID: r.ID.String(), Name: r.Name, Enabled: r.Enabled, Origin: r.Origin,
-		Scope: string(r.Scope), Item: r.Item, CheckKey: r.CheckKey, Metric: r.Metric,
+		Scope: string(r.Scope), Item: r.Item, ItemCheckKey: r.ItemCheckKey, CheckKey: r.CheckKey, Metric: r.Metric,
 		Severity: string(r.Severity), Mode: r.Mode, Source: r.Source,
 		ForSeconds: int(r.For / time.Second), CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
 	}
@@ -318,7 +325,7 @@ func toRuleInput(b ruleBody) (rules.RuleInput, error) {
 	}
 	return rules.RuleInput{
 		Name: b.Name, Enabled: enabled, Scope: rules.Scope(b.Scope),
-		GroupID: groupID, HostID: hostID, Item: b.Item,
+		GroupID: groupID, HostID: hostID, Item: b.Item, ItemCheckKey: b.ItemCheckKey,
 		Metric: b.Metric, Severity: rules.Severity(b.Severity), Mode: b.Mode,
 		Form: form, Expression: b.Expression,
 		For: time.Duration(b.ForSeconds) * time.Second,

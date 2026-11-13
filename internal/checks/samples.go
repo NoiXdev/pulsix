@@ -118,7 +118,7 @@ func plausible(at, now time.Time) bool {
 // The numbers, and where each comes from:
 //
 //   - MaxCheckKeyLen: a check_key is the key the manager itself pushed in
-//     CheckConfig, and normalizeDefinition's keyPattern caps that at 63
+//     CheckConfig, and checkplugins.CheckKeyPattern caps that at 63
 //     bytes. 64 is that bound with a byte of slack.
 //
 //   - MaxItemLen: an item is a disk mount point, a network interface

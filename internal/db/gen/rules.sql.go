@@ -240,38 +240,39 @@ func (q *Queries) CountStateChangesSince(ctx context.Context, arg CountStateChan
 
 const createRule = `-- name: CreateRule :exec
 INSERT INTO check_rules (
-  id, org_id, name, enabled, origin, scope, group_id, host_id, item,
+  id, org_id, name, enabled, origin, scope, group_id, host_id, item, item_check_key,
   check_key, metric, severity, mode, ast, clear_ast, source, for_duration,
   created_at, updated_at
 ) VALUES (
   $1, $2, $3, $4, $5,
-  $6, $7, $8, $9,
-  $10, $11, $12, $13,
-  $14::jsonb, $15::jsonb, $16, $17,
-  $18, $19
+  $6, $7, $8, $9, $10,
+  $11, $12, $13, $14,
+  $15::jsonb, $16::jsonb, $17, $18,
+  $19, $20
 )
 `
 
 type CreateRuleParams struct {
-	ID          uuid.UUID       `json:"id"`
-	OrgID       uuid.UUID       `json:"org_id"`
-	Name        string          `json:"name"`
-	Enabled     bool            `json:"enabled"`
-	Origin      string          `json:"origin"`
-	Scope       string          `json:"scope"`
-	GroupID     pgtype.UUID     `json:"group_id"`
-	HostID      pgtype.UUID     `json:"host_id"`
-	Item        string          `json:"item"`
-	CheckKey    string          `json:"check_key"`
-	Metric      string          `json:"metric"`
-	Severity    string          `json:"severity"`
-	Mode        string          `json:"mode"`
-	Ast         []byte          `json:"ast"`
-	ClearAst    []byte          `json:"clear_ast"`
-	Source      string          `json:"source"`
-	ForDuration pgtype.Interval `json:"for_duration"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
+	ID           uuid.UUID       `json:"id"`
+	OrgID        uuid.UUID       `json:"org_id"`
+	Name         string          `json:"name"`
+	Enabled      bool            `json:"enabled"`
+	Origin       string          `json:"origin"`
+	Scope        string          `json:"scope"`
+	GroupID      pgtype.UUID     `json:"group_id"`
+	HostID       pgtype.UUID     `json:"host_id"`
+	Item         string          `json:"item"`
+	ItemCheckKey *string         `json:"item_check_key"`
+	CheckKey     string          `json:"check_key"`
+	Metric       string          `json:"metric"`
+	Severity     string          `json:"severity"`
+	Mode         string          `json:"mode"`
+	Ast          []byte          `json:"ast"`
+	ClearAst     []byte          `json:"clear_ast"`
+	Source       string          `json:"source"`
+	ForDuration  pgtype.Interval `json:"for_duration"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // created_at/updated_at are supplied by the caller (internal/rules.Service's
@@ -290,6 +291,7 @@ func (q *Queries) CreateRule(ctx context.Context, arg CreateRuleParams) error {
 		arg.GroupID,
 		arg.HostID,
 		arg.Item,
+		arg.ItemCheckKey,
 		arg.CheckKey,
 		arg.Metric,
 		arg.Severity,
@@ -422,7 +424,7 @@ func (q *Queries) GetHostFacts(ctx context.Context, arg GetHostFactsParams) ([]b
 }
 
 const getRule = `-- name: GetRule :one
-SELECT id, org_id, name, enabled, origin, scope, group_id, host_id, item, check_key, metric, severity, mode, ast, clear_ast, source, for_duration, created_at, updated_at FROM check_rules WHERE org_id = $1 AND id = $2
+SELECT id, org_id, name, enabled, origin, scope, group_id, host_id, item, check_key, metric, severity, mode, ast, clear_ast, source, for_duration, created_at, updated_at, item_check_key FROM check_rules WHERE org_id = $1 AND id = $2
 `
 
 type GetRuleParams struct {
@@ -453,6 +455,7 @@ func (q *Queries) GetRule(ctx context.Context, arg GetRuleParams) (CheckRule, er
 		&i.ForDuration,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ItemCheckKey,
 	)
 	return i, err
 }
@@ -555,7 +558,7 @@ func (q *Queries) ListCheckStates(ctx context.Context, arg ListCheckStatesParams
 }
 
 const listRules = `-- name: ListRules :many
-SELECT id, org_id, name, enabled, origin, scope, group_id, host_id, item, check_key, metric, severity, mode, ast, clear_ast, source, for_duration, created_at, updated_at FROM check_rules
+SELECT id, org_id, name, enabled, origin, scope, group_id, host_id, item, check_key, metric, severity, mode, ast, clear_ast, source, for_duration, created_at, updated_at, item_check_key FROM check_rules
 WHERE org_id = $1
   AND ($2::text IS NULL OR scope = $2::text)
   AND ($3::text IS NULL OR check_key = $3::text)
@@ -608,6 +611,7 @@ func (q *Queries) ListRules(ctx context.Context, arg ListRulesParams) ([]CheckRu
 			&i.ForDuration,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ItemCheckKey,
 		); err != nil {
 			return nil, err
 		}
@@ -750,30 +754,32 @@ const updateRule = `-- name: UpdateRule :execrows
 UPDATE check_rules
 SET name = $1, enabled = $2, scope = $3,
     group_id = $4, host_id = $5, item = $6,
-    check_key = $7, metric = $8, severity = $9,
-    mode = $10, ast = $11::jsonb, clear_ast = $12::jsonb,
-    source = $13, for_duration = $14, updated_at = $15
-WHERE org_id = $16 AND id = $17
+    item_check_key = $7,
+    check_key = $8, metric = $9, severity = $10,
+    mode = $11, ast = $12::jsonb, clear_ast = $13::jsonb,
+    source = $14, for_duration = $15, updated_at = $16
+WHERE org_id = $17 AND id = $18
 `
 
 type UpdateRuleParams struct {
-	Name        string          `json:"name"`
-	Enabled     bool            `json:"enabled"`
-	Scope       string          `json:"scope"`
-	GroupID     pgtype.UUID     `json:"group_id"`
-	HostID      pgtype.UUID     `json:"host_id"`
-	Item        string          `json:"item"`
-	CheckKey    string          `json:"check_key"`
-	Metric      string          `json:"metric"`
-	Severity    string          `json:"severity"`
-	Mode        string          `json:"mode"`
-	Ast         []byte          `json:"ast"`
-	ClearAst    []byte          `json:"clear_ast"`
-	Source      string          `json:"source"`
-	ForDuration pgtype.Interval `json:"for_duration"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	OrgID       uuid.UUID       `json:"org_id"`
-	ID          uuid.UUID       `json:"id"`
+	Name         string          `json:"name"`
+	Enabled      bool            `json:"enabled"`
+	Scope        string          `json:"scope"`
+	GroupID      pgtype.UUID     `json:"group_id"`
+	HostID       pgtype.UUID     `json:"host_id"`
+	Item         string          `json:"item"`
+	ItemCheckKey *string         `json:"item_check_key"`
+	CheckKey     string          `json:"check_key"`
+	Metric       string          `json:"metric"`
+	Severity     string          `json:"severity"`
+	Mode         string          `json:"mode"`
+	Ast          []byte          `json:"ast"`
+	ClearAst     []byte          `json:"clear_ast"`
+	Source       string          `json:"source"`
+	ForDuration  pgtype.Interval `json:"for_duration"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+	OrgID        uuid.UUID       `json:"org_id"`
+	ID           uuid.UUID       `json:"id"`
 }
 
 // Full replace of every mutable column; origin, created_at are deliberately
@@ -789,6 +795,7 @@ func (q *Queries) UpdateRule(ctx context.Context, arg UpdateRuleParams) (int64, 
 		arg.GroupID,
 		arg.HostID,
 		arg.Item,
+		arg.ItemCheckKey,
 		arg.CheckKey,
 		arg.Metric,
 		arg.Severity,

@@ -63,23 +63,30 @@ const (
 // in Catalogue() and stores that entry's own check key, so a rule can never
 // claim a metric belongs to a check it does not (see Service.Create's own
 // comment).
+//
+// ItemCheckKey is the check key an item-scoped rule judges (backlog
+// 3.13e): one check's instance key, such as "nginx-internal", where
+// CheckKey is always the plugin's. Empty means the plugin's key, and it is
+// always empty on every other scope — org, group and host rules judge every
+// check that reports their metric, whatever its key.
 type Rule struct {
-	ID, OrgID uuid.UUID
-	Name      string
-	Enabled   bool
-	Origin    string // "seed" | "user"
-	Scope     Scope
-	GroupID   *uuid.UUID
-	HostID    *uuid.UUID
-	Item      string
-	CheckKey  string
-	Metric    string
-	Severity  Severity
-	Mode      string // "form" | "expression"
-	Trigger   Node
-	Clear     Node // the zero Node when the rule has no clear condition
-	Source    string
-	For       time.Duration
+	ID, OrgID    uuid.UUID
+	Name         string
+	Enabled      bool
+	Origin       string // "seed" | "user"
+	Scope        Scope
+	GroupID      *uuid.UUID
+	HostID       *uuid.UUID
+	Item         string
+	ItemCheckKey string
+	CheckKey     string
+	Metric       string
+	Severity     Severity
+	Mode         string // "form" | "expression"
+	Trigger      Node
+	Clear        Node // the zero Node when the rule has no clear condition
+	Source       string
+	For          time.Duration
 
 	CreatedAt, UpdatedAt time.Time
 }
@@ -90,18 +97,22 @@ type Rule struct {
 // Expression through Parse (Task 2) in "expression" mode. Setting both, or
 // neither, is refused — see Service.Create's validation.
 type RuleInput struct {
-	Name       string
-	Enabled    bool
-	Scope      Scope
-	GroupID    *uuid.UUID
-	HostID     *uuid.UUID
-	Item       string
-	Metric     string
-	Severity   Severity
-	Mode       string
-	Form       *Form  // mode "form"
-	Expression string // mode "expression"
-	For        time.Duration
+	Name    string
+	Enabled bool
+	Scope   Scope
+	GroupID *uuid.UUID
+	HostID  *uuid.UUID
+	Item    string
+	// ItemCheckKey names the check an item-scoped rule judges; empty
+	// means the plugin's key. Any other scope must leave it empty. It is
+	// trimmed, and must match checkplugins.CheckKeyPattern.
+	ItemCheckKey string
+	Metric       string
+	Severity     Severity
+	Mode         string
+	Form         *Form  // mode "form"
+	Expression   string // mode "expression"
+	For          time.Duration
 }
 
 // Filter narrows List's result. A zero field means "no filter on this

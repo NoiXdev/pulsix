@@ -133,6 +133,16 @@ func (c candidate) beats(other candidate) bool {
 	return bytes.Compare(c.rule.ID[:], other.rule.ID[:]) < 0
 }
 
+// itemCheckKey is the check key an item-scoped rule judges: its own
+// ItemCheckKey, or the plugin's key when it names none — every item rule
+// written before backlog 3.13e.
+func itemCheckKey(r Rule) string {
+	if r.ItemCheckKey != "" {
+		return r.ItemCheckKey
+	}
+	return r.CheckKey
+}
+
 // tupleSeverity keys the per-(tuple, severity) grouping Resolve reduces
 // over — one independent decision per severity, per the design's own
 // "Rule granularity" (warn and crit are two rows, resolved independently,
@@ -150,6 +160,10 @@ type tupleSeverity struct {
 // host-scoped or item-scoped rule bound to a different host, and a
 // group-scoped rule bound to a group absent from host.Groups (one whose
 // selector no longer matches this host).
+//
+// An org-, group- or host-scoped rule competes for every tuple whose
+// metric is its own, whatever the tuple's check key; an item-scoped rule
+// names one tuple, under its ItemCheckKey or else the plugin's key.
 //
 // An item-scoped rule always produces an Effective for the tuple it names,
 // even when that tuple is not in host.Tuples — Observed is false in that
@@ -172,9 +186,14 @@ func Resolve(rules []Rule, host HostContext) []Effective {
 		k := tupleSeverity{tuple: t, severity: r.Severity}
 		candidates[k] = append(candidates[k], candidate{rule: r, group: g})
 	}
+	// Metric alone decides, never the tuple's check key (backlog 3.13e): a
+	// metric name belongs to exactly one plugin (checkplugins'
+	// TestNoTwoPluginsShareAMetricName), so a tuple reporting the rule's
+	// metric comes from a check of the rule's plugin, whatever key that
+	// check runs under — a second nginx check is judged like the first.
 	addToEveryMatchingTuple := func(r Rule, g GroupRank) {
 		for _, t := range host.Tuples {
-			if t.CheckKey == r.CheckKey && t.Metric == r.Metric {
+			if t.Metric == r.Metric {
 				addCandidate(t, r, g)
 			}
 		}
@@ -205,7 +224,7 @@ func Resolve(rules []Rule, host HostContext) []Effective {
 			if r.HostID == nil || *r.HostID != host.HostID {
 				continue
 			}
-			addCandidate(Tuple{CheckKey: r.CheckKey, Item: r.Item, Metric: r.Metric}, r, GroupRank{})
+			addCandidate(Tuple{CheckKey: itemCheckKey(r), Item: r.Item, Metric: r.Metric}, r, GroupRank{})
 		}
 	}
 

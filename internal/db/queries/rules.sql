@@ -5,12 +5,12 @@
 -- the timestamps this statement writes are the only ones the service ever
 -- sees again.
 INSERT INTO check_rules (
-  id, org_id, name, enabled, origin, scope, group_id, host_id, item,
+  id, org_id, name, enabled, origin, scope, group_id, host_id, item, item_check_key,
   check_key, metric, severity, mode, ast, clear_ast, source, for_duration,
   created_at, updated_at
 ) VALUES (
   sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(name), sqlc.arg(enabled), sqlc.arg(origin),
-  sqlc.arg(scope), sqlc.arg(group_id), sqlc.arg(host_id), sqlc.arg(item),
+  sqlc.arg(scope), sqlc.arg(group_id), sqlc.arg(host_id), sqlc.arg(item), sqlc.narg(item_check_key),
   sqlc.arg(check_key), sqlc.arg(metric), sqlc.arg(severity), sqlc.arg(mode),
   sqlc.arg(ast)::jsonb, sqlc.arg(clear_ast)::jsonb, sqlc.arg(source), sqlc.arg(for_duration),
   sqlc.arg(created_at), sqlc.arg(updated_at)
@@ -28,6 +28,7 @@ SELECT * FROM check_rules WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id);
 UPDATE check_rules
 SET name = sqlc.arg(name), enabled = sqlc.arg(enabled), scope = sqlc.arg(scope),
     group_id = sqlc.arg(group_id), host_id = sqlc.arg(host_id), item = sqlc.arg(item),
+    item_check_key = sqlc.narg(item_check_key),
     check_key = sqlc.arg(check_key), metric = sqlc.arg(metric), severity = sqlc.arg(severity),
     mode = sqlc.arg(mode), ast = sqlc.arg(ast)::jsonb, clear_ast = sqlc.arg(clear_ast)::jsonb,
     source = sqlc.arg(source), for_duration = sqlc.arg(for_duration), updated_at = sqlc.arg(updated_at)

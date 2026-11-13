@@ -4181,6 +4181,7 @@ export interface components {
             warnings: number;
         };
         EffectiveRuleDTO: {
+            /** @description The key of the check that reports this tuple, which may differ from the winner's check_key (the plugin's) */
             check_key: string;
             item?: string;
             metric: string;
@@ -6380,6 +6381,8 @@ export interface components {
             host_id?: string;
             /** @description Required for scope=item, forbidden otherwise */
             item?: string;
+            /** @description For scope=item: the key of the check whose item this rule judges, e.g. nginx-internal; empty or absent means the plugin's key. Forbidden on other scopes. Update replaces the whole rule, so an update without it falls back to the plugin's key */
+            item_check_key?: string;
             /** @description One of the metrics GET /rules/metrics lists */
             metric: string;
             /** @description form or expression */
@@ -6410,7 +6413,7 @@ export interface components {
             source?: string;
         };
         RuleDTO: {
-            /** @description Derived from metric; the check this rule's metric belongs to */
+            /** @description Derived from metric; the plugin this rule's metric belongs to. Org, group and host rules judge every check of this plugin, whatever its key */
             check_key: string;
             /** Format: date-time */
             created_at: string;
@@ -6432,6 +6435,8 @@ export interface components {
             host_name?: string;
             id: string;
             item?: string;
+            /** @description The key of the check an item-scoped rule judges; absent means the plugin's key (check_key). Always absent on other scopes */
+            item_check_key?: string;
             metric: string;
             /** @enum {string} */
             mode: "form" | "expression";

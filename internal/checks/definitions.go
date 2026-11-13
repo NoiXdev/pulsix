@@ -9,7 +9,6 @@ package checks
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -44,10 +43,6 @@ const (
 	originCustom = "custom"
 	originShared = "shared"
 )
-
-// keyPattern is the same shape a plugin name itself always satisfies, so a
-// key left to default to the plugin name never fails this check.
-var keyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 const (
 	// MinInterval is the shortest check interval a definition may carry. It
@@ -120,8 +115,10 @@ func ValidateDefinitionShape(plugin, key string, params map[string]any, interval
 	if normalizedKey == "" {
 		normalizedKey = plugin // "key defaults to the plugin name" (spec's Data model)
 	}
-	if !keyPattern.MatchString(normalizedKey) {
-		return "", fmt.Errorf("%w: key must match %s", ErrInvalidInput, keyPattern.String())
+	// The same shape a plugin name itself always satisfies, so a key left
+	// to default to the plugin name never fails this check.
+	if !checkplugins.ValidCheckKey(normalizedKey) {
+		return "", fmt.Errorf("%w: key must match %s", ErrInvalidInput, checkplugins.CheckKeyPattern)
 	}
 	if interval < MinInterval || interval > MaxInterval {
 		return "", fmt.Errorf("%w: interval must be between %s and %s", ErrInvalidInput, MinInterval, MaxInterval)

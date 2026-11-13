@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // maxNameRunes bounds a rule's name, the same 100-rune shape
@@ -140,6 +142,25 @@ func validateScope(in RuleInput) error {
 	return nil
 }
 
+// normalizeItemCheckKey trims in.ItemCheckKey and checks it (backlog
+// 3.13e): only an item-scoped rule names a check key of its own, and the
+// key must have the shape every check definition's key has. It need not
+// exist on the host — the item need not either; Resolve shows such a rule
+// as unobserved. Blank is the plugin's key, on any scope.
+func normalizeItemCheckKey(in RuleInput) (string, error) {
+	key := strings.TrimSpace(in.ItemCheckKey)
+	if key == "" {
+		return "", nil
+	}
+	if in.Scope != ScopeItem {
+		return "", invalidf("item_check_key is only for scope %q", ScopeItem)
+	}
+	if !checkplugins.ValidCheckKey(key) {
+		return "", invalidf("item_check_key must match %s", checkplugins.CheckKeyPattern)
+	}
+	return key, nil
+}
+
 // compileRule turns in's Form or Expression (per in.Mode) into a trigger
 // tree, an optional clear tree, and the Source column: a Format-rendered
 // summary of the trigger in form mode, or in.Expression verbatim in
@@ -221,6 +242,10 @@ func (s *Service) buildRule(in RuleInput) (Rule, int, error) {
 	if err := validateScope(in); err != nil {
 		return Rule{}, 0, err
 	}
+	itemCheckKey, err := normalizeItemCheckKey(in)
+	if err != nil {
+		return Rule{}, 0, err
+	}
 	trigger, clear, source, pos, err := compileRule(in)
 	if err != nil {
 		return Rule{}, pos, err
@@ -241,7 +266,7 @@ func (s *Service) buildRule(in RuleInput) (Rule, int, error) {
 
 	return Rule{
 		Name: name, Enabled: in.Enabled, Scope: in.Scope,
-		GroupID: in.GroupID, HostID: in.HostID, Item: in.Item,
+		GroupID: in.GroupID, HostID: in.HostID, Item: in.Item, ItemCheckKey: itemCheckKey,
 		CheckKey: entry.CheckKey, Metric: in.Metric, Severity: in.Severity,
 		Mode: in.Mode, Trigger: trigger, Clear: clear, Source: source, For: in.For,
 	}, 0, nil
