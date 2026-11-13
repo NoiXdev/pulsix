@@ -767,6 +767,7 @@ type OrgMonitoringSetting struct {
 	OrgID            uuid.UUID `json:"org_id"`
 	ClientAbsentDays int32     `json:"client_absent_days"`
 	UpdatedAt        time.Time `json:"updated_at"`
+	RetentionDays    *int32    `json:"retention_days"`
 }
 
 type Organization struct {

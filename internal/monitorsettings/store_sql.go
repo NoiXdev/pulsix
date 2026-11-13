@@ -24,27 +24,43 @@ func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
 
 // Get implements Store.
 func (s *SQLStore) Get(ctx context.Context, orgID uuid.UUID) (Settings, bool, error) {
-	days, err := s.q.GetOrgMonitoringSettings(ctx, orgID)
+	row, err := s.q.GetOrgMonitoringSettings(ctx, orgID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Settings{}, false, nil
 	}
 	if err != nil {
 		return Settings{}, false, fmt.Errorf("get org monitoring settings: %w", err)
 	}
-	return Settings{ClientAbsentDays: int(days)}, true, nil
+	return settingsOf(row.ClientAbsentDays, row.RetentionDays), true, nil
 }
 
-// Put implements Store.
-func (s *SQLStore) Put(ctx context.Context, orgID uuid.UUID, st Settings) error {
+// Put implements Store: one upsert that replaces client_absent_days and
+// replaces the retention choice only when u carries one (0 stores NULL).
+func (s *SQLStore) Put(ctx context.Context, orgID uuid.UUID, u Update) (Settings, error) {
 	// The service's own check, repeated here only because it is what makes
 	// the narrowing to int32 below safe.
-	if err := st.validate(); err != nil {
-		return err
+	if err := u.validate(); err != nil {
+		return Settings{}, err
 	}
-	if err := s.q.UpsertOrgMonitoringSettings(ctx, gen.UpsertOrgMonitoringSettingsParams{
-		OrgID: orgID, ClientAbsentDays: int32(st.ClientAbsentDays),
-	}); err != nil {
-		return fmt.Errorf("store org monitoring settings: %w", err)
+	params := gen.UpsertOrgMonitoringSettingsParams{
+		OrgID: orgID, ClientAbsentDays: int32(u.ClientAbsentDays), SetRetention: u.RetentionDays != nil,
 	}
-	return nil
+	if u.RetentionDays != nil && *u.RetentionDays != 0 {
+		days := int32(*u.RetentionDays)
+		params.RetentionDays = &days
+	}
+	row, err := s.q.UpsertOrgMonitoringSettings(ctx, params)
+	if err != nil {
+		return Settings{}, fmt.Errorf("store org monitoring settings: %w", err)
+	}
+	return settingsOf(row.ClientAbsentDays, row.RetentionDays), nil
+}
+
+// settingsOf converts a stored row; a NULL retention_days is no choice (0).
+func settingsOf(clientAbsentDays int32, retentionDays *int32) Settings {
+	st := Settings{ClientAbsentDays: int(clientAbsentDays)}
+	if retentionDays != nil {
+		st.RetentionDays = int(*retentionDays)
+	}
+	return st
 }

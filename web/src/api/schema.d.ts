@@ -5955,9 +5955,32 @@ export interface components {
         };
         OrgMonitoringSettingsDTO: {
             /**
+             * Format: int64
+             * @description Days without contact after which a client host raises a warning; 0 = never
+             */
+            client_absent_days: number;
+            /**
+             * Format: int64
+             * @description The organization's retention choice in days; null = no choice (the instance default, retention_max_days)
+             * @enum {integer|null}
+             */
+            retention_days: 30 | 90 | 365 | null;
+            /**
+             * Format: int64
+             * @description How many days measurements and state history are kept: the choice, capped at retention_max_days
+             */
+            retention_effective_days: number;
+            /**
+             * Format: int64
+             * @description The instance's retention maximum in days (set by the operator); no organization keeps measurements longer
+             */
+            retention_max_days: number;
+        };
+        OrgMonitoringSettingsInputDTO: {
+            /**
              * Format: uri
              * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/OrgMonitoringSettingsDTO.json
+             * @example https://example.com/schemas/OrgMonitoringSettingsInputDTO.json
              */
             readonly $schema?: string;
             /**
@@ -5965,6 +5988,22 @@ export interface components {
              * @description Days without contact after which a client host raises a warning; 0 = never
              */
             client_absent_days: number;
+            /**
+             * Format: int64
+             * @description Retention choice in days. Omitted keeps the stored choice; null clears it back to the instance default
+             * @enum {integer|null}
+             */
+            retention_days?: 30 | 90 | 365 | null;
+            /**
+             * Format: int64
+             * @description Read-only; ignored
+             */
+            readonly retention_effective_days?: number;
+            /**
+             * Format: int64
+             * @description Read-only; ignored
+             */
+            readonly retention_max_days?: number;
         };
         OrgMonitoringSettingsOutputBody: {
             /**
@@ -15327,7 +15366,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OrgMonitoringSettingsDTO"];
+                "application/json": components["schemas"]["OrgMonitoringSettingsInputDTO"];
             };
         };
         responses: {

@@ -120,7 +120,7 @@ func TestCheckPluginSchemaEnumsCoverTheDescriptors(t *testing.T) {
 		Components struct {
 			Schemas map[string]struct {
 				Properties map[string]struct {
-					Enum []string `json:"enum"`
+					Enum schemaEnum `json:"enum"`
 				} `json:"properties"`
 			} `json:"schemas"`
 		} `json:"components"`

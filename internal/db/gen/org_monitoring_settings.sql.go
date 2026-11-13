@@ -31,35 +31,69 @@ func (q *Queries) GetOrgClientAbsentDays(ctx context.Context, orgID uuid.UUID) (
 }
 
 const getOrgMonitoringSettings = `-- name: GetOrgMonitoringSettings :one
-SELECT client_absent_days FROM org_monitoring_settings WHERE org_id = $1
+SELECT client_absent_days, retention_days FROM org_monitoring_settings WHERE org_id = $1
 `
+
+type GetOrgMonitoringSettingsRow struct {
+	ClientAbsentDays int32  `json:"client_absent_days"`
+	RetentionDays    *int32 `json:"retention_days"`
+}
 
 // Org-level monitoring settings (backlog 3.57, table
 // org_monitoring_settings from migration 00091): the organization's stored
 // row, read inside the request's organization scope; the caller turns
-// pgx.ErrNoRows (no row yet) into the defaults.
-func (q *Queries) GetOrgMonitoringSettings(ctx context.Context, orgID uuid.UUID) (int32, error) {
+// pgx.ErrNoRows (no row yet) into the defaults. retention_days (backlog
+// 3.15, 00093) is NULL when the organization made no retention choice.
+func (q *Queries) GetOrgMonitoringSettings(ctx context.Context, orgID uuid.UUID) (GetOrgMonitoringSettingsRow, error) {
 	row := q.db.QueryRow(ctx, getOrgMonitoringSettings, orgID)
-	var client_absent_days int32
-	err := row.Scan(&client_absent_days)
-	return client_absent_days, err
+	var i GetOrgMonitoringSettingsRow
+	err := row.Scan(&i.ClientAbsentDays, &i.RetentionDays)
+	return i, err
 }
 
-const upsertOrgMonitoringSettings = `-- name: UpsertOrgMonitoringSettings :exec
-INSERT INTO org_monitoring_settings (org_id, client_absent_days)
-VALUES ($1, $2)
+const upsertOrgMonitoringSettings = `-- name: UpsertOrgMonitoringSettings :one
+INSERT INTO org_monitoring_settings (org_id, client_absent_days, retention_days)
+VALUES (
+  $1, $2,
+  CASE WHEN $3::boolean THEN $4::integer END
+)
 ON CONFLICT (org_id) DO UPDATE
-SET client_absent_days = EXCLUDED.client_absent_days, updated_at = now()
+SET client_absent_days = EXCLUDED.client_absent_days,
+    retention_days = CASE WHEN $3::boolean
+                          THEN EXCLUDED.retention_days
+                          ELSE org_monitoring_settings.retention_days END,
+    updated_at = now()
+RETURNING client_absent_days, retention_days
 `
 
 type UpsertOrgMonitoringSettingsParams struct {
 	OrgID            uuid.UUID `json:"org_id"`
 	ClientAbsentDays int32     `json:"client_absent_days"`
+	SetRetention     bool      `json:"set_retention"`
+	RetentionDays    *int32    `json:"retention_days"`
 }
 
-// Replaces the stored settings; the row is created when the organization
-// has none. The table's CHECK refuses a value outside 0..365.
-func (q *Queries) UpsertOrgMonitoringSettings(ctx context.Context, arg UpsertOrgMonitoringSettingsParams) error {
-	_, err := q.db.Exec(ctx, upsertOrgMonitoringSettings, arg.OrgID, arg.ClientAbsentDays)
-	return err
+type UpsertOrgMonitoringSettingsRow struct {
+	ClientAbsentDays int32  `json:"client_absent_days"`
+	RetentionDays    *int32 `json:"retention_days"`
+}
+
+// Writes the settings; the row is created when the organization has none.
+// client_absent_days is always replaced. retention_days is replaced only
+// when set_retention is true (NULL then clears the choice back to the
+// instance maximum); otherwise the stored choice is kept, and a new row
+// starts without one. One statement, so a concurrent write of the other
+// setting is never lost to a read-modify-write. The table's CHECKs refuse
+// client_absent_days outside 0..365 and retention_days outside
+// (30, 90, 365). Returns the row as stored.
+func (q *Queries) UpsertOrgMonitoringSettings(ctx context.Context, arg UpsertOrgMonitoringSettingsParams) (UpsertOrgMonitoringSettingsRow, error) {
+	row := q.db.QueryRow(ctx, upsertOrgMonitoringSettings,
+		arg.OrgID,
+		arg.ClientAbsentDays,
+		arg.SetRetention,
+		arg.RetentionDays,
+	)
+	var i UpsertOrgMonitoringSettingsRow
+	err := row.Scan(&i.ClientAbsentDays, &i.RetentionDays)
+	return i, err
 }

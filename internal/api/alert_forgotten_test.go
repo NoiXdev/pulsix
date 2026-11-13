@@ -54,7 +54,7 @@ func TestAForgottenAlertReadsAsForgotten(t *testing.T) {
 		Components struct {
 			Schemas map[string]struct {
 				Properties map[string]struct {
-					Enum []string `json:"enum"`
+					Enum []any `json:"enum"` // numbers too (retention_days)
 				} `json:"properties"`
 			} `json:"schemas"`
 		} `json:"components"`
@@ -64,7 +64,7 @@ func TestAForgottenAlertReadsAsForgotten(t *testing.T) {
 	}
 	enum := doc.Components.Schemas["AlertDTO"].Properties["closed_reason"].Enum
 	for _, want := range []string{"resolved", "stale", "forgotten"} {
-		if !slices.Contains(enum, want) {
+		if !slices.Contains(enum, any(want)) {
 			t.Errorf("AlertDTO.closed_reason enum = %v, missing %q", enum, want)
 		}
 	}

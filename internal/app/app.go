@@ -91,6 +91,9 @@ type App struct {
 	stopAuthReaper func()
 	// stopItemExpiry stops the item expiry loop (backlog 3.12b).
 	stopItemExpiry func()
+	// stopRetentionPurge stops the per-organization retention purge
+	// (backlog 3.15).
+	stopRetentionPurge func()
 	// stopDispatch stops the notification dispatcher (spec 2026-09-18
 	// §5), waiting for a batch in flight.
 	stopDispatch func()
@@ -175,6 +178,9 @@ func (a *App) Close() {
 	}
 	if a.stopItemExpiry != nil {
 		a.stopItemExpiry()
+	}
+	if a.stopRetentionPurge != nil {
+		a.stopRetentionPurge()
 	}
 	if a.stopAuthReaper != nil {
 		a.stopAuthReaper()
@@ -652,7 +658,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Items:     itemsSvc,
 		EvalDirty: rules.NewDirtyMarker(appDB),
 		// The org monitoring settings (backlog 3.57: client_absent_days).
-		MonitorSettings: monitorsettings.NewService(monitorsettings.NewSQLStore(appDB)),
+		MonitorSettings: monitorsettings.NewService(monitorsettings.NewSQLStore(appDB), cfg.RetentionMaxDays()),
 		// The public agent distribution: the install script is templated
 		// with this manager's own public URL, and the binaries it hands
 		// out are the ones embedded at build time — nil in a build made
@@ -693,6 +699,14 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// kept reporting, under its own advisory key. A period of 0 disables it.
 	// Stopped in Close.
 	itemExpiryStop := startLoop(checks.NewExpiryLoop(checksSvc, schedule.NewAdvisoryLocker(appDB.Pool(), checks.ExpiryAdvisoryKey), cfg.ItemExpiry, checks.DefaultExpiryInterval, slog.Default()).Run)
+
+	// The retention purge (backlog 3.15): once per hour, one manager
+	// deletes the measurements and state history of every organization
+	// whose retention choice is below PULSIX_SAMPLE_RETENTION and that are
+	// older than the choice, in batches within a per-round budget, under
+	// its own advisory key (interval 0 keeps the hourly default). Stopped
+	// in Close.
+	retentionPurgeStop := startLoop(monitorsettings.NewPurger(monitorsettings.NewPurgeSQLStore(appDB), schedule.NewAdvisoryLocker(appDB.Pool(), monitorsettings.RetentionPurgeLockKey), cfg.RetentionMaxDays(), o.retentionPurgeInterval, time.Now, slog.Default()).Run)
 
 	// The expired-ceremony and expired-session reaper (backlog 1.21): one
 	// DELETE pass per interval (default 1h) under its own advisory key,
@@ -784,6 +798,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 			reaperStop()
 			retestStop()
 			itemExpiryStop()
+			retentionPurgeStop()
 			authReaperStop()
 			tickerStop()
 			dispatchStop()
@@ -809,6 +824,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 				reaperStop()
 				retestStop()
 				itemExpiryStop()
+				retentionPurgeStop()
 				authReaperStop()
 				tickerStop()
 				dispatchStop()
@@ -834,7 +850,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 
 	return &App{
 		Handler: handler, GRPC: grpcServer, GRPCListen: cfg.GRPCListen, db: appDB,
-		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
+		stopReaper: reaperStop, stopRetest: retestStop, stopItemExpiry: itemExpiryStop, stopRetentionPurge: retentionPurgeStop, stopAuthReaper: authReaperStop, stopTicker: tickerStop, stopDispatch: dispatchStop, stopDigest: digestStop, stopEval: evalStop, stopAlertNotify: alertNotifyStop, stopProbes: probesStop, stopEmbedded: stopEmbedded,
 		items: itemsSvc, backups: backupsSvc, stopBackupTicker: backupTickerStop, background: accountsSvc,
 	}, nil
 }

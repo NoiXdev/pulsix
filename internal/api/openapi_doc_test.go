@@ -156,7 +156,7 @@ func TestCheckPluginEnumsNameEveryPlugin(t *testing.T) {
 		Components struct {
 			Schemas map[string]struct {
 				Properties map[string]struct {
-					Enum []string `json:"enum"`
+					Enum schemaEnum `json:"enum"`
 				} `json:"properties"`
 			} `json:"schemas"`
 		} `json:"components"`
@@ -179,4 +179,23 @@ func TestCheckPluginEnumsNameEveryPlugin(t *testing.T) {
 	if found < 3 {
 		t.Fatalf("schemas with a plugin enum = %d, want at least the three check DTOs", found)
 	}
+}
+
+// schemaEnum decodes a schema's enum as strings. Most enums are strings;
+// a numeric one (retention_days: 30, 90, 365) decodes as its JSON text.
+type schemaEnum []string
+
+func (e *schemaEnum) UnmarshalJSON(b []byte) error {
+	var raw []json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	out := make(schemaEnum, len(raw))
+	for i, r := range raw {
+		if err := json.Unmarshal(r, &out[i]); err != nil {
+			out[i] = string(r)
+		}
+	}
+	*e = out
+	return nil
 }

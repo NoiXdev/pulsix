@@ -314,6 +314,15 @@ func WithAuthRateLimit(n int) Option {
 	return func(s *Server) { s.Deps.AuthRateLimit = n }
 }
 
+// WithRetentionMaxDays sets the instance retention maximum the monitoring
+// settings service is given (PULSIX_SAMPLE_RETENTION; the apitest default
+// is 90, the variable's default).
+func WithRetentionMaxDays(days int) Option {
+	return func(s *Server) {
+		s.Deps.MonitorSettings = monitorsettings.NewService(monitorsettings.NewSQLStore(s.DB), days)
+	}
+}
+
 // WithVersion sets Deps.Version, the manager's build version: the value the
 // version_status of workers and agents is measured against. Left unset it
 // is empty, which makes every status "unknown".
@@ -676,7 +685,9 @@ func New(t *testing.T, opts ...Option) *Server {
 		Items:     s.Items,
 		EvalDirty: rules.NewDirtyMarker(d),
 		// The org monitoring settings (backlog 3.57) on the test database.
-		MonitorSettings: monitorsettings.NewService(monitorsettings.NewSQLStore(d)),
+		// The instance retention maximum is the default 90 days;
+		// WithRetentionMaxDays changes it.
+		MonitorSettings: monitorsettings.NewService(monitorsettings.NewSQLStore(d), 90),
 		AgentPush:       s.Push,
 		Notify:          notifySvc,
 		Maintenance:     maintenanceSvc,
