@@ -25,6 +25,12 @@
 //     TestUnsupportedPluginMessage (internal/checks/plugins_test.go); the
 //     golden metric table of TestCatalogueMatchesShippedPlugins
 //     (internal/rules/catalog_test.go).
+//   - Run the WHOLE internal/api package once (timeout 1800 s) after adding
+//     a plugin, not only -run filters: tests there name plugins as examples
+//     (TestCheckDefinitionRoutes used a real future plugin, nginx, as its
+//     "unknown" plugin and broke silently in 3.11 because implementers only
+//     ran filtered tests). Use a name no plugin will ever take for an
+//     unknown plugin.
 //   - A server-run plugin also needs its case in internal/probe's Run (the
 //     probe pin test TestRunKnowsExactlyTheServerPlugins checks it).
 //   - SPA: regenerate the descriptor fixture (go test ./internal/checkplugins
