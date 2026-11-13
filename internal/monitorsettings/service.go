@@ -38,6 +38,16 @@ type Settings struct {
 	ClientAbsentDays int
 }
 
+// validate is the one range check of the settings: the service refuses
+// with it, and the SQL store applies it before narrowing to the column's
+// integer type. The table's CHECK is the same bound for other writers.
+func (st Settings) validate() error {
+	if st.ClientAbsentDays < 0 || st.ClientAbsentDays > MaxClientAbsentDays {
+		return fmt.Errorf("%w: client_absent_days must be between 0 and %d", ErrInvalidInput, MaxClientAbsentDays)
+	}
+	return nil
+}
+
 // Defaults is what an organization without a stored row gets.
 func Defaults() Settings {
 	return Settings{ClientAbsentDays: DefaultClientAbsentDays}
@@ -74,8 +84,8 @@ func (s *Service) Get(ctx context.Context, orgID uuid.UUID) (Settings, error) {
 // Set validates and replaces the organization's settings and returns them
 // as stored. An out-of-range value is ErrInvalidInput and writes nothing.
 func (s *Service) Set(ctx context.Context, orgID uuid.UUID, st Settings) (Settings, error) {
-	if st.ClientAbsentDays < 0 || st.ClientAbsentDays > MaxClientAbsentDays {
-		return Settings{}, fmt.Errorf("%w: client_absent_days must be between 0 and %d", ErrInvalidInput, MaxClientAbsentDays)
+	if err := st.validate(); err != nil {
+		return Settings{}, err
 	}
 	if err := s.store.Put(ctx, orgID, st); err != nil {
 		return Settings{}, fmt.Errorf("store monitoring settings: %w", err)

@@ -31,16 +31,12 @@ func (q *Queries) GetOrgClientAbsentDays(ctx context.Context, orgID uuid.UUID) (
 }
 
 const getOrgMonitoringSettings = `-- name: GetOrgMonitoringSettings :one
-
 SELECT client_absent_days FROM org_monitoring_settings WHERE org_id = $1
 `
 
-// Org-level monitoring settings (backlog 3.57), on the
-// org_monitoring_settings table migration 00091 creates. The API's
-// statements run inside the request's organization scope, whose
-// org_isolation policy admits only that organization's row; the
-// evaluation ticker reads outside any scope and names org_id itself.
-// The organization's stored monitoring settings; the caller turns
+// Org-level monitoring settings (backlog 3.57, table
+// org_monitoring_settings from migration 00091): the organization's stored
+// row, read inside the request's organization scope; the caller turns
 // pgx.ErrNoRows (no row yet) into the defaults.
 func (q *Queries) GetOrgMonitoringSettings(ctx context.Context, orgID uuid.UUID) (int32, error) {
 	row := q.db.QueryRow(ctx, getOrgMonitoringSettings, orgID)

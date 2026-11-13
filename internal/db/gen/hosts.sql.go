@@ -481,52 +481,6 @@ func (q *Queries) ListZonesForOrg(ctx context.Context, orgID uuid.UUID) ([]Zone,
 	return items, nil
 }
 
-const lockHostKind = `-- name: LockHostKind :one
-SELECT kind FROM hosts WHERE id = $1 AND org_id = $2 FOR NO KEY UPDATE
-`
-
-type LockHostKindParams struct {
-	ID    uuid.UUID `json:"id"`
-	OrgID uuid.UUID `json:"org_id"`
-}
-
-// Backlog 3.57: the host's kind before an update changes it, read under
-// the row lock the update takes anyway (FOR NO KEY UPDATE is the lock an
-// UPDATE that leaves the key alone takes), so the kind compared after the
-// update is the one it replaced. No row means an unknown host, which the
-// update itself then reports.
-func (q *Queries) LockHostKind(ctx context.Context, arg LockHostKindParams) (string, error) {
-	row := q.db.QueryRow(ctx, lockHostKind, arg.ID, arg.OrgID)
-	var kind string
-	err := row.Scan(&kind)
-	return kind, err
-}
-
-const markHostKindChanged = `-- name: MarkHostKindChanged :exec
-INSERT INTO check_eval_cursor (org_id, host_id, dirty_at)
-VALUES ($1, $2, clock_timestamp())
-ON CONFLICT (host_id) DO UPDATE SET dirty_at = clock_timestamp()
-`
-
-type MarkHostKindChangedParams struct {
-	OrgID  uuid.UUID `json:"org_id"`
-	HostID uuid.UUID `json:"host_id"`
-}
-
-// Backlog 3.57: a host whose kind changed is due for evaluation at once (a
-// client turned server must be judged as one, a server turned client
-// frozen). The same upsert as rules.sql's MarkHostDirty, run inside the
-// host update's transaction, but stamped with clock_timestamp() AFTER the
-// cursor's row lock is held, the reason MarkHostDirtyNow (checks.sql)
-// gives: the update may have waited for an evaluation that read the old
-// kind and stamps evaluated_at with its own transaction start, which can
-// be later than this transaction's now(); now() here would leave the host
-// looking evaluated. DO UPDATE's SET is evaluated once the lock is taken.
-func (q *Queries) MarkHostKindChanged(ctx context.Context, arg MarkHostKindChangedParams) error {
-	_, err := q.db.Exec(ctx, markHostKindChanged, arg.OrgID, arg.HostID)
-	return err
-}
-
 const orgsWithoutDefaultZone = `-- name: OrgsWithoutDefaultZone :many
 SELECT o.id FROM organizations o
 WHERE NOT EXISTS (

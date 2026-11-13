@@ -221,8 +221,8 @@ func TestHostDTOCarriesRevision(t *testing.T) {
 }
 
 // TestUpdateHostAuditSaysWhatChanged: the audit summary of a PATCH names the
-// host and, when the body also set the jump host or the manual tags, says
-// so; a plain edit is exactly "updated host <name>".
+// host and, when the body also set the jump host, the manual tags or the
+// kind, says so; a plain edit is exactly "updated host <name>".
 func TestUpdateHostAuditSaysWhatChanged(t *testing.T) {
 	f := newSSHFixture(t, "hostwrite-audit-org")
 	url := f.org + "/hosts/" + f.hostID
@@ -243,6 +243,8 @@ func TestUpdateHostAuditSaysWhatChanged(t *testing.T) {
 	patch(map[string]any{"tags": []map[string]any{{"key": "role", "value": "db"}}})
 	patch(map[string]any{"jump": map[string]any{"mode": "none"}})
 	patch(map[string]any{"jump": map[string]any{"mode": "none"}, "tags": []map[string]any{}})
+	patch(map[string]any{"kind": "client"})
+	patch(map[string]any{"kind": "server", "tags": []map[string]any{}})
 
 	var got []string
 	for _, ev := range readActivity(t, f.s, f.c, "hostwrite-audit-org").Items {
@@ -254,7 +256,9 @@ func TestUpdateHostAuditSaysWhatChanged(t *testing.T) {
 		"updated host web-01",
 		"updated host web-01; set its jump host",
 		"updated host web-01; set its jump host and tags",
+		"updated host web-01; set its kind to client",
 		"updated host web-01; set its tags",
+		"updated host web-01; set its tags; set its kind to server",
 	}
 	sort.Strings(got)
 	if strings.Join(got, "|") != strings.Join(want, "|") {

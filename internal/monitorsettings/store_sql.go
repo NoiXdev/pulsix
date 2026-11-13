@@ -36,10 +36,10 @@ func (s *SQLStore) Get(ctx context.Context, orgID uuid.UUID) (Settings, bool, er
 
 // Put implements Store.
 func (s *SQLStore) Put(ctx context.Context, orgID uuid.UUID, st Settings) error {
-	if st.ClientAbsentDays < 0 || st.ClientAbsentDays > MaxClientAbsentDays {
-		// Range-checked before the conversion; the table's CHECK is the
-		// same bound for writers that skip the service.
-		return fmt.Errorf("%w: client_absent_days must be between 0 and %d", ErrInvalidInput, MaxClientAbsentDays)
+	// The service's own check, repeated here only because it is what makes
+	// the narrowing to int32 below safe.
+	if err := st.validate(); err != nil {
+		return err
 	}
 	if err := s.q.UpsertOrgMonitoringSettings(ctx, gen.UpsertOrgMonitoringSettingsParams{
 		OrgID: orgID, ClientAbsentDays: int32(st.ClientAbsentDays),

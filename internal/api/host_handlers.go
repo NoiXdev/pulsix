@@ -134,8 +134,9 @@ func (b hostInputBody) toInput() (hosts.HostInput, error) {
 }
 
 // hostUpdateSummary is the audit summary of a PATCH: the host's name, and
-// what else the body wrote with it — the jump host, the manual tags, or both
-// — so the activity feed does not read like a plain edit when it was not.
+// what else the body wrote with it — the jump host, the manual tags, the
+// kind (server or client, which decides whether an offline agent alerts) —
+// so the activity feed does not read like a plain edit when it was not.
 func hostUpdateSummary(name string, in hosts.HostInput) string {
 	s := "updated host " + name
 	switch {
@@ -145,6 +146,9 @@ func hostUpdateSummary(name string, in hosts.HostInput) string {
 		s += "; set its jump host"
 	case in.Tags != nil:
 		s += "; set its tags"
+	}
+	if in.Kind != "" {
+		s += "; set its kind to " + string(in.Kind)
 	}
 	return s
 }

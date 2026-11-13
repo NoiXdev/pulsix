@@ -303,7 +303,8 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	mailer := mail.NewSMTP(setupSvc.LoadSMTP)
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(appDB), mailer, cfg.PublicURL, time.Now)
 	auditRec := audit.NewRecorder(audit.NewSQLStore(appDB), time.Now)
-	hostsSvc := hosts.NewService(hosts.NewSQLStore(appDB), time.Now)
+	// A kind change marks the host due for evaluation (backlog 3.57).
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(appDB), time.Now, hosts.WithEvalDirty(rules.NewDirtyMarker(appDB)))
 	// The monitoring check pipeline (v0.3b-1): SeedForOrg is wired into the
 	// hook right below; WithMatcher/WithHostRoster (checks_ports.go) are
 	// what let ResolveHost/ResolveOrg run at all — a Service built without

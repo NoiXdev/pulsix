@@ -1,6 +1,7 @@
 package hosts_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -50,5 +51,80 @@ func TestHostKindValidation(t *testing.T) {
 	changed, err := svc.UpdateHost(ctx, org, client.ID, kept.Revision, hosts.HostInput{Name: "laptop", ZoneID: zone.ID, Kind: hosts.KindServer})
 	if err != nil || changed.Kind != hosts.KindServer {
 		t.Fatalf("update to server = %q, %v", changed.Kind, err)
+	}
+}
+
+// fakeDirty records the hosts marked dirty; err fails every mark.
+type fakeDirty struct {
+	marked []uuid.UUID
+	err    error
+}
+
+func (f *fakeDirty) MarkHostDirty(_ context.Context, _, hostID uuid.UUID) error {
+	f.marked = append(f.marked, hostID)
+	return f.err
+}
+
+// TestKindChangeMarksTheHostDirty: an update that changes the kind marks
+// the host due for evaluation after the write; one that keeps it, or names
+// no kind, does not; a failed update marks nothing; a failed mark does not
+// fail the committed update.
+func TestKindChangeMarksTheHostDirty(t *testing.T) {
+	st := newFakeHostStore()
+	dirty := &fakeDirty{}
+	svc := hosts.NewService(st, time.Now, hosts.WithEvalDirty(dirty))
+	org := uuid.Must(uuid.NewV7())
+	zone, err := svc.CreateZone(ctx, org, "fra", "Falkenstein")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := svc.CreateHost(ctx, org, hosts.HostInput{Name: "laptop", ZoneID: zone.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty.marked) != 0 {
+		t.Fatalf("create marked %v, want nothing", dirty.marked)
+	}
+	update := func(k hosts.Kind) error {
+		t.Helper()
+		cur, err := svc.GetHost(ctx, org, h.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = svc.UpdateHost(ctx, org, h.ID, cur.Revision, hosts.HostInput{Name: "laptop", ZoneID: zone.ID, Kind: k})
+		return err
+	}
+
+	for _, k := range []hosts.Kind{"", hosts.KindServer} {
+		if err := update(k); err != nil {
+			t.Fatal(err)
+		}
+		if len(dirty.marked) != 0 {
+			t.Fatalf("update with kind %q marked %v, want nothing", k, dirty.marked)
+		}
+	}
+	if err := update(hosts.KindClient); err != nil {
+		t.Fatal(err)
+	}
+	if len(dirty.marked) != 1 || dirty.marked[0] != h.ID {
+		t.Fatalf("server→client marked %v, want the host once", dirty.marked)
+	}
+
+	// A stale revision writes nothing and marks nothing.
+	if _, err := svc.UpdateHost(ctx, org, h.ID, 999, hosts.HostInput{Name: "laptop", ZoneID: zone.ID, Kind: hosts.KindServer}); !errors.Is(err, hosts.ErrRevisionMismatch) {
+		t.Fatalf("stale update = %v", err)
+	}
+	if len(dirty.marked) != 1 {
+		t.Fatalf("stale update marked %v", dirty.marked)
+	}
+
+	// The mark runs after the write committed: its failure is logged, and
+	// the update still succeeds.
+	dirty.err = errors.New("cursor unavailable")
+	if err := update(hosts.KindServer); err != nil {
+		t.Fatalf("update with a failing mark = %v, want success", err)
+	}
+	if got, _ := svc.GetHost(ctx, org, h.ID); got.Kind != hosts.KindServer || len(dirty.marked) != 2 {
+		t.Fatalf("after a failed mark: kind %q, marks %v", got.Kind, dirty.marked)
 	}
 }

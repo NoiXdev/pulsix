@@ -382,7 +382,7 @@ func WithFailingAudit() Option {
 // assertion in it would pass for the wrong reason.
 func WithHostsStore(wrap func(hosts.Store) hosts.Store) Option {
 	return func(s *Server) {
-		s.Deps.Hosts = hosts.NewService(wrap(countingHostStore{Store: hosts.NewSQLStore(s.DB), counter: s.HostReads}), time.Now)
+		s.Deps.Hosts = hosts.NewService(wrap(countingHostStore{Store: hosts.NewSQLStore(s.DB), counter: s.HostReads}), time.Now, hosts.WithEvalDirty(rules.NewDirtyMarker(s.DB)))
 	}
 }
 
@@ -458,7 +458,7 @@ func New(t *testing.T, opts ...Option) *Server {
 	setupSvc := setup.NewService(setup.NewSQLStore(d), s.Sessions, crypto.NewBox(testMasterKey), time.Now, SetupToken())
 	tenancySvc := tenancy.NewService(tenancy.NewSQLStore(d), s.Mail, publicURL, time.Now)
 	s.HostReads = &HostReadCounter{}
-	hostsSvc := hosts.NewService(countingHostStore{Store: hosts.NewSQLStore(d), counter: s.HostReads}, time.Now)
+	hostsSvc := hosts.NewService(countingHostStore{Store: hosts.NewSQLStore(d), counter: s.HostReads}, time.Now, hosts.WithEvalDirty(rules.NewDirtyMarker(d)))
 	// The monitoring check pipeline, wired exactly as app.Build wires it:
 	// the same store, and the same two host ports (WithMatcher /
 	// WithHostRoster) without which Preview and the resolver refuse to

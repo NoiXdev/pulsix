@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -175,8 +176,7 @@ type Store interface {
 	// UpdateHostWith persists every mutable field of h (ZoneID, Name,
 	// Address, Managed, Monitored, and Kind unless it is empty) while
 	// h.Revision is still current, and writes x in the same transaction,
-	// returning the row as stored. A kind change marks the host due for
-	// evaluation in the same transaction (backlog 3.57).
+	// returning the row as stored.
 	// ErrNotFound if no host matches (h.ID, h.OrgID) or x names a jump host
 	// that does not exist in the organization, ErrRevisionMismatch if the
 	// revision moved; in every failure nothing is written.
@@ -324,11 +324,30 @@ func clampLimit(limit int) int {
 type Service struct {
 	store Store
 	now   func() time.Time
+	dirty EvalDirtyMarker
 }
 
+// EvalDirtyMarker marks a host due for evaluation (backlog 3.57: a kind
+// change). Declared here so the service never imports internal/rules;
+// internal/app wires rules.DirtyMarker.
+type EvalDirtyMarker interface {
+	MarkHostDirty(ctx context.Context, orgID, hostID uuid.UUID) error
+}
+
+// Option configures a Service.
+type Option func(*Service)
+
+// WithEvalDirty wires the marker UpdateHost calls after a kind change.
+// Without one a kind change takes effect at the host's next due time.
+func WithEvalDirty(m EvalDirtyMarker) Option { return func(s *Service) { s.dirty = m } }
+
 // NewService wires the store and clock.
-func NewService(store Store, now func() time.Time) *Service {
-	return &Service{store: store, now: now}
+func NewService(store Store, now func() time.Time, opts ...Option) *Service {
+	s := &Service{store: store, now: now}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // validateSlug reports ErrInvalidInput if slug or name is empty or slug
@@ -470,8 +489,56 @@ func (s *Service) UpdateHost(ctx context.Context, orgID, id uuid.UUID, rev int64
 	if _, err := s.store.GetZone(ctx, orgID, in.ZoneID); err != nil {
 		return Host{}, err
 	}
+	// The kind the update replaces, for the dirty mark below. Read before
+	// the write and outside its transaction: when the stored revision is
+	// rev, that row is exactly the one the revision-checked update
+	// replaces; any other answer (a newer revision, a failed read) marks
+	// the host anyway, which only costs one evaluation.
+	var prev Host
+	prevErr := errNoKindGiven
+	if in.Kind != "" {
+		prev, prevErr = s.store.GetHost(ctx, orgID, id)
+	}
 	h := Host{ID: id, OrgID: orgID, ZoneID: in.ZoneID, Name: in.Name, Address: in.Address, Managed: in.Managed, Monitored: in.Monitored, Revision: rev, Kind: in.Kind}
-	return s.store.UpdateHostWith(ctx, h, extras)
+	out, err := s.store.UpdateHostWith(ctx, h, extras)
+	if err != nil {
+		return Host{}, err
+	}
+	if in.Kind != "" && (prevErr != nil || prev.Revision != rev || prev.Kind != out.Kind) {
+		s.markKindChanged(ctx, out)
+	}
+	return out, nil
+}
+
+// errNoKindGiven stands for "no previous kind was read" in UpdateHost.
+var errNoKindGiven = errors.New("no kind given")
+
+// markKindChanged makes a host whose kind changed due for evaluation at
+// once (backlog 3.57: a client turned server is judged as one, a server
+// turned client is frozen), AFTER the update committed and never inside
+// its transaction. The evaluator holds a host's cursor row while it takes
+// FOR KEY SHARE on the hosts row (the foreign keys of what it inserts),
+// and an update that renames the host holds a lock that conflicts with
+// KEY SHARE: marking inside the update's transaction would wait for the
+// cursor while holding the row, and deadlock against that evaluation.
+//
+// The mark is rules' MarkHostDirty, one statement in its own transaction
+// whose now() is later than the update's commit, so it is also later than
+// the evaluated_at of any evaluation that read the old kind (that stamp is
+// the evaluation's own start); an evaluation that starts after the commit
+// reads the new kind. A failed mark is logged, not returned: the write has
+// committed, and the host is still re-judged at its next due time. Today
+// that is at most its earliest pending deadline (a tuple's staleness
+// deadline, three of its check's intervals) or the evaluator's heartbeat
+// (15 s, 5 min for a silent host), and the next reading its agent sends
+// marks it dirty anyway.
+func (s *Service) markKindChanged(ctx context.Context, h Host) {
+	if s.dirty == nil {
+		return
+	}
+	if err := s.dirty.MarkHostDirty(ctx, h.OrgID, h.ID); err != nil {
+		slog.WarnContext(ctx, "mark host dirty after a kind change", "host_id", h.ID, "err", err)
+	}
 }
 
 // SetCapabilities updates the Managed and/or Monitored flag of the host
