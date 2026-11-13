@@ -66,11 +66,14 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	return rules.CheckContext{Intervals: intervals, Asks: asks, Groups: ranks}, nil
 }
 
-// asksFor is c's item predicate for the evaluation (backlog 3.55): the very
+// asksFor is c's item predicate for the evaluation (backlog 3.55): the
 // rule the host page hides a dropped item's values by
-// (checks.Definition.AsksForItem), so evaluation and display agree on
-// which items a check still asks for. The whole-host item "" is always
-// asked — it carries the check's own errors, whatever its list names.
+// (checks.Definition.AsksForItem), so both agree on every named item. The
+// whole-host item "" is always judged here, whatever the list names: the
+// plugins that report on it (temperature, smart, raid) are always asked
+// for it anyway, and the ones that never emit it (disk, network,
+// service) leave nothing for the guard to change. The host page has no
+// such guard; a "" value of those plugins would be hidden there.
 func asksFor(c checks.Resolved) func(item string) bool {
 	return func(item string) bool {
 		return item == "" || checkplugins.AsksForItem(c.Plugin, c.Params, item)
