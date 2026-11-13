@@ -354,6 +354,8 @@ export const enHosts = {
       '1h': '1 h',
       '24h': '24 h',
       '7d': '7 d',
+      '30d': '30 d',
+      '90d': '90 d',
     },
     readFailed: 'Could not read this series.',
     chartFailed: 'The chart could not be loaded. Reload the page to try again.',

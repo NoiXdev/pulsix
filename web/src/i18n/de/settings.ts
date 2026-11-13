@@ -39,6 +39,13 @@ export const deSettings: Messages['settings'] = {
     clientAbsentDaysHint:
       'Für Client-Hosts mit Agent: Hatte ein Client so viele Tage keinen Kontakt, öffnet sich eine Warnung. Sie schließt sich, wenn der Client zurück ist. 0 schaltet sie ab.',
     invalid: 'Gib eine ganze Zahl von Tagen zwischen 0 und 365 ein.',
+    retention: 'Messwerte aufbewahren für',
+    retentionDefault: (days: number) => `Instanz-Standard (${days} Tage)`,
+    retentionDays: (days: number) => `${days} Tage`,
+    retentionAboveMax: (days: number) => `Die Instanz behält höchstens ${days} Tage`,
+    retentionHint: 'Wie lange Messwerte und Statusverlauf dieser Organisation aufbewahrt werden. Das vom Betreiber gesetzte Instanz-Maximum begrenzt die Auswahl.',
+    retentionLowerWarning: (days: number) => `Messwerte und Statusverlauf, die älter als ${days} Tage sind, werden innerhalb einer Stunde gelöscht.`,
+    retentionLowerTitle: 'Ältere Messwerte löschen?',
     readOnlyHint: 'Nur Inhaber und Admins können die Überwachungseinstellungen ändern.',
     save: 'Speichern',
     saveLabel: 'Überwachungseinstellungen speichern',

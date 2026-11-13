@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRootRoute, createRoute, createRouter, createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { ToastProvider } from '../../ui/toast.tsx';
+import { ConfirmProvider } from '../../ui/confirm.tsx';
 import { mockApi, type MockRequest } from '../../test/mockApi.ts';
 import { OrgGeneralPage } from './OrgGeneralPage.tsx';
 
@@ -22,7 +23,9 @@ function renderPage() {
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <ConfirmProvider>
+          <RouterProvider router={router} />
+        </ConfirmProvider>
       </ToastProvider>
     </QueryClientProvider>,
   );
@@ -137,7 +140,7 @@ describe('OrgGeneralPage', () => {
       await user.type(input, '0');
       await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
 
-      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 0 }]));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 0, retention_days: null }]));
       expect(await screen.findByText('Monitoring settings saved')).toBeInTheDocument();
     });
 
@@ -170,7 +173,7 @@ describe('OrgGeneralPage', () => {
       await user.clear(input);
       await user.type(input, '365');
       await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
-      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 365 }]));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 365, retention_days: null }]));
     });
 
     it('is read-only below admin', async () => {
@@ -182,6 +185,125 @@ describe('OrgGeneralPage', () => {
       expect(input).toHaveAttribute('readonly');
       expect(screen.queryByRole('button', { name: 'Save monitoring settings' })).not.toBeInTheDocument();
       expect(screen.getByText('Only owners and admins can change the monitoring settings.')).toBeInTheDocument();
+    });
+  });
+
+  // Backlog 3.15: how long this organization keeps measurements, capped by
+  // the instance maximum the operator set.
+  describe('measurement retention', () => {
+    const SELECT = 'Keep measurements for';
+    type Stored = { retention_days: number | null; retention_max_days: number; retention_effective_days: number };
+    function routes(role: string, stored: Stored, puts: unknown[] = []) {
+      let current = { client_absent_days: 14, ...stored };
+      return {
+        'GET /api/v1/orgs/acme': org(role),
+        'GET /api/v1/orgs/acme/settings/monitoring': () => ({ settings: current }),
+        'PUT /api/v1/orgs/acme/settings/monitoring': (req: MockRequest) => {
+          puts.push(req.body);
+          const b = req.body as { client_absent_days: number; retention_days: number | null };
+          const eff = Math.min(b.retention_days ?? current.retention_max_days, current.retention_max_days);
+          current = { ...current, client_absent_days: b.client_absent_days, retention_days: b.retention_days, retention_effective_days: eff };
+          return { settings: current };
+        },
+      };
+    }
+    const DEFAULT90: Stored = { retention_days: null, retention_max_days: 90, retention_effective_days: 90 };
+
+    it('offers the instance default and the three choices, disabling those above the maximum', async () => {
+      const user = userEvent.setup();
+      mockApi(routes('admin', DEFAULT90));
+      renderPage();
+
+      const box = await screen.findByRole('combobox', { name: SELECT });
+      await waitFor(() => expect(box).toHaveValue('Instance default (90 days)'));
+      await user.click(box);
+      const options = screen.getAllByRole('option');
+      expect(options.map((o) => o.textContent)).toEqual([
+        expect.stringContaining('Instance default (90 days)'),
+        expect.stringContaining('30 days'),
+        expect.stringContaining('90 days'),
+        expect.stringContaining('365 days'),
+      ]);
+      expect(options[1]).not.toHaveAttribute('aria-disabled', 'true');
+      expect(options[2]).not.toHaveAttribute('aria-disabled', 'true');
+      expect(options[3]).toHaveAttribute('aria-disabled', 'true');
+      expect(options[3]).toHaveTextContent('The instance keeps at most 90 days');
+    });
+
+    it('saves a choice together with the absent days and sends null for the default', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', { retention_days: 90, retention_max_days: 365, retention_effective_days: 90 }, puts));
+      renderPage();
+
+      const box = await screen.findByRole('combobox', { name: SELECT });
+      await waitFor(() => expect(box).toHaveValue('90 days'));
+      await user.click(box);
+      await user.click(screen.getByRole('option', { name: /^365 days/ }));
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 14, retention_days: 365 }]));
+
+      await user.click(await screen.findByRole('combobox', { name: SELECT }));
+      await user.click(screen.getByRole('option', { name: /Instance default/ }));
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+      await waitFor(() => expect(puts[1]).toEqual({ client_absent_days: 14, retention_days: null }));
+    });
+
+    it('warns before lowering the effective retention and saves only after confirming', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', { retention_days: 365, retention_max_days: 365, retention_effective_days: 365 }, puts));
+      renderPage();
+
+      const box = await screen.findByRole('combobox', { name: SELECT });
+      await waitFor(() => expect(box).toHaveValue('365 days'));
+      await user.click(box);
+      await user.click(screen.getByRole('option', { name: /^30 days/ }));
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+
+      expect(await screen.findByText('Measurements and state history older than 30 days will be deleted within the hour.')).toBeInTheDocument();
+      expect(puts).toEqual([]);
+      await user.click(screen.getByRole('button', { name: 'Confirm' }));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 14, retention_days: 30 }]));
+    });
+
+    it('saves nothing when the warning is cancelled', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', { retention_days: 365, retention_max_days: 365, retention_effective_days: 365 }, puts));
+      renderPage();
+
+      const box = await screen.findByRole('combobox', { name: SELECT });
+      await waitFor(() => expect(box).toHaveValue('365 days'));
+      await user.click(box);
+      await user.click(screen.getByRole('option', { name: /^30 days/ }));
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+      await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+      expect(puts).toEqual([]);
+    });
+
+    it('does not warn when the effective value stays or grows', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      // Choosing 365 under a 90-day maximum is not offered; choosing the
+      // default while the choice was 30 grows 30 to 90.
+      mockApi(routes('admin', { retention_days: 30, retention_max_days: 90, retention_effective_days: 30 }, puts));
+      renderPage();
+
+      const box = await screen.findByRole('combobox', { name: SELECT });
+      await waitFor(() => expect(box).toHaveValue('30 days'));
+      await user.click(box);
+      await user.click(screen.getByRole('option', { name: /Instance default/ }));
+      await user.click(screen.getByRole('button', { name: 'Save monitoring settings' }));
+      await waitFor(() => expect(puts).toEqual([{ client_absent_days: 14, retention_days: null }]));
+    });
+
+    it('is read-only below admin', async () => {
+      mockApi(routes('operator', DEFAULT90));
+      renderPage();
+      const box = await screen.findByRole('combobox', { name: SELECT });
+      await waitFor(() => expect(box).toHaveValue('Instance default (90 days)'));
+      expect(box).toBeDisabled();
     });
   });
 });

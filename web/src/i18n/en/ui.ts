@@ -64,6 +64,8 @@ export const enUi = {
       '1h': 'over the last hour',
       '24h': 'over the last 24 hours',
       '7d': 'over the last 7 days',
+      '30d': 'over the last 30 days',
+      '90d': 'over the last 90 days',
     },
     label: (what: string, range: string, samples: number) => `${what} ${range}, ${samples} samples`,
     empty: 'No samples in this range.',

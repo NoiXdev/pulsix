@@ -42,6 +42,13 @@ export const enSettings = {
     clientAbsentDaysHint:
       'For client hosts with an agent: when a client has not been in contact for this many days, a warning opens. It closes when the client is back. 0 switches it off.',
     invalid: 'Enter a whole number of days from 0 to 365.',
+    retention: 'Keep measurements for',
+    retentionDefault: (days: number) => `Instance default (${days} days)`,
+    retentionDays: (days: number) => `${days} days`,
+    retentionAboveMax: (days: number) => `The instance keeps at most ${days} days`,
+    retentionHint: 'How long measurements and state history are kept for this organization. The instance maximum, set by the operator, caps the choice.',
+    retentionLowerWarning: (days: number) => `Measurements and state history older than ${days} days will be deleted within the hour.`,
+    retentionLowerTitle: 'Delete older measurements?',
     readOnlyHint: 'Only owners and admins can change the monitoring settings.',
     save: 'Save',
     saveLabel: 'Save monitoring settings',

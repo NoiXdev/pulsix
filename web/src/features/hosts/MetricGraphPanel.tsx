@@ -7,6 +7,7 @@
 import { lazy, Suspense } from 'react';
 import { Button } from '../../ui/button.tsx';
 import { ErrorBoundary } from '../../ui/ErrorBoundary.tsx';
+import { useMonitoringSettings } from '../../api/hooks/useMonitoringSettings.ts';
 import { useHostMetric, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { importMetricChart } from './metricChartImport.ts';
 import type { MetricRange } from '../../api/types.ts';
@@ -15,6 +16,13 @@ import { useT } from '../../i18n/useT.ts';
 const MetricChart = lazy(() => importMetricChart().then((m) => ({ default: m.MetricChart })));
 
 const RANGES: MetricRange[] = ['1h', '24h', '7d'];
+
+/** The longer ranges (backlog 3.15) and the days of retention each needs:
+ * a window beyond what the organization keeps would only show empty space. */
+const LONG_RANGES: Array<[MetricRange, number]> = [
+  ['30d', 30],
+  ['90d', 90],
+];
 
 /** The chart's own height, shared with the Suspense fallback so a cold
  * open does not shift the panel and everything under it by ~164 px while
@@ -36,11 +44,15 @@ export function MetricGraphPanel({
 }) {
   const t = useT();
   const series = useHostMetric(org, hostId, selection);
+  // Read by every member; while it loads, or if it fails, only the
+  // always-available ranges are offered.
+  const retention = useMonitoringSettings(org).data?.settings.retention_effective_days ?? 0;
+  const ranges = [...RANGES, ...LONG_RANGES.filter(([, days]) => retention >= days).map(([range]) => range)];
 
   return (
     <div className="rounded-md border border-border p-2">
       <div className="mb-2 flex items-center gap-1">
-        {RANGES.map((value) => (
+        {ranges.map((value) => (
           <Button
             key={value}
             type="button"

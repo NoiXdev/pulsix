@@ -783,6 +783,47 @@ describe('HostChecksCard', () => {
     expect(await screen.findByRole('img', { name: /over the last 7 days, 3 samples/ })).toBeInTheDocument();
   });
 
+  // Backlog 3.15: 30 d and 90 d are offered only where the organization's
+  // effective retention reaches that far.
+  it.each([
+    [7, ['1 h', '24 h', '7 d']],
+    [30, ['1 h', '24 h', '7 d', '30 d']],
+    [90, ['1 h', '24 h', '7 d', '30 d', '90 d']],
+    [365, ['1 h', '24 h', '7 d', '30 d', '90 d']],
+  ])('offers the ranges a retention of %i days covers', async (effective, labels) => {
+    const user = userEvent.setup();
+    const asked: string[] = [];
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': { effective: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': THREE_SOURCES,
+      'GET /api/v1/orgs/acme/settings/monitoring': {
+        settings: { client_absent_days: 14, retention_days: null, retention_max_days: effective, retention_effective_days: effective },
+      },
+      'GET /api/v1/orgs/acme/hosts/h1/metrics': (req: MockRequest) => {
+        asked.push(req.search.get('range') ?? '');
+        return { check: 'disk', item: '/var', metric: 'used_percent', range: req.search.get('range'), from: NOW, to: NOW, points: [] };
+      },
+    });
+    renderCard();
+
+    await user.click(await screen.findByRole('button', { name: 'Graph disk /var used_percent' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '1 h' })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('button', { pressed: undefined })
+          .map((b) => b.textContent)
+          .filter((x) => /^\d+ [hd]$/.test(x ?? '')),
+      ).toEqual(labels),
+    );
+    if (labels.includes('90 d')) {
+      await user.click(screen.getByRole('button', { name: '90 d' }));
+      await waitFor(() => expect(asked).toContain('90d'));
+    }
+  });
+
   it('omits the item parameter for a whole-host metric', async () => {
     const user = userEvent.setup();
     const asked: Array<Record<string, string>> = [];

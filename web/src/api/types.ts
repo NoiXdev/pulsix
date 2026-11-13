@@ -249,14 +249,14 @@ export type AlertTupleState = AlertStateChange['from_state'];
 
 /**
  * The windows GET /hosts/{id}/metrics accepts, and nothing else: the route
- * refuses any other value with a 400 naming these three
+ * refuses any other value with a 400 naming these five
  * (internal/api/host_check_handlers.go). The generated schema types
  * `range` as a bare string — huma validates it by hand there so the
  * refusal carries a readable message — so the closed set is spelled out
  * here rather than left to a free-text query parameter the GUI could
  * silently get wrong.
  */
-export type MetricRange = '1h' | '24h' | '7d';
+export type MetricRange = '1h' | '24h' | '7d' | '30d' | '90d';
 
 // OncallRotation is one oncall.Rotation on the wire (v0.4c design, "API and
 // permissions"): an ordered channel cycle, a period and an anchor (the

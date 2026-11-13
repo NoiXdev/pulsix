@@ -57,6 +57,8 @@ export const deUi: Messages['ui'] = {
       '1h': 'in der letzten Stunde',
       '24h': 'in den letzten 24 Stunden',
       '7d': 'in den letzten 7 Tagen',
+      '30d': 'in den letzten 30 Tagen',
+      '90d': 'in den letzten 90 Tagen',
     },
     label: (what: string, range: string, samples: number) => `${what}, ${range}, ${samples} Messwerte`,
     empty: 'Keine Messwerte in diesem Zeitraum.',

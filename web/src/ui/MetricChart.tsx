@@ -17,6 +17,8 @@ const TICK_FORMAT: Record<MetricRange, string> = {
   '1h': '{HH}:{mm}',
   '24h': '{HH}:{mm}',
   '7d': '{DD}.{MM} {HH}h',
+  '30d': '{DD}.{MM}',
+  '90d': '{DD}.{MM}',
 };
 
 /** Fallbacks for the brand tokens below, mirroring src/styles/tokens.css.

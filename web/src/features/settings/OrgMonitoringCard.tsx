@@ -1,14 +1,25 @@
 import { useState } from 'react';
-import { useMonitoringSettings, useUpdateMonitoringSettings } from '../../api/hooks/useMonitoringSettings.ts';
+import { useMonitoringSettings, useUpdateMonitoringSettings, type RetentionChoice } from '../../api/hooks/useMonitoringSettings.ts';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
 import { Label } from '../../ui/label.tsx';
+import { Select, type SelectOption } from '../../ui/Select.tsx';
+import { useConfirm } from '../../ui/confirmContext.ts';
 import { Card } from '../../ui/table.tsx';
 import { useToast } from '../../ui/toastContext.ts';
 import { useT } from '../../i18n/useT.ts';
 
 /** The range the server accepts (internal/monitorsettings: 0..365). */
 const MAX_DAYS = 365;
+
+/** The retention choices the server accepts (internal/monitorsettings). */
+const RETENTION_CHOICES = [30, 90, 365] as const;
+const DEFAULT_CHOICE = 'default';
+
+/** choiceOf maps the select's value back to what the API takes. */
+function choiceOf(value: string): RetentionChoice {
+  return value === DEFAULT_CHOICE ? null : (Number(value) as RetentionChoice);
+}
 
 /** parseDays reads the field as a whole number of days in 0..365, or null. */
 function parseDays(text: string): number | null {
@@ -28,13 +39,32 @@ export function OrgMonitoringCard({ org, canWrite }: { org: string; canWrite: bo
   const t = useT();
   const m = t.settings.monitoring;
   const toast = useToast();
+  const confirm = useConfirm();
   const settings = useMonitoringSettings(org);
   const update = useUpdateMonitoringSettings(org);
   const [draft, setDraft] = useState<string | null>(null);
   const [invalid, setInvalid] = useState(false);
+  const [retentionDraft, setRetentionDraft] = useState<string | null>(null);
 
   const stored = settings.data?.settings.client_absent_days;
   const text = draft ?? (stored === undefined ? '' : String(stored));
+
+  const maxDays = settings.data?.settings.retention_max_days;
+  const storedChoice = settings.data?.settings.retention_days ?? null;
+  const retentionValue = retentionDraft ?? (storedChoice === null ? DEFAULT_CHOICE : String(storedChoice));
+  const retentionOptions: SelectOption[] =
+    maxDays === undefined
+      ? []
+      : [
+          { value: DEFAULT_CHOICE, label: m.retentionDefault(maxDays) },
+          ...RETENTION_CHOICES.map((days) => ({
+            value: String(days),
+            label: m.retentionDays(days),
+            disabled: days > maxDays,
+            hint: days > maxDays ? m.retentionAboveMax(maxDays) : undefined,
+          })),
+        ];
+  const dirty = draft !== null || retentionDraft !== null;
 
   return (
     <Card>
@@ -50,9 +80,18 @@ export function OrgMonitoringCard({ org, canWrite }: { org: string; canWrite: bo
             return;
           }
           setInvalid(false);
+          const retentionDays = choiceOf(retentionValue);
+          // Lowering what is kept deletes data, so it is asked first.
+          const current = settings.data?.settings.retention_effective_days;
+          const next = maxDays === undefined ? undefined : Math.min(retentionDays ?? maxDays, maxDays);
+          if (current !== undefined && next !== undefined && next < current) {
+            const ok = await confirm({ title: m.retentionLowerTitle, message: m.retentionLowerWarning(next), destructive: true });
+            if (!ok) return;
+          }
           try {
-            await update.mutateAsync(days);
+            await update.mutateAsync({ clientAbsentDays: days, retentionDays });
             setDraft(null);
+            setRetentionDraft(null);
             toast.show(m.saved);
           } catch (err) {
             toast.show(err instanceof Error ? err.message : m.saveFailed, 'destructive');
@@ -96,9 +135,25 @@ export function OrgMonitoringCard({ org, canWrite }: { org: string; canWrite: bo
             {!canWrite && <span className="text-xs text-muted-foreground">{m.readOnlyHint}</span>}
           </div>
         )}
+        {!settings.isError && maxDays !== undefined && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="retention_days">{m.retention}</Label>
+            <Select
+              id="retention_days"
+              options={retentionOptions}
+              value={retentionValue}
+              onChange={(v) => setRetentionDraft(v)}
+              disabled={!canWrite}
+              aria-describedby="retention_days_hint"
+            />
+            <span id="retention_days_hint" className="text-xs text-muted-foreground">
+              {m.retentionHint}
+            </span>
+          </div>
+        )}
         {canWrite && !settings.isError && (
           <div className="flex justify-end">
-            <Button type="submit" variant="primary" aria-label={m.saveLabel} disabled={settings.isPending || update.isPending || draft === null}>
+            <Button type="submit" variant="primary" aria-label={m.saveLabel} disabled={settings.isPending || update.isPending || !dirty}>
               {m.save}
             </Button>
           </div>

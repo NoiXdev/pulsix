@@ -355,6 +355,8 @@ export const deHosts: Messages['hosts'] = {
       '1h': '1 Std.',
       '24h': '24 Std.',
       '7d': '7 T.',
+      '30d': '30 T.',
+      '90d': '90 T.',
     },
     readFailed: 'Diese Messreihe konnte nicht gelesen werden.',
     chartFailed: 'Das Diagramm konnte nicht geladen werden. Zum erneuten Versuch die Seite neu laden.',
