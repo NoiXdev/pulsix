@@ -63,7 +63,7 @@ an operator can count on. The operator's steps are in
   through it as sent again; stop every manager instance before the new
   version starts.
 - **Migration 00087 adds the check key of an item rule (3.13e).** It adds the
-  nullable column `rules.item_check_key` and a CHECK that it is set only on
+  nullable column `check_rules.item_check_key` and a CHECK that it is set only on
   item-scope rules (`item_check_key IS NULL OR scope = 'item'`); nothing is
   rewritten, and an older release ignores the column. Stop every manager
   instance before the new version starts: an older manager that keeps
@@ -233,7 +233,13 @@ repositories as before. An older worker never asks.
   (ignore, watch) now accept any well-formed check key, so such an item can be
   ignored per item. The API's rule objects gain `item_check_key` (item scope
   only; empty or absent means the plugin key); a rule update is a full replace,
-  so a client that omits it resets the rule to the plugin key.
+  so a client that omits it resets the rule to the plugin key. Item decisions
+  still name exactly one check key: an existing ignore on `disk` or `service`
+  (for example `/snap/*` org-wide) does not cover the same item of a copy
+  under another key such as `disk-data` or `service-2`, so those items alert
+  until a decision for that key is added after upgrading (older releases
+  refuse such keys, so it cannot be done beforehand). Consider a maintenance
+  window around the upgrade if you run copied checks on many hosts.
 - **3.11c, non-finite and out-of-range values:** the manager's ingest now
   counts an observation whose value is ±Inf, NaN or beyond ±1e100 as malformed
   (`rejected_malformed` in the stream's log line) and drops it alone; the rest
