@@ -130,3 +130,29 @@ export function RuleItemPicker({
     </div>
   );
 }
+
+/**
+ * RuleCheckPicker chooses which of the host's checks an item-scoped rule
+ * judges. `keys` are the host's checks that run the rule metric's plugin
+ * (several can: `disk` and `disk-data`, each reporting its own mounts).
+ * The current value stays selectable when the host does not list it — a
+ * rule edited after its check was removed, or while the host's checks are
+ * still loading — rather than falling back to "(unavailable)".
+ */
+export function RuleCheckPicker({ keys, value, onChange }: { keys: string[]; value: string; onChange: (key: string) => void }) {
+  const t = useT();
+  return (
+    <div className="flex flex-col gap-1">
+      <Label htmlFor="rule-item-check">{t.checks.ruleDialog.itemCheck}</Label>
+      <Select
+        id="rule-item-check"
+        value={value}
+        onChange={onChange}
+        options={[
+          ...(value !== '' && !keys.includes(value) ? [{ value, label: t.checks.currentBinding(value) }] : []),
+          ...keys.map((k) => ({ value: k, label: k })),
+        ]}
+      />
+    </div>
+  );
+}

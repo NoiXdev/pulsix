@@ -186,7 +186,8 @@ describe('ItemsPage', () => {
     renderPage();
 
     await user.click(await screen.findByRole('button', { name: 'New decision' }));
-    await pickOption(screen, 'Check', { value: 'disk' });
+    await user.clear(screen.getByLabelText('Check'));
+    await user.type(screen.getByLabelText('Check'), 'disk');
     await pickOption(screen, 'Match kind', { value: 'glob' });
     await user.type(screen.getByLabelText('Pattern'), '/mnt/backup*');
     await user.type(screen.getByLabelText('Note'), 'Backup volume runs hot on purpose.');

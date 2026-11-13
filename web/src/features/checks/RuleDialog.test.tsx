@@ -303,3 +303,117 @@ describe('RuleDialog', () => {
     expect(screen.getByRole('dialog', { name: 'New rule' })).toBeInTheDocument();
   });
 });
+
+describe('RuleDialog, item scope check', () => {
+  const HOST_CHECKS = {
+    host_id: 'h1',
+    monitored: true,
+    checks: [
+      { key: 'cpu', plugin: 'cpu', definition_id: 'c1', enabled: true, interval_seconds: 30, origin: 'seed', params: {}, source: 'org', values: [] },
+      { key: 'disk', plugin: 'disk', definition_id: 'c2', enabled: true, interval_seconds: 30, origin: 'seed', params: {}, source: 'org', values: [] },
+      { key: 'disk-data', plugin: 'disk', definition_id: 'c3', enabled: true, interval_seconds: 30, origin: 'custom', params: {}, source: 'host', values: [] },
+    ],
+  };
+  const DISK_METRICS: RuleMetric[] = [{ name: 'disk.used_pct', check_key: 'disk', kind: 'numeric' }];
+  const ITEMS = {
+    items: [
+      { check_key: 'disk', item: '/', first_seen: '', reported: true, decision: 'watch' },
+      { check_key: 'disk-data', item: '/data', first_seen: '', reported: true, decision: 'watch' },
+    ],
+  };
+  const routes = (extra: Record<string, unknown> = {}) => ({
+    'GET /api/v1/orgs/acme/hosts': { hosts: [{ id: 'h1', name: 'web-1' }], next_cursor: '' },
+    'GET /api/v1/orgs/acme/hosts/h1/checks': HOST_CHECKS,
+    'GET /api/v1/orgs/acme/hosts/h1/items': ITEMS,
+    ...extra,
+  });
+  const itemOptions = () => {
+    const list = (screen.getByLabelText('Item') as HTMLInputElement).getAttribute('list');
+    return [...document.querySelectorAll(`#${list} option`)].map((o) => o.getAttribute('value'));
+  };
+
+  it('lists the host’s checks of the metric’s plugin, preselects the plugin’s key and follows the choice in the item picker', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    mockApi(routes({ 'POST /api/v1/orgs/acme/rules': (req: MockRequest) => ((posted = req.body as Record<string, unknown>), { rule: { id: 'n' } }) }));
+    renderDialog({ metrics: DISK_METRICS });
+
+    await pickOption(screen, 'Applies to', { value: 'item' });
+    await pickOption(screen, 'Host', { value: 'h1' });
+    const check = await screen.findByLabelText('Check');
+    await waitFor(() => expect(check).toHaveValue('disk'));
+    await user.click(check);
+    expect(screen.getAllByRole('option').map((o) => o.getAttribute('data-value'))).toEqual(['disk', 'disk-data']);
+    await user.click(screen.getAllByRole('option')[0]!);
+    await waitFor(() => expect(itemOptions()).toEqual(['/']));
+
+    await pickOption(screen, 'Check', { value: 'disk-data' });
+    await waitFor(() => expect(itemOptions()).toEqual(['/data']));
+
+    await user.type(screen.getByLabelText('Name'), 'Data mount');
+    await user.type(screen.getByLabelText('Item'), '/data');
+    await user.type(screen.getByLabelText('Value'), '90');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posted).toBeDefined());
+    expect(posted).toMatchObject({ scope: 'item', host_id: 'h1', item: '/data', item_check_key: 'disk-data' });
+  });
+
+  it('always sends item_check_key for an item rule, the plugin’s key when that is the choice', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    mockApi(routes({ 'POST /api/v1/orgs/acme/rules': (req: MockRequest) => ((posted = req.body as Record<string, unknown>), { rule: { id: 'n' } }) }));
+    renderDialog({ metrics: DISK_METRICS });
+
+    await pickOption(screen, 'Applies to', { value: 'item' });
+    await pickOption(screen, 'Host', { value: 'h1' });
+    await waitFor(() => expect(screen.getByLabelText('Check')).toHaveValue('disk'));
+    await user.type(screen.getByLabelText('Name'), 'Root');
+    await user.type(screen.getByLabelText('Item'), '/');
+    await user.type(screen.getByLabelText('Value'), '90');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posted).toBeDefined());
+    expect(posted).toMatchObject({ item_check_key: 'disk' });
+  });
+
+  it('falls back to the first check when the host has none under the plugin’s key', async () => {
+    mockApi(routes({ 'GET /api/v1/orgs/acme/hosts/h1/checks': { ...HOST_CHECKS, checks: HOST_CHECKS.checks.slice(2) } }));
+    renderDialog({ metrics: DISK_METRICS });
+
+    await pickOption(screen, 'Applies to', { value: 'item' });
+    await pickOption(screen, 'Host', { value: 'h1' });
+    await waitFor(() => expect(screen.getByLabelText('Check')).toHaveValue('disk-data'));
+  });
+
+  it('never sends item_check_key once the scope is switched away from item', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    mockApi(routes({ 'POST /api/v1/orgs/acme/rules': (req: MockRequest) => ((posted = req.body as Record<string, unknown>), { rule: { id: 'n' } }) }));
+    renderDialog({ metrics: DISK_METRICS });
+
+    await pickOption(screen, 'Applies to', { value: 'item' });
+    await pickOption(screen, 'Host', { value: 'h1' });
+    await pickOption(screen, 'Check', { value: 'disk-data' });
+    await pickOption(screen, 'Applies to', { value: 'host' });
+    expect(screen.queryByLabelText('Check')).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText('Name'), 'Host disk');
+    await user.type(screen.getByLabelText('Value'), '90');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posted).toBeDefined());
+    expect(posted).not.toHaveProperty('item_check_key');
+    expect(posted).not.toHaveProperty('item');
+  });
+
+  it('prefills an edited item rule with its own check, or the plugin’s key when it has none', async () => {
+    mockApi(routes());
+    const base = {
+      scope: 'item' as const, host_id: 'h1', item: '/data', metric: 'disk.used_pct', check_key: 'disk',
+      form: { metric: 'disk.used_pct', op: '>=', value: 90 },
+    };
+    const { unmount } = renderDialog({ metrics: DISK_METRICS, rule: expressionRule({ ...base, mode: 'form', item_check_key: 'disk-data' }) });
+    await waitFor(() => expect(screen.getByLabelText('Check')).toHaveValue('disk-data'));
+    unmount();
+
+    renderDialog({ metrics: DISK_METRICS, rule: expressionRule({ ...base, mode: 'form' }) });
+    await waitFor(() => expect(screen.getByLabelText('Check')).toHaveValue('disk'));
+  });
+});

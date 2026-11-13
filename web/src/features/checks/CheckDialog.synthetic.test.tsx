@@ -41,7 +41,7 @@ describe('CheckDialog — synthetic plugins', () => {
     await openNew(user, 'http');
     expect(screen.getByLabelText('Key')).toHaveValue('http');
     expect(screen.getByText(/Runs from the Pulsix server, not on the host/)).toBeInTheDocument();
-    expect(screen.getByText('Alert rules on http.* metrics apply only to the check with the key “http”.')).toBeInTheDocument();
+    expect(screen.getByText('Alert rules on http.* metrics apply to every check of this type, whatever its key.')).toBeInTheDocument();
     await pickOption(screen, 'Plugin', { value: 'cpu' });
     expect(screen.getByLabelText('Key')).toHaveValue('');
     expect(screen.queryByText(/Alert rules on/)).not.toBeInTheDocument();

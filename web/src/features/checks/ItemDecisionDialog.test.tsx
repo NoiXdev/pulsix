@@ -300,4 +300,52 @@ describe('ItemDecisionDialog', () => {
     const note = screen.getByLabelText('Note') as HTMLTextAreaElement;
     expect(note.tagName).toBe('TEXTAREA');
   });
+
+  it('suggests the plugin keys but accepts and posts any well-formed check key', async () => {
+    const user = userEvent.setup();
+    let posted: Record<string, unknown> | undefined;
+    mockApi({
+      'POST /api/v1/orgs/acme/item-decisions/preview': () => ({ matches: [], total: 0, capped: false }),
+      'POST /api/v1/orgs/acme/item-decisions': (req: MockRequest) => {
+        posted = req.body as Record<string, unknown>;
+        return { decision: { id: 'd1' } };
+      },
+    });
+    renderDialog();
+
+    const key = screen.getByLabelText('Check') as HTMLInputElement;
+    const suggestions = [...document.querySelectorAll(`#${key.getAttribute('list')} option`)].map((o) => o.getAttribute('value'));
+    expect(suggestions).toEqual(['disk', 'service']);
+
+    await user.clear(key);
+    await user.type(key, 'disk-data');
+    await user.type(screen.getByLabelText('Pattern'), '/data');
+    await screen.findByText(/Matches no currently known item/);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(posted).toMatchObject({ check_key: 'disk-data', pattern: '/data' }));
+  });
+
+  it('refuses a malformed check key before asking the server', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'POST /api/v1/orgs/acme/item-decisions/preview': () => ({ matches: [], total: 0, capped: false }),
+    });
+    renderDialog();
+
+    const key = screen.getByLabelText('Check');
+    await user.clear(key);
+    await user.type(key, 'Disk_Data');
+    await user.type(screen.getByLabelText('Pattern'), '/data');
+    expect(await screen.findByRole('alert')).toHaveTextContent(/lowercase letters, digits and hyphens/);
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
+  it('prefills the check key of a decision on a key no plugin owns', () => {
+    renderDialog({
+      decision: {
+        id: 'd-x', scope: 'org', check_key: 'disk-data', match_kind: 'exact', pattern: '/data', decision: 'ignore', created_at: '', updated_at: '',
+      },
+    });
+    expect(screen.getByLabelText('Check')).toHaveValue('disk-data');
+  });
 });

@@ -136,7 +136,7 @@ export const enChecks = {
   synthetic: {
     pluginHint: 'runs from the Pulsix server',
     runsFromServer: 'Runs from the Pulsix server, not on the host.',
-    rulesKey: (plugin: string) => `Alert rules on ${plugin}.* metrics apply only to the check with the key “${plugin}”.`,
+    rulesKey: (plugin: string) => `Alert rules on ${plugin}.* metrics apply to every check of this type, whatever its key.`,
   },
   /** Every check plugin's parameter fields, keyed by plugin and parameter
    * as GET /check-plugins names them (backlog 3.54), shared by the check
@@ -376,6 +376,7 @@ export const enChecks = {
       'until the clear condition is met. Remove the clear condition and continue?',
     expression: 'Expression',
     item: 'Item',
+    itemCheck: 'Check',
     itemPlaceholder: '/var, sshd, …',
     form: {
       operator: 'Operator',
@@ -420,6 +421,8 @@ export const enChecks = {
     appliesTo: 'Applies to',
     check: 'Check',
     noChecks: 'No checks yet',
+    checkPlaceholder: 'disk, disk-data, …',
+    checkInvalid: 'A check key uses lowercase letters, digits and hyphens only (up to 63 characters), e.g. disk-data.',
     matchKind: 'Match kind',
     exact: 'Exact — one literal item name',
     glob: "Glob — a '*' pattern",

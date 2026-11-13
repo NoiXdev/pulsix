@@ -6,9 +6,10 @@ import { Label } from '../../ui/label.tsx';
 import { Select } from '../../ui/Select.tsx';
 import { Switch } from '../../ui/switch.tsx';
 import { useT } from '../../i18n/useT.ts';
+import { useHostChecks } from '../../api/hooks/useChecks.ts';
 import { useCheckRule, useCreateRule, useUpdateRule } from '../../api/hooks/useRules.ts';
 import { RuleForm } from './RuleForm.tsx';
-import { RuleHostPicker, RuleItemPicker } from './RulePickers.tsx';
+import { RuleCheckPicker, RuleHostPicker, RuleItemPicker } from './RulePickers.tsx';
 import { defaultOpFor, lines } from './ruleDialogText.ts';
 import { RuleExpression } from './RuleExpression.tsx';
 import type { MonitoringGroup, Rule, RuleFormValue, RuleInput, RuleMetric, RuleScope } from '../../api/types.ts';
@@ -73,12 +74,27 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
   const [hostId, setHostId] = useState(rule?.host_id ?? '');
   const [item, setItem] = useState(rule?.item ?? '');
   const [metric, setMetric] = useState(rule?.metric ?? metrics[0]?.name ?? '');
+  // The check an item rule judges, as the operator chose it; '' means
+  // "not chosen yet" and RuleCheckPicker resolves it (the plugin's key when
+  // the host runs it, else the host's first check of that plugin). An
+  // edited rule without item_check_key judges the plugin's key, so that is
+  // made explicit here rather than left to the picker's fallback.
+  const [itemCheckKey, setItemCheckKey] = useState(
+    rule ? (rule.item_check_key ?? (rule.scope === 'item' ? rule.check_key : '')) : '',
+  );
   const [severity, setSeverity] = useState<Rule['severity']>(rule?.severity ?? 'warn');
   const [forSeconds, setForSeconds] = useState(String(rule?.for_seconds ?? 0));
   const [mode, setMode] = useState<Rule['mode']>(rule?.mode ?? 'form');
   const [warned, setWarned] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const pluginKey = metrics.find((m) => m.name === metric)?.check_key;
+  // The host's checks that run the metric's plugin — each can carry its
+  // own items and its own rules, whatever its key.
+  const hostChecks = useHostChecks(org, hostId, scope === 'item');
+  const pluginCheckKeys = (hostChecks.data?.checks ?? []).filter((c) => c.plugin === pluginKey).map((c) => c.key);
+  const defaultCheckKey = pluginKey === undefined || pluginCheckKeys.length === 0 || pluginCheckKeys.includes(pluginKey) ? pluginKey ?? '' : pluginCheckKeys[0]!;
+  const effectiveCheckKey = itemCheckKey || defaultCheckKey;
   const kind = metrics.find((m) => m.name === metric)?.kind ?? 'numeric';
 
   const initialForm = rule?.form;
@@ -98,6 +114,7 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
 
   function onMetricChange(next: string) {
     setMetric(next);
+    setItemCheckKey('');
     const nextKind = metrics.find((m) => m.name === next)?.kind ?? 'numeric';
     setOp(defaultOpFor(nextKind));
     setValue('');
@@ -118,6 +135,16 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
     if (kind === 'discrete') setLabels('');
   }
 
+  function onHostChange(next: string) {
+    setHostId(next);
+    setItemCheckKey('');
+  }
+
+  function onScopeChange(next: RuleScope) {
+    setScope(next);
+    if (next !== 'item') setItemCheckKey('');
+  }
+
   function formBody(): RuleFormValue {
     if (kind === 'discrete') {
       return { metric, op, labels: op === 'in' ? lines(labels) : labels.trim() ? [labels.trim()] : [] };
@@ -132,7 +159,7 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
       scope,
       ...(scope === 'group' ? { group_id: groupId } : {}),
       ...(scope === 'host' || scope === 'item' ? { host_id: hostId } : {}),
-      ...(scope === 'item' ? { item: item.trim() } : {}),
+      ...(scope === 'item' ? { item: item.trim(), ...(effectiveCheckKey ? { item_check_key: effectiveCheckKey } : {}) } : {}),
       metric,
       severity,
       for_seconds: Number(forSeconds),
@@ -233,7 +260,7 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
             id="rule-scope"
             value={scope}
             disabled={seeded}
-            onChange={(v) => setScope(v as RuleScope)}
+            onChange={(v) => onScopeChange(v as RuleScope)}
             options={[
               { value: 'org', label: t.checks.scope.org },
               { value: 'group', label: groups.length === 0 ? t.checks.scope.groupNone : t.checks.scope.group, disabled: groups.length === 0 },
@@ -263,16 +290,11 @@ export function RuleDialog({ org, rule, metrics, groups, onClose }: RuleDialogPr
             />
           </div>
         )}
-        {(scope === 'host' || scope === 'item') && <RuleHostPicker org={org} value={hostId} onChange={setHostId} />}
+        {(scope === 'host' || scope === 'item') && <RuleHostPicker org={org} value={hostId} onChange={onHostChange} />}
         {scope === 'item' && (
-          <RuleItemPicker
-            org={org}
-            hostId={hostId}
-            checkKey={metrics.find((m) => m.name === metric)?.check_key}
-            value={item}
-            onChange={setItem}
-          />
+          <RuleCheckPicker keys={pluginCheckKeys} value={effectiveCheckKey} onChange={setItemCheckKey} />
         )}
+        {scope === 'item' && <RuleItemPicker org={org} hostId={hostId} checkKey={effectiveCheckKey} value={item} onChange={setItem} />}
         {mode === 'form' ? (
           <RuleForm
             kind={kind}

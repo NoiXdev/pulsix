@@ -58,7 +58,7 @@ describe('SharedCheckFormPage — synthetic plugins', () => {
     await openNew('tls');
     expect(screen.getByLabelText('Key')).toHaveValue('tls');
     expect(screen.getByText(/Runs from the Pulsix server, not on the host/)).toBeInTheDocument();
-    expect(screen.getByText('Alert rules on tls.* metrics apply only to the check with the key “tls”.')).toBeInTheDocument();
+    expect(screen.getByText('Alert rules on tls.* metrics apply to every check of this type, whatever its key.')).toBeInTheDocument();
   });
 
   it('sends only the http fields the user set', async () => {

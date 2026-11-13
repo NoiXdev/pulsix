@@ -81,7 +81,7 @@ function RuleTarget({ org, rule, groups }: { org: string; rule: Rule; groups: Mo
         className="truncate font-mono text-[13px] text-foreground hover:text-primary"
       >
         {rule.host_name ?? rule.host_id.slice(0, 8)}
-        {rule.scope === 'item' && rule.item ? ` / ${rule.item}` : ''}
+        {rule.scope === 'item' && rule.item ? ` / ${rule.item}${rule.item_check_key ? ` (${rule.item_check_key})` : ''}` : ''}
       </Link>
     );
   }

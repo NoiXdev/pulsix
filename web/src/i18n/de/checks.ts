@@ -117,7 +117,7 @@ export const deChecks: Messages['checks'] = {
   synthetic: {
     pluginHint: 'läuft auf dem Pulsix-Server',
     runsFromServer: 'Läuft auf dem Pulsix-Server, nicht auf dem Host.',
-    rulesKey: (plugin: string) => `Alarmregeln für ${plugin}.*-Metriken gelten nur für den Check mit dem Schlüssel „${plugin}“.`,
+    rulesKey: (plugin: string) => `Alarmregeln für ${plugin}.*-Metriken gelten für jeden Check dieses Typs, unabhängig von seinem Schlüssel.`,
   },
   params: {
     disk: {
@@ -358,6 +358,7 @@ export const deChecks: Messages['checks'] = {
       'statt zu halten, bis die Rückkehrbedingung erfüllt ist. Rückkehrbedingung entfernen und fortfahren?',
     expression: 'Ausdruck',
     item: 'Element',
+    itemCheck: 'Check',
     itemPlaceholder: '/var, sshd, …',
     form: {
       operator: 'Operator',
@@ -403,6 +404,8 @@ export const deChecks: Messages['checks'] = {
     appliesTo: 'Gilt für',
     check: 'Check',
     noChecks: 'Noch keine Checks',
+    checkPlaceholder: 'disk, disk-data, …',
+    checkInvalid: 'Ein Check-Schlüssel besteht nur aus Kleinbuchstaben, Ziffern und Bindestrichen (bis zu 63 Zeichen), z. B. disk-data.',
     matchKind: 'Mustertyp',
     exact: 'Exakt – ein buchstäblicher Elementname',
     glob: 'Glob – ein Muster mit „*“',

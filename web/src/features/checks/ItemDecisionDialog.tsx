@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Input } from '../../ui/input.tsx';
@@ -46,6 +46,9 @@ const PATTERN_MAX_BYTES = 512;
  * catches. */
 const PATTERN_MAX_UTF16 = 512;
 
+/** The check key format the server enforces (checkplugins.ValidCheckKey). */
+const CHECK_KEY_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+
 /** utf8Length counts p as the server counts it: UTF-8 bytes. */
 function utf8Length(p: string): number {
   return new TextEncoder().encode(p).length;
@@ -62,10 +65,10 @@ export interface ItemDecisionDialogProps {
   org: string;
   /** The decision being edited; undefined creates one. */
   decision?: ItemDecision;
-  /** The check keys this organization's checks resolve — the same
-   * catalogue (GET /rules/metrics, collapsed to its check keys)
-   * RuleDialog's own metric picker draws from, so this picker cannot name
-   * a check key items.Service would refuse. */
+  /** The plugin check keys GET /rules/metrics knows, offered as
+   * suggestions. A decision may name any well-formed check key — a check
+   * can run under its own key (`disk-data`) and need not exist yet — so
+   * the field also takes free text, validated by CHECK_KEY_PATTERN. */
   checkKeys: string[];
   onClose: () => void;
 }
@@ -104,6 +107,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   const [verdict, setVerdict] = useState<ItemDecisionVerdict>(decision?.decision ?? 'ignore');
   const [note, setNote] = useState(decision?.note ?? '');
   const [error, setError] = useState<string | null>(null);
+  const checkListId = useId();
 
   // The preview query lives here, not inside PatternPreview, because the
   // confirmation gate below needs to know — synchronously, on every
@@ -119,8 +123,11 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
     return () => clearTimeout(timer);
   }, [pattern]);
 
-  const liveBody = previewBody(scope, hostId, checkKey, matchKind, pattern);
-  const debouncedBody = previewBody(scope, hostId, checkKey, matchKind, debouncedPattern);
+  // A malformed key previews nothing: the server would only refuse it.
+  const checkKeyInvalid = checkKey !== '' && !CHECK_KEY_PATTERN.test(checkKey);
+  const previewKey = checkKeyInvalid ? '' : checkKey;
+  const liveBody = previewBody(scope, hostId, previewKey, matchKind, pattern);
+  const debouncedBody = previewBody(scope, hostId, previewKey, matchKind, debouncedPattern);
   const preview = useItemDecisionPreview(org, debouncedBody);
 
   // Stale exactly when there is something worth previewing at all
@@ -190,7 +197,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
     // disabled> does not fire a click, but this guard keeps the decision
     // in one place rather than trusting every path to the form down to
     // the DOM's own submit semantics.
-    if (previewStale || orgWatchMismatch || patternTooLong) return;
+    if (previewStale || orgWatchMismatch || patternTooLong || checkKeyInvalid) return;
     if (preview.data?.capped && !(await ask({ message: t.checks.itemDialog.confirmBroad(preview.data.total) }))) return;
     try {
       if (editing) await update.mutateAsync(body());
@@ -202,7 +209,7 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
   }
 
   const title = editing ? t.checks.items.editDecision(decision.pattern) : t.checks.itemDialog.newTitle;
-  const saveDisabled = create.isPending || update.isPending || previewStale || orgWatchMismatch || patternTooLong;
+  const saveDisabled = create.isPending || update.isPending || previewStale || orgWatchMismatch || patternTooLong || checkKeyInvalid;
 
   return (
     <Dialog open onClose={onClose} title={title} size="wide">
@@ -222,22 +229,27 @@ export function ItemDecisionDialog({ org, decision, checkKeys, onClose }: ItemDe
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="decision-check">{t.checks.itemDialog.check}</Label>
-            <Select
+            <Input
               id="decision-check"
               required
+              list={checkListId}
+              className="font-mono"
+              maxLength={63}
+              placeholder={t.checks.itemDialog.checkPlaceholder}
+              aria-invalid={checkKeyInvalid || undefined}
               value={checkKey}
-              onChange={setCheckKey}
-              placeholder={checkKeys.length === 0 ? t.checks.itemDialog.noChecks : undefined}
-              options={[
-                // An edited decision's own check key, when the catalogue
-                // this dialog was given does not happen to contain it — the
-                // same fix RuleDialog's own group select carries: a value
-                // Select cannot match falls back to "<id> (unavailable)"
-                // rather than the honest binding.
-                ...(checkKey !== '' && !checkKeys.includes(checkKey) ? [{ value: checkKey, label: t.checks.currentBinding(checkKey) }] : []),
-                ...checkKeys.map((k) => ({ value: k, label: k })),
-              ]}
+              onChange={(e) => setCheckKey(e.target.value.trim())}
             />
+            <datalist id={checkListId}>
+              {checkKeys.map((k) => (
+                <option key={k} value={k} />
+              ))}
+            </datalist>
+            {checkKeyInvalid && (
+              <p role="alert" className="text-xs text-[var(--px-crit)]">
+                {t.checks.itemDialog.checkInvalid}
+              </p>
+            )}
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="decision-match-kind">{t.checks.itemDialog.matchKind}</Label>

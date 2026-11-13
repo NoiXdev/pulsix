@@ -151,6 +151,30 @@ describe('RulesPage', () => {
     expect(screen.getByRole('link', { name: 'Db tier' })).toBeInTheDocument();
   });
 
+  it('shows the check an item rule judges when it is not the plugin’s', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': org('operator'),
+      'GET /api/v1/orgs/acme/monitoring-groups': GROUPS,
+      'GET /api/v1/orgs/acme/rules/metrics': METRICS,
+      'GET /api/v1/orgs/acme/rules': {
+        rules: [
+          rule({
+            id: 'r-a', name: 'Data mount', scope: 'item', host_id: 'h1', host_name: 'web-1', item: '/data', item_check_key: 'disk-data',
+            metric: 'disk.used_pct', check_key: 'disk', form: { metric: 'disk.used_pct', op: '>=', value: 90 },
+          }),
+          rule({
+            id: 'r-b', name: 'Root mount', scope: 'item', host_id: 'h1', host_name: 'web-1', item: '/',
+            metric: 'disk.used_pct', check_key: 'disk', form: { metric: 'disk.used_pct', op: '>=', value: 90 },
+          }),
+        ],
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByRole('link', { name: 'web-1 / /data (disk-data)' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'web-1 / /' })).toBeInTheDocument();
+  });
+
   it('shows a viewer the rules but no write affordances', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('viewer'),
