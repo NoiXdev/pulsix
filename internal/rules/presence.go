@@ -51,7 +51,13 @@ type HostPresence struct {
 // is: a client whose agent is not online (spec item 1). A client without
 // an agent has no presence to wait for and is judged like a server.
 func (p HostPresence) frozen() bool {
-	return p.Client && p.HasAgent && !p.AgentOnline
+	return p.clientWithAgent() && !p.AgentOnline
+}
+
+// clientWithAgent reports whether the host is a client with an agent —
+// the only host whose presence changes anything.
+func (p HostPresence) clientWithAgent() bool {
+	return p.Client && p.HasAgent
 }
 
 // stalenessAnchor is the moment no tuple's staleness may be measured from
@@ -69,13 +75,15 @@ func (p HostPresence) stalenessAnchor() time.Time {
 // its host alert opens (AlertInput.UnknownGrace): the online window for a
 // client with an agent, zero for every other host.
 func (p HostPresence) unknownGrace() time.Duration {
-	if !p.Client || !p.HasAgent {
+	if !p.clientWithAgent() {
 		return 0
 	}
 	return p.OnlineWindow
 }
 
-// graceDue tightens due to the moment an unknown roll-up's grace ends, so
+// graceDue tightens due to the moment an unknown roll-up's grace ends —
+// counted from the later of the roll-up's start and the online period's
+// (AlertInput.UnknownGraceStart, the same rule) — so
 // the ticker is back exactly when the host alert may open rather than on
 // the silent heartbeat. It only ever brings due forward: a grace that has
 // already ended, or ends after due, changes nothing — and a host with no
@@ -85,7 +93,7 @@ func graceDue(host HostState, p HostPresence, now, due time.Time) time.Time {
 	if grace <= 0 || host.State != StateUnknown {
 		return due
 	}
-	if end := host.Since.Add(grace); end.After(now) && end.Before(due) {
+	if end := graceStart(host.Since, p.stalenessAnchor()).Add(grace); end.After(now) && end.Before(due) {
 		return end
 	}
 	return due

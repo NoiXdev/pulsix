@@ -269,6 +269,8 @@ func TestEvaluateWakesAnOnlineClientWhenItsUnknownGraceEnds(t *testing.T) {
 	const window = 90 * time.Second
 	client := onClient(at(0))
 	client.OnlineWindow = window
+	reconnectedClient := onClient(at(182))
+	reconnectedClient.OnlineWindow = window
 
 	// A 1-hour check last read before the online period began: stale at
 	// online start + 3 h = at(180).
@@ -320,6 +322,25 @@ func TestEvaluateWakesAnOnlineClientWhenItsUnknownGraceEnds(t *testing.T) {
 			name: "once the grace is over the silent heartbeat applies",
 			snap: silentPass(at(183), client),
 			want: silentResult(at(183), at(188)),
+		},
+		{
+			// Back from an outage with the roll-up carried unknown through
+			// the freeze (a probe still failing): the grace runs from the
+			// start of the online period, so the ticker returns when it
+			// ends rather than five minutes on.
+			name: "a client back online with a carried unknown roll-up is due when the grace from its online start ends",
+			snap: rules.Snapshot{
+				Now:          at(182).Add(10 * time.Second),
+				Tuples:       []rules.TupleSnapshot{{Tuple: cpuT, Err: "probe failed", At: at(182), Interval: oneMin}},
+				Previous:     prev(was(cpuT, rules.StateUnknown, at(100))),
+				PreviousHost: &rules.HostState{State: rules.StateUnknown, Unknown: 1, Since: at(100), EvaluatedAt: at(100)},
+				Presence:     reconnectedClient,
+			},
+			want: rules.Result{
+				States:  []rules.TupleState{{Tuple: cpuT, State: rules.StateUnknown, Since: at(100), EvaluatedAt: at(182).Add(10 * time.Second)}},
+				Host:    rules.HostState{State: rules.StateUnknown, Unknown: 1, Since: at(100), EvaluatedAt: at(182).Add(10 * time.Second)},
+				NextDue: at(182).Add(window),
+			},
 		},
 		{
 			name: "a server has no grace and keeps the silent heartbeat",

@@ -395,7 +395,8 @@ func (t *Ticker) evaluate(ctx context.Context, d Due, now time.Time) error {
 		Unmeasured: res.Unmeasured,
 		Frozen:     res.Frozen, Absent: res.Absent,
 		AgentLastSeen: res.AgentLastSeen, AbsentAfter: snap.Presence.AbsentAfter,
-		UnknownGrace: snap.Presence.unknownGrace(),
+		ClientWithAgent: snap.Presence.clientWithAgent(),
+		UnknownGrace:    snap.Presence.unknownGrace(), AgentOnlineSince: snap.Presence.stalenessAnchor(),
 	}); err != nil {
 		t.log.ErrorContext(ctx, "apply alerts; "+failedHostNext(ctx),
 			"org", d.OrgID, "host", d.HostID, "err", err)

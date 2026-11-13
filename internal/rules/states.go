@@ -142,19 +142,47 @@ type AlertInput struct {
 	// frozen input (the "not seen since …" moment), zero otherwise.
 	AgentLastSeen time.Time
 	// AbsentAfter is the organization's client absent threshold the
-	// verdict was taken against (HostPresence.AbsentAfter; zero = off),
-	// for the warning's "not seen for N days" cause.
+	// verdict was taken against (HostPresence.AbsentAfter; zero = off).
+	// Reconcile decides from Absent alone; the warning itself says "not
+	// seen since" the agent's last contact rather than naming N days.
 	AbsentAfter time.Duration
-	// UnknownGrace is how long the roll-up must have read unknown (since
-	// Host.Since) before the host alert opens. It is the agents list's
-	// online window for a client with an agent, and zero — at once, as
-	// before client hosts existed — for every other host. A client that
-	// is shutting down can go unknown before its agent reads offline (a
-	// short-interval check goes stale, a ping of the notebook fails); by
-	// the time the grace has passed it is frozen instead, and no alert or
-	// notification is raised for an ordinary power-off. Positive exactly
-	// for a client with an agent, which is also what Reconcile reads it as.
+	// ClientWithAgent reports that the host is a client with an agent —
+	// the only host that can be frozen, absent or given an unknown grace.
+	// On an input that is not frozen it means the client is back online,
+	// which is what lets Reconcile close an absent warning as resolved.
+	ClientWithAgent bool
+	// UnknownGrace is how long the roll-up must have read unknown before
+	// the host alert opens, counted from UnknownGraceStart. It is the
+	// agents list's online window for a client with an agent, and zero —
+	// at once, as before client hosts existed — for every other host. A
+	// client that is shutting down can go unknown before its agent reads
+	// offline (a short-interval check goes stale, a ping of the notebook
+	// fails); by the time the grace has passed it is frozen instead, and
+	// no alert or notification is raised for an ordinary power-off.
 	UnknownGrace time.Duration
+	// AgentOnlineSince is the start of an online client's current online
+	// period (HostPresence.AgentOnlineSince), zero when unknown and for
+	// every other host. A roll-up carried unknown through a freeze keeps
+	// its old Since, so the grace of a client that has just come back is
+	// counted from here instead (UnknownGraceStart).
+	AgentOnlineSince time.Time
+}
+
+// UnknownGraceStart is the moment an unknown roll-up's grace is counted
+// from: the later of the roll-up's own start and the agent's online
+// period's start (AlertInput.AgentOnlineSince).
+func (in AlertInput) UnknownGraceStart() time.Time {
+	return graceStart(in.Host.Since, in.AgentOnlineSince)
+}
+
+// graceStart is UnknownGraceStart's rule, shared with the evaluator's
+// own due time (graceDue) so the two cannot disagree about when the
+// grace ends.
+func graceStart(since, onlineSince time.Time) time.Time {
+	if onlineSince.After(since) {
+		return onlineSince
+	}
+	return since
 }
 
 // FleetFilter narrows HostStates. The zero FleetFilter matches every host

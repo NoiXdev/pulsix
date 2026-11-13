@@ -52,15 +52,34 @@ func frozen(host rules.HostState, absent bool, absentAfter time.Duration) rules.
 		OrgID: orgID, HostID: hostID, At: t0.Add(time.Hour),
 		Host:   host,
 		Frozen: true, Absent: absent, AgentLastSeen: lastSeen, AbsentAfter: absentAfter,
-		UnknownGrace: window,
+		ClientWithAgent: true, UnknownGrace: window,
 	}
 }
 
-// onlineClient is an online client's judged input with roll-up host.
+// onlineClient is an online client's judged input with roll-up host, in
+// an online period that began well before the roll-up did.
 func onlineClient(host rules.HostState) rules.AlertInput {
 	in := withHost(input(), host)
 	in.AbsentAfter = absentIn
+	in.ClientWithAgent = true
 	in.UnknownGrace = window
+	in.AgentOnlineSince = t0.Add(-24 * time.Hour)
+	return in
+}
+
+// reconnected is onlineClient whose online period began `ago` before the
+// tick.
+func reconnected(host rules.HostState, ago time.Duration) rules.AlertInput {
+	in := onlineClient(host)
+	in.AgentOnlineSince = in.At.Add(-ago)
+	return in
+}
+
+// zeroWindow is onlineClient built with a zero online window: still a
+// client with an agent, but with no grace.
+func zeroWindow(host rules.HostState) rules.AlertInput {
+	in := onlineClient(host)
+	in.UnknownGrace = 0
 	return in
 }
 
@@ -127,17 +146,16 @@ func TestReconcileClientHostAlert(t *testing.T) {
 		},
 		// Spec item 3: the absent warning.
 		{
-			// Opened at the moment the threshold was reached — the state's
-			// own start, as a tuple alert opens at its state's Since, so a
-			// late tick does not move the alert's history forward.
-			name: "an absent client opens the host alert at severity warn when the threshold was reached",
+			// Dated at the tick that found it: the "since" fact is the
+			// agent's last contact, which the warning shows on its own.
+			name: "an absent client opens the host alert at severity warn, dated at the tick",
 			in:   frozen(okHost, true, absentIn),
-			want: []alerts.Action{openHost(lastSeen.Add(absentIn), rules.StateWarn)},
+			want: []alerts.Action{openHost(t0.Add(time.Hour), rules.StateWarn)},
 		},
 		{
 			name: "an absent client with no roll-up at all still gets the warning",
 			in:   frozen(rules.HostState{}, true, absentIn),
-			want: []alerts.Action{openHost(lastSeen.Add(absentIn), rules.StateWarn)},
+			want: []alerts.Action{openHost(t0.Add(time.Hour), rules.StateWarn)},
 		},
 		{
 			name: "an open absent warning is not opened again on the next tick",
@@ -152,7 +170,7 @@ func TestReconcileClientHostAlert(t *testing.T) {
 			open: []alerts.Alert{openUnknownHost()},
 			want: []alerts.Action{
 				closeAction(unknownHostID, alerts.Stale),
-				openHost(lastSeen.Add(absentIn), rules.StateWarn),
+				openHost(t0.Add(time.Hour), rules.StateWarn),
 			},
 		},
 		{
@@ -213,6 +231,31 @@ func TestReconcileClientHostAlert(t *testing.T) {
 			in:   onlineClient(okHost),
 			open: []alerts.Alert{openUnknownHost()},
 			want: []alerts.Action{closeAction(unknownHostID, alerts.Resolved)},
+		},
+		// A client back from an outage whose roll-up was carried unknown
+		// through the freeze: the grace runs from the online period's
+		// start, not from the roll-up's old Since.
+		{
+			name: "a reconnected client's carried unknown roll-up waits its grace from the online start",
+			in:   reconnected(unknownHost, window-time.Second),
+		},
+		{
+			name: "a reconnected client's carried unknown roll-up opens once the grace from the online start has passed",
+			in:   reconnected(unknownHost, window),
+			want: []alerts.Action{openHost(t0, rules.StateUnknown)},
+		},
+		// A store built with a zero window: no grace, but still a client
+		// with an agent, so its return still resolves the warning.
+		{
+			name: "with a zero window an online client's warning still closes as resolved",
+			in:   zeroWindow(okHost),
+			open: []alerts.Alert{openAbsentWarning()},
+			want: []alerts.Action{closeAction(warnHostID, alerts.Resolved)},
+		},
+		{
+			name: "with a zero window an online client's unknown roll-up opens the alert at once",
+			in:   zeroWindow(unknownSince(0)),
+			want: []alerts.Action{openHost(t0.Add(time.Hour), rules.StateUnknown)},
 		},
 		// Client to server while the agent is off: no grace, no
 		// presence; the server goes unknown as any server would.

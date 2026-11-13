@@ -187,7 +187,13 @@ func hostAction(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
 	case rules.StateUnknown:
 		out = append(out, Action{Kind: ActionOpen, Subject: sub, At: in.Host.Since, Severity: rules.StateUnknown})
 	case rules.StateWarn:
-		out = append(out, Action{Kind: ActionOpen, Subject: sub, At: absentSince(in), Severity: rules.StateWarn})
+		// Dated at the tick that found it, not at the threshold's
+		// crossing: a lowered threshold (or a long-gone server switched to
+		// a client) would otherwise open it days in the past, under a
+		// setting that did not exist then. The historical fact — since
+		// when the client has not been seen — is the agent's last
+		// contact, which the warning shows on its own (NotSeenSince).
+		out = append(out, Action{Kind: ActionOpen, Subject: sub, At: in.At, Severity: rules.StateWarn})
 	}
 	return out
 }
@@ -199,10 +205,13 @@ func hostAction(in rules.AlertInput, bySubject map[Subject]Alert) []Action {
 //     carried roll-up is not a verdict — and wants the absent warning
 //     exactly while it is absent (spec item 3).
 //   - Any other host wants the unknown alert while its roll-up reads
-//     unknown. A client with an agent (UnknownGrace > 0) waits out the
-//     grace from the roll-up's start first, so a client that is shutting
-//     down is frozen before its alert would open; one that already holds
-//     the unknown alert keeps it for as long as the roll-up stays unknown.
+//     unknown. A client with an agent waits out the grace first, counted
+//     from the later of the roll-up's start and its online period's
+//     (UnknownGraceStart): a client that is shutting down is frozen before
+//     its alert would open, and one that has just come back with a
+//     roll-up carried unknown through the freeze gets the same grace. One
+//     that already holds the unknown alert keeps it for as long as the
+//     roll-up stays unknown.
 func hostWants(in rules.AlertInput, found bool, existing Alert) rules.State {
 	if in.Frozen {
 		if in.Absent {
@@ -216,7 +225,7 @@ func hostWants(in rules.AlertInput, found bool, existing Alert) rules.State {
 	if found && existing.Severity == rules.StateUnknown {
 		return rules.StateUnknown
 	}
-	if in.UnknownGrace > 0 && in.At.Before(in.Host.Since.Add(in.UnknownGrace)) {
+	if in.UnknownGrace > 0 && in.At.Before(in.UnknownGraceStart().Add(in.UnknownGrace)) {
 		return ""
 	}
 	return rules.StateUnknown
@@ -230,7 +239,7 @@ func hostWants(in rules.AlertInput, found bool, existing Alert) rules.State {
 //     off, or a client that went off with its roll-up unknown) — nothing
 //     says it recovered.
 //   - The absent warning closes resolved only when the client is back: not
-//     frozen, and still a client with an agent (UnknownGrace > 0). While
+//     frozen, and still a client with an agent (ClientWithAgent). While
 //     frozen it closes because the threshold was raised or the warning
 //     switched off, and on a host that is no longer a client with an
 //     agent because there is nothing left to be absent; neither is a
@@ -239,7 +248,7 @@ func hostWants(in rules.AlertInput, found bool, existing Alert) rules.State {
 //     roll-up of a host nothing judges any more.
 func hostCloseReason(in rules.AlertInput, existing Alert) CloseReason {
 	if existing.Severity == rules.StateWarn {
-		if !in.Frozen && in.UnknownGrace > 0 {
+		if !in.Frozen && in.ClientWithAgent {
 			return Resolved
 		}
 		return Stale
@@ -248,19 +257,4 @@ func hostCloseReason(in rules.AlertInput, existing Alert) CloseReason {
 		return Stale
 	}
 	return Resolved
-}
-
-// absentSince is when the absent warning's state began: the moment the
-// agent's last contact became AbsentAfter old, which is what a tuple
-// alert's open uses its state's Since for — a late tick does not move the
-// alert's history forward. Never later than this evaluation, and in.At
-// itself when either half is missing.
-func absentSince(in rules.AlertInput) time.Time {
-	if in.AgentLastSeen.IsZero() || in.AbsentAfter <= 0 {
-		return in.At
-	}
-	if since := in.AgentLastSeen.Add(in.AbsentAfter); since.Before(in.At) {
-		return since
-	}
-	return in.At
 }

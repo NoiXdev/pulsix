@@ -232,16 +232,23 @@ func alertItemsText(items []AlertItem) string {
 // alertSubjectText is the last column of an alert's line: what the alert
 // is about. A tuple alert names its check, item and metric. A host-scope
 // alert has none (it carries no check key — the alerts table's own
-// CHECK), and the unknown one says nothing more, as it always has; the
+// CHECK), and the unknown one says nothing more, as it always has. The
 // client's absent warning (backlog 3.57: host scope at severity warn)
 // says that the client has not been seen, and since when while it is
-// open.
+// open — written like every other time a notification carries
+// (formatTime; an organization has no time zone of its own, backlog
+// 2.77). Its closed event says the warning no longer applies, which holds
+// whether the client came back (resolved) or the threshold moved (stale);
+// the event carries no reason to tell the two apart.
 func alertSubjectText(it AlertItem) string {
 	if it.CheckKey == "" && it.Severity == "warn" {
-		if it.NotSeenSince == nil {
+		switch {
+		case it.Event == "closed":
+			return "no longer absent"
+		case it.NotSeenSince == nil:
 			return "not seen"
 		}
-		return "not seen since " + it.NotSeenSince.UTC().Format("2006-01-02 15:04 UTC")
+		return "not seen since " + formatTime(*it.NotSeenSince)
 	}
 	what := oneLine(it.CheckKey)
 	if it.Item != "" {

@@ -10,9 +10,13 @@ import (
 // TestAlertItemsTextSaysWhenAnAbsentClientWasLastSeen (backlog 3.57): the
 // absent warning — the host-scope alert at severity warn — has no check
 // to name, so its line says what it is about: the client has not been
-// seen since its agent's last contact. Without the moment (a closed
-// warning) it still says what it was. The unknown host alert's line is
-// unchanged.
+// seen since its agent's last contact, written like every other time a
+// notification carries (formatTime: RFC 3339 in UTC — an organization has
+// no time zone of its own, backlog 2.77). Its closed event says the
+// warning no longer applies, which is true whether the client came back
+// or the threshold moved. Any other event without the moment (an opened
+// event decided after the warning closed) still says what it was. The
+// unknown host alert's line is unchanged.
 func TestAlertItemsTextSaysWhenAnAbsentClientWasLastSeen(t *testing.T) {
 	seen := time.Date(2026, 10, 29, 7, 42, 13, 0, time.FixedZone("CET", 3600))
 	cases := []struct {
@@ -23,12 +27,17 @@ func TestAlertItemsTextSaysWhenAnAbsentClientWasLastSeen(t *testing.T) {
 		{
 			name: "an open absent warning",
 			item: AlertItem{HostName: "notebook-3", Severity: "warn", Event: "opened", NotSeenSince: &seen},
-			want: "warn     notebook-3           opened   not seen since 2026-10-29 06:42 UTC",
+			want: "warn     notebook-3           opened   not seen since 2026-10-29T06:42:13Z",
 		},
 		{
 			name: "a closed absent warning",
 			item: AlertItem{HostName: "notebook-3", Severity: "warn", Event: "closed"},
-			want: "warn     notebook-3           closed   not seen",
+			want: "warn     notebook-3           closed   no longer absent",
+		},
+		{
+			name: "an absent warning's event without the moment",
+			item: AlertItem{HostName: "notebook-3", Severity: "warn", Event: "opened"},
+			want: "warn     notebook-3           opened   not seen",
 		},
 		{
 			name: "the unknown host alert",

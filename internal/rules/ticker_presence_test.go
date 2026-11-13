@@ -48,7 +48,9 @@ func TestTickHandsTheHostsPresenceThrough(t *testing.T) {
 	}
 
 	// Online again: judged, and nothing frozen reaches the sink.
+	onlineSince := tickEpoch.Add(-time.Hour)
 	load.Presence.AgentOnline = true
+	load.Presence.AgentOnlineSince = onlineSince
 	store = newFakeEvalStore(load, due(hostA))
 	sink = &fakeSink{}
 	tk = rules.NewTicker(store, sink, rules.WithTickerClock(func() time.Time { return tickEpoch }))
@@ -59,9 +61,12 @@ func TestTickHandsTheHostsPresenceThrough(t *testing.T) {
 		t.Fatalf("online client: sink saw %+v, want it judged (crit) and not frozen", in)
 	}
 	// The unknown host alert's grace is the online window, for a client
-	// with an agent only (alerts.Reconcile's shutdown-race guard).
-	if got := sink.calls[0].UnknownGrace; got != 90*time.Second {
-		t.Fatalf("online client: sink saw unknown grace %v, want the online window 1m30s", got)
+	// with an agent only (alerts.Reconcile's shutdown-race guard),
+	// measured from no earlier than the online period's start; and the
+	// sink is told outright that this is a client with an agent.
+	if got := sink.calls[0]; got.UnknownGrace != 90*time.Second || !got.ClientWithAgent || !got.AgentOnlineSince.Equal(onlineSince) {
+		t.Fatalf("online client: sink saw grace %v, client with agent %v, online since %v; want 1m30s, true, %v",
+			got.UnknownGrace, got.ClientWithAgent, got.AgentOnlineSince, onlineSince)
 	}
 
 	// A server — even one carrying a window — gets none: the host alert
@@ -73,7 +78,8 @@ func TestTickHandsTheHostsPresenceThrough(t *testing.T) {
 	if _, err := tk.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick: %v", err)
 	}
-	if got := sink.calls[0].UnknownGrace; got != 0 {
-		t.Fatalf("server: sink saw unknown grace %v, want none", got)
+	if got := sink.calls[0]; got.UnknownGrace != 0 || got.ClientWithAgent || !got.AgentOnlineSince.IsZero() {
+		t.Fatalf("server: sink saw grace %v, client with agent %v, online since %v; want none of them",
+			got.UnknownGrace, got.ClientWithAgent, got.AgentOnlineSince)
 	}
 }
