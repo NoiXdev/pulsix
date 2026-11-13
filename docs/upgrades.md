@@ -827,6 +827,17 @@ character is one of `A-Z a-z 0-9 . _ ~ : / % + = , -` or `[` `]`, the brackets o
 IPv6 host such as `http://[2001:db8::1]:8080` (never in the path). Fix the value in `.env` before
 upgrading.
 
+## Agent install and uninstall scripts (no migration)
+
+Backlog 3.49 and 3.51 change `install.sh` and `install.ps1` only; there is no
+migration and no manager change. The scripts gain `--uninstall` / `-Uninstall` with
+`--keep-data` / `-KeepData`, and the Windows upgrade waits for the old process.
+**Linux hosts should run the install command once more** after the manager is
+upgraded: the new unit adds `AF_NETLINK` to `RestrictAddressFamilies` (without it the
+agent probably cannot read its network interfaces under systemd, so IP facts and the
+network check fail), and the re-run now restarts the agent onto the new binary. An
+agent that is not re-run keeps working as before.
+
 ## Downgrading
 
 There is none in place. A newer schema is refused (above), and migrations do
