@@ -28,12 +28,32 @@ const flappingWindow = 30 * time.Minute
 // CheckContext is what the check pipeline knows about one host that an
 // evaluation needs: the resolved interval of every check that still
 // applies to it — which is what "stale" is defined against, and whose
-// absence is what takes a tuple out of the evaluation entirely — and the
-// monitoring groups whose selector currently matches it, which is how a
-// group-scoped rule reaches the host.
+// absence is what takes a tuple out of the evaluation entirely — whether
+// each of those checks still asks for a given item, and the monitoring
+// groups whose selector currently matches it, which is how a group-scoped
+// rule reaches the host.
 type CheckContext struct {
 	Intervals map[string]time.Duration
-	Groups    []GroupRank
+	// Asks reports, per check key, whether the check still asks the host
+	// for an item (backlog 3.55): a mount taken off a disk check's list
+	// keeps its check_current row, but nobody measures it any more, so it
+	// is left out exactly like a check that no longer resolves. A key with
+	// no predicate asks for every item, and the whole-host item "" is
+	// always asked — Load never consults the predicate for it.
+	Asks   map[string]func(item string) bool
+	Groups []GroupRank
+}
+
+// interval is the resolved interval tuple t is measured at, or zero —
+// which takes it out of the evaluation — when its check no longer
+// resolves or no longer asks for its item.
+func (c CheckContext) interval(t Tuple) time.Duration {
+	if t.Item != "" {
+		if asks, ok := c.Asks[t.CheckKey]; ok && !asks(t.Item) {
+			return 0
+		}
+	}
+	return c.Intervals[t.CheckKey]
 }
 
 // HostChecks is the port into internal/checks. It is declared here, next
@@ -96,12 +116,13 @@ func (s *EvalSQLStore) Load(ctx context.Context, d Due) (HostLoad, error) {
 		reported[i] = t
 		tuples[i] = TupleSnapshot{
 			Tuple: t, Value: r.Value, Label: r.Label, Err: textOf(r.Error), At: r.At,
-			// A check the manager no longer resolves for this host leaves
-			// the interval at zero, which is what takes the tuple out of the
+			// A check the manager no longer resolves for this host, or one
+			// that no longer asks for this item (backlog 3.55), leaves the
+			// interval at zero, which is what takes the tuple out of the
 			// evaluation entirely (Evaluate's own skip). The current row
 			// itself is never deleted — that is v0.3b-1's ruling, and this
 			// is the read side of it.
-			Interval: checkCtx.Intervals[r.CheckKey],
+			Interval: checkCtx.interval(t),
 		}
 	}
 

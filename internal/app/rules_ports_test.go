@@ -86,3 +86,44 @@ func TestRulesHostChecksPropagatesFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestRulesHostChecksContextForHostAsksPerItem (backlog 3.55): the
+// evaluation leaves out the items a check's list no longer names, with
+// the very predicate the host page hides them by. A disk check listing
+// "/" asks for "/" and not "/data"; the whole-host item "" is asked
+// whatever the list says (it carries a check-level error, not a mount);
+// a check without a list, and a synthetic check, ask for everything.
+func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
+	r := &fakeCheckResolver{set: checks.ResolvedSet{
+		Checks: []checks.Resolved{
+			{Key: "disk", Plugin: checks.PluginDisk, Params: map[string]any{"mounts": []any{"/"}}, Interval: time.Minute},
+			{Key: "disk-all", Plugin: checks.PluginDisk, Interval: time.Minute},
+			{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute},
+		},
+		Synthetic: []checks.Resolved{{Key: "web", Plugin: checks.PluginHTTP, Interval: 30 * time.Second}},
+	}}
+	got, err := rulesHostChecks{checks: r}.ContextForHost(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		key, item string
+		want      bool
+	}{
+		{"disk", "/", true},
+		{"disk", "", true},
+		{"disk", "/data", false},
+		{"disk-all", "/data", true},
+		{"cpu", "", true},
+		{"web", "", true},
+		{"web", "https://example.invalid/", true},
+	} {
+		asks, ok := got.Asks[c.key]
+		if !ok {
+			t.Fatalf("no predicate for %q; Asks = %v", c.key, got.Asks)
+		}
+		if asks(c.item) != c.want {
+			t.Errorf("Asks[%q](%q) = %v, want %v", c.key, c.item, !c.want, c.want)
+		}
+	}
+}
