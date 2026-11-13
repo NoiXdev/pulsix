@@ -49,12 +49,13 @@ func TestPrimaryMetrics(t *testing.T) {
 	mustValue(t, obs, "", "pg.replication_lag_seconds", 0)
 	mustValue(t, obs, "", "pg.replication_lag_bytes", 0)
 	mustValue(t, obs, "", "pg.oldest_xact_seconds", 0)
+	mustValue(t, obs, "", "pg.databases_unreported", 0)
 	mustValue(t, obs, "app", "pg.database_size_bytes", 2048)
 	mustValue(t, obs, "postgres", "pg.database_size_bytes", 8000000)
 	if !sess.closed {
 		t.Error("session not closed")
 	}
-	if len(obs) != 8+2 {
+	if len(obs) != 9+2 {
 		t.Errorf("%d observations: %+v", len(obs), obs)
 	}
 }
@@ -134,6 +135,7 @@ func TestDatabaseCap(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "256") || !strings.Contains(err.Error(), `"db256"`) {
 		t.Errorf("advisory error does not name the skipped databases: %v", err)
 	}
+	mustValue(t, obs, "", "pg.databases_unreported", 44)
 	if sess.gotLimit <= maxDatabases || sess.gotLimit > 1024 {
 		t.Errorf("row limit %d is not bounded just above the cap", sess.gotLimit)
 	}
@@ -163,7 +165,19 @@ func TestUnreportableDatabaseNameIsSkippedAndNamed(t *testing.T) {
 			}
 		}
 		mustValue(t, obs, "ok", "pg.database_size_bytes", 2)
+		mustValue(t, obs, "", "pg.databases_unreported", 1)
 	}
+}
+
+// Refused names and databases beyond the cap are both counted.
+func TestUnreportedCountsRefusedNamesAndCappedDatabases(t *testing.T) {
+	dbs := []database{{Name: "a\nb", Size: i64(1)}}
+	for i := 0; i < maxDatabases+3; i++ {
+		dbs = append(dbs, database{Name: fmt.Sprintf("db%03d", i), Size: i64(1)})
+	}
+	sess := &fakeSession{stats: serverStats{MaxConnections: 1}, dbs: dbs}
+	obs, _ := collect(t, newTestPlugin(sess, nil, nil), nil, goodFields)
+	mustValue(t, obs, "", "pg.databases_unreported", 4)
 }
 
 func TestFieldsReachTheConnection(t *testing.T) {

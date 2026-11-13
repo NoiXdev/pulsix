@@ -142,6 +142,9 @@ func TestDockerAllSelection(t *testing.T) {
 	if v := findObs(t, obs, "", "docker.containers_total").Value; v == nil || *v != 2 {
 		t.Errorf("total = %v", v)
 	}
+	if v := findObs(t, obs, "", "docker.containers_unreported").Value; v == nil || *v != 0 {
+		t.Errorf("unreported = %v, want 0", v)
+	}
 }
 
 func TestDockerOptOutValue(t *testing.T) {

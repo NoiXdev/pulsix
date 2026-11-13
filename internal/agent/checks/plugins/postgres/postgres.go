@@ -20,6 +20,9 @@ import (
 
 const (
 	metricUp = "pg.up"
+	// metricUnreported counts the databases a round leaves out: those beyond
+	// the cap and those whose name the item contract refuses. 0 when none.
+	metricUnreported = "pg.databases_unreported"
 
 	// maxDatabases is how many databases one round reports.
 	maxDatabases = 256
@@ -167,9 +170,10 @@ func observe(st serverStats, dbs []database, filter []string) ([]checks.Observat
 	var errs []error
 	seen := make(map[string]struct{}, len(dbs))
 	var left []string
-	reported := 0
+	refused, reported := 0, 0
 	for _, d := range dbs {
 		if !checks.ReportableItem(d.Name) {
+			refused++
 			errs = append(errs, fmt.Errorf("postgres: database %q cannot be reported: name longer than %d bytes, not valid UTF-8 or carrying a control character", d.Name, checks.MaxItemLen))
 			continue
 		}
@@ -204,5 +208,6 @@ func observe(st serverStats, dbs []database, filter []string) ([]checks.Observat
 		}
 		errs = append(errs, fmt.Errorf("postgres: only %d databases are reported; left out: %s%s", maxDatabases, strings.Join(quoted, ", "), more))
 	}
+	obs = append(obs, checks.ValueObservation("", metricUnreported, float64(refused+len(left))))
 	return obs, errors.Join(errs...)
 }

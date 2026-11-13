@@ -11,6 +11,7 @@ package checks
 
 import (
 	"context"
+	"log/slog"
 	"reflect"
 	"sync"
 	"time"
@@ -91,6 +92,9 @@ type Scheduler struct {
 	now     func() time.Time
 	ticker  func(time.Duration) Ticker
 	secrets Secrets // SecretPlugins' secrets (secret.go); nil knows none
+	log     *slog.Logger
+	// advisories logs the advisory errors of plain plugins (advisory.go).
+	advisories *advisoryLog
 
 	mu      sync.Mutex
 	version string
@@ -122,6 +126,10 @@ func NewScheduler(reg map[string]Plugin, now func() time.Time, ticker func(time.
 	for _, o := range opts {
 		o(s)
 	}
+	if s.log == nil {
+		s.log = slog.New(slog.DiscardHandler)
+	}
+	s.advisories = newAdvisoryLog(s.log, now)
 	return s
 }
 
@@ -268,6 +276,7 @@ func (s *Scheduler) stopLocked(key string) {
 		sc.ticker.Stop()
 	}
 	delete(s.checks, key)
+	s.advisories.forget(key)
 }
 
 // runCheck is one check's whole lifetime: it fires on its own ticker,
@@ -285,7 +294,8 @@ func (s *Scheduler) runCheck(ctx context.Context, key string, plugin Plugin, sc 
 			return
 		case <-sc.ticker.C():
 			at := s.now()
-			obs := s.collect(ctx, plugin, sc.spec.Params)
+			obs, advisory := s.collect(ctx, plugin, sc.spec.Params)
+			s.advisories.note(key, plugin.Name(), advisory)
 			if len(obs) == 0 {
 				continue // nothing usable this tick
 			}

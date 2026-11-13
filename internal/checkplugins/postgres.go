@@ -35,6 +35,9 @@ func postgresPlugin() Descriptor {
 			{Name: "pg.replication_lag_bytes", Kind: Numeric},
 			{Name: "pg.oldest_xact_seconds", Kind: Numeric},
 			{Name: "pg.database_size_bytes", Kind: Numeric},
+			// Databases left out of a round (beyond the agent's cap, or a
+			// name the item contract refuses), reported on item "".
+			{Name: "pg.databases_unreported", Kind: Numeric},
 		},
 	}
 }

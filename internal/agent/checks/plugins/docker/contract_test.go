@@ -72,6 +72,9 @@ func TestDockerSkipsContainersTheManagerWouldRefuse(t *testing.T) {
 			if v := findObs(t, obs, "", "docker.containers_running").Value; v == nil || *v != 1 {
 				t.Errorf("running = %v, want 1", v)
 			}
+			if v := findObs(t, obs, "", "docker.containers_unreported").Value; v == nil || *v != 1 {
+				t.Errorf("unreported = %v, want 1", v)
+			}
 			for _, o := range obs {
 				encodesAsCheckResult(t, o)
 			}

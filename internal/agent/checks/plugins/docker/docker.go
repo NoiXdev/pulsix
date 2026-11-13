@@ -115,6 +115,7 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 	}
 
 	selected, errs := reportableContainers(selectContainers(list, cfg))
+	unreported := float64(len(errs)) // refused names only; a later deadline error is no container
 	details := inspectAll(ctx, engine, selected)
 	if perr := parent.Err(); perr != nil {
 		return nil, perr
@@ -150,6 +151,7 @@ func (p dockerPlugin) Collect(ctx context.Context, params map[string]any) ([]che
 	obs = append(obs,
 		checks.ValueObservation("", "docker.containers_running", running),
 		checks.ValueObservation("", "docker.containers_total", total),
+		checks.ValueObservation("", "docker.containers_unreported", unreported),
 	)
 	if err := ctx.Err(); err != nil {
 		// The deadline hit mid-inspect: what was gathered is still reported.

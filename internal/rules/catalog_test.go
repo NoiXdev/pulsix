@@ -68,12 +68,13 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"dns.resolve_ms":       {CheckKey: "dns", Kind: rules.MetricNumeric},
 		"dns.answer_match":     {CheckKey: "dns", Kind: rules.MetricNumeric},
 		// Backlog 3.12: the docker plugin (internal/agent/checks/plugins/docker/).
-		"docker.state":              {CheckKey: "docker", Kind: rules.MetricDiscrete},
-		"docker.health":             {CheckKey: "docker", Kind: rules.MetricDiscrete},
-		"docker.restart_count":      {CheckKey: "docker", Kind: rules.MetricNumeric},
-		"docker.exit_code":          {CheckKey: "docker", Kind: rules.MetricNumeric},
-		"docker.containers_running": {CheckKey: "docker", Kind: rules.MetricNumeric},
-		"docker.containers_total":   {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.state":                 {CheckKey: "docker", Kind: rules.MetricDiscrete},
+		"docker.health":                {CheckKey: "docker", Kind: rules.MetricDiscrete},
+		"docker.restart_count":         {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.exit_code":             {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.containers_running":    {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.containers_total":      {CheckKey: "docker", Kind: rules.MetricNumeric},
+		"docker.containers_unreported": {CheckKey: "docker", Kind: rules.MetricNumeric},
 
 		// Backlog 3.9: the hardware plugins (temperature, smart, raid).
 		"temp.celsius":                   {CheckKey: "temperature", Kind: rules.MetricNumeric},
@@ -107,6 +108,7 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"pg.replication_lag_bytes":   {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.oldest_xact_seconds":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.database_size_bytes":     {CheckKey: "postgres", Kind: rules.MetricNumeric},
+		"pg.databases_unreported":    {CheckKey: "postgres", Kind: rules.MetricNumeric},
 
 		"mysql.up":                      {CheckKey: "mysql", Kind: rules.MetricNumeric},
 		"mysql.connections":             {CheckKey: "mysql", Kind: rules.MetricNumeric},

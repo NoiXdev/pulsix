@@ -3,6 +3,7 @@ package checks
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"maps"
 )
 
@@ -50,26 +51,30 @@ type SchedulerOption func(*Scheduler)
 // scheduler knows no secret.
 func WithSecrets(s Secrets) SchedulerOption { return func(sc *Scheduler) { sc.secrets = s } }
 
+// WithLogger is where the scheduler logs plugins' advisory errors (advisory.go).
+// Without it nothing is logged.
+func WithLogger(l *slog.Logger) SchedulerOption { return func(sc *Scheduler) { sc.log = l } }
+
 // errSecretParam is the error for a SecretParam that is not a string; the
 // manager validates params, so only a manager bug produces it.
 var errSecretParam = errors.New(`param "secret" must be a string`)
 
 // collect runs plugin once for one check. A SecretPlugin is handed its
 // secret's fields, or not called at all when the secret cannot be
-// resolved. Collect's error is advisory (Plugin) and dropped here, as it
-// always was: it never reaches a log, and the observations carry the
-// failures that matter.
-func (s *Scheduler) collect(ctx context.Context, plugin Plugin, params map[string]any) []Observation {
+// resolved. The returned error is the plugin's advisory error (Plugin): it
+// is returned only for a plugin that is not a SecretPlugin, because a
+// SecretPlugin's may carry driver text and is dropped here. The
+// observations carry the failures that matter.
+func (s *Scheduler) collect(ctx context.Context, plugin Plugin, params map[string]any) ([]Observation, error) {
 	sp, ok := plugin.(SecretPlugin)
 	if !ok {
-		obs, _ := plugin.Collect(ctx, params)
-		return obs
+		return plugin.Collect(ctx, params)
 	}
 	fields, err := s.secretFields(params)
 	if err != nil {
-		return []Observation{ErrObservation("", sp.SecretErrorMetric(), err)}
+		return []Observation{ErrObservation("", sp.SecretErrorMetric(), err)}, nil
 	}
-	return collectSecret(ctx, sp, params, fields)
+	return collectSecret(ctx, sp, params, fields), nil
 }
 
 // collectSecret calls sp.CollectWithSecret and turns a panic into one fixed

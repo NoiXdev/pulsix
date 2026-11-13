@@ -23,6 +23,9 @@ func dockerPlugin() Descriptor {
 			{Name: "docker.exit_code", Kind: Numeric},
 			{Name: "docker.containers_running", Kind: Numeric},
 			{Name: "docker.containers_total", Kind: Numeric},
+			// Containers left out of a round because their name is refused
+			// as an item, reported on item "".
+			{Name: "docker.containers_unreported", Kind: Numeric},
 		},
 	}
 }

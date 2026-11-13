@@ -206,7 +206,7 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 		o(l)
 	}
 	l.secrets = l.newSecretsWatcher()
-	l.scheduler = checks.NewScheduler(l.registry, l.now, l.checksTicker, checks.WithSecrets(secretsSource{l.secrets}))
+	l.scheduler = checks.NewScheduler(l.registry, l.now, l.checksTicker, checks.WithSecrets(secretsSource{l.secrets}), checks.WithLogger(l.log))
 	l.buffer = checks.NewBuffer(bufferWindow, l.now)
 	return l
 }

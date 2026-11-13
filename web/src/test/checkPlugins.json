@@ -188,6 +188,10 @@
         {
           "name": "docker.containers_total",
           "kind": "numeric"
+        },
+        {
+          "name": "docker.containers_unreported",
+          "kind": "numeric"
         }
       ]
     },
@@ -380,6 +384,10 @@
         },
         {
           "name": "pg.database_size_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "pg.databases_unreported",
           "kind": "numeric"
         }
       ]
