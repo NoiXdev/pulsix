@@ -245,9 +245,22 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		return nil, err
 	}
 	migrateErr := migrationDB.Migrate(ctx)
+	// The measurement retention (backlog 3.15): both hypertables' retention
+	// policy follows PULSIX_SAMPLE_RETENTION. Replacing a policy needs the
+	// hypertables' owner, so it runs here on the migration connection before
+	// it closes; it changes nothing when the value is unchanged and is
+	// serialized across managers starting together (checks.RetentionSync).
+	var retentionErr error
+	if migrateErr == nil {
+		retentionErr = checks.NewRetentionSync(checks.NewRetentionPolicySQLStore(migrationDB), slog.Default()).
+			Sync(ctx, cfg.RetentionMaxDays())
+	}
 	migrationDB.Close()
 	if migrateErr != nil {
 		return nil, fmt.Errorf("run migrations: %w", migrateErr)
+	}
+	if retentionErr != nil {
+		return nil, retentionErr
 	}
 
 	// Every request from here on is served through appRole instead: its

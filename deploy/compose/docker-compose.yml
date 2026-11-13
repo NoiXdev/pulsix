@@ -70,6 +70,8 @@ x-manager-base: &manager-base
     # How long a quiet item may stay silent before it is forgotten (Go
     # duration, at least 48h; 0 switches the expiry off). Unset: 168h.
     PULSIX_ITEM_EXPIRY: "${PULSIX_ITEM_EXPIRY:-168h}"
+    # The most days measurements are kept (7 to 365). Unset: 90.
+    PULSIX_SAMPLE_RETENTION: "${PULSIX_SAMPLE_RETENTION:-90}"
   volumes:
     # The backup folder (README.md, "Backup and restore"): where backups
     # go unless the web interface names S3-compatible storage, and where

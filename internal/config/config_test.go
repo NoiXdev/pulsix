@@ -646,3 +646,68 @@ func TestLoadPublicURLErrorHidesValueAndDecodesRunes(t *testing.T) {
 		t.Errorf("want the decoded rune named, got %v", err)
 	}
 }
+
+// TestSampleRetention: PULSIX_SAMPLE_RETENTION is the instance maximum for
+// keeping measurements (backlog 3.15): a whole number of days from 7 to
+// 365, default 90 — today's fixed value, so nothing changes without the
+// variable. Anything else fails the start with a message naming the
+// variable and its bounds.
+func TestSampleRetention(t *testing.T) {
+	base := map[string]string{
+		"PULSIX_DATABASE_URL": "postgres://u:p@db/pulsix",
+		"PULSIX_MASTER_KEY":   strings.Repeat("ab", 32),
+		"PULSIX_PUBLIC_URL":   "https://pulsix.example.test",
+	}
+	cases := []struct {
+		raw     string
+		want    int
+		wantErr bool
+	}{
+		{raw: "", want: 90},
+		{raw: "7", want: 7},
+		{raw: "30", want: 30},
+		{raw: "90", want: 90},
+		{raw: "365", want: 365},
+		{raw: "6", wantErr: true},
+		{raw: "366", wantErr: true},
+		{raw: "0", wantErr: true},
+		{raw: "-30", wantErr: true},
+		{raw: "30d", wantErr: true},
+		{raw: "720h", wantErr: true},
+		{raw: "30.5", wantErr: true},
+		{raw: " 30", wantErr: true},
+		{raw: "ninety", wantErr: true},
+	}
+	for _, c := range cases {
+		m := map[string]string{"PULSIX_SAMPLE_RETENTION": c.raw}
+		for k, v := range base {
+			m[k] = v
+		}
+		cfg, err := config.Load(env(m))
+		if c.wantErr {
+			if err == nil || !strings.Contains(err.Error(), "PULSIX_SAMPLE_RETENTION") ||
+				!strings.Contains(err.Error(), "7") || !strings.Contains(err.Error(), "365") {
+				t.Errorf("PULSIX_SAMPLE_RETENTION=%q: want an error naming the variable and its bounds, got %v", c.raw, err)
+			}
+			continue
+		}
+		if err != nil || cfg.SampleRetentionDays != c.want || cfg.RetentionMaxDays() != c.want {
+			t.Errorf("PULSIX_SAMPLE_RETENTION=%q: got %d (max %d), %v; want %d", c.raw, cfg.SampleRetentionDays, cfg.RetentionMaxDays(), err, c.want)
+		}
+	}
+}
+
+// TestRetentionMaxDaysDefaultsAZeroConfig: a Config built by hand (tests
+// do, Load never leaves it zero) still gets today's 90 days instead of a
+// zero maximum that would delete everything.
+func TestRetentionMaxDaysDefaultsAZeroConfig(t *testing.T) {
+	if config.DefaultSampleRetentionDays != 90 {
+		t.Fatalf("DefaultSampleRetentionDays = %d, want 90 (today's value)", config.DefaultSampleRetentionDays)
+	}
+	if got := (config.Config{}).RetentionMaxDays(); got != config.DefaultSampleRetentionDays {
+		t.Fatalf("zero Config RetentionMaxDays = %d, want %d", got, config.DefaultSampleRetentionDays)
+	}
+	if got := (config.Config{SampleRetentionDays: 30}).RetentionMaxDays(); got != 30 {
+		t.Fatalf("RetentionMaxDays = %d, want 30", got)
+	}
+}

@@ -65,6 +65,14 @@ type Config struct {
 	// Go duration of at least MinItemExpiry, 48h; the default 168h; 0
 	// switches the automatic expiry off).
 	ItemExpiry time.Duration
+	// SampleRetentionDays is the instance maximum, in whole days, for
+	// keeping measurements — check_samples and check_state_changes
+	// (PULSIX_SAMPLE_RETENTION, MinSampleRetentionDays to
+	// MaxSampleRetentionDays, default DefaultSampleRetentionDays; backlog
+	// 3.15). The manager sets both hypertables' retention policy to it at
+	// start, and no organization keeps measurements longer. Read it through
+	// RetentionMaxDays, which also covers a hand-built Config.
+	SampleRetentionDays int
 	// JobMaxAttempts is how often a job may be claimed before the reaper
 	// fails a stale claim instead of requeuing it (PULSIX_JOB_MAX_ATTEMPTS,
 	// a positive integer; default DefaultJobMaxAttempts). It stops a job
@@ -129,6 +137,15 @@ type Config struct {
 const (
 	DefaultItemExpiry = 168 * time.Hour
 	MinItemExpiry     = 2 * checks.MaxInterval
+)
+
+// DefaultSampleRetentionDays is the default PULSIX_SAMPLE_RETENTION —
+// the 90 days migrations 00044 and 00046 set, so nothing changes without
+// the variable; MinSampleRetentionDays and MaxSampleRetentionDays bound it.
+const (
+	DefaultSampleRetentionDays = 90
+	MinSampleRetentionDays     = 7
+	MaxSampleRetentionDays     = 365
 )
 
 // DefaultRetestInterval is the connection re-test scheduler's pass period.
@@ -210,6 +227,14 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		cfg.ItemExpiry = d
 	}
+	cfg.SampleRetentionDays = DefaultSampleRetentionDays
+	if raw := getenv("PULSIX_SAMPLE_RETENTION"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < MinSampleRetentionDays || n > MaxSampleRetentionDays {
+			return cfg, fmt.Errorf("PULSIX_SAMPLE_RETENTION must be a whole number of days from %d to %d (e.g. 30, 90, 365)", MinSampleRetentionDays, MaxSampleRetentionDays)
+		}
+		cfg.SampleRetentionDays = n
+	}
 	cfg.JobMaxAttempts = DefaultJobMaxAttempts
 	if raw := getenv("PULSIX_JOB_MAX_ATTEMPTS"); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -286,6 +311,18 @@ func (c Config) RPID() string {
 func (c Config) Origin() string {
 	u, _ := url.Parse(c.PublicURL)
 	return u.Scheme + "://" + u.Host
+}
+
+// RetentionMaxDays is the instance maximum retention for measurements in
+// days: SampleRetentionDays, or DefaultSampleRetentionDays when it is zero
+// — Load always sets it, but a Config built by hand (the tests do) must
+// not hand the policy sync, or the per-organization deletion, a maximum of
+// zero days.
+func (c Config) RetentionMaxDays() int {
+	if c.SampleRetentionDays <= 0 {
+		return DefaultSampleRetentionDays
+	}
+	return c.SampleRetentionDays
 }
 
 // GRPCHost is the hostname the gRPC server certificate carries as its DNS
