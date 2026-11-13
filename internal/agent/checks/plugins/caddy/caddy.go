@@ -39,8 +39,8 @@ type plugin struct {
 	now func() time.Time
 	// url is the page the counters belong to; another one starts over. One
 	// instance per check key, collected from one goroutine only.
-	url              string
-	requests, errors dbcheck.Counter
+	url               string
+	requests, errs5xx dbcheck.Counter
 }
 
 // New returns the caddy plugin. It is a checks.StatefulPlugin prototype: the
@@ -83,7 +83,7 @@ func statusURL(params map[string]any) string {
 func (p *plugin) observe(url string, m metrics) []checks.Observation {
 	if url != p.url {
 		p.url = url
-		p.requests, p.errors = dbcheck.Counter{}, dbcheck.Counter{}
+		p.requests, p.errs5xx = dbcheck.Counter{}, dbcheck.Counter{}
 	}
 	disabled := func(metric string) checks.Observation {
 		return checks.ErrObservation("", metric, errors.New("caddy: "+reasonDisabled))
@@ -96,7 +96,7 @@ func (p *plugin) observe(url string, m metrics) []checks.Observation {
 	}
 	at := p.now()
 	obs = append(obs, p.rate("caddy.requests_per_s", &p.requests, at, m.requests, m.haveRequests, disabled)...)
-	obs = append(obs, p.rate("caddy.errors_5xx_per_s", &p.errors, at, m.errors5xx, m.have5xx, disabled)...)
+	obs = append(obs, p.rate("caddy.errors_5xx_per_s", &p.errs5xx, at, m.errs5xx, m.have5xx, disabled)...)
 	return obs
 }
 

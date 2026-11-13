@@ -63,7 +63,6 @@ func mustDown(t *testing.T, obs []checks.Observation, reason string) {
 
 var (
 	newServer  = webchecktest.NewServer
-	find       = webchecktest.Find
 	mustValue  = webchecktest.MustValue
 	mustAbsent = webchecktest.MustAbsent
 	noSecretIn = webchecktest.NoSecretIn
@@ -272,7 +271,8 @@ func TestUnexpectedFormat(t *testing.T) {
 		{"html", "<html>hi</html>\n"},
 		{"json", `{"requests": 5}`},
 		{"bad value", "caddy_http_requests_total{server=\"a\"} many\n"},
-		{"long line", "go_goroutines 1\n# " + strings.Repeat("x", 70<<10) + "\n"},
+		{"plain text", "Welcome to Caddy\n"},
+		{"long relevant line", "go_goroutines 1\ncaddy_http_requests_total{server=\"" + strings.Repeat("x", 70<<10) + "\"} 1\n"},
 		{"huge page of one line", strings.Repeat("a", 1<<20)},
 	}
 	for _, tt := range tests {
@@ -457,5 +457,4 @@ func TestPrototypeAndInstances(t *testing.T) {
 	if a.(*plugin).now == nil {
 		t.Fatal("instance has no clock")
 	}
-	_ = find
 }

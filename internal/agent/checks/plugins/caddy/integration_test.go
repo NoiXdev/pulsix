@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck/webchecktest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -83,7 +84,7 @@ func TestAgainstARealServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustValue(t, obs, "caddy.up", 1)
-	if o, ok := find(obs, "caddy.requests_in_flight"); !ok || o.Value == nil || *o.Value < 0 {
+	if o, ok := webchecktest.Find(obs, "caddy.requests_in_flight"); !ok || o.Value == nil || *o.Value < 0 {
 		t.Fatalf("requests_in_flight = %+v, want a value >= 0", o)
 	}
 	mustAbsent(t, obs, "caddy.requests_per_s")
@@ -99,10 +100,10 @@ func TestAgainstARealServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustValue(t, obs, "caddy.up", 1)
-	if o, ok := find(obs, "caddy.requests_per_s"); !ok || o.Value == nil || *o.Value <= 0 {
+	if o, ok := webchecktest.Find(obs, "caddy.requests_per_s"); !ok || o.Value == nil || *o.Value <= 0 {
 		t.Fatalf("requests_per_s = %+v, want a positive rate", o)
 	}
-	if o, ok := find(obs, "caddy.errors_5xx_per_s"); !ok || o.Value == nil || *o.Value != 0 {
+	if o, ok := webchecktest.Find(obs, "caddy.errors_5xx_per_s"); !ok || o.Value == nil || *o.Value != 0 {
 		t.Fatalf("errors_5xx_per_s = %+v, want 0", o)
 	}
 }

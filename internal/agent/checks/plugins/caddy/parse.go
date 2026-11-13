@@ -16,11 +16,11 @@ type metrics struct {
 	haveInflight bool
 	requests     uint64
 	haveRequests bool
-	// errors5xx is the counter of responses with a code of 500-599, summed
+	// errs5xx is the counter of responses with a code of 500-599, summed
 	// over the codes of each (server, handler) pair before the largest
 	// handler is taken.
-	errors5xx uint64
-	have5xx   bool
+	errs5xx uint64
+	have5xx bool
 }
 
 var errFormat = errors.New("unexpected response format")
@@ -44,22 +44,23 @@ type key struct{ server, handler string }
 
 // aggregate collects the series of one page before they are folded.
 type aggregate struct {
-	inflight map[key]float64
+	inflight map[key]uint64
 	requests map[key]uint64
 	errs     map[key]uint64
 	haveDur  bool
 }
 
 // parseMetrics reads the Prometheus text exposition format line by line:
-// comments and blank lines are skipped, every other line must be
-// "name[{labels}] value [timestamp]" with a valid metric name. Only the
-// three families the plugin reports are parsed beyond the name; a broken
-// line of one of them, or a line that is no sample at all (an HTML page),
-// is a format error. A sample whose value is NaN, infinite or negative, or
-// a counter above 2^53, is ignored.
+// comments and blank lines are skipped, every other line must be a
+// plausible sample, "name[{labels}] value [timestamp]" with a valid metric
+// name and a numeric value; anything else (an HTML or plain-text page) is a
+// format error. Only the three families the plugin reports are parsed in
+// detail and bounded to 64 KiB per line; the labels of every other line are
+// only skipped over. A sample whose value is NaN, infinite or negative, or
+// above 2^53, is ignored.
 func parseMetrics(body []byte) (metrics, error) {
 	a := aggregate{
-		inflight: map[key]float64{},
+		inflight: map[key]uint64{},
 		requests: map[key]uint64{},
 		errs:     map[key]uint64{},
 	}
@@ -68,9 +69,6 @@ func parseMetrics(body []byte) (metrics, error) {
 	for rest != "" {
 		line, tail, _ := strings.Cut(rest, "\n")
 		rest = tail
-		if len(line) > maxLine {
-			return metrics{}, errFormat
-		}
 		line = strings.TrimLeft(strings.TrimRight(line, " \t\r"), " \t")
 		if line == "" || line[0] == '#' {
 			continue
@@ -82,7 +80,17 @@ func parseMetrics(body []byte) (metrics, error) {
 		samples++
 		name := line[:end]
 		if name != famInflight && name != famRequests && name != famDuration {
+			after, ok := skipLabels(strings.TrimLeft(line[end:], " \t"))
+			if !ok {
+				return metrics{}, errFormat
+			}
+			if _, err := parseValue(after); err != nil {
+				return metrics{}, err
+			}
 			continue
+		}
+		if len(line) > maxLine {
+			return metrics{}, errFormat
 		}
 		if err := a.add(name, line[end:]); err != nil {
 			return metrics{}, err
@@ -92,6 +100,56 @@ func parseMetrics(body []byte) (metrics, error) {
 		return metrics{}, errFormat
 	}
 	return a.fold(), nil
+}
+
+// skipLabels returns what follows the label set at the start of s (s itself
+// without one), stepping over quoted values and their escapes without
+// building anything; ok is false when the braces are not closed.
+func skipLabels(s string) (rest string, ok bool) {
+	if !strings.HasPrefix(s, "{") {
+		return s, true
+	}
+	inQuote := false
+	for i := 1; i < len(s); i++ {
+		switch c := s[i]; {
+		case inQuote && c == '\\':
+			i++
+		case c == '"':
+			inQuote = !inQuote
+		case !inQuote && c == '}':
+			return s[i+1:], true
+		}
+	}
+	return "", false
+}
+
+// parseValue reads "value [timestamp]": the value a float (an out-of-range
+// one is infinite), the timestamp an integer, nothing after them.
+func parseValue(s string) (float64, error) {
+	val, tail, _ := cutField(s)
+	if val == "" {
+		return 0, errFormat
+	}
+	if ts, more, _ := cutField(tail); ts != "" {
+		if _, err := strconv.ParseInt(ts, 10, 64); err != nil || strings.TrimSpace(more) != "" {
+			return 0, errFormat
+		}
+	}
+	v, err := strconv.ParseFloat(val, 64)
+	if err != nil && !errors.Is(err, strconv.ErrRange) {
+		return 0, errFormat
+	}
+	return v, nil
+}
+
+// cutField splits off the first blank-separated field of s.
+func cutField(s string) (field, rest string, found bool) {
+	s = strings.TrimLeft(s, " \t")
+	i := strings.IndexAny(s, " \t")
+	if i < 0 {
+		return s, "", s != ""
+	}
+	return s[:i], s[i:], true
 }
 
 // add parses the rest of a relevant line (labels, value, timestamp).
@@ -104,32 +162,18 @@ func (a *aggregate) add(name, rest string) error {
 			return err
 		}
 	}
-	fields := strings.Fields(rest)
-	if len(fields) < 1 || len(fields) > 2 {
-		return errFormat
+	v, err := parseValue(rest)
+	if err != nil {
+		return err
 	}
-	if len(fields) == 2 {
-		if _, err := strconv.ParseInt(fields[1], 10, 64); err != nil {
-			return errFormat
-		}
-	}
-	v, err := strconv.ParseFloat(fields[0], 64)
-	if err != nil && !errors.Is(err, strconv.ErrRange) {
-		return errFormat
-	}
-	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > maxCounter {
 		return nil
 	}
 	k := key{server, handler}
-	if name == famInflight {
-		a.inflight[k] += v
-		return nil
-	}
-	if v > maxCounter {
-		return nil
-	}
 	n := uint64(v)
 	switch name {
+	case famInflight:
+		a.inflight[k] = satAdd(a.inflight[k], n)
 	case famRequests:
 		a.requests[k] = satAdd(a.requests[k], n)
 	case famDuration:
@@ -143,17 +187,11 @@ func (a *aggregate) add(name, rest string) error {
 
 // fold takes the largest handler per server and sums the servers.
 func (a *aggregate) fold() metrics {
-	m := metrics{haveInflight: len(a.inflight) > 0, haveRequests: len(a.requests) > 0, have5xx: a.haveDur}
-	perServer := map[string]float64{}
-	for k, v := range a.inflight {
-		perServer[k.server] = math.Max(perServer[k.server], v)
+	return metrics{
+		inflight: float64(sumOfLargest(a.inflight)), haveInflight: len(a.inflight) > 0,
+		requests: sumOfLargest(a.requests), haveRequests: len(a.requests) > 0,
+		errs5xx: sumOfLargest(a.errs), have5xx: a.haveDur,
 	}
-	for _, v := range perServer {
-		m.inflight += v
-	}
-	m.requests = sumOfLargest(a.requests)
-	m.errors5xx = sumOfLargest(a.errs)
-	return m
 }
 
 func sumOfLargest(series map[key]uint64) uint64 {
@@ -210,6 +248,9 @@ func parseLabels(s string) (server, handler, code, rest string, err error) {
 			return "", "", "", "", errFormat
 		}
 		label := strings.TrimSpace(s[:eq])
+		if !validLabelName(label) {
+			return "", "", "", "", errFormat
+		}
 		s = strings.TrimLeft(s[eq+1:], " \t")
 		if s == "" || s[0] != '"' {
 			return "", "", "", "", errFormat
@@ -265,4 +306,12 @@ func parseQuoted(s string) (val, rest string, err error) {
 		}
 	}
 	return "", "", errFormat
+}
+
+// validLabelName reports whether s is a Prometheus label name.
+func validLabelName(s string) bool {
+	if s == "" || strings.Contains(s, ":") {
+		return false
+	}
+	return validName(s)
 }
