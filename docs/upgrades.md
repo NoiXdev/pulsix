@@ -280,12 +280,20 @@ repositories as before. An older worker never asks.
 - **3.15, retention per organization:** the new variable `PULSIX_SAMPLE_RETENTION`
   (whole days, 7 to 365, default 90, the previous fixed value) is the longest time
   measurements and state history (`check_samples`, `check_state_changes`) are
-  kept. Without it nothing changes. Every manager start sets the retention policy
+  kept. Without it nothing changes, with one exception: **a retention policy
+  changed by hand in the database (for example to 180 days) is replaced by the
+  variable's value at the first start, and the database job then drops the older
+  chunks. Set `PULSIX_SAMPLE_RETENTION` to that value before upgrading.** A hand-made
+  policy without `drop_after` (`drop_created_before`) stops the start with a message
+  telling you to remove it. Every manager start sets the retention policy
   of both tables to it (logged at info; a value outside the range, or a failed
   sync, stops the start), and so does `restore`: it re-runs the old 90-day
   migrations, then applies the value from its own environment, so give `restore`
   the same value as the manager (in the compose stack `docker compose run --rm cli`
-  passes it from `.env`). **Lowering the value deletes the older rows**: the
+  passes it from `.env`). The restore prints the retention it applied, and says so
+  when it fell back to the 90-day default because the variable is not set; the
+  database job then drops older data at its next run (within a day), not at the
+  next manager start. **Lowering the value deletes the older rows**: the
   database drops chunks older than the new maximum right after the next start (at
   the latest within a day). Raising it does not bring deleted data back. Every
   manager instance must use the same value, otherwise each start flips the
