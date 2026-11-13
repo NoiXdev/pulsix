@@ -3139,6 +3139,15 @@ export interface components {
             agent_name: string;
             /** Format: date-time */
             cert_expires_at?: string;
+            /**
+             * Format: date-time
+             * @description When the stored comparison was written: at once when either version changes, otherwise again once it is 10 minutes old. Omitted until the manager has compared
+             */
+            config_checked_at?: string;
+            /** @description The check configuration version the manager resolved for the host at the last comparison. Omitted until the manager has compared */
+            config_expected?: string;
+            /** @description The check configuration version the agent reported at the last comparison; empty when it had applied none yet. Omitted until the manager has compared */
+            config_version?: string;
             /** Format: date-time */
             created_at: string;
             host_id: string;

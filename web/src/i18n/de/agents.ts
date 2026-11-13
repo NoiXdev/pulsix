@@ -21,6 +21,12 @@ export const deAgents: Messages['agents'] = {
     online: 'online',
     offline: 'offline',
   },
+  config: {
+    current: 'Konfiguration aktuell',
+    outdated: 'Konfiguration veraltet',
+    detail: (running: string, expected: string) => `Agent läuft mit ${running} · Manager erwartet ${expected}`,
+    none: 'keiner',
+  },
   boundToHost: 'an einen Host',
   boundNewHost: 'neuer Host',
   empty: 'Noch keine Agents registriert.',

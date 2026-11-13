@@ -122,6 +122,8 @@ type fakeAgentStore struct {
 	revokedC          map[string]bool
 	touched           []string               // "serial:version" per Touch or Heartbeat call
 	reports           []agents.SecretsReport // per Heartbeat call
+	configChecks      []configCheckCall      // per RecordConfigCheck call
+	configCheckErr    error
 	touchErr          error
 	lookupErr         error
 	revokeAfterLookup string
@@ -326,6 +328,30 @@ func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, 
 		}
 	}
 	return nil
+}
+
+// configCheckCall is one RecordConfigCheck call.
+type configCheckCall struct {
+	serial, reported, expected string
+}
+
+// RecordConfigCheck records the call (configChecks) and fails with
+// configCheckErr when it is set.
+func (f *fakeAgentStore) RecordConfigCheck(_ context.Context, serial, reported, expected string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.configCheckErr != nil {
+		return f.configCheckErr
+	}
+	f.configChecks = append(f.configChecks, configCheckCall{serial: serial, reported: reported, expected: expected})
+	return nil
+}
+
+// recordedConfigChecks returns every successful RecordConfigCheck call.
+func (f *fakeAgentStore) recordedConfigChecks() []configCheckCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]configCheckCall(nil), f.configChecks...)
 }
 
 // secretsReports returns every Heartbeat call's report.

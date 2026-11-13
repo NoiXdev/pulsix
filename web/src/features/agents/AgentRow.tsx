@@ -5,6 +5,7 @@ import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import type { Agent, AgentToken } from '../../api/types.ts';
 import { VersionSkewBadge } from '../workers/VersionSkewBadge.tsx';
+import { ConfigVersionBadge } from './ConfigVersionBadge.tsx';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from '../workers/expiry.ts';
 
 /** AgentRow is one host agent. The host's page is the agent's detail page, so
@@ -52,6 +53,7 @@ export function AgentRow({
       <span className="flex min-w-0 items-center gap-2 text-xs">
         <span className="truncate font-mono">{a.version || '—'}</span>
         <VersionSkewBadge status={a.version_status} />
+        <ConfigVersionBadge reported={a.config_version} expected={a.config_expected} />
       </span>
       <span className={`text-xs ${expiring ? 'font-semibold text-[var(--px-warn)]' : 'text-muted-foreground'}`} data-expiring={expiring || undefined}>
         {expiryLabel(a.cert_expires_at, now, t)}

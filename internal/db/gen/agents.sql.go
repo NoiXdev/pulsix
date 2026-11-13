@@ -162,7 +162,7 @@ func (q *Queries) GetAgentEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid
 }
 
 const getHostAgent = `-- name: GetHostAgent :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -196,6 +196,9 @@ func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (Get
 		&i.HostAgent.SecretNames,
 		&i.HostAgent.SecretsState,
 		&i.HostAgent.ConnectedSince,
+		&i.HostAgent.ConfigVersion,
+		&i.HostAgent.ConfigExpected,
+		&i.HostAgent.ConfigCheckedAt,
 		&i.CertNotAfter,
 		&i.HostName,
 	)
@@ -233,7 +236,7 @@ func (q *Queries) InsertAgentCertificate(ctx context.Context, arg InsertAgentCer
 }
 
 const listHostAgents = `-- name: ListHostAgents :many
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -270,6 +273,9 @@ func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHo
 			&i.HostAgent.SecretNames,
 			&i.HostAgent.SecretsState,
 			&i.HostAgent.ConnectedSince,
+			&i.HostAgent.ConfigVersion,
+			&i.HostAgent.ConfigExpected,
+			&i.HostAgent.ConfigCheckedAt,
 			&i.CertNotAfter,
 			&i.HostName,
 		); err != nil {
@@ -357,7 +363,7 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 }
 
 const lockHostAgentsByName = `-- name: LockHostAgentsByName :many
-SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since FROM host_agents
+SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at FROM host_agents
 WHERE org_id = $1 AND agent_name = $2
 FOR UPDATE
 `
@@ -393,6 +399,9 @@ func (q *Queries) LockHostAgentsByName(ctx context.Context, arg LockHostAgentsBy
 			&i.SecretNames,
 			&i.SecretsState,
 			&i.ConnectedSince,
+			&i.ConfigVersion,
+			&i.ConfigExpected,
+			&i.ConfigCheckedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -429,7 +438,7 @@ func (q *Queries) LockLiveAgentCertificate(ctx context.Context, arg LockLiveAgen
 }
 
 const lookupAgentSerial = `-- name: LookupAgentSerial :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
 FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = $1
@@ -457,6 +466,9 @@ func (q *Queries) LookupAgentSerial(ctx context.Context, serial string) (LookupA
 		&i.HostAgent.SecretNames,
 		&i.HostAgent.SecretsState,
 		&i.HostAgent.ConnectedSince,
+		&i.HostAgent.ConfigVersion,
+		&i.HostAgent.ConfigExpected,
+		&i.HostAgent.ConfigCheckedAt,
 		&i.CertSerialPresented,
 		&i.CertRevokedAt,
 	)
@@ -491,6 +503,41 @@ func (q *Queries) NewestAgentCertificate(ctx context.Context, arg NewestAgentCer
 	var i NewestAgentCertificateRow
 	err := row.Scan(&i.Started, &i.PublicKeySha256)
 	return i, err
+}
+
+const recordAgentConfigCheck = `-- name: RecordAgentConfigCheck :exec
+UPDATE host_agents SET config_version = $1::text,
+  config_expected = $2::text, config_checked_at = now()
+WHERE cert_serial = $3
+  AND (config_version IS DISTINCT FROM $1::text
+    OR config_expected IS DISTINCT FROM $2::text
+    OR config_checked_at IS NULL
+    OR config_checked_at < now() - make_interval(secs => $4::double precision))
+`
+
+type RecordAgentConfigCheckParams struct {
+	ConfigVersion       string  `json:"config_version"`
+	ConfigExpected      string  `json:"config_expected"`
+	Serial              string  `json:"serial"`
+	RewriteAfterSeconds float64 `json:"rewrite_after_seconds"`
+}
+
+// One configuration comparison of the heartbeat path (org-unscoped, by
+// serial like RecordAgentHeartbeat; backlog 3.13c, migration 00089): the
+// version the agent reported, the one the manager resolved, and when. The
+// row is only written when something changed — either version — or the
+// stored check is older than rewrite_after_seconds (agents'
+// configCheckRewrite), so an agent that stays in step adds no row write
+// per heartbeat while the check's age still tells the GUI it is recent.
+// IS DISTINCT FROM treats the NULLs of a never-compared row as different.
+func (q *Queries) RecordAgentConfigCheck(ctx context.Context, arg RecordAgentConfigCheckParams) error {
+	_, err := q.db.Exec(ctx, recordAgentConfigCheck,
+		arg.ConfigVersion,
+		arg.ConfigExpected,
+		arg.Serial,
+		arg.RewriteAfterSeconds,
+	)
+	return err
 }
 
 const recordAgentHeartbeat = `-- name: RecordAgentHeartbeat :exec
@@ -618,8 +665,9 @@ VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (host_id) DO UPDATE
 SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     version = EXCLUDED.version, last_seen = NULL, connected_since = NULL, created_at = now(),
-    secret_names = NULL, secrets_state = NULL
-RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since
+    secret_names = NULL, secrets_state = NULL,
+    config_version = NULL, config_expected = NULL, config_checked_at = NULL
+RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at
 `
 
 type UpsertHostAgentParams struct {
@@ -634,8 +682,9 @@ type UpsertHostAgentParams struct {
 // (ON CONFLICT on the host primary key), so exactly one agent row exists
 // per host at any time. agent_certificates carries the previous serials —
 // the service marks the old one revoked in the same transaction. Like
-// last_seen, the secrets report (00086) and the connection start (00088)
-// start over: the new registration has neither reported nor connected yet.
+// last_seen, the secrets report (00086), the connection start (00088) and
+// the configuration check (00089) start over: the new registration has
+// neither reported, connected nor been compared yet.
 func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams) (HostAgent, error) {
 	row := q.db.QueryRow(ctx, upsertHostAgent,
 		arg.HostID,
@@ -656,6 +705,9 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		&i.SecretNames,
 		&i.SecretsState,
 		&i.ConnectedSince,
+		&i.ConfigVersion,
+		&i.ConfigExpected,
+		&i.ConfigCheckedAt,
 	)
 	return i, err
 }

@@ -66,6 +66,26 @@ describe('AgentsPage', () => {
     expect(screen.getByText('v1.1.0')).toBeInTheDocument();
   });
 
+  it("badges each agent's configuration check next to its version, and nothing while it is unknown", async () => {
+    const v1 = 'aaaaaaaa11111111', v2 = 'bbbbbbbb22222222';
+    mockApi({
+      'GET /api/v1/orgs/acme': org('viewer'),
+      'GET /api/v1/orgs/acme/agents': {
+        agents: [
+          agent({ host_id: 'h1', host_name: 'web-current', config_version: v1, config_expected: v1, config_checked_at: new Date().toISOString() }),
+          agent({ host_id: 'h2', host_name: 'web-outdated', config_version: v1, config_expected: v2, config_checked_at: new Date().toISOString() }),
+          agent({ host_id: 'h3', host_name: 'web-unknown' }),
+        ],
+      },
+    });
+    renderPage();
+    expect(await screen.findByRole('link', { name: 'web-current' })).toBeInTheDocument();
+    expect(screen.getAllByText('Config current')).toHaveLength(1);
+    expect(screen.getAllByText('Config outdated')).toHaveLength(1);
+    expect(within(screen.getByRole('link', { name: 'web-outdated' })).getByTitle('Agent runs aaaaaaaa · manager expects bbbbbbbb')).toBeInTheDocument();
+    expect(within(screen.getByRole('link', { name: 'web-unknown' })).queryByText(/^Config /)).toBeNull();
+  });
+
   it('lists agents with their host, status, version and certificate expiry', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': org('operator'),

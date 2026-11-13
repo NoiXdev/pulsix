@@ -52,6 +52,14 @@ type agentDTO struct {
 	// which is not the same as an empty list ("no secrets").
 	SecretNames  []string `json:"secret_names" nullable:"true" doc:"The names of the secrets the agent loaded from its agent.yaml, sorted; null when unknown (an agent too old to report them, or no heartbeat yet)"`
 	SecretsState *string  `json:"secrets_state" nullable:"true" doc:"The state of the agent's agent.yaml: absent, ok, or the error that made the agent drop every secret; null when unknown"`
+	// ConfigVersion, ConfigExpected and ConfigCheckedAt are the manager's
+	// latest comparison of the check configuration the agent runs against
+	// the one it resolved for the host (backlog 3.13c). All three are
+	// omitted until a comparison ran; the empty string is a real report
+	// (an agent that has applied no configuration yet).
+	ConfigVersion   *string    `json:"config_version,omitempty" doc:"The check configuration version the agent reported at the last comparison; empty when it had applied none yet. Omitted until the manager has compared"`
+	ConfigExpected  *string    `json:"config_expected,omitempty" doc:"The check configuration version the manager resolved for the host at the last comparison. Omitted until the manager has compared"`
+	ConfigCheckedAt *time.Time `json:"config_checked_at,omitempty" doc:"When the stored comparison was written: at once when either version changes, otherwise again once it is 10 minutes old. Omitted until the manager has compared"`
 }
 
 type agentTokenDTO struct {
@@ -130,6 +138,10 @@ func toAgentDTO(v agents.View, managerVersion string) agentDTO {
 	}
 	if v.Online {
 		dto.Status = "online"
+	}
+	if c := v.Config; c.Known {
+		reported, expected, at := c.Reported, c.Expected, c.CheckedAt
+		dto.ConfigVersion, dto.ConfigExpected, dto.ConfigCheckedAt = &reported, &expected, &at
 	}
 	if v.Secrets.Known {
 		state := v.Secrets.State

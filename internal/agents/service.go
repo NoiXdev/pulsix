@@ -82,6 +82,10 @@ type Agent struct {
 	// Secrets is the agent's latest report on its local secrets file,
 	// written by Heartbeat; reads fill it, Register ignores it.
 	Secrets SecretsReport
+	// Config is the latest configuration comparison, written by
+	// RecordConfigCheck; reads fill it, Register ignores it (and resets
+	// the stored one).
+	Config ConfigCheck
 }
 
 // Registration is one enrollment's or renewal's identity as the registry
@@ -237,6 +241,12 @@ type Store interface {
 	// the secrets report in one statement, org-unscoped. A report that is
 	// not Known stores "unknown" (NULL), replacing any earlier one.
 	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport) error
+	// RecordConfigCheck stores one configuration comparison by serial,
+	// org-unscoped: the row changes only when reported or expected differ
+	// from the stored ones or the stored check is older than
+	// configCheckRewrite. An unknown serial writes nothing and is no
+	// error.
+	RecordConfigCheck(ctx context.Context, serial, reported, expected string) error
 	List(ctx context.Context, orgID uuid.UUID) ([]Agent, error)
 	// GetByHost is one host's active agent, org-scoped; ErrNotFound when
 	// the host runs none (never enrolled, or revoked).

@@ -75,6 +75,40 @@ describe('HostAgentCard', () => {
     expect(screen.queryByText('Newer than manager')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['aaaaaaaa1111', 'Config current', 'Agent runs aaaaaaaa · manager expects aaaaaaaa'],
+    ['bbbbbbbb2222', 'Config outdated', 'Agent runs aaaaaaaa · manager expects bbbbbbbb'],
+  ])('badges the configuration check against %s', async (expected, label, detail) => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/agent': {
+        agent: {
+          host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online', last_seen: new Date().toISOString(),
+          version: 'v1.1.0', cert_expires_at: inDays(60), created_at: '',
+          config_version: 'aaaaaaaa1111', config_expected: expected, config_checked_at: new Date().toISOString(),
+        },
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.getByTitle(detail)).toBeInTheDocument();
+  });
+
+  it('shows no configuration badge before the manager has compared', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/agent': {
+        agent: {
+          host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online', last_seen: new Date().toISOString(),
+          version: 'v1.1.0', cert_expires_at: inDays(60), created_at: '',
+        },
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByText('v1.1.0')).toBeInTheDocument();
+    expect(screen.queryByText(/^Config /)).toBeNull();
+  });
+
   it('highlights a certificate that is about to expire', async () => {
     mockApi({
       'GET /api/v1/orgs/acme/hosts/h1/agent': {

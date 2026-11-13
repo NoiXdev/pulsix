@@ -65,11 +65,13 @@ func secretsReportOf(names []string, state string) SecretsReport {
 	if len(kept) > MaxSecretNames {
 		kept = kept[:MaxSecretNames:MaxSecretNames]
 	}
-	return SecretsReport{Known: true, Names: kept, State: boundState(state)}
+	return SecretsReport{Known: true, Names: kept, State: boundLine(state, MaxSecretsStateBytes)}
 }
 
-// boundState is secretsReportOf's state rule.
-func boundState(s string) string {
+// boundLine is secretsReportOf's state rule, and RecordConfigCheck's for
+// the versions: valid UTF-8, control characters as spaces, at most maxBytes
+// cut on a rune boundary.
+func boundLine(s string, maxBytes int) string {
 	s = strings.ToValidUTF8(s, "�")
 	s = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -77,10 +79,10 @@ func boundState(s string) string {
 		}
 		return r
 	}, s)
-	if len(s) <= MaxSecretsStateBytes {
+	if len(s) <= maxBytes {
 		return s
 	}
-	cut := MaxSecretsStateBytes
+	cut := maxBytes
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}

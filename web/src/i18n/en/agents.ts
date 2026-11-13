@@ -21,6 +21,14 @@ export const enAgents = {
     online: 'online',
     offline: 'offline',
   },
+  /** The latest comparison of the check configuration the agent runs
+   * against the one the manager resolved for its host. */
+  config: {
+    current: 'Config current',
+    outdated: 'Config outdated',
+    detail: (running: string, expected: string) => `Agent runs ${running} · manager expects ${expected}`,
+    none: 'none',
+  },
   boundToHost: 'to a host',
   boundNewHost: 'new host',
   empty: 'No agents enrolled yet.',

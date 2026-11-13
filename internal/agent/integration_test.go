@@ -217,6 +217,12 @@ func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string,
 	return f.Touch(ctx, serial, version)
 }
 
+// RecordConfigCheck stores nothing: this harness reads the configuration
+// the agent applied from the agent itself.
+func (f *integAgentStore) RecordConfigCheck(context.Context, string, string, string) error {
+	return nil
+}
+
 func (f *integAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }
 
 // GetByHost belongs to the API's host card, which this harness does not

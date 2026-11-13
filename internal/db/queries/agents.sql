@@ -62,14 +62,16 @@ ORDER BY h.agent_name;
 -- (ON CONFLICT on the host primary key), so exactly one agent row exists
 -- per host at any time. agent_certificates carries the previous serials —
 -- the service marks the old one revoked in the same transaction. Like
--- last_seen, the secrets report (00086) and the connection start (00088)
--- start over: the new registration has neither reported nor connected yet.
+-- last_seen, the secrets report (00086), the connection start (00088) and
+-- the configuration check (00089) start over: the new registration has
+-- neither reported, connected nor been compared yet.
 INSERT INTO host_agents (host_id, org_id, agent_name, cert_serial, version)
 VALUES (sqlc.arg(host_id), sqlc.arg(org_id), sqlc.arg(agent_name), sqlc.arg(cert_serial), sqlc.arg(version))
 ON CONFLICT (host_id) DO UPDATE
 SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     version = EXCLUDED.version, last_seen = NULL, connected_since = NULL, created_at = now(),
-    secret_names = NULL, secrets_state = NULL
+    secret_names = NULL, secrets_state = NULL,
+    config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING *;
 
 -- name: TouchAgentBySerial :exec
@@ -107,6 +109,23 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
       OR last_seen < now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
     THEN now() ELSE connected_since END
 WHERE cert_serial = sqlc.arg(serial);
+
+-- name: RecordAgentConfigCheck :exec
+-- One configuration comparison of the heartbeat path (org-unscoped, by
+-- serial like RecordAgentHeartbeat; backlog 3.13c, migration 00089): the
+-- version the agent reported, the one the manager resolved, and when. The
+-- row is only written when something changed — either version — or the
+-- stored check is older than rewrite_after_seconds (agents'
+-- configCheckRewrite), so an agent that stays in step adds no row write
+-- per heartbeat while the check's age still tells the GUI it is recent.
+-- IS DISTINCT FROM treats the NULLs of a never-compared row as different.
+UPDATE host_agents SET config_version = sqlc.arg(config_version)::text,
+  config_expected = sqlc.arg(config_expected)::text, config_checked_at = now()
+WHERE cert_serial = sqlc.arg(serial)
+  AND (config_version IS DISTINCT FROM sqlc.arg(config_version)::text
+    OR config_expected IS DISTINCT FROM sqlc.arg(config_expected)::text
+    OR config_checked_at IS NULL
+    OR config_checked_at < now() - make_interval(secs => sqlc.arg(rewrite_after_seconds)::double precision));
 
 -- name: DeleteHostAgent :execrows
 DELETE FROM host_agents WHERE org_id = sqlc.arg(org_id) AND host_id = sqlc.arg(host_id);

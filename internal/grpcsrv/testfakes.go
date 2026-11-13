@@ -393,6 +393,10 @@ func (f *fakeAgentStore) Heartbeat(context.Context, string, string, agents.Secre
 	return nil
 }
 
+func (f *fakeAgentStore) RecordConfigCheck(context.Context, string, string, string) error {
+	return nil
+}
+
 func (f *fakeAgentStore) List(context.Context, uuid.UUID) ([]agents.Agent, error) { return nil, nil }
 
 // GetByHost serves the API's host card, which this package never calls:

@@ -331,6 +331,19 @@ func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets
 	return nil
 }
 
+// RecordConfigCheck stores the check on the agent row unconditionally;
+// the write-only-on-change rule is the SQL store's (store_config_test.go).
+func (f *fakeStore) RecordConfigCheck(_ context.Context, serial, reported, expected string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.agentsR {
+		if f.agentsR[i].CertSerial == serial {
+			f.agentsR[i].Config = agents.ConfigCheck{Known: true, Reported: reported, Expected: expected, CheckedAt: time.Now()}
+		}
+	}
+	return nil
+}
+
 func (f *fakeStore) List(_ context.Context, orgID uuid.UUID) ([]agents.Agent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

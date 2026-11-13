@@ -6,6 +6,7 @@ import { useToast } from '../../ui/toastContext.ts';
 import { useHostAgent, useRevokeAgent } from '../../api/hooks/useAgents.ts';
 import { EXPIRY_WARN_DAYS, daysLeft, expiryLabel, seenLabel } from '../workers/expiry.ts';
 import { VersionSkewBadge } from '../workers/VersionSkewBadge.tsx';
+import { ConfigVersionBadge } from '../agents/ConfigVersionBadge.tsx';
 import { AddAgentDialog } from '../agents/AddAgentDialog.tsx';
 import { useT } from '../../i18n/useT.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
@@ -71,6 +72,7 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
             <span className="flex min-w-0 items-center gap-2">
               <span className="font-mono">{agent.version || '—'}</span>
               <VersionSkewBadge status={agent.version_status} />
+              <ConfigVersionBadge reported={agent.config_version} expected={agent.config_expected} />
             </span>
           </div>
           <div className="flex justify-between gap-2">

@@ -196,7 +196,11 @@ func (s *Service) noteVersion(ctx context.Context, agent agents.AgentIdentity, v
 // the only thing that ends the exchange, which is exactly what makes an
 // unrecognised or stale version self-correcting in one round trip rather
 // than a loop: whatever the manager sends becomes, by construction, what
-// ResolveHost computes, so the very next heartbeat already agrees.
+// ResolveHost computes, so the very next heartbeat already agrees. Each
+// comparison is also stored for the GUI (recordConfigCheck). The agent's
+// configuration re-assert (PULSIX_CONFIG_INTERVAL) is an ordinary
+// heartbeat, so it reaches this same comparison and is recorded the same
+// way.
 func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdentity, hb *agentpb.Heartbeat) (*agentpb.CheckConfig, error) {
 	if err := s.deps.Agents.Heartbeat(ctx, agent.Serial, hb.GetVersion(), hb.GetSecretNames(), hb.GetSecretsState()); err != nil {
 		return nil, err
@@ -236,6 +240,7 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 			"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID, "err", err)
 		return nil, nil
 	}
+	s.recordConfigCheck(ctx, agent, hb.GetConfigVersion(), resolved.Version)
 	if resolved.Version == hb.GetConfigVersion() {
 		return nil, nil
 	}
@@ -244,6 +249,27 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 		return nil, fmt.Errorf("encode check configuration: %w", err)
 	}
 	return cfg, nil
+}
+
+// recordConfigCheck stores the comparison processHeartbeat just made —
+// reported against expected — for the Agents page and the host's agent
+// card (backlog 3.13c). Only a comparison that ran is stored: a heartbeat
+// inside the resolve throttle or with a failed resolve compared nothing,
+// and the stored check keeps what the last real one found. The store
+// writes the row only when something changed or the stored check has aged
+// (agents' configCheckRewrite), so a steady agent adds no write per
+// heartbeat. A failed write is logged and dropped, never fatal to the
+// stream: the check is display data, and the next comparison writes it
+// again — the same posture as the failed resolve above.
+func (s *Service) recordConfigCheck(ctx context.Context, agent agents.AgentIdentity, reported, expected string) {
+	if err := s.deps.Agents.RecordConfigCheck(ctx, agent.Serial, reported, expected); err != nil {
+		log := s.deps.Log
+		if log == nil {
+			log = slog.Default()
+		}
+		log.WarnContext(ctx, "record agent configuration check; the next heartbeat writes it again",
+			"serial", agent.Serial, "org_id", agent.OrgID, "host_id", agent.HostID, "err", err)
+	}
 }
 
 // errCheckResultsRejected marks a RecordObservations failure that is this

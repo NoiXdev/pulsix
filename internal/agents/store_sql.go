@@ -258,6 +258,24 @@ func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secret
 	return nil
 }
 
+// configCheckRewrite is how old a stored configuration check may grow
+// before an unchanged comparison writes it again (backlog 3.13c): long
+// enough that a steady agent's heartbeats add no row write each, short
+// enough that config_checked_at still says the check is recent.
+const configCheckRewrite = 10 * time.Minute
+
+// RecordConfigCheck writes one comparison; the query itself decides
+// whether the row changes (RecordAgentConfigCheck, agents.sql).
+func (s *SQLStore) RecordConfigCheck(ctx context.Context, serial, reported, expected string) error {
+	if err := s.q.RecordAgentConfigCheck(ctx, gen.RecordAgentConfigCheckParams{
+		Serial: serial, ConfigVersion: reported, ConfigExpected: expected,
+		RewriteAfterSeconds: configCheckRewrite.Seconds(),
+	}); err != nil {
+		return fmt.Errorf("record agent config check: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 	rows, err := s.q.ListHostAgents(ctx, orgID)
 	if err != nil {
@@ -283,7 +301,18 @@ func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) 
 		a.CertNotAfter = &t
 	}
 	a.Secrets = secretsFromRow(h.SecretNames, h.SecretsState)
+	a.Config = configFromRow(h.ConfigVersion, h.ConfigExpected, h.ConfigCheckedAt)
 	return a
+}
+
+// configFromRow reads the three check columns: the time decides whether a
+// comparison was stored at all (RecordConfigCheck writes all three, a
+// re-enrollment resets all three).
+func configFromRow(reported, expected *string, checkedAt pgtype.Timestamptz) ConfigCheck {
+	if !checkedAt.Valid {
+		return ConfigCheck{}
+	}
+	return ConfigCheck{Known: true, Reported: derefText(reported), Expected: derefText(expected), CheckedAt: checkedAt.Time}
 }
 
 // secretsFromRow reads the two report columns: the state decides whether
