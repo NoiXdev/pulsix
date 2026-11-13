@@ -3,6 +3,7 @@ package webcheck_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,5 +133,34 @@ func TestRoundOwnDeadlineIsATimeout(t *testing.T) {
 	}
 	if d := time.Since(start); d > 6*time.Second {
 		t.Fatalf("took %v", d)
+	}
+}
+
+// A panic while fetching or parsing a page happens on a goroutine of
+// Round's own; it is surfaced on the caller's goroutine, after every page
+// is done, as a fixed value that carries nothing of the page, so the
+// scheduler's recovery of a SecretPlugin (checks.collectSecret) catches it.
+func TestRoundPanicSurfacesOnTheCallersGoroutine(t *testing.T) {
+	boom := webchecktest.NewServer(t, "boom "+webchecktest.PlantPass)
+	slow := webchecktest.NewServer(t, "slow")
+	var slowDone atomic.Bool
+	parse := func(body []byte) (string, error) {
+		if strings.HasPrefix(string(body), "boom") {
+			panic("page said " + string(body))
+		}
+		time.Sleep(200 * time.Millisecond)
+		slowDone.Store(true)
+		return string(body), nil
+	}
+	var got any
+	func() {
+		defer func() { got = recover() }()
+		_, _ = webcheck.Round(t.Context(), []string{boom.URL, slow.URL}, 0, nil, nil, parse)
+	}()
+	if got == nil || fmt.Sprint(got) != "webcheck: page handler panicked" {
+		t.Fatalf("recovered %v, want the fixed panic value", got)
+	}
+	if !slowDone.Load() {
+		t.Fatal("Round panicked before every page was done")
 	}
 }

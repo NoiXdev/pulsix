@@ -113,6 +113,10 @@ func poolURLs(params map[string]any) ([]string, error) {
 	seen := make(map[string]bool, len(list))
 	var out []string
 	for _, e := range list {
+		// A list whose every entry is left out here yields no pool, not
+		// the default: the operator named pools, none of them usable, so
+		// the round reports pools_down 0 and nothing else. The manager's
+		// validation keeps this from happening.
 		if e == "" || seen[e] || !checks.ReportableItem(e) {
 			continue
 		}

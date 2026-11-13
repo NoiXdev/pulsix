@@ -39,7 +39,10 @@ New format **`statusURL`** (Go and TypeScript, vectors in
 URL with a host, no user info, no fragment, no `{address}` placeholder (the
 agent fetches it as written; it is not a server-side probe). Absent
 parameters mean the defaults; an empty `urls` list means the one default
-URL.
+URL. (Noted during implementation: a list parameter cannot carry a
+`Default` — the API types a default as a string, a number or a boolean —
+so phpfpm's descriptor gives the default URL as the `urls` Example, and the
+GUI hint states it.)
 
 ### Secret fields (optional secret)
 
@@ -73,7 +76,9 @@ field parsing, error classification and rates):
 - Each request at most 5 s (`dbcheck.QueryTimeout`), one round at most
   10 s (`dbcheck.CollectTimeout`); phpfpm fetches its URLs concurrently
   under the round's deadline.
-- The body is read up to 4 MiB; a larger one reads "response too large".
+- The body is read up to 4 MiB; a larger one reads "response too large"
+  (changed during implementation: phpfpm reads at most 1 MiB per pool, so
+  16 pools stay within 16 MiB; a `full` page of about 2,500 processes fits).
 - Status 200 is required. 401 reads "authentication failed (HTTP 401)",
   403 "permission denied (HTTP 403)", any other "HTTP status <code>".
 - A body that is not the expected format reads "unexpected response

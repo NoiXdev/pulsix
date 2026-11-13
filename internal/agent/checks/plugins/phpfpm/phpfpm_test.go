@@ -285,6 +285,22 @@ func TestPoolURLsKeepTheItemContract(t *testing.T) {
 	if err != nil || !slices.Equal(got, []string{"http://a/ok"}) {
 		t.Fatalf("poolURLs = %q, %v", got, err)
 	}
+	// A list whose every entry is left out asks for no pool: nothing is
+	// fetched and only pools_down 0 is reported (not the default pool).
+	if got, err := poolURLs(map[string]any{"urls": []any{"", "http://a/\n"}}); err != nil || len(got) != 0 {
+		t.Fatalf("poolURLs(all left out) = %q, %v", got, err)
+	}
+	p, _ := newTestPlugin()
+	obs := collect(t, p, map[string]any{"urls": []any{"http://a/\n"}})
+	if len(obs) != 1 {
+		t.Fatalf("all entries left out: %+v", obs)
+	}
+	mustValueAt(t, obs, "", "phpfpm.pools_down", 0)
+	// The agent's bound is the descriptor's (internal/checkplugins
+	// TestPHPFPMDescriptor pins that one).
+	if maxPools != 16 {
+		t.Fatalf("maxPools = %d, want 16", maxPools)
+	}
 	many := make([]any, 40)
 	for i := range many {
 		many[i] = fmt.Sprintf("http://h/%d", i)
