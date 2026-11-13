@@ -519,7 +519,7 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 			body map[string]any
 			want int
 		}{
-			"unknown plugin":    {map[string]any{"plugin": "nginx", "interval_seconds": 60, "binding_kind": "org"}, http.StatusBadRequest},
+			"unknown plugin":    {map[string]any{"plugin": "snmp", "interval_seconds": 60, "binding_kind": "org"}, http.StatusBadRequest},
 			"interval too low":  {map[string]any{"plugin": "cpu", "key": "cpu-low", "interval_seconds": 1, "binding_kind": "org"}, http.StatusBadRequest},
 			"unknown parameter": {map[string]any{"plugin": "cpu", "key": "cpu-x", "interval_seconds": 60, "binding_kind": "org", "params": map[string]any{"nope": 1}}, http.StatusBadRequest},
 			"service needs units": {map[string]any{
