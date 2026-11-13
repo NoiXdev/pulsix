@@ -313,6 +313,9 @@ function Stop-AgentService([string]$Unchanged) {
 			$problem = "the $ServiceName process ($processId) did not exit within 30 seconds of the stop; $Unchanged. End it (Stop-Process -Id $processId) and try again"
 		}
 	}
+	if ($null -ne $process) {
+		$process.Dispose()
+	}
 	if ($null -ne $problem) {
 		try {
 			Set-AgentRecovery
@@ -391,12 +394,16 @@ function Assert-RemovableBinDir {
 # anything changes, and a service that does not stop ends the uninstall
 # before anything is removed. Every step tolerates its target being
 # absent, and a service an earlier run left marked for deletion is left to
-# go on its own. The data directory is removed with .NET's
-# Directory.Delete, which deletes a junction or symlink it meets as the
-# link and never enters it; the check before makes sure there is none.
+# go on its own. The data directory is removed only when it was there,
+# and passed its check, before anything changed: one that appears during
+# the uninstall (any user may create it under ProgramData) is someone
+# else's and stays. It is removed with .NET's Directory.Delete, which
+# deletes a junction or symlink it meets as the link and never enters it;
+# the check before makes sure there is none.
 function Uninstall-Agent {
 	Assert-RemovableBinDir
-	if ((-not $KeepData) -and (Test-Path -LiteralPath $DataDir)) {
+	$removeData = (-not $KeepData) -and (Test-Path -LiteralPath $DataDir)
+	if ($removeData) {
 		Assert-RemovableDataDir $DataDir
 	}
 	$removed = $false
@@ -426,10 +433,12 @@ function Uninstall-Agent {
 		if (Test-Path -LiteralPath $DataDir) {
 			Write-Host "pulsix-agent: kept $DataDir (-KeepData)"
 		}
-	} elseif (Test-Path -LiteralPath $DataDir) {
+	} elseif ($removeData -and (Test-Path -LiteralPath $DataDir)) {
 		[IO.Directory]::Delete($DataDir, $true)
 		Write-Host "pulsix-agent: removed $DataDir"
 		$removed = $true
+	} elseif (Test-Path -LiteralPath $DataDir) {
+		Write-Warning "pulsix-agent: $DataDir appeared during the uninstall and was left alone; check it and remove it by hand"
 	}
 	if (-not $removed) {
 		Write-Host 'pulsix-agent: nothing to remove'

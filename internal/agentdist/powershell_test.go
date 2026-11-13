@@ -267,6 +267,8 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		// Only when WaitForExit itself fails.
 		"} catch {\n\t\t\t$exited = Wait-ProcessExit $processId 30",
 		"if (-not $exited) {",
+		// The handle is let go once the wait is over.
+		"$process.Dispose()",
 		"Set-AgentRecovery",
 		"Stop-Install",
 	)
@@ -303,7 +305,10 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 	uninstall := psFunction(t, script, "Uninstall-Agent")
 	assertInOrder(t, "Uninstall-Agent", uninstall,
 		"Assert-RemovableBinDir",
-		"Assert-RemovableDataDir $DataDir",
+		// Whether the data directory is removed is decided, and checked,
+		// before anything changes: one that appears later is never removed.
+		"$removeData = (-not $KeepData) -and (Test-Path -LiteralPath $DataDir)",
+		"if ($removeData) {\n\t\tAssert-RemovableDataDir $DataDir\n\t}",
 		// A service marked for deletion: refused while it runs, else left
 		// to go on its own, without sc.exe (error 1072).
 		"if (($null -ne $service) -and (Test-AgentServiceMarkedForDeletion)) {",
@@ -316,10 +321,14 @@ func TestInstallPs1UpgradeAndUninstallOrder(t *testing.T) {
 		"Remove-Item -LiteralPath $BinPath -Force",
 		"Remove-Item -LiteralPath $BinDir -Force",
 		"if ($KeepData) {",
-		"[IO.Directory]::Delete($DataDir, $true)",
+		"} elseif ($removeData -and (Test-Path -LiteralPath $DataDir)) {\n\t\t[IO.Directory]::Delete($DataDir, $true)",
+		"} elseif (Test-Path -LiteralPath $DataDir) {\n\t\tWrite-Warning",
 		"pulsix-agent: nothing to remove",
 		"pulsix-agent: the agent is still registered in Pulsix; revoke or delete it on the Agents page",
 	)
+	if strings.Count(uninstall, "Assert-RemovableDataDir") != 1 || strings.Count(uninstall, "Directory]::Delete(") != 1 {
+		t.Error("Uninstall-Agent must check the data directory once and remove it once, both under $removeData")
+	}
 	for _, bad := range []string{"finally", "Set-AgentRecovery"} {
 		if strings.Contains(uninstall, bad) {
 			t.Errorf("Uninstall-Agent must not contain %q: it would set recovery actions on a deleted service", bad)
