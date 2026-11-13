@@ -147,7 +147,10 @@ Darwin)
 *) die "unsupported system $SYSTEM (Linux, macOS and Windows have agents; on Windows use install.ps1)" ;;
 esac
 
-[ "$(id -u)" = "0" ] || die "must run as root (e.g. curl ... | sudo sh -s -- --manager ...)"
+if [ "$(id -u)" != "0" ]; then
+	[ -z "$PULSIX_UNINSTALL" ] || die "must run as root (e.g. curl ... | sudo sh -s -- --uninstall)"
+	die "must run as root (e.g. curl ... | sudo sh -s -- --manager ...)"
+fi
 
 # wait_for_launchd_job_gone: bootout can return before the job is gone (the
 # agent is still handling SIGTERM), and bootstrapping a label that is still
@@ -190,10 +193,15 @@ remove_data_dir() {
 
 # uninstall_linux: stop and disable the unit where systemd runs (a unit
 # that is not loaded is not an error), then remove the unit, the binary
-# and the data directory. Logs are in the journal; nothing to remove.
+# and the data directory. A unit still active afterwards stops the
+# uninstall before anything is removed, so a running agent never loses its
+# binary. Logs are in the journal; nothing to remove.
 uninstall_linux() {
 	if [ -d /run/systemd/system ] && [ -f "$UNIT_PATH" ]; then
 		systemctl disable --now "$SERVICE_NAME" 2> /dev/null || true
+		if systemctl is-active --quiet "$SERVICE_NAME"; then
+			die "could not stop $SERVICE_NAME; nothing was removed. Run 'systemctl stop $SERVICE_NAME' and retry"
+		fi
 		echo "pulsix-agent: stopped and disabled $SERVICE_NAME"
 	fi
 	remove_path "$UNIT_PATH"

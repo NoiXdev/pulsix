@@ -149,19 +149,92 @@ func TestInstallScriptUninstallShape(t *testing.T) {
 			t.Errorf("the uninstall must run before %q", later)
 		}
 	}
-	if root := strings.Index(out, `[ "$(id -u)" = "0" ]`); root < 0 || root > dispatch {
+	if root := strings.Index(out, `if [ "$(id -u)" != "0" ]; then`); root < 0 || root > dispatch {
 		t.Error("the uninstall must run after the root check")
+	}
+	// The root message fits the mode; the install's stays as it was.
+	for _, want := range []string{
+		`die "must run as root (e.g. curl ... | sudo sh -s -- --uninstall)"`,
+		`die "must run as root (e.g. curl ... | sudo sh -s -- --manager ...)"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the root check must carry %q", want)
+		}
 	}
 	// Linux systemctl steps only where systemd runs.
 	if !strings.Contains(out, "[ -d /run/systemd/system ] && [ -f \"$UNIT_PATH\" ]") {
 		t.Error("the uninstall must stop the unit only where systemd runs and the unit exists")
 	}
-	// A symlinked data directory is removed as a link, never followed:
-	// no rm -rf on a path with a trailing slash.
+	// A unit that is still active after disable --now stops the uninstall
+	// before anything is removed, and is never reported as stopped.
+	assertInOrder(t, "uninstall_linux", shellFunction(t, out, "uninstall_linux"),
+		`systemctl disable --now "$SERVICE_NAME"`,
+		`if systemctl is-active --quiet "$SERVICE_NAME"; then`,
+		`die "could not stop $SERVICE_NAME`,
+		`echo "pulsix-agent: stopped and disabled $SERVICE_NAME"`,
+		`remove_path "$UNIT_PATH"`,
+	)
+	// The macOS uninstall waits for the job to go, like the upgrade.
+	assertInOrder(t, "uninstall_darwin", shellFunction(t, out, "uninstall_darwin"),
+		`launchctl bootout "system/$LAUNCHD_LABEL"`,
+		"wait_for_launchd_job_gone",
+		`remove_path "$PLIST_PATH"`,
+	)
+	// remove_path refuses an empty or relative path before rm -rf sees it.
+	assertInOrder(t, "remove_path", shellFunction(t, out, "remove_path"),
+		"/?*) ;;",
+		`*) die "refusing to remove '$1'" ;;`,
+		`rm -rf -- "$1"`,
+	)
+	// A symlinked data directory is removed as a link, never followed: the
+	// only rm -rf calls are remove_path's (fixed paths, no trailing slash)
+	// and the download directory's cleanup.
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "rm -rf") && strings.Contains(line, `/"`) {
-			t.Errorf("rm -rf with a trailing slash follows a symlink: %q", strings.TrimSpace(line))
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, "rm -rf") || strings.HasPrefix(line, "#") {
+			continue
 		}
+		if line != `rm -rf -- "$1"` && line != `trap 'rm -rf "$TMP"' EXIT` {
+			t.Errorf("unexpected rm -rf (only remove_path and the $TMP trap may use it): %q", line)
+		}
+	}
+	for _, path := range []string{"$DATA_DIR", "$LOG_DIR", "$UNIT_PATH", "$PLIST_PATH", "$BIN_DIR/pulsix-agent"} {
+		for _, bad := range []string{`remove_path "` + path + `/"`, `remove_path "` + path + `"/`} {
+			if strings.Contains(out, bad) {
+				t.Errorf("a trailing slash follows a symlink: %q", bad)
+			}
+		}
+	}
+}
+
+// shellFunction returns the body of the shell function name: from its
+// "name() {" line up to the next line that is a lone "}".
+func shellFunction(t *testing.T, script, name string) string {
+	t.Helper()
+	start := strings.Index(script, "\n"+name+"() {\n")
+	if start < 0 {
+		t.Fatalf("the installer must define %s()", name)
+	}
+	body := script[start+1:]
+	end := strings.Index(body, "\n}\n")
+	if end < 0 {
+		t.Fatalf("%s() has no closing brace", name)
+	}
+	return body[:end]
+}
+
+// assertInOrder fails unless every want occurs in text, each after the one before.
+func assertInOrder(t *testing.T, what, text string, wants ...string) {
+	t.Helper()
+	at, prev := 0, "its start"
+	for _, want := range wants {
+		i := strings.Index(text[at:], want)
+		if i < 0 {
+			t.Errorf("%s must contain %q after %q", what, want, prev)
+			return
+		}
+		at += i + len(want)
+		prev = want
 	}
 }
 
