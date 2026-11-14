@@ -7,7 +7,7 @@ import (
 	"time"
 
 	gosql "github.com/go-sql-driver/mysql"
-	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
+	"github.com/noixdev/pulsix/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )

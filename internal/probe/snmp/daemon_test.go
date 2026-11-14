@@ -4,14 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"net"
-	"os"
-	"os/exec"
+	"io"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/testcontainers/testcontainers-go"
+
+	"github.com/noixdev/pulsix/internal/containertest"
 	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probe/probetest"
 	"github.com/noixdev/pulsix/internal/probe/snmp"
@@ -35,65 +35,43 @@ rouser pulsixaes priv
 rouser pulsixauth auth
 `
 
-// requireLinuxDocker skips the test unless a Docker daemon that runs Linux
-// containers answers; with PULSIX_TEST_REQUIRE_DOCKER=1 it fails instead,
-// so a CI job that must run it cannot pass by skipping.
-func requireLinuxDocker(t *testing.T) {
-	t.Helper()
-	skip := t.Skipf
-	if os.Getenv("PULSIX_TEST_REQUIRE_DOCKER") == "1" {
-		skip = t.Fatalf
-	}
-	if _, err := exec.LookPath("docker"); err != nil {
-		skip("no docker: %v", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.OSType}}").Output()
-	if err != nil {
-		skip("docker daemon unavailable: %v", err)
-		return
-	}
-	if os := strings.TrimSpace(string(out)); os != "linux" {
-		skip("docker runs %s containers, the test needs linux", os)
-	}
-}
-
 // startSNMPD runs net-snmp's daemon in a throwaway container named
-// pulsix-sdd-snmpd-<random>, published on a random loopback UDP port, and
-// returns that port once the daemon answers. The container is removed
-// when the test ends, whatever its outcome; no other container is touched.
+// pulsix-sdd-snmpd-<random> with its UDP port published on a random host
+// port, and returns that port once the daemon answers. The container is
+// removed when the test ends, whatever its outcome; no other container is
+// touched. The container installs net-snmp from Alpine's package
+// repository when it starts, so the test needs that repository reachable;
+// containertest gates it on a Docker daemon running Linux containers
+// (skip without one, fail under PULSIX_TEST_REQUIRE_DOCKER=1).
 func startSNMPD(t *testing.T) int {
 	t.Helper()
-	requireLinuxDocker(t)
+	containertest.RequireLinuxDocker(t)
 	var b [6]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		t.Fatal(err)
 	}
-	name := "pulsix-sdd-snmpd-" + hex.EncodeToString(b[:])
-	docker := func(timeout time.Duration, args ...string) (string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
-		return strings.TrimSpace(string(out)), err
-	}
-	t.Cleanup(func() { _, _ = docker(time.Minute, "rm", "-f", name) })
-
+	ctx := context.Background()
 	script := `apk add --no-cache net-snmp >/dev/null && printf '%s' "$SNMPD_CONF" > /etc/snmp/snmpd.conf && exec snmpd -f -Lo -C -c /etc/snmp/snmpd.conf udp:161`
-	if out, err := docker(5*time.Minute, "run", "-d", "--rm", "--name", name, "-p", "127.0.0.1::161/udp",
-		"-e", "SNMPD_CONF="+snmpdConf, snmpdImage, "sh", "-c", script); err != nil {
-		t.Fatalf("docker run: %v: %s", err, out)
-	}
-	out, err := docker(time.Minute, "port", name, "161/udp")
+	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Name:         "pulsix-sdd-snmpd-" + hex.EncodeToString(b[:]),
+			Image:        snmpdImage,
+			ExposedPorts: []string{"161/udp"},
+			Env:          map[string]string{"SNMPD_CONF": snmpdConf},
+			Cmd:          []string{"sh", "-c", script},
+		},
+		Started: true,
+	})
+	// A container that started and then failed still has to go.
+	t.Cleanup(func() { _ = testcontainers.TerminateContainer(c) })
 	if err != nil {
-		t.Fatalf("docker port: %v: %s", err, out)
+		t.Fatalf("start %s: %v", snmpdImage, err)
 	}
-	_, portStr, err := net.SplitHostPort(strings.Fields(out)[0])
+	mapped, err := c.MappedPort(ctx, "161/udp")
 	if err != nil {
-		t.Fatalf("docker port %q: %v", out, err)
+		t.Fatalf("mapped port: %v", err)
 	}
-	port, err := strconv.Atoi(portStr)
+	port, err := strconv.Atoi(mapped.Port())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,19 +79,29 @@ func startSNMPD(t *testing.T) int {
 	// The container installs net-snmp first; wait until the daemon answers.
 	deadline := time.Now().Add(3 * time.Minute)
 	for {
-		obs := snmp.Probe(context.Background(), probetest.LoopbackGuard(), daemonParams(port, "v2c"), "127.0.0.1", v2c)
+		obs := snmp.Probe(ctx, probetest.LoopbackGuard(), daemonParams(port, "v2c"), "127.0.0.1", v2c)
 		if len(obs) > 0 && obs[0].Value != nil && *obs[0].Value == 1 {
 			return port
 		}
-		if running, _ := docker(time.Minute, "inspect", "-f", "{{.State.Running}}", name); running != "true" {
-			logs, _ := docker(time.Minute, "logs", name)
-			t.Fatalf("snmpd container stopped: %s", logs)
+		if state, err := c.State(ctx); err != nil || !state.Running {
+			t.Fatalf("snmpd container stopped (%v): %s", err, containerLogs(ctx, c))
 		}
 		if time.Now().After(deadline) {
 			t.Fatal("snmpd did not answer within 3 minutes")
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+// containerLogs returns c's output, for a failure message.
+func containerLogs(ctx context.Context, c testcontainers.Container) string {
+	r, err := c.Logs(ctx)
+	if err != nil {
+		return "(no logs: " + err.Error() + ")"
+	}
+	defer func() { _ = r.Close() }()
+	out, _ := io.ReadAll(r)
+	return string(out)
 }
 
 var v2c = map[string]string{"community": "pulsix-v2c-test"}

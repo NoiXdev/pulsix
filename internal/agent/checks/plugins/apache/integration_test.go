@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
+	"github.com/noixdev/pulsix/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )

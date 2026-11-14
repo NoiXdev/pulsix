@@ -73,11 +73,12 @@ jobs:
       # everything else, each with its own timeout (backlog 2.83 and
       # 3.21) — and prints a per-package table plus, when anything fails,
       # the failing packages' own go test output.
-      # PULSIX_TEST_REQUIRE_DOCKER: the check plugins' container tests
-      # (internal/agent/checks/plugins/internal/containertest) skip where
-      # no Docker runs Linux containers, as on the agent-macos and
-      # agent-windows runners; here, where Docker is part of the runner,
-      # a broken daemon fails them instead of passing by skipping.
+      # PULSIX_TEST_REQUIRE_DOCKER: the container tests (the check
+      # plugins' real servers, the snmp probe's real daemon; gated by
+      # internal/containertest) skip where no Docker runs Linux
+      # containers, as on the agent-macos and agent-windows runners; here,
+      # where Docker is part of the runner, a broken daemon fails them
+      # instead of passing by skipping.
       - run: scripts/coverage-gate.sh
         env:
           PULSIX_TEST_REQUIRE_DOCKER: "1"

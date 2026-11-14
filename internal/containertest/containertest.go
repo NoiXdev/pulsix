@@ -1,10 +1,10 @@
-// Package containertest gates the check plugins' container-based
-// integration tests on a Docker daemon that runs Linux containers. The
-// agent's unit tests also run on macOS and Windows, where CI has no such
-// daemon (macOS runners have no Docker at all, Windows runners run Windows
-// containers), so there the tests skip; on the Linux go job, which sets
-// RequiredEnv, a missing daemon fails them instead. It is imported from
-// _test.go files only.
+// Package containertest gates the module's container-based integration
+// tests (the check plugins' real servers, the snmp probe's real daemon) on
+// a Docker daemon that runs Linux containers. The agent's unit tests also
+// run on macOS and Windows, where CI has no such daemon (macOS runners
+// have no Docker at all, Windows runners run Windows containers), so there
+// the tests skip; on the Linux go job, which sets RequiredEnv, a missing
+// daemon fails them instead. It is imported from _test.go files only.
 package containertest
 
 import (
