@@ -85,6 +85,9 @@ type scheduledCheck struct {
 	// advisory logs the advisory errors of plain plugins (advisory.go); it
 	// lives and dies with this instance.
 	advisory *advisoryLog
+	// local records that this check came from the host's own local set
+	// (local.go), not from the manager's configuration.
+	local bool
 }
 
 // Scheduler holds one timer per check key. NewScheduler wires it;
@@ -101,8 +104,12 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	version string
-	checks  map[string]*scheduledCheck
-	running bool // Run has started: Apply may start/stop goroutines directly
+	// managerSpecs and localSpecs are the two desired sets; checks runs
+	// their union (reconcileLocked in local.go).
+	managerSpecs []Spec
+	localSpecs   []Spec
+	checks       map[string]*scheduledCheck
+	running      bool // Run has started: Apply may start/stop goroutines directly
 	// finished records that Run has RETURNED. running is false both
 	// before Run starts and after it ends, and the two mean opposite
 	// things to Apply: before, a tracked check waits for Run's startup
@@ -162,6 +169,12 @@ func (s *Scheduler) Version() string {
 // a check silently doing nothing for ever is the kind of thing an
 // operator has to be able to find in a log.
 //
+// The host's local set (ApplyLocal) runs next to cfg and is re-checked
+// against it: a local check whose key cfg now carries stops, one whose
+// key cfg no longer carries starts. Neither the unrunnable list nor the
+// version rule below looks at the local set — both are about the
+// manager's configuration only.
+//
 // Such a configuration is only PARTLY applied, and then cfg.Version is
 // deliberately not adopted. The manager stamps its version over the full
 // set it intends; reporting that version back while running less than it
@@ -182,25 +195,13 @@ func (s *Scheduler) Apply(cfg Config) (unrunnable []string) {
 		return nil
 	}
 
-	seen := make(map[string]struct{}, len(cfg.Checks))
 	for _, spec := range cfg.Checks {
-		seen[spec.Key] = struct{}{}
 		if _, known := s.reg[spec.Plugin]; !known {
 			unrunnable = append(unrunnable, spec.Key)
 		}
-		if existing, ok := s.checks[spec.Key]; ok {
-			if specsEqual(existing.spec, spec) {
-				continue // unchanged: the running timer keeps its phase
-			}
-			s.stopLocked(spec.Key)
-		}
-		s.startLocked(spec)
 	}
-	for key := range s.checks {
-		if _, ok := seen[key]; !ok {
-			s.stopLocked(key)
-		}
-	}
+	s.managerSpecs = append([]Spec(nil), cfg.Checks...)
+	s.reconcileLocked()
 	if len(unrunnable) > 0 {
 		s.version = ""
 		return unrunnable
@@ -211,17 +212,18 @@ func (s *Scheduler) Apply(cfg Config) (unrunnable []string) {
 
 // specsEqual compares everything about a check that a fresh timer would
 // need to reflect. Key is deliberately not compared: it is already the
-// map key both specs share by construction (Apply only ever calls this
-// with two specs for the same key).
+// map key both specs share by construction (reconcileLocked only ever
+// calls this with two specs for the same key).
 func specsEqual(a, b Spec) bool {
 	return a.Plugin == b.Plugin && a.Interval == b.Interval && reflect.DeepEqual(a.Params, b.Params)
 }
 
 // startLocked creates spec's ticker and, if Run has already started,
 // spawns its goroutine right away; otherwise Run's own startup loop
-// spawns it once it begins. Called with s.mu held.
-func (s *Scheduler) startLocked(spec Spec) {
-	sc := &scheduledCheck{spec: spec, ticker: s.ticker(spec.Interval), stop: make(chan struct{}), plugin: s.pluginFor(spec.Plugin)}
+// spawns it once it begins. local marks a check from the host's local
+// set. Called with s.mu held.
+func (s *Scheduler) startLocked(spec Spec, local bool) {
+	sc := &scheduledCheck{spec: spec, ticker: s.ticker(spec.Interval), stop: make(chan struct{}), plugin: s.pluginFor(spec.Plugin), local: local}
 	sc.advisory = newAdvisoryLog(s.log, s.now, spec.Key, spec.Plugin)
 	s.checks[spec.Key] = sc
 	if s.running {
