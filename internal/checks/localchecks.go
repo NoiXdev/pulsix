@@ -25,12 +25,14 @@ type LocalCheck struct {
 // satisfied in internal/app by the agents service. A host without an agent,
 // or whose agent's report is unknown (an older agent, no heartbeat yet),
 // has no local checks; an error is a failed read, never "none".
+//
+// One host at a time: only ResolveHostWithLocal reads it, for the callers
+// that judge or show a host's tuples (the rule evaluation, the host page,
+// the effective-rules view). The batch resolves feed the push and the
+// probes, which never use Local.
 type LocalCheckSource interface {
 	// LocalChecksByHost is hostID's local checks.
 	LocalChecksByHost(ctx context.Context, orgID, hostID uuid.UUID) ([]LocalCheck, error)
-	// LocalChecksByHosts is the local checks of each listed host in one
-	// read; a host without any may be absent from the map.
-	LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID][]LocalCheck, error)
 }
 
 // WithLocalChecks wires the local checks port; a Service built without it
@@ -43,19 +45,6 @@ func (s *Service) localForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]
 		return nil, nil
 	}
 	local, err := s.localChecks.LocalChecksByHost(ctx, orgID, hostID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve: local checks: %w", err)
-	}
-	return local, nil
-}
-
-// localForHosts reads the local checks of hostIDs in one call, or none
-// without the port or without hosts.
-func (s *Service) localForHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID][]LocalCheck, error) {
-	if s.localChecks == nil || len(hostIDs) == 0 {
-		return map[uuid.UUID][]LocalCheck{}, nil
-	}
-	local, err := s.localChecks.LocalChecksByHosts(ctx, orgID, hostIDs)
 	if err != nil {
 		return nil, fmt.Errorf("resolve: local checks: %w", err)
 	}

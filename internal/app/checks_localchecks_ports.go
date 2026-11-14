@@ -10,10 +10,9 @@ import (
 )
 
 // agentLocalChecks is the slice of agents.Service the adapter below reads:
-// each host's agent's latest local checks report (backlog 3.5a).
+// a host's agent's latest local checks report (backlog 3.5a).
 type agentLocalChecks interface {
 	LocalChecksByHost(ctx context.Context, orgID, hostID uuid.UUID) (agents.LocalChecksReport, error)
-	LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]agents.LocalChecksReport, error)
 }
 
 // checksLocalChecks adapts agents.Service to checks.LocalCheckSource: the
@@ -37,22 +36,6 @@ func (a checksLocalChecks) LocalChecksByHost(ctx context.Context, orgID, hostID 
 		return nil, err
 	}
 	return toChecksLocal(report), nil
-}
-
-// LocalChecksByHosts implements checks.LocalCheckSource; a host without
-// local checks is absent from the map.
-func (a checksLocalChecks) LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID][]checks.LocalCheck, error) {
-	reports, err := a.agents.LocalChecksByHosts(ctx, orgID, hostIDs)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[uuid.UUID][]checks.LocalCheck, len(reports))
-	for id, report := range reports {
-		if local := toChecksLocal(report); len(local) > 0 {
-			out[id] = local
-		}
-	}
-	return out, nil
 }
 
 // toChecksLocal is a report's checks as the resolver's type; nil for an

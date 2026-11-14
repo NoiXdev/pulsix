@@ -13,14 +13,11 @@ import (
 )
 
 // fakeLocalChecks is the checks.LocalCheckSource test double: the checks
-// each host's agent reported, and how often each method was called.
+// each host's agent reported, and how often it was read.
 type fakeLocalChecks struct {
-	byHost     map[uuid.UUID][]checks.LocalCheck
-	err        error
-	hostCalls  int
-	hostsCalls int
-	// asked is the id list of the last LocalChecksByHosts call.
-	asked []uuid.UUID
+	byHost    map[uuid.UUID][]checks.LocalCheck
+	err       error
+	hostCalls int
 }
 
 func (f *fakeLocalChecks) LocalChecksByHost(_ context.Context, _, hostID uuid.UUID) ([]checks.LocalCheck, error) {
@@ -29,21 +26,6 @@ func (f *fakeLocalChecks) LocalChecksByHost(_ context.Context, _, hostID uuid.UU
 		return nil, f.err
 	}
 	return f.byHost[hostID], nil
-}
-
-func (f *fakeLocalChecks) LocalChecksByHosts(_ context.Context, _ uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID][]checks.LocalCheck, error) {
-	f.hostsCalls++
-	f.asked = slices.Clone(hostIDs)
-	if f.err != nil {
-		return nil, f.err
-	}
-	out := map[uuid.UUID][]checks.LocalCheck{}
-	for _, id := range hostIDs {
-		if c, ok := f.byHost[id]; ok {
-			out[id] = c
-		}
-	}
-	return out, nil
 }
 
 func localKeys(rs []checks.Resolved) []string {
@@ -78,7 +60,7 @@ func TestResolveHostLocalChecks(t *testing.T) {
 		{Key: "local-a", Plugin: checks.PluginCPU, Interval: time.Minute},
 	}}}
 	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster), checks.WithLocalChecks(local))
-	rs, err := svc.ResolveHost(ctx, org, host)
+	rs, err := svc.ResolveHostWithLocal(ctx, org, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +84,8 @@ func TestResolveHostLocalChecks(t *testing.T) {
 	if got := localKeys(rs.All()); !slices.Equal(got, []string{"cpu", "web", "local-a", "local-x"}) {
 		t.Fatalf("All() = %v, want Checks, then Synthetic, then Local", got)
 	}
-	if local.hostCalls != 1 || local.hostsCalls != 0 {
-		t.Fatalf("source calls = %d by host, %d by hosts; want exactly one by host", local.hostCalls, local.hostsCalls)
+	if local.hostCalls != 1 {
+		t.Fatalf("source read %d times, want once", local.hostCalls)
 	}
 }
 
@@ -131,7 +113,7 @@ func TestResolveHostLocalKeyLosesToTheManagersCheck(t *testing.T) {
 	local.byHost[host] = append(local.byHost[host], checks.LocalCheck{Key: "local-off", Plugin: checks.PluginMemory, Interval: time.Minute})
 	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster), checks.WithLocalChecks(local))
 
-	rs, err := svc.ResolveHost(ctx, org, host)
+	rs, err := svc.ResolveHostWithLocal(ctx, org, host)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +140,7 @@ func TestResolveHostLocalChecksEmpty(t *testing.T) {
 	}}
 
 	withSource := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster), checks.WithLocalChecks(local))
-	rs, err := withSource.ResolveHost(ctx, org, cold)
+	rs, err := withSource.ResolveHostWithLocal(ctx, org, cold)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +152,7 @@ func TestResolveHostLocalChecksEmpty(t *testing.T) {
 	}
 
 	withoutSource := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster))
-	rs, err = withoutSource.ResolveHost(ctx, org, monitored)
+	rs, err = withoutSource.ResolveHostWithLocal(ctx, org, monitored)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,77 +161,54 @@ func TestResolveHostLocalChecksEmpty(t *testing.T) {
 	}
 }
 
-// TestResolveOrgAndHostsFillLocal: the batch paths fill Local per host
-// from one read for all their hosts — the monitored ones only — and agree
-// with ResolveHost host for host.
-func TestResolveOrgAndHostsFillLocal(t *testing.T) {
-	store, matcher, roster, org := newResolverFixture()
-	h1, h2, cold := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
-	roster.monitored[h1], roster.monitored[h2], roster.monitored[cold] = true, true, false
-	putDef(store, checks.Definition{OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
-	local := &fakeLocalChecks{byHost: map[uuid.UUID][]checks.LocalCheck{
-		h1:   {{Key: "local-one", Plugin: checks.PluginCPU, Interval: time.Minute}},
-		cold: {{Key: "local-cold", Plugin: checks.PluginCPU, Interval: time.Minute}},
-	}}
-	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster), checks.WithLocalChecks(local))
-
-	byOrg, err := svc.ResolveOrg(ctx, org)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if local.hostsCalls != 1 || local.hostCalls != 0 {
-		t.Fatalf("ResolveOrg: %d batch and %d single reads, want one batch read", local.hostsCalls, local.hostCalls)
-	}
-	byHosts, err := svc.ResolveHosts(ctx, org, []uuid.UUID{h1, h2, cold, h1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if local.hostsCalls != 2 || local.hostCalls != 0 {
-		t.Fatalf("ResolveHosts: %d batch and %d single reads in all, want one more batch read", local.hostsCalls, local.hostCalls)
-	}
-	if slices.Contains(local.asked, cold) {
-		t.Fatalf("ResolveHosts asked for %v, want the monitored hosts only", local.asked)
-	}
-	for name, sets := range map[string]map[uuid.UUID]checks.ResolvedSet{"ResolveOrg": byOrg, "ResolveHosts": byHosts} {
-		if got := localKeys(sets[h1].Local); !slices.Equal(got, []string{"local-one"}) || sets[h1].Local[0].Source != checks.BindingLocal {
-			t.Fatalf("%s: h1 Local = %+v, want local-one", name, sets[h1].Local)
-		}
-		if sets[h2].Local == nil || len(sets[h2].Local) != 0 {
-			t.Fatalf("%s: h2 Local = %#v, want a non-nil empty slice", name, sets[h2].Local)
-		}
-		one, err := svc.ResolveHost(ctx, org, h1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if one.Version != sets[h1].Version || !slices.Equal(localKeys(one.Local), localKeys(sets[h1].Local)) {
-			t.Fatalf("%s: h1 = %+v, ResolveHost = %+v", name, sets[h1], one)
-		}
-	}
-	if _, ok := byOrg[cold]; ok {
-		t.Fatal("ResolveOrg resolved an unmonitored host")
-	}
-	if got := byHosts[cold].Local; got == nil || len(got) != 0 {
-		t.Fatalf("ResolveHosts: unmonitored Local = %#v, want a non-nil empty slice", got)
-	}
-}
-
-// TestResolveLocalChecksPropagatesErrors: a failing read is an error, not
-// "this host defines no local checks" — the rule evaluation would take its
-// local tuples out of the evaluation on that answer.
-func TestResolveLocalChecksPropagatesErrors(t *testing.T) {
+// TestOnlyResolveHostWithLocalReadsLocalChecks: ResolveHost, ResolveHosts
+// and ResolveOrg feed the push, the heartbeat comparison and the probes,
+// which never use Local — so they never read the agents' reports, and a
+// failing read cannot fail them. ResolveHostWithLocal, the resolve of the
+// callers that judge or show tuples, reads them and reports a failing read
+// as an error, not as "this host defines no local checks" (the rule
+// evaluation would take its local tuples out on that answer). The sets
+// agree otherwise, Version included.
+func TestOnlyResolveHostWithLocalReadsLocalChecks(t *testing.T) {
 	store, matcher, roster, org := newResolverFixture()
 	host := uuid.Must(uuid.NewV7())
 	roster.monitored[host] = true
-	boom := errors.New("agents store down")
-	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster), checks.WithLocalChecks(&fakeLocalChecks{err: boom}))
+	putDef(store, checks.Definition{OrgID: org, Key: "cpu", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: true, BindingKind: checks.BindingOrg})
+	local := &fakeLocalChecks{byHost: map[uuid.UUID][]checks.LocalCheck{host: {{Key: "local-a", Plugin: checks.PluginCPU, Interval: time.Minute}}}}
+	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster), checks.WithLocalChecks(local))
 
-	if _, err := svc.ResolveHost(ctx, org, host); !errors.Is(err, boom) {
-		t.Fatalf("ResolveHost = %v, want the source's error", err)
+	with, err := svc.ResolveHostWithLocal(ctx, org, host)
+	if err != nil || len(with.Local) != 1 {
+		t.Fatalf("ResolveHostWithLocal = %+v, %v; want local-a", with, err)
 	}
-	if _, err := svc.ResolveHosts(ctx, org, []uuid.UUID{host}); !errors.Is(err, boom) {
-		t.Fatalf("ResolveHosts = %v, want the source's error", err)
+	local.hostCalls = 0
+	local.err = errors.New("agents store down")
+
+	one, err := svc.ResolveHost(ctx, org, host)
+	if err != nil {
+		t.Fatalf("ResolveHost with a failing local source = %v, want nil", err)
 	}
-	if _, err := svc.ResolveOrg(ctx, org); !errors.Is(err, boom) {
-		t.Fatalf("ResolveOrg = %v, want the source's error", err)
+	byHosts, err := svc.ResolveHosts(ctx, org, []uuid.UUID{host})
+	if err != nil {
+		t.Fatalf("ResolveHosts with a failing local source = %v, want nil", err)
+	}
+	byOrg, err := svc.ResolveOrg(ctx, org)
+	if err != nil {
+		t.Fatalf("ResolveOrg with a failing local source = %v, want nil", err)
+	}
+	for name, rs := range map[string]checks.ResolvedSet{"ResolveHost": one, "ResolveHosts": byHosts[host], "ResolveOrg": byOrg[host]} {
+		if rs.Local == nil || len(rs.Local) != 0 {
+			t.Fatalf("%s: Local = %#v, want a non-nil empty slice", name, rs.Local)
+		}
+		if rs.Version != with.Version || len(rs.Checks) != 1 {
+			t.Fatalf("%s = %+v, want the same Checks and Version as ResolveHostWithLocal", name, rs)
+		}
+	}
+	if local.hostCalls != 0 {
+		t.Fatalf("the push and probe resolves read the local checks %d times, want none", local.hostCalls)
+	}
+
+	if _, err := svc.ResolveHostWithLocal(ctx, org, host); !errors.Is(err, local.err) {
+		t.Fatalf("ResolveHostWithLocal = %v, want the source's error", err)
 	}
 }

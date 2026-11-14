@@ -1091,6 +1091,11 @@ func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 	if !errors.Is(err, shared.ErrInvalidInput) {
 		t.Fatalf("CreateCheckDefinition() with a too-short interval error = %v, want ErrInvalidInput", err)
 	}
+	// Re-wrapped under this package's sentinel, the message says
+	// "invalid input" once, like the organization's own definitions.
+	if want := "invalid input: interval must be between 10s and 24h0m0s"; err.Error() != want {
+		t.Fatalf("CreateCheckDefinition() with a too-short interval error = %q, want %q", err.Error(), want)
+	}
 }
 
 // TestCheckDefinitionKeysStartingWithLocalAreReserved (backlog 3.5a): an
@@ -1104,16 +1109,17 @@ func TestCheckDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
 	store.checkDefs[id] = shared.CheckDefinition{ID: id, Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second}
 	svc := shared.NewService(store)
 
+	const want = "invalid input: keys starting with local- are reserved for checks defined on the host"
 	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Key: "local-x", Plugin: "cpu", Interval: 60 * time.Second})
-	if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "keys starting with local- are reserved for checks defined on the host") {
-		t.Fatalf("CreateCheckDefinition(local-x) = %v, want the reservation as ErrInvalidInput", err)
+	if !errors.Is(err, shared.ErrInvalidInput) || err.Error() != want {
+		t.Fatalf("CreateCheckDefinition(local-x) = %v, want %q", err, want)
 	}
 	if len(store.createCheckDefCalls) != 0 {
 		t.Fatalf("CreateCheckDefinitionWithProjections called %d times, want 0", len(store.createCheckDefCalls))
 	}
 	_, err = svc.UpdateCheckDefinition(ctx, id, shared.CheckDefinitionInput{Key: "local-disk", Plugin: "disk", Interval: 300 * time.Second})
-	if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "keys starting with local- are reserved for checks defined on the host") {
-		t.Fatalf("UpdateCheckDefinition renaming to local-disk = %v, want the reservation as ErrInvalidInput", err)
+	if !errors.Is(err, shared.ErrInvalidInput) || err.Error() != want {
+		t.Fatalf("UpdateCheckDefinition renaming to local-disk = %v, want %q", err, want)
 	}
 
 	// A definition that already had such a key stays editable under it.

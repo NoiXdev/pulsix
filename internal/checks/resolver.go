@@ -60,6 +60,11 @@ type ResolvedSet struct {
 	// Source BindingLocal and no SourceID. The agent runs them without the
 	// manager, so Version does not cover them either; a key also in Checks
 	// or Synthetic is left out, since the manager's check wins.
+	//
+	// Only ResolveHostWithLocal fills it, for the callers that judge or
+	// show a host's tuples. ResolveHost, ResolveHosts and ResolveOrg feed
+	// the push, the heartbeat comparison and the probes, which never use
+	// it, so they leave it empty rather than read the agents' reports.
 	Local []Resolved
 	// Version is the hex SHA-256 of Checks' canonical encoding (see
 	// canonicalEncoding) — the configuration version an agent reports in
@@ -346,9 +351,27 @@ func toResolvedSet(hostID uuid.UUID, resolved []Resolved, local []LocalCheck) (R
 // not monitored (or does not exist in orgID at all — the two read the
 // same, the same "invisible rather than forbidden" contract ErrNotFound
 // gives every other lookup in this codebase) resolves to an empty set,
-// never an error — its local checks included: its agent may still run
-// them, but their values are stored, not judged.
+// never an error.
+//
+// Local stays empty: this is the push's and the heartbeat comparison's
+// resolve. ResolveHostWithLocal is the same set with Local filled.
 func (s *Service) ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (ResolvedSet, error) {
+	return s.resolveHost(ctx, orgID, hostID, false)
+}
+
+// ResolveHostWithLocal is ResolveHost with Local filled from the host's
+// agent's last report (backlog 3.5a): the resolve of the callers that judge
+// or show the host's tuples — the rule evaluation, the host page and the
+// effective-rules view. An unmonitored host still resolves to an empty
+// set, local checks included: its agent may still run them, but their
+// values are stored, not judged.
+func (s *Service) ResolveHostWithLocal(ctx context.Context, orgID, hostID uuid.UUID) (ResolvedSet, error) {
+	return s.resolveHost(ctx, orgID, hostID, true)
+}
+
+// resolveHost is ResolveHost and ResolveHostWithLocal; withLocal says
+// whether the local checks are read.
+func (s *Service) resolveHost(ctx context.Context, orgID, hostID uuid.UUID, withLocal bool) (ResolvedSet, error) {
 	if s.hostRoster == nil {
 		return ResolvedSet{}, fmt.Errorf("checks: resolve: service was built without WithHostRoster")
 	}
@@ -364,9 +387,11 @@ func (s *Service) ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (Res
 	if err != nil {
 		return ResolvedSet{}, err
 	}
-	local, err := s.localForHost(ctx, orgID, hostID)
-	if err != nil {
-		return ResolvedSet{}, err
+	var local []LocalCheck
+	if withLocal {
+		if local, err = s.localForHost(ctx, orgID, hostID); err != nil {
+			return ResolvedSet{}, err
+		}
 	}
 	return toResolvedSet(hostID, bundle.resolve(hostID), local)
 }
@@ -410,20 +435,6 @@ func (s *Service) ResolveHosts(ctx context.Context, orgID uuid.UUID, hostIDs []u
 	if err != nil {
 		return nil, err
 	}
-	// The local checks of the requested hosts that are monitored, in one
-	// read: an unmonitored host's are never resolved.
-	asked := make([]uuid.UUID, 0, len(hostIDs))
-	seen := make(map[uuid.UUID]bool, len(hostIDs))
-	for _, id := range hostIDs {
-		if _, ok := monitored[id]; ok && !seen[id] {
-			seen[id] = true
-			asked = append(asked, id)
-		}
-	}
-	local, err := s.localForHosts(ctx, orgID, asked)
-	if err != nil {
-		return nil, err
-	}
 
 	out := make(map[uuid.UUID]ResolvedSet, len(hostIDs))
 	for _, id := range hostIDs {
@@ -434,7 +445,7 @@ func (s *Service) ResolveHosts(ctx context.Context, orgID uuid.UUID, hostIDs []u
 		if _, ok := monitored[id]; ok {
 			checks = bundle.resolve(id)
 		}
-		rs, err := toResolvedSet(id, checks, local[id])
+		rs, err := toResolvedSet(id, checks, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -464,14 +475,9 @@ func (s *Service) ResolveOrg(ctx context.Context, orgID uuid.UUID) (map[uuid.UUI
 	if err != nil {
 		return nil, err
 	}
-	local, err := s.localForHosts(ctx, orgID, monitoredIDs)
-	if err != nil {
-		return nil, err
-	}
-
 	out := make(map[uuid.UUID]ResolvedSet, len(monitoredIDs))
 	for _, id := range monitoredIDs {
-		rs, err := toResolvedSet(id, bundle.resolve(id), local[id])
+		rs, err := toResolvedSet(id, bundle.resolve(id), nil)
 		if err != nil {
 			return nil, err
 		}

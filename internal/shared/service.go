@@ -792,9 +792,17 @@ func reservedKeyRefusal(key string) error {
 		return reservedKeyError(key)
 	}
 	if err := checks.RefuseLocalKey(key); err != nil {
-		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return asInvalidInput(err)
 	}
 	return nil
+}
+
+// asInvalidInput re-wraps a checks.ErrInvalidInput failure under this
+// package's ErrInvalidInput (mapSharedErr recognizes only that one). Both
+// sentinels read "invalid input", so the checks one's prefix is dropped
+// rather than said twice.
+func asInvalidInput(err error) error {
+	return fmt.Errorf("%w: %s", ErrInvalidInput, strings.TrimPrefix(err.Error(), checks.ErrInvalidInput.Error()+": "))
 }
 
 // validateCheckDefinitionShape is validateCheckDefinitionInput without the
@@ -803,7 +811,7 @@ func reservedKeyRefusal(key string) error {
 func validateCheckDefinitionShape(in CheckDefinitionInput) (string, error) {
 	key, err := checks.ValidateDefinitionShape(in.Plugin, in.Key, in.Params, in.Interval)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
+		return "", asInvalidInput(err)
 	}
 	return key, nil
 }

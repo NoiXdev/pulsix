@@ -2,6 +2,8 @@ package agents_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -235,6 +237,37 @@ func TestLocalChecksByHosts(t *testing.T) {
 	if len(got) != 2 || !slices.Equal(keysOf(got[a].Checks), []string{"local-0"}) ||
 		!slices.Equal(keysOf(got[b].Checks), []string{"local-1"}) || got[none].Known {
 		t.Fatalf("by hosts = %+v", got)
+	}
+}
+
+// noHostAgentStore refuses the whole-row agent read, so a test can pin
+// that a read does not go through it.
+type noHostAgentStore struct{ *fakeStore }
+
+func (noHostAgentStore) GetByHost(context.Context, uuid.UUID, uuid.UUID) (agents.Agent, error) {
+	return agents.Agent{}, errors.New("GetByHost must not be read")
+}
+
+// LocalChecksByHost is on the rule evaluation's path (every judged host,
+// every pass), so it reads the narrow local checks query for its one host,
+// not the whole agent row with its joins.
+func TestLocalChecksByHostReadsOnlyTheLocalChecks(t *testing.T) {
+	st := &fakeStore{}
+	svc := agents.NewService(noHostAgentStore{st}, agents.WithProvisioner(&fakeProvisioner{}))
+	org, host, none := uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
+	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-narrow")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Heartbeat(ctx, "serial-narrow", agents.HeartbeatReport{Version: "v1", SecretsState: "ok",
+		LocalChecks: []agents.LocalCheckInput{diskCheck("local-a")}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.LocalChecksByHost(ctx, org, host)
+	if err != nil || !got.Known || !slices.Equal(keysOf(got.Checks), []string{"local-a"}) {
+		t.Fatalf("LocalChecksByHost = %+v, %v; want local-a", got, err)
+	}
+	if got, err := svc.LocalChecksByHost(ctx, org, none); err != nil || got.Known {
+		t.Fatalf("no agent: %+v, %v; want unknown, nil", got, err)
 	}
 }
 

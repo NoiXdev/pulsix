@@ -649,15 +649,15 @@ func (s *Service) SecretsByHost(ctx context.Context, orgID, hostID uuid.UUID) (S
 
 // LocalChecksByHost is the host's agent's latest local checks report: a
 // host without an agent has no report, which is "unknown", not an error.
+// It reads the two local checks columns of the one host (the
+// LocalChecksByHosts query), not the whole agent row: it is on the rule
+// evaluation's path, once per judged host per pass.
 func (s *Service) LocalChecksByHost(ctx context.Context, orgID, hostID uuid.UUID) (LocalChecksReport, error) {
-	a, err := s.store.GetByHost(ctx, orgID, hostID)
-	if errors.Is(err, ErrNotFound) {
-		return LocalChecksReport{}, nil
-	}
+	reports, err := s.store.LocalChecksByHosts(ctx, orgID, []uuid.UUID{hostID})
 	if err != nil {
 		return LocalChecksReport{}, err
 	}
-	return a.LocalChecks, nil
+	return reports[hostID], nil
 }
 
 // LocalChecksByHosts is LocalChecksByHost for several hosts in one read,

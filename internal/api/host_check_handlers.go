@@ -253,7 +253,7 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		}
 		// One resolution serves both what the tuple states are filtered
 		// by and the checks defined on the host (Local), listed below.
-		resolved, err := deps.Checks.ResolveHost(ctx, scope.OrgID, hostID)
+		resolved, err := deps.Checks.ResolveHostWithLocal(ctx, scope.OrgID, hostID)
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
@@ -612,20 +612,20 @@ func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, c
 // and got disabled — or deleted outright — would show that stale verdict
 // on the host page for ever, indistinguishable from a live one.
 //
-// resolvedKeys is resolvedKeysOf the caller's deps.Checks.ResolveHost, the
-// exact same input rules.ContextForHost feeds the evaluator (see
-// internal/app/rules_ports.go's own adapter): a disabled definition, or a
-// key nothing binds any more, is absent from it, so "present here" and
-// "the evaluator would still evaluate this tuple" are the same question
-// asked of the same data. A deleted check's tuple never reaches this
+// resolvedKeys is resolvedKeysOf the caller's
+// deps.Checks.ResolveHostWithLocal, the exact same input
+// rules.ContextForHost feeds the evaluator (see internal/app/rules_ports.go's
+// own adapter): a disabled definition, or a key nothing binds any more, is
+// absent from it, so "present here" and "the evaluator would still
+// evaluate this tuple" are the same question asked of the same data. A deleted check's tuple never reaches this
 // filter at all — its key is not in the caller's own `effective` list
 // either, so toHostCheckDTO never looks it up — this only ever matters for
 // the disabled case, where the check still appears (Enabled: false) but
 // must not carry a live-looking state.
 //
-// The caller maps ResolveHost's failure as the checks.Service fault it is;
-// StatesForHost's is mapped and logged here in its own name rather than
-// folded into mapChecksErr's "unmapped checks error": it is
+// The caller maps ResolveHostWithLocal's failure as the checks.Service
+// fault it is; StatesForHost's is mapped and logged here in its own name
+// rather than folded into mapChecksErr's "unmapped checks error": it is
 // rules.StateStore's, and logging it as a checks failure would send
 // on-call triage at the wrong package for a fault this route did nothing
 // to cause.
@@ -650,7 +650,7 @@ func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID,
 // reduces to on the read side, and the exact input rules.ContextForHost
 // feeds the evaluator (internal/app/rules_ports.go's own adapter). A
 // disabled definition, or a key nothing binds any more, is absent from
-// ResolveHost's list, so "present here" and "the evaluator would still
+// ResolveHostWithLocal's set, so "present here" and "the evaluator would still
 // evaluate this tuple" are the same question asked of the same data.
 //
 // It is a helper rather than two copies because two routes read the same
@@ -659,7 +659,7 @@ func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID,
 // rules view (rule_handlers.go). A tuple missing from one and listed by
 // the other is two reads of one host contradicting each other.
 func resolvedCheckKeys(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (map[string]bool, error) {
-	resolved, err := deps.Checks.ResolveHost(ctx, orgID, hostID)
+	resolved, err := deps.Checks.ResolveHostWithLocal(ctx, orgID, hostID)
 	if err != nil {
 		return nil, mapChecksErr(ctx, err)
 	}

@@ -54,6 +54,9 @@ func TestHostChecksListLocalChecks(t *testing.T) {
 		checks.Observation{HostID: f.web, CheckKey: "local-disk", Item: "/", Metric: "disk.used_pct", At: at, Value: floatPtr(42)},
 		checks.Observation{HostID: f.web, CheckKey: "local-disk", Item: "/data", Metric: "disk.used_pct", At: at, Value: floatPtr(7)},
 	)
+	// The evaluator's verdict on the local tuple: the route keeps a state
+	// only for a key the host resolves, local ones included.
+	seedTupleState(t, f.s, f.orgID, f.web, "local-disk", "/", "disk.used_pct", "warn", at, time.Now(), false)
 
 	resp := requestJSON(t, f.viewerC, http.MethodGet, f.hostURL(f.web)+"/checks", nil)
 	if resp.StatusCode != http.StatusOK {
@@ -123,8 +126,36 @@ func TestHostChecksListLocalChecks(t *testing.T) {
 	if len(disk.Values) != 1 || disk.Values[0].Item != "/" || disk.Values[0].Value == nil || *disk.Values[0].Value != 42 {
 		t.Fatalf("local-disk values = %+v, want only the asked-for mount /", disk.Values)
 	}
+	if st := disk.Values[0].State; st == nil || *st != "warn" {
+		t.Fatalf("local-disk / state = %v, want the stored warn", st)
+	}
 	if pg.MissingSecret != "db-main" || disk.MissingSecret != "" {
 		t.Fatalf("missing_secret = %q (pg) / %q (disk), want db-main for the postgres check only", pg.MissingSecret, disk.MissingSecret)
+	}
+
+	// The effective-rules view judges the local tuple like any other: the
+	// seeded organization rules on disk.used_pct apply to local-disk.
+	resp = requestJSON(t, f.viewerC, http.MethodGet, f.hostURL(f.web)+"/effective-rules", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("effective-rules = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	var effective struct {
+		Effective []struct {
+			CheckKey string `json:"check_key"`
+			Item     string `json:"item"`
+			Metric   string `json:"metric"`
+			Severity string `json:"severity"`
+		} `json:"effective"`
+	}
+	decodeInto(t, resp, &effective)
+	severities := map[string]bool{}
+	for _, e := range effective.Effective {
+		if e.CheckKey == "local-disk" && e.Item == "/" && e.Metric == "disk.used_pct" {
+			severities[e.Severity] = true
+		}
+	}
+	if !severities["warn"] || !severities["crit"] {
+		t.Fatalf("effective rules for local-disk / = %v in %+v, want the seeded warn and crit", severities, effective.Effective)
 	}
 
 	cold := f.hostChecks(t, f.viewerC, f.cold)

@@ -19,7 +19,7 @@ import (
 // without a database, the same shape maintenance_ports.go's own resolver
 // port uses.
 type checkResolver interface {
-	ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (checks.ResolvedSet, error)
+	ResolveHostWithLocal(ctx context.Context, orgID, hostID uuid.UUID) (checks.ResolvedSet, error)
 	GroupsForHost(ctx context.Context, orgID, hostID uuid.UUID) ([]checks.Group, error)
 }
 
@@ -54,7 +54,9 @@ func NewRulesHostChecks(svc *checks.Service) rules.HostChecks { return rulesHost
 // checks any more" would take every one of its tuples out of the
 // evaluation and delete its roll-up.
 func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.UUID) (rules.CheckContext, error) {
-	set, err := a.checks.ResolveHost(ctx, orgID, hostID)
+	// With the checks defined in the host's agent.yaml (backlog 3.5a):
+	// their tuples are judged like any other.
+	set, err := a.checks.ResolveHostWithLocal(ctx, orgID, hostID)
 	if err != nil {
 		return rules.CheckContext{}, err
 	}

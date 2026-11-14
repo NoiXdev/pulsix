@@ -18,7 +18,7 @@ type fakeCheckResolver struct {
 	groupsErr error
 }
 
-func (f *fakeCheckResolver) ResolveHost(context.Context, uuid.UUID, uuid.UUID) (checks.ResolvedSet, error) {
+func (f *fakeCheckResolver) ResolveHostWithLocal(context.Context, uuid.UUID, uuid.UUID) (checks.ResolvedSet, error) {
 	return f.set, f.resolved
 }
 

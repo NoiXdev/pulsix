@@ -1237,3 +1237,21 @@ func TestCheckConfigForLeavesOutSyntheticChecks(t *testing.T) {
 		t.Fatalf("config = %+v, want cpu alone under version v1", cfg)
 	}
 }
+
+// TestCheckConfigForLeavesOutLocalChecks (backlog 3.5a): the checks defined
+// in the host's agent.yaml are the agent's own; pushing them back would
+// make them manager checks that shadow themselves. The pushed configuration
+// carries Checks alone, under the version that covers exactly them.
+func TestCheckConfigForLeavesOutLocalChecks(t *testing.T) {
+	cfg, err := checkConfigFor(checks.ResolvedSet{
+		Checks:  []checks.Resolved{{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute}},
+		Local:   []checks.Resolved{{Key: "local-disk", Plugin: checks.PluginDisk, Interval: time.Minute, Source: checks.BindingLocal}},
+		Version: "v1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.GetChecks()) != 1 || cfg.GetChecks()[0].GetKey() != "cpu" || cfg.GetVersion() != "v1" {
+		t.Fatalf("config = %+v, want cpu alone under version v1", cfg)
+	}
+}
