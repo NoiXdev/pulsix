@@ -986,14 +986,15 @@ func TestUpdateDefinitionRefusesRebindingOntoASharedKeysOrgSlot(t *testing.T) {
 
 // TestDefinitionKeysStartingWithLocalAreReserved (backlog 3.5a): keys
 // starting with local- belong to the checks defined in a host's agent.yaml,
-// so a definition can neither be created under one nor renamed to one —
-// on the normalized key, through ValidateDefinitionShape, which
-// internal/shared's definitions go through too. And no definition can be
-// bound at BindingLocal: that scope is a local check's, never a
-// definition's.
+// so a definition can neither be created under one nor renamed to one — on
+// the normalized key. A definition that already had such a key before the
+// reservation keeps it and stays editable: an update that keeps the key,
+// including disabling it, is accepted, whatever the row's origin. And no
+// definition can be bound at BindingLocal: that scope is a local check's.
 func TestDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
 	const want = "invalid input: keys starting with local- are reserved for checks defined on the host"
-	svc := checks.NewService(newFakeStore())
+	store := newFakeStore()
+	svc := checks.NewService(store)
 	org := uuid.Must(uuid.NewV7())
 
 	for _, key := range []string{"local-x", "  local-backup ", "local-"} {
@@ -1003,13 +1004,18 @@ func TestDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
 		if !errors.Is(err, checks.ErrInvalidInput) || err.Error() != want {
 			t.Fatalf("CreateDefinition(key %q) = %v, want %q", key, err, want)
 		}
-		if _, err := checks.ValidateDefinitionShape(checks.PluginCPU, key, nil, time.Minute); err == nil || err.Error() != want {
-			t.Fatalf("ValidateDefinitionShape(key %q) = %v, want %q", key, err, want)
-		}
+	}
+	if err := checks.RefuseLocalKey("local-x"); err == nil || err.Error() != want {
+		t.Fatalf("RefuseLocalKey(local-x) = %v, want %q", err, want)
 	}
 	// Only the prefix is reserved: a key that merely contains it is not.
-	if _, err := checks.ValidateDefinitionShape(checks.PluginCPU, "not-local-x", nil, time.Minute); err != nil {
-		t.Fatalf("ValidateDefinitionShape(not-local-x) = %v, want nil", err)
+	if err := checks.RefuseLocalKey("not-local-x"); err != nil {
+		t.Fatalf("RefuseLocalKey(not-local-x) = %v, want nil", err)
+	}
+	// The shape alone says nothing about the reservation: an update keeping
+	// a legacy key goes through it.
+	if _, err := checks.ValidateDefinitionShape(checks.PluginCPU, "local-x", nil, time.Minute); err != nil {
+		t.Fatalf("ValidateDefinitionShape(local-x) = %v, want nil", err)
 	}
 
 	d, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
@@ -1023,6 +1029,19 @@ func TestDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
 	})
 	if !errors.Is(err, checks.ErrInvalidInput) || err.Error() != want {
 		t.Fatalf("UpdateDefinition renaming to local-disk = %v, want %q", err, want)
+	}
+
+	for _, origin := range []string{"custom", "seed", "shared"} {
+		legacy := putDef(store, checks.Definition{
+			OrgID: org, Key: "local-legacy-" + origin, Plugin: checks.PluginCPU, Interval: time.Minute,
+			Enabled: true, Origin: origin, BindingKind: checks.BindingOrg,
+		})
+		updated, err := svc.UpdateDefinition(ctx, org, legacy.ID, checks.DefinitionInput{
+			Key: legacy.Key, Plugin: checks.PluginCPU, Interval: time.Minute, Enabled: false, BindingKind: checks.BindingOrg,
+		})
+		if err != nil || updated.Enabled || updated.Key != legacy.Key {
+			t.Fatalf("%s: disabling a legacy %s definition = %+v, %v; want it disabled under its own key", origin, legacy.Key, updated, err)
+		}
 	}
 
 	host := uuid.Must(uuid.NewV7())

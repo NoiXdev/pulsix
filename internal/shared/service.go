@@ -640,8 +640,9 @@ func (s *Service) CreateCheckDefinition(ctx context.Context, in CheckDefinitionI
 // The same checks as CreateCheckDefinition apply to a rename; the collision
 // check excludes id's own current projections. A reserved key is refused
 // only when the update would move the definition ONTO it: network and
-// uptime became reserved (backlog 3.7) after a definition could already be
-// called that, and such a definition stays editable under its own key —
+// uptime became reserved (backlog 3.7), and keys starting with local-
+// (backlog 3.5a), after a definition could already be called that, and
+// such a definition stays editable under its own key —
 // the seeds leave a key a shared definition holds alone
 // (checks.Service.SeedForOrg, migration 00084).
 func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in CheckDefinitionInput) (CheckDefinition, error) {
@@ -649,13 +650,13 @@ func (s *Service) UpdateCheckDefinition(ctx context.Context, id uuid.UUID, in Ch
 	if err != nil {
 		return CheckDefinition{}, err
 	}
-	if reservedSeedKeys[key] {
+	if refusal := reservedKeyRefusal(key); refusal != nil {
 		current, err := s.store.GetCheckDefinition(ctx, id)
 		if err != nil {
 			return CheckDefinition{}, err
 		}
 		if current.Key != key {
-			return CheckDefinition{}, reservedKeyError(key)
+			return CheckDefinition{}, refusal
 		}
 	}
 	existing, err := s.store.ExistingCheckDefinitionNames(ctx, id)
@@ -766,18 +767,34 @@ const checkDefinitionUnknownScopeDescription = "a scope that organization has co
 // rather than letting checks.ErrInvalidInput escape: mapSharedErr
 // (internal/api/shared_handlers.go) only recognizes shared.ErrInvalidInput,
 // the same reason validateTemplateDefinitionInput exists for a shared
-// template's extra vars. Then refuses reservedSeedKeys outright — see that
-// var's own doc comment for why this cannot be left to the ordinary
-// collision check alone.
+// template's extra vars. Then refuses reservedSeedKeys and keys starting
+// with local- outright (reservedKeyRefusal) — see reservedSeedKeys' own doc
+// comment for why this cannot be left to the ordinary collision check
+// alone.
 func validateCheckDefinitionInput(in CheckDefinitionInput) (string, error) {
 	key, err := validateCheckDefinitionShape(in)
 	if err != nil {
 		return "", err
 	}
-	if reservedSeedKeys[key] {
-		return "", reservedKeyError(key)
+	if err := reservedKeyRefusal(key); err != nil {
+		return "", err
 	}
 	return key, nil
+}
+
+// reservedKeyRefusal is why a definition may not take key, or nil: one of
+// reservedSeedKeys, or a key starting with local- (checks.RefuseLocalKey,
+// backlog 3.5a — those belong to the checks defined in a host's
+// agent.yaml). Both apply to a key a definition is about to take, on create
+// or on a rename; a definition that already had the key keeps it.
+func reservedKeyRefusal(key string) error {
+	if reservedSeedKeys[key] {
+		return reservedKeyError(key)
+	}
+	if err := checks.RefuseLocalKey(key); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidInput, err)
+	}
+	return nil
 }
 
 // validateCheckDefinitionShape is validateCheckDefinitionInput without the

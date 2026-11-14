@@ -286,22 +286,26 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		out.Body.Checks = make([]hostCheckDTO, 0, len(effective)+len(resolved.Local))
 		byKey := currentByKey(current)
 		now := time.Now()
-		listed := make(map[string]bool, len(effective))
+		// The resolver keeps a local check only where no enabled definition
+		// has its key, so a definition with a local check's key here is a
+		// disabled one from before the local- reservation: the agent runs
+		// its own check under that key, and the page says so with the local
+		// row below instead of the definition's.
+		local := make(map[string]bool, len(resolved.Local))
+		for _, r := range resolved.Local {
+			local[r.Key] = true
+		}
 		for _, d := range effective {
+			if local[d.Key] {
+				continue
+			}
 			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
 			dto.MissingSecret = checks.MissingSecret(d.Plugin, d.Params, d.Enabled, agentSecrets)
 			out.Body.Checks = append(out.Body.Checks, dto)
-			listed[d.Key] = true
 		}
 		// The checks defined in the host's agent.yaml (backlog 3.5a), after
-		// the definitions and in key order (Local's own). A local key the
-		// resolver kept although a definition has it — only a disabled
-		// definition from before the local- reservation can — is listed
-		// once, as that definition: its values are already shown there.
+		// the definitions and in key order (Local's own).
 		for _, r := range resolved.Local {
-			if listed[r.Key] {
-				continue
-			}
 			dto := toLocalHostCheckDTO(r, stillAsked(r.AsksForItem, byKey[r.Key]), now, statesByTuple, ignored)
 			dto.MissingSecret = checks.MissingSecret(r.Plugin, r.Params, true, agentSecrets)
 			out.Body.Checks = append(out.Body.Checks, dto)

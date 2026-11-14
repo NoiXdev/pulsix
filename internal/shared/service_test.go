@@ -1097,7 +1097,7 @@ func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 // installation-owned definition goes through checks.ValidateDefinitionShape
 // too, so a key starting with local- — reserved for the checks defined in
 // a host's agent.yaml — is refused on create and on a rename, before
-// anything is written.
+// anything is written; a definition that already had one keeps it.
 func TestCheckDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
 	store := newFakeStore()
 	id := uuid.Must(uuid.NewV7())
@@ -1114,6 +1114,14 @@ func TestCheckDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
 	_, err = svc.UpdateCheckDefinition(ctx, id, shared.CheckDefinitionInput{Key: "local-disk", Plugin: "disk", Interval: 300 * time.Second})
 	if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "keys starting with local- are reserved for checks defined on the host") {
 		t.Fatalf("UpdateCheckDefinition renaming to local-disk = %v, want the reservation as ErrInvalidInput", err)
+	}
+
+	// A definition that already had such a key stays editable under it.
+	legacy := uuid.Must(uuid.NewV7())
+	store.checkDefs[legacy] = shared.CheckDefinition{ID: legacy, Key: "local-old", Plugin: "cpu", Interval: 60 * time.Second}
+	got, err := svc.UpdateCheckDefinition(ctx, legacy, shared.CheckDefinitionInput{Key: "local-old", Plugin: "cpu", Interval: 120 * time.Second})
+	if err != nil || got.Key != "local-old" || got.Interval != 120*time.Second {
+		t.Fatalf("UpdateCheckDefinition keeping its legacy local- key = %+v, %v; want it updated", got, err)
 	}
 }
 

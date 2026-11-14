@@ -125,14 +125,18 @@ func TestResolveHostLocalKeyLosesToTheManagersCheck(t *testing.T) {
 		{Key: "local-ok", Plugin: checks.PluginMemory, Interval: time.Minute},
 		{Key: "local-probe", Plugin: checks.PluginMemory, Interval: time.Minute},
 	}}}
+	// Disabled, a definition runs nowhere, so it shadows nothing: the
+	// agent runs its own check under that key.
+	putDef(store, checks.Definition{OrgID: org, Key: "local-off", Plugin: checks.PluginCPU, Interval: 30 * time.Second, Enabled: false, BindingKind: checks.BindingOrg})
+	local.byHost[host] = append(local.byHost[host], checks.LocalCheck{Key: "local-off", Plugin: checks.PluginMemory, Interval: time.Minute})
 	svc := checks.NewService(store, checks.WithMatcher(matcher), checks.WithHostRoster(roster), checks.WithLocalChecks(local))
 
 	rs, err := svc.ResolveHost(ctx, org, host)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := localKeys(rs.Local); !slices.Equal(got, []string{"local-ok"}) {
-		t.Fatalf("Local = %v, want only local-ok", got)
+	if got := localKeys(rs.Local); !slices.Equal(got, []string{"local-off", "local-ok"}) {
+		t.Fatalf("Local = %v, want local-off and local-ok", got)
 	}
 	if rs.Checks[0].Plugin != checks.PluginCPU || rs.Synthetic[0].Plugin != checks.PluginHTTP {
 		t.Fatalf("Checks = %+v, Synthetic = %+v, want the manager's definitions", rs.Checks, rs.Synthetic)

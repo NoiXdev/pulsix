@@ -134,3 +134,42 @@ func TestHostChecksListLocalChecks(t *testing.T) {
 		}
 	}
 }
+
+// TestHostChecksShowTheLocalCheckOverADisabledLegacyDefinition (backlog
+// 3.5a): a definition that took a local- key before the reservation
+// shadows the host's local check of that key while enabled — the agent
+// runs the manager's — so the host page lists the definition. Disabled, it
+// no longer does: the agent runs its own check, and the page lists that
+// local row instead of the disabled definition, once.
+func TestHostChecksShowTheLocalCheckOverADisabledLegacyDefinition(t *testing.T) {
+	f := newChecksFixture(t, "host-checks-local-legacy")
+	scoped := db.WithOrgScope(context.Background(), f.orgID)
+	legacy := func(key string, enabled bool) {
+		t.Helper()
+		if _, err := checks.NewSQLStore(f.s.DB).CreateDefinition(scoped, checks.Definition{
+			ID: uuid.Must(uuid.NewV7()), OrgID: f.orgID, Key: key, Plugin: "cpu", Interval: time.Minute,
+			Enabled: enabled, Origin: "custom", BindingKind: checks.BindingOrg,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy("local-off", false)
+	legacy("local-on", true)
+	f.registerAgentWithLocalChecks(t, f.web, "serial-host-local-legacy", nil, []agents.LocalCheckInput{
+		{Key: "local-off", Plugin: "disk", ParamsJSON: `{}`, IntervalSeconds: 120},
+		{Key: "local-on", Plugin: "disk", ParamsJSON: `{}`, IntervalSeconds: 120},
+	})
+
+	body := f.hostChecks(t, f.viewerC, f.web)
+	rows := map[string][]hostCheck{}
+	for _, c := range body.Checks {
+		rows[c.Key] = append(rows[c.Key], c)
+	}
+	if off := rows["local-off"]; len(off) != 1 || off[0].Source != "local" || off[0].Origin != "local" ||
+		!off[0].Enabled || off[0].Plugin != "disk" || off[0].DefinitionID != "" {
+		t.Fatalf("local-off rows = %+v, want only the local disk check", off)
+	}
+	if on := rows["local-on"]; len(on) != 1 || on[0].Source != "org" || on[0].Plugin != "cpu" || on[0].DefinitionID == "" {
+		t.Fatalf("local-on rows = %+v, want only the enabled definition", on)
+	}
+}

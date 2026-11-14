@@ -118,13 +118,6 @@ func ValidateDefinitionShape(plugin, key string, params map[string]any, interval
 	if normalizedKey == "" {
 		normalizedKey = plugin // "key defaults to the plugin name" (spec's Data model)
 	}
-	// Keys starting with local- belong to the checks defined in a host's
-	// agent.yaml (backlog 3.5a), so the two never collide. The prefix
-	// alone, not checkplugins.ValidLocalCheckKey: "local-" by itself is no
-	// valid local key, and is refused here all the same.
-	if strings.HasPrefix(normalizedKey, checkplugins.LocalCheckPrefix) {
-		return "", fmt.Errorf("%w: keys starting with local- are reserved for checks defined on the host", ErrInvalidInput)
-	}
 	// The same shape a plugin name itself always satisfies, so a key left
 	// to default to the plugin name never fails this check.
 	if !checkplugins.ValidCheckKey(normalizedKey) {
@@ -137,6 +130,25 @@ func ValidateDefinitionShape(plugin, key string, params map[string]any, interval
 		return "", err
 	}
 	return normalizedKey, nil
+}
+
+// RefuseLocalKey refuses a normalized definition key starting with local-:
+// those keys belong to the checks defined in a host's agent.yaml (backlog
+// 3.5a), so the two never collide. The prefix alone, not
+// checkplugins.ValidLocalCheckKey: "local-" by itself is no valid local key,
+// and is refused all the same.
+//
+// It is not part of ValidateDefinitionShape because it applies only to a
+// key a definition is about to TAKE — on create, or on an update that
+// renames it. A definition that already had such a key before the
+// reservation keeps it and stays editable (and wins over a local check of
+// the same key while enabled). Exported for internal/shared, whose
+// installation-owned definitions follow the same rule.
+func RefuseLocalKey(key string) error {
+	if strings.HasPrefix(key, checkplugins.LocalCheckPrefix) {
+		return fmt.Errorf("%w: keys starting with local- are reserved for checks defined on the host", ErrInvalidInput)
+	}
+	return nil
 }
 
 // normalizeDefinition validates in into a definition's mutable fields; id,
@@ -176,6 +188,9 @@ func normalizeDefinition(in DefinitionInput) (Definition, error) {
 func (s *Service) createDefinition(ctx context.Context, orgID uuid.UUID, in DefinitionInput, origin string) (Definition, error) {
 	d, err := normalizeDefinition(in)
 	if err != nil {
+		return Definition{}, err
+	}
+	if err := RefuseLocalKey(d.Key); err != nil {
 		return Definition{}, err
 	}
 	if origin == originCustom {
@@ -266,6 +281,13 @@ func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in 
 	existing, err := s.store.GetDefinition(ctx, orgID, id)
 	if err != nil {
 		return Definition{}, err
+	}
+	// Only a rename takes a key; one kept from before the reservation
+	// stays (RefuseLocalKey).
+	if d.Key != existing.Key {
+		if err := RefuseLocalKey(d.Key); err != nil {
+			return Definition{}, err
+		}
 	}
 	if existing.Origin == originSeed && (d.Key != existing.Key || d.Plugin != existing.Plugin) {
 		return Definition{}, fmt.Errorf("%w: a seeded definition's key and plugin are fixed; copy it to change them", ErrInvalidInput)
