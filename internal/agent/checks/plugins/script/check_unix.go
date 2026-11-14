@@ -15,7 +15,7 @@ import (
 type unixFile struct {
 	uid  uint32
 	mode fs.FileMode
-	// userMounted: a directory on a file system a user may mount (FUSE),
+	// userMounted: a directory or file on a file system a user may mount (FUSE),
 	// whose owners and modes its server makes up.
 	userMounted bool
 }
@@ -122,6 +122,11 @@ func (osFS) judgeFile(p string) error {
 	if err != nil {
 		return err
 	}
+	// A FUSE file system can be mounted on a single file its user owns;
+	// its server then reports root as the owner.
+	if f.userMounted, err = onUserMountableFS(p); err != nil {
+		return err
+	}
 	return judgeUnixFile(f)
 }
 
@@ -147,9 +152,14 @@ func unixStat(path string) (unixFile, error) {
 // POSIX ACLs) is not seen: the standard library offers no portable way to
 // read one.
 //
+// A file on FUSE is refused whatever it reports, as a directory is
+// (judgeUnixDir).
+//
 // A refusal says why without a path.
 func judgeUnixFile(file unixFile) error {
 	switch {
+	case file.userMounted:
+		return refuse("on a user-mountable file system")
 	case file.uid != 0:
 		return refuse(fmt.Sprintf("owned by uid %d, not by root", file.uid))
 	case file.mode.Perm()&0o022 != 0:

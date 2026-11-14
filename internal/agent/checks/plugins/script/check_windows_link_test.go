@@ -73,13 +73,15 @@ func adminFolder(t *testing.T) string {
 }
 
 // removeLinksThenAll removes every entry of dir that is a link or junction
-// by itself first, so nothing walks into System32, then dir.
+// by itself first, so nothing walks into System32, then dir. Lstat reports
+// a junction as a directory that is also irregular, so any type bit beside
+// the directory bit marks a link here.
 func removeLinksThenAll(t *testing.T, dir string) {
 	t.Helper()
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
 		p := filepath.Join(dir, e.Name())
-		if fi, err := os.Lstat(p); err == nil && fi.Mode().Type() != 0 && !fi.IsDir() {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().Type()&^os.ModeDir != 0 {
 			if err := os.Remove(p); err != nil {
 				t.Errorf("remove the link %s: %v", p, err)
 			}

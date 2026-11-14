@@ -8,8 +8,8 @@ import (
 // fuseSuperMagic is FUSE's file system type.
 const fuseSuperMagic = 0x65735546
 
-// onUserMountableFS reports whether the directory dir lies on a FUSE file
-// system: its server, which a user may run, answers every lookup and
+// onUserMountableFS reports whether dir, a directory or a file, lies on a
+// FUSE file system: its server, which a user may run, answers every lookup and
 // reports owners and modes as it likes.
 func onUserMountableFS(dir string) (bool, error) {
 	var st syscall.Statfs_t

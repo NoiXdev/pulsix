@@ -27,6 +27,9 @@ func TestJudgeUnixFile(t *testing.T) {
 		{"owned by a user", unixFile{uid: 1000, mode: 0o755}, "owned by uid 1000, not by root"},
 		{"group-writable", unixFile{uid: 0, mode: 0o775}, "writable by group or others"},
 		{"other-writable", unixFile{uid: 0, mode: 0o757}, "writable by group or others"},
+		// A user may mount a FUSE server on a file they own and report
+		// root as its owner.
+		{"on a user-mountable file system", unixFile{uid: 0, mode: 0o644, userMounted: true}, "on a user-mountable file system"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
