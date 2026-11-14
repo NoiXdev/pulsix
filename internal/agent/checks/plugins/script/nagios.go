@@ -133,17 +133,22 @@ func skipEntry(s string) string {
 // unitFactors normalises Nagios units: times to seconds, sizes to bytes
 // (×1024ⁿ, the Nagios plugins' convention).
 var unitFactors = map[string]float64{
-	"":   1,
-	"s":  1,
-	"ms": 1e-3,
-	"us": 1e-6,
-	"%":  1,
-	"c":  1,
-	"B":  1,
-	"KB": 1 << 10,
-	"MB": 1 << 20,
-	"GB": 1 << 30,
-	"TB": 1 << 40,
+	"":    1,
+	"s":   1,
+	"ms":  1e-3,
+	"us":  1e-6,
+	"%":   1,
+	"c":   1,
+	"B":   1,
+	"KB":  1 << 10,
+	"kB":  1 << 10,
+	"KiB": 1 << 10,
+	"MB":  1 << 20,
+	"MiB": 1 << 20,
+	"GB":  1 << 30,
+	"GiB": 1 << 30,
+	"TB":  1 << 40,
+	"TiB": 1 << 40,
 }
 
 // perfValue reads `value[UOM][;warn;crit;min;max]` and normalises the unit.

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/agent/checks"
 )
 
 func TestNagiosStatus(t *testing.T) {
@@ -71,6 +73,10 @@ func TestParseNagios(t *testing.T) {
 			message: "OK", values: []itemValue{{"c:small", 1}},
 		},
 		{
+			name: "binary and lower-case kilo units", out: "OK | a=1kB b=1KiB c=1MiB d=1GiB e=1TiB",
+			message: "OK", values: []itemValue{{"c:a", 1 << 10}, {"c:b", 1 << 10}, {"c:c", 1 << 20}, {"c:d", 1 << 30}, {"c:e", 1 << 40}},
+		},
+		{
 			name: "an unknown unit is taken as is", out: "OK | temp=45C fan=1200rpm",
 			message: "OK", values: []itemValue{{"c:temp", 45}, {"c:fan", 1200}},
 		},
@@ -116,10 +122,25 @@ func TestParseNagiosValueCap(t *testing.T) {
 }
 
 func TestParseNagiosHostileOutput(t *testing.T) {
-	// 64 KiB of pipes, quotes and equals signs: bounded, and every item reportable.
-	out := []byte(strings.Repeat("|'=''\x00\xff=1 ", maxOutput/12))
-	_, values := parseNagios("c", out)
-	if len(values) > maxValues {
-		t.Errorf("kept %d values, more than %d", len(values), maxValues)
+	// 64 KiB of pipes, quotes, equals signs, control bytes and invalid
+	// UTF-8: bounded, and every item and the message reportable.
+	outputs := []string{
+		strings.Repeat("|'=''\x00\xff=1 ", maxOutput/12),
+		"\xff\x00\u2028msg\t" + strings.Repeat("x", 1000) + " | " + strings.Repeat("'a\x01''b'=1 \xfe=2 \u2029=3 ", maxOutput/30),
+		strings.Repeat("\n|", maxOutput/2),
+	}
+	for i, out := range outputs {
+		msg, values := parseNagios("c", []byte(out))
+		if len(values) > maxValues {
+			t.Errorf("output %d: kept %d values, more than %d", i, len(values), maxValues)
+		}
+		for _, v := range values {
+			if !checks.ReportableItem(v.item) {
+				t.Errorf("output %d: value item %q is not reportable", i, v.item)
+			}
+		}
+		if !checks.ReportableLabel(cleanMessage(msg)) {
+			t.Errorf("output %d: message %q is not reportable once cleaned", i, cleanMessage(msg))
+		}
 	}
 }

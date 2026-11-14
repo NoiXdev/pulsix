@@ -15,12 +15,15 @@ const noOutput = "(no output)"
 const maxValues = 64
 
 // cleanMessage turns a message into a script.output label the manager
-// accepts: invalid UTF-8 replaced, control characters and line or
-// paragraph separators removed, trimmed, cut to checks.MaxLabelLen bytes
+// accepts: invalid UTF-8 replaced, a tab turned into a space, other
+// control characters and line or paragraph separators removed, trimmed, cut to checks.MaxLabelLen bytes
 // on a rune boundary; empty becomes noOutput.
 func cleanMessage(s string) string {
 	s = strings.ToValidUTF8(s, "\uFFFD")
 	s = strings.Map(func(r rune) rune {
+		if r == '\t' {
+			return ' '
+		}
 		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
 			return -1
 		}

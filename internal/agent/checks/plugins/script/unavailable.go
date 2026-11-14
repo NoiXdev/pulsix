@@ -1,13 +1,10 @@
 package script
 
-import (
-	"context"
-	"errors"
-)
+import "context"
 
 // errUnavailable is the checker's refusal while the agent has no real
 // runner and checker (backlog 3.6g, Task 4 replaces both).
-var errUnavailable = errors.New("running commands is not available on this system")
+var errUnavailable = refuse("running commands is not available on this system")
 
 // unavailable is a runner and checker that refuse everything: every
 // program is refused before it could run.

@@ -25,6 +25,7 @@
 package script
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -49,10 +50,14 @@ const (
 	textStartFailed = "could not start the program"
 	textNoExit      = "the program ended without an exit code"
 	textInternal    = "internal error while running the command"
-	textNoCommands  = "commands are not available"
-	textTooMany     = "the check lists more than 32 commands"
-	textBadFormat   = `the check's parameter "format" is invalid`
-	textBadTimeout  = `the check's parameter "timeout_seconds" is invalid`
+	// textUncheckedProgram follows the program's path; an argument that
+	// could not be checked is not named at all.
+	textUncheckedProgram  = "could not be checked"
+	textUncheckedArgument = "an argument could not be checked"
+	textNoCommands        = "commands are not available"
+	textTooMany           = "the check lists more than 32 commands"
+	textBadFormat         = `the check's parameter "format" is invalid`
+	textBadTimeout        = `the check's parameter "timeout_seconds" is invalid`
 )
 
 const (
@@ -237,24 +242,48 @@ func notDefined(name, problem string) string {
 }
 
 // checkFiles checks the program, then every argument that is an absolute
-// path naming a regular file, and returns "<path>: <reason>" for the first
-// one the checker refuses, or "" when every one passes.
+// path naming a regular file, and returns why the first one that does not
+// pass fails, or "" when every one passes. It fails closed: a file the
+// checker could not check stops the run like a refused one. A path is
+// echoed only when it is the program or a file the checker inspected and
+// refused (checker), and only the refusal's own reason goes with it.
 func (p *scriptPlugin) checkFiles(argv []string) string {
-	if !filepath.IsAbs(argv[0]) {
-		return argv[0] + ": not an absolute path"
+	prog := argv[0]
+	if !filepath.IsAbs(prog) {
+		return prog + ": not an absolute path"
 	}
-	if err := p.check.Check(argv[0]); err != nil {
-		return argv[0] + ": " + err.Error()
+	if err := p.check.Check(prog); err != nil {
+		if reason, ok := refusalReason(err); ok {
+			return prog + ": " + reason
+		}
+		if errors.Is(err, errNotFile) {
+			return prog + ": " + errNotFile.Error()
+		}
+		return prog + ": " + textUncheckedProgram
 	}
 	for _, arg := range argv[1:] {
 		if !filepath.IsAbs(arg) {
 			continue
 		}
-		if err := p.check.Check(arg); err != nil && !errors.Is(err, errNotFile) {
-			return arg + ": " + err.Error()
+		err := p.check.Check(arg)
+		if reason, ok := refusalReason(err); ok {
+			return arg + ": " + reason
+		}
+		if err != nil && !errors.Is(err, errNotFile) {
+			return textUncheckedArgument
 		}
 	}
 	return ""
+}
+
+// refusalReason is the reason of a refuse error in err's chain, without
+// any text a wrapper added around it.
+func refusalReason(err error) (string, bool) {
+	var r refusal
+	if !errors.As(err, &r) {
+		return "", false
+	}
+	return string(r), true
 }
 
 // startFailure words a failure to start the program: the fixed text, plus
@@ -270,6 +299,7 @@ func startFailure(err error) string {
 
 // report turns a finished run into the command's observations.
 func report(name string, res runResult, f format) []checks.Observation {
+	res.stdout = bytes.TrimPrefix(res.stdout, byteOrderMark)
 	var st status
 	var message string
 	var values []itemValue
@@ -295,6 +325,10 @@ func report(name string, res runResult, f format) []checks.Observation {
 	}
 	return obs
 }
+
+// byteOrderMark is UTF-8's, which Windows PowerShell 5.1 writes ahead of
+// its output; it is dropped before either format reads the output.
+var byteOrderMark = []byte("\xEF\xBB\xBF")
 
 // noRun is a command's report when no output came: status unknown and
 // text, cleaned, as output.

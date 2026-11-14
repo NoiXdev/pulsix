@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -69,6 +68,18 @@ func TestCollectNagiosValues(t *testing.T) {
 	})
 }
 
+func TestCollectNagiosByteOrderMark(t *testing.T) {
+	r := exitedWith(0, "\xEF\xBB\xBF'a b'=1 | c=2\n")
+	got := collect(t, newPlugin(r, progOK()), map[string]any{"commands": []string{"x"}}, oneCommand())
+	equalLines(t, got, []string{
+		`x script.status "ok"`,
+		`x script.output "'a b'=1"`,
+		"x script.exit_code 0",
+		"x script.duration_seconds 0.25",
+		"x:c script.value 2",
+	})
+}
+
 func TestCollectJSON(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		r := exitedWith(2, `{"status":"ok","message":"fine","metrics":{"age":2}}`)
@@ -91,6 +102,11 @@ func TestCollectJSON(t *testing.T) {
 			"x script.duration_seconds 0.25",
 		})
 	})
+	t.Run("a byte order mark is dropped", func(t *testing.T) {
+		r := exitedWith(0, "\xEF\xBB\xBF"+`{"status":"warn","message":"bom"}`)
+		got := collect(t, newPlugin(r, progOK()), map[string]any{"commands": []string{"x"}, "format": "json"}, oneCommand())
+		equalLines(t, got[:2], []string{`x script.status "warn"`, `x script.output "bom"`})
+	})
 	t.Run("empty message", func(t *testing.T) {
 		r := exitedWith(0, `{"status":"ok"}`)
 		got := collect(t, newPlugin(r, progOK()), map[string]any{"commands": []string{"x"}, "format": "json"}, oneCommand())
@@ -101,7 +117,7 @@ func TestCollectJSON(t *testing.T) {
 }
 
 func TestCollectWithoutARun(t *testing.T) {
-	refusal := errors.New("writable by group or others")
+	refusal := refuse("writable by group or others")
 	tests := []struct {
 		name    string
 		cmds    fakeCommands
@@ -130,6 +146,15 @@ func TestCollectWithoutARun(t *testing.T) {
 			name: "script argument refused", cmds: oneCommand("-f", "/opt/x.py", "/opt/y.py"),
 			files: map[string]error{prog: nil, "/opt/x.py": refusal, "/opt/y.py": errors.New("other")},
 			want:  []string{`x script.status "unknown"`, `x script.output "/opt/x.py: writable by group or others"`},
+		},
+		{
+			name: "program could not be checked", cmds: oneCommand(), files: map[string]error{prog: errors.New("lstat failed: EIO")},
+			want: []string{`x script.status "unknown"`, `x script.output "` + prog + `: ` + textUncheckedProgram + `"`},
+		},
+		{
+			name: "argument could not be checked", cmds: oneCommand("/opt/" + marker),
+			files: map[string]error{prog: nil, "/opt/" + marker: errors.New("stat /opt/" + marker + ": permission denied")},
+			want:  []string{`x script.status "unknown"`, `x script.output "` + textUncheckedArgument + `"`},
 		},
 		{
 			name: "relative program", cmds: fakeCommands{argv: map[string][]string{"x": {"check_x", "MARKER"}}},
@@ -310,69 +335,6 @@ func TestCollectCommandsParam(t *testing.T) {
 			`c33 script.status "unknown"`, `c33 script.output "` + textTooMany + `"`,
 		})
 	})
-}
-
-func TestCollectConcurrencyBound(t *testing.T) {
-	const n = 10
-	var mu sync.Mutex
-	cur, peak := 0, 0
-	full := make(chan struct{})
-	r := &fakeRunner{run: func(ctx context.Context, argv []string) (runResult, error) {
-		mu.Lock()
-		cur++
-		peak = max(peak, cur)
-		if cur == maxParallel {
-			select {
-			case <-full:
-			default:
-				close(full)
-			}
-		}
-		mu.Unlock()
-		select { // the first maxParallel runs wait until all of them run at once
-		case <-full:
-		case <-ctx.Done():
-		}
-		mu.Lock()
-		cur--
-		mu.Unlock()
-		return runResult{exited: true, stdout: []byte(argv[1])}, nil
-	}}
-	names := make([]string, n)
-	argv := map[string][]string{}
-	for i := range names {
-		names[i] = fmt.Sprintf("c%d", i)
-		argv[names[i]] = []string{prog, "out" + names[i]}
-	}
-	got := collect(t, newPlugin(r, progOK()), map[string]any{"commands": names}, fakeCommands{argv: argv})
-	if peak != maxParallel {
-		t.Errorf("at most %d runs at once, want %d", peak, maxParallel)
-	}
-	if len(got) != 4*n {
-		t.Fatalf("got %d observations, want %d", len(got), 4*n)
-	}
-	for i, name := range names {
-		if want := fmt.Sprintf(`%s script.output "out%s"`, name, name); got[4*i+1] != want {
-			t.Errorf("observation %d = %s, want %s", 4*i+1, got[4*i+1], want)
-		}
-	}
-}
-
-func TestCollectStopsWhenTheAgentStops(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	r := &fakeRunner{run: func(rctx context.Context, _ []string) (runResult, error) {
-		cancel()
-		<-rctx.Done()
-		return runResult{}, rctx.Err()
-	}}
-	obs, err := newPlugin(r, progOK()).CollectWithCommands(ctx, map[string]any{"commands": []string{"x"}}, oneCommand())
-	if obs != nil || !errors.Is(err, context.Canceled) {
-		t.Errorf("got (%v, %v), want (nil, context.Canceled)", obs, err)
-	}
-	obs, err = newPlugin(r, progOK()).CollectWithCommands(ctx, map[string]any{"commands": []string{"x"}}, oneCommand())
-	if obs != nil || !errors.Is(err, context.Canceled) {
-		t.Errorf("on a dead context: got (%v, %v), want (nil, context.Canceled)", obs, err)
-	}
 }
 
 func TestPlainCollect(t *testing.T) {

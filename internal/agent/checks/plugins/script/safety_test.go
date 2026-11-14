@@ -62,6 +62,35 @@ func TestCollectNeverReportsAnArgument(t *testing.T) {
 		obs, err := newPlugin(exitedWith(0, ""), c).CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, cmds)
 		assertNoMarker(t, obs, err)
 	})
+	t.Run("argument the checker could not check", func(t *testing.T) {
+		c := checkerFunc(func(path string) error {
+			if path == prog {
+				return nil
+			}
+			return errors.New("stat " + path + ": permission denied")
+		})
+		obs, err := newPlugin(exitedWith(0, ""), c).CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, cmds)
+		assertNoMarker(t, obs, err)
+	})
+	t.Run("program the checker could not check", func(t *testing.T) {
+		c := checkerFunc(func(path string) error { return errors.New("stat " + path + " " + marker) })
+		obs, err := newPlugin(exitedWith(0, ""), c).CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, cmds)
+		assertNoMarker(t, obs, err)
+	})
+	t.Run("refusal of an argument that is no file", func(t *testing.T) {
+		// A checker breaking the contract: a refusal for a path that names
+		// no file is still only echoed for what it checked, the argument
+		// itself, never another one.
+		c := checkerFunc(func(path string) error {
+			if path == prog {
+				return nil
+			}
+			return refuse("not owned by root")
+		})
+		argv := []string{prog, "--password=" + marker, "/etc/x.py"}
+		obs, err := newPlugin(exitedWith(0, ""), c).CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, fakeCommands{argv: map[string][]string{"x": argv}})
+		assertNoMarker(t, obs, err)
+	})
 	t.Run("checker panics", func(t *testing.T) {
 		c := checkerFunc(func(path string) error { panic("check " + path + " " + marker) })
 		obs, err := newPlugin(exitedWith(0, ""), c).CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, cmds)

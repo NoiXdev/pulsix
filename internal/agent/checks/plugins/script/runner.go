@@ -38,16 +38,36 @@ var (
 
 // checker checks a file before a run: the program, and every argument
 // that is an absolute path naming a regular file (the script an
-// interpreter is given). Check resolves symlinks and refuses a file others
-// could change; the error says why, without the path, since the plugin
-// reports it as "<path>: <reason>".
+// interpreter is given). Check resolves symlinks. It returns one of:
 //
-// When path does not name a regular file (missing, a directory, a device)
-// Check returns an error wrapping errNotFile. The plugin refuses such a
-// program, and leaves such an argument alone: an argument that names no
-// file (a mount point, a device, a URL) is no script.
+//   - nil: the path names a regular file nobody but the system can change;
+//   - an error wrapping errNotFile: the path names no regular file
+//     (missing, a directory, a device). The plugin refuses such a program
+//     and leaves such an argument alone: an argument that names no file (a
+//     mount point, a device, a URL) is no script;
+//   - refuse(reason): the path names an existing regular file the checker
+//     inspected and refuses (writable by others, wrong owner). reason says
+//     why without the path; only then does the plugin report
+//     "<path>: <reason>";
+//   - any other error: the file could not be checked (a failed stat, an
+//     unreadable ACL). The plugin fails closed and reports a fixed text,
+//     naming the program but never an argument, whose path may be
+//     something other than a file name.
 type checker interface {
 	Check(path string) error
 }
 
-var errNotFile = errors.New("does not exist or is not a regular file")
+var (
+	errNotFile = errors.New("does not exist or is not a regular file")
+	// errRefused is what a refuse error matches (errors.Is).
+	errRefused = errors.New("refused")
+)
+
+// refuse is the checker's refusal of a file it inspected: its text is
+// reason alone, and it matches errRefused.
+func refuse(reason string) error { return refusal(reason) }
+
+type refusal string
+
+func (r refusal) Error() string      { return string(r) }
+func (refusal) Is(target error) bool { return target == errRefused }
