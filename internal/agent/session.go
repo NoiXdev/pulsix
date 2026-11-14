@@ -309,17 +309,23 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 // sendHeartbeat sends the agent's build version and the scheduler's
 // currently-applied configuration version — what agentapi's
 // processHeartbeat compares against the set it resolves, to decide
-// whether to push — and the secrets file's names and state, never a
-// field. Asking the watcher here is also what makes it read the file
-// again, at most once a minute.
+// whether to push — the secrets file's names and state, never a field,
+// and the local checks running from it with the problems of those that
+// do not. Asking the watcher here is also what makes it read the file
+// again, at most once a minute, and its local checks are applied before
+// they are reported.
 func (l *Loop) sendHeartbeat(sender *streamSender) error {
 	set, state := l.secrets.Current()
+	l.applyLocal(set)
+	shadowed := l.scheduler.Shadowed()
 	return sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{
 		Heartbeat: &agentpb.Heartbeat{
-			Version:       l.cfg.Version,
-			ConfigVersion: l.scheduler.Version(),
-			SecretNames:   set.Names(),
-			SecretsState:  reportedSecretsState(state),
+			Version:            l.cfg.Version,
+			ConfigVersion:      l.scheduler.Version(),
+			SecretNames:        set.Names(),
+			SecretsState:       reportedSecretsState(state),
+			LocalChecks:        runningLocalChecks(set.LocalChecks(), shadowed),
+			LocalCheckProblems: localCheckProblems(set.LocalCheckProblems(), shadowed),
 		},
 	}})
 }

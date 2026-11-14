@@ -47,8 +47,12 @@ type loopTest struct {
 	cfg    Config
 	dialer *fakeDialer
 	ticks  *fakeTickers
-	facts  Collector
-	now    func() time.Time
+	// lookTicks is the local checks' once-a-minute look (localchecks.go),
+	// apart from ticks so the session's ticker indices stay what every
+	// cadence test counts on.
+	lookTicks *fakeTickers
+	facts     Collector
+	now       func() time.Time
 
 	mu     sync.Mutex
 	sleeps []time.Duration
@@ -98,7 +102,7 @@ func newLoopTest(t *testing.T) *loopTest {
 	}
 	return &loopTest{
 		t: t, dir: dir, cfg: cfg, dialer: &fakeDialer{},
-		ticks: &fakeTickers{}, facts: &fakeCollector{}, now: time.Now,
+		ticks: &fakeTickers{}, lookTicks: &fakeTickers{}, facts: &fakeCollector{}, now: time.Now,
 	}
 }
 
@@ -122,6 +126,7 @@ func (lt *loopTest) options() []LoopOption {
 		WithSleep(lt.recordSleep),
 		WithLogger(slog.New(slog.NewTextHandler(&lt.logs, nil))),
 		WithTicker(lt.ticks.factory()),
+		withLocalLookTicker(lt.lookTicks.factory()),
 		WithRand(lt.jitter),
 		// Permissive: on Windows the real protector refuses a temp dir
 		// the test user owns. The data dir rules have their own tests.

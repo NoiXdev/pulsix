@@ -57,6 +57,22 @@ message Heartbeat {
   // the agent drop every secret (it never quotes the file). Empty from an
   // agent older than the file.
   string secrets_state = 4;
+  // The local checks the agent runs from its configuration file's checks
+  // section, key order: the file's valid entries minus the keys a check
+  // from the manager shadows. Empty from an agent older than the section.
+  repeated LocalCheck local_checks = 5;
+  // Why some of the file's local checks do not run: the refused entries
+  // ("line N: <reason>", line order), then each key a check from the
+  // manager shadows. At most 32 entries.
+  repeated string local_check_problems = 6;
+}
+
+// LocalCheck is a check defined in the agent's own configuration file.
+message LocalCheck {
+  string key = 1;
+  string plugin = 2;
+  string params_json = 3; // canonical JSON
+  int32 interval_seconds = 4;
 }
 
 message Facts {

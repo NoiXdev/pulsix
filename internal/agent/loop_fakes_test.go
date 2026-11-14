@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/ca"
@@ -17,15 +18,17 @@ import (
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
 
-// fakeTicker is a channel-driven ticker the test controls.
+// fakeTicker is a channel-driven ticker the test controls. It records
+// whether it was stopped, which is how a test sees a check retired.
 type fakeTicker struct {
-	c chan time.Time
+	c       chan time.Time
+	stopped atomic.Bool
 }
 
 func newFakeTicker() *fakeTicker { return &fakeTicker{c: make(chan time.Time)} }
 
 func (f *fakeTicker) C() <-chan time.Time { return f.c }
-func (f *fakeTicker) Stop()               {}
+func (f *fakeTicker) Stop()               { f.stopped.Store(true) }
 
 // fakeTickers hands out fake tickers, recording their intervals in
 // hand-out order (the loop builds the heartbeat ticker before the facts

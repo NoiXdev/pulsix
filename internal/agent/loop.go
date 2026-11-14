@@ -144,6 +144,14 @@ type Loop struct {
 	scheduler *checks.Scheduler
 	buffer    *checks.Buffer
 
+	// lookTicker is the minute look's ticker factory when a test sets one
+	// apart; nil uses ticker (localchecks.go).
+	lookTicker tickerFactory
+	// localMu guards shadowed: the local keys a check from the manager
+	// shadowed at the last applyLocal, so a change is logged once.
+	localMu  sync.Mutex
+	shadowed []string
+
 	// routeMu guards sender: which stream session, if any, currently
 	// receives the scheduler's results. See handleResults, activateSender
 	// and deactivateSender in session.go.
@@ -239,8 +247,10 @@ func (l *Loop) Run(ctx context.Context) error {
 		"heartbeat_interval", l.cfg.HeartbeatInterval, "facts_interval", l.cfg.FactsInterval,
 		"config_interval", l.cfg.ConfigInterval)
 	// The first look at the secrets file, so its outcome is logged at
-	// start rather than with the first heartbeat or check that needs it.
-	l.secrets.Current()
+	// start rather than with the first heartbeat or check that needs it,
+	// and its local checks are in the scheduler before it starts.
+	startSet, _ := l.secrets.Current()
+	l.applyLocal(startSet)
 	if !id.Valid(l.now()) {
 		// why says WHICH of the two unusable cases this is (backlog
 		// 2.103). Both re-enrol, so the agent behaves the same either
@@ -280,6 +290,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-time.After(streamDrainWit):
 		}
 	}()
+	// The minute look at the file lives as long as the scheduler, so local
+	// checks follow the file while no stream is up; it stops with schedCtx
+	// and Run waits for it.
+	lookDone := l.startLocalLook(schedCtx)
+	defer func() { <-lookDone }()
 	defer schedCancel()
 
 	backoffShift := 0
