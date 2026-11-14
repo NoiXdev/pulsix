@@ -372,7 +372,7 @@ func (s *SQLStore) GetDefinition(ctx context.Context, id uuid.UUID) (RepoDefinit
 // not wrapped in its own transaction: ProjectAllInto's caller (Task 3's
 // tenancy.Service.CreateOrg) is the one with a transaction to put this in,
 // the same division of labour rules.SeedForOrg's own doc comment describes
-// for its five rules. Unlike every other method on this store, it is
+// for its seed rules. Unlike every other method on this store, it is
 // expected to run on an org-bound ctx (SQLStore's own doc comment).
 func (s *SQLStore) ProjectInto(ctx context.Context, def RepoDefinition, orgID uuid.UUID) error {
 	name, url, branch, subpath := ProjectedRepoColumns(def)

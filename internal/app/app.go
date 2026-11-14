@@ -372,7 +372,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	itemsStore := items.NewSQLStore(appDB)
 	itemsSvc := items.NewService(itemsStore)
 	// Every organization gets its "default" zone, its "Linux base" check
-	// definitions, its five-row starter rule set and a projection of every
+	// definitions, its seven-row starter rule set and a projection of every
 	// installation-owned repository, job template AND check definition
 	// (v0.2f, spec decision 4) the moment it is created, through whichever of the
 	// two paths created it — POST /orgs (tenancy.Service.CreateOrg) or the

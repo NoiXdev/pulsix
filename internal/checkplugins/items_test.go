@@ -62,6 +62,15 @@ func TestAsksForItem(t *testing.T) {
 		{"phpfpm stopped asking for a pool off its list", "phpfpm", map[string]any{"urls": []any{"http://127.0.0.1/status"}}, "http://127.0.0.1/b", false},
 		{"phpfpm with a list still asks for its whole-host item", "phpfpm", map[string]any{"urls": []any{"http://127.0.0.1/b"}}, "", true},
 		{"phpfpm without a list asks for the default pool", "phpfpm", nil, "http://127.0.0.1/status", true},
+		// script's items are its command names; a value is
+		// "<command>:<label>" and belongs to the command before the first ':'.
+		{"script asks for a command on its list", "script", map[string]any{"commands": []any{"backup", "disk_root"}}, "disk_root", true},
+		{"script asks for a value of a listed command", "script", map[string]any{"commands": []any{"disk_root"}}, "disk_root:/", true},
+		{"script cuts a value at its first colon", "script", map[string]any{"commands": []any{"disk_root"}}, "disk_root:/a:b", true},
+		{"script stopped asking for a command off its list", "script", map[string]any{"commands": []any{"backup"}}, "disk_root", false},
+		{"script stopped asking for a value of a command off its list", "script", map[string]any{"commands": []any{"backup"}}, "disk_root:/", false},
+		{"script does not match a command that only starts the same", "script", map[string]any{"commands": []any{"disk"}}, "disk_root:/", false},
+		{"script reports no whole-host item", "script", map[string]any{"commands": []any{"backup"}}, "", false},
 		// disk and network report no whole-host item, so "" is only asked
 		// when nothing bounds them.
 		{"disk with a list does not ask for item \"\"", "disk", map[string]any{"mounts": []string{"/"}}, "", false},

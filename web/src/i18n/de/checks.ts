@@ -100,6 +100,7 @@ export const deChecks: Messages['checks'] = {
       apache: 'Apache httpd',
       caddy: 'Caddy',
       phpfpm: 'PHP-FPM',
+      script: 'Eigenes Skript',
     },
     key: 'Schlüssel',
     keyTitle: 'Kleinbuchstaben, Ziffern und Bindestriche; höchstens 63 Zeichen, nicht mit einem Bindestrich beginnend',
@@ -234,6 +235,21 @@ export const deChecks: Messages['checks'] = {
       },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
     },
+    script: {
+      commands: {
+        label: 'Befehle (einer pro Zeile)',
+        hint: 'Namen von Befehlen, die in der agent.yaml jedes Hosts unter commands: definiert sind; gesendet wird nur der Name, was läuft, bestimmt der Host. Ein Host, der einen Namen nicht definiert, meldet ihn als unbekannt.',
+        placeholder: 'backup_age\ndisk_root',
+      },
+      format: {
+        label: 'Ausgabeformat',
+        options: { nagios: 'Nagios-Plugin (Exit-Code und Perfdata)', json: 'JSON (status, message, metrics)' },
+      },
+      timeout_seconds: {
+        label: 'Timeout (Sekunden)',
+        hint: 'Ein Befehl, der dann noch läuft, wird samt aller von ihm gestarteten Prozesse beendet und als unbekannt gemeldet.',
+      },
+    },
     icmp: {
       count: { label: 'Pings pro Durchlauf' },
       timeout_s: { label: 'Timeout (Sekunden)' },
@@ -283,6 +299,7 @@ export const deChecks: Messages['checks'] = {
       noControl: 'Einträge dürfen keine Steuerzeichen enthalten',
       devicePath: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
       secretName: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
+      commandName: 'jeder Eintrag muss ein Befehlsname aus 1 bis 64 Zeichen sein: Buchstaben, Ziffern und . _ -',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',

@@ -114,6 +114,7 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 	checkplugins.FormatDockerLabel:  "key or key=value",
 	checkplugins.FormatDockerSocket: "an absolute path or npipe:////./pipe/name",
 	checkplugins.FormatSecretName:   "the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -",
+	checkplugins.FormatCommandName:  "the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -",
 }
 
 // describeCheckParam renders one parameter as "name (part; part; …)":

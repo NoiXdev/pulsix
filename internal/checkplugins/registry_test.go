@@ -13,7 +13,7 @@ import (
 // SharedCheckFormPage.tsx offered the plugins in before the descriptors.
 func TestNamesInTheSPAsOrder(t *testing.T) {
 	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker",
-		"temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "phpfpm", "icmp", "tcp", "http", "tls", "dns"}
+		"temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "phpfpm", "script", "icmp", "tcp", "http", "tls", "dns"}
 	if got := checkplugins.Names(); !slices.Equal(got, want) {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
@@ -200,6 +200,10 @@ func validateOne(plugin string, p checkplugins.ParamSpec, v any) error {
 	case "http":
 		if p.Name != "url" {
 			params["url"] = "http://x"
+		}
+	case "script":
+		if p.Name != "commands" {
+			params["commands"] = []any{"x"}
 		}
 	}
 	return checkplugins.Validate(plugin, params)

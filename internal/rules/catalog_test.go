@@ -157,6 +157,11 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"phpfpm.requests_per_s":             {CheckKey: "phpfpm", Kind: rules.MetricNumeric},
 		"phpfpm.max_children_reached_per_s": {CheckKey: "phpfpm", Kind: rules.MetricNumeric},
 		"phpfpm.slow_requests_per_s":        {CheckKey: "phpfpm", Kind: rules.MetricNumeric},
+		"script.status":                     {CheckKey: "script", Kind: rules.MetricDiscrete},
+		"script.output":                     {CheckKey: "script", Kind: rules.MetricDiscrete},
+		"script.exit_code":                  {CheckKey: "script", Kind: rules.MetricNumeric},
+		"script.duration_seconds":           {CheckKey: "script", Kind: rules.MetricNumeric},
+		"script.value":                      {CheckKey: "script", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -208,6 +213,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"apache":  "apache",
 		"caddy":   "caddy",
 		"phpfpm":  "phpfpm",
+		"script":  "script",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")

@@ -116,6 +116,7 @@ export const enChecks = {
       apache: 'Apache httpd',
       caddy: 'Caddy',
       phpfpm: 'PHP-FPM',
+      script: 'Custom script',
     },
     key: 'Key',
     keyTitle: 'Lower-case letters, digits and hyphens; up to 63 characters, not starting with a hyphen',
@@ -259,6 +260,18 @@ export const enChecks = {
       },
       verify_tls: { label: 'Verify the TLS certificate' },
     },
+    script: {
+      commands: {
+        label: 'Commands (one per line)',
+        hint: 'Names of commands defined under commands: in agent.yaml on each host; only the name is sent, the host decides what runs. A host that does not define a name reports it as unknown.',
+        placeholder: 'backup_age\ndisk_root',
+      },
+      format: {
+        label: 'Output format',
+        options: { nagios: 'Nagios plugin (exit code and perfdata)', json: 'JSON (status, message, metrics)' },
+      },
+      timeout_seconds: { label: 'Timeout (seconds)', hint: 'A command still running then is stopped, with every process it started, and reported as unknown.' },
+    },
     icmp: {
       count: { label: 'Pings per run' },
       timeout_s: { label: 'Timeout (seconds)' },
@@ -304,6 +317,7 @@ export const enChecks = {
       noControl: 'entries must not contain control characters',
       devicePath: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
       secretName: 'must be 1 to 64 characters: letters, digits and . _ -',
+      commandName: 'every entry must be a command name of 1 to 64 characters: letters, digits and . _ -',
       url: 'must be an http:// or https:// URL without a user name or password',
       statusURL: 'must be an http:// or https:// URL without a user name, password or #fragment, and without {address}',
       dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',

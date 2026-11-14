@@ -373,7 +373,7 @@ func (s *Service) DeleteRepo(ctx context.Context, id uuid.UUID) error {
 // created organization rather than an existing one receiving a new
 // definition (CreateRepo's own job). A failure partway is reported rather
 // than retried or rolled back here — the same posture SeedForOrg's own
-// comment documents for its five rules, and for the same reason: this call
+// comment documents for its seed rules, and for the same reason: this call
 // has no transaction of its own to roll back into, and whether it runs
 // inside the caller's (Task 3 wires CreateOrg's own transaction around it)
 // is that caller's decision, not this one's.

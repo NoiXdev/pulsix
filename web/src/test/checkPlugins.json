@@ -717,6 +717,59 @@
       ]
     },
     {
+      "name": "script",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "commands",
+          "type": "list",
+          "required": true,
+          "max_entries": 32,
+          "non_empty": true,
+          "format": "commandName"
+        },
+        {
+          "name": "format",
+          "type": "enum",
+          "default": "nagios",
+          "options": [
+            "nagios",
+            "json"
+          ]
+        },
+        {
+          "name": "timeout_seconds",
+          "type": "integer",
+          "default": 10,
+          "min": 1,
+          "max": 60
+        }
+      ],
+      "item_param": "commands",
+      "metrics": [
+        {
+          "name": "script.status",
+          "kind": "discrete"
+        },
+        {
+          "name": "script.output",
+          "kind": "discrete"
+        },
+        {
+          "name": "script.exit_code",
+          "kind": "numeric"
+        },
+        {
+          "name": "script.duration_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "script.value",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "icmp",
       "runs": "server",
       "params": [

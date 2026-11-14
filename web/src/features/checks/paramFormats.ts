@@ -311,6 +311,10 @@ function secretName(s: string): boolean {
   return /^[A-Za-z0-9_.-]{1,64}$/.test(s);
 }
 
+/** commandName: the name of a command under commands: in the agent's
+ * agent.yaml — the same rule as secretName. */
+const commandName = secretName;
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -323,6 +327,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   dockerLabel,
   dockerSocket,
   secretName,
+  commandName,
 };
 
 /** formatValid reports whether s passes the named format. An unknown

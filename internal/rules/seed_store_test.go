@@ -15,9 +15,10 @@ import (
 )
 
 // backfillBeginMarker and backfillEndMarker bound the exact backfill INSERT
-// statement inside migration 00045_check_rules.sql (internal/db/migrations),
-// so loadBackfillSQL can extract it verbatim rather than a hand-copied
-// second draft of it living in this test file. Moving, renaming or
+// statement inside each rules seed migration (backfillMigrations, in
+// internal/db/migrations), so loadBackfillSQL can extract it verbatim
+// rather than a hand-copied second draft of it living in this test file.
+// Moving, renaming or
 // deleting either marker without updating this constant — or vice versa —
 // makes loadBackfillSQL fail loudly (see its own doc comment), which is the
 // whole point: a copy that can silently drift is worse than no copy.
@@ -25,6 +26,12 @@ const (
 	backfillBeginMarker = "-- rules-seed-backfill:begin"
 	backfillEndMarker   = "-- rules-seed-backfill:end"
 )
+
+// backfillMigrations are the migrations that backfill SeedRules() into the
+// organizations existing when they ran: 00045 the first five rows, 00094
+// the two script rules (backlog 3.6g). Together they must write every
+// SeedRules() entry.
+var backfillMigrations = []string{"00045_check_rules.sql", "00094_seed_script_rules.sql"}
 
 // loadBackfillSQL reads the real migration file off disk and returns
 // exactly the statement between backfillBeginMarker and backfillEndMarker,
@@ -35,13 +42,13 @@ const (
 // rewritten to close). It fails the test outright, rather than returning
 // an empty string that would let the caller silently insert zero rows, if
 // the migration file cannot be read or either marker is missing.
-func loadBackfillSQL(t *testing.T) string {
+func loadBackfillSQL(t *testing.T, file string) string {
 	t.Helper()
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("loadBackfillSQL: runtime.Caller could not resolve this test file's own path")
 	}
-	migrationPath := filepath.Join(filepath.Dir(thisFile), "..", "db", "migrations", "00045_check_rules.sql")
+	migrationPath := filepath.Join(filepath.Dir(thisFile), "..", "db", "migrations", file)
 	contents, err := os.ReadFile(migrationPath)
 	if err != nil {
 		t.Fatalf("loadBackfillSQL: read %s: %v", migrationPath, err)
@@ -65,10 +72,10 @@ func loadBackfillSQL(t *testing.T) string {
 	return stmt
 }
 
-// TestRulesBackfillMatchesSeedRules proves migration 00045's backfill
-// INSERT: an organization that already has no check_rules rows (as every
-// organization created before this migration's Task 5 addendum did) gets
-// the same five-row starter set a newly created one gets from
+// TestRulesBackfillMatchesSeedRules proves the backfill INSERTs of
+// migrations 00045 and 00094 together: an organization that already has
+// no check_rules rows (as every organization created before 00045 did)
+// gets the same seven-row starter set a newly created one gets from
 // rules.Service.SeedForOrg. The statement under test is read straight out
 // of the migration file (loadBackfillSQL) and executed against a real
 // database — there is no way to re-run "only the backfill part" of an
@@ -98,15 +105,16 @@ func TestRulesBackfillMatchesSeedRules(t *testing.T) {
 		t.Fatalf("before = %+v, want none", before)
 	}
 
-	backfillSQL := loadBackfillSQL(t)
-	// The migration's own statement backfills every organization in the
+	// Each migration's own statement backfills every organization in the
 	// table (it runs once, for every pre-existing org, when the migration
 	// applies) — no WHERE clause to scope it to just this test's org. That
 	// is fine here: testdb.Open truncates every table after each test
 	// (testdb.go's own t.Cleanup), so org is the only row in organizations
-	// when this statement runs.
-	if _, err := d.Pool().Exec(context.Background(), backfillSQL); err != nil {
-		t.Fatalf("execute the migration's backfill statement: %v", err)
+	// when these statements run.
+	for _, file := range backfillMigrations {
+		if _, err := d.Pool().Exec(context.Background(), loadBackfillSQL(t, file)); err != nil {
+			t.Fatalf("execute %s's backfill statement: %v", file, err)
+		}
 	}
 
 	after, err := st.List(scoped, org, rules.Filter{})
@@ -137,6 +145,9 @@ func TestRulesBackfillMatchesSeedRules(t *testing.T) {
 			t.Fatalf("SeedRules() entry %q names an unknown metric %q", in.Name, in.Metric)
 		}
 
+		if got.Name != in.Name || !got.Enabled {
+			t.Fatalf("backfilled %s = (%q, enabled %v), want (%q, enabled)", key, got.Name, got.Enabled, in.Name)
+		}
 		if got.Origin != "seed" {
 			t.Fatalf("backfilled %s origin = %q, want seed", key, got.Origin)
 		}

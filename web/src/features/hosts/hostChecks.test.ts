@@ -137,7 +137,7 @@ describe('isGraphable', () => {
 
   it('reads the discrete metrics and the label-only plugins off the descriptors', () => {
     const kinds = metricKinds(CHECK_PLUGINS);
-    expect([...kinds.discreteMetrics].sort()).toEqual(['docker.health', 'docker.state', 'mysql.replication_state', 'raid.state', 'redis.replication_link', 'redis.role', 'service.state']);
+    expect([...kinds.discreteMetrics].sort()).toEqual(['docker.health', 'docker.state', 'mysql.replication_state', 'raid.state', 'redis.replication_link', 'redis.role', 'script.output', 'script.status', 'service.state']);
     expect([...kinds.labelOnlyPlugins]).toEqual(['service']);
   });
 

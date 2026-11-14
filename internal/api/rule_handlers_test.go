@@ -194,7 +194,7 @@ func (f rulesFixture) createRule(t *testing.T, c *http.Client, body map[string]a
 }
 
 // orgFormRuleBody is a valid, org-scoped, form-mode rule body over cpu.load1
-// — a metric none of the five seed rules touch, so a test built on it never
+// — a metric none of the seven seed rules touch, so a test built on it never
 // collides with the seed set.
 func orgFormRuleBody(name string, op string, value float64) map[string]any {
 	return map[string]any{
@@ -229,14 +229,14 @@ func (f rulesFixture) auditActionsFor(t *testing.T, objectType, objectID string)
 func TestRuleRoutes(t *testing.T) {
 	f := newRulesFixture(t, "rules")
 
-	// Every organization is created with the five-row starter set
+	// Every organization is created with the seven-row starter set
 	// (rules.SeedRules), origin "seed", scope org, enabled.
 	t.Run("lists the seed set", func(t *testing.T) {
 		byName := map[string]ruleDTO{}
 		for _, r := range f.listRules(t, f.viewerC) {
 			byName[r.Name] = r
 		}
-		for _, name := range []string{"Disk usage warning", "Disk usage critical", "Memory usage warning", "Memory usage critical", "CPU usage warning"} {
+		for _, name := range []string{"Disk usage warning", "Disk usage critical", "Memory usage warning", "Memory usage critical", "CPU usage warning", "Script reports critical", "Script reports warning"} {
 			r, ok := byName[name]
 			if !ok {
 				t.Fatalf("seed rule %q missing from %+v", name, byName)

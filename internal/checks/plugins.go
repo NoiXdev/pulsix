@@ -33,6 +33,7 @@ const (
 	PluginApache      = "apache"
 	PluginCaddy       = "caddy"
 	PluginPHPFPM      = "phpfpm"
+	PluginScript      = "script"
 
 	PluginICMP = "icmp"
 	PluginTCP  = "tcp"

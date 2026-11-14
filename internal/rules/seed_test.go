@@ -3,6 +3,7 @@ package rules_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -53,25 +54,31 @@ func TestSeedRulesExcludesServiceState(t *testing.T) {
 	}
 }
 
-// TestSeedRulesExactSet pins the brief's own five-row table verbatim: the
-// metric, severity, trigger, clear condition and for-duration of every
-// entry, so a future edit that silently changes a threshold (rather than
-// deliberately updating both this test and the migration) fails loudly.
+// TestSeedRulesExactSet pins the seed table verbatim: the name, metric,
+// severity, trigger, clear condition and for-duration of every entry, so a
+// future edit that silently changes a threshold (rather than deliberately
+// updating both this test and the migrations) fails loudly. The first five
+// rows are migration 00045's, the two script rows migration 00094's
+// (backlog 3.6g).
 func TestSeedRulesExactSet(t *testing.T) {
 	want := []struct {
+		name       string
 		metric     string
 		severity   rules.Severity
 		op         string
 		value      float64
+		labels     []string
 		clearOp    string
 		clearValue float64
 		forDur     time.Duration
 	}{
-		{"disk.used_pct", rules.SeverityWarn, ">=", 85, "<", 80, 0},
-		{"disk.used_pct", rules.SeverityCrit, ">=", 95, "<", 90, 0},
-		{"mem.used_pct", rules.SeverityWarn, ">=", 90, "", 0, 10 * time.Minute},
-		{"mem.used_pct", rules.SeverityCrit, ">=", 97, "", 0, 5 * time.Minute},
-		{"cpu.used_pct", rules.SeverityWarn, ">=", 90, "", 0, 15 * time.Minute},
+		{"Disk usage warning", "disk.used_pct", rules.SeverityWarn, ">=", 85, nil, "<", 80, 0},
+		{"Disk usage critical", "disk.used_pct", rules.SeverityCrit, ">=", 95, nil, "<", 90, 0},
+		{"Memory usage warning", "mem.used_pct", rules.SeverityWarn, ">=", 90, nil, "", 0, 10 * time.Minute},
+		{"Memory usage critical", "mem.used_pct", rules.SeverityCrit, ">=", 97, nil, "", 0, 5 * time.Minute},
+		{"CPU usage warning", "cpu.used_pct", rules.SeverityWarn, ">=", 90, nil, "", 0, 15 * time.Minute},
+		{"Script reports critical", "script.status", rules.SeverityCrit, "in", 0, []string{"crit"}, "", 0, 0},
+		{"Script reports warning", "script.status", rules.SeverityWarn, "in", 0, []string{"warn", "unknown"}, "", 0, 0},
 	}
 
 	got := rules.SeedRules()
@@ -80,8 +87,8 @@ func TestSeedRulesExactSet(t *testing.T) {
 	}
 	for i, w := range want {
 		in := got[i]
-		if in.Metric != w.metric || in.Severity != w.severity {
-			t.Fatalf("entry %d = (metric %q, severity %q), want (%q, %q)", i, in.Metric, in.Severity, w.metric, w.severity)
+		if in.Name != w.name || in.Metric != w.metric || in.Severity != w.severity {
+			t.Fatalf("entry %d = (%q, metric %q, severity %q), want (%q, %q, %q)", i, in.Name, in.Metric, in.Severity, w.name, w.metric, w.severity)
 		}
 		if !in.Enabled {
 			t.Fatalf("entry %d (%s %s) is not enabled", i, in.Metric, in.Severity)
@@ -95,8 +102,8 @@ func TestSeedRulesExactSet(t *testing.T) {
 		if in.Form == nil {
 			t.Fatalf("entry %d (%s %s) has no form", i, in.Metric, in.Severity)
 		}
-		if in.Form.Op != w.op || in.Form.Value != w.value {
-			t.Fatalf("entry %d (%s %s) trigger = %s %v, want %s %v", i, in.Metric, in.Severity, in.Form.Op, in.Form.Value, w.op, w.value)
+		if in.Form.Op != w.op || in.Form.Value != w.value || !slices.Equal(in.Form.Labels, w.labels) {
+			t.Fatalf("entry %d (%s %s) trigger = %s %v %v, want %s %v %v", i, in.Metric, in.Severity, in.Form.Op, in.Form.Value, in.Form.Labels, w.op, w.value, w.labels)
 		}
 		if in.Form.ClearOp != w.clearOp || (w.clearOp != "" && in.Form.ClearValue != w.clearValue) {
 			t.Fatalf("entry %d (%s %s) clear = %s %v, want %s %v", i, in.Metric, in.Severity, in.Form.ClearOp, in.Form.ClearValue, w.clearOp, w.clearValue)
@@ -104,11 +111,11 @@ func TestSeedRulesExactSet(t *testing.T) {
 	}
 }
 
-// TestSeedForOrgWritesFiveSeedRows proves the service side of Task 5: a
+// TestSeedForOrgWritesSevenSeedRows proves the service side of the seed: a
 // fresh organization's rules, seeded through Service.SeedForOrg against an
-// in-memory store (no database needed), are exactly the five SeedRules()
+// in-memory store (no database needed), are exactly the seven SeedRules()
 // entries, each org-scoped and stamped origin "seed".
-func TestSeedForOrgWritesFiveSeedRows(t *testing.T) {
+func TestSeedForOrgWritesSevenSeedRows(t *testing.T) {
 	store := newFakeStore()
 	svc := rules.NewService(store)
 	orgID := uuid.Must(uuid.NewV7())
@@ -121,8 +128,8 @@ func TestSeedForOrgWritesFiveSeedRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 5 {
-		t.Fatalf("seeded %d rules, want exactly 5: %+v", len(got), got)
+	if len(got) != 7 {
+		t.Fatalf("seeded %d rules, want exactly 7: %+v", len(got), got)
 	}
 	seen := map[string]bool{}
 	for _, r := range got {
@@ -137,7 +144,7 @@ func TestSeedForOrgWritesFiveSeedRows(t *testing.T) {
 		}
 		seen[r.Metric+"/"+string(r.Severity)] = true
 	}
-	for _, want := range []string{"disk.used_pct/warn", "disk.used_pct/crit", "mem.used_pct/warn", "mem.used_pct/crit", "cpu.used_pct/warn"} {
+	for _, want := range []string{"disk.used_pct/warn", "disk.used_pct/crit", "mem.used_pct/warn", "mem.used_pct/crit", "cpu.used_pct/warn", "script.status/crit", "script.status/warn"} {
 		if !seen[want] {
 			t.Fatalf("seed set missing %q, got %+v", want, got)
 		}
@@ -146,7 +153,7 @@ func TestSeedForOrgWritesFiveSeedRows(t *testing.T) {
 
 // failingCreateStore wraps fakeStore, failing every Create from the nth
 // call onward — the shape needed to prove SeedForOrg stops and propagates
-// on a store failure partway through the five inserts, rather than
+// on a store failure partway through the seven inserts, rather than
 // swallowing it and leaving a partial seed set unreported.
 type failingCreateStore struct {
 	*fakeStore
@@ -163,7 +170,7 @@ func (f *failingCreateStore) Create(ctx context.Context, r rules.Rule) error {
 }
 
 // TestSeedForOrgPropagatesStoreError proves a store failure partway through
-// SeedForOrg's five inserts is reported to the caller (CreateOrg's own
+// SeedForOrg's seven inserts is reported to the caller (CreateOrg's own
 // propagation, tenancy.OrgCreatedHook) instead of silently leaving an
 // organization with an incomplete seed set nobody is told about.
 func TestSeedForOrgPropagatesStoreError(t *testing.T) {

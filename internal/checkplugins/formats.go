@@ -47,6 +47,11 @@ const (
 	// digits, '_', '.' or '-', the agent's own rule for the names it
 	// loads.
 	FormatSecretName Format = "secretName"
+	// FormatCommandName: the name of a command in the agent's local
+	// configuration file (agent.yaml's commands:, backlog 3.6g) — the same
+	// rule as FormatSecretName, a format of its own so the API and the SPA
+	// explain a refusal as a command name rather than a secret's.
+	FormatCommandName Format = "commandName"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -56,7 +61,7 @@ func Formats() []Format {
 	return []Format{
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
-		FormatSecretName,
+		FormatSecretName, FormatCommandName,
 	}
 }
 
@@ -98,7 +103,7 @@ func (f Format) problem(s string) string {
 		return dockerLabelProblem(s)
 	case FormatDockerSocket:
 		return dockerSocketProblem(s)
-	case FormatSecretName:
+	case FormatSecretName, FormatCommandName:
 		if !secretNamePattern.MatchString(s) {
 			return "must be 1 to 64 letters, digits, '_', '.' or '-'"
 		}
@@ -108,10 +113,11 @@ func (f Format) problem(s string) string {
 	return ""
 }
 
-// secretNamePattern is the shape of a secret's name in agent.yaml; the
-// agent (internal/agent's secrets file) refuses every other name with the
-// same rule, and the manager's heartbeat store (internal/agents) applies
-// this format to the names an agent reports.
+// secretNamePattern is the shape of a secret's or a command's name in
+// agent.yaml; the agent (internal/agent's secrets file) refuses every other
+// name with the same rule, and the manager's heartbeat store
+// (internal/agents) applies this format to the secret names an agent
+// reports.
 var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 
 func hasControl(s string) bool { return strings.ContainsFunc(s, unicode.IsControl) }
