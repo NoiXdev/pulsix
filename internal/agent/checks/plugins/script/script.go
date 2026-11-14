@@ -216,7 +216,10 @@ func (p *scriptPlugin) runOne(ctx context.Context, name string, commands checks.
 	// network mount.
 	rctx, cancel := context.WithTimeout(ctx, opts.timeout)
 	defer cancel()
-	path, argv, refusal := p.checkFilesWithin(rctx, argv, opts.timeout)
+	path, argv, refusal, err := p.checkFilesWithin(rctx, argv, opts.timeout)
+	if err != nil {
+		return nil // the agent is stopping: CollectWithCommands reports nothing
+	}
 	if refusal != "" {
 		return noRun(name, refusal)
 	}

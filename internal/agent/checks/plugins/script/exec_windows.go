@@ -129,12 +129,13 @@ func checkProgramName(prog string) error {
 // other. A path that starts with two separators is decided by its syntax
 // alone, never stat'ed (windowsPathKindOf): a device or namespace path, or
 // \\x without a share (a switch like //Nologo), names no file to check;
-// a network path goes to the checker, which refuses it.
+// a network path, or a file path in device form (\\?\C:\…), goes to the
+// checker, which refuses it.
 func fileArgument(arg string) (string, bool, error) {
 	switch windowsPathKindOf(arg) {
 	case pathDevice, pathNoShare:
 		return "", false, nil
-	case pathNetwork:
+	case pathNetwork, pathDeviceFile:
 		return arg, true, nil
 	}
 	if filepath.IsAbs(arg) {

@@ -21,7 +21,7 @@ func (fileChecker) Check(path string) (string, error) {
 	}
 	resolved, err := resolveFile(path)
 	if err != nil {
-		return "", fmt.Errorf("check %s: %w", path, err)
+		return "", contextFor("check "+path, err)
 	}
 	if err := judgeFile(resolved); err != nil {
 		return "", err
@@ -29,35 +29,70 @@ func (fileChecker) Check(path string) (string, error) {
 	return resolved, nil
 }
 
-// CheckPlace judges the deepest directory on path's way that exists
-// (placeOf) and every directory above it (judgePlace).
+// CheckPlace judges the directory that decides whether a file can appear
+// at path (placeOf) and every directory above it (judgePlace).
 func (fileChecker) CheckPlace(path string) error {
 	if err := judgeSyntax(path); err != nil {
 		return err
 	}
 	dir, own, err := placeOf(path)
 	if err != nil {
-		return fmt.Errorf("check the place of %s: %w", path, err)
+		return contextFor("check the place of "+path, err)
 	}
 	return judgePlace(dir, own)
 }
 
-// placeOf is the deepest directory on path's way that exists, resolved
-// (resolveDir), and whether it is path's own directory: path itself names
-// no regular file, so its directory comes first, then each one above
-// while one is missing or no directory.
-func placeOf(path string) (dir string, own bool, err error) {
-	own = true
-	for d := filepath.Dir(path); ; d = filepath.Dir(d) {
-		resolved, err := resolveDir(d)
-		switch {
-		case err == nil:
-			return resolved, own, nil
-		case !errors.Is(err, errNotFile):
-			return "", false, err
-		case filepath.Dir(d) == d:
-			return "", false, errors.New("no directory on its way exists")
-		}
-		own = false
+// contextFor wraps err with what was being done, except a refusal, whose
+// text is its reason alone (checker).
+func contextFor(doing string, err error) error {
+	if _, ok := refusalReason(err); ok {
+		return err
 	}
+	return fmt.Errorf("%s: %w", doing, err)
 }
+
+// placeOf is the directory that decides whether a file can appear at
+// path, resolved, and whether it is path's own directory. It walks path
+// from its root one name at a time, resolving each step where it leads
+// (resolveEntry: a link to its target, a ".." from there), so the place
+// is judged where the links on the way lead, never where they lie:
+//
+//   - path exists (as no regular file): the directory it lies in;
+//   - a name on the way is missing: the deepest directory reached, its
+//     own directory when only the last name is missing;
+//   - a name on the way is no directory: the directory that one lies in.
+//
+// A link on the way that leads to nothing is refused (textDanglingLink).
+func placeOf(path string) (dir string, own bool, err error) {
+	root, names := splitPlace(path)
+	cur, isDir, err := resolveEntry(root)
+	if err != nil {
+		return "", false, err
+	}
+	reached := 0
+	for _, name := range names {
+		if !isDir {
+			break
+		}
+		next, nextIsDir, err := resolveEntry(filepath.Join(cur, name))
+		if errors.Is(err, errNotFile) {
+			break
+		}
+		if err != nil {
+			return "", false, err
+		}
+		cur, isDir, reached = next, nextIsDir, reached+1
+	}
+	switch {
+	case reached == len(names):
+		return filepath.Dir(cur), true, nil
+	case !isDir:
+		return filepath.Dir(cur), false, nil
+	}
+	return cur, reached == len(names)-1, nil
+}
+
+// textDanglingLink refuses a path with a link on its way (or at its end)
+// that leads to nothing: where it would lead once its target appears is
+// not known, so the place cannot be judged.
+const textDanglingLink = "a link on its way leads to nothing"

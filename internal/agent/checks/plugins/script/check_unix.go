@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -36,23 +37,40 @@ func resolveFile(path string) (string, error) {
 	return "", err
 }
 
-// resolveDir resolves every symlink in path and returns the directory it
-// names; a path that names none is errNotFile.
-func resolveDir(path string) (string, error) {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err == nil {
-		var fi fs.FileInfo
-		if fi, err = os.Lstat(resolved); err == nil && !fi.IsDir() {
-			return "", errNotFile
+// splitPlace splits an absolute path into its root and the names after
+// it, as the kernel walks them: nothing is cleaned, a ".." after a link
+// climbs from where the link leads.
+func splitPlace(path string) (string, []string) {
+	var names []string
+	for _, name := range strings.Split(path, "/") {
+		if name != "" && name != "." {
+			names = append(names, name)
 		}
 	}
-	switch {
-	case err == nil:
-		return resolved, nil
-	case namesNoFile(err):
-		return "", errNotFile
+	return "/", names
+}
+
+// resolveEntry resolves p, whose directory has no links, to where it
+// leads, and says whether that is a directory. p missing is errNotFile;
+// p a link that leads to nothing is refused.
+func resolveEntry(p string) (string, bool, error) {
+	resolved, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		if !namesNoFile(err) {
+			return "", false, err
+		}
+		if _, lerr := os.Lstat(p); lerr == nil {
+			return "", false, refuse(textDanglingLink)
+		} else if !namesNoFile(lerr) {
+			return "", false, lerr
+		}
+		return "", false, errNotFile
 	}
-	return "", err
+	fi, err := os.Lstat(resolved)
+	if err != nil {
+		return "", false, err
+	}
+	return resolved, fi.IsDir(), nil
 }
 
 // judgeSyntax refuses nothing on Unix: every absolute path is one to stat.

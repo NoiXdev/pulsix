@@ -5,6 +5,7 @@ package script
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,9 +31,12 @@ func TestFileCheckerRefusesNetworkPathsWithoutAStat(t *testing.T) {
 			t.Errorf("%s took %s: a network lookup?", p, d)
 		}
 	}
-	for _, p := range []string{`\\.\PhysicalDrive0`, `\\?\C:\Windows\System32\cmd.exe`} {
-		if _, err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
-			t.Errorf("Check(%s) = %v, want a refusal", p, err)
+	if _, err := (fileChecker{}).Check(`\\.\PhysicalDrive0`); !errors.Is(err, errRefused) {
+		t.Errorf("Check(a device) = %v, want a refusal", err)
+	}
+	for _, p := range []string{`\\?\C:\Windows\System32\cmd.exe`, `\\.\C:\Windows\System32\cmd.exe`, `\\?\UNC\pulsix-test.invalid\share\x.ps1`} {
+		if _, err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) || err.Error() != textDeviceForm {
+			t.Errorf("Check(%s) = %v, want the refusal %q", p, err, textDeviceForm)
 		}
 	}
 }
@@ -58,12 +62,15 @@ func TestCollectWindowsPathArguments(t *testing.T) {
 	r := exitedWith(0, "OK")
 	cmds := fakeCommands{argv: map[string][]string{
 		"net":    {cmd, "/c", `\\pulsix-test.invalid\share\x.cmd`},
-		"switch": {cmd, "//Nologo", "/c", `\\.\pipe\x`, `//?/C:/x`, "/T:30"},
+		"switch": {cmd, "//Nologo", "/c", `\\.\pipe\x`, `\\.\PhysicalDrive0`, "/T:30"},
+		"device": {cmd, "/c", `\\?\C:\scripts\x.cmd`},
 	}}
-	got := collect(t, newPlugin(r, fileChecker{}), map[string]any{"commands": []string{"net", "switch"}}, cmds)
-	if len(got) < 3 || got[0] != `net script.status "unknown"` ||
+	got := collect(t, newPlugin(r, fileChecker{}), map[string]any{"commands": []string{"net", "switch", "device"}}, cmds)
+	if len(got) != 8 || got[0] != `net script.status "unknown"` ||
 		got[1] != `net script.output "\\\\pulsix-test.invalid\\share\\x.cmd: `+textNetworkPath+`"` ||
-		got[2] != `switch script.status "ok"` {
+		got[2] != `switch script.status "ok"` ||
+		got[6] != `device script.status "unknown"` ||
+		got[7] != `device script.output "\\\\?\\C:\\scripts\\x.cmd: `+textDeviceForm+`"` {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -142,5 +149,46 @@ func TestFileCheckerPlace(t *testing.T) {
 	missing := filepath.Join(filepath.Dir(cmdExe(t)), "pulsix-test-missing.exe")
 	if err := (fileChecker{}).CheckPlace(missing); err != nil {
 		t.Errorf("CheckPlace(%s) = %v, want it to pass", missing, err)
+	}
+}
+
+// TestFileCheckerPlaceFollowsLinks: the place is judged where links and
+// junctions on the way lead, not where they lie, and one that leads to
+// nothing is refused.
+func TestFileCheckerPlaceFollowsLinks(t *testing.T) {
+	system32 := filepath.Dir(cmdExe(t))
+	dir := t.TempDir()
+	links := map[string]string{} // link -> how it was made
+	if l := filepath.Join(dir, "symlink"); os.Symlink(system32, l) == nil {
+		links[l] = "symlink"
+	}
+	if l := filepath.Join(dir, "junction"); exec.Command(cmdExe(t), "/c", "mklink", "/J", l, system32).Run() == nil {
+		links[l] = "junction"
+	}
+	if len(links) == 0 {
+		t.Skip("neither a symlink nor a junction could be made here")
+	}
+	for l, kind := range links {
+		for _, p := range []string{l, filepath.Join(l, "pulsix-test-missing.exe"), filepath.Join(l, "missing", "deeper.exe")} {
+			if err := (fileChecker{}).CheckPlace(p); err != nil {
+				t.Errorf("%s: CheckPlace(%s) = %v, want it to pass", kind, p, err)
+			}
+		}
+	}
+
+	nothing := filepath.Join(dir, "nothing")
+	dangling := map[string]string{}
+	if l := filepath.Join(dir, "dangling-symlink"); os.Symlink(nothing, l) == nil {
+		dangling[l] = "symlink"
+	}
+	if l := filepath.Join(dir, "dangling-junction"); exec.Command(cmdExe(t), "/c", "mklink", "/J", l, nothing).Run() == nil {
+		dangling[l] = "junction"
+	}
+	for l, kind := range dangling {
+		for _, p := range []string{l, filepath.Join(l, "x.ps1")} {
+			if err := (fileChecker{}).CheckPlace(p); !errors.Is(err, errRefused) || err.Error() != textDanglingLink {
+				t.Errorf("%s: CheckPlace(%s) = %v, want the refusal %q", kind, p, err, textDanglingLink)
+			}
+		}
 	}
 }

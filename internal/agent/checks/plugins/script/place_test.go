@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/agent/checks"
 )
 
 // TestCollectJudgesWhereAMissingArgumentLives: an absolute argument that
@@ -141,4 +143,31 @@ func TestCollectFileCheckPanicIsReported(t *testing.T) {
 	obs, err := newPlugin(exitedWith(0, ""), c).CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, oneCommand())
 	assertNoMarker(t, obs, err)
 	equalLines(t, render(obs), []string{`x script.status "unknown"`, `x script.output "` + textInternal + `"`})
+}
+
+// TestRunOneAgentStoppingDuringFileChecks: when the agent stops while the
+// files are checked, the command reports nothing (the round is dropped),
+// not that its checks took too long.
+func TestRunOneAgentStoppingDuringFileChecks(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &fakeChecker{files: map[string]error{prog: nil}, check: func(string) {
+		cancel()
+		<-release
+	}}
+	opts, problem := parseOptions(map[string]any{"timeout_seconds": 30})
+	if problem != "" {
+		t.Fatal(problem)
+	}
+	done := make(chan []checks.Observation, 1)
+	go func() { done <- newPlugin(exitedWith(0, "OK"), c).runOne(ctx, "x", oneCommand(), opts) }()
+	select {
+	case obs := <-done:
+		if obs != nil {
+			t.Errorf("runOne = %q, want no observations", render(obs))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runOne did not return when the agent stopped")
+	}
 }

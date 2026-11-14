@@ -48,9 +48,9 @@ var (
 func CheckEnvFile(p protector, path string) error { return checkPrivateFile(p, path, envFile) }
 
 // CheckConfigFile applies CheckEnvFile's rule, with this platform's
-// protector, to the configuration file that holds the agent's secrets
-// and the commands it runs (agent.yaml). Its error text is reported to the manager as the file's
-// state, so it names the path and the finding only.
+// protector, to the configuration file that holds the agent's secrets and
+// the commands it runs (agent.yaml). Its error text is reported to the
+// manager as the file's state, so it names the path and the finding only.
 func CheckConfigFile(path string) error { return checkConfigFile(newProtector(), path) }
 
 func checkConfigFile(p protector, path string) error { return checkPrivateFile(p, path, configFile) }

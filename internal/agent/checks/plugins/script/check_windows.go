@@ -73,15 +73,22 @@ const placeMask = writeMask &^ windows.FILE_APPEND_DATA
 // textNetworkPath refuses a network path, by its syntax or once resolved.
 const textNetworkPath = "network paths are not supported"
 
+// textDeviceForm refuses a file path written in device form (\\?\C:\…,
+// \\.\UNC\…): the plain form says the same, and the checks read paths
+// in it.
+const textDeviceForm = "paths in device form are not supported"
+
 // judgeSyntax decides a path that starts with two separators by its
-// syntax alone, without a stat (windowsPathKindOf): a network path is
-// refused, a device or namespace path too (as a program; an argument of
-// that form never reaches the checker, fileArgument), and \\x without a
-// share names no file.
+// syntax alone, without a stat (windowsPathKindOf): a network path and a
+// file path in device form are refused, a device or namespace path too
+// (as a program; an argument of that form never reaches the checker,
+// fileArgument), and \\x without a share names no file.
 func judgeSyntax(path string) error {
 	switch windowsPathKindOf(path) {
 	case pathNetwork:
 		return refuse(textNetworkPath)
+	case pathDeviceFile:
+		return refuse(textDeviceForm)
 	case pathDevice:
 		return refuse("device and namespace paths are not supported")
 	case pathNoShare:
@@ -95,26 +102,71 @@ func judgeSyntax(path string) error {
 // reports it for the opened file; a path that names none is errNotFile,
 // one that leads to a network path is refused.
 func resolveFile(path string) (string, error) {
-	return resolveTo(path, fs.FileMode.IsRegular)
-}
-
-// resolveDir is resolveFile for a directory.
-func resolveDir(path string) (string, error) {
-	return resolveTo(path, fs.FileMode.IsDir)
-}
-
-// resolveTo resolves path as resolveFile does; is says which kind of
-// file it must name.
-func resolveTo(path string, is func(fs.FileMode) bool) (string, error) {
 	fi, err := os.Stat(path)
 	switch {
 	case err != nil && namesNoFile(err):
 		return "", errNotFile
 	case err != nil:
 		return "", err
-	case !is(fi.Mode()):
+	case !fi.Mode().IsRegular():
 		return "", errNotFile
 	}
+	final, err := openFinal(path)
+	if err != nil {
+		return "", err
+	}
+	if fi, err := os.Lstat(final); err != nil || !fi.Mode().IsRegular() {
+		if err != nil && !namesNoFile(err) {
+			return "", err
+		}
+		return "", errNotFile
+	}
+	return final, nil
+}
+
+// splitPlace splits an absolute path into its root and the names after
+// it. Windows reads a path's "." and ".." by its text before following
+// any link, so the path is cleaned first, as Windows does.
+func splitPlace(path string) (string, []string) {
+	clean := filepath.Clean(path)
+	vol := filepath.VolumeName(clean)
+	var names []string
+	for _, name := range strings.Split(clean[len(vol):], `\`) {
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return vol + `\`, names
+}
+
+// resolveEntry resolves p, whose directory has no links, to its final
+// path, and says whether that is a directory. p missing is errNotFile; p
+// a link or junction that leads to nothing is refused, one that leads to
+// a network path too.
+func resolveEntry(p string) (string, bool, error) {
+	final, err := openFinal(p)
+	if errors.Is(err, errNotFile) {
+		if _, lerr := os.Lstat(p); lerr == nil {
+			return "", false, refuse(textDanglingLink)
+		} else if !namesNoFile(lerr) {
+			return "", false, lerr
+		}
+		return "", false, errNotFile
+	}
+	if err != nil {
+		return "", false, err
+	}
+	fi, err := os.Lstat(final)
+	if err != nil {
+		return "", false, err
+	}
+	return final, fi.IsDir(), nil
+}
+
+// openFinal opens path, following every link and junction, and returns
+// the final path Windows reports for what it opened; a path that names
+// nothing is errNotFile, one that leads to a network path is refused.
+func openFinal(path string) (string, error) {
 	p, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return "", errNotFile
@@ -135,12 +187,6 @@ func resolveTo(path string, is func(fs.FileMode) bool) (string, error) {
 	}
 	if windowsPathKindOf(final) != pathLocal {
 		return "", refuse(textNetworkPath)
-	}
-	if fi, err := os.Lstat(final); err != nil || !is(fi.Mode()) {
-		if err != nil && !namesNoFile(err) {
-			return "", err
-		}
-		return "", errNotFile
 	}
 	return final, nil
 }

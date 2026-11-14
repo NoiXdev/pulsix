@@ -250,13 +250,14 @@ missing secret is reported. Nothing is seeded and there is no schema change.
 
 The `script` plugin (backlog 3.6g) follows the same rule for the check: an older
 agent skips a `script` check, warns on every configuration push and shows no
-readings until it is updated, and the manager does not gate on it. **The `commands:` key in `agent.yaml` is stricter.** An agent
-older than this release does not know the key and refuses the whole file, so a host
-whose `agent.yaml` gains `commands:` also loses its `secrets:` until that agent is
-updated. Update the agent first, then add `commands:`. Migration 00094 adds two default
-rules, "Script reports critical" and "Script reports warning", to every existing
-organization (skipped where a rule of that name exists); they judge nothing until a
-`script` check reports.
+readings until it is updated, and the manager does not gate on it. **The
+`commands:` key in `agent.yaml` is stricter.** An agent older than this release
+does not know the key and refuses the whole file, so a host whose `agent.yaml`
+gains `commands:` also loses its `secrets:` until that agent is updated. Update
+the agent first, then add `commands:`. Migration 00094 adds two default rules,
+"Script reports critical" and "Script reports warning", to every existing
+organization (skipped where a rule of that name exists); they judge nothing
+until a `script` check reports.
 
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and

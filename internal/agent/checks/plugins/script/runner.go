@@ -62,8 +62,8 @@ var (
 //   - refuse(reason): the path names an existing regular file the checker
 //     inspected and refuses (writable by others, wrong owner), or a path
 //     it refuses by its syntax alone, without a stat (Windows: a network
-//     path). reason says why without the path; only then does the plugin
-//     report "<path>: <reason>";
+//     path, a file path in device form). reason says why without the path;
+//     only then does the plugin report "<path>: <reason>";
 //   - any other error: the file could not be checked (a failed stat, an
 //     unreadable ACL). The plugin fails closed and reports a fixed text,
 //     naming the program but never an argument, whose path may be
@@ -71,14 +71,18 @@ var (
 //
 // CheckPlace judges where an absolute path that names no regular file
 // lives, so a script missing at the check cannot appear before the run in
-// a directory others can write. It takes the deepest directory that
-// exists on the path's way (the path's own directory when the path itself
-// exists, walking up while one is missing), resolves its links, and judges
-// it and every directory above it by the rules Check applies to a file's
-// directories. It returns nil when they pass, refuse(reason) (reason
-// without a path, "its directory …" or "a directory above it …") when one
-// it inspected does not, and any other error when it could not check
-// them; the plugin echoes the argument only with a refusal.
+// a directory others can write. It walks the path from its root, resolving
+// every link (and on Windows junction) on the way, the last name
+// included, and judges the place where they lead, never where they lie:
+// the directory the path's target lies in when it exists (a directory, a
+// device), else the deepest directory reached (the path's own directory
+// when only the last name is missing), and every directory above it, by
+// the rules Check applies to a file's directories. A link on the way that
+// leads to nothing is refused (its target's place is unknown). It returns
+// nil when they pass, refuse(reason) (reason without a path: "its
+// directory …", "a directory above it …", a dangling link) when it
+// refuses, and any other error when it could not check them; the plugin
+// echoes the argument only with a refusal.
 type checker interface {
 	Check(path string) (resolved string, err error)
 	CheckPlace(path string) error

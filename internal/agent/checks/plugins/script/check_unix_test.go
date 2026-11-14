@@ -231,9 +231,10 @@ func TestFileCheckerPlace(t *testing.T) {
 	for p, want := range map[string]string{
 		filepath.Join(dir, "missing.py"):           own,
 		filepath.Join(dir, "missing", "deeper.py"): above,
-		fifo:                      own,
-		dangling:                  own,
-		filepath.Join(dir, "sub"): own,
+		fifo:                            own,
+		dangling:                        textDanglingLink,
+		filepath.Join(dangling, "x.py"): textDanglingLink,
+		filepath.Join(dir, "sub"):       own,
 		filepath.Join(link, "missing", "deeper.py"): above,
 		filepath.Join(fifo, "below"):                above,
 	} {
@@ -250,6 +251,29 @@ func TestFileCheckerPlace(t *testing.T) {
 	if fi, err := os.Stat("/dev"); err == nil && fi.Sys().(*syscall.Stat_t).Uid == 0 && fi.Mode().Perm()&0o022 == 0 {
 		if err := (fileChecker{}).CheckPlace("/dev/null"); err != nil {
 			t.Errorf("CheckPlace(/dev/null) = %v, want it to pass", err)
+		}
+	}
+}
+
+// TestFileCheckerPlaceFollowsLinks: the place is judged where the links
+// on the way lead, a ".." after a link included, not where the links
+// themselves lie: a link in the user's temp directory to the shell's
+// root-owned directory passes, as does a missing file below it or next to
+// it.
+func TestFileCheckerPlaceFollowsLinks(t *testing.T) {
+	binDir := filepath.Dir(rootOwnedShell(t))
+	link := filepath.Join(t.TempDir(), "bin")
+	if err := os.Symlink(binDir, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		link,
+		filepath.Join(link, "pulsix-test-missing"),
+		link + "/../pulsix-test-missing", // not filepath.Join, which drops the ".." lexically
+		filepath.Join(link, "pulsix-test-missing", "deeper"),
+	} {
+		if err := (fileChecker{}).CheckPlace(p); err != nil {
+			t.Errorf("CheckPlace(%s) = %v, want it to pass", p, err)
 		}
 	}
 }

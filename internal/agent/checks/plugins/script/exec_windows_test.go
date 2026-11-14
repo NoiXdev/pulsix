@@ -62,8 +62,8 @@ func TestExecRunnerRefusesAProgramWithoutExtension(t *testing.T) {
 // without a drive and drive paths without a root as files, so both are
 // checked, as the absolute path the command will open. Device and
 // namespace paths and a \\x without a share (a switch like //Nologo) are
-// left alone without a stat; a network path goes to the checker, which
-// refuses it by its syntax.
+// left alone without a stat; a network path, and a file path in device
+// form, go to the checker, which refuses them by their syntax.
 func TestFileArgument(t *testing.T) {
 	dir, err := workDir()
 	if err != nil {
@@ -81,9 +81,10 @@ func TestFileArgument(t *testing.T) {
 		{`D:x.ps1`, `D:\x.ps1`, true},
 		{`//host/share/x.ps1`, `//host/share/x.ps1`, true},
 		{`\\.\PhysicalDrive0`, "", false},
-		{`\\?\C:\scripts\x.ps1`, "", false},
+		{`\\?\C:\scripts\x.ps1`, `\\?\C:\scripts\x.ps1`, true},
+		{`\\.\UNC\host\share\x.ps1`, `\\.\UNC\host\share\x.ps1`, true},
 		{`//./pipe/x`, "", false},
-		{`//?/C:/x`, "", false},
+		{`//?/C:/x`, `//?/C:/x`, true},
 		{`//Nologo`, "", false},
 		{`//B`, "", false},
 		{`\\host`, "", false},

@@ -13,11 +13,13 @@ import (
 // timeout bounds: a stat on a hung network mount does not return, and the
 // round must. A check given up on keeps the command's argv marked in
 // p.checking until it returns, so later rounds report the command busy
-// instead of piling another stuck check onto it.
-func (p *scriptPlugin) checkFilesWithin(ctx context.Context, argv []string, timeout time.Duration) (path string, run []string, refusal string) {
+// instead of piling another stuck check onto it. When ctx ends before
+// its deadline (the agent stopping), err is ctx's error and the command
+// is not reported.
+func (p *scriptPlugin) checkFilesWithin(ctx context.Context, argv []string, timeout time.Duration) (path string, run []string, refusal string, err error) {
 	key := strings.Join(argv, "\x00")
 	if p.checking.stuck(key) {
-		return "", nil, textBusy
+		return "", nil, textBusy, nil
 	}
 	type outcome struct {
 		path    string
@@ -39,10 +41,13 @@ func (p *scriptPlugin) checkFilesWithin(ctx context.Context, argv []string, time
 	}()
 	select {
 	case o := <-done:
-		return o.path, o.run, o.refusal
+		return o.path, o.run, o.refusal, nil
 	case <-ctx.Done():
 		p.checking.giveUp(key, st)
-		return "", nil, fmt.Sprintf("checking the files took longer than %ds", int64(timeout/time.Second))
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", nil, "", ctx.Err()
+		}
+		return "", nil, fmt.Sprintf("checking the files took longer than %ds", int64(timeout/time.Second)), nil
 	}
 }
 
