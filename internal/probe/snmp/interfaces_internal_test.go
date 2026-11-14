@@ -221,6 +221,10 @@ func TestPollHostileInterfaceRows(t *testing.T) {
 	dev.row(colIfAdminStatus, 3, gosnmp.OctetString, []byte("up"))
 	dev.row(colIfOperStatus, 3, gosnmp.Integer, 1)
 	dev.row(colIfHCInOctets, 3, gosnmp.OctetString, []byte("1"))
+	// An ifDescr that is not a string: the interface has no name.
+	dev.row(colIfDescr, 4, gosnmp.ObjectIdentifier, ".1.3.6.1")
+	dev.row(colIfAdminStatus, 4, gosnmp.Integer, 1)
+	dev.row(colIfOperStatus, 4, gosnmp.Integer, 1)
 	// A row for an interface not in ifTable: ignored.
 	dev.row(colIfName, 2, gosnmp.OctetString, []byte("ghost"))
 	fp := newFakePoller(dev)
@@ -228,7 +232,8 @@ func TestPollHostileInterfaceRows(t *testing.T) {
 	wantLabel(t, m, "snmp.if.status", "ok", "up")
 	wantErr(t, m, "snmp.if.status", "odd types", errNoStatus)
 	wantAbsent(t, m, "snmp.if.status", "ghost")
-	if len(m) != 3+2 {
+	wantLabel(t, m, "snmp.if.status", "if4", "up")
+	if len(m) != 3+3 {
 		t.Fatalf("%+v", m)
 	}
 }
@@ -274,4 +279,58 @@ func TestPollWalkReadsBoundedRows(t *testing.T) {
 	if limit := (maxWalkRows + 1) * len(ifColumns); dev.rows > limit {
 		t.Fatalf("walks read %d rows, want at most %d", dev.rows, limit)
 	}
+}
+
+// TestPollUnreadableTableKeepsThePreviousSample: a poll whose interface
+// table could not be read leaves the sample before it, so the next poll
+// has rates over both intervals.
+func TestPollUnreadableTableKeepsThePreviousSample(t *testing.T) {
+	dev := ifDevice()
+	fp := newFakePoller(dev)
+	_, _ = poll(fp, ifParams, v2cSecret)
+	fp.now = fp.now.Add(time.Minute)
+	dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(100000+6000))
+	dev.walkErr[colIfDescr] = errFakeTimeout
+	m := byKey(t, first(poll(fp, ifParams, v2cSecret)))
+	wantErr(t, m, "snmp.if.status", "", errNoInterfaceTable)
+
+	delete(dev.walkErr, colIfDescr)
+	advance(fp, dev) // two minutes after the first poll
+	dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(100000+12000))
+	m = byKey(t, first(poll(fp, ifParams, v2cSecret)))
+	wantValue(t, m, "snmp.if.in_bps", "lo", 500) // 7500 bytes in 120 s
+}
+
+// TestPollRateAboveTheSpeedIsDropped: a 32-bit counter cleared without a
+// reboot reads as a wrap; on a 10 Mbit/s interface that rate is
+// impossible and not reported.
+func TestPollRateAboveTheSpeedIsDropped(t *testing.T) {
+	dev := ifDevice()
+	dev.row(colIfSpeed, 2, gosnmp.Gauge32, uint(10_000_000))
+	fp := newFakePoller(dev)
+	_, _ = poll(fp, ifParams, v2cSecret)
+	advance(fp, dev)
+	dev.row(colIfSpeed, 2, gosnmp.Gauge32, uint(10_000_000))
+	// eth1's ifInOctets went from 2^32-100 to 650: read as a wrap of 750
+	// bytes, 100 bit/s, under the speed. Clear it instead: 2^31 → 650.
+	m := byKey(t, first(poll(fp, ifParams, v2cSecret)))
+	wantValue(t, m, "snmp.if.in_bps", "eth1 descr", 100)
+
+	dev.columns[colIfInOctets] = nil
+	dev.row(colIfInOctets, 1, gosnmp.Counter32, uint(0))
+	dev.row(colIfInOctets, 2, gosnmp.Counter32, uint(1<<31))
+	dev.row(colIfInOctets, 3, gosnmp.Counter32, uint(0))
+	fp.now = fp.now.Add(time.Minute)
+	dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(100000+12000))
+	_, _ = poll(fp, ifParams, v2cSecret)
+	dev.columns[colIfInOctets] = nil
+	dev.row(colIfInOctets, 1, gosnmp.Counter32, uint(0))
+	dev.row(colIfInOctets, 2, gosnmp.Counter32, uint(650))
+	dev.row(colIfInOctets, 3, gosnmp.Counter32, uint(0))
+	fp.now = fp.now.Add(time.Minute)
+	dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(100000+18000))
+	m = byKey(t, first(poll(fp, ifParams, v2cSecret)))
+	wantAbsent(t, m, "snmp.if.in_bps", "eth1 descr")
+	wantAbsent(t, m, "snmp.if.errors", "eth1 descr")
+	wantValue(t, m, "snmp.if.out_bps", "eth1 descr", 0)
 }

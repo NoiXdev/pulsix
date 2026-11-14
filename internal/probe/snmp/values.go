@@ -21,6 +21,7 @@ const (
 // packets), so every failure maps to one of these.
 const (
 	errNoSuchObject     = "the device has no such object"
+	errBadOID           = "invalid OID: SNMP cannot encode it"
 	errUnsupportedType  = "the device answered with a value type the probe does not read"
 	errNoAnswer         = "no answer from the device"
 	errMalformed        = "the device answered with a malformed response"

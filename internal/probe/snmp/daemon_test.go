@@ -21,10 +21,12 @@ import (
 // test installs net-snmp from that release's package repository.
 const snmpdImage = "alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf"
 
-// snmpdConf configures the daemon: a v2c community and three v3 users,
+// snmpdConf configures the daemon: its sysName, a v2c community and three
+// v3 users,
 // authPriv with SHA-512/AES-256 and SHA-256/AES, authNoPriv with SHA. The
 // values are test-only.
 const snmpdConf = `rocommunity pulsix-v2c-test default
+sysName pulsix-lab
 createUser pulsixpriv SHA-512 "pulsix-auth-pass" AES-256 "pulsix-priv-pass"
 createUser pulsixaes SHA-256 "pulsix-auth-pass" AES "pulsix-priv-pass"
 createUser pulsixauth SHA "pulsix-auth-pass"
@@ -142,10 +144,14 @@ func TestRealDaemon(t *testing.T) {
 		if o := m["snmp.up/"]; o.Value == nil || *o.Value != 1 {
 			t.Fatalf("snmp.up: %+v (all %+v)", o, obs)
 		}
-		if o := m["snmp.uptime_seconds/"]; o.Value == nil || *o.Value <= 0 {
+		// The container started moments ago.
+		if o := m["snmp.uptime_seconds/"]; o.Value == nil || *o.Value <= 0 || *o.Value > 3600 {
 			t.Fatalf("snmp.uptime_seconds: %+v", o)
 		}
-		if o := m["snmp.text/sysname"]; o.Label == nil || *o.Label == "" {
+		if o := m["snmp.response_ms/"]; o.Value == nil || *o.Value <= 0 || *o.Value > 1000 {
+			t.Fatalf("snmp.response_ms: %+v", o)
+		}
+		if o := m["snmp.text/sysname"]; o.Label == nil || *o.Label != "pulsix-lab" {
 			t.Fatalf("snmp.text[sysname]: %+v", o)
 		}
 		if o := m["snmp.value/ifnumber"]; o.Value == nil || *o.Value < 2 {

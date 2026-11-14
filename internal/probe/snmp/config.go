@@ -29,9 +29,11 @@ const (
 const errNoSecretParam = "the secret parameter is not set"
 
 // oidEntry is one oids entry: the item it reports on and its OID with a
-// leading dot, the form devices answer with.
+// leading dot, the form devices answer with. bad marks an OID the probe
+// cannot ask for; only its own item fails.
 type oidEntry struct {
 	name, oid string
+	bad       bool
 }
 
 // settings are the params of one snmp check.
@@ -72,11 +74,15 @@ func parseSettings(params map[string]any) (settings, error) {
 		return s, errors.New("invalid oids")
 	}
 	for _, e := range entries {
-		if !checkplugins.FormatSNMPOID.Valid(e) {
+		name, oid, ok := strings.Cut(e, "=")
+		if !ok || !checkplugins.FormatSecretName.Valid(name) {
 			return s, errors.New("invalid oids entry")
 		}
-		name, oid, _ := strings.Cut(e, "=")
-		s.oids = append(s.oids, oidEntry{name: name, oid: "." + strings.TrimPrefix(oid, ".")})
+		s.oids = append(s.oids, oidEntry{
+			name: name,
+			oid:  "." + strings.TrimPrefix(oid, "."),
+			bad:  !checkplugins.FormatSNMPOID.Valid(e) || !encodable(oid),
+		})
 	}
 	if len(s.oids) == 0 && !s.interfaces {
 		return s, errors.New("nothing to poll")
@@ -198,4 +204,14 @@ func credentialsFor(name, version string, secret map[string]string) (credentials
 	usm.PrivacyProtocol, usm.PrivacyPassphrase = priv, privPass
 	c.flags = gosnmp.AuthPriv
 	return c, nil
+}
+
+// encodable reports whether gosnmp can put oid into a request. The format
+// already refuses what X.690 cannot encode; this asks gosnmp's own encoder,
+// so an OID that still slipped through fails its item alone instead of the
+// whole request it would have been part of.
+func encodable(oid string) bool {
+	x := &gosnmp.GoSNMP{Version: gosnmp.Version2c}
+	_, err := x.SnmpEncodePacket(gosnmp.GetRequest, []gosnmp.SnmpPDU{{Name: oid, Type: gosnmp.Null}}, 0, 0)
+	return err == nil
 }

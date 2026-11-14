@@ -80,21 +80,70 @@ func TestInterfaceRates(t *testing.T) {
 		in: counter{100 + 1, 32}, out: counter{200 + 1, 32},
 		inErr: counter{1 + 30, 32}, outErr: counter{29, 32}, // wrapped: +30
 	}
-	r := interfaceRates(prev, cur, 60)
+	r := interfaceRates(prev, cur, 60, 0)
 	if !r.hasIn || r.inBps != 1000 || !r.hasOut || r.outBps != 2000 || !r.hasErrs || r.errs != 1 {
 		t.Fatalf("rates from 64-bit octets: %+v", r)
 	}
 
 	// Without 64-bit octets on either side, the 32-bit ones count.
 	prev.hcIn, cur.hcOut = counter{}, counter{}
-	r = interfaceRates(prev, cur, 1)
+	r = interfaceRates(prev, cur, 1, 0)
 	if !r.hasIn || r.inBps != 8 || !r.hasOut || r.outBps != 8 {
 		t.Fatalf("rates from 32-bit octets: %+v", r)
 	}
 
 	// One error counter missing: no error rate.
 	cur.outErr = counter{}
-	if r = interfaceRates(prev, cur, 1); r.hasErrs {
+	if r = interfaceRates(prev, cur, 1, 0); r.hasErrs {
 		t.Fatalf("errors without ifOutErrors: %+v", r)
+	}
+}
+
+// TestInterfaceRatesAboveTheSpeed: a rate above the interface's speed (a
+// 32-bit counter cleared without a reboot reads as a wrap) is dropped, and
+// so is the error rate with it; an unknown speed bounds nothing.
+func TestInterfaceRatesAboveTheSpeed(t *testing.T) {
+	prev := ifCounters{in: counter{1 << 31, 32}, out: counter{1000, 32}, inErr: counter{0, 32}, outErr: counter{0, 32}}
+	cleared := ifCounters{in: counter{500, 32}, out: counter{1000 + 7500, 32}, inErr: counter{0, 32}, outErr: counter{0, 32}}
+	// in: (2^32 - 2^31 + 500) bytes in 60 s is about 286 Mbit/s.
+	r := interfaceRates(prev, cleared, 60, 100e6)
+	if r.hasIn || !r.hasOut || r.outBps != 1000 || r.hasErrs {
+		t.Fatalf("100 Mbit/s interface after a clear: %+v", r)
+	}
+	if r = interfaceRates(prev, cleared, 60, 0); !r.hasIn || !r.hasErrs {
+		t.Fatalf("unknown speed: %+v", r)
+	}
+	if r = interfaceRates(prev, cleared, 60, 1e9); !r.hasIn {
+		t.Fatalf("1 Gbit/s interface: a wrap of 286 Mbit/s is plausible: %+v", r)
+	}
+	// Up to 10 % above the speed is timing slack on a saturated link.
+	full := ifCounters{out: counter{1000 + 1_000_000*60/8*105/100, 32}}
+	if r = interfaceRates(prev, full, 60, 1e6); !r.hasOut {
+		t.Fatalf("5 %% above the speed: %+v", r)
+	}
+	// Errors above one per minimum frame are implausible.
+	errs := ifCounters{inErr: counter{1e6, 32}, outErr: counter{0, 32}}
+	if r = interfaceRates(prev, errs, 1, 100e6); r.hasErrs {
+		t.Fatalf("1e6 errors/s on 100 Mbit/s: %+v", r)
+	}
+}
+
+func TestInterfaceSpeed(t *testing.T) {
+	for _, tc := range []struct {
+		high, low uint64
+		hasHigh   bool
+		hasLow    bool
+		want      float64
+	}{
+		{10000, 0, true, false, 10e9},
+		{0, 100e6, true, true, 100e6}, // ifHighSpeed 0: below 1 Mbit/s or unknown
+		{1000, 4294967295, true, true, 1e9},
+		{0, 4294967295, false, true, 0}, // ifSpeed saturated, no ifHighSpeed
+		{0, 0, false, false, 0},
+	} {
+		r := ifRow{highSpeed: gauge{tc.high, tc.hasHigh}, speed: gauge{tc.low, tc.hasLow}}
+		if got := r.bitsPerSecond(); got != tc.want {
+			t.Errorf("%+v: speed %v, want %v", tc, got, tc.want)
+		}
 	}
 }

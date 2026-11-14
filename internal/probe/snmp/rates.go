@@ -77,10 +77,28 @@ type ifRates struct {
 	hasIn, hasOut, hasErrs bool
 }
 
+// speedSlack is how far above an interface's speed a rate may read before
+// it counts as impossible: the counters and the clock are not read at the
+// same instant, so a saturated link reads a little above its speed.
+const speedSlack = 1.1
+
+// minFrameBits is the smallest Ethernet frame in bits; every error counts
+// at least one frame, which bounds the error rate an interface can have.
+const minFrameBits = 64 * 8
+
 // interfaceRates computes an interface's rates over secs: bits per second
 // from the 64-bit octet counters when both polls have them, else from the
 // 32-bit ones, and errors per second from ifInErrors plus ifOutErrors.
-func interfaceRates(prev, cur ifCounters, secs float64) ifRates {
+//
+// speed is the interface's bits per second, 0 when unknown. With a speed,
+// a rate above it (with speedSlack) is impossible and dropped: that is
+// what a 32-bit counter cleared without a reboot looks like, since it
+// reads as a wrap. Clearing usually resets every counter of the interface,
+// so the error rate goes with a dropped octet rate, and it is dropped on
+// its own above one error per minimum frame. A clear whose false wrap
+// stays under the speed (a 32-bit-only interface of 1 Gbit/s or more)
+// cannot be told from a real wrap.
+func interfaceRates(prev, cur ifCounters, secs, speed float64) ifRates {
 	var r ifRates
 	octets := func(hcPrev, hcCur, prev32, cur32 counter) (float64, bool) {
 		if hcPrev.width == 64 && hcCur.width == 64 {
@@ -90,10 +108,21 @@ func interfaceRates(prev, cur ifCounters, secs float64) ifRates {
 		v, ok := perSecond(prev32, cur32, secs)
 		return v * 8, ok
 	}
+	possible := func(v, limit float64) bool { return speed <= 0 || v <= limit*speedSlack }
+	impossible := false
 	r.inBps, r.hasIn = octets(prev.hcIn, cur.hcIn, prev.in, cur.in)
+	if r.hasIn && !possible(r.inBps, speed) {
+		r.inBps, r.hasIn, impossible = 0, false, true
+	}
 	r.outBps, r.hasOut = octets(prev.hcOut, cur.hcOut, prev.out, cur.out)
+	if r.hasOut && !possible(r.outBps, speed) {
+		r.outBps, r.hasOut, impossible = 0, false, true
+	}
 	inErr, okIn := perSecond(prev.inErr, cur.inErr, secs)
 	outErr, okOut := perSecond(prev.outErr, cur.outErr, secs)
-	r.errs, r.hasErrs = inErr+outErr, okIn && okOut
+	r.errs, r.hasErrs = inErr+outErr, okIn && okOut && !impossible
+	if r.hasErrs && !possible(r.errs, speed/minFrameBits) {
+		r.errs, r.hasErrs = 0, false
+	}
 	return r
 }

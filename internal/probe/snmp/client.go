@@ -3,6 +3,7 @@ package snmp
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,11 @@ type client interface {
 	walk(root string, fn gosnmp.WalkFunc) error
 	// answered reports whether any packet came back from the device.
 	answered() bool
+	// roundTrip is the time from the last request sent to the last answer
+	// received: after a Get, that request's own round trip, without the
+	// v3 engine discovery gosnmp may have sent before it. 0 when no
+	// answer came.
+	roundTrip() time.Duration
 	close()
 }
 
@@ -37,18 +43,30 @@ type dialFunc func(ctx context.Context, g *probe.Guard, target netip.AddrPort, t
 
 // gosnmpClient is a client over gosnmp.
 type gosnmpClient struct {
-	x        *gosnmp.GoSNMP
-	stop     func() bool
-	received *atomic.Bool
+	x    *gosnmp.GoSNMP
+	conn net.Conn
+	stop func() bool
+	// timing is written by gosnmp's send hooks, which run on the
+	// goroutine calling get, and read by that goroutine after it.
+	timing *timing
+}
+
+// timing records the session's sends and receives.
+type timing struct {
+	sent     time.Time
+	rtt      time.Duration
+	received atomic.Bool
 }
 
 // dialDevice opens a UDP session to target, an address the guard already
 // allowed; the guard's dial-time check runs again on the socket as a
 // backstop. Each request waits timeout and is sent retries more times;
-// ctx's deadline cuts that short, and cancelling ctx unblocks a pending
-// read.
+// ctx's deadline cuts that short (gosnmp clamps each read's deadline to
+// it), and cancelling ctx closes the socket, which ends a pending read at
+// once — a deadline set into the past could be overwritten by gosnmp's
+// next per-request deadline.
 func dialDevice(ctx context.Context, g *probe.Guard, target netip.AddrPort, timeout time.Duration, c credentials) (client, error) {
-	received := new(atomic.Bool)
+	tm := new(timing)
 	x := &gosnmp.GoSNMP{
 		Target:         target.Addr().String(),
 		Port:           target.Port(),
@@ -61,7 +79,11 @@ func dialDevice(ctx context.Context, g *probe.Guard, target netip.AddrPort, time
 		MaxOids:        oidsPerRequest,
 		MaxRepetitions: maxRepetitions,
 		Control:        g.Dialer(0).Control,
-		OnRecv:         func(*gosnmp.GoSNMP) { received.Store(true) },
+		OnSent:         func(*gosnmp.GoSNMP) { tm.sent = time.Now() },
+		OnRecv: func(*gosnmp.GoSNMP) {
+			tm.rtt = time.Since(tm.sent)
+			tm.received.Store(true)
+		},
 	}
 	if c.version == gosnmp.Version3 {
 		x.SecurityModel = gosnmp.UserSecurityModel
@@ -72,16 +94,20 @@ func dialDevice(ctx context.Context, g *probe.Guard, target netip.AddrPort, time
 		return nil, err
 	}
 	conn := x.Conn
-	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Unix(1, 0)) })
-	return &gosnmpClient{x: x, stop: stop, received: received}, nil
+	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	return &gosnmpClient{x: x, conn: conn, stop: stop, timing: tm}, nil
 }
 
 func (c *gosnmpClient) get(oids []string) (*gosnmp.SnmpPacket, error) { return c.x.Get(oids) }
 
 func (c *gosnmpClient) walk(root string, fn gosnmp.WalkFunc) error { return c.x.BulkWalk(root, fn) }
 
-func (c *gosnmpClient) answered() bool { return c.received.Load() }
+func (c *gosnmpClient) answered() bool { return c.timing.received.Load() }
 
+func (c *gosnmpClient) roundTrip() time.Duration { return c.timing.rtt }
+
+// close ends the session; the socket may already be closed by a cancel,
+// so gosnmp's second close is ignored.
 func (c *gosnmpClient) close() {
 	c.stop()
 	_ = c.x.Close()

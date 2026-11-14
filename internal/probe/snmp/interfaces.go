@@ -15,6 +15,7 @@ import (
 // IF-MIB columns the interfaces option walks.
 const (
 	colIfDescr       = ".1.3.6.1.2.1.2.2.1.2"
+	colIfSpeed       = ".1.3.6.1.2.1.2.2.1.5"
 	colIfAdminStatus = ".1.3.6.1.2.1.2.2.1.7"
 	colIfOperStatus  = ".1.3.6.1.2.1.2.2.1.8"
 	colIfInOctets    = ".1.3.6.1.2.1.2.2.1.10"
@@ -24,6 +25,7 @@ const (
 	colIfName        = ".1.3.6.1.2.1.31.1.1.1.1"
 	colIfHCInOctets  = ".1.3.6.1.2.1.31.1.1.1.6"
 	colIfHCOutOctets = ".1.3.6.1.2.1.31.1.1.1.10"
+	colIfHighSpeed   = ".1.3.6.1.2.1.31.1.1.1.15"
 )
 
 // ifColumns are walked in this order; ifDescr, which every ifTable row
@@ -31,7 +33,7 @@ const (
 var ifColumns = []string{
 	colIfDescr, colIfName, colIfAdminStatus, colIfOperStatus,
 	colIfHCInOctets, colIfHCOutOctets, colIfInOctets, colIfOutOctets,
-	colIfInErrors, colIfOutErrors,
+	colIfInErrors, colIfOutErrors, colIfSpeed, colIfHighSpeed,
 }
 
 // maxInterfaces bounds the interfaces one poll reports, the lowest
@@ -58,7 +60,33 @@ type ifRow struct {
 	name, descr string // raw device strings
 	admin, oper int64  // 0: not reported
 	counters    ifCounters
-	item        string // set by nameInterfaces
+	// speed is ifSpeed (bit/s), highSpeed ifHighSpeed (Mbit/s).
+	speed, highSpeed gauge
+	item             string // set by nameInterfaces
+}
+
+// gauge is a Gauge32 reading; ok is false when the device did not report
+// it.
+type gauge struct {
+	value uint64
+	ok    bool
+}
+
+// ifSpeedSaturated is ifSpeed's value for an interface faster than it can
+// say; ifHighSpeed tells the speed then.
+const ifSpeedSaturated = 1<<32 - 1
+
+// bitsPerSecond is the interface's speed: ifHighSpeed in Mbit/s when it
+// is above 0 (it is 0 below 1 Mbit/s), else ifSpeed unless saturated; 0
+// when unknown.
+func (r ifRow) bitsPerSecond() float64 {
+	switch {
+	case r.highSpeed.ok && r.highSpeed.value > 0:
+		return float64(r.highSpeed.value) * 1e6
+	case r.speed.ok && r.speed.value > 0 && r.speed.value < ifSpeedSaturated:
+		return float64(r.speed.value)
+	}
+	return 0
 }
 
 // rowIndex is the ifIndex of a column's row OID: exactly one arc after the
@@ -92,8 +120,11 @@ func readInterfaces(c client) (rows []ifRow, skipped bool, err error) {
 			return errStopWalk
 		}
 		seen[idx] = true
-		descr, _ := toText(pdu.Value)
-		rows = append(rows, ifRow{index: idx, descr: descr})
+		r := ifRow{index: idx}
+		if pdu.Type == gosnmp.OctetString {
+			r.descr, _ = toText(pdu.Value)
+		}
+		rows = append(rows, r)
 		return nil
 	})
 	if err != nil && !errors.Is(err, errStopWalk) {
@@ -175,6 +206,10 @@ func setColumn(r *ifRow, col string, pdu gosnmp.SnmpPDU) {
 		r.counters.inErr = readCounter(pdu)
 	case colIfOutErrors:
 		r.counters.outErr = readCounter(pdu)
+	case colIfSpeed:
+		r.speed = readGauge(pdu)
+	case colIfHighSpeed:
+		r.highSpeed = readGauge(pdu)
 	}
 }
 
@@ -191,6 +226,15 @@ func readCounter(pdu gosnmp.SnmpPDU) counter {
 		return counter{value: v, width: 32}
 	}
 	return counter{}
+}
+
+// readGauge reads a Gauge32; anything else is unreported.
+func readGauge(pdu gosnmp.SnmpPDU) gauge {
+	v, ok := toUint(pdu.Value)
+	if pdu.Type != gosnmp.Gauge32 || !ok || v >= 1<<32 {
+		return gauge{}
+	}
+	return gauge{value: v, ok: true}
 }
 
 // nameInterfaces sets each row's item: ifName, else ifDescr, cleaned; an
@@ -269,7 +313,7 @@ func interfaceObservations(rows []ifRow, prev map[int]ifCounters, secs float64, 
 		if !ratesOK || !had {
 			continue
 		}
-		rt := interfaceRates(p, r.counters, secs)
+		rt := interfaceRates(p, r.counters, secs, r.bitsPerSecond())
 		if rt.hasIn {
 			obs = append(obs, itemValue("snmp.if.in_bps", r.item, rt.inBps))
 		}

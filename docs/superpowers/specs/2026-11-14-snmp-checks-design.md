@@ -68,7 +68,7 @@ Descriptor (`internal/checkplugins/snmp.go`, `Runs: Server`):
 | `version` | enum `v2c`, `v3` | default `v2c` |
 | `port` | integer 1–65535 | default 161 |
 | `timeout_seconds` | integer 1–30 | default 5 |
-| `oids` | list, at most 32 | each `FormatSNMPOID`: `name=OID`, name the secret-name pattern, OID numeric dotted (`1.3.6…`, optional leading dot, at most 128 arcs, each arc ≤ 2³²−1); names unique |
+| `oids` | list, at most 32 | each `FormatSNMPOID`: `name=OID`, name the secret-name pattern, OID numeric dotted (`1.3.6…`, optional leading dot, at most 128 arcs, each arc ≤ 2³²−1, and BER-encodable per X.690 8.19: first arc 0–2, second ≤ 39 under 0 and 1, 40·first+second ≤ 2³²−1); names unique |
 | `interfaces` | bool | default false |
 
 `Check` hook: at least one of `oids` non-empty or `interfaces` true.

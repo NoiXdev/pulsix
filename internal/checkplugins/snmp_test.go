@@ -86,7 +86,7 @@ func TestValidateSNMPMessages(t *testing.T) {
 		{map[string]any{"secret": "sw"}, "snmp: nothing to poll: list at least one entry in oids or set interfaces to true"},
 		{snmpOK(map[string]any{"oids": []any{"a=1.3", "b=1.4", "a=1.5"}}), `snmp: oids names "a" twice`},
 		{snmpOK(map[string]any{"oids": []any{"a b=1.3"}}), "snmp: oids entries must be name=OID, the name 1 to 64 letters, digits, '_', '.' or '-'"},
-		{snmpOK(map[string]any{"oids": []any{"a=1"}}), "snmp: oids entries must be name=OID, the OID numeric and dotted such as 1.3.6.1.2.1.1.3.0: 2 to 128 whole numbers, each at most 4294967295 and without leading zeros, an optional leading dot"},
+		{snmpOK(map[string]any{"oids": []any{"a=1"}}), "snmp: oids entries must be name=OID, the OID numeric and dotted such as 1.3.6.1.2.1.1.3.0: 2 to 128 whole numbers, each at most 4294967295 and without leading zeros, the first 0, 1 or 2, the second at most 39 after 0 or 1 and at most 4294967215 after 2, an optional leading dot"},
 	}
 	for _, tc := range cases {
 		err := checkplugins.Validate("snmp", tc.params)
@@ -149,7 +149,9 @@ func TestSNMPDescriptor(t *testing.T) {
 
 // TestSNMPOIDFormat: name=OID, the name the secret-name pattern, the OID
 // numeric and dotted with an optional leading dot, 2 to 128 arcs, each a
-// decimal of at most 2^32-1 without leading zeros.
+// decimal of at most 2^32-1 without leading zeros, and only what X.690
+// can encode: a first arc of 0, 1 or 2, a second arc of at most 39 under
+// 0 and 1, and 40*first+second at most 2^32-1 (gosnmp's bound).
 func TestSNMPOIDFormat(t *testing.T) {
 	arcs := func(n int) string { return strings.TrimSuffix(strings.Repeat("1.", n), ".") }
 	cases := []struct {
@@ -164,8 +166,13 @@ func TestSNMPOIDFormat(t *testing.T) {
 		{strings.Repeat("n", 64) + "=1.3", true},
 		{"a=" + arcs(128), true},
 		{"a=." + arcs(128), true},
-		{"a=1.4294967295", true},
+		{"a=1.3.4294967295", true},
 		{"a=1.0.10", true},
+		{"a=0.39", true},
+		{"a=1.39", true},
+		{"a=2.40", true},
+		{"a=2.4294967215", true},
+		{"a=2.999.1", true},
 
 		{"", false},
 		{"=1.3", false},
@@ -179,6 +186,14 @@ func TestSNMPOIDFormat(t *testing.T) {
 		{"a=.1", false},
 		{"a=" + arcs(129), false},
 		{"a=1.4294967296", false},
+		{"a=1.4294967295", false},
+		{"a=3.1", false},
+		{"a=3.6.1.2", false},
+		{"a=4294967295.1", false},
+		{"a=0.40", false},
+		{"a=1.40.1", false},
+		{"a=2.4294967216", false},
+		{"a=2.4294967295", false},
 		{"a=1.99999999999", false},
 		{"a=1.03", false},
 		{"a=1.00", false},

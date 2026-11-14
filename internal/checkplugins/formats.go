@@ -265,38 +265,46 @@ func snmpOIDProblem(s string) string {
 		return "must be name=OID, the name 1 to 64 letters, digits, '_', '.' or '-'"
 	}
 	if !validNumericOID(oid) {
-		return "must be name=OID, the OID numeric and dotted such as 1.3.6.1.2.1.1.3.0: 2 to 128 whole numbers, each at most 4294967295 and without leading zeros, an optional leading dot"
+		return "must be name=OID, the OID numeric and dotted such as 1.3.6.1.2.1.1.3.0: 2 to 128 whole numbers, each at most 4294967295 and without leading zeros, the first 0, 1 or 2, the second at most 39 after 0 or 1 and at most 4294967215 after 2, an optional leading dot"
 	}
 	return ""
 }
 
-// validNumericOID: dot-separated decimal arcs, one leading dot allowed.
+// validNumericOID: dot-separated decimal arcs, one leading dot allowed,
+// and only OIDs BER can encode (X.690 8.19): the first two arcs travel as
+// one subidentifier 40*first+second, so the first is 0, 1 or 2, the
+// second at most 39 under 0 and 1, and the sum at most maxSNMPOIDArc —
+// exactly what the probe's SNMP library refuses to encode otherwise.
 func validNumericOID(oid string) bool {
 	arcs := strings.Split(strings.TrimPrefix(oid, "."), ".")
 	if len(arcs) < minSNMPOIDArcs || len(arcs) > maxSNMPOIDArcs {
 		return false
 	}
-	for _, arc := range arcs {
-		if !validOIDArc(arc) {
+	vals := make([]uint64, len(arcs))
+	for i, arc := range arcs {
+		v, ok := oidArc(arc)
+		if !ok {
 			return false
 		}
+		vals[i] = v
 	}
-	return true
+	first, second := vals[0], vals[1]
+	return first <= 2 && (first == 2 || second <= 39) && 40*first+second <= maxSNMPOIDArc
 }
 
-// validOIDArc: "0", or ASCII digits without a leading zero, at most
+// oidArc reads "0", or ASCII digits without a leading zero, at most
 // maxSNMPOIDArc.
-func validOIDArc(arc string) bool {
+func oidArc(arc string) (uint64, bool) {
 	if arc == "" || len(arc) > 10 || (arc[0] == '0' && arc != "0") {
-		return false
+		return 0, false
 	}
 	var n uint64
 	for i := 0; i < len(arc); i++ {
 		c := arc[i]
 		if c < '0' || c > '9' {
-			return false
+			return 0, false
 		}
 		n = n*10 + uint64(c-'0')
 	}
-	return n <= maxSNMPOIDArc
+	return n, n <= maxSNMPOIDArc
 }

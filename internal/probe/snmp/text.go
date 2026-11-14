@@ -61,5 +61,5 @@ func reportableItem(item string) bool {
 }
 
 func isControl(r rune) bool {
-	return unicode.IsControl(r) || r == ' ' || r == ' '
+	return unicode.IsControl(r) || r == '\u2028' || r == '\u2029'
 }

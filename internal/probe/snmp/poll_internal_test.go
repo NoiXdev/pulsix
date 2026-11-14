@@ -320,3 +320,31 @@ func TestPollNeverQuotesTheSecret(t *testing.T) {
 		}
 	}
 }
+
+// TestPollBadOIDFailsOnlyItsItem: an entry whose OID SNMP cannot encode is
+// an error on its own item; it is not asked for, and neither the device's
+// state nor its siblings suffer.
+func TestPollBadOIDFailsOnlyItsItem(t *testing.T) {
+	dev := newFakeDevice()
+	dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(1))
+	dev.set(".1.3.6.1.9.1", gosnmp.Integer, 7)
+	fp := newFakePoller(dev)
+	m := byKey(t, first(poll(fp, params(map[string]any{"oids": []any{"bad=3.1", "ok=1.3.6.1.9.1", "worse=1.40.1"}}), v2cSecret)))
+	wantValue(t, m, "snmp.up", "", 1)
+	wantValue(t, m, "snmp.value", "ok", 7)
+	wantErr(t, m, "snmp.value", "bad", errBadOID)
+	wantErr(t, m, "snmp.value", "worse", errBadOID)
+	if len(dev.gets) != 1 || len(dev.gets[0]) != 2 {
+		t.Fatalf("requests %v, want sysUpTime and ok only", dev.gets)
+	}
+}
+
+// TestPollResponseTimeIsTheClientsRoundTrip: snmp.response_ms is the first
+// request's own round trip as the client measured it (without a v3 engine
+// discovery before it).
+func TestPollResponseTimeIsTheClientsRoundTrip(t *testing.T) {
+	dev := newFakeDevice()
+	dev.rtt = 7 * time.Millisecond
+	m := byKey(t, first(poll(newFakePoller(dev), params(map[string]any{"interfaces": true}), v2cSecret)))
+	wantValue(t, m, "snmp.response_ms", "", 7)
+}

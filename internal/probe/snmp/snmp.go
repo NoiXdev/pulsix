@@ -117,10 +117,22 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	}
 	defer c.close()
 
-	// The first request: sysUpTime and the first oids entries.
-	oids := make([]string, 0, len(s.oids)+1)
-	oids = append(oids, oidSysUpTime)
+	// The entries to ask for; one SNMP cannot encode fails on its own.
+	var obs []probe.Observation
+	asked := make([]oidEntry, 0, len(s.oids))
+	var badObs []probe.Observation
 	for _, e := range s.oids {
+		if e.bad {
+			badObs = append(badObs, probe.Observation{Metric: "snmp.value", Item: e.name, Err: errBadOID})
+			continue
+		}
+		asked = append(asked, e)
+	}
+
+	// The first request: sysUpTime and the first entries.
+	oids := make([]string, 0, len(asked)+1)
+	oids = append(oids, oidSysUpTime)
+	for _, e := range asked {
 		oids = append(oids, e.oid)
 	}
 	first := oids[:min(len(oids), oidsPerRequest)]
@@ -129,17 +141,21 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	if err != nil {
 		return failed(classifyFirst(err, creds.version == gosnmp.Version3, c.answered()), s, fail), Info{}
 	}
-	obs := []probe.Observation{probe.Value("snmp.up", 1), probe.Value("snmp.response_ms", probe.Millis(time.Since(start)))}
+	rtt := c.roundTrip()
+	if rtt <= 0 {
+		rtt = time.Since(start)
+	}
+	obs = append(obs, probe.Value("snmp.up", 1), probe.Value("snmp.response_ms", probe.Millis(rtt)))
 
 	cur := sample{}
 	vars, batchErr := answers(pkt, first)
 	obs = append(obs, uptimeObservation(vars, batchErr, &cur))
-	obs = append(obs, entryObservations(s.oids[:len(first)-1], vars[min(len(vars), 1):], batchErr)...)
+	obs = append(obs, entryObservations(asked[:len(first)-1], vars[min(len(vars), 1):], batchErr)...)
 
-	// The other oids entries, oidsPerRequest at a time.
+	// The other entries, oidsPerRequest at a time.
 	for off := len(first); off < len(oids); off += oidsPerRequest {
 		batch := oids[off:min(len(oids), off+oidsPerRequest)]
-		entries := s.oids[off-1 : off-1+len(batch)]
+		entries := asked[off-1 : off-1+len(batch)]
 		pkt, err := c.get(batch)
 		if err != nil {
 			obs = append(obs, entryObservations(entries, nil, errNoAnswer)...)
@@ -148,14 +164,18 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 		vars, batchErr := answers(pkt, batch)
 		obs = append(obs, entryObservations(entries, vars, batchErr)...)
 	}
+	obs = append(obs, badObs...)
 
 	var info Info
+	keep := true
 	if s.interfaces {
 		var ifObs []probe.Observation
-		ifObs, info.InterfacesSkipped = p.pollInterfaces(c, target, &cur)
+		ifObs, info.InterfacesSkipped, keep = p.pollInterfaces(c, target, &cur)
 		obs = append(obs, ifObs...)
 	}
-	p.target, p.prev = target, &cur
+	if keep {
+		p.target, p.prev = target, &cur
+	}
 	return obs, info
 }
 
@@ -172,12 +192,14 @@ func failed(f failure, s settings, fail func(string) []probe.Observation) []prob
 }
 
 // pollInterfaces reads the interface table into cur and returns its
-// observations, with rates against the previous poll of the same target.
-func (p *Poller) pollInterfaces(c client, target netip.AddrPort, cur *sample) ([]probe.Observation, bool) {
+// observations, with rates against the previous poll of the same target,
+// and whether cur should replace that poll: not when the table could not
+// be read, so the next poll's rates span both intervals.
+func (p *Poller) pollInterfaces(c client, target netip.AddrPort, cur *sample) (obs []probe.Observation, skipped, keep bool) {
 	rows, skipped, err := readInterfaces(c)
 	cur.at = p.now()
 	if err != nil {
-		return []probe.Observation{{Metric: "snmp.if.status", Err: errNoInterfaceTable}}, false
+		return []probe.Observation{{Metric: "snmp.if.status", Err: errNoInterfaceTable}}, false, false
 	}
 	nameInterfaces(rows)
 	cur.ifs = make(map[int]ifCounters, len(rows))
@@ -193,7 +215,7 @@ func (p *Poller) pollInterfaces(c client, target netip.AddrPort, cur *sample) ([
 	if prev != nil {
 		prevIfs = prev.ifs
 	}
-	return interfaceObservations(rows, prevIfs, secs, ok), skipped
+	return interfaceObservations(rows, prevIfs, secs, ok), skipped, true
 }
 
 // uptimeObservation is snmp.uptime_seconds from the first request's first

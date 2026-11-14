@@ -32,8 +32,9 @@ type fakeDevice struct {
 	pduError gosnmp.SNMPError
 	// walkErr fails the walk of a root.
 	walkErr map[string]error
-	// replied is what answered reports.
+	// replied is what answered reports; rtt what roundTrip does.
 	replied bool
+	rtt     time.Duration
 
 	gets   [][]string
 	walked []string
@@ -83,6 +84,8 @@ func (f *fakeDevice) walk(root string, fn gosnmp.WalkFunc) error {
 }
 
 func (f *fakeDevice) answered() bool { return f.replied }
+
+func (f *fakeDevice) roundTrip() time.Duration { return f.rtt }
 
 func (f *fakeDevice) close() {
 	f.mu.Lock()

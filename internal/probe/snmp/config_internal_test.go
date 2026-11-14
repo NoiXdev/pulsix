@@ -1,6 +1,8 @@
 package snmp
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -71,8 +73,8 @@ func TestParseSettingsRefusesWhatTheDescriptorRefuses(t *testing.T) {
 		"bad timeout":    {"secret": "s", "timeout_seconds": float64(31), "interfaces": true},
 		"zero timeout":   {"secret": "s", "timeout_seconds": float64(0), "interfaces": true},
 		"entry no name":  {"secret": "s", "oids": []any{"=1.3.6"}},
-		"entry no oid":   {"secret": "s", "oids": []any{"x="}},
-		"entry bad arc":  {"secret": "s", "oids": []any{"x=1.3.a"}},
+		"entry no equal": {"secret": "s", "oids": []any{"x"}},
+		"entry bad name": {"secret": "s", "oids": []any{"a b=1.3.6"}},
 		"entry not str":  {"secret": "s", "oids": []any{float64(1)}},
 		"too many oids":  {"secret": "s", "oids": manyOIDs(33)},
 		"nothing to ask": {"secret": "s"},
@@ -185,6 +187,64 @@ func TestCredentialsNeverFormatTheirValues(t *testing.T) {
 	for _, s := range []string{c.String(), c.GoString()} {
 		if strings.Contains(s, "s3cret") {
 			t.Fatalf("credentials format as %q", s)
+		}
+	}
+}
+
+// TestParseSettingsBadOIDFailsOnlyItsEntry: an entry with a good name but
+// an OID the probe cannot ask for is kept, marked bad, so only its item
+// fails.
+func TestParseSettingsBadOIDFailsOnlyItsEntry(t *testing.T) {
+	s, err := parseSettings(map[string]any{"secret": "s", "oids": []any{"ok=1.3.6.1", "a=3.1", "b=1.40.1", "c=2.4294967295", "d=1.3.a", "e="}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.oids) != 6 || s.oids[0].bad {
+		t.Fatalf("oids %+v", s.oids)
+	}
+	for _, e := range s.oids[1:] {
+		if !e.bad {
+			t.Errorf("entry %q not marked bad", e.name)
+		}
+	}
+}
+
+// TestEncodableMatchesTheFormat: every OID the format accepts is one
+// gosnmp's encoder takes, and the encoder refuses the first/second-arc
+// cases the format refuses (X.690 8.19). The encoder is laxer on syntax
+// (leading zeros, empty arcs), which the format refuses on its own.
+func TestEncodableMatchesTheFormat(t *testing.T) {
+	raw, err := os.ReadFile("../../checkplugins/testdata/formats.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors []struct {
+		Format, Input string
+		Valid         bool
+	}
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, v := range vectors {
+		name, oid, ok := strings.Cut(v.Input, "=")
+		if v.Format != "snmpOID" || !ok || !checkplugins.FormatSecretName.Valid(name) || strings.Contains(oid, "=") {
+			continue
+		}
+		if !v.Valid {
+			continue
+		}
+		n++
+		if !encodable(oid) {
+			t.Errorf("encodable(%q) = false, the format accepts it", oid)
+		}
+	}
+	if n < 10 {
+		t.Fatalf("only %d vectors checked", n)
+	}
+	for _, oid := range []string{"3.1", "3.6.1.2", "4294967295.1", "0.40", "1.40.1", "1.4294967295", "2.4294967216", "2.4294967295", "1.4294967296", "1"} {
+		if encodable(oid) {
+			t.Errorf("encodable(%q) = true, the format refuses it", oid)
 		}
 	}
 }

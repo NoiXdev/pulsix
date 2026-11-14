@@ -318,18 +318,25 @@ const commandName = secretName;
 /** snmpOID: one entry of snmp's oids, "name=OID" split at the first '=':
  * the name follows secretName, the OID is numeric and dotted with an
  * optional leading dot, 2 to 128 arcs, each a decimal of at most
- * 4294967295 without leading zeros. */
+ * 4294967295 without leading zeros, and BER-encodable (X.690 8.19): the
+ * first arc 0, 1 or 2, the second at most 39 under 0 and 1, and
+ * 40*first+second at most 4294967295. */
 function snmpOID(s: string): boolean {
   const eq = s.indexOf('=');
   if (eq < 0 || !secretName(s.slice(0, eq))) return false;
   let oid = s.slice(eq + 1);
   if (oid.startsWith('.')) oid = oid.slice(1);
   const arcs = oid.split('.');
-  return (
-    arcs.length >= 2 &&
-    arcs.length <= 128 &&
-    arcs.every((arc) => /^(0|[1-9][0-9]{0,9})$/.test(arc) && Number(arc) <= 4294967295)
-  );
+  if (
+    arcs.length < 2 ||
+    arcs.length > 128 ||
+    !arcs.every((arc) => /^(0|[1-9][0-9]{0,9})$/.test(arc) && Number(arc) <= 4294967295)
+  ) {
+    return false;
+  }
+  const first = Number(arcs[0]);
+  const second = Number(arcs[1]);
+  return first <= 2 && (first === 2 || second <= 39) && 40 * first + second <= 4294967295;
 }
 
 /** Every format, by the name the descriptors use. */
