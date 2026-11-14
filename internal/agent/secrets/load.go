@@ -13,7 +13,7 @@ import (
 const FileName = "agent.yaml"
 
 // ErrAbsent is Load's error for a file that does not exist: the agent then
-// simply has no secrets.
+// simply has no secrets and no commands.
 var ErrAbsent = errors.New("the configuration file does not exist")
 
 // Check refuses a file that someone other than the allowed principals could
@@ -28,7 +28,7 @@ const maxAttempts = 3
 // errReplaced marks an attempt that saw the file replaced under it.
 var errReplaced = errors.New("replaced while it was read")
 
-// Load reads the secrets in path. The file must pass check first, every
+// Load reads the secrets and commands in path. The file must pass check first, every
 // time: an editor that saves by renaming a temporary file over it can
 // leave a moment where the file is readable by everyone, and such a file
 // is refused rather than read. Load holds the file open while it checks

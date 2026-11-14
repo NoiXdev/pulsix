@@ -3,6 +3,7 @@ package secrets
 import (
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,9 +19,10 @@ const badCommandName = "a command name is 1 to 64 characters of A-Z a-z 0-9 _ . 
 // parseCommands decodes the mapping under commands; a missing or empty one
 // holds none. A command is a name matching namePattern that maps to a
 // sequence of 1 to maxCommandArgs single values, each at most
-// maxValueBytes long; the first is the program and must be an absolute
-// path on the agent's OS. An argument may hold a password, so like a
-// secret's value it is never quoted in an error.
+// maxValueBytes long and without a NUL character (no process can receive
+// one); the first is the program and must be an absolute path on the
+// agent's OS without control characters. An argument may hold a password,
+// so like a secret's value it is never quoted in an error.
 func parseCommands(n *yaml.Node) (map[string][]string, error) {
 	if n == nil || isNull(n) {
 		return nil, nil
@@ -75,6 +77,10 @@ func parseArgv(name, n *yaml.Node) ([]string, error) {
 			return nil, errAt(entry, `a command entry has no value; write "" for an empty one`)
 		case len(entry.Value) > maxValueBytes:
 			return nil, errAt(entry, "a command entry is longer than "+strconv.Itoa(maxValueBytes)+" bytes")
+		case strings.IndexByte(entry.Value, 0) >= 0:
+			return nil, errAt(entry, "a command entry must not contain a NUL character")
+		case i == 0 && strings.ContainsFunc(entry.Value, isControl):
+			return nil, errAt(entry, "the program path must not contain control characters")
 		case i == 0 && !filepath.IsAbs(entry.Value):
 			return nil, errAt(entry, "the program must be an absolute path")
 		}
@@ -82,3 +88,8 @@ func parseArgv(name, n *yaml.Node) ([]string, error) {
 	}
 	return argv, nil
 }
+
+// isControl reports a C0 control character or DEL. The program path may
+// appear in a check's output, where such a character would break a line or
+// a terminal.
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }

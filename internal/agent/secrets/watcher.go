@@ -10,8 +10,8 @@ import (
 )
 
 // State is the configuration file's state as the agent reports it:
-// StateAbsent, StateOK, or the error that made the agent drop every secret.
-// An error state never quotes the file's content.
+// StateAbsent, StateOK, or the error that made the agent drop every secret
+// and command. An error state never quotes the file's content.
 type State string
 
 // The two states that are not errors.
@@ -23,10 +23,10 @@ const (
 // checkInterval is how often, at most, the watcher looks at the file.
 const checkInterval = time.Minute
 
-// Watcher holds the secrets of one configuration file and reads it again
-// on every look. It looks at the file on the first Current and then at most
-// once per checkInterval, on the Current that finds the interval over: no
-// goroutine of its own. It is safe for concurrent use.
+// Watcher holds the secrets and commands of one configuration file and
+// reads it again on every look. It looks at the file on the first Current
+// and then at most once per checkInterval, on the Current that finds the
+// interval over: no goroutine of its own. It is safe for concurrent use.
 //
 // Every look is a full Load — protection check, read and parse — whether
 // or not the file's size, time or mode changed. The file is at most 1 MiB
@@ -72,11 +72,11 @@ func NewWatcher(path string, check Check, opts ...Option) *Watcher {
 // Path is the watched file.
 func (w *Watcher) Path() string { return w.path }
 
-// Current returns the secrets and the file's state, reading the file
-// first when it has not done so for checkInterval. Only a file that does
-// not exist is StateAbsent; any other failure, a path the agent cannot
-// look at included, is an error state. Any failure leaves no secrets at
-// all, never the last good ones.
+// Current returns the secrets and commands and the file's state, reading
+// the file first when it has not done so for checkInterval. Only a file
+// that does not exist is StateAbsent; any other failure, a path the agent
+// cannot look at included, is an error state. Any failure leaves no
+// secrets and no commands at all, never the last good ones.
 func (w *Watcher) Current() (Set, State) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -117,6 +117,6 @@ func (w *Watcher) update(set Set, state State) {
 	case StateAbsent:
 		w.log.Info("no secrets file", "path", w.path)
 	default:
-		w.log.Warn("refused the secrets file; no secrets are available", "path", w.path, "state", string(state))
+		w.log.Warn("refused the secrets file; no secrets or commands are available", "path", w.path, "state", string(state))
 	}
 }

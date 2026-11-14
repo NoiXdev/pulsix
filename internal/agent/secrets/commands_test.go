@@ -29,7 +29,7 @@ func TestParseAcceptsCommands(t *testing.T) {
 		"commands:\n" +
 		"  disk_root: [" + p + ", \"-w\", \"20%\", \"-c\", \"10%\", \"-p\", \"/\"]\n" +
 		"  backup_age:\n    - " + p + "\n" +
-		"  with.empty-arg_1:\n    - " + p + "\n    - \"\"\n    - !!str 5\n    - 30\n"
+		"  with.empty-arg_1:\n    - " + p + "\n    - \"\"\n    - !!str 5\n    - 30\n    - \"a\\tb\\nc\\x7F\"\n"
 	set, err := parse([]byte(src))
 	if err != nil {
 		t.Fatalf("parse = %v", err)
@@ -47,7 +47,8 @@ func TestParseAcceptsCommands(t *testing.T) {
 		{"disk_root", []string{program(), "-w", "20%", "-c", "10%", "-p", "/"}},
 		{"backup_age", []string{program()}},
 		// Numbers are taken as written, like secret field values.
-		{"with.empty-arg_1", []string{program(), "", "5", "30"}},
+		// Control characters are refused in the program only.
+		{"with.empty-arg_1", []string{program(), "", "5", "30", "a\tb\nc\x7f"}},
 	}
 	for _, tt := range tests {
 		got, ok := set.Command(tt.name)
@@ -109,6 +110,20 @@ func TestParseRefusesBadCommandsWithoutQuotingThem(t *testing.T) {
 			"line 2, column 6: a command needs at least its program"},
 		{"relative program", "commands:\n  a: [bin/" + argValue + "]\n",
 			"line 2, column 7: the program must be an absolute path"},
+		{"NUL in an argument", "commands:\n  a: [" + p + ", \"" + argValue + "\\0x\"]\n",
+			"line 2, column " + strconv.Itoa(9+len(p)) + ": a command entry must not contain a NUL character"},
+		{"NUL in the program", "commands:\n  a: [\"/" + argValue + "\\0\"]\n",
+			"line 2, column 7: a command entry must not contain a NUL character"},
+		{"NUL in a relative program", "commands:\n  a: [\"" + argValue + "\\0\"]\n",
+			"line 2, column 7: a command entry must not contain a NUL character"},
+		{"tab in the program", "commands:\n  a: [\"/" + argValue + "\\tx\"]\n",
+			"line 2, column 7: the program path must not contain control characters"},
+		{"newline in the program", "commands:\n  a: [\"/" + argValue + "\\nx\"]\n",
+			"line 2, column 7: the program path must not contain control characters"},
+		{"DEL in the program", "commands:\n  a: [\"/" + argValue + "\\x7Fx\"]\n",
+			"line 2, column 7: the program path must not contain control characters"},
+		{"control character in a relative program", "commands:\n  a: [\"" + argValue + "\\x01\"]\n",
+			"line 2, column 7: the program path must not contain control characters"},
 		{"empty program", "commands:\n  a: [\"\", " + argValue + "]\n",
 			"line 2, column 7: the program must be an absolute path"},
 		{"too many entries", "commands:\n  a: [" + strings.Join(many, ", ") + "]\n",

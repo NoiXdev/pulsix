@@ -213,8 +213,8 @@ func TestWatcherLogsChangesWithoutValues(t *testing.T) {
 	}
 }
 
-// TestWatcherConcurrentReaders: the heartbeat and the scheduler read the
-// watcher from their own goroutines (run with -race).
+// TestWatcherLogsACommandChange: a change of the command names alone is
+// logged, by name and without an argument.
 func TestWatcherLogsACommandChange(t *testing.T) {
 	f := newWatchFixture(t)
 	f.write("secrets:\n  pg:\n    password: x\n")
@@ -231,6 +231,8 @@ func TestWatcherLogsACommandChange(t *testing.T) {
 	}
 }
 
+// TestWatcherConcurrentReaders: the heartbeat and the scheduler read the
+// watcher from their own goroutines (run with -race).
 func TestWatcherConcurrentReaders(t *testing.T) {
 	f := newWatchFixture(t)
 	f.write("secrets:\n  pg:\n    a: b\n")
