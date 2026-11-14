@@ -2,6 +2,8 @@ package orgsecrets
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -28,7 +30,8 @@ const (
 func validName(name string) bool { return checkplugins.FormatSecretName.Valid(name) }
 
 // validate checks a Put. Errors wrap ErrInvalidInput and name a field only
-// once its name passed the pattern.
+// once its name passed the pattern. Fields are checked in name order, so
+// the same request always gets the same answer.
 func validate(name string, fields map[string]string) error {
 	if !validName(name) {
 		return fmt.Errorf("%w: %s", ErrInvalidInput, badName)
@@ -36,11 +39,11 @@ func validate(name string, fields map[string]string) error {
 	if len(fields) == 0 || len(fields) > maxFields {
 		return fmt.Errorf("%w: a secret has 1 to %d fields", ErrInvalidInput, maxFields)
 	}
-	for field, value := range fields {
+	for _, field := range slices.Sorted(maps.Keys(fields)) {
 		if !validName(field) {
 			return fmt.Errorf("%w: %s", ErrInvalidInput, badFieldName)
 		}
-		if problem := valueProblem(value); problem != "" {
+		if problem := valueProblem(fields[field]); problem != "" {
 			return fmt.Errorf("%w: field %s: %s", ErrInvalidInput, field, problem)
 		}
 	}

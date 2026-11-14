@@ -41,7 +41,7 @@ type memRow struct {
 
 func newMemStore() *memStore { return &memStore{rows: map[uuid.UUID]map[string]memRow{}} }
 
-func (m *memStore) Upsert(_ context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) error {
+func (m *memStore) Upsert(_ context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (orgsecrets.Stored, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.rows[orgID] == nil {
@@ -53,7 +53,14 @@ func (m *memStore) Upsert(_ context.Context, orgID uuid.UUID, name string, seale
 	}
 	r.sealed, r.fieldNames, r.updatedAt = slices.Clone(sealed), slices.Clone(fieldNames), at
 	m.rows[orgID][name] = r
-	return nil
+	return orgsecrets.Stored{Name: name, FieldNames: slices.Clone(fieldNames), CreatedAt: r.createdAt, UpdatedAt: r.updatedAt}, nil
+}
+
+func (m *memStore) Exists(_ context.Context, orgID uuid.UUID, name string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.rows[orgID][name]
+	return ok, nil
 }
 
 func (m *memStore) List(_ context.Context, orgID uuid.UUID) ([]orgsecrets.Stored, error) {
@@ -87,7 +94,7 @@ func (m *memStore) Delete(_ context.Context, orgID uuid.UUID, name string) (bool
 
 // put writes a row as it is, for the AAD tests that move a ciphertext.
 func (m *memStore) put(orgID uuid.UUID, name string, sealed []byte) {
-	_ = m.Upsert(ctx, orgID, name, sealed, []string{"community"}, time.Now())
+	_, _ = m.Upsert(ctx, orgID, name, sealed, []string{"community"}, time.Now())
 }
 
 // fakeRefs is the CheckRefs port.
@@ -182,7 +189,7 @@ func TestPutValidation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld()
-			err := w.svc.Put(ctx, w.org, tc.secret, tc.fields)
+			_, err := w.svc.Put(ctx, w.org, tc.secret, tc.fields)
 			if tc.ok {
 				if err != nil {
 					t.Fatalf("Put: %v", err)
@@ -200,13 +207,26 @@ func TestPutValidation(t *testing.T) {
 	}
 }
 
+// TestPutValidationIsDeterministic: with several bad fields the refusal
+// always names the first in name order, whatever the map's order.
+func TestPutValidationIsDeterministic(t *testing.T) {
+	w := newWorld()
+	fields := map[string]string{"zeta": "", "mid": "", "alpha": "", "omega": ""}
+	for range 50 {
+		_, err := w.svc.Put(ctx, w.org, "sw", fields)
+		if !errors.Is(err, orgsecrets.ErrInvalidInput) || !strings.Contains(err.Error(), "field alpha:") {
+			t.Fatalf("Put = %v, want the refusal naming field alpha", err)
+		}
+	}
+}
+
 // TestPutSealsAndFieldsOpens: the stored row is the sealed JSON object
 // (no clear value in it) with its sorted field names, and Fields opens it
 // back to the same map.
 func TestPutSealsAndFieldsOpens(t *testing.T) {
 	w := newWorld()
 	in := map[string]string{"user": "monitor", "auth_pass": leak, "priv_pass": leak + "-priv"}
-	if err := w.svc.Put(ctx, w.org, "core-switch", in); err != nil {
+	if _, err := w.svc.Put(ctx, w.org, "core-switch", in); err != nil {
 		t.Fatal(err)
 	}
 	row := w.store.rows[w.org]["core-switch"]
@@ -231,7 +251,7 @@ func TestPutSealsAndFieldsOpens(t *testing.T) {
 // nothing of the value.
 func TestSealedRowIsBoundToOrgAndName(t *testing.T) {
 	w := newWorld()
-	if err := w.svc.Put(ctx, w.org, "a", map[string]string{"community": leak}); err != nil {
+	if _, err := w.svc.Put(ctx, w.org, "a", map[string]string{"community": leak}); err != nil {
 		t.Fatal(err)
 	}
 	sealed := w.store.rows[w.org]["a"].sealed
@@ -260,13 +280,21 @@ func TestSealedRowIsBoundToOrgAndName(t *testing.T) {
 func TestPutReplacesWhole(t *testing.T) {
 	w := newWorld()
 	created := w.clock.t
-	if err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": "old", "extra": "x"}); err != nil {
+	if _, err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": "old", "extra": "x"}); err != nil {
 		t.Fatal(err)
 	}
 	w.clock.t = created.Add(time.Hour)
-	if err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": leak}); err != nil {
+	w.refs.refs = []orgsecrets.CheckRef{{Key: "snmp-core", Plugin: "srv", Params: map[string]any{"secret": "sw"}}}
+	put, err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": leak})
+	if err != nil {
 		t.Fatal(err)
 	}
+	// Put returns the secret as stored, with the checks using it.
+	if put.Name != "sw" || !put.CreatedAt.Equal(created) || !put.UpdatedAt.Equal(created.Add(time.Hour)) ||
+		!slices.Equal(put.FieldNames, []string{"community"}) || !slices.Equal(put.UsedBy, []string{"snmp-core"}) {
+		t.Fatalf("Put returned %+v", put)
+	}
+	assertNoLeak(t, "Put's result", fmt.Sprintf("%#v", put))
 	list, err := w.svc.List(ctx, w.org)
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +321,7 @@ func TestPutReplacesWhole(t *testing.T) {
 func TestListUsedByCountsServerChecksOnly(t *testing.T) {
 	w := newWorld()
 	for _, name := range []string{"sw", "unused"} {
-		if err := w.svc.Put(ctx, w.org, name, map[string]string{"community": leak}); err != nil {
+		if _, err := w.svc.Put(ctx, w.org, name, map[string]string{"community": leak}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -342,7 +370,7 @@ func TestDelete(t *testing.T) {
 	if err := w.svc.Delete(ctx, w.org, "absent"); !errors.Is(err, orgsecrets.ErrNotFound) {
 		t.Fatalf("Delete of an absent secret = %v, want ErrNotFound", err)
 	}
-	if err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": leak}); err != nil {
+	if _, err := w.svc.Put(ctx, w.org, "sw", map[string]string{"community": leak}); err != nil {
 		t.Fatal(err)
 	}
 	w.refs.refs = []orgsecrets.CheckRef{

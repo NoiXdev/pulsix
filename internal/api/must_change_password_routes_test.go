@@ -261,6 +261,16 @@ func (g schemaSampler) sample(schema map[string]any) any {
 				out[name] = g.sample(prop)
 			}
 		}
+		// A map with a lower bound (minProperties over an
+		// additionalProperties schema, such as a secret's fields) gets
+		// that many sampled entries.
+		if addl, ok := schema["additionalProperties"].(map[string]any); ok {
+			if n, ok := schema["minProperties"].(float64); ok {
+				for i := range int(n) {
+					out[fmt.Sprintf("walk%d", i)] = g.sample(addl)
+				}
+			}
+		}
 		return out
 	case "array":
 		n := 0

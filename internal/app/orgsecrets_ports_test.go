@@ -82,7 +82,7 @@ func TestSecretCheckRefsEveryBinding(t *testing.T) {
 		})
 	}
 	onServer := build(mysqlOnServer)
-	if err := onServer.Put(scoped, org, "sw", map[string]string{"password": "x"}); err != nil {
+	if _, err := onServer.Put(scoped, org, "sw", map[string]string{"password": "x"}); err != nil {
 		t.Fatal(err)
 	}
 

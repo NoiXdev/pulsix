@@ -84,11 +84,28 @@ func (q *Queries) ListOrgSecrets(ctx context.Context, orgID uuid.UUID) ([]ListOr
 	return items, nil
 }
 
-const upsertOrgSecret = `-- name: UpsertOrgSecret :exec
+const orgSecretExists = `-- name: OrgSecretExists :one
+SELECT EXISTS (SELECT 1 FROM org_secrets WHERE org_id = $1 AND name = $2)
+`
+
+type OrgSecretExistsParams struct {
+	OrgID uuid.UUID `json:"org_id"`
+	Name  string    `json:"name"`
+}
+
+func (q *Queries) OrgSecretExists(ctx context.Context, arg OrgSecretExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, orgSecretExists, arg.OrgID, arg.Name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const upsertOrgSecret = `-- name: UpsertOrgSecret :one
 INSERT INTO org_secrets (org_id, name, fields_sealed, field_names, created_at, updated_at)
 VALUES ($1, $2, $3, $4::text[], $5, $5)
 ON CONFLICT (org_id, name) DO UPDATE
 SET fields_sealed = EXCLUDED.fields_sealed, field_names = EXCLUDED.field_names, updated_at = EXCLUDED.updated_at
+RETURNING name, field_names, created_at, updated_at
 `
 
 type UpsertOrgSecretParams struct {
@@ -99,15 +116,30 @@ type UpsertOrgSecretParams struct {
 	At           time.Time `json:"at"`
 }
 
+type UpsertOrgSecretRow struct {
+	Name       string    `json:"name"`
+	FieldNames []string  `json:"field_names"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // Create or replace a secret whole: a replace swaps the sealed fields and
 // the field names and moves updated_at, created_at stays the first write's.
-func (q *Queries) UpsertOrgSecret(ctx context.Context, arg UpsertOrgSecretParams) error {
-	_, err := q.db.Exec(ctx, upsertOrgSecret,
+// It returns the row without its sealed fields.
+func (q *Queries) UpsertOrgSecret(ctx context.Context, arg UpsertOrgSecretParams) (UpsertOrgSecretRow, error) {
+	row := q.db.QueryRow(ctx, upsertOrgSecret,
 		arg.OrgID,
 		arg.Name,
 		arg.FieldsSealed,
 		arg.FieldNames,
 		arg.At,
 	)
-	return err
+	var i UpsertOrgSecretRow
+	err := row.Scan(
+		&i.Name,
+		&i.FieldNames,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

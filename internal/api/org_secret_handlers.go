@@ -12,10 +12,21 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
+
+// OrgSecretStore is what the API may do with the organization's secrets:
+// list, write and delete them. It deliberately has no Fields — opening a
+// secret's values is the probe runner's alone, which internal/app hands
+// the concrete *orgsecrets.Service; no handler can reach a value.
+type OrgSecretStore interface {
+	List(ctx context.Context, orgID uuid.UUID) ([]orgsecrets.Secret, error)
+	Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (orgsecrets.Secret, error)
+	Delete(ctx context.Context, orgID uuid.UUID, name string) error
+}
 
 // orgSecretDTO is a secret as the API shows it: everything but its values.
 type orgSecretDTO struct {
@@ -49,7 +60,28 @@ type orgSecretPutInput struct {
 	Org  string `path:"org"`
 	Name string `path:"name"`
 	Body struct {
-		Fields map[string]string `json:"fields" doc:"The secret's fields, replacing every stored one: 1 to 16, names of 1 to 64 characters of A-Z a-z 0-9 _ . -, values of 1 to 4096 bytes without NUL"`
+		Fields orgSecretFields `json:"fields"`
+	}
+}
+
+// orgSecretFields is the PUT body's fields object. Its schema bounds what
+// a schema can: 1 to 16 properties, string values of 1 to 4096
+// characters. The service stays the authority — maxLength counts
+// characters where the rule is 4096 bytes, and a schema cannot bound the
+// keys (field names) — and repeats every check.
+type orgSecretFields map[string]string
+
+// Schema implements huma.SchemaProvider.
+func (orgSecretFields) Schema(huma.Registry) *huma.Schema {
+	minProps, maxProps, minLen, maxLen := 1, 16, 1, 4096
+	value := &huma.Schema{Type: huma.TypeString, MinLength: &minLen, MaxLength: &maxLen}
+	value.PrecomputeMessages()
+	return &huma.Schema{
+		Type:                 huma.TypeObject,
+		Description:          "The secret's fields, replacing every stored one: 1 to 16, names of 1 to 64 characters of A-Z a-z 0-9 _ . -, values of 1 to 4096 bytes without NUL",
+		MinProperties:        &minProps,
+		MaxProperties:        &maxProps,
+		AdditionalProperties: value,
 	}
 }
 
@@ -87,20 +119,13 @@ func registerOrgSecretRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		if err := deps.OrgSecrets.Put(ctx, scope.OrgID, in.Name, in.Body.Fields); err != nil {
-			return nil, mapOrgSecretsErr(ctx, err)
-		}
-		list, err := deps.OrgSecrets.List(ctx, scope.OrgID)
+		stored, err := deps.OrgSecrets.Put(ctx, scope.OrgID, in.Name, in.Body.Fields)
 		if err != nil {
 			return nil, mapOrgSecretsErr(ctx, err)
 		}
+		setAuditObject(ctx, stored.Name, "stored secret "+stored.Name+" (fields: "+strings.Join(stored.FieldNames, ", ")+")")
 		out := &orgSecretOutput{}
-		for _, s := range list {
-			if s.Name == in.Name {
-				out.Body.Secret = toOrgSecretDTO(s)
-			}
-		}
-		setAuditObject(ctx, in.Name, "stored secret "+in.Name+" (fields: "+strings.Join(out.Body.Secret.FieldNames, ", ")+")")
+		out.Body.Secret = toOrgSecretDTO(stored)
 		return out, nil
 	}, withAudit("putOrgSecret", "secret"))
 

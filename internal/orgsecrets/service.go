@@ -59,10 +59,14 @@ type Stored struct {
 // Store persists secrets (org_secrets).
 type Store interface {
 	// Upsert creates or replaces a secret whole: created_at is at on
-	// create and kept on replace, updated_at is at.
-	Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) error
+	// create and kept on replace, updated_at is at. It returns the row as
+	// stored, without its sealed fields.
+	Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, error)
 	// List returns the organization's secrets ordered by name.
 	List(ctx context.Context, orgID uuid.UUID) ([]Stored, error)
+	// Exists reports whether the organization has a secret of that name,
+	// without reading its sealed fields.
+	Exists(ctx context.Context, orgID uuid.UUID, name string) (bool, error)
 	// Sealed returns a secret's sealed fields, or ErrNotFound.
 	Sealed(ctx context.Context, orgID uuid.UUID, name string) ([]byte, error)
 	// Delete removes a secret and reports whether there was one.
@@ -121,25 +125,36 @@ func AAD(orgID uuid.UUID, name string) []byte {
 	return []byte("org_secrets|" + orgID.String() + "|" + name)
 }
 
-// Put creates or replaces the secret name with exactly fields.
-func (s *Service) Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) error {
+// Put creates or replaces the secret name with exactly fields and
+// returns it as stored, with the checks using it — never a value.
+func (s *Service) Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (Secret, error) {
 	if err := validate(name, fields); err != nil {
-		return err
+		return Secret{}, err
 	}
 	plain, err := json.Marshal(fields)
 	if err != nil {
-		return fmt.Errorf("encode secret %s: %w", name, err)
+		return Secret{}, fmt.Errorf("encode secret %s: %w", name, err)
 	}
 	sealed, err := s.d.Box.SealAAD(plain, AAD(orgID, name))
 	clear(plain)
 	if err != nil {
-		return fmt.Errorf("seal secret %s: %w", name, err)
+		return Secret{}, fmt.Errorf("seal secret %s: %w", name, err)
 	}
 	names := slices.Sorted(maps.Keys(fields))
-	if err := s.d.Store.Upsert(ctx, orgID, name, sealed, names, s.d.Now()); err != nil {
-		return fmt.Errorf("store secret %s: %w", name, err)
+	row, err := s.d.Store.Upsert(ctx, orgID, name, sealed, names, s.d.Now())
+	if err != nil {
+		return Secret{}, fmt.Errorf("store secret %s: %w", name, err)
 	}
-	return nil
+	used, err := s.usedBy(ctx, orgID)
+	if err != nil {
+		return Secret{}, err
+	}
+	return secretOf(row, used), nil
+}
+
+// secretOf is a stored row with the checks using it.
+func secretOf(r Stored, used map[string][]string) Secret {
+	return Secret{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, UsedBy: used[r.Name]}
 }
 
 // List returns the organization's secrets with the checks using each,
@@ -155,7 +170,7 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID) ([]Secret, error) {
 	}
 	out := make([]Secret, len(rows))
 	for i, r := range rows {
-		out[i] = Secret{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, UsedBy: used[r.Name]}
+		out[i] = secretOf(r, used)
 	}
 	return out, nil
 }
@@ -179,11 +194,12 @@ func (s *Service) Delete(ctx context.Context, orgID uuid.UUID, name string) erro
 	if !validName(name) {
 		return ErrNotFound
 	}
-	if _, err := s.d.Store.Sealed(ctx, orgID, name); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return ErrNotFound
-		}
+	exists, err := s.d.Store.Exists(ctx, orgID, name)
+	if err != nil {
 		return fmt.Errorf("look up secret %s: %w", name, err)
+	}
+	if !exists {
+		return ErrNotFound
 	}
 	used, err := s.usedBy(ctx, orgID)
 	if err != nil {

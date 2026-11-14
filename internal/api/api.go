@@ -34,7 +34,6 @@ import (
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
-	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -73,8 +72,9 @@ type Deps struct {
 	// passwords, Git deploy keys and tokens); see registerCredentialRoutes.
 	Credentials *credentials.Service
 	// OrgSecrets is the organization's secret store for the checks the
-	// server runs (backlog 3.13d); see registerOrgSecretRoutes.
-	OrgSecrets *orgsecrets.Service
+	// server runs (backlog 3.13d); see registerOrgSecretRoutes. An
+	// interface without Fields: no handler can open a value.
+	OrgSecrets OrgSecretStore
 	// SSH stores jump hosts, zone defaults and host SSH settings; see
 	// registerSSHRoutes.
 	SSH *sshconf.Service

@@ -23,10 +23,14 @@ type SQLStore struct{ q *gen.Queries }
 func NewSQLStore(d *db.DB) *SQLStore { return &SQLStore{q: gen.New(d)} }
 
 // Upsert implements Store.
-func (s *SQLStore) Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) error {
-	return s.q.UpsertOrgSecret(ctx, gen.UpsertOrgSecretParams{
+func (s *SQLStore) Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, error) {
+	r, err := s.q.UpsertOrgSecret(ctx, gen.UpsertOrgSecretParams{
 		OrgID: orgID, Name: name, FieldsSealed: sealed, FieldNames: fieldNames, At: at,
 	})
+	if err != nil {
+		return Stored{}, err
+	}
+	return Stored{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}, nil
 }
 
 // List implements Store.
@@ -40,6 +44,11 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Stored, error) 
 		out[i] = Stored{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}
 	}
 	return out, nil
+}
+
+// Exists implements Store.
+func (s *SQLStore) Exists(ctx context.Context, orgID uuid.UUID, name string) (bool, error) {
+	return s.q.OrgSecretExists(ctx, gen.OrgSecretExistsParams{OrgID: orgID, Name: name})
 }
 
 // Sealed implements Store.

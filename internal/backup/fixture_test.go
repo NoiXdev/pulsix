@@ -94,6 +94,7 @@ INSERT INTO check_states (org_id, host_id, check_key, metric, state, since, rule
 INSERT INTO maintenance_windows (id, org_id, name, target_kind, host_id, starts_at, ends_at, created_by) VALUES ('00000000-0000-4000-8000-000000000029', '00000000-0000-4000-8000-000000000001', 'patch', 'host', '00000000-0000-4000-8000-000000000004', now(), now() + interval '1 hour', '00000000-0000-4000-8000-000000000002');
 INSERT INTO org_job_settings (org_id) VALUES ('00000000-0000-4000-8000-000000000001');
 INSERT INTO org_monitoring_settings (org_id, client_absent_days) VALUES ('00000000-0000-4000-8000-000000000001', 7);
+INSERT INTO org_secrets (org_id, name, fields_sealed, field_names) VALUES ('00000000-0000-4000-8000-000000000001', 'fixture', '\x0f', '{community}');
 INSERT INTO rotation_groups (id, org_id, credential_id, targets) VALUES ('00000000-0000-4000-8000-00000000002a', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000005', '[]');
 INSERT INTO api_tokens (id, user_id, org_id, name, role, secret_hash) VALUES ('00000000-0000-4000-8000-00000000002b', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'ci', 'admin', '\x05');
 INSERT INTO audit_events (id, org_id, actor_id, actor_kind, action, object_type, object_id, summary, at) VALUES ('00000000-0000-4000-8000-00000000002c', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 'user', 'fixture', 'host', 'web-1', E'line one\nline two\ttab \\ backslash', now());

@@ -43,14 +43,26 @@ func TestSQLStore(t *testing.T) {
 	if _, err := store.Sealed(scoped, org, "sw"); !errors.Is(err, orgsecrets.ErrNotFound) {
 		t.Fatalf("Sealed before any write = %v, want ErrNotFound", err)
 	}
-	if err := store.Upsert(scoped, org, "sw", []byte("sealed-1"), []string{"community", "extra"}, t0); err != nil {
+	if _, err := store.Upsert(scoped, org, "sw", []byte("sealed-1"), []string{"community", "extra"}, t0); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Upsert(scoped, org, "a-first", []byte("sealed-a"), []string{"user"}, t0); err != nil {
+	if _, err := store.Upsert(scoped, org, "a-first", []byte("sealed-a"), []string{"user"}, t0); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Upsert(scoped, org, "sw", []byte("sealed-2"), []string{"community"}, t0.Add(time.Hour)); err != nil {
+	row, err := store.Upsert(scoped, org, "sw", []byte("sealed-2"), []string{"community"}, t0.Add(time.Hour))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if row.Name != "sw" || !row.CreatedAt.Equal(t0) || !row.UpdatedAt.Equal(t0.Add(time.Hour)) || !slices.Equal(row.FieldNames, []string{"community"}) {
+		t.Fatalf("Upsert returned %+v; want the replaced row with created_at kept", row)
+	}
+	for name, want := range map[string]bool{"sw": true, "absent": false} {
+		if ok, err := store.Exists(scoped, org, name); err != nil || ok != want {
+			t.Fatalf("Exists(%s) = %v, %v; want %v", name, ok, err, want)
+		}
+	}
+	if ok, err := store.Exists(otherScoped, org, "sw"); err != nil || ok {
+		t.Fatalf("Exists of org's row inside the other scope = %v, %v; want false", ok, err)
 	}
 	got, err := store.Sealed(scoped, org, "sw")
 	if err != nil || !bytes.Equal(got, []byte("sealed-2")) {
@@ -74,7 +86,7 @@ func TestSQLStore(t *testing.T) {
 	if _, err := store.Sealed(otherScoped, org, "sw"); !errors.Is(err, orgsecrets.ErrNotFound) {
 		t.Fatalf("org's row read inside the other scope: %v, want ErrNotFound", err)
 	}
-	if err := store.Upsert(otherScoped, org, "sw", []byte("hijack"), []string{"x"}, t0); err == nil {
+	if _, err := store.Upsert(otherScoped, org, "sw", []byte("hijack"), []string{"x"}, t0); err == nil {
 		t.Fatal("an upsert of org's row inside the other scope succeeded, want a row-level security refusal")
 	}
 	if ok, err := store.Delete(otherScoped, org, "sw"); err != nil || ok {
@@ -99,7 +111,7 @@ func TestServiceOverSQLStore(t *testing.T) {
 		Store: orgsecrets.NewSQLStore(d), Box: crypto.NewBox(testKey), Checks: &fakeRefs{},
 	})
 	in := map[string]string{"community": leak}
-	if err := svc.Put(db.WithOrgScope(ctx, org), org, "sw", in); err != nil {
+	if _, err := svc.Put(db.WithOrgScope(ctx, org), org, "sw", in); err != nil {
 		t.Fatal(err)
 	}
 	var raw []byte

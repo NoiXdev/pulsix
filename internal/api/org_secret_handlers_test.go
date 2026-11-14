@@ -9,6 +9,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -186,21 +187,35 @@ func TestOrgSecretsLifecycleAndPermissions(t *testing.T) {
 // wrong and never repeats the value.
 func TestOrgSecretsInvalidInput(t *testing.T) {
 	f := newOrgSecretsFixture(t, "orgsecrets-invalid")
+	seventeen := map[string]string{}
+	for i := range 17 {
+		seventeen[fmt.Sprintf("f%02d", i)] = secretLeak
+	}
+	// want pins who refused: the schema (a location) or the service (its
+	// text). The schema bounds the count and the value length.
 	for _, tc := range []struct {
 		name, path string
 		body       any
+		want       string
 	}{
-		{"invalid name", "/secrets/bad%20name", map[string]any{"fields": map[string]string{"community": secretLeak}}},
-		{"no fields", "/secrets/sw", map[string]any{"fields": map[string]string{}}},
-		{"invalid field name", "/secrets/sw", map[string]any{"fields": map[string]string{"a:b": secretLeak}}},
-		{"empty value", "/secrets/sw", map[string]any{"fields": map[string]string{"community": ""}}},
-		{"over-long value", "/secrets/sw", map[string]any{"fields": map[string]string{"community": strings.Repeat(secretLeak, 300)}}},
-		{"NUL in a value", "/secrets/sw", map[string]any{"fields": map[string]string{"community": secretLeak + "\x00"}}},
-		{"a value that is not a string", "/secrets/sw", map[string]any{"fields": map[string]any{"community": []string{secretLeak}}}},
+		{"invalid name", "/secrets/bad%20name", map[string]any{"fields": map[string]string{"community": secretLeak}}, `a secret name is`},
+		{"no fields", "/secrets/sw", map[string]any{"fields": map[string]string{}}, `"location":"body.fields"`},
+		{"invalid field name", "/secrets/sw", map[string]any{"fields": map[string]string{"a:b": secretLeak}}, `a field name is`},
+		{"empty value", "/secrets/sw", map[string]any{"fields": map[string]string{"community": ""}}, `"location":"body.fields.community"`},
+		{"over-long value", "/secrets/sw", map[string]any{"fields": map[string]string{"community": strings.Repeat(secretLeak, 300)}}, `"location":"body.fields.community"`},
+		{"NUL in a value", "/secrets/sw", map[string]any{"fields": map[string]string{"community": secretLeak + "\x00"}}, `NUL character`},
+		{"a value that is not a string", "/secrets/sw", map[string]any{"fields": map[string]any{"community": []string{secretLeak}}}, `"location":"body.fields.community"`},
+		// huma echoes the whole request object for a missing required
+		// property and for an unexpected one; redactErrorValues must clear it.
+		{"missing fields key", "/secrets/sw", map[string]any{"field": map[string]string{"community": secretLeak}}, `"expected required property fields`},
+		{"unexpected property", "/secrets/sw", map[string]any{"fields": map[string]string{"community": secretLeak}, "extra": secretLeak}, `"location":"body.extra"`},
+		{"whole body a value", "/secrets/sw", secretLeak, `"location":"body"`},
+		{"17 fields", "/secrets/sw", map[string]any{"fields": seventeen}, `"location":"body.fields"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if code, text := f.do(t, f.ownerC, http.MethodPut, tc.path, tc.body); code != http.StatusUnprocessableEntity {
-				t.Fatalf("PUT: %d %s, want 422", code, strings.ReplaceAll(text, secretLeak, "<LEAK>"))
+			code, text := f.do(t, f.ownerC, http.MethodPut, tc.path, tc.body)
+			if code != http.StatusUnprocessableEntity || !strings.Contains(text, tc.want) {
+				t.Fatalf("PUT: %d %s, want 422 with %s", code, strings.ReplaceAll(text, secretLeak, "<LEAK>"), tc.want)
 			}
 		})
 	}
@@ -242,4 +257,60 @@ func TestOrgSecretsDeleteConflictNamesTheChecks(t *testing.T) {
 		t.Fatalf("list = %+v, want db-main used by pg-a, pg-b", list)
 	}
 	f.assertNoLeak(t)
+}
+
+// TestOrgSecretsAreOrganizationScoped: names are per organization — org B
+// can store a secret under the name org A uses — and an admin of org B
+// cannot list, replace or delete org A's secrets through A's slug, nor
+// reach them through B's.
+func TestOrgSecretsAreOrganizationScoped(t *testing.T) {
+	a := newOrgSecretsFixture(t, "orgsecrets-xorg-a")
+	bOwner := a.s.SeedUser("orgsecrets-xorg-b-owner@example.test", "correct horse battery")
+	a.s.SeedOrg("orgsecrets-xorg-b", bOwner)
+	bC := a.s.LoginAs(bOwner)
+	bBase := a.s.HTTP.URL + "/api/v1/orgs/orgsecrets-xorg-b"
+
+	if code, text := a.do(t, a.ownerC, http.MethodPut, "/secrets/sw", map[string]any{"fields": map[string]string{"community": secretLeak}}); code != http.StatusOK {
+		t.Fatalf("A's PUT: %d %s", code, text)
+	}
+
+	// Through A's slug, B's admin is refused everything.
+	for _, tc := range []struct {
+		method string
+		body   any
+	}{
+		{http.MethodGet, nil},
+		{http.MethodPut, map[string]any{"fields": map[string]string{"community": "hijack"}}},
+		{http.MethodDelete, nil},
+	} {
+		path := "/secrets/sw"
+		if tc.method == http.MethodGet {
+			path = "/secrets"
+		}
+		if code, text := a.do(t, bC, tc.method, path, tc.body); code != http.StatusForbidden && code != http.StatusNotFound {
+			t.Fatalf("%s %s by B's admin through A's slug: %d %s, want 403 or 404", tc.method, path, code, text)
+		}
+	}
+
+	// Through B's own slug, A's secret does not exist.
+	resp := requestJSON(t, bC, http.MethodDelete, bBase+"/secrets/sw", nil)
+	if text := mustReadBody(t, resp); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("DELETE of sw through B's slug: %d %s, want 404", resp.StatusCode, text)
+	}
+	resp = requestJSON(t, bC, http.MethodGet, bBase+"/secrets", nil)
+	text := mustReadBody(t, resp)
+	a.bodies = append(a.bodies, text)
+	if resp.StatusCode != http.StatusOK || strings.Contains(text, `"sw"`) {
+		t.Fatalf("B's list: %d %s, want 200 without sw", resp.StatusCode, text)
+	}
+
+	// The same name in B is B's own secret; A's is untouched.
+	resp = requestJSON(t, bC, http.MethodPut, bBase+"/secrets/sw", map[string]any{"fields": map[string]string{"user": "b"}})
+	if text := mustReadBody(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("B's PUT of sw: %d %s", resp.StatusCode, text)
+	}
+	if list := a.list(t, a.viewer); len(list) != 1 || list[0].Name != "sw" || strings.Join(list[0].FieldNames, ",") != "community" {
+		t.Fatalf("A's list after B's write = %+v, want sw with community", list)
+	}
+	a.assertNoLeak(t)
 }
