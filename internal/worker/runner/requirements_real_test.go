@@ -194,6 +194,10 @@ func TestRequirementsCommentOnlyInstallsNothingInRealAnsible(t *testing.T) {
 	mustNotExist(t, requirements.CacheDir(h.clone()))
 }
 
+// galaxyRefusesEscapingRole is how ansible-galaxy (seen with ansible-core
+// 2.21.6) refuses the role dependency fixture's name on its own.
+const galaxyRefusesEscapingRole = "The role name '../../../ESCAPED_DEP' resolves to a path outside of the configured role directory"
+
 // TestTraversalFixturesEscapeWithoutIsolationInRealAnsible is the control
 // for the worker image's isolation test: without a play uid nothing stops
 // galaxy, and both fixtures write where their metadata points — outside
@@ -237,6 +241,27 @@ func TestTraversalFixturesEscapeWithoutIsolationInRealAnsible(t *testing.T) {
 		escaped := filepath.Join(filepath.Dir(h.clone()), "ESCAPED_DEP")
 		mustNotExist(t, escaped)
 		_, _, lines, err := h.ensure(t)
+		if err != nil && strings.Contains(err.Error(), galaxyRefusesEscapingRole) {
+			// A newer ansible-galaxy refuses this dependency name itself:
+			// 2.21.6 (the go job's runner image) does, while 2.21.4 (the
+			// worker image's pin, which e2e-ansible installs) and 2.21.5
+			// install it outside the roles directory. Such a galaxy leaves
+			// the fixture nothing to escape through, so this control has
+			// nothing to show; it must still not have written anything, and
+			// the run must still have been unisolated. Where the worker
+			// image's runtime is required (PULSIX_E2E_REAL_ANSIBLE=1) it
+			// fails instead: there the refusal means the pinned galaxy
+			// changed, and the image's isolation test (internal/e2e/
+			// uidboundary) uses the same fixture.
+			mustNotExist(t, escaped)
+			if !strings.Contains(h.log.String(), warning) {
+				t.Errorf("worker log lacks %q:\n%s", warning, h.log)
+			}
+			if os.Getenv("PULSIX_E2E_REAL_ANSIBLE") == "1" {
+				t.Fatalf("PULSIX_E2E_REAL_ANSIBLE=1 but this ansible-galaxy refuses the fixture's role name itself, so the fixture no longer attacks: %v", err)
+			}
+			t.Skipf("this ansible-galaxy refuses the escaping role name itself, so the fixture cannot escape here: %v", err)
+		}
 		if err != nil {
 			t.Fatalf("ensureRequirements: %v\nlines:\n%s", err, strings.Join(lines, "\n"))
 		}
