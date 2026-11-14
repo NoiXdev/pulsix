@@ -53,6 +53,7 @@ const (
 	unencodableParam = "params cannot be written as JSON"
 	badNumberForm    = "numbers are written in plain decimal, without leading zeros, underscores or base prefixes"
 	nonFiniteNumber  = "numbers must be finite"
+	nulInParamValue  = "a value must not contain a NUL character"
 )
 
 var (
@@ -71,7 +72,7 @@ type localEntry struct {
 	plugin       *yaml.Node // nil when absent
 	interval     *yaml.Node // nil when absent
 	params       map[string]any
-	paramProblem string // the first number in params in a form refused, if any
+	paramProblem string // the first value in params refused (a NUL, a number form), if any
 }
 
 // parseLocalChecks decodes the mapping under checks; a missing or empty one
@@ -192,8 +193,8 @@ func parseLocalEntry(key, n *yaml.Node) (localEntry, error) {
 }
 
 // judge validates what the entry says, in order: key, fields, plugin,
-// interval, the params' names and number forms, the plugin's own params
-// validation, the params' JSON size. It returns the check or the first
+// interval, the params' names, NULs and number forms, the plugin's own
+// params validation, the params' JSON size. It returns the check or the first
 // reason to refuse it.
 func (e localEntry) judge() (LocalCheck, string) {
 	c := LocalCheck{Key: e.key.Value, Interval: defaultLocalInterval, Params: e.params}

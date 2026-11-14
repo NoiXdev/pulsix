@@ -113,6 +113,11 @@ func TestHeartbeatDropsInvalidLocalChecks(t *testing.T) {
 			ParamsJSON: `{"mounts":["/` + paramsMarker + strings.Repeat("a", 2048) + `"]}`, IntervalSeconds: 60}, "local-b", "2048"},
 		{"params Validate refuses", agents.LocalCheckInput{Key: "local-b", Plugin: "disk", ParamsJSON: `{"mounts":"` + paramsMarker + `"}`, IntervalSeconds: 60}, "local-b", "params"},
 		{"params with an unknown key", agents.LocalCheckInput{Key: "local-b", Plugin: "disk", ParamsJSON: `{"` + paramsMarker + `":1}`, IntervalSeconds: 60}, "local-b", "params"},
+		// PostgreSQL's jsonb refuses \u0000: a stored NUL would fail every
+		// heartbeat of the agent, so the check is dropped before the store.
+		{"NUL in a list item", agents.LocalCheckInput{Key: "local-b", Plugin: "disk", ParamsJSON: `{"mounts":["/` + paramsMarker + `\u0000"]}`, IntervalSeconds: 60}, "local-b", "NUL"},
+		{"NUL in a string value", agents.LocalCheckInput{Key: "local-b", Plugin: "docker", ParamsJSON: `{"label":"` + paramsMarker + `\u0000=1"}`, IntervalSeconds: 60}, "local-b", "NUL"},
+		{"NUL in a parameter name", agents.LocalCheckInput{Key: "local-b", Plugin: "disk", ParamsJSON: `{"mounts\u0000":["/` + paramsMarker + `"]}`, IntervalSeconds: 60}, "local-b", "NUL"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -179,6 +184,7 @@ func TestHeartbeatBoundsLocalCheckProblems(t *testing.T) {
 	}
 	problems[0] = strings.Repeat("€", 100) // 300 bytes
 	problems[1] = "bad \xff\n line"
+	problems[2] = "nul \x00 here" // PostgreSQL text refuses a NUL
 	got, _ := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalCheckProblems: problems})
 	if checkplugins.MaxLocalCheckProblems != 32 || len(got.Problems) != 32 || got.Problems[31] != "line 31: refused" {
 		t.Fatalf("problems = %d (last %q), want the first 32", len(got.Problems), got.Problems[len(got.Problems)-1])
@@ -188,6 +194,9 @@ func TestHeartbeatBoundsLocalCheckProblems(t *testing.T) {
 	}
 	if got.Problems[1] != "bad �  line" {
 		t.Fatalf("problem = %q, want valid UTF-8 on one line", got.Problems[1])
+	}
+	if got.Problems[2] != "nul   here" {
+		t.Fatalf("problem = %q, want the NUL replaced", got.Problems[2])
 	}
 	if got.Checks == nil || len(got.Checks) != 0 {
 		t.Fatalf("checks = %#v, want known and empty", got.Checks)

@@ -4,6 +4,7 @@ import (
 	"math"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -11,8 +12,10 @@ import (
 // parseParams decodes a params mapping into the values a JSON-decoded
 // manager push would carry: see paramScalar for a single value; a list
 // becomes []any of them. An empty mapping is nil. A structural fault is an
-// error (the file is refused); a number in a form paramScalar refuses is
-// the first such problem, in document order, which refuses the entry only.
+// error (the file is refused); a value holding a NUL (which the manager
+// cannot store) or a number in a form paramScalar refuses is a problem,
+// the first in document order, which refuses the entry only. A name
+// holding a NUL is left to the name check, which refuses it too.
 func parseParams(n *yaml.Node) (params map[string]any, problem string, err error) {
 	if len(n.Content) == 0 {
 		return nil, "", nil
@@ -38,6 +41,7 @@ func parseParams(n *yaml.Node) (params map[string]any, problem string, err error
 			if isNull(val) {
 				return nil, "", errAt(val, `a parameter has no value; write "" for an empty one`)
 			}
+			note(nulProblem(val))
 			v, p := paramScalar(val)
 			note(p)
 			out[key.Value] = v
@@ -50,6 +54,7 @@ func parseParams(n *yaml.Node) (params map[string]any, problem string, err error
 				case isNull(entry):
 					return nil, "", errAt(entry, `a list entry has no value; write "" for an empty one`)
 				}
+				note(nulProblem(entry))
 				v, p := paramScalar(entry)
 				note(p)
 				list = append(list, v)
@@ -60,6 +65,17 @@ func parseParams(n *yaml.Node) (params map[string]any, problem string, err error
 		}
 	}
 	return out, problem, nil
+}
+
+// nulProblem refuses a single value holding a NUL (YAML's "\0"), as a
+// command entry is refused: the manager stores a local check's params as
+// JSON in a column that cannot hold one, so it would drop the check. The
+// reason never quotes the value.
+func nulProblem(n *yaml.Node) string {
+	if strings.IndexByte(n.Value, 0) >= 0 {
+		return nulInParamValue
+	}
+	return ""
 }
 
 // paramScalar resolves a non-null single value the way YAML 1.2's core

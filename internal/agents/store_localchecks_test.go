@@ -168,3 +168,30 @@ func TestLocalChecksByHostsReadsSeveralHosts(t *testing.T) {
 		t.Fatalf("no hosts = %+v, %v; want an empty map", got, err)
 	}
 }
+
+// TestHeartbeatWithANULStores: PostgreSQL refuses a NUL in jsonb
+// (\u0000) and in text. A heartbeat carrying a check whose params hold one,
+// and a problem holding one, must still store — the check dropped, the
+// problem's NUL replaced — or no heartbeat of that agent would ever land.
+func TestHeartbeatWithANULStores(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-local-nul")
+	h := createHost(t, d, org, zone, "nul-1")
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-n", "v1", "9701")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Heartbeat(ctx, "9701", agents.HeartbeatReport{Version: "v2", SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{
+		{Key: "local-cpu", Plugin: "cpu", ParamsJSON: "{}", IntervalSeconds: 60},
+		{Key: "local-d", Plugin: "disk", ParamsJSON: `{"mounts":["/data\u0000"]}`, IntervalSeconds: 60},
+		{Key: "local-e", Plugin: "disk", ParamsJSON: `{"mounts\u0000":["/data"]}`, IntervalSeconds: 60},
+	}, LocalCheckProblems: []string{"line 4: a\x00b"}}); err != nil {
+		t.Fatalf("heartbeat with a NUL: %v", err)
+	}
+	r, err := svc.LocalChecksByHost(db.WithOrgScope(ctx, org), org, h.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Known || len(r.Checks) != 1 || r.Checks[0].Key != "local-cpu" || !slices.Equal(r.Problems, []string{"line 4: a b"}) {
+		t.Fatalf("stored %+v, want local-cpu only and the problem without its NUL", r)
+	}
+}
+

@@ -318,6 +318,16 @@ func TestParseRefusesOneLocalCheck(t *testing.T) {
 			"a parameter name is 1 to 64 characters of A-Z a-z 0-9 _ . -"},
 		{"params not finite", "  local-bad:\n    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: .inf\n",
 			"params: numbers must be finite"},
+		// A NUL (YAML's "\0") anywhere in params refuses the entry: the
+		// manager cannot store one, and a value never shows in a problem.
+		{"params value with a NUL", "  local-bad:\n    plugin: docker\n    params:\n      label: \"" + paramValue + "\\0=1\"\n",
+			"params: a value must not contain a NUL character"},
+		{"params list item with a NUL", "  local-bad:\n    plugin: disk\n    params:\n      mounts: [/a, \"/" + paramValue + "\\0\"]\n",
+			"params: a value must not contain a NUL character"},
+		{"params name with a NUL", "  local-bad:\n    plugin: disk\n    params:\n      \"mounts\\0" + paramValue + "\": [/a]\n",
+			"a parameter name is 1 to 64 characters of A-Z a-z 0-9 _ . -"},
+		{"order: a NUL before the plugin's validation", "  local-bad:\n    plugin: script\n    params:\n      format: \"json\\0\"\n",
+			"params: a value must not contain a NUL character"},
 		{"interval 9", "  local-bad:\n    plugin: cpu\n    interval_seconds: 9\n",
 			"interval_seconds must be a whole number from 10 to 86400"},
 		{"interval 86401", "  local-bad:\n    plugin: cpu\n    interval_seconds: 86401\n",

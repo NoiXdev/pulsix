@@ -102,12 +102,13 @@ type localCheckDrops struct {
 // comes first) and each is kept only when its key is LocalCheckPrefix plus
 // CheckKeyPattern and not seen before, its plugin is known and run by the
 // agent, its interval is within MinInterval and MaxInterval, its params
-// JSON is at most checkplugins.MaxLocalCheckParamsBytes and an object that
-// checkplugins.Validate accepts, and fewer than checkplugins.MaxLocalChecks
-// were kept before it (checked right after the key, so nothing past the
-// cap is parsed). Problems are kept as sent, the first
-// checkplugins.MaxLocalCheckProblems, each bounded by boundLine to
-// MaxLocalCheckProblemBytes.
+// JSON is at most checkplugins.MaxLocalCheckParamsBytes and an object
+// without a NUL that checkplugins.Validate accepts, and fewer than
+// checkplugins.MaxLocalChecks were kept before it (checked right after the
+// key, so nothing past the cap is parsed). Problems are kept as sent, the
+// first checkplugins.MaxLocalCheckProblems, each bounded by boundLine to
+// MaxLocalCheckProblemBytes (which also replaces a NUL, as PostgreSQL text
+// refuses one).
 func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []string) (LocalChecksReport, localCheckDrops) {
 	if secretsState == "" {
 		return LocalChecksReport{}, localCheckDrops{}
@@ -174,6 +175,9 @@ func validLocalCheck(c LocalCheckInput, seen map[string]bool, kept int) (LocalCh
 	if !ok {
 		return LocalCheck{}, "the params are not a JSON object"
 	}
+	if holdsNUL(params) {
+		return LocalCheck{}, "the params contain a NUL character"
+	}
 	if err := checkplugins.Validate(c.Plugin, params); err != nil {
 		return LocalCheck{}, "the plugin refuses the params"
 	}
@@ -181,6 +185,26 @@ func validLocalCheck(c LocalCheckInput, seen map[string]bool, kept int) (LocalCh
 		return LocalCheck{}, localParamsTooLong
 	}
 	return LocalCheck{Key: c.Key, Plugin: c.Plugin, Params: params, Interval: interval}, ""
+}
+
+// holdsNUL reports whether a JSON-decoded value holds a NUL (U+0000) in any
+// string — an object's names included. PostgreSQL's jsonb refuses one
+// (\u0000), so a check carrying it could not be stored, and with it the
+// whole heartbeat.
+func holdsNUL(v any) bool {
+	switch v := v.(type) {
+	case string:
+		return strings.IndexByte(v, 0) >= 0
+	case []any:
+		return slices.ContainsFunc(v, holdsNUL)
+	case map[string]any:
+		for name, value := range v {
+			if strings.IndexByte(name, 0) >= 0 || holdsNUL(value) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // loggableKey is a dropped check's key for a log line: boundLine's rule,
