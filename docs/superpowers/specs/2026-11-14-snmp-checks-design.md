@@ -51,9 +51,9 @@ probes keep `Item == ""` and no label.
   `secret` param), and `Fields(org, name)` for the probe runner only. No
   read path returns a value.
 - **API:** `GET /orgs/{org}/secrets`, `PUT /orgs/{org}/secrets/{name}`
-  (body `{fields: {…}}`), `DELETE /orgs/{org}/secrets/{name}`; the
-  permission the notification channels' secrets use for writes, and the
-  checks read permission for the list. Every write is audited (name and
+  (body `{fields: {…}}`), `DELETE /orgs/{org}/secrets/{name}`; writes need
+  `credentials.write` (the permission for SSH keys, the other stored
+  credentials), the list needs `checks.read` (it carries names only). Every write is audited (name and
   field names, never values). Error texts never carry a value.
 - **Not in backups' clear text:** the sealed column is backed up as it is
   (the backup already carries the master key's ciphertexts the same way).
