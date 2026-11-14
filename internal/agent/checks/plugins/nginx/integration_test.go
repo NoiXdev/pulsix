@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -56,6 +57,7 @@ func startNginx(t *testing.T) string {
 
 // TestAgainstARealServer runs the plugin against nginx 1.27 with stub_status.
 func TestAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
 	url := startNginx(t)
 	p, clk := newTestPlugin()
 	params := map[string]any{"url": url}

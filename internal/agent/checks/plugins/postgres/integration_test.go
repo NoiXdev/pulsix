@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -18,6 +19,7 @@ const testImage = "timescale/timescaledb:2.30.0-pg18"
 // TestAgainstARealServer runs the plugin against a real PostgreSQL with a
 // dedicated pg_monitor user, the setup the docs tell an operator to make.
 func TestAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
 	ctx := context.Background()
 	c, err := tcpostgres.Run(ctx, testImage,
 		tcpostgres.WithDatabase("postgres"), tcpostgres.WithUsername("admin"), tcpostgres.WithPassword("admin-pw"),

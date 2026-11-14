@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/webcheck/webchecktest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -68,6 +69,7 @@ func startCaddy(t *testing.T) (metricsURL, siteURL string) {
 // TestAgainstARealServer runs the plugin against Caddy 2.8 with the metrics
 // on, after a request to the site.
 func TestAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
 	metricsURL, siteURL := startCaddy(t)
 	for range 2 {
 		resp, err := http.Get(siteURL)

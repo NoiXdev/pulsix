@@ -73,7 +73,14 @@ jobs:
       # everything else, each with its own timeout (backlog 2.83 and
       # 3.21) — and prints a per-package table plus, when anything fails,
       # the failing packages' own go test output.
+      # PULSIX_TEST_REQUIRE_DOCKER: the check plugins' container tests
+      # (internal/agent/checks/plugins/internal/containertest) skip where
+      # no Docker runs Linux containers, as on the agent-macos and
+      # agent-windows runners; here, where Docker is part of the runner,
+      # a broken daemon fails them instead of passing by skipping.
       - run: scripts/coverage-gate.sh
+        env:
+          PULSIX_TEST_REQUIRE_DOCKER: "1"
       # The agent binaries the manager embeds and serves are built by a
       # script only the release image and `make build` run, so nothing
       # above would notice it breaking (a cross-compile error, a renamed
@@ -100,6 +107,9 @@ jobs:
   # decision the platform code makes is in files the Linux gate counts.
   # None of the agent packages needs Postgres (their integration test runs
   # the manager surface in-process over bufconn), so nothing is excluded.
+  # The check plugins' tests against real servers need Docker running
+  # Linux containers, which neither runner has (macOS: no Docker at all;
+  # Windows: Windows containers), so they skip here and run in the go job.
   agent-windows:
     runs-on: windows-latest
     timeout-minutes: 30

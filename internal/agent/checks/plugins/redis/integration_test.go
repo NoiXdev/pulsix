@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -71,6 +72,7 @@ func startServer(t *testing.T) (host, port string) {
 // TestAgainstARealServer runs the plugin against Redis 7.4 started with
 // requirepass.
 func TestAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
 	host, port := startServer(t)
 	ctx := context.Background()
 	fields := func(extra map[string]string) map[string]string {

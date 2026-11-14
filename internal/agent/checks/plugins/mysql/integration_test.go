@@ -7,6 +7,7 @@ import (
 	"time"
 
 	gosql "github.com/go-sql-driver/mysql"
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -115,6 +116,7 @@ func openAdmin(host, port string) (*sql.DB, error) {
 // 11.4 with a dedicated monitoring user, the setup the docs tell an
 // operator to make.
 func TestAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
 	for _, fl := range flavors {
 		t.Run(fl.name, func(t *testing.T) {
 			t.Parallel()

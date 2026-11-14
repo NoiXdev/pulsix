@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -65,6 +66,7 @@ func startApache(t *testing.T) string {
 // TestAgainstARealServer runs the plugin against Apache httpd 2.4 with
 // mod_status and ExtendedStatus On.
 func TestAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
 	url := startApache(t)
 	p, clk := newTestPlugin()
 	params := map[string]any{"url": url}

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/agent/checks/plugins/internal/containertest"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -95,6 +96,7 @@ func startFPM(t *testing.T) string {
 // TestAgainstARealServer runs the plugin against PHP-FPM 8.3's status page
 // behind nginx.
 func TestAgainstARealServer(t *testing.T) {
+	containertest.RequireLinuxDocker(t)
 	url := startFPM(t)
 	p, clk := newTestPlugin()
 	params := map[string]any{"urls": []any{url}}
