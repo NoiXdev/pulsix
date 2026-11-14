@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -142,7 +143,9 @@ func AAD(orgID uuid.UUID, name string) []byte {
 }
 
 // Put creates or replaces the secret name with exactly fields and
-// returns it as stored, with the checks using it — never a value.
+// returns it as stored, with the checks using it — never a value. Once
+// the write has committed Put does not fail: when the checks using it
+// cannot be listed, UsedBy is left empty.
 func (s *Service) Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (Secret, error) {
 	return s.write(ctx, orgID, name, fields, func(sealed []byte, names []string, at time.Time) (Stored, error) {
 		return s.d.Store.Upsert(ctx, orgID, name, sealed, names, at)
@@ -164,7 +167,8 @@ func (s *Service) Create(ctx context.Context, orgID uuid.UUID, name string, fiel
 }
 
 // write validates and seals fields, hands them to store and returns the
-// stored secret with the checks using it.
+// stored secret with the checks using it, or with UsedBy empty when they
+// cannot be listed.
 func (s *Service) write(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string,
 	store func(sealed []byte, names []string, at time.Time) (Stored, error)) (Secret, error) {
 	if err := validate(name, fields); err != nil {
@@ -183,9 +187,14 @@ func (s *Service) write(ctx context.Context, orgID uuid.UUID, name string, field
 	if err != nil {
 		return Secret{}, fmt.Errorf("store secret %s: %w", name, err)
 	}
+	// The write has committed: a failed "used by" lookup must not turn it
+	// into an error, or the API would answer 500 and audit nothing for a
+	// credential it did store. UsedBy stays unknown (empty); the list the
+	// SPA refetches after a write fills it. The error names no value.
 	used, err := s.usedBy(ctx, orgID)
 	if err != nil {
-		return Secret{}, err
+		slog.WarnContext(ctx, "stored a secret but could not list the checks using it", "secret", row.Name, "err", err)
+		used = nil
 	}
 	return secretOf(row, used), nil
 }

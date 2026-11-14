@@ -442,3 +442,40 @@ func TestCreateOnly(t *testing.T) {
 		t.Fatalf("Create of an invalid name = %v, want ErrInvalidInput", err)
 	}
 }
+
+// TestWriteSurvivesAFailedUsedByLookup: the "used by" lookup runs after
+// the write has committed. When it fails, Put and Create still answer with
+// the stored secret (UsedBy unknown, left empty) instead of an error, so
+// the API answers success and audits the write it made; a 500 would leave
+// a stored credential without an audit entry.
+func TestWriteSurvivesAFailedUsedByLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(w *world, fields map[string]string) (orgsecrets.Secret, error)
+	}{
+		{"put", func(w *world, f map[string]string) (orgsecrets.Secret, error) {
+			return w.svc.Put(ctx, w.org, "sw", f)
+		}},
+		{"create", func(w *world, f map[string]string) (orgsecrets.Secret, error) {
+			return w.svc.Create(ctx, w.org, "sw", f)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld()
+			w.refs.refs = []orgsecrets.CheckRef{{Key: "snmp-core", Plugin: "srv", Params: map[string]any{"secret": "sw"}}}
+			w.refs.err = errors.New("db down")
+			got, err := tc.write(w, map[string]string{"community": leak})
+			if err != nil {
+				t.Fatalf("write after a failed used-by lookup = %v, want the stored secret", err)
+			}
+			if got.Name != "sw" || !slices.Equal(got.FieldNames, []string{"community"}) || !got.UpdatedAt.Equal(w.clock.t) || len(got.UsedBy) != 0 {
+				t.Fatalf("write returned %+v, want sw as stored with UsedBy unknown", got)
+			}
+			assertNoLeak(t, "the result", fmt.Sprintf("%#v", got))
+			fields, err := w.svc.Fields(ctx, w.org, "sw")
+			if err != nil || !maps.Equal(fields, map[string]string{"community": leak}) {
+				t.Fatalf("the secret was not stored (%v)", err)
+			}
+		})
+	}
+}
