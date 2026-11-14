@@ -1,6 +1,7 @@
 package probes
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"maps"
@@ -45,7 +46,9 @@ func TestSecretReachesThePoller(t *testing.T) {
 	check := snmpCheck("sw", "core-sw", time.Minute)
 	want := maps.Clone(check.Params)
 	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true}, check)
+	start := time.Now()
 	h.tickAt(0)
+	after := time.Now()
 
 	ps := h.pollers.Built()
 	if len(ps) != 1 || len(ps[0].Calls()) != 1 {
@@ -60,6 +63,13 @@ func TestSecretReachesThePoller(t *testing.T) {
 	}
 	if l := h.secrets.Lookups(); len(l) != 1 || l[0].org != h.org || !l[0].scoped || l[0].scope != h.org || l[0].name != "core-sw" {
 		t.Fatalf("lookups = %+v, want one for core-sw in the organization's scope", l)
+	}
+	// The lookup runs under the probe's deadline (interval - 1 s), so a
+	// hung store cannot pin the slot in flight.
+	if l := h.secrets.Lookups()[0]; !l.hasDeadline ||
+		l.deadline.Before(start.Add(59*time.Second)) || l.deadline.After(after.Add(59*time.Second)) {
+		t.Fatalf("lookup deadline %v (set %v), want start + interval - 1s (%v .. %v)",
+			l.deadline, l.hasDeadline, start.Add(59*time.Second), after.Add(59*time.Second))
 	}
 	if n := len(h.probe.Calls()); n != 0 {
 		t.Fatalf("the stateless probe ran %d times for an snmp check", n)
@@ -102,11 +112,14 @@ func TestNoSecretNoLookup(t *testing.T) {
 	}
 }
 
-// failedSecretCase is a secret that cannot be handed over, and the error
-// every metric carries.
+// failedSecretCase is a secret that cannot be handed over, the error
+// every metric carries, and whether the runner logs it. Only a store
+// failure is logged: a missing secret, or no store, is a configuration
+// state that recurs on every poll and is shown on the host page instead.
 type failedSecretCase struct {
 	edit    func(*harness, *Deps)
 	wantErr string
+	logged  bool
 }
 
 func failedSecretCases() map[string]failedSecretCase {
@@ -117,6 +130,7 @@ func failedSecretCases() map[string]failedSecretCase {
 				h.secrets.err = errors.New("dial tcp 10.9.8.7:5432: password authentication failed for user pulsix")
 			},
 			wantErr: errSecretStore,
+			logged:  true,
 		},
 		"no store": {
 			edit:    func(_ *harness, d *Deps) { d.Secrets = nil },
@@ -131,10 +145,19 @@ func failedSecretCases() map[string]failedSecretCase {
 func TestUnavailableSecretFailsEveryMetric(t *testing.T) {
 	for name, tc := range failedSecretCases() {
 		t.Run(name, func(t *testing.T) {
-			h := newHarness(t, tc.edit)
+			var logs syncBuffer
+			h := newHarness(t, func(h *harness, d *Deps) {
+				d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+				if tc.edit != nil {
+					tc.edit(h, d)
+				}
+			})
 			h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
 				snmpCheck("sw", "core-sw", time.Minute))
 			h.tickAt(0)
+			if warned := strings.Contains(logs.String(), "level=WARN"); warned != tc.logged {
+				t.Fatalf("warned = %v, want %v; log %q", warned, tc.logged, logs.String())
+			}
 			for _, p := range h.pollers.Built() {
 				if n := len(p.Calls()); n != 0 {
 					t.Fatalf("polled %d times without a secret", n)
@@ -226,5 +249,52 @@ func TestSecretValuesNeverLeak(t *testing.T) {
 				t.Fatalf("observation %+v carries a secret value", o)
 			}
 		}
+	}
+}
+
+// TestSecretStoreErrorAtShutdownIsNotLogged: a lookup cut short by the
+// runner's own cancellation measured nothing worth a warning; one that
+// ran into the probe's deadline is a real failure and is logged. Both
+// report the fixed text.
+func TestSecretStoreErrorAtShutdownIsNotLogged(t *testing.T) {
+	for name, tc := range map[string]struct {
+		ctx    func() (context.Context, context.CancelFunc)
+		logged bool
+	}{
+		"cancelled": {
+			ctx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				return ctx, cancel
+			},
+		},
+		"deadline": {
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			},
+			logged: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var logs syncBuffer
+			h := newHarness(t, func(h *harness, d *Deps) {
+				d.Log = slog.New(slog.NewTextHandler(&logs, nil))
+				h.secrets.err = errors.New("dial tcp 10.9.8.7:5432: refused")
+			})
+			s := slot{host: h.host, key: "sw"}
+			tg := target{org: h.org, address: "192.0.2.1", check: snmpCheck("sw", "core-sw", time.Minute), secret: "core-sw"}
+			ctx, cancel := tc.ctx()
+			defer cancel()
+			obs := h.r.runProbe(ctx, s, tg, h.pollers.New())
+			if len(obs) == 0 || obs[0].Err != errSecretStore {
+				t.Fatalf("observations = %+v, want the fixed store error", obs)
+			}
+			if n := len(h.pollers.Built()[0].Calls()); n != 0 {
+				t.Fatalf("polled %d times without the secret", n)
+			}
+			if warned := strings.Contains(logs.String(), "level=WARN"); warned != tc.logged {
+				t.Fatalf("warned = %v, want %v; log %q", warned, tc.logged, logs.String())
+			}
+		})
 	}
 }

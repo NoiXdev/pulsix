@@ -263,11 +263,13 @@ type fakeSecrets struct {
 }
 
 // secretLookup is one Fields call: the organization asked for, the one
-// ctx was scoped to, and the name.
+// ctx was scoped to, the name, and ctx's deadline.
 type secretLookup struct {
-	org, scope uuid.UUID
-	scoped     bool
-	name       string
+	org, scope  uuid.UUID
+	scoped      bool
+	name        string
+	deadline    time.Time
+	hasDeadline bool
 }
 
 func (f *fakeSecrets) set(org uuid.UUID, name string, fields map[string]string) {
@@ -284,9 +286,12 @@ func (f *fakeSecrets) set(org uuid.UUID, name string, fields map[string]string) 
 
 func (f *fakeSecrets) Fields(ctx context.Context, org uuid.UUID, name string) (map[string]string, error) {
 	scope, scoped := db.OrgScope(ctx)
+	dl, hasDeadline := ctx.Deadline()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.lookups = append(f.lookups, secretLookup{org: org, scope: scope, scoped: scoped, name: name})
+	f.lookups = append(f.lookups, secretLookup{
+		org: org, scope: scope, scoped: scoped, name: name, deadline: dl, hasDeadline: hasDeadline,
+	})
 	if f.err != nil {
 		return nil, f.err
 	}
