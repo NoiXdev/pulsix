@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/api"
+	"github.com/noixdev/pulsix/internal/api/apitest"
 	"github.com/noixdev/pulsix/internal/db"
 )
 
@@ -197,4 +202,68 @@ func TestHostChecksCarryTheMissingSecretOfAnSNMPCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect("the store holds the name, the agent does not", "", "sw-core")
+}
+
+// countingOrgSecrets counts Names, the only read the host checks route
+// makes of the secret store, and forwards everything to the real store.
+type countingOrgSecrets struct {
+	api.OrgSecretStore
+	names *atomic.Int32
+}
+
+func (c countingOrgSecrets) Names(ctx context.Context, orgID uuid.UUID) ([]string, error) {
+	c.names.Add(1)
+	return c.OrgSecretStore.Names(ctx, orgID)
+}
+
+// TestHostChecksReadTheSecretStoreOnlyForAProbeNamingASecret: the host
+// checks route asks the organization's secret store for its names only
+// when an enabled check probed from the manager names a secret — not for
+// the fixture's agent checks, a postgres check naming a secret (agent.yaml
+// answers for it) or a disabled snmp check — and then once per request.
+func TestHostChecksReadTheSecretStoreOnlyForAProbeNamingASecret(t *testing.T) {
+	var names atomic.Int32
+	f := newChecksFixture(t, "host-checks-store-reads", apitest.WithOrgSecretsWrapper(func(s api.OrgSecretStore) api.OrgSecretStore {
+		return countingOrgSecrets{OrgSecretStore: s, names: &names}
+	}))
+	get := func(when string) {
+		t.Helper()
+		resp := requestJSON(t, f.viewerC, http.MethodGet, f.hostURL(f.web)+"/checks", nil)
+		if body := mustReadBody(t, resp); resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: host checks = %d %s", when, resp.StatusCode, body)
+		}
+	}
+	expectReads := func(when string, want int32) {
+		t.Helper()
+		if got := names.Load(); got != want {
+			t.Fatalf("%s: the route read the secret store's names %d times, want %d", when, got, want)
+		}
+	}
+
+	get("agent checks only")
+	expectReads("agent checks only", 0)
+
+	f.createCheck(t, f.operatorC, map[string]any{
+		"key": "pg-main", "plugin": "postgres", "interval_seconds": 60,
+		"binding_kind": "host", "host_id": f.web.String(), "params": map[string]any{"secret": "db-main"},
+	})
+	get("an agent check naming a secret")
+	expectReads("an agent check naming a secret", 0)
+
+	sw := f.createCheck(t, f.operatorC, map[string]any{
+		"key": "sw", "plugin": "snmp", "interval_seconds": 60, "enabled": false,
+		"binding_kind": "host", "host_id": f.web.String(), "params": map[string]any{"secret": "sw-core", "interfaces": true},
+	})
+	get("a disabled snmp check")
+	expectReads("a disabled snmp check", 0)
+
+	resp := requestJSON(t, f.operatorC, http.MethodPut, f.checksURL()+"/"+sw.ID, map[string]any{
+		"plugin": "snmp", "key": "sw", "interval_seconds": 60, "enabled": true,
+		"binding_kind": "host", "host_id": f.web.String(), "params": map[string]any{"secret": "sw-core", "interfaces": true},
+	})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusOK {
+		t.Fatalf("enable sw = %d %s", resp.StatusCode, body)
+	}
+	get("an enabled snmp check naming a secret")
+	expectReads("an enabled snmp check naming a secret", 1)
 }

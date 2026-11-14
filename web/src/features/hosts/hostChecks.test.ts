@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as checks from './hostChecks.ts';
 import { CHECK_PLUGINS } from '../../test/checkPlugins.ts';
-import { formatNumber, isGraphable, metricKinds, metricLabel, offersForget } from './hostChecks.ts';
+import { formatNumber, isGraphable, metricKinds, metricLabel, missingSecretText, offersForget } from './hostChecks.ts';
 import { en } from '../../i18n/en/index.ts';
 import { de } from '../../i18n/de/index.ts';
 import type { HostCheck, HostCheckValue, ItemDecision } from '../../api/types.ts';
@@ -301,5 +301,32 @@ describe('sourceLabel', () => {
 
   it('names a check defined on the host in German', () => {
     expect(checks.sourceLabel(check({ definition_id: undefined, origin: 'local', source: 'local' }), de)).toBe('Auf dem Host definiert');
+  });
+});
+
+describe('missingSecretText', () => {
+  it.each([
+    ['English', en, 'Secret sw is not defined in this organization’s secrets (Settings → Secrets).', 'Secret db is not defined in agent.yaml on this host.', 'Secret x is not defined.'],
+    [
+      'German',
+      de,
+      'Das Secret sw ist in den Secrets dieser Organisation nicht definiert (Einstellungen → Secrets).',
+      'Das Secret db ist in der agent.yaml auf diesem Host nicht definiert.',
+      'Das Secret x ist nicht definiert.',
+    ],
+  ] as const)('names the place by where the plugin runs (%s)', (_name, t, server, agent, unknown) => {
+    expect(missingSecretText(t, 'sw', 'snmp', CHECK_PLUGINS)).toBe(server);
+    expect(missingSecretText(t, 'db', 'postgres', CHECK_PLUGINS)).toBe(agent);
+    // Without the descriptors, or for a plugin they do not list, it names
+    // no place rather than the wrong one.
+    expect(missingSecretText(t, 'x', 'snmp', undefined)).toBe(unknown);
+    expect(missingSecretText(t, 'x', 'no-such-plugin', CHECK_PLUGINS)).toBe(unknown);
+  });
+
+  it('never sends a probe’s secret to agent.yaml', () => {
+    for (const p of CHECK_PLUGINS.filter((d) => d.runs === 'server')) {
+      expect(missingSecretText(en, 's', p.name, CHECK_PLUGINS)).not.toContain('agent.yaml');
+      expect(missingSecretText(de, 's', p.name, CHECK_PLUGINS)).not.toContain('agent.yaml');
+    }
   });
 });

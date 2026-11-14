@@ -59,9 +59,9 @@ type checksFixture struct {
 	web, dbHost, cold uuid.UUID
 }
 
-func newChecksFixture(t *testing.T, slug string) checksFixture {
+func newChecksFixture(t *testing.T, slug string, opts ...apitest.Option) checksFixture {
 	t.Helper()
-	s := apitest.New(t)
+	s := apitest.New(t, opts...)
 	owner := s.SeedUser(slug+"-owner@example.test", "correct horse battery")
 	operator := s.SeedUser(slug+"-operator@example.test", "correct horse battery")
 	viewer := s.SeedUser(slug+"-viewer@example.test", "correct horse battery")
@@ -519,7 +519,7 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 			body map[string]any
 			want int
 		}{
-			"unknown plugin":    {map[string]any{"plugin": "snmp", "interval_seconds": 60, "binding_kind": "org"}, http.StatusBadRequest},
+			"unknown plugin":    {map[string]any{"plugin": "no-such-plugin", "interval_seconds": 60, "binding_kind": "org"}, http.StatusBadRequest},
 			"interval too low":  {map[string]any{"plugin": "cpu", "key": "cpu-low", "interval_seconds": 1, "binding_kind": "org"}, http.StatusBadRequest},
 			"unknown parameter": {map[string]any{"plugin": "cpu", "key": "cpu-x", "interval_seconds": 60, "binding_kind": "org", "params": map[string]any{"nope": 1}}, http.StatusBadRequest},
 			"service needs units": {map[string]any{
@@ -539,6 +539,14 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 				t.Errorf("%s = %d, want %d (%s)", name, resp.StatusCode, c.want, mustReadBody(t, resp))
 			}
 		}
+		// The unknown plugin is refused as unknown, not by some real
+		// plugin's parameter rules (a name a plugin later takes would pass
+		// the status check above for the wrong reason, as nginx did in 3.11
+		// and snmp in 3.13d).
+		resp := postJSON(t, f.operatorC, f.checksURL(), cases["unknown plugin"].body)
+		if body := mustReadBody(t, resp); resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "plugin must be one of") {
+			t.Errorf("unknown plugin = %d %s, want 400 naming the plugins", resp.StatusCode, body)
+		}
 
 		// A seeded row's key and plugin are fixed — the operator copies it
 		// to change them — but its interval and enabled flag are not.
@@ -548,7 +556,7 @@ func TestCheckDefinitionRoutes(t *testing.T) {
 				seeded = d
 			}
 		}
-		resp := requestJSON(t, f.operatorC, http.MethodPut, f.checksURL()+"/"+seeded.ID, map[string]any{
+		resp = requestJSON(t, f.operatorC, http.MethodPut, f.checksURL()+"/"+seeded.ID, map[string]any{
 			"plugin": "cpu", "key": "memory", "interval_seconds": 60, "binding_kind": "org",
 		})
 		if resp.StatusCode != http.StatusBadRequest {

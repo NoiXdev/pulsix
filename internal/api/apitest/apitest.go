@@ -333,6 +333,13 @@ func WithOrgSecretsPlugins(lookup func(name string) (checkplugins.Descriptor, bo
 	return func(s *Server) { s.Deps.OrgSecrets = newOrgSecrets(s.DB, s.Checks, lookup) }
 }
 
+// WithOrgSecretsWrapper replaces Deps.OrgSecrets with wrap's return value,
+// applied to the store New (or an earlier option) built, so a test can
+// count or fail what a route asks of the secret store.
+func WithOrgSecretsWrapper(wrap func(api.OrgSecretStore) api.OrgSecretStore) Option {
+	return func(s *Server) { s.Deps.OrgSecrets = wrap(s.Deps.OrgSecrets) }
+}
+
 // newOrgSecrets builds the secret store as internal/app does; a nil lookup
 // is the real descriptors.
 func newOrgSecrets(d *db.DB, checksSvc *checks.Service, lookup func(string) (checkplugins.Descriptor, bool)) *orgsecrets.Service {

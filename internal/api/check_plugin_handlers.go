@@ -63,7 +63,7 @@ type checkPluginDTO struct {
 	Name                checkPluginName        `json:"name"`
 	Runs                string                 `json:"runs" enum:"agent,server" doc:"agent plugins run on the host's agent, server ones are probed from the manager"`
 	Params              []checkPluginParamDTO  `json:"params" nullable:"false" doc:"In the order a form shows them; empty for a plugin that takes none"`
-	ItemParam           string                 `json:"item_param,omitempty" doc:"The list parameter that enumerates the plugin's items, if any"`
+	ItemParam           string                 `json:"item_param,omitempty" doc:"The list parameter that bounds which items the plugin reports on, if any. An entry is not always an item's exact name: smart reports a controller disk as \"<path> [<type>]\" under its path's entry, script reports values as \"<command>:<label>\" under the command's, and snmp's oids entries name=OID report on item name, while its interfaces flag adds every interface the device names"`
 	HostItemAlwaysAsked bool                   `json:"host_item_always_asked,omitempty" doc:"The plugin also reports on the whole-host item whatever its item list says"`
 	Metrics             []checkPluginMetricDTO `json:"metrics" nullable:"false"`
 }

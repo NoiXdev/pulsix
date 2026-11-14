@@ -39,6 +39,23 @@ export interface MetricKinds {
   labelOnlyPlugins: ReadonlySet<string>;
 }
 
+/** missingSecretText says where a check's missing secret belongs, by
+ * where its plugin runs (the descriptors' runs): the host's agent.yaml for
+ * a plugin the agent runs, the organization's secrets for one the manager
+ * probes (backlog 3.13d). While the descriptors are not known it says only
+ * that the secret is missing, never the wrong place. */
+export function missingSecretText(
+  t: Messages,
+  name: string,
+  plugin: string,
+  plugins: readonly CheckPluginDescriptor[] | undefined,
+): string {
+  const runs = plugins?.find((p) => p.name === plugin)?.runs;
+  if (runs === 'server') return t.hosts.checks.missingSecretServer(name);
+  if (runs === 'agent') return t.hosts.checks.missingSecret(name);
+  return t.hosts.checks.missingSecretUnknown(name);
+}
+
 /** metricKinds reads MetricKinds off the descriptors. Without them (the
  * read failed) both sets are empty and isGraphable judges by the reading
  * alone. */

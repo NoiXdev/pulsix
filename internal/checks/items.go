@@ -15,12 +15,16 @@ import "github.com/noixdev/pulsix/internal/checkplugins"
 // reads as "the agent stopped reporting this" when the truth is "you
 // stopped asking for it" (backlog 3.28).
 //
-// Which parameter enumerates a plugin's items, whether its whole-host item
-// "" is asked whatever the list says (temperature, smart, raid), and how a
-// reported item maps to a list entry (smart's "<path> [<type>]") is the
-// plugin's descriptor's business: checkplugins.AsksForItem. A plugin whose
-// items are not enumerable in its parameters asks for everything it
-// reports, and so does one whose list is absent or empty.
+// Which parameter bounds a plugin's items, whether its whole-host item ""
+// is asked whatever the list says (temperature, smart, raid, snmp), how a
+// reported item maps to a list entry (ItemEntry: smart's "<path>
+// [<type>]", script's "<command>:<label>"), and whether the plugin decides
+// with its own rule in place of that comparison (ItemAsked: snmp's oids
+// entries "name=OID" ask for item "name", and interfaces: true asks for
+// any item, the device naming its interfaces) is the plugin's descriptor's
+// business: checkplugins.AsksForItem. A plugin whose items are not
+// enumerable in its parameters asks for everything it reports, and so does
+// one whose list is absent or empty.
 //
 // Samples are untouched either way: a graph of a mount dropped last week
 // is still a real graph, and GET /hosts/{id}/metrics still serves it.

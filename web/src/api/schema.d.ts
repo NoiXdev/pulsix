@@ -4034,7 +4034,7 @@ export interface components {
         CheckPluginDTO: {
             /** @description The plugin also reports on the whole-host item whatever its item list says */
             host_item_always_asked?: boolean;
-            /** @description The list parameter that enumerates the plugin's items, if any */
+            /** @description The list parameter that bounds which items the plugin reports on, if any. An entry is not always an item's exact name: smart reports a controller disk as "<path> [<type>]" under its path's entry, script reports values as "<command>:<label>" under the command's, and snmp's oids entries name=OID report on item name, while its interfaces flag adds every interface the device names */
             item_param?: string;
             metrics: components["schemas"]["CheckPluginMetricDTO"][];
             /** @enum {string} */

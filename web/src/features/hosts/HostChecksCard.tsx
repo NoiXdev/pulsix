@@ -5,7 +5,7 @@ import { Pill, Tag } from '../../ui/badge.tsx';
 import { useHostChecks, useHostEffectiveRules, useMonitoringGroups, type MetricSelection } from '../../api/hooks/useChecks.ts';
 import { useCheckPlugins } from '../../api/hooks/useCheckPlugins.ts';
 import { intervalLabel } from '../checks/interval.ts';
-import { clockSkewLabel, metricKinds, sourceLabel, type TupleKey } from './hostChecks.ts';
+import { clockSkewLabel, metricKinds, missingSecretText, sourceLabel, type TupleKey } from './hostChecks.ts';
 import { HostCheckValueRow } from './HostCheckValueRow.tsx';
 import { useT } from '../../i18n/useT.ts';
 
@@ -145,7 +145,7 @@ export function HostChecksCard({ org, hostId, canRead, canWrite, frozen = false 
                 </div>
                 {c.missing_secret && (
                   <p role="alert" className="mt-2 text-xs text-[var(--px-warn)]">
-                    {t.hosts.checks.missingSecret(c.missing_secret)}
+                    {missingSecretText(t, c.missing_secret, c.plugin, plugins.data)}
                   </p>
                 )}
                 {monitored && (

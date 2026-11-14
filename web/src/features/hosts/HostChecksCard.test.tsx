@@ -134,13 +134,33 @@ describe('HostChecksCard', () => {
       'GET /api/v1/orgs/acme/hosts/h1/checks': {
         host_id: 'h1',
         monitored: true,
-        checks: [check({ key: 'mysql', missing_secret: 'db-prod' }), check({ definition_id: 'd2', key: 'disk' })],
+        checks: [check({ key: 'mysql', plugin: 'mysql', missing_secret: 'db-prod' }), check({ definition_id: 'd2', key: 'disk' })],
       },
     });
     renderCard();
     expect(await screen.findByRole('heading', { name: 'mysql' })).toBeInTheDocument();
-    expect(block('mysql').getByText('Secret db-prod is not defined in agent.yaml on this host.')).toBeInTheDocument();
-    expect(block('disk').queryByText(/is not defined in agent.yaml/)).not.toBeInTheDocument();
+    expect(await block('mysql').findByText('Secret db-prod is not defined in agent.yaml on this host.')).toBeInTheDocument();
+    expect(block('disk').queryByText(/is not defined/)).not.toBeInTheDocument();
+  });
+
+  it('points a probed check’s missing secret to the organization’s secrets, not agent.yaml (backlog 3.13d)', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check({ key: 'sw', plugin: 'snmp', params: { secret: 'sw-core', interfaces: true }, missing_secret: 'sw-core' }),
+          check({ definition_id: 'd2', key: 'pg', plugin: 'postgres', missing_secret: 'db-main' }),
+        ],
+      },
+    });
+    renderCard();
+    expect(await screen.findByRole('heading', { name: 'sw' })).toBeInTheDocument();
+    expect(
+      await block('sw').findByText('Secret sw-core is not defined in this organization’s secrets (Settings → Secrets).'),
+    ).toBeInTheDocument();
+    expect(block('sw').queryByText(/agent\.yaml/)).not.toBeInTheDocument();
+    expect(block('pg').getByText('Secret db-main is not defined in agent.yaml on this host.')).toBeInTheDocument();
   });
 
   it('offers a graph for numeric metrics only', async () => {

@@ -303,6 +303,11 @@ export const enHosts = {
     disabled: 'disabled',
     noReading: 'No reading yet.',
     missingSecret: (name: string) => `Secret ${name} is not defined in agent.yaml on this host.`,
+    /** A check the manager probes (snmp) reads its secret from the
+     * organization's secret store, not from the host. */
+    missingSecretServer: (name: string) => `Secret ${name} is not defined in this organization’s secrets (Settings → Secrets).`,
+    /** While the plugin descriptors are not known, only that it is missing. */
+    missingSecretUnknown: (name: string) => `Secret ${name} is not defined.`,
   },
   value: {
     sinceTitle: (age: string) => `in this state since ${age}`,

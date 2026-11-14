@@ -303,6 +303,8 @@ export const deHosts: Messages['hosts'] = {
     disabled: 'deaktiviert',
     noReading: 'Noch kein Messwert.',
     missingSecret: (name: string) => `Das Secret ${name} ist in der agent.yaml auf diesem Host nicht definiert.`,
+    missingSecretServer: (name: string) => `Das Secret ${name} ist in den Secrets dieser Organisation nicht definiert (Einstellungen → Secrets).`,
+    missingSecretUnknown: (name: string) => `Das Secret ${name} ist nicht definiert.`,
   },
   value: {
     sinceTitle: (age: string) => `Zustand eingetreten ${age}`,
