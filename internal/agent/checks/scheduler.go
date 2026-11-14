@@ -90,9 +90,11 @@ type scheduledCheck struct {
 	local bool
 }
 
-// Scheduler holds one timer per check key. NewScheduler wires it;
-// Apply installs or updates the running configuration; Run drives every
-// check's timer until its context ends.
+// Scheduler holds one timer per check key. NewScheduler wires it; it
+// keeps two desired sets — the manager's, which Apply installs or
+// updates, and the host's local one, which ApplyLocal installs (local.go)
+// — and runs their union, a key both carry being the manager's; Run
+// drives every check's timer until its context ends.
 type Scheduler struct {
 	reg     map[string]Plugin
 	now     func() time.Time
@@ -183,6 +185,12 @@ func (s *Scheduler) Version() string {
 // version instead keeps the manager answering every heartbeat until the
 // configuration is one this agent can actually run, which is the
 // self-healing behaviour the delivery design rests on.
+//
+// The scheduler owns cfg.Checks after the call, Params maps included: a
+// running check reads its Params on every tick, and a definition is
+// compared with the next one by content, so a caller that changed a map
+// it had handed over would race the check and hide the change. Every call
+// passes freshly decoded specs.
 func (s *Scheduler) Apply(cfg Config) (unrunnable []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

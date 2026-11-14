@@ -106,6 +106,46 @@ func TestSchedulerApplyLocalUnchangedKeepsPhase(t *testing.T) {
 	stopRun(t, cancel, done, ticks)
 }
 
+func TestSchedulerChangedLocalCheckRestartsOnlyItself(t *testing.T) {
+	plugin := &fakePlugin{obs: []Observation{{Metric: "m", Value: floatPtr(1)}}}
+	ticks := &fakeTickers{}
+	sched := NewScheduler(map[string]Plugin{"cpu": plugin}, time.Now, ticks.factory())
+	sched.Apply(Config{Version: "v1", Checks: []Spec{{Key: "a", Plugin: "cpu", Interval: time.Minute}}})
+	other := Spec{Key: "local-y", Plugin: "cpu", Interval: time.Minute}
+	sched.ApplyLocal([]Spec{{Key: "local-x", Plugin: "cpu", Interval: time.Minute}, other})
+
+	sink, cancel, done := localTestRun(sched)
+	_, tickers := ticks.recorded()
+	if len(tickers) != 3 {
+		t.Fatalf("tickers = %d, want 3", len(tickers))
+	}
+	tickers[1].c <- time.Now()
+	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 1 })
+
+	sched.ApplyLocal([]Spec{{Key: "local-x", Plugin: "cpu", Interval: 30 * time.Second}, other})
+	intervals, tickers := ticks.recorded()
+	if len(tickers) != 4 {
+		t.Fatalf("tickers = %d, want 4 (exactly one restart)", len(tickers))
+	}
+	if intervals[3] != 30*time.Second {
+		t.Errorf("new ticker interval = %v, want 30s", intervals[3])
+	}
+	waitForSchedulerTest(t, time.Second, tickers[1].wasStopped)
+	if tickers[0].wasStopped() || tickers[2].wasStopped() {
+		t.Error("restarting local-x touched another check")
+	}
+	// Backstop for the asynchronous stop: the untouched checks and the
+	// restarted one all still collect.
+	tickers[0].c <- time.Now()
+	tickers[2].c <- time.Now()
+	tickers[3].c <- time.Now()
+	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 4 })
+	if got, want := resultKeys(sink.all()[1:]), []string{"a", "local-x", "local-y"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("result keys = %v, want %v", got, want)
+	}
+	stopRun(t, cancel, done, ticks)
+}
+
 func TestSchedulerManagerKeyShadowsALocalCheckAndReleasesIt(t *testing.T) {
 	cpu := &fakePlugin{obs: []Observation{{Metric: "cpu.used_pct", Value: floatPtr(1)}}}
 	mem := &fakePlugin{obs: []Observation{{Metric: "mem.used_pct", Value: floatPtr(2)}}}
@@ -280,6 +320,14 @@ func TestSchedulerEmptyLocalSetStopsOnlyLocalChecks(t *testing.T) {
 	waitForSchedulerTest(t, time.Second, func() bool { return tickers[1].wasStopped() && tickers[2].wasStopped() })
 	if tickers[0].wasStopped() {
 		t.Error("an empty local set stopped the manager's check")
+	}
+	// A wrongly stopped spawned check stops its ticker asynchronously, so
+	// the check above alone could pass by luck: the manager's check must
+	// still collect.
+	tickers[0].c <- time.Now()
+	waitForSchedulerTest(t, time.Second, func() bool { return len(sink.all()) == 2 })
+	if got := sink.all()[1][0].CheckKey; got != "a" {
+		t.Errorf("CheckKey = %q, want a", got)
 	}
 	if got := sched.Shadowed(); len(got) != 0 {
 		t.Errorf("Shadowed = %v, want none", got)

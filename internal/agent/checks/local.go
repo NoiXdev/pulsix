@@ -21,6 +21,10 @@ type desiredCheck struct {
 // sorted. Version and Apply's unrunnable rule are unaffected: they are
 // about the manager's set only.
 //
+// The scheduler owns specs after the call, Params maps included, as Apply
+// owns its configuration: callers pass fresh specs on every call
+// (secrets.Set.LocalChecks returns deep copies each time).
+//
 // After Run has returned it does nothing, for the reason Apply gives.
 func (s *Scheduler) ApplyLocal(specs []Spec) (shadowed []string) {
 	s.mu.Lock()
