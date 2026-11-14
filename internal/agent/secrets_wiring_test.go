@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -326,6 +327,136 @@ func TestSecretsSourceSaysWhyASecretIsMissing(t *testing.T) {
 	want := "the file is not usable: configuration file " + path + " holds secrets but is accessible to mode 0644; restrict it"
 	if _, ok, problem := src.Secret("pg"); ok || problem != want {
 		t.Fatalf("refused: ok %v, problem %q, want %q", ok, problem, want)
+	}
+}
+
+// commandArg is a command argument that must never leave the agent.
+const commandArg = "arg-Pa55word-77"
+
+// commandProgram is an absolute program path on the agent's OS, which the
+// file's parser requires.
+func commandProgram() string {
+	if runtime.GOOS == "windows" {
+		return `C:\Program Files\Pulsix\check_disk.exe`
+	}
+	return "/usr/lib/check_disk"
+}
+
+// commandsFile is a commands section defining disk as commandProgram with
+// commandArg; the program is single-quoted so a Windows path's
+// backslashes are taken as written.
+func commandsFile() string {
+	return "commands:\n  disk: ['" + commandProgram() + "', -p, " + commandArg + "]\n"
+}
+
+func TestCommandsSourceSaysWhyACommandIsMissing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.yaml")
+	refuse := false
+	now := time.Now()
+	clock := func() time.Time { return now }
+	w := secrets.NewWatcher(path, func(p string) error {
+		if refuse {
+			return fmt.Errorf("configuration file %s holds secrets but is accessible to mode 0644; restrict it", p)
+		}
+		return nil
+	}, secrets.WithClock(clock))
+	src := commandsSource{w}
+
+	if argv, ok, problem := src.Command("disk"); ok || argv != nil || problem != "the file "+path+" does not exist" {
+		t.Fatalf("absent: %q, ok %v, problem %q", argv, ok, problem)
+	}
+	writeSecretsFile(t, path, commandsFile())
+	now = now.Add(time.Minute)
+	want := []string{commandProgram(), "-p", commandArg}
+	if argv, ok, problem := src.Command("disk"); !ok || problem != "" || !reflect.DeepEqual(argv, want) {
+		t.Fatalf("defined: %q, %v, %q; want %q", argv, ok, problem, want)
+	}
+	if argv, ok, problem := src.Command("other"); ok || argv != nil || problem != "" {
+		t.Fatalf("not defined in a good file: %q, ok %v, problem %q", argv, ok, problem)
+	}
+	refuse = true
+	now = now.Add(time.Minute)
+	wantProblem := "the file is not usable: configuration file " + path + " holds secrets but is accessible to mode 0644; restrict it"
+	if argv, ok, problem := src.Command("disk"); ok || argv != nil || problem != wantProblem {
+		t.Fatalf("refused: %q, ok %v, problem %q, want %q", argv, ok, problem, wantProblem)
+	}
+	// The secrets source names the same problem.
+	if _, _, problem := (secretsSource{w}).Secret("pg"); problem != wantProblem {
+		t.Fatalf("secretsSource problem = %q, want %q", problem, wantProblem)
+	}
+}
+
+// echoCommandPlugin records the argv its check's command resolves to and
+// reports only the command's name.
+type echoCommandPlugin struct {
+	mu    sync.Mutex
+	argvs [][]string
+}
+
+func (p *echoCommandPlugin) Name() string { return "script" }
+
+func (p *echoCommandPlugin) Collect(context.Context, map[string]any) ([]checks.Observation, error) {
+	return nil, nil
+}
+
+func (p *echoCommandPlugin) CollectWithCommands(_ context.Context, params map[string]any, commands checks.Commands) ([]checks.Observation, error) {
+	name, _ := params["command"].(string)
+	argv, ok, problem := commands.Command(name)
+	p.mu.Lock()
+	p.argvs = append(p.argvs, argv)
+	p.mu.Unlock()
+	if !ok {
+		return []checks.Observation{checks.ErrObservation(name, "script.status", fmt.Errorf("not defined (%s)", problem))}, nil
+	}
+	return []checks.Observation{checks.ValueObservation(name, "script.exit_code", 0)}, nil
+}
+
+func (p *echoCommandPlugin) handed() [][]string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([][]string(nil), p.argvs...)
+}
+
+// TestLoopHandsAPluginTheHostsCommands: end to end, a command plugin looks
+// its command up in the same file the secrets come from, and no argument
+// reaches the stream or the log.
+func TestLoopHandsAPluginTheHostsCommands(t *testing.T) {
+	lt := newLoopTest(t)
+	lt.withIdentity()
+	writeSecretsFile(t, lt.cfg.SecretsPath, twoSecrets+commandsFile())
+	stream := newFakeStream()
+	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
+	plugin := &echoCommandPlugin{}
+	opts := append(lt.options(), withRegistry(map[string]checks.Plugin{"script": plugin}))
+
+	cancel, done := runLoop(t, NewLoop(lt.cfg, lt.dialer, lt.facts, opts...))
+	waitFor(t, 2*time.Second, func() bool { return len(stream.sentMessages()) > 0 })
+	stream.pushManagerMessage(&agentpb.ManagerMessage{CheckConfig: &agentpb.CheckConfig{
+		Version: "cfg-v1",
+		Checks: []*agentpb.CheckSpec{
+			{Key: "a", Plugin: "script", ParamsJson: `{"command":"disk"}`, IntervalSeconds: 30},
+		},
+	}})
+	waitFor(t, 2*time.Second, func() bool { _, tk := lt.ticks.recorded(); return len(tk) == 4 })
+	_, tickers := lt.ticks.recorded()
+	tickers[3].c <- time.Now()
+	waitFor(t, 2*time.Second, func() bool { return len(checkResultMessages(stream)) == 1 })
+
+	if got, want := plugin.handed(), [][]string{{commandProgram(), "-p", commandArg}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv handed = %q, want %q", got, want)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("Run = %v", err)
+	}
+	for _, m := range stream.sentMessages() {
+		if strings.Contains(m.String(), commandArg) {
+			t.Fatalf("a sent message carries a command argument: %v", m)
+		}
+	}
+	if strings.Contains(lt.logText(), commandArg) {
+		t.Fatalf("the log carries a command argument:\n%s", lt.logText())
 	}
 }
 

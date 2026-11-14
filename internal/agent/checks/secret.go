@@ -59,13 +59,18 @@ func WithLogger(l *slog.Logger) SchedulerOption { return func(sc *Scheduler) { s
 // manager validates params, so only a manager bug produces it.
 var errSecretParam = errors.New(`param "secret" must be a string`)
 
-// collect runs plugin once for one check. A SecretPlugin is handed its
-// secret's fields, or not called at all when the secret cannot be
-// resolved. The returned error is the plugin's advisory error (Plugin): it
-// is returned only for a plugin that is not a SecretPlugin, because a
-// SecretPlugin's may carry driver text and is dropped here. The
-// observations carry the failures that matter.
+// collect runs plugin once for one check. A CommandPlugin is handed the
+// commands lookup. A SecretPlugin is handed its secret's fields, or not
+// called at all when the secret cannot be resolved. The returned error is
+// the plugin's advisory error (Plugin): it is returned only for a plain
+// plugin, because a CommandPlugin's may carry a command argument and a
+// SecretPlugin's driver text; theirs are dropped here. The observations
+// carry the failures that matter.
 func (s *Scheduler) collect(ctx context.Context, plugin Plugin, params map[string]any) ([]Observation, error) {
+	if cp, ok := plugin.(CommandPlugin); ok {
+		obs, _ := cp.CollectWithCommands(ctx, params, s.commands)
+		return obs, nil
+	}
 	sp, ok := plugin.(SecretPlugin)
 	if !ok {
 		return plugin.Collect(ctx, params)

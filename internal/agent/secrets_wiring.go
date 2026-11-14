@@ -15,8 +15,8 @@ const maxSecretsStateLen = 2048
 // newSecretsWatcher watches the agent's configuration file (backlog 3.5)
 // under the same protection rule as its env file, through the loop's own
 // protector, clock and logger. It has no goroutine: the heartbeat and the
-// scheduler's secret lookups drive it, and it reads the file at most once
-// a minute.
+// scheduler's secret and command lookups drive it, and it reads the file
+// at most once a minute.
 func (l *Loop) newSecretsWatcher() *secrets.Watcher {
 	return secrets.NewWatcher(l.cfg.SecretsPath,
 		func(path string) error { return checkConfigFile(l.protect, path) },
@@ -32,13 +32,31 @@ func (s secretsSource) Secret(name string) (map[string]string, bool, string) {
 	if fields, ok := set.Fields(name); ok {
 		return fields, true, ""
 	}
+	return nil, false, fileProblem(s.w, state)
+}
+
+// commandsSource is the scheduler's checks.Commands: the watcher's current
+// set, and why it has no commands when the file is missing or refused.
+type commandsSource struct{ w *secrets.Watcher }
+
+func (s commandsSource) Command(name string) ([]string, bool, string) {
+	set, state := s.w.Current()
+	if argv, ok := set.Command(name); ok {
+		return argv, true, ""
+	}
+	return nil, false, fileProblem(s.w, state)
+}
+
+// fileProblem says why the watched file defines nothing in state: empty
+// when the file is fine, so only the name looked up is missing.
+func fileProblem(w *secrets.Watcher, state secrets.State) string {
 	switch state {
 	case secrets.StateOK:
-		return nil, false, ""
+		return ""
 	case secrets.StateAbsent:
-		return nil, false, reportable("the file " + s.w.Path() + " does not exist")
+		return reportable("the file " + w.Path() + " does not exist")
 	default:
-		return nil, false, reportable("the file is not usable: " + string(state))
+		return reportable("the file is not usable: " + string(state))
 	}
 }
 

@@ -95,7 +95,9 @@ type Scheduler struct {
 	now     func() time.Time
 	ticker  func(time.Duration) Ticker
 	secrets Secrets // SecretPlugins' secrets (secret.go); nil knows none
-	log     *slog.Logger
+	// commands is CommandPlugins' lookup (command.go); never nil.
+	commands Commands
+	log      *slog.Logger
 
 	mu      sync.Mutex
 	version string
@@ -116,13 +118,15 @@ type Scheduler struct {
 // fixtures in tests), an injected clock (Result.At, never a ticker's own
 // reported time, so a fake clock and a fake ticker can be driven
 // independently in tests) and a ticker factory (the loop's own, real or
-// faked). WithSecrets is where SecretPlugins' secrets come from.
+// faked). WithSecrets is where SecretPlugins' secrets come from,
+// WithCommands where CommandPlugins look their commands up.
 func NewScheduler(reg map[string]Plugin, now func() time.Time, ticker func(time.Duration) Ticker, opts ...SchedulerOption) *Scheduler {
 	s := &Scheduler{
-		reg:    reg,
-		now:    now,
-		ticker: ticker,
-		checks: make(map[string]*scheduledCheck),
+		reg:      reg,
+		now:      now,
+		ticker:   ticker,
+		commands: noCommands{},
+		checks:   make(map[string]*scheduledCheck),
 	}
 	for _, o := range opts {
 		o(s)
