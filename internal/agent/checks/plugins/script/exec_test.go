@@ -15,10 +15,15 @@ import (
 	"time"
 )
 
+// runArgv runs argv with r, its program the file argv[0] names.
+func runArgv(ctx context.Context, r execRunner, argv []string) (runResult, error) {
+	return r.Run(ctx, argv[0], argv)
+}
+
 func TestExecRunnerExitCodes(t *testing.T) {
 	for _, code := range []string{"0", "2", "7"} {
 		t.Run(code, func(t *testing.T) {
-			res, err := newExecRunner().Run(context.Background(), helperArgv(t, "exit:"+code))
+			res, err := runArgv(context.Background(), newExecRunner(), helperArgv(t, "exit:"+code))
 			if err != nil {
 				t.Fatalf("Run: %v", err)
 			}
@@ -40,7 +45,7 @@ func TestExecRunnerExitCodes(t *testing.T) {
 // shell syntax arrive as exactly one argument each.
 func TestExecRunnerPassesEachArgumentWhole(t *testing.T) {
 	args := []string{"a b", `c"d`, "$(touch x); `y`", "'e'", "", `C:\f g\h`}
-	res, err := newExecRunner().Run(context.Background(), helperArgv(t, "args", args...))
+	res, err := runArgv(context.Background(), newExecRunner(), helperArgv(t, "args", args...))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -53,12 +58,26 @@ func TestExecRunnerPassesEachArgumentWhole(t *testing.T) {
 	}
 }
 
+// TestExecRunnerRunsThePathUnderTheConfiguredName: the file run is path
+// (the one the checker passed), and the process sees argv[0] as its name.
+func TestExecRunnerRunsThePathUnderTheConfiguredName(t *testing.T) {
+	argv := helperArgv(t, "argv0")
+	name := filepath.Join(t.TempDir(), "configured-name.exe")
+	res, err := newExecRunner().Run(context.Background(), argv[0], append([]string{name}, argv[1:]...))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if string(res.stdout) != name {
+		t.Fatalf("the process's name is %q, want %q", res.stdout, name)
+	}
+}
+
 func TestExecRunnerCapsOutput(t *testing.T) {
 	for _, tc := range []struct {
 		n         int
 		truncated bool
 	}{{maxOutput, false}, {maxOutput + 1, true}, {4 * maxOutput, true}} {
-		res, err := newExecRunner().Run(context.Background(), helperArgv(t, "flood:"+strconv.Itoa(tc.n)))
+		res, err := runArgv(context.Background(), newExecRunner(), helperArgv(t, "flood:"+strconv.Itoa(tc.n)))
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -72,7 +91,7 @@ func TestExecRunnerCapsOutput(t *testing.T) {
 // the built variables and nothing the agent's own environment holds.
 func TestExecRunnerBuildsTheEnvironment(t *testing.T) {
 	t.Setenv("PULSIX_SCRIPT_TEST_SECRET", "MARKER")
-	res, err := newExecRunner().Run(context.Background(), helperArgv(t, "env"))
+	res, err := runArgv(context.Background(), newExecRunner(), helperArgv(t, "env"))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -99,7 +118,7 @@ func TestExecRunnerWorkingDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		want = os.Getenv("SystemDrive") + `\`
 	}
-	res, err := newExecRunner().Run(context.Background(), helperArgv(t, "cwd"))
+	res, err := runArgv(context.Background(), newExecRunner(), helperArgv(t, "cwd"))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -114,15 +133,18 @@ func TestExecRunnerWorkingDirectory(t *testing.T) {
 func TestExecRunnerKillsTheTreeOnTimeout(t *testing.T) {
 	// A first run of the helper binary can be slow (a virus scanner on
 	// Windows); the timed run must get to start its child in time.
-	if _, err := newExecRunner().Run(context.Background(), helperArgv(t, "exit:0")); err != nil {
+	if _, err := runArgv(context.Background(), newExecRunner(), helperArgv(t, "exit:0")); err != nil {
 		t.Fatalf("warm-up run: %v", err)
 	}
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
-	const timeout = 3 * time.Second
+	timeout := 3 * time.Second
+	if runtime.GOOS == "windows" {
+		timeout = 10 * time.Second // process starts are slow there
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	start := time.Now()
-	res, err := newExecRunner().Run(ctx, helperArgv(t, "tree", pidFile))
+	res, err := runArgv(ctx, newExecRunner(), helperArgv(t, "tree", pidFile))
 	if !errors.Is(err, errTimeout) {
 		t.Fatalf("Run error = %v, want errTimeout", err)
 	}
@@ -143,7 +165,7 @@ func TestExecRunnerEndsWhatTheScriptLeftBehind(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	start := time.Now()
-	res, err := newExecRunner().Run(ctx, helperArgv(t, "orphan", pidFile))
+	res, err := runArgv(ctx, newExecRunner(), helperArgv(t, "orphan", pidFile))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -161,7 +183,7 @@ func TestExecRunnerEndsWhatTheScriptLeftBehind(t *testing.T) {
 func TestExecRunnerAgentStopping(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(200*time.Millisecond, cancel)
-	_, err := newExecRunner().Run(ctx, helperArgv(t, "sleep:20000"))
+	_, err := runArgv(ctx, newExecRunner(), helperArgv(t, "sleep:20000"))
 	if !errors.Is(err, context.Canceled) || errors.Is(err, errTimeout) {
 		t.Fatalf("Run error = %v, want context.Canceled", err)
 	}
@@ -171,7 +193,7 @@ func TestExecRunnerAgentStopping(t *testing.T) {
 // names no argument.
 func TestExecRunnerStartFailure(t *testing.T) {
 	prog := filepath.Join(t.TempDir(), "missing.exe")
-	_, err := newExecRunner().Run(context.Background(), []string{prog, "--password", "MARKER"})
+	_, err := runArgv(context.Background(), newExecRunner(), []string{prog, "--password", "MARKER"})
 	if err == nil || errors.Is(err, errTimeout) || errors.Is(err, errBusy) {
 		t.Fatalf("Run error = %v, want a start failure", err)
 	}
@@ -198,25 +220,25 @@ func TestExecRunnerStuckProcess(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	res, err := r.Run(ctx, argv)
+	res, err := runArgv(ctx, r, argv)
 	if !errors.Is(err, errTimeout) {
 		t.Fatalf("first Run error = %v, want errTimeout", err)
 	}
 	if res.duration <= 0 {
 		t.Errorf("duration %v", res.duration)
 	}
-	if d := time.Since(start); d > time.Second {
+	if d := time.Since(start); d > 3*time.Second {
 		t.Fatalf("first Run took %v", d)
 	}
-	if _, err := r.Run(context.Background(), argv); !errors.Is(err, errBusy) {
+	if _, err := runArgv(context.Background(), r, argv); !errors.Is(err, errBusy) {
 		t.Fatalf("second Run error = %v, want errBusy", err)
 	}
-	if _, err := r.Run(context.Background(), helperArgv(t, "exit:0")); err != nil {
+	if _, err := runArgv(context.Background(), r, helperArgv(t, "exit:0")); err != nil {
 		t.Fatalf("another command: %v", err)
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		_, err := r.Run(context.Background(), argv)
+		_, err := runArgv(context.Background(), r, argv)
 		if err == nil {
 			break
 		}
@@ -235,7 +257,7 @@ func TestExecRunnerConcurrentSameArgv(t *testing.T) {
 	errs := make(chan error, 2)
 	for range 2 {
 		go func() {
-			_, err := r.Run(context.Background(), argv)
+			_, err := runArgv(context.Background(), r, argv)
 			errs <- err
 		}()
 	}
@@ -307,7 +329,7 @@ func TestCommandEnv(t *testing.T) {
 	if got := commandEnv("windows", lookup); !slices.Equal(got, want) {
 		t.Errorf("windows without SystemRoot and TEMP:\ngot  %q\nwant %q", got, want)
 	}
-	if got := commandEnv("windows", func(string) (string, bool) { return "", false }); len(got) != 0 {
-		t.Errorf("windows with nothing set: %q", got)
+	if got := commandEnv("windows", func(string) (string, bool) { return "", false }); got == nil || len(got) != 0 {
+		t.Errorf("windows with nothing set: %#v, want an empty, non-nil environment", got)
 	}
 }

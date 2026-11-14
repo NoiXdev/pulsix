@@ -27,6 +27,7 @@ func TestMain(m *testing.M) {
 // helperMain is the stand-in script. Modes:
 //   - "exit:<n>": prints "out:<n>" to stdout, noise to stderr, exits n;
 //   - "args": prints its remaining arguments as a JSON array;
+//   - "argv0": prints the name it was started under (os.Args[0]);
 //   - "flood:<n>": writes n bytes of 'x';
 //   - "env": prints its environment as a JSON array;
 //   - "cwd": prints its working directory;
@@ -47,6 +48,9 @@ func helperMain(mode string, rest []string) int {
 	case "args":
 		b, _ := json.Marshal(rest)
 		_, _ = os.Stdout.Write(b)
+		return 0
+	case "argv0":
+		fmt.Print(os.Args[0])
 		return 0
 	case "flood":
 		n, _ := strconv.Atoi(arg)

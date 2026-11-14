@@ -33,7 +33,7 @@ func TestExecRunnerKillsAShellScriptsTree(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	start := time.Now()
-	_, err := newExecRunner().Run(ctx, []string{"/bin/sh", script})
+	_, err := runArgv(ctx, newExecRunner(), []string{"/bin/sh", script})
 	if !errors.Is(err, errTimeout) {
 		t.Fatalf("Run error = %v, want errTimeout", err)
 	}
@@ -51,7 +51,7 @@ func TestExecRunnerShellScriptExitCode(t *testing.T) {
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	res, err := newExecRunner().Run(context.Background(), []string{"/bin/sh", script})
+	res, err := runArgv(context.Background(), newExecRunner(), []string{"/bin/sh", script})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestExecRunnerShellScriptExitCode(t *testing.T) {
 // TestExecRunnerKilledBySignal: a process ended by a signal has no exit
 // code, and that is a result, not an error.
 func TestExecRunnerKilledBySignal(t *testing.T) {
-	res, err := newExecRunner().Run(context.Background(), []string{"/bin/sh", "-c", "kill -KILL $$"})
+	res, err := runArgv(context.Background(), newExecRunner(), []string{"/bin/sh", "-c", "kill -KILL $$"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -106,5 +106,21 @@ func TestNewRefusesAUserScript(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the refused script ran")
+	}
+}
+
+// TestNewRunsTheLinkTarget: a program named through a link in a directory
+// the user owns is judged, and run, as the file the link leads to; the
+// link's own directory does not matter, since the link is not used again.
+func TestNewRunsTheLinkTarget(t *testing.T) {
+	sh := rootOwnedShell(t)
+	link := filepath.Join(t.TempDir(), "my-shell")
+	if err := os.Symlink(sh, link); err != nil {
+		t.Fatal(err)
+	}
+	got := collect(t, New().(*scriptPlugin), map[string]any{"commands": []string{"x"}},
+		fakeCommands{argv: map[string][]string{"x": {link, "-c", "echo 'OK - via link'"}}})
+	if len(got) < 2 || got[0] != `x script.status "ok"` || got[1] != `x script.output "OK - via link"` {
+		t.Fatalf("observations %q", got)
 	}
 }

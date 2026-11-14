@@ -5,6 +5,7 @@ package script
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -16,8 +17,9 @@ import (
 
 // tree is a run's job object. It kills every process in it when its last
 // handle closes (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE), and the processes
-// the program starts join it on their own. The program is assigned right
-// after it starts; whatever it starts in that moment escapes the job.
+// the program starts join it on their own. The program starts suspended,
+// is assigned to the job, and only then runs, so nothing it starts
+// escapes the job.
 type tree struct {
 	job windows.Handle
 }
@@ -40,22 +42,39 @@ func newTree() (*tree, error) {
 	return &tree{job: job}, nil
 }
 
-// prepare starts the program without a console window: the agent runs as
-// a service, where a console would be created for nobody to see.
+// prepare starts the program suspended (attach resumes it) and without a
+// console window: the agent runs as a service, where a console would be
+// created for nobody to see.
 func (*tree) prepare(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NO_WINDOW | windows.CREATE_SUSPENDED}
 }
 
-// attach assigns the started program to the job. The process is not
-// waited on yet, so its pid still names it.
+// processSuspendResume is PROCESS_SUSPEND_RESUME, which x/sys/windows
+// does not define.
+const processSuspendResume = 0x0800
+
+// ntResumeProcess resumes every thread of a process; a process started
+// suspended has one, whose handle os/exec does not keep.
+var ntResumeProcess = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
+
+// attach assigns the started, still suspended program to the job, then
+// lets it run. The process is not waited on yet, so its pid still names
+// it.
 func (t *tree) attach(cmd *exec.Cmd) error {
-	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid))
+	h, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|processSuspendResume,
+		false, uint32(cmd.Process.Pid))
 	if err != nil {
 		return fmt.Errorf("open the process: %w", err)
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
 	if err := windows.AssignProcessToJobObject(t.job, h); err != nil {
 		return fmt.Errorf("assign the process to its job: %w", err)
+	}
+	if err := ntResumeProcess.Find(); err != nil {
+		return fmt.Errorf("resume the process: %w", err)
+	}
+	if st, _, _ := ntResumeProcess.Call(uintptr(h)); st != 0 {
+		return fmt.Errorf("resume the process: %w", windows.NTStatus(st))
 	}
 	return nil
 }
@@ -96,7 +115,33 @@ func workDir() (string, error) {
 func checkProgramName(prog string) error {
 	base := filepath.Base(prog)
 	if i := strings.LastIndexByte(base, '.'); i < 0 || i == len(base)-1 {
-		return fmt.Errorf("start the program: its name has no extension: %w", windows.ERROR_BAD_EXE_FORMAT)
+		return errNoExtension
 	}
 	return nil
+}
+
+// fileArgument says whether arg names a file the checker must pass, and
+// by which path. Besides an absolute path, Windows reads a path rooted
+// without a drive (`\scripts\x.ps1`, also with forward slashes) on the
+// working directory's drive, and a path with a drive but no root (`C:x`)
+// from that drive's working directory, which for a command is the drive's
+// root: the system drive's is its working directory, and it inherits no
+// other.
+func fileArgument(arg string) (string, bool, error) {
+	if filepath.IsAbs(arg) {
+		return arg, true, nil
+	}
+	vol := filepath.VolumeName(arg)
+	rest := arg[len(vol):]
+	switch {
+	case vol != "":
+		return vol + `\` + rest, true, nil
+	case rest != "" && os.IsPathSeparator(rest[0]):
+		dir, err := workDir()
+		if err != nil {
+			return "", true, err
+		}
+		return filepath.VolumeName(dir) + rest, true, nil
+	}
+	return "", false, nil
 }

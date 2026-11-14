@@ -7,31 +7,38 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 )
 
 func TestJudgeUnix(t *testing.T) {
 	rootDir := unixFile{uid: 0, mode: fs.ModeDir | 0o755}
+	userDir := unixFile{uid: 1000, mode: fs.ModeDir | 0o755}
+	root := []unixFile{rootDir, rootDir}
 	cases := []struct {
-		name      string
-		file, dir unixFile
-		want      string // "" passes
+		name string
+		file unixFile
+		dirs []unixFile
+		want string // "" passes
 	}{
-		{"root file, root dir", unixFile{0, 0o755}, rootDir, ""},
-		{"execute for the owner only", unixFile{0, 0o700}, rootDir, ""},
-		{"setuid is no write right", unixFile{0, fs.ModeSetuid | 0o755}, rootDir, ""},
-		{"owned by a user", unixFile{1000, 0o755}, rootDir, "owned by uid 1000, not by root"},
-		{"group-writable", unixFile{0, 0o775}, rootDir, "writable by group or others"},
-		{"other-writable", unixFile{0, 0o757}, rootDir, "writable by group or others"},
-		{"not executable", unixFile{0, 0o644}, rootDir, "not executable"},
-		{"directory owned by a user", unixFile{0, 0o755}, unixFile{1000, fs.ModeDir | 0o755}, "its directory is owned by uid 1000, not by root"},
-		{"group-writable directory", unixFile{0, 0o755}, unixFile{0, fs.ModeDir | 0o775}, "its directory is writable by group or others"},
-		{"sticky world-writable directory", unixFile{0, 0o755}, unixFile{0, fs.ModeDir | fs.ModeSticky | 0o777}, "its directory is writable by group or others"},
+		{"root file, root chain", unixFile{0, 0o755}, root, ""},
+		{"execute for the owner only", unixFile{0, 0o700}, root, ""},
+		{"no execute bit is no refusal", unixFile{0, 0o644}, root, ""},
+		{"setuid is no write right", unixFile{0, fs.ModeSetuid | 0o755}, root, ""},
+		{"owned by a user", unixFile{1000, 0o755}, root, "owned by uid 1000, not by root"},
+		{"group-writable", unixFile{0, 0o775}, root, "writable by group or others"},
+		{"other-writable", unixFile{0, 0o757}, root, "writable by group or others"},
+		{"directory owned by a user", unixFile{0, 0o755}, []unixFile{userDir, rootDir}, "its directory is owned by uid 1000, not by root"},
+		{"group-writable directory", unixFile{0, 0o755}, []unixFile{{0, fs.ModeDir | 0o775}, rootDir}, "its directory is writable by group or others"},
+		{"sticky world-writable directory", unixFile{0, 0o755}, []unixFile{{0, fs.ModeDir | fs.ModeSticky | 0o777}, rootDir}, "its directory is writable by group or others"},
+		{"user-owned directory above", unixFile{0, 0o755}, []unixFile{rootDir, userDir, rootDir}, "a directory above it is owned by uid 1000, not by root"},
+		{"sticky world-writable directory above", unixFile{0, 0o755}, []unixFile{rootDir, {0, fs.ModeDir | fs.ModeSticky | 0o1777}, rootDir}, "a directory above it is writable by group or others"},
+		{"group-writable root", unixFile{0, 0o755}, []unixFile{rootDir, rootDir, {0, fs.ModeDir | 0o775}}, "a directory above it is writable by group or others"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := judgeUnix(tc.file, tc.dir)
+			err := judgeUnix(tc.file, tc.dirs)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("refused: %v", err)
@@ -42,6 +49,34 @@ func TestJudgeUnix(t *testing.T) {
 				t.Fatalf("got %v, want the refusal %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestStatChain: the chain holds the file's directory and each one above
+// it up to the root; a root-owned file in a temp directory the user owns
+// is refused for that directory.
+func TestStatChain(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "x")
+	if err := os.WriteFile(p, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, dirs, err := statChain(p)
+	if err != nil {
+		t.Fatalf("statChain: %v", err)
+	}
+	if want := strings.Count(p, "/"); len(dirs) != want {
+		t.Fatalf("%d directories for %s, want %d", len(dirs), p, want)
+	}
+	if os.Geteuid() == 0 {
+		return
+	}
+	asRoot := unixFile{uid: 0, mode: 0o755}
+	if err := judgeUnix(asRoot, dirs); !errors.Is(err, errRefused) {
+		t.Fatalf("a file under the user's temp directory: %v, want a refusal", err)
 	}
 }
 
@@ -67,8 +102,8 @@ func rootOwnedShell(t *testing.T) string {
 
 func TestFileCheckerAcceptsARootOwnedProgram(t *testing.T) {
 	sh := rootOwnedShell(t)
-	if err := (fileChecker{}).Check(sh); err != nil {
-		t.Fatalf("Check(%s): %v", sh, err)
+	if resolved, err := (fileChecker{}).Check(sh); err != nil || resolved != sh {
+		t.Fatalf("Check(%s) = %q, %v", sh, resolved, err)
 	}
 }
 
@@ -81,8 +116,8 @@ func TestFileCheckerResolvesSymlinks(t *testing.T) {
 	if err := os.Symlink(sh, link); err != nil {
 		t.Fatal(err)
 	}
-	if err := (fileChecker{}).Check(link); err != nil {
-		t.Fatalf("a link to %s: %v", sh, err)
+	if resolved, err := (fileChecker{}).Check(link); err != nil || resolved != sh {
+		t.Fatalf("a link to %s: %q, %v", sh, resolved, err)
 	}
 
 	target := filepath.Join(dir, "target")
@@ -94,7 +129,7 @@ func TestFileCheckerResolvesSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	if os.Geteuid() != 0 {
-		if err := (fileChecker{}).Check(evil); !errors.Is(err, errRefused) {
+		if _, err := (fileChecker{}).Check(evil); !errors.Is(err, errRefused) {
 			t.Fatalf("a link to a file the user owns: %v, want a refusal", err)
 		}
 	}
@@ -115,7 +150,7 @@ func TestFileCheckerRefusesUserFiles(t *testing.T) {
 		if err := os.Chmod(p, mode); err != nil {
 			t.Fatal(err)
 		}
-		err := (fileChecker{}).Check(p)
+		_, err := (fileChecker{}).Check(p)
 		if !errors.Is(err, errRefused) {
 			t.Errorf("mode %v: %v, want a refusal", mode, err)
 		}
@@ -137,7 +172,7 @@ func TestFileCheckerNotAFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range []string{dir, fifo, filepath.Join(dir, "missing"), filepath.Join(file, "below"), dangling, "/dev/null"} {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
+		if _, err := (fileChecker{}).Check(p); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
 			t.Errorf("Check(%s) = %v, want errNotFile", p, err)
 		}
 	}
@@ -162,7 +197,7 @@ func TestFileCheckerCouldNotCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
-	err := (fileChecker{}).Check(p)
+	_, err := (fileChecker{}).Check(p)
 	if err == nil || errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
 		t.Fatalf("Check = %v, want an error that is neither errNotFile nor a refusal", err)
 	}

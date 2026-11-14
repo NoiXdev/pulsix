@@ -16,14 +16,17 @@ const (
 	// process ended or was killed (a descendant holding it open).
 	waitDelay = 2 * time.Second
 	// defaultReapGrace is how long Run waits, after its context ended and
-	// the process tree was killed, for the process to actually go away.
-	defaultReapGrace = 2 * time.Second
+	// the process tree was killed, for the process to actually go away:
+	// longer than waitDelay, after which exec closes the output pipe a
+	// descendant still holds, so a killed process is not given up on
+	// merely because its pipe was slow to close.
+	defaultReapGrace = waitDelay + time.Second
 )
 
-// execRunner runs a command's argv directly, never through a shell, with
-// a built environment (env.go), the root directory as working directory,
-// standard input and standard error on the null device and standard
-// output read up to maxOutput. The process and everything it starts form
+// execRunner runs the checked file directly, never through a shell, under
+// the command's argv, with a built environment (env.go), the root
+// directory as working directory, standard input and standard error on
+// the null device and standard output read up to maxOutput. The process and everything it starts form
 // one tree (a process group on Unix, a job object on Windows,
 // exec_unix.go and exec_windows.go): a timeout kills the whole tree, and
 // whatever the program leaves behind when it exits is killed with it.
@@ -44,15 +47,15 @@ type execRunner struct {
 
 func newExecRunner() execRunner { return execRunner{busy: newInflight()} }
 
-func (r execRunner) Run(ctx context.Context, argv []string) (runResult, error) {
-	if len(argv) == 0 {
+func (r execRunner) Run(ctx context.Context, path string, argv []string) (runResult, error) {
+	if path == "" || len(argv) == 0 {
 		return runResult{}, errors.New("run: no program")
 	}
-	key := strings.Join(argv, "\x00")
+	key := path + "\x00" + strings.Join(argv, "\x00")
 	if r.busy.stuck(key) {
 		return runResult{}, errBusy
 	}
-	if err := checkProgramName(argv[0]); err != nil {
+	if err := checkProgramName(path); err != nil {
 		return runResult{}, err
 	}
 	dir, err := workDir()
@@ -64,7 +67,10 @@ func (r execRunner) Run(ctx context.Context, argv []string) (runResult, error) {
 		return runResult{}, fmt.Errorf("start the program: %w", err)
 	}
 	out := &cappedWriter{max: maxOutput}
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// The file run is path, the one the checker passed; the process sees
+	// the program's name as the command gives it.
+	cmd := exec.CommandContext(ctx, path, argv[1:]...)
+	cmd.Args[0] = argv[0]
 	cmd.Env = commandEnv(runtime.GOOS, os.LookupEnv)
 	cmd.Dir = dir
 	cmd.Stdout = out

@@ -20,7 +20,7 @@ type panicky struct{}
 func (panicky) Command(string) ([]string, bool, string) { panic("lookup " + marker) }
 
 func TestCollectNeverReportsAnArgument(t *testing.T) {
-	argv := []string{prog, "--password=" + marker, "/nonexistent/" + marker, marker}
+	argv := []string{prog, "--password=" + marker, abs("nonexistent", marker), marker}
 	cmds := fakeCommands{argv: map[string][]string{"x": argv}}
 	runners := map[string]func(context.Context, []string) (runResult, error){
 		"ok": func(context.Context, []string) (runResult, error) {
@@ -87,7 +87,7 @@ func TestCollectNeverReportsAnArgument(t *testing.T) {
 			}
 			return refuse("not owned by root")
 		})
-		argv := []string{prog, "--password=" + marker, "/etc/x.py"}
+		argv := []string{prog, "--password=" + marker, abs("etc", "x.py")}
 		obs, err := newPlugin(exitedWith(0, ""), c).CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, fakeCommands{argv: map[string][]string{"x": argv}})
 		assertNoMarker(t, obs, err)
 	})
@@ -100,7 +100,7 @@ func TestCollectNeverReportsAnArgument(t *testing.T) {
 
 type checkerFunc func(string) error
 
-func (f checkerFunc) Check(path string) error { return f(path) }
+func (f checkerFunc) Check(path string) (string, error) { return path, f(path) }
 
 func TestCollectRecoversPanics(t *testing.T) {
 	t.Run("in the runner", func(t *testing.T) {

@@ -1,35 +1,23 @@
 package script
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-)
+import "fmt"
 
-// fileChecker is the checker the agent runs with: it resolves symlinks
-// and judges the file they lead to and that file's directory by the
+// fileChecker is the checker the agent runs with: it resolves the path to
+// the file it leads to (resolveFile: symlinks, and on Windows junctions)
+// and judges that file, its directory and every directory above it by the
 // platform's rules (check_unix.go, check_windows.go). Only the system may
-// change a file a command runs or hands its interpreter; anyone else who
-// could would run code as the agent.
+// change a file a command runs or hands its interpreter, or swap it
+// through a directory on its way; anyone else who could would run code as
+// the agent.
 type fileChecker struct{}
 
-func (fileChecker) Check(path string) error {
-	resolved, err := filepath.EvalSymlinks(path)
+func (fileChecker) Check(path string) (string, error) {
+	resolved, err := resolveFile(path)
 	if err != nil {
-		if namesNoFile(err) {
-			return fmt.Errorf("check %s: %w", path, errNotFile)
-		}
-		return fmt.Errorf("check %s: %w", path, err)
+		return "", fmt.Errorf("check %s: %w", path, err)
 	}
-	fi, err := os.Lstat(resolved)
-	if err != nil {
-		if namesNoFile(err) {
-			return fmt.Errorf("check %s: %w", path, errNotFile)
-		}
-		return fmt.Errorf("check %s: %w", path, err)
+	if err := judgeFile(resolved); err != nil {
+		return "", err
 	}
-	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("check %s: %w", path, errNotFile)
-	}
-	return judgeFile(resolved, fi)
+	return resolved, nil
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"syscall"
 )
 
@@ -53,3 +54,9 @@ func workDir() (string, error) { return "/", nil }
 // checkProgramName accepts every program path: Unix runs exactly the file
 // named.
 func checkProgramName(string) error { return nil }
+
+// fileArgument says whether arg names a file the checker must pass, and
+// by which path: on Unix an absolute path.
+func fileArgument(arg string) (string, bool, error) {
+	return arg, filepath.IsAbs(arg), nil
+}

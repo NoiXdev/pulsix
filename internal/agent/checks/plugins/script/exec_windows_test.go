@@ -4,6 +4,7 @@ package script
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -34,7 +35,7 @@ func cmdExe(t *testing.T) string {
 // TestExecRunnerCmdExe: a command run through cmd.exe /c returns its exit
 // code and output.
 func TestExecRunnerCmdExe(t *testing.T) {
-	res, err := newExecRunner().Run(context.Background(), []string{cmdExe(t), "/c", "echo hello& exit 3"})
+	res, err := runArgv(context.Background(), newExecRunner(), []string{cmdExe(t), "/c", "echo hello& exit 3"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -52,7 +53,37 @@ func TestExecRunnerRefusesAProgramWithoutExtension(t *testing.T) {
 	if err := os.WriteFile(prog, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newExecRunner().Run(context.Background(), []string{prog}); err == nil {
-		t.Fatal("a program without extension was started")
+	if _, err := runArgv(context.Background(), newExecRunner(), []string{prog}); !errors.Is(err, errNoExtension) {
+		t.Fatalf("Run = %v, want errNoExtension", err)
+	}
+}
+
+// TestFileArgument: besides absolute paths, Windows reads rooted paths
+// without a drive and drive paths without a root as files, so both are
+// checked, as the absolute path the command will open.
+func TestFileArgument(t *testing.T) {
+	dir, err := workDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sys := filepath.VolumeName(dir)
+	cases := []struct {
+		arg, want string
+		ok        bool
+	}{
+		{`C:\scripts\x.ps1`, `C:\scripts\x.ps1`, true},
+		{`\\host\share\x.ps1`, `\\host\share\x.ps1`, true},
+		{`\scripts\x.ps1`, sys + `\scripts\x.ps1`, true},
+		{`/scripts/x.ps1`, sys + `/scripts/x.ps1`, true},
+		{`D:x.ps1`, `D:\x.ps1`, true},
+		{`-File`, "", false},
+		{`x.ps1`, "", false},
+		{``, "", false},
+	}
+	for _, tc := range cases {
+		got, ok, err := fileArgument(tc.arg)
+		if err != nil || ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("fileArgument(%q) = %q, %v, %v; want %q, %v", tc.arg, got, ok, err, tc.want, tc.ok)
+		}
 	}
 }

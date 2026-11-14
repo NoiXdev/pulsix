@@ -16,7 +16,7 @@ func commandEnv(goos string, lookup func(string) (string, bool)) []string {
 	if goos != "windows" {
 		return []string{"PATH=" + unixPath, "LANG=C", "LC_ALL=C"}
 	}
-	var env []string
+	env := make([]string, 0, len(windowsVars)+1)
 	for _, name := range windowsVars {
 		if v, ok := lookup(name); ok {
 			env = append(env, name+"="+v)

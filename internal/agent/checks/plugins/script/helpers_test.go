@@ -3,6 +3,7 @@ package script
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -15,13 +16,21 @@ type fakeRunner struct {
 
 	mu    sync.Mutex
 	calls [][]string
+	paths []string
 }
 
-func (f *fakeRunner) Run(ctx context.Context, argv []string) (runResult, error) {
+func (f *fakeRunner) Run(ctx context.Context, path string, argv []string) (runResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, append([]string(nil), argv...))
+	f.paths = append(f.paths, path)
 	f.mu.Unlock()
 	return f.run(ctx, argv)
+}
+
+func (f *fakeRunner) ranPaths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.paths...)
 }
 
 func (f *fakeRunner) called() [][]string {
@@ -41,22 +50,31 @@ func exitedWith(code int, stdout string) *fakeRunner {
 const durationOfRun = 250_000_000
 
 // fakeChecker answers Check per path: a listed path gets its error (nil
-// accepts it), any other path does not name a file.
+// accepts it), any other path does not name a file. An accepted path
+// resolves to its entry in resolved, else to itself.
 type fakeChecker struct {
-	files map[string]error
+	files    map[string]error
+	resolved map[string]string
 
 	mu      sync.Mutex
 	checked []string
 }
 
-func (f *fakeChecker) Check(path string) error {
+func (f *fakeChecker) Check(path string) (string, error) {
 	f.mu.Lock()
 	f.checked = append(f.checked, path)
 	f.mu.Unlock()
-	if err, ok := f.files[path]; ok {
-		return err
+	err, ok := f.files[path]
+	switch {
+	case !ok:
+		return "", errNotFile
+	case err != nil:
+		return "", err
 	}
-	return errNotFile
+	if r, ok := f.resolved[path]; ok {
+		return r, nil
+	}
+	return path, nil
 }
 
 // fakeCommands is the agent.yaml lookup.
@@ -73,7 +91,14 @@ func (f fakeCommands) Command(name string) ([]string, bool, string) {
 	return append([]string(nil), argv...), true, ""
 }
 
-const prog = "/usr/lib/nagios/plugins/check_x"
+// prog is the programs' path in the tests, absolute on every platform.
+var prog = abs("usr", "lib", "nagios", "plugins", "check_x")
+
+// abs is elem joined by slashes under the platform's root (testRoot):
+// absolute on every platform, and quoted (render) without escapes.
+func abs(elem ...string) string {
+	return testRoot + strings.Join(elem, "/")
+}
 
 // oneCommand defines command "x" as prog with args.
 func oneCommand(args ...string) fakeCommands {

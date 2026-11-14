@@ -18,29 +18,41 @@ type runResult struct {
 	duration  time.Duration // wall time of the run
 }
 
-// runner runs argv directly, never through a shell: argv[0] is the
-// program, the rest its arguments. It must return once ctx is done,
+// runner runs the file at path directly, never through a shell, with
+// argv as its arguments: path is the program the checker resolved and
+// passed, argv[0] the program as the command names it (what the process
+// sees as its name, which a multi-call binary reads), the rest its
+// arguments. It must return once ctx is done,
 // whatever the process does. A non-zero exit code, or a process ended by
 // a signal, is a result, not an error. Errors are errTimeout (ctx's
 // deadline passed and the process tree was killed; the result's duration
-// is still set), errBusy (an earlier run of the same argv could not be
-// stopped and has not exited yet), or a failure to start the program. An
+// is still set), errBusy (an earlier run of the same path and argv could
+// not be stopped and has not exited yet), errNoExtension (Windows: the
+// program's name has no extension, so Windows would look for another
+// file), or a failure to start the program. An
 // error must not quote argv beyond the program path; the plugin reports
 // none of a start failure's text but an errno's.
 type runner interface {
-	Run(ctx context.Context, argv []string) (runResult, error)
+	Run(ctx context.Context, path string, argv []string) (runResult, error)
 }
 
 var (
-	errTimeout = errors.New("the command timed out")
-	errBusy    = errors.New("an earlier run of this command has not exited yet")
+	errTimeout     = errors.New("the command timed out")
+	errBusy        = errors.New("an earlier run of this command has not exited yet")
+	errNoExtension = errors.New("the program's name has no extension")
 )
 
 // checker checks a file before a run: the program, and every argument
 // that is an absolute path naming a regular file (the script an
-// interpreter is given). Check resolves symlinks. It returns one of:
+// interpreter is given). Check resolves symlinks (and on Windows
+// junctions) and judges the file they lead to, its directory and every
+// directory above it, then returns that resolved path: the plugin runs
+// and passes the file that was checked, never the name again, which a
+// link in a directory others can write could point elsewhere by then. It
+// returns one of:
 //
-//   - nil: the path names a regular file nobody but the system can change;
+//   - the resolved path and nil: the path names a regular file nobody but
+//     the system can change, nor swap through a directory on its way;
 //   - an error wrapping errNotFile: the path names no regular file
 //     (missing, a directory, a device). The plugin refuses such a program
 //     and leaves such an argument alone: an argument that names no file (a
@@ -54,7 +66,7 @@ var (
 //     naming the program but never an argument, whose path may be
 //     something other than a file name.
 type checker interface {
-	Check(path string) error
+	Check(path string) (resolved string, err error)
 }
 
 var (

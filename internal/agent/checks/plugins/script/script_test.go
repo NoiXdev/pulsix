@@ -143,17 +143,17 @@ func TestCollectWithoutARun(t *testing.T) {
 			want: []string{`x script.status "unknown"`, `x script.output "` + prog + `: ` + errNotFile.Error() + `"`},
 		},
 		{
-			name: "script argument refused", cmds: oneCommand("-f", "/opt/x.py", "/opt/y.py"),
-			files: map[string]error{prog: nil, "/opt/x.py": refusal, "/opt/y.py": errors.New("other")},
-			want:  []string{`x script.status "unknown"`, `x script.output "/opt/x.py: writable by group or others"`},
+			name: "script argument refused", cmds: oneCommand("-f", abs("opt", "x.py"), abs("opt", "y.py")),
+			files: map[string]error{prog: nil, abs("opt", "x.py"): refusal, abs("opt", "y.py"): errors.New("other")},
+			want:  []string{`x script.status "unknown"`, `x script.output "` + abs("opt", "x.py") + `: writable by group or others"`},
 		},
 		{
 			name: "program could not be checked", cmds: oneCommand(), files: map[string]error{prog: errors.New("lstat failed: EIO")},
 			want: []string{`x script.status "unknown"`, `x script.output "` + prog + `: ` + textUncheckedProgram + `"`},
 		},
 		{
-			name: "argument could not be checked", cmds: oneCommand("/opt/" + marker),
-			files: map[string]error{prog: nil, "/opt/" + marker: errors.New("stat /opt/" + marker + ": permission denied")},
+			name: "argument could not be checked", cmds: oneCommand(abs("opt", marker)),
+			files: map[string]error{prog: nil, abs("opt", marker): errors.New("stat " + abs("opt", marker) + ": permission denied")},
 			want:  []string{`x script.status "unknown"`, `x script.output "` + textUncheckedArgument + `"`},
 		},
 		{
@@ -213,17 +213,17 @@ func TestCollectWithoutARun(t *testing.T) {
 
 func TestCollectChecksAbsolutePathArguments(t *testing.T) {
 	r := exitedWith(0, "OK")
-	c := &fakeChecker{files: map[string]error{prog: nil, "/opt/x.py": nil}}
-	cmds := oneCommand("-p", "/", "/opt/x.py", "relative.py", "--file=/opt/z")
+	c := &fakeChecker{files: map[string]error{prog: nil, abs("opt", "x.py"): nil}}
+	cmds := oneCommand("-p", testRoot, abs("opt", "x.py"), "relative.py", "--file="+abs("opt", "z"))
 	got := collect(t, newPlugin(r, c), map[string]any{"commands": []string{"x"}}, cmds)
 	if got[0] != `x script.status "ok"` {
 		t.Fatalf("status = %s, want ok", got[0])
 	}
-	want := []string{prog, "/", "/opt/x.py"}
+	want := []string{prog, testRoot, abs("opt", "x.py")}
 	if fmt.Sprint(c.checked) != fmt.Sprint(want) {
 		t.Errorf("checked %q, want %q", c.checked, want)
 	}
-	if calls := r.called(); len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint(append([]string{prog}, "-p", "/", "/opt/x.py", "relative.py", "--file=/opt/z")) {
+	if calls := r.called(); len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint(append([]string{prog}, "-p", testRoot, abs("opt", "x.py"), "relative.py", "--file="+abs("opt", "z"))) {
 		t.Errorf("runner called with %q", calls)
 	}
 }
@@ -364,4 +364,32 @@ func TestNewWiresTheRealRunnerAndChecker(t *testing.T) {
 	if _, ok := checks.Plugin(p).(checks.CommandPlugin); !ok {
 		t.Error("New() is not a CommandPlugin")
 	}
+}
+
+// TestCollectRunsTheCheckedFiles: the runner gets the program's resolved
+// path, the program's configured name as argv[0], and every checked
+// argument replaced by its resolved path, so a link swapped after the
+// check cannot change what runs.
+func TestCollectRunsTheCheckedFiles(t *testing.T) {
+	r := exitedWith(0, "OK")
+	link, target := abs("opt", "link.py"), abs("srv", "real.py")
+	c := &fakeChecker{
+		files:    map[string]error{prog: nil, link: nil},
+		resolved: map[string]string{prog: abs("usr", "lib", "real_check"), link: target},
+	}
+	collect(t, newPlugin(r, c), map[string]any{"commands": []string{"x"}}, oneCommand("-f", link, "-v"))
+	if paths := r.ranPaths(); len(paths) != 1 || paths[0] != abs("usr", "lib", "real_check") {
+		t.Errorf("ran %q, want the resolved program", paths)
+	}
+	if calls := r.called(); len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint([]string{prog, "-f", target, "-v"}) {
+		t.Errorf("argv %q, want the configured name and the resolved argument", calls)
+	}
+}
+
+func TestCollectReportsAProgramWithoutExtension(t *testing.T) {
+	r := &fakeRunner{run: func(context.Context, []string) (runResult, error) {
+		return runResult{}, fmt.Errorf("start: %w", errNoExtension)
+	}}
+	got := collect(t, newPlugin(r, progOK()), map[string]any{"commands": []string{"x"}}, oneCommand())
+	equalLines(t, got, []string{`x script.status "unknown"`, `x script.output "the program's name has no extension"`})
 }
