@@ -71,7 +71,7 @@ func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 	ctx, cancel := probe.Bound(ctx, params, icmpDefaultTimeout)
 	defer cancel()
 
-	target, err := resolveAllowed(ctx, g, host)
+	target, err := probe.ResolveAllowed(ctx, g, host)
 	if errors.Is(err, probe.ErrNotAllowed) {
 		return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 	}
@@ -104,39 +104,6 @@ func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 		probe.Value("icmp.loss_pct", float64(len(r.sent)-r.replies)*100/float64(len(r.sent))),
 		probe.Value("icmp.rtt_ms", probe.Millis(r.rtt)/float64(r.replies)),
 	}
-}
-
-// resolveAllowed returns the address to ping: host itself when it is an IP,
-// else the first allowed address it resolves to, IPv4 preferred. It returns
-// probe.ErrNotAllowed when the guard refuses every candidate.
-func resolveAllowed(ctx context.Context, g *probe.Guard, host string) (netip.Addr, error) {
-	if ip, err := netip.ParseAddr(host); err == nil {
-		if !g.Allowed(ip) {
-			return netip.Addr{}, probe.ErrNotAllowed
-		}
-		return ip.Unmap(), nil
-	}
-	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
-	if err != nil {
-		return netip.Addr{}, err
-	}
-	var v6 netip.Addr
-	for _, ip := range ips {
-		ip = ip.Unmap()
-		if !g.Allowed(ip) {
-			continue
-		}
-		if ip.Is4() {
-			return ip, nil
-		}
-		if !v6.IsValid() {
-			v6 = ip
-		}
-	}
-	if v6.IsValid() {
-		return v6, nil
-	}
-	return netip.Addr{}, probe.ErrNotAllowed
 }
 
 func icmpSocketError(err error) string {

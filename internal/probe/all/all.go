@@ -11,6 +11,7 @@ import (
 	"github.com/noixdev/pulsix/internal/probe/dns"
 	"github.com/noixdev/pulsix/internal/probe/http"
 	"github.com/noixdev/pulsix/internal/probe/icmp"
+	"github.com/noixdev/pulsix/internal/probe/snmp"
 	"github.com/noixdev/pulsix/internal/probe/tcp"
 	"github.com/noixdev/pulsix/internal/probe/tls"
 )
@@ -23,6 +24,7 @@ func Registry() probe.Registry {
 		"dns":  dns.Probe,
 		"http": http.Probe,
 		"tls":  tls.Probe,
+		"snmp": snmp.Probe,
 	}
 }
 

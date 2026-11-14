@@ -183,3 +183,21 @@ func TestGuardDialerRefusesAtDialTime(t *testing.T) {
 	}
 	_ = conn.Close()
 }
+
+func TestResolveAllowed(t *testing.T) {
+	ctx := context.Background()
+	got, err := probe.ResolveAllowed(ctx, probetest.LoopbackGuard(), "127.0.0.1")
+	if err != nil || got != netip.MustParseAddr("127.0.0.1") {
+		t.Fatalf("loopback with the test guard: %v, %v", got, err)
+	}
+	got, err = probe.ResolveAllowed(ctx, probetest.LoopbackGuard(), "::ffff:127.0.0.1")
+	if err != nil || got != netip.MustParseAddr("127.0.0.1") {
+		t.Fatalf("a mapped literal must come back unmapped: %v, %v", got, err)
+	}
+	if _, err := probe.ResolveAllowed(ctx, probe.NewGuard(nil, nil), "127.0.0.1"); !errors.Is(err, probe.ErrNotAllowed) {
+		t.Fatalf("loopback with the production guard: err %v, want ErrNotAllowed", err)
+	}
+	if _, err := probe.ResolveAllowed(ctx, probe.NewGuard(nil, nil), "localhost"); !errors.Is(err, probe.ErrNotAllowed) {
+		t.Fatalf("a name resolving to loopback only: err %v, want ErrNotAllowed", err)
+	}
+}

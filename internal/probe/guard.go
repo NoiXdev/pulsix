@@ -1,6 +1,7 @@
 package probe
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -117,4 +118,40 @@ func (g *Guard) control(_, address string, _ syscall.RawConn) error {
 		return ErrNotAllowed
 	}
 	return nil
+}
+
+// ResolveAllowed returns the address to dial for host: host itself when it
+// is an IP literal (unmapped), else the first address it resolves to that
+// the guard allows, IPv4 preferred. It returns ErrNotAllowed when the guard
+// refuses every candidate, and the resolver's error when host does not
+// resolve. Probes that do not dial through Dialer (icmp, snmp) check their
+// target with it before sending anything.
+func ResolveAllowed(ctx context.Context, g *Guard, host string) (netip.Addr, error) {
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if !g.Allowed(ip) {
+			return netip.Addr{}, ErrNotAllowed
+		}
+		return ip.Unmap(), nil
+	}
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	var v6 netip.Addr
+	for _, ip := range ips {
+		ip = ip.Unmap()
+		if !g.Allowed(ip) {
+			continue
+		}
+		if ip.Is4() {
+			return ip, nil
+		}
+		if !v6.IsValid() {
+			v6 = ip
+		}
+	}
+	if v6.IsValid() {
+		return v6, nil
+	}
+	return netip.Addr{}, ErrNotAllowed
 }

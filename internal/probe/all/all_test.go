@@ -11,12 +11,11 @@ import (
 )
 
 // awaitingProbe are server plugins whose descriptor landed before their
-// probe: snmp's descriptor, default rules and secret warning come first
-// (backlog 3.13d, task 3), internal/probe/snmp in the next change (task 4).
-// Until then Run answers "unknown probe plugin" for them, which is what
-// the runner reports on every metric. TestAwaitingProbeIsCurrent fails as
-// soon as such a probe is registered, so the entry cannot outlive the gap.
-var awaitingProbe = map[string]bool{"snmp": true}
+// probe (snmp's did in backlog 3.13d, task 3, its probe in task 4). Until
+// then Run answers "unknown probe plugin" for them, which is what the
+// runner reports on every metric. TestAwaitingProbeIsCurrent fails as soon
+// as such a probe is registered, so an entry cannot outlive the gap.
+var awaitingProbe = map[string]bool{}
 
 // TestAwaitingProbeIsCurrent: every awaitingProbe entry is a server plugin
 // that has no probe yet.
@@ -36,9 +35,9 @@ func TestAwaitingProbeIsCurrent(t *testing.T) {
 // TestRunKnowsExactlyTheServerPlugins pins the registry to the descriptors:
 // every plugin with Runs == Server must be handled, and no agent plugin may be.
 // No packet leaves the host: the context is already cancelled, the params
-// are empty and the address is TEST-NET-1. tcp (no port), http (no url)
-// and dns (its default name is the address, an IP literal it refuses to
-// look up) fail on their empty params before any dial; tls dials with the
+// are empty and the address is TEST-NET-1. tcp (no port), http (no url),
+// snmp (no secret) and dns (its default name is the address, an IP literal
+// it refuses to look up) fail on their empty params before any dial; tls dials with the
 // cancelled context, which the dialer checks before connecting; icmp opens
 // a local socket and closes it again without sending, because its send
 // loop checks the context first.
