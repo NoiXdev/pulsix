@@ -161,16 +161,55 @@ describe('RowMenu', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 
-  it('closes on scroll and on resize', async () => {
+  /** mockTriggerAt makes every element but the menu report `top` as its
+   * position, so a test can move the trigger as a scroll would. */
+  function mockTriggerAt(top: { current: number }) {
+    return vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const r =
+        this.getAttribute('role') === 'menu'
+          ? { top: 0, bottom: 80, left: 0, right: 160, width: 160, height: 80 }
+          : { top: top.current, bottom: top.current + 20, left: 600, right: 628, width: 28, height: 20 };
+      return { x: r.left, y: r.top, toJSON: () => r, ...r } as DOMRect;
+    });
+  }
+
+  it('closes on a scroll that moves its trigger, and on resize', async () => {
     const user = userEvent.setup();
-    renderRow();
-    const trigger = await screen.findByRole('button', { name: 'Actions for web-01' });
-    await user.click(trigger);
-    fireEvent.scroll(document);
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    await user.click(trigger);
-    fireEvent(window, new Event('resize'));
-    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    const top = { current: 100 };
+    const spy = mockTriggerAt(top);
+    try {
+      renderRow();
+      const trigger = await screen.findByRole('button', { name: 'Actions for web-01' });
+      await user.click(trigger);
+      top.current = 60;
+      fireEvent.scroll(document);
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      await user.click(trigger);
+      fireEvent(window, new Event('resize'));
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // A browser delivers scroll events on its next frame, so the scroll that
+  // brought the trigger into view (a click near the viewport's edge, or the
+  // end of a wheel scroll) can arrive after the click has opened the menu.
+  // The trigger has not moved since, so the menu is still where it belongs.
+  it('stays open on a scroll that leaves its trigger where it was', async () => {
+    const user = userEvent.setup();
+    const top = { current: 100 };
+    const spy = mockTriggerAt(top);
+    try {
+      renderRow();
+      await user.click(await screen.findByRole('button', { name: 'Actions for web-01' }));
+      fireEvent.scroll(document);
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+      await user.click(screen.getByRole('menuitem', { name: 'Restart' }));
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('opens below the trigger, and flips above it near the viewport bottom', async () => {

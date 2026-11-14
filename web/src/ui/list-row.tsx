@@ -166,6 +166,9 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
   const menuRef = useRef<HTMLDivElement>(null);
   const menuId = useId();
   const [pos, setPos] = useState<Position | null>(null);
+  // Where the trigger was when the menu was placed, to tell a scroll that
+  // moved it from one that did not.
+  const anchorRef = useRef<{ top: number; left: number } | null>(null);
 
   const close = useCallback((restoreFocus: boolean) => {
     setOpen(false);
@@ -183,7 +186,9 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
   useLayoutEffect(() => {
     if (!open || !triggerRef.current || !menuRef.current) return;
     const menu = menuRef.current.getBoundingClientRect();
-    setPos(place(triggerRef.current.getBoundingClientRect(), menu.width, menu.height));
+    const trigger = triggerRef.current.getBoundingClientRect();
+    anchorRef.current = { top: trigger.top, left: trigger.left };
+    setPos(place(trigger, menu.width, menu.height));
   }, [open]);
 
   // Focus waits for the position: an element hidden by `visibility` cannot
@@ -199,11 +204,17 @@ export function RowMenu({ label, children }: { label: string; children: ReactNod
       const target = e.target as Node;
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) close(false);
     }
-    // A fixed popover does not follow its row, so any scroll (of the page or
-    // of a scroll container) or a resize closes it. Scrolling the menu itself
-    // is not that.
+    // A fixed popover does not follow its row, so a scroll (of the page or of
+    // a scroll container) that moves the trigger, or a resize, closes it.
+    // Scrolling the menu itself is not that, and neither is a scroll that
+    // left the trigger where it was: the browser delivers scroll events on
+    // its next frame, so the scroll that brought the trigger into view can
+    // arrive after the click that opened the menu.
     function onScroll(e: Event) {
       if (e.target instanceof Node && menuRef.current?.contains(e.target)) return;
+      const anchor = anchorRef.current;
+      const now = triggerRef.current?.getBoundingClientRect();
+      if (anchor && now && now.top === anchor.top && now.left === anchor.left) return;
       close(false);
     }
     function onResize() {
