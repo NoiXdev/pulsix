@@ -212,8 +212,11 @@ export function decisionOriginLabel(decision: ItemDecision, t: Messages): string
 
 /** sourceLabel renders the scope a check was inherited from as the thing
  * itself — the organization, the named monitoring group, this host — never
- * as the raw id the envelope carries beside it. */
+ * as the raw id the envelope carries beside it. A check defined in the
+ * host's own agent.yaml (backlog 3.5a) was inherited from nothing: it
+ * names where it lives instead, which is also where it is changed. */
 export function sourceLabel(c: HostCheck, t: Messages): string {
+  if (c.source === 'local') return t.hosts.scope.definedOnHost;
   if (c.source === 'host') return t.hosts.scope.thisHost;
   if (c.source === 'group') return c.source_name ?? t.hosts.scope.monitoringGroup;
   return t.hosts.scope.organization;

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -700,6 +700,70 @@ describe('HostChecksCard', () => {
     expect(block('cpu').getByText('disabled')).toBeInTheDocument();
     expect(block('cpu').getByText('Web tier')).toBeInTheDocument();
     expect(block('cpu').getByText('No reading yet.')).toBeInTheDocument();
+  });
+
+  // Backlog 3.5a: a check defined in the host's own agent.yaml has no
+  // definition behind it — nothing on the card may edit, disable, override
+  // or point at one — while what acts on its values (Forget, the graph, the
+  // rules that judge it) works as for any check.
+  it('shows a check defined on the host without any definition control, and keeps its values’ actions', async () => {
+    const local = (key: string, values: unknown[]) => {
+      const c: Record<string, unknown> = check({ key, plugin: 'disk', origin: 'local', source: 'local', values });
+      delete c.definition_id;
+      return c;
+    };
+    const errors = vi.spyOn(console, 'error');
+    mockApi({
+      'GET /api/v1/orgs/acme/hosts/h1/items': { items: [] },
+      'GET /api/v1/orgs/acme/monitoring-groups': { groups: [] },
+      'GET /api/v1/orgs/acme/hosts/h1/effective-rules': {
+        effective: [
+          {
+            check_key: 'data-disk',
+            item: '/data',
+            metric: 'used_percent',
+            severity: 'warn',
+            observed: true,
+            winner: {
+              id: 'r1', name: 'Data disk filling', enabled: true, origin: 'user', scope: 'host', host_id: 'h1',
+              check_key: 'data-disk', metric: 'used_percent', severity: 'warn', mode: 'form',
+              form: { metric: 'used_percent', op: '>=', value: 90 }, source: 'used_percent >= 90',
+              for_seconds: 0, created_at: '', updated_at: '',
+            },
+            shadowed: [],
+          },
+        ],
+      },
+      'GET /api/v1/orgs/acme/hosts/h1/checks': {
+        host_id: 'h1',
+        monitored: true,
+        checks: [
+          check(),
+          local('data-disk', [{ item: '/data', metric: 'used_percent', value: 93, at: NOW, stale: true, state: 'crit', flapping: false, state_stale: false, ignored: false }]),
+          local('scratch-disk', []),
+        ],
+      },
+    });
+    renderCard();
+
+    expect(await screen.findByRole('heading', { name: 'data-disk' })).toBeInTheDocument();
+    // Two local checks, neither with an id: both render, each once.
+    expect(screen.getAllByRole('heading', { name: 'scratch-disk' })).toHaveLength(1);
+    expect(errors.mock.calls.flat().join(' ')).not.toMatch(/unique "key"/);
+    errors.mockRestore();
+
+    for (const key of ['data-disk', 'scratch-disk']) {
+      expect(block(key).getByText('Defined on the host')).toBeInTheDocument();
+      expect(block(key).queryByRole('link')).not.toBeInTheDocument();
+      expect(block(key).queryByText('disabled')).not.toBeInTheDocument();
+      expect(block(key).queryByRole('button', { name: /edit|disable|override/i })).not.toBeInTheDocument();
+    }
+
+    const values = row('data-disk', '/data used_percent');
+    expect(values.getByRole('button', { name: 'Forget data-disk /data' })).toBeInTheDocument();
+    expect(values.getByRole('button', { name: 'Graph data-disk /data used_percent' })).toBeInTheDocument();
+    await userEvent.click(values.getByRole('button', { name: 'Rules for data-disk /data used_percent' }));
+    expect(await screen.findByText('Data disk filling')).toBeInTheDocument();
   });
 
   it('renders a load average at two decimals rather than the float it arrived as', async () => {

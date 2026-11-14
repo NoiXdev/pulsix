@@ -68,7 +68,7 @@ export function agentBody(status: 'online' | 'offline', lastSeen: string) {
   return {
     agent: {
       agent_name: 'a', host_id: 'h1', host_name: 'web-04.fra', status, last_seen: lastSeen, version: '1.0.0', version_status: 'current',
-      created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null,
+      created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null, local_check_problems: null,
     },
   };
 }

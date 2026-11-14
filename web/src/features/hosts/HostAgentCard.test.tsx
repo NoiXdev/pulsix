@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import userEvent from '@testing-library/user-event';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../ui/toast.tsx';
 import { mockApi } from '../../test/mockApi.ts';
@@ -251,6 +251,42 @@ describe('HostAgentCard', () => {
       withSecrets({ secrets_state: null, secret_names: null });
       renderCard();
       expect(await screen.findByText(/Unknown — the agent has not reported it yet/)).toBeInTheDocument();
+    });
+  });
+
+  // Backlog 3.5a: the checks agent.yaml defines that the agent does not
+  // run, one line each as it reported them.
+  describe('local check problems', () => {
+    const withProblems = (problems: string[] | null) =>
+      mockApi({
+        'GET /api/v1/orgs/acme/hosts/h1/agent': {
+          agent: {
+            host_id: 'h1', host_name: 'web-1', agent_name: 'web-1', status: 'online', last_seen: new Date().toISOString(),
+            version: 'v0.3a', created_at: '', secrets_state: 'ok', secret_names: [], local_check_problems: problems,
+          },
+        },
+      });
+
+    it('lists each problem under its heading', async () => {
+      withProblems(['agent.yaml: line 14: checks[1]: unknown plugin "nope"', 'agent.yaml: line 20: checks[2]: key "app" is used twice']);
+      renderCard();
+      expect(await screen.findByText('Problems with local checks')).toBeInTheDocument();
+      const list = screen.getByRole('list', { name: 'Problems with local checks' });
+      expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+        'agent.yaml: line 14: checks[1]: unknown plugin "nope"',
+        'agent.yaml: line 20: checks[2]: key "app" is used twice',
+      ]);
+      expect(within(list).getAllByRole('listitem')[0]).toHaveClass('wrap-anywhere');
+    });
+
+    it.each([
+      ['none', [] as string[]],
+      ['unknown', null],
+    ])('says nothing when there are %s', async (_name, problems) => {
+      withProblems(problems);
+      renderCard();
+      expect(await screen.findByText('online')).toBeInTheDocument();
+      expect(screen.queryByText('Problems with local checks')).not.toBeInTheDocument();
     });
   });
 });

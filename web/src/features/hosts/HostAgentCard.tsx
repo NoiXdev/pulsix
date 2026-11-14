@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Card } from '../../ui/table.tsx';
 import { Pill } from '../../ui/badge.tsx';
 import { Button } from '../../ui/button.tsx';
@@ -25,6 +25,7 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
   const agent = query.data?.agent;
   const now = new Date();
   const [enrolling, setEnrolling] = useState(false);
+  const problemsId = useId();
 
   async function onRevoke() {
     if (!agent) return;
@@ -99,6 +100,21 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
             )}
             {agent.secrets_state == null && <p className="text-muted-foreground">{t.hosts.agent.secretsUnknown}</p>}
           </div>
+          {/* Backlog 3.5a: why checks defined in agent.yaml do not run, one
+              line each as the agent reported them. Nothing for none, and
+              nothing for null either — an agent too old to report them, or
+              one that has not sent a heartbeat, is the secrets' "unknown"
+              above already. */}
+          {(agent.local_check_problems ?? []).length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span id={problemsId} className="text-muted-foreground">{t.hosts.agent.localCheckProblems}</span>
+              <ul aria-labelledby={problemsId} className="flex flex-col gap-1">
+                {(agent.local_check_problems ?? []).map((p, i) => (
+                  <li key={i} className="wrap-anywhere text-[var(--px-warn)]">{p}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {canWrite && (
             <div className="mt-1 flex justify-end">
               <Button type="button" variant="destructive" aria-label={t.agents.revokeLabel(agent.host_name)} onClick={() => void onRevoke()}>

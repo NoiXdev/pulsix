@@ -60,7 +60,7 @@ describe('FleetPage in German', () => {
       'GET /api/v1/orgs/acme/agents': {
         agents: [{
           host_id: 'h1', host_name: 'laptop-1', agent_name: 'laptop-1', status: 'offline', last_seen: new Date(Date.now() - 3 * 3600_000).toISOString(),
-          created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null, version_status: 'current',
+          created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null, local_check_problems: null, version_status: 'current',
         }],
       },
     });

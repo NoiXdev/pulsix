@@ -11,6 +11,7 @@ export const deHosts: Messages['hosts'] = {
   },
   scope: {
     thisHost: 'Dieser Host',
+    definedOnHost: 'Auf dem Host definiert',
     monitoringGroup: 'Überwachungsgruppe',
     organization: 'Organisation',
     groupFallback: (id: string) => `Gruppe ${id}`,
@@ -245,6 +246,7 @@ export const deHosts: Messages['hosts'] = {
     secrets: 'Secrets',
     secretsOk: (n: number) => `agent.yaml: ${n} ${n === 1 ? 'Secret' : 'Secrets'}`,
     secretsAbsent: 'Keine agent.yaml',
+    localCheckProblems: 'Probleme mit lokalen Checks',
     secretsUnknown: 'Unbekannt – der Agent hat es noch nicht gemeldet (er ist älter als diese Version oder hat seit dem Verbinden noch keinen Heartbeat gesendet)',
   },
   inventory: {

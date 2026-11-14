@@ -18,6 +18,7 @@ export const enHosts = {
   },
   scope: {
     thisHost: 'This host',
+    definedOnHost: 'Defined on the host',
     monitoringGroup: 'Monitoring group',
     organization: 'Organization',
     groupFallback: (id: string) => `group ${id}`,
@@ -248,6 +249,7 @@ export const enHosts = {
     secrets: 'Secrets',
     secretsOk: (n: number) => `agent.yaml: ${n} ${n === 1 ? 'secret' : 'secrets'}`,
     secretsAbsent: 'No agent.yaml',
+    localCheckProblems: 'Problems with local checks',
     secretsUnknown: 'Unknown — the agent has not reported it yet (it is older than this version, or has not sent a heartbeat since it connected)',
   },
   inventory: {

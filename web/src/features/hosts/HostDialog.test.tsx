@@ -388,7 +388,7 @@ describe('HostDialog', () => {
     const AGENT = {
       agent: {
         agent_name: 'a', host_id: 'h1', host_name: 'web-04.fra', status: 'online', last_seen: '2026-11-13T10:00:00Z', version_status: 'current',
-        created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null,
+        created_at: '2026-01-01T00:00:00Z', secret_names: null, secrets_state: null, local_check_problems: null,
       },
     };
 

@@ -229,7 +229,7 @@ describe('FleetPage', () => {
   describe('client hosts', () => {
     const agent = (hostId: string, status: 'online' | 'offline', lastSeen: string) => ({
       host_id: hostId, host_name: hostId, agent_name: hostId, status, last_seen: lastSeen, created_at: '2026-01-01T00:00:00Z',
-      secret_names: null, secrets_state: null, version_status: 'current',
+      secret_names: null, secrets_state: null, local_check_problems: null, version_status: 'current',
     });
     const threeHoursAgo = () => new Date(Date.now() - 3 * 3600_000).toISOString();
     function routes() {

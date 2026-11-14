@@ -292,7 +292,14 @@ describe('sourceLabel', () => {
     // never shown raw.
     ['group-bound with no name still never shows the id', check({ source: 'group', source_id: 'g1' }), 'Monitoring group'],
     ['host-bound', check({ source: 'host', source_id: 'h1', source_name: 'web-1' }), 'This host'],
+    // Backlog 3.5a: a check from the host's own agent.yaml has no
+    // definition behind it at all — not "this host"'s binding of one.
+    ['defined on the host', check({ definition_id: undefined, origin: 'local', source: 'local' }), 'Defined on the host'],
   ])('%s', (_name, c, expected) => {
     expect(sourceLabel(c)).toBe(expected);
+  });
+
+  it('names a check defined on the host in German', () => {
+    expect(checks.sourceLabel(check({ definition_id: undefined, origin: 'local', source: 'local' }), de)).toBe('Auf dem Host definiert');
   });
 });

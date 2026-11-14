@@ -62,7 +62,7 @@ describe('HostsListPage in German', () => {
   it('says Aus and when an offline client was last seen, and tags an online one', async () => {
     const agent = (hostId: string, status: 'online' | 'offline', lastSeen: string) => ({
       host_id: hostId, host_name: hostId, agent_name: hostId, status, last_seen: lastSeen, created_at: '2026-01-01T00:00:00Z',
-      secret_names: null, secrets_state: null, version_status: 'current',
+      secret_names: null, secrets_state: null, local_check_problems: null, version_status: 'current',
     });
     mockApi({
       'GET /api/v1/orgs/acme/hosts': { hosts: [{ ...host('h1', 'laptop-1'), kind: 'client' }, { ...host('h2', 'laptop-2'), kind: 'client' }] },

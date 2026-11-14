@@ -127,14 +127,21 @@ export function HostChecksCard({ org, hostId, canRead, canWrite, frozen = false 
           )}
           {checks.length === 0 && <p className="text-xs text-muted-foreground">{t.hosts.checks.none}</p>}
           <ul className="flex flex-col gap-3">
+            {/* Keyed by the check key, unique on a host: a check defined
+                in the host's agent.yaml (backlog 3.5a) has no definition
+                id, and the server lists it in place of a definition with
+                the same key rather than beside it. */}
             {checks.map((c) => (
-              <li key={c.definition_id} className="rounded-md border border-border p-3">
+              <li key={c.key} className="rounded-md border border-border p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-mono text-[13px] text-foreground">{c.key}</h3>
                   <Tag>{c.plugin}</Tag>
                   <Tag>{sourceLabel(c, t)}</Tag>
                   <span className="text-[11px] text-muted-foreground">{t.hosts.checks.every(intervalLabel(c.interval_seconds, t))}</span>
-                  {!c.enabled && <Pill tone="unknown">{t.hosts.checks.disabled}</Pill>}
+                  {/* A local check is always on — only removing it from
+                      agent.yaml stops it — and nothing here edits,
+                      disables or overrides it: no definition is behind it. */}
+                  {!c.enabled && c.source !== 'local' && <Pill tone="unknown">{t.hosts.checks.disabled}</Pill>}
                 </div>
                 {c.missing_secret && (
                   <p role="alert" className="mt-2 text-xs text-[var(--px-warn)]">
