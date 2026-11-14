@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/agents"
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // paramsMarker rides in every params value the tests send, so a log line
@@ -145,11 +146,11 @@ func TestHeartbeatDropsTheSecondOfADuplicateKey(t *testing.T) {
 
 func TestHeartbeatKeepsAtMost32LocalChecks(t *testing.T) {
 	var in []agents.LocalCheckInput
-	for i := range agents.MaxLocalChecks + 1 {
-		in = append(in, diskCheck(fmt.Sprintf("local-%02d", agents.MaxLocalChecks-i)))
+	for i := range checkplugins.MaxLocalChecks + 1 {
+		in = append(in, diskCheck(fmt.Sprintf("local-%02d", checkplugins.MaxLocalChecks-i)))
 	}
 	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: in})
-	if agents.MaxLocalChecks != 32 || len(got.Checks) != 32 {
+	if checkplugins.MaxLocalChecks != 32 || len(got.Checks) != 32 {
 		t.Fatalf("kept %d, want 32", len(got.Checks))
 	}
 	if got.Checks[0].Key != "local-00" || got.Checks[31].Key != "local-31" {
@@ -179,7 +180,7 @@ func TestHeartbeatBoundsLocalCheckProblems(t *testing.T) {
 	problems[0] = strings.Repeat("€", 100) // 300 bytes
 	problems[1] = "bad \xff\n line"
 	got, _ := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalCheckProblems: problems})
-	if agents.MaxLocalCheckProblems != 32 || len(got.Problems) != 32 || got.Problems[31] != "line 31: refused" {
+	if checkplugins.MaxLocalCheckProblems != 32 || len(got.Problems) != 32 || got.Problems[31] != "line 31: refused" {
 		t.Fatalf("problems = %d (last %q), want the first 32", len(got.Problems), got.Problems[len(got.Problems)-1])
 	}
 	if got.Problems[0] != strings.Repeat("€", 85) || !utf8.ValidString(got.Problems[0]) {
@@ -275,11 +276,11 @@ func TestLocalChecksByHostReadsOnlyTheLocalChecks(t *testing.T) {
 // is dropped leaves room for 32 valid ones.
 func TestHeartbeatRefusedLocalCheckLeavesRoomUnderTheCap(t *testing.T) {
 	in := []agents.LocalCheckInput{{Key: "local-0", Plugin: "nope", ParamsJSON: "{}", IntervalSeconds: 60}}
-	for i := range agents.MaxLocalChecks {
+	for i := range checkplugins.MaxLocalChecks {
 		in = append(in, diskCheck(fmt.Sprintf("local-%02d", i+10)))
 	}
 	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: in})
-	if len(got.Checks) != agents.MaxLocalChecks || got.Checks[0].Key != "local-10" {
+	if len(got.Checks) != checkplugins.MaxLocalChecks || got.Checks[0].Key != "local-10" {
 		t.Fatalf("kept %d (first %q), want all 32 valid ones", len(got.Checks), got.Checks[0].Key)
 	}
 	if !strings.Contains(logs, "key=local-0 ") || strings.Contains(logs, "more than 32") {
@@ -291,7 +292,7 @@ func TestHeartbeatRefusedLocalCheckLeavesRoomUnderTheCap(t *testing.T) {
 // escapes '<' as six bytes) are refused, as the agent refuses them.
 func TestHeartbeatDropsLocalCheckOverTheCanonicalSize(t *testing.T) {
 	params := `{"mounts":["/` + paramsMarker + strings.Repeat("<", 400) + `"]}`
-	if len(params) > agents.MaxLocalCheckParamsBytes {
+	if len(params) > checkplugins.MaxLocalCheckParamsBytes {
 		t.Fatalf("test params are %d bytes as sent; want them within the cap", len(params))
 	}
 	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{
@@ -354,12 +355,12 @@ func TestHeartbeatExaminesAtMost64LocalChecks(t *testing.T) {
 // cap even when its params would also be refused.
 func TestHeartbeatPastTheCapDropsWithoutParsing(t *testing.T) {
 	var in []agents.LocalCheckInput
-	for i := range agents.MaxLocalChecks {
+	for i := range checkplugins.MaxLocalChecks {
 		in = append(in, diskCheck(fmt.Sprintf("local-%02d", i)))
 	}
 	in = append(in, agents.LocalCheckInput{Key: "local-zz", Plugin: "disk", ParamsJSON: "not json", IntervalSeconds: 60})
 	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: in})
-	if len(got.Checks) != agents.MaxLocalChecks || !strings.Contains(logs, "key=local-zz ") || !strings.Contains(logs, "more than 32") {
+	if len(got.Checks) != checkplugins.MaxLocalChecks || !strings.Contains(logs, "key=local-zz ") || !strings.Contains(logs, "more than 32") {
 		t.Fatalf("kept %d, log = %q; want local-zz dropped for the cap", len(got.Checks), logs)
 	}
 }

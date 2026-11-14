@@ -12,12 +12,10 @@ import (
 	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
-// Limits of the checks section (backlog 3.5a).
-const (
-	maxLocalChecks       = 32
-	maxLocalParamsBytes  = 2048 // a check's params as canonical JSON
-	defaultLocalInterval = 60 * time.Second
-)
+// defaultLocalInterval is a local check's interval when its entry names
+// none. The section's other bounds are checkplugins.MaxLocalChecks and
+// checkplugins.MaxLocalCheckParamsBytes, which the manager enforces too.
+const defaultLocalInterval = 60 * time.Second
 
 // LocalCheck is a check defined in the file's checks section. The agent
 // runs it next to the manager's checks, under its own key.
@@ -53,7 +51,6 @@ const (
 	serverRunPlugin  = "the plugin runs on the server, not on the agent"
 	badParamName     = "a parameter name is 1 to 64 characters of A-Z a-z 0-9 _ . -"
 	unencodableParam = "params cannot be written as JSON"
-	tooManyChecks    = "more than 32 local checks"
 	badNumberForm    = "numbers are written in plain decimal, without leading zeros, underscores or base prefixes"
 	nonFiniteNumber  = "numbers must be finite"
 )
@@ -62,7 +59,8 @@ var (
 	badLocalInterval = "interval_seconds must be a whole number from " +
 		strconv.Itoa(int(checkplugins.MinInterval/time.Second)) + " to " +
 		strconv.Itoa(int(checkplugins.MaxInterval/time.Second))
-	longLocalParams = "params are longer than " + strconv.Itoa(maxLocalParamsBytes) + " bytes as JSON"
+	longLocalParams = "params are longer than " + strconv.Itoa(checkplugins.MaxLocalCheckParamsBytes) + " bytes as JSON"
+	tooManyChecks   = "more than " + strconv.Itoa(checkplugins.MaxLocalChecks) + " local checks"
 )
 
 // localEntry is one entry of the checks section after the structural walk:
@@ -84,8 +82,8 @@ type localEntry struct {
 // refused. Everything an entry says (its key, fields, plugin, interval and
 // params) refuses that entry only: it is left out and described in
 // problems as "line N: <reason>", N being the entry key's line, in line
-// order. Of the entries left, the first maxLocalChecks in key order are
-// kept, in key order.
+// order. Of the entries left, the first checkplugins.MaxLocalChecks in key
+// order are kept, in key order.
 func parseLocalChecks(n *yaml.Node) (checks []LocalCheck, problems []string, err error) {
 	if n == nil || isNull(n) {
 		return nil, nil, nil
@@ -127,11 +125,11 @@ func parseLocalChecks(n *yaml.Node) (checks []LocalCheck, problems []string, err
 		validLines[c.Key] = e.key.Line
 	}
 	sort.Slice(valid, func(i, j int) bool { return valid[i].Key < valid[j].Key })
-	if len(valid) > maxLocalChecks {
-		for _, c := range valid[maxLocalChecks:] {
+	if len(valid) > checkplugins.MaxLocalChecks {
+		for _, c := range valid[checkplugins.MaxLocalChecks:] {
 			refused = append(refused, problem{validLines[c.Key], tooManyChecks})
 		}
-		valid = valid[:maxLocalChecks]
+		valid = valid[:checkplugins.MaxLocalChecks]
 	}
 	sort.SliceStable(refused, func(i, j int) bool { return refused[i].line < refused[j].line })
 	for _, p := range refused {
@@ -239,7 +237,7 @@ func (e localEntry) judge() (LocalCheck, string) {
 	switch {
 	case err != nil:
 		return LocalCheck{}, unencodableParam
-	case len(raw) > maxLocalParamsBytes:
+	case len(raw) > checkplugins.MaxLocalCheckParamsBytes:
 		return LocalCheck{}, longLocalParams
 	}
 	c.ParamsJSON = string(raw)

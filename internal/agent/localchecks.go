@@ -7,6 +7,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/agent/secrets"
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
 )
 
@@ -27,9 +28,6 @@ const (
 	// minutes. Looking every 30 s costs nothing (the watcher still reads
 	// at most once a minute) and applies an edit within about a minute.
 	localLookInterval = 30 * time.Second
-	// maxLocalCheckProblems bounds the problems a heartbeat carries, as
-	// the manager keeps no more.
-	maxLocalCheckProblems = 32
 )
 
 // withLocalLookTicker replaces the ticker factory of the periodic look only
@@ -117,11 +115,11 @@ func runningLocalChecks(local []secrets.LocalCheck, shadowed []string) []*agentp
 
 // localCheckProblems is what the heartbeat reports as problems: the file's
 // refused entries (line order), then each shadowed key (key order), at
-// most maxLocalCheckProblems, each safe for a proto3 string.
+// most checkplugins.MaxLocalCheckProblems, each safe for a proto3 string.
 func localCheckProblems(fileProblems, shadowed []string) []string {
 	var out []string
 	add := func(p string) {
-		if len(out) < maxLocalCheckProblems {
+		if len(out) < checkplugins.MaxLocalCheckProblems {
 			out = append(out, reportable(p))
 		}
 	}

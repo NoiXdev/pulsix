@@ -71,3 +71,13 @@ func TestCanonicalParamsRefusesWhatJSONCannotCarry(t *testing.T) {
 		t.Fatal("CanonicalParams(NaN) = nil error")
 	}
 }
+
+// The shared bounds are part of the agent–manager contract: an agent and a
+// manager of different builds must agree on them, so a change here is a
+// version-skew change (docs/upgrades.md), not a refactoring.
+func TestLocalCheckBounds(t *testing.T) {
+	if checkplugins.MaxLocalChecks != 32 || checkplugins.MaxLocalCheckParamsBytes != 2048 || checkplugins.MaxLocalCheckProblems != 32 {
+		t.Fatalf("bounds = %d checks, %d params bytes, %d problems; want 32, 2048, 32",
+			checkplugins.MaxLocalChecks, checkplugins.MaxLocalCheckParamsBytes, checkplugins.MaxLocalCheckProblems)
+	}
+}
