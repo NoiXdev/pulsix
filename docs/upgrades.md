@@ -249,8 +249,8 @@ it is missing); item `""` carries `phpfpm.pools_down`, which is also where a
 missing secret is reported. Nothing is seeded and there is no schema change.
 
 The `script` plugin (backlog 3.6g) follows the same rule for the check: an older
-agent skips a `script` check without a result and logs one warning, and the manager
-does not gate on it. **The `commands:` key in `agent.yaml` is stricter.** An agent
+agent skips a `script` check, warns on every configuration push and shows no
+readings until it is updated, and the manager does not gate on it. **The `commands:` key in `agent.yaml` is stricter.** An agent
 older than this release does not know the key and refuses the whole file, so a host
 whose `agent.yaml` gains `commands:` also loses its `secrets:` until that agent is
 updated. Update the agent first, then add `commands:`. Migration 00094 adds two default
