@@ -53,11 +53,12 @@ var (
 //     nor swap through a directory on its way;
 //   - an error wrapping errNotFile: the path names no regular file (a
 //     missing name, a directory, a device, a fifo, a socket, a kernel
-//     object under /proc), and nobody but the system can put one there:
-//     the directory the name is missing in, or lies in, passed with every
-//     one on the way. The plugin refuses such a program and leaves such
-//     an argument alone: an argument that names no file (a mount point, a
-//     device, a URL path) is no script;
+//     object behind /proc/<pid>/fd), and nobody but the system can put
+//     one there: the directory the name is missing in, or lies in, passed
+//     with every one on the way, and a directory the path names passed
+//     itself (an interpreter may run what it holds). The plugin refuses
+//     such a program and leaves such an argument alone: an argument that
+//     names no file (a mount point, a device, a URL path) is no script;
 //   - refuse(reason): a directory on the way, a link object (Windows) or
 //     the file is one others could change, or the path is refused by its
 //     syntax alone, without a stat (Windows: a network path, a file path
@@ -67,9 +68,26 @@ var (
 //     unreadable access list, too many links or a loop). The plugin fails
 //     closed and reports a fixed text, naming the program but never an
 //     argument, whose path may be something other than a file name.
+//
+// form says how an argument wrote the path (fileArgument); the program is
+// always formExact.
 type checker interface {
-	Check(path string) error
+	Check(path string, form pathForm) error
 }
+
+// pathForm is how a path was written, which on Windows decides how
+// strictly the directory a missing last name lies in is judged.
+type pathForm int
+
+const (
+	// formExact: an absolute path, on Windows with its drive.
+	formExact pathForm = iota
+	// formRooted: a Windows argument rooted without a drive (`/c`,
+	// `/T:30`, `\x`), the form of a switch: its last name may be missing
+	// in a directory where others may add subdirectories (C:\), which
+	// puts no file there.
+	formRooted
+)
 
 var (
 	errNotFile = errors.New("does not exist or is not a regular file")

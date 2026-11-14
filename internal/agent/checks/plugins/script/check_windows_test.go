@@ -113,7 +113,7 @@ func TestJudgeAncestorSecurity(t *testing.T) {
 }
 
 func TestFileCheckerAcceptsCmdExe(t *testing.T) {
-	if err := (fileChecker{}).Check(cmdExe(t)); err != nil {
+	if err := (fileChecker{}).Check(cmdExe(t), formExact); err != nil {
 		t.Fatalf("Check(cmd.exe): %v", err)
 	}
 }
@@ -137,7 +137,7 @@ func TestFileCheckerRefusesAUserFile(t *testing.T) {
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
 		t.Fatalf("set the access list: %v", err)
 	}
-	if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+	if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) {
 		t.Fatalf("Check = %v, want a refusal", err)
 	}
 }
@@ -147,7 +147,7 @@ func TestFileCheckerRefusesAUserFile(t *testing.T) {
 func TestFileCheckerNotAFile(t *testing.T) {
 	system32 := filepath.Dir(cmdExe(t))
 	for _, p := range []string{system32, filepath.Join(system32, "pulsix-test-missing.exe"), filepath.Join(system32, "pulsix-test-missing", "below")} {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
 			t.Errorf("Check(%s) = %v, want errNotFile", p, err)
 		}
 	}

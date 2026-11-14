@@ -72,30 +72,32 @@ func TestFileArgument(t *testing.T) {
 	sys := filepath.VolumeName(dir)
 	cases := []struct {
 		arg, want string
+		form      pathForm
 		ok        bool
 	}{
-		{`C:\scripts\x.ps1`, `C:\scripts\x.ps1`, true},
-		{`\\host\share\x.ps1`, `\\host\share\x.ps1`, true},
-		{`\scripts\x.ps1`, sys + `\scripts\x.ps1`, true},
-		{`/scripts/x.ps1`, sys + `/scripts/x.ps1`, true},
-		{`D:x.ps1`, `D:\x.ps1`, true},
-		{`//host/share/x.ps1`, `//host/share/x.ps1`, true},
-		{`\\.\PhysicalDrive0`, "", false},
-		{`\\?\C:\scripts\x.ps1`, `\\?\C:\scripts\x.ps1`, true},
-		{`\\.\UNC\host\share\x.ps1`, `\\.\UNC\host\share\x.ps1`, true},
-		{`//./pipe/x`, "", false},
-		{`//?/C:/x`, `//?/C:/x`, true},
-		{`//Nologo`, "", false},
-		{`//B`, "", false},
-		{`\\host`, "", false},
-		{`-File`, "", false},
-		{`x.ps1`, "", false},
-		{``, "", false},
+		{`C:\scripts\x.ps1`, `C:\scripts\x.ps1`, formExact, true},
+		{`\\host\share\x.ps1`, `\\host\share\x.ps1`, formExact, true},
+		{`\scripts\x.ps1`, sys + `\scripts\x.ps1`, formRooted, true},
+		{`/scripts/x.ps1`, sys + `/scripts/x.ps1`, formRooted, true},
+		{`/c`, sys + `/c`, formRooted, true},
+		{`D:x.ps1`, `D:\x.ps1`, formExact, true},
+		{`//host/share/x.ps1`, `//host/share/x.ps1`, formExact, true},
+		{`\\.\PhysicalDrive0`, "", formExact, false},
+		{`\\?\C:\scripts\x.ps1`, `\\?\C:\scripts\x.ps1`, formExact, true},
+		{`\\.\UNC\host\share\x.ps1`, `\\.\UNC\host\share\x.ps1`, formExact, true},
+		{`//./pipe/x`, "", formExact, false},
+		{`//?/C:/x`, `//?/C:/x`, formExact, true},
+		{`//Nologo`, "", formExact, false},
+		{`//B`, "", formExact, false},
+		{`\\host`, "", formExact, false},
+		{`-File`, "", formExact, false},
+		{`x.ps1`, "", formExact, false},
+		{``, "", formExact, false},
 	}
 	for _, tc := range cases {
-		got, ok, err := fileArgument(tc.arg)
-		if err != nil || ok != tc.ok || (ok && got != tc.want) {
-			t.Errorf("fileArgument(%q) = %q, %v, %v; want %q, %v", tc.arg, got, ok, err, tc.want, tc.ok)
+		got, form, ok, err := fileArgument(tc.arg)
+		if err != nil || ok != tc.ok || (ok && (got != tc.want || form != tc.form)) {
+			t.Errorf("fileArgument(%q) = %q, %d, %v, %v; want %q, %d, %v", tc.arg, got, form, ok, err, tc.want, tc.form, tc.ok)
 		}
 	}
 }

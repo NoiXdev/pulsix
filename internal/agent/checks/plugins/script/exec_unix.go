@@ -55,8 +55,8 @@ func workDir() (string, error) { return "/", nil }
 // named.
 func checkProgramName(string) error { return nil }
 
-// fileArgument says whether arg names a file the checker must pass, and
-// by which path: on Unix an absolute path.
-func fileArgument(arg string) (string, bool, error) {
-	return arg, filepath.IsAbs(arg), nil
+// fileArgument says whether arg names a file the checker must pass, by
+// which path and in which form: on Unix an absolute path, exact.
+func fileArgument(arg string) (string, pathForm, bool, error) {
+	return arg, formExact, filepath.IsAbs(arg), nil
 }

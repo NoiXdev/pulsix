@@ -60,16 +60,22 @@ func trustedSIDs() ([]*windows.SID, error) {
 	return []*windows.SID{system, admins, installer}, nil
 }
 
-// placeMask are the rights on the directory a path's last name is missing
-// in that let someone put a file at that name: writeMask without the right
-// to add a subdirectory (FILE_ADD_SUBDIRECTORY, which is FILE_APPEND_DATA),
-// which every user has on C:\ and which creates a directory, no file. A
-// switch like /c reads as a missing file in C:\, so C:\ must pass here.
+// placeMask are the rights on the directory a switch-like argument's last
+// name is missing in that let someone put a file at that name: writeMask
+// without the right to add a subdirectory (FILE_ADD_SUBDIRECTORY, which is
+// FILE_APPEND_DATA), which every user has on C:\ and which creates a
+// directory, no file. A switch like /c reads as a missing file in C:\, so
+// C:\ must pass here.
 const placeMask = writeMask &^ windows.FILE_APPEND_DATA
 
-// textNetworkPath refuses a network path, by its syntax, on a mapped
-// network drive, or as a link's target.
+// textNetworkPath refuses a network path, by its syntax or on a mapped
+// network drive.
 const textNetworkPath = "network paths are not supported"
+
+// textTrailingDot refuses a name that ends in a dot or a space, which
+// Windows drops when it opens the path: another name than the one
+// checked.
+const textTrailingDot = "names ending in a dot or a space are not supported"
 
 // textDeviceForm refuses a file path written in device form (\\?\C:\…,
 // \\.\UNC\…): the plain form says the same, and the checks read paths
@@ -97,15 +103,17 @@ func judgeSyntax(path string) error {
 
 // dirMask is what a directory used as use must deny others: a directory
 // a name is looked up in only the rights to swap what it holds
-// (ancestorMask); one where the last name is missing every write right
-// but adding a subdirectory (placeMask); the file's own directory, and
-// one where a directory on the way is missing (adding a subdirectory there
-// makes the way), every write right (writeMask).
+// (ancestorMask); one where a switch-like argument's last name is missing
+// every write right but adding a subdirectory (placeMask); every other
+// use every write right (writeMask): the directory holding the file or
+// the link the path ends in, one the path names, one where a name written
+// with its drive is missing, and one where a directory on the way is
+// missing (adding a subdirectory there makes the way).
 func dirMask(use dirUse) windows.ACCESS_MASK {
 	switch use {
 	case useLookup:
 		return ancestorMask
-	case useMissing:
+	case useMissingRooted:
 		return placeMask
 	}
 	return writeMask
@@ -187,7 +195,6 @@ func namesNoFile(err error) bool {
 		errors.Is(err, windows.ERROR_PATH_NOT_FOUND) ||
 		errors.Is(err, windows.ERROR_INVALID_NAME) ||
 		errors.Is(err, windows.ERROR_BAD_PATHNAME) ||
-		errors.Is(err, windows.ERROR_FILENAME_EXCED_RANGE) ||
 		errors.Is(err, windows.ERROR_INVALID_DRIVE) ||
 		errors.Is(err, windows.ERROR_BAD_NETPATH) ||
 		errors.Is(err, windows.ERROR_BAD_NET_NAME) ||

@@ -70,6 +70,10 @@ func TestCollectArgumentsThatNameNoFile(t *testing.T) {
 			if fmt.Sprint(c.checked) != fmt.Sprint(want) {
 				t.Errorf("checked %q, want %q", c.checked, want)
 			}
+			// The program is always exact; on Unix every argument too.
+			if len(c.forms) == 0 || c.forms[0] != formExact {
+				t.Errorf("forms %v, want the program checked as exact", c.forms)
+			}
 			if calls := r.called(); len(calls) != 1 || !slices.Equal(calls[0], append([]string{prog}, tt.args...)) {
 				t.Errorf("ran %q, want the arguments unchanged", calls)
 			}

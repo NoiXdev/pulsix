@@ -100,7 +100,7 @@ func TestCollectNeverReportsAnArgument(t *testing.T) {
 
 type checkerFunc func(string) error
 
-func (f checkerFunc) Check(path string) error { return f(path) }
+func (f checkerFunc) Check(path string, _ pathForm) error { return f(path) }
 
 func TestCollectRecoversPanics(t *testing.T) {
 	t.Run("in the runner", func(t *testing.T) {

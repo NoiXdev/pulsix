@@ -15,7 +15,13 @@ import (
 type unixFile struct {
 	uid  uint32
 	mode fs.FileMode
+	// userMounted: a directory on a file system a user may mount (FUSE),
+	// whose owners and modes its server makes up.
+	userMounted bool
 }
+
+// nameMax is the longest name a Unix file system takes (NAME_MAX).
+const nameMax = 255
 
 // osFS is the walk's file system: lstat, readlink, owner and mode bits.
 type osFS struct{}
@@ -46,23 +52,13 @@ func (osFS) join(root string, names []string) string { return root + strings.Joi
 
 func (osFS) lookup(p string) (entryKind, error) {
 	fi, err := os.Lstat(p)
-	switch {
-	case err != nil && namesNoFile(err):
-		return 0, errNotFile
-	case err != nil:
-		return 0, err
+	if err != nil {
+		return 0, unixLookupError(p, err)
 	}
 	switch m := fi.Mode(); {
 	case m&fs.ModeSymlink != 0:
 		return entryLink, nil
 	case m.IsDir():
-		kernel, err := onKernelFS(p)
-		if err != nil {
-			return 0, err
-		}
-		if kernel {
-			return entryKernel, nil
-		}
 		return entryDir, nil
 	case m.IsRegular():
 		return entryFile, nil
@@ -70,9 +66,23 @@ func (osFS) lookup(p string) (entryKind, error) {
 	return entryOther, nil
 }
 
-// follow reads the link at p. A target that is no path but a kernel
-// object's name (Linux: socket:[4711] behind /proc/self/fd) names no
-// file, and neither does an empty one.
+// unixLookupError is what a failed lstat of p means: a missing name (or a
+// directory on the way that is none) names no file, and so does a last
+// name too long for any file system; anything else, a path too long as a
+// whole included, could not be checked.
+func unixLookupError(p string, err error) error {
+	switch {
+	case errors.Is(err, syscall.ENAMETOOLONG) && len(p)-strings.LastIndexByte(p, '/')-1 > nameMax:
+		return errNotFile
+	case namesNoFile(err):
+		return errNotFile
+	}
+	return err
+}
+
+// follow reads the link at p. An empty target names no file. A kernel
+// object's name behind /proc/<pid>/fd (socket:[4711]) is a relative
+// target like any other: a missing name in that root-owned directory.
 func (osFS) follow(p, _ string) (string, []string, error) {
 	target, err := os.Readlink(p)
 	switch {
@@ -82,17 +92,22 @@ func (osFS) follow(p, _ string) (string, []string, error) {
 		return "", nil, errNotFile
 	case strings.HasPrefix(target, "/"):
 		return "/", unixNames(target), nil
-	case strings.Contains(target, ":["):
-		return "", nil, errNotFile
 	}
 	return "", unixNames(target), nil
 }
+
+// below is errNotFile: the kernel answers ENOTDIR for a path that goes on
+// below a file, and nobody can make it name one.
+func (osFS) below(string) error { return errNotFile }
 
 // judgeDir applies one rule for every use: whoever may write a directory
 // can rename an entry in it, or create the name that is missing.
 func (osFS) judgeDir(dir string, _ dirUse, which string) error {
 	d, err := unixStat(dir)
 	if err != nil {
+		return err
+	}
+	if d.userMounted, err = onUserMountableFS(dir); err != nil {
 		return err
 	}
 	return judgeUnixDir(d, which)
@@ -146,9 +161,14 @@ func judgeUnixFile(file unixFile) error {
 // judgeUnixDir is the Unix rule for a directory on the way: owned by root
 // and writable by nobody else, a sticky world-writable one like /tmp
 // included: whoever can write it can rename an entry and put another in
-// its place. which names the directory in a refusal.
+// its place. A directory on FUSE is refused whatever it reports: a user
+// may run the server that answers for it. Network file systems (NFS, SMB)
+// report owners the agent cannot verify; they are judged by what they
+// report. which names the directory in a refusal.
 func judgeUnixDir(dir unixFile, which string) error {
 	switch {
+	case dir.userMounted:
+		return refuse(which + " is on a user-mountable file system")
 	case dir.uid != 0:
 		return refuse(fmt.Sprintf("%s is owned by uid %d, not by root", which, dir.uid))
 	case dir.mode.Perm()&0o022 != 0:
@@ -158,8 +178,8 @@ func judgeUnixDir(dir unixFile, which string) error {
 }
 
 // namesNoFile reports whether err says the path names nothing: it, or a
-// directory on the way, does not exist, a component on the way is no
-// directory, or the name is too long to be a file's.
+// directory on the way, does not exist, or a component on the way is no
+// directory.
 func namesNoFile(err error) bool {
-	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ENAMETOOLONG)
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }

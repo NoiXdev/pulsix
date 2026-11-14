@@ -60,7 +60,7 @@ func (p *scriptPlugin) checkFiles(argv []string) (refusal string) {
 	if !filepath.IsAbs(prog) {
 		return prog + ": not an absolute path"
 	}
-	if err := p.check.Check(prog); err != nil {
+	if err := p.check.Check(prog, formExact); err != nil {
 		if reason, ok := refusalReason(err); ok {
 			return prog + ": " + reason
 		}
@@ -70,14 +70,14 @@ func (p *scriptPlugin) checkFiles(argv []string) (refusal string) {
 		return prog + ": " + textUncheckedProgram
 	}
 	for _, arg := range argv[1:] {
-		file, ok, err := fileArgument(arg)
+		file, form, ok, err := fileArgument(arg)
 		if err != nil {
 			return textUncheckedArgument
 		}
 		if !ok {
 			continue
 		}
-		err = p.check.Check(file)
+		err = p.check.Check(file, form)
 		if reason, ok := refusalReason(err); ok {
 			return arg + ": " + reason
 		}

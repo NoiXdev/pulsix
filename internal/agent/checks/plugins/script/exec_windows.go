@@ -120,38 +120,40 @@ func checkProgramName(prog string) error {
 	return nil
 }
 
-// fileArgument says whether arg names a file the checker must pass, and
-// by which path. Besides an absolute path, Windows reads a path rooted
-// without a drive (`\scripts\x.ps1`, also with forward slashes) on the
-// working directory's drive, and a path with a drive but no root (`C:x`)
-// from that drive's working directory, which for a command is the drive's
-// root: the system drive's is its working directory, and it inherits no
-// other. A path that starts with two separators is decided by its syntax
-// alone, never stat'ed (windowsPathKindOf): a device or namespace path, or
-// \\x without a share (a switch like //Nologo), names no file to check;
-// a network path, or a file path in device form (\\?\C:\…), goes to the
-// checker, which refuses it.
-func fileArgument(arg string) (string, bool, error) {
+// fileArgument says whether arg names a file the checker must pass, by
+// which path and in which form. Besides an absolute path, Windows reads a
+// path rooted without a drive (`\scripts\x.ps1`, also with forward
+// slashes) on the working directory's drive, and a path with a drive but
+// no root (`C:x`) from that drive's working directory, which for a command
+// is the drive's root: the system drive's is its working directory, and
+// it inherits no other. A path rooted without a drive is formRooted, the
+// form a switch like /c has; every other is formExact. A path that starts
+// with two separators is decided by its syntax alone, never stat'ed
+// (windowsPathKindOf): a device or namespace path, or \\x without a share
+// (a switch like //Nologo), names no file to check; a network path, or a
+// file path in device form (\\?\C:\…), goes to the checker, which
+// refuses it.
+func fileArgument(arg string) (string, pathForm, bool, error) {
 	switch windowsPathKindOf(arg) {
 	case pathDevice, pathNoShare:
-		return "", false, nil
+		return "", formExact, false, nil
 	case pathNetwork, pathDeviceFile:
-		return arg, true, nil
+		return arg, formExact, true, nil
 	}
 	if filepath.IsAbs(arg) {
-		return arg, true, nil
+		return arg, formExact, true, nil
 	}
 	vol := filepath.VolumeName(arg)
 	rest := arg[len(vol):]
 	switch {
 	case vol != "":
-		return vol + `\` + rest, true, nil
+		return vol + `\` + rest, formExact, true, nil
 	case rest != "" && os.IsPathSeparator(rest[0]):
 		dir, err := workDir()
 		if err != nil {
-			return "", true, err
+			return "", formRooted, true, err
 		}
-		return filepath.VolumeName(dir) + rest, true, nil
+		return filepath.VolumeName(dir) + rest, formRooted, true, nil
 	}
-	return "", false, nil
+	return "", formExact, false, nil
 }

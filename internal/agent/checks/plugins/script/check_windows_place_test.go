@@ -21,18 +21,18 @@ import (
 func TestFileCheckerRefusesNetworkPathsWithoutAStat(t *testing.T) {
 	for _, p := range []string{`\\pulsix-test.invalid\share\x.ps1`, `//pulsix-test.invalid/share/x.ps1`, `\\pulsix-test.invalid\share`} {
 		start := time.Now()
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) || err.Error() != textNetworkPath {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) || err.Error() != textNetworkPath {
 			t.Errorf("Check(%s) = %v, want the refusal %q", p, err, textNetworkPath)
 		}
 		if d := time.Since(start); d > time.Second {
 			t.Errorf("%s took %s: a network lookup?", p, d)
 		}
 	}
-	if err := (fileChecker{}).Check(`\\.\PhysicalDrive0`); !errors.Is(err, errRefused) {
+	if err := (fileChecker{}).Check(`\\.\PhysicalDrive0`, formExact); !errors.Is(err, errRefused) {
 		t.Errorf("Check(a device) = %v, want a refusal", err)
 	}
 	for _, p := range []string{`\\?\C:\Windows\System32\cmd.exe`, `\\.\C:\Windows\System32\cmd.exe`, `\\?\UNC\pulsix-test.invalid\share\x.ps1`, `\\?\HarddiskVolume1\Windows\System32\cmd.exe`} {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) || err.Error() != textDeviceForm {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) || err.Error() != textDeviceForm {
 			t.Errorf("Check(%s) = %v, want the refusal %q", p, err, textDeviceForm)
 		}
 	}
@@ -44,12 +44,12 @@ func TestFileCheckerRefusesNetworkPathsWithoutAStat(t *testing.T) {
 func TestCollectWindowsPathArguments(t *testing.T) {
 	cmd := cmdExe(t)
 	// A switch like /c reads as a rooted path on the system drive, a
-	// missing name in its root.
+	// missing name in its root, judged as a switch-like form.
 	root, err := workDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, use := range []dirUse{useLookup, useMissing} {
+	for _, use := range []dirUse{useLookup, useMissingRooted} {
 		if err := (osFS{}).judgeDir(root, use, "its directory"); err != nil {
 			t.Skipf("the system drive's root does not pass here: %v", err)
 		}
@@ -71,29 +71,33 @@ func TestCollectWindowsPathArguments(t *testing.T) {
 }
 
 // TestJudgeDirMasks: a directory a name is looked up in may let others
-// add entries (as C:\ lets every user), one where the last name is
-// missing may let them add subdirectories, which puts no file at the
-// name; the directory holding the file, or one where a directory on the
-// way is missing, may let them change nothing.
+// add entries (as C:\ lets every user); one where the last name of a
+// switch-like argument (/c) is missing may let them add subdirectories,
+// which puts no file at the name; every other use (the directory holding
+// the file or a link the path ends in, one the path names, one where a
+// name written with its drive is missing) may let them change nothing.
 func TestJudgeDirMasks(t *testing.T) {
 	trusted, err := trustedSIDs()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cDrive := "O:" + trustedInstallerSID + "D:(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;BU)(A;CI;0x4;;;BU)(A;OICIIO;SDGRGWGX;;;AU)(A;;0x4;;;AU)"
+	users := "its directory lets S-1-5-32-545 change it"
 	cases := []struct {
 		sddl string
 		use  dirUse
 		want string // "" passes, else the refusal's start
 	}{
 		{cDrive, useLookup, ""},
-		{cDrive, useMissing, ""},
-		{cDrive, useMissingWay, "its directory lets S-1-5-32-545 change it"},
-		{cDrive, useHolds, "its directory lets S-1-5-32-545 change it"},
+		{cDrive, useMissingRooted, ""},
+		{cDrive, useMissing, users},
+		{cDrive, useMissingWay, users},
+		{cDrive, useHolds, users},
+		{cDrive, useNamed, users},
 		{"O:BAD:(A;;FA;;;BA)(A;;0x2;;;BU)", useLookup, ""},
-		{"O:BAD:(A;;FA;;;BA)(A;;0x2;;;BU)", useMissing, "its directory lets S-1-5-32-545 change it"},
-		{"O:BAD:(A;;FA;;;BA)(A;;GW;;;BU)", useMissing, "its directory lets S-1-5-32-545 change it"},
-		{"O:BAD:(A;;FA;;;BA)(A;;0x40;;;BU)", useLookup, "its directory lets S-1-5-32-545 change it"},
+		{"O:BAD:(A;;FA;;;BA)(A;;0x2;;;BU)", useMissingRooted, users},
+		{"O:BAD:(A;;FA;;;BA)(A;;GW;;;BU)", useMissingRooted, users},
+		{"O:BAD:(A;;FA;;;BA)(A;;0x40;;;BU)", useLookup, users},
 		{"O:BUD:(A;;FA;;;BA)", useLookup, "its directory is owned by S-1-5-32-545"},
 	}
 	for _, tc := range cases {
@@ -142,7 +146,7 @@ func openFolder(t *testing.T) string {
 func TestFileCheckerRefusesAMissingFileInAnOpenFolder(t *testing.T) {
 	dir := openFolder(t)
 	for _, p := range []string{filepath.Join(dir, "missing.ps1"), filepath.Join(dir, "missing", "deeper.ps1")} {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) {
 			t.Errorf("Check(%s) = %v, want a refusal", p, err)
 		}
 	}
@@ -177,7 +181,7 @@ func TestFileCheckerRefusesLinksInAUserFolder(t *testing.T) {
 	}
 	for l, kind := range made {
 		for _, p := range []string{l, filepath.Join(l, "cmd.exe"), filepath.Join(l, "pulsix-test-missing.exe")} {
-			if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+			if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) {
 				t.Errorf("%s: Check(%s) = %v, want a refusal", kind, p, err)
 			}
 		}
@@ -191,26 +195,31 @@ func TestFileCheckerRefusesLinksInAUserFolder(t *testing.T) {
 	}
 }
 
-// TestFileCheckerFollowsSystemLinks: a link Windows keeps for old paths,
-// owned by the system, leads to a folder: no file, and nothing refused on
-// the way.
-func TestFileCheckerFollowsSystemLinks(t *testing.T) {
-	tried := 0
-	for _, p := range []string{`C:\Users\All Users`, `C:\Documents and Settings`} {
-		if fi, err := os.Lstat(p); err != nil || fi.Mode().Type() == 0 {
-			continue
-		}
-		err := (fileChecker{}).Check(p)
-		switch {
-		case errors.Is(err, errRefused):
-			t.Errorf("Check(%s) = %v, want no refusal", p, err)
-		case errors.Is(err, errNotFile):
-			tried++
-		default:
-			t.Logf("Check(%s) = %v: the link cannot be read here", p, err)
+// TestFileCheckerWindowsNames: a name ending in a dot or a space is
+// refused (Windows would open another name); a path that goes on below a
+// file cannot be checked; a stream of an existing file is judged by that
+// file, a stream of a missing one names no file.
+func TestFileCheckerWindowsNames(t *testing.T) {
+	cmd := cmdExe(t)
+	for _, p := range []string{cmd + ".", cmd + " ", filepath.Dir(cmd) + `.\cmd.exe`} {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) || err.Error() != textTrailingDot {
+			t.Errorf("Check(%q) = %v, want the refusal %q", p, err, textTrailingDot)
 		}
 	}
-	if tried == 0 {
-		t.Skip("no readable system link here")
+	if err := (fileChecker{}).Check(cmd+`\below`, formExact); err == nil || errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
+		t.Errorf("Check(below cmd.exe) = %v, want an error that is neither errNotFile nor a refusal", err)
+	}
+	if err := (fileChecker{}).Check(cmd+":pulsix-stream", formExact); err != nil {
+		t.Errorf("Check(a stream of cmd.exe) = %v, want it judged as cmd.exe", err)
+	}
+	root, err := workDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (osFS{}).judgeDir(root, useMissingRooted, "its directory"); err != nil {
+		t.Skipf("the system drive's root does not pass here: %v", err)
+	}
+	if err := (fileChecker{}).Check(root+"pulsix-test-missing:30", formRooted); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
+		t.Errorf("Check(a switch like /T:30) = %v, want errNotFile", err)
 	}
 }

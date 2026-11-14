@@ -4,6 +4,7 @@ package script
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -19,13 +20,13 @@ func TestJudgeUnixFile(t *testing.T) {
 		file unixFile
 		want string // "" passes
 	}{
-		{"root, closed", unixFile{0, 0o755}, ""},
-		{"execute for the owner only", unixFile{0, 0o700}, ""},
-		{"no execute bit is no refusal", unixFile{0, 0o644}, ""},
-		{"setuid is no write right", unixFile{0, fs.ModeSetuid | 0o755}, ""},
-		{"owned by a user", unixFile{1000, 0o755}, "owned by uid 1000, not by root"},
-		{"group-writable", unixFile{0, 0o775}, "writable by group or others"},
-		{"other-writable", unixFile{0, 0o757}, "writable by group or others"},
+		{"root, closed", unixFile{uid: 0, mode: 0o755}, ""},
+		{"execute for the owner only", unixFile{uid: 0, mode: 0o700}, ""},
+		{"no execute bit is no refusal", unixFile{uid: 0, mode: 0o644}, ""},
+		{"setuid is no write right", unixFile{uid: 0, mode: fs.ModeSetuid | 0o755}, ""},
+		{"owned by a user", unixFile{uid: 1000, mode: 0o755}, "owned by uid 1000, not by root"},
+		{"group-writable", unixFile{uid: 0, mode: 0o775}, "writable by group or others"},
+		{"other-writable", unixFile{uid: 0, mode: 0o757}, "writable by group or others"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -40,10 +41,11 @@ func TestJudgeUnixDir(t *testing.T) {
 		dir  unixFile
 		want string // "" passes
 	}{
-		{"root, closed", unixFile{0, fs.ModeDir | 0o755}, ""},
-		{"owned by a user", unixFile{1000, fs.ModeDir | 0o755}, "its directory is owned by uid 1000, not by root"},
-		{"group-writable", unixFile{0, fs.ModeDir | 0o775}, "its directory is writable by group or others"},
-		{"sticky world-writable", unixFile{0, fs.ModeDir | fs.ModeSticky | 0o777}, "its directory is writable by group or others"},
+		{"root, closed", unixFile{uid: 0, mode: fs.ModeDir | 0o755}, ""},
+		{"owned by a user", unixFile{uid: 1000, mode: fs.ModeDir | 0o755}, "its directory is owned by uid 1000, not by root"},
+		{"group-writable", unixFile{uid: 0, mode: fs.ModeDir | 0o775}, "its directory is writable by group or others"},
+		{"sticky world-writable", unixFile{uid: 0, mode: fs.ModeDir | fs.ModeSticky | 0o777}, "its directory is writable by group or others"},
+		{"on a user-mountable file system", unixFile{uid: 0, mode: fs.ModeDir | 0o755, userMounted: true}, "its directory is on a user-mountable file system"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,7 +106,7 @@ func asUser(t *testing.T) {
 
 func TestFileCheckerAcceptsARootOwnedProgram(t *testing.T) {
 	sh := rootOwnedShell(t)
-	if err := (fileChecker{}).Check(sh); err != nil {
+	if err := (fileChecker{}).Check(sh, formExact); err != nil {
 		t.Fatalf("Check(%s) = %v", sh, err)
 	}
 }
@@ -121,7 +123,7 @@ func TestFileCheckerFollowsSystemLinks(t *testing.T) {
 			continue
 		}
 		tried++
-		if err := (fileChecker{}).Check(p); err != nil {
+		if err := (fileChecker{}).Check(p, formExact); err != nil {
 			t.Errorf("Check(%s) (leads to %s) = %v, want it to pass", p, resolved, err)
 		}
 	}
@@ -165,7 +167,7 @@ func TestFileCheckerRefusesLinksInAUserDirectory(t *testing.T) {
 		}
 	}
 	for _, p := range []string{link, binLink, filepath.Join(binLink, filepath.Base(sh)), filepath.Join(binLink, "evil.sh"), chain} {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) {
 			t.Errorf("Check(%s) = %v, want a refusal", p, err)
 		}
 	}
@@ -194,7 +196,7 @@ func TestFileCheckerRefusesUserFiles(t *testing.T) {
 	}
 	paths = append(paths, fifo, dir, filepath.Join(dir, "missing.py"), filepath.Join(dir, "missing", "deeper.py"))
 	for _, p := range paths {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errRefused) {
 			t.Errorf("Check(%s) = %v, want a refusal", p, err)
 		}
 	}
@@ -214,25 +216,65 @@ func TestFileCheckerNamesNoFile(t *testing.T) {
 		paths = append(paths, "/dev/null")
 	}
 	for _, p := range paths {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
+		if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
 			t.Errorf("Check(%s) = %v, want errNotFile", p, err)
 		}
 	}
 }
 
 // TestFileCheckerStandardStreams: on Linux /dev/stderr leads through
-// /proc to whatever the agent's standard error is (a socket, a pipe):
-// the kernel's, no file to judge.
+// /proc/self, the checking process's own directory there: it passes for
+// the agent, which runs as root, and is refused for a user, who owns it.
 func TestFileCheckerStandardStreams(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/dev/stderr leads through /proc on Linux only")
 	}
-	if !rootOwnedAndClosedChain("/dev") {
-		t.Skip("/dev is not root-owned and closed here")
+	if target, err := os.Readlink("/dev/stderr"); err != nil || target != "/proc/self/fd/2" || !rootOwnedAndClosedChain("/dev") {
+		t.Skip("/dev/stderr is no link to /proc/self/fd/2 under a root-owned /dev here")
 	}
-	for _, p := range []string{"/dev/stderr", "/dev/stdout", "/proc/self/status"} {
-		if err := (fileChecker{}).Check(p); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
-			t.Errorf("Check(%s) = %v, want errNotFile", p, err)
+	err := (fileChecker{}).Check("/dev/stderr", formExact)
+	if os.Geteuid() != 0 {
+		want := fmt.Sprintf("a directory on its way is owned by uid %d, not by root", os.Geteuid())
+		if !errors.Is(err, errRefused) || err.Error() != want {
+			t.Fatalf("Check(/dev/stderr) = %v, want the refusal %q", err, want)
+		}
+		return
+	}
+	if errors.Is(err, errRefused) || (err != nil && !errors.Is(err, errNotFile)) {
+		t.Fatalf("Check(/dev/stderr) as root = %v, want it to pass", err)
+	}
+}
+
+// TestFileCheckerOverlongName: a name longer than any file system allows
+// names no file; nobody can create it.
+func TestFileCheckerOverlongName(t *testing.T) {
+	rootOwnedAndClosed(t, "/")
+	p := "/" + strings.Repeat("a", nameMax+1)
+	if err := (fileChecker{}).Check(p, formExact); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
+		t.Fatalf("Check(an overlong name) = %v, want errNotFile", err)
+	}
+}
+
+// TestUnixLookupError: a missing name names no file; a path too long as a
+// whole could not be checked, unless its last name alone is too long to
+// exist.
+func TestUnixLookupError(t *testing.T) {
+	long := "/opt/" + strings.Repeat("a", nameMax+1)
+	cases := []struct {
+		p       string
+		err     error
+		notFile bool
+	}{
+		{"/opt/x", fs.ErrNotExist, true},
+		{"/opt/x", syscall.ENOTDIR, true},
+		{"/opt/x", syscall.ENAMETOOLONG, false},
+		{long, syscall.ENAMETOOLONG, true},
+		{"/opt/x", fs.ErrPermission, false},
+	}
+	for _, tc := range cases {
+		got := unixLookupError(tc.p, &fs.PathError{Op: "lstat", Path: tc.p, Err: tc.err})
+		if errors.Is(got, errNotFile) != tc.notFile || got == nil {
+			t.Errorf("unixLookupError(%.20s…, %v) = %v, want errNotFile %v", tc.p, tc.err, got, tc.notFile)
 		}
 	}
 }
@@ -246,7 +288,7 @@ func TestFileCheckerCouldNotCheck(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(dir, "pulsix-test")); !errors.Is(err, fs.ErrPermission) {
 			continue
 		}
-		err := (fileChecker{}).Check(filepath.Join(dir, "pulsix-test"))
+		err := (fileChecker{}).Check(filepath.Join(dir, "pulsix-test"), formExact)
 		if err == nil || errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
 			t.Fatalf("Check = %v, want an error that is neither errNotFile nor a refusal", err)
 		}

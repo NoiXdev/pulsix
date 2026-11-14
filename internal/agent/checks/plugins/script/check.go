@@ -13,11 +13,11 @@ import (
 // on its way names; anyone else who could would run code as the agent.
 type fileChecker struct{}
 
-func (fileChecker) Check(path string) error {
+func (fileChecker) Check(path string, form pathForm) error {
 	if err := judgeSyntax(path); err != nil {
 		return err
 	}
-	return contextFor("check "+path, walk(osFS{}, path))
+	return contextFor("check "+path, walk(osFS{}, path, form))
 }
 
 // contextFor wraps err with what was being done, except a refusal, whose
@@ -44,9 +44,6 @@ const (
 	entryFile            // a regular file
 	entryLink            // a symlink, or on Windows a junction
 	entryOther           // a device, a fifo, a socket
-	// entryKernel is a directory of a file system the kernel makes up
-	// (Linux /proc): nothing below it is a file anyone could put there.
-	entryKernel
 )
 
 // dirUse is why the walk judges a directory, which on Windows decides the
@@ -57,7 +54,9 @@ type dirUse int
 const (
 	// useLookup: a name in it is looked up and found.
 	useLookup dirUse = iota
-	// useHolds: the path's regular file lies in it.
+	// useHolds: the path's regular file lies in it, or the link the path
+	// ends in: the directory the program runs from, where Windows looks
+	// for its DLLs and an interpreter for the script's modules.
 	useHolds
 	// useMissing: the path's last name is missing in it, so nobody but
 	// the system may put a file there.
@@ -65,6 +64,13 @@ const (
 	// useMissingWay: a name with more names after it is missing in it,
 	// so nobody but the system may make the way either.
 	useMissingWay
+	// useMissingRooted: the last name of a switch-like argument
+	// (formRooted) is missing in it; Windows lets others add
+	// subdirectories here, which puts no file at the name.
+	useMissingRooted
+	// useNamed: the path names this directory, whose contents an
+	// interpreter may run (python3 <dir> runs <dir>/__main__.py).
+	useNamed
 )
 
 // walkFS is what the walk reads from the file system, per platform. Paths
@@ -83,13 +89,17 @@ type walkFS interface {
 	// dir; a target that is no path is errNotFile.
 	follow(p, dir string) (root string, names []string, err error)
 	// judgeDir judges dir for use; which ("its directory", "a directory
-	// on its way") starts a refusal.
+	// on its way", "the directory it names") starts a refusal.
 	judgeDir(dir string, use dirUse, which string) error
 	// judgeLink judges the link object at p (Windows: its owner and
 	// access list, since whoever may write it may re-point it).
 	judgeLink(p string) error
 	// judgeFile judges the regular file at p.
 	judgeFile(p string) error
+	// below is what a path that goes on below the file or device at p
+	// names: Unix errNotFile (ENOTDIR), Windows an error (its rules for
+	// such paths are not ones the walk follows).
+	below(p string) error
 }
 
 // walk resolves path itself, one name at a time from its root, following
@@ -99,17 +109,18 @@ type walkFS interface {
 // system can change what the path names between the check and the run.
 //
 //   - A regular file at the end: its directory as the file's holder, then
-//     the file itself. The only nil.
+//     the file itself. The only nil. A link as the path's last name: its
+//     directory as a holder too, since the program runs by that path.
 //   - A missing name: the directory it is missing in (nobody else may
 //     create it there), then errNotFile. A link that leads nowhere is just
 //     that.
-//   - A directory, a device, a fifo, a socket, a path below a file, or
-//     anything under a kernel file system (/proc): errNotFile, once the
-//     directories on the way passed.
+//   - A directory at the end: the directory itself, then errNotFile.
+//   - A device, a fifo or a socket: errNotFile once the directories on the
+//     way passed; a path below one of them or a file: below.
 //
 // A ".." climbs from where the walk is, so after a link from where the
 // link led (Windows has none left: split cleaned them away).
-func walk(fsys walkFS, path string) error {
+func walk(fsys walkFS, path string, form pathForm) error {
 	root, queue, err := fsys.split(path)
 	if err != nil {
 		return err
@@ -138,7 +149,10 @@ func walk(fsys walkFS, path string) error {
 		kind, err := fsys.lookup(p)
 		if errors.Is(err, errNotFile) {
 			use := useMissingWay
-			if last {
+			switch {
+			case last && form == formRooted:
+				use = useMissingRooted
+			case last:
 				use = useMissing
 			}
 			if err := w.judge(dir, use, last); err != nil {
@@ -159,6 +173,11 @@ func walk(fsys walkFS, path string) error {
 			if err := fsys.judgeLink(p); err != nil {
 				return err
 			}
+			if last {
+				if err := w.judge(dir, useHolds, true); err != nil {
+					return err
+				}
+			}
 			r, names, err := fsys.follow(p, dir)
 			if err != nil {
 				return err
@@ -169,15 +188,21 @@ func walk(fsys walkFS, path string) error {
 			queue = append(slices.Clip(names), queue...)
 		case entryFile:
 			if !last {
-				return errNotFile
+				return fsys.below(p)
 			}
 			if err := w.judge(dir, useHolds, true); err != nil {
 				return err
 			}
 			return fsys.judgeFile(p)
 		default:
+			if !last {
+				return fsys.below(p)
+			}
 			return errNotFile
 		}
+	}
+	if err := w.judge(fsys.join(root, stack), useNamed, true); err != nil {
+		return err
 	}
 	return errNotFile
 }
@@ -202,7 +227,10 @@ func (w *walker) judge(dir string, use dirUse, own bool) error {
 		return nil
 	}
 	which := "a directory on its way"
-	if own {
+	switch {
+	case use == useNamed:
+		which = "the directory it names"
+	case own:
 		which = "its directory"
 	}
 	if err := w.fs.judgeDir(dir, use, which); err != nil {

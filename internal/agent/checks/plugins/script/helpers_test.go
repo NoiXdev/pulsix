@@ -44,21 +44,23 @@ const durationOfRun = 250_000_000
 // fakeChecker answers Check per path: a listed path gets its error (nil
 // accepts it), any other path names no file whose place passes
 // (errNotFile). check, when set, runs ahead of every Check (a test
-// blocking the checker).
+// blocking the checker). It records the paths and the forms asked for.
 type fakeChecker struct {
 	files map[string]error
 	check func(path string)
 
 	mu      sync.Mutex
 	checked []string
+	forms   []pathForm
 }
 
-func (f *fakeChecker) Check(path string) error {
+func (f *fakeChecker) Check(path string, form pathForm) error {
 	if f.check != nil {
 		f.check(path)
 	}
 	f.mu.Lock()
 	f.checked = append(f.checked, path)
+	f.forms = append(f.forms, form)
 	f.mu.Unlock()
 	if err, ok := f.files[path]; ok {
 		return err
