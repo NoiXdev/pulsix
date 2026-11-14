@@ -27,9 +27,9 @@ const (
 // ("absent", "ok" or the error that made it drop every secret).
 //
 // Known is false when there is no report: the agent is older than the
-// file, or the registration has not sent a heartbeat yet. Names is then
-// nil and State empty; when Known, Names is non-nil (possibly empty) and
-// sorted.
+// file, or it has not sent a heartbeat since it enrolled (a certificate
+// renewal keeps the report). Names is then nil and State empty; when
+// Known, Names is non-nil (possibly empty) and sorted.
 type SecretsReport struct {
 	Known bool
 	Names []string

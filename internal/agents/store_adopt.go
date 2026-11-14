@@ -17,6 +17,8 @@ import (
 // exactly one, read the host's certificates, ask allow and, unless the
 // serial is already the host's live certificate, register it through the
 // renewal path (the row takes the serial, older certificates are revoked).
+// The agent's reports start over as on a re-enrollment: the row comes from
+// a restored backup, so what it holds is not what this agent last said.
 func (s *SQLStore) AdoptCertificate(ctx context.Context, a Agent, allow func(AdoptionState) error) (AgentIdentity, error) {
 	var out AgentIdentity
 	err := s.d.WithWriteTx(ctx, a.OrgID, func(ctx context.Context) error {
@@ -57,7 +59,7 @@ func (s *SQLStore) AdoptCertificate(ctx context.Context, a Agent, allow func(Ado
 		}
 		if !state.Registered {
 			a.HostID, a.Version = row.HostID, row.Version
-			if err := s.register(ctx, a); err != nil {
+			if err := s.register(ctx, a, false); err != nil {
 				// The serial is the primary key of every organization's
 				// certificates: one this org scope cannot see is still
 				// taken, and still not this adoption's.

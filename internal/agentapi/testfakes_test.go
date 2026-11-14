@@ -214,8 +214,8 @@ func (f *fakeAgentStore) Claim(_ context.Context, orgID, id uuid.UUID, fn func(c
 }
 
 // Renew is Register guarded like the real store: the serial renewed from
-// must still be live.
-func (f *fakeAgentStore) Renew(ctx context.Context, a agents.Agent, fromSerial string) error {
+// must still be live, and the agent's reports are kept.
+func (f *fakeAgentStore) Renew(_ context.Context, a agents.Agent, fromSerial string) error {
 	f.mu.Lock()
 	_, known := f.certs[fromSerial]
 	live := known && !f.revokedC[fromSerial]
@@ -223,10 +223,16 @@ func (f *fakeAgentStore) Renew(ctx context.Context, a agents.Agent, fromSerial s
 	if !live {
 		return agents.ErrNotFound
 	}
-	return f.Register(ctx, a)
+	return f.register(a, true)
 }
 
 func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
+	return f.register(a, false)
+}
+
+// register replaces the host's agent; keepReports carries the replaced
+// row's secrets and local checks reports over, as a renewal does.
+func (f *fakeAgentStore) register(a agents.Agent, keepReports bool) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.registerErr != nil {
@@ -240,6 +246,9 @@ func (f *fakeAgentStore) Register(_ context.Context, a agents.Agent) error {
 	}
 	for i := range f.agentsR {
 		if f.agentsR[i].HostID == a.HostID && f.agentsR[i].OrgID == a.OrgID {
+			if keepReports {
+				a.Secrets, a.LocalChecks = f.agentsR[i].Secrets, f.agentsR[i].LocalChecks
+			}
 			f.agentsR[i] = a
 			f.certs[a.CertSerial] = agents.AgentIdentity{OrgID: a.OrgID, HostID: a.HostID, Name: a.AgentName, Version: a.Version}
 			return nil

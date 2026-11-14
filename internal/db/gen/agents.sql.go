@@ -753,8 +753,10 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
       WHEN host_agents.last_seen >= now() - make_interval(secs => $6::double precision)
       THEN host_agents.connected_since END,
     online_since = NULL,
-    secret_names = NULL, secrets_state = NULL,
-    local_checks = NULL, local_check_problems = NULL,
+    secret_names = CASE WHEN $7::boolean THEN host_agents.secret_names END,
+    secrets_state = CASE WHEN $7::boolean THEN host_agents.secrets_state END,
+    local_checks = CASE WHEN $7::boolean THEN host_agents.local_checks END,
+    local_check_problems = CASE WHEN $7::boolean THEN host_agents.local_check_problems END,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems
 `
@@ -766,16 +768,22 @@ type UpsertHostAgentParams struct {
 	CertSerial          string    `json:"cert_serial"`
 	Version             string    `json:"version"`
 	ReconnectGapSeconds float64   `json:"reconnect_gap_seconds"`
+	KeepReports         bool      `json:"keep_reports"`
 }
 
 // The active agent of a host: re-enrollment and certificate renewal both
 // replace the row in place (ON CONFLICT on the host primary key), so
 // exactly one agent row exists per host at any time. agent_certificates
 // carries the previous serials — the service marks the old one revoked in
-// the same transaction. Like last_seen, the secrets report (00086) and the
-// configuration check (00089) start over: the new registration has
-// neither reported nor been compared yet; so does the local checks report
-// (00095). The connection start (00088,
+// the same transaction. Like last_seen, the configuration check (00089)
+// starts over: the new registration has not been compared yet. The
+// agent's reports — secrets (00086) and local checks (00095), which the
+// heartbeat writes together — start over on a re-enrollment, which may be
+// another agent, and are kept when keep_reports is set: a certificate
+// renewal is the same agent on a new serial, so what it last said about
+// its agent.yaml still holds, and resetting would leave its local checks
+// unresolved (their tuples unmeasured, their open alerts closed) until its
+// next heartbeat. The connection start (00088,
 // backlog 3.12c) is kept when the previous registration was last seen
 // within the reconnect gap — a renewal happens on a live connection, every
 // ~60 days, and must not restart the item expiry's wait — and otherwise
@@ -791,6 +799,7 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		arg.CertSerial,
 		arg.Version,
 		arg.ReconnectGapSeconds,
+		arg.KeepReports,
 	)
 	var i HostAgent
 	err := row.Scan(

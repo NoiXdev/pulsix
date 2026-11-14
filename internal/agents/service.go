@@ -222,7 +222,8 @@ type Store interface {
 	Register(ctx context.Context, a Agent) error
 	// Renew is Register for a certificate renewal: it fails with
 	// ErrNotFound, changing nothing, unless fromSerial is still the host's
-	// live certificate when the transaction runs.
+	// live certificate when the transaction runs. It keeps the agent's
+	// secrets and local checks reports, which Register starts over.
 	Renew(ctx context.Context, a Agent, fromSerial string) error
 	// GetBySerial resolves a presented serial without an organization
 	// filter; ErrNotFound when unknown.

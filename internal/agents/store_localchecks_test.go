@@ -195,3 +195,54 @@ func TestHeartbeatWithANULStores(t *testing.T) {
 	}
 }
 
+// TestRenewalKeepsTheAgentReports (backlog 3.5a, final review finding 3):
+// a certificate renewal is the same agent on a new serial, so what it last
+// reported about agent.yaml stays true — the local checks keep resolving
+// (a NULL would leave their tuples unmeasured and close their open alerts
+// until the next heartbeat) and the secrets report stays with them, the
+// four columns known or unknown together. A re-enrollment may be another
+// agent: there all four start over.
+func TestRenewalKeepsTheAgentReports(t *testing.T) {
+	svc, _, d, org, zone := newAgentWorld(t, "agent-local-renew")
+	h := createHost(t, d, org, zone, "renew-1")
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-r", "v1", "9801")); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Heartbeat(ctx, "9801", agents.HeartbeatReport{Version: "v1", SecretsState: "ok", SecretNames: []string{"pg_main"},
+		LocalChecks:        []agents.LocalCheckInput{{Key: "local-cpu", Plugin: "cpu", ParamsJSON: "{}", IntervalSeconds: 60}},
+		LocalCheckProblems: []string{"line 9: unknown plugin"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scoped := db.WithOrgScope(ctx, org)
+	reports := func() (agents.LocalChecksReport, agents.SecretsReport) {
+		t.Helper()
+		local, err := svc.LocalChecksByHost(scoped, org, h.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		secrets, err := svc.SecretsByHost(scoped, org, h.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return local, secrets
+	}
+
+	if err := svc.Renew(ctx, registrationOf(org, h.ID, "agent-r", "v1", "9802"), "9801"); err != nil {
+		t.Fatal(err)
+	}
+	local, secrets := reports()
+	if !local.Known || len(local.Checks) != 1 || local.Checks[0].Key != "local-cpu" || !slices.Equal(local.Problems, []string{"line 9: unknown plugin"}) {
+		t.Fatalf("local checks after a renewal = %+v, want the report kept", local)
+	}
+	if !secrets.Known || secrets.State != "ok" || !slices.Equal(secrets.Names, []string{"pg_main"}) {
+		t.Fatalf("secrets after a renewal = %+v, want the report kept", secrets)
+	}
+
+	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-r", "v2", "9803")); err != nil {
+		t.Fatal(err)
+	}
+	if local, secrets := reports(); local.Known || secrets.Known {
+		t.Fatalf("after a re-enrollment: local %+v, secrets %+v; want both unknown", local, secrets)
+	}
+}

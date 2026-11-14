@@ -62,10 +62,15 @@ ORDER BY h.agent_name;
 -- replace the row in place (ON CONFLICT on the host primary key), so
 -- exactly one agent row exists per host at any time. agent_certificates
 -- carries the previous serials — the service marks the old one revoked in
--- the same transaction. Like last_seen, the secrets report (00086) and the
--- configuration check (00089) start over: the new registration has
--- neither reported nor been compared yet; so does the local checks report
--- (00095). The connection start (00088,
+-- the same transaction. Like last_seen, the configuration check (00089)
+-- starts over: the new registration has not been compared yet. The
+-- agent's reports — secrets (00086) and local checks (00095), which the
+-- heartbeat writes together — start over on a re-enrollment, which may be
+-- another agent, and are kept when keep_reports is set: a certificate
+-- renewal is the same agent on a new serial, so what it last said about
+-- its agent.yaml still holds, and resetting would leave its local checks
+-- unresolved (their tuples unmeasured, their open alerts closed) until its
+-- next heartbeat. The connection start (00088,
 -- backlog 3.12c) is kept when the previous registration was last seen
 -- within the reconnect gap — a renewal happens on a live connection, every
 -- ~60 days, and must not restart the item expiry's wait — and otherwise
@@ -82,8 +87,10 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
       WHEN host_agents.last_seen >= now() - make_interval(secs => sqlc.arg(reconnect_gap_seconds)::double precision)
       THEN host_agents.connected_since END,
     online_since = NULL,
-    secret_names = NULL, secrets_state = NULL,
-    local_checks = NULL, local_check_problems = NULL,
+    secret_names = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.secret_names END,
+    secrets_state = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.secrets_state END,
+    local_checks = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.local_checks END,
+    local_check_problems = CASE WHEN sqlc.arg(keep_reports)::boolean THEN host_agents.local_check_problems END,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING *;
 

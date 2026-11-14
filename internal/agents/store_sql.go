@@ -150,14 +150,16 @@ func (s *SQLStore) Claim(ctx context.Context, orgID, id uuid.UUID, fn func(ctx c
 // inserted.
 func (s *SQLStore) Register(ctx context.Context, a Agent) error {
 	return s.d.WithWriteTx(ctx, a.OrgID, func(ctx context.Context) error {
-		return s.register(ctx, a)
+		return s.register(ctx, a, false)
 	})
 }
 
 // Renew is Register for a certificate renewal: in the same transaction it
 // first locks the serial the agent renews from and requires it to be the
 // host's live certificate, ErrNotFound otherwise — revoked meanwhile, or
-// already replaced (backlog 7.18).
+// already replaced (backlog 7.18). Unlike Register it keeps the agent's
+// secrets and local checks reports: the renewing agent is the one that
+// sent them.
 func (s *SQLStore) Renew(ctx context.Context, a Agent, fromSerial string) error {
 	return s.d.WithWriteTx(ctx, a.OrgID, func(ctx context.Context) error {
 		n, err := s.q.LockLiveAgentCertificate(ctx, gen.LockLiveAgentCertificateParams{
@@ -169,16 +171,17 @@ func (s *SQLStore) Renew(ctx context.Context, a Agent, fromSerial string) error 
 		if n == 0 {
 			return ErrNotFound
 		}
-		return s.register(ctx, a)
+		return s.register(ctx, a, true)
 	})
 }
 
 // register is Register's and Renew's shared body, inside their
-// transaction.
-func (s *SQLStore) register(ctx context.Context, a Agent) error {
+// transaction; keepReports keeps the stored secrets and local checks
+// reports (a renewal) instead of starting them over (UpsertHostAgent).
+func (s *SQLStore) register(ctx context.Context, a Agent, keepReports bool) error {
 	if _, err := s.q.UpsertHostAgent(ctx, gen.UpsertHostAgentParams{
 		HostID: a.HostID, OrgID: a.OrgID, AgentName: a.AgentName, CertSerial: a.CertSerial, Version: a.Version,
-		ReconnectGapSeconds: reconnectGap.Seconds(),
+		ReconnectGapSeconds: reconnectGap.Seconds(), KeepReports: keepReports,
 	}); err != nil {
 		return fmt.Errorf("upsert agent: %w", err)
 	}
