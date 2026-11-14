@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -82,6 +83,10 @@ type Agent struct {
 	// Secrets is the agent's latest report on its local secrets file,
 	// written by Heartbeat; reads fill it, Register ignores it.
 	Secrets SecretsReport
+	// LocalChecks is the agent's latest report on the checks defined in
+	// its agent.yaml (backlog 3.5a), written by Heartbeat together with
+	// Secrets; reads fill it, Register ignores it.
+	LocalChecks LocalChecksReport
 	// Config is the latest configuration comparison, written by
 	// RecordConfigCheck; reads fill it, Register ignores it (and resets
 	// the stored one).
@@ -237,10 +242,14 @@ type Store interface {
 	// stored secrets report as it is (the stream's open and ingest pacing
 	// carry none).
 	Touch(ctx context.Context, serial, version string) error
-	// Heartbeat is Touch for a heartbeat message: last_seen, version and
-	// the secrets report in one statement, org-unscoped. A report that is
-	// not Known stores "unknown" (NULL), replacing any earlier one.
-	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport) error
+	// Heartbeat is Touch for a heartbeat message: last_seen, version, the
+	// secrets report and the local checks report in one statement,
+	// org-unscoped. A report that is not Known stores "unknown" (NULL),
+	// replacing any earlier one.
+	Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport) error
+	// LocalChecksByHosts reads the local checks reports of the listed
+	// hosts' agents, org-scoped; a host without an agent has no entry.
+	LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]LocalChecksReport, error)
 	// RecordConfigCheck stores one configuration comparison by serial,
 	// org-unscoped: the row changes only when reported or expected differ
 	// from the stored ones or the stored check is older than
@@ -284,6 +293,8 @@ type Service struct {
 	// ca supplies the fingerprint a created token carries; without it
 	// CreateToken refuses (see CAPinner).
 	ca CAPinner
+	// log takes the heartbeat's notes on local checks it dropped.
+	log *slog.Logger
 }
 
 // Option configures a Service.
@@ -298,6 +309,16 @@ func WithCA(p CAPinner) Option { return func(s *Service) { s.ca = p } }
 // WithClock injects the clock (tests).
 func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = now } }
 
+// WithLogger sets the logger the service writes its log lines to, in place
+// of slog.Default(); nil keeps the default.
+func WithLogger(l *slog.Logger) Option {
+	return func(s *Service) {
+		if l != nil {
+			s.log = l
+		}
+	}
+}
+
 // WithRand injects the entropy source for ids and enrollment secrets.
 func WithRand(r io.Reader) Option { return func(s *Service) { s.rand = r } }
 
@@ -307,7 +328,7 @@ func (s *Service) SetRevokeHook(c StreamCutter) { s.streams = c }
 
 // NewService wires the store; claim needs WithProvisioner.
 func NewService(store Store, opts ...Option) *Service {
-	s := &Service{store: store, now: time.Now, rand: rand.Reader}
+	s := &Service{store: store, now: time.Now, rand: rand.Reader, log: slog.Default()}
 	for _, o := range opts {
 		o(s)
 	}
@@ -543,14 +564,29 @@ func (s *Service) Touch(ctx context.Context, serial, version string) error {
 	return s.store.Touch(ctx, serial, version)
 }
 
+// HeartbeatReport is what one heartbeat message says about the agent: its
+// build, its secrets report and its local checks report, as sent.
+type HeartbeatReport struct {
+	Version            string
+	SecretNames        []string
+	SecretsState       string
+	LocalChecks        []LocalCheckInput
+	LocalCheckProblems []string
+}
+
 // Heartbeat records a heartbeat message: last_seen becomes now, version
-// the agent's self-reported build, and the secret names and file state it
-// reported replace the stored ones — bounded first (secretsReportOf), so
-// whatever the agent sent, only well-formed names and one bounded line of
-// state are stored. An agent that sends no state (older than agent.yaml)
-// is stored as unknown.
-func (s *Service) Heartbeat(ctx context.Context, serial, version string, secretNames []string, secretsState string) error {
-	return s.store.Heartbeat(ctx, serial, version, secretsReportOf(secretNames, secretsState))
+// the agent's self-reported build, and the secrets and local checks
+// reports replace the stored ones — bounded and validated first
+// (secretsReportOf, localChecksReportOf), so whatever the agent sent, only
+// well-formed names, one bounded line of state, checks the agent could run
+// and a short list of bounded problems are stored. Each local check
+// dropped is logged by key and reason, never its params. An agent that
+// sends no secrets state (older than agent.yaml) is stored as unknown in
+// both reports.
+func (s *Service) Heartbeat(ctx context.Context, serial string, r HeartbeatReport) error {
+	local, dropped := localChecksReportOf(r.SecretsState, r.LocalChecks, r.LocalCheckProblems)
+	logDroppedLocalChecks(ctx, s.log, serial, dropped)
+	return s.store.Heartbeat(ctx, serial, r.Version, secretsReportOf(r.SecretNames, r.SecretsState), local)
 }
 
 // List returns orgID's agents ordered by agent name.
@@ -609,6 +645,29 @@ func (s *Service) SecretsByHost(ctx context.Context, orgID, hostID uuid.UUID) (S
 		return SecretsReport{}, err
 	}
 	return a.Secrets, nil
+}
+
+// LocalChecksByHost is the host's agent's latest local checks report: a
+// host without an agent has no report, which is "unknown", not an error.
+func (s *Service) LocalChecksByHost(ctx context.Context, orgID, hostID uuid.UUID) (LocalChecksReport, error) {
+	a, err := s.store.GetByHost(ctx, orgID, hostID)
+	if errors.Is(err, ErrNotFound) {
+		return LocalChecksReport{}, nil
+	}
+	if err != nil {
+		return LocalChecksReport{}, err
+	}
+	return a.LocalChecks, nil
+}
+
+// LocalChecksByHosts is LocalChecksByHost for several hosts in one read,
+// for the check resolution of an organization or a group of hosts: a host
+// without an agent has no entry, so a lookup reads it as unknown.
+func (s *Service) LocalChecksByHosts(ctx context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]LocalChecksReport, error) {
+	if len(hostIDs) == 0 {
+		return map[uuid.UUID]LocalChecksReport{}, nil
+	}
+	return s.store.LocalChecksByHosts(ctx, orgID, hostIDs)
 }
 
 // GetByHost is the host detail card's read: the host's active agent, or

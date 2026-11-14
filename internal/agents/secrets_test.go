@@ -21,7 +21,7 @@ func heartbeatSecrets(t *testing.T, names []string, state string) agents.Secrets
 	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-s")); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Heartbeat(ctx, "serial-s", "v2", names, state); err != nil {
+	if err := svc.Heartbeat(ctx, "serial-s", agents.HeartbeatReport{Version: "v2", SecretNames: names, SecretsState: state}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := svc.GetByHost(ctx, org, host)
@@ -133,7 +133,7 @@ func TestSecretsByHost(t *testing.T) {
 	if err := svc.Register(ctx, reg(org, host, "agent-a", "v1", "serial-h")); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.Heartbeat(ctx, "serial-h", "v1", []string{"api"}, "ok"); err != nil {
+	if err := svc.Heartbeat(ctx, "serial-h", agents.HeartbeatReport{Version: "v1", SecretNames: []string{"api"}, SecretsState: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := svc.SecretsByHost(ctx, org, host)

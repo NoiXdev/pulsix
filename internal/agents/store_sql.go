@@ -246,12 +246,12 @@ func (s *SQLStore) Touch(ctx context.Context, serial, version string) error {
 	})
 }
 
-// Heartbeat writes last_seen, version, the secrets report, the
-// connection start (Touch's rule, reconnectGap) and the online period's
-// start (Touch's rule, StaleAfter) in one statement. An
-// unknown report writes NULL to both report columns; a known one writes
-// its names as a (possibly empty, never NULL) array.
-func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport) error {
+// Heartbeat writes last_seen, version, the secrets report, the local
+// checks report, the connection start (Touch's rule, reconnectGap) and the
+// online period's start (Touch's rule, StaleAfter) in one statement. An
+// unknown report writes NULL to its columns; a known one writes its names,
+// checks and problems as (possibly empty, never NULL) arrays.
+func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secrets SecretsReport, local LocalChecksReport) error {
 	p := gen.RecordAgentHeartbeatParams{
 		Serial: serial, Version: version, ReconnectGapSeconds: reconnectGap.Seconds(),
 		OnlineWindowSeconds: StaleAfter.Seconds(),
@@ -264,6 +264,11 @@ func (s *SQLStore) Heartbeat(ctx context.Context, serial, version string, secret
 		state := secrets.State
 		p.SecretNames, p.SecretsState = names, &state
 	}
+	checks, problems, err := localChecksColumns(local)
+	if err != nil {
+		return fmt.Errorf("record agent heartbeat: %w", err)
+	}
+	p.LocalChecks, p.LocalCheckProblems = checks, problems
 	if err := s.q.RecordAgentHeartbeat(ctx, p); err != nil {
 		return fmt.Errorf("record agent heartbeat: %w", err)
 	}
@@ -295,7 +300,11 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 	}
 	out := make([]Agent, len(rows))
 	for i, r := range rows {
-		out[i] = toAgent(r.HostAgent, r.CertNotAfter, r.HostName)
+		a, err := toAgent(r.HostAgent, r.CertNotAfter, r.HostName)
+		if err != nil {
+			return nil, fmt.Errorf("list agents: %w", err)
+		}
+		out[i] = a
 	}
 	return out, nil
 }
@@ -303,7 +312,7 @@ func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Agent, error) {
 // toAgent maps one host_agents row plus its certificate's expiry (the
 // LEFT JOIN's column, absent for a row the 00039 backfill could not
 // reach) onto the domain type.
-func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) Agent {
+func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) (Agent, error) {
 	a := Agent{
 		HostID: h.HostID, OrgID: h.OrgID, AgentName: h.AgentName, CertSerial: h.CertSerial,
 		LastSeen: db.TimePtr(h.LastSeen), Version: h.Version, CreatedAt: h.CreatedAt, HostName: hostName,
@@ -314,7 +323,12 @@ func toAgent(h gen.HostAgent, certNotAfter pgtype.Timestamptz, hostName string) 
 	}
 	a.Secrets = secretsFromRow(h.SecretNames, h.SecretsState)
 	a.Config = configFromRow(h.ConfigVersion, h.ConfigExpected, h.ConfigCheckedAt)
-	return a
+	local, err := localChecksFromRow(h.LocalChecks, h.LocalCheckProblems)
+	if err != nil {
+		return Agent{}, fmt.Errorf("agent of host %s: %w", h.HostID, err)
+	}
+	a.LocalChecks = local
+	return a, nil
 }
 
 // configFromRow reads the three check columns: the time decides whether a
@@ -350,7 +364,11 @@ func (s *SQLStore) GetByHost(ctx context.Context, orgID, hostID uuid.UUID) (Agen
 	if err != nil {
 		return Agent{}, fmt.Errorf("get host agent: %w", err)
 	}
-	return toAgent(row.HostAgent, row.CertNotAfter, row.HostName), nil
+	a, err := toAgent(row.HostAgent, row.CertNotAfter, row.HostName)
+	if err != nil {
+		return Agent{}, fmt.Errorf("get host agent: %w", err)
+	}
+	return a, nil
 }
 
 // Revoke marks every certificate of the host's agent revoked and removes

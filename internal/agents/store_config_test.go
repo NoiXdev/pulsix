@@ -112,7 +112,7 @@ func TestConfigCheckIsWrittenOnlyWhenItChanges(t *testing.T) {
 	is("the configuration moved on", cur3, "bbb", "ccc")
 
 	// The plain heartbeat leaves the check as it is.
-	if err := svc.Heartbeat(ctx, "9401", "v1", nil, "ok"); err != nil {
+	if err := svc.Heartbeat(ctx, "9401", agents.HeartbeatReport{Version: "v1", SecretsState: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	is("after a heartbeat", read(), "bbb", "ccc")

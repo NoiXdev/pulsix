@@ -43,7 +43,7 @@ func TestHeartbeatStoresSecretsWithLastSeen(t *testing.T) {
 		t.Fatalf("a registered agent that never reported = %+v, want unknown", a.Secrets)
 	}
 
-	if err := svc.Heartbeat(ctx, "9101", "v2", []string{"mysql-prod", "bad name", "api"}, "ok"); err != nil {
+	if err := svc.Heartbeat(ctx, "9101", agents.HeartbeatReport{Version: "v2", SecretNames: []string{"mysql-prod", "bad name", "api"}, SecretsState: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	a := read()
@@ -66,7 +66,7 @@ func TestHeartbeatStoresSecretsWithLastSeen(t *testing.T) {
 		t.Fatalf("after Touch = %+v, want the report kept", a.Secrets)
 	}
 
-	if err := svc.Heartbeat(ctx, "9101", "v2", nil, "agent.yaml is readable by other users"); err != nil {
+	if err := svc.Heartbeat(ctx, "9101", agents.HeartbeatReport{Version: "v2", SecretsState: "agent.yaml is readable by other users"}); err != nil {
 		t.Fatal(err)
 	}
 	if a := read(); !a.Secrets.Known || a.Secrets.Names == nil || len(a.Secrets.Names) != 0 ||
@@ -79,7 +79,7 @@ func TestHeartbeatStoresSecretsWithLastSeen(t *testing.T) {
 
 	// A state near the cap, multi-byte, survives the round trip intact.
 	long := strings.Repeat("ü", agents.MaxSecretsStateBytes/2)
-	if err := svc.Heartbeat(ctx, "9101", "v2", nil, long); err != nil {
+	if err := svc.Heartbeat(ctx, "9101", agents.HeartbeatReport{Version: "v2", SecretsState: long}); err != nil {
 		t.Fatal(err)
 	}
 	if a := read(); a.Secrets.State != long {
@@ -87,7 +87,7 @@ func TestHeartbeatStoresSecretsWithLastSeen(t *testing.T) {
 	}
 
 	// Downgraded to a build older than agent.yaml: unknown again.
-	if err := svc.Heartbeat(ctx, "9101", "v1", nil, ""); err != nil {
+	if err := svc.Heartbeat(ctx, "9101", agents.HeartbeatReport{Version: "v1", SecretsState: ""}); err != nil {
 		t.Fatal(err)
 	}
 	if a := read(); a.Secrets.Known || a.Secrets.Names != nil || a.Version != "v1" {
@@ -98,7 +98,7 @@ func TestHeartbeatStoresSecretsWithLastSeen(t *testing.T) {
 	}
 
 	// A new registration describes a new agent: nothing reported yet.
-	if err := svc.Heartbeat(ctx, "9101", "v2", []string{"api"}, "ok"); err != nil {
+	if err := svc.Heartbeat(ctx, "9101", agents.HeartbeatReport{Version: "v2", SecretNames: []string{"api"}, SecretsState: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := svc.Register(ctx, registrationOf(org, h.ID, "agent-a", "v2", "9102")); err != nil {

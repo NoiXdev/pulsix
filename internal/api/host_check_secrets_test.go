@@ -56,7 +56,7 @@ func TestHostChecksMissingSecretIsQuietWithoutASecretCheck(t *testing.T) {
 	}
 	quiet("unknown report")
 
-	if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-host-secrets", "v1", nil, "absent"); err != nil {
+	if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-host-secrets", agents.HeartbeatReport{Version: "v1", SecretsState: "absent"}); err != nil {
 		t.Fatal(err)
 	}
 	quiet("known report without secrets")
@@ -108,13 +108,13 @@ func TestHostChecksCarryTheMissingSecretOfAPostgresCheck(t *testing.T) {
 	if got := missing(); got != "" {
 		t.Fatalf("unknown report: missing_secret = %q", got)
 	}
-	if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-host-pg-secret", "v1", []string{"other"}, "ok"); err != nil {
+	if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-host-pg-secret", agents.HeartbeatReport{Version: "v1", SecretNames: []string{"other"}, SecretsState: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := missing(); got != "db-main" {
 		t.Fatalf("agent reported only %q: missing_secret = %q, want db-main", "other", got)
 	}
-	if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-host-pg-secret", "v1", []string{"other", "db-main"}, "ok"); err != nil {
+	if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-host-pg-secret", agents.HeartbeatReport{Version: "v1", SecretNames: []string{"other", "db-main"}, SecretsState: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := missing(); got != "" {

@@ -183,9 +183,11 @@ func (s *Service) noteVersion(ctx context.Context, agent agents.AgentIdentity, v
 }
 
 // processHeartbeat records the heartbeat in the registry — last_seen, the
-// agent's reported build version and its secrets report (names and file
+// agent's reported build version, its secrets report (names and file
 // state, which the agents service bounds; an agent older than agent.yaml
-// sends no state and is stored as unknown) — then — if a checks service is wired — resolves the host's
+// sends no state and is stored as unknown) and its local checks report
+// (the checks defined in agent.yaml it runs and their problems, which the
+// agents service validates again) — then — if a checks service is wired — resolves the host's
 // configuration and compares its version against what the agent reports
 // in the very same heartbeat (Heartbeat.config_version). A mismatch is
 // answered with the current set, always, regardless of why the versions
@@ -202,7 +204,7 @@ func (s *Service) noteVersion(ctx context.Context, agent agents.AgentIdentity, v
 // heartbeat, so it reaches this same comparison and is recorded the same
 // way.
 func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdentity, hb *agentpb.Heartbeat) (*agentpb.CheckConfig, error) {
-	if err := s.deps.Agents.Heartbeat(ctx, agent.Serial, hb.GetVersion(), hb.GetSecretNames(), hb.GetSecretsState()); err != nil {
+	if err := s.deps.Agents.Heartbeat(ctx, agent.Serial, heartbeatReportOf(hb)); err != nil {
 		return nil, err
 	}
 	s.noteVersion(ctx, agent, hb.GetVersion())
@@ -249,6 +251,19 @@ func (s *Service) processHeartbeat(ctx context.Context, agent agents.AgentIdenti
 		return nil, fmt.Errorf("encode check configuration: %w", err)
 	}
 	return cfg, nil
+}
+
+// heartbeatReportOf hands a heartbeat's fields to the agents service as
+// sent; validating and bounding them is the service's job.
+func heartbeatReportOf(hb *agentpb.Heartbeat) agents.HeartbeatReport {
+	local := make([]agents.LocalCheckInput, len(hb.GetLocalChecks()))
+	for i, c := range hb.GetLocalChecks() {
+		local[i] = agents.LocalCheckInput{Key: c.GetKey(), Plugin: c.GetPlugin(), ParamsJSON: c.GetParamsJson(), IntervalSeconds: c.GetIntervalSeconds()}
+	}
+	return agents.HeartbeatReport{
+		Version: hb.GetVersion(), SecretNames: hb.GetSecretNames(), SecretsState: hb.GetSecretsState(),
+		LocalChecks: local, LocalCheckProblems: hb.GetLocalCheckProblems(),
+	}
 }
 
 // recordConfigCheck stores the comparison processHeartbeat just made —

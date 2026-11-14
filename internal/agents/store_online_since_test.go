@@ -57,7 +57,7 @@ func TestOnlineSinceTracksTheOnlinePeriod(t *testing.T) {
 	}
 	heartbeat := func() {
 		t.Helper()
-		if err := svc.Heartbeat(ctx, "9401", "v1", nil, "ok"); err != nil {
+		if err := svc.Heartbeat(ctx, "9401", agents.HeartbeatReport{Version: "v1", SecretsState: "ok"}); err != nil {
 			t.Fatal(err)
 		}
 	}

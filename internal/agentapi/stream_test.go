@@ -185,6 +185,52 @@ func TestHeartbeatStoresTheSecretsReport(t *testing.T) {
 	}
 }
 
+// TestHeartbeatHandsTheLocalChecksThrough: a heartbeat's local checks
+// and their problems reach the registry with the secrets report, validated
+// by the agents service (an invalid check never lands); a heartbeat
+// without a secrets state — an agent older than local checks — stores
+// them as unknown.
+func TestHeartbeatHandsTheLocalChecksThrough(t *testing.T) {
+	h := newHarness(t)
+	_, client := enrollAnAgent(t, h, "web-1")
+	stream, err := (*client).AgentStream(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hb := range []*agentpb.Heartbeat{
+		{Version: "v1", SecretsState: "ok", LocalChecks: []*agentpb.LocalCheck{
+			{Key: "local-disk", Plugin: "disk", ParamsJson: `{"mounts":["/"]}`, IntervalSeconds: 300},
+			{Key: "no-prefix", Plugin: "cpu", ParamsJson: `{}`, IntervalSeconds: 60},
+		}, LocalCheckProblems: []string{`line 4: check "x": unknown plugin "nope"`}},
+		{Version: "v1", LocalChecks: []*agentpb.LocalCheck{{Key: "local-cpu", Plugin: "cpu", ParamsJson: `{}`, IntervalSeconds: 60}}},
+	} {
+		if err := stream.Send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{Heartbeat: hb}}); err != nil {
+			t.Fatal(err)
+		}
+		if ack, err := recvWithin(t, stream, recvTimeout); err != nil || !ack.GetAck() {
+			t.Fatalf("heartbeat ack = %+v, %v", ack, err)
+		}
+	}
+	reports := h.store.localChecksReports()
+	if len(reports) != 2 {
+		t.Fatalf("reports = %+v, want one per heartbeat", reports)
+	}
+	r := reports[0]
+	if !r.Known || len(r.Checks) != 1 || r.Checks[0].Key != "local-disk" || r.Checks[0].Plugin != "disk" ||
+		r.Checks[0].Interval != 5*time.Minute || len(r.Checks[0].Params) != 1 {
+		t.Fatalf("first report = %+v, want known with local-disk only", r)
+	}
+	if len(r.Problems) != 1 || r.Problems[0] != `line 4: check "x": unknown plugin "nope"` {
+		t.Fatalf("problems = %q", r.Problems)
+	}
+	if r := reports[1]; r.Known || r.Checks != nil {
+		t.Fatalf("report without a secrets state = %+v, want unknown", r)
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestFactsFlowToSink: facts land on the sink with the authenticated
 // agent's org and host, and the message is acknowledged.
 func TestFactsFlowToSink(t *testing.T) {

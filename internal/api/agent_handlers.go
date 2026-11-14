@@ -52,6 +52,10 @@ type agentDTO struct {
 	// which is not the same as an empty list ("no secrets").
 	SecretNames  []string `json:"secret_names" nullable:"true" doc:"The names of the secrets the agent loaded from its agent.yaml, sorted; null when unknown (an agent too old to report them, or no heartbeat yet)"`
 	SecretsState *string  `json:"secrets_state" nullable:"true" doc:"The state of the agent's agent.yaml: absent, ok, or the error that made the agent drop every secret; null when unknown"`
+	// LocalCheckProblems is the agent's last report on the checks defined
+	// in its agent.yaml (backlog 3.5a): why entries do not run. Null when
+	// the agent has not reported, like the secret names.
+	LocalCheckProblems []string `json:"local_check_problems" nullable:"true" doc:"Why checks defined in the agent's agent.yaml do not run, one line each, as the agent reported them; empty when all run, null when unknown (an agent too old to report them, or no heartbeat yet)"`
 	// ConfigVersion, ConfigExpected and ConfigCheckedAt are the manager's
 	// latest comparison of the check configuration the agent runs against
 	// the one it resolved for the host (backlog 3.13c). All three are
@@ -148,6 +152,12 @@ func toAgentDTO(v agents.View, managerVersion string) agentDTO {
 		dto.SecretNames, dto.SecretsState = v.Secrets.Names, &state
 		if dto.SecretNames == nil {
 			dto.SecretNames = []string{}
+		}
+	}
+	if v.LocalChecks.Known {
+		dto.LocalCheckProblems = v.LocalChecks.Problems
+		if dto.LocalCheckProblems == nil {
+			dto.LocalCheckProblems = []string{}
 		}
 	}
 	return dto

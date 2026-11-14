@@ -64,7 +64,8 @@ ORDER BY h.agent_name;
 -- carries the previous serials — the service marks the old one revoked in
 -- the same transaction. Like last_seen, the secrets report (00086) and the
 -- configuration check (00089) start over: the new registration has
--- neither reported nor been compared yet. The connection start (00088,
+-- neither reported nor been compared yet; so does the local checks report
+-- (00095). The connection start (00088,
 -- backlog 3.12c) is kept when the previous registration was last seen
 -- within the reconnect gap — a renewal happens on a live connection, every
 -- ~60 days, and must not restart the item expiry's wait — and otherwise
@@ -82,6 +83,7 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
       THEN host_agents.connected_since END,
     online_since = NULL,
     secret_names = NULL, secrets_state = NULL,
+    local_checks = NULL, local_check_problems = NULL,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
 RETURNING *;
 
@@ -121,13 +123,15 @@ WHERE cert_serial = sqlc.arg(serial);
 
 -- name: RecordAgentHeartbeat :exec
 -- A heartbeat message (org-unscoped, by serial like TouchAgentBySerial):
--- last_seen, the build version and the agent's secrets report in one
--- statement. Both report columns are NULL together for an agent that
--- sends no report (older than agent.yaml), so a downgrade reads as
--- unknown rather than keeping what a newer build said. connected_since
--- and online_since follow TouchAgentBySerial's rules, word for word.
+-- last_seen, the build version, the agent's secrets report and its local
+-- checks report (00095) in one statement. The four report columns are NULL
+-- together for an agent that sends no report (older than agent.yaml), so
+-- a downgrade reads as unknown rather than keeping what a newer build
+-- said. connected_since and online_since follow TouchAgentBySerial's
+-- rules, word for word.
 UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
   secret_names = sqlc.narg(secret_names)::text[], secrets_state = sqlc.narg(secrets_state),
+  local_checks = sqlc.narg(local_checks)::jsonb, local_check_problems = sqlc.narg(local_check_problems)::text[],
   connected_since = CASE
     WHEN connected_since IS NULL
       OR (last_seen IS NOT NULL
@@ -138,6 +142,14 @@ UPDATE host_agents SET last_seen = now(), version = sqlc.arg(version),
       OR last_seen < now() - make_interval(secs => sqlc.arg(online_window_seconds)::double precision)
     THEN now() ELSE online_since END
 WHERE cert_serial = sqlc.arg(serial);
+
+-- name: ListAgentLocalChecks :many
+-- The local checks reports (00095) of the listed hosts' agents, for the
+-- check resolution of several hosts at once. A host without an agent has
+-- no row; NULL columns are "unknown".
+SELECT host_id, local_checks, local_check_problems
+FROM host_agents
+WHERE org_id = sqlc.arg(org_id) AND host_id = ANY(sqlc.arg(host_ids)::uuid[]);
 
 -- name: RecordAgentConfigCheck :exec
 -- One configuration comparison of the heartbeat path (org-unscoped, by

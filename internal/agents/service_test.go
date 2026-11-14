@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -316,7 +317,7 @@ func (f *fakeStore) Touch(_ context.Context, serial, version string) error {
 	return nil
 }
 
-func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets agents.SecretsReport) error {
+func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.touched = append(f.touched, serial+":"+version)
@@ -326,9 +327,22 @@ func (f *fakeStore) Heartbeat(_ context.Context, serial, version string, secrets
 			f.agentsR[i].LastSeen = &now
 			f.agentsR[i].Version = version
 			f.agentsR[i].Secrets = secrets
+			f.agentsR[i].LocalChecks = local
 		}
 	}
 	return nil
+}
+
+func (f *fakeStore) LocalChecksByHosts(_ context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]agents.LocalChecksReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]agents.LocalChecksReport{}
+	for _, a := range f.agentsR {
+		if a.OrgID == orgID && slices.Contains(hostIDs, a.HostID) {
+			out[a.HostID] = a.LocalChecks
+		}
+	}
+	return out, nil
 }
 
 // RecordConfigCheck stores the check on the agent row unconditionally;

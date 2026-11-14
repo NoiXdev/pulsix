@@ -3,6 +3,8 @@ package agents_test
 import (
 	"testing"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/agents"
 )
 
 // TestConnectedSinceTracksTheConnection walks one agent through the
@@ -66,7 +68,7 @@ func TestConnectedSinceTracksTheConnection(t *testing.T) {
 	}
 	heartbeat := func() {
 		t.Helper()
-		if err := svc.Heartbeat(ctx, "9301", "v1", nil, "ok"); err != nil {
+		if err := svc.Heartbeat(ctx, "9301", agents.HeartbeatReport{Version: "v1", SecretsState: "ok"}); err != nil {
 			t.Fatal(err)
 		}
 	}

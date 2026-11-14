@@ -3172,6 +3172,8 @@ export interface components {
             host_name: string;
             /** Format: date-time */
             last_seen?: string;
+            /** @description Why checks defined in the agent's agent.yaml do not run, one line each, as the agent reported them; empty when all run, null when unknown (an agent too old to report them, or no heartbeat yet) */
+            local_check_problems: string[] | null;
             /** @description The names of the secrets the agent loaded from its agent.yaml, sorted; null when unknown (an agent too old to report them, or no heartbeat yet) */
             secret_names: string[] | null;
             /** @description The state of the agent's agent.yaml: absent, ok, or the error that made the agent drop every secret; null when unknown */

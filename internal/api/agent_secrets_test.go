@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/noixdev/pulsix/internal/agents"
 )
 
 // TestAgentDTOReportsSecrets: the host's agent card and the Agents page
@@ -44,7 +46,7 @@ func TestAgentDTOReportsSecrets(t *testing.T) {
 
 	heartbeat := func(names []string, state string) {
 		t.Helper()
-		if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-secrets-1", "v0.3a", names, state); err != nil {
+		if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-secrets-1", agents.HeartbeatReport{Version: "v0.3a", SecretNames: names, SecretsState: state}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,4 +58,51 @@ func TestAgentDTOReportsSecrets(t *testing.T) {
 
 	heartbeat(nil, "")
 	expect("null", "null")
+}
+
+// TestAgentDTOReportsLocalCheckProblems: the host's agent card and the
+// Agents page carry the problems the agent reported about the checks
+// defined in its agent.yaml (backlog 3.5a): null when unknown — an agent
+// older than local checks, or one that has not reported — [] when there
+// are none, the list otherwise.
+func TestAgentDTOReportsLocalCheckProblems(t *testing.T) {
+	f := newAgentFixture(t, "agent-local-problems")
+	f.enroll(t, "agent-a", "v0.3a", "serial-local-1", true)
+
+	expect := func(want string) {
+		t.Helper()
+		var body struct {
+			Agent map[string]json.RawMessage `json:"agent"`
+		}
+		decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/hosts/"+f.host.ID.String()+"/agent", nil), &body)
+		if got, ok := body.Agent["local_check_problems"]; !ok || string(got) != want {
+			t.Fatalf("card local_check_problems = %s (present %v), want %s", got, ok, want)
+		}
+		var list struct {
+			Agents []map[string]json.RawMessage `json:"agents"`
+		}
+		decodeInto(t, requestJSON(t, f.viewx, http.MethodGet, f.base+"/agents", nil), &list)
+		if len(list.Agents) != 1 || string(list.Agents[0]["local_check_problems"]) != want {
+			t.Fatalf("list row = %v; want local_check_problems %s", list.Agents, want)
+		}
+	}
+	heartbeat := func(state string, problems []string) {
+		t.Helper()
+		if err := f.s.Deps.Agents.Heartbeat(context.Background(), "serial-local-1", agents.HeartbeatReport{
+			Version: "v0.3a", SecretsState: state, LocalCheckProblems: problems,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	expect("null")
+
+	heartbeat("ok", nil)
+	expect(`[]`)
+
+	heartbeat("ok", []string{`line 4: check "local-x": unknown plugin "nope"`})
+	expect(`["line 4: check \"local-x\": unknown plugin \"nope\""]`)
+
+	heartbeat("", []string{"stray"})
+	expect("null")
 }

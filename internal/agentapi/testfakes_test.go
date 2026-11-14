@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -120,9 +121,10 @@ type fakeAgentStore struct {
 	agentsR           []agents.Agent
 	certs             map[string]agents.AgentIdentity // serial → identity
 	revokedC          map[string]bool
-	touched           []string               // "serial:version" per Touch or Heartbeat call
-	reports           []agents.SecretsReport // per Heartbeat call
-	configChecks      []configCheckCall      // per RecordConfigCheck call
+	touched           []string                   // "serial:version" per Touch or Heartbeat call
+	reports           []agents.SecretsReport     // per Heartbeat call
+	localReports      []agents.LocalChecksReport // per Heartbeat call
+	configChecks      []configCheckCall          // per RecordConfigCheck call
 	configCheckErr    error
 	touchErr          error
 	lookupErr         error
@@ -313,21 +315,37 @@ func (f *fakeAgentStore) Touch(_ context.Context, serial, version string) error 
 	return nil
 }
 
-// Heartbeat is Touch plus the secrets report, which it records and
-// stores on the agent row the way the SQL store does.
-func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, secrets agents.SecretsReport) error {
+// Heartbeat is Touch plus the secrets and local checks reports, which it
+// records and stores on the agent row the way the SQL store does.
+func (f *fakeAgentStore) Heartbeat(ctx context.Context, serial, version string, secrets agents.SecretsReport, local agents.LocalChecksReport) error {
 	if err := f.Touch(ctx, serial, version); err != nil {
 		return err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reports = append(f.reports, secrets)
+	f.localReports = append(f.localReports, local)
 	for i := range f.agentsR {
 		if f.agentsR[i].CertSerial == serial {
 			f.agentsR[i].Secrets = secrets
+			f.agentsR[i].LocalChecks = local
 		}
 	}
 	return nil
+}
+
+// LocalChecksByHosts reads the stored local checks reports of the listed
+// hosts' agents.
+func (f *fakeAgentStore) LocalChecksByHosts(_ context.Context, orgID uuid.UUID, hostIDs []uuid.UUID) (map[uuid.UUID]agents.LocalChecksReport, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[uuid.UUID]agents.LocalChecksReport{}
+	for _, a := range f.agentsR {
+		if a.OrgID == orgID && slices.Contains(hostIDs, a.HostID) {
+			out[a.HostID] = a.LocalChecks
+		}
+	}
+	return out, nil
 }
 
 // configCheckCall is one RecordConfigCheck call.
@@ -352,6 +370,13 @@ func (f *fakeAgentStore) recordedConfigChecks() []configCheckCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]configCheckCall(nil), f.configChecks...)
+}
+
+// localChecksReports returns every Heartbeat call's local checks report.
+func (f *fakeAgentStore) localChecksReports() []agents.LocalChecksReport {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]agents.LocalChecksReport(nil), f.localReports...)
 }
 
 // secretsReports returns every Heartbeat call's report.
