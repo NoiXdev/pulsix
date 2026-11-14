@@ -102,6 +102,9 @@ type checkerFunc func(string) error
 
 func (f checkerFunc) Check(path string) (string, error) { return path, f(path) }
 
+// CheckPlace passes every place: checkerFunc's tests are about Check.
+func (checkerFunc) CheckPlace(string) error { return nil }
+
 func TestCollectRecoversPanics(t *testing.T) {
 	t.Run("in the runner", func(t *testing.T) {
 		r := &fakeRunner{run: func(_ context.Context, argv []string) (runResult, error) {

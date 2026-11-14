@@ -333,3 +333,25 @@ func TestCommandEnv(t *testing.T) {
 		t.Errorf("windows with nothing set: %#v, want an empty, non-nil environment", got)
 	}
 }
+
+// TestCommandArg0: on Windows a .bat or .cmd program runs through
+// cmd.exe, which runs the file the command line's first word names, not
+// the one the process was created from: that word is the checked path.
+// Any other program keeps its configured name.
+func TestCommandArg0(t *testing.T) {
+	cases := []struct {
+		goos, path, arg0, want string
+	}{
+		{"windows", `C:\real\check.bat`, `C:\link\check.bat`, `C:\real\check.bat`},
+		{"windows", `C:\real\check.CMD`, `C:\link\check.CMD`, `C:\real\check.CMD`},
+		{"windows", `C:\real\check.exe`, `C:\link\check.exe`, `C:\link\check.exe`},
+		{"windows", `C:\real\check.bat.exe`, `C:\link\x.bat.exe`, `C:\link\x.bat.exe`},
+		{"linux", "/real/check.bat", "/link/check.bat", "/link/check.bat"},
+		{"darwin", "/real/busybox", "/bin/ping", "/bin/ping"},
+	}
+	for _, tc := range cases {
+		if got := commandArg0(tc.goos, tc.path, tc.arg0); got != tc.want {
+			t.Errorf("commandArg0(%s, %s, %s) = %s, want %s", tc.goos, tc.path, tc.arg0, got, tc.want)
+		}
+	}
+}

@@ -63,17 +63,56 @@ func trustedSIDs() ([]*windows.SID, error) {
 	return []*windows.SID{system, admins, installer}, nil
 }
 
+// placeMask are the rights on a missing file's own directory that let
+// someone put a file at its name: writeMask without the right to add a
+// subdirectory (FILE_ADD_SUBDIRECTORY, which is FILE_APPEND_DATA), which
+// every user has on C:\ and which creates a directory, no file. A switch
+// like /c reads as a missing file in C:\, so C:\ must pass here.
+const placeMask = writeMask &^ windows.FILE_APPEND_DATA
+
+// textNetworkPath refuses a network path, by its syntax or once resolved.
+const textNetworkPath = "network paths are not supported"
+
+// judgeSyntax decides a path that starts with two separators by its
+// syntax alone, without a stat (windowsPathKindOf): a network path is
+// refused, a device or namespace path too (as a program; an argument of
+// that form never reaches the checker, fileArgument), and \\x without a
+// share names no file.
+func judgeSyntax(path string) error {
+	switch windowsPathKindOf(path) {
+	case pathNetwork:
+		return refuse(textNetworkPath)
+	case pathDevice:
+		return refuse("device and namespace paths are not supported")
+	case pathNoShare:
+		return errNotFile
+	}
+	return nil
+}
+
 // resolveFile returns the final path of the regular file path names,
 // with every symlink and junction on the way resolved, as Windows itself
-// reports it for the opened file; a path that names none is errNotFile.
+// reports it for the opened file; a path that names none is errNotFile,
+// one that leads to a network path is refused.
 func resolveFile(path string) (string, error) {
+	return resolveTo(path, fs.FileMode.IsRegular)
+}
+
+// resolveDir is resolveFile for a directory.
+func resolveDir(path string) (string, error) {
+	return resolveTo(path, fs.FileMode.IsDir)
+}
+
+// resolveTo resolves path as resolveFile does; is says which kind of
+// file it must name.
+func resolveTo(path string, is func(fs.FileMode) bool) (string, error) {
 	fi, err := os.Stat(path)
 	switch {
 	case err != nil && namesNoFile(err):
 		return "", errNotFile
 	case err != nil:
 		return "", err
-	case !fi.Mode().IsRegular():
+	case !is(fi.Mode()):
 		return "", errNotFile
 	}
 	p, err := windows.UTF16PtrFromString(path)
@@ -94,7 +133,10 @@ func resolveFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if fi, err := os.Lstat(final); err != nil || !fi.Mode().IsRegular() {
+	if windowsPathKindOf(final) != pathLocal {
+		return "", refuse(textNetworkPath)
+	}
+	if fi, err := os.Lstat(final); err != nil || !is(fi.Mode()) {
 		if err != nil && !namesNoFile(err) {
 			return "", err
 		}
@@ -154,6 +196,31 @@ func judgeFile(resolved string) error {
 	if err := judgePath(dir, "its directory ", writeMask, trusted); err != nil {
 		return err
 	}
+	return judgeAncestors(dir, trusted)
+}
+
+// judgePlace judges dir, the final path of the deepest directory on a
+// missing file's way: its own directory (own) with placeMask, else, a
+// directory missing below it, with every write right (writeMask), since
+// adding a subdirectory there makes the way; every directory above it
+// with ancestorMask.
+func judgePlace(dir string, own bool) error {
+	trusted, err := trustedSIDs()
+	if err != nil {
+		return err
+	}
+	subject, mask := "a directory above it ", windows.ACCESS_MASK(writeMask)
+	if own {
+		subject, mask = "its directory ", placeMask
+	}
+	if err := judgePath(dir, subject, mask, trusted); err != nil {
+		return err
+	}
+	return judgeAncestors(dir, trusted)
+}
+
+// judgeAncestors judges every directory above dir with ancestorMask.
+func judgeAncestors(dir string, trusted []*windows.SID) error {
 	for parent := filepath.Dir(dir); parent != dir; dir, parent = parent, filepath.Dir(parent) {
 		if err := judgePath(parent, "a directory above it ", ancestorMask, trusted); err != nil {
 			return err

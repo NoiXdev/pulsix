@@ -4,6 +4,7 @@ package script
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -80,24 +81,20 @@ func TestStatChain(t *testing.T) {
 	}
 }
 
-// rootOwnedShell is /bin/sh resolved, skipping the test unless it and its
-// directory are root-owned and writable by nobody else.
+// rootOwnedShell is /bin/sh resolved, skipping the test unless it and
+// every directory above it are root-owned and writable by nobody else.
 func rootOwnedShell(t *testing.T) string {
 	t.Helper()
 	sh, err := filepath.EvalSymlinks("/bin/sh")
 	if err != nil {
 		t.Skipf("resolve /bin/sh: %v", err)
 	}
-	for _, p := range []string{sh, filepath.Dir(sh)} {
-		fi, err := os.Stat(p)
-		if err != nil {
-			t.Skipf("stat %s: %v", p, err)
-		}
-		if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Uid != 0 || fi.Mode().Perm()&0o022 != 0 {
-			t.Skipf("%s is not root-owned and closed to others", p)
+	for p := sh; ; p = filepath.Dir(p) {
+		rootOwnedAndClosed(t, p)
+		if filepath.Dir(p) == p {
+			return sh
 		}
 	}
-	return sh
 }
 
 func TestFileCheckerAcceptsARootOwnedProgram(t *testing.T) {
@@ -200,5 +197,95 @@ func TestFileCheckerCouldNotCheck(t *testing.T) {
 	_, err := (fileChecker{}).Check(p)
 	if err == nil || errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
 		t.Fatalf("Check = %v, want an error that is neither errNotFile nor a refusal", err)
+	}
+}
+
+// TestFileCheckerPlace: an argument that names no regular file is judged
+// by the deepest directory on its way that exists: its own directory
+// ("its directory"), or one further up while directories are missing ("a
+// directory above it"). The root, a device, a mount point and a URL path
+// under root-owned directories pass.
+func TestFileCheckerPlace(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a temp directory is root-owned")
+	}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dangling := filepath.Join(dir, "dangling")
+	if err := os.Symlink(filepath.Join(dir, "nothing"), dangling); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	uid := os.Geteuid()
+	own := fmt.Sprintf("its directory is owned by uid %d, not by root", uid)
+	above := fmt.Sprintf("a directory above it is owned by uid %d, not by root", uid)
+	for p, want := range map[string]string{
+		filepath.Join(dir, "missing.py"):           own,
+		filepath.Join(dir, "missing", "deeper.py"): above,
+		fifo:                      own,
+		dangling:                  own,
+		filepath.Join(dir, "sub"): own,
+		filepath.Join(link, "missing", "deeper.py"): above,
+		filepath.Join(fifo, "below"):                above,
+	} {
+		if err := (fileChecker{}).CheckPlace(p); !errors.Is(err, errRefused) || err.Error() != want {
+			t.Errorf("CheckPlace(%s) = %v, want the refusal %q", p, err, want)
+		}
+	}
+	rootOwnedAndClosed(t, "/")
+	for _, p := range []string{"/", "/health-of-pulsix-test", "/mnt-of-pulsix-test/nfs"} {
+		if err := (fileChecker{}).CheckPlace(p); err != nil {
+			t.Errorf("CheckPlace(%s) = %v, want it to pass", p, err)
+		}
+	}
+	if fi, err := os.Stat("/dev"); err == nil && fi.Sys().(*syscall.Stat_t).Uid == 0 && fi.Mode().Perm()&0o022 == 0 {
+		if err := (fileChecker{}).CheckPlace("/dev/null"); err != nil {
+			t.Errorf("CheckPlace(/dev/null) = %v, want it to pass", err)
+		}
+	}
+}
+
+// TestFileCheckerPlaceCouldNotCheck: a directory on the way the checker
+// may not search is neither a refusal nor a pass.
+func TestFileCheckerPlaceCouldNotCheck(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root searches any directory")
+	}
+	closed := filepath.Join(t.TempDir(), "closed")
+	if err := os.Mkdir(closed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(closed, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(closed, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(closed, 0o700) })
+	err := (fileChecker{}).CheckPlace(filepath.Join(closed, "sub", "x.py"))
+	if err == nil || errors.Is(err, errRefused) {
+		t.Fatalf("CheckPlace = %v, want an error that is no refusal", err)
+	}
+}
+
+// rootOwnedAndClosed skips the test unless path (a file or a directory) is
+// root-owned and writable by nobody else.
+func rootOwnedAndClosed(t *testing.T, path string) {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Skipf("stat %s: %v", path, err)
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Uid != 0 || fi.Mode().Perm()&0o022 != 0 {
+		t.Skipf("%s is not root-owned and closed to others", path)
 	}
 }

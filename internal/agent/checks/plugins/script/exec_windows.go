@@ -126,8 +126,17 @@ func checkProgramName(prog string) error {
 // working directory's drive, and a path with a drive but no root (`C:x`)
 // from that drive's working directory, which for a command is the drive's
 // root: the system drive's is its working directory, and it inherits no
-// other.
+// other. A path that starts with two separators is decided by its syntax
+// alone, never stat'ed (windowsPathKindOf): a device or namespace path, or
+// \\x without a share (a switch like //Nologo), names no file to check;
+// a network path goes to the checker, which refuses it.
 func fileArgument(arg string) (string, bool, error) {
+	switch windowsPathKindOf(arg) {
+	case pathDevice, pathNoShare:
+		return "", false, nil
+	case pathNetwork:
+		return arg, true, nil
+	}
 	if filepath.IsAbs(arg) {
 		return arg, true, nil
 	}

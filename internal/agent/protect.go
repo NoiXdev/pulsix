@@ -39,7 +39,7 @@ type privateFile struct{ kind, holds, flag string }
 
 var (
 	envFile    = privateFile{kind: "env file", holds: "the enrollment token", flag: "--env-file"}
-	configFile = privateFile{kind: "configuration file", holds: "secrets", flag: "--config"}
+	configFile = privateFile{kind: "configuration file", holds: "secrets or commands", flag: "--config"}
 )
 
 // CheckEnvFile refuses an env file another user could read or change: it
@@ -49,7 +49,7 @@ func CheckEnvFile(p protector, path string) error { return checkPrivateFile(p, p
 
 // CheckConfigFile applies CheckEnvFile's rule, with this platform's
 // protector, to the configuration file that holds the agent's secrets
-// (agent.yaml). Its error text is reported to the manager as the file's
+// and the commands it runs (agent.yaml). Its error text is reported to the manager as the file's
 // state, so it names the path and the finding only.
 func CheckConfigFile(path string) error { return checkConfigFile(newProtector(), path) }
 

@@ -120,7 +120,7 @@ func TestLoopHeartbeatReportsARefusedSecretsFile(t *testing.T) {
 	cancel, done := runLoop(t, NewLoop(lt.cfg, lt.dialer, lt.facts, opts...))
 	waitFor(t, 2*time.Second, func() bool { return len(heartbeats(stream)) > 0 })
 	hb := heartbeats(stream)[0]
-	want := "configuration file " + lt.cfg.SecretsPath + " holds secrets but is accessible to mode 0644; restrict it"
+	want := "configuration file " + lt.cfg.SecretsPath + " holds secrets or commands but is accessible to mode 0644; restrict it"
 	if len(hb.GetSecretNames()) != 0 || hb.GetSecretsState() != want {
 		t.Errorf("heartbeat = %v, want no names and state %q", hb, want)
 	}
@@ -161,7 +161,7 @@ func TestLoopStartsWithARefusedSecretsFileInTheDataDir(t *testing.T) {
 			cancel, done := runLoop(t, NewLoop(lt.cfg, lt.dialer, lt.facts, opts...))
 			waitFor(t, 2*time.Second, func() bool { return len(heartbeats(stream)) > 0 })
 			hb := heartbeats(stream)[0]
-			want := "configuration file " + lt.cfg.SecretsPath + ` holds secrets but is accessible to owner PC\mallory, BUILTIN\Users; restrict it`
+			want := "configuration file " + lt.cfg.SecretsPath + ` holds secrets or commands but is accessible to owner PC\mallory, BUILTIN\Users; restrict it`
 			if len(hb.GetSecretNames()) != 0 || hb.GetSecretsState() != want {
 				t.Errorf("heartbeat = %v, want no names and state %q", hb, want)
 			}
@@ -305,7 +305,7 @@ func TestSecretsSourceSaysWhyASecretIsMissing(t *testing.T) {
 	clock := func() time.Time { return now }
 	w := secrets.NewWatcher(path, func(p string) error {
 		if refuse {
-			return fmt.Errorf("configuration file %s holds secrets but is accessible to mode 0644; restrict it", p)
+			return fmt.Errorf("configuration file %s holds secrets or commands but is accessible to mode 0644; restrict it", p)
 		}
 		return nil
 	}, secrets.WithClock(clock))
@@ -324,7 +324,7 @@ func TestSecretsSourceSaysWhyASecretIsMissing(t *testing.T) {
 	}
 	refuse = true
 	now = now.Add(time.Minute)
-	want := "the file is not usable: configuration file " + path + " holds secrets but is accessible to mode 0644; restrict it"
+	want := "the file is not usable: configuration file " + path + " holds secrets or commands but is accessible to mode 0644; restrict it"
 	if _, ok, problem := src.Secret("pg"); ok || problem != want {
 		t.Fatalf("refused: ok %v, problem %q, want %q", ok, problem, want)
 	}
@@ -357,7 +357,7 @@ func TestCommandsSourceSaysWhyACommandIsMissing(t *testing.T) {
 	clock := func() time.Time { return now }
 	w := secrets.NewWatcher(path, func(p string) error {
 		if refuse {
-			return fmt.Errorf("configuration file %s holds secrets but is accessible to mode 0644; restrict it", p)
+			return fmt.Errorf("configuration file %s holds secrets or commands but is accessible to mode 0644; restrict it", p)
 		}
 		return nil
 	}, secrets.WithClock(clock))
@@ -377,7 +377,7 @@ func TestCommandsSourceSaysWhyACommandIsMissing(t *testing.T) {
 	}
 	refuse = true
 	now = now.Add(time.Minute)
-	wantProblem := "the file is not usable: configuration file " + path + " holds secrets but is accessible to mode 0644; restrict it"
+	wantProblem := "the file is not usable: configuration file " + path + " holds secrets or commands but is accessible to mode 0644; restrict it"
 	if argv, ok, problem := src.Command("disk"); ok || argv != nil || problem != wantProblem {
 		t.Fatalf("refused: %q, ok %v, problem %q, want %q", argv, ok, problem, wantProblem)
 	}

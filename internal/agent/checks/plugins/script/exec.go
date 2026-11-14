@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -70,7 +71,7 @@ func (r execRunner) Run(ctx context.Context, path string, argv []string) (runRes
 	// The file run is path, the one the checker passed; the process sees
 	// the program's name as the command gives it.
 	cmd := exec.CommandContext(ctx, path, argv[1:]...)
-	cmd.Args[0] = argv[0]
+	cmd.Args[0] = commandArg0(runtime.GOOS, path, argv[0])
 	cmd.Env = commandEnv(runtime.GOOS, os.LookupEnv)
 	cmd.Dir = dir
 	cmd.Stdout = out
@@ -134,6 +135,22 @@ func (r execRunner) Run(ctx context.Context, path string, argv []string) (runRes
 		res.exited, res.exitCode = true, ps.ExitCode()
 	}
 	return res, nil
+}
+
+// commandArg0 is the process's first argument: the program's name as the
+// command gives it (a multi-call binary reads it), except on Windows for
+// a .bat or .cmd program. Windows runs those through cmd.exe, which runs
+// the file the command line's first word names rather than the one the
+// process was created from, so that word is the checked path.
+func commandArg0(goos, path, arg0 string) string {
+	if goos != "windows" {
+		return arg0
+	}
+	switch strings.ToLower(filepath.Ext(strings.ReplaceAll(path, `\`, "/"))) {
+	case ".bat", ".cmd":
+		return path
+	}
+	return arg0
 }
 
 // stopped is Run's error once ctx ended: errTimeout for its deadline,

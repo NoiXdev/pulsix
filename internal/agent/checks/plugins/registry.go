@@ -1,9 +1,10 @@
 // Package plugins wires the agent's check plugins together. Each plugin
 // lives in its own package below this one (cpu, memory, disk, network,
-// service, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache, caddy, phpfpm, script) and imports internal/agent/checks for the
-// Plugin interface and the shared observation helpers; the registry lives
-// here rather than in checks because checks importing the plugins would
-// close an import cycle.
+// service, uptime, docker, temperature, smart, raid, postgres, mysql,
+// redis, nginx, apache, caddy, phpfpm, script) and imports
+// internal/agent/checks for the Plugin interface and the shared
+// observation helpers; the registry lives here rather than in checks
+// because checks importing the plugins would close an import cycle.
 //
 // Adding a plugin, everything one change must touch:
 //

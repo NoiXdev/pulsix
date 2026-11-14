@@ -36,6 +36,43 @@ func resolveFile(path string) (string, error) {
 	return "", err
 }
 
+// resolveDir resolves every symlink in path and returns the directory it
+// names; a path that names none is errNotFile.
+func resolveDir(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		var fi fs.FileInfo
+		if fi, err = os.Lstat(resolved); err == nil && !fi.IsDir() {
+			return "", errNotFile
+		}
+	}
+	switch {
+	case err == nil:
+		return resolved, nil
+	case namesNoFile(err):
+		return "", errNotFile
+	}
+	return "", err
+}
+
+// judgeSyntax refuses nothing on Unix: every absolute path is one to stat.
+func judgeSyntax(string) error { return nil }
+
+// judgePlace judges dir, a directory without links on its way, and every
+// directory above it by the rule for a file's directories (judgeDirs);
+// own says whether dir is the path's own directory.
+func judgePlace(dir string, own bool) error {
+	dirs, err := dirChain(dir)
+	if err != nil {
+		return err
+	}
+	first := "a directory above it"
+	if own {
+		first = "its directory"
+	}
+	return judgeDirs(dirs, first)
+}
+
 // judgeFile judges resolved, a regular file without links on its way, and
 // every directory above it up to the root.
 func judgeFile(resolved string) error {
@@ -53,15 +90,24 @@ func statChain(resolved string) (unixFile, []unixFile, error) {
 	if err != nil {
 		return unixFile{}, nil, err
 	}
+	dirs, err := dirChain(filepath.Dir(resolved))
+	if err != nil {
+		return unixFile{}, nil, err
+	}
+	return file, dirs, nil
+}
+
+// dirChain reads dir and each directory above it, the root last.
+func dirChain(dir string) ([]unixFile, error) {
 	var dirs []unixFile
-	for dir := filepath.Dir(resolved); ; dir = filepath.Dir(dir) {
+	for ; ; dir = filepath.Dir(dir) {
 		d, err := unixStat(dir)
 		if err != nil {
-			return unixFile{}, nil, err
+			return nil, err
 		}
 		dirs = append(dirs, d)
 		if filepath.Dir(dir) == dir {
-			return file, dirs, nil
+			return dirs, nil
 		}
 	}
 }
@@ -99,10 +145,16 @@ func judgeUnix(file unixFile, dirs []unixFile) error {
 	case file.mode.Perm()&0o022 != 0:
 		return refuse("writable by group or others")
 	}
+	return judgeDirs(dirs, "its directory")
+}
+
+// judgeDirs is judgeUnix's rule for directories, dirs[0] named first in a
+// refusal, the rest "a directory above it".
+func judgeDirs(dirs []unixFile, first string) error {
 	for i, dir := range dirs {
 		which := "a directory above it"
 		if i == 0 {
-			which = "its directory"
+			which = first
 		}
 		switch {
 		case dir.uid != 0:

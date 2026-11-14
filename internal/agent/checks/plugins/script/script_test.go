@@ -358,8 +358,8 @@ func TestNewWiresTheRealRunnerAndChecker(t *testing.T) {
 	if !ok || r.busy == nil || r.noKill {
 		t.Errorf("runner %#v, want an execRunner with its busy set", p.run)
 	}
-	if _, ok := p.check.(fileChecker); !ok {
-		t.Errorf("checker %T, want fileChecker", p.check)
+	if _, ok := p.check.(fileChecker); !ok || p.checking == nil {
+		t.Errorf("checker %T (checking set: %v), want fileChecker with its checking set", p.check, p.checking != nil)
 	}
 	if _, ok := checks.Plugin(p).(checks.CommandPlugin); !ok {
 		t.Error("New() is not a CommandPlugin")

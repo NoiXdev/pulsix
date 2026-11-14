@@ -14,9 +14,11 @@
 // perfdata, nagios.go) or the JSON format (jsonformat.go).
 //
 // Before every run the program, and every argument that names a regular
-// file by an absolute path, passes the checker; the runner then runs the
-// file the checker resolved, with the resolved argument paths, directly
-// within timeout_seconds (runner.go). At most maxParallel
+// file by an absolute path, passes the checker, and an absolute argument
+// that names no file has its place judged (checkfiles.go); the runner
+// then runs the file the checker resolved, with the resolved argument
+// paths, directly. Checks and run together end within timeout_seconds
+// (runner.go). At most maxParallel
 // commands of one check run at once. Every failure (an undefined command,
 // a refused file, a timeout, a start failure, an earlier run still stuck,
 // even a panic) is reported as status unknown with a fixed output that
@@ -30,7 +32,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -69,12 +70,14 @@ const (
 	metricValue    = "script.value"
 )
 
-// scriptPlugin runs host-defined commands. It holds no state of its own:
-// the runner keeps what must outlive a round (the commands it could not
-// stop), so one value serves every check key at once.
+// scriptPlugin runs host-defined commands. What must outlive a round is
+// shared by every check key the one value serves: the runner keeps the
+// commands it could not stop, checking the commands whose file checks
+// outlived their round's timeout.
 type scriptPlugin struct {
-	run   runner
-	check checker
+	run      runner
+	check    checker
+	checking *inflight
 }
 
 // New returns the script plugin: commands run as real processes
@@ -84,7 +87,7 @@ func New() checks.Plugin {
 }
 
 func newPlugin(r runner, c checker) *scriptPlugin {
-	return &scriptPlugin{run: r, check: c}
+	return &scriptPlugin{run: r, check: c, checking: newInflight()}
 }
 
 func (*scriptPlugin) Name() string { return "script" }
@@ -209,13 +212,14 @@ func (p *scriptPlugin) runOne(ctx context.Context, name string, commands checks.
 	if !ok || len(argv) == 0 {
 		return noRun(name, notDefined(name, problem))
 	}
-	path, argv, refusal := p.checkFiles(argv)
+	// The timeout covers the file checks too: a stat can hang on a dead
+	// network mount.
+	rctx, cancel := context.WithTimeout(ctx, opts.timeout)
+	defer cancel()
+	path, argv, refusal := p.checkFilesWithin(rctx, argv, opts.timeout)
 	if refusal != "" {
 		return noRun(name, refusal)
 	}
-
-	rctx, cancel := context.WithTimeout(ctx, opts.timeout)
-	defer cancel()
 	res, err := p.run.Run(rctx, path, argv)
 	switch {
 	case errors.Is(err, errTimeout) || (err != nil && ctx.Err() == nil && errors.Is(rctx.Err(), context.DeadlineExceeded)):
@@ -243,63 +247,6 @@ func notDefined(name, problem string) string {
 		msg += " (" + problem + ")"
 	}
 	return msg
-}
-
-// checkFiles checks the program, then every argument that names a file
-// by an absolute path (fileArgument), and returns the program's resolved
-// path with argv to run: argv[0] as configured, each argument that named
-// a regular file replaced by the checker's resolved path, so the process
-// gets the files that were checked. When one does not pass it returns why
-// the first one fails. It fails closed: a file the checker could not
-// check stops the run like a refused one. A path is echoed only when it is
-// the program or a file the checker inspected and refused (checker), and
-// only the refusal's own reason goes with it.
-func (p *scriptPlugin) checkFiles(argv []string) (path string, run []string, refusal string) {
-	prog := argv[0]
-	if !filepath.IsAbs(prog) {
-		return "", nil, prog + ": not an absolute path"
-	}
-	path, err := p.check.Check(prog)
-	if err != nil {
-		if reason, ok := refusalReason(err); ok {
-			return "", nil, prog + ": " + reason
-		}
-		if errors.Is(err, errNotFile) {
-			return "", nil, prog + ": " + errNotFile.Error()
-		}
-		return "", nil, prog + ": " + textUncheckedProgram
-	}
-	run = append([]string(nil), argv...)
-	for i, arg := range argv[1:] {
-		file, ok, err := fileArgument(arg)
-		if err != nil {
-			return "", nil, textUncheckedArgument
-		}
-		if !ok {
-			continue
-		}
-		resolved, err := p.check.Check(file)
-		if reason, ok := refusalReason(err); ok {
-			return "", nil, arg + ": " + reason
-		}
-		switch {
-		case err == nil:
-			run[i+1] = resolved
-		case !errors.Is(err, errNotFile):
-			return "", nil, textUncheckedArgument
-		}
-	}
-	return path, run, ""
-}
-
-// refusalReason is the reason of a refuse error in err's chain, without
-// any text a wrapper added around it.
-func refusalReason(err error) (string, bool) {
-	var r refusal
-	if !errors.As(err, &r) {
-		return "", false
-	}
-	return string(r), true
 }
 
 // startFailure words a failure to start the program: the fixed text, plus

@@ -251,8 +251,8 @@ func TestCheckConfigFile(t *testing.T) {
 	}{
 		{"directory", root, "", "configuration file " + root + " is not a regular file"},
 		{"symlink", link, "", "configuration file " + link + " is a symlink; point --config at the file itself"},
-		{"loose", file, "mode 0644", "configuration file " + file + " holds secrets but is accessible to mode 0644; restrict it"},
-		{"foreign owner", file, `owner PC\alice`, `configuration file ` + file + ` holds secrets but is accessible to owner PC\alice; restrict it`},
+		{"loose", file, "mode 0644", "configuration file " + file + " holds secrets or commands but is accessible to mode 0644; restrict it"},
+		{"foreign owner", file, `owner PC\alice`, `configuration file ` + file + ` holds secrets or commands but is accessible to owner PC\alice; restrict it`},
 		{"tight", file, "", ""},
 	}
 	for _, tt := range tests {
