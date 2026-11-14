@@ -158,7 +158,8 @@ func registerOrgSecretRoutes(hapi huma.API, deps Deps) {
 // mapOrgSecretsErr converts the store's errors; none of their texts
 // carries a value. A 409 also lists the checks using the secret, one
 // error detail per check key (location used_by, the key as its message:
-// redactErrorValues clears every detail's value).
+// redactErrorValues clears every detail's value). The service returns
+// ErrConflict only as an *InUseError, so the first case covers it.
 func mapOrgSecretsErr(ctx context.Context, err error) error {
 	var inUse *orgsecrets.InUseError
 	switch {
@@ -174,8 +175,6 @@ func mapOrgSecretsErr(ctx context.Context, err error) error {
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, orgsecrets.ErrNotFound):
 		return huma.Error404NotFound("not found")
-	case errors.Is(err, orgsecrets.ErrConflict):
-		return huma.Error409Conflict(err.Error())
 	default:
 		slog.ErrorContext(ctx, "unmapped secret store error", "err", err)
 		return huma.Error500InternalServerError("internal error")
