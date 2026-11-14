@@ -334,3 +334,21 @@ func TestPollRateAboveTheSpeedIsDropped(t *testing.T) {
 	wantAbsent(t, m, "snmp.if.errors", "eth1 descr")
 	wantValue(t, m, "snmp.if.out_bps", "eth1 descr", 0)
 }
+
+// TestPollLoopbackAboveItsAdvertisedSpeed: net-snmp's lo advertises
+// 10 Mbit/s; its 64-bit counters at 100 Mbit/s are reported as they are.
+func TestPollLoopbackAboveItsAdvertisedSpeed(t *testing.T) {
+	dev := ifDevice()
+	dev.row(colIfSpeed, 1, gosnmp.Gauge32, uint(10_000_000))
+	dev.row(colIfHighSpeed, 1, gosnmp.Gauge32, uint(10))
+	fp := newFakePoller(dev)
+	_, _ = poll(fp, ifParams, v2cSecret)
+	fp.now = fp.now.Add(time.Minute)
+	dev.columns = map[string][]gosnmp.SnmpPDU{}
+	dev.set(oidSysUpTime, gosnmp.TimeTicks, uint32(100000+6000))
+	dev.iface(1, "lo", "loopback", 1, 1, 1000+100e6/8*60, 2000, true)
+	dev.row(colIfSpeed, 1, gosnmp.Gauge32, uint(10_000_000))
+	dev.row(colIfHighSpeed, 1, gosnmp.Gauge32, uint(10))
+	m := byKey(t, first(poll(fp, ifParams, v2cSecret)))
+	wantValue(t, m, "snmp.if.in_bps", "lo", 100e6)
+}

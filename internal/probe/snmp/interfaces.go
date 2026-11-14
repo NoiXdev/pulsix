@@ -76,15 +76,16 @@ type gauge struct {
 // say; ifHighSpeed tells the speed then.
 const ifSpeedSaturated = 1<<32 - 1
 
-// bitsPerSecond is the interface's speed: ifHighSpeed in Mbit/s when it
-// is above 0 (it is 0 below 1 Mbit/s), else ifSpeed unless saturated; 0
-// when unknown.
+// bitsPerSecond is the interface's speed, which a rate across a 32-bit
+// wrap is held against: ifSpeed when it is above 0 and not saturated (it
+// is precise; ifHighSpeed rounds to whole Mbit/s, a T1's 1544000 to 1),
+// else ifHighSpeed in Mbit/s when above 0; 0 when unknown.
 func (r ifRow) bitsPerSecond() float64 {
 	switch {
-	case r.highSpeed.ok && r.highSpeed.value > 0:
-		return float64(r.highSpeed.value) * 1e6
 	case r.speed.ok && r.speed.value > 0 && r.speed.value < ifSpeedSaturated:
 		return float64(r.speed.value)
+	case r.highSpeed.ok && r.highSpeed.value > 0:
+		return float64(r.highSpeed.value) * 1e6
 	}
 	return 0
 }

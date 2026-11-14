@@ -335,7 +335,7 @@ export const enChecks = {
       devicePath: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
       secretName: 'must be 1 to 64 characters: letters, digits and . _ -',
       commandName: 'every entry must be a command name of 1 to 64 characters: letters, digits and . _ -',
-      snmpOID: 'every entry must be name=OID: a name of 1 to 64 characters (letters, digits and . _ -) and a numeric OID such as 1.3.6.1.2.1.1.3.0 that starts with 0, 1 or 2',
+      snmpOID: 'every entry must be name=OID: a name of 1 to 64 characters (letters, digits and . _ -) and a numeric OID such as 1.3.6.1.2.1.1.3.0 that starts with 0, 1 or 2 (after 0 or 1, the second number is at most 39)',
       url: 'must be an http:// or https:// URL without a user name or password',
       statusURL: 'must be an http:// or https:// URL without a user name, password or #fragment, and without {address}',
       dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',

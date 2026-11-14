@@ -50,24 +50,32 @@ func elapsed(prev *sample, cur sample) (float64, bool) {
 }
 
 // perSecond is a counter's increase per second between two readings secs
-// apart. A 32-bit counter that went backwards wrapped once at 2^32 (two
-// wraps within one interval cannot be told apart from one); a 64-bit
-// counter that went backwards was reset and gives no rate, as does a width
-// that changed or a reading that is missing.
-func perSecond(prev, cur counter, secs float64) (float64, bool) {
+// apart, and whether it was computed across a wrap. A 32-bit counter that
+// went backwards wrapped once at 2^32 (two wraps within one interval
+// cannot be told apart from one, nor can a counter cleared without a
+// reboot; interfaceRates holds such a rate against the interface's
+// speed). A 64-bit counter that went backwards was reset and gives no
+// rate, as does a width that changed or a reading that is missing.
+func perSecond(prev, cur counter, secs float64) (rate float64, wrapped, ok bool) {
 	if secs <= 0 || prev.width == 0 || cur.width != prev.width {
-		return 0, false
+		return 0, false, false
 	}
-	var d uint64
 	switch {
 	case cur.value >= prev.value:
-		d = cur.value - prev.value
+		return float64(cur.value-prev.value) / secs, false, true
 	case cur.width == 32 && prev.value < 1<<32:
-		d = cur.value + 1<<32 - prev.value
-	default:
+		return float64(cur.value+1<<32-prev.value) / secs, true, true
+	}
+	return 0, false, false
+}
+
+// increasePerSecond is perSecond for a counter that never wraps in one
+// interval: one that went backwards was reset, and gives no rate.
+func increasePerSecond(prev, cur counter, secs float64) (float64, bool) {
+	if secs <= 0 || prev.width == 0 || cur.width != prev.width || cur.value < prev.value {
 		return 0, false
 	}
-	return float64(d) / secs, true
+	return float64(cur.value-prev.value) / secs, true
 }
 
 // ifRates are one interface's rates between two polls; has* says which
@@ -77,52 +85,53 @@ type ifRates struct {
 	hasIn, hasOut, hasErrs bool
 }
 
-// speedSlack is how far above an interface's speed a rate may read before
-// it counts as impossible: the counters and the clock are not read at the
-// same instant, so a saturated link reads a little above its speed.
+// speedSlack is how far above an interface's speed a rate across a wrap
+// may read before the wrap counts as a clear: the counters and the clock
+// are not read at the same instant, so a saturated link reads a little
+// above its speed.
 const speedSlack = 1.1
-
-// minFrameBits is the smallest Ethernet frame in bits; every error counts
-// at least one frame, which bounds the error rate an interface can have.
-const minFrameBits = 64 * 8
 
 // interfaceRates computes an interface's rates over secs: bits per second
 // from the 64-bit octet counters when both polls have them, else from the
 // 32-bit ones, and errors per second from ifInErrors plus ifOutErrors.
 //
-// speed is the interface's bits per second, 0 when unknown. With a speed,
-// a rate above it (with speedSlack) is impossible and dropped: that is
-// what a 32-bit counter cleared without a reboot looks like, since it
-// reads as a wrap. Clearing usually resets every counter of the interface,
-// so the error rate goes with a dropped octet rate, and it is dropped on
-// its own above one error per minimum frame. A clear whose false wrap
-// stays under the speed (a 32-bit-only interface of 1 Gbit/s or more)
-// cannot be told from a real wrap.
+// A 32-bit octet counter that went backwards is read as one wrap, but a
+// counter cleared without a reboot (an operator's "clear counters") looks
+// the same. speed is the interface's bits per second, 0 when unknown; a
+// rate across a wrap above it (with speedSlack) was a clear, and is
+// dropped, together with the error rate, whose counters were cleared too.
+// Only a wrap is held against the speed: devices advertise speeds below
+// what an interface carries (net-snmp's lo says 10 Mbit/s, Cisco's
+// ifSpeed follows the configured bandwidth), so a 64-bit rate or one
+// without a wrap is reported whatever the speed says.
+//
+// Error counters never move 2^32 in one interval, so one that went
+// backwards was cleared and gives no rate, never a wrap.
+//
+// What stays undetectable: a clear on a 32-bit-only interface whose speed
+// is unknown, or whose false wrap stays under the speed (from about
+// 1 Gbit/s at a 60 s interval, since a wrap spans at most 2^32 octets),
+// reads as one spike for that poll; two wraps within one interval read as
+// one.
 func interfaceRates(prev, cur ifCounters, secs, speed float64) ifRates {
 	var r ifRates
+	cleared := false
 	octets := func(hcPrev, hcCur, prev32, cur32 counter) (float64, bool) {
 		if hcPrev.width == 64 && hcCur.width == 64 {
-			v, ok := perSecond(hcPrev, hcCur, secs)
+			v, _, ok := perSecond(hcPrev, hcCur, secs)
 			return v * 8, ok
 		}
-		v, ok := perSecond(prev32, cur32, secs)
+		v, wrapped, ok := perSecond(prev32, cur32, secs)
+		if ok && wrapped && speed > 0 && v*8 > speed*speedSlack {
+			cleared = true
+			return 0, false
+		}
 		return v * 8, ok
 	}
-	possible := func(v, limit float64) bool { return speed <= 0 || v <= limit*speedSlack }
-	impossible := false
 	r.inBps, r.hasIn = octets(prev.hcIn, cur.hcIn, prev.in, cur.in)
-	if r.hasIn && !possible(r.inBps, speed) {
-		r.inBps, r.hasIn, impossible = 0, false, true
-	}
 	r.outBps, r.hasOut = octets(prev.hcOut, cur.hcOut, prev.out, cur.out)
-	if r.hasOut && !possible(r.outBps, speed) {
-		r.outBps, r.hasOut, impossible = 0, false, true
-	}
-	inErr, okIn := perSecond(prev.inErr, cur.inErr, secs)
-	outErr, okOut := perSecond(prev.outErr, cur.outErr, secs)
-	r.errs, r.hasErrs = inErr+outErr, okIn && okOut && !impossible
-	if r.hasErrs && !possible(r.errs, speed/minFrameBits) {
-		r.errs, r.hasErrs = 0, false
-	}
+	inErr, okIn := increasePerSecond(prev.inErr, cur.inErr, secs)
+	outErr, okOut := increasePerSecond(prev.outErr, cur.outErr, secs)
+	r.errs, r.hasErrs = inErr+outErr, okIn && okOut && !cleared
 	return r
 }
