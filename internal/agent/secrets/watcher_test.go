@@ -231,6 +231,40 @@ func TestWatcherLogsACommandChange(t *testing.T) {
 	}
 }
 
+// TestWatcherLogsLocalCheckChanges: a change of the local check keys or of
+// their problems is logged — the keys, and each problem as a warning —
+// never a param value; an unchanged file logs nothing.
+func TestWatcherLogsLocalCheckChanges(t *testing.T) {
+	f := newWatchFixture(t)
+	f.write("secrets:\n  pg:\n    password: x\n")
+	f.expect("pg", "ok")
+	f.write("secrets:\n  pg:\n    password: x\nchecks:\n  local-pg:\n    plugin: postgres\n    params:\n      secret: " + paramValue + "\n")
+	f.advance(time.Minute)
+	f.expect("pg", "ok")
+	f.advance(time.Minute)
+	f.expect("pg", "ok") // unchanged: no line
+	f.write("secrets:\n  pg:\n    password: x\nchecks:\n  local-pg:\n    plugin: postgres\n    params:\n      secret: " + paramValue + "\n" +
+		"  bad:\n    plugin: postgres\n    params:\n      secret: " + paramValue + "\n")
+	f.advance(time.Minute)
+	f.expect("pg", "ok")
+	f.advance(time.Minute)
+	f.expect("pg", "ok") // unchanged problems: no line
+	log := f.log.String()
+	if strings.Contains(log, paramValue) {
+		t.Fatalf("log quotes a param value: %s", log)
+	}
+	lines := strings.Split(strings.TrimSuffix(log, "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("log has %d lines, want 4 (loaded, checks changed, problems changed + their warning):\n%s", len(lines), log)
+	}
+	if !strings.Contains(lines[1], "names.checks=[local-pg]") || !strings.Contains(lines[2], "names.check_problems=1") {
+		t.Fatalf("log = %s", log)
+	}
+	if !strings.Contains(lines[3], "level=WARN") || !strings.Contains(lines[3], "line 9: a local check key") {
+		t.Fatalf("problem line = %s", lines[3])
+	}
+}
+
 // TestWatcherConcurrentReaders: the heartbeat and the scheduler read the
 // watcher from their own goroutines (run with -race).
 func TestWatcherConcurrentReaders(t *testing.T) {

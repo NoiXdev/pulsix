@@ -13,7 +13,7 @@ import (
 const FileName = "agent.yaml"
 
 // ErrAbsent is Load's error for a file that does not exist: the agent then
-// simply has no secrets and no commands.
+// simply has no secrets, no commands and no local checks.
 var ErrAbsent = errors.New("the configuration file does not exist")
 
 // Check refuses a file that someone other than the allowed principals could
@@ -28,10 +28,10 @@ const maxAttempts = 3
 // errReplaced marks an attempt that saw the file replaced under it.
 var errReplaced = errors.New("replaced while it was read")
 
-// Load reads the secrets and commands in path. The file must pass check first, every
-// time: an editor that saves by renaming a temporary file over it can
-// leave a moment where the file is readable by everyone, and such a file
-// is refused rather than read. Load holds the file open while it checks
+// Load reads the secrets, commands and local checks in path. The file must
+// pass check first, every time: an editor that saves by renaming a
+// temporary file over it can leave a moment where the file is readable by
+// everyone, and such a file is refused rather than read. Load holds the file open while it checks
 // it and makes sure the path still names that same file afterwards, so the
 // content it parses is the content that passed. A missing file is
 // ErrAbsent. No error ever quotes the file's content.

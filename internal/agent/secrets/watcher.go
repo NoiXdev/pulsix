@@ -10,8 +10,9 @@ import (
 )
 
 // State is the configuration file's state as the agent reports it:
-// StateAbsent, StateOK, or the error that made the agent drop every secret
-// and command. An error state never quotes the file's content.
+// StateAbsent, StateOK, or the error that made the agent drop every
+// secret, command and local check. An error state never quotes the file's
+// content.
 type State string
 
 // The two states that are not errors.
@@ -23,10 +24,11 @@ const (
 // checkInterval is how often, at most, the watcher looks at the file.
 const checkInterval = time.Minute
 
-// Watcher holds the secrets and commands of one configuration file and
-// reads it again on every look. It looks at the file on the first Current
-// and then at most once per checkInterval, on the Current that finds the
-// interval over: no goroutine of its own. It is safe for concurrent use.
+// Watcher holds the secrets, commands and local checks of one
+// configuration file and reads it again on every look. It looks at the
+// file on the first Current and then at most once per checkInterval, on
+// the Current that finds the interval over: no goroutine of its own. It is
+// safe for concurrent use.
 //
 // Every look is a full Load — protection check, read and parse — whether
 // or not the file's size, time or mode changed. The file is at most 1 MiB
@@ -72,11 +74,13 @@ func NewWatcher(path string, check Check, opts ...Option) *Watcher {
 // Path is the watched file.
 func (w *Watcher) Path() string { return w.path }
 
-// Current returns the secrets and commands and the file's state, reading
-// the file first when it has not done so for checkInterval. Only a file
-// that does not exist is StateAbsent; any other failure, a path the agent
-// cannot look at included, is an error state. Any failure leaves no
-// secrets and no commands at all, never the last good ones.
+// Current returns the secrets, commands and local checks and the file's
+// state, reading the file first when it has not done so for checkInterval.
+// Only a file that does not exist is StateAbsent; any other failure, a
+// path the agent cannot look at included, is an error state. Any failure
+// leaves no secrets, commands or local checks at all, never the last good
+// ones. A refused local check is not a failure: it is one of the Set's
+// LocalCheckProblems.
 func (w *Watcher) Current() (Set, State) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -102,11 +106,15 @@ func (w *Watcher) look() {
 }
 
 // update stores a look's outcome and logs it when the secret or command
-// names or the state changed.
+// names, the local check keys or problems, or the state changed. The
+// problems of refused local checks are logged as a warning of their own.
 func (w *Watcher) update(set Set, state State) {
-	changed := !w.looked || state != w.state ||
+	problems := set.LocalCheckProblems()
+	problemsChanged := !slices.Equal(problems, w.set.localCheckProblems)
+	changed := !w.looked || state != w.state || problemsChanged ||
 		!slices.Equal(set.Names(), w.set.Names()) ||
-		!slices.Equal(set.CommandNames(), w.set.CommandNames())
+		!slices.Equal(set.CommandNames(), w.set.CommandNames()) ||
+		!slices.Equal(set.localCheckKeys(), w.set.localCheckKeys())
 	w.set, w.state = set, state
 	if !changed {
 		return
@@ -114,6 +122,9 @@ func (w *Watcher) update(set Set, state State) {
 	switch state {
 	case StateOK:
 		w.log.Info("loaded the secrets file", "path", w.path, "names", set)
+		if problemsChanged && len(problems) > 0 {
+			w.log.Warn("refused local checks in the secrets file; the others run", "path", w.path, "problems", problems)
+		}
 	case StateAbsent:
 		w.log.Info("no secrets file", "path", w.path)
 	default:

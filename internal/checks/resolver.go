@@ -16,13 +16,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/noixdev/pulsix/internal/checkplugins"
 )
 
 // Resolved is one check as it applies to a specific host, after
@@ -258,17 +259,11 @@ func (b *resolveBundle) resolve(hostID uuid.UUID) []Resolved {
 }
 
 // canonicalParams renders params the way Version's encoding requires:
-// "{}" for nil or empty (never the bare string "null" json.Marshal(nil
-// map) would otherwise produce — two definitions that both take no
-// parameters must hash identically regardless of whether the map that
-// happened to reach here was nil or merely empty), sorted-key JSON
-// otherwise — encoding/json sorts map keys at every nesting level, so
-// marshalling map[string]any is already canonical.
+// checkplugins.CanonicalParams, which the agent's local checks use too —
+// "{}" for nil or empty, sorted-key JSON otherwise. The version is a hash
+// over this encoding, so it must never change (TestVersionCanonicalEncoding).
 func canonicalParams(params map[string]any) ([]byte, error) {
-	if len(params) == 0 {
-		return []byte("{}"), nil
-	}
-	return json.Marshal(params)
+	return checkplugins.CanonicalParams(params)
 }
 
 // canonicalEncoding renders checks (already sorted by Key) into the exact

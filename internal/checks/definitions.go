@@ -44,17 +44,14 @@ const (
 	originShared = "shared"
 )
 
+// MinInterval and MaxInterval are the bounds of a definition's interval:
+// checkplugins.MinInterval and checkplugins.MaxInterval under the names
+// this package's callers (internal/agentapi's ingest budget, internal/config's
+// item expiry) already use. The agent validates its local checks against the
+// same constants.
 const (
-	// MinInterval is the shortest check interval a definition may carry. It
-	// is exported because it is also the fastest an agent can legitimately
-	// produce observations, which internal/agentapi's per-stream ingest
-	// budget uses as its refill period (backlog 7.111).
-	MinInterval = 10 * time.Second
-	// MaxInterval is the longest check interval a definition may carry.
-	// It is exported because internal/config derives the shortest item
-	// expiry period from it (backlog 3.12b): an item must never be
-	// forgotten between two reports of its check.
-	MaxInterval = 24 * time.Hour
+	MinInterval = checkplugins.MinInterval
+	MaxInterval = checkplugins.MaxInterval
 )
 
 // Definition is a plugin bound to a scope. Samples (a later task) are keyed
