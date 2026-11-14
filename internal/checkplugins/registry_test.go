@@ -13,14 +13,14 @@ import (
 // SharedCheckFormPage.tsx offered the plugins in before the descriptors.
 func TestNamesInTheSPAsOrder(t *testing.T) {
 	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker",
-		"temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "phpfpm", "script", "icmp", "tcp", "http", "tls", "dns"}
+		"temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "phpfpm", "script", "icmp", "tcp", "http", "tls", "dns", "snmp"}
 	if got := checkplugins.Names(); !slices.Equal(got, want) {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
 }
 
 func TestRuns(t *testing.T) {
-	server := []string{"icmp", "tcp", "http", "tls", "dns"}
+	server := []string{"icmp", "tcp", "http", "tls", "dns", "snmp"}
 	for _, d := range checkplugins.All() {
 		want := checkplugins.Agent
 		if slices.Contains(server, d.Name) {
@@ -37,8 +37,8 @@ func TestGet(t *testing.T) {
 	if !ok || d.Name != "smart" || d.ItemParam != "devices" || !d.HostItemAlwaysAsked || d.ItemEntry == nil {
 		t.Fatalf("Get(smart) = %+v, %v", d, ok)
 	}
-	if _, ok := checkplugins.Get("snmp"); ok {
-		t.Fatal("Get(snmp) found a plugin")
+	if _, ok := checkplugins.Get("no-such-plugin"); ok {
+		t.Fatal("Get(no-such-plugin) found a plugin")
 	}
 }
 
@@ -106,8 +106,11 @@ func TestDescriptorsAreWellFormed(t *testing.T) {
 			if i < 0 || d.Params[i].Type != checkplugins.TypeList {
 				t.Errorf("%s: item param %q is not one of its list parameters", d.Name, d.ItemParam)
 			}
-		} else if d.HostItemAlwaysAsked || d.ItemEntry != nil {
+		} else if d.HostItemAlwaysAsked || d.ItemEntry != nil || d.ItemAsked != nil {
 			t.Errorf("%s: item rules without an item param", d.Name)
+		}
+		if d.ItemEntry != nil && d.ItemAsked != nil {
+			t.Errorf("%s: ItemAsked replaces the list comparison ItemEntry feeds; set one of them", d.Name)
 		}
 	}
 }
@@ -205,6 +208,13 @@ func validateOne(plugin string, p checkplugins.ParamSpec, v any) error {
 		if p.Name != "commands" {
 			params["commands"] = []any{"x"}
 		}
+	case "snmp":
+		if p.Name != "secret" {
+			params["secret"] = "sw"
+		}
+		if p.Name != "oids" {
+			params["oids"] = []any{"x=1.3"}
+		}
 	}
 	return checkplugins.Validate(plugin, params)
 }
@@ -230,7 +240,7 @@ func TestDescriptorsMarshalWithoutHooks(t *testing.T) {
 		t.Fatalf("cpu params = %#v, want []", cpu["params"])
 	}
 	for _, d := range got {
-		for _, hook := range []string{"ItemEntry", "Check", "item_entry", "check"} {
+		for _, hook := range []string{"ItemEntry", "ItemAsked", "Check", "item_entry", "item_asked", "check"} {
 			if _, ok := d[hook]; ok {
 				t.Fatalf("%s marshals its %s hook", d["name"], hook)
 			}

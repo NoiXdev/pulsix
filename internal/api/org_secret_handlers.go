@@ -19,11 +19,13 @@ import (
 )
 
 // OrgSecretStore is what the API may do with the organization's secrets:
-// list, write and delete them. It deliberately has no Fields — opening a
-// secret's values is the probe runner's alone, which internal/app hands
-// the concrete *orgsecrets.Service; no handler can reach a value.
+// list them (Names for the host page's missing-secret warning), write and
+// delete them. It deliberately has no Fields — opening a secret's values
+// is the probe runner's alone, which internal/app hands the concrete
+// *orgsecrets.Service; no handler can reach a value.
 type OrgSecretStore interface {
 	List(ctx context.Context, orgID uuid.UUID) ([]orgsecrets.Secret, error)
+	Names(ctx context.Context, orgID uuid.UUID) ([]string, error)
 	Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (orgsecrets.Secret, error)
 	Delete(ctx context.Context, orgID uuid.UUID, name string) error
 }

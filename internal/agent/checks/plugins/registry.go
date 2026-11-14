@@ -32,8 +32,11 @@
 //     "unknown" plugin and broke silently in 3.11 because implementers only
 //     ran filtered tests). Use a name no plugin will ever take for an
 //     unknown plugin.
-//   - A server-run plugin also needs its case in internal/probe's Run (the
-//     probe pin test TestRunKnowsExactlyTheServerPlugins checks it).
+//   - A server-run plugin also needs its probe in internal/probe/all's
+//     Registry (TestRunKnowsExactlyTheServerPlugins and
+//     TestRegistryNamesAreTheServerPlugins check it). One that takes a
+//     secret reads it from the organization's secret store, so its secret
+//     hint in the SPA points to the secrets settings, not agent.yaml.
 //   - SPA: regenerate the descriptor fixture (go test ./internal/checkplugins
 //     -run TestSPAFixtureIsCurrent -update-spa-fixture) and ALWAYS
 //     regenerate src/api/schema.d.ts with web/scripts/api-gen.sh (the

@@ -40,6 +40,7 @@ const (
 	PluginHTTP = "http"
 	PluginTLS  = "tls"
 	PluginDNS  = "dns"
+	PluginSNMP = "snmp"
 )
 
 // IsSynthetic reports whether plugin is one of the synthetic plugins

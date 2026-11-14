@@ -90,7 +90,7 @@ func checkParamsFieldDoc() string {
 		}
 		params := make([]string, len(d.Params))
 		for i, p := range d.Params {
-			params[i] = describeCheckParam(p)
+			params[i] = describeCheckParamOf(d.Runs, p)
 		}
 		sentences = append(sentences, d.Name+": "+strings.Join(params, ", ")+".")
 	}
@@ -115,6 +115,21 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 	checkplugins.FormatDockerSocket: "an absolute path or npipe:////./pipe/name",
 	checkplugins.FormatSecretName:   "the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -",
 	checkplugins.FormatCommandName:  "the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -",
+	checkplugins.FormatSNMPOID:      "name=OID, the name 1 to 64 letters, digits, _ . -, the OID numeric such as 1.3.6.1.2.1.1.3.0",
+}
+
+// serverSecretPhrase is FormatSecretName's phrase for a plugin the
+// manager probes: its secret is in the organization's secret store
+// (backlog 3.13d), not in an agent.yaml.
+const serverSecretPhrase = "the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -"
+
+// describeCheckParamOf is describeCheckParam for a parameter of a plugin
+// that runs where runs says.
+func describeCheckParamOf(runs checkplugins.Runs, p checkplugins.ParamSpec) string {
+	if runs == checkplugins.Server && p.Format == checkplugins.FormatSecretName {
+		return describeCheckParamWith(p, serverSecretPhrase)
+	}
+	return describeCheckParam(p)
 }
 
 // describeCheckParam renders one parameter as "name (part; part; …)":
@@ -122,6 +137,12 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 // only where the spec sets it. Parts are separated by semicolons because
 // an enum's options are a comma list of their own.
 func describeCheckParam(p checkplugins.ParamSpec) string {
+	return describeCheckParamWith(p, "")
+}
+
+// describeCheckParamWith is describeCheckParam with formatPhrase in place
+// of the format's own phrase when it is not "".
+func describeCheckParamWith(p checkplugins.ParamSpec, formatPhrase string) string {
 	list := p.Type == checkplugins.TypeList
 	each := func(s string) string {
 		if list {
@@ -155,7 +176,10 @@ func describeCheckParam(p checkplugins.ParamSpec) string {
 		parts = append(parts, each(fmt.Sprintf("at most %d bytes", p.MaxBytes)))
 	}
 	if p.Format != "" {
-		phrase, ok := checkFormatPhrases[p.Format]
+		phrase, ok := formatPhrase, formatPhrase != ""
+		if !ok {
+			phrase, ok = checkFormatPhrases[p.Format]
+		}
 		if !ok {
 			phrase = "format " + string(p.Format)
 		}

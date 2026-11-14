@@ -52,6 +52,13 @@ const (
 	// rule as FormatSecretName, a format of its own so the API and the SPA
 	// explain a refusal as a command name rather than a secret's.
 	FormatCommandName Format = "commandName"
+	// FormatSNMPOID: one entry of snmp's oids (backlog 3.13d), "name=OID".
+	// The name follows FormatSecretName's rule and becomes the item the
+	// value is reported on; the OID is numeric and dotted (1.3.6.1.2.1.1.3.0,
+	// a leading dot allowed), 2 to 128 arcs, each a decimal of at most
+	// 2^32-1 without leading zeros. Symbolic names need MIB files, which
+	// the manager does not load.
+	FormatSNMPOID Format = "snmpOID"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -61,7 +68,7 @@ func Formats() []Format {
 	return []Format{
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
-		FormatSecretName, FormatCommandName,
+		FormatSecretName, FormatCommandName, FormatSNMPOID,
 	}
 }
 
@@ -107,6 +114,8 @@ func (f Format) problem(s string) string {
 		if !secretNamePattern.MatchString(s) {
 			return "must be 1 to 64 letters, digits, '_', '.' or '-'"
 		}
+	case FormatSNMPOID:
+		return snmpOIDProblem(s)
 	default:
 		return "uses a format no validator knows: " + string(f)
 	}
@@ -239,4 +248,55 @@ func dockerSocketProblem(s string) string {
 		return "must be an absolute path or " + dockerPipePrefix + " followed by a pipe name"
 	}
 	return ""
+}
+
+// SNMP OID bounds: an OID has at least two arcs and at most 128 (RFC 2578's
+// limit on sub-identifiers), each an unsigned 32-bit number.
+const (
+	minSNMPOIDArcs = 2
+	maxSNMPOIDArcs = 128
+	maxSNMPOIDArc  = 1<<32 - 1
+)
+
+// snmpOIDProblem checks a "name=OID" entry, split at the first '='.
+func snmpOIDProblem(s string) string {
+	name, oid, ok := strings.Cut(s, "=")
+	if !ok || !secretNamePattern.MatchString(name) {
+		return "must be name=OID, the name 1 to 64 letters, digits, '_', '.' or '-'"
+	}
+	if !validNumericOID(oid) {
+		return "must be name=OID, the OID numeric and dotted such as 1.3.6.1.2.1.1.3.0: 2 to 128 whole numbers, each at most 4294967295 and without leading zeros, an optional leading dot"
+	}
+	return ""
+}
+
+// validNumericOID: dot-separated decimal arcs, one leading dot allowed.
+func validNumericOID(oid string) bool {
+	arcs := strings.Split(strings.TrimPrefix(oid, "."), ".")
+	if len(arcs) < minSNMPOIDArcs || len(arcs) > maxSNMPOIDArcs {
+		return false
+	}
+	for _, arc := range arcs {
+		if !validOIDArc(arc) {
+			return false
+		}
+	}
+	return true
+}
+
+// validOIDArc: "0", or ASCII digits without a leading zero, at most
+// maxSNMPOIDArc.
+func validOIDArc(arc string) bool {
+	if arc == "" || len(arc) > 10 || (arc[0] == '0' && arc != "0") {
+		return false
+	}
+	var n uint64
+	for i := 0; i < len(arc); i++ {
+		c := arc[i]
+		if c < '0' || c > '9' {
+			return false
+		}
+		n = n*10 + uint64(c-'0')
+	}
+	return n <= maxSNMPOIDArc
 }

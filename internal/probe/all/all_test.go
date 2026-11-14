@@ -10,6 +10,29 @@ import (
 	"github.com/noixdev/pulsix/internal/probe/all"
 )
 
+// awaitingProbe are server plugins whose descriptor landed before their
+// probe: snmp's descriptor, default rules and secret warning come first
+// (backlog 3.13d, task 3), internal/probe/snmp in the next change (task 4).
+// Until then Run answers "unknown probe plugin" for them, which is what
+// the runner reports on every metric. TestAwaitingProbeIsCurrent fails as
+// soon as such a probe is registered, so the entry cannot outlive the gap.
+var awaitingProbe = map[string]bool{"snmp": true}
+
+// TestAwaitingProbeIsCurrent: every awaitingProbe entry is a server plugin
+// that has no probe yet.
+func TestAwaitingProbeIsCurrent(t *testing.T) {
+	reg := all.Registry()
+	for name := range awaitingProbe {
+		d, ok := checkplugins.Get(name)
+		if !ok || d.Runs != checkplugins.Server {
+			t.Errorf("awaitingProbe names %s, which is not a server plugin", name)
+		}
+		if _, ok := reg[name]; ok {
+			t.Errorf("%s has its probe now; remove it from awaitingProbe", name)
+		}
+	}
+}
+
 // TestRunKnowsExactlyTheServerPlugins pins the registry to the descriptors:
 // every plugin with Runs == Server must be handled, and no agent plugin may be.
 // No packet leaves the host: the context is already cancelled, the params
@@ -36,7 +59,7 @@ func TestRunKnowsExactlyTheServerPlugins(t *testing.T) {
 					unknown = true
 				}
 			}
-			if want := d.Runs != checkplugins.Server; unknown != want {
+			if want := d.Runs != checkplugins.Server || awaitingProbe[d.Name]; unknown != want {
 				t.Fatalf("plugin %s (runs %s): unknown probe plugin = %v, want %v; observations %+v", d.Name, d.Runs, unknown, want, obs)
 			}
 		})
@@ -75,7 +98,7 @@ func TestRegistryDispatchesEachProbeByName(t *testing.T) {
 func TestRegistryNamesAreTheServerPlugins(t *testing.T) {
 	reg := all.Registry()
 	for _, d := range checkplugins.All() {
-		if _, ok := reg[d.Name]; ok != (d.Runs == checkplugins.Server) {
+		if _, ok := reg[d.Name]; ok != (d.Runs == checkplugins.Server && !awaitingProbe[d.Name]) {
 			t.Fatalf("plugin %s (runs %s): in registry = %v", d.Name, d.Runs, ok)
 		}
 	}

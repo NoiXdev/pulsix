@@ -79,7 +79,7 @@ func TestAsksForItem(t *testing.T) {
 		// JSON round-trips a params list as []any.
 		{"a list decoded from JSON matches too", "service", map[string]any{"units": []any{"sshd"}}, "sshd", true},
 		{"a list that is not strings bounds nothing", "disk", map[string]any{"mounts": []any{1.0}}, "/var", true},
-		{"an unknown plugin asks for everything", "snmp", map[string]any{"oids": []any{"x"}}, "y", true},
+		{"an unknown plugin asks for everything", "no-such-plugin", map[string]any{"oids": []any{"x"}}, "y", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

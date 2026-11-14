@@ -23,9 +23,10 @@ import (
 // TestSecretCheckRefsEveryBinding: a secret named by a check at each
 // binding — the organization's, a monitoring group's, a host's — and by a
 // shared definition's projection is held by all four, and Delete names
-// them. The plugin is mysql under a lookup that runs it on the server (no
-// real server plugin takes a secret yet); under the real descriptors mysql
-// runs on the agent, which reads agent.yaml, so nothing holds the secret.
+// them. The plugin is mysql under a lookup that runs it on the server, so
+// every binding kind is covered with one plugin; under the real
+// descriptors mysql runs on the agent, which reads agent.yaml, so nothing
+// holds the secret (TestSecretCheckRefsSNMP covers a real server plugin).
 func TestSecretCheckRefsEveryBinding(t *testing.T) {
 	ctx := context.Background()
 	d := testdb.Open(t)
@@ -101,5 +102,60 @@ func TestSecretCheckRefsEveryBinding(t *testing.T) {
 	}
 	if err := agentRun.Delete(scoped, org, "sw"); err != nil {
 		t.Fatalf("Delete with the real descriptors: %v", err)
+	}
+}
+
+// TestSecretCheckRefsSNMP: under the real descriptors snmp is a server
+// plugin taking a secret (backlog 3.13d), so its checks hold the secret
+// they name — at the organization's binding and a host's — while a mysql
+// check naming the same secret does not (it reads the host's agent.yaml),
+// nor does an snmp check naming another secret.
+func TestSecretCheckRefsSNMP(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	org := seedOrg(t, d, "app-secret-refs-snmp")
+	scoped := db.WithOrgScope(ctx, org)
+	q := gen.New(d.Pool())
+
+	hostsSvc := hosts.NewService(hosts.NewSQLStore(d), time.Now)
+	zone, err := hostsSvc.CreateZone(scoped, org, "edge", "Edge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := hostsSvc.CreateHost(scoped, org, hosts.HostInput{Name: "sw-1", Address: "192.0.2.20", ZoneID: zone.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, def := range []gen.CreateCheckDefinitionParams{
+		{Key: "sw-org", BindingKind: "org", Plugin: "snmp", Params: []byte(`{"secret":"sw","interfaces":true}`)},
+		{Key: "sw-host", BindingKind: "host", HostID: pgtype.UUID{Bytes: host.ID, Valid: true}, Plugin: "snmp",
+			Params: []byte(`{"secret":"sw","oids":["load=1.3.6.1.4.1.2021.10.1.3.1"]}`)},
+		{Key: "ups", BindingKind: "org", Plugin: "snmp", Params: []byte(`{"secret":"ups","interfaces":true}`)},
+		{Key: "db", BindingKind: "org", Plugin: "mysql", Params: []byte(`{"secret":"sw"}`)},
+	} {
+		def.ID, def.OrgID, def.IntervalSeconds, def.Enabled, def.Origin = uuid.Must(uuid.NewV7()), org, 60, true, "custom"
+		if _, err := q.CreateCheckDefinition(ctx, def); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := orgsecrets.NewService(orgsecrets.Deps{
+		Store: orgsecrets.NewSQLStore(d), Box: crypto.NewBox([32]byte{1}),
+		Checks: NewSecretCheckRefs(checks.NewService(checks.NewSQLStore(d))),
+	})
+	if _, err := svc.Put(scoped, org, "sw", map[string]string{"community": "x"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := svc.List(scoped, org)
+	if err != nil || len(list) != 1 || strings.Join(list[0].UsedBy, ",") != "sw-host,sw-org" {
+		t.Fatalf("List = %+v, %v; want sw used by sw-host, sw-org", list, err)
+	}
+	err = svc.Delete(scoped, org, "sw")
+	if !errors.Is(err, orgsecrets.ErrConflict) || !strings.Contains(err.Error(), "sw-host, sw-org") || strings.Contains(err.Error(), "db") {
+		t.Fatalf("Delete = %v, want ErrConflict naming sw-host, sw-org only", err)
+	}
+	names, err := svc.Names(scoped, org)
+	if err != nil || strings.Join(names, ",") != "sw" {
+		t.Fatalf("Names = %v, %v; want [sw] (the conflict deleted nothing)", names, err)
 	}
 }

@@ -77,8 +77,8 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Plugins) != 23 {
-		t.Fatalf("%d plugins, want 23", len(body.Plugins))
+	if len(body.Plugins) != 24 {
+		t.Fatalf("%d plugins, want 24", len(body.Plugins))
 	}
 	for i, name := range checkplugins.Names() {
 		if body.Plugins[i].Name != name {
@@ -115,6 +115,19 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	}
 	if p := smart.Params[0]; p.Type != "list" || p.MaxEntries != 64 || p.MaxBytes != 255 || p.Format != "devicePath" {
 		t.Errorf("smart devices param = %+v", p)
+	}
+	snmp := body.Plugins[23]
+	if snmp.Name != "snmp" || snmp.Runs != "server" || snmp.ItemParam != "oids" || !snmp.HostItemAlwaysAsked {
+		t.Errorf("snmp = %+v", snmp)
+	}
+	if p := snmp.Params[0]; p.Name != "secret" || !p.Required || p.Format != "secretName" {
+		t.Errorf("snmp secret param = %+v", p)
+	}
+	if p := snmp.Params[4]; p.Name != "oids" || p.Type != "list" || p.MaxEntries != 32 || p.Format != "snmpOID" {
+		t.Errorf("snmp oids param = %+v", p)
+	}
+	if p := snmp.Params[5]; p.Name != "interfaces" || p.Type != "bool" || p.Default != false {
+		t.Errorf("snmp interfaces param = %+v", p)
 	}
 	if params := body.Plugins[0].Params; params == nil || len(params) != 0 {
 		t.Errorf("cpu params = %#v, want []", params)

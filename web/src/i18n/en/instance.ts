@@ -126,6 +126,7 @@ export const enInstance = {
         http: 'HTTP(S)',
         tls: 'TLS certificate',
         dns: 'DNS',
+        snmp: 'SNMP device',
         docker: 'Docker containers',
         temperature: 'Temperature',
         smart: 'SMART disk health',

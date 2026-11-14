@@ -120,10 +120,20 @@ type Descriptor struct {
 	// it, for a plugin whose items are not always the entries themselves
 	// (smart's "<path> [<type>]"); nil means the item is the entry.
 	ItemEntry func(item string) string `json:"-"`
+	// ItemAsked replaces AsksForItem's comparison of item with the
+	// ItemParam entries, for a plugin whose entries are not its items'
+	// names or whose other parameters widen what it asks for (snmp: an
+	// entry "name=OID" asks for item "name", and interfaces asks for any
+	// item the device names). It runs only where the generic rules have
+	// not answered already: the list is present and not empty, and item is
+	// not a HostItemAlwaysAsked plugin's "". entries is the list as
+	// strings. Nil means the item must be one of the entries (after
+	// ItemEntry); a descriptor sets at most one of the two.
+	ItemAsked func(params map[string]any, entries []string, item string) bool `json:"-"`
 	// Check validates what spans parameters or needs code beyond ParamSpec
 	// and the formats. It runs after every parameter passed its own spec
 	// and returns a description of the problem, which Validate prefixes
-	// with the plugin's name. Nil for every plugin today.
+	// with the plugin's name. Only snmp has one today.
 	Check func(params map[string]any) error `json:"-"`
 }
 

@@ -39,6 +39,7 @@ func registry() []plugin {
 		{"http", httpPlugin},
 		{"tls", tlsPlugin},
 		{"dns", dnsPlugin},
+		{"snmp", snmpPlugin},
 	}
 }
 

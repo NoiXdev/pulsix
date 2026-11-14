@@ -62,6 +62,8 @@ func TestSyntheticParamsAccepted(t *testing.T) {
 		{"dns name 253 bytes", checks.PluginDNS, map[string]any{"name": dnsName(253)}},
 		{"dns name 63-byte label", checks.PluginDNS, map[string]any{"name": strings.Repeat("a", 63) + ".example"}},
 		{"long string at the cap", checks.PluginTCP, map[string]any{"port": 1.0, "expect": strings.Repeat("x", 500)}},
+		{"snmp defaults", checks.PluginSNMP, map[string]any{"secret": "sw", "version": "v2c", "port": 161.0, "timeout_seconds": 5.0, "interfaces": true}},
+		{"snmp oids", checks.PluginSNMP, map[string]any{"secret": "sw", "version": "v3", "oids": []any{"load=1.3.6.1.4.1.2021.10.1.3.1", "up=.1.3.6.1.2.1.1.3.0"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -145,6 +147,12 @@ func TestSyntheticParamsRefused(t *testing.T) {
 		{"dns empty expect", checks.PluginDNS, map[string]any{"expect": ""}},
 		{"dns timeout 31", checks.PluginDNS, map[string]any{"timeout_s": 31.0}},
 		{"dns unknown key", checks.PluginDNS, map[string]any{"qtype": "A"}},
+		{"snmp without secret", checks.PluginSNMP, map[string]any{"interfaces": true}},
+		{"snmp nothing to poll", checks.PluginSNMP, map[string]any{"secret": "sw"}},
+		{"snmp v1", checks.PluginSNMP, map[string]any{"secret": "sw", "interfaces": true, "version": "v1"}},
+		{"snmp symbolic oid", checks.PluginSNMP, map[string]any{"secret": "sw", "oids": []any{"up=sysUpTime.0"}}},
+		{"snmp duplicate oid names", checks.PluginSNMP, map[string]any{"secret": "sw", "oids": []any{"a=1.3", "a=1.4"}}},
+		{"snmp community in params", checks.PluginSNMP, map[string]any{"secret": "sw", "interfaces": true, "community": "public"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

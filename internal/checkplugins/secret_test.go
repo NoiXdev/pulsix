@@ -32,7 +32,7 @@ func TestUsesSecret(t *testing.T) {
 	}
 	// The plugins that take a secret (backlog 3.10); add each database
 	// plugin here as it lands.
-	want := map[string]bool{"postgres": true, "mysql": true, "redis": true, "nginx": true, "apache": true, "caddy": true, "phpfpm": true}
+	want := map[string]bool{"postgres": true, "mysql": true, "redis": true, "nginx": true, "apache": true, "caddy": true, "phpfpm": true, "snmp": true}
 	for _, d := range checkplugins.All() {
 		if d.UsesSecret() != want[d.Name] {
 			t.Errorf("%s: UsesSecret = %v, want %v", d.Name, d.UsesSecret(), want[d.Name])

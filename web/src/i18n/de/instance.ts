@@ -128,6 +128,7 @@ export const deInstance: Messages['instance'] = {
         http: 'HTTP(S)',
         tls: 'TLS-Zertifikat',
         dns: 'DNS',
+        snmp: 'SNMP-Gerät',
         docker: 'Docker-Container',
         temperature: 'Temperatur',
         smart: 'SMART-Festplattenzustand',

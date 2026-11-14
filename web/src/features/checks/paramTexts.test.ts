@@ -59,13 +59,28 @@ describe.each([
   });
 
   it('says in every secret hint that the secret lives in agent.yaml (safety precondition 4)', () => {
-    const bad = CHECK_PLUGINS.flatMap((p) =>
+    const bad = CHECK_PLUGINS.filter((p) => p.runs === 'agent').flatMap((p) =>
       p.params
         .filter((s) => s.name === 'secret')
         .filter((s) => !paramText(t, p.name, s.name)?.hint?.includes('agent.yaml'))
         .map((s) => `${p.name}.${s.name}`),
     );
     expect(bad).toEqual([]);
-    expect(CHECK_PLUGINS.some((p) => p.params.some((s) => s.name === 'secret'))).toBe(true);
+    expect(CHECK_PLUGINS.some((p) => p.runs === 'agent' && p.params.some((s) => s.name === 'secret'))).toBe(true);
+  });
+
+  it('points every probe’s secret hint to the organization’s secrets, not agent.yaml (backlog 3.13d)', () => {
+    const settings = t.shell.nav.settings;
+    const bad = CHECK_PLUGINS.filter((p) => p.runs === 'server').flatMap((p) =>
+      p.params
+        .filter((s) => s.name === 'secret')
+        .filter((s) => {
+          const hint = paramText(t, p.name, s.name)?.hint ?? '';
+          return hint.includes('agent.yaml') || !hint.includes(`${settings} → Secrets`);
+        })
+        .map((s) => `${p.name}.${s.name}`),
+    );
+    expect(bad).toEqual([]);
+    expect(CHECK_PLUGINS.some((p) => p.runs === 'server' && p.params.some((s) => s.name === 'secret'))).toBe(true);
   });
 });

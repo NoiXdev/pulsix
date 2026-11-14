@@ -12,13 +12,20 @@ import (
 // rows, never a default hidden in Go code (the design's own position — an
 // operator must be able to see a threshold, change it and delete it, and
 // deleting it must mean "no rule", not "silently fall back to a hardcoded
-// value"). All seven bind at scope org, in form mode.
+// value"). All nine bind at scope org, in form mode.
 //
 // The two script rules (backlog 3.6g) judge the verdict a host-defined
 // script reports: crit is critical, warn and unknown are warnings (a script
 // that cannot run should be seen; the operator can edit the rule). They
 // match nothing on a host without a script check, which is why the script
 // plugin itself is not seeded as a check while its rules are.
+//
+// The two SNMP rules (backlog 3.13d) are the same kind: a device that does
+// not answer is critical (snmp.up is 0 only when the device did not
+// answer; a refused or misconfigured probe is a collection error, not 0),
+// an interface the device's operator switched on but that is not up is a
+// warning (admin_down is deliberate and stays quiet). They match nothing
+// in an organization without an snmp check.
 //
 // service.state deliberately has no row here, and that is not an
 // oversight: backlog 4.3's standing ruling is that the seeded sshd check
@@ -32,10 +39,11 @@ import (
 // This function's return value is used two ways that must never disagree:
 // SeedForOrg calls it directly for a newly created organization, and the
 // backfill migrations encode the same rows in SQL for organizations that
-// already existed — 00045 the first five, 00094 the two script rules. A
-// migration cannot call Go code, so keep them in sync by hand when either
-// changes (TestRulesBackfillMatchesSeedRules and
-// TestScriptRulesMigrationMatchesSeedForOrg compare them).
+// already existed — 00045 the first five, 00094 the two script rules,
+// 00097 the two SNMP rules. A migration cannot call Go code, so keep them
+// in sync by hand when either changes (TestRulesBackfillMatchesSeedRules,
+// TestScriptRulesMigrationMatchesSeedForOrg and
+// TestSNMPRulesMigrationMatchesSeedForOrg compare them).
 func SeedRules() []RuleInput {
 	return []RuleInput{
 		{
@@ -75,6 +83,16 @@ func SeedRules() []RuleInput {
 			Name: "Script reports warning", Enabled: true, Scope: ScopeOrg,
 			Metric: "script.status", Severity: SeverityWarn, Mode: modeForm,
 			Form: &Form{Metric: "script.status", Op: "in", Labels: []string{"warn", "unknown"}},
+		},
+		{
+			Name: "SNMP device unreachable", Enabled: true, Scope: ScopeOrg,
+			Metric: "snmp.up", Severity: SeverityCrit, Mode: modeForm,
+			Form: &Form{Metric: "snmp.up", Op: "<", Value: 1},
+		},
+		{
+			Name: "Interface down", Enabled: true, Scope: ScopeOrg,
+			Metric: "snmp.if.status", Severity: SeverityWarn, Mode: modeForm,
+			Form: &Form{Metric: "snmp.if.status", Op: "in", Labels: []string{"down"}},
 		},
 	}
 }

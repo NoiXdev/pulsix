@@ -162,6 +162,15 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"script.exit_code":                  {CheckKey: "script", Kind: rules.MetricNumeric},
 		"script.duration_seconds":           {CheckKey: "script", Kind: rules.MetricNumeric},
 		"script.value":                      {CheckKey: "script", Kind: rules.MetricNumeric},
+		"snmp.up":                           {CheckKey: "snmp", Kind: rules.MetricNumeric},
+		"snmp.response_ms":                  {CheckKey: "snmp", Kind: rules.MetricNumeric},
+		"snmp.uptime_seconds":               {CheckKey: "snmp", Kind: rules.MetricNumeric},
+		"snmp.value":                        {CheckKey: "snmp", Kind: rules.MetricNumeric},
+		"snmp.text":                         {CheckKey: "snmp", Kind: rules.MetricDiscrete},
+		"snmp.if.status":                    {CheckKey: "snmp", Kind: rules.MetricDiscrete},
+		"snmp.if.in_bps":                    {CheckKey: "snmp", Kind: rules.MetricNumeric},
+		"snmp.if.out_bps":                   {CheckKey: "snmp", Kind: rules.MetricNumeric},
+		"snmp.if.errors":                    {CheckKey: "snmp", Kind: rules.MetricNumeric},
 	}
 	got := rules.Catalogue()
 	if len(got) != len(want) {
@@ -214,6 +223,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"caddy":   "caddy",
 		"phpfpm":  "phpfpm",
 		"script":  "script",
+		"snmp":    "snmp",
 	}
 	for name, entry := range rules.Catalogue() {
 		prefix, _, ok := strings.Cut(name, ".")

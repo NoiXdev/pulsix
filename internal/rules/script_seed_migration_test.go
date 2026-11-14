@@ -18,15 +18,15 @@ import (
 // scriptRuleNames are the two seed rules migration 00094 backfills.
 var scriptRuleNames = []string{"Script reports critical", "Script reports warning"}
 
-// scriptRuleRows returns org's check_rules rows named like a script seed
-// rule, each as the whole row's jsonb without the columns that differ
-// between any two writes of the same rule (ids, organization, timestamps),
-// keyed by name; a name held twice fails the test.
-func scriptRuleRows(ctx context.Context, t *testing.T, d *db.DB, org uuid.UUID) map[string]string {
+// namedRuleRows returns org's check_rules rows with one of names, each as
+// the whole row's jsonb without the columns that differ between any two
+// writes of the same rule (ids, organization, timestamps), keyed by name;
+// a name held twice fails the test.
+func namedRuleRows(ctx context.Context, t *testing.T, d *db.DB, org uuid.UUID, names []string) map[string]string {
 	t.Helper()
 	rows, err := d.Pool().Query(ctx, `
 SELECT name, (to_jsonb(r) - 'id' - 'org_id' - 'created_at' - 'updated_at')::text
-FROM check_rules r WHERE org_id = $1 AND name = ANY($2)`, org, scriptRuleNames)
+FROM check_rules r WHERE org_id = $1 AND name = ANY($2)`, org, names)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +46,12 @@ FROM check_rules r WHERE org_id = $1 AND name = ANY($2)`, org, scriptRuleNames)
 		t.Fatal(err)
 	}
 	return got
+}
+
+// scriptRuleRows is namedRuleRows for the script seed rules.
+func scriptRuleRows(ctx context.Context, t *testing.T, d *db.DB, org uuid.UUID) map[string]string {
+	t.Helper()
+	return namedRuleRows(ctx, t, d, org, scriptRuleNames)
 }
 
 // TestScriptRulesMigrationMatchesSeedForOrg (backlog 3.6g): migration 00094
@@ -137,7 +143,8 @@ func TestScriptRulesMigrationMatchesSeedForOrg(t *testing.T) {
 		}
 	}
 	// others: the five rules SeedForOrg wrote for "created" besides the
-	// script pair.
+	// script pair — its SNMP pair is gone with 00097's Down, which
+	// DownTo(93) ran first.
 	if seeds != 0 || operators != 1 || others != 5 {
 		t.Fatalf("after Down: %d seed rows, %d operator rows, %d other rows; want 0, 1 and 5", seeds, operators, others)
 	}

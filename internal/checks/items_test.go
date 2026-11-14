@@ -41,6 +41,13 @@ func TestDefinitionAsksForItem(t *testing.T) {
 		{"http asks for its whole-host item", PluginHTTP, map[string]any{"url": "https://{address}/"}, "", true},
 		{"tls asks for its whole-host item", PluginTLS, nil, "", true},
 		{"dns asks for its whole-host item", PluginDNS, map[string]any{"name": "example.com"}, "", true},
+		// snmp (backlog 3.13d): an oids entry "name=OID" asks for item
+		// "name"; interfaces asks for any item, named by the device.
+		{"snmp asks for an oids entry's name", PluginSNMP, map[string]any{"oids": []any{"load=1.3.6.1.4.1.2021.10.1.3.1"}}, "load", true},
+		{"snmp stopped asking for a name off its list", PluginSNMP, map[string]any{"oids": []any{"load=1.3.6.1.4.1.2021.10.1.3.1"}}, "temp", false},
+		{"snmp with interfaces asks for any interface", PluginSNMP, map[string]any{"oids": []any{"load=1.3.6"}, "interfaces": true}, "Gi0/1", true},
+		{"snmp without interfaces stopped asking for an interface", PluginSNMP, map[string]any{"oids": []any{"load=1.3.6"}, "interfaces": false}, "Gi0/1", false},
+		{"snmp with a list still asks for its whole-host item", PluginSNMP, map[string]any{"oids": []any{"load=1.3.6"}}, "", true},
 		// The hardware plugins (backlog 3.9) bound their items by their
 		// list, but also report a whole-host count on item "" (and their
 		// host-level errors there), which every list still asks for.

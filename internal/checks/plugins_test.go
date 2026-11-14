@@ -10,16 +10,16 @@ import (
 	"github.com/noixdev/pulsix/internal/checks"
 )
 
-// TestIsSynthetic: the five probe plugins run on the manager, everything
-// else on the host's agent.
+// TestIsSynthetic: the probe plugins run on the manager, everything else
+// on the host's agent.
 func TestIsSynthetic(t *testing.T) {
-	for _, p := range []string{checks.PluginICMP, checks.PluginTCP, checks.PluginHTTP, checks.PluginTLS, checks.PluginDNS} {
+	for _, p := range []string{checks.PluginICMP, checks.PluginTCP, checks.PluginHTTP, checks.PluginTLS, checks.PluginDNS, checks.PluginSNMP} {
 		if !checks.IsSynthetic(p) {
 			t.Errorf("IsSynthetic(%q) = false, want true", p)
 		}
 	}
 	for _, p := range []string{checks.PluginCPU, checks.PluginMemory, checks.PluginDisk, checks.PluginService,
-		checks.PluginNetwork, checks.PluginUptime, "", "snmp"} {
+		checks.PluginNetwork, checks.PluginUptime, "", "no-such-plugin"} {
 		if checks.IsSynthetic(p) {
 			t.Errorf("IsSynthetic(%q) = true, want false", p)
 		}
@@ -51,7 +51,7 @@ func TestPluginConstantsAreTheDescriptors(t *testing.T) {
 		checks.PluginCPU, checks.PluginMemory, checks.PluginDisk, checks.PluginService,
 		checks.PluginNetwork, checks.PluginUptime, checks.PluginDocker,
 		checks.PluginTemperature, checks.PluginSmart, checks.PluginRaid, checks.PluginPostgres, checks.PluginMySQL, checks.PluginRedis, checks.PluginNginx, checks.PluginApache, checks.PluginCaddy, checks.PluginPHPFPM, checks.PluginScript,
-		checks.PluginICMP, checks.PluginTCP, checks.PluginHTTP, checks.PluginTLS, checks.PluginDNS,
+		checks.PluginICMP, checks.PluginTCP, checks.PluginHTTP, checks.PluginTLS, checks.PluginDNS, checks.PluginSNMP,
 	}
 	if names := checkplugins.Names(); !slices.Equal(constants, names) {
 		t.Fatalf("Plugin constants %v, descriptors %v", constants, names)
@@ -62,12 +62,12 @@ func TestPluginConstantsAreTheDescriptors(t *testing.T) {
 // read when the list was a literal, before it was derived from the
 // descriptors (backlog 3.54).
 func TestUnsupportedPluginMessage(t *testing.T) {
-	_, err := checks.ValidateDefinitionShape("snmp", "", nil, time.Minute)
+	_, err := checks.ValidateDefinitionShape("no-such-plugin", "", nil, time.Minute)
 	if !errors.Is(err, checks.ErrInvalidInput) {
-		t.Fatalf("ValidateDefinitionShape(snmp) = %v, want ErrInvalidInput", err)
+		t.Fatalf("ValidateDefinitionShape(no-such-plugin) = %v, want ErrInvalidInput", err)
 	}
-	const want = `invalid input: plugin must be one of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache, caddy, phpfpm, script, icmp, tcp, http, tls, dns, got "snmp"`
+	const want = `invalid input: plugin must be one of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache, caddy, phpfpm, script, icmp, tcp, http, tls, dns, snmp, got "no-such-plugin"`
 	if err.Error() != want {
-		t.Fatalf("ValidateDefinitionShape(snmp) = %q, want %q", err.Error(), want)
+		t.Fatalf("ValidateDefinitionShape(no-such-plugin) = %q, want %q", err.Error(), want)
 	}
 }

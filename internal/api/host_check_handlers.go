@@ -157,8 +157,10 @@ type hostCheckDTO struct {
 	SourceName      string              `json:"source_name,omitempty"`
 	Values          []hostCheckValueDTO `json:"values"`
 	// MissingSecret is checks.MissingSecret's warning (backlog 3.5): the
-	// secret this check names that the host's agent did not report.
-	MissingSecret string `json:"missing_secret,omitempty" doc:"The secret this check's secret parameter names that the host's agent did not report in its last heartbeat; the agent fails the check with \"secret <name> is not defined in agent.yaml\" until it is added. Absent when the check names no secret, the agent reported it, or the agent's report is unknown"`
+	// secret this check names that is not where its plugin looks — the
+	// host's agent report for an agent plugin, the organization's secret
+	// store for a probe (backlog 3.13d).
+	MissingSecret string `json:"missing_secret,omitempty" doc:"The secret this check's secret parameter names that is not available to it. For a check the host's agent runs: the agent did not report it in its last heartbeat, and fails the check with \"secret <name> is not defined in agent.yaml\" until it is added. For a check probed from the manager: the organization's secret store holds no secret of that name, and every probe fails until one is stored. Absent when the check names no secret, the secret is there, the check is disabled, or (for a check the agent runs) the agent's report is unknown"`
 }
 
 type hostChecksOutput struct {
@@ -274,7 +276,12 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapAgentsErr(ctx, err)
 		}
-		agentSecrets := checks.AgentSecrets{Known: reported.Known, Names: reported.Names}
+		known := checks.KnownSecrets{Agent: checks.AgentSecrets{Known: reported.Known, Names: reported.Names}}
+		if checks.NeedOrgSecretNames(effective) {
+			if known.Org, err = deps.OrgSecrets.Names(ctx, scope.OrgID); err != nil {
+				return nil, mapOrgSecretsErr(ctx, err)
+			}
+		}
 
 		out := &hostChecksOutput{}
 		out.Body.HostID = hostID.String()
@@ -300,14 +307,14 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 				continue
 			}
 			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
-			dto.MissingSecret = checks.MissingSecret(d.Plugin, d.Params, d.Enabled, agentSecrets)
+			dto.MissingSecret = checks.MissingSecret(d.Plugin, d.Params, d.Enabled, known)
 			out.Body.Checks = append(out.Body.Checks, dto)
 		}
 		// The checks defined in the host's agent.yaml (backlog 3.5a), after
 		// the definitions and in key order (Local's own).
 		for _, r := range resolved.Local {
 			dto := toLocalHostCheckDTO(r, stillAsked(r.AsksForItem, byKey[r.Key]), now, statesByTuple, ignored)
-			dto.MissingSecret = checks.MissingSecret(r.Plugin, r.Params, true, agentSecrets)
+			dto.MissingSecret = checks.MissingSecret(r.Plugin, r.Params, true, known)
 			out.Body.Checks = append(out.Body.Checks, dto)
 		}
 		return out, nil

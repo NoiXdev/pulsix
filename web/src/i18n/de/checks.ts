@@ -89,6 +89,7 @@ export const deChecks: Messages['checks'] = {
       http: 'HTTP(S)',
       tls: 'TLS-Zertifikat',
       dns: 'DNS',
+      snmp: 'SNMP-Gerät',
       docker: 'Docker-Container',
       temperature: 'Temperatur',
       smart: 'SMART-Festplattenzustand',
@@ -289,6 +290,22 @@ export const deChecks: Messages['checks'] = {
       },
       timeout_s: { label: 'Timeout (Sekunden)' },
     },
+    snmp: {
+      secret: {
+        label: 'Secret',
+        hint: 'Name eines Secrets dieser Organisation unter Einstellungen → Secrets: es enthält die Community (v2c) oder den SNMPv3-Login. Seine Werte werden nie wieder angezeigt und verlassen den Pulsix-Server nie.',
+        placeholder: 'switch-core',
+      },
+      version: { label: 'SNMP-Version', options: { v2c: 'v2c (Community)', v3: 'v3 (Benutzername und Passwörter)' } },
+      port: { label: 'Port' },
+      timeout_seconds: { label: 'Timeout pro Anfrage (Sekunden)' },
+      oids: {
+        label: 'Werte (einer pro Zeile, Name=OID)',
+        hint: 'Jede Zeile liest einen Wert vom Gerät und meldet ihn unter seinem Namen. Nur numerische OIDs wie 1.3.6.1.2.1.1.3.0.',
+        placeholder: 'ups_load=1.3.6.1.2.1.33.1.4.4.1.5.1',
+      },
+      interfaces: { label: 'Schnittstellen überwachen', hint: 'Status, Datenverkehr und Fehler jeder Schnittstelle, die das Gerät auflistet, höchstens 128.' },
+    },
   },
   paramErrors: {
     wholeRange: (min: number, max: number) => `muss eine ganze Zahl zwischen ${min} und ${max} sein`,
@@ -300,6 +317,7 @@ export const deChecks: Messages['checks'] = {
       devicePath: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
       secretName: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
       commandName: 'jeder Eintrag muss ein Befehlsname aus 1 bis 64 Zeichen sein: Buchstaben, Ziffern und . _ -',
+      snmpOID: 'jeder Eintrag muss Name=OID sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und eine numerische OID wie 1.3.6.1.2.1.1.3.0',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',

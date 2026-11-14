@@ -315,6 +315,23 @@ function secretName(s: string): boolean {
  * agent.yaml — the same rule as secretName. */
 const commandName = secretName;
 
+/** snmpOID: one entry of snmp's oids, "name=OID" split at the first '=':
+ * the name follows secretName, the OID is numeric and dotted with an
+ * optional leading dot, 2 to 128 arcs, each a decimal of at most
+ * 4294967295 without leading zeros. */
+function snmpOID(s: string): boolean {
+  const eq = s.indexOf('=');
+  if (eq < 0 || !secretName(s.slice(0, eq))) return false;
+  let oid = s.slice(eq + 1);
+  if (oid.startsWith('.')) oid = oid.slice(1);
+  const arcs = oid.split('.');
+  return (
+    arcs.length >= 2 &&
+    arcs.length <= 128 &&
+    arcs.every((arc) => /^(0|[1-9][0-9]{0,9})$/.test(arc) && Number(arc) <= 4294967295)
+  );
+}
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -328,6 +345,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   dockerSocket,
   secretName,
   commandName,
+  snmpOID,
 };
 
 /** formatValid reports whether s passes the named format. An unknown

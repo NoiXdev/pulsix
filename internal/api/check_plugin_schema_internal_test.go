@@ -11,7 +11,7 @@ import (
 // TestCheckPluginFieldDoc: the write bodies' plugin doc string, built from
 // the registry, reads exactly as the literal it replaced.
 func TestCheckPluginFieldDoc(t *testing.T) {
-	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache, caddy, phpfpm, script (run by the host's agent) or icmp, tcp, http, tls, dns (probed from the manager)"
+	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache, caddy, phpfpm, script (run by the host's agent) or icmp, tcp, http, tls, dns, snmp (probed from the manager)"
 	if got := checkPluginFieldDoc(); got != want {
 		t.Fatalf("checkPluginFieldDoc() =\n%s\nwant\n%s", got, want)
 	}
@@ -57,7 +57,11 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"tls: port (1 to 65535; default 443), server_name (at most 500 bytes; not blank), timeout_s (1 to 30; default 10). " +
 		"dns: name (at most 500 bytes; a DNS name that may contain {address}; default {address}), " +
 		"type (A, AAAA, CNAME, MX, TXT or NS; default A), server (at most 500 bytes; an IP address with an optional port), " +
-		"expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5)."
+		"expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5). " +
+		"snmp: secret (required; not empty; at most 64 bytes; the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -), " +
+		"version (v2c or v3; default v2c), port (1 to 65535; default 161), timeout_seconds (1 to 30; default 5), " +
+		"oids (list; at most 32 entries; each name=OID, the name 1 to 64 letters, digits, _ . -, the OID numeric such as 1.3.6.1.2.1.1.3.0), " +
+		"interfaces (true or false; default false)."
 	if got := checkParamsFieldDoc(); got != want {
 		t.Fatalf("checkParamsFieldDoc() =\n%s\nwant\n%s", got, want)
 	}

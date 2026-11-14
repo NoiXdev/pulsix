@@ -15,8 +15,9 @@ import (
 // is absent, not a list of strings, or empty: no list means every item the
 // host finds — which is also what the agent's plugins do with the
 // parameter. Otherwise only the listed items are asked, except that a
-// HostItemAlwaysAsked plugin's whole-host item "" always is, and that an
-// ItemEntry hook maps a reported item to the entry naming it first.
+// HostItemAlwaysAsked plugin's whole-host item "" always is, that an
+// ItemEntry hook maps a reported item to the entry naming it first, and
+// that an ItemAsked hook decides in place of the comparison.
 func AsksForItem(plugin string, params map[string]any, item string) bool {
 	d, ok := Get(plugin)
 	if !ok || d.ItemParam == "" {
@@ -28,6 +29,9 @@ func AsksForItem(plugin string, params map[string]any, item string) bool {
 	}
 	if item == "" && d.HostItemAlwaysAsked {
 		return true
+	}
+	if d.ItemAsked != nil {
+		return d.ItemAsked(params, asked, item)
 	}
 	if d.ItemEntry != nil {
 		item = d.ItemEntry(item)

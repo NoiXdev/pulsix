@@ -1014,6 +1014,96 @@
           "kind": "numeric"
         }
       ]
+    },
+    {
+      "name": "snmp",
+      "runs": "server",
+      "params": [
+        {
+          "name": "secret",
+          "type": "string",
+          "required": true,
+          "example": "switch-core",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        },
+        {
+          "name": "version",
+          "type": "enum",
+          "default": "v2c",
+          "options": [
+            "v2c",
+            "v3"
+          ]
+        },
+        {
+          "name": "port",
+          "type": "integer",
+          "default": 161,
+          "min": 1,
+          "max": 65535
+        },
+        {
+          "name": "timeout_seconds",
+          "type": "integer",
+          "default": 5,
+          "min": 1,
+          "max": 30
+        },
+        {
+          "name": "oids",
+          "type": "list",
+          "example": "ups_load=1.3.6.1.2.1.33.1.4.4.1.5.1",
+          "max_entries": 32,
+          "format": "snmpOID"
+        },
+        {
+          "name": "interfaces",
+          "type": "bool",
+          "default": false
+        }
+      ],
+      "item_param": "oids",
+      "host_item_always_asked": true,
+      "metrics": [
+        {
+          "name": "snmp.up",
+          "kind": "numeric"
+        },
+        {
+          "name": "snmp.response_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "snmp.uptime_seconds",
+          "kind": "numeric"
+        },
+        {
+          "name": "snmp.value",
+          "kind": "numeric"
+        },
+        {
+          "name": "snmp.text",
+          "kind": "discrete"
+        },
+        {
+          "name": "snmp.if.status",
+          "kind": "discrete"
+        },
+        {
+          "name": "snmp.if.in_bps",
+          "kind": "numeric"
+        },
+        {
+          "name": "snmp.if.out_bps",
+          "kind": "numeric"
+        },
+        {
+          "name": "snmp.if.errors",
+          "kind": "numeric"
+        }
+      ]
     }
   ]
 }
