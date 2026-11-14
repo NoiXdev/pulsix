@@ -135,7 +135,9 @@ type hostCheckValueDTO struct {
 }
 
 type hostCheckDTO struct {
-	DefinitionID string `json:"definition_id"`
+	// DefinitionID is absent for a check defined in the host's agent.yaml
+	// (backlog 3.5a): no definition stands behind it.
+	DefinitionID string `json:"definition_id,omitempty" doc:"The winning definition; absent for a check defined on the host (source local)"`
 	Key          string `json:"key"`
 	// Plugin is a closed set here, unlike checkDefinitionBody's own
 	// write-side field (which internal/checks validates and answers for,
@@ -149,8 +151,8 @@ type hostCheckDTO struct {
 	Params          map[string]any      `json:"params"`
 	IntervalSeconds int                 `json:"interval_seconds"`
 	Enabled         bool                `json:"enabled" doc:"false means the winning scope turned this check off; it is listed so the GUI can show where"`
-	Origin          string              `json:"origin" enum:"seed,custom,shared"`
-	Source          string              `json:"source" enum:"org,group,host" doc:"The scope the winning definition is bound at"`
+	Origin          string              `json:"origin" enum:"seed,custom,shared,local" doc:"local for a check defined in the host's agent.yaml, which the GUI cannot edit, disable or override"`
+	Source          string              `json:"source" enum:"org,group,host,local" doc:"The scope the winning definition is bound at; local for a check defined in the host's agent.yaml"`
 	SourceID        string              `json:"source_id,omitempty" doc:"The group or host it is bound to; absent for an organization-bound check"`
 	SourceName      string              `json:"source_name,omitempty"`
 	Values          []hostCheckValueDTO `json:"values"`
@@ -249,13 +251,19 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, mapChecksErr(ctx, err)
 		}
-		statesByTuple, err := currentTupleStates(ctx, deps, scope.OrgID, hostID)
+		// One resolution serves both what the tuple states are filtered
+		// by and the checks defined on the host (Local), listed below.
+		resolved, err := deps.Checks.ResolveHost(ctx, scope.OrgID, hostID)
 		if err != nil {
-			// currentTupleStates already maps and logs its own two failure
-			// modes (checks.Service.ResolveHost versus rules.StateStore) under
-			// their own names — see its own doc comment — so the error it
-			// returns is already the response this route should give, not a
-			// raw error for mapChecksErr to relabel as a checks failure.
+			return nil, mapChecksErr(ctx, err)
+		}
+		statesByTuple, err := currentTupleStates(ctx, deps, scope.OrgID, hostID, resolvedKeysOf(resolved))
+		if err != nil {
+			// currentTupleStates already maps and logs its own failure
+			// (rules.StateStore's, not a checks one) — see its own doc
+			// comment — so the error it returns is already the response
+			// this route should give, not a raw error for mapChecksErr to
+			// relabel as a checks failure.
 			return nil, err
 		}
 		ignored, err := hostIgnoredItems(ctx, deps, scope.OrgID, hostID, current)
@@ -275,12 +283,27 @@ func registerHostCheckRoutes(hapi huma.API, deps Deps) {
 			seconds := offset.Offset.Seconds()
 			out.Body.ClockOffsetSeconds = &seconds
 		}
-		out.Body.Checks = make([]hostCheckDTO, 0, len(effective))
+		out.Body.Checks = make([]hostCheckDTO, 0, len(effective)+len(resolved.Local))
 		byKey := currentByKey(current)
 		now := time.Now()
+		listed := make(map[string]bool, len(effective))
 		for _, d := range effective {
-			dto := toHostCheckDTO(d, stillAsked(d, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
-			dto.MissingSecret = checks.MissingSecret(d, agentSecrets)
+			dto := toHostCheckDTO(d, stillAsked(d.AsksForItem, byKey[d.Key]), groupNames, host.Name, now, statesByTuple, ignored)
+			dto.MissingSecret = checks.MissingSecret(d.Plugin, d.Params, d.Enabled, agentSecrets)
+			out.Body.Checks = append(out.Body.Checks, dto)
+			listed[d.Key] = true
+		}
+		// The checks defined in the host's agent.yaml (backlog 3.5a), after
+		// the definitions and in key order (Local's own). A local key the
+		// resolver kept although a definition has it — only a disabled
+		// definition from before the local- reservation can — is listed
+		// once, as that definition: its values are already shown there.
+		for _, r := range resolved.Local {
+			if listed[r.Key] {
+				continue
+			}
+			dto := toLocalHostCheckDTO(r, stillAsked(r.AsksForItem, byKey[r.Key]), now, statesByTuple, ignored)
+			dto.MissingSecret = checks.MissingSecret(r.Plugin, r.Params, true, agentSecrets)
 			out.Body.Checks = append(out.Body.Checks, dto)
 		}
 		return out, nil
@@ -420,10 +443,10 @@ func currentByKey(current []checks.Current) map[string][]checks.Current {
 // means every filesystem the host finds. Only the current view is
 // filtered; GET /hosts/{id}/metrics still serves the dropped item's
 // samples, because a graph of a mount dropped last week is a real graph.
-func stillAsked(d checks.Definition, values []checks.Current) []checks.Current {
+func stillAsked(asks func(item string) bool, values []checks.Current) []checks.Current {
 	kept := values[:0:0]
 	for _, v := range values {
-		if d.AsksForItem(v.Item) {
+		if asks(v.Item) {
 			kept = append(kept, v)
 		}
 	}
@@ -454,7 +477,31 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 	case checks.BindingOrg:
 		// Bound to the organization itself: no single group or host to name.
 	}
-	dto.Values = make([]hostCheckValueDTO, len(values))
+	dto.Values = toHostCheckValues(d.Key, d.Interval, values, now, states, ignored)
+	return dto
+}
+
+// toLocalHostCheckDTO is a check defined in the host's agent.yaml (backlog
+// 3.5a): read-only, so no definition id, source or origin but "local", and
+// enabled — it runs whenever the agent does.
+func toLocalHostCheckDTO(r checks.Resolved, values []checks.Current, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) hostCheckDTO {
+	params := r.Params
+	if params == nil {
+		params = map[string]any{}
+	}
+	return hostCheckDTO{
+		Key: r.Key, Plugin: checkPluginName(r.Plugin), Params: params,
+		IntervalSeconds: int(r.Interval / time.Second), Enabled: true,
+		Origin: string(checks.BindingLocal), Source: string(checks.BindingLocal),
+		Values: toHostCheckValues(r.Key, r.Interval, values, now, states, ignored),
+	}
+}
+
+// toHostCheckValues renders one check's current values: each with its
+// staleness against the check's own interval, the rule engine's verdict on
+// its tuple and what an item decision says about it.
+func toHostCheckValues(key string, interval time.Duration, values []checks.Current, now time.Time, states map[rules.Tuple]rules.TupleState, ignored map[ignoredKey]items.Resolution) []hostCheckValueDTO {
+	out := make([]hostCheckValueDTO, len(values))
 	for i, c := range values {
 		v := hostCheckValueDTO{Item: c.Item, Metric: c.Metric, Value: c.Value, Error: c.Err, At: c.At}
 		if c.Value != nil {
@@ -470,8 +517,8 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 		// Staleness is measured against this check's own interval, so a
 		// five-minute disk check is not called stale a minute after its
 		// last reading while a ten-second CPU check is.
-		v.Stale = now.Sub(c.At) > time.Duration(staleIntervals)*d.Interval
-		if st, ok := states[rules.Tuple{CheckKey: d.Key, Item: c.Item, Metric: c.Metric}]; ok {
+		v.Stale = now.Sub(c.At) > time.Duration(staleIntervals)*interval
+		if st, ok := states[rules.Tuple{CheckKey: key, Item: c.Item, Metric: c.Metric}]; ok {
 			state := string(st.State)
 			since, evaluatedAt := st.Since, st.EvaluatedAt
 			v.State, v.Since, v.Flapping = &state, &since, st.Flapping
@@ -480,22 +527,22 @@ func toHostCheckDTO(d checks.Definition, values []checks.Current, groupNames map
 			// the verdict was formed rather than the moment the reading
 			// arrived: a stopped evaluator still has fresh samples flowing
 			// in (Stale stays false) but stops advancing EvaluatedAt.
-			v.StateStale = now.Sub(evaluatedAt) > time.Duration(staleIntervals)*d.Interval
+			v.StateStale = now.Sub(evaluatedAt) > time.Duration(staleIntervals)*interval
 		}
 		// Every tuple, item-less ones included (backlog 3.45): the filter
 		// that used to stand here was the second half of the same wrong
 		// rule hostIgnoredItems carried, and leaving either in place
 		// keeps the flag silent for a glob an operator really did write.
-		if res, ok := ignored[ignoredKey{CheckKey: d.Key, Item: c.Item}]; ok {
+		if res, ok := ignored[ignoredKey{CheckKey: key, Item: c.Item}]; ok {
 			v.Ignored = res.Ignored()
 			if res.Decision != nil {
 				decided := toItemDecisionDTO(*res.Decision)
 				v.DecidedBy = &decided
 			}
 		}
-		dto.Values[i] = v
+		out[i] = v
 	}
-	return dto
+	return out
 }
 
 // ignoredKey identifies one (check_key, item) pair — an item decision's own
@@ -561,28 +608,24 @@ func hostIgnoredItems(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, c
 // and got disabled — or deleted outright — would show that stale verdict
 // on the host page for ever, indistinguishable from a live one.
 //
-// deps.Checks.ResolveHost is the exact same input rules.ContextForHost
-// feeds the evaluator (see internal/app/rules_ports.go's own adapter): a
-// disabled definition, or a key nothing binds any more, is absent from its
-// Checks list, so "present here" and "the evaluator would still evaluate
-// this tuple" are the same question asked of the same data. A deleted
-// check's tuple never reaches this filter at all — its key is not in the
-// caller's own `effective` list either, so toHostCheckDTO never looks it
-// up — this only ever matters for the disabled case, where the check
-// still appears (Enabled: false) but must not carry a live-looking state.
+// resolvedKeys is resolvedKeysOf the caller's deps.Checks.ResolveHost, the
+// exact same input rules.ContextForHost feeds the evaluator (see
+// internal/app/rules_ports.go's own adapter): a disabled definition, or a
+// key nothing binds any more, is absent from it, so "present here" and
+// "the evaluator would still evaluate this tuple" are the same question
+// asked of the same data. A deleted check's tuple never reaches this
+// filter at all — its key is not in the caller's own `effective` list
+// either, so toHostCheckDTO never looks it up — this only ever matters for
+// the disabled case, where the check still appears (Enabled: false) but
+// must not carry a live-looking state.
 //
-// The two calls below fail on behalf of two different packages, and each
-// error is mapped and logged in its own name rather than both being folded
-// into mapChecksErr's "unmapped checks error" at the caller: ResolveHost's
-// failure really is a checks.Service fault, but StatesForHost's is
+// The caller maps ResolveHost's failure as the checks.Service fault it is;
+// StatesForHost's is mapped and logged here in its own name rather than
+// folded into mapChecksErr's "unmapped checks error": it is
 // rules.StateStore's, and logging it as a checks failure would send
 // on-call triage at the wrong package for a fault this route did nothing
 // to cause.
-func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) (map[rules.Tuple]rules.TupleState, error) {
-	resolvedKeys, err := resolvedCheckKeys(ctx, deps, orgID, hostID)
-	if err != nil {
-		return nil, err
-	}
+func currentTupleStates(ctx context.Context, deps Deps, orgID, hostID uuid.UUID, resolvedKeys map[string]bool) (map[rules.Tuple]rules.TupleState, error) {
 	states, err := deps.RuleStates.StatesForHost(ctx, orgID, hostID)
 	if err != nil {
 		slog.ErrorContext(ctx, "host checks: rule states", "org_id", orgID, "host_id", hostID, "err", err)
@@ -616,14 +659,22 @@ func resolvedCheckKeys(ctx context.Context, deps Deps, orgID, hostID uuid.UUID) 
 	if err != nil {
 		return nil, mapChecksErr(ctx, err)
 	}
-	// Synthetic checks included: their results are tuples like any other
-	// (backlog 3.13), and ContextForHost resolves them an interval too.
+	return resolvedKeysOf(resolved), nil
+}
+
+// resolvedKeysOf is resolvedCheckKeys over a set the caller already
+// resolved — the host checks route resolves once for its states and for
+// the checks defined on the host.
+func resolvedKeysOf(resolved checks.ResolvedSet) map[string]bool {
+	// Synthetic and local checks included: their results are tuples like
+	// any other (backlogs 3.13, 3.5a), and ContextForHost resolves them an
+	// interval too.
 	all := resolved.All()
 	keys := make(map[string]bool, len(all))
 	for _, c := range all {
 		keys[c.Key] = true
 	}
-	return keys, nil
+	return keys
 }
 
 // monitoringGroupNames maps group id to name, for naming the scope a

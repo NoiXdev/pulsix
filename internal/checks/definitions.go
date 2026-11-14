@@ -28,6 +28,12 @@ const (
 	BindingHost  BindingKind = "host"
 )
 
+// BindingLocal is the source of a check defined in a host's agent.yaml
+// (backlog 3.5a, ResolvedSet.Local): it is never a definition's scope —
+// normalizeDefinition refuses it like any kind it does not know — and takes
+// part in no precedence; a manager check of the same key wins outright.
+const BindingLocal BindingKind = "local"
+
 // Origin distinguishes a row the seed set created from one an operator
 // created, and — since migration 00062, spec v0.2f decision 2 — from one
 // that is a projection of an installation-owned definition. Only the first
@@ -111,6 +117,13 @@ func ValidateDefinitionShape(plugin, key string, params map[string]any, interval
 	normalizedKey = strings.TrimSpace(key)
 	if normalizedKey == "" {
 		normalizedKey = plugin // "key defaults to the plugin name" (spec's Data model)
+	}
+	// Keys starting with local- belong to the checks defined in a host's
+	// agent.yaml (backlog 3.5a), so the two never collide. The prefix
+	// alone, not checkplugins.ValidLocalCheckKey: "local-" by itself is no
+	// valid local key, and is refused here all the same.
+	if strings.HasPrefix(normalizedKey, checkplugins.LocalCheckPrefix) {
+		return "", fmt.Errorf("%w: keys starting with local- are reserved for checks defined on the host", ErrInvalidInput)
 	}
 	// The same shape a plugin name itself always satisfies, so a key left
 	// to default to the plugin name never fails this check.

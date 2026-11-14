@@ -43,7 +43,7 @@ func TestMissingSecret(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := missingSecret(fakeSecretLookup, tc.d, tc.agent); got != tc.want {
+			if got := missingSecret(fakeSecretLookup, tc.d.Plugin, tc.d.Params, tc.d.Enabled, tc.agent); got != tc.want {
 				t.Fatalf("missingSecret = %q, want %q", got, tc.want)
 			}
 		})
@@ -59,7 +59,7 @@ func TestMissingSecretUsesTheRegistry(t *testing.T) {
 		if desc, _ := checkplugins.Get(name); desc.UsesSecret() {
 			want = "redis"
 		}
-		if got := MissingSecret(d, AgentSecrets{Known: true, Names: []string{}}); got != want {
+		if got := MissingSecret(d.Plugin, d.Params, d.Enabled, AgentSecrets{Known: true, Names: []string{}}); got != want {
 			t.Errorf("%s: MissingSecret = %q, want %q", name, got, want)
 		}
 	}

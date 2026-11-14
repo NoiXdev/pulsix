@@ -983,3 +983,58 @@ func TestUpdateDefinitionRefusesRebindingOntoASharedKeysOrgSlot(t *testing.T) {
 		t.Fatalf("rebinding under a key no shared projection holds must still succeed, got %v", err)
 	}
 }
+
+// TestDefinitionKeysStartingWithLocalAreReserved (backlog 3.5a): keys
+// starting with local- belong to the checks defined in a host's agent.yaml,
+// so a definition can neither be created under one nor renamed to one —
+// on the normalized key, through ValidateDefinitionShape, which
+// internal/shared's definitions go through too. And no definition can be
+// bound at BindingLocal: that scope is a local check's, never a
+// definition's.
+func TestDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
+	const want = "invalid input: keys starting with local- are reserved for checks defined on the host"
+	svc := checks.NewService(newFakeStore())
+	org := uuid.Must(uuid.NewV7())
+
+	for _, key := range []string{"local-x", "  local-backup ", "local-"} {
+		_, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+			Key: key, Plugin: checks.PluginCPU, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+		})
+		if !errors.Is(err, checks.ErrInvalidInput) || err.Error() != want {
+			t.Fatalf("CreateDefinition(key %q) = %v, want %q", key, err, want)
+		}
+		if _, err := checks.ValidateDefinitionShape(checks.PluginCPU, key, nil, time.Minute); err == nil || err.Error() != want {
+			t.Fatalf("ValidateDefinitionShape(key %q) = %v, want %q", key, err, want)
+		}
+	}
+	// Only the prefix is reserved: a key that merely contains it is not.
+	if _, err := checks.ValidateDefinitionShape(checks.PluginCPU, "not-local-x", nil, time.Minute); err != nil {
+		t.Fatalf("ValidateDefinitionShape(not-local-x) = %v, want nil", err)
+	}
+
+	d, err := svc.CreateDefinition(ctx, org, checks.DefinitionInput{
+		Key: "disk-data", Plugin: checks.PluginDisk, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.UpdateDefinition(ctx, org, d.ID, checks.DefinitionInput{
+		Key: "local-disk", Plugin: checks.PluginDisk, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingOrg,
+	})
+	if !errors.Is(err, checks.ErrInvalidInput) || err.Error() != want {
+		t.Fatalf("UpdateDefinition renaming to local-disk = %v, want %q", err, want)
+	}
+
+	host := uuid.Must(uuid.NewV7())
+	for _, in := range []checks.DefinitionInput{
+		{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingLocal},
+		{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute, Enabled: true, BindingKind: checks.BindingLocal, HostID: &host},
+	} {
+		if _, err := svc.CreateDefinition(ctx, org, in); !errors.Is(err, checks.ErrInvalidInput) {
+			t.Fatalf("CreateDefinition bound at local = %v, want ErrInvalidInput", err)
+		}
+		if _, err := svc.UpdateDefinition(ctx, org, d.ID, in); !errors.Is(err, checks.ErrInvalidInput) {
+			t.Fatalf("UpdateDefinition bound at local = %v, want ErrInvalidInput", err)
+		}
+	}
+}

@@ -72,6 +72,12 @@ func TestDefinitionAsksForItem(t *testing.T) {
 			if got := d.AsksForItem(tc.item); got != tc.want {
 				t.Fatalf("AsksForItem(%q) = %v, want %v", tc.item, got, tc.want)
 			}
+			// A resolved check — a local one (backlog 3.5a) has no
+			// definition — answers by the same rule.
+			r := Resolved{Plugin: tc.plugin, Params: tc.params}
+			if got := r.AsksForItem(tc.item); got != tc.want {
+				t.Fatalf("Resolved.AsksForItem(%q) = %v, want %v", tc.item, got, tc.want)
+			}
 		})
 	}
 }

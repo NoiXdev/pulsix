@@ -1093,6 +1093,30 @@ func TestCreateCheckDefinitionRefusesAnOutOfRangeInterval(t *testing.T) {
 	}
 }
 
+// TestCheckDefinitionKeysStartingWithLocalAreReserved (backlog 3.5a): an
+// installation-owned definition goes through checks.ValidateDefinitionShape
+// too, so a key starting with local- — reserved for the checks defined in
+// a host's agent.yaml — is refused on create and on a rename, before
+// anything is written.
+func TestCheckDefinitionKeysStartingWithLocalAreReserved(t *testing.T) {
+	store := newFakeStore()
+	id := uuid.Must(uuid.NewV7())
+	store.checkDefs[id] = shared.CheckDefinition{ID: id, Key: "disk-data", Plugin: "disk", Interval: 300 * time.Second}
+	svc := shared.NewService(store)
+
+	_, err := svc.CreateCheckDefinition(ctx, shared.CheckDefinitionInput{Key: "local-x", Plugin: "cpu", Interval: 60 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "keys starting with local- are reserved for checks defined on the host") {
+		t.Fatalf("CreateCheckDefinition(local-x) = %v, want the reservation as ErrInvalidInput", err)
+	}
+	if len(store.createCheckDefCalls) != 0 {
+		t.Fatalf("CreateCheckDefinitionWithProjections called %d times, want 0", len(store.createCheckDefCalls))
+	}
+	_, err = svc.UpdateCheckDefinition(ctx, id, shared.CheckDefinitionInput{Key: "local-disk", Plugin: "disk", Interval: 300 * time.Second})
+	if !errors.Is(err, shared.ErrInvalidInput) || !strings.Contains(err.Error(), "keys starting with local- are reserved for checks defined on the host") {
+		t.Fatalf("UpdateCheckDefinition renaming to local-disk = %v, want the reservation as ErrInvalidInput", err)
+	}
+}
+
 // TestCreateCheckDefinitionRefusesAReservedSeedKeyEvenWithNoOrganizations
 // is the review's own Important finding, fixed and pinned here: cpu,
 // memory, disk and service are refused OUTRIGHT, not merely when some

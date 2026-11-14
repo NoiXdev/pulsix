@@ -484,7 +484,8 @@ func New(t *testing.T, opts ...Option) *Server {
 	s.Checks = checks.NewService(checks.NewSQLStore(d),
 		checks.WithAlertCloser(s.Alerts),
 		checks.WithMatcher(app.NewChecksHostMatcher(hostsSvc)),
-		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)))
+		checks.WithHostRoster(app.NewChecksHostRoster(hostsSvc)),
+		checks.WithLocalChecks(app.NewChecksLocalChecks(agents.NewService(agents.NewSQLStore(d)))))
 	// The rule engine (v0.3b-2): SeedForOrg is wired into the hook right
 	// below, alongside checksSvc's own, exactly like production wiring
 	// (internal/app/app.go) — rulesSvc needs no host ports of its own,

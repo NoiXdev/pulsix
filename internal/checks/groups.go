@@ -185,9 +185,12 @@ type Service struct {
 	store      Store
 	matcher    HostMatcher
 	hostRoster HostRoster
-	alerts     AlertCloser
-	rand       io.Reader
-	now        func() time.Time
+	// localChecks is what hosts' agents reported about the checks defined
+	// in their agent.yaml (localchecks.go); nil resolves none.
+	localChecks LocalCheckSource
+	alerts      AlertCloser
+	rand        io.Reader
+	now         func() time.Time
 	// offsets is what ingest learned about each host's clock, kept in
 	// this process for the host page to read back (skew.go).
 	offsets *clockOffsets

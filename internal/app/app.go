@@ -336,10 +336,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// AlertSink and checksSvc's alert closer for forgotten items (backlog
 	// 3.12b) — one wire, not three to keep in sync.
 	alertsSvc := alerts.NewService(alerts.NewSQLStore(appDB), time.Now)
+	// The checks defined in hosts' agent.yaml (backlog 3.5a) resolve from
+	// what each agent last reported in its heartbeat. agentsSvc itself is
+	// built further down, once the CA is; this read needs none of its
+	// ports, so a plain agents.Service over the same database serves it.
 	checksSvc := checks.NewService(checks.NewSQLStore(appDB),
 		checks.WithAlertCloser(alertsSvc),
 		checks.WithMatcher(NewChecksHostMatcher(hostsSvc)),
-		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)))
+		checks.WithHostRoster(NewChecksHostRoster(hostsSvc)),
+		checks.WithLocalChecks(NewChecksLocalChecks(agents.NewService(agents.NewSQLStore(appDB)))))
 	// The rule engine's starter set (v0.3b-2, Task 5): rulesSvc needs no
 	// host ports of its own — SeedForOrg only ever writes org-scoped rows —
 	// so it is built here for the sole purpose of the hook right below,

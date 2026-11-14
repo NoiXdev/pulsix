@@ -32,11 +32,12 @@ type Resolved struct {
 	Key, Plugin string
 	Params      map[string]any
 	Interval    time.Duration
-	// Source is the scope the winning definition was bound at.
+	// Source is the scope the winning definition was bound at, or
+	// BindingLocal for a check defined in the host's agent.yaml.
 	Source BindingKind
 	// SourceID is the group or host the winning definition belongs to;
 	// nil when Source is BindingOrg (an organization-bound definition
-	// belongs to no single group or host).
+	// belongs to no single group or host) or BindingLocal (no definition).
 	SourceID *uuid.UUID
 }
 
@@ -54,6 +55,12 @@ type ResolvedSet struct {
 	// does not know their plugins, and Version does not cover them, so
 	// adding one does not re-push the agent's set.
 	Synthetic []Resolved
+	// Local are the checks defined in the host's agent.yaml (backlog
+	// 3.5a), as its agent last reported them, sorted by Key, each with
+	// Source BindingLocal and no SourceID. The agent runs them without the
+	// manager, so Version does not cover them either; a key also in Checks
+	// or Synthetic is left out, since the manager's check wins.
+	Local []Resolved
 	// Version is the hex SHA-256 of Checks' canonical encoding (see
 	// canonicalEncoding) — the configuration version an agent reports in
 	// its heartbeat and the manager compares against to decide whether to
@@ -61,14 +68,17 @@ type ResolvedSet struct {
 	Version string
 }
 
-// All returns every resolved check of the host, host-local and synthetic:
-// what the rule evaluation and the host page judge, since both kinds of
-// result land in the same tuples. Checks first, then Synthetic; a key is
-// in at most one of them, since both come out of one merge keyed by Key.
+// All returns every resolved check of the host, host-local, synthetic and
+// defined on the host: what the rule evaluation and the host page judge,
+// since every kind of result lands in the same tuples. Checks first, then
+// Synthetic, then Local; a key is in at most one of them, since Checks and
+// Synthetic come out of one merge keyed by Key and Local leaves out the
+// keys of both.
 func (rs ResolvedSet) All() []Resolved {
-	out := make([]Resolved, 0, len(rs.Checks)+len(rs.Synthetic))
+	out := make([]Resolved, 0, len(rs.Checks)+len(rs.Synthetic)+len(rs.Local))
 	out = append(out, rs.Checks...)
-	return append(out, rs.Synthetic...)
+	out = append(out, rs.Synthetic...)
+	return append(out, rs.Local...)
 }
 
 // resolveBundle is every input the resolver needs for one organization,
@@ -306,13 +316,14 @@ func version(checks []Resolved) (string, error) {
 // toResolvedSet splits resolved into the host-local Checks and the
 // Synthetic ones (IsSynthetic), sorts both by Key (resolve already sorts,
 // but a ResolvedSet is never handed out unsorted even if a future caller
-// of resolve forgets to) and computes Version over Checks alone. Both are
+// of resolve forgets to), computes Version over Checks alone and adds the
+// host's local checks as Local (resolveLocal). All three are
 // normalised to a non-nil, empty slice when there is nothing to report —
 // an unmonitored host and a monitored host with zero surviving checks must
 // serialise identically ("[]", never the bare "null" a nil slice would
 // produce once Task 6 puts this on the wire) even though they reach here
 // by different paths.
-func toResolvedSet(hostID uuid.UUID, resolved []Resolved) (ResolvedSet, error) {
+func toResolvedSet(hostID uuid.UUID, resolved []Resolved, local []LocalCheck) (ResolvedSet, error) {
 	checks, synthetic := []Resolved{}, []Resolved{}
 	for _, r := range resolved {
 		if IsSynthetic(r.Plugin) {
@@ -327,7 +338,7 @@ func toResolvedSet(hostID uuid.UUID, resolved []Resolved) (ResolvedSet, error) {
 	if err != nil {
 		return ResolvedSet{}, fmt.Errorf("resolve: compute version: %w", err)
 	}
-	return ResolvedSet{HostID: hostID, Checks: checks, Synthetic: synthetic, Version: v}, nil
+	return ResolvedSet{HostID: hostID, Checks: checks, Synthetic: synthetic, Local: resolveLocal(local, checks, synthetic), Version: v}, nil
 }
 
 // ResolveHost computes hostID's resolved set: organization, then every
@@ -335,7 +346,8 @@ func toResolvedSet(hostID uuid.UUID, resolved []Resolved) (ResolvedSet, error) {
 // not monitored (or does not exist in orgID at all — the two read the
 // same, the same "invisible rather than forbidden" contract ErrNotFound
 // gives every other lookup in this codebase) resolves to an empty set,
-// never an error.
+// never an error — its local checks included: its agent may still run
+// them, but their values are stored, not judged.
 func (s *Service) ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (ResolvedSet, error) {
 	if s.hostRoster == nil {
 		return ResolvedSet{}, fmt.Errorf("checks: resolve: service was built without WithHostRoster")
@@ -345,14 +357,18 @@ func (s *Service) ResolveHost(ctx context.Context, orgID, hostID uuid.UUID) (Res
 		return ResolvedSet{}, fmt.Errorf("resolve: monitored hosts: %w", err)
 	}
 	if !containsID(monitoredIDs, hostID) {
-		return toResolvedSet(hostID, nil)
+		return toResolvedSet(hostID, nil, nil)
 	}
 
 	bundle, err := s.loadResolveBundle(ctx, orgID)
 	if err != nil {
 		return ResolvedSet{}, err
 	}
-	return toResolvedSet(hostID, bundle.resolve(hostID))
+	local, err := s.localForHost(ctx, orgID, hostID)
+	if err != nil {
+		return ResolvedSet{}, err
+	}
+	return toResolvedSet(hostID, bundle.resolve(hostID), local)
 }
 
 // ResolveHosts computes the resolved set of each host in hostIDs, sharing
@@ -394,6 +410,20 @@ func (s *Service) ResolveHosts(ctx context.Context, orgID uuid.UUID, hostIDs []u
 	if err != nil {
 		return nil, err
 	}
+	// The local checks of the requested hosts that are monitored, in one
+	// read: an unmonitored host's are never resolved.
+	asked := make([]uuid.UUID, 0, len(hostIDs))
+	seen := make(map[uuid.UUID]bool, len(hostIDs))
+	for _, id := range hostIDs {
+		if _, ok := monitored[id]; ok && !seen[id] {
+			seen[id] = true
+			asked = append(asked, id)
+		}
+	}
+	local, err := s.localForHosts(ctx, orgID, asked)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make(map[uuid.UUID]ResolvedSet, len(hostIDs))
 	for _, id := range hostIDs {
@@ -404,7 +434,7 @@ func (s *Service) ResolveHosts(ctx context.Context, orgID uuid.UUID, hostIDs []u
 		if _, ok := monitored[id]; ok {
 			checks = bundle.resolve(id)
 		}
-		rs, err := toResolvedSet(id, checks)
+		rs, err := toResolvedSet(id, checks, local[id])
 		if err != nil {
 			return nil, err
 		}
@@ -434,10 +464,14 @@ func (s *Service) ResolveOrg(ctx context.Context, orgID uuid.UUID) (map[uuid.UUI
 	if err != nil {
 		return nil, err
 	}
+	local, err := s.localForHosts(ctx, orgID, monitoredIDs)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make(map[uuid.UUID]ResolvedSet, len(monitoredIDs))
 	for _, id := range monitoredIDs {
-		rs, err := toResolvedSet(id, bundle.resolve(id))
+		rs, err := toResolvedSet(id, bundle.resolve(id), local[id])
 		if err != nil {
 			return nil, err
 		}

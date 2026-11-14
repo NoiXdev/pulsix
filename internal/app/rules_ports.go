@@ -58,8 +58,10 @@ func (a rulesHostChecks) ContextForHost(ctx context.Context, orgID, hostID uuid.
 	if err != nil {
 		return rules.CheckContext{}, err
 	}
-	// Every resolved check, synthetic ones included: the manager's probes
-	// write into the same tuples an agent's results do (backlog 3.13).
+	// Every resolved check, synthetic and local ones included: the
+	// manager's probes (backlog 3.13) and the checks defined in the host's
+	// agent.yaml (backlog 3.5a) write into the same tuples an agent's
+	// pushed checks do.
 	all := set.All()
 	intervals := make(map[string]time.Duration, len(all))
 	asks := make(map[string]func(item string) bool, len(all))

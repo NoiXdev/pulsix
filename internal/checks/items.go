@@ -27,3 +27,10 @@ import "github.com/noixdev/pulsix/internal/checkplugins"
 func (d Definition) AsksForItem(item string) bool {
 	return checkplugins.AsksForItem(d.Plugin, d.Params, item)
 }
+
+// AsksForItem is Definition.AsksForItem for a resolved check: the same
+// rule over its plugin and params, for a check that has no definition —
+// one defined in the host's agent.yaml (backlog 3.5a).
+func (r Resolved) AsksForItem(item string) bool {
+	return checkplugins.AsksForItem(r.Plugin, r.Params, item)
+}

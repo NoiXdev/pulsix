@@ -69,6 +69,27 @@ func TestRulesHostChecksContextForHostIncludesSyntheticChecks(t *testing.T) {
 	}
 }
 
+// TestRulesHostChecksContextForHostIncludesLocalChecks (backlog 3.5a): a
+// check defined in the host's agent.yaml reports into tuples like any
+// other, so rules on its metrics need its interval — ContextForHost takes
+// it from set.All(), which lists Local after Checks and Synthetic.
+func TestRulesHostChecksContextForHostIncludesLocalChecks(t *testing.T) {
+	r := &fakeCheckResolver{set: checks.ResolvedSet{
+		Checks: []checks.Resolved{{Key: "cpu", Interval: time.Minute}},
+		Local:  []checks.Resolved{{Key: "local-disk", Plugin: checks.PluginDisk, Interval: 5 * time.Minute, Source: checks.BindingLocal}},
+	}}
+	got, err := rulesHostChecks{checks: r}.ContextForHost(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Intervals) != 2 || got.Intervals["local-disk"] != 5*time.Minute {
+		t.Fatalf("intervals = %+v, want cpu and the local local-disk", got.Intervals)
+	}
+	if got.Asks["local-disk"] == nil {
+		t.Fatal("no item predicate for the local check")
+	}
+}
+
 // TestRulesHostChecksPropagatesFailures: neither half may be silently
 // treated as "this host has no checks" — that would take every tuple out
 // of the evaluation and delete the host's roll-up.

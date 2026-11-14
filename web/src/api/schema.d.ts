@@ -4635,7 +4635,8 @@ export interface components {
             monitored?: boolean;
         };
         HostCheckDTO: {
-            definition_id: string;
+            /** @description The winning definition; absent for a check defined on the host (source local) */
+            definition_id?: string;
             /** @description false means the winning scope turned this check off; it is listed so the GUI can show where */
             enabled: boolean;
             /** Format: int64 */
@@ -4643,18 +4644,21 @@ export interface components {
             key: string;
             /** @description The secret this check's secret parameter names that the host's agent did not report in its last heartbeat; the agent fails the check with "secret <name> is not defined in agent.yaml" until it is added. Absent when the check names no secret, the agent reported it, or the agent's report is unknown */
             missing_secret?: string;
-            /** @enum {string} */
-            origin: "seed" | "custom" | "shared";
+            /**
+             * @description local for a check defined in the host's agent.yaml, which the GUI cannot edit, disable or override
+             * @enum {string}
+             */
+            origin: "seed" | "custom" | "shared" | "local";
             params: {
                 [key: string]: unknown;
             };
             /** @enum {string} */
             plugin: "cpu" | "memory" | "disk" | "service" | "network" | "uptime" | "docker" | "temperature" | "smart" | "raid" | "postgres" | "mysql" | "redis" | "nginx" | "apache" | "caddy" | "phpfpm" | "script" | "icmp" | "tcp" | "http" | "tls" | "dns";
             /**
-             * @description The scope the winning definition is bound at
+             * @description The scope the winning definition is bound at; local for a check defined in the host's agent.yaml
              * @enum {string}
              */
-            source: "org" | "group" | "host";
+            source: "org" | "group" | "host" | "local";
             /** @description The group or host it is bound to; absent for an organization-bound check */
             source_id?: string;
             source_name?: string;
