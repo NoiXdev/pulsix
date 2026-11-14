@@ -3,6 +3,7 @@ import { useParams } from '@tanstack/react-router';
 import { KeyRound } from 'lucide-react';
 import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { Dialog } from '../../ui/dialog.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
 import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useToast } from '../../ui/toastContext.ts';
@@ -36,6 +37,7 @@ export function SecretsPage() {
   const secrets = useSecrets(org);
   const remove = useDeleteSecret(org);
   const [editing, setEditing] = useState<OrgSecret | 'new' | null>(null);
+  const [blocked, setBlocked] = useState<OrgSecret | null>(null);
 
   const guard = useQueryGuard(secrets);
   if (guard) return guard;
@@ -43,13 +45,20 @@ export function SecretsPage() {
   const list = secrets.data.secrets ?? [];
 
   async function onDelete(secret: OrgSecret) {
+    // The list already knows the checks naming it: say so instead of
+    // asking for a delete the server would refuse. The 409 below stays for
+    // a list that went stale.
+    if ((secret.used_by ?? []).length > 0) {
+      setBlocked(secret);
+      return;
+    }
     if (!(await ask({ message: s.deleteConfirm(secret.name), confirmLabel: t.common.delete, destructive: true }))) return;
     try {
       await remove.mutateAsync(secret.name);
       toast.show(s.deleted(secret.name));
     } catch (err) {
       const checks = conflictChecks(err);
-      if (checks) toast.show(s.inUse(secret.name, checks), 'destructive');
+      if (checks) toast.show(s.inUse(secret.name, checks.join(', '), checks.length), 'destructive');
       else toast.show(err instanceof Error ? err.message : s.deleteFailed, 'destructive');
     }
   }
@@ -87,6 +96,20 @@ export function SecretsPage() {
         {list.length === 0 && <p className="px-4 py-6 text-center text-xs text-muted-foreground">{s.empty}</p>}
       </Card>
       {list.length > 0 && <span className="text-[11px] text-muted-foreground">{s.count(list.length)}</span>}
+      {blocked && (
+        <Dialog open onClose={() => setBlocked(null)} title={s.inUseTitle}>
+          <div className="flex flex-col gap-4">
+            <p className="text-sm">
+              {s.inUseBody(blocked.name, (blocked.used_by ?? []).join(', '), (blocked.used_by ?? []).length)}
+            </p>
+            <div className="flex justify-end">
+              <Button variant="primary" onClick={() => setBlocked(null)}>
+                {s.close}
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+      )}
       {editing && (
         <SecretDialog
           org={org}

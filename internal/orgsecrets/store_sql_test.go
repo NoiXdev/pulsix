@@ -56,6 +56,17 @@ func TestSQLStore(t *testing.T) {
 	if row.Name != "sw" || !row.CreatedAt.Equal(t0) || !row.UpdatedAt.Equal(t0.Add(time.Hour)) || !slices.Equal(row.FieldNames, []string{"community"}) {
 		t.Fatalf("Upsert returned %+v; want the replaced row with created_at kept", row)
 	}
+	// Insert creates only: an existing name comes back false and keeps its row.
+	if _, ok, err := store.Insert(scoped, org, "sw", []byte("sealed-x"), []string{"x"}, t0.Add(2*time.Hour)); err != nil || ok {
+		t.Fatalf("Insert of an existing name = %v, %v; want false", ok, err)
+	}
+	ins, ok, err := store.Insert(scoped, org, "new", []byte("sealed-n"), []string{"user"}, t0)
+	if err != nil || !ok || ins.Name != "new" || !ins.CreatedAt.Equal(t0) || !slices.Equal(ins.FieldNames, []string{"user"}) {
+		t.Fatalf("Insert of a new name = %+v, %v, %v", ins, ok, err)
+	}
+	if ok, err := store.Delete(scoped, org, "new"); err != nil || !ok {
+		t.Fatalf("Delete of the inserted row = %v, %v", ok, err)
+	}
 	for name, want := range map[string]bool{"sw": true, "absent": false} {
 		if ok, err := store.Exists(scoped, org, name); err != nil || ok != want {
 			t.Fatalf("Exists(%s) = %v, %v; want %v", name, ok, err, want)

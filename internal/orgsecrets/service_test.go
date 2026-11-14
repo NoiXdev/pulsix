@@ -56,6 +56,19 @@ func (m *memStore) Upsert(_ context.Context, orgID uuid.UUID, name string, seale
 	return orgsecrets.Stored{Name: name, FieldNames: slices.Clone(fieldNames), CreatedAt: r.createdAt, UpdatedAt: r.updatedAt}, nil
 }
 
+func (m *memStore) Insert(_ context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (orgsecrets.Stored, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.rows[orgID] == nil {
+		m.rows[orgID] = map[string]memRow{}
+	}
+	if _, ok := m.rows[orgID][name]; ok {
+		return orgsecrets.Stored{}, false, nil
+	}
+	m.rows[orgID][name] = memRow{sealed: slices.Clone(sealed), fieldNames: slices.Clone(fieldNames), createdAt: at, updatedAt: at}
+	return orgsecrets.Stored{Name: name, FieldNames: slices.Clone(fieldNames), CreatedAt: at, UpdatedAt: at}, true, nil
+}
+
 func (m *memStore) Exists(_ context.Context, orgID uuid.UUID, name string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -382,6 +395,11 @@ func TestDelete(t *testing.T) {
 	if !errors.Is(err, orgsecrets.ErrConflict) || !strings.Contains(err.Error(), "snmp-core, snmp-host") || strings.Contains(err.Error(), "mysql") {
 		t.Fatalf("Delete of a used secret = %v, want ErrConflict naming snmp-core, snmp-host only", err)
 	}
+	// The keys also come as a list, for the API's structured 409.
+	var inUse *orgsecrets.InUseError
+	if !errors.As(err, &inUse) || !slices.Equal(inUse.Keys, []string{"snmp-core", "snmp-host"}) {
+		t.Fatalf("Delete of a used secret = %#v, want an InUseError with keys snmp-core, snmp-host", err)
+	}
 	if _, err := w.svc.Fields(ctx, w.org, "sw"); err != nil {
 		t.Fatalf("the refused delete removed the secret: %v", err)
 	}
@@ -396,5 +414,31 @@ func TestDelete(t *testing.T) {
 	}
 	if err := w.svc.Delete(ctx, w.org, "a/b"); !errors.Is(err, orgsecrets.ErrNotFound) {
 		t.Fatalf("Delete of an invalid name = %v, want ErrNotFound", err)
+	}
+}
+
+// TestCreateOnly: Create stores a new secret like Put, but refuses a name
+// the organization already has with ErrExists and leaves that secret as
+// it was; it validates like Put.
+func TestCreateOnly(t *testing.T) {
+	w := newWorld()
+	created, err := w.svc.Create(ctx, w.org, "sw", map[string]string{"community": leak})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Name != "sw" || !slices.Equal(created.FieldNames, []string{"community"}) || !created.CreatedAt.Equal(w.clock.t) {
+		t.Fatalf("Create returned %+v", created)
+	}
+	assertNoLeak(t, "Create's result", fmt.Sprintf("%#v", created))
+	w.clock.t = w.clock.t.Add(time.Hour)
+	if _, err := w.svc.Create(ctx, w.org, "sw", map[string]string{"community": "other"}); !errors.Is(err, orgsecrets.ErrExists) {
+		t.Fatalf("Create of an existing name = %v, want ErrExists", err)
+	}
+	got, err := w.svc.Fields(ctx, w.org, "sw")
+	if err != nil || !maps.Equal(got, map[string]string{"community": leak}) {
+		t.Fatalf("the refused create changed the secret (%v)", err)
+	}
+	if _, err := w.svc.Create(ctx, w.org, "a/b", map[string]string{"community": "x"}); !errors.Is(err, orgsecrets.ErrInvalidInput) {
+		t.Fatalf("Create of an invalid name = %v, want ErrInvalidInput", err)
 	}
 }

@@ -22,7 +22,15 @@ export const enSecrets = {
   deleteConfirm: (name: string) => `Delete secret ${name}? This cannot be undone.`,
   deleted: (name: string) => `Secret ${name} deleted`,
   deleteFailed: 'Failed to delete the secret',
-  inUse: (name: string, checks: string) => `Secret ${name} is still used by the checks ${checks} and was not deleted.`,
+  /** `checks` is the keys joined with ", ", `n` how many there are. */
+  inUse: (name: string, checks: string, n: number) =>
+    `Secret ${name} is still used by ${n === 1 ? 'the check' : 'the checks'} ${checks} and was not deleted.`,
+  inUseTitle: 'Secret in use',
+  inUseBody: (name: string, checks: string, n: number) =>
+    n === 1
+      ? `Secret ${name} is used by the check ${checks}. Change that check to name another secret, or delete it, before deleting the secret.`
+      : `Secret ${name} is used by the checks ${checks}. Change those checks to name another secret, or delete them, before deleting it.`,
+  close: 'Close',
   saved: (name: string) => `Secret ${name} saved`,
   saveFailed: 'Failed to save the secret',
   dialog: {
@@ -36,8 +44,11 @@ export const enSecrets = {
     fieldName: (i: number) => `Field ${i} name`,
     fieldValue: (i: number) => `Field ${i} value`,
     removeField: (i: number) => `Remove field ${i}`,
+    showValue: (i: number) => `Show value of field ${i}`,
     addField: 'Add field',
     neverShown: 'Values are never shown again after saving: they are stored encrypted and only the checks naming this secret use them.',
+    exists: (name: string) =>
+      `A secret named ${name} was created in the meantime. Choose another name, or close this dialog and replace ${name} from its row.`,
     replaceNote: 'Replacing stores exactly the fields below: enter every value again. A field you remove is deleted.',
   },
   /** Read as the continuation of the field's label, hence the lower case. */

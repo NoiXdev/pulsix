@@ -22,3 +22,11 @@ SELECT fields_sealed FROM org_secrets WHERE org_id = @org_id AND name = @name;
 
 -- name: DeleteOrgSecret :execrows
 DELETE FROM org_secrets WHERE org_id = @org_id AND name = @name;
+
+-- name: InsertOrgSecret :one
+-- Create a secret only when the organization has none of that name (PUT
+-- with If-None-Match: *): no row comes back when it exists.
+INSERT INTO org_secrets (org_id, name, fields_sealed, field_names, created_at, updated_at)
+VALUES (@org_id, @name, @fields_sealed, @field_names::text[], @at, @at)
+ON CONFLICT (org_id, name) DO NOTHING
+RETURNING name, field_names, created_at, updated_at;

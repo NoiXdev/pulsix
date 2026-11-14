@@ -55,6 +55,11 @@ probes keep `Item == ""` and no label.
   `credentials.write` (the permission for SSH keys, the other stored
   credentials), the list needs `checks.read` (it carries names only). Every write is audited (name and
   field names, never values). Error texts never carry a value.
+  `PUT` with `If-None-Match: *` creates only (412 when the name exists;
+  the SPA sends it on create), any other `If-None-Match` is a 400; without
+  it `PUT` creates or replaces. The delete 409 lists the check keys as
+  error details (location `used_by`, the key as the message) next to its
+  text.
 - **Not in backups' clear text:** the sealed column is backed up as it is
   (the backup already carries the master key's ciphertexts the same way).
 

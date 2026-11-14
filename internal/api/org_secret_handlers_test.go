@@ -7,6 +7,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -253,6 +254,25 @@ func TestOrgSecretsDeleteConflictNamesTheChecks(t *testing.T) {
 	if code != http.StatusConflict || !strings.Contains(text, "pg-a, pg-b") {
 		t.Fatalf("DELETE of a used secret: %d %s, want 409 naming pg-a, pg-b", code, text)
 	}
+	// The keys also come structured: one error detail per check, located
+	// at used_by, its message the key.
+	var problem struct {
+		Errors []struct {
+			Location string `json:"location"`
+			Message  string `json:"message"`
+		} `json:"errors"`
+	}
+	decodeText(t, text, &problem)
+	var keys []string
+	for _, e := range problem.Errors {
+		if e.Location != "used_by" {
+			t.Fatalf("409 detail at %q, want used_by: %s", e.Location, text)
+		}
+		keys = append(keys, e.Message)
+	}
+	if strings.Join(keys, ",") != "pg-a,pg-b" {
+		t.Fatalf("409 details name %v, want pg-a, pg-b: %s", keys, text)
+	}
 	if list := f.list(t, f.viewer); len(list) != 1 || strings.Join(list[0].UsedBy, ",") != "pg-a,pg-b" {
 		t.Fatalf("list = %+v, want db-main used by pg-a, pg-b", list)
 	}
@@ -313,4 +333,60 @@ func TestOrgSecretsAreOrganizationScoped(t *testing.T) {
 		t.Fatalf("A's list after B's write = %+v, want sw with community", list)
 	}
 	a.assertNoLeak(t)
+}
+
+// putWith sends a PUT with an If-None-Match header and keeps the body for
+// assertNoLeak.
+func (f *orgSecretsFixture) putWith(t *testing.T, c *http.Client, path, ifNoneMatch string, body any) (int, string) {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPut, f.base+path, bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("If-None-Match", ifNoneMatch)
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := mustReadBody(t, resp)
+	f.bodies = append(f.bodies, text)
+	return resp.StatusCode, text
+}
+
+// TestOrgSecretsCreateOnly: PUT with If-None-Match: * creates a secret
+// only when the name is free and answers 412 otherwise, leaving the stored
+// secret alone; without the header PUT stays create-or-replace. Any other
+// If-None-Match is refused: the store has no ETags to compare.
+func TestOrgSecretsCreateOnly(t *testing.T) {
+	f := newOrgSecretsFixture(t, "orgsecrets-create")
+	fields := func(v string) map[string]any { return map[string]any{"fields": map[string]string{"community": v}} }
+
+	if code, text := f.putWith(t, f.ownerC, "/secrets/sw", "*", fields(secretLeak)); code != http.StatusOK {
+		t.Fatalf("create-only PUT of a new name: %d %s", code, text)
+	}
+	code, text := f.putWith(t, f.ownerC, "/secrets/sw", "*", map[string]any{"fields": map[string]string{"username": secretLeak}})
+	if code != http.StatusPreconditionFailed || !strings.Contains(text, "already exists") {
+		t.Fatalf("create-only PUT of an existing name: %d %s, want 412", code, text)
+	}
+	if list := f.list(t, f.viewer); len(list) != 1 || strings.Join(list[0].FieldNames, ",") != "community" {
+		t.Fatalf("the refused create changed the secret: %+v", list)
+	}
+	if code, text := f.putWith(t, f.ownerC, "/secrets/sw", `"abc"`, fields(secretLeak)); code != http.StatusBadRequest {
+		t.Fatalf("PUT with an ETag in If-None-Match: %d %s, want 400", code, text)
+	}
+	if code, text := f.putWith(t, f.operatorC, "/secrets/other", "*", fields(secretLeak)); code != http.StatusForbidden {
+		t.Fatalf("create-only PUT by an operator: %d %s, want 403", code, text)
+	}
+	if code, text := f.do(t, f.ownerC, http.MethodPut, "/secrets/sw", map[string]any{"fields": map[string]string{"username": "monitor"}}); code != http.StatusOK {
+		t.Fatalf("PUT without the header (replace): %d %s", code, text)
+	}
+	if list := f.list(t, f.viewer); len(list) != 1 || strings.Join(list[0].FieldNames, ",") != "username" {
+		t.Fatalf("after the replace: %+v", list)
+	}
+	f.assertNoLeak(t)
 }

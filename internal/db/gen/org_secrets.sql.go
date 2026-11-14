@@ -45,6 +45,48 @@ func (q *Queries) GetOrgSecretSealed(ctx context.Context, arg GetOrgSecretSealed
 	return fields_sealed, err
 }
 
+const insertOrgSecret = `-- name: InsertOrgSecret :one
+INSERT INTO org_secrets (org_id, name, fields_sealed, field_names, created_at, updated_at)
+VALUES ($1, $2, $3, $4::text[], $5, $5)
+ON CONFLICT (org_id, name) DO NOTHING
+RETURNING name, field_names, created_at, updated_at
+`
+
+type InsertOrgSecretParams struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	Name         string    `json:"name"`
+	FieldsSealed []byte    `json:"fields_sealed"`
+	FieldNames   []string  `json:"field_names"`
+	At           time.Time `json:"at"`
+}
+
+type InsertOrgSecretRow struct {
+	Name       string    `json:"name"`
+	FieldNames []string  `json:"field_names"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// Create a secret only when the organization has none of that name (PUT
+// with If-None-Match: *): no row comes back when it exists.
+func (q *Queries) InsertOrgSecret(ctx context.Context, arg InsertOrgSecretParams) (InsertOrgSecretRow, error) {
+	row := q.db.QueryRow(ctx, insertOrgSecret,
+		arg.OrgID,
+		arg.Name,
+		arg.FieldsSealed,
+		arg.FieldNames,
+		arg.At,
+	)
+	var i InsertOrgSecretRow
+	err := row.Scan(
+		&i.Name,
+		&i.FieldNames,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listOrgSecrets = `-- name: ListOrgSecrets :many
 SELECT name, field_names, created_at, updated_at FROM org_secrets
 WHERE org_id = $1 ORDER BY name

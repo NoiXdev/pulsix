@@ -15374,7 +15374,10 @@ export interface operations {
     putOrgSecret: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description * creates the secret only when the name is free (412 when it exists); without it PUT creates or replaces */
+                "If-None-Match"?: string;
+            };
             path: {
                 org: string;
                 name: string;

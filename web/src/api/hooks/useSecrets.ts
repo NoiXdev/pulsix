@@ -25,6 +25,9 @@ function useInvalidate(org: string) {
 export interface PutSecretInput {
   name: string;
   fields: Record<string, string>;
+  /** Create only: the server answers 412 when the name is taken instead
+   * of replacing that secret (If-None-Match: *). */
+  createOnly: boolean;
 }
 
 /** usePutSecret creates or wholly replaces a secret. gcTime: 0 — the
@@ -33,8 +36,13 @@ export interface PutSecretInput {
 export function usePutSecret(org: string) {
   const invalidate = useInvalidate(org);
   return useMutation({
-    mutationFn: ({ name, fields }: PutSecretInput) =>
-      unwrap(api.PUT('/api/v1/orgs/{org}/secrets/{name}', { params: { path: { org, name } }, body: { fields } })),
+    mutationFn: ({ name, fields, createOnly }: PutSecretInput) =>
+      unwrap(
+        api.PUT('/api/v1/orgs/{org}/secrets/{name}', {
+          params: { path: { org, name }, ...(createOnly ? { header: { 'If-None-Match': '*' } } : {}) },
+          body: { fields },
+        }),
+      ),
     gcTime: 0,
     onSuccess: invalidate,
   });

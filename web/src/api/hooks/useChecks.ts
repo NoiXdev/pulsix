@@ -15,12 +15,16 @@ import type { CheckDefinitionInput, MetricRange, MonitoringGroupInput } from '..
  * changing a group's selector changes which hosts a definition bound to it
  * reaches. Refreshing only the list that was written would leave the other
  * page showing rows the server no longer has.
+ *
+ * The secret store's list is refreshed too: its "used by" is the checks
+ * naming each secret (backlog 3.13d), which any of these writes can change.
  */
 function useInvalidate(org: string) {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: ['checks', org] });
     void qc.invalidateQueries({ queryKey: ['monitoring-groups', org] });
+    void qc.invalidateQueries({ queryKey: ['secrets', org] });
   };
 }
 

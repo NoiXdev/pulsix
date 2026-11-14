@@ -27,6 +27,7 @@ type OrgSecretStore interface {
 	List(ctx context.Context, orgID uuid.UUID) ([]orgsecrets.Secret, error)
 	Names(ctx context.Context, orgID uuid.UUID) ([]string, error)
 	Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (orgsecrets.Secret, error)
+	Create(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (orgsecrets.Secret, error)
 	Delete(ctx context.Context, orgID uuid.UUID, name string) error
 }
 
@@ -59,9 +60,10 @@ type orgSecretPathInput struct {
 }
 
 type orgSecretPutInput struct {
-	Org  string `path:"org"`
-	Name string `path:"name"`
-	Body struct {
+	Org         string `path:"org"`
+	Name        string `path:"name"`
+	IfNoneMatch string `header:"If-None-Match" doc:"* creates the secret only when the name is free (412 when it exists); without it PUT creates or replaces"`
+	Body        struct {
 		Fields orgSecretFields `json:"fields"`
 	}
 }
@@ -121,7 +123,16 @@ func registerOrgSecretRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		stored, err := deps.OrgSecrets.Put(ctx, scope.OrgID, in.Name, in.Body.Fields)
+		write := deps.OrgSecrets.Put
+		switch strings.TrimSpace(in.IfNoneMatch) {
+		case "":
+		case "*":
+			write = deps.OrgSecrets.Create
+		default:
+			// A secret has no ETag a value could match.
+			return nil, huma.Error400BadRequest("If-None-Match takes only *")
+		}
+		stored, err := write(ctx, scope.OrgID, in.Name, in.Body.Fields)
 		if err != nil {
 			return nil, mapOrgSecretsErr(ctx, err)
 		}
@@ -145,9 +156,20 @@ func registerOrgSecretRoutes(hapi huma.API, deps Deps) {
 }
 
 // mapOrgSecretsErr converts the store's errors; none of their texts
-// carries a value.
+// carries a value. A 409 also lists the checks using the secret, one
+// error detail per check key (location used_by, the key as its message:
+// redactErrorValues clears every detail's value).
 func mapOrgSecretsErr(ctx context.Context, err error) error {
+	var inUse *orgsecrets.InUseError
 	switch {
+	case errors.As(err, &inUse):
+		details := make([]error, len(inUse.Keys))
+		for i, key := range inUse.Keys {
+			details[i] = &huma.ErrorDetail{Location: "used_by", Message: key}
+		}
+		return huma.Error409Conflict(err.Error(), details...)
+	case errors.Is(err, orgsecrets.ErrExists):
+		return huma.Error412PreconditionFailed("a secret of this name already exists")
 	case errors.Is(err, orgsecrets.ErrInvalidInput):
 		return huma.Error422UnprocessableEntity(err.Error())
 	case errors.Is(err, orgsecrets.ErrNotFound):

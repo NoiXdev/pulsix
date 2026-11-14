@@ -33,10 +33,23 @@ var (
 	ErrInvalidInput = errors.New("invalid secret")
 	// ErrNotFound: the organization has no secret of that name.
 	ErrNotFound = errors.New("secret not found")
-	// ErrConflict: a check still names the secret; the wrapped text names
-	// the check keys.
+	// ErrConflict: a check still names the secret; the error is an
+	// *InUseError carrying the check keys.
 	ErrConflict = errors.New("secret in use")
+	// ErrExists: Create found a secret of that name already.
+	ErrExists = errors.New("secret already exists")
 )
+
+// InUseError is Delete's refusal of a secret server-run checks name: Keys
+// are their check keys, sorted. It matches ErrConflict.
+type InUseError struct{ Keys []string }
+
+func (e *InUseError) Error() string {
+	return ErrConflict.Error() + ": the checks " + strings.Join(e.Keys, ", ") + " use it"
+}
+
+// Unwrap makes errors.Is(err, ErrConflict) hold.
+func (e *InUseError) Unwrap() error { return ErrConflict }
 
 // Secret is a secret as List shows it: everything but its values.
 type Secret struct {
@@ -62,6 +75,9 @@ type Store interface {
 	// create and kept on replace, updated_at is at. It returns the row as
 	// stored, without its sealed fields.
 	Upsert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, error)
+	// Insert creates a secret only when the organization has none of that
+	// name; false (and no write) when it has.
+	Insert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, bool, error)
 	// List returns the organization's secrets ordered by name.
 	List(ctx context.Context, orgID uuid.UUID) ([]Stored, error)
 	// Exists reports whether the organization has a secret of that name,
@@ -128,6 +144,29 @@ func AAD(orgID uuid.UUID, name string) []byte {
 // Put creates or replaces the secret name with exactly fields and
 // returns it as stored, with the checks using it — never a value.
 func (s *Service) Put(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (Secret, error) {
+	return s.write(ctx, orgID, name, fields, func(sealed []byte, names []string, at time.Time) (Stored, error) {
+		return s.d.Store.Upsert(ctx, orgID, name, sealed, names, at)
+	})
+}
+
+// Create stores the secret name like Put, but only when the organization
+// has none of that name: ErrExists otherwise, and the stored one stays as
+// it was (a value can never be read back, so a replace by accident would
+// be unrecoverable).
+func (s *Service) Create(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string) (Secret, error) {
+	return s.write(ctx, orgID, name, fields, func(sealed []byte, names []string, at time.Time) (Stored, error) {
+		row, ok, err := s.d.Store.Insert(ctx, orgID, name, sealed, names, at)
+		if err == nil && !ok {
+			return Stored{}, ErrExists
+		}
+		return row, err
+	})
+}
+
+// write validates and seals fields, hands them to store and returns the
+// stored secret with the checks using it.
+func (s *Service) write(ctx context.Context, orgID uuid.UUID, name string, fields map[string]string,
+	store func(sealed []byte, names []string, at time.Time) (Stored, error)) (Secret, error) {
 	if err := validate(name, fields); err != nil {
 		return Secret{}, err
 	}
@@ -140,8 +179,7 @@ func (s *Service) Put(ctx context.Context, orgID uuid.UUID, name string, fields 
 	if err != nil {
 		return Secret{}, fmt.Errorf("seal secret %s: %w", name, err)
 	}
-	names := slices.Sorted(maps.Keys(fields))
-	row, err := s.d.Store.Upsert(ctx, orgID, name, sealed, names, s.d.Now())
+	row, err := store(sealed, slices.Sorted(maps.Keys(fields)), s.d.Now())
 	if err != nil {
 		return Secret{}, fmt.Errorf("store secret %s: %w", name, err)
 	}
@@ -189,7 +227,7 @@ func (s *Service) Names(ctx context.Context, orgID uuid.UUID) ([]string, error) 
 }
 
 // Delete removes a secret no server-run check names; ErrNotFound when
-// there is none, ErrConflict naming the checks otherwise.
+// there is none, an *InUseError (ErrConflict) naming the checks otherwise.
 func (s *Service) Delete(ctx context.Context, orgID uuid.UUID, name string) error {
 	if !validName(name) {
 		return ErrNotFound
@@ -206,7 +244,7 @@ func (s *Service) Delete(ctx context.Context, orgID uuid.UUID, name string) erro
 		return err
 	}
 	if keys := used[name]; len(keys) > 0 {
-		return fmt.Errorf("%w: the checks %s use it", ErrConflict, strings.Join(keys, ", "))
+		return &InUseError{Keys: slices.Clone(keys)}
 	}
 	ok, err := s.d.Store.Delete(ctx, orgID, name)
 	if err != nil {

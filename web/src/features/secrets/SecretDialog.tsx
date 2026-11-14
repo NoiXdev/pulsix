@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, Plus, Trash2 } from 'lucide-react';
 import { Dialog } from '../../ui/dialog.tsx';
 import { Button } from '../../ui/button.tsx';
 import { Field } from '../../ui/field.tsx';
 import { Input } from '../../ui/input.tsx';
 import { useToast } from '../../ui/toastContext.ts';
+import { ApiError } from '../../api/client.ts';
 import { usePutSecret } from '../../api/hooks/useSecrets.ts';
 import type { OrgSecret } from '../../api/types.ts';
 import { useT } from '../../i18n/useT.ts';
@@ -39,6 +40,10 @@ export function SecretDialog({ org, secret, taken, onClose }: SecretDialogProps)
   );
   const [errors, setErrors] = useState<SecretErrors | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  // Which rows show their value as typed (a protocol name such as SHA is
+  // not secret, and a typo in it only shows at the first poll). Hidden by
+  // default; it never outlives the dialog.
+  const [shown, setShown] = useState<boolean[]>([]);
 
   function setRow(i: number, patch: Partial<FieldRow>) {
     setRows((all) => all.map((r, j) => (j === i ? { ...r, ...patch } : r)));
@@ -51,11 +56,14 @@ export function SecretDialog({ org, secret, taken, onClose }: SecretDialogProps)
     setErrors(found);
     if (found) return;
     try {
-      const res = await put.mutateAsync({ name, fields: fieldsOf(rows) });
+      // A create never replaces: the server answers 412 when someone
+      // created the name since this list was loaded.
+      const res = await put.mutateAsync({ name, fields: fieldsOf(rows), createOnly: !secret });
       toast.show(s.saved(res.secret.name));
       onClose();
     } catch (err) {
-      setFailure(err instanceof Error ? err.message : s.saveFailed);
+      if (err instanceof ApiError && err.status === 412) setFailure(d.exists(name));
+      else setFailure(err instanceof Error ? err.message : s.saveFailed);
     } finally {
       put.reset();
     }
@@ -81,16 +89,18 @@ export function SecretDialog({ org, secret, taken, onClose }: SecretDialogProps)
             />
           </Field>
         )}
-        <div className="flex flex-col gap-2">
-          <span className="text-xs font-medium">{d.fields}</span>
-          <span className="text-[11px] text-muted-foreground">{d.fieldsHint}</span>
+        <fieldset className="flex min-w-0 flex-col gap-2" aria-describedby="secret-fields-hint">
+          <legend className="mb-2 text-xs font-medium">{d.fields}</legend>
+          <span id="secret-fields-hint" className="text-[11px] text-muted-foreground">
+            {d.fieldsHint}
+          </span>
           {rows.map((row, i) => {
             const re = errors?.rows[i];
             const nameErr = `secret-field-${i}-name-error`;
             const valueErr = `secret-field-${i}-value-error`;
             return (
               <div key={i} className="flex flex-col gap-1">
-                <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_32px] gap-2">
+                <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_32px_32px] gap-2">
                   <Input
                     aria-label={d.fieldName(i + 1)}
                     className="font-mono"
@@ -103,7 +113,7 @@ export function SecretDialog({ org, secret, taken, onClose }: SecretDialogProps)
                   />
                   <Input
                     aria-label={d.fieldValue(i + 1)}
-                    type="password"
+                    type={shown[i] ? 'text' : 'password'}
                     value={row.value}
                     onChange={(e) => setRow(i, { value: e.target.value })}
                     autoComplete="new-password"
@@ -113,10 +123,20 @@ export function SecretDialog({ org, secret, taken, onClose }: SecretDialogProps)
                   <Button
                     type="button"
                     variant="ghost"
+                    aria-label={d.showValue(i + 1)}
+                    aria-pressed={!!shown[i]}
+                    onClick={() => setShown((all) => rows.map((_, j) => (j === i ? !all[j] : !!all[j])))}
+                  >
+                    {shown[i] ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
                     aria-label={d.removeField(i + 1)}
                     disabled={rows.length <= 1}
                     onClick={() => {
                       setRows((all) => all.filter((_, j) => j !== i));
+                      setShown((all) => all.filter((_, j) => j !== i));
                       setErrors(null);
                     }}
                   >
@@ -145,8 +165,12 @@ export function SecretDialog({ org, secret, taken, onClose }: SecretDialogProps)
           >
             <Plus size={13} /> {d.addField}
           </Button>
-          {errors?.form && <span className="text-[11px] text-destructive">{errors.form}</span>}
-        </div>
+          {errors?.form && (
+            <span role="alert" className="text-[11px] text-destructive">
+              {errors.form}
+            </span>
+          )}
+        </fieldset>
         {failure && (
           <p role="alert" className="text-xs text-[var(--px-crit)]">
             {failure}

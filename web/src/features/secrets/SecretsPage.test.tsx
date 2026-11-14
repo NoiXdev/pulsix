@@ -14,7 +14,7 @@ const org = (role: string) => ({ org: { id: 'o', name: 'Acme', slug: 'acme', rol
 
 const secret = (over: Record<string, unknown> = {}) => ({
   name: 'switch-core',
-  field_names: ['auth_pass', 'priv_pass', 'user'],
+  field_names: ['auth_password', 'auth_protocol', 'username'],
   created_at: '2026-11-01T10:00:00Z',
   updated_at: '2026-11-10T10:00:00Z',
   used_by: ['snmp', 'snmp-core'],
@@ -42,6 +42,14 @@ function renderPage() {
   return qc;
 }
 
+/** A problem response as the API answers a refusal. */
+function problem(status: number, detail: string, errors?: { location: string; message: string }[]) {
+  return new Response(JSON.stringify({ status, detail, ...(errors ? { errors } : {}) }), {
+    status,
+    headers: { 'Content-Type': 'application/problem+json' },
+  });
+}
+
 async function chooseFromMenu(user: ReturnType<typeof userEvent.setup>, name: string, item: string) {
   await user.click(await screen.findByRole('button', { name: `Actions for ${name}` }));
   await user.click(await screen.findByRole('menuitem', { name: item }));
@@ -65,7 +73,7 @@ describe('SecretsPage', () => {
     });
     renderPage();
     expect(await screen.findByText('switch-core')).toBeInTheDocument();
-    expect(screen.getByText('auth_pass, priv_pass, user')).toBeInTheDocument();
+    expect(screen.getByText('auth_password, auth_protocol, username')).toBeInTheDocument();
     expect(screen.getByText('snmp, snmp-core')).toBeInTheDocument();
     expect(screen.getByText('ups')).toBeInTheDocument();
     expect(screen.getByText('community')).toBeInTheDocument();
@@ -97,7 +105,7 @@ describe('SecretsPage', () => {
       'GET /api/v1/orgs/acme/secrets': { secrets: [] },
       'PUT /api/v1/orgs/acme/secrets/ups-1': (req: MockRequest) => {
         puts.push(req);
-        return { secret: secret({ name: 'ups-1', field_names: ['community', 'user'], used_by: [] }) };
+        return { secret: secret({ name: 'ups-1', field_names: ['auth_protocol', 'username'], used_by: [] }) };
       },
     });
     const qc = renderPage();
@@ -105,20 +113,24 @@ describe('SecretsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: 'New secret' });
     expect(within(dialog).getByText(/never shown again/)).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText('Name'), 'ups-1');
-    await user.type(within(dialog).getByLabelText('Field 1 name'), 'community');
+    await user.type(within(dialog).getByLabelText('Field 1 name'), 'username');
     expect(within(dialog).getByLabelText('Field 1 value')).toHaveAttribute('type', 'password');
-    await user.type(within(dialog).getByLabelText('Field 1 value'), 'pssst-community');
+    expect(within(dialog).getByLabelText('Field 1 value')).toHaveAttribute('autocomplete', 'new-password');
+    await user.type(within(dialog).getByLabelText('Field 1 value'), 'pssst-monitor');
     await user.click(within(dialog).getByRole('button', { name: 'Add field' }));
-    await user.type(within(dialog).getByLabelText('Field 2 name'), 'user');
-    await user.type(within(dialog).getByLabelText('Field 2 value'), 'ops');
+    expect(within(dialog).getByLabelText('Field 2 value')).toHaveAttribute('autocomplete', 'new-password');
+    await user.type(within(dialog).getByLabelText('Field 2 name'), 'auth_protocol');
+    await user.type(within(dialog).getByLabelText('Field 2 value'), 'SHA');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(puts).toHaveLength(1));
-    expect(puts[0].body).toEqual({ fields: { community: 'pssst-community', user: 'ops' } });
+    expect(puts[0].body).toEqual({ fields: { username: 'pssst-monitor', auth_protocol: 'SHA' } });
+    // A create never replaces a secret someone else created meanwhile.
+    expect(puts[0].headers.get('If-None-Match')).toBe('*');
     expect(await screen.findByText('Secret ups-1 saved')).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'New secret' })).not.toBeInTheDocument());
     await settled();
-    expect(cacheCarries(qc, 'pssst-community')).toBe(false);
+    expect(cacheCarries(qc, 'pssst-monitor')).toBe(false);
   });
 
   it('removes a field row, never below one', async () => {
@@ -129,9 +141,9 @@ describe('SecretsPage', () => {
     const dialog = await screen.findByRole('dialog', { name: 'New secret' });
     expect(within(dialog).getByRole('button', { name: 'Remove field 1' })).toBeDisabled();
     await user.click(within(dialog).getByRole('button', { name: 'Add field' }));
-    await user.type(within(dialog).getByLabelText('Field 2 name'), 'user');
+    await user.type(within(dialog).getByLabelText('Field 2 name'), 'username');
     await user.click(within(dialog).getByRole('button', { name: 'Remove field 1' }));
-    expect(within(dialog).getByLabelText('Field 1 name')).toHaveValue('user');
+    expect(within(dialog).getByLabelText('Field 1 name')).toHaveValue('username');
     expect(within(dialog).queryByLabelText('Field 2 name')).not.toBeInTheDocument();
   });
 
@@ -170,7 +182,7 @@ describe('SecretsPage', () => {
     const puts: MockRequest[] = [];
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),
-      'GET /api/v1/orgs/acme/secrets': { secrets: [secret({ field_names: ['community', 'user'] })] },
+      'GET /api/v1/orgs/acme/secrets': { secrets: [secret({ field_names: ['auth_password', 'username'] })] },
       'PUT /api/v1/orgs/acme/secrets/switch-core': (req: MockRequest) => {
         puts.push(req);
         return { secret: secret() };
@@ -182,12 +194,12 @@ describe('SecretsPage', () => {
     expect(within(dialog).getByText(/enter every value again/)).toBeInTheDocument();
     expect(within(dialog).getByText(/never shown again/)).toBeInTheDocument();
     expect(within(dialog).queryByLabelText('Name')).not.toBeInTheDocument();
-    expect(within(dialog).getByLabelText('Field 1 name')).toHaveValue('community');
-    expect(within(dialog).getByLabelText('Field 2 name')).toHaveValue('user');
+    expect(within(dialog).getByLabelText('Field 1 name')).toHaveValue('auth_password');
+    expect(within(dialog).getByLabelText('Field 2 name')).toHaveValue('username');
     expect(within(dialog).getByLabelText('Field 1 value')).toHaveValue('');
     expect(within(dialog).getByLabelText('Field 2 value')).toHaveValue('');
 
-    await user.type(within(dialog).getByLabelText('Field 1 value'), 'new-community');
+    await user.type(within(dialog).getByLabelText('Field 1 value'), 'new-auth-password');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     expect(within(dialog).getByLabelText('Field 2 value')).toHaveAttribute('aria-invalid', 'true');
     await settled();
@@ -196,10 +208,11 @@ describe('SecretsPage', () => {
     await user.type(within(dialog).getByLabelText('Field 2 value'), 'ops');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(puts).toHaveLength(1));
-    expect(puts[0].body).toEqual({ fields: { community: 'new-community', user: 'ops' } });
+    expect(puts[0].body).toEqual({ fields: { auth_password: 'new-auth-password', username: 'ops' } });
+    expect(puts[0].headers.get('If-None-Match')).toBeNull();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Replace switch-core' })).not.toBeInTheDocument());
     await settled();
-    expect(cacheCarries(qc, 'new-community')).toBe(false);
+    expect(cacheCarries(qc, 'new-auth-password')).toBe(false);
   });
 
   it("shows the server's refusal in the dialog and still keeps the values out of the cache", async () => {
@@ -208,7 +221,7 @@ describe('SecretsPage', () => {
       'GET /api/v1/orgs/acme': org('admin'),
       'GET /api/v1/orgs/acme/secrets': { secrets: [] },
       'PUT /api/v1/orgs/acme/secrets/sw': () =>
-        new Response(JSON.stringify({ detail: 'invalid input: value of field "c" is not valid UTF-8' }), {
+        new Response(JSON.stringify({ detail: 'invalid secret: field community: the value is not valid UTF-8' }), {
           status: 422,
           headers: { 'Content-Type': 'application/json' },
         }),
@@ -217,10 +230,10 @@ describe('SecretsPage', () => {
     await user.click(await screen.findByRole('button', { name: 'New secret' }));
     const dialog = await screen.findByRole('dialog', { name: 'New secret' });
     await user.type(within(dialog).getByLabelText('Name'), 'sw');
-    await user.type(within(dialog).getByLabelText('Field 1 name'), 'c');
+    await user.type(within(dialog).getByLabelText('Field 1 name'), 'community');
     await user.type(within(dialog).getByLabelText('Field 1 value'), 'refused-value');
     await user.click(within(dialog).getByRole('button', { name: 'Save' }));
-    expect(await within(dialog).findByRole('alert')).toHaveTextContent('is not valid UTF-8');
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('invalid secret: field community: the value is not valid UTF-8');
     expect(cacheCarries(qc, 'refused-value')).toBe(false);
   });
 
@@ -242,16 +255,18 @@ describe('SecretsPage', () => {
     expect(await screen.findByText('Secret ups deleted')).toBeInTheDocument();
   });
 
-  it('names the checks that still use a secret it could not delete', async () => {
+  it('names the checks of a 409 that the stale list did not know about', async () => {
     const user = userEvent.setup();
     mockApi({
       'GET /api/v1/orgs/acme': org('admin'),
-      'GET /api/v1/orgs/acme/secrets': { secrets: [secret({ used_by: [] })] },
+      'GET /api/v1/orgs/acme/secrets': { secrets: [secret({ used_by: [] }), secret({ name: 'ups', used_by: [] })] },
       'DELETE /api/v1/orgs/acme/secrets/switch-core': () =>
-        new Response(JSON.stringify({ detail: 'secret in use: the checks snmp, snmp-core use it' }), {
-          status: 409,
-          headers: { 'Content-Type': 'application/json' },
-        }),
+        problem(409, 'secret in use: the checks snmp, snmp-core use it', [
+          { location: 'used_by', message: 'snmp' },
+          { location: 'used_by', message: 'snmp-core' },
+        ]),
+      'DELETE /api/v1/orgs/acme/secrets/ups': () =>
+        problem(409, 'secret in use: the checks snmp-ups use it', [{ location: 'used_by', message: 'snmp-ups' }]),
     });
     renderPage();
     await chooseFromMenu(user, 'switch-core', 'Delete');
@@ -259,5 +274,119 @@ describe('SecretsPage', () => {
     expect(
       await screen.findByText('Secret switch-core is still used by the checks snmp, snmp-core and was not deleted.'),
     ).toBeInTheDocument();
+    await chooseFromMenu(user, 'ups', 'Delete');
+    await acceptConfirm(user);
+    expect(await screen.findByText('Secret ups is still used by the check snmp-ups and was not deleted.')).toBeInTheDocument();
+  });
+
+  it("shows the server's own text for any other refused delete", async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/secrets': { secrets: [secret({ used_by: [] })] },
+      'DELETE /api/v1/orgs/acme/secrets/switch-core': () => problem(500, 'internal error'),
+    });
+    renderPage();
+    await chooseFromMenu(user, 'switch-core', 'Delete');
+    await acceptConfirm(user);
+    expect(await screen.findByText('internal error')).toBeInTheDocument();
+  });
+
+  it('explains up front that checks use a secret instead of offering to delete it', async () => {
+    const user = userEvent.setup();
+    let deletes = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/secrets': { secrets: [secret(), secret({ name: 'ups', used_by: ['snmp-ups'] })] },
+      'DELETE /api/v1/orgs/acme/secrets/switch-core': () => {
+        deletes += 1;
+        return {};
+      },
+    });
+    renderPage();
+    await chooseFromMenu(user, 'switch-core', 'Delete');
+    const dialog = await screen.findByRole('dialog', { name: 'Secret in use' });
+    expect(
+      within(dialog).getByText('Secret switch-core is used by the checks snmp, snmp-core. Change those checks to name another secret, or delete them, before deleting it.'),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Secret in use' })).not.toBeInTheDocument());
+
+    await chooseFromMenu(user, 'ups', 'Delete');
+    expect(
+      await screen.findByText('Secret ups is used by the check snmp-ups. Change that check to name another secret, or delete it, before deleting the secret.'),
+    ).toBeInTheDocument();
+    await settled();
+    expect(deletes).toBe(0);
+  });
+
+  it('says so when a create finds the name taken meanwhile, without replacing it', async () => {
+    const user = userEvent.setup();
+    mockApi({
+      'GET /api/v1/orgs/acme': org('admin'),
+      'GET /api/v1/orgs/acme/secrets': { secrets: [] },
+      'PUT /api/v1/orgs/acme/secrets/sw': () => problem(412, 'a secret of this name already exists'),
+    });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'New secret' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New secret' });
+    await user.type(within(dialog).getByLabelText('Name'), 'sw');
+    await user.type(within(dialog).getByLabelText('Field 1 name'), 'community');
+    await user.type(within(dialog).getByLabelText('Field 1 value'), 'x');
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'A secret named sw was created in the meantime. Choose another name, or close this dialog and replace sw from its row.',
+    );
+  });
+
+  it('shows empty values after cancelling and opening the dialog again', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme': org('admin'), 'GET /api/v1/orgs/acme/secrets': { secrets: [secret()] } });
+    renderPage();
+    await chooseFromMenu(user, 'switch-core', 'Replace');
+    let dialog = await screen.findByRole('dialog', { name: 'Replace switch-core' });
+    await user.type(within(dialog).getByLabelText('Field 1 value'), 'typed-then-cancelled');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Replace switch-core' })).not.toBeInTheDocument());
+    await chooseFromMenu(user, 'switch-core', 'Replace');
+    dialog = await screen.findByRole('dialog', { name: 'Replace switch-core' });
+    expect(within(dialog).getByLabelText('Field 1 value')).toHaveValue('');
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'New secret' }));
+    dialog = await screen.findByRole('dialog', { name: 'New secret' });
+    await user.type(within(dialog).getByLabelText('Field 1 value'), 'typed-then-cancelled');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await user.click(await screen.findByRole('button', { name: 'New secret' }));
+    dialog = await screen.findByRole('dialog', { name: 'New secret' });
+    expect(within(dialog).getByLabelText('Field 1 value')).toHaveValue('');
+  });
+
+  it('groups the field rows under their caption and hint', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme': org('admin'), 'GET /api/v1/orgs/acme/secrets': { secrets: [] } });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'New secret' }));
+    const group = await screen.findByRole('group', { name: 'Fields' });
+    expect(group).toHaveAccessibleDescription(/For SNMP v2c: community/);
+    expect(within(group).getByLabelText('Field 1 value')).toBeInTheDocument();
+  });
+
+  it('shows a value while typing on request, hidden by default', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme': org('admin'), 'GET /api/v1/orgs/acme/secrets': { secrets: [] } });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'New secret' }));
+    const dialog = await screen.findByRole('dialog', { name: 'New secret' });
+    await user.click(within(dialog).getByRole('button', { name: 'Add field' }));
+    const show = within(dialog).getByRole('button', { name: 'Show value of field 1' });
+    expect(show).toHaveAttribute('aria-pressed', 'false');
+    await user.click(show);
+    expect(within(dialog).getByLabelText('Field 1 value')).toHaveAttribute('type', 'text');
+    expect(within(dialog).getByLabelText('Field 2 value')).toHaveAttribute('type', 'password');
+    expect(within(dialog).getByRole('button', { name: 'Show value of field 1' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(within(dialog).getByRole('button', { name: 'Show value of field 1' }));
+    expect(within(dialog).getByLabelText('Field 1 value')).toHaveAttribute('type', 'password');
   });
 });

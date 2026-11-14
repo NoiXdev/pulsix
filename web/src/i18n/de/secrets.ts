@@ -20,7 +20,14 @@ export const deSecrets: Messages['secrets'] = {
   deleteConfirm: (name: string) => `Secret ${name} löschen? Das lässt sich nicht rückgängig machen.`,
   deleted: (name: string) => `Secret ${name} gelöscht`,
   deleteFailed: 'Das Secret konnte nicht gelöscht werden',
-  inUse: (name: string, checks: string) => `Das Secret ${name} wird noch von den Checks ${checks} verwendet und wurde nicht gelöscht.`,
+  inUse: (name: string, checks: string, n: number) =>
+    `Das Secret ${name} wird noch ${n === 1 ? 'vom Check' : 'von den Checks'} ${checks} verwendet und wurde nicht gelöscht.`,
+  inUseTitle: 'Secret wird verwendet',
+  inUseBody: (name: string, checks: string, n: number) =>
+    n === 1
+      ? `Das Secret ${name} wird vom Check ${checks} verwendet. Lass diesen Check ein anderes Secret nennen oder lösche ihn, bevor du das Secret löschst.`
+      : `Das Secret ${name} wird von den Checks ${checks} verwendet. Lass diese Checks ein anderes Secret nennen oder lösche sie, bevor du das Secret löschst.`,
+  close: 'Schließen',
   saved: (name: string) => `Secret ${name} gespeichert`,
   saveFailed: 'Das Secret konnte nicht gespeichert werden',
   dialog: {
@@ -34,8 +41,11 @@ export const deSecrets: Messages['secrets'] = {
     fieldName: (i: number) => `Name von Feld ${i}`,
     fieldValue: (i: number) => `Wert von Feld ${i}`,
     removeField: (i: number) => `Feld ${i} entfernen`,
+    showValue: (i: number) => `Wert von Feld ${i} anzeigen`,
     addField: 'Feld hinzufügen',
     neverShown: 'Die Werte werden nach dem Speichern nie wieder angezeigt: Sie werden verschlüsselt gespeichert, und nur die Checks, die dieses Secret nennen, verwenden sie.',
+    exists: (name: string) =>
+      `Ein Secret namens ${name} wurde inzwischen angelegt. Wähle einen anderen Namen oder schließe diesen Dialog und ersetze ${name} über seine Zeile.`,
     replaceNote: 'Beim Ersetzen werden genau die Felder unten gespeichert: Gib jeden Wert erneut ein. Ein entferntes Feld wird gelöscht.',
   },
   errors: {

@@ -9,24 +9,36 @@ const queryKey = ['admin', 'check-definitions'] as const;
  * useSharedRepoDefinitions.ts's own doc comment, Task 7's own application:
  * every organization holds a projection of each one, this list is the
  * definitions themselves. */
+/** Every organization holds a projection of each definition, and a
+ * projection naming a secret counts in that organization's secret list
+ * ("used by"), so a write refreshes the secret lists of every organization
+ * as well. */
+function useInvalidate() {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey });
+    void qc.invalidateQueries({ queryKey: ['secrets'] });
+  };
+}
+
 export function useCheckDefinitions() {
   return useQuery({ queryKey, queryFn: () => unwrap(api.GET('/api/v1/admin/checks/definitions')) });
 }
 
 export function useCreateCheckDefinition() {
-  const qc = useQueryClient();
+  const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (body: CheckDefinitionDefInput) => unwrap(api.POST('/api/v1/admin/checks/definitions', { body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey }),
+    onSuccess: invalidate,
   });
 }
 
 export function useUpdateCheckDefinition(id: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (body: CheckDefinitionDefInput) =>
       unwrap(api.PUT('/api/v1/admin/checks/definitions/{id}', { params: { path: { id } }, body })),
-    onSuccess: () => qc.invalidateQueries({ queryKey }),
+    onSuccess: invalidate,
   });
 }
 
@@ -37,9 +49,9 @@ export function useUpdateCheckDefinition(id: string) {
  * DeleteCheckDefinitionWithProjections), so this mutation only ever needs
  * to surface a network or server failure, never a 409's own detail. */
 export function useDeleteCheckDefinition() {
-  const qc = useQueryClient();
+  const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (id: string) => unwrap(api.DELETE('/api/v1/admin/checks/definitions/{id}', { params: { path: { id } } })),
-    onSuccess: () => qc.invalidateQueries({ queryKey }),
+    onSuccess: invalidate,
   });
 }

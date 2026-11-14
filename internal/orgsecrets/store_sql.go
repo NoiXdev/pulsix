@@ -33,6 +33,20 @@ func (s *SQLStore) Upsert(ctx context.Context, orgID uuid.UUID, name string, sea
 	return Stored{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}, nil
 }
 
+// Insert implements Store: no row back means the name was taken.
+func (s *SQLStore) Insert(ctx context.Context, orgID uuid.UUID, name string, sealed []byte, fieldNames []string, at time.Time) (Stored, bool, error) {
+	r, err := s.q.InsertOrgSecret(ctx, gen.InsertOrgSecretParams{
+		OrgID: orgID, Name: name, FieldsSealed: sealed, FieldNames: fieldNames, At: at,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Stored{}, false, nil
+	}
+	if err != nil {
+		return Stored{}, false, err
+	}
+	return Stored{Name: r.Name, FieldNames: r.FieldNames, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}, true, nil
+}
+
 // List implements Store.
 func (s *SQLStore) List(ctx context.Context, orgID uuid.UUID) ([]Stored, error) {
 	rows, err := s.q.ListOrgSecrets(ctx, orgID)
