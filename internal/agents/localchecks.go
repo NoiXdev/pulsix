@@ -36,6 +36,12 @@ const (
 	// maxLoggedDrops bounds the log lines one heartbeat writes about
 	// dropped checks; the rest are counted in one more line.
 	maxLoggedDrops = MaxLocalChecks
+	// maxExaminedLocalChecks bounds how many entries of one heartbeat are
+	// looked at, in the order sent: twice what can be kept, so an agent
+	// that keeps to the cap is always judged whole, and a longer list costs
+	// no sorting, parsing or allocation beyond it. The entries after it are
+	// dropped unexamined and only counted.
+	maxExaminedLocalChecks = 2 * MaxLocalChecks
 )
 
 // LocalCheckInput is one local check as the heartbeat carries it: the
@@ -75,9 +81,20 @@ type droppedLocalCheck struct {
 	key, reason string
 }
 
+// localCheckDrops is what one heartbeat's validation refused: the examined
+// entries it dropped, each with its reason, and how many entries were not
+// examined at all (beyond maxExaminedLocalChecks).
+type localCheckDrops struct {
+	examined   []droppedLocalCheck
+	unexamined int
+}
+
 // localChecksReportOf validates one heartbeat's local checks and bounds its
 // problems, the way secretsReportOf bounds the secrets report; it returns
 // the report and the checks it dropped.
+//
+// Only the first maxExaminedLocalChecks entries as sent are looked at; the
+// rest are dropped unexamined.
 //
 // An empty secrets state means an agent older than agent.yaml, so the
 // report is unknown whatever rides along. Otherwise the checks are taken in
@@ -87,21 +104,25 @@ type droppedLocalCheck struct {
 // agent, its interval is within MinInterval and MaxInterval, its params
 // JSON is at most MaxLocalCheckParamsBytes and an object that
 // checkplugins.Validate accepts, and fewer than MaxLocalChecks were kept
-// before it. Problems are kept as sent, the first MaxLocalCheckProblems,
+// before it (checked right after the key, so nothing past the cap is
+// parsed). Problems are kept as sent, the first MaxLocalCheckProblems,
 // each bounded by boundLine to MaxLocalCheckProblemBytes.
-func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []string) (LocalChecksReport, []droppedLocalCheck) {
+func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []string) (LocalChecksReport, localCheckDrops) {
 	if secretsState == "" {
-		return LocalChecksReport{}, nil
+		return LocalChecksReport{}, localCheckDrops{}
+	}
+	var drops localCheckDrops
+	if len(in) > maxExaminedLocalChecks {
+		in, drops.unexamined = in[:maxExaminedLocalChecks], len(in)-maxExaminedLocalChecks
 	}
 	sorted := slices.Clone(in)
 	slices.SortStableFunc(sorted, func(a, b LocalCheckInput) int { return cmp.Compare(a.Key, b.Key) })
 	kept := make([]LocalCheck, 0, min(len(sorted), MaxLocalChecks))
-	var dropped []droppedLocalCheck
 	seen := make(map[string]bool, len(sorted))
 	for _, c := range sorted {
 		check, reason := validLocalCheck(c, seen, len(kept))
 		if reason != "" {
-			dropped = append(dropped, droppedLocalCheck{key: loggableKey(c.Key), reason: reason})
+			drops.examined = append(drops.examined, droppedLocalCheck{key: loggableKey(c.Key), reason: reason})
 			continue
 		}
 		kept = append(kept, check)
@@ -110,13 +131,15 @@ func localChecksReportOf(secretsState string, in []LocalCheckInput, problems []s
 	for _, p := range problems[:min(len(problems), MaxLocalCheckProblems)] {
 		bounded = append(bounded, boundLine(p, MaxLocalCheckProblemBytes))
 	}
-	return LocalChecksReport{Known: true, Checks: kept, Problems: bounded}, dropped
+	return LocalChecksReport{Known: true, Checks: kept, Problems: bounded}, drops
 }
 
 // validLocalCheck is one check's verdict: the check, or a fixed reason it
 // is dropped. seen collects every well-formed key met so far, so of two
 // checks with the same key the second is dropped whatever became of the
-// first; kept is how many checks were kept before this one.
+// first; kept is how many checks were kept before this one — once that is
+// MaxLocalChecks, a check is dropped before its plugin or params are looked
+// at.
 func validLocalCheck(c LocalCheckInput, seen map[string]bool, kept int) (LocalCheck, string) {
 	if !checkplugins.ValidLocalCheckKey(c.Key) {
 		return LocalCheck{}, "the key is not local- followed by a valid check key"
@@ -125,6 +148,9 @@ func validLocalCheck(c LocalCheckInput, seen map[string]bool, kept int) (LocalCh
 		return LocalCheck{}, "a duplicate key"
 	}
 	seen[c.Key] = true
+	if kept >= MaxLocalChecks {
+		return LocalCheck{}, "more than 32 local checks"
+	}
 	d, ok := checkplugins.Get(c.Plugin)
 	if !ok {
 		return LocalCheck{}, "an unknown plugin"
@@ -153,9 +179,6 @@ func validLocalCheck(c LocalCheckInput, seen map[string]bool, kept int) (LocalCh
 	if canonical, err := checkplugins.CanonicalParams(params); err != nil || len(canonical) > MaxLocalCheckParamsBytes {
 		return LocalCheck{}, "the params are over 2048 bytes"
 	}
-	if kept >= MaxLocalChecks {
-		return LocalCheck{}, "more than 32 local checks"
-	}
 	return LocalCheck{Key: c.Key, Plugin: c.Plugin, Params: params, Interval: interval}, ""
 }
 
@@ -173,13 +196,13 @@ func loggableKey(key string) string {
 
 // logDroppedLocalChecks writes one warning per dropped check — key and
 // reason, never params — up to maxLoggedDrops, and one more line counting
-// the rest.
-func logDroppedLocalChecks(ctx context.Context, log *slog.Logger, serial string, dropped []droppedLocalCheck) {
-	for i, d := range dropped {
-		if i == maxLoggedDrops {
-			log.WarnContext(ctx, "dropped more local checks the agent reported", "serial", serial, "count", len(dropped)-i)
-			return
-		}
+// the rest, the unexamined entries included.
+func logDroppedLocalChecks(ctx context.Context, log *slog.Logger, serial string, drops localCheckDrops) {
+	listed := drops.examined[:min(len(drops.examined), maxLoggedDrops)]
+	for _, d := range listed {
 		log.WarnContext(ctx, "dropped a local check the agent reported", "serial", serial, "key", d.key, "reason", d.reason)
+	}
+	if more := len(drops.examined) - len(listed) + drops.unexamined; more > 0 {
+		log.WarnContext(ctx, "dropped more local checks the agent reported", "serial", serial, "count", more)
 	}
 }

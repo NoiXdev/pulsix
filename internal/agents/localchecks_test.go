@@ -237,3 +237,96 @@ func TestLocalChecksByHosts(t *testing.T) {
 		t.Fatalf("by hosts = %+v", got)
 	}
 }
+
+// A refused check does not count toward the cap: one that sorts first and
+// is dropped leaves room for 32 valid ones.
+func TestHeartbeatRefusedLocalCheckLeavesRoomUnderTheCap(t *testing.T) {
+	in := []agents.LocalCheckInput{{Key: "local-0", Plugin: "nope", ParamsJSON: "{}", IntervalSeconds: 60}}
+	for i := range agents.MaxLocalChecks {
+		in = append(in, diskCheck(fmt.Sprintf("local-%02d", i+10)))
+	}
+	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: in})
+	if len(got.Checks) != agents.MaxLocalChecks || got.Checks[0].Key != "local-10" {
+		t.Fatalf("kept %d (first %q), want all 32 valid ones", len(got.Checks), got.Checks[0].Key)
+	}
+	if !strings.Contains(logs, "key=local-0 ") || strings.Contains(logs, "more than 32") {
+		t.Fatalf("log = %q, want only the refused check", logs)
+	}
+}
+
+// Params within 2048 bytes as sent but over it once canonical (json.Marshal
+// escapes '<' as six bytes) are refused, as the agent refuses them.
+func TestHeartbeatDropsLocalCheckOverTheCanonicalSize(t *testing.T) {
+	params := `{"mounts":["/` + paramsMarker + strings.Repeat("<", 400) + `"]}`
+	if len(params) > agents.MaxLocalCheckParamsBytes {
+		t.Fatalf("test params are %d bytes as sent; want them within the cap", len(params))
+	}
+	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: []agents.LocalCheckInput{
+		{Key: "local-esc", Plugin: "disk", ParamsJSON: params, IntervalSeconds: 60}, diskCheck("local-ok"),
+	}})
+	if !slices.Equal(keysOf(got.Checks), []string{"local-ok"}) {
+		t.Fatalf("kept %q, want only local-ok", keysOf(got.Checks))
+	}
+	if !strings.Contains(logs, "key=local-esc ") || !strings.Contains(logs, "2048") {
+		t.Fatalf("log = %q, want local-esc dropped for its size", logs)
+	}
+}
+
+// logLines splits captured log text into its lines.
+func logLines(logs string) []string {
+	if logs == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(logs, "\n"), "\n")
+}
+
+// One heartbeat logs at most 32 dropped checks one by one; the rest are
+// counted in one more line.
+func TestHeartbeatCapsTheDropLogLines(t *testing.T) {
+	var in []agents.LocalCheckInput
+	for i := range 40 {
+		in = append(in, agents.LocalCheckInput{Key: fmt.Sprintf("local-%02d", i), Plugin: "nope", ParamsJSON: "{}", IntervalSeconds: 60})
+	}
+	_, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: in})
+	lines := logLines(logs)
+	if len(lines) != 33 {
+		t.Fatalf("logged %d lines, want 32 plus one count line:\n%s", len(lines), logs)
+	}
+	if !strings.Contains(lines[31], "key=local-31 ") || !strings.Contains(lines[32], "count=8") || strings.Contains(lines[32], "key=") {
+		t.Fatalf("last lines = %q / %q, want local-31 then a count of 8", lines[31], lines[32])
+	}
+}
+
+// Only the first 64 entries as sent are examined at all: an entry after
+// them is neither kept nor validated, only counted in the summary line.
+func TestHeartbeatExaminesAtMost64LocalChecks(t *testing.T) {
+	var in []agents.LocalCheckInput
+	for i := range 64 {
+		in = append(in, agents.LocalCheckInput{Key: fmt.Sprintf("local-b%02d", i), Plugin: "nope", ParamsJSON: "{}", IntervalSeconds: 60})
+	}
+	for i := range 36 {
+		in = append(in, diskCheck(fmt.Sprintf("local-a%02d", i)))
+	}
+	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: in})
+	if !got.Known || len(got.Checks) != 0 {
+		t.Fatalf("kept %q, want nothing: the valid entries come after the first 64", keysOf(got.Checks))
+	}
+	lines := logLines(logs)
+	if len(lines) != 33 || !strings.Contains(lines[32], "count=68") {
+		t.Fatalf("logged %d lines (last %q), want 32 plus a count of 68 (32 more examined, 36 not examined)", len(lines), lines[len(lines)-1])
+	}
+}
+
+// Past the cap nothing more is parsed: the 33rd check is dropped for the
+// cap even when its params would also be refused.
+func TestHeartbeatPastTheCapDropsWithoutParsing(t *testing.T) {
+	var in []agents.LocalCheckInput
+	for i := range agents.MaxLocalChecks {
+		in = append(in, diskCheck(fmt.Sprintf("local-%02d", i)))
+	}
+	in = append(in, agents.LocalCheckInput{Key: "local-zz", Plugin: "disk", ParamsJSON: "not json", IntervalSeconds: 60})
+	got, logs := heartbeatLocal(t, agents.HeartbeatReport{SecretsState: "ok", LocalChecks: in})
+	if len(got.Checks) != agents.MaxLocalChecks || !strings.Contains(logs, "key=local-zz ") || !strings.Contains(logs, "more than 32") {
+		t.Fatalf("kept %d, log = %q; want local-zz dropped for the cap", len(got.Checks), logs)
+	}
+}
