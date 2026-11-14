@@ -102,7 +102,7 @@ export function HostAgentCard({ org, hostId, hostName, zoneId, canWrite }: { org
           </div>
           {/* Backlog 3.5a: why checks defined in agent.yaml do not run, one
               line each as the agent reported them. Nothing for none, and
-              nothing for null either — an agent too old to report them, or
+              nothing for null either — an agent older than agent.yaml, or
               one that has not sent a heartbeat, is the secrets' "unknown"
               above already. */}
           {(agent.local_check_problems ?? []).length > 0 && (

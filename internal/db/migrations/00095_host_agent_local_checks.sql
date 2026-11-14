@@ -7,11 +7,15 @@
 -- manager validates both again and keeps the latest report per agent, next
 -- to the secrets report (00086), for the host page and the rules.
 --
--- Both columns are NULL for "unknown": an agent older than local checks
--- sends no secrets state, and a registration that has not reported yet
--- has none. The heartbeat writes them together with the secrets columns,
--- so either all four are NULL or none is; zero local checks is '[]' and
--- zero problems '{}', not NULL. Nullable and without a default, the ADD
+-- Both columns are NULL for "unknown": an agent older than agent.yaml
+-- (3.5) sends no secrets state, and an enrolment that has not reported
+-- yet has none (a certificate renewal keeps the report). The heartbeat
+-- writes them together with the secrets columns, so either all four are
+-- NULL or none is; zero local checks is '[]' and zero problems '{}', not
+-- NULL — which is also what an agent from 3.5 stores: it reads agent.yaml
+-- but predates the checks section, so it reports a secrets state and no
+-- local checks, and "none" is true for it (it refuses a file that has
+-- checks:). Nullable and without a default, the ADD
 -- COLUMNs touch only the catalog — existing rows read as unknown.
 ALTER TABLE host_agents ADD COLUMN local_checks jsonb;
 ALTER TABLE host_agents ADD COLUMN local_check_problems text[];

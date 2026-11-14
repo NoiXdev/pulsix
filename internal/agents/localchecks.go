@@ -65,10 +65,14 @@ type LocalCheck struct {
 // its agent.yaml: the ones it runs and the problems that kept others from
 // running.
 //
-// Known is false when there is no report: the agent is older than local
-// checks (it sends no secrets state, see secretsReportOf), or the
-// registration has not sent a heartbeat yet. Checks and Problems are then
-// nil; when Known, both are non-nil (possibly empty), Checks in key order.
+// Known is false when there is no report: the agent is older than
+// agent.yaml (it sends no secrets state, see secretsReportOf), or it has
+// not sent a heartbeat since it enrolled (a certificate renewal keeps the
+// report). Checks and Problems are then nil; when Known, both are non-nil
+// (possibly empty), Checks in key order. An agent from 3.5 reads agent.yaml
+// but predates its checks section: it reports a secrets state and no local
+// checks, so it is Known with none — which is true, as it refuses a file
+// that has checks.
 type LocalChecksReport struct {
 	Known    bool
 	Checks   []LocalCheck

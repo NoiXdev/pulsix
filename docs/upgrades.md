@@ -267,7 +267,12 @@ first, then add `checks:`. A new agent under an older manager runs its local
 checks and the manager stores their values, but does not show or judge them until
 the manager is updated. Migration 00095 adds two nullable columns to
 `host_agents` (`local_checks`, `local_check_problems`); NULL means an agent that
-has not reported them (an older agent), and nothing is seeded.
+has not reported (one older than `agent.yaml`, 3.5, or one that has not sent a
+heartbeat since it enrolled), and nothing is seeded. An agent from 3.5 reads
+`agent.yaml` but predates `checks:`, so it is stored as reporting no local checks
+and no problems (`[]`), not as unknown. A certificate renewal keeps both columns
+and the secrets report; a re-enrollment resets all four until the first
+heartbeat.
 
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
