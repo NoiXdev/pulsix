@@ -49,6 +49,7 @@ import (
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
+	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/probe"
@@ -450,6 +451,12 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	}
 
 	credsSvc := credentials.NewService(credentials.NewSQLStore(appDB), box, time.Now, rand.Reader)
+	// The secret store of the server-run checks (backlog 3.13d): sealed
+	// with the same box; "used by" reads the check definitions through
+	// checksSvc. The probe runner reads it too (Fields).
+	orgSecretsSvc := orgsecrets.NewService(orgsecrets.Deps{
+		Store: orgsecrets.NewSQLStore(appDB), Box: box, Checks: NewSecretCheckRefs(checksSvc),
+	})
 	sshSvc := sshconf.NewService(sshconf.NewSQLStore(appDB), credsSvc, hostsSvc)
 	invStore := inventory.NewSQLStore(appDB)
 	inventorySvc := inventory.NewService(invStore, hostsSvc, sshSvc, box)
@@ -629,7 +636,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		// Backlog 1.20: the auth endpoints' per-address limiter size
 		// (PULSIX_AUTH_RATE_LIMIT; 0 from config disables it).
 		AuthRateLimit: cfg.AuthRateLimit,
-		Credentials:   credsSvc, SSH: sshSvc,
+		Credentials:   credsSvc, SSH: sshSvc, OrgSecrets: orgSecretsSvc,
 		Inventory: inventorySvc, Renderer: renderer,
 		Repos: reposSvc, Shared: sharedSvc, Playbooks: playbooksSvc, Templates: templatesSvc,
 		Jobs: jobsSvc, Schedules: schedulesSvc, Triggers: triggersSvc, Version: cfg.Version,

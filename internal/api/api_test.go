@@ -33,6 +33,7 @@ import (
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
+	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -238,6 +239,9 @@ func baseHealthzDeps(t *testing.T) api.Deps {
 		// Backlog 7.2's required dependency: the instance backup API.
 		// Zero-valued like its siblings — nothing here drives a route.
 		Backups: &backup.Service{},
+		// Backlog 3.13d's required dependency: the secret store of the
+		// server-run checks. Zero-valued like its siblings.
+		OrgSecrets: &orgsecrets.Service{},
 	}
 }
 
@@ -457,6 +461,13 @@ func TestNewRejectsHalfWiredDeps(t *testing.T) {
 	// each added a required Deps field and left exactly these
 	// -run-filtered tests the only thing that could have caught a
 	// forgotten wire, since go build does not compile test files.
+	// The secret store (backlog 3.13d): a nil service would panic on the
+	// secrets routes.
+	noOrgSecrets := testDeps(t)
+	noOrgSecrets.OrgSecrets = nil
+	if _, err := api.New(noOrgSecrets); err == nil || !strings.Contains(err.Error(), "OrgSecrets") {
+		t.Fatalf("api.New without OrgSecrets = %v, want an error naming OrgSecrets", err)
+	}
 	noAlerts := testDeps(t)
 	noAlerts.Alerts = nil
 	if _, err := api.New(noAlerts); err == nil || !strings.Contains(err.Error(), "Alerts") {

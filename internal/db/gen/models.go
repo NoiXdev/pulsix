@@ -772,6 +772,15 @@ type OrgMonitoringSetting struct {
 	RetentionDays    *int32    `json:"retention_days"`
 }
 
+type OrgSecret struct {
+	OrgID        uuid.UUID `json:"org_id"`
+	Name         string    `json:"name"`
+	FieldsSealed []byte    `json:"fields_sealed"`
+	FieldNames   []string  `json:"field_names"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type Organization struct {
 	ID        uuid.UUID `json:"id"`
 	Slug      string    `json:"slug"`

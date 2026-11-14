@@ -2694,6 +2694,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/orgs/{org}/secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get API v1 orgs by org secrets */
+        get: operations["get-api-v1-orgs-by-org-secrets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/orgs/{org}/secrets/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put API v1 orgs by org secrets by name */
+        put: operations["putOrgSecret"];
+        post?: never;
+        /** Delete API v1 orgs by org secrets by name */
+        delete: operations["deleteOrgSecret"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/orgs/{org}/settings/jobs": {
         parameters: {
             query?: never;
@@ -6028,6 +6063,47 @@ export interface components {
              */
             readonly $schema?: string;
             org: components["schemas"]["OrgDTO"];
+        };
+        OrgSecretDTO: {
+            /** Format: date-time */
+            created_at: string;
+            /** @description The secret's field names, sorted; the values are never returned */
+            field_names: string[] | null;
+            name: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description Keys of the server-run checks naming this secret, sorted; a secret in use cannot be deleted */
+            used_by: string[] | null;
+        };
+        OrgSecretListOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgSecretListOutputBody.json
+             */
+            readonly $schema?: string;
+            secrets: components["schemas"]["OrgSecretDTO"][] | null;
+        };
+        OrgSecretOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgSecretOutputBody.json
+             */
+            readonly $schema?: string;
+            secret: components["schemas"]["OrgSecretDTO"];
+        };
+        OrgSecretPutInputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/OrgSecretPutInputBody.json
+             */
+            readonly $schema?: string;
+            /** @description The secret's fields, replacing every stored one: 1 to 16, names of 1 to 64 characters of A-Z a-z 0-9 _ . -, values of 1 to 4096 bytes without NUL */
+            fields: {
+                [key: string]: string;
+            };
         };
         OrgTagKeysOutputBody: {
             /**
@@ -15251,6 +15327,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScheduleRunsOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "get-api-v1-orgs-by-org-secrets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgSecretListOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    putOrgSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrgSecretPutInputBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrgSecretOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    deleteOrgSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                org: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkOutputBody"];
                 };
             };
             /** @description Error */

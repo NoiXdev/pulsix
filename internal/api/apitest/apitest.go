@@ -33,6 +33,7 @@ import (
 	"github.com/noixdev/pulsix/internal/backup"
 	"github.com/noixdev/pulsix/internal/ca"
 	"github.com/noixdev/pulsix/internal/calendar"
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/clientip"
 	"github.com/noixdev/pulsix/internal/config"
@@ -50,6 +51,7 @@ import (
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
+	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/outbound"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
@@ -321,6 +323,23 @@ func WithRetentionMaxDays(days int) Option {
 	return func(s *Server) {
 		s.Deps.MonitorSettings = monitorsettings.NewService(monitorsettings.NewSQLStore(s.DB), days)
 	}
+}
+
+// WithOrgSecretsPlugins rebuilds the secret store with a descriptor
+// lookup of the test's own, so a test can have a server-run plugin that
+// takes a secret before a real one does (the store's "used by" counts
+// server-run checks only).
+func WithOrgSecretsPlugins(lookup func(name string) (checkplugins.Descriptor, bool)) Option {
+	return func(s *Server) { s.Deps.OrgSecrets = newOrgSecrets(s.DB, s.Checks, lookup) }
+}
+
+// newOrgSecrets builds the secret store as internal/app does; a nil lookup
+// is the real descriptors.
+func newOrgSecrets(d *db.DB, checksSvc *checks.Service, lookup func(string) (checkplugins.Descriptor, bool)) *orgsecrets.Service {
+	return orgsecrets.NewService(orgsecrets.Deps{
+		Store: orgsecrets.NewSQLStore(d), Box: crypto.NewBox(testMasterKey),
+		Checks: app.NewSecretCheckRefs(checksSvc), Plugins: lookup,
+	})
 }
 
 // WithVersion sets Deps.Version, the manager's build version: the value the
@@ -656,6 +675,7 @@ func New(t *testing.T, opts ...Option) *Server {
 		Mailer:      mail.NewSMTP(setupSvc.LoadSMTP),
 		Hosts:       hostsSvc,
 		Credentials: credsSvc,
+		OrgSecrets:  newOrgSecrets(d, s.Checks, nil), // backlog 3.13d; WithOrgSecretsPlugins swaps the descriptors
 		SSH:         sshSvc,
 		Inventory:   inventorySvc,
 		Renderer:    renderer,

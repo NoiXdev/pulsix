@@ -34,6 +34,7 @@ import (
 	"github.com/noixdev/pulsix/internal/monitorsettings"
 	"github.com/noixdev/pulsix/internal/notify"
 	"github.com/noixdev/pulsix/internal/oncall"
+	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/playbooks"
 	"github.com/noixdev/pulsix/internal/repos"
 	"github.com/noixdev/pulsix/internal/rules"
@@ -71,6 +72,9 @@ type Deps struct {
 	// Credentials is the organization's encrypted secret store (SSH keys,
 	// passwords, Git deploy keys and tokens); see registerCredentialRoutes.
 	Credentials *credentials.Service
+	// OrgSecrets is the organization's secret store for the checks the
+	// server runs (backlog 3.13d); see registerOrgSecretRoutes.
+	OrgSecrets *orgsecrets.Service
 	// SSH stores jump hosts, zone defaults and host SSH settings; see
 	// registerSSHRoutes.
 	SSH *sshconf.Service
@@ -303,6 +307,9 @@ func (d Deps) validate() error {
 	}
 	if d.Credentials == nil {
 		missing = append(missing, "Credentials")
+	}
+	if d.OrgSecrets == nil {
+		missing = append(missing, "OrgSecrets")
 	}
 	if d.SSH == nil {
 		missing = append(missing, "SSH")
@@ -590,6 +597,7 @@ func registerRoutes(hapi huma.API, deps Deps) {
 	registerHostRoutes(orgScoped, deps)               // zones + hosts, all /orgs/{org}/...
 	registerTagRoutes(orgScoped, deps)                // host tags + the tag selector, all /orgs/{org}/...
 	registerCredentialRoutes(orgScoped, deps)         // /orgs/{org}/credentials...
+	registerOrgSecretRoutes(orgScoped, deps)          // /orgs/{org}/secrets...
 	registerSSHRoutes(orgScoped, deps)                // /orgs/{org}/bastions..., zone default, host SSH
 	registerInventoryRoutes(orgScoped, deps)          // /orgs/{org}/inventory/groups...
 	registerInventoryMemberRoutes(orgScoped, deps)    // memberships, host inventory, previews
