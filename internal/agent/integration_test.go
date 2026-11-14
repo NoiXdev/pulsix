@@ -212,9 +212,16 @@ func (f *integAgentStore) Touch(_ context.Context, serial, version string) error
 }
 
 // Heartbeat records like Touch: this harness asserts that heartbeats
-// arrive, not what they report about the secrets file.
-func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string, _ agents.SecretsReport) error {
+// arrive, not what they report about the agent.yaml file.
+func (f *integAgentStore) Heartbeat(ctx context.Context, serial, version string, _ agents.SecretsReport, _ agents.LocalChecksReport) error {
 	return f.Touch(ctx, serial, version)
+}
+
+// LocalChecksByHosts reports no host: the manager's view of local checks
+// belongs to the host page and the rule evaluation, which this harness
+// does not exercise.
+func (f *integAgentStore) LocalChecksByHosts(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]agents.LocalChecksReport, error) {
+	return map[uuid.UUID]agents.LocalChecksReport{}, nil
 }
 
 // RecordConfigCheck stores nothing: this harness reads the configuration
