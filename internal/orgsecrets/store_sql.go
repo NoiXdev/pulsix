@@ -14,9 +14,10 @@ import (
 )
 
 // SQLStore implements Store on org_secrets. It runs on *db.DB, so every
-// statement runs inside the context's organization scope (the API binds
-// the request's; the probe runner binds none and reads under the bypass
-// policy, filtered by org_id like every statement here).
+// statement runs inside the context's organization scope: the API binds
+// the request's organization and the probe runner the host's, so every
+// read runs under org_isolation, and each statement also filters by
+// org_id.
 type SQLStore struct{ q *gen.Queries }
 
 // NewSQLStore builds the store on d itself, never on its raw pool.

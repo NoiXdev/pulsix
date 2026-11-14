@@ -286,8 +286,9 @@ nothing until an `snmp` check reports. **Existing hosts get no SNMP checks**: a
 check has to be added to a host or a monitoring group, with a secret created under
 Settings, Secrets first. The manager binary now depends on
 `github.com/gosnmp/gosnmp` v1.47.0 (an internal detail; public docs do not name it).
-Downgrading past 00096 drops the secrets, so keep a backup from before the upgrade
-if you may need to roll back.
+A downgrade is a restore of a backup from before the upgrade (see Downgrading);
+that backup has no secrets, so secrets created since have to be created again after
+the next upgrade.
 
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and

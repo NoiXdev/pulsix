@@ -19,8 +19,9 @@
 --
 -- The row-level security pair is the standard form (00091):
 -- org_isolation admits only the bound organization, org_isolation_bypass
--- applies when none is bound (the server's probe runner reads across
--- organizations).
+-- applies when none is bound. Every reader binds one: the API binds the
+-- request's organization and the server's probe runner the host's, so a
+-- probe reads only its own organization's secrets.
 CREATE TABLE org_secrets (
   org_id        uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   name          text NOT NULL CHECK (name ~ '^[A-Za-z0-9_.-]{1,64}$'),
