@@ -45,6 +45,11 @@ describe('the Settings section', () => {
     expect(await settledAt('/o/acme/settings')).toBe('/o/acme/settings/members');
   });
 
+  it('has a Secrets page', async () => {
+    expect(await settledAt('/o/acme/settings/secrets')).toBe('/o/acme/settings/secrets');
+    expect(router.state.matches.some((m) => m.routeId.endsWith('/settings/secrets'))).toBe(true);
+  });
+
   it('has a General page', async () => {
     expect(await settledAt('/o/acme/settings/general')).toBe('/o/acme/settings/general');
     expect(router.state.matches.some((m) => m.routeId.endsWith('/settings/general'))).toBe(true);

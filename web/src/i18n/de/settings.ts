@@ -14,6 +14,7 @@ export const deSettings: Messages['settings'] = {
     members: 'Mitglieder',
     activity: 'Aktivität',
     tokens: 'API-Tokens',
+    secrets: 'Secrets',
     notifications: 'Benachrichtigungen',
     alertRoutes: 'Alarmrouten',
     rotations: 'Bereitschaftsrotationen',

@@ -16,6 +16,7 @@ export const enSettings = {
     members: 'Members',
     activity: 'Activity',
     tokens: 'API tokens',
+    secrets: 'Secrets',
     notifications: 'Notifications',
     alertRoutes: 'Alert routes',
     rotations: 'On-call rotations',

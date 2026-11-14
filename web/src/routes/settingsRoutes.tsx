@@ -6,6 +6,7 @@ import { AccountPage } from '../features/users/AccountPage.tsx';
 import { OrganizationsPage } from '../features/instance/OrganizationsPage.tsx';
 import { ActivityPage } from '../features/activity/ActivityPage.tsx';
 import { TokensPage } from '../features/tokens/TokensPage.tsx';
+import { SecretsPage } from '../features/secrets/SecretsPage.tsx';
 import { SmtpSettingsPage } from '../features/instance/SmtpSettingsPage.tsx';
 import { LanguageSettingsPage } from '../features/instance/LanguageSettingsPage.tsx';
 import { BackupsPage } from '../features/instance/BackupsPage.tsx';
@@ -64,6 +65,9 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
     component: ActivityPage,
   });
   const tokensRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/tokens', component: TokensPage });
+  // The organization's secret store (backlog 3.13d): the credentials of the
+  // checks the Pulsix server runs.
+  const secretsRoute = createRoute({ getParentRoute: () => settingsRoute, path: '/secrets', component: SecretsPage });
   const legacyCredentialsRoute = createRoute({
     getParentRoute: () => settingsRoute,
     path: '/credentials',
@@ -141,6 +145,7 @@ export function settingsRouteTree(orgRoute: AnyRoute) {
         memberRoute,
         activityRoute,
         tokensRoute,
+        secretsRoute,
         legacyCredentialsRoute,
         legacyJumpHostsRoute,
         usersRoute,

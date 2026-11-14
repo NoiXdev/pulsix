@@ -21,6 +21,7 @@ import { enRepos } from './repos.ts';
 import { enRoutes } from './routes.ts';
 import { enRuns } from './runs.ts';
 import { enSchedules } from './schedules.ts';
+import { enSecrets } from './secrets.ts';
 import { enSettings } from './settings.ts';
 import { enSetup } from './setup.ts';
 import { enShell } from './shell.ts';
@@ -68,6 +69,7 @@ export const en = {
   routes: enRoutes,
   runs: enRuns,
   schedules: enSchedules,
+  secrets: enSecrets,
   settings: enSettings,
   setup: enSetup,
   shell: enShell,

@@ -17,6 +17,7 @@ describe('crumbLabels', () => {
   it('labels every settings leaf', () => {
     expect(crumbLabels('/o/acme/settings/activity', 'acme')).toEqual(['Settings', 'Activity']);
     expect(crumbLabels('/o/acme/settings/tokens', 'acme')).toEqual(['Settings', 'Tokens']);
+    expect(crumbLabels('/o/acme/settings/secrets', 'acme')).toEqual(['Settings', 'Secrets']);
     expect(crumbLabels('/o/acme/settings/mail', 'acme')).toEqual(['Settings', 'Outgoing mail']);
     expect(crumbLabels('/o/acme/settings/language', 'acme')).toEqual(['Settings', 'Language']);
   });

@@ -27,6 +27,8 @@ export type InventoryGroupSummary = components['schemas']['GroupSummaryDTO'];
 export type InventoryGroup = components['schemas']['GroupDTO'];
 export type InventoryMember = components['schemas']['InventoryMemberDTO'];
 export type Credential = components['schemas']['CredentialDTO'];
+/** A secret of the organization's store (backlog 3.13d): names only, never a value. */
+export type OrgSecret = components['schemas']['OrgSecretDTO'];
 export type Bastion = components['schemas']['BastionDTO'];
 export type HostSSH = components['schemas']['HostSSHDTO'];
 

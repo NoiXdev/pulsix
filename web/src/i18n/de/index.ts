@@ -22,6 +22,7 @@ import { deRepos } from './repos.ts';
 import { deRoutes } from './routes.ts';
 import { deRuns } from './runs.ts';
 import { deSchedules } from './schedules.ts';
+import { deSecrets } from './secrets.ts';
 import { deSettings } from './settings.ts';
 import { deSetup } from './setup.ts';
 import { deShell } from './shell.ts';
@@ -82,6 +83,7 @@ export const de: Messages = {
   routes: deRoutes,
   runs: deRuns,
   schedules: deSchedules,
+  secrets: deSecrets,
   settings: deSettings,
   setup: deSetup,
   shell: deShell,

@@ -1,0 +1,50 @@
+import type { Messages } from '../types.ts';
+
+export const deSecrets: Messages['secrets'] = {
+  title: 'Secrets',
+  subtitle:
+    'Zugangsdaten für die Checks, die der Pulsix-Server ausführt, etwa eine SNMP-Community oder ein SNMP-Login. Ein Check nennt ein Secret in seinem Feld „Secret“.',
+  count: (n: number) => (n === 1 ? '1 Secret' : `${n} Secrets`),
+  add: 'Neues Secret',
+  readOnly: 'Nur Inhaber und Admins können Secrets anlegen, ersetzen oder löschen.',
+  empty: 'Noch keine Secrets. Lege eines für jeden Geräte-Login an, den ein Check braucht, und nenne es dann im Check.',
+  columns: {
+    name: 'Name',
+    fields: 'Felder',
+    updated: 'Letzte Änderung',
+    usedBy: 'Verwendet von',
+  },
+  unused: 'keinem Check',
+  replace: 'Ersetzen',
+  delete: 'Löschen',
+  deleteConfirm: (name: string) => `Secret ${name} löschen? Das lässt sich nicht rückgängig machen.`,
+  deleted: (name: string) => `Secret ${name} gelöscht`,
+  deleteFailed: 'Das Secret konnte nicht gelöscht werden',
+  inUse: (name: string, checks: string) => `Das Secret ${name} wird noch von den Checks ${checks} verwendet und wurde nicht gelöscht.`,
+  saved: (name: string) => `Secret ${name} gespeichert`,
+  saveFailed: 'Das Secret konnte nicht gespeichert werden',
+  dialog: {
+    newTitle: 'Neues Secret',
+    replaceTitle: (name: string) => `${name} ersetzen`,
+    name: 'Name',
+    nameHint: 'Buchstaben, Ziffern und . _ -, bis zu 64 Zeichen. Checks nennen das Secret bei diesem Namen.',
+    fields: 'Felder',
+    fieldsHint:
+      'Für SNMP v2c: community. Für SNMP v3: username, auth_protocol und auth_password, für Verschlüsselung dazu priv_protocol und priv_password.',
+    fieldName: (i: number) => `Name von Feld ${i}`,
+    fieldValue: (i: number) => `Wert von Feld ${i}`,
+    removeField: (i: number) => `Feld ${i} entfernen`,
+    addField: 'Feld hinzufügen',
+    neverShown: 'Die Werte werden nach dem Speichern nie wieder angezeigt: Sie werden verschlüsselt gespeichert, und nur die Checks, die dieses Secret nennen, verwenden sie.',
+    replaceNote: 'Beim Ersetzen werden genau die Felder unten gespeichert: Gib jeden Wert erneut ein. Ein entferntes Feld wird gelöscht.',
+  },
+  errors: {
+    name: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
+    nameTaken: 'ein Secret dieses Namens gibt es schon – ersetze es über seine Zeile',
+    fieldName: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
+    fieldRepeated: 'dieser Feldname kommt zweimal vor',
+    valueTooLong: 'darf höchstens 4096 Bytes lang sein',
+    valueNul: 'darf kein NUL-Zeichen enthalten',
+    fieldCount: 'Ein Secret hat 1 bis 16 Felder.',
+  },
+};

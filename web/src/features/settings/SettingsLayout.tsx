@@ -15,7 +15,9 @@ import { useT } from '../../i18n/useT.ts';
  * and fetches nothing.
  *
  * Which group a role sees:
- * - Organization (General, Members, Activity, API tokens): every member.
+ * - Organization (General, Members, Activity, API tokens, Secrets): every
+ *   member. Secrets lists names only (checks.read, which every role has);
+ *   the page itself gates its writes on credentials.write.
  * - Alerting (Notifications, Alert routes, On-call rotations): the roles
  *   that may read channels (channels.read, operator and above).
  *   alert_route_handlers.go and oncall_handlers.go gate their own reads on
@@ -46,6 +48,7 @@ export function SettingsLayout() {
         { to: '/o/$org/settings/members', params, label: t.settings.tabs.members },
         { to: '/o/$org/settings/activity', params, label: t.settings.tabs.activity },
         { to: '/o/$org/settings/tokens', params, label: t.settings.tabs.tokens },
+        { to: '/o/$org/settings/secrets', params, label: t.settings.tabs.secrets },
       ],
     },
   ];

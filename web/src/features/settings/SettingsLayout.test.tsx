@@ -64,6 +64,8 @@ describe('SettingsLayout', () => {
     expect(screen.getByRole('link', { name: 'Members' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Activity' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'API tokens' })).toBeInTheDocument();
+    // Every member reads the secret store's names (checks.read); writing is the page's own gate.
+    expect(screen.getByRole('link', { name: 'Secrets' })).toHaveAttribute('href', '/o/acme/settings/secrets');
     // Both gates have answered (a viewer, not an instance admin) before the absences count.
     expect(await screen.findByText('gates: member, viewer')).toBeInTheDocument();
     expect(screen.queryByText('Alerting')).not.toBeInTheDocument();
@@ -95,7 +97,7 @@ describe('SettingsLayout', () => {
     const links = screen.getAllByRole('link');
     expect(links[links.indexOf(users) + 1]).toBe(organizations);
     expect(links[links.indexOf(organizations) + 1]).toHaveAccessibleName('Outgoing mail');
-    expect(links[links.indexOf(users) - 1]).toHaveAccessibleName('API tokens');
+    expect(links[links.indexOf(users) - 1]).toHaveAccessibleName('Secrets');
     expect(screen.getByRole('link', { name: 'Outgoing mail' })).toHaveAttribute('href', '/o/acme/settings/mail');
     expect(screen.getByRole('link', { name: 'Language' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Backups' })).toBeInTheDocument();

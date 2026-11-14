@@ -45,6 +45,7 @@ export const enShell = {
     members: 'Members',
     activity: 'Activity',
     tokens: 'Tokens',
+    secrets: 'Secrets',
     mail: 'Outgoing mail',
     language: 'Language',
     groups: 'Groups',

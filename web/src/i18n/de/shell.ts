@@ -41,6 +41,7 @@ export const deShell: Messages['shell'] = {
     members: 'Mitglieder',
     activity: 'Aktivität',
     tokens: 'Tokens',
+    secrets: 'Secrets',
     mail: 'E-Mail-Versand',
     language: 'Sprache',
     groups: 'Gruppen',
