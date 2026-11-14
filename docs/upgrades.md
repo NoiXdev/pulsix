@@ -259,6 +259,16 @@ the agent first, then add `commands:`. Migration 00094 adds two default rules,
 organization (skipped where a rule of that name exists); they judge nothing
 until a `script` check reports.
 
+Local checks in `agent.yaml` (backlog 3.5a) skew both ways. **The `checks:` key is
+stricter for an older agent.** An agent older than this release does not know the
+key and refuses the whole file, so a host whose `agent.yaml` gains `checks:` also
+loses its `secrets:` and `commands:` until that agent is updated. Update the agent
+first, then add `checks:`. A new agent under an older manager runs its local
+checks and the manager stores their values, but does not show or judge them until
+the manager is updated. Migration 00095 adds two nullable columns to
+`host_agents` (`local_checks`, `local_check_problems`); NULL means an agent that
+has not reported them (an older agent), and nothing is seeded.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
