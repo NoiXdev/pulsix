@@ -309,7 +309,7 @@ export const enChecks = {
     snmp: {
       secret: {
         label: 'Secret',
-        hint: 'Name of a secret of this organization under Settings → Secrets: it holds the community (v2c) or the SNMPv3 login. Its values are never shown again and never leave the Pulsix server.',
+        hint: 'Name of a secret in the organization’s secrets (Settings → Secrets), holding the community (v2c) or the SNMPv3 login; its values are never shown again and never leave the Pulsix server. A definition several organizations use reads each one’s own secret of that name.',
         placeholder: 'switch-core',
       },
       version: { label: 'SNMP version', options: { v2c: 'v2c (community)', v3: 'v3 (user name and passwords)' } },

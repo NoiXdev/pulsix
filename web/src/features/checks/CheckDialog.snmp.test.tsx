@@ -38,7 +38,7 @@ describe('CheckDialog — snmp plugin', () => {
     const user = userEvent.setup();
     await openNew(user);
     expect(screen.getByLabelText('Secret')).toHaveAttribute('placeholder', 'switch-core');
-    expect(screen.getByText(/under Settings → Secrets/)).toBeInTheDocument();
+    expect(screen.getByText(/the organization’s secrets \(Settings → Secrets\)/)).toBeInTheDocument();
     expect(screen.queryByText(/agent\.yaml/)).not.toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'SNMP version' })).toHaveValue('v2c (community)');
     expect(screen.getByLabelText('Port')).toHaveAttribute('placeholder', '161');

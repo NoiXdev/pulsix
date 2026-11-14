@@ -293,7 +293,7 @@ export const deChecks: Messages['checks'] = {
     snmp: {
       secret: {
         label: 'Secret',
-        hint: 'Name eines Secrets dieser Organisation unter Einstellungen → Secrets: es enthält die Community (v2c) oder den SNMPv3-Login. Seine Werte werden nie wieder angezeigt und verlassen den Pulsix-Server nie.',
+        hint: 'Name eines Secrets in den Secrets der Organisation (Einstellungen → Secrets), das die Community (v2c) oder den SNMPv3-Login enthält; seine Werte werden nie wieder angezeigt und verlassen den Pulsix-Server nie. Eine Definition, die mehrere Organisationen nutzen, liest in jeder deren eigenes Secret dieses Namens.',
         placeholder: 'switch-core',
       },
       version: { label: 'SNMP-Version', options: { v2c: 'v2c (Community)', v3: 'v3 (Benutzername und Passwörter)' } },
