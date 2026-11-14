@@ -99,8 +99,17 @@ off: false
 quoted: "5432"
 single: '1.5'
 name: !!str 12
-hex: 0x1F
 huge: 18446744073709551615
+neg: -12
+plus: +5
+exp: 1e3
+negexp: -1.5e-2
+dot: .5
+trail: 1.
+zero: 0
+zerof: 0.25
+clock: 1:30
+yes: yes
 when: 2026-11-14
 word: hello
 list: [a, 2, "3", false]
@@ -110,9 +119,9 @@ empty: []
 	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
 		t.Fatal(err)
 	}
-	got, err := parseParams(doc.Content[0])
-	if err != nil {
-		t.Fatalf("parseParams = %v", err)
+	got, problem, err := parseParams(doc.Content[0])
+	if err != nil || problem != "" {
+		t.Fatalf("parseParams = %v, %q", err, problem)
 	}
 	want := map[string]any{
 		"port":   float64(5432),
@@ -122,8 +131,17 @@ empty: []
 		"quoted": "5432",
 		"single": "1.5",
 		"name":   "12",
-		"hex":    float64(31),
 		"huge":   float64(18446744073709551615),
+		"neg":    float64(-12),
+		"plus":   float64(5),
+		"exp":    float64(1000),
+		"negexp": -0.015,
+		"dot":    0.5,
+		"trail":  float64(1),
+		"zero":   float64(0),
+		"zerof":  0.25,
+		"clock":  "1:30", // no sexagesimal numbers
+		"yes":    "yes",  // no YAML 1.1 booleans
 		"when":   "2026-11-14",
 		"word":   "hello",
 		"list":   []any{"a", float64(2), "3", false},
@@ -299,7 +317,29 @@ func TestParseRefusesOneLocalCheck(t *testing.T) {
 		{"params name malformed", "  local-bad:\n    plugin: script\n    params:\n      \"" + paramValue + " x\": y\n",
 			"a parameter name is 1 to 64 characters of A-Z a-z 0-9 _ . -"},
 		{"params not finite", "  local-bad:\n    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: .inf\n",
-			"script: timeout_seconds must be "},
+			"params: numbers must be finite"},
+		{"interval 9", "  local-bad:\n    plugin: cpu\n    interval_seconds: 9\n",
+			"interval_seconds must be a whole number from 10 to 86400"},
+		{"interval 86401", "  local-bad:\n    plugin: cpu\n    interval_seconds: 86401\n",
+			"interval_seconds must be a whole number from 10 to 86400"},
+		{"params 2049 bytes as JSON", "  local-bad:\n    plugin: postgres\n    params:\n" + paramsOfJSONLength(t, 2049),
+			"params are longer than 2048 bytes as JSON"},
+		// An entry with two faults reports the first in the documented
+		// order: key, fields, plugin, interval, params, JSON size.
+		{"order: key before plugin", "  bad:\n    plugin: nope\n",
+			"a local check key is local- followed by"},
+		{"order: field before plugin", "  local-bad:\n    plugin: " + serverPlugin(t) + "\n    intervall: 60\n",
+			"unknown entry field"},
+		{"order: plugin before interval", "  local-bad:\n    plugin: nope\n    interval_seconds: 5\n",
+			"unknown plugin"},
+		{"order: missing plugin before interval", "  local-bad:\n    interval_seconds: 5\n",
+			"plugin is required"},
+		{"order: interval before params", "  local-bad:\n    plugin: script\n    interval_seconds: 5\n    params:\n      format: " + paramValue + "\n",
+			"interval_seconds must be"},
+		{"order: number form before the plugin's validation", "  local-bad:\n    plugin: script\n    params:\n      timeout_seconds: 010\n",
+			"params: " + wantNumberForm},
+		{"order: the plugin's validation before JSON size", "  local-bad:\n    plugin: postgres\n    params:\n      databases: [" + strings.Join(long, ", ") + "]\n",
+			"postgres: secret is required"},
 		{"params over 2048 bytes as JSON", "  local-bad:\n    plugin: postgres\n    params:\n      secret: pg\n      databases: [" + strings.Join(long, ", ") + "]\n",
 			"params are longer than 2048 bytes as JSON"},
 	}
@@ -404,4 +444,109 @@ func TestSetNeverPrintsALocalCheckParam(t *testing.T) {
 			t.Errorf("log = %q, want %s", got, want)
 		}
 	}
+}
+
+// wantNumberForm is the reason for a number YAML 1.1 would read differently
+// from what an operator means (010 is 8 there) or that no JSON push carries.
+const wantNumberForm = "numbers are written in plain decimal, without leading zeros, underscores or base prefixes"
+
+// TestParseRefusesNonDecimalNumbers: a plain number yaml would read in a
+// YAML 1.1 form (octal 010, 1_000, 0b11, 0x1F) refuses its entry rather
+// than silently meaning something else; .inf and .nan refuse it too.
+func TestParseRefusesNonDecimalNumbers(t *testing.T) {
+	tests := []struct {
+		name, body, want string
+	}{
+		{"interval octal", "    plugin: cpu\n    interval_seconds: 0300\n", "interval_seconds: " + wantNumberForm},
+		{"interval underscore", "    plugin: cpu\n    interval_seconds: 1_000\n", "interval_seconds: " + wantNumberForm},
+		{"interval binary", "    plugin: cpu\n    interval_seconds: 0b111100\n", "interval_seconds: " + wantNumberForm},
+		{"interval hex", "    plugin: cpu\n    interval_seconds: 0x3c\n", "interval_seconds: " + wantNumberForm},
+		{"interval 0o octal", "    plugin: cpu\n    interval_seconds: 0o74\n", "interval_seconds: " + wantNumberForm},
+		{"param octal", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: 010\n", "params: " + wantNumberForm},
+		{"param underscore", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: 1_0\n", "params: " + wantNumberForm},
+		{"param binary", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: 0b11\n", "params: " + wantNumberForm},
+		{"param hex", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: 0x1F\n", "params: " + wantNumberForm},
+		{"param leading zero float", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: 00.5\n", "params: " + wantNumberForm},
+		{"param octal in a list", "    plugin: script\n    params:\n      commands: [a, 010]\n", "params: " + wantNumberForm},
+		{"param inf", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: .inf\n", "params: numbers must be finite"},
+		{"param negative inf", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: -.Inf\n", "params: numbers must be finite"},
+		{"param nan", "    plugin: script\n    params:\n      commands: [a]\n      timeout_seconds: .nan\n", "params: numbers must be finite"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			set, err := parse([]byte("checks:\n  local-bad:\n" + tt.body + "  local-ok:\n    plugin: cpu\n"))
+			if err != nil {
+				t.Fatalf("parse refused the file: %v", err)
+			}
+			if got := set.LocalChecks(); len(got) != 1 || got[0].Key != "local-ok" {
+				t.Errorf("LocalChecks = %#v, want local-ok only", got)
+			}
+			if got, want := set.LocalCheckProblems(), []string{"line 2: " + tt.want}; !reflect.DeepEqual(got, want) {
+				t.Errorf("problems = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestParseAcceptsTheBounds: the interval's bounds and the params' JSON size
+// limit are inclusive; a signed decimal interval is fine.
+func TestParseAcceptsTheBounds(t *testing.T) {
+	tests := []struct {
+		name, body string
+		interval   time.Duration
+	}{
+		{"interval 10", "    plugin: cpu\n    interval_seconds: 10\n", 10 * time.Second},
+		{"interval 86400", "    plugin: cpu\n    interval_seconds: 86400\n", 24 * time.Hour},
+		{"interval +60", "    plugin: cpu\n    interval_seconds: +60\n", time.Minute},
+		{"params 2048 bytes as JSON", "    plugin: postgres\n    params:\n" + paramsOfJSONLength(t, 2048), time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			set, err := parse([]byte("checks:\n  local-ok:\n" + tt.body))
+			if err != nil {
+				t.Fatalf("parse = %v", err)
+			}
+			got := set.LocalChecks()
+			if len(got) != 1 || got[0].Interval != tt.interval || len(set.LocalCheckProblems()) != 0 {
+				t.Fatalf("LocalChecks = %#v, problems %q", got, set.LocalCheckProblems())
+			}
+		})
+	}
+}
+
+// paramsOfJSONLength is the YAML of postgres params (a secret and a list of
+// databases, indented for an entry's params) whose canonical JSON is
+// exactly n bytes.
+func paramsOfJSONLength(t *testing.T, n int) string {
+	t.Helper()
+	params := map[string]any{"secret": "pg", "databases": []any{}}
+	size := func() int {
+		raw, err := checkplugins.CanonicalParams(params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(raw)
+	}
+	var dbs []any
+	for i := 0; n-size() > 66; i++ { // a 60-byte entry costs at most 63 bytes
+		dbs = append(dbs, fmt.Sprintf("d%02d%s", i, strings.Repeat("x", 57)))
+		params["databases"] = dbs
+	}
+	last := n - size() - 2 // its quotes
+	if len(dbs) > 0 {
+		last-- // its comma
+	}
+	if last < 1 || last > 63 {
+		t.Fatalf("cannot reach %d bytes (last entry %d)", n, last)
+	}
+	dbs = append(dbs, strings.Repeat("z", last))
+	params["databases"] = dbs
+	if got := size(); got != n {
+		t.Fatalf("params JSON is %d bytes, want %d", got, n)
+	}
+	names := make([]string, len(dbs))
+	for i, d := range dbs {
+		names[i] = d.(string)
+	}
+	return "      secret: pg\n      databases: [" + strings.Join(names, ", ") + "]\n"
 }
