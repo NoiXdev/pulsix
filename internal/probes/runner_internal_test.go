@@ -589,3 +589,31 @@ func TestPanickingRefreshIsRecovered(t *testing.T) {
 		t.Fatalf("probed %d times, want the runner to carry on once the resolver recovers", n)
 	}
 }
+
+// TestItemAndLabelReachTheRecordedObservations: a probe's per-item and
+// discrete results are recorded with their item and label.
+func TestItemAndLabelReachTheRecordedObservations(t *testing.T) {
+	state, one := "up", 1.0
+	h := newHarness(t, func(_ *harness, d *Deps) {
+		d.Probe = func(context.Context, string, map[string]any, string) []probe.Observation {
+			return []probe.Observation{
+				{Metric: "snmp.if_oper", Item: "eth0", Value: &one, Label: &state},
+				{Metric: "snmp.up", Value: &one},
+			}
+		}
+	})
+	h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+		synthetic("web", "http", time.Minute))
+	h.tickAt(0)
+	b := h.rec.Batches()
+	if len(b) != 1 || len(b[0].obs) != 2 {
+		t.Fatalf("want one batch of two observations, got %+v", b)
+	}
+	first, second := b[0].obs[0], b[0].obs[1]
+	if first.Item != "eth0" || first.Label == nil || *first.Label != "up" {
+		t.Fatalf("item and label not passed on: %+v", first)
+	}
+	if second.Item != "" || second.Label != nil {
+		t.Fatalf("an observation without item or label gained one: %+v", second)
+	}
+}

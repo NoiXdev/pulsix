@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/probetest"
 )
 
 func TestGuardAllowed(t *testing.T) {
@@ -176,7 +177,7 @@ func TestGuardDialerRefusesAtDialTime(t *testing.T) {
 		t.Fatalf("dial loopback: err %v, want ErrNotAllowed", err)
 	}
 
-	conn, err := loopbackGuard().Dialer(time.Second).DialContext(context.Background(), "tcp", ln.Addr().String())
+	conn, err := probetest.LoopbackGuard().Dialer(time.Second).DialContext(context.Background(), "tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("dial loopback with test guard: %v", err)
 	}

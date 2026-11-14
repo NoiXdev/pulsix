@@ -1,4 +1,4 @@
-package probe_test
+package all_test
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/all"
 )
 
-// TestRunKnowsExactlyTheServerPlugins pins Run's switch to the descriptors:
+// TestRunKnowsExactlyTheServerPlugins pins the registry to the descriptors:
 // every plugin with Runs == Server must be handled, and no agent plugin may be.
 // No packet leaves the host: the context is already cancelled, the params
 // are empty and the address is TEST-NET-1. tcp (no port), http (no url)
@@ -28,7 +29,7 @@ func TestRunKnowsExactlyTheServerPlugins(t *testing.T) {
 			servers++
 		}
 		t.Run(d.Name, func(t *testing.T) {
-			obs := probe.Run(ctx, g, d.Name, map[string]any{}, "192.0.2.1")
+			obs := all.Run(ctx, g, d.Name, map[string]any{}, "192.0.2.1", nil)
 			unknown := false
 			for _, o := range obs {
 				if strings.Contains(o.Err, "unknown probe plugin") {
@@ -44,5 +45,38 @@ func TestRunKnowsExactlyTheServerPlugins(t *testing.T) {
 	// refuses agent plugins, and pass whatever Run's switch says.
 	if servers == 0 {
 		t.Fatal("no descriptor runs on the server")
+	}
+}
+
+func TestRunUnknownPluginIsAnError(t *testing.T) {
+	obs := all.Run(context.Background(), probe.NewGuardForTest(true, nil), "nosuch", nil, "127.0.0.1", nil)
+	if len(obs) != 1 || obs[0].Metric != "nosuch.up" || !strings.Contains(obs[0].Err, "unknown probe plugin") {
+		t.Fatalf("want one error for nosuch.up, got %+v", obs)
+	}
+}
+
+func TestRegistryDispatchesEachProbeByName(t *testing.T) {
+	var called string
+	fake := func(name string) probe.Func {
+		return func(context.Context, *probe.Guard, map[string]any, string, map[string]string) []probe.Observation {
+			called = name
+			return nil
+		}
+	}
+	reg := probe.Registry{"a": fake("a"), "b": fake("b")}
+	for _, name := range []string{"a", "b"} {
+		reg.Run(context.Background(), nil, name, nil, "", nil)
+		if called != name {
+			t.Fatalf("Run(%q) called %q", name, called)
+		}
+	}
+}
+
+func TestRegistryNamesAreTheServerPlugins(t *testing.T) {
+	reg := all.Registry()
+	for _, d := range checkplugins.All() {
+		if _, ok := reg[d.Name]; ok != (d.Runs == checkplugins.Server) {
+			t.Fatalf("plugin %s (runs %s): in registry = %v", d.Name, d.Runs, ok)
+		}
 	}
 }

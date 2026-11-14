@@ -1,4 +1,4 @@
-package probe
+package icmp
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/noixdev/pulsix/internal/probe"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -55,33 +56,33 @@ func listenICMP(network, address string) (packetConn, error) {
 
 // probeICMP sends count echo requests to address and reports how many came
 // back and their average round trip.
-func probeICMP(ctx context.Context, g *Guard, params map[string]any, address string, open icmpOpener) []Observation {
+func probeICMP(ctx context.Context, g *probe.Guard, params map[string]any, address string, open icmpOpener) []probe.Observation {
 	metrics := []string{"icmp.up", "icmp.loss_pct", "icmp.rtt_ms"}
 
-	host, err := targetHost(address)
+	host, err := probe.TargetHost(address)
 	if err != nil {
-		return failAll(err.Error(), metrics...)
+		return probe.FailAll(err.Error(), metrics...)
 	}
-	count := numParam(params, "count", icmpDefaultCount)
+	count := probe.NumParam(params, "count", icmpDefaultCount)
 	if count < 1 || count > icmpMaxCount || count != math.Trunc(count) {
-		return failAll("invalid count", metrics...)
+		return probe.FailAll("invalid count", metrics...)
 	}
 
-	ctx, cancel := bound(ctx, params, icmpDefaultTimeout)
+	ctx, cancel := probe.Bound(ctx, params, icmpDefaultTimeout)
 	defer cancel()
 
 	target, err := resolveAllowed(ctx, g, host)
-	if errors.Is(err, ErrNotAllowed) {
-		return failAll(ErrNotAllowed.Error(), metrics...)
+	if errors.Is(err, probe.ErrNotAllowed) {
+		return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 	}
 	if err != nil {
-		return down("icmp")
+		return probe.Down("icmp")
 	}
 
 	r := newEchoRound(target, int(count))
 	conn, err := open(r.network, r.listen)
 	if err != nil {
-		return failAll(icmpSocketError(err), metrics...)
+		return probe.FailAll(icmpSocketError(err), metrics...)
 	}
 	defer func() { _ = conn.Close() }()
 	// Closing the socket wakes a blocked read at once on cancel.
@@ -92,26 +93,26 @@ func probeICMP(ctx context.Context, g *Guard, params map[string]any, address str
 	if r.replies == 0 {
 		if r.sent[0].IsZero() {
 			// Cancelled before the first request: nothing was measured.
-			return down("icmp")
+			return probe.Down("icmp")
 		}
 		// Requests went out and none came back: the loss is measured, a
 		// round trip is not.
-		return []Observation{value("icmp.up", 0), value("icmp.loss_pct", 100)}
+		return []probe.Observation{probe.Value("icmp.up", 0), probe.Value("icmp.loss_pct", 100)}
 	}
-	return []Observation{
-		value("icmp.up", 1),
-		value("icmp.loss_pct", float64(len(r.sent)-r.replies)*100/float64(len(r.sent))),
-		value("icmp.rtt_ms", millis(r.rtt)/float64(r.replies)),
+	return []probe.Observation{
+		probe.Value("icmp.up", 1),
+		probe.Value("icmp.loss_pct", float64(len(r.sent)-r.replies)*100/float64(len(r.sent))),
+		probe.Value("icmp.rtt_ms", probe.Millis(r.rtt)/float64(r.replies)),
 	}
 }
 
 // resolveAllowed returns the address to ping: host itself when it is an IP,
 // else the first allowed address it resolves to, IPv4 preferred. It returns
-// ErrNotAllowed when the guard refuses every candidate.
-func resolveAllowed(ctx context.Context, g *Guard, host string) (netip.Addr, error) {
+// probe.ErrNotAllowed when the guard refuses every candidate.
+func resolveAllowed(ctx context.Context, g *probe.Guard, host string) (netip.Addr, error) {
 	if ip, err := netip.ParseAddr(host); err == nil {
 		if !g.Allowed(ip) {
-			return netip.Addr{}, ErrNotAllowed
+			return netip.Addr{}, probe.ErrNotAllowed
 		}
 		return ip.Unmap(), nil
 	}
@@ -135,7 +136,7 @@ func resolveAllowed(ctx context.Context, g *Guard, host string) (netip.Addr, err
 	if v6.IsValid() {
 		return v6, nil
 	}
-	return netip.Addr{}, ErrNotAllowed
+	return netip.Addr{}, probe.ErrNotAllowed
 }
 
 func icmpSocketError(err error) string {
@@ -267,4 +268,9 @@ func minTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// Probe is the icmp probe, as the registry runs it.
+func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address string, _ map[string]string) []probe.Observation {
+	return probeICMP(ctx, g, params, address, listenICMP)
 }

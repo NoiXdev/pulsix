@@ -22,6 +22,7 @@ import (
 
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/all"
 )
 
 // AdvisoryKeyProbes is the probe runner's pg_try_advisory_lock key, next
@@ -50,7 +51,7 @@ type Deps struct {
 	Hosts    Hosts
 	Recorder Recorder
 	Locker   Locker
-	// Probe runs one probe; default probe.Run with Guard.
+	// Probe runs one probe; default all.Run with Guard.
 	Probe ProbeFunc
 	// Guard is the dial guard the default Probe uses (probe.NewGuard with
 	// PULSIX_PROBE_DENY_CIDRS and PULSIX_NOTIFY_NAT64_PREFIXES in
@@ -121,7 +122,7 @@ func NewRunner(d Deps) *Runner {
 	if r.probe == nil {
 		g := d.Guard
 		r.probe = func(ctx context.Context, plugin string, params map[string]any, address string) []probe.Observation {
-			return probe.Run(ctx, g, plugin, params, address)
+			return all.Run(ctx, g, plugin, params, address, nil)
 		}
 	}
 	if r.clock == nil {
@@ -288,7 +289,7 @@ func (r *Runner) probeAndRecord(ctx context.Context, s slot, t target) {
 	batch := make([]checks.Observation, len(obs))
 	for i, o := range obs {
 		batch[i] = checks.Observation{
-			HostID: s.host, CheckKey: s.key, Metric: o.Metric, At: at, Value: o.Value, Err: o.Err,
+			HostID: s.host, CheckKey: s.key, Item: o.Item, Metric: o.Metric, At: at, Value: o.Value, Label: o.Label, Err: o.Err,
 		}
 	}
 	res, err := r.recorder.RecordProbeObservations(orgScope(ctx, t.org), t.org, batch)

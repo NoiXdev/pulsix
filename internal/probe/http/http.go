@@ -1,4 +1,4 @@
-package probe
+package http
 
 import (
 	"bytes"
@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/probe"
 )
 
 const (
@@ -36,59 +38,59 @@ var (
 // response arrived, its status, the time to the end of the body read and,
 // when body_contains is set, whether the first 1 MiB of the body holds it.
 // roots verifies https certificates; nil means the system roots.
-func probeHTTP(ctx context.Context, g *Guard, params map[string]any, address string, roots *x509.CertPool) []Observation {
-	bodyContains := strParam(params, "body_contains", "")
+func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, address string, roots *x509.CertPool) []probe.Observation {
+	bodyContains := probe.StrParam(params, "body_contains", "")
 	metrics := []string{"http.up", "http.status_code", "http.response_ms"}
 	if bodyContains != "" {
 		metrics = append(metrics, "http.body_match")
 	}
 
-	target, err := httpURL(strParam(params, "url", ""), address)
+	target, err := httpURL(probe.StrParam(params, "url", ""), address)
 	if err != nil {
-		return failAll(err.Error(), metrics...)
+		return probe.FailAll(err.Error(), metrics...)
 	}
-	method := strParam(params, "method", http.MethodGet)
+	method := probe.StrParam(params, "method", http.MethodGet)
 	if method != http.MethodGet && method != http.MethodHead {
-		return failAll(errBadMethod.Error(), metrics...)
+		return probe.FailAll(errBadMethod.Error(), metrics...)
 	}
 
-	ctx, cancel := bound(ctx, params, httpDefaultTimeout)
+	ctx, cancel := probe.Bound(ctx, params, httpDefaultTimeout)
 	defer cancel()
 
 	// refused records a dial the guard refused on any hop: net/http does not
-	// promise to keep ErrNotAllowed in the error chain it returns.
+	// promise to keep probe.ErrNotAllowed in the error chain it returns.
 	var refused atomic.Bool
-	transport := newHTTPTransport(g, boolParam(params, "verify_tls", true), roots, &refused)
+	transport := newHTTPTransport(g, probe.BoolParam(params, "verify_tls", true), roots, &refused)
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Transport:     transport,
-		CheckRedirect: redirectPolicy(boolParam(params, "follow_redirects", true)),
+		CheckRedirect: redirectPolicy(probe.BoolParam(params, "follow_redirects", true)),
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
 	if err != nil {
-		return failAll(errBadURL.Error(), metrics...)
+		return probe.FailAll(errBadURL.Error(), metrics...)
 	}
 	req.Header.Set("User-Agent", httpUserAgent)
 
 	start := time.Now()
 	resp, err := client.Do(req)
 	if refused.Load() {
-		return failAll(ErrNotAllowed.Error(), metrics...)
+		return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 	}
 	if err != nil {
-		return down("http")
+		return probe.Down("http")
 	}
 	match := readBody(resp.Body, bodyContains, httpBodyLimit)
 	elapsed := time.Since(start)
 	_ = resp.Body.Close()
 
-	obs := []Observation{
-		value("http.up", 1),
-		value("http.status_code", float64(resp.StatusCode)),
-		value("http.response_ms", millis(elapsed)),
+	obs := []probe.Observation{
+		probe.Value("http.up", 1),
+		probe.Value("http.status_code", float64(resp.StatusCode)),
+		probe.Value("http.response_ms", probe.Millis(elapsed)),
 	}
 	if bodyContains != "" {
-		obs = append(obs, boolValue("http.body_match", match))
+		obs = append(obs, probe.BoolValue("http.body_match", match))
 	}
 	return obs
 }
@@ -96,15 +98,15 @@ func probeHTTP(ctx context.Context, g *Guard, params map[string]any, address str
 // httpURL replaces {address} in raw with the host's address (an IPv6
 // address bracketed) and accepts only an http or https URL with a host.
 func httpURL(raw, address string) (*url.URL, error) {
-	if strings.Contains(raw, addressPlaceholder) {
-		host, err := targetHost(address)
+	if strings.Contains(raw, probe.AddressPlaceholder) {
+		host, err := probe.TargetHost(address)
 		if err != nil {
 			return nil, err
 		}
 		if strings.Contains(host, ":") {
 			host = "[" + strings.ReplaceAll(host, "%", "%25") + "]"
 		}
-		raw = strings.ReplaceAll(raw, addressPlaceholder, host)
+		raw = strings.ReplaceAll(raw, probe.AddressPlaceholder, host)
 	}
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
@@ -116,13 +118,13 @@ func httpURL(raw, address string) (*url.URL, error) {
 // newHTTPTransport returns a single-use transport that dials only through
 // the guard, uses no proxy and keeps no connection for a later probe. A dial
 // the guard refuses sets refused.
-func newHTTPTransport(g *Guard, verify bool, roots *x509.CertPool, refused *atomic.Bool) *http.Transport {
+func newHTTPTransport(g *probe.Guard, verify bool, roots *x509.CertPool, refused *atomic.Bool) *http.Transport {
 	dialer := g.Dialer(0)
 	return &http.Transport{
 		Proxy: nil,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := dialer.DialContext(ctx, network, addr)
-			if errors.Is(err, ErrNotAllowed) {
+			if errors.Is(err, probe.ErrNotAllowed) {
 				refused.Store(true)
 			}
 			return conn, err
@@ -170,4 +172,9 @@ func readBody(body io.Reader, want string, limit int64) bool {
 	}
 	buf, _ := io.ReadAll(capped)
 	return bytes.Contains(buf, []byte(want))
+}
+
+// Probe is the http probe, as the registry runs it.
+func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address string, _ map[string]string) []probe.Observation {
+	return probeHTTP(ctx, g, params, address, nil)
 }

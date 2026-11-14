@@ -4,36 +4,30 @@
 // are already validated by internal/checks.
 package probe
 
-import (
-	"context"
-	"errors"
-	"math"
-	"net/netip"
-	"strings"
-	"time"
-)
+import "context"
 
 // Observation is one metric of one probe: a Value, or an Err when the
 // attempt could not be made at all. Never both.
+//
+// Item names what a metric measures when a probe reports several of the
+// same metric (an interface, a sensor); it is empty for a probe with one
+// subject. Label is the discrete reading of a metric that is not a number
+// (a state name); it is nil for numeric metrics.
 type Observation struct {
-	Metric string
-	Value  *float64
-	Err    string
+	Metric, Item string
+	Value        *float64
+	Label        *string
+	Err          string
 }
 
-// Collection errors for an attempt that could not be made.
-var (
-	errNoAddress = errors.New("host has no address")
-	errBadTarget = errors.New("target is not a valid address")
-	errBadPort   = errors.New("invalid port")
-	// errNameIsAddress: a dns A or AAAA check of an IP literal asks no
-	// server, so it cannot be attempted.
-	errNameIsAddress = errors.New("name is an address")
-)
+// Func is one probe: it never returns a Go error, every outcome is in the
+// observations. secret holds the fields of the check's named secret and is
+// nil for probes that use none.
+type Func func(ctx context.Context, g *Guard, params map[string]any, address string, secret map[string]string) []Observation
 
-// addressPlaceholder in a name or URL parameter is replaced with the host's
-// address.
-const addressPlaceholder = "{address}"
+// Registry maps a plugin name to its probe. It is built by the caller
+// (internal/probe/all in production) so this package imports no probe.
+type Registry map[string]Func
 
 // Run probes address with plugin and params, already validated by
 // internal/checks. It never returns a Go error: every outcome is in the
@@ -45,138 +39,12 @@ const addressPlaceholder = "{address}"
 //
 // The probe's timeout is its params' timeout_s (or the plugin's default),
 // cut to ctx's deadline when that is earlier.
-func Run(ctx context.Context, g *Guard, plugin string, params map[string]any, address string) []Observation {
+func (r Registry) Run(ctx context.Context, g *Guard, plugin string, params map[string]any, address string, secret map[string]string) []Observation {
 	if g == nil {
 		g = NewGuard(nil, nil)
 	}
-	switch plugin {
-	case "tcp":
-		return probeTCP(ctx, g, params, address)
-	case "icmp":
-		return probeICMP(ctx, g, params, address, listenICMP)
-	case "dns":
-		return probeDNS(ctx, g, params, address, g.Dialer)
-	case "http":
-		return probeHTTP(ctx, g, params, address, nil)
-	case "tls":
-		return probeTLS(ctx, g, params, address, nil)
+	if f, ok := r[plugin]; ok {
+		return f(ctx, g, params, address, secret)
 	}
-	return failAll("unknown probe plugin "+plugin, plugin+".up")
-}
-
-func value(metric string, v float64) Observation {
-	return Observation{Metric: metric, Value: &v}
-}
-
-func boolValue(metric string, b bool) Observation {
-	if b {
-		return value(metric, 1)
-	}
-	return value(metric, 0)
-}
-
-// down is the whole result of a failed attempt.
-func down(plugin string) []Observation {
-	return []Observation{value(plugin+".up", 0)}
-}
-
-// failAll is the result of an attempt that could not be made: one error per
-// metric.
-func failAll(msg string, metrics ...string) []Observation {
-	out := make([]Observation, 0, len(metrics))
-	for _, m := range metrics {
-		out = append(out, Observation{Metric: m, Err: msg})
-	}
-	return out
-}
-
-func millis(d time.Duration) float64 {
-	return float64(d) / float64(time.Millisecond)
-}
-
-// numParam reads a number param; JSON numbers arrive as float64.
-func numParam(params map[string]any, key string, def float64) float64 {
-	switch v := params[key].(type) {
-	case float64:
-		return v
-	case int:
-		return float64(v)
-	case int64:
-		return float64(v)
-	}
-	return def
-}
-
-// portParam reads the port param (or def) and reports whether it is a
-// whole number in 1..65535.
-func portParam(params map[string]any, def float64) (int, bool) {
-	port := numParam(params, "port", def)
-	if port < 1 || port > 65535 || port != math.Trunc(port) {
-		return 0, false
-	}
-	return int(port), true
-}
-
-func boolParam(params map[string]any, key string, def bool) bool {
-	if v, ok := params[key].(bool); ok {
-		return v
-	}
-	return def
-}
-
-func strParam(params map[string]any, key, def string) string {
-	if v, ok := params[key].(string); ok {
-		return v
-	}
-	return def
-}
-
-// bound derives the probe's context: timeout_s from params (or def), never
-// later than ctx's own deadline.
-func bound(ctx context.Context, params map[string]any, def time.Duration) (context.Context, context.CancelFunc) {
-	d := def
-	if s := numParam(params, "timeout_s", 0); s > 0 {
-		d = time.Duration(s * float64(time.Second))
-	}
-	return context.WithTimeout(ctx, d)
-}
-
-// targetHost turns a host's address into the host part of a dial target: a
-// hostname, an IPv4 address or an unbracketed IPv6 address (brackets around
-// an IPv6 literal are accepted and removed). Callers bracket it again with
-// net.JoinHostPort.
-func targetHost(address string) (string, error) {
-	a := strings.TrimSpace(address)
-	if a == "" {
-		return "", errNoAddress
-	}
-	if strings.HasPrefix(a, "[") && strings.HasSuffix(a, "]") {
-		inner := a[1 : len(a)-1]
-		if ip, err := netip.ParseAddr(inner); err != nil || !ip.Is6() {
-			return "", errBadTarget
-		}
-		return inner, nil
-	}
-	if _, err := netip.ParseAddr(a); err == nil {
-		return a, nil
-	}
-	if !validHostname(a) {
-		return "", errBadTarget
-	}
-	return a, nil
-}
-
-// validHostname accepts letters, digits, '-', '_' and '.', at most 253 bytes.
-func validHostname(s string) bool {
-	if len(s) > 253 {
-		return false
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
-		default:
-			return false
-		}
-	}
-	return true
+	return FailAll("unknown probe plugin "+plugin, plugin+".up")
 }

@@ -1,4 +1,4 @@
-package probe
+package tls
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/probe"
 )
 
 const (
@@ -20,46 +22,46 @@ const (
 // certificate, then verifies the chain itself against roots (nil: the
 // system roots) and server_name ({address} replaced), so the leaf's expiry
 // is reported for an invalid chain too.
-func probeTLS(ctx context.Context, g *Guard, params map[string]any, address string, roots *x509.CertPool) []Observation {
+func probeTLS(ctx context.Context, g *probe.Guard, params map[string]any, address string, roots *x509.CertPool) []probe.Observation {
 	metrics := []string{"tls.up", "tls.handshake_ms", "tls.cert_valid", "tls.cert_expiry_days"}
 
-	host, err := targetHost(address)
+	host, err := probe.TargetHost(address)
 	if err != nil {
-		return failAll(err.Error(), metrics...)
+		return probe.FailAll(err.Error(), metrics...)
 	}
-	port, ok := portParam(params, tlsDefaultPort)
+	port, ok := probe.PortParam(params, tlsDefaultPort)
 	if !ok {
-		return failAll(errBadPort.Error(), metrics...)
+		return probe.FailAll(probe.ErrBadPort.Error(), metrics...)
 	}
 	// server_name may carry {address}: it becomes the host's address
 	// without IPv6 brackets, the form SNI and verification take.
-	serverName := strings.ReplaceAll(strParam(params, "server_name", ""), addressPlaceholder, host)
+	serverName := strings.ReplaceAll(probe.StrParam(params, "server_name", ""), probe.AddressPlaceholder, host)
 	if serverName == "" {
 		serverName = host
 	}
 
-	ctx, cancel := bound(ctx, params, tlsDefaultTimeout)
+	ctx, cancel := probe.Bound(ctx, params, tlsDefaultTimeout)
 	defer cancel()
 
 	raw, err := g.Dialer(0).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
-		if errors.Is(err, ErrNotAllowed) {
-			return failAll(ErrNotAllowed.Error(), metrics...)
+		if errors.Is(err, probe.ErrNotAllowed) {
+			return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 		}
-		return down("tls")
+		return probe.Down("tls")
 	}
 	conn := tls.Client(raw, tlsProbeConfig(serverName))
 	defer func() { _ = conn.Close() }()
 
 	start := time.Now()
 	if err := conn.HandshakeContext(ctx); err != nil {
-		return down("tls")
+		return probe.Down("tls")
 	}
-	obs := []Observation{value("tls.up", 1), value("tls.handshake_ms", millis(time.Since(start)))}
+	obs := []probe.Observation{probe.Value("tls.up", 1), probe.Value("tls.handshake_ms", probe.Millis(time.Since(start)))}
 
 	certs := conn.ConnectionState().PeerCertificates
 	if len(certs) == 0 {
-		return append(obs, value("tls.cert_valid", 0))
+		return append(obs, probe.Value("tls.cert_valid", 0))
 	}
 	now := time.Now()
 	leaf := certs[0]
@@ -74,8 +76,8 @@ func probeTLS(ctx context.Context, g *Guard, params map[string]any, address stri
 		CurrentTime:   now,
 	})
 	return append(obs,
-		boolValue("tls.cert_valid", verr == nil),
-		value("tls.cert_expiry_days", leaf.NotAfter.Sub(now).Hours()/24),
+		probe.BoolValue("tls.cert_valid", verr == nil),
+		probe.Value("tls.cert_expiry_days", leaf.NotAfter.Sub(now).Hours()/24),
 	)
 }
 
@@ -91,4 +93,9 @@ func tlsProbeConfig(serverName string) *tls.Config {
 		InsecureSkipVerify: true,             //nolint:gosec // verified by probeTLS against the roots and server_name
 		MinVersion:         tls.VersionTLS10, //nolint:gosec // old appliances; see the doc comment
 	}
+}
+
+// Probe is the tls probe, as the registry runs it.
+func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address string, _ map[string]string) []probe.Observation {
+	return probeTLS(ctx, g, params, address, nil)
 }

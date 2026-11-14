@@ -1,4 +1,4 @@
-package probe
+package tcp
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/probe"
 )
 
 const (
@@ -18,39 +20,39 @@ const (
 
 // probeTCP connects to address:port, optionally writes send and looks for
 // expect in the first 4 KiB read within the timeout.
-func probeTCP(ctx context.Context, g *Guard, params map[string]any, address string) []Observation {
-	send := strParam(params, "send", "")
-	expect := strParam(params, "expect", "")
+func probeTCP(ctx context.Context, g *probe.Guard, params map[string]any, address string) []probe.Observation {
+	send := probe.StrParam(params, "send", "")
+	expect := probe.StrParam(params, "expect", "")
 	metrics := []string{"tcp.up", "tcp.connect_ms"}
 	if expect != "" {
 		metrics = append(metrics, "tcp.banner_match")
 	}
 
-	host, err := targetHost(address)
+	host, err := probe.TargetHost(address)
 	if err != nil {
-		return failAll(err.Error(), metrics...)
+		return probe.FailAll(err.Error(), metrics...)
 	}
-	port, ok := portParam(params, 0)
+	port, ok := probe.PortParam(params, 0)
 	if !ok {
-		return failAll(errBadPort.Error(), metrics...)
+		return probe.FailAll(probe.ErrBadPort.Error(), metrics...)
 	}
 
-	ctx, cancel := bound(ctx, params, tcpDefaultTimeout)
+	ctx, cancel := probe.Bound(ctx, params, tcpDefaultTimeout)
 	defer cancel()
 
 	start := time.Now()
 	// ctx carries the timeout, so the dialer needs none of its own.
 	conn, err := g.Dialer(0).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 	if err != nil {
-		if errors.Is(err, ErrNotAllowed) {
-			return failAll(ErrNotAllowed.Error(), metrics...)
+		if errors.Is(err, probe.ErrNotAllowed) {
+			return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
 		}
-		return down("tcp")
+		return probe.Down("tcp")
 	}
 	connect := time.Since(start)
 	defer func() { _ = conn.Close() }()
 
-	obs := []Observation{value("tcp.up", 1), value("tcp.connect_ms", millis(connect))}
+	obs := []probe.Observation{probe.Value("tcp.up", 1), probe.Value("tcp.connect_ms", probe.Millis(connect))}
 	if send == "" && expect == "" {
 		return obs
 	}
@@ -68,7 +70,7 @@ func probeTCP(ctx context.Context, g *Guard, params map[string]any, address stri
 		_, _ = conn.Write([]byte(send))
 	}
 	if expect != "" {
-		obs = append(obs, boolValue("tcp.banner_match", readContains(conn, expect, tcpBannerLimit)))
+		obs = append(obs, probe.BoolValue("tcp.banner_match", readContains(conn, expect, tcpBannerLimit)))
 	}
 	return obs
 }
@@ -88,4 +90,9 @@ func readContains(conn net.Conn, want string, limit int) bool {
 		}
 	}
 	return false
+}
+
+// Probe is the tcp probe, as the registry runs it.
+func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address string, _ map[string]string) []probe.Observation {
+	return probeTCP(ctx, g, params, address)
 }

@@ -1,4 +1,4 @@
-package probe_test
+package dns_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/probetest"
 )
 
 // dnsStub is a minimal authoritative DNS server on loopback UDP, hand-rolled
@@ -125,15 +126,15 @@ func dnsParams(server string, extra map[string]any) map[string]any {
 
 func TestDNSAnswered(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
-	obs := probe.Run(context.Background(), loopbackGuard(), "dns", dnsParams(server, map[string]any{"name": "example.test"}), "")
-	m := byMetric(t, obs)
+	obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"name": "example.test"}), "")
+	m := probetest.ByMetric(t, obs)
 	if len(m) != 2 {
 		t.Fatalf("want up and resolve_ms only, got %+v", obs)
 	}
-	if v := wantValue(t, m, "dns.up"); v != 1 {
+	if v := probetest.WantValue(t, m, "dns.up"); v != 1 {
 		t.Fatalf("dns.up = %v, want 1", v)
 	}
-	if v := wantValue(t, m, "dns.resolve_ms"); v < 0 {
+	if v := probetest.WantValue(t, m, "dns.resolve_ms"); v < 0 {
 		t.Fatalf("dns.resolve_ms = %v, want >= 0", v)
 	}
 }
@@ -149,13 +150,13 @@ func TestDNSExpect(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.expect, func(t *testing.T) {
-			obs := probe.Run(context.Background(), loopbackGuard(), "dns",
+			obs := run(context.Background(), probetest.LoopbackGuard(),
 				dnsParams(server, map[string]any{"name": "example.test", "type": "A", "expect": tc.expect}), "")
-			m := byMetric(t, obs)
-			if v := wantValue(t, m, "dns.up"); v != 1 {
+			m := probetest.ByMetric(t, obs)
+			if v := probetest.WantValue(t, m, "dns.up"); v != 1 {
 				t.Fatalf("dns.up = %v, want 1", v)
 			}
-			if v := wantValue(t, m, "dns.answer_match"); v != tc.want {
+			if v := probetest.WantValue(t, m, "dns.answer_match"); v != tc.want {
 				t.Fatalf("dns.answer_match = %v, want %v", v, tc.want)
 			}
 		})
@@ -164,16 +165,16 @@ func TestDNSExpect(t *testing.T) {
 
 func TestDNSNXDOMAINIsDown(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
-	obs := probe.Run(context.Background(), loopbackGuard(), "dns",
+	obs := run(context.Background(), probetest.LoopbackGuard(),
 		dnsParams(server, map[string]any{"name": "missing.test", "expect": "192.0.2.7"}), "")
-	wantOnly(t, obs, "dns.up", 0)
+	probetest.WantOnly(t, obs, "dns.up", 0)
 }
 
 func TestDNSNoRecordsIsDown(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
-	obs := probe.Run(context.Background(), loopbackGuard(), "dns",
+	obs := run(context.Background(), probetest.LoopbackGuard(),
 		dnsParams(server, map[string]any{"name": "example.test", "type": "AAAA"}), "")
-	wantOnly(t, obs, "dns.up", 0)
+	probetest.WantOnly(t, obs, "dns.up", 0)
 }
 
 func TestDNSNameSubstitutesAddress(t *testing.T) {
@@ -189,8 +190,8 @@ func TestDNSNameSubstitutesAddress(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			obs := probe.Run(context.Background(), loopbackGuard(), "dns", dnsParams(server, tc.params), tc.address)
-			if v := wantValue(t, byMetric(t, obs), "dns.up"); v != 1 {
+			obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, tc.params), tc.address)
+			if v := probetest.WantValue(t, probetest.ByMetric(t, obs), "dns.up"); v != 1 {
 				t.Fatalf("dns.up = %v, want 1", v)
 			}
 		})
@@ -199,25 +200,25 @@ func TestDNSNameSubstitutesAddress(t *testing.T) {
 
 func TestDNSEmptyAddressIsAnErrorOnlyWhenNeeded(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
-	obs := probe.Run(context.Background(), loopbackGuard(), "dns", dnsParams(server, map[string]any{"expect": "x"}), "")
-	wantErrors(t, obs, "host has no address", "dns.up", "dns.resolve_ms", "dns.answer_match")
+	obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"expect": "x"}), "")
+	probetest.WantErrors(t, obs, "host has no address", "dns.up", "dns.resolve_ms", "dns.answer_match")
 
-	obs = probe.Run(context.Background(), loopbackGuard(), "dns", dnsParams(server, map[string]any{"name": "example.test"}), "")
-	if v := wantValue(t, byMetric(t, obs), "dns.up"); v != 1 {
+	obs = run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, map[string]any{"name": "example.test"}), "")
+	if v := probetest.WantValue(t, probetest.ByMetric(t, obs), "dns.up"); v != 1 {
 		t.Fatalf("a fixed name needs no address: dns.up = %v, want 1", v)
 	}
 }
 
 func TestDNSRefusedServerIsAnError(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
-	obs := probe.Run(context.Background(), probe.NewGuard(nil, nil), "dns",
+	obs := run(context.Background(), probe.NewGuard(nil, nil),
 		dnsParams(server, map[string]any{"name": "example.test", "expect": "192.0.2.7"}), "")
-	wantErrors(t, obs, "target address not allowed", "dns.up", "dns.resolve_ms", "dns.answer_match")
+	probetest.WantErrors(t, obs, "target address not allowed", "dns.up", "dns.resolve_ms", "dns.answer_match")
 }
 
 func TestDNSUnparsableServerIsAnError(t *testing.T) {
-	obs := probe.Run(context.Background(), loopbackGuard(), "dns", dnsParams("not-an-ip", map[string]any{"name": "example.test"}), "")
-	m := byMetric(t, obs)
+	obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams("not-an-ip", map[string]any{"name": "example.test"}), "")
+	m := probetest.ByMetric(t, obs)
 	if len(m) != 2 || m["dns.up"].Err == "" || m["dns.resolve_ms"].Err == "" {
 		t.Fatalf("want one error per metric, got %+v", obs)
 	}
@@ -227,9 +228,9 @@ func TestDNSOtherTypesUnansweredAreDown(t *testing.T) {
 	server := startDNSStub(t, exampleZone())
 	for _, typ := range []string{"AAAA", "CNAME", "MX", "TXT", "NS"} {
 		t.Run(typ, func(t *testing.T) {
-			obs := probe.Run(context.Background(), loopbackGuard(), "dns",
+			obs := run(context.Background(), probetest.LoopbackGuard(),
 				dnsParams(server, map[string]any{"name": "missing.test", "type": typ, "expect": "x"}), "")
-			wantOnly(t, obs, "dns.up", 0)
+			probetest.WantOnly(t, obs, "dns.up", 0)
 		})
 	}
 }
@@ -251,8 +252,8 @@ func TestDNSNameThatIsAnAddressIsAnError(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			obs := probe.Run(context.Background(), loopbackGuard(), "dns", dnsParams(server, tc.params), tc.address)
-			wantErrors(t, obs, "name is an address", tc.metrics...)
+			obs := run(context.Background(), probetest.LoopbackGuard(), dnsParams(server, tc.params), tc.address)
+			probetest.WantErrors(t, obs, "name is an address", tc.metrics...)
 		})
 	}
 }

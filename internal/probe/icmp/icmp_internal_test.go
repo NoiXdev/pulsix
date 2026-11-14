@@ -1,4 +1,4 @@
-package probe
+package icmp
 
 import (
 	"context"
@@ -14,6 +14,9 @@ import (
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
+
+	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/probetest"
 )
 
 // echoConn answers every echo request written to it, except the sequence
@@ -109,27 +112,12 @@ func opener(conn packetConn, err error, network *string) icmpOpener {
 	}
 }
 
-func icmpByMetric(t *testing.T, obs []Observation) map[string]Observation {
-	t.Helper()
-	m := map[string]Observation{}
-	for _, o := range obs {
-		if (o.Value == nil) == (o.Err == "") {
-			t.Fatalf("observation %q must carry a value xor an error: %+v", o.Metric, o)
-		}
-		m[o.Metric] = o
-	}
-	if len(m) != len(obs) {
-		t.Fatalf("duplicate metric in %+v", obs)
-	}
-	return m
-}
-
 func TestICMPSocketNotPermittedNamesTheSysctl(t *testing.T) {
 	for _, errno := range []syscall.Errno{syscall.EACCES, syscall.EPERM} {
 		t.Run(errno.Error(), func(t *testing.T) {
 			refused := os.NewSyscallError("socket", errno)
-			obs := probeICMP(context.Background(), NewGuardForTest(true, nil), nil, "127.0.0.1", opener(nil, refused, nil))
-			m := icmpByMetric(t, obs)
+			obs := probeICMP(context.Background(), probe.NewGuardForTest(true, nil), nil, "127.0.0.1", opener(nil, refused, nil))
+			m := probetest.ByMetric(t, obs)
 			if len(m) != 3 {
 				t.Fatalf("want one error per metric, got %+v", obs)
 			}
@@ -143,9 +131,9 @@ func TestICMPSocketNotPermittedNamesTheSysctl(t *testing.T) {
 }
 
 func TestICMPOtherSocketErrorIsAnError(t *testing.T) {
-	obs := probeICMP(context.Background(), NewGuardForTest(true, nil), nil, "127.0.0.1",
+	obs := probeICMP(context.Background(), probe.NewGuardForTest(true, nil), nil, "127.0.0.1",
 		opener(nil, os.NewSyscallError("socket", syscall.EMFILE), nil))
-	m := icmpByMetric(t, obs)
+	m := probetest.ByMetric(t, obs)
 	if len(m) != 3 || m["icmp.up"].Err == "" || strings.Contains(m["icmp.up"].Err, "ping_group_range") {
 		t.Fatalf("want a plain error per metric, got %+v", obs)
 	}
@@ -171,12 +159,12 @@ func TestICMPCountsReplies(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var network string
 			conn := newEchoConn(tc.v6, tc.drop...)
-			obs := probeICMP(context.Background(), NewGuard(nil, nil),
+			obs := probeICMP(context.Background(), probe.NewGuard(nil, nil),
 				map[string]any{"count": tc.count, "timeout_s": float64(1)}, tc.address, opener(conn, nil, &network))
 			if network != tc.wantNet {
 				t.Fatalf("opened %q, want %q", network, tc.wantNet)
 			}
-			m := icmpByMetric(t, obs)
+			m := probetest.ByMetric(t, obs)
 			if len(m) != 3 {
 				t.Fatalf("want up, loss_pct and rtt_ms, got %+v", obs)
 			}
@@ -201,7 +189,7 @@ func TestICMPCountsReplies(t *testing.T) {
 func TestICMPNoReplyIsDown(t *testing.T) {
 	conn := newEchoConn(false, 0, 1)
 	start := time.Now()
-	obs := probeICMP(context.Background(), NewGuard(nil, nil),
+	obs := probeICMP(context.Background(), probe.NewGuard(nil, nil),
 		map[string]any{"count": float64(2), "timeout_s": float64(1)}, "192.0.2.1", opener(conn, nil, nil))
 	wantNoReply(t, obs)
 	if d := time.Since(start); d > 3*time.Second {
@@ -217,7 +205,7 @@ func TestICMPIgnoresForeignReplies(t *testing.T) {
 		t.Fatal(err)
 	}
 	conn.replies <- reply{b: foreign, from: &net.UDPAddr{IP: net.ParseIP("192.0.2.1")}}
-	obs := probeICMP(context.Background(), NewGuard(nil, nil),
+	obs := probeICMP(context.Background(), probe.NewGuard(nil, nil),
 		map[string]any{"count": float64(1), "timeout_s": float64(1)}, "192.0.2.1", opener(conn, nil, nil))
 	wantNoReply(t, obs)
 }
@@ -225,9 +213,9 @@ func TestICMPIgnoresForeignReplies(t *testing.T) {
 // wantNoReply fails unless obs is exactly icmp.up=0 and icmp.loss_pct=100:
 // requests went out and none came back, so the loss was measured but no
 // round trip was.
-func wantNoReply(t *testing.T, obs []Observation) {
+func wantNoReply(t *testing.T, obs []probe.Observation) {
 	t.Helper()
-	m := icmpByMetric(t, obs)
+	m := probetest.ByMetric(t, obs)
 	up, loss := m["icmp.up"], m["icmp.loss_pct"]
 	if len(m) != 2 || up.Value == nil || *up.Value != 0 || loss.Value == nil || *loss.Value != 100 {
 		t.Fatalf("want exactly icmp.up=0 and icmp.loss_pct=100, got %+v", obs)
@@ -239,7 +227,7 @@ func TestICMPCancelReturnsPromptly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(100*time.Millisecond, cancel)
 	start := time.Now()
-	_ = probeICMP(ctx, NewGuard(nil, nil), map[string]any{"count": float64(1), "timeout_s": float64(30)}, "192.0.2.1", opener(conn, nil, nil))
+	_ = probeICMP(ctx, probe.NewGuard(nil, nil), map[string]any{"count": float64(1), "timeout_s": float64(30)}, "192.0.2.1", opener(conn, nil, nil))
 	if d := time.Since(start); d > 2*time.Second {
 		t.Fatalf("probe took %v after cancel", d)
 	}

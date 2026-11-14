@@ -45,6 +45,6 @@ type Locker interface {
 }
 
 // ProbeFunc runs one probe of address and returns its observations. The
-// probe must honour ctx's deadline; production is probe.Run with the
+// probe must honour ctx's deadline; production is all.Run with the
 // manager's guard.
 type ProbeFunc func(ctx context.Context, plugin string, params map[string]any, address string) []probe.Observation
