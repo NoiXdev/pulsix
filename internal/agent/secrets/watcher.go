@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 )
@@ -100,10 +101,12 @@ func (w *Watcher) look() {
 	}
 }
 
-// update stores a look's outcome and logs it when the names or the state
-// changed.
+// update stores a look's outcome and logs it when the secret or command
+// names or the state changed.
 func (w *Watcher) update(set Set, state State) {
-	changed := !w.looked || state != w.state || !equalNames(set.Names(), w.set.Names())
+	changed := !w.looked || state != w.state ||
+		!slices.Equal(set.Names(), w.set.Names()) ||
+		!slices.Equal(set.CommandNames(), w.set.CommandNames())
 	w.set, w.state = set, state
 	if !changed {
 		return
@@ -116,16 +119,4 @@ func (w *Watcher) update(set Set, state State) {
 	default:
 		w.log.Warn("refused the secrets file; no secrets are available", "path", w.path, "state", string(state))
 	}
-}
-
-func equalNames(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

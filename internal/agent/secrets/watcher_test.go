@@ -208,13 +208,29 @@ func TestWatcherLogsChangesWithoutValues(t *testing.T) {
 	if n := strings.Count(log, "\n"); n != 2 {
 		t.Fatalf("log has %d lines, want 2 (loaded, refused):\n%s", n, log)
 	}
-	if !strings.Contains(log, "names=[pg]") || !strings.Contains(log, "line 3") {
+	if !strings.Contains(log, "names.secrets=[pg]") || !strings.Contains(log, "line 3") {
 		t.Fatalf("log = %s", log)
 	}
 }
 
 // TestWatcherConcurrentReaders: the heartbeat and the scheduler read the
 // watcher from their own goroutines (run with -race).
+func TestWatcherLogsACommandChange(t *testing.T) {
+	f := newWatchFixture(t)
+	f.write("secrets:\n  pg:\n    password: x\n")
+	f.expect("pg", "ok")
+	f.write("secrets:\n  pg:\n    password: x\ncommands:\n  disk: [" + quoted(program()) + ", " + argValue + "]\n")
+	f.advance(time.Minute)
+	f.expect("pg", "ok")
+	log := f.log.String()
+	if strings.Contains(log, argValue) {
+		t.Fatalf("log quotes an argument: %s", log)
+	}
+	if n := strings.Count(log, "\n"); n != 2 || !strings.Contains(log, "names.commands=[disk]") {
+		t.Fatalf("log has %d lines, want 2 (loaded, commands changed):\n%s", n, log)
+	}
+}
+
 func TestWatcherConcurrentReaders(t *testing.T) {
 	f := newWatchFixture(t)
 	f.write("secrets:\n  pg:\n    a: b\n")

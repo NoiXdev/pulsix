@@ -29,6 +29,33 @@ func TestSetNeverPrintsAValue(t *testing.T) {
 	}
 }
 
+func TestSetNeverPrintsACommandArgument(t *testing.T) {
+	set, err := parse([]byte("secrets:\n  pg:\n    password: " + secretValue + "\n" +
+		"commands:\n  disk_root: [" + quoted(program()) + ", " + argValue + "]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"%v", "%+v", "%#v", "%s", "%q"} {
+		got := fmt.Sprintf(format, set)
+		if strings.Contains(got, argValue) || strings.Contains(got, program()) || strings.Contains(got, secretValue) ||
+			!strings.Contains(got, "pg") || !strings.Contains(got, "disk_root") {
+			t.Errorf("Sprintf(%s) = %q, want the names only", format, got)
+		}
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("loaded", "names", set)
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("loaded", "names", set)
+	got := buf.String()
+	if strings.Contains(got, argValue) || strings.Contains(got, "check_disk") || strings.Contains(got, secretValue) {
+		t.Errorf("log = %q, want the names only", got)
+	}
+	for _, want := range []string{"names.secrets=[pg]", "names.commands=[disk_root]", `"commands":["disk_root"]`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("log = %q, want %s", got, want)
+		}
+	}
+}
+
 func TestSetFieldsIsACopy(t *testing.T) {
 	set, err := parse([]byte("secrets:\n  pg:\n    password: x\n"))
 	if err != nil {
@@ -54,5 +81,8 @@ func TestZeroSetIsEmpty(t *testing.T) {
 	}
 	if _, ok := set.Fields("x"); ok {
 		t.Fatal("zero Set has a secret")
+	}
+	if _, ok := set.Command("x"); ok || len(set.CommandNames()) != 0 {
+		t.Fatal("zero Set has a command")
 	}
 }

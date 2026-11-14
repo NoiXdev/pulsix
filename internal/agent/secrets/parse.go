@@ -47,12 +47,15 @@ func errAt(n *yaml.Node, reason string) error {
 //	secrets:
 //	  <name>:
 //	    <field>: <value>
+//	commands:
+//	  <name>: [<program>, <argument>, …]
 //
-// strictly: the only top-level key is secrets; names and field names match
+// strictly: the only top-level keys are secrets and commands, each
+// optional and an empty one meaning none; names and field names match
 // namePattern; duplicate keys, anchors (and so aliases), nulls, nested
 // values and a second document are refused. A scalar value is taken as
 // written, so an unquoted number or boolean (port: 5432, tls: true) is the
-// text "5432" or "true".
+// text "5432" or "true". parseCommands has the rules of a command.
 //
 // Explicit YAML tags are refused, wherever they stand, with the fixed
 // reason badTagReason — except !!str on a single value (a key or a field
@@ -94,53 +97,62 @@ func parse(data []byte) (Set, error) {
 		return Set{}, nil
 	}
 	if root.Kind != yaml.MappingNode {
-		return Set{}, errAt(root, "the file must be a mapping with a secrets key")
+		return Set{}, errAt(root, "the file must be a mapping with a secrets or commands key")
 	}
-	var secrets *yaml.Node
+	sections := map[string]*yaml.Node{}
 	seen := map[string]int{}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		key := root.Content[i]
-		if key.Kind != yaml.ScalarNode || key.Value != "secrets" {
-			return Set{}, errAt(key, "unknown top-level key; only secrets is allowed")
+		if key.Kind != yaml.ScalarNode || (key.Value != "secrets" && key.Value != "commands") {
+			return Set{}, errAt(key, "unknown top-level key; only secrets and commands are allowed")
 		}
 		if line, dup := seen[key.Value]; dup {
-			return Set{}, errAt(key, "secrets is already set at line "+strconv.Itoa(line))
+			return Set{}, errAt(key, key.Value+" is already set at line "+strconv.Itoa(line))
 		}
 		seen[key.Value] = key.Line
-		secrets = root.Content[i+1]
+		sections[key.Value] = root.Content[i+1]
 	}
-	if secrets == nil || isNull(secrets) {
-		return Set{}, nil
+	secrets, err := parseSecrets(sections["secrets"])
+	if err != nil {
+		return Set{}, err
 	}
-	return parseSecrets(secrets)
+	commands, err := parseCommands(sections["commands"])
+	if err != nil {
+		return Set{}, err
+	}
+	return Set{secrets: secrets, commands: commands}, nil
 }
 
-// parseSecrets decodes the mapping under secrets.
-func parseSecrets(n *yaml.Node) (Set, error) {
+// parseSecrets decodes the mapping under secrets; a missing or empty one
+// holds none.
+func parseSecrets(n *yaml.Node) (map[string]map[string]string, error) {
+	if n == nil || isNull(n) {
+		return nil, nil
+	}
 	if n.Kind != yaml.MappingNode {
-		return Set{}, errAt(n, "secrets must map secret names to their fields")
+		return nil, errAt(n, "secrets must map secret names to their fields")
 	}
 	out := make(map[string]map[string]string, len(n.Content)/2)
 	lines := map[string]int{}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key, val := n.Content[i], n.Content[i+1]
 		if err := checkKey(key, badSecretName); err != nil {
-			return Set{}, err
+			return nil, err
 		}
 		if line, dup := lines[key.Value]; dup {
-			return Set{}, errAt(key, "this secret is already defined at line "+strconv.Itoa(line))
+			return nil, errAt(key, "this secret is already defined at line "+strconv.Itoa(line))
 		}
 		lines[key.Value] = key.Line
 		if len(out) == maxSecrets {
-			return Set{}, errAt(key, "more than "+strconv.Itoa(maxSecrets)+" secrets")
+			return nil, errAt(key, "more than "+strconv.Itoa(maxSecrets)+" secrets")
 		}
 		fields, err := parseFields(key, val)
 		if err != nil {
-			return Set{}, err
+			return nil, err
 		}
 		out[key.Value] = fields
 	}
-	return Set{secrets: out}, nil
+	return out, nil
 }
 
 // parseFields decodes one secret's field mapping; name is the secret's name
