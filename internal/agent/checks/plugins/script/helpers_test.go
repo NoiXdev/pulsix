@@ -16,21 +16,13 @@ type fakeRunner struct {
 
 	mu    sync.Mutex
 	calls [][]string
-	paths []string
 }
 
-func (f *fakeRunner) Run(ctx context.Context, path string, argv []string) (runResult, error) {
+func (f *fakeRunner) Run(ctx context.Context, argv []string) (runResult, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, append([]string(nil), argv...))
-	f.paths = append(f.paths, path)
 	f.mu.Unlock()
 	return f.run(ctx, argv)
-}
-
-func (f *fakeRunner) ranPaths() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.paths...)
 }
 
 func (f *fakeRunner) called() [][]string {
@@ -50,46 +42,28 @@ func exitedWith(code int, stdout string) *fakeRunner {
 const durationOfRun = 250_000_000
 
 // fakeChecker answers Check per path: a listed path gets its error (nil
-// accepts it), any other path does not name a file. An accepted path
-// resolves to its entry in resolved, else to itself. CheckPlace answers
-// from places, nil (the place passes) for a path not listed; check, when
-// set, runs ahead of every Check (a test blocking the checker).
+// accepts it), any other path names no file whose place passes
+// (errNotFile). check, when set, runs ahead of every Check (a test
+// blocking the checker).
 type fakeChecker struct {
-	files    map[string]error
-	resolved map[string]string
-	places   map[string]error
-	check    func(path string)
+	files map[string]error
+	check func(path string)
 
 	mu      sync.Mutex
 	checked []string
-	placed  []string
 }
 
-func (f *fakeChecker) CheckPlace(path string) error {
-	f.mu.Lock()
-	f.placed = append(f.placed, path)
-	f.mu.Unlock()
-	return f.places[path]
-}
-
-func (f *fakeChecker) Check(path string) (string, error) {
+func (f *fakeChecker) Check(path string) error {
 	if f.check != nil {
 		f.check(path)
 	}
 	f.mu.Lock()
 	f.checked = append(f.checked, path)
 	f.mu.Unlock()
-	err, ok := f.files[path]
-	switch {
-	case !ok:
-		return "", errNotFile
-	case err != nil:
-		return "", err
+	if err, ok := f.files[path]; ok {
+		return err
 	}
-	if r, ok := f.resolved[path]; ok {
-		return r, nil
-	}
-	return path, nil
+	return errNotFile
 }
 
 // fakeCommands is the agent.yaml lookup.

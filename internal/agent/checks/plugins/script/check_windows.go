@@ -6,9 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
-	"path/filepath"
-	"strings"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -29,12 +26,12 @@ const writeMask = windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.F
 	fileDeleteChild | windows.FILE_WRITE_ATTRIBUTES | windows.DELETE | windows.WRITE_DAC |
 	windows.WRITE_OWNER | windows.GENERIC_WRITE | windows.GENERIC_ALL
 
-// ancestorMask are the rights that let someone swap what a directory
-// above the file's own holds: delete or rename it or its entries
-// (DELETE, FILE_DELETE_CHILD), or give themselves more rights on it
-// (WRITE_DAC, WRITE_OWNER, GENERIC_ALL). Adding files or subdirectories
+// ancestorMask are the rights that let someone swap what a directory a
+// name is looked up in holds: delete or rename it or its entries (DELETE,
+// FILE_DELETE_CHILD), or give themselves more rights on it (WRITE_DAC,
+// WRITE_OWNER, GENERIC_ALL). Adding files or subdirectories
 // (FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY), which every user may do in C:\,
-// replaces nothing on the way.
+// replaces nothing on the way: the name looked up is taken.
 const ancestorMask = windows.DELETE | fileDeleteChild | windows.WRITE_DAC | windows.WRITE_OWNER | windows.GENERIC_ALL
 
 // The deny entry types besides ACCESS_DENIED_ACE_TYPE, which
@@ -63,14 +60,15 @@ func trustedSIDs() ([]*windows.SID, error) {
 	return []*windows.SID{system, admins, installer}, nil
 }
 
-// placeMask are the rights on a missing file's own directory that let
-// someone put a file at its name: writeMask without the right to add a
-// subdirectory (FILE_ADD_SUBDIRECTORY, which is FILE_APPEND_DATA), which
-// every user has on C:\ and which creates a directory, no file. A switch
-// like /c reads as a missing file in C:\, so C:\ must pass here.
+// placeMask are the rights on the directory a path's last name is missing
+// in that let someone put a file at that name: writeMask without the right
+// to add a subdirectory (FILE_ADD_SUBDIRECTORY, which is FILE_APPEND_DATA),
+// which every user has on C:\ and which creates a directory, no file. A
+// switch like /c reads as a missing file in C:\, so C:\ must pass here.
 const placeMask = writeMask &^ windows.FILE_APPEND_DATA
 
-// textNetworkPath refuses a network path, by its syntax or once resolved.
+// textNetworkPath refuses a network path, by its syntax, on a mapped
+// network drive, or as a link's target.
 const textNetworkPath = "network paths are not supported"
 
 // textDeviceForm refuses a file path written in device form (\\?\C:\…,
@@ -97,198 +95,27 @@ func judgeSyntax(path string) error {
 	return nil
 }
 
-// resolveFile returns the final path of the regular file path names,
-// with every symlink and junction on the way resolved, as Windows itself
-// reports it for the opened file; a path that names none is errNotFile,
-// one that leads to a network path is refused.
-func resolveFile(path string) (string, error) {
-	fi, err := os.Stat(path)
-	switch {
-	case err != nil && namesNoFile(err):
-		return "", errNotFile
-	case err != nil:
-		return "", err
-	case !fi.Mode().IsRegular():
-		return "", errNotFile
+// dirMask is what a directory used as use must deny others: a directory
+// a name is looked up in only the rights to swap what it holds
+// (ancestorMask); one where the last name is missing every write right
+// but adding a subdirectory (placeMask); the file's own directory, and
+// one where a directory on the way is missing (adding a subdirectory there
+// makes the way), every write right (writeMask).
+func dirMask(use dirUse) windows.ACCESS_MASK {
+	switch use {
+	case useLookup:
+		return ancestorMask
+	case useMissing:
+		return placeMask
 	}
-	final, err := openFinal(path)
-	if err != nil {
-		return "", err
-	}
-	if fi, err := os.Lstat(final); err != nil || !fi.Mode().IsRegular() {
-		if err != nil && !namesNoFile(err) {
-			return "", err
-		}
-		return "", errNotFile
-	}
-	return final, nil
-}
-
-// splitPlace splits an absolute path into its root and the names after
-// it. Windows reads a path's "." and ".." by its text before following
-// any link, so the path is cleaned first, as Windows does.
-func splitPlace(path string) (string, []string) {
-	clean := filepath.Clean(path)
-	vol := filepath.VolumeName(clean)
-	var names []string
-	for _, name := range strings.Split(clean[len(vol):], `\`) {
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return vol + `\`, names
-}
-
-// resolveEntry resolves p, whose directory has no links, to its final
-// path, and says whether that is a directory. p missing is errNotFile; p
-// a link or junction that leads to nothing is refused, one that leads to
-// a network path too.
-func resolveEntry(p string) (string, bool, error) {
-	final, err := openFinal(p)
-	if errors.Is(err, errNotFile) {
-		if _, lerr := os.Lstat(p); lerr == nil {
-			return "", false, refuse(textDanglingLink)
-		} else if !namesNoFile(lerr) {
-			return "", false, lerr
-		}
-		return "", false, errNotFile
-	}
-	if err != nil {
-		return "", false, err
-	}
-	fi, err := os.Lstat(final)
-	if err != nil {
-		return "", false, err
-	}
-	return final, fi.IsDir(), nil
-}
-
-// openFinal opens path, following every link and junction, and returns
-// the final path Windows reports for what it opened; a path that names
-// nothing is errNotFile, one that leads to a network path is refused.
-func openFinal(path string) (string, error) {
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return "", errNotFile
-	}
-	h, err := windows.CreateFile(p, windows.FILE_READ_ATTRIBUTES,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-	if err != nil {
-		if namesNoFile(err) {
-			return "", errNotFile
-		}
-		return "", fmt.Errorf("open: %w", err)
-	}
-	defer func() { _ = windows.CloseHandle(h) }()
-	final, err := finalPath(h)
-	if err != nil {
-		return "", err
-	}
-	if windowsPathKindOf(final) != pathLocal {
-		return "", refuse(textNetworkPath)
-	}
-	return final, nil
-}
-
-// GetFinalPathNameByHandle's flags (both zero: the default), which
-// x/sys/windows does not define.
-const (
-	fileNameNormalized = 0x0
-	volumeNameDOS      = 0x0
-)
-
-// finalPath is the DOS path of the opened file, without the \\?\ prefix.
-func finalPath(h windows.Handle) (string, error) {
-	buf := make([]uint16, windows.MAX_PATH)
-	for {
-		n, err := windows.GetFinalPathNameByHandle(h, &buf[0], uint32(len(buf)), fileNameNormalized|volumeNameDOS)
-		if err != nil {
-			return "", fmt.Errorf("read the final path: %w", err)
-		}
-		if n < uint32(len(buf)) {
-			return stripPrefix(windows.UTF16ToString(buf[:n])), nil
-		}
-		buf = make([]uint16, n+1)
-	}
-}
-
-// stripPrefix turns \\?\C:\x into C:\x and \\?\UNC\host\share\x into
-// \\host\share\x.
-func stripPrefix(p string) string {
-	switch {
-	case strings.HasPrefix(p, `\\?\UNC\`):
-		return `\\` + p[len(`\\?\UNC\`):]
-	case strings.HasPrefix(p, `\\?\`):
-		return p[len(`\\?\`):]
-	}
-	return p
-}
-
-// judgeFile judges resolved, a regular file's final path: the file and
-// its directory each owned by a trusted principal, with no allow entry
-// granting anyone else a write right (writeMask); every directory above
-// owned by a trusted principal, with no allow entry granting anyone else
-// a right to swap what it holds (ancestorMask).
-func judgeFile(resolved string) error {
-	trusted, err := trustedSIDs()
-	if err != nil {
-		return err
-	}
-	if err := judgePath(resolved, "", writeMask, trusted); err != nil {
-		return err
-	}
-	dir := filepath.Dir(resolved)
-	if err := judgePath(dir, "its directory ", writeMask, trusted); err != nil {
-		return err
-	}
-	return judgeAncestors(dir, trusted)
-}
-
-// judgePlace judges dir, the final path of the deepest directory on a
-// missing file's way: its own directory (own) with placeMask, else, a
-// directory missing below it, with every write right (writeMask), since
-// adding a subdirectory there makes the way; every directory above it
-// with ancestorMask.
-func judgePlace(dir string, own bool) error {
-	trusted, err := trustedSIDs()
-	if err != nil {
-		return err
-	}
-	subject, mask := "a directory above it ", windows.ACCESS_MASK(writeMask)
-	if own {
-		subject, mask = "its directory ", placeMask
-	}
-	if err := judgePath(dir, subject, mask, trusted); err != nil {
-		return err
-	}
-	return judgeAncestors(dir, trusted)
-}
-
-// judgeAncestors judges every directory above dir with ancestorMask.
-func judgeAncestors(dir string, trusted []*windows.SID) error {
-	for parent := filepath.Dir(dir); parent != dir; dir, parent = parent, filepath.Dir(parent) {
-		if err := judgePath(parent, "a directory above it ", ancestorMask, trusted); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func judgePath(path, subject string, mask windows.ACCESS_MASK, trusted []*windows.SID) error {
-	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT,
-		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return fmt.Errorf("read the security descriptor of %s: %w", path, err)
-	}
-	return judgeSecurity(sd, subject, mask, trusted)
+	return writeMask
 }
 
 // judgeSecurity judges one security descriptor against mask. subject (""
-// for the file, "its directory " or "a directory above it ") starts a
-// refusal, which names SIDs,
-// never a path. An entry that is inherit-only does not apply to the
-// object itself; an allow entry of a type it cannot read is refused.
+// for the file, "its directory ", "a directory on its way " or "a link on
+// its way ") starts a refusal, which names SIDs, never a path. An entry
+// that is inherit-only does not apply to the object itself; an allow entry
+// of a type it cannot read is refused.
 func judgeSecurity(sd *windows.SECURITY_DESCRIPTOR, subject string, mask windows.ACCESS_MASK, trusted []*windows.SID) error {
 	owner, _, err := sd.Owner()
 	if err != nil {

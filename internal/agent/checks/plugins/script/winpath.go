@@ -13,13 +13,14 @@ const (
 	// pathLocal is every path that does not start with two separators.
 	pathLocal windowsPathKind = iota
 	// pathDevice is a device or namespace path (\\.\…, \\?\…) that
-	// names no drive's or share's file (a pipe, a disk, \\.\C: the
-	// volume): no file a check judges, so an argument of this form is
+	// names no drive's or share's file (a pipe, a mailslot, a disk, \\.\C:
+	// the volume): no file a check judges, so an argument of this form is
 	// left alone.
 	pathDevice
 	// pathDeviceFile is a file path in device form: \\?\ or \\.\ ahead
-	// of a drive (C:\…), UNC\…, a volume (Volume{…}\…) or GLOBALROOT\…:
-	// refused, never stat'ed.
+	// of a drive (C:\…), UNC\…, a volume (Volume{…}\…), GLOBALROOT\…,
+	// or a path below another device (HarddiskVolume1\…): refused, never
+	// stat'ed.
 	pathDeviceFile
 	// pathNoShare is \\x (or //x) without a share: no path at all, a
 	// switch like cscript's //Nologo.
@@ -51,18 +52,27 @@ func windowsPathKindOf(p string) windowsPathKind {
 }
 
 // inDeviceFileForm reports whether what follows a \\?\ or \\.\ prefix
-// names a file: a drive with a root, UNC, a volume or GLOBALROOT.
+// names a file: a drive with a root, UNC, a volume or GLOBALROOT, or a
+// path below any other device name (\\?\HarddiskVolume1\x), except below
+// the pipe and mailslot namespaces, whose names are no files. A device
+// name alone (\\.\PhysicalDrive0, \\.\C:) names the device.
 func inDeviceFileForm(after string) bool {
 	if len(after) > 2 && after[1] == ':' && isWindowsSeparator(after[2]) &&
 		(after[0]|0x20 >= 'a' && after[0]|0x20 <= 'z') {
 		return true
 	}
-	first := after
+	first, rest := after, ""
 	if i := strings.IndexAny(after, `\/`); i >= 0 {
-		first = after[:i]
+		first, rest = after[:i], after[i+1:]
 	}
-	return strings.EqualFold(first, "UNC") || strings.EqualFold(first, "GLOBALROOT") ||
-		(len(first) >= 7 && strings.EqualFold(first[:7], "Volume{"))
+	switch {
+	case strings.EqualFold(first, "UNC") || strings.EqualFold(first, "GLOBALROOT") ||
+		(len(first) >= 7 && strings.EqualFold(first[:7], "Volume{")):
+		return true
+	case strings.EqualFold(first, "pipe") || strings.EqualFold(first, "mailslot"):
+		return false
+	}
+	return rest != ""
 }
 
 func isWindowsSeparator(c byte) bool { return c == '\\' || c == '/' }

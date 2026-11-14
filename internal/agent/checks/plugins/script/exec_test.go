@@ -15,9 +15,9 @@ import (
 	"time"
 )
 
-// runArgv runs argv with r, its program the file argv[0] names.
+// runArgv runs argv with r.
 func runArgv(ctx context.Context, r execRunner, argv []string) (runResult, error) {
-	return r.Run(ctx, argv[0], argv)
+	return r.Run(ctx, argv)
 }
 
 func TestExecRunnerExitCodes(t *testing.T) {
@@ -58,17 +58,21 @@ func TestExecRunnerPassesEachArgumentWhole(t *testing.T) {
 	}
 }
 
-// TestExecRunnerRunsThePathUnderTheConfiguredName: the file run is path
-// (the one the checker passed), and the process sees argv[0] as its name.
-func TestExecRunnerRunsThePathUnderTheConfiguredName(t *testing.T) {
+// TestExecRunnerRunsTheConfiguredPath: the program is started by the
+// path the command gives, a link included, and sees that path as its
+// name, not the file the link leads to.
+func TestExecRunnerRunsTheConfiguredPath(t *testing.T) {
 	argv := helperArgv(t, "argv0")
-	name := filepath.Join(t.TempDir(), "configured-name.exe")
-	res, err := newExecRunner().Run(context.Background(), argv[0], append([]string{name}, argv[1:]...))
+	link := filepath.Join(t.TempDir(), "configured-name.exe")
+	if err := os.Symlink(argv[0], link); err != nil {
+		t.Skipf("no symlink can be made here: %v", err)
+	}
+	res, err := newExecRunner().Run(context.Background(), append([]string{link}, argv[1:]...))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if string(res.stdout) != name {
-		t.Fatalf("the process's name is %q, want %q", res.stdout, name)
+	if string(res.stdout) != link {
+		t.Fatalf("the process's name is %q, want %q", res.stdout, link)
 	}
 }
 
@@ -331,27 +335,5 @@ func TestCommandEnv(t *testing.T) {
 	}
 	if got := commandEnv("windows", func(string) (string, bool) { return "", false }); got == nil || len(got) != 0 {
 		t.Errorf("windows with nothing set: %#v, want an empty, non-nil environment", got)
-	}
-}
-
-// TestCommandArg0: on Windows a .bat or .cmd program runs through
-// cmd.exe, which runs the file the command line's first word names, not
-// the one the process was created from: that word is the checked path.
-// Any other program keeps its configured name.
-func TestCommandArg0(t *testing.T) {
-	cases := []struct {
-		goos, path, arg0, want string
-	}{
-		{"windows", `C:\real\check.bat`, `C:\link\check.bat`, `C:\real\check.bat`},
-		{"windows", `C:\real\check.CMD`, `C:\link\check.CMD`, `C:\real\check.CMD`},
-		{"windows", `C:\real\check.exe`, `C:\link\check.exe`, `C:\link\check.exe`},
-		{"windows", `C:\real\check.bat.exe`, `C:\link\x.bat.exe`, `C:\link\x.bat.exe`},
-		{"linux", "/real/check.bat", "/link/check.bat", "/link/check.bat"},
-		{"darwin", "/real/busybox", "/bin/ping", "/bin/ping"},
-	}
-	for _, tc := range cases {
-		if got := commandArg0(tc.goos, tc.path, tc.arg0); got != tc.want {
-			t.Errorf("commandArg0(%s, %s, %s) = %s, want %s", tc.goos, tc.path, tc.arg0, got, tc.want)
-		}
 	}
 }

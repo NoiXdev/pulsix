@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -100,19 +101,22 @@ func TestNewRefusesAUserScript(t *testing.T) {
 	}
 	got := collect(t, New().(*scriptPlugin), map[string]any{"commands": []string{"x"}},
 		fakeCommands{argv: map[string][]string{"x": {sh, script}}})
-	want := fmt.Sprintf(`x script.output "%s: owned by uid %d, not by root"`, script, os.Geteuid())
-	if len(got) != 2 || got[0] != `x script.status "unknown"` || got[1] != want {
-		t.Fatalf("observations %q, want the refusal %s", got, want)
+	// The temp directory is the user's, so a directory on the script's
+	// way is the first thing refused.
+	want := fmt.Sprintf(`x script.output "%s: `, script)
+	if len(got) != 2 || got[0] != `x script.status "unknown"` || !strings.HasPrefix(got[1], want) {
+		t.Fatalf("observations %q, want a refusal starting %s", got, want)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the refused script ran")
 	}
 }
 
-// TestNewRunsTheLinkTarget: a program named through a link in a directory
-// the user owns is judged, and run, as the file the link leads to; the
-// link's own directory does not matter, since the link is not used again.
-func TestNewRunsTheLinkTarget(t *testing.T) {
+// TestNewRefusesAProgramBehindAUserLink: a program named through a link
+// in a directory the user owns is refused, though the link leads to a
+// root-owned shell: the user could re-point it before the run.
+func TestNewRefusesAProgramBehindAUserLink(t *testing.T) {
+	asUser(t)
 	sh := rootOwnedShell(t)
 	link := filepath.Join(t.TempDir(), "my-shell")
 	if err := os.Symlink(sh, link); err != nil {
@@ -120,7 +124,22 @@ func TestNewRunsTheLinkTarget(t *testing.T) {
 	}
 	got := collect(t, New().(*scriptPlugin), map[string]any{"commands": []string{"x"}},
 		fakeCommands{argv: map[string][]string{"x": {link, "-c", "echo 'OK - via link'"}}})
-	if len(got) < 2 || got[0] != `x script.status "ok"` || got[1] != `x script.output "OK - via link"` {
-		t.Fatalf("observations %q", got)
+	if len(got) != 2 || got[0] != `x script.status "unknown"` || !strings.HasPrefix(got[1], `x script.output "`+link+`: `) {
+		t.Fatalf("observations %q, want a refusal of the link", got)
+	}
+}
+
+// TestNewRunsTheConfiguredPath: the program runs under the path the
+// command gives, so the shell sees /bin/sh as its name ($0), even where
+// /bin/sh is a link (Debian's dash, merged-usr's /bin).
+func TestNewRunsTheConfiguredPath(t *testing.T) {
+	rootOwnedShell(t)
+	if !rootOwnedAndClosedChain("/bin") {
+		t.Skip("/bin is not root-owned and closed here")
+	}
+	got := collect(t, New().(*scriptPlugin), map[string]any{"commands": []string{"x"}},
+		fakeCommands{argv: map[string][]string{"x": {"/bin/sh", "-c", `echo "OK - $0"`}}})
+	if len(got) < 2 || got[0] != `x script.status "ok"` || got[1] != `x script.output "OK - /bin/sh"` {
+		t.Fatalf("observations %q, want the shell named /bin/sh", got)
 	}
 }

@@ -15,27 +15,24 @@ import (
 )
 
 // TestFileCheckerRefusesNetworkPathsWithoutAStat: a network path is
-// refused by its syntax, as program and as place, before anything asks
-// the host it names (an unresolvable one here, which a stat would wait
-// on); a device path is refused as a program.
+// refused by its syntax before anything asks the host it names (an
+// unresolvable one here, which a stat would wait on); a device path and a
+// path in device form are refused as a program.
 func TestFileCheckerRefusesNetworkPathsWithoutAStat(t *testing.T) {
 	for _, p := range []string{`\\pulsix-test.invalid\share\x.ps1`, `//pulsix-test.invalid/share/x.ps1`, `\\pulsix-test.invalid\share`} {
 		start := time.Now()
-		if _, err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) || err.Error() != textNetworkPath {
+		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) || err.Error() != textNetworkPath {
 			t.Errorf("Check(%s) = %v, want the refusal %q", p, err, textNetworkPath)
-		}
-		if err := (fileChecker{}).CheckPlace(p); !errors.Is(err, errRefused) || err.Error() != textNetworkPath {
-			t.Errorf("CheckPlace(%s) = %v, want the refusal %q", p, err, textNetworkPath)
 		}
 		if d := time.Since(start); d > time.Second {
 			t.Errorf("%s took %s: a network lookup?", p, d)
 		}
 	}
-	if _, err := (fileChecker{}).Check(`\\.\PhysicalDrive0`); !errors.Is(err, errRefused) {
+	if err := (fileChecker{}).Check(`\\.\PhysicalDrive0`); !errors.Is(err, errRefused) {
 		t.Errorf("Check(a device) = %v, want a refusal", err)
 	}
-	for _, p := range []string{`\\?\C:\Windows\System32\cmd.exe`, `\\.\C:\Windows\System32\cmd.exe`, `\\?\UNC\pulsix-test.invalid\share\x.ps1`} {
-		if _, err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) || err.Error() != textDeviceForm {
+	for _, p := range []string{`\\?\C:\Windows\System32\cmd.exe`, `\\.\C:\Windows\System32\cmd.exe`, `\\?\UNC\pulsix-test.invalid\share\x.ps1`, `\\?\HarddiskVolume1\Windows\System32\cmd.exe`} {
+		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) || err.Error() != textDeviceForm {
 			t.Errorf("Check(%s) = %v, want the refusal %q", p, err, textDeviceForm)
 		}
 	}
@@ -46,18 +43,16 @@ func TestFileCheckerRefusesNetworkPathsWithoutAStat(t *testing.T) {
 // paths and device paths do not stop the run.
 func TestCollectWindowsPathArguments(t *testing.T) {
 	cmd := cmdExe(t)
-	// A switch like /c reads as a rooted path on the system drive, whose
-	// root is then judged as the place of a missing file.
+	// A switch like /c reads as a rooted path on the system drive, a
+	// missing name in its root.
 	root, err := workDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	trusted, err := trustedSIDs()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := judgePath(root, "its directory ", placeMask, trusted); err != nil {
-		t.Skipf("the system drive's root does not pass here: %v", err)
+	for _, use := range []dirUse{useLookup, useMissing} {
+		if err := (osFS{}).judgeDir(root, use, "its directory"); err != nil {
+			t.Skipf("the system drive's root does not pass here: %v", err)
+		}
 	}
 	r := exitedWith(0, "OK")
 	cmds := fakeCommands{argv: map[string][]string{
@@ -75,52 +70,54 @@ func TestCollectWindowsPathArguments(t *testing.T) {
 	}
 }
 
-// TestJudgePlaceSecurity: a missing file's own directory may let others
-// add subdirectories (as C:\ lets every user), which puts no file at the
-// name; a right to add a file there is refused.
-func TestJudgePlaceSecurity(t *testing.T) {
+// TestJudgeDirMasks: a directory a name is looked up in may let others
+// add entries (as C:\ lets every user), one where the last name is
+// missing may let them add subdirectories, which puts no file at the
+// name; the directory holding the file, or one where a directory on the
+// way is missing, may let them change nothing.
+func TestJudgeDirMasks(t *testing.T) {
 	trusted, err := trustedSIDs()
 	if err != nil {
 		t.Fatal(err)
 	}
 	cDrive := "O:" + trustedInstallerSID + "D:(A;OICI;FA;;;BA)(A;OICI;FA;;;SY)(A;OICI;0x1200a9;;;BU)(A;CI;0x4;;;BU)(A;OICIIO;SDGRGWGX;;;AU)(A;;0x4;;;AU)"
-	for sddl, want := range map[string]string{
-		cDrive:                             "",
-		"O:BAD:(A;;FA;;;BA)(A;;0x2;;;BU)":  "its directory lets S-1-5-32-545 change it",
-		"O:BAD:(A;;FA;;;BA)(A;;GW;;;BU)":   "its directory lets S-1-5-32-545 change it",
-		"O:BAD:(A;;FA;;;BA)(A;;0x40;;;BU)": "its directory lets S-1-5-32-545 change it",
-		"O:BUD:(A;;FA;;;BA)":               "its directory is owned by S-1-5-32-545",
-	} {
-		sd, err := windows.SecurityDescriptorFromString(sddl)
+	cases := []struct {
+		sddl string
+		use  dirUse
+		want string // "" passes, else the refusal's start
+	}{
+		{cDrive, useLookup, ""},
+		{cDrive, useMissing, ""},
+		{cDrive, useMissingWay, "its directory lets S-1-5-32-545 change it"},
+		{cDrive, useHolds, "its directory lets S-1-5-32-545 change it"},
+		{"O:BAD:(A;;FA;;;BA)(A;;0x2;;;BU)", useLookup, ""},
+		{"O:BAD:(A;;FA;;;BA)(A;;0x2;;;BU)", useMissing, "its directory lets S-1-5-32-545 change it"},
+		{"O:BAD:(A;;FA;;;BA)(A;;GW;;;BU)", useMissing, "its directory lets S-1-5-32-545 change it"},
+		{"O:BAD:(A;;FA;;;BA)(A;;0x40;;;BU)", useLookup, "its directory lets S-1-5-32-545 change it"},
+		{"O:BUD:(A;;FA;;;BA)", useLookup, "its directory is owned by S-1-5-32-545"},
+	}
+	for _, tc := range cases {
+		sd, err := windows.SecurityDescriptorFromString(tc.sddl)
 		if err != nil {
-			t.Fatalf("SDDL %s: %v", sddl, err)
+			t.Fatalf("SDDL %s: %v", tc.sddl, err)
 		}
-		err = judgeSecurity(sd, "its directory ", placeMask, trusted)
-		if want == "" {
+		err = judgeSecurity(sd, "its directory ", dirMask(tc.use), trusted)
+		if tc.want == "" {
 			if err != nil {
-				t.Errorf("%s refused: %v", sddl, err)
+				t.Errorf("%s for use %d refused: %v", tc.sddl, tc.use, err)
 			}
 			continue
 		}
-		if !errors.Is(err, errRefused) || !strings.HasPrefix(err.Error(), want) {
-			t.Errorf("%s: got %v, want a refusal %q", sddl, err, want)
+		if !errors.Is(err, errRefused) || !strings.HasPrefix(err.Error(), tc.want) {
+			t.Errorf("%s for use %d: got %v, want a refusal %q", tc.sddl, tc.use, err, tc.want)
 		}
-	}
-	// The deepest existing directory above a missing one is judged with
-	// every write right: adding a subdirectory there creates the way.
-	sd, err := windows.SecurityDescriptorFromString(cDrive)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := judgeSecurity(sd, "a directory above it ", writeMask, trusted); !errors.Is(err, errRefused) {
-		t.Errorf("C: style with every write right: %v, want a refusal", err)
 	}
 }
 
-// TestFileCheckerPlace: a missing file in a directory users may change is
-// refused for that directory, one below a missing directory for the
-// deepest one that exists; a missing file in System32 passes.
-func TestFileCheckerPlace(t *testing.T) {
+// openFolder is a folder in the test's temp directory that Users may
+// change.
+func openFolder(t *testing.T) string {
+	t.Helper()
 	dir := filepath.Join(t.TempDir(), "open")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -137,58 +134,83 @@ func TestFileCheckerPlace(t *testing.T) {
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
 		t.Fatalf("set the access list: %v", err)
 	}
-	for p, want := range map[string]string{
-		filepath.Join(dir, "missing.ps1"):           "its directory ",
-		filepath.Join(dir, "missing", "deeper.ps1"): "a directory above it ",
-	} {
-		err := (fileChecker{}).CheckPlace(p)
-		if !errors.Is(err, errRefused) || !strings.HasPrefix(err.Error(), want) {
-			t.Errorf("CheckPlace(%s) = %v, want a refusal starting %q", p, err, want)
+	return dir
+}
+
+// TestFileCheckerRefusesAMissingFileInAnOpenFolder: a missing file, or
+// one below a missing folder, in a folder users may change is refused.
+func TestFileCheckerRefusesAMissingFileInAnOpenFolder(t *testing.T) {
+	dir := openFolder(t)
+	for _, p := range []string{filepath.Join(dir, "missing.ps1"), filepath.Join(dir, "missing", "deeper.ps1")} {
+		if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+			t.Errorf("Check(%s) = %v, want a refusal", p, err)
 		}
-	}
-	missing := filepath.Join(filepath.Dir(cmdExe(t)), "pulsix-test-missing.exe")
-	if err := (fileChecker{}).CheckPlace(missing); err != nil {
-		t.Errorf("CheckPlace(%s) = %v, want it to pass", missing, err)
 	}
 }
 
-// TestFileCheckerPlaceFollowsLinks: the place is judged where links and
-// junctions on the way lead, not where they lie, and one that leads to
-// nothing is refused.
-func TestFileCheckerPlaceFollowsLinks(t *testing.T) {
+// links makes a symlink and a junction at name in dir to target, those
+// the machine lets the test make, and returns them with their kind.
+func links(t *testing.T, dir, name, target string) map[string]string {
+	t.Helper()
+	made := map[string]string{}
+	if l := filepath.Join(dir, name+"-symlink"); os.Symlink(target, l) == nil {
+		made[l] = "symlink"
+	}
+	if l := filepath.Join(dir, name+"-junction"); exec.Command(cmdExe(t), "/c", "mklink", "/J", l, target).Run() == nil {
+		made[l] = "junction"
+	}
+	return made
+}
+
+// TestFileCheckerRefusesLinksInAUserFolder: a symlink or junction in the
+// test's temp folder, which the user may re-point, is refused though it
+// leads to System32, and so is one that leads to nothing.
+func TestFileCheckerRefusesLinksInAUserFolder(t *testing.T) {
 	system32 := filepath.Dir(cmdExe(t))
 	dir := t.TempDir()
-	links := map[string]string{} // link -> how it was made
-	if l := filepath.Join(dir, "symlink"); os.Symlink(system32, l) == nil {
-		links[l] = "symlink"
+	made := links(t, dir, "system32", system32)
+	for l, kind := range links(t, dir, "dangling", filepath.Join(dir, "nothing")) {
+		made[l] = kind
 	}
-	if l := filepath.Join(dir, "junction"); exec.Command(cmdExe(t), "/c", "mklink", "/J", l, system32).Run() == nil {
-		links[l] = "junction"
-	}
-	if len(links) == 0 {
+	if len(made) == 0 {
 		t.Skip("neither a symlink nor a junction could be made here")
 	}
-	for l, kind := range links {
-		for _, p := range []string{l, filepath.Join(l, "pulsix-test-missing.exe"), filepath.Join(l, "missing", "deeper.exe")} {
-			if err := (fileChecker{}).CheckPlace(p); err != nil {
-				t.Errorf("%s: CheckPlace(%s) = %v, want it to pass", kind, p, err)
+	for l, kind := range made {
+		for _, p := range []string{l, filepath.Join(l, "cmd.exe"), filepath.Join(l, "pulsix-test-missing.exe")} {
+			if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+				t.Errorf("%s: Check(%s) = %v, want a refusal", kind, p, err)
 			}
 		}
 	}
+	p := newPlugin(nil, fileChecker{})
+	for l := range made {
+		arg := filepath.Join(l, "evil.ps1")
+		if refusal := p.checkFiles([]string{cmdExe(t), "/c", arg}); !strings.HasPrefix(refusal, arg+": ") {
+			t.Errorf("checkFiles(%s) = %q, want a refusal naming it", arg, refusal)
+		}
+	}
+}
 
-	nothing := filepath.Join(dir, "nothing")
-	dangling := map[string]string{}
-	if l := filepath.Join(dir, "dangling-symlink"); os.Symlink(nothing, l) == nil {
-		dangling[l] = "symlink"
-	}
-	if l := filepath.Join(dir, "dangling-junction"); exec.Command(cmdExe(t), "/c", "mklink", "/J", l, nothing).Run() == nil {
-		dangling[l] = "junction"
-	}
-	for l, kind := range dangling {
-		for _, p := range []string{l, filepath.Join(l, "x.ps1")} {
-			if err := (fileChecker{}).CheckPlace(p); !errors.Is(err, errRefused) || err.Error() != textDanglingLink {
-				t.Errorf("%s: CheckPlace(%s) = %v, want the refusal %q", kind, p, err, textDanglingLink)
-			}
+// TestFileCheckerFollowsSystemLinks: a link Windows keeps for old paths,
+// owned by the system, leads to a folder: no file, and nothing refused on
+// the way.
+func TestFileCheckerFollowsSystemLinks(t *testing.T) {
+	tried := 0
+	for _, p := range []string{`C:\Users\All Users`, `C:\Documents and Settings`} {
+		if fi, err := os.Lstat(p); err != nil || fi.Mode().Type() == 0 {
+			continue
 		}
+		err := (fileChecker{}).Check(p)
+		switch {
+		case errors.Is(err, errRefused):
+			t.Errorf("Check(%s) = %v, want no refusal", p, err)
+		case errors.Is(err, errNotFile):
+			tried++
+		default:
+			t.Logf("Check(%s) = %v: the link cannot be read here", p, err)
+		}
+	}
+	if tried == 0 {
+		t.Skip("no readable system link here")
 	}
 }

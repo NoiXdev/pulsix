@@ -13,11 +13,10 @@
 // (at most 64). Output is read in the Nagios format (exit code and
 // perfdata, nagios.go) or the JSON format (jsonformat.go).
 //
-// Before every run the program, and every argument that names a regular
-// file by an absolute path, passes the checker, and an absolute argument
-// that names no file has its place judged (checkfiles.go); the runner
-// then runs the file the checker resolved, with the resolved argument
-// paths, directly. Checks and run together end within timeout_seconds
+// Before every run the program, and every argument that is an absolute
+// path, passes the checker, which judges every directory on the path's
+// way, links included (checkfiles.go, check.go); the runner then runs the
+// command directly, exactly as configured. Checks and run together end within timeout_seconds
 // (runner.go). At most maxParallel
 // commands of one check run at once. Every failure (an undefined command,
 // a refused file, a timeout, a start failure, an earlier run still stuck,
@@ -216,14 +215,14 @@ func (p *scriptPlugin) runOne(ctx context.Context, name string, commands checks.
 	// network mount.
 	rctx, cancel := context.WithTimeout(ctx, opts.timeout)
 	defer cancel()
-	path, argv, refusal, err := p.checkFilesWithin(rctx, argv, opts.timeout)
+	refusal, err := p.checkFilesWithin(rctx, argv, opts.timeout)
 	if err != nil {
 		return nil // the agent is stopping: CollectWithCommands reports nothing
 	}
 	if refusal != "" {
 		return noRun(name, refusal)
 	}
-	res, err := p.run.Run(rctx, path, argv)
+	res, err := p.run.Run(rctx, argv)
 	switch {
 	case errors.Is(err, errTimeout) || (err != nil && ctx.Err() == nil && errors.Is(rctx.Err(), context.DeadlineExceeded)):
 		d := res.duration

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -24,11 +23,11 @@ const (
 	defaultReapGrace = waitDelay + time.Second
 )
 
-// execRunner runs the checked file directly, never through a shell, under
-// the command's argv, with a built environment (env.go), the root
-// directory as working directory, standard input and standard error on
-// the null device and standard output read up to maxOutput. The process and everything it starts form
-// one tree (a process group on Unix, a job object on Windows,
+// execRunner runs the command's argv directly, never through a shell,
+// with a built environment (env.go), the root directory as working
+// directory, standard input and standard error on the null device and
+// standard output read up to maxOutput. The process and everything it
+// starts form one tree (a process group on Unix, a job object on Windows,
 // exec_unix.go and exec_windows.go): a timeout kills the whole tree, and
 // whatever the program leaves behind when it exits is killed with it.
 type execRunner struct {
@@ -48,11 +47,12 @@ type execRunner struct {
 
 func newExecRunner() execRunner { return execRunner{busy: newInflight()} }
 
-func (r execRunner) Run(ctx context.Context, path string, argv []string) (runResult, error) {
-	if path == "" || len(argv) == 0 {
+func (r execRunner) Run(ctx context.Context, argv []string) (runResult, error) {
+	if len(argv) == 0 || argv[0] == "" {
 		return runResult{}, errors.New("run: no program")
 	}
-	key := path + "\x00" + strings.Join(argv, "\x00")
+	path := argv[0]
+	key := strings.Join(argv, "\x00")
 	if r.busy.stuck(key) {
 		return runResult{}, errBusy
 	}
@@ -68,10 +68,9 @@ func (r execRunner) Run(ctx context.Context, path string, argv []string) (runRes
 		return runResult{}, fmt.Errorf("start the program: %w", err)
 	}
 	out := &cappedWriter{max: maxOutput}
-	// The file run is path, the one the checker passed; the process sees
-	// the program's name as the command gives it.
+	// The file run is the path the command gives, the one the checker
+	// passed, and the process sees it as its name.
 	cmd := exec.CommandContext(ctx, path, argv[1:]...)
-	cmd.Args[0] = commandArg0(runtime.GOOS, path, argv[0])
 	cmd.Env = commandEnv(runtime.GOOS, os.LookupEnv)
 	cmd.Dir = dir
 	cmd.Stdout = out
@@ -135,22 +134,6 @@ func (r execRunner) Run(ctx context.Context, path string, argv []string) (runRes
 		res.exited, res.exitCode = true, ps.ExitCode()
 	}
 	return res, nil
-}
-
-// commandArg0 is the process's first argument: the program's name as the
-// command gives it (a multi-call binary reads it), except on Windows for
-// a .bat or .cmd program. Windows runs those through cmd.exe, which runs
-// the file the command line's first word names rather than the one the
-// process was created from, so that word is the checked path.
-func commandArg0(goos, path, arg0 string) string {
-	if goos != "windows" {
-		return arg0
-	}
-	switch strings.ToLower(filepath.Ext(strings.ReplaceAll(path, `\`, "/"))) {
-	case ".bat", ".cmd":
-		return path
-	}
-	return arg0
 }
 
 // stopped is Run's error once ctx ended: errTimeout for its deadline,

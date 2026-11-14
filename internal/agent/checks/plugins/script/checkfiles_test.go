@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -11,23 +13,22 @@ import (
 	"github.com/noixdev/pulsix/internal/agent/checks"
 )
 
-// TestCollectJudgesWhereAMissingArgumentLives: an absolute argument that
-// names no regular file is still judged by where it lives, so a script
-// that is missing at the check cannot appear in a directory others can
-// write before the run. Its path is echoed only with a refusal of the
-// place the checker inspected; a place that could not be checked names no
-// argument.
-func TestCollectJudgesWhereAMissingArgumentLives(t *testing.T) {
+// TestCollectArgumentsThatNameNoFile: an absolute argument that names no
+// regular file (a missing script, the root, a device, a mount point, a
+// URL path) is left as it is once the checker passed the directories on
+// its way (errNotFile); where one is refused, the argument is echoed with
+// the reason, and one the checker could not check names no argument.
+func TestCollectArgumentsThatNameNoFile(t *testing.T) {
 	missing := abs("home", "u", "x.py")
 	tests := []struct {
-		name   string
-		args   []string
-		places map[string]error
-		want   []string // nil: the command ran
+		name  string
+		args  []string
+		files map[string]error
+		want  []string // nil: the command ran
 	}{
 		{
 			name: "missing file in a user-owned directory", args: []string{missing},
-			places: map[string]error{missing: refuse("its directory is owned by uid 1000, not by root")},
+			files: map[string]error{missing: refuse("its directory is owned by uid 1000, not by root")},
 			want: []string{`x script.status "unknown"`,
 				`x script.output "` + missing + `: its directory is owned by uid 1000, not by root"`},
 		},
@@ -38,15 +39,17 @@ func TestCollectJudgesWhereAMissingArgumentLives(t *testing.T) {
 			name: "the root, a device, a mount point and a URL path", args: []string{"-p", testRoot, abs("dev", "sda"), abs("mnt", "nfs"), "-u", abs("health")},
 		},
 		{
-			name: "place could not be checked", args: []string{abs("srv", marker)},
-			places: map[string]error{abs("srv", marker): errors.New("stat " + abs("srv", marker) + ": permission denied")},
-			want:   []string{`x script.status "unknown"`, `x script.output "` + textUncheckedArgument + `"`},
+			name: "could not be checked", args: []string{abs("srv", marker)},
+			files: map[string]error{abs("srv", marker): errors.New("lstat " + abs("srv", marker) + ": permission denied")},
+			want:  []string{`x script.status "unknown"`, `x script.output "` + textUncheckedArgument + `"`},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := exitedWith(0, "OK")
-			c := &fakeChecker{files: map[string]error{prog: nil}, places: tt.places}
+			files := map[string]error{prog: nil}
+			maps.Copy(files, tt.files)
+			c := &fakeChecker{files: files}
 			got := collect(t, newPlugin(r, c), map[string]any{"commands": []string{"x"}}, oneCommand(tt.args...))
 			if tt.want != nil {
 				equalLines(t, got, tt.want)
@@ -58,32 +61,19 @@ func TestCollectJudgesWhereAMissingArgumentLives(t *testing.T) {
 			if got[0] != `x script.status "ok"` {
 				t.Fatalf("status = %s, want ok", got[0])
 			}
-			var abss []string
+			want := []string{prog}
 			for _, a := range tt.args {
 				if a[0] != '-' {
-					abss = append(abss, a)
+					want = append(want, a)
 				}
 			}
-			if fmt.Sprint(c.placed) != fmt.Sprint(abss) {
-				t.Errorf("places judged %q, want %q", c.placed, abss)
+			if fmt.Sprint(c.checked) != fmt.Sprint(want) {
+				t.Errorf("checked %q, want %q", c.checked, want)
+			}
+			if calls := r.called(); len(calls) != 1 || !slices.Equal(calls[0], append([]string{prog}, tt.args...)) {
+				t.Errorf("ran %q, want the arguments unchanged", calls)
 			}
 		})
-	}
-}
-
-// TestCollectJudgesNoPlaceForAProgramOrAFile: a program that names no
-// file is reported as such, and an argument naming a file is judged by
-// Check alone.
-func TestCollectJudgesNoPlaceForAProgramOrAFile(t *testing.T) {
-	c := &fakeChecker{files: map[string]error{abs("opt", "x.py"): nil}}
-	collect(t, newPlugin(exitedWith(0, ""), c), map[string]any{"commands": []string{"x"}}, oneCommand(abs("opt", "y.py")))
-	if len(c.placed) != 0 {
-		t.Errorf("places judged %q for a missing program", c.placed)
-	}
-	c = &fakeChecker{files: map[string]error{prog: nil, abs("opt", "x.py"): nil}}
-	collect(t, newPlugin(exitedWith(0, ""), c), map[string]any{"commands": []string{"x"}}, oneCommand(abs("opt", "x.py")))
-	if len(c.placed) != 0 {
-		t.Errorf("places judged %q for a file", c.placed)
 	}
 }
 

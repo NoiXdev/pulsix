@@ -80,13 +80,13 @@ func TestJudgeAncestorSecurity(t *testing.T) {
 		{"add file", "O:BAD:(A;;0x2;;;BU)", ""},
 		{"write attributes", "O:BAD:(A;;0x110;;;BU)", ""},
 		{"generic write", "O:BAD:(A;;GW;;;BU)", ""},
-		{"delete", "O:BAD:(A;;SD;;;AU)", "a directory above it lets S-1-5-11 change it"},
+		{"delete", "O:BAD:(A;;SD;;;AU)", "a directory on its way lets S-1-5-11 change it"},
 		{"delete child", "O:BAD:(A;;0x40;;;BU)", "lets S-1-5-32-545"},
 		{"write DAC", "O:BAD:(A;;WD;;;BU)", "lets S-1-5-32-545"},
 		{"write owner", "O:BAD:(A;;WO;;;BU)", "lets S-1-5-32-545"},
 		{"generic all", "O:BAD:(A;;GA;;;BU)", "lets S-1-5-32-545"},
 		{"modify", "O:BAD:(A;;0x1301bf;;;AU)", "lets S-1-5-11"},
-		{"owner a user", "O:BUD:(A;;FA;;;BA)", "a directory above it is owned by S-1-5-32-545"},
+		{"owner a user", "O:BUD:(A;;FA;;;BA)", "a directory on its way is owned by S-1-5-32-545"},
 	}
 	trusted, err := trustedSIDs()
 	if err != nil {
@@ -98,7 +98,7 @@ func TestJudgeAncestorSecurity(t *testing.T) {
 			if err != nil {
 				t.Fatalf("SDDL %s: %v", tc.sddl, err)
 			}
-			err = judgeSecurity(sd, "a directory above it ", ancestorMask, trusted)
+			err = judgeSecurity(sd, "a directory on its way ", ancestorMask, trusted)
 			if tc.want == "" {
 				if err != nil {
 					t.Fatalf("refused: %v", err)
@@ -112,25 +112,9 @@ func TestJudgeAncestorSecurity(t *testing.T) {
 	}
 }
 
-func TestStripPrefix(t *testing.T) {
-	for in, want := range map[string]string{
-		`\\?\C:\Windows\System32\cmd.exe`: `C:\Windows\System32\cmd.exe`,
-		`\\?\UNC\host\share\x.ps1`:        `\\host\share\x.ps1`,
-		`C:\x`:                            `C:\x`,
-	} {
-		if got := stripPrefix(in); got != want {
-			t.Errorf("stripPrefix(%s) = %s, want %s", in, got, want)
-		}
-	}
-}
-
 func TestFileCheckerAcceptsCmdExe(t *testing.T) {
-	resolved, err := (fileChecker{}).Check(cmdExe(t))
-	if err != nil {
+	if err := (fileChecker{}).Check(cmdExe(t)); err != nil {
 		t.Fatalf("Check(cmd.exe): %v", err)
-	}
-	if !strings.EqualFold(resolved, cmdExe(t)) {
-		t.Errorf("resolved to %s, want %s", resolved, cmdExe(t))
 	}
 }
 
@@ -153,16 +137,46 @@ func TestFileCheckerRefusesAUserFile(t *testing.T) {
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
 		t.Fatalf("set the access list: %v", err)
 	}
-	if _, err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
+	if err := (fileChecker{}).Check(p); !errors.Is(err, errRefused) {
 		t.Fatalf("Check = %v, want a refusal", err)
 	}
 }
 
+// TestFileCheckerNotAFile: under System32, a directory, a missing name
+// and a name below a missing directory name no file, and pass as such.
 func TestFileCheckerNotAFile(t *testing.T) {
-	dir := t.TempDir()
-	for _, p := range []string{dir, filepath.Join(dir, "missing"), filepath.Join(dir, "missing", "below")} {
-		if _, err := (fileChecker{}).Check(p); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
+	system32 := filepath.Dir(cmdExe(t))
+	for _, p := range []string{system32, filepath.Join(system32, "pulsix-test-missing.exe"), filepath.Join(system32, "pulsix-test-missing", "below")} {
+		if err := (fileChecker{}).Check(p); !errors.Is(err, errNotFile) || errors.Is(err, errRefused) {
 			t.Errorf("Check(%s) = %v, want errNotFile", p, err)
+		}
+	}
+}
+
+// TestEntryKindOf: symlinks and junctions are links, a socket is no file,
+// another name-surrogate reparse point cannot be checked, and any other
+// tag leaves the entry what its attributes say.
+func TestEntryKindOf(t *testing.T) {
+	const reparse, dir = windows.FILE_ATTRIBUTE_REPARSE_POINT, windows.FILE_ATTRIBUTE_DIRECTORY
+	cases := []struct {
+		attrs, tag uint32
+		want       entryKind
+		err        bool
+	}{
+		{0, 0, entryFile, false},
+		{dir, 0, entryDir, false},
+		{reparse, windows.IO_REPARSE_TAG_SYMLINK, entryLink, false},
+		{reparse | dir, windows.IO_REPARSE_TAG_SYMLINK, entryLink, false},
+		{reparse | dir, windows.IO_REPARSE_TAG_MOUNT_POINT, entryLink, false},
+		{reparse, ioReparseTagAFUnix, entryOther, false},
+		{reparse, 0x80000013, entryFile, false},      // deduplicated
+		{reparse | dir, 0x9000601a, entryDir, false}, // a cloud files folder
+		{reparse, 0xa000001d, 0, true},               // a name surrogate it does not follow
+	}
+	for _, tc := range cases {
+		got, err := entryKindOf(tc.attrs, tc.tag)
+		if (err != nil) != tc.err || (!tc.err && got != tc.want) {
+			t.Errorf("entryKindOf(%#x, %#x) = %d, %v; want %d (error %v)", tc.attrs, tc.tag, got, err, tc.want, tc.err)
 		}
 	}
 }

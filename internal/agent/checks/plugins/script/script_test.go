@@ -366,23 +366,18 @@ func TestNewWiresTheRealRunnerAndChecker(t *testing.T) {
 	}
 }
 
-// TestCollectRunsTheCheckedFiles: the runner gets the program's resolved
-// path, the program's configured name as argv[0], and every checked
-// argument replaced by its resolved path, so a link swapped after the
-// check cannot change what runs.
-func TestCollectRunsTheCheckedFiles(t *testing.T) {
+// TestCollectRunsTheCommandAsConfigured: the runner gets the command's
+// argv as agent.yaml gives it, the program and a checked argument behind
+// links included. The checker passed every directory on their way, so
+// nobody but an administrator can make them name something else before
+// the run, and a script keeps the name it was given ($0).
+func TestCollectRunsTheCommandAsConfigured(t *testing.T) {
 	r := exitedWith(0, "OK")
-	link, target := abs("opt", "link.py"), abs("srv", "real.py")
-	c := &fakeChecker{
-		files:    map[string]error{prog: nil, link: nil},
-		resolved: map[string]string{prog: abs("usr", "lib", "real_check"), link: target},
-	}
+	link := abs("opt", "link.py")
+	c := &fakeChecker{files: map[string]error{prog: nil, link: nil}}
 	collect(t, newPlugin(r, c), map[string]any{"commands": []string{"x"}}, oneCommand("-f", link, "-v"))
-	if paths := r.ranPaths(); len(paths) != 1 || paths[0] != abs("usr", "lib", "real_check") {
-		t.Errorf("ran %q, want the resolved program", paths)
-	}
-	if calls := r.called(); len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint([]string{prog, "-f", target, "-v"}) {
-		t.Errorf("argv %q, want the configured name and the resolved argument", calls)
+	if calls := r.called(); len(calls) != 1 || fmt.Sprint(calls[0]) != fmt.Sprint([]string{prog, "-f", link, "-v"}) {
+		t.Errorf("argv %q, want the command as configured", calls)
 	}
 }
 
