@@ -315,8 +315,7 @@ func (l *Loop) streamSession(ctx context.Context, id *Identity) error {
 // again, at most once a minute, and its local checks are applied before
 // they are reported.
 func (l *Loop) sendHeartbeat(sender *streamSender) error {
-	set, state := l.secrets.Current()
-	l.applyLocal(set)
+	set, state := l.lookAndApplyLocal()
 	shadowed := l.scheduler.Shadowed()
 	return sender.send(&agentpb.AgentMessage{Body: &agentpb.AgentMessage_Heartbeat{
 		Heartbeat: &agentpb.Heartbeat{

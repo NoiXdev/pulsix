@@ -219,6 +219,55 @@ func TestLoopHeartbeatReportsTheLocalChecks(t *testing.T) {
 	}
 }
 
+// TestLoopHeartbeatAppliesAnEditedLocalCheck: with a stream up, the
+// heartbeat's own look applies an edit of the file — the periodic look
+// never fires here.
+func TestLoopHeartbeatAppliesAnEditedLocalCheck(t *testing.T) {
+	lt := newLoopTest(t)
+	lt.withIdentity()
+	clock := &testClock{now: time.Now()}
+	lt.now = clock.Now
+	writeSecretsFile(t, lt.cfg.SecretsPath, "checks:\n  local-cpu:\n    plugin: cpu\n    interval_seconds: 120\n")
+	stream := newFakeStream()
+	lt.dialer.agentConn = &fakeAgentConn{streams: []*fakeStream{stream}}
+	l := NewLoop(lt.cfg, lt.dialer, lt.facts, append(lt.options(), withRegistry(map[string]checks.Plugin{"cpu": fakeCPU{}}))...)
+
+	cancel, done := runLoop(t, l)
+	waitFor(t, 2*time.Second, func() bool { return len(heartbeats(stream)) > 0 })
+	lt.waitForTickers(4) // the local check's, then heartbeat, facts, config
+	before := tickerOf(t, lt.ticks, 120*time.Second)
+
+	writeSecretsFile(t, lt.cfg.SecretsPath, "checks:\n  local-cpu:\n    plugin: cpu\n    interval_seconds: 150\n")
+	clock.advance(time.Minute)
+	n := len(heartbeats(stream))
+	tickerOf(t, lt.ticks, lt.cfg.HeartbeatInterval).c <- time.Now()
+	waitFor(t, 2*time.Second, func() bool { return len(heartbeats(stream)) > n })
+	if !before.stopped.Load() {
+		t.Fatal("the local check on its old interval is still running after the heartbeat's look")
+	}
+	after := tickerOf(t, lt.ticks, 150*time.Second)
+	assertLocalChecks(t, heartbeats(stream)[n].GetLocalChecks(),
+		[]*agentpb.LocalCheck{{Key: "local-cpu", Plugin: "cpu", ParamsJson: "{}", IntervalSeconds: 150}})
+	if _, looks := lt.lookTicks.recorded(); len(looks) != 1 {
+		t.Fatalf("look tickers = %d, want 1", len(looks))
+	}
+	after.c <- time.Now()
+	waitFor(t, 2*time.Second, func() bool {
+		for _, m := range checkResultMessages(stream) {
+			for _, r := range m.GetResults() {
+				if r.GetCheckKey() == "local-cpu" {
+					return true
+				}
+			}
+		}
+		return false
+	})
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
 func assertLocalChecks(t *testing.T, got, want []*agentpb.LocalCheck) {
 	t.Helper()
 	if len(got) != len(want) {
@@ -236,6 +285,8 @@ func assertLocalChecks(t *testing.T, got, want []*agentpb.LocalCheck) {
 func TestLocalCheckReport(t *testing.T) {
 	cpu := secrets.LocalCheck{Key: "local-cpu", Plugin: "cpu", Interval: time.Minute, ParamsJSON: "{}"}
 	pg := secrets.LocalCheck{Key: "local-pg", Plugin: "postgres", Interval: 90 * time.Second, ParamsJSON: `{"secret":"pg"}`}
+	cpuRow := &agentpb.LocalCheck{Key: "local-cpu", Plugin: "cpu", ParamsJson: "{}", IntervalSeconds: 60}
+	pgRow := &agentpb.LocalCheck{Key: "local-pg", Plugin: "postgres", ParamsJson: `{"secret":"pg"}`, IntervalSeconds: 90}
 	many := make([]string, 40)
 	for i := range many {
 		many[i] = fmt.Sprintf("line %d: unknown plugin", i+1)
@@ -245,11 +296,16 @@ func TestLocalCheckReport(t *testing.T) {
 		checks       []secrets.LocalCheck
 		problems     []string
 		shadowed     []string
-		wantKeys     []string
+		wantChecks   []*agentpb.LocalCheck
 		wantProblems []string
 	}{
 		{name: "none"},
-		{name: "all running", checks: []secrets.LocalCheck{cpu, pg}, wantKeys: []string{"local-cpu", "local-pg"}},
+		{name: "all running", checks: []secrets.LocalCheck{cpu, pg}, wantChecks: []*agentpb.LocalCheck{cpuRow, pgRow}},
+		{
+			name: "one shadowed", checks: []secrets.LocalCheck{cpu, pg}, shadowed: []string{"local-cpu"},
+			wantChecks:   []*agentpb.LocalCheck{pgRow},
+			wantProblems: []string{`check "local-cpu": a check from the manager has the same key`},
+		},
 		{
 			name: "shadowed after the file's problems", checks: []secrets.LocalCheck{cpu, pg},
 			problems: []string{"line 9: unknown plugin"}, shadowed: []string{"local-cpu", "local-pg"},
@@ -270,18 +326,7 @@ func TestLocalCheckReport(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := runningLocalChecks(tt.checks, tt.shadowed)
-			var keys []string
-			for _, c := range got {
-				keys = append(keys, c.GetKey())
-			}
-			if !reflect.DeepEqual(keys, tt.wantKeys) {
-				t.Fatalf("running = %v, want %v", keys, tt.wantKeys)
-			}
-			if len(got) > 0 && got[len(got)-1].GetKey() == "local-pg" &&
-				(got[len(got)-1].GetIntervalSeconds() != 90 || got[len(got)-1].GetParamsJson() != `{"secret":"pg"}`) {
-				t.Fatalf("local-pg = %v", got[len(got)-1])
-			}
+			assertLocalChecks(t, runningLocalChecks(tt.checks, tt.shadowed), tt.wantChecks)
 			if p := localCheckProblems(tt.problems, tt.shadowed); !reflect.DeepEqual(p, tt.wantProblems) {
 				t.Fatalf("problems = %q, want %q", p, tt.wantProblems)
 			}

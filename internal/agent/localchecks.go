@@ -57,33 +57,43 @@ func (l *Loop) startLocalLook(ctx context.Context) <-chan struct{} {
 			case <-ctx.Done():
 				return
 			case <-tick.C():
-				set, _ := l.secrets.Current()
-				l.applyLocal(set)
+				l.lookAndApplyLocal()
 			}
 		}
 	}()
 	return done
 }
 
-// applyLocal installs set's local checks in the scheduler and logs the
-// keys a check from the manager shadows when they changed since the last
-// time — once per change, not once per look.
-func (l *Loop) applyLocal(set secrets.Set) {
+// lookAndApplyLocal looks at the file, installs its local checks in the
+// scheduler and returns what it read. It logs the keys a check from the
+// manager shadows when they changed since the last time — once per
+// change, not once per look.
+//
+// localMu is held across the whole look: the startup look, the heartbeat
+// and the periodic look each call this, and without it two looks
+// straddling the watcher's re-read could apply the older set last (the
+// scheduler running it again until the next look, its changed checks
+// restarting twice) or store an outdated shadowed list, so a later real
+// change back to it would go unlogged. Nothing that holds the watcher's
+// or the scheduler's mutex takes localMu, and no caller holds it across
+// a stream send.
+func (l *Loop) lookAndApplyLocal() (secrets.Set, secrets.State) {
+	l.localMu.Lock()
+	set, state := l.secrets.Current()
 	local := set.LocalChecks() // fresh copies: the scheduler owns them
 	specs := make([]checks.Spec, 0, len(local))
 	for _, c := range local {
 		specs = append(specs, checks.Spec{Key: c.Key, Plugin: c.Plugin, Params: c.Params, Interval: c.Interval})
 	}
 	shadowed := l.scheduler.ApplyLocal(specs)
-
-	l.localMu.Lock()
 	changed := !slices.Equal(shadowed, l.shadowed)
 	l.shadowed = shadowed
 	l.localMu.Unlock()
 	if changed && len(shadowed) > 0 {
-		l.log.Warn("local checks shadowed by checks from the manager with the same key; the manager's run instead",
+		l.log.Warn("local checks shadowed by checks from the manager with the same key; the manager's checks run instead",
 			"keys", shadowed)
 	}
+	return set, state
 }
 
 // runningLocalChecks is what the heartbeat reports as running: the file's

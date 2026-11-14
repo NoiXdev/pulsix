@@ -147,8 +147,9 @@ type Loop struct {
 	// lookTicker is the periodic look's ticker factory when a test sets one
 	// apart; nil uses ticker (localchecks.go).
 	lookTicker tickerFactory
-	// localMu guards shadowed: the local keys a check from the manager
-	// shadowed at the last applyLocal, so a change is logged once.
+	// localMu serialises looking at the file and applying its local checks
+	// (lookAndApplyLocal) and guards shadowed: the local keys a check from
+	// the manager shadowed at the last look, so a change is logged once.
 	localMu  sync.Mutex
 	shadowed []string
 
@@ -249,8 +250,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	// The first look at the secrets file, so its outcome is logged at
 	// start rather than with the first heartbeat or check that needs it,
 	// and its local checks are in the scheduler before it starts.
-	startSet, _ := l.secrets.Current()
-	l.applyLocal(startSet)
+	l.lookAndApplyLocal()
 	if !id.Valid(l.now()) {
 		// why says WHICH of the two unusable cases this is (backlog
 		// 2.103). Both re-enrol, so the agent behaves the same either
