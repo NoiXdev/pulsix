@@ -76,10 +76,10 @@ type scriptPlugin struct {
 	check checker
 }
 
-// New returns the script plugin. Until the real runner and checker exist
-// it refuses every program as not available on this system.
+// New returns the script plugin: commands run as real processes
+// (exec.go) after the file checker passed their files (check.go).
 func New() checks.Plugin {
-	return newPlugin(unavailable{}, unavailable{})
+	return newPlugin(newExecRunner(), fileChecker{})
 }
 
 func newPlugin(r runner, c checker) *scriptPlugin {

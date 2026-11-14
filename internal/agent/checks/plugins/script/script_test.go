@@ -346,12 +346,22 @@ func TestPlainCollect(t *testing.T) {
 	equalLines(t, render(obs), []string{`x script.status "unknown"`, `x script.output "` + textNoCommands + `"`})
 }
 
-func TestNewIsUnavailableUntilTheRealRunner(t *testing.T) {
-	p, ok := New().(checks.CommandPlugin)
+// TestNewWiresTheRealRunnerAndChecker: New runs host commands with the
+// exec runner and the file checker, one runner (and its busy marks) for
+// every check key.
+func TestNewWiresTheRealRunnerAndChecker(t *testing.T) {
+	p, ok := New().(*scriptPlugin)
 	if !ok {
-		t.Fatal("New() is not a CommandPlugin")
+		t.Fatalf("New() is %T", New())
 	}
-	obs, _ := p.CollectWithCommands(context.Background(), map[string]any{"commands": []string{"x"}}, oneCommand("--password", "MARKER"))
-	got := render(obs)
-	equalLines(t, got, []string{`x script.status "unknown"`, `x script.output "` + prog + `: ` + errUnavailable.Error() + `"`})
+	r, ok := p.run.(execRunner)
+	if !ok || r.busy == nil || r.noKill {
+		t.Errorf("runner %#v, want an execRunner with its busy set", p.run)
+	}
+	if _, ok := p.check.(fileChecker); !ok {
+		t.Errorf("checker %T, want fileChecker", p.check)
+	}
+	if _, ok := checks.Plugin(p).(checks.CommandPlugin); !ok {
+		t.Error("New() is not a CommandPlugin")
+	}
 }
