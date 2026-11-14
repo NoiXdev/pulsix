@@ -119,7 +119,7 @@ func TestLoopRunsALocalCheckBeforeAnyStream(t *testing.T) {
 	}
 }
 
-// TestLoopFollowsTheLocalChecksWithoutAStream: the minute look applies an
+// TestLoopFollowsTheLocalChecksWithoutAStream: the periodic look applies an
 // edit of the file, and a refused file stops the local checks.
 func TestLoopFollowsTheLocalChecksWithoutAStream(t *testing.T) {
 	lt := newLoopTest(t)
@@ -133,8 +133,8 @@ func TestLoopFollowsTheLocalChecksWithoutAStream(t *testing.T) {
 	_, tickers := lt.waitForTickers(1)
 	waitFor(t, 2*time.Second, func() bool { _, looks := lt.lookTicks.recorded(); return len(looks) == 1 })
 	lookIntervals, looks := lt.lookTicks.recorded()
-	if lookIntervals[0] != time.Minute {
-		t.Fatalf("look interval = %v, want a minute", lookIntervals[0])
+	if lookIntervals[0] != 30*time.Second {
+		t.Fatalf("look interval = %v, want 30s", lookIntervals[0])
 	}
 
 	writeSecretsFile(t, lt.cfg.SecretsPath, "checks:\n  local-cpu:\n    plugin: cpu\n    interval_seconds: 45\n")
@@ -157,7 +157,7 @@ func TestLoopFollowsTheLocalChecksWithoutAStream(t *testing.T) {
 		t.Fatalf("Run = %v", err)
 	}
 	if !looks[0].stopped.Load() {
-		t.Fatal("the minute look's ticker is still running after Run returned")
+		t.Fatal("the periodic look's ticker is still running after Run returned")
 	}
 	if intervals, _ := lt.ticks.recorded(); len(intervals) != 2 {
 		t.Fatalf("tickers = %v, want 2 (nothing started for the refused file)", intervals)

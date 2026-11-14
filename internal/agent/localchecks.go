@@ -13,29 +13,35 @@ import (
 // Local checks are the checks section of the agent's configuration file
 // (backlog 3.5a). They run in the scheduler next to the manager's checks
 // and follow the file on every look at it: the startup look, every
-// heartbeat and the minute look below, which keeps them following the
+// heartbeat and the periodic look below, which keeps them following the
 // file while no stream is up. A refused file has no local checks, so its
 // local checks stop as its secrets go.
 
 const (
 	// localLookInterval is how often Run looks at the file on its own,
-	// whether or not a stream is up: the watcher reads it at most this
-	// often anyway.
-	localLookInterval = time.Minute
+	// whether or not a stream is up. It is half the watcher's period on
+	// purpose: the watcher re-reads only when a full minute has passed
+	// since its last read, and a one-minute ticker's ticks arrive a few
+	// microseconds early or late, so about every other tick would land
+	// just under the minute and be skipped — an edit could wait two
+	// minutes. Looking every 30 s costs nothing (the watcher still reads
+	// at most once a minute) and applies an edit within about a minute.
+	localLookInterval = 30 * time.Second
 	// maxLocalCheckProblems bounds the problems a heartbeat carries, as
 	// the manager keeps no more.
 	maxLocalCheckProblems = 32
 )
 
-// withLocalLookTicker replaces the ticker factory of the minute look only
+// withLocalLookTicker replaces the ticker factory of the periodic look only
 // (tests: a separate fake, so the session's ticker order stays as the
 // cadence tests count it). By default the look uses the loop's own.
 func withLocalLookTicker(fn tickerFactory) LoopOption {
 	return func(l *Loop) { l.lookTicker = fn }
 }
 
-// startLocalLook looks at the file once a minute until ctx ends, applying
-// its local checks; the returned channel closes when it has stopped.
+// startLocalLook looks at the file every localLookInterval until ctx
+// ends, applying its local checks; the returned channel closes when it
+// has stopped.
 func (l *Loop) startLocalLook(ctx context.Context) <-chan struct{} {
 	factory := l.lookTicker
 	if factory == nil {

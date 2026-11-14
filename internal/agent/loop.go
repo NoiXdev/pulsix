@@ -144,7 +144,7 @@ type Loop struct {
 	scheduler *checks.Scheduler
 	buffer    *checks.Buffer
 
-	// lookTicker is the minute look's ticker factory when a test sets one
+	// lookTicker is the periodic look's ticker factory when a test sets one
 	// apart; nil uses ticker (localchecks.go).
 	lookTicker tickerFactory
 	// localMu guards shadowed: the local keys a check from the manager
@@ -290,7 +290,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-time.After(streamDrainWit):
 		}
 	}()
-	// The minute look at the file lives as long as the scheduler, so local
+	// The periodic look at the file lives as long as the scheduler, so local
 	// checks follow the file while no stream is up; it stops with schedCtx
 	// and Run waits for it.
 	lookDone := l.startLocalLook(schedCtx)

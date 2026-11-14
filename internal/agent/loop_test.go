@@ -47,7 +47,7 @@ type loopTest struct {
 	cfg    Config
 	dialer *fakeDialer
 	ticks  *fakeTickers
-	// lookTicks is the local checks' once-a-minute look (localchecks.go),
+	// lookTicks is the local checks' periodic look (localchecks.go),
 	// apart from ticks so the session's ticker indices stay what every
 	// cadence test counts on.
 	lookTicks *fakeTickers
