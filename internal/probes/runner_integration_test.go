@@ -134,7 +134,7 @@ func TestRunnerProbesAndRecords(t *testing.T) {
 	second := probes.NewRunner(probes.Deps{
 		Orgs: hostsSvc, Resolver: checksSvc, Hosts: hostsSvc, Recorder: checksSvc,
 		Locker: schedule.NewAdvisoryLocker(d.Pool(), probes.AdvisoryKeyProbes),
-		Probe: func(context.Context, string, map[string]any, string) []probe.Observation {
+		Probe: func(context.Context, string, map[string]any, string, map[string]string) []probe.Observation {
 			secondProbes.Add(1)
 			return nil
 		},

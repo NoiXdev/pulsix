@@ -27,30 +27,35 @@ func synthetic(key, plugin string, interval time.Duration) checks.Resolved {
 
 // harness is one runner over fakes, driven tick by tick.
 type harness struct {
-	r      *Runner
-	clock  *fakeClock
-	locker *fakeLocker
-	world  *fakeWorld
-	rec    *fakeRecorder
-	probe  *fakeProbe
-	org    uuid.UUID
-	host   uuid.UUID
+	r       *Runner
+	clock   *fakeClock
+	locker  *fakeLocker
+	world   *fakeWorld
+	rec     *fakeRecorder
+	probe   *fakeProbe
+	secrets *fakeSecrets
+	pollers *fakePollers
+	org     uuid.UUID
+	host    uuid.UUID
 }
 
 func newHarness(t *testing.T, edit func(*harness, *Deps)) *harness {
 	t.Helper()
 	h := &harness{
-		clock:  &fakeClock{now: t0},
-		locker: &fakeLocker{allow: true},
-		world:  newFakeWorld(),
-		rec:    &fakeRecorder{},
-		probe:  &fakeProbe{},
-		org:    uuid.Must(uuid.NewV7()),
-		host:   uuid.Must(uuid.NewV7()),
+		clock:   &fakeClock{now: t0},
+		locker:  &fakeLocker{allow: true},
+		world:   newFakeWorld(),
+		rec:     &fakeRecorder{},
+		probe:   &fakeProbe{},
+		secrets: &fakeSecrets{},
+		pollers: &fakePollers{},
+		org:     uuid.Must(uuid.NewV7()),
+		host:    uuid.Must(uuid.NewV7()),
 	}
 	d := Deps{
 		Orgs: fakeOrgs{ids: []uuid.UUID{h.org}}, Resolver: h.world, Hosts: h.world,
 		Recorder: h.rec, Locker: h.locker, Probe: h.probe.Run, Clock: h.clock.Now,
+		Secrets: h.secrets, NewPoller: h.pollers.New,
 	}
 	if edit != nil {
 		edit(h, &d)
@@ -526,7 +531,7 @@ func TestPanickingProbeIsRecovered(t *testing.T) {
 	var calls atomic.Int32
 	h := newHarness(t, func(_ *harness, d *Deps) {
 		d.Log = slog.New(slog.NewTextHandler(&logs, nil))
-		d.Probe = func(context.Context, string, map[string]any, string) []probe.Observation {
+		d.Probe = func(context.Context, string, map[string]any, string, map[string]string) []probe.Observation {
 			calls.Add(1)
 			panic("malformed answer")
 		}
@@ -595,7 +600,7 @@ func TestPanickingRefreshIsRecovered(t *testing.T) {
 func TestItemAndLabelReachTheRecordedObservations(t *testing.T) {
 	state, one := "up", 1.0
 	h := newHarness(t, func(_ *harness, d *Deps) {
-		d.Probe = func(context.Context, string, map[string]any, string) []probe.Observation {
+		d.Probe = func(context.Context, string, map[string]any, string, map[string]string) []probe.Observation {
 			return []probe.Observation{
 				{Metric: "snmp.if_oper", Item: "eth0", Value: &one, Label: &state},
 				{Metric: "snmp.up", Value: &one},

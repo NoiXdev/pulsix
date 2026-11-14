@@ -26,7 +26,7 @@ type selectiveProbe struct {
 	keys     []string
 }
 
-func (p *selectiveProbe) Run(ctx context.Context, plugin string, params map[string]any, _ string) []probe.Observation {
+func (p *selectiveProbe) Run(ctx context.Context, plugin string, params map[string]any, _ string, _ map[string]string) []probe.Observation {
 	key, _ := params["key"].(string)
 	p.mu.Lock()
 	p.keys = append(p.keys, key)

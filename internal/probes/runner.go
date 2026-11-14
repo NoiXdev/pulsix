@@ -20,9 +20,11 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probe/all"
+	"github.com/noixdev/pulsix/internal/probe/snmp"
 )
 
 // AdvisoryKeyProbes is the probe runner's pg_try_advisory_lock key, next
@@ -51,13 +53,22 @@ type Deps struct {
 	Hosts    Hosts
 	Recorder Recorder
 	Locker   Locker
-	// Probe runs one probe; default all.Run with Guard.
+	// Probe runs one probe of a plugin without a Poller; default all.Run
+	// with Guard.
 	Probe ProbeFunc
-	// Guard is the dial guard the default Probe uses (probe.NewGuard with
-	// PULSIX_PROBE_DENY_CIDRS and PULSIX_NOTIFY_NAT64_PREFIXES in
-	// production; nil is probe.NewGuard(nil, nil)).
+	// NewPoller builds the Poller of one snmp slot; default snmp.NewPoller
+	// on Clock, polling with Guard.
+	NewPoller func() Poller
+	// Guard is the dial guard the default Probe and Poller use
+	// (probe.NewGuard with PULSIX_PROBE_DENY_CIDRS and
+	// PULSIX_NOTIFY_NAT64_PREFIXES in production; nil is
+	// probe.NewGuard(nil, nil)).
 	Guard *probe.Guard
-	// Clock stamps each result's At; default time.Now.
+	// Secrets is the organizations' secret store. Nil fails every probe
+	// whose check names a secret with "no secret store".
+	Secrets Secrets
+	// Clock stamps each result's At, measures the snmp rates' intervals
+	// and paces the skipped-interfaces log; default time.Now.
 	Clock func() time.Time
 	// Tick, Refresh and MaxConcurrent default to DefaultTick,
 	// DefaultRefresh and DefaultMaxConcurrent.
@@ -72,25 +83,37 @@ type slot struct {
 	key  string
 }
 
-// target is what probing a slot needs.
+// target is what probing a slot needs. secret is the name of the secret
+// the check's secret parameter names, "" when its plugin takes none or the
+// check names none; it is read off the params at refresh, so a probe
+// that needs no secret does no lookup at all.
 type target struct {
 	org     uuid.UUID
 	address string
 	check   checks.Resolved
+	secret  string
 }
 
 // Runner probes every monitored host's synthetic checks while it holds the
-// lock. Its schedule state is owned by the Run goroutine; only the
-// in-flight set and the wake channel are shared with the probe goroutines.
+// lock. Its schedule state and the slots' pollers are owned by the Run
+// goroutine; only the in-flight set, the wake channel and the
+// skipped-interfaces log throttle are shared with the probe goroutines.
+// A probe goroutine gets its slot's poller from the launch and uses no
+// other.
 type Runner struct {
-	orgs     Orgs
-	resolver Resolver
-	hosts    Hosts
-	recorder Recorder
-	locker   Locker
-	probe    ProbeFunc
-	clock    func() time.Time
-	log      *slog.Logger
+	orgs      Orgs
+	resolver  Resolver
+	hosts     Hosts
+	recorder  Recorder
+	locker    Locker
+	probe     ProbeFunc
+	newPoller func() Poller
+	secrets   Secrets
+	clock     func() time.Time
+	log       *slog.Logger
+	// describe looks a plugin's descriptor up: checkplugins.Get, swapped
+	// by tests for plugins of their own.
+	describe func(string) (checkplugins.Descriptor, bool)
 
 	tickEvery, refreshEvery time.Duration
 	maxConcurrent           int
@@ -100,6 +123,10 @@ type Runner struct {
 	targets   map[slot]target
 	refreshed time.Time
 	next      map[slot]time.Time
+	pollers   map[slot]Poller
+
+	// skipped paces the log of a device's skipped interfaces per slot.
+	skipped *throttle
 
 	mu       sync.Mutex
 	inFlight map[slot]uuid.UUID // running slot → its organization
@@ -114,19 +141,25 @@ type Runner struct {
 func NewRunner(d Deps) *Runner {
 	r := &Runner{
 		orgs: d.Orgs, resolver: d.Resolver, hosts: d.Hosts, recorder: d.Recorder, locker: d.Locker,
-		probe: d.Probe, clock: d.Clock, log: d.Log,
+		probe: d.Probe, newPoller: d.NewPoller, secrets: d.Secrets, clock: d.Clock, log: d.Log,
+		describe:  checkplugins.Get,
 		tickEvery: d.Tick, refreshEvery: d.Refresh, maxConcurrent: d.MaxConcurrent,
-		targets: map[slot]target{}, next: map[slot]time.Time{}, inFlight: map[slot]uuid.UUID{},
+		targets: map[slot]target{}, next: map[slot]time.Time{}, pollers: map[slot]Poller{},
+		inFlight: map[slot]uuid.UUID{}, skipped: newThrottle(skippedLogEvery),
 		wake: make(chan struct{}, 1),
-	}
-	if r.probe == nil {
-		g := d.Guard
-		r.probe = func(ctx context.Context, plugin string, params map[string]any, address string) []probe.Observation {
-			return all.Run(ctx, g, plugin, params, address, nil)
-		}
 	}
 	if r.clock == nil {
 		r.clock = time.Now
+	}
+	g := d.Guard
+	if r.probe == nil {
+		r.probe = func(ctx context.Context, plugin string, params map[string]any, address string, secret map[string]string) []probe.Observation {
+			return all.Run(ctx, g, plugin, params, address, secret)
+		}
+	}
+	if r.newPoller == nil {
+		clock := r.clock
+		r.newPoller = func() Poller { return snmpPoller{p: snmp.NewPoller(clock), g: g} }
 	}
 	if r.log == nil {
 		r.log = slog.Default()
@@ -222,17 +255,19 @@ func (r *Runner) tickOnce(ctx context.Context) {
 	r.launchDue(ctx, now, r.slack())
 }
 
-// lost forgets the schedule when the lock is gone: while another manager
-// holds it, that one probes, and the timing remembered here says nothing
-// about what it did. A regained lock starts afresh, like any new holder,
-// and with a fresh refresh. Probes still in flight finish and are
-// recorded; their slots are not started again before they do.
+// lost forgets the schedule and the slots' pollers when the lock is gone:
+// while another manager holds it, that one probes, and the timing and
+// counters remembered here say nothing about what it did. A regained
+// lock starts afresh, like any new holder, and with a fresh refresh.
+// Probes still in flight finish and are recorded; their slots are not
+// started again before they do.
 func (r *Runner) lost() {
 	if !r.held {
 		return
 	}
 	r.held = false
 	clear(r.next)
+	clear(r.pollers)
 	r.refreshed = time.Time{}
 }
 
@@ -257,7 +292,7 @@ func probeTimeout(interval time.Duration) time.Duration {
 // panic in the probe or the recording (untrusted network input reaches
 // net/http, crypto/tls and x/net/icmp) is logged with its stack and
 // records nothing; the slot is released and due again on schedule.
-func (r *Runner) probeSlot(ctx context.Context, s slot, t target) {
+func (r *Runner) probeSlot(ctx context.Context, s slot, t target, p Poller) {
 	defer r.wg.Done()
 	defer func() {
 		r.mu.Lock()
@@ -268,20 +303,34 @@ func (r *Runner) probeSlot(ctx context.Context, s slot, t target) {
 		default: // a wake-up is already pending
 		}
 	}()
-	r.safely(ctx, "probe", func() { r.probeAndRecord(ctx, s, t) }, "org", t.org, "host", s.host, "check", s.key)
+	r.safely(ctx, "probe", func() { r.probeAndRecord(ctx, s, t, p) }, "org", t.org, "host", s.host, "check", s.key)
 }
 
-// runProbe runs the probe under its deadline; the deferred cancel also
-// runs when the probe panics.
-func (r *Runner) runProbe(ctx context.Context, t target) []probe.Observation {
+// runProbe looks the check's secret up and runs the probe, both under
+// the probe's deadline; the deferred cancel also runs when the probe
+// panics. A slot with a poller (snmp) is polled with it, any other probed
+// through the probe function. A secret that cannot be handed over fails
+// every metric without probing.
+func (r *Runner) runProbe(ctx context.Context, s slot, t target, p Poller) []probe.Observation {
 	pctx, cancel := context.WithTimeout(ctx, probeTimeout(t.check.Interval))
 	defer cancel()
-	return r.probe(pctx, t.check.Plugin, t.check.Params, t.address)
+	secret, failed := r.secretFor(pctx, s, t)
+	if failed != nil {
+		return failed
+	}
+	if p == nil {
+		return r.probe(pctx, t.check.Plugin, t.check.Params, t.address, secret)
+	}
+	obs, info := p.Poll(pctx, t.check.Params, t.address, secret)
+	if info.InterfacesSkipped {
+		r.logSkipped(ctx, s, t)
+	}
+	return obs
 }
 
 // probeAndRecord is probeSlot's body.
-func (r *Runner) probeAndRecord(ctx context.Context, s slot, t target) {
-	obs := r.runProbe(ctx, t)
+func (r *Runner) probeAndRecord(ctx context.Context, s slot, t target, p Poller) {
+	obs := r.runProbe(ctx, s, t, p)
 	if ctx.Err() != nil || len(obs) == 0 {
 		return
 	}

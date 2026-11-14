@@ -787,13 +787,15 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// results through checksSvc too. Every dial goes through the guard: the
 	// webhook egress policy's refused ranges (loopback, link-local, cloud
 	// metadata; seen through the operator's NAT64 prefixes) plus
-	// PULSIX_PROBE_DENY_CIDRS.
+	// PULSIX_PROBE_DENY_CIDRS. A check whose plugin takes a secret (snmp)
+	// gets its fields from the organization's secret store.
 	// Stopped in Close and on every early return below.
 	probesStop := startLoop(probes.NewRunner(probes.Deps{
 		Orgs: hostsSvc, Resolver: checksSvc, Hosts: hostsSvc, Recorder: checksSvc,
-		Locker: schedule.NewAdvisoryLocker(appDB.Pool(), probes.AdvisoryKeyProbes),
-		Guard:  probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes),
-		Clock:  time.Now, Log: slog.Default(),
+		Locker:  schedule.NewAdvisoryLocker(appDB.Pool(), probes.AdvisoryKeyProbes),
+		Guard:   probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes),
+		Secrets: orgSecretsSvc,
+		Clock:   time.Now, Log: slog.Default(),
 	}).Run)
 
 	var grpcServer *grpc.Server

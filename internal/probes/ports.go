@@ -8,6 +8,7 @@ import (
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/hosts"
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/snmp"
 )
 
 // Orgs lists every organization: the runner's iteration root.
@@ -44,7 +45,25 @@ type Locker interface {
 	Unlock(ctx context.Context)
 }
 
-// ProbeFunc runs one probe of address and returns its observations. The
-// probe must honour ctx's deadline; production is all.Run with the
-// manager's guard.
-type ProbeFunc func(ctx context.Context, plugin string, params map[string]any, address string) []probe.Observation
+// ProbeFunc runs one probe of address and returns its observations. secret
+// holds the fields of the check's secret, nil for a plugin that takes
+// none; it is never merged into params. The probe must honour ctx's
+// deadline; production is all.Run with the manager's guard. Plugins with a
+// Poller (snmp) do not go through it.
+type ProbeFunc func(ctx context.Context, plugin string, params map[string]any, address string, secret map[string]string) []probe.Observation
+
+// Poller polls one snmp slot and keeps what its next poll needs (the
+// counters its rates are computed from): snmp.Poller with the manager's
+// guard. The runner keeps one per slot and never polls one from two
+// goroutines at once.
+type Poller interface {
+	Poll(ctx context.Context, params map[string]any, address string, secret map[string]string) ([]probe.Observation, snmp.Info)
+}
+
+// Secrets reads the fields of an organization's stored secret, for the
+// probes whose plugin takes one: orgsecrets.Service's Fields, which
+// returns orgsecrets.ErrNotFound when the organization has no secret of
+// that name.
+type Secrets interface {
+	Fields(ctx context.Context, orgID uuid.UUID, name string) (map[string]string, error)
+}

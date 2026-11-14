@@ -19,9 +19,10 @@ func orgScope(ctx context.Context, orgID uuid.UUID) context.Context {
 
 // refresh re-reads every organization's synthetic checks and host
 // addresses. A slot that is gone (definition removed or disabled, host no
-// longer monitored or deleted) leaves the schedule; a new one, and one
-// whose plugin, params, interval or address changed, is due at once, so
-// an edit takes effect within one refresh plus one tick. When an organization cannot be read, its previous targets stand
+// longer monitored or deleted) leaves the schedule and drops its poller; a
+// new one, and one whose plugin, params, interval or address changed, is
+// due at once on a new poller, so an edit takes effect within one refresh
+// plus one tick. When an organization cannot be read, its previous targets stand
 // until a later refresh succeeds: a database hiccup does not pause its
 // probes. When the organization list cannot be read, or ctx ends (the
 // tick's deadline) midway, nothing changes and the error is returned; the
@@ -53,6 +54,11 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 	for s := range r.next {
 		if t, ok := next[s]; !ok || changed(r.targets[s], t) {
 			delete(r.next, s)
+		}
+	}
+	for s := range r.pollers {
+		if t, ok := next[s]; !ok || changed(r.targets[s], t) {
+			delete(r.pollers, s)
 		}
 	}
 	r.targets = next
@@ -95,7 +101,7 @@ func (r *Runner) orgTargets(ctx context.Context, org uuid.UUID) (map[slot]target
 			continue
 		}
 		for _, c := range sets[h.ID].Synthetic {
-			out[slot{host: h.ID, key: c.Key}] = target{org: org, address: h.Address, check: c}
+			out[slot{host: h.ID, key: c.Key}] = target{org: org, address: h.Address, check: c, secret: r.secretName(c)}
 		}
 	}
 	return out, nil

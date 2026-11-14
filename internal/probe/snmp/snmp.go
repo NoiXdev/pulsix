@@ -87,13 +87,7 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 	if err != nil {
 		return probe.FailAll(err.Error(), hostMetrics...), Info{}
 	}
-	fail := func(msg string) []probe.Observation {
-		obs := probe.FailAll(msg, hostMetrics...)
-		for _, e := range s.oids {
-			obs = append(obs, probe.Observation{Metric: "snmp.value", Item: e.name, Err: msg})
-		}
-		return obs
-	}
+	fail := func(msg string) []probe.Observation { return failAll(s, msg) }
 	creds, err := credentialsFor(s.secret, s.version, secret)
 	if err != nil {
 		return fail(err.Error()), Info{}
@@ -177,6 +171,28 @@ func (p *Poller) Poll(ctx context.Context, g *probe.Guard, params map[string]any
 		p.target, p.prev = target, &cur
 	}
 	return obs, info
+}
+
+// FailAll is a poll that could not be attempted, with msg on every
+// metric params would have produced: the host metrics and each oids
+// entry's snmp.value, the shape Poll gives a secret it cannot use. Params
+// it cannot read give the host metrics alone. The probe runner reports a
+// secret it cannot hand over this way.
+func FailAll(params map[string]any, msg string) []probe.Observation {
+	s, err := parseSettings(params)
+	if err != nil {
+		return probe.FailAll(msg, hostMetrics...)
+	}
+	return failAll(s, msg)
+}
+
+// failAll is msg on the host metrics and each oids entry's snmp.value.
+func failAll(s settings, msg string) []probe.Observation {
+	obs := probe.FailAll(msg, hostMetrics...)
+	for _, e := range s.oids {
+		obs = append(obs, probe.Observation{Metric: "snmp.value", Item: e.name, Err: msg})
+	}
+	return obs
 }
 
 // failed is the result of a dial or first request that failed. The

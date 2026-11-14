@@ -2,14 +2,19 @@ package probes
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/checks"
+	"github.com/noixdev/pulsix/internal/db"
 	"github.com/noixdev/pulsix/internal/hosts"
+	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/probe"
+	"github.com/noixdev/pulsix/internal/probe/snmp"
 )
 
 // fakeClock is the injected clock; tests move it by hand.
@@ -180,6 +185,8 @@ func (r *fakeRecorder) Batches() []recorded {
 // params["key"], which only the fake reads.
 type probeCall struct {
 	key, plugin, address string
+	params               map[string]any
+	secret               map[string]string
 	deadline             time.Time
 	hasDeadline          bool
 }
@@ -195,11 +202,13 @@ type fakeProbe struct {
 	started  chan string
 }
 
-func (p *fakeProbe) Run(ctx context.Context, plugin string, params map[string]any, address string) []probe.Observation {
+func (p *fakeProbe) Run(ctx context.Context, plugin string, params map[string]any, address string, secret map[string]string) []probe.Observation {
 	key, _ := params["key"].(string)
 	dl, ok := ctx.Deadline()
 	p.mu.Lock()
-	p.calls = append(p.calls, probeCall{key: key, plugin: plugin, address: address, deadline: dl, hasDeadline: ok})
+	p.calls = append(p.calls, probeCall{
+		key: key, plugin: plugin, address: address, params: params, secret: secret, deadline: dl, hasDeadline: ok,
+	})
 	p.inFlight++
 	if p.inFlight > p.maxSeen {
 		p.maxSeen = p.inFlight
@@ -242,4 +251,118 @@ func (p *fakeProbe) MaxInFlight() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.maxSeen
+}
+
+// fakeSecrets is the organization secret store: org → name → fields.
+// err, when set, is every lookup's answer.
+type fakeSecrets struct {
+	mu      sync.Mutex
+	secrets map[uuid.UUID]map[string]map[string]string
+	err     error
+	lookups []secretLookup
+}
+
+// secretLookup is one Fields call: the organization asked for, the one
+// ctx was scoped to, and the name.
+type secretLookup struct {
+	org, scope uuid.UUID
+	scoped     bool
+	name       string
+}
+
+func (f *fakeSecrets) set(org uuid.UUID, name string, fields map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.secrets == nil {
+		f.secrets = map[uuid.UUID]map[string]map[string]string{}
+	}
+	if f.secrets[org] == nil {
+		f.secrets[org] = map[string]map[string]string{}
+	}
+	f.secrets[org][name] = fields
+}
+
+func (f *fakeSecrets) Fields(ctx context.Context, org uuid.UUID, name string) (map[string]string, error) {
+	scope, scoped := db.OrgScope(ctx)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookups = append(f.lookups, secretLookup{org: org, scope: scope, scoped: scoped, name: name})
+	if f.err != nil {
+		return nil, f.err
+	}
+	fields, ok := f.secrets[org][name]
+	if !ok {
+		return nil, orgsecrets.ErrNotFound
+	}
+	return maps.Clone(fields), nil
+}
+
+func (f *fakeSecrets) Lookups() []secretLookup {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]secretLookup(nil), f.lookups...)
+}
+
+// pollCall is one Poll a fakePoller saw.
+type pollCall struct {
+	key, address string
+	params       map[string]any
+	secret       map[string]string
+}
+
+// fakePoller is one slot's poller; id tells pollers apart.
+type fakePoller struct {
+	id      int
+	mu      sync.Mutex
+	calls   []pollCall
+	skipped bool
+}
+
+func (p *fakePoller) Poll(_ context.Context, params map[string]any, address string, secret map[string]string) ([]probe.Observation, snmp.Info) {
+	key, _ := params["key"].(string)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, pollCall{key: key, address: address, params: params, secret: secret})
+	one := 1.0
+	return []probe.Observation{{Metric: "snmp.up", Value: &one}}, snmp.Info{InterfacesSkipped: p.skipped}
+}
+
+func (p *fakePoller) Calls() []pollCall {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]pollCall(nil), p.calls...)
+}
+
+// fakePollers is Deps.NewPoller: it builds numbered fakePollers and keeps
+// every one it built.
+type fakePollers struct {
+	mu      sync.Mutex
+	built   []*fakePoller
+	skipped bool
+}
+
+func (f *fakePollers) New() Poller {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p := &fakePoller{id: len(f.built) + 1, skipped: f.skipped}
+	f.built = append(f.built, p)
+	return p
+}
+
+func (f *fakePollers) Built() []*fakePoller {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*fakePoller(nil), f.built...)
+}
+
+// polls lists every poll of every poller as "<poller id>:<key>", in the
+// pollers' order.
+func (f *fakePollers) polls() []string {
+	var out []string
+	for _, p := range f.Built() {
+		for _, c := range p.Calls() {
+			out = append(out, fmt.Sprintf("%d:%s", p.id, c.key))
+		}
+	}
+	return out
 }

@@ -49,7 +49,7 @@ func (r *Runner) launchDue(ctx context.Context, now time.Time, slack time.Durati
 		r.next[s] = now.Add(t.check.Interval)
 		r.markInFlight(s, t.org)
 		r.wg.Add(1)
-		go r.probeSlot(ctx, s, t)
+		go r.probeSlot(ctx, s, t, r.pollerFor(s, t))
 	}
 }
 
