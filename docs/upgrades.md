@@ -274,6 +274,21 @@ and no problems (`[]`), not as unknown. A certificate renewal keeps both columns
 and the secrets report; a re-enrollment resets all four until the first
 heartbeat.
 
+SNMP checks and the organization secret store (backlog 3.13d) add two migrations
+and a dependency, and no version skew: the `snmp` check runs on the manager and is
+never sent to agents, so agents need no update. Migration 00096 adds the table
+`org_secrets` (sealed fields, clear field names, row-level security like every
+organization table); it is part of backups as it is, the sealed column included,
+and needs the same master key on restore as the other sealed data. Migration 00097
+adds two default rules, "SNMP device unreachable" and "Interface down", to every
+existing organization (skipped where a rule of that name exists); they judge
+nothing until an `snmp` check reports. **Existing hosts get no SNMP checks**: a
+check has to be added to a host or a monitoring group, with a secret created under
+Settings, Secrets first. The manager binary now depends on
+`github.com/gosnmp/gosnmp` v1.47.0 (an internal detail; public docs do not name it).
+Downgrading past 00096 drops the secrets, so keep a backup from before the upgrade
+if you may need to roll back.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
