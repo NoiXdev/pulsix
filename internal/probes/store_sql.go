@@ -1,10 +1,10 @@
 package probes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/google/uuid"
@@ -87,16 +87,25 @@ func toAssignment(r gen.ProbeAssignment) (Assignment, error) {
 
 // sameAssignment compares what an update would change: the identifying key
 // is equal by construction.
+// Params are compared as canonical JSON (encoding/json sorts map keys), so
+// typed values (int, []string) equal what the column decodes to.
 func sameAssignment(a, b Assignment) bool {
-	return a.Plugin == b.Plugin && a.Interval == b.Interval && a.Address == b.Address &&
-		reflect.DeepEqual(a.Params, b.Params)
+	if a.Plugin != b.Plugin || a.Interval != b.Interval || a.Address != b.Address {
+		return false
+	}
+	pa, errA := encodeParams(a.Params)
+	pb, errB := encodeParams(b.Params)
+	return errA == nil && errB == nil && bytes.Equal(pa, pb)
 }
 
 // ReplaceOrgAssignments makes want the organization's complete set of
 // assignments in one transaction: new ones are inserted, changed ones
 // updated (unchanged rows are not written), and stored ones that are not in
 // want deleted. Other organizations are never touched; every element of
-// want must carry org.
+// want must carry org, and no slot may appear twice.
+//
+// It expects a single writer per organization (the probe runner holding
+// advisory lock 8314); it takes no lock of its own.
 func (s *SQLStore) ReplaceOrgAssignments(ctx context.Context, org uuid.UUID, want []Assignment) error {
 	return s.d.WithOrg(ctx, org, func(tx pgx.Tx) error {
 		q := gen.New(tx)
@@ -116,6 +125,9 @@ func (s *SQLStore) ReplaceOrgAssignments(ctx context.Context, org uuid.UUID, wan
 		for _, a := range want {
 			if a.OrgID != org {
 				return fmt.Errorf("assignment %s/%s names organization %s, not %s", a.TargetHostID, a.CheckKey, a.OrgID, org)
+			}
+			if seen[a.slot()] {
+				return fmt.Errorf("duplicate assignment of %s/%s to agent %s", a.TargetHostID, a.CheckKey, a.AgentHostID)
 			}
 			seen[a.slot()] = true
 			params, err := encodeParams(a.Params)

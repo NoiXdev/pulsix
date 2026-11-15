@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -302,5 +303,48 @@ func TestVantageCurrentIsOrgScoped(t *testing.T) {
 	rows, err = store.VantageCurrent(db.WithOrgScope(ctx, otherOrg), org, target, "k")
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("scope mismatch read %d rows, %v", len(rows), err)
+	}
+}
+
+func TestReplaceOrgAssignmentsComparesParamsCanonically(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	store := probes.NewSQLStore(d)
+	org, host := seedStoreOrg(t, d, "pa-canon")
+	agent, target := host("a"), host("t")
+	scoped := db.WithOrgScope(ctx, org)
+	typed := func() []probes.Assignment {
+		return []probes.Assignment{asg(org, agent, target, "k", time.Minute,
+			map[string]any{"port": 443, "names": []string{"a", "b"}, "tls": true})}
+	}
+	if err := store.ReplaceOrgAssignments(scoped, org, typed()); err != nil {
+		t.Fatal(err)
+	}
+	var first time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT assigned_at FROM probe_assignments`).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceOrgAssignments(scoped, org, typed()); err != nil {
+		t.Fatal(err)
+	}
+	var second time.Time
+	if err := d.Pool().QueryRow(ctx, `SELECT assigned_at FROM probe_assignments`).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if !first.Equal(second) {
+		t.Errorf("identical typed params were rewritten: %v -> %v", first, second)
+	}
+}
+
+func TestReplaceOrgAssignmentsRefusesDuplicates(t *testing.T) {
+	ctx := context.Background()
+	d := testdb.Open(t)
+	store := probes.NewSQLStore(d)
+	org, host := seedStoreOrg(t, d, "pa-dup")
+	agent, target := host("a"), host("t")
+	a := asg(org, agent, target, "k", time.Minute, nil)
+	err := store.ReplaceOrgAssignments(db.WithOrgScope(ctx, org), org, []probes.Assignment{a, a})
+	if err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("err = %v, want a duplicate assignment error", err)
 	}
 }
