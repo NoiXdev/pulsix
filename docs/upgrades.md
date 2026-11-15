@@ -290,6 +290,13 @@ A downgrade is a restore of a backup from before the upgrade (see Downgrading);
 that backup has no secrets, so secrets created since have to be created again after
 the next upgrade.
 
+JSON values on the `http` check (backlog 3.6h) add no migration, no dependency and no
+version skew: the check runs on the manager and is never sent to agents. Existing
+`http` checks behave as before until `json_values` or `secret` is set. The manager now
+reads at most `min(2, GOMAXPROCS)` JSON responses at once; with more checks waiting, the
+later ones report "the manager was too busy to read the JSON response" on their JSON
+values only (backlog 3.71).
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
