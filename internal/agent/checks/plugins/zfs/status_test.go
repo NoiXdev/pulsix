@@ -16,13 +16,14 @@ func utc(s string) time.Time {
 }
 
 // wantPool is one pool's expected status-derived values. lastScrub zero
-// means no finished scrub is named (the age counts from creation).
+// means no finished scrub is named; scrubStart zero, no running or paused
+// scrub with a start.
 type wantPool struct {
 	kind                      string
 	pct                       wantNum
 	read, write, cksum        wantNum
 	unhealthy, dataErrors     wantNum
-	lastScrub                 time.Time
+	lastScrub, scrubStart     time.Time
 	lastScrubErr, kindErrWant bool
 }
 
@@ -41,6 +42,9 @@ func checkPool(t *testing.T, name string, got poolStatus, w wantPool) {
 	checkNum(t, name+" errors_checksum", got.checksumErrors, w.cksum)
 	checkNum(t, name+" devices_unhealthy", got.devicesUnhealthy, w.unhealthy)
 	checkNum(t, name+" data_errors", got.dataErrors, w.dataErrors)
+	if got.scan.scrubStartErr != nil || !got.scan.scrubStart.Equal(w.scrubStart) {
+		t.Errorf("%s scrub start = %v (%v), want %v", name, got.scan.scrubStart, got.scan.scrubStartErr, w.scrubStart)
+	}
 	if w.lastScrubErr {
 		if got.scan.lastScrubErr == nil {
 			t.Errorf("%s last scrub = %v, want an error", name, got.scan.lastScrub)
@@ -79,13 +83,16 @@ func TestParseStatus(t *testing.T) {
 			"tank": {kind: "resilver", pct: num(24.61), read: num(12), write: num(344), cksum: zero, unhealthy: num(1), dataErrors: zero},
 		}},
 		{"status_scrub_progress.txt", map[string]wantPool{
-			"tank": {kind: "scrub", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero},
+			"tank": {kind: "scrub", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
+				scrubStart: utc("2024-11-10 00:24:02")},
 		}},
 		{"status_scrub_progress_2_2.txt", map[string]wantPool{
-			"tank": {kind: "scrub", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero},
+			"tank": {kind: "scrub", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
+				scrubStart: utc("2024-11-10 00:24:02")},
 		}},
 		{"status_scrub_paused.txt", map[string]wantPool{
-			"tank": {kind: "scrub_paused", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero},
+			"tank": {kind: "scrub_paused", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
+				scrubStart: utc("2024-11-10 00:24:02")},
 		}},
 		// A canceled scrub is not a finished one.
 		{"status_scrub_canceled.txt", map[string]wantPool{
@@ -114,6 +121,19 @@ func TestParseStatus(t *testing.T) {
 			"rpool": {kind: "none", pct: num(100), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
 				lastScrub: utc("2024-11-10 00:25:53")},
 			"tank": {kind: "none", pct: num(100), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero},
+		}},
+		// Repeated scan: headers: the scrub's, then one per rebuilt
+		// top-level vdev (or the other way round). The running one names
+		// the kind and progress; the finished scrub the end.
+		{"status_rebuild.txt", map[string]wantPool{
+			"alpha": {kind: "none", pct: num(100), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
+				lastScrub: utc("2024-11-10 00:36:35")},
+			"beta": {kind: "scrub", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
+				scrubStart: utc("2024-11-17 00:24:02")},
+			"gamma": {kind: "resilver", pct: num(24.61), read: num(4), write: num(211), cksum: zero, unhealthy: num(1), dataErrors: zero,
+				lastScrub: utc("2024-11-10 00:36:35")},
+			"delta": {kind: "scrub", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
+				scrubStart: utc("2024-11-17 00:24:02")},
 		}},
 		// Older releases: "scanned out of" without a percentage (1.23T of
 		// 3.62T, checked below), an old finished-scrub line, a counter
@@ -220,45 +240,84 @@ func TestParseCounter(t *testing.T) {
 	}
 }
 
+// scanEntries splits a test's scan text into the paragraph's entries: a
+// line starting with "scan: " starts another, as a repeated header does.
+func scanEntries(text string) [][]string {
+	if text == "" {
+		return nil
+	}
+	var entries [][]string
+	for i, l := range strings.Split(text, "\n") {
+		if rest, ok := strings.CutPrefix(l, "scan: "); ok || i == 0 {
+			if ok {
+				l = rest
+			}
+			entries = append(entries, []string{l})
+			continue
+		}
+		entries[len(entries)-1] = append(entries[len(entries)-1], l)
+	}
+	return entries
+}
+
 func TestParseScan(t *testing.T) {
 	end := utc("2024-11-10 00:36:35")
+	start := utc("2024-11-10 00:24:02")
+	const (
+		finished  = "scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024"
+		rebuilt   = "resilvered (mirror-0) 1.21T in 00:42:10 with 0 errors on Sat Nov  9 18:02:11 2024"
+		rebuildOn = "resilver (draid2:5d:12c:1s-0) in progress since Sat Nov  9 22:14:51 2024\n\t1.82T scanned at 1.21G/s, 912G issued 607M/s, 3.62T total\n\t228G resilvered, 24.61% done, 01:17:52 to go"
+		scrubOn   = "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.23T scanned at 1.02G/s, 456G issued at 380M/s, 3.62T total\n\t0B repaired, 12.30% done, 02:25:12 to go"
+	)
 	for _, tc := range []struct {
-		desc      string
-		lines     string
-		kind      string
-		kindErr   bool
-		pct       wantNum
-		lastScrub time.Time
-		endErr    bool
+		desc       string
+		text       string
+		kind       string
+		kindErr    bool
+		pct        wantNum
+		lastScrub  time.Time
+		endErr     bool
+		scrubStart time.Time
+		startErr   bool
 	}{
-		{"no scan line", "", "none", false, num(100), time.Time{}, false},
-		{"none requested", "none requested", "none", false, num(100), time.Time{}, false},
-		{"finished scrub", "scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024", "none", false, num(100), end, false},
-		{"finished scrub 0.8", "scrub repaired 0B in 0 days 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024", "none", false, num(100), end, false},
-		{"finished scrub, bad date", "scrub repaired 0B in 00:12:33 with 0 errors on Sonntag 10.11.2024", "none", false, num(100), time.Time{}, true},
-		{"canceled", "scrub canceled on Sun Nov 10 00:30:00 2024", "none", false, num(100), time.Time{}, false},
-		{"resilvered", "resilvered 1.21T in 03:12:45 with 0 errors on Sat Nov  9 18:02:11 2024", "none", false, num(100), time.Time{}, false},
-		{"rebuilt", "resilvered (mirror-0) 1.21T in 00:42:10 with 0 errors on Sat Nov  9 18:02:11 2024", "none", false, num(100), time.Time{}, false},
-		{"resilvered, then a scrub line", "resilvered 1.21T in 03:12:45 with 0 errors on Sat Nov  9 18:02:11 2024\n\tscrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024", "none", false, num(100), end, false},
-		{"scrub running", "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.23T scanned at 1.02G/s, 456G issued at 380M/s, 3.62T total\n\t0B repaired, 12.30% done, 02:25:12 to go", "scrub", false, num(12.30), time.Time{}, false},
-		{"scrub running, issued computed", "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.23T scanned at 1.02G/s, 512G issued at 380M/s, 2T total", "scrub", false, num(25), time.Time{}, false},
-		{"scrub running 2.2, issued computed", "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.5T / 2T scanned at 1.02G/s, 512G / 2T issued at 380M/s", "scrub", false, num(25), time.Time{}, false},
-		{"scrub running 2.2, scanned computed", "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1T / 2T scanned at 1.02G/s", "scrub", false, num(50), time.Time{}, false},
-		{"scrub running, nothing to compute from", "scrub in progress since Sun Nov 10 00:24:02 2024", "scrub", false, numErr, time.Time{}, false},
-		{"scrub running, nan", "scrub in progress since Sun Nov 10 00:24:02 2024\n\t0B repaired, -nan% done, no estimated completion time", "scrub", false, numErr, time.Time{}, false},
-		{"scrub running, over 100", "scrub in progress since Sun Nov 10 00:24:02 2024\n\t0B repaired, 100.40% done, 00:00:01 to go", "scrub", false, num(100), time.Time{}, false},
-		{"resilver running", "resilver in progress since Sat Nov  9 22:14:51 2024\n\t228G resilvered, 24.61% done, 01:17:52 to go", "resilver", false, num(24.61), time.Time{}, false},
-		{"rebuild running", "resilver (draid2:5d:12c:1s-0) in progress since Sat Nov  9 22:14:51 2024\n\t1.82T scanned at 1.21G/s, 912G issued 607M/s, 3.62T total\n\t228G resilvered, 24.61% done, 01:17:52 to go", "resilver", false, num(24.61), time.Time{}, false},
-		{"paused", "scrub paused since Sun Nov 10 02:00:00 2024\n\tscrub started on Sun Nov 10 00:24:02 2024\n\t1.23T scanned, 456G issued, 3.62T total\n\t0B repaired, 12.30% done", "scrub_paused", false, num(12.30), time.Time{}, false},
-		{"paused, no percentage", "scrub paused since Sun Nov 10 02:00:00 2024\n\tscrub started on Sun Nov 10 00:24:02 2024", "scrub_paused", false, num(0), time.Time{}, false},
-		{"unknown", "frobnicate in progress", "", true, numErr, time.Time{}, true},
+		{desc: "no scan line", kind: "none", pct: num(100)},
+		{desc: "none requested", text: "none requested", kind: "none", pct: num(100)},
+		{desc: "finished scrub", text: finished, kind: "none", pct: num(100), lastScrub: end},
+		{desc: "finished scrub 0.8", text: "scrub repaired 0B in 0 days 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024", kind: "none", pct: num(100), lastScrub: end},
+		{desc: "finished scrub, bad date", text: "scrub repaired 0B in 00:12:33 with 0 errors on Sonntag 10.11.2024", kind: "none", pct: num(100), endErr: true},
+		{desc: "canceled", text: "scrub canceled on Sun Nov 10 00:30:00 2024", kind: "none", pct: num(100)},
+		{desc: "resilvered", text: "resilvered 1.21T in 03:12:45 with 0 errors on Sat Nov  9 18:02:11 2024", kind: "none", pct: num(100)},
+		{desc: "rebuilt", text: rebuilt, kind: "none", pct: num(100)},
+		// Repeated scan: headers — the scrub's, then one per rebuilt vdev,
+		// in either order.
+		{desc: "scrub finished, rebuild finished", text: finished + "\nscan: " + rebuilt, kind: "none", pct: num(100), lastScrub: end},
+		{desc: "rebuild finished, scrub finished", text: rebuilt + "\nscan: " + finished, kind: "none", pct: num(100), lastScrub: end},
+		{desc: "scrub running, rebuild finished", text: scrubOn + "\nscan: " + rebuilt, kind: "scrub", pct: num(12.30), scrubStart: start},
+		{desc: "rebuild finished, scrub running", text: rebuilt + "\nscan: " + scrubOn, kind: "scrub", pct: num(12.30), scrubStart: start},
+		{desc: "scrub finished, rebuild running", text: finished + "\nscan: " + rebuildOn, kind: "resilver", pct: num(24.61), lastScrub: end},
+		{desc: "rebuild running, scrub finished", text: rebuildOn + "\nscan: " + finished, kind: "resilver", pct: num(24.61), lastScrub: end},
+		{desc: "scrub running, rebuild running", text: scrubOn + "\nscan: " + rebuildOn, kind: "resilver", pct: num(24.61), scrubStart: start},
+		{desc: "scrub running", text: scrubOn, kind: "scrub", pct: num(12.30), scrubStart: start},
+		{desc: "scrub running, bad start", text: "scrub in progress since gestern\n\t0B repaired, 12.30% done", kind: "scrub", pct: num(12.30), startErr: true},
+		{desc: "scrub running, issued computed", text: "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.23T scanned at 1.02G/s, 512G issued at 380M/s, 2T total", kind: "scrub", pct: num(25), scrubStart: start},
+		{desc: "scrub running 2.2, issued computed", text: "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.5T / 2T scanned at 1.02G/s, 512G / 2T issued at 380M/s", kind: "scrub", pct: num(25), scrubStart: start},
+		{desc: "scrub running 2.2, scanned computed", text: "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1T / 2T scanned at 1.02G/s", kind: "scrub", pct: num(50), scrubStart: start},
+		{desc: "scrub running, nothing to compute from", text: "scrub in progress since Sun Nov 10 00:24:02 2024", kind: "scrub", pct: numErr, scrubStart: start},
+		// Just started, nothing issued yet: zpool divides 0 by 0.
+		{desc: "scrub running, nan", text: "scrub in progress since Sun Nov 10 00:24:02 2024\n\t0B repaired, -nan% done, no estimated completion time", kind: "scrub", pct: num(0), scrubStart: start},
+		{desc: "scrub running, unreadable percentage", text: "scrub in progress since Sun Nov 10 00:24:02 2024\n\t0B repaired, 12,30% done, 02:25:12 to go", kind: "scrub", pct: numErr, scrubStart: start},
+		{desc: "scrub running, over 100", text: "scrub in progress since Sun Nov 10 00:24:02 2024\n\t0B repaired, 100.40% done, 00:00:01 to go", kind: "scrub", pct: num(100), scrubStart: start},
+		{desc: "resilver running", text: "resilver in progress since Sat Nov  9 22:14:51 2024\n\t228G resilvered, 24.61% done, 01:17:52 to go", kind: "resilver", pct: num(24.61)},
+		{desc: "rebuild running", text: rebuildOn, kind: "resilver", pct: num(24.61)},
+		{desc: "paused", text: "scrub paused since Sun Nov 10 02:00:00 2024\n\tscrub started on Sun Nov 10 00:24:02 2024\n\t1.23T scanned, 456G issued, 3.62T total\n\t0B repaired, 12.30% done", kind: "scrub_paused", pct: num(12.30), scrubStart: start},
+		{desc: "paused, no percentage", text: "scrub paused since Sun Nov 10 02:00:00 2024\n\tscrub started on Sun Nov 10 00:24:02 2024", kind: "scrub_paused", pct: num(0), scrubStart: start},
+		{desc: "paused, no start", text: "scrub paused since Sun Nov 10 02:00:00 2024\n\t0B repaired, 12.30% done", kind: "scrub_paused", pct: num(12.30)},
+		{desc: "paused, bad start", text: "scrub paused since Sun Nov 10 02:00:00 2024\n\tscrub started on gestern", kind: "scrub_paused", pct: num(0), startErr: true},
+		{desc: "unknown", text: "frobnicate in progress", kindErr: true, pct: numErr, endErr: true},
+		{desc: "unknown next to a finished scrub", text: finished + "\nscan: frobnicate in progress", kindErr: true, pct: numErr, lastScrub: end},
 	} {
 		t.Run(tc.desc, func(t *testing.T) {
-			var lines []string
-			if tc.lines != "" {
-				lines = strings.Split(tc.lines, "\n")
-			}
-			got := parseScan(lines, time.UTC)
+			got := parseScan(scanEntries(tc.text), time.UTC)
 			if tc.kindErr {
 				if got.kindErr == nil {
 					t.Errorf("kind = %q, want an error", got.kind)
@@ -274,6 +333,13 @@ func TestParseScan(t *testing.T) {
 			} else if got.lastScrubErr != nil || !got.lastScrub.Equal(tc.lastScrub) {
 				t.Errorf("last scrub = %v (%v), want %v", got.lastScrub, got.lastScrubErr, tc.lastScrub)
 			}
+			if tc.startErr {
+				if got.scrubStartErr == nil {
+					t.Errorf("scrub start = %v, want an error", got.scrubStart)
+				}
+			} else if got.scrubStartErr != nil || !got.scrubStart.Equal(tc.scrubStart) {
+				t.Errorf("scrub start = %v (%v), want %v", got.scrubStart, got.scrubStartErr, tc.scrubStart)
+			}
 		})
 	}
 }
@@ -281,7 +347,7 @@ func TestParseScan(t *testing.T) {
 // TestParseScanLocalTime: the dates are the host's local time.
 func TestParseScanLocalTime(t *testing.T) {
 	loc := time.FixedZone("CET", 3600)
-	got := parseScan([]string{"scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024"}, loc)
+	got := parseScan([][]string{{"scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024"}}, loc)
 	if want := utc("2024-11-09 23:36:35"); !got.lastScrub.Equal(want) {
 		t.Fatalf("last scrub = %v, want %v", got.lastScrub, want)
 	}

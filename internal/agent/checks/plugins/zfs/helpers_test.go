@@ -92,6 +92,7 @@ func testPlugin(r runner) zfsPlugin {
 		run:    r,
 		now:    func() time.Time { return clock },
 		loc:    time.UTC,
+		scrubs: newScrubMemory(),
 	}
 }
 

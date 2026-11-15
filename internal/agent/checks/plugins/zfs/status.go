@@ -51,7 +51,7 @@ var counterForm = regexp.MustCompile(`^(\d+(?:\.\d+)?)([KMGTPE]?)$`)
 type poolParse struct {
 	name       string
 	section    string
-	scanLines  []string
+	scans      [][]string // one per scan: header
 	hasConfig  bool
 	rows       []treeRow
 	sums       [3]float64
@@ -89,7 +89,7 @@ func parseStatus(out []byte, loc *time.Location) map[string]poolStatus {
 			cur.section = key
 			switch key {
 			case "scan":
-				cur.scanLines = []string{rest}
+				cur.scans = append(cur.scans, []string{rest})
 			case "config":
 				cur.hasConfig = true
 			case "errors":
@@ -102,7 +102,7 @@ func parseStatus(out []byte, loc *time.Location) map[string]poolStatus {
 		}
 		switch cur.section {
 		case "scan":
-			cur.scanLines = append(cur.scanLines, line)
+			cur.scans[len(cur.scans)-1] = append(cur.scans[len(cur.scans)-1], line)
 		case "config":
 			if strings.HasPrefix(line, "\t") {
 				cur.row(line[1:])
@@ -201,7 +201,7 @@ var (
 
 // result turns the paragraph into the pool's values.
 func (p *poolParse) result(loc *time.Location) poolStatus {
-	st := poolStatus{scan: parseScan(p.scanLines, loc)}
+	st := poolStatus{scan: parseScan(p.scans, loc)}
 
 	treeErr := p.treeErr
 	if treeErr == nil && (!p.hasConfig || len(p.rows) == 0) {

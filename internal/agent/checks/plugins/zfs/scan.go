@@ -26,11 +26,15 @@ type scanState struct {
 	// pct is zfs.scan_pct.
 	pct number
 	// lastScrub is when the last scrub finished; zero when the paragraph
-	// names none (never scrubbed, canceled, a resilver), so the age counts
-	// from the pool's creation. lastScrubErr is set instead when that end
-	// cannot be read.
+	// names none (never scrubbed, canceled, running, a resilver).
+	// lastScrubErr is set instead when that end cannot be read.
 	lastScrub    time.Time
 	lastScrubErr error
+	// scrubStart is when the running or paused scrub started; zero when
+	// none runs or a paused one names no start. scrubStartErr is set
+	// instead when that start cannot be read.
+	scrubStart    time.Time
+	scrubStartErr error
 }
 
 // ctimeLayout is the C library's ctime form, which zpool prints dates in
@@ -53,64 +57,106 @@ var (
 	sizeForm = regexp.MustCompile(`^(\d+(?:\.\d+)?)([BKMGTPE]?)$`)
 )
 
-// parseScan reads a pool's scan paragraph: the text after "scan:" and its
-// continuation lines; none at all is a pool that was never scanned.
-func parseScan(lines []string, loc *time.Location) scanState {
+// parseScan reads a pool's scan paragraph: one entry per "scan:" header,
+// each the text after it and its continuation lines; none at all is a pool
+// that was never scanned. OpenZFS prints the scrub's entry, then one per
+// top-level vdev with a sequential rebuild (zpool replace -s or attach -s,
+// a dRAID distributed spare). The running entry names the kind and the
+// progress — a resilver or rebuild before a scrub before a paused scrub —
+// and the finished-scrub entry the last scrub's end. An entry the plugin
+// does not know makes the kind and progress errors, and the last scrub's
+// end too unless a finished-scrub entry names it.
+func parseScan(entries [][]string, loc *time.Location) scanState {
 	st := scanState{kind: scanNone, pct: value(100)}
-	for _, l := range lines {
-		l = strings.TrimSpace(l)
-		if strings.HasPrefix(l, "scrub repaired ") {
-			st.lastScrub, st.lastScrubErr = endDate(l, loc)
-			break
+	var resilvering, scrubbing, paused []string
+	var unknown error
+	for _, e := range entries {
+		if len(e) == 0 {
+			continue
+		}
+		first := strings.TrimSpace(e[0])
+		switch {
+		case first == "" || first == "none requested",
+			strings.HasPrefix(first, "scrub canceled on "),
+			strings.HasPrefix(first, "resilver canceled on "),
+			strings.HasPrefix(first, "resilvered "):
+			// Nothing runs.
+		case strings.HasPrefix(first, "scrub repaired "):
+			if st.lastScrub.IsZero() && st.lastScrubErr == nil {
+				st.lastScrub, st.lastScrubErr = dateAfter(first, " on ", "last scrub's end", loc)
+			}
+		case strings.HasPrefix(first, "scrub in progress since "):
+			scrubbing = firstOf(scrubbing, e)
+		case resilverRunning.MatchString(first):
+			resilvering = firstOf(resilvering, e)
+		case strings.HasPrefix(first, "scrub paused since "):
+			paused = firstOf(paused, e)
+		default:
+			if unknown == nil {
+				unknown = fmt.Errorf("unrecognized scan line %q", cutText(first, maxQuote))
+			}
 		}
 	}
-	first := ""
-	if len(lines) > 0 {
-		first = strings.TrimSpace(lines[0])
+	switch {
+	case unknown != nil:
+		st.kind, st.kindErr, st.pct = "", unknown, number{err: unknown}
+		if st.lastScrub.IsZero() && st.lastScrubErr == nil {
+			st.lastScrubErr = unknown
+		}
+	case resilvering != nil:
+		st.kind, st.pct = scanResilver, progress(resilvering, false)
+	case scrubbing != nil:
+		st.kind, st.pct = scanScrub, progress(scrubbing, false)
+	case paused != nil:
+		st.kind, st.pct = scanScrubPaused, progress(paused, true)
 	}
 	switch {
-	case first == "" || first == "none requested",
-		strings.HasPrefix(first, "scrub repaired "),
-		strings.HasPrefix(first, "scrub canceled on "),
-		strings.HasPrefix(first, "resilver canceled on "),
-		strings.HasPrefix(first, "resilvered "):
-		// Nothing runs.
-	case strings.HasPrefix(first, "scrub in progress since "):
-		st.kind, st.pct = scanScrub, progress(lines, false)
-	case resilverRunning.MatchString(first):
-		st.kind, st.pct = scanResilver, progress(lines, false)
-	case strings.HasPrefix(first, "scrub paused since "):
-		st.kind, st.pct = scanScrubPaused, progress(lines, true)
-	default:
-		err := fmt.Errorf("unrecognized scan line %q", cutText(first, maxQuote))
-		st.kind, st.kindErr, st.pct = "", err, number{err: err}
-		if st.lastScrub.IsZero() && st.lastScrubErr == nil {
-			st.lastScrubErr = err
+	case scrubbing != nil:
+		st.scrubStart, st.scrubStartErr = dateAfter(strings.TrimSpace(scrubbing[0]), " since ", "scrub start", loc)
+	case paused != nil:
+		for _, l := range paused[1:] {
+			if l = strings.TrimSpace(l); strings.HasPrefix(l, "scrub started on ") {
+				st.scrubStart, st.scrubStartErr = dateAfter(l, " on ", "scrub start", loc)
+				break
+			}
 		}
 	}
 	return st
 }
 
-// endDate reads the date after a line's last " on ".
-func endDate(line string, loc *time.Location) (time.Time, error) {
-	i := strings.LastIndex(line, " on ")
+// firstOf keeps the first entry of a kind.
+func firstOf(have, e []string) []string {
+	if have != nil {
+		return have
+	}
+	return e
+}
+
+// dateAfter reads the date after a line's last sep; what names the date
+// in the error.
+func dateAfter(line, sep, what string, loc *time.Location) (time.Time, error) {
+	i := strings.LastIndex(line, sep)
 	if i < 0 {
 		return time.Time{}, fmt.Errorf("no date in scan line %q", cutText(line, maxQuote))
 	}
-	s := strings.TrimSpace(line[i+len(" on "):])
+	s := strings.TrimSpace(line[i+len(sep):])
 	t, err := time.ParseInLocation(ctimeLayout, s, loc)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("last scrub's end %q is not a date", cutText(s, maxQuote))
+		return time.Time{}, fmt.Errorf("%s %q is not a date", what, cutText(s, maxQuote))
 	}
 	return t, nil
 }
 
 // progress reads a running scan's percentage: the "N% done" zpool prints,
 // else computed from the amounts done and in total. A paused scrub that
-// prints neither is at 0.
+// prints neither is at 0, and so is a scan that just started, for which
+// zpool divides 0 by 0 and prints "nan%" ("-nan%" with glibc).
 func progress(lines []string, paused bool) number {
 	text := strings.Join(lines, " ")
 	if m := percentDone.FindStringSubmatch(text); m != nil {
+		if strings.Contains(strings.ToLower(m[1]), "nan") {
+			return value(0)
+		}
 		v, err := strconv.ParseFloat(m[1], 64)
 		if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 			return number{err: fmt.Errorf("scan progress %q is not a number", cutText(m[1]+"%", maxQuote))}

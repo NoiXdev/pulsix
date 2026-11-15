@@ -1,21 +1,13 @@
 package zfs
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
 )
-
-// zfsGetArgs is `zfs get` for the creation time (a Unix time with -p) of
-// the pools' root datasets, which follow as further arguments.
-var zfsGetArgs = []string{"get", "-Hp", "-o", "name,value", "creation"}
 
 // statusDerived are the metrics read from zpool status (and zfs get).
 var statusDerived = []string{
@@ -34,8 +26,10 @@ type caller struct {
 
 // call runs one program and returns its standard output, or an error
 // worded for the check: which bound stopped it, or the run's own error
-// with stderr's first line. It returns when a bound ends even if the
-// runner does not.
+// with stderr's first line — then with whatever standard output the run
+// still produced (zfs get exits non-zero when one of its datasets is gone
+// but prints the others). It returns when a bound ends even if the runner
+// does not.
 func (c caller) call(name string, args []string, what string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(c.ctx, c.callTimeout)
 	defer cancel()
@@ -64,62 +58,9 @@ func (c caller) call(name string, args []string, what string) ([]byte, error) {
 		return nil, fmt.Errorf("zfs: %s did not answer within %s", what, c.callTimeout)
 	}
 	if line := cleanStderr(r.stderr); line != "" {
-		return nil, fmt.Errorf("zfs: %s: %w: %s", what, r.err, line)
+		return r.stdout, fmt.Errorf("zfs: %s: %w: %s", what, r.err, line)
 	}
-	return nil, fmt.Errorf("zfs: %s: %w", what, r.err)
-}
-
-// creationTimes is zfs get's answer: each pool's raw creation value, or
-// why there is none for any.
-type creationTimes struct {
-	values map[string]string
-	err    error
-}
-
-// creation asks zfs get for the named pools' creation times.
-func (c caller) creation(names []string) creationTimes {
-	out, err := c.call("zfs", append(slices.Clone(zfsGetArgs), names...), "zfs get creation")
-	if err != nil {
-		return creationTimes{err: err}
-	}
-	values := map[string]string{}
-	for line := range bytes.Lines(out) {
-		name, v, ok := strings.Cut(strings.TrimRight(string(line), "\r\n"), "\t")
-		if ok {
-			values[name] = v
-		}
-	}
-	return creationTimes{values: values}
-}
-
-// of returns the pool's creation time.
-func (ct creationTimes) of(name string) (time.Time, error) {
-	if ct.err != nil {
-		return time.Time{}, ct.err
-	}
-	v, ok := ct.values[name]
-	if !ok {
-		return time.Time{}, fmt.Errorf("zfs: pool %s: no creation time in zfs get's output", name)
-	}
-	sec, err := strconv.ParseInt(v, 10, 64)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("zfs: pool %s: creation time %q is not a number", name, cutText(v, maxQuote))
-	}
-	return time.Unix(sec, 0), nil
-}
-
-// neverScrubbed names the pools whose scrub age counts from their
-// creation: in zpool status, with no finished scrub named and no unreadable
-// one either.
-func neverScrubbed(pools []listedPool, statuses map[string]poolStatus) []string {
-	var names []string
-	for _, lp := range pools {
-		st, ok := statuses[lp.name]
-		if ok && st.scan.lastScrub.IsZero() && st.scan.lastScrubErr == nil {
-			names = append(names, lp.name)
-		}
-	}
-	return names
+	return r.stdout, fmt.Errorf("zfs: %s: %w", what, r.err)
 }
 
 // report gathers one collection's observations and its advisory errors,
@@ -174,7 +115,7 @@ func (r *report) label(item, metric, label string) {
 }
 
 // pool reports every metric of one pool.
-func (r *report) pool(lp listedPool, statuses map[string]poolStatus, statusErr error, created creationTimes, now time.Time) {
+func (r *report) pool(lp listedPool, statuses map[string]poolStatus, statusErr error, age scrubAge) {
 	name := lp.name
 	r.label(name, "zfs.state", lp.health)
 	r.number(name, "zfs.capacity_pct", lp.capacity)
@@ -203,29 +144,5 @@ func (r *report) pool(lp listedPool, statuses map[string]poolStatus, statusErr e
 		r.label(name, "zfs.scan", st.scan.kind)
 	}
 	r.number(name, "zfs.scan_pct", st.scan.pct)
-	r.scrubAge(name, st.scan, created, now)
-}
-
-// scrubAge reports zfs.scrub_age_days: from the last finished scrub, else
-// from the pool's creation.
-func (r *report) scrubAge(name string, scan scanState, created creationTimes, now time.Time) {
-	const metric = "zfs.scrub_age_days"
-	switch {
-	case scan.lastScrubErr != nil:
-		r.fail(name, metric, fmt.Errorf("zfs: pool %s: %w", name, scan.lastScrubErr))
-	case !scan.lastScrub.IsZero():
-		r.obs = append(r.obs, checks.ValueObservation(name, metric, daysSince(now, scan.lastScrub)))
-	default:
-		t, err := created.of(name)
-		if err != nil {
-			r.fail(name, metric, err)
-			return
-		}
-		r.obs = append(r.obs, checks.ValueObservation(name, metric, daysSince(now, t)))
-	}
-}
-
-// daysSince is the fractional days from t to now; 0 when t is later.
-func daysSince(now, t time.Time) float64 {
-	return max(now.Sub(t).Hours()/24, 0)
+	r.scrubAge(name, age)
 }

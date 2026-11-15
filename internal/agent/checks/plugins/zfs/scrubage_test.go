@@ -4,13 +4,18 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/noixdev/pulsix/internal/agent/checks"
 )
 
-// TestCollectScrubAge is Review Focus 3: the age from the last finished
-// scrub, else from the pool's creation (zfs get, asked only for the pools
-// that need it), never an error while zfs get works.
+// TestCollectScrubAge is Review Focus 3 with the age's sources in order:
+// a finished scrub's end; else a running or paused scrub's start; else the
+// pool's creation (zfs get, asked only for the pools that need it) — on a
+// plugin that remembers nothing yet. Never an error while zfs get works.
 func TestCollectScrubAge(t *testing.T) {
 	created := utc("2024-06-01 12:00:00")
 	creation := fmt.Sprintf("%%s\t%d\n", created.Unix())
@@ -20,13 +25,18 @@ func TestCollectScrubAge(t *testing.T) {
 		since        time.Time
 	}{
 		{"status_mirror_healthy.txt", "tank", false, utc("2024-11-10 00:36:35")},
+		{"status_scrub_progress.txt", "tank", false, utc("2024-11-10 00:24:02")},
+		{"status_scrub_paused.txt", "tank", false, utc("2024-11-10 00:24:02")},
 		{"status_scrub_canceled.txt", "tank", true, created},
 		{"status_never_scrubbed.txt", "fresh", true, created},
 		{"status_resilvered.txt", "tank", true, created},
-		{"status_scrub_progress.txt", "tank", true, created},
 		{"status_resilver_spare.txt", "tank", true, created},
+		{"status_rebuild.txt", "alpha", false, utc("2024-11-10 00:36:35")},
+		{"status_rebuild.txt", "beta", false, utc("2024-11-17 00:24:02")},
+		{"status_rebuild.txt", "gamma", false, utc("2024-11-10 00:36:35")},
+		{"status_rebuild.txt", "delta", false, utc("2024-11-17 00:24:02")},
 	} {
-		t.Run(tc.status, func(t *testing.T) {
+		t.Run(tc.status+"/"+tc.pool, func(t *testing.T) {
 			f := newFake(t, map[string]reply{
 				"zpool list":   {stdout: fmt.Appendf(nil, "%s\tONLINE\t100\t50\t50\t1\n", tc.pool)},
 				"zpool status": {stdout: load(t, tc.status)},
@@ -46,6 +56,109 @@ func TestCollectScrubAge(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCollectScrubAgeRemembered: a finished scrub seen once is remembered
+// per pool, so when a resilver, a canceled scrub or nothing replaces the
+// scan line the age still counts from it, without zfs get; a running
+// scrub's start comes first, a newer finished scrub replaces the memory,
+// and a pool never seen finished still counts from its creation.
+func TestCollectScrubAgeRemembered(t *testing.T) {
+	const created = 1717243200
+	p := testPlugin(nil)
+	round := func(status string, wantGet bool) []checks.Observation {
+		t.Helper()
+		list := "tank\tONLINE\t100\t50\t50\t1\n"
+		if strings.Contains(status, "pool: other\n") {
+			list += "other\tONLINE\t100\t50\t50\t1\n"
+		}
+		f := newFake(t, map[string]reply{
+			"zpool list":   {stdout: []byte(list)},
+			"zpool status": {stdout: []byte(status)},
+			"zfs get":      {stdout: fmt.Appendf(nil, "tank\t%d\nother\t%d\n", created, created)},
+		})
+		p.run = f
+		obs, err := p.Collect(context.Background(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := f.called("zfs get"); ok != wantGet {
+			t.Fatalf("zfs get called = %v, want %v", ok, wantGet)
+		}
+		return obs
+	}
+	other := strings.ReplaceAll(string(load(t, "status_never_scrubbed.txt")), "fresh", "other")
+	age := func(s string) float64 { return days(clock.Sub(utc(s))) }
+
+	obs := round(string(load(t, "status_mirror_healthy.txt"))+other, true)
+	wantValue(t, obs, "tank", "zfs.scrub_age_days", age("2024-11-10 00:36:35"))
+	wantValue(t, obs, "other", "zfs.scrub_age_days", days(clock.Sub(time.Unix(created, 0))))
+
+	for _, status := range []string{"status_resilvered.txt", "status_scrub_canceled.txt", "status_resilver_spare.txt"} {
+		obs = round(string(load(t, status)), false)
+		wantValue(t, obs, "tank", "zfs.scrub_age_days", age("2024-11-10 00:36:35"))
+	}
+	obs = round(strings.Replace(string(load(t, "status_resilvered.txt")), "  scan: resilvered 1.21T in 03:12:45 with 0 errors on Sat Nov  9 18:02:11 2024", "  scan: none requested", 1), false)
+	wantValue(t, obs, "tank", "zfs.scrub_age_days", age("2024-11-10 00:36:35"))
+
+	// A running scrub's start before the memory.
+	obs = round(string(load(t, "status_scrub_progress.txt")), false)
+	wantValue(t, obs, "tank", "zfs.scrub_age_days", age("2024-11-10 00:24:02"))
+
+	// A newer finished scrub replaces the memory.
+	obs = round(string(load(t, "status_data_errors.txt")), false)
+	wantValue(t, obs, "tank", "zfs.scrub_age_days", age("2024-11-10 00:44:13"))
+	obs = round(string(load(t, "status_resilvered.txt")), false)
+	wantValue(t, obs, "tank", "zfs.scrub_age_days", age("2024-11-10 00:44:13"))
+
+	// The other pool was never seen finished.
+	obs = round(other+string(load(t, "status_resilvered.txt")), true)
+	wantValue(t, obs, "other", "zfs.scrub_age_days", days(clock.Sub(time.Unix(created, 0))))
+}
+
+// TestCollectScrubAgeConcurrent: one plugin instance collected from several
+// checks at once (run with -race).
+func TestCollectScrubAgeConcurrent(t *testing.T) {
+	f := newFake(t, map[string]reply{
+		"zpool list":   {stdout: load(t, "list_two_pools.txt")},
+		"zpool status": {stdout: load(t, "status_two_pools.txt")},
+		"zfs get":      {stdout: []byte("tank\t1717243200\n")},
+	})
+	p := testPlugin(f)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if _, err := p.Collect(context.Background(), nil); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	if got, ok := p.scrubs.get("rpool"); !ok || !got.Equal(utc("2024-11-10 00:25:53")) {
+		t.Fatalf("remembered rpool = %v, %v", got, ok)
+	}
+}
+
+// TestCollectCreationPartial: zfs get exits non-zero for one pool (it
+// vanished) but prints the other's creation: that one stands, only the
+// missing one carries the error.
+func TestCollectCreationPartial(t *testing.T) {
+	f := newFake(t, map[string]reply{
+		"zpool list":   {stdout: []byte("fresh\tONLINE\t100\t50\t50\t1\ntank\tONLINE\t100\t50\t50\t1\n")},
+		"zpool status": {stdout: append(load(t, "status_never_scrubbed.txt"), load(t, "status_scrub_canceled.txt")...)},
+		"zfs get": {stdout: []byte("fresh\t1717243200\n"), err: exitStatus(1),
+			stderr: []byte("cannot open 'tank': dataset does not exist\n")},
+	})
+	obs, err := testPlugin(f).Collect(context.Background(), nil)
+	if err == nil {
+		t.Fatal("want an advisory error")
+	}
+	args, _ := f.called("zfs get")
+	if !slices.Equal(args, []string{"zfs", "get", "-Hp", "-o", "name,value", "creation", "fresh", "tank"}) {
+		t.Fatalf("zfs get args = %q", args)
+	}
+	wantValue(t, obs, "fresh", "zfs.scrub_age_days", days(clock.Sub(time.Unix(1717243200, 0))))
+	wantErr(t, obs, "tank", "zfs.scrub_age_days", "zfs: zfs get creation: exit status 1: cannot open 'tank': dataset does not exist")
 }
 
 // TestCollectScrubAgeOnlyAsksNeededPools: two pools, one scrubbed: zfs get

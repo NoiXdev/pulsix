@@ -75,6 +75,16 @@ func TestCollectDevZFSCheckFails(t *testing.T) {
 	wantErr(t, obs, "", "zfs.pools", "zfs: stat /dev/zfs: permission denied")
 }
 
+// TestCollectNilGate: a plugin without its /dev/zfs check (the zero
+// value) reports zero pools rather than nothing.
+func TestCollectNilGate(t *testing.T) {
+	obs, err := zfsPlugin{}.Collect(context.Background(), nil)
+	if err != nil || len(obs) != 1 {
+		t.Fatalf("obs=%+v err=%v", obs, err)
+	}
+	wantValue(t, obs, "", "zfs.pools", 0)
+}
+
 // TestCollectNoZpool: /dev/zfs but no zpool program: zero pools, no error.
 func TestCollectNoZpool(t *testing.T) {
 	f := newFake(t, map[string]reply{"zpool list": {err: fmt.Errorf("zpool %w", errNotFound)}})
@@ -392,7 +402,7 @@ func TestCollectUnavailablePool(t *testing.T) {
 func TestCollectStatusParseErrors(t *testing.T) {
 	f := newFake(t, map[string]reply{
 		"zpool list":   {stdout: []byte("backup\tFAULTED\t100\t50\t50\t1\n")},
-		"zpool status": {stdout: []byte(strings.Replace(string(load(t, "status_faulted.txt")), "  scan: scrub repaired 0B in 01:02:03 with 0 errors on Sun Oct 13 01:26:04 2024", "  scan: scrub in progress since Sun Nov 10 00:24:02 2024\n\t0B repaired, -nan% done", 1))},
+		"zpool status": {stdout: []byte(strings.Replace(string(load(t, "status_faulted.txt")), "  scan: scrub repaired 0B in 01:02:03 with 0 errors on Sun Oct 13 01:26:04 2024", "  scan: scrub in progress since Sun Nov 10 00:24:02 2024\n\t0B repaired, 12,30% done", 1))},
 		"zfs get":      {stdout: []byte("backup\t1717243200\n")},
 	})
 	obs, err := testPlugin(f).Collect(context.Background(), nil)
@@ -402,7 +412,7 @@ func TestCollectStatusParseErrors(t *testing.T) {
 	wantLabel(t, obs, "backup", "zfs.state", "FAULTED")
 	wantErr(t, obs, "backup", "zfs.data_errors", "List of errors unavailable: pool I/O is currently suspended")
 	wantLabel(t, obs, "backup", "zfs.scan", "scrub")
-	wantErr(t, obs, "backup", "zfs.scan_pct", "-nan")
+	wantErr(t, obs, "backup", "zfs.scan_pct", "12,30%")
 	wantValue(t, obs, "backup", "zfs.devices_unhealthy", 1)
 	wantValue(t, obs, "backup", "zfs.errors_write", 12)
 }

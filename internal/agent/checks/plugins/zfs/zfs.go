@@ -15,21 +15,33 @@
 // OpenZFS than the current distributions ship. Calls, in order:
 // `zpool list -Hp -o name,health,size,free,capacity,fragmentation`
 // (list.go); `zpool status -p` for every pool, the pools filter applied
-// after parsing (status.go, scan.go); and only when a reported pool never
-// finished a scrub, `zfs get -Hp -o name,value creation <pool>…`. Each call
-// gets 30 s and stdout up to 1 MiB, the whole collection 60 s.
+// after parsing (status.go, scan.go); and only for the reported pools
+// whose scrub age counts from their creation (below),
+// `zfs get -Hp -o name,value creation <pool>…` (age.go). Each call gets
+// 30 s and stdout up to 1 MiB, the whole collection 60 s.
 //
 // Every metric is reported on every run for every reported pool — a value
 // the agent stops sending turns stale and leaves the host unknown — as a
 // value or as a collection error, except zfs.fragmentation_pct where zpool
-// prints '-' (it is then never present, so never stale). zfs.scan_pct is
-// the running scrub's or resilver's progress (computed from the amounts
-// done and in total when no percentage is printed), the paused scrub's
-// (0 when it prints none), 100 when none runs. zfs.scrub_age_days counts
-// in days from the end of the last finished scrub, else from the pool's
-// creation: a canceled scrub is not a finished one, a resilver is not a
-// scrub, and a pool that was never scrubbed is not an error. An end in the
-// future (the clock moved) reads 0.
+// prints '-' (it is then never present, so never stale). zpool status may
+// print several scan: entries for a pool — the scrub's, then one per
+// top-level vdev with a sequential rebuild — and the running one names
+// zfs.scan (a resilver or rebuild before a scrub before a paused scrub).
+// zfs.scan_pct is its progress (computed from the amounts done and in
+// total when no percentage is printed; 0 for the "nan%" of a scan that just
+// started), the paused scrub's (0 when it prints none), 100 when none runs.
+//
+// zfs.scrub_age_days is in days, fractional, counted from the first of:
+// the end of the finished scrub zpool status prints now (the plugin
+// remembers it per pool); the start of the running or paused scrub, so a
+// routine scrub reads about 0 days rather than the pool's age; the
+// remembered end, when a resilver, a canceled scrub or nothing has
+// replaced the scan line since; the pool's creation. A canceled scrub is
+// not a finished one, a resilver is not a scrub, and a pool that was never
+// scrubbed is not an error. The memory lives in the plugin only: after an
+// agent restart the age counts from the creation (or a running scrub's
+// start) until the next finished scrub is seen. A date in the future (the
+// clock moved) reads 0.
 //
 // Error counters sum each column over every row of the pool's
 // configuration tree — the pool row, vdevs, leaves and the logs, cache,
@@ -46,7 +58,8 @@
 // every pool an error; a pool in zpool list missing from zpool status
 // (it vanished between the calls) gets those errors on its own; a pool
 // only in zpool status is ignored. A failing zfs get makes
-// zfs.scrub_age_days of the never-scrubbed pools an error. Error texts
+// zfs.scrub_age_days an error for the pools it printed no creation time
+// for; the ones it did print stand. Error texts
 // quote at most the first line of stderr, cleaned and cut to 256 bytes.
 //
 // zfs.pools is the number of pools reported this round, after the "pools"
@@ -86,6 +99,9 @@ type zfsPlugin struct {
 	now func() time.Time
 	// loc is the time zone zpool prints dates in; nil means time.Local.
 	loc *time.Location
+	// scrubs remembers each pool's last finished scrub; shared by every
+	// copy of the plugin value. nil remembers nothing.
+	scrubs *scrubMemory
 	// callTimeout and collectTimeout override the defaults; zero means the
 	// default.
 	callTimeout    time.Duration
@@ -99,6 +115,7 @@ func New() checks.Plugin {
 		hasZFS: zfsLoaded,
 		run:    execRunner{find: locator{lookPath: exec.LookPath}.find, busy: newInflight()},
 		now:    time.Now,
+		scrubs: newScrubMemory(),
 	}
 }
 
@@ -124,12 +141,12 @@ func (p zfsPlugin) Collect(ctx context.Context, params map[string]any) ([]checks
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if p.hasZFS == nil {
-		return nil, nil
-	}
 	filter, _, err := checks.ParamStrings(params, "pools")
 	if err != nil {
 		return nil, fmt.Errorf("zfs: %w", err)
+	}
+	if p.hasZFS == nil {
+		return poolCount(0), nil // a zero plugin: no ZFS to look at
 	}
 	loaded, err := p.hasZFS()
 	if err != nil {
@@ -172,9 +189,10 @@ func (p zfsPlugin) Collect(ctx context.Context, params map[string]any) ([]checks
 		statuses = parseStatus(out, p.location())
 	}
 
+	bases, fromCreation := scrubBases(pools, statuses, p.scrubs)
 	var created creationTimes
-	if names := neverScrubbed(pools, statuses); len(names) > 0 {
-		created = c.creation(names)
+	if len(fromCreation) > 0 {
+		created = c.creation(fromCreation)
 		if perr := ctx.Err(); perr != nil {
 			return nil, perr
 		}
@@ -183,7 +201,7 @@ func (p zfsPlugin) Collect(ctx context.Context, params map[string]any) ([]checks
 	r := newReport(errs)
 	now := p.clock()
 	for _, lp := range pools {
-		r.pool(lp, statuses, statusErr, created, now)
+		r.pool(lp, statuses, statusErr, scrubAge{base: bases[lp.name], created: created, now: now})
 	}
 	r.obs = append(r.obs, checks.ValueObservation("", poolsMetric, float64(len(pools))))
 	return r.obs, r.err()
