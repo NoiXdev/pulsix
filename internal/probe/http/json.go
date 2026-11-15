@@ -191,6 +191,11 @@ func jsonValue(name string, nodes []any) probe.Observation {
 	}
 	switch v := nodes[0].(type) {
 	case json.Number:
+		// A number longer than the subset compares is out of range too:
+		// its digits are the target's, not a reading.
+		if len(v) > jpath.MaxNumberLen {
+			return jsonError(name, errOutOfRange)
+		}
 		f, err := strconv.ParseFloat(string(v), 64)
 		if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
 			return jsonError(name, errOutOfRange)

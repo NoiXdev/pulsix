@@ -29,13 +29,17 @@ Pulsix's own parser and evaluator instead of the library (see Descriptor).
   bracket (no unions, no slices), at most one descendant segment (`..name`,
   `..*`, `..[selector]`); a filter is comparisons `@path op literal` and
   existence tests `@path` (an `@path` of names and indexes only) joined by
-  `&&`, `||`, `!` and parentheses, at most 8; no `$` inside a filter, no
+  `&&`, `||`, `!` and parentheses: at most 8 comparisons and tests and 32
+  expression nodes in all (operators and parentheses count), so a filter
+  does a fixed amount of work per candidate; no `$` inside a filter, no
   functions, no nested filters. Why (review of Task 2): the target writes
   the document the path runs over, and full RFC 9535 cannot be bounded —
   unions and descendant segments multiply the node list, `$` queries
   inside filters make evaluation polynomial in the body, and
   `match`/`search` compile patterns the document can supply — whereas
-  every path of the subset evaluates in time linear in the body.
+  in the subset no segment reaches a node twice, so a path's work is at
+  most linear in the body per segment and is capped by the probe's
+  node-visit budget.
   `internal/triggers` keeps the full library for its own, operator-written
   documents.
 - `secret`: `SecretParam()`, optional.
@@ -62,8 +66,13 @@ Pulsix's own parser and evaluator instead of the library (see Descriptor).
   refuses → that item's error "the path is not allowed" (defence in depth
   behind the format); an evaluation that would visit more than 2 000 000
   nodes (a 1 MiB body holds about 525 000 values) → that item's error
-  "the path selected too much", the backstop that keeps every entry's
-  work bounded; a body whose read broke off (timeout, reset) → every JSON
+  "the path selected too much", the cap on every entry's work (each
+  node reached, child looked at, `@` step and filter node evaluated is
+  charged; node lists then stay below about 128 MiB above the document,
+  typically far less); a document number longer than 64 bytes is never
+  compared (comparisons treat it like a value of another type) and, when
+  selected, is "the number is out of range", so a long number costs no
+  more than a short one; a body whose read broke off (timeout, reset) → every JSON
   item "the response was cut short".
 - Each path: zero nodes → "the path matched nothing"; more than one →
   "the path matched <n> values"; one node that is an object, array or

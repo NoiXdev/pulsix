@@ -10,12 +10,21 @@ import (
 // than its budget.
 var ErrTooMuch = errors.New("the path selected too much")
 
+// MaxNumberLen bounds the text of a document number the subset compares:
+// a longer one (a million digits fit in a body) is not comparable, so a
+// comparison costs a fixed amount whatever the document. internal/probe/http
+// reports such a number, when a path selects it, as out of range.
+const MaxNumberLen = 64
+
 // evaluator charges every node a segment reaches, every child a filter or
-// a descendant segment looks at and every step of an @ path to a budget.
-// Within the subset no node is reached twice by one segment, so the work
-// is at most the budget whatever the document.
+// a descendant segment looks at, every step of an @ path and every node
+// of a filter expression it evaluates to a budget. Every unit of work is
+// one of these or a fixed amount next to one, so the work is a constant
+// times the budget whatever the document; ops counts the units for the
+// tests that pin this.
 type evaluator struct {
 	left int
+	ops  int
 }
 
 // visit charges one node and reports whether the budget still holds.
@@ -28,7 +37,10 @@ func (e *evaluator) visit() bool {
 // decodes it (numbers as json.Number or float64), as RFC 9535 defines the
 // node list. It stops with ErrTooMuch after budget node visits.
 func (p *Path) Select(doc any, budget int) ([]any, error) {
-	e := &evaluator{left: budget}
+	return (&evaluator{left: budget}).run(p, doc)
+}
+
+func (e *evaluator) run(p *Path, doc any) ([]any, error) {
 	nodes := []any{doc}
 	for _, s := range p.segs {
 		var out []any
@@ -50,6 +62,7 @@ func (p *Path) Select(doc any, budget int) ([]any, error) {
 // descend applies sel to n and to each of n's descendants, in document
 // order.
 func (e *evaluator) descend(n any, sel selector, out []any) []any {
+	e.ops++
 	out = e.apply(n, sel, out)
 	switch v := n.(type) {
 	case []any:
@@ -72,6 +85,7 @@ func (e *evaluator) descend(n any, sel selector, out []any) []any {
 
 // apply appends what sel selects from n.
 func (e *evaluator) apply(n any, sel selector, out []any) []any {
+	e.ops++
 	switch sel.kind {
 	case selName:
 		if obj, ok := n.(map[string]any); ok {
@@ -128,6 +142,7 @@ func index(arr []any, i int64) (any, bool) {
 // for Nothing.
 func (e *evaluator) query(node any, q []step) (any, bool) {
 	for _, s := range q {
+		e.ops++
 		var ok bool
 		if s.isName {
 			obj, isObj := node.(map[string]any)
@@ -149,7 +164,18 @@ func (e *evaluator) query(node any, q []step) (any, bool) {
 	return node, true
 }
 
+// charge counts one filter expression node's work and charges it.
+// The count is kept apart from the charge so a test notices work that
+// goes uncharged.
+func (e *evaluator) charge() bool {
+	e.ops++
+	return e.visit()
+}
+
 func (x orExpr) eval(e *evaluator, node any) bool {
+	if !e.charge() {
+		return false
+	}
 	for _, t := range x {
 		if t.eval(e, node) {
 			return true
@@ -159,6 +185,9 @@ func (x orExpr) eval(e *evaluator, node any) bool {
 }
 
 func (x andExpr) eval(e *evaluator, node any) bool {
+	if !e.charge() {
+		return false
+	}
 	for _, t := range x {
 		if !t.eval(e, node) {
 			return false
@@ -167,9 +196,14 @@ func (x andExpr) eval(e *evaluator, node any) bool {
 	return true
 }
 
-func (x notExpr) eval(e *evaluator, node any) bool { return !x.x.eval(e, node) }
+func (x notExpr) eval(e *evaluator, node any) bool {
+	return e.charge() && !x.x.eval(e, node)
+}
 
 func (x existExpr) eval(e *evaluator, node any) bool {
+	if !e.charge() {
+		return false
+	}
 	_, ok := e.query(node, x.q)
 	return ok
 }
@@ -179,6 +213,9 @@ func (x existExpr) eval(e *evaluator, node any) bool {
 // and null only for equality; values of different types are unequal and
 // unordered.
 func (x cmpExpr) eval(e *evaluator, node any) bool {
+	if !e.charge() {
+		return false
+	}
 	v, ok := e.query(node, x.q)
 	eq := func() bool { return ok && equal(v, x.lit) }
 	lt := func() bool { return ok && less(v, x.lit) }
@@ -200,10 +237,14 @@ func (x cmpExpr) eval(e *evaluator, node any) bool {
 	return false
 }
 
-// number reads a JSON number of the document.
+// number reads a JSON number of the document; one longer than
+// MaxNumberLen is not comparable.
 func number(v any) (float64, bool) {
 	switch n := v.(type) {
 	case json.Number:
+		if len(n) > MaxNumberLen {
+			return 0, false
+		}
 		// A valid number out of range is ±Inf, still ordered.
 		f, _ := strconv.ParseFloat(string(n), 64)
 		return f, true

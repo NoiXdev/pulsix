@@ -1,16 +1,27 @@
 // Package jpath parses and evaluates the JSONPath subset of the http
 // check's json_values (backlog 3.6h): RFC 9535 syntax and semantics for
-// what it accepts, restricted so that evaluating any accepted path over a
-// document the target writes costs time linear in the document's size.
+// what it accepts, restricted so that a path over a document the target
+// writes cannot multiply its work.
 //
 // Accepted: `$`, then segments `.name`, `.*`, `['name']`, `[0]`, `[-1]`,
 // `[*]` and `[?filter]`, exactly one selector per bracket, and at most
 // one descendant segment (`..name`, `..*`, `..[selector]`) in the whole
 // path. A filter is comparisons `@path op literal` and existence tests
-// `@path`, joined by `&&`, `||`, `!` and parentheses, at most 8 of them;
-// an `@path` holds names and indexes only. Not accepted: unions, slices,
-// `$` inside a filter, functions, nested filters. internal/triggers keeps
-// the full RFC 9535 library for its own, operator-written documents.
+// `@path`, joined by `&&`, `||`, `!` and parentheses: at most 8
+// comparisons and tests and 32 expression nodes in all. An `@path` holds
+// names and indexes only. Not accepted: unions, slices, `$` inside a
+// filter, functions, nested filters. internal/triggers keeps the full
+// RFC 9535 library for its own, operator-written documents.
+//
+// Cost: no segment reaches a node twice, so each segment's work is at
+// most linear in the document, and a path's work is at most the document
+// times its segments; Select's node-visit budget caps it, every unit of
+// work charged to it or bounded next to a charged one. A document number
+// longer than MaxNumberLen is not compared, so a comparison costs a fixed
+// amount. Memory: a node list holds at most budget entries (16 bytes
+// each); with slice growth and the previous segment's list, the peak above
+// the decoded document is about 4 × 16 bytes × budget (about 128 MiB for a
+// budget of 2 000 000, typically far less).
 package jpath
 
 import (
@@ -24,6 +35,10 @@ import (
 const (
 	// maxTerms bounds the comparisons and existence tests of one filter.
 	maxTerms = 8
+	// maxFilterNodes bounds a filter's whole expression: comparisons,
+	// existence tests, &&, ||, ! and parentheses each count, so no shape
+	// of filter does more than a fixed amount of work per candidate.
+	maxFilterNodes = 32
 	// maxIndex is RFC 9535's I-JSON integer bound.
 	maxIndex = 1<<53 - 1
 )
@@ -97,6 +112,7 @@ type parser struct {
 	s     string
 	i     int
 	terms int
+	nodes int
 }
 
 // Parse parses path. Its error says where and why, quoting nothing but
@@ -224,7 +240,7 @@ func (p *parser) selector() (selector, error) {
 	case c == '?':
 		p.i++
 		p.blank()
-		p.terms = 0
+		p.terms, p.nodes = 0, 0
 		f, err := p.or()
 		return selector{kind: selFilter, filter: f}, err
 	case c == '-' || isDigit(c):
@@ -402,6 +418,9 @@ func (p *parser) or() (expr, error) {
 			p.i = save
 			break
 		}
+		if err := p.node(); err != nil {
+			return nil, err
+		}
 		p.blank()
 		next, err := p.and()
 		if err != nil {
@@ -429,6 +448,9 @@ func (p *parser) and() (expr, error) {
 			p.i = save
 			break
 		}
+		if err := p.node(); err != nil {
+			return nil, err
+		}
 		p.blank()
 		next, err := p.basic()
 		if err != nil {
@@ -446,13 +468,16 @@ func (p *parser) and() (expr, error) {
 // test, the last and the first optionally negated.
 func (p *parser) basic() (expr, error) {
 	if p.eat("!") {
+		if err := p.node(); err != nil {
+			return nil, err
+		}
 		p.blank()
 		switch {
 		case p.peek("("):
 			x, err := p.paren()
 			return notExpr{x}, err
 		case p.peek("@"):
-			q, err := p.relQuery()
+			q, _, err := p.relQuery()
 			if err != nil {
 				return nil, err
 			}
@@ -469,7 +494,7 @@ func (p *parser) basic() (expr, error) {
 	if !p.peek("@") {
 		return nil, p.notAFilterTerm()
 	}
-	q, err := p.relQuery()
+	q, spaced, err := p.relQuery()
 	if err != nil {
 		return nil, err
 	}
@@ -482,6 +507,11 @@ func (p *parser) basic() (expr, error) {
 	if op == "" {
 		p.i = save
 		return existExpr{q}, nil
+	}
+	if spaced {
+		// RFC 9535's singular query, which a comparison takes, has no
+		// blank space inside its brackets; an existence test may.
+		return nil, p.errf("a compared @ path has no blank space inside its brackets")
 	}
 	p.blank()
 	lit, err := p.literal()
@@ -511,11 +541,23 @@ func (p *parser) term() error {
 	if p.terms > maxTerms {
 		return p.errf("a filter holds at most %d comparisons", maxTerms)
 	}
+	return p.node()
+}
+
+// node counts one node of the filter's expression.
+func (p *parser) node() error {
+	p.nodes++
+	if p.nodes > maxFilterNodes {
+		return p.errf("a filter holds at most %d operators, parentheses and comparisons", maxFilterNodes)
+	}
 	return nil
 }
 
 func (p *parser) paren() (expr, error) {
 	p.i++ // (
+	if err := p.node(); err != nil {
+		return nil, err
+	}
 	p.blank()
 	x, err := p.or()
 	if err != nil {
@@ -528,72 +570,83 @@ func (p *parser) paren() (expr, error) {
 	return x, nil
 }
 
-// relQuery reads "@" and its name and index segments.
-func (p *parser) relQuery() ([]step, error) {
+// relQuery reads "@" and its name and index segments, and reports
+// whether a bracket held blank space.
+func (p *parser) relQuery() ([]step, bool, error) {
 	p.i++ // @
 	var q []step
+	spaced := false
 	for {
 		save := p.i
 		p.blank()
 		switch {
 		case p.peek(".."):
-			return nil, p.errf("a descendant segment is not supported inside a filter")
+			return nil, false, p.errf("a descendant segment is not supported inside a filter")
 		case p.eat("."):
 			if p.peek("*") {
-				return nil, p.errf("a wildcard is not supported inside a filter")
+				return nil, false, p.errf("a wildcard is not supported inside a filter")
 			}
 			name, err := p.shorthand()
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			q = append(q, step{isName: true, name: name})
 		case p.eat("["):
-			s, err := p.relBracket()
+			s, blank, err := p.relBracket()
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
+			spaced = spaced || blank
 			q = append(q, s)
 		default:
 			p.i = save
-			return q, nil
+			return q, spaced, nil
 		}
 	}
 }
 
-// relBracket reads a singular segment's selector and "]"; RFC 9535 has
-// no blank space inside these brackets.
-func (p *parser) relBracket() (step, error) {
+// relBracket reads one name or index and "]", and reports whether blank
+// space surrounded it (RFC 9535 allows it in an existence test only).
+func (p *parser) relBracket() (step, bool, error) {
+	start := p.i
+	p.blank()
+	spaced := p.i != start
 	if p.done() {
-		return step{}, p.errf("expected a name or an index")
+		return step{}, spaced, p.errf("expected a name or an index")
 	}
 	var s step
 	switch c := p.s[p.i]; {
 	case c == '\'' || c == '"':
 		name, err := p.str()
 		if err != nil {
-			return s, err
+			return s, spaced, err
 		}
 		s = step{isName: true, name: name}
 	case c == '-' || isDigit(c):
 		n, err := p.integer()
 		if err != nil {
-			return s, err
+			return s, spaced, err
 		}
 		s = step{index: n}
 	case c == '?':
-		return s, p.errf("a filter inside a filter is not supported")
+		return s, spaced, p.errf("a filter inside a filter is not supported")
 	case c == '*':
-		return s, p.errf("a wildcard is not supported inside a filter")
+		return s, spaced, p.errf("a wildcard is not supported inside a filter")
 	default:
-		return s, p.errf("expected a name or an index")
+		return s, spaced, p.errf("expected a name or an index")
 	}
-	if p.peek(",") {
-		return s, p.errf("a bracket holds one selector")
+	before := p.i
+	p.blank()
+	spaced = spaced || p.i != before
+	switch {
+	case p.peek(","):
+		return s, spaced, p.errf("a bracket holds one selector")
+	case p.peek(":"):
+		return s, spaced, p.errf("slices are not supported")
+	case !p.eat("]"):
+		return s, spaced, p.errf("expected ]")
 	}
-	if !p.eat("]") {
-		return s, p.errf("expected ]")
-	}
-	return s, nil
+	return s, spaced, nil
 }
 
 func (p *parser) cmpOp() string {

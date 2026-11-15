@@ -386,6 +386,7 @@ func TestHTTPJSONPathWorkIsBounded(t *testing.T) {
 		"$[0][?count($[0][?count($[0][*])>0])>0]",
 		"$[?search(@.a, @.b)]",
 		"$[?match(@, '[a-z]{1000}')]",
+		"$..[?" + strings.Repeat("!(", 168) + "@" + strings.Repeat(")", 168) + "]",
 	}
 	// Close to 1 MiB, 64 deep: every level wide, or many deep chains.
 	var wide strings.Builder
@@ -407,6 +408,7 @@ func TestHTTPJSONPathWorkIsBounded(t *testing.T) {
 		"deep":    "$..*" + strings.Repeat(".*", 63),
 		"terms":   "$..[?" + strings.Join(terms, " || ") + "]",
 		"indexes": "$..[0]" + strings.Repeat("[0]", 62),
+		"not":     "$..[?" + strings.Repeat("!(", 15) + "@" + strings.Repeat(")", 15) + "]",
 	}
 	for name, body := range map[string]string{"wide": wide.String(), "chains": chains} {
 		t.Run(name, func(t *testing.T) {
@@ -425,7 +427,9 @@ func TestHTTPJSONPathWorkIsBounded(t *testing.T) {
 			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
 				"json_values": values(entries...),
 			}), "")
-			if d := time.Since(start); d > 2*time.Second {
+			// A loose backstop only (about 1 s under -race); the bound
+			// itself is pinned by visit counts in internal/jpath.
+			if d := time.Since(start); d > 30*time.Second {
 				t.Fatalf("probe took %v: the path work is not bounded", d)
 			}
 			m := byItem(t, obs)
@@ -459,4 +463,18 @@ func TestHTTPJSONCutShort(t *testing.T) {
 	if o := m[mi{"http.up", ""}]; o.Value == nil || *o.Value != 1 {
 		t.Fatalf("http.up = %+v, want 1", o)
 	}
+}
+
+// TestHTTPJSONLongNumbers: a number of half a million digits is out of
+// range when selected and costs nothing extra when compared.
+func TestHTTPJSONLongNumbers(t *testing.T) {
+	long := "1" + strings.Repeat("0", 500_000)
+	srv := jsonServer(t, http.StatusOK, `{"n":`+long+`,"m":[`+long+`,2]}`)
+	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
+		"json_values": values("n=$.n", "small=$.m[?@ < 10]", "big=$.m[?@ > 10]"),
+	}), "")
+	m := byItem(t, obs)
+	wantItemError(t, m, "n", "the number is out of range")
+	wantNumber(t, m, "small", 2)
+	wantItemError(t, m, "big", "the path matched nothing")
 }

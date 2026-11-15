@@ -93,6 +93,9 @@ func TestParseAccepts(t *testing.T) {
 		"$[?( @.a == 1 || @.b ) && !@.c]",
 		"$[?@.a==1&&@.b==2||@.c==3&&@.d==4||@.e&&@.f&&@.g&&@.h]",
 		"$.checks[?@.name=='db'].status",
+		"$[?@[ 0 ]]",
+		"$[?!@[ 'a' ][0]]",
+		"$[?" + strings.Repeat("!(", 15) + "@" + strings.Repeat(")", 15) + "]",
 		"$." + strings.Repeat("p", 510),
 	} {
 		if _, err := jpath.Parse(path); err != nil {
@@ -154,20 +157,24 @@ func TestParseRefuses(t *testing.T) {
 		"$[?@[*]]":                "a wildcard is not supported inside a filter",
 		"$..[?@..x]":              "a descendant segment is not supported inside a filter",
 		"$[?@[0,1]]":              "a bracket holds one selector",
-		"$[?@[ 0]]":               "expected a name or an index",
-		"$[?1 == @.a]":            "a comparison starts with an @ path",
-		"$[?true]":                "a comparison starts with an @ path",
-		"$[?@.a == @.b]":          "a comparison has a literal on its right",
-		"$[?@.a = 1]":             "expected ]",
-		"$[?@.a == 01]":           "a number has no leading zero",
-		"$[?@.a == 1.]":           "expected a digit",
-		"$[?@.a == .5]":           "expected a literal",
-		"$[?@.a == 1e]":           "expected a digit",
-		"$[?@.a == True]":         "expected a literal",
-		"$[?!@.a == 1]":           "expected ]",
-		"$[?!1]":                  "! applies to ( or @ only",
-		"$[?(@.a]":                "expected )",
-		"$[?@.a &&]":              "a comparison starts with an @ path",
+		"$[?@[ 0] == 1]":          "a compared @ path has no blank space inside its brackets",
+		"$[?@['a' ] < 1]":         "a compared @ path has no blank space inside its brackets",
+		"$[?" + strings.Repeat("!(", 16) + "@" + strings.Repeat(")", 16) + "]":     "a filter holds at most 32 operators, parentheses and comparisons",
+		"$[?" + strings.Repeat("(", 33) + "@" + strings.Repeat(")", 33) + "]":      "a filter holds at most 32 operators, parentheses and comparisons",
+		"$[?@.a||@.b||@.c||@.d||@.e||@.f||@.g||@.h||!(!(!(!(!(!(!(!(!(@)))))))))]": "a filter holds at most 32 operators, parentheses and comparisons",
+		"$[?1 == @.a]":    "a comparison starts with an @ path",
+		"$[?true]":        "a comparison starts with an @ path",
+		"$[?@.a == @.b]":  "a comparison has a literal on its right",
+		"$[?@.a = 1]":     "expected ]",
+		"$[?@.a == 01]":   "a number has no leading zero",
+		"$[?@.a == 1.]":   "expected a digit",
+		"$[?@.a == .5]":   "expected a literal",
+		"$[?@.a == 1e]":   "expected a digit",
+		"$[?@.a == True]": "expected a literal",
+		"$[?!@.a == 1]":   "expected ]",
+		"$[?!1]":          "! applies to ( or @ only",
+		"$[?(@.a]":        "expected )",
+		"$[?@.a &&]":      "a comparison starts with an @ path",
 		"$[?@.a&&@.b&&@.c&&@.d&&@.e&&@.f&&@.g&&@.h&&@.i]": "a filter holds at most 8 comparisons",
 	} {
 		_, err := jpath.Parse(path)
@@ -314,7 +321,7 @@ func TestSelectStopsAtTheBudget(t *testing.T) {
 	for path, want := range map[string]error{
 		"$[*][*]":      nil,      // 1000 + 3000 visits
 		"$..*":         nil,      // 4000 + 4000
-		"$..[?@ == 1]": nil,      // 8000
+		"$..[?@ == 1]": nil,      // 8000 + 4000 comparisons
 		"$[*][*][*]":   nil,      // a number has no children
 		"$..*..*":      errParse, // refused before it could run
 	} {
@@ -325,8 +332,8 @@ func TestSelectStopsAtTheBudget(t *testing.T) {
 			}
 			continue
 		}
-		if _, err := p.Select(doc, 10_000); err != want {
-			t.Errorf("Select(%q, 10000) = %v, want %v", path, err, want)
+		if _, err := p.Select(doc, 20_000); err != want {
+			t.Errorf("Select(%q, 20000) = %v, want %v", path, err, want)
 		}
 		if _, err := p.Select(doc, 3_000); !errors.Is(err, jpath.ErrTooMuch) {
 			t.Errorf("Select(%q, 3000) = %v, want ErrTooMuch", path, err)
@@ -335,3 +342,30 @@ func TestSelectStopsAtTheBudget(t *testing.T) {
 }
 
 var errParse = errors.New("refused by Parse")
+
+// TestLongNumbersAreNotCompared: a document number longer than
+// MaxNumberLen compares like a value of another type, so a million
+// digits cost no more than one.
+func TestLongNumbersAreNotCompared(t *testing.T) {
+	long := "1" + strings.Repeat("0", 1_000_000)
+	edge := "1" + strings.Repeat("0", jpath.MaxNumberLen-1)
+	doc := decode(t, "["+long+", 1, "+edge+"]")
+	for path, want := range map[string]int{
+		"$[?@ == 1]": 1,
+		"$[?@ != 1]": 2,
+		"$[?@ > 1]":  1, // the 64-digit one
+		"$[?@ >= 1]": 2,
+		"$[?@ < 1]":  0,
+		"$[?@]":      3,
+		"$[0]":       1, // selecting is not comparing
+	} {
+		p, err := jpath.Parse(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodes, err := p.Select(doc, budget)
+		if err != nil || len(nodes) != want {
+			t.Errorf("Select(%q) = %d nodes, %v; want %d", path, len(nodes), err, want)
+		}
+	}
+}
