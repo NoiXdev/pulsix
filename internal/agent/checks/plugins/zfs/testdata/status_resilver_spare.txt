@@ -1,0 +1,23 @@
+  pool: tank
+ state: DEGRADED
+status: One or more devices is currently being resilvered.  The pool will
+	continue to function, possibly in a degraded state.
+action: Wait for the resilver to complete.
+  scan: resilver in progress since Sat Nov  9 22:14:51 2024
+	1.82T scanned at 1.21G/s, 912G issued at 607M/s, 3.62T total
+	228G resilvered, 24.61% done, 01:17:52 to go
+config:
+
+	NAME                                   STATE     READ WRITE CKSUM
+	tank                                   DEGRADED     0     0     0
+	  raidz1-0                             DEGRADED     0     0     0
+	    spare-0                            DEGRADED     0     0     0
+	      ata-ST4000VN008-2DR166_ZDH1C4D5  FAULTED     12   344     0  too many errors
+	      ata-ST4000VN008-2DR166_ZDH1E6F7  ONLINE       0     0     0  (resilvering)
+	    ata-ST4000VN008-2DR166_ZDH1A2B3    ONLINE       0     0     0
+	    ata-ST4000VN008-2DR166_ZDH1G8H9    ONLINE       0     0     0
+	spares
+	  ata-ST4000VN008-2DR166_ZDH1E6F7      INUSE     currently in use
+	  ata-ST4000VN008-2DR166_ZDH1J0K1      AVAIL   
+
+errors: No known data errors

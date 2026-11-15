@@ -1,0 +1,12 @@
+  pool: tank
+ state: ONLINE
+  scan: scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024
+config:
+
+	NAME                                          STATE     READ WRITE CKSUM
+	tank                                          ONLINE       0     0     0
+	  mirror-0                                    ONLINE       0     0     0
+	    ata-WDC_WD40EFRX-68N32N0_WD-WCC7K1KXSJ0P  ONLINE       0     0     0
+	    ata-WDC_WD40EFRX-68N32N0_WD-WCC7K3PLR2HN  ONLINE       0     0     0
+
+errors: No known data errors

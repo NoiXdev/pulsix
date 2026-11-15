@@ -1,0 +1,13 @@
+  pool: backup
+ state: FAULTED
+status: One or more devices are faulted in response to IO failures.
+action: Make sure the affected devices are connected, then run 'zpool clear'.
+   see: https://openzfs.github.io/openzfs-docs/msg/ZFS-8000-HC
+  scan: scrub repaired 0B in 01:02:03 with 0 errors on Sun Oct 13 01:26:04 2024
+config:
+
+	NAME                             STATE     READ WRITE CKSUM
+	backup                           FAULTED      0     0     0
+	  usb-WD_Elements_25A3_3534-0:0  FAULTED      3    12     0  too many errors
+
+errors: List of errors unavailable: pool I/O is currently suspended

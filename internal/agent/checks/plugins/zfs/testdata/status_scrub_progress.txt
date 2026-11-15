@@ -1,0 +1,14 @@
+  pool: tank
+ state: ONLINE
+  scan: scrub in progress since Sun Nov 10 00:24:02 2024
+	1.23T scanned at 1.02G/s, 456G issued at 380M/s, 3.62T total
+	0B repaired, 12.30% done, 02:25:12 to go
+config:
+
+	NAME                                                   STATE     READ WRITE CKSUM
+	tank                                                   ONLINE       0     0     0
+	  mirror-0                                             ONLINE       0     0     0
+	    nvme-Samsung_SSD_970_EVO_Plus_2TB_S59CNM0R512345A  ONLINE       0     0     0
+	    nvme-Samsung_SSD_970_EVO_Plus_2TB_S59CNM0R512346B  ONLINE       0     0     0
+
+errors: No known data errors

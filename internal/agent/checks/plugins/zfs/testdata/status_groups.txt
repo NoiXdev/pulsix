@@ -1,0 +1,35 @@
+  pool: fast
+ state: ONLINE
+status: One or more devices has experienced an unrecoverable error.  An
+	attempt was made to correct the error.  Applications are unaffected.
+action: Determine if the device needs to be replaced, and clear the errors
+	using 'zpool clear' or replace the device with 'zpool replace'.
+   see: https://openzfs.github.io/openzfs-docs/msg/ZFS-8000-9P
+  scan: scrub repaired 128K in 00:41:07 with 0 errors on Sun Nov 10 01:05:09 2024
+config:
+
+	NAME           STATE     READ WRITE CKSUM
+	fast           ONLINE       0     0     1
+	  raidz1-0     ONLINE       0     0     4
+	    sda        ONLINE       2     0     3
+	    sdb        ONLINE       0     0     0
+	    sdc        ONLINE       0     1     0
+	dedup	
+	  mirror-2     ONLINE       0     0     0
+	    nvme0n1p3  ONLINE       0     0     0
+	    nvme1n1p3  ONLINE       0     0     5
+	special	
+	  mirror-1     ONLINE       0     0     0
+	    nvme0n1p2  ONLINE       1     0     0
+	    nvme1n1p2  ONLINE       0     0     0
+	logs	
+	  mirror-3     ONLINE       0     2     0
+	    nvme0n1p1  ONLINE       0     0     0
+	    nvme1n1p1  ONLINE       0     0     0
+	cache
+	  nvme2n1      ONLINE       7     0     0
+	  nvme3n1      UNAVAIL      0     0     0  cannot open
+	spares
+	  sdd          AVAIL   
+
+errors: No known data errors

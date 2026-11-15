@@ -1,0 +1,22 @@
+  pool: data
+ state: DEGRADED
+status: One or more devices are faulted in response to persistent errors.
+	Sufficient replicas exist for the pool to continue functioning in a
+	degraded state.
+action: Replace the faulted device, or use 'zpool clear' to mark the device
+	repaired.
+   see: https://openzfs.github.io/openzfs-docs/msg/ZFS-8000-K4
+  scan: scrub repaired 1.50M in 05:12:44 with 0 errors on Sun Nov  3 05:36:46 2024
+config:
+
+	NAME                                 STATE     READ WRITE CKSUM
+	data                                 DEGRADED     0     0     0
+	  raidz2-0                           DEGRADED     0     0     0
+	    ata-ST8000VN004-3CP101_WWZ1A0B1  ONLINE       0     0     0
+	    ata-ST8000VN004-3CP101_WWZ1A0B2  ONLINE       0     0     0
+	    ata-ST8000VN004-3CP101_WWZ1A0B3  FAULTED      3    87     0  too many errors
+	    ata-ST8000VN004-3CP101_WWZ1A0B4  ONLINE       0     0     0
+	    ata-ST8000VN004-3CP101_WWZ1A0B5  ONLINE       0     0     0
+	    ata-ST8000VN004-3CP101_WWZ1A0B6  ONLINE       0     0     0
+
+errors: No known data errors

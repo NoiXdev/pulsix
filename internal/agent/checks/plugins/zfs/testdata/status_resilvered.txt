@@ -1,0 +1,12 @@
+  pool: tank
+ state: ONLINE
+  scan: resilvered 1.21T in 03:12:45 with 0 errors on Sat Nov  9 18:02:11 2024
+config:
+
+	NAME                                 STATE     READ WRITE CKSUM
+	tank                                 ONLINE       0     0     0
+	  mirror-0                           ONLINE       0     0     0
+	    ata-ST4000VN008-2DR166_ZDH1A2B3  ONLINE       0     0     0
+	    ata-ST4000VN008-2DR166_ZDH1K2L3  ONLINE       0     0     0
+
+errors: No known data errors

@@ -1,0 +1,15 @@
+  pool: tank
+ state: ONLINE
+status: One or more devices has experienced an error resulting in data
+	corruption.  Applications may be affected.
+action: Restore the file in question if possible.  Otherwise restore the
+	entire pool from backup.
+   see: https://openzfs.github.io/openzfs-docs/msg/ZFS-8000-8A
+  scan: scrub repaired 0B in 00:20:11 with 3 errors on Sun Nov 10 00:44:13 2024
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	tank        ONLINE       0     0     0
+	  sda       ONLINE       0     0     6
+
+errors: 3 data errors, use '-v' for a list

@@ -1,0 +1,26 @@
+  pool: rpool
+ state: ONLINE
+  scan: scrub repaired 0B in 00:01:52 with 0 errors on Sun Nov 10 00:25:53 2024
+config:
+
+	NAME                                 STATE     READ WRITE CKSUM
+	rpool                                ONLINE       0     0     0
+	  mirror-0                           ONLINE       0     0     0
+	    nvme-eui.0025385b71b0a1c2-part3  ONLINE       0     0     0
+	    nvme-eui.0025385b71b0a1c3-part3  ONLINE       0     0     0
+
+errors: No known data errors
+
+  pool: tank
+ state: ONLINE
+  scan: none requested
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	tank        ONLINE       0     0     0
+	  raidz1-0  ONLINE       0     0     0
+	    sda     ONLINE       0     0     0
+	    sdb     ONLINE       0     0     0
+	    sdc     ONLINE       0     0     0
+
+errors: No known data errors
