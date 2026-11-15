@@ -9,6 +9,7 @@ import (
 
 	"github.com/gosnmp/gosnmp"
 
+	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probe/probetest"
 )
 
@@ -43,7 +44,7 @@ func TestNameInterfaces(t *testing.T) {
 		if r.item != want[r.index] {
 			t.Errorf("interface %d: item %q, want %q", r.index, r.item, want[r.index])
 		}
-		if seen[r.item] || !reportableItem(r.item) {
+		if seen[r.item] || !probe.ReportableItem(r.item) {
 			t.Errorf("interface %d: item %q is a duplicate or unreportable", r.index, r.item)
 		}
 		seen[r.item] = true

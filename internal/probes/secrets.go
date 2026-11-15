@@ -7,7 +7,7 @@ import (
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/orgsecrets"
 	"github.com/noixdev/pulsix/internal/probe"
-	"github.com/noixdev/pulsix/internal/probe/snmp"
+	"github.com/noixdev/pulsix/internal/probe/all"
 )
 
 // The errors a probe reports when its check's secret cannot be handed
@@ -63,12 +63,13 @@ func (r *Runner) secretFor(ctx context.Context, s slot, t target) (map[string]st
 }
 
 // unattempted is a probe of t that could not be attempted, msg on every
-// metric its params would have produced: for snmp the host metrics and
-// each oids entry's value (snmp.FailAll, what a poll reports for a secret
-// it cannot use), for any other plugin each of its descriptor's metrics.
+// metric its params would have produced: the plugin's own FailAll where it
+// has one (all.FailAll: snmp's host metrics and oids entries, http's
+// metrics and json_values entries, what a probe reports for a secret it
+// cannot use), otherwise each of its descriptor's metrics.
 func (r *Runner) unattempted(t target, msg string) []probe.Observation {
-	if t.check.Plugin == pluginSNMP {
-		return snmp.FailAll(t.check.Params, msg)
+	if obs, ok := all.FailAll(t.check.Plugin, t.check.Params, msg); ok {
+		return obs
 	}
 	d, _ := r.describe(t.check.Plugin)
 	metrics := make([]string, len(d.Metrics))

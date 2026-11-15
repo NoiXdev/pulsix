@@ -250,11 +250,11 @@ func nameInterfaces(rows []ifRow) {
 	count := map[string]int{}
 	for i := range rows {
 		r := &rows[i]
-		r.item = cleanText(r.name)
+		r.item = probe.CleanText(r.name)
 		if r.item == "" {
-			r.item = cleanText(r.descr)
+			r.item = probe.CleanText(r.descr)
 		}
-		if !reportableItem(r.item) {
+		if !probe.ReportableItem(r.item) {
 			r.item = fallbackName(r.index)
 		}
 		count[r.item]++
@@ -269,7 +269,7 @@ func nameInterfaces(rows []ifRow) {
 		candidates = append(candidates, fallbackName(r.index), fmt.Sprintf("if%d (%d)", r.index, r.index))
 		r.item = ""
 		for _, c := range candidates {
-			if reportableItem(c) && !taken[c] {
+			if probe.ReportableItem(c) && !taken[c] {
 				r.item = c
 				break
 			}

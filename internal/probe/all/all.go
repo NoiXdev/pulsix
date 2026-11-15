@@ -32,3 +32,25 @@ func Registry() probe.Registry {
 func Run(ctx context.Context, g *probe.Guard, plugin string, params map[string]any, address string, secret map[string]string) []probe.Observation {
 	return Registry().Run(ctx, g, plugin, params, address, secret)
 }
+
+// failAlls are the plugins whose metrics depend on their params (list
+// items, a secret the runner may not have): each reports, for a probe that
+// could not be attempted, exactly the metrics and items its params would
+// have produced.
+func failAlls() map[string]func(params map[string]any, msg string) []probe.Observation {
+	return map[string]func(map[string]any, string) []probe.Observation{
+		"http": http.FailAll,
+		"snmp": snmp.FailAll,
+	}
+}
+
+// FailAll is plugin's own result for a probe of params that could not be
+// attempted, msg on every metric; ok is false for a plugin without one,
+// whose metrics are its descriptor's, item "" each.
+func FailAll(plugin string, params map[string]any, msg string) (obs []probe.Observation, ok bool) {
+	f, ok := failAlls()[plugin]
+	if !ok {
+		return nil, false
+	}
+	return f(params, msg), true
+}

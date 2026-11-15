@@ -298,3 +298,46 @@ func TestSecretStoreErrorAtShutdownIsNotLogged(t *testing.T) {
 		})
 	}
 }
+
+// TestUnavailableSecretOfAnHTTPCheck: an http check's missing secret is
+// an error on the metrics its params produce, the JSON values on their
+// items, and on nothing else: no item-less http.json.* or http.body_match
+// row appears for a check that does not ask for them.
+func TestUnavailableSecretOfAnHTTPCheck(t *testing.T) {
+	type mi struct{ metric, item string }
+	for name, tc := range map[string]struct {
+		params map[string]any
+		want   []mi
+	}{
+		"json values": {
+			params: map[string]any{"url": "https://api.example.com/health", "json_values": []any{"status=$.status", "depth=$.queue.depth"}},
+			want: []mi{{"http.up", ""}, {"http.status_code", ""}, {"http.response_ms", ""},
+				{"http.json.value", "status"}, {"http.json.value", "depth"}},
+		},
+		"plain": {
+			params: map[string]any{"url": "https://api.example.com/health"},
+			want:   []mi{{"http.up", ""}, {"http.status_code", ""}, {"http.response_ms", ""}},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			params := map[string]any{"key": "api", "secret": "api-token"}
+			maps.Copy(params, tc.params)
+			h.world.addHost(h.org, hosts.Host{ID: h.host, Address: "192.0.2.1", Monitored: true},
+				checks.Resolved{Key: "api", Plugin: "http", Interval: time.Minute, Params: params})
+			h.tickAt(0)
+			if n := len(h.probe.Calls()); n != 0 {
+				t.Fatalf("probed %d times without the secret", n)
+			}
+			b := h.rec.Batches()
+			if len(b) != 1 || len(b[0].obs) != len(tc.want) {
+				t.Fatalf("batches = %+v, want errors on %v", b, tc.want)
+			}
+			for i, o := range b[0].obs {
+				if o.Metric != tc.want[i].metric || o.Item != tc.want[i].item || o.Err != `secret "api-token" is not defined` {
+					t.Fatalf("observation %d = %+v, want the error on %v", i, o, tc.want[i])
+				}
+			}
+		})
+	}
+}

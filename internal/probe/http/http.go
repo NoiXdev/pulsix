@@ -36,22 +36,26 @@ var (
 
 // probeHTTP requests url (with {address} replaced) and reports whether a
 // response arrived, its status, the time to the end of the body read and,
-// when body_contains is set, whether the first 1 MiB of the body holds it.
-// roots verifies https certificates; nil means the system roots.
-func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, address string, roots *x509.CertPool) []probe.Observation {
+// when body_contains is set, whether the first 1 MiB of the body holds it;
+// each json_values entry is read from the same bytes. The check's secret
+// (its fields in secret, its name in params) sends credentials. roots
+// verifies https certificates; nil means the system roots.
+func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, address string, secret map[string]string, roots *x509.CertPool) []probe.Observation {
 	bodyContains := probe.StrParam(params, "body_contains", "")
-	metrics := []string{"http.up", "http.status_code", "http.response_ms"}
-	if bodyContains != "" {
-		metrics = append(metrics, "http.body_match")
-	}
+	entries := jsonEntries(params)
+	fail := func(msg string) []probe.Observation { return failAll(bodyContains != "", entries, msg) }
 
 	target, err := httpURL(probe.StrParam(params, "url", ""), address)
 	if err != nil {
-		return probe.FailAll(err.Error(), metrics...)
+		return fail(err.Error())
 	}
 	method := probe.StrParam(params, "method", http.MethodGet)
 	if method != http.MethodGet && method != http.MethodHead {
-		return probe.FailAll(errBadMethod.Error(), metrics...)
+		return fail(errBadMethod.Error())
+	}
+	cred, err := credentialsFor(probe.StrParam(params, "secret", ""), secret)
+	if err != nil {
+		return fail(err.Error())
 	}
 
 	ctx, cancel := probe.Bound(ctx, params, httpDefaultTimeout)
@@ -64,23 +68,25 @@ func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 	defer transport.CloseIdleConnections()
 	client := &http.Client{
 		Transport:     transport,
-		CheckRedirect: redirectPolicy(probe.BoolParam(params, "follow_redirects", true)),
+		CheckRedirect: redirectPolicy(probe.BoolParam(params, "follow_redirects", true), cred.header),
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), nil)
 	if err != nil {
-		return probe.FailAll(errBadURL.Error(), metrics...)
+		return fail(errBadURL.Error())
 	}
 	req.Header.Set("User-Agent", httpUserAgent)
+	cred.apply(req)
 
 	start := time.Now()
 	resp, err := client.Do(req)
 	if refused.Load() {
-		return probe.FailAll(probe.ErrNotAllowed.Error(), metrics...)
+		return fail(probe.ErrNotAllowed.Error())
 	}
 	if err != nil {
+		// The client's error is never passed on: it quotes the URL.
 		return probe.Down("http")
 	}
-	match := readBody(resp.Body, bodyContains, httpBodyLimit)
+	body, over := readBody(resp.Body, bodyContains != "" || len(entries) > 0, httpBodyLimit)
 	elapsed := time.Since(start)
 	_ = resp.Body.Close()
 
@@ -90,7 +96,30 @@ func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 		probe.Value("http.response_ms", probe.Millis(elapsed)),
 	}
 	if bodyContains != "" {
-		obs = append(obs, probe.BoolValue("http.body_match", match))
+		obs = append(obs, probe.BoolValue("http.body_match", bytes.Contains(body, []byte(bodyContains))))
+	}
+	return append(obs, jsonObservations(entries, body, over)...)
+}
+
+// FailAll is the result of an http probe of params that could not be
+// attempted, msg on every metric the params would have produced: the
+// whole-host metrics, http.body_match when body_contains is set and each
+// json_values entry's item. The runner reports it for a secret it cannot
+// hand over.
+func FailAll(params map[string]any, msg string) []probe.Observation {
+	return failAll(probe.StrParam(params, "body_contains", "") != "", jsonEntries(params), msg)
+}
+
+// failAll is msg on the whole-host metrics, on http.body_match when
+// bodyMatch and on each entry's http.json.value.
+func failAll(bodyMatch bool, entries []jsonEntry, msg string) []probe.Observation {
+	metrics := []string{"http.up", "http.status_code", "http.response_ms"}
+	if bodyMatch {
+		metrics = append(metrics, "http.body_match")
+	}
+	obs := probe.FailAll(msg, metrics...)
+	for _, e := range entries {
+		obs = append(obs, jsonError(e.name, msg))
 	}
 	return obs
 }
@@ -109,7 +138,9 @@ func httpURL(raw, address string) (*url.URL, error) {
 		raw = strings.ReplaceAll(raw, probe.AddressPlaceholder, host)
 	}
 	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" {
+	// User info is refused like the url format refuses it: credentials
+	// come from the check's secret only.
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
 		return nil, errBadURL
 	}
 	return u, nil
@@ -149,32 +180,72 @@ func httpTLSConfig(verify bool, roots *x509.CertPool) *tls.Config {
 }
 
 // redirectPolicy follows at most httpMaxRedirects redirects, or none: then
-// the 3xx itself is the response.
-func redirectPolicy(follow bool) func(*http.Request, []*http.Request) error {
-	return func(_ *http.Request, via []*http.Request) error {
+// the 3xx itself is the response. The credential header (none when "")
+// goes along only while every hop keeps the first request's scheme, host
+// and port: once a redirect leaves that origin, or goes from https to
+// http, it is removed and stays removed.
+func redirectPolicy(follow bool, header string) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
 		if !follow {
 			return http.ErrUseLastResponse
 		}
 		if len(via) > httpMaxRedirects {
 			return errTooManyRedirects
 		}
+		if header != "" && !sameOriginThroughout(req, via) {
+			req.Header.Del(header)
+		}
 		return nil
 	}
 }
 
-// readBody reads body up to limit bytes and reports whether want appears in
-// what was read. Nothing read leaves the probe.
-func readBody(body io.Reader, want string, limit int64) bool {
-	capped := io.LimitReader(body, limit)
-	if want == "" {
-		_, _ = io.Copy(io.Discard, capped)
-		return false
+// sameOriginThroughout reports whether req and every hop in via have the
+// first hop's origin.
+func sameOriginThroughout(req *http.Request, via []*http.Request) bool {
+	if len(via) == 0 {
+		return true
 	}
-	buf, _ := io.ReadAll(capped)
-	return bytes.Contains(buf, []byte(want))
+	first := origin(via[0].URL)
+	for _, r := range via[1:] {
+		if origin(r.URL) != first {
+			return false
+		}
+	}
+	return origin(req.URL) == first
+}
+
+// origin is u's scheme, host (without case) and port, the scheme's
+// default port when u names none.
+func origin(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+}
+
+// readBody reads body up to limit bytes, keeping them when keep, and
+// reports whether the body went on past limit (only when keep). Nothing
+// read leaves the probe.
+func readBody(body io.Reader, keep bool, limit int64) ([]byte, bool) {
+	if !keep {
+		_, _ = io.Copy(io.Discard, io.LimitReader(body, limit))
+		return nil, false
+	}
+	buf, _ := io.ReadAll(io.LimitReader(body, limit+1))
+	if int64(len(buf)) > limit {
+		return buf[:limit], true
+	}
+	return buf, false
 }
 
 // Probe is the http probe, as the registry runs it.
-func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address string, _ map[string]string) []probe.Observation {
-	return probeHTTP(ctx, g, params, address, nil)
+func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address string, secret map[string]string) []probe.Observation {
+	return probeHTTP(ctx, g, params, address, secret, nil)
 }

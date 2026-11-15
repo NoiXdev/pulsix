@@ -77,7 +77,7 @@ func TestPollReadsEveryValueType(t *testing.T) {
 	wantLabel(t, m, "snmp.text", "str", "UPS model�")
 	wantLabel(t, m, "snmp.text", "oid", ".1.3.6.1.4.1.9")
 	wantLabel(t, m, "snmp.text", "ip", "10.0.0.1")
-	if o := m[key{"snmp.text", "long"}]; o.Label == nil || len(*o.Label) > maxLabelLen {
+	if o := m[key{"snmp.text", "long"}]; o.Label == nil || len(*o.Label) > probe.MaxLabelLen {
 		t.Fatalf("long text: %+v", o)
 	}
 	wantErr(t, m, "snmp.value", "null", errUnsupportedType)

@@ -89,7 +89,7 @@ func valueObservation(name string, pdu gosnmp.SnmpPDU) probe.Observation {
 		}
 	case gosnmp.OctetString, gosnmp.ObjectIdentifier, gosnmp.IPAddress:
 		if s, ok := toText(pdu.Value); ok {
-			l := label(s)
+			l := probe.Label(s)
 			obs.Metric, obs.Label = "snmp.text", &l
 			return obs
 		}
