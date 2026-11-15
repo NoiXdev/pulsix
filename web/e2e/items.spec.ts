@@ -251,7 +251,10 @@ async function waitForDiscoveredInPreview(page: Page, hostName: string, pattern:
     const dialog = page.getByRole('dialog');
     await pickOption(dialog, 'Applies to', 'One host');
     await selectHost(dialog, hostName);
-    await pickOption(dialog, 'Check', { value: CHECK_KEY });
+    // The check is a free-text key with the known plugin keys as datalist
+    // suggestions (a decision may name a check that runs under its own
+    // key, `disk-data`, or does not exist yet), not a Select: typed.
+    await dialog.getByLabel('Check', { exact: true }).fill(CHECK_KEY);
     // Match kind defaults to "exact" already (ItemDecisionDialog's own
     // initial state) — selected by value here anyway, so a future change
     // to that default cannot silently turn this into a glob match.
