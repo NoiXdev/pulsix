@@ -339,15 +339,37 @@ function snmpOID(s: string): boolean {
   return first <= 2 && (first === 2 || second <= 39) && 40 * first + second <= 4294967295;
 }
 
+/** jsonPathDescendants counts the descendant segments of a JSONPath, as
+ * the server's JSONPathDescendants does: every ".." outside a string
+ * literal, filters included. */
+function jsonPathDescendants(path: string): number {
+  let n = 0;
+  let quote = '';
+  for (let i = 0; i < path.length; i++) {
+    const c = path[i];
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = '';
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === '.' && path[i + 1] === '.') {
+      n++;
+      i++;
+    }
+  }
+  return n;
+}
+
 /** jsonValue: one entry of http's json_values, "name=path" split at the
- * first '=': the name follows secretName, the path starts with $ and is
- * at most 512 bytes. Whether the path is a JSONPath query the server
- * decides; its parser has no twin here. */
+ * first '=': the name follows secretName, the path starts with $, is at
+ * most 512 bytes and has at most one descendant segment (..). Whether the
+ * path is a JSONPath query the server decides; its parser has no twin
+ * here. */
 function jsonValue(s: string): boolean {
   const eq = s.indexOf('=');
   if (eq < 0 || !secretName(s.slice(0, eq))) return false;
   const path = s.slice(eq + 1);
-  return path.startsWith('$') && byteLen(path) <= 512;
+  return path.startsWith('$') && byteLen(path) <= 512 && jsonPathDescendants(path) <= 1;
 }
 
 /** Every format, by the name the descriptors use. */

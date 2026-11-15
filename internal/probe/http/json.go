@@ -20,6 +20,10 @@ import (
 const (
 	maxJSONValues  = 32
 	maxJSONPathLen = 512
+	// maxJSONDepth bounds how deeply a document may nest: a descendant
+	// segment's work grows with the depth of a document the target
+	// writes.
+	maxJSONDepth = 64
 )
 
 // Item errors of the JSON values. None quotes the response.
@@ -33,13 +37,18 @@ const (
 	errNull       = "the path matched null"
 	errOutOfRange = "the number is out of range"
 	errBadPath    = "the path is not a valid JSONPath"
+	errNotAllowed = "the path is not allowed"
+	errTooDeep    = "the response is nested too deeply"
+	errCutShort   = "the response was cut short"
 )
 
 // jsonEntry is one json_values entry: the item it reports on and its
-// parsed path, nil when the path cannot be used (only its item fails).
+// parsed path, or the problem that keeps the path from running (only its
+// item fails).
 type jsonEntry struct {
-	name string
-	path *jsonpath.Path
+	name    string
+	path    *jsonpath.Path
+	problem string
 }
 
 // jsonEntries reads json_values: at most maxJSONValues entries, each
@@ -59,21 +68,35 @@ func jsonEntries(params map[string]any) []jsonEntry {
 			continue
 		}
 		seen[name] = true
-		e := jsonEntry{name: name}
-		if len(path) <= maxJSONPathLen {
-			if p, err := jsonpath.Parse(path); err == nil {
-				e.path = p
-			}
-		}
-		entries = append(entries, e)
+		entries = append(entries, parseEntry(name, path))
 	}
 	return entries
 }
 
+// parseEntry parses an entry's path. A path with more descendant segments
+// than the descriptor allows is refused here too: params arrive validated,
+// but the probe does not run a path whose cost the target could multiply.
+func parseEntry(name, path string) jsonEntry {
+	e := jsonEntry{name: name, problem: errBadPath}
+	if len(path) > maxJSONPathLen {
+		return e
+	}
+	p, err := jsonpath.Parse(path)
+	if err != nil {
+		return e
+	}
+	if checkplugins.JSONPathDescendants(path) > checkplugins.MaxJSONPathDescendants {
+		e.problem = errNotAllowed
+		return e
+	}
+	return jsonEntry{name: name, path: p}
+}
+
 // jsonObservations reads each entry from body; over marks a body that went
-// on past the cap. A body that is not one JSON value, or is cut, is the
+// on past the cap, cut one whose read broke off. A body that is not one
+// JSON value of at most maxJSONDepth levels, or is incomplete, is the
 // same error on every entry.
-func jsonObservations(entries []jsonEntry, body []byte, over bool) []probe.Observation {
+func jsonObservations(entries []jsonEntry, body []byte, over, cut bool) []probe.Observation {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -84,8 +107,15 @@ func jsonObservations(entries []jsonEntry, body []byte, over bool) []probe.Obser
 		}
 		return obs
 	}
-	if over {
+	switch {
+	case over:
 		return fail(errTooLarge)
+	case cut:
+		return fail(errCutShort)
+	case !json.Valid(body):
+		return fail(errNotJSON)
+	case tooDeep(body):
+		return fail(errTooDeep)
 	}
 	doc, ok := decodeJSON(body)
 	if !ok {
@@ -94,12 +124,39 @@ func jsonObservations(entries []jsonEntry, body []byte, over bool) []probe.Obser
 	obs := make([]probe.Observation, len(entries))
 	for i, e := range entries {
 		if e.path == nil {
-			obs[i] = jsonError(e.name, errBadPath)
+			obs[i] = jsonError(e.name, e.problem)
 			continue
 		}
 		obs[i] = jsonValue(e.name, e.path.Select(doc))
 	}
 	return obs
+}
+
+// tooDeep reports whether valid JSON nests more than maxJSONDepth arrays
+// and objects; brackets inside strings do not count.
+func tooDeep(body []byte) bool {
+	depth := 0
+	inString, escaped := false, false
+	for _, c := range body {
+		switch {
+		case escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case inString:
+			inString = c != '"'
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			depth++
+			if depth > maxJSONDepth {
+				return true
+			}
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return false
 }
 
 // decodeJSON decodes body as exactly one JSON value, numbers as

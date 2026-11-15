@@ -21,7 +21,11 @@ other decision below is **(Claude's call)**.
 - `json_values`: list, at most 32, each `FormatJSONValue`: `name=path`,
   name the secret-name pattern `[A-Za-z0-9_.-]{1,64}`, path at most 512
   bytes and accepted by the JSONPath parser (`github.com/theory/jsonpath`,
-  as `internal/triggers` uses it); names unique (Check hook).
+  as `internal/triggers` uses it); names unique (Check hook). A path has
+  at most one descendant segment (`..`), counted across the whole path
+  including filter sub-queries, because the target writes the document
+  the path runs over and each further descendant segment multiplies the
+  evaluation cost by its size (review of Task 2).
 - `secret`: `SecretParam()`, optional.
 - Check hook: `json_values` non-empty requires `method` `GET`.
 - Metrics added: `http.json.value` (numeric, item = name),
@@ -40,6 +44,12 @@ other decision below is **(Claude's call)**.
   so large integers keep their precision until converted to float64) →
   every JSON item an error "the response is not JSON" or "the response is
   larger than 1 MiB".
+- The probe bounds the evaluation cost on a body the target controls: a
+  document nested deeper than 64 arrays/objects → every JSON item an
+  error "the response is nested too deeply", a path with more than one
+  descendant segment → that item's error "the path is not allowed"
+  (defence in depth behind the format), and a body whose read broke off
+  (timeout, reset) → every JSON item "the response was cut short".
 - Each path: zero nodes → "the path matched nothing"; more than one →
   "the path matched <n> values"; one node that is an object, array or
   null → "the path matched an object" / "a list" / "null"; a number →
@@ -54,7 +64,7 @@ other decision below is **(Claude's call)**.
   `token`, `header`+`value`); anything else → every metric an error
   naming the secret and the problem, never a value; a `header` name must
   be a valid HTTP token and not one the probe controls (`Host`,
-  `Content-Length`, `Transfer-Encoding`, `Connection`). The header is set
+  `Content-Length`, `Transfer-Encoding`, `Connection`, `User-Agent`). The header is set
   on the first request; on a redirect it is kept only when scheme, host
   and port are unchanged (Basic and Bearer the same way, implemented in
   the redirect policy), and an https → http downgrade drops it too.

@@ -12,7 +12,7 @@ import (
 // reservedHeaders are the headers the probe controls; a secret's header
 // may not be one of them.
 var reservedHeaders = map[string]bool{
-	"Host": true, "Content-Length": true, "Transfer-Encoding": true, "Connection": true,
+	"Host": true, "Content-Length": true, "Transfer-Encoding": true, "Connection": true, "User-Agent": true,
 }
 
 // credentials is the header a check's secret sends; header "" sends none.
@@ -62,7 +62,7 @@ func credentialsFor(name string, fields map[string]string) (credentials, error) 
 		}
 		header = http.CanonicalHeaderKey(header)
 		if reservedHeaders[header] {
-			return credentials{}, fieldError(name, "header", "must not be Host, Content-Length, Transfer-Encoding or Connection")
+			return credentials{}, fieldError(name, "header", "must not be Host, Content-Length, Transfer-Encoding, Connection or User-Agent")
 		}
 		if !httpguts.ValidHeaderFieldValue(fields["value"]) {
 			return credentials{}, fieldError(name, "value", "must be a valid HTTP header value")

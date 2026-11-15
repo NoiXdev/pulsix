@@ -345,7 +345,7 @@ export const enChecks = {
       devicePath: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
       secretName: 'must be 1 to 64 characters: letters, digits and . _ -',
       commandName: 'every entry must be a command name of 1 to 64 characters: letters, digits and . _ -',
-      jsonValue: 'every entry must be name=JSONPath: a name of 1 to 64 characters (letters, digits and . _ -) and a path of at most 512 bytes that starts with $, such as $.status',
+      jsonValue: 'every entry must be name=JSONPath: a name of 1 to 64 characters (letters, digits and . _ -) and a path of at most 512 bytes that starts with $ and uses .. at most once, such as $.status',
       snmpOID: 'every entry must be name=OID: a name of 1 to 64 characters (letters, digits and . _ -) and a numeric OID such as 1.3.6.1.2.1.1.3.0 that starts with 0, 1 or 2 (after 0 or 1, the second number is at most 39)',
       url: 'must be an http:// or https:// URL without a user name or password',
       statusURL: 'must be an http:// or https:// URL without a user name, password or #fragment, and without {address}',

@@ -88,7 +88,7 @@ func TestHTTPNoSecretParamNoCredentials(t *testing.T) {
 // value; nothing is requested.
 func TestHTTPBadCredentials(t *testing.T) {
 	const mustHold = `secret "api" must hold username and password, token, or header and value`
-	const reserved = `secret "api": field "header" must not be Host, Content-Length, Transfer-Encoding or Connection`
+	const reserved = `secret "api": field "header" must not be Host, Content-Length, Transfer-Encoding, Connection or User-Agent`
 	srv, s := recordingServer(t)
 	for _, tc := range []struct {
 		name   string
@@ -109,6 +109,7 @@ func TestHTTPBadCredentials(t *testing.T) {
 		{"content-length", map[string]string{"header": "content-length", "value": "1"}, reserved},
 		{"transfer-encoding", map[string]string{"header": "TRANSFER-ENCODING", "value": "chunked"}, reserved},
 		{"connection", map[string]string{"header": "Connection", "value": "close"}, reserved},
+		{"user-agent", map[string]string{"header": "user-agent", "value": "curl"}, reserved},
 		{"header with a space", map[string]string{"header": "X Key", "value": "v-s3cret"}, `secret "api": field "header" must be an HTTP header name`},
 		{"header with a colon", map[string]string{"header": "X-Key:", "value": "v-s3cret"}, `secret "api": field "header" must be an HTTP header name`},
 		{"value with a newline", map[string]string{"header": "X-Key", "value": "v-s3cret\r\nX-Evil: 1"}, `secret "api": field "value" must be a valid HTTP header value`},

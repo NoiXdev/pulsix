@@ -323,6 +323,37 @@ func oidArc(arc string) (uint64, bool) {
 // maxJSONPathLen bounds a json_values entry's path in bytes (backlog 3.6h).
 const maxJSONPathLen = 512
 
+// MaxJSONPathDescendants bounds the descendant segments ("..") of a
+// json_values path, filter sub-queries included. The target writes the
+// document the path runs over, and each further descendant segment
+// multiplies the work by the document's size; internal/probe/http refuses
+// the same before it evaluates a path.
+const MaxJSONPathDescendants = 1
+
+// JSONPathDescendants counts the descendant segments of a JSONPath
+// expression, inside filters too: every ".." outside a string literal,
+// which in a path the parser accepts is always one.
+func JSONPathDescendants(path string) int {
+	n := 0
+	var quote byte
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		switch {
+		case quote != 0 && c == '\\':
+			i++ // the escaped character
+		case quote != 0 && c == quote:
+			quote = 0
+		case quote != 0:
+		case c == '\'' || c == '"':
+			quote = c
+		case c == '.' && i+1 < len(path) && path[i+1] == '.':
+			n++
+			i++
+		}
+	}
+	return n
+}
+
 // jsonValueProblem checks a "name=path" entry, split at the first '='
 // (a name never contains one; a path may, in a filter).
 func jsonValueProblem(s string) string {
@@ -337,6 +368,9 @@ func jsonValueProblem(s string) string {
 		// The parser's own reason: the path is the operator's
 		// configuration, never a response, so quoting it is safe.
 		return "must be name=JSONPath, the path a JSONPath expression (RFC 9535): " + err.Error()
+	}
+	if JSONPathDescendants(path) > MaxJSONPathDescendants {
+		return "must be name=JSONPath, the path with at most one descendant segment (..)"
 	}
 	return ""
 }

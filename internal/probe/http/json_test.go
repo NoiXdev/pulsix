@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/noixdev/pulsix/internal/probe"
 	httpprobe "github.com/noixdev/pulsix/internal/probe/http"
@@ -331,5 +332,94 @@ func TestHTTPFailAll(t *testing.T) {
 	m = byItem(t, httpprobe.FailAll(map[string]any{"url": "http://x/"}, "boom"))
 	if len(m) != 3 {
 		t.Fatalf("FailAll without body_contains or json_values = %+v, want the 3 host metrics", m)
+	}
+}
+
+// nested is a JSON document of depth levels of arrays around a number.
+func nested(depth int) string {
+	return strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth)
+}
+
+// TestHTTPJSONDepthIsBounded: a document nested deeper than 64 is an error
+// on every JSON item; 64 levels are read.
+func TestHTTPJSONDepthIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		depth int
+		want  string
+	}{{64, "the path matched 1 values"}, {65, "the response is nested too deeply"}} {
+		t.Run(fmt.Sprint(tc.depth), func(t *testing.T) {
+			srv := jsonServer(t, http.StatusOK, nested(tc.depth))
+			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
+				"json_values": values("leaf=$..[?@==1]", "root=$"),
+			}), "")
+			m := byItem(t, obs)
+			if tc.depth == 64 {
+				wantNumber(t, m, "leaf", 1)
+				wantItemError(t, m, "root", "the path matched a list")
+				return
+			}
+			wantItemError(t, m, "leaf", tc.want)
+			wantItemError(t, m, "root", tc.want)
+		})
+	}
+	t.Run("brackets inside strings do not count", func(t *testing.T) {
+		srv := jsonServer(t, http.StatusOK, `{"s":"`+strings.Repeat("[{", 100)+`\"[","n":2}`)
+		obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
+			"json_values": values("n=$.n"),
+		}), "")
+		wantNumber(t, byItem(t, obs), "n", 2)
+	})
+}
+
+// TestHTTPJSONPathWorkIsBounded: a path with more than one descendant
+// segment is refused on its item before it runs, and the most a permitted
+// path can cost over the largest, deepest body stays small.
+func TestHTTPJSONPathWorkIsBounded(t *testing.T) {
+	// Close to 1 MiB, 64 deep, every level wide.
+	var b strings.Builder
+	for range 63 {
+		b.WriteString("[" + strings.Repeat("0,", 200))
+	}
+	b.WriteString("[" + strings.Repeat("1,", (1<<20-b.Len())/2-200) + "1")
+	b.WriteString(strings.Repeat("]", 64))
+	srv := jsonServer(t, http.StatusOK, b.String())
+	start := time.Now()
+	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
+		"json_values": values(
+			"three=$..*..*..*",
+			"filtered=$..[?@..x]",
+			"one=$..[?@[?@[?@[?@==7]]]]",
+			"all=$..*",
+		),
+	}), "")
+	// About 3 s under -race; unbounded, the refused paths alone ran for
+	// minutes on this body. The budget leaves room for a loaded runner.
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("probe took %v: the path work is not bounded", d)
+	}
+	m := byItem(t, obs)
+	wantItemError(t, m, "three", "the path is not allowed")
+	wantItemError(t, m, "filtered", "the path is not allowed")
+	wantItemError(t, m, "one", "the path matched nothing")
+	if o := m[mi{"http.json.value", "all"}]; !strings.HasPrefix(o.Err, "the path matched ") {
+		t.Fatalf("all = %+v, want a count of the matches", o)
+	}
+}
+
+// TestHTTPJSONCutShort: a body that breaks off is not called invalid JSON.
+func TestHTTPJSONCutShort(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "1000")
+		_, _ = w.Write([]byte(`{"a":1,`))
+		// Returning short of Content-Length closes the connection.
+	}))
+	defer srv.Close()
+	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
+		"json_values": values("a=$.a"),
+	}), "")
+	m := byItem(t, obs)
+	wantItemError(t, m, "a", "the response was cut short")
+	if o := m[mi{"http.up", ""}]; o.Value == nil || *o.Value != 1 {
+		t.Fatalf("http.up = %+v, want 1", o)
 	}
 }

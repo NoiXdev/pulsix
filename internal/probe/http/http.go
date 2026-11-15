@@ -86,7 +86,7 @@ func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 		// The client's error is never passed on: it quotes the URL.
 		return probe.Down("http")
 	}
-	body, over := readBody(resp.Body, bodyContains != "" || len(entries) > 0, httpBodyLimit)
+	body, over, readErr := readBody(resp.Body, bodyContains != "" || len(entries) > 0, httpBodyLimit)
 	elapsed := time.Since(start)
 	_ = resp.Body.Close()
 
@@ -98,7 +98,7 @@ func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 	if bodyContains != "" {
 		obs = append(obs, probe.BoolValue("http.body_match", bytes.Contains(body, []byte(bodyContains))))
 	}
-	return append(obs, jsonObservations(entries, body, over)...)
+	return append(obs, jsonObservations(entries, body, over, readErr != nil)...)
 }
 
 // FailAll is the result of an http probe of params that could not be
@@ -231,18 +231,19 @@ func origin(u *url.URL) string {
 }
 
 // readBody reads body up to limit bytes, keeping them when keep, and
-// reports whether the body went on past limit (only when keep). Nothing
-// read leaves the probe.
-func readBody(body io.Reader, keep bool, limit int64) ([]byte, bool) {
+// reports whether the body went on past limit (only when keep) and the
+// error a read broke off with (a timeout, a reset). body_contains looks in
+// what arrived either way. Nothing read leaves the probe.
+func readBody(body io.Reader, keep bool, limit int64) ([]byte, bool, error) {
 	if !keep {
-		_, _ = io.Copy(io.Discard, io.LimitReader(body, limit))
-		return nil, false
+		_, err := io.Copy(io.Discard, io.LimitReader(body, limit))
+		return nil, false, err
 	}
-	buf, _ := io.ReadAll(io.LimitReader(body, limit+1))
+	buf, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if int64(len(buf)) > limit {
-		return buf[:limit], true
+		return buf[:limit], true, nil
 	}
-	return buf, false
+	return buf, false, err
 }
 
 // Probe is the http probe, as the registry runs it.

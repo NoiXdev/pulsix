@@ -22,8 +22,9 @@ func snmpCheck(key, secret string, interval time.Duration) checks.Resolved {
 	}}
 }
 
-// vaultDescriptor is a stateless server plugin that takes a secret; no
-// real one does yet, so the tests describe it themselves.
+// vaultDescriptor is a stateless server plugin that takes a secret and
+// has no FailAll of its own (http has one), so the tests describe it
+// themselves to reach the runner's fallback to the descriptor's metrics.
 func vaultDescriptor(name string) (checkplugins.Descriptor, bool) {
 	if name != "vault" {
 		return checkplugins.Get(name)

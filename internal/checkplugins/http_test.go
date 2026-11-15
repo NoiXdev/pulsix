@@ -75,6 +75,7 @@ func TestValidateHTTPMessages(t *testing.T) {
 		{httpOK(map[string]any{"json_values": []any{"a b=$.a"}}), "http: json_values entries must be name=JSONPath, the name 1 to 64 letters, digits, '_', '.' or '-'"},
 		{httpOK(map[string]any{"json_values": []any{"a=.a"}}), "http: json_values entries must be name=JSONPath, the path starting with $ and at most 512 bytes"},
 		{httpOK(map[string]any{"json_values": []any{"a=$." + strings.Repeat("p", 511)}}), "http: json_values entries must be name=JSONPath, the path starting with $ and at most 512 bytes"},
+		{httpOK(map[string]any{"json_values": []any{"a=$..*..*"}}), "http: json_values entries must be name=JSONPath, the path with at most one descendant segment (..)"},
 	}
 	for _, tc := range cases {
 		err := checkplugins.Validate("http", tc.params)
@@ -156,6 +157,7 @@ func TestJSONValueFormat(t *testing.T) {
 		{"a=$.a[-1]", true},
 		{"a=$[*]", true},
 		{"a=$..x", true},
+		{"a=$..[?@.x=='a..b'].y", true},
 		{"a=$[?@.x=='y'].z", true},
 		{strings.Repeat("n", 64) + "=$.a", true},
 		{"a=$." + strings.Repeat("p", 510), true},
@@ -184,6 +186,11 @@ func TestJSONValueFormat(t *testing.T) {
 		{"a=$['open", false},
 		{"a=$[?@.x ==]", false},
 		{"a=$.a\n", false},
+		// More than one descendant segment, filters included.
+		{"a=$..*..*", false},
+		{"a=$..*..*..*", false},
+		{"a=$..[?@..x]", false},
+		{"a=$[?@..x && @..y]", false},
 	}
 	for _, tc := range cases {
 		if got := checkplugins.FormatJSONValue.Valid(tc.in); got != tc.valid {
@@ -221,5 +228,26 @@ func TestHTTPAsksForItem(t *testing.T) {
 				t.Fatalf("AsksForItem(http, %v, %q) = %v, want %v", tc.params, tc.item, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestJSONPathDescendants counts ".." outside string literals: for a path
+// the parser accepts, each one is a descendant segment.
+func TestJSONPathDescendants(t *testing.T) {
+	for path, want := range map[string]int{
+		"$.a":                 0,
+		"$..a":                1,
+		"$..*..*..*":          3,
+		"$..[?@..x]":          2,
+		"$[?@.n=='a..b']":     0,
+		`$[?@.n=="a..b"]..c`:  1,
+		`$['it\'s..'].b..c`:   1,
+		`$["q\"..x"]`:         0,
+		"$[?count(@..*) > 1]": 1,
+		"$[?@.a==1.5].b":      0,
+	} {
+		if got := checkplugins.JSONPathDescendants(path); got != want {
+			t.Errorf("JSONPathDescendants(%q) = %d, want %d", path, got, want)
+		}
 	}
 }
