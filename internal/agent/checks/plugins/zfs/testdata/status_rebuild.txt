@@ -68,3 +68,17 @@ config:
 	    sdj     ONLINE       0     0     0
 
 errors: No known data errors
+
+  pool: epsilon
+ state: ONLINE
+  scan: scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024
+  scan: resilver (mirror-0) canceled on Wed Nov 13 10:00:00 2024
+config:
+
+	NAME        STATE     READ WRITE CKSUM
+	epsilon     ONLINE       0     0     0
+	  mirror-0  ONLINE       0     0     0
+	    sdk     ONLINE       0     0     0
+	    sdl     ONLINE       0     0     0
+
+errors: No known data errors

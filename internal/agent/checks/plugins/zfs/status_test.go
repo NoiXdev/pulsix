@@ -132,6 +132,8 @@ func TestParseStatus(t *testing.T) {
 				scrubStart: utc("2024-11-17 00:24:02")},
 			"gamma": {kind: "resilver", pct: num(24.61), read: num(4), write: num(211), cksum: zero, unhealthy: num(1), dataErrors: zero,
 				lastScrub: utc("2024-11-10 00:36:35")},
+			"epsilon": {kind: "none", pct: num(100), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
+				lastScrub: utc("2024-11-10 00:36:35")},
 			"delta": {kind: "scrub", pct: num(12.30), read: zero, write: zero, cksum: zero, unhealthy: zero, dataErrors: zero,
 				scrubStart: utc("2024-11-17 00:24:02")},
 		}},
@@ -189,6 +191,22 @@ func TestParseStatusPoolNameWithSpace(t *testing.T) {
 		t.Fatal("pool missing")
 	}
 	checkPool(t, "my pool", p, wantPool{kind: "none", pct: num(100), read: num(1), write: num(0), cksum: num(2), unhealthy: num(0), dataErrors: num(0)})
+}
+
+// TestParseStatusErrorScrubHeader: OpenZFS 2.2 prints the error scrub's
+// paragraph under its own " scrub:" header.
+func TestParseStatusErrorScrubHeader(t *testing.T) {
+	in := "  pool: tank\n state: ONLINE\n scrub: error scrub in progress since Sun Nov 10 00:24:02 2024\n" +
+		"\t42.17% done, issued I/O for 1234 error blocks\nconfig:\n\n" +
+		"\tNAME        STATE     READ WRITE CKSUM\n" +
+		"\ttank        ONLINE       0     0     0\n" +
+		"\t  sda       ONLINE       0     0     0\n\n" +
+		"errors: No known data errors\n"
+	p := parseStatus([]byte(in), time.UTC)["tank"]
+	checkPool(t, "tank", p, wantPool{kind: "scrub", pct: num(42.17), read: num(0), write: num(0), cksum: num(0), unhealthy: num(0), dataErrors: num(0)})
+	if p.scan.neverScanned {
+		t.Fatal("an error scrub's paragraph read as never scanned")
+	}
 }
 
 // TestParseStatusMissingParts: a pool paragraph without a tree or an errors
@@ -264,10 +282,11 @@ func TestParseScan(t *testing.T) {
 	end := utc("2024-11-10 00:36:35")
 	start := utc("2024-11-10 00:24:02")
 	const (
-		finished  = "scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024"
-		rebuilt   = "resilvered (mirror-0) 1.21T in 00:42:10 with 0 errors on Sat Nov  9 18:02:11 2024"
-		rebuildOn = "resilver (draid2:5d:12c:1s-0) in progress since Sat Nov  9 22:14:51 2024\n\t1.82T scanned at 1.21G/s, 912G issued 607M/s, 3.62T total\n\t228G resilvered, 24.61% done, 01:17:52 to go"
-		scrubOn   = "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.23T scanned at 1.02G/s, 456G issued at 380M/s, 3.62T total\n\t0B repaired, 12.30% done, 02:25:12 to go"
+		finished   = "scrub repaired 0B in 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024"
+		rebuilt    = "resilvered (mirror-0) 1.21T in 00:42:10 with 0 errors on Sat Nov  9 18:02:11 2024"
+		rebuildOn  = "resilver (draid2:5d:12c:1s-0) in progress since Sat Nov  9 22:14:51 2024\n\t1.82T scanned at 1.21G/s, 912G issued 607M/s, 3.62T total\n\t228G resilvered, 24.61% done, 01:17:52 to go"
+		rebuildOff = "resilver (mirror-1) canceled on Sat Nov  9 18:02:11 2024"
+		scrubOn    = "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.23T scanned at 1.02G/s, 456G issued at 380M/s, 3.62T total\n\t0B repaired, 12.30% done, 02:25:12 to go"
 	)
 	for _, tc := range []struct {
 		desc       string
@@ -279,9 +298,10 @@ func TestParseScan(t *testing.T) {
 		endErr     bool
 		scrubStart time.Time
 		startErr   bool
+		never      bool // the paragraph says the pool was never scanned
 	}{
-		{desc: "no scan line", kind: "none", pct: num(100)},
-		{desc: "none requested", text: "none requested", kind: "none", pct: num(100)},
+		{desc: "no scan line", kind: "none", pct: num(100), never: true},
+		{desc: "none requested", text: "none requested", kind: "none", pct: num(100), never: true},
 		{desc: "finished scrub", text: finished, kind: "none", pct: num(100), lastScrub: end},
 		{desc: "finished scrub 0.8", text: "scrub repaired 0B in 0 days 00:12:33 with 0 errors on Sun Nov 10 00:36:35 2024", kind: "none", pct: num(100), lastScrub: end},
 		{desc: "finished scrub, bad date", text: "scrub repaired 0B in 00:12:33 with 0 errors on Sonntag 10.11.2024", kind: "none", pct: num(100), endErr: true},
@@ -297,6 +317,19 @@ func TestParseScan(t *testing.T) {
 		{desc: "scrub finished, rebuild running", text: finished + "\nscan: " + rebuildOn, kind: "resilver", pct: num(24.61), lastScrub: end},
 		{desc: "rebuild running, scrub finished", text: rebuildOn + "\nscan: " + finished, kind: "resilver", pct: num(24.61), lastScrub: end},
 		{desc: "scrub running, rebuild running", text: scrubOn + "\nscan: " + rebuildOn, kind: "resilver", pct: num(24.61), scrubStart: start},
+		// A canceled sequential rebuild: nothing runs on that vdev.
+		{desc: "rebuild canceled", text: rebuildOff, kind: "none", pct: num(100)},
+		{desc: "scrub finished, rebuild canceled", text: finished + "\nscan: " + rebuildOff, kind: "none", pct: num(100), lastScrub: end},
+		{desc: "scrub running, rebuild canceled", text: scrubOn + "\nscan: " + rebuildOff, kind: "scrub", pct: num(12.30), scrubStart: start},
+		{desc: "rebuild canceled, rebuild running", text: rebuildOff + "\nscan: " + rebuildOn, kind: "resilver", pct: num(24.61)},
+		{desc: "resilver canceled", text: "resilver canceled on Sat Nov  9 18:02:11 2024", kind: "none", pct: num(100)},
+		// Error scrubs (zpool scrub -e, OpenZFS 2.2): they run as scrubs
+		// but are no full scrub, so neither an end nor a start for the age.
+		{desc: "error scrub running", text: "error scrub in progress since Sun Nov 10 00:24:02 2024\n\t42.17% done, issued I/O for 1234 error blocks", kind: "scrub", pct: num(42.17)},
+		{desc: "error scrub paused", text: "error scrub paused since Sun Nov 10 02:00:00 2024\n\terror scrub started on Sun Nov 10 00:24:02 2024\n\t42.17% done, issued I/O for 1234 error blocks", kind: "scrub_paused", pct: num(42.17)},
+		{desc: "error scrub finished", text: "scrubbed 1234 error blocks in 0 days 00:00:12 on Sun Nov 10 00:36:35 2024", kind: "none", pct: num(100)},
+		{desc: "error scrub canceled", text: "error scrub canceled on Sun Nov 10 00:30:00 2024", kind: "none", pct: num(100)},
+		{desc: "error scrub running, rebuild running", text: "error scrub in progress since Sun Nov 10 00:24:02 2024\n\t42.17% done, issued I/O for 1234 error blocks\nscan: " + rebuildOn, kind: "resilver", pct: num(24.61)},
 		{desc: "scrub running", text: scrubOn, kind: "scrub", pct: num(12.30), scrubStart: start},
 		{desc: "scrub running, bad start", text: "scrub in progress since gestern\n\t0B repaired, 12.30% done", kind: "scrub", pct: num(12.30), startErr: true},
 		{desc: "scrub running, issued computed", text: "scrub in progress since Sun Nov 10 00:24:02 2024\n\t1.23T scanned at 1.02G/s, 512G issued at 380M/s, 2T total", kind: "scrub", pct: num(25), scrubStart: start},
@@ -332,6 +365,9 @@ func TestParseScan(t *testing.T) {
 				}
 			} else if got.lastScrubErr != nil || !got.lastScrub.Equal(tc.lastScrub) {
 				t.Errorf("last scrub = %v (%v), want %v", got.lastScrub, got.lastScrubErr, tc.lastScrub)
+			}
+			if got.neverScanned != tc.never {
+				t.Errorf("never scanned = %v, want %v", got.neverScanned, tc.never)
 			}
 			if tc.startErr {
 				if got.scrubStartErr == nil {

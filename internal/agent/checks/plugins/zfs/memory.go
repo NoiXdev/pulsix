@@ -18,14 +18,17 @@ type scrubMemory struct {
 
 func newScrubMemory() *scrubMemory { return &scrubMemory{ends: map[string]time.Time{}} }
 
-// remember records the pool's last finished scrub; a nil memory forgets.
+// remember records the pool's last finished scrub, keeping the later of
+// the remembered and the new end; a nil memory remembers nothing.
 func (m *scrubMemory) remember(pool string, end time.Time) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.ends[pool] = end
+	if have, ok := m.ends[pool]; !ok || end.After(have) {
+		m.ends[pool] = end
+	}
 }
 
 // get returns the pool's remembered last finished scrub.
@@ -37,4 +40,15 @@ func (m *scrubMemory) get(pool string) (time.Time, bool) {
 	defer m.mu.Unlock()
 	end, ok := m.ends[pool]
 	return end, ok
+}
+
+// forget drops the pool's remembered scrub: its scan record says it was
+// never scrubbed, so the name now stands for another pool.
+func (m *scrubMemory) forget(pool string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.ends, pool)
 }

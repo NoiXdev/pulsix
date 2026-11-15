@@ -24,24 +24,30 @@
 // the agent stops sending turns stale and leaves the host unknown — as a
 // value or as a collection error, except zfs.fragmentation_pct where zpool
 // prints '-' (it is then never present, so never stale). zpool status may
-// print several scan: entries for a pool — the scrub's, then one per
-// top-level vdev with a sequential rebuild — and the running one names
-// zfs.scan (a resilver or rebuild before a scrub before a paused scrub).
+// print several scan: entries for a pool — the scrub's (or, OpenZFS 2.2,
+// an error scrub's under " scrub:" when that is the newer), then one per
+// top-level vdev with a sequential rebuild, running, finished or canceled
+// — and the running one names zfs.scan (a resilver or rebuild before a
+// scrub or error scrub before a paused one).
 // zfs.scan_pct is its progress (computed from the amounts done and in
 // total when no percentage is printed; 0 for the "nan%" of a scan that just
 // started), the paused scrub's (0 when it prints none), 100 when none runs.
 //
 // zfs.scrub_age_days is in days, fractional, counted from the first of:
 // the end of the finished scrub zpool status prints now (the plugin
-// remembers it per pool); the start of the running or paused scrub, so a
-// routine scrub reads about 0 days rather than the pool's age; the
-// remembered end, when a resilver, a canceled scrub or nothing has
-// replaced the scan line since; the pool's creation. A canceled scrub is
-// not a finished one, a resilver is not a scrub, and a pool that was never
-// scrubbed is not an error. The memory lives in the plugin only: after an
-// agent restart the age counts from the creation (or a running scrub's
-// start) until the next finished scrub is seen. A date in the future (the
-// clock moved) reads 0.
+// remembers it per pool, keeping the later end); the start of the running
+// or paused scrub, so a routine scrub reads about 0 days rather than the
+// pool's age; the remembered end, when a resilver, a canceled scrub or an
+// error scrub has replaced the scan line since; the pool's creation. A
+// canceled scrub is not a finished one, a resilver is not a scrub, an
+// error scrub (zpool scrub -e) is no full scrub, and a pool that was never
+// scrubbed is not an error. A pool whose scan paragraph is empty or "none
+// requested" was never scanned under this identity (the record is kept on
+// disk and never reset: the pool was re-created, or another one took the
+// name), so its remembered end is forgotten. The memory lives in the
+// plugin only: after an agent restart the age counts from the creation (or
+// a running scrub's start) until the next finished scrub is seen. A date
+// in the future (the clock moved) reads 0.
 //
 // Error counters sum each column over every row of the pool's
 // configuration tree — the pool row, vdevs, leaves and the logs, cache,

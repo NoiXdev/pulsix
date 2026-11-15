@@ -45,7 +45,7 @@ func scrubBase(scan scanState, remembered time.Time, haveRemembered bool) ageBas
 }
 
 // scrubBases remembers the finished scrubs zpool status prints for the
-// reported pools and returns each such pool's age base, and the pools
+// reported pools, forgets the pools it says were never scanned, and returns each such pool's age base, and the pools
 // whose age counts from their creation (zfs get is asked for those only).
 func scrubBases(pools []listedPool, statuses map[string]poolStatus, mem *scrubMemory) (map[string]ageBase, []string) {
 	bases := map[string]ageBase{}
@@ -55,7 +55,10 @@ func scrubBases(pools []listedPool, statuses map[string]poolStatus, mem *scrubMe
 		if !ok {
 			continue
 		}
-		if !st.scan.lastScrub.IsZero() && st.scan.lastScrubErr == nil {
+		switch {
+		case st.scan.neverScanned:
+			mem.forget(lp.name) // re-created, or another pool under the name
+		case !st.scan.lastScrub.IsZero() && st.scan.lastScrubErr == nil:
 			mem.remember(lp.name, st.scan.lastScrub)
 		}
 		end, have := mem.get(lp.name)

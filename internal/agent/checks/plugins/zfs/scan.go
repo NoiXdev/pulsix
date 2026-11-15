@@ -35,6 +35,10 @@ type scanState struct {
 	// instead when that start cannot be read.
 	scrubStart    time.Time
 	scrubStartErr error
+	// neverScanned is a paragraph with no entry or only "none requested":
+	// the pool's scan record, kept on disk and never reset, holds nothing,
+	// so it was never scrubbed under this identity.
+	neverScanned bool
 }
 
 // ctimeLayout is the C library's ctime form, which zpool prints dates in
@@ -42,8 +46,9 @@ type scanState struct {
 const ctimeLayout = "Mon Jan _2 15:04:05 2006"
 
 var (
-	resilverRunning = regexp.MustCompile(`^resilver( \([^)]*\))? in progress since `)
-	percentDone     = regexp.MustCompile(`(\S+)% done`)
+	resilverRunning  = regexp.MustCompile(`^resilver( \([^)]*\))? in progress since `)
+	resilverCanceled = regexp.MustCompile(`^resilver( \([^)]*\))? canceled on `)
+	percentDone      = regexp.MustCompile(`(\S+)% done`)
 	// progressForms compute the progress when no percentage is printed:
 	// what was issued (the actual work since sequential scrubs) before
 	// what was scanned, each as zpool prints it in its releases.
@@ -61,25 +66,34 @@ var (
 // each the text after it and its continuation lines; none at all is a pool
 // that was never scanned. OpenZFS prints the scrub's entry, then one per
 // top-level vdev with a sequential rebuild (zpool replace -s or attach -s,
-// a dRAID distributed spare). The running entry names the kind and the
-// progress — a resilver or rebuild before a scrub before a paused scrub —
-// and the finished-scrub entry the last scrub's end. An entry the plugin
+// a dRAID distributed spare; running, finished or canceled). OpenZFS 2.2
+// prints an error scrub (zpool scrub -e) in the scrub's place when it is
+// the newer, under a " scrub:" header (status.go reads it as an entry
+// too). The running entry names the kind and the progress — a resilver or
+// rebuild before a scrub or error scrub before a paused one — and the
+// finished-scrub entry the last scrub's end. An error scrub is no full
+// scrub: it never gives the age an end or a start. An entry the plugin
 // does not know makes the kind and progress errors, and the last scrub's
 // end too unless a finished-scrub entry names it.
 func parseScan(entries [][]string, loc *time.Location) scanState {
-	st := scanState{kind: scanNone, pct: value(100)}
-	var resilvering, scrubbing, paused []string
+	st := scanState{kind: scanNone, pct: value(100), neverScanned: true}
+	var resilvering, scrubbing, paused, errScrubbing, errPaused []string
 	var unknown error
 	for _, e := range entries {
 		if len(e) == 0 {
 			continue
 		}
 		first := strings.TrimSpace(e[0])
+		if first == "" || first == "none requested" {
+			continue
+		}
+		st.neverScanned = false
 		switch {
-		case first == "" || first == "none requested",
-			strings.HasPrefix(first, "scrub canceled on "),
-			strings.HasPrefix(first, "resilver canceled on "),
-			strings.HasPrefix(first, "resilvered "):
+		case strings.HasPrefix(first, "scrub canceled on "),
+			resilverCanceled.MatchString(first),
+			strings.HasPrefix(first, "resilvered "),
+			strings.HasPrefix(first, "error scrub canceled on "),
+			strings.HasPrefix(first, "scrubbed "): // a finished error scrub
 			// Nothing runs.
 		case strings.HasPrefix(first, "scrub repaired "):
 			if st.lastScrub.IsZero() && st.lastScrubErr == nil {
@@ -87,10 +101,14 @@ func parseScan(entries [][]string, loc *time.Location) scanState {
 			}
 		case strings.HasPrefix(first, "scrub in progress since "):
 			scrubbing = firstOf(scrubbing, e)
+		case strings.HasPrefix(first, "error scrub in progress since "):
+			errScrubbing = firstOf(errScrubbing, e)
 		case resilverRunning.MatchString(first):
 			resilvering = firstOf(resilvering, e)
 		case strings.HasPrefix(first, "scrub paused since "):
 			paused = firstOf(paused, e)
+		case strings.HasPrefix(first, "error scrub paused since "):
+			errPaused = firstOf(errPaused, e)
 		default:
 			if unknown == nil {
 				unknown = fmt.Errorf("unrecognized scan line %q", cutText(first, maxQuote))
@@ -107,9 +125,14 @@ func parseScan(entries [][]string, loc *time.Location) scanState {
 		st.kind, st.pct = scanResilver, progress(resilvering, false)
 	case scrubbing != nil:
 		st.kind, st.pct = scanScrub, progress(scrubbing, false)
+	case errScrubbing != nil:
+		st.kind, st.pct = scanScrub, progress(errScrubbing, false)
 	case paused != nil:
 		st.kind, st.pct = scanScrubPaused, progress(paused, true)
+	case errPaused != nil:
+		st.kind, st.pct = scanScrubPaused, progress(errPaused, true)
 	}
+	// Only a full scrub's start counts for the age, never an error scrub's.
 	switch {
 	case scrubbing != nil:
 		st.scrubStart, st.scrubStartErr = dateAfter(strings.TrimSpace(scrubbing[0]), " since ", "scrub start", loc)

@@ -88,7 +88,8 @@ func parseStatus(out []byte, loc *time.Location) map[string]poolStatus {
 			}
 			cur.section = key
 			switch key {
-			case "scan":
+			case "scan", "scrub": // "scrub": OpenZFS 2.2's error scrub
+				cur.section = "scan"
 				cur.scans = append(cur.scans, []string{rest})
 			case "config":
 				cur.hasConfig = true
