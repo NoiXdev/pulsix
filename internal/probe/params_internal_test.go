@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,6 +26,9 @@ func TestTargetHost(t *testing.T) {
 		{"http://example.com", "", errBadTarget},
 		{"exa mple.com", "", errBadTarget},
 		{"example.com/path", "", errBadTarget},
+		{"under_score-host.example", "under_score-host.example", nil},
+		{strings.Repeat("a", 253), strings.Repeat("a", 253), nil},
+		{strings.Repeat("a", 254), "", errBadTarget},
 	}
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {

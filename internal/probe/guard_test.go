@@ -200,4 +200,49 @@ func TestResolveAllowed(t *testing.T) {
 	if _, err := probe.ResolveAllowed(ctx, probe.NewGuard(nil, nil), "localhost"); !errors.Is(err, probe.ErrNotAllowed) {
 		t.Fatalf("a name resolving to loopback only: err %v, want ErrNotAllowed", err)
 	}
+	if _, err := probe.ResolveAllowed(ctx, probe.NewGuard(nil, nil), "fe80::1"); !errors.Is(err, probe.ErrNotAllowed) {
+		t.Fatalf("a refused IPv6 literal: err %v, want ErrNotAllowed", err)
+	}
+}
+
+// TestResolveAllowedName: a name is resolved, and of the answers the guard
+// allows an IPv4 address wins; an IPv6 one is used only when no IPv4 address
+// is allowed. localhost is answered from the hosts file, so no query leaves
+// the machine.
+func TestResolveAllowedName(t *testing.T) {
+	ctx := context.Background()
+	got, err := probe.ResolveAllowed(ctx, probetest.LoopbackGuard(), "localhost")
+	if err != nil || !got.Is4() || !got.IsLoopback() {
+		t.Fatalf("localhost with the test guard: %v, %v; want an IPv4 loopback address", got, err)
+	}
+
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", "localhost")
+	if err != nil {
+		t.Fatalf("resolve localhost: %v", err)
+	}
+	hasV6 := false
+	for _, ip := range ips {
+		if ip.Unmap() == netip.IPv6Loopback() {
+			hasV6 = true
+		}
+	}
+	if !hasV6 {
+		t.Skipf("localhost does not resolve to ::1 here (%v); the IPv6 fallback needs it", ips)
+	}
+	noV4 := probe.NewGuardForTest(true, []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})
+	got, err = probe.ResolveAllowed(ctx, noV4, "localhost")
+	if err != nil || got != netip.IPv6Loopback() {
+		t.Fatalf("localhost with IPv4 loopback denied: %v, %v; want ::1", got, err)
+	}
+}
+
+// TestResolveAllowedLookupError: a name that does not resolve returns the
+// resolver's error, not ErrNotAllowed. The name is not a valid domain name,
+// so the resolver refuses it without sending a query.
+func TestResolveAllowedLookupError(t *testing.T) {
+	_, err := probe.ResolveAllowed(context.Background(), probetest.LoopbackGuard(), "no..such.invalid")
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) || errors.Is(err, probe.ErrNotAllowed) {
+		t.Fatalf("err %v, want the resolver's DNS error", err)
+	}
 }
