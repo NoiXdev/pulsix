@@ -286,8 +286,8 @@ func TestHTTPJSONEntriesAreBounded(t *testing.T) {
 		"json_values": values("long="+long, "bad=$[", "nameless", "=$.a", "ok=$.a"),
 	}), "")
 	m := byItem(t, obs)
-	wantItemError(t, m, "long", "the path is not a valid JSONPath")
-	wantItemError(t, m, "bad", "the path is not a valid JSONPath")
+	wantItemError(t, m, "long", "the path is not allowed")
+	wantItemError(t, m, "bad", "the path is not allowed")
 	wantNumber(t, m, "ok", 1)
 	if len(obs) != 3+3 {
 		t.Fatalf("an entry without a name has no item to report on; got %+v", obs)
@@ -371,38 +371,75 @@ func TestHTTPJSONDepthIsBounded(t *testing.T) {
 	})
 }
 
-// TestHTTPJSONPathWorkIsBounded: a path with more than one descendant
-// segment is refused on its item before it runs, and the most a permitted
-// path can cost over the largest, deepest body stays small.
+// TestHTTPJSONPathWorkIsBounded: the paths that multiplied the work in
+// the full RFC 9535 language are refused on their items before they run,
+// and the costliest paths of the subset stay within the budget over the
+// largest, deepest bodies.
 func TestHTTPJSONPathWorkIsBounded(t *testing.T) {
-	// Close to 1 MiB, 64 deep, every level wide.
-	var b strings.Builder
+	refused := []string{
+		"$..*..*..*",
+		"$..[?@..x]",
+		"$..[?@[?@[?@[?@==7]]]]",
+		"$" + strings.Repeat("[0,0]", 26),
+		"$..[" + strings.Repeat("*,", 63) + "*]",
+		"$[0][?count($[0][*])>0]",
+		"$[0][?count($[0][?count($[0][*])>0])>0]",
+		"$[?search(@.a, @.b)]",
+		"$[?match(@, '[a-z]{1000}')]",
+	}
+	// Close to 1 MiB, 64 deep: every level wide, or many deep chains.
+	var wide strings.Builder
 	for range 63 {
-		b.WriteString("[" + strings.Repeat("0,", 200))
+		wide.WriteString("[" + strings.Repeat("0,", 200))
 	}
-	b.WriteString("[" + strings.Repeat("1,", (1<<20-b.Len())/2-200) + "1")
-	b.WriteString(strings.Repeat("]", 64))
-	srv := jsonServer(t, http.StatusOK, b.String())
-	start := time.Now()
-	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
-		"json_values": values(
-			"three=$..*..*..*",
-			"filtered=$..[?@..x]",
-			"one=$..[?@[?@[?@[?@==7]]]]",
-			"all=$..*",
-		),
-	}), "")
-	// About 3 s under -race; unbounded, the refused paths alone ran for
-	// minutes on this body. The budget leaves room for a loaded runner.
-	if d := time.Since(start); d > 20*time.Second {
-		t.Fatalf("probe took %v: the path work is not bounded", d)
+	wide.WriteString("[" + strings.Repeat("1,", (1<<20-wide.Len())/2-200) + "1")
+	wide.WriteString(strings.Repeat("]", 64))
+	chain := strings.Repeat("[", 63) + "1" + strings.Repeat("]", 63)
+	chains := "[" + strings.Repeat(chain+",", (1<<20)/(len(chain)+1)-2) + chain + "]"
+	deep := "@" + strings.Repeat("[0]", 14)
+	terms := make([]string, 8)
+	for i := range terms {
+		terms[i] = deep + " == 2"
 	}
-	m := byItem(t, obs)
-	wantItemError(t, m, "three", "the path is not allowed")
-	wantItemError(t, m, "filtered", "the path is not allowed")
-	wantItemError(t, m, "one", "the path matched nothing")
-	if o := m[mi{"http.json.value", "all"}]; !strings.HasPrefix(o.Err, "the path matched ") {
-		t.Fatalf("all = %+v, want a count of the matches", o)
+	accepted := map[string]string{
+		"all":     "$..*",
+		"filter":  "$..[?@ == 7]",
+		"deep":    "$..*" + strings.Repeat(".*", 63),
+		"terms":   "$..[?" + strings.Join(terms, " || ") + "]",
+		"indexes": "$..[0]" + strings.Repeat("[0]", 62),
+	}
+	for name, body := range map[string]string{"wide": wide.String(), "chains": chains} {
+		t.Run(name, func(t *testing.T) {
+			if len(body) > 1<<20 {
+				t.Fatalf("body is %d bytes, over the cap", len(body))
+			}
+			srv := jsonServer(t, http.StatusOK, body)
+			entries := make([]string, 0, len(refused)+len(accepted))
+			for i, p := range refused {
+				entries = append(entries, fmt.Sprintf("r%d=%s", i, p))
+			}
+			for name, p := range accepted {
+				entries = append(entries, name+"="+p)
+			}
+			start := time.Now()
+			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
+				"json_values": values(entries...),
+			}), "")
+			if d := time.Since(start); d > 2*time.Second {
+				t.Fatalf("probe took %v: the path work is not bounded", d)
+			}
+			m := byItem(t, obs)
+			for i := range refused {
+				wantItemError(t, m, fmt.Sprintf("r%d", i), "the path is not allowed")
+			}
+			for name := range accepted {
+				o := m[mi{"http.json.value", name}]
+				if (o.Err == "" && o.Value == nil) || o.Err == "the path is not allowed" {
+					t.Fatalf("%s = %+v, want it evaluated", name, o)
+				}
+				t.Logf("%s: %s", name, o.Err)
+			}
+		})
 	}
 }
 

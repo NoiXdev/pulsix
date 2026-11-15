@@ -75,7 +75,8 @@ func TestValidateHTTPMessages(t *testing.T) {
 		{httpOK(map[string]any{"json_values": []any{"a b=$.a"}}), "http: json_values entries must be name=JSONPath, the name 1 to 64 letters, digits, '_', '.' or '-'"},
 		{httpOK(map[string]any{"json_values": []any{"a=.a"}}), "http: json_values entries must be name=JSONPath, the path starting with $ and at most 512 bytes"},
 		{httpOK(map[string]any{"json_values": []any{"a=$." + strings.Repeat("p", 511)}}), "http: json_values entries must be name=JSONPath, the path starting with $ and at most 512 bytes"},
-		{httpOK(map[string]any{"json_values": []any{"a=$..*..*"}}), "http: json_values entries must be name=JSONPath, the path with at most one descendant segment (..)"},
+		{httpOK(map[string]any{"json_values": []any{"a=$..*..*"}}), "http: json_values entries must be name=JSONPath, the path a JSONPath in Pulsix's supported subset (see the docs): at byte 4: at most one descendant segment (..)"},
+		{httpOK(map[string]any{"json_values": []any{"a=$[0,0]"}}), "http: json_values entries must be name=JSONPath, the path a JSONPath in Pulsix's supported subset (see the docs): at byte 3: a bracket holds one selector"},
 	}
 	for _, tc := range cases {
 		err := checkplugins.Validate("http", tc.params)
@@ -86,7 +87,7 @@ func TestValidateHTTPMessages(t *testing.T) {
 	// A path the parser refuses quotes the parser: the expression is the
 	// operator's own configuration, never a response.
 	err := checkplugins.Validate("http", httpOK(map[string]any{"json_values": []any{"a=$["}}))
-	const prefix = "http: json_values entries must be name=JSONPath, the path a JSONPath expression (RFC 9535): "
+	const prefix = "http: json_values entries must be name=JSONPath, the path a JSONPath in Pulsix's supported subset (see the docs): "
 	if !errors.Is(err, checkplugins.ErrInvalidParams) || !strings.HasPrefix(err.Error(), prefix) || len(err.Error()) == len(prefix) {
 		t.Errorf("Validate(http, a=$[) = %v, want the prefix %q and the parser's reason", err, prefix)
 	}
@@ -191,6 +192,18 @@ func TestJSONValueFormat(t *testing.T) {
 		{"a=$..*..*..*", false},
 		{"a=$..[?@..x]", false},
 		{"a=$[?@..x && @..y]", false},
+		// Outside the bounded subset (backlog 3.6h review): unions, slices,
+		// $ inside a filter, functions, nested filters, wildcards in one.
+		{"a=$[0,0]", false},
+		{"a=$[*,*]", false},
+		{"a=$[0:2]", false},
+		{"a=$[?@.a == $.b]", false},
+		{"a=$[0][?count($[0][*])>0]", false},
+		{"a=$[?match(@, 'a.*')]", false},
+		{"a=$[?search(@.a, @.b)]", false},
+		{"a=$[?@[?@.a]]", false},
+		{"a=$[?@.*]", false},
+		{"a=$[?@.a == @.b]", false},
 	}
 	for _, tc := range cases {
 		if got := checkplugins.FormatJSONValue.Valid(tc.in); got != tc.valid {
@@ -228,26 +241,5 @@ func TestHTTPAsksForItem(t *testing.T) {
 				t.Fatalf("AsksForItem(http, %v, %q) = %v, want %v", tc.params, tc.item, got, tc.want)
 			}
 		})
-	}
-}
-
-// TestJSONPathDescendants counts ".." outside string literals: for a path
-// the parser accepts, each one is a descendant segment.
-func TestJSONPathDescendants(t *testing.T) {
-	for path, want := range map[string]int{
-		"$.a":                 0,
-		"$..a":                1,
-		"$..*..*..*":          3,
-		"$..[?@..x]":          2,
-		"$[?@.n=='a..b']":     0,
-		`$[?@.n=="a..b"]..c`:  1,
-		`$['it\'s..'].b..c`:   1,
-		`$["q\"..x"]`:         0,
-		"$[?count(@..*) > 1]": 1,
-		"$[?@.a==1.5].b":      0,
-	} {
-		if got := checkplugins.JSONPathDescendants(path); got != want {
-			t.Errorf("JSONPathDescendants(%q) = %d, want %d", path, got, want)
-		}
 	}
 }

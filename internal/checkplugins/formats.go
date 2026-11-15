@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/theory/jsonpath"
+	"github.com/noixdev/pulsix/internal/jpath"
 )
 
 // Format names a validator for a string, or for each entry of a list. The
@@ -63,10 +63,10 @@ const (
 	FormatSNMPOID Format = "snmpOID"
 	// FormatJSONValue: one entry of http's json_values (backlog 3.6h),
 	// "name=path". The name follows FormatSecretName's rule and becomes the
-	// item the value is reported on; the path is an RFC 9535 JSONPath query
-	// of at most 512 bytes that github.com/theory/jsonpath, the parser the
-	// probe evaluates it with, accepts. The SPA's twin checks the shape and
-	// the length only.
+	// item the value is reported on; the path is at most 512 bytes and in
+	// the bounded RFC 9535 subset internal/jpath parses, the parser the
+	// probe evaluates it with. The SPA's twin checks the shape, the length
+	// and the descendant segments (..) only.
 	FormatJSONValue Format = "jsonValue"
 )
 
@@ -323,37 +323,6 @@ func oidArc(arc string) (uint64, bool) {
 // maxJSONPathLen bounds a json_values entry's path in bytes (backlog 3.6h).
 const maxJSONPathLen = 512
 
-// MaxJSONPathDescendants bounds the descendant segments ("..") of a
-// json_values path, filter sub-queries included. The target writes the
-// document the path runs over, and each further descendant segment
-// multiplies the work by the document's size; internal/probe/http refuses
-// the same before it evaluates a path.
-const MaxJSONPathDescendants = 1
-
-// JSONPathDescendants counts the descendant segments of a JSONPath
-// expression, inside filters too: every ".." outside a string literal,
-// which in a path the parser accepts is always one.
-func JSONPathDescendants(path string) int {
-	n := 0
-	var quote byte
-	for i := 0; i < len(path); i++ {
-		c := path[i]
-		switch {
-		case quote != 0 && c == '\\':
-			i++ // the escaped character
-		case quote != 0 && c == quote:
-			quote = 0
-		case quote != 0:
-		case c == '\'' || c == '"':
-			quote = c
-		case c == '.' && i+1 < len(path) && path[i+1] == '.':
-			n++
-			i++
-		}
-	}
-	return n
-}
-
 // jsonValueProblem checks a "name=path" entry, split at the first '='
 // (a name never contains one; a path may, in a filter).
 func jsonValueProblem(s string) string {
@@ -364,13 +333,10 @@ func jsonValueProblem(s string) string {
 	if !strings.HasPrefix(path, "$") || len(path) > maxJSONPathLen {
 		return fmt.Sprintf("must be name=JSONPath, the path starting with $ and at most %d bytes", maxJSONPathLen)
 	}
-	if _, err := jsonpath.Parse(path); err != nil {
+	if _, err := jpath.Parse(path); err != nil {
 		// The parser's own reason: the path is the operator's
 		// configuration, never a response, so quoting it is safe.
-		return "must be name=JSONPath, the path a JSONPath expression (RFC 9535): " + err.Error()
-	}
-	if JSONPathDescendants(path) > MaxJSONPathDescendants {
-		return "must be name=JSONPath, the path with at most one descendant segment (..)"
+		return "must be name=JSONPath, the path a JSONPath in Pulsix's supported subset (see the docs): " + err.Error()
 	}
 	return ""
 }

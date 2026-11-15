@@ -48,7 +48,7 @@ describe('the parameter formats', () => {
     // Refused by the server's JSONPath parser (TestJSONValueFormat), so
     // these cannot be shared vectors: the form lets them through and the
     // server's 400 names the parser's reason.
-    for (const entry of ['a=$[', 'a=$.', 'a=$x', "a=$['open"]) {
+    for (const entry of ['a=$[', 'a=$.', 'a=$x', "a=$['open", 'a=$[0,0]', 'a=$[?count(@) > 1]', 'a=$[?@.a == $.b]']) {
       expect(formatValid('jsonValue', entry)).toBe(true);
     }
     expect(formatProblem('jsonValue', 'a=.a')).toBe('jsonValue');

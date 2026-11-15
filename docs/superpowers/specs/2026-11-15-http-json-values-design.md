@@ -14,18 +14,30 @@ the organization's secret store: exactly one of `username`+`password`
 never follow a redirect to another host; values never in error texts. Not
 part of it: POST and request bodies, assertions inside the check (3.13b),
 bodies over 1 MiB. The SNMP half of 3.6h was delivered by 3.13d. Every
-other decision below is **(Claude's call)**.
+other decision below is **(Claude's call)**. Amended after the Task 2
+review (controller's ruling): paths are a bounded RFC 9535 subset with
+Pulsix's own parser and evaluator instead of the library (see Descriptor).
 
 ## Descriptor (`internal/checkplugins/http.go`)
 
 - `json_values`: list, at most 32, each `FormatJSONValue`: `name=path`,
   name the secret-name pattern `[A-Za-z0-9_.-]{1,64}`, path at most 512
-  bytes and accepted by the JSONPath parser (`github.com/theory/jsonpath`,
-  as `internal/triggers` uses it); names unique (Check hook). A path has
-  at most one descendant segment (`..`), counted across the whole path
-  including filter sub-queries, because the target writes the document
-  the path runs over and each further descendant segment multiplies the
-  evaluation cost by its size (review of Task 2).
+  bytes and accepted by `internal/jpath`, Pulsix's own parser for a
+  bounded subset of RFC 9535 (same semantics as the RFC for what it
+  accepts); names unique (Check hook). The subset: `$`, then `.name`,
+  `.*`, `['name']`, `[index]`, `[*]`, `[?filter]`, one selector per
+  bracket (no unions, no slices), at most one descendant segment (`..name`,
+  `..*`, `..[selector]`); a filter is comparisons `@path op literal` and
+  existence tests `@path` (an `@path` of names and indexes only) joined by
+  `&&`, `||`, `!` and parentheses, at most 8; no `$` inside a filter, no
+  functions, no nested filters. Why (review of Task 2): the target writes
+  the document the path runs over, and full RFC 9535 cannot be bounded —
+  unions and descendant segments multiply the node list, `$` queries
+  inside filters make evaluation polynomial in the body, and
+  `match`/`search` compile patterns the document can supply — whereas
+  every path of the subset evaluates in time linear in the body.
+  `internal/triggers` keeps the full library for its own, operator-written
+  documents.
 - `secret`: `SecretParam()`, optional.
 - Check hook: `json_values` non-empty requires `method` `GET`.
 - Metrics added: `http.json.value` (numeric, item = name),
@@ -33,8 +45,8 @@ other decision below is **(Claude's call)**.
 - Items: `ItemAsked` (the hook 3.13d added) — an item is asked when it is
   a `json_values` name. Whole-host metrics stay item `""`.
 - The SPA twin of `FormatJSONValue` checks the `name=` shape, the name
-  pattern, a path starting with `$` and the length; the server is the
-  authority on the path's syntax.
+  pattern, a path starting with `$`, the length and at most one `..`; the
+  server is the authority on the subset.
 
 ## Probe (`internal/probe/http`)
 
@@ -46,10 +58,13 @@ other decision below is **(Claude's call)**.
   larger than 1 MiB".
 - The probe bounds the evaluation cost on a body the target controls: a
   document nested deeper than 64 arrays/objects → every JSON item an
-  error "the response is nested too deeply", a path with more than one
-  descendant segment → that item's error "the path is not allowed"
-  (defence in depth behind the format), and a body whose read broke off
-  (timeout, reset) → every JSON item "the response was cut short".
+  error "the response is nested too deeply"; a path `internal/jpath`
+  refuses → that item's error "the path is not allowed" (defence in depth
+  behind the format); an evaluation that would visit more than 2 000 000
+  nodes (a 1 MiB body holds about 525 000 values) → that item's error
+  "the path selected too much", the backstop that keeps every entry's
+  work bounded; a body whose read broke off (timeout, reset) → every JSON
+  item "the response was cut short".
 - Each path: zero nodes → "the path matched nothing"; more than one →
   "the path matched <n> values"; one node that is an object, array or
   null → "the path matched an object" / "a list" / "null"; a number →

@@ -363,8 +363,8 @@ function jsonPathDescendants(path: string): number {
 /** jsonValue: one entry of http's json_values, "name=path" split at the
  * first '=': the name follows secretName, the path starts with $, is at
  * most 512 bytes and has at most one descendant segment (..). Whether the
- * path is a JSONPath query the server decides; its parser has no twin
- * here. */
+ * path is in the supported JSONPath subset the server decides; its parser
+ * has no twin here. */
 function jsonValue(s: string): boolean {
   const eq = s.indexOf('=');
   if (eq < 0 || !secretName(s.slice(0, eq))) return false;

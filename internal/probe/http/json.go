@@ -9,9 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/theory/jsonpath"
-
 	"github.com/noixdev/pulsix/internal/checkplugins"
+	"github.com/noixdev/pulsix/internal/jpath"
 	"github.com/noixdev/pulsix/internal/probe"
 )
 
@@ -24,6 +23,11 @@ const (
 	// segment's work grows with the depth of a document the target
 	// writes.
 	maxJSONDepth = 64
+	// jsonPathBudget bounds the nodes one path's evaluation visits. A
+	// 1 MiB body holds about 525 000 values; the costliest path of the
+	// subset a real API needs, a filter under the descendant segment,
+	// visits each about three times.
+	jsonPathBudget = 2_000_000
 )
 
 // Item errors of the JSON values. None quotes the response.
@@ -36,8 +40,8 @@ const (
 	errList       = "the path matched a list"
 	errNull       = "the path matched null"
 	errOutOfRange = "the number is out of range"
-	errBadPath    = "the path is not a valid JSONPath"
 	errNotAllowed = "the path is not allowed"
+	errTooMuch    = "the path selected too much"
 	errTooDeep    = "the response is nested too deeply"
 	errCutShort   = "the response was cut short"
 )
@@ -47,7 +51,7 @@ const (
 // item fails).
 type jsonEntry struct {
 	name    string
-	path    *jsonpath.Path
+	path    *jpath.Path
 	problem string
 }
 
@@ -73,21 +77,15 @@ func jsonEntries(params map[string]any) []jsonEntry {
 	return entries
 }
 
-// parseEntry parses an entry's path. A path with more descendant segments
-// than the descriptor allows is refused here too: params arrive validated,
-// but the probe does not run a path whose cost the target could multiply.
+// parseEntry parses an entry's path with the subset's parser. Params
+// arrive validated, so a refusal here means they bypassed the descriptor.
 func parseEntry(name, path string) jsonEntry {
-	e := jsonEntry{name: name, problem: errBadPath}
 	if len(path) > maxJSONPathLen {
-		return e
+		return jsonEntry{name: name, problem: errNotAllowed}
 	}
-	p, err := jsonpath.Parse(path)
+	p, err := jpath.Parse(path)
 	if err != nil {
-		return e
-	}
-	if checkplugins.JSONPathDescendants(path) > checkplugins.MaxJSONPathDescendants {
-		e.problem = errNotAllowed
-		return e
+		return jsonEntry{name: name, problem: errNotAllowed}
 	}
 	return jsonEntry{name: name, path: p}
 }
@@ -112,14 +110,15 @@ func jsonObservations(entries []jsonEntry, body []byte, over, cut bool) []probe.
 		return fail(errTooLarge)
 	case cut:
 		return fail(errCutShort)
-	case !json.Valid(body):
-		return fail(errNotJSON)
-	case tooDeep(body):
-		return fail(errTooDeep)
 	}
+	// Decoding checks the syntax (encoding/json bounds the depth at
+	// 10 000); tooDeep then scans the valid body for the probe's bound.
 	doc, ok := decodeJSON(body)
 	if !ok {
 		return fail(errNotJSON)
+	}
+	if tooDeep(body) {
+		return fail(errTooDeep)
 	}
 	obs := make([]probe.Observation, len(entries))
 	for i, e := range entries {
@@ -127,7 +126,12 @@ func jsonObservations(entries []jsonEntry, body []byte, over, cut bool) []probe.
 			obs[i] = jsonError(e.name, e.problem)
 			continue
 		}
-		obs[i] = jsonValue(e.name, e.path.Select(doc))
+		nodes, err := e.path.Select(doc, jsonPathBudget)
+		if err != nil {
+			obs[i] = jsonError(e.name, errTooMuch)
+			continue
+		}
+		obs[i] = jsonValue(e.name, nodes)
 	}
 	return obs
 }
@@ -178,7 +182,7 @@ func decodeJSON(body []byte) (any, bool) {
 // jsonValue turns what a path selected into the entry's observation: a
 // number is http.json.value, a string or a boolean http.json.text, and
 // anything but exactly one scalar an error on http.json.value.
-func jsonValue(name string, nodes jsonpath.NodeList) probe.Observation {
+func jsonValue(name string, nodes []any) probe.Observation {
 	if len(nodes) == 0 {
 		return jsonError(name, errNoMatch)
 	}
