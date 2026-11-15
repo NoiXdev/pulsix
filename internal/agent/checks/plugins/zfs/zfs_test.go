@@ -42,7 +42,7 @@ func TestCollectHealthy(t *testing.T) {
 	wantValue(t, obs, "tank", "zfs.scrub_age_days", days(clock.Sub(utc("2024-11-10 00:36:35"))))
 	wantValue(t, obs, "", "zfs.pools", 1)
 	if len(obs) != 14 {
-		t.Errorf("got %d observations, want 13 for the pool and zfs.pools: %+v", len(obs), obs)
+		t.Errorf("got %d observations, want 14: 13 for the pool and zfs.pools: %+v", len(obs), obs)
 	}
 	if got := f.callList(); !slices.EqualFunc(got, [][]string{listArgs, statusArgs}, slices.Equal) {
 		t.Fatalf("calls = %q", got)
@@ -191,8 +191,8 @@ func TestCollectBlockingStatus(t *testing.T) {
 				"zpool status": tc.r,
 			})
 			p := testPlugin(f)
-			p.callTimeout = 50 * time.Millisecond
-			p.collectTimeout = 5 * time.Second
+			p.callTimeout = 300 * time.Millisecond
+			p.collectTimeout = 500 * time.Millisecond
 			start := time.Now()
 			obs, err := p.Collect(context.Background(), nil)
 			if d := time.Since(start); d > 2*time.Second {
@@ -202,7 +202,7 @@ func TestCollectBlockingStatus(t *testing.T) {
 				t.Fatal("want an advisory error")
 			}
 			for _, m := range statusMetrics {
-				wantErr(t, obs, "tank", m, "zfs: zpool status -p did not answer within 50ms")
+				wantErr(t, obs, "tank", m, "zfs: zpool status -p did not answer within 300ms")
 			}
 			wantLabel(t, obs, "tank", "zfs.state", "ONLINE")
 			wantValue(t, obs, "", "zfs.pools", 1)
@@ -222,7 +222,7 @@ func TestCollectBlockingCollection(t *testing.T) {
 			replies[call] = reply{ignoreCtx: true}
 			p := testPlugin(newFake(t, replies))
 			p.callTimeout = time.Minute
-			p.collectTimeout = 80 * time.Millisecond
+			p.collectTimeout = 500 * time.Millisecond
 			start := time.Now()
 			obs, err := p.Collect(context.Background(), nil)
 			if d := time.Since(start); d > 2*time.Second {
@@ -235,10 +235,10 @@ func TestCollectBlockingCollection(t *testing.T) {
 				if len(obs) != 1 {
 					t.Fatalf("obs = %+v", obs)
 				}
-				wantErr(t, obs, "", "zfs.pools", "zfs: zpool list: no answer within the check's 80ms time limit")
+				wantErr(t, obs, "", "zfs.pools", "zfs: zpool list: no answer within the check's 500ms time limit")
 				return
 			}
-			wantErr(t, obs, "tank", "zfs.scan", "zfs: zpool status -p: no answer within the check's 80ms time limit")
+			wantErr(t, obs, "tank", "zfs.scan", "zfs: zpool status -p: no answer within the check's 500ms time limit")
 			wantValue(t, obs, "", "zfs.pools", 1)
 		})
 	}

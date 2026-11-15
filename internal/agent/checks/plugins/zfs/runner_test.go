@@ -139,7 +139,7 @@ func TestExecRunnerKillsOnTimeout(t *testing.T) {
 // kernel, waiting on a suspended pool) does not hold Run past its deadline,
 // and no second one is started with the same arguments until it exited.
 func TestExecRunnerStuckProcess(t *testing.T) {
-	r := helperRunner(t, "sleep:800")
+	r := helperRunner(t, "sleep:3000")
 	r.noKill = true
 	r.reapGrace = 50 * time.Millisecond
 	args := []string{"status", "-p"}

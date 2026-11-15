@@ -49,7 +49,8 @@ func scrubBase(scan scanState, remembered time.Time, haveRemembered bool) ageBas
 // zpool list shows them ONLINE or DEGRADED: an unavailable pool shown from
 // the cache file prints no scan line), and returns each pool's age base and
 // the pools whose age counts from their creation (zfs get is asked for
-// those only).
+// those only, and only while they are ONLINE or DEGRADED; another pool's
+// age is then an error naming its health).
 func scrubBases(pools []listedPool, statuses map[string]poolStatus, mem *scrubMemory) (map[string]ageBase, []string) {
 	bases := map[string]ageBase{}
 	var fromCreation []string
@@ -58,18 +59,24 @@ func scrubBases(pools []listedPool, statuses map[string]poolStatus, mem *scrubMe
 		if !ok {
 			continue
 		}
+		available := lp.health == "ONLINE" || lp.health == "DEGRADED"
 		switch {
-		case st.scan.neverScanned && (lp.health == "ONLINE" || lp.health == "DEGRADED"):
+		case st.scan.neverScanned && available:
 			mem.forget(lp.name) // re-created, or another pool under the name
 		case !st.scan.lastScrub.IsZero() && st.scan.lastScrubErr == nil:
 			mem.remember(lp.name, st.scan.lastScrub)
 		}
 		end, have := mem.get(lp.name)
 		b := scrubBase(st.scan, end, have)
-		bases[lp.name] = b
-		if b.fromCreation {
+		switch {
+		case b.fromCreation && !available:
+			// zfs get may hang on a suspended pool and cost every other
+			// pool its age: not asked.
+			b = ageBase{err: fmt.Errorf("pool is %s: creation time not read", lp.health)}
+		case b.fromCreation:
 			fromCreation = append(fromCreation, lp.name)
 		}
+		bases[lp.name] = b
 	}
 	return bases, fromCreation
 }

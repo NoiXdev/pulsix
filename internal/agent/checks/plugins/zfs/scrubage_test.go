@@ -287,3 +287,41 @@ func TestCollectCreationFails(t *testing.T) {
 		})
 	}
 }
+
+// TestCollectCreationSkipsUnavailablePools: zfs get is not asked about a
+// pool that is neither ONLINE nor DEGRADED (it may hang on a suspended
+// pool and cost the healthy pools their age); such a pool's age, when it
+// would count from creation, is an error naming its health.
+func TestCollectCreationSkipsUnavailablePools(t *testing.T) {
+	for _, health := range []string{"SUSPENDED", "UNAVAIL", "FAULTED"} {
+		t.Run(health, func(t *testing.T) {
+			sick := strings.ReplaceAll(string(load(t, "status_never_scrubbed.txt")), "fresh", "sick")
+			f := newFake(t, map[string]reply{
+				"zpool list":   {stdout: []byte("fresh\tONLINE\t100\t50\t50\t1\nsick\t" + health + "\t100\t50\t50\t1\n")},
+				"zpool status": {stdout: append(load(t, "status_never_scrubbed.txt"), sick...)},
+				"zfs get":      {stdout: []byte("fresh\t1717243200\n")},
+			})
+			obs, err := testPlugin(f).Collect(context.Background(), nil)
+			if err == nil {
+				t.Fatal("want an advisory error")
+			}
+			args, _ := f.called("zfs get")
+			if !slices.Equal(args, []string{"zfs", "get", "-Hp", "-o", "name,value", "creation", "fresh"}) {
+				t.Fatalf("zfs get args = %q", args)
+			}
+			wantValue(t, obs, "fresh", "zfs.scrub_age_days", days(clock.Sub(time.Unix(1717243200, 0))))
+			wantErr(t, obs, "sick", "zfs.scrub_age_days", "zfs: pool sick: pool is "+health+": creation time not read")
+		})
+	}
+
+	// Only unavailable pools need it: no zfs get at all.
+	f := newFake(t, map[string]reply{
+		"zpool list":   {stdout: []byte("fresh\tSUSPENDED\t100\t50\t50\t1\n")},
+		"zpool status": {stdout: load(t, "status_never_scrubbed.txt")},
+	})
+	obs, _ := testPlugin(f).Collect(context.Background(), nil)
+	wantErr(t, obs, "fresh", "zfs.scrub_age_days", "pool is SUSPENDED")
+	if _, ok := f.called("zfs get"); ok {
+		t.Fatal("zfs get asked about an unavailable pool")
+	}
+}

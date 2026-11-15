@@ -23,7 +23,10 @@
 // Every metric is reported on every run for every reported pool — a value
 // the agent stops sending turns stale and leaves the host unknown — as a
 // value or as a collection error, except zfs.fragmentation_pct where zpool
-// prints '-' (it is then never present, so never stale). zpool status may
+// prints '-': a pool without the space map histogram feature never has
+// it, so it is never stale; an unavailable pool's (every column but name
+// and health '-') turns stale alongside the errors on its size, free space
+// and capacity. zpool status may
 // print several scan: entries for a pool — the scrub's (or, OpenZFS 2.2,
 // an error scrub's under " scrub:" when that is the newer), then one per
 // top-level vdev with a sequential rebuild, running, finished or canceled
@@ -42,9 +45,13 @@
 // canceled scrub is not a finished one, a resilver is not a scrub, an
 // error scrub (zpool scrub -e) is no full scrub, and a pool that was never
 // scrubbed is not an error. A pool whose scan paragraph is empty or "none
-// requested" was never scanned under this identity (the record is kept on
-// disk and never reset: the pool was re-created, or another one took the
-// name), so its remembered end is forgotten. The memory lives in the
+// requested" while it is ONLINE or DEGRADED was never scanned under this
+// identity (the record is kept on disk and never reset: the pool was
+// re-created, or another one took the name), so its remembered end is
+// forgotten; an unavailable pool prints no scan line and keeps it. zfs get
+// is asked only about ONLINE and DEGRADED pools (it may hang on a
+// suspended one); another pool whose age would count from its creation
+// reports an error naming its health instead. The memory lives in the
 // plugin only: after an agent restart the age counts from the creation (or
 // a running scrub's start) until the next finished scrub is seen. A date
 // in the future (the clock moved) reads 0.
