@@ -100,6 +100,22 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"raid.sync_pct":                  {CheckKey: "raid", Kind: rules.MetricNumeric},
 		"raid.arrays":                    {CheckKey: "raid", Kind: rules.MetricNumeric},
 
+		// Backlog 3.9a: the zfs plugin (internal/agent/checks/plugins/zfs/).
+		"zfs.state":             {CheckKey: "zfs", Kind: rules.MetricDiscrete},
+		"zfs.capacity_pct":      {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.size_bytes":        {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.free_bytes":        {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.fragmentation_pct": {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.errors_read":       {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.errors_write":      {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.errors_checksum":   {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.data_errors":       {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.devices_unhealthy": {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.scan":              {CheckKey: "zfs", Kind: rules.MetricDiscrete},
+		"zfs.scan_pct":          {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.scrub_age_days":    {CheckKey: "zfs", Kind: rules.MetricNumeric},
+		"zfs.pools":             {CheckKey: "zfs", Kind: rules.MetricNumeric},
+
 		// Backlog 3.10: the database plugins (postgres, mysql, redis).
 		"pg.up":                      {CheckKey: "postgres", Kind: rules.MetricNumeric},
 		"pg.connections":             {CheckKey: "postgres", Kind: rules.MetricNumeric},
@@ -217,6 +233,7 @@ func TestCatalogueCheckKeyMatchesEmittingPlugin(t *testing.T) {
 		"temp":    "temperature",
 		"smart":   "smart",
 		"raid":    "raid",
+		"zfs":     "zfs",
 		"pg":      "postgres",
 		"mysql":   "mysql",
 		"redis":   "redis",

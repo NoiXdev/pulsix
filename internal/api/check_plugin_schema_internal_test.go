@@ -11,7 +11,7 @@ import (
 // TestCheckPluginFieldDoc: the write bodies' plugin doc string, built from
 // the registry, reads exactly as the literal it replaced.
 func TestCheckPluginFieldDoc(t *testing.T) {
-	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, postgres, mysql, redis, nginx, apache, caddy, phpfpm, script (run by the host's agent) or icmp, tcp, http, tls, dns, snmp (probed from the manager)"
+	want := "One of cpu, memory, disk, service, network, uptime, docker, temperature, smart, raid, zfs, postgres, mysql, redis, nginx, apache, caddy, phpfpm, script (run by the host's agent) or icmp, tcp, http, tls, dns, snmp (probed from the manager)"
 	if got := checkPluginFieldDoc(); got != want {
 		t.Fatalf("checkPluginFieldDoc() =\n%s\nwant\n%s", got, want)
 	}
@@ -31,6 +31,7 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"temperature: sensors (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
 		"smart: devices (list; at most 64 entries; each at most 255 bytes; each a /dev/... path). " +
 		"raid: arrays (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
+		"zfs: pools (list; at most 64 entries; each at most 255 bytes; each without control characters). " +
 		"postgres: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -), " +
 		"databases (list; at most 64 entries; each at most 63 bytes; each without control characters). " +
 		"mysql: secret (required; not empty; at most 64 bytes; the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -). " +

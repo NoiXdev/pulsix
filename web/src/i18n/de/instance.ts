@@ -133,6 +133,7 @@ export const deInstance: Messages['instance'] = {
         temperature: 'Temperatur',
         smart: 'SMART-Festplattenzustand',
         raid: 'RAID-Arrays',
+        zfs: 'ZFS-Pools',
         postgres: 'PostgreSQL',
         mysql: 'MySQL / MariaDB',
         redis: 'Redis / Valkey',

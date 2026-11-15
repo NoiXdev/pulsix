@@ -26,6 +26,7 @@ const (
 	PluginTemperature = "temperature"
 	PluginSmart       = "smart"
 	PluginRaid        = "raid"
+	PluginZFS         = "zfs"
 	PluginPostgres    = "postgres"
 	PluginMySQL       = "mysql"
 	PluginRedis       = "redis"

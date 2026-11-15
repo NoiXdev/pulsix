@@ -77,8 +77,8 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Plugins) != 24 {
-		t.Fatalf("%d plugins, want 24", len(body.Plugins))
+	if len(body.Plugins) != 25 {
+		t.Fatalf("%d plugins, want 25", len(body.Plugins))
 	}
 	for i, name := range checkplugins.Names() {
 		if body.Plugins[i].Name != name {
@@ -86,9 +86,9 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 		}
 	}
 
-	probe := body.Plugins[20]
+	probe := body.Plugins[21]
 	if probe.Name != "http" || probe.Runs != "server" {
-		t.Fatalf("plugins[20] = %s/%s, want http/server", probe.Name, probe.Runs)
+		t.Fatalf("plugins[21] = %s/%s, want http/server", probe.Name, probe.Runs)
 	}
 	url := probe.Params[0]
 	if url.Name != "url" || url.Type != "string" || !url.Required || url.MaxBytes != 500 ||
@@ -125,7 +125,7 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	if p := smart.Params[0]; p.Type != "list" || p.MaxEntries != 64 || p.MaxBytes != 255 || p.Format != "devicePath" {
 		t.Errorf("smart devices param = %+v", p)
 	}
-	snmp := body.Plugins[23]
+	snmp := body.Plugins[24]
 	if snmp.Name != "snmp" || snmp.Runs != "server" || snmp.ItemParam != "oids" || !snmp.HostItemAlwaysAsked {
 		t.Errorf("snmp = %+v", snmp)
 	}

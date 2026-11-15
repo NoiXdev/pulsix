@@ -94,6 +94,7 @@ export const deChecks: Messages['checks'] = {
       temperature: 'Temperatur',
       smart: 'SMART-Festplattenzustand',
       raid: 'RAID-Arrays',
+      zfs: 'ZFS-Pools',
       postgres: 'PostgreSQL',
       mysql: 'MySQL / MariaDB',
       redis: 'Redis / Valkey',
@@ -169,6 +170,13 @@ export const deChecks: Messages['checks'] = {
         label: 'Arrays (eines pro Zeile, leer bedeutet jedes Array)',
         hint: 'Array-Namen wie md0; leer bedeutet jedes Array. Nur Linux-Software-RAID.',
         placeholder: 'md0\nmd1',
+      },
+    },
+    zfs: {
+      pools: {
+        label: 'Pools (eines pro Zeile, leer bedeutet jeder Pool)',
+        hint: 'Pool-Namen wie tank; leer bedeutet jeder Pool. Nur Linux mit ZFS.',
+        placeholder: 'tank\nbackup',
       },
     },
     postgres: {

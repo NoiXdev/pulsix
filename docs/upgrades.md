@@ -195,6 +195,12 @@ seeded and there is no schema change. `smart` also needs smartmontools on the
 host (the agent reports "smartctl not found" until it is installed, and finds a
 later install without a restart).
 
+The same holds for the `zfs` plugin (backlog 3.9a): an older agent skips a `zfs`
+check, warns on every configuration push and shows no readings until it is
+updated, and the manager does not gate on it. Nothing is seeded and there is no
+schema change. The check needs the OpenZFS tools (`zpool`, `zfs`) on the host;
+a host without ZFS reports zero pools.
+
 The same holds for the `postgres` plugin (backlog 3.10): an older agent skips a
 `postgres` check, warns on every configuration push and shows no readings until
 it is updated, and the manager does not gate on it. The check also needs the

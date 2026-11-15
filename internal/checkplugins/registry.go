@@ -26,6 +26,7 @@ func registry() []plugin {
 		{"temperature", temperaturePlugin},
 		{"smart", smartPlugin},
 		{"raid", raidPlugin},
+		{"zfs", zfsPlugin},
 		{"postgres", postgresPlugin},
 		{"mysql", mysqlPlugin},
 		{"redis", redisPlugin},

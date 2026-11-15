@@ -110,6 +110,7 @@ export const enChecks = {
       temperature: 'Temperature',
       smart: 'SMART disk health',
       raid: 'RAID arrays',
+      zfs: 'ZFS pools',
       postgres: 'PostgreSQL',
       mysql: 'MySQL / MariaDB',
       redis: 'Redis / Valkey',
@@ -194,6 +195,13 @@ export const enChecks = {
         label: 'Arrays (one per line, empty means every array)',
         hint: 'Array names such as md0; empty means every array. Linux software RAID only.',
         placeholder: 'md0\nmd1',
+      },
+    },
+    zfs: {
+      pools: {
+        label: 'Pools (one per line, empty means every pool)',
+        hint: 'Pool names such as tank; empty means every pool. Linux with ZFS only.',
+        placeholder: 'tank\nbackup',
       },
     },
     postgres: {

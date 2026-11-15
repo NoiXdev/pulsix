@@ -327,6 +327,79 @@
       ]
     },
     {
+      "name": "zfs",
+      "runs": "agent",
+      "params": [
+        {
+          "name": "pools",
+          "type": "list",
+          "max_entries": 64,
+          "max_bytes": 255,
+          "format": "noControl"
+        }
+      ],
+      "item_param": "pools",
+      "host_item_always_asked": true,
+      "metrics": [
+        {
+          "name": "zfs.state",
+          "kind": "discrete"
+        },
+        {
+          "name": "zfs.capacity_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.size_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.free_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.fragmentation_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.errors_read",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.errors_write",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.errors_checksum",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.data_errors",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.devices_unhealthy",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.scan",
+          "kind": "discrete"
+        },
+        {
+          "name": "zfs.scan_pct",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.scrub_age_days",
+          "kind": "numeric"
+        },
+        {
+          "name": "zfs.pools",
+          "kind": "numeric"
+        }
+      ]
+    },
+    {
       "name": "postgres",
       "runs": "agent",
       "params": [

@@ -131,6 +131,7 @@ export const enInstance = {
         temperature: 'Temperature',
         smart: 'SMART disk health',
         raid: 'RAID arrays',
+        zfs: 'ZFS pools',
         postgres: 'PostgreSQL',
         mysql: 'MySQL / MariaDB',
         redis: 'Redis / Valkey',

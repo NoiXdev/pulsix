@@ -13,7 +13,7 @@ import (
 // SharedCheckFormPage.tsx offered the plugins in before the descriptors.
 func TestNamesInTheSPAsOrder(t *testing.T) {
 	want := []string{"cpu", "memory", "disk", "service", "network", "uptime", "docker",
-		"temperature", "smart", "raid", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "phpfpm", "script", "icmp", "tcp", "http", "tls", "dns", "snmp"}
+		"temperature", "smart", "raid", "zfs", "postgres", "mysql", "redis", "nginx", "apache", "caddy", "phpfpm", "script", "icmp", "tcp", "http", "tls", "dns", "snmp"}
 	if got := checkplugins.Names(); !slices.Equal(got, want) {
 		t.Fatalf("Names() = %v, want %v", got, want)
 	}
@@ -255,6 +255,7 @@ func TestDescriptorsMarshalWithoutHooks(t *testing.T) {
 		`{"name":"url","type":"string","required":true,"example":"https://{address}/","max_bytes":500,"format":"url"}`,
 		`{"name":"units","type":"list","required":true,"non_empty":true,"format":"notBlank"}`,
 		`{"name":"raid.state","kind":"discrete"}`,
+		`{"name":"zfs.state","kind":"discrete"}`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("JSON lacks %s", want)
