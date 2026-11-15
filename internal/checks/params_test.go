@@ -62,6 +62,9 @@ func TestSyntheticParamsAccepted(t *testing.T) {
 		{"dns name 253 bytes", checks.PluginDNS, map[string]any{"name": dnsName(253)}},
 		{"dns name 63-byte label", checks.PluginDNS, map[string]any{"name": strings.Repeat("a", 63) + ".example"}},
 		{"long string at the cap", checks.PluginTCP, map[string]any{"port": 1.0, "expect": strings.Repeat("x", 500)}},
+		{"http json values and a secret", checks.PluginHTTP, map[string]any{
+			"url": "https://{address}/health", "secret": "api-token", "json_values": []any{"status=$.status", "depth=$.queues[0].depth"},
+		}},
 		{"snmp defaults", checks.PluginSNMP, map[string]any{"secret": "sw", "version": "v2c", "port": 161.0, "timeout_seconds": 5.0, "interfaces": true}},
 		{"snmp oids", checks.PluginSNMP, map[string]any{"secret": "sw", "version": "v3", "oids": []any{"load=1.3.6.1.4.1.2021.10.1.3.1", "up=.1.3.6.1.2.1.1.3.0"}}},
 	}
@@ -110,6 +113,10 @@ func TestSyntheticParamsRefused(t *testing.T) {
 		{"http userinfo", checks.PluginHTTP, map[string]any{"url": "https://user:pass@example.com/"}},
 		{"http user only", checks.PluginHTTP, map[string]any{"url": "https://user@{address}/"}},
 		{"http method POST", checks.PluginHTTP, map[string]any{"url": "http://x", "method": "POST"}},
+		{"http json values with HEAD", checks.PluginHTTP, map[string]any{"url": "http://x", "method": "HEAD", "json_values": []any{"a=$.a"}}},
+		{"http json value unparsable", checks.PluginHTTP, map[string]any{"url": "http://x", "json_values": []any{"a=$["}}},
+		{"http duplicate json value names", checks.PluginHTTP, map[string]any{"url": "http://x", "json_values": []any{"a=$.a", "a=$.b"}}},
+		{"http credentials in params", checks.PluginHTTP, map[string]any{"url": "http://x", "token": "t"}},
 		{"http method lower case", checks.PluginHTTP, map[string]any{"url": "http://x", "method": "get"}},
 		{"http follow_redirects not bool", checks.PluginHTTP, map[string]any{"url": "http://x", "follow_redirects": "yes"}},
 		{"http verify_tls not bool", checks.PluginHTTP, map[string]any{"url": "http://x", "verify_tls": 1.0}},

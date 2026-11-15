@@ -3,7 +3,6 @@ package checkplugins
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
 // snmp plugin bounds (backlog 3.13d). internal/probe/snmp trusts params
@@ -58,13 +57,6 @@ func snmpPlugin() Descriptor {
 	}
 }
 
-// snmpOIDName is the item an oids entry reports on: its name, before the
-// first '=' (FormatSNMPOID's split; a name never contains one).
-func snmpOIDName(entry string) string {
-	name, _, _ := strings.Cut(entry, "=")
-	return name
-}
-
 // snmpItemAsked: with interfaces set, every item is asked for (interface
 // names are the device's, unknown to the manager); otherwise only the
 // names of the oids entries are.
@@ -72,25 +64,15 @@ func snmpItemAsked(params map[string]any, entries []string, item string) bool {
 	if params["interfaces"] == true {
 		return true
 	}
-	for _, e := range entries {
-		if snmpOIDName(e) == item {
-			return true
-		}
-	}
-	return false
+	return namedEntryAsked(entries, item)
 }
 
 // snmpCheck: a check must poll something, and two oids entries must not
 // report on the same item.
 func snmpCheck(params map[string]any) error {
 	entries, _ := stringList(params["oids"])
-	seen := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		name := snmpOIDName(e)
-		if seen[name] {
-			return fmt.Errorf("oids names %q twice", name)
-		}
-		seen[name] = true
+	if name, twice := duplicateEntryName(entries); twice {
+		return fmt.Errorf("oids names %q twice", name)
 	}
 	if len(entries) == 0 && params["interfaces"] != true {
 		return errors.New("nothing to poll: list at least one entry in oids or set interfaces to true")

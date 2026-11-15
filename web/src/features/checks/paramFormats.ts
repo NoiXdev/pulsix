@@ -339,6 +339,17 @@ function snmpOID(s: string): boolean {
   return first <= 2 && (first === 2 || second <= 39) && 40 * first + second <= 4294967295;
 }
 
+/** jsonValue: one entry of http's json_values, "name=path" split at the
+ * first '=': the name follows secretName, the path starts with $ and is
+ * at most 512 bytes. Whether the path is a JSONPath query the server
+ * decides; its parser has no twin here. */
+function jsonValue(s: string): boolean {
+  const eq = s.indexOf('=');
+  if (eq < 0 || !secretName(s.slice(0, eq))) return false;
+  const path = s.slice(eq + 1);
+  return path.startsWith('$') && byteLen(path) <= 512;
+}
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -353,6 +364,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   secretName,
   commandName,
   snmpOID,
+  jsonValue,
 };
 
 /** formatValid reports whether s passes the named format. An unknown

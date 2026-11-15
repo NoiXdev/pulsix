@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/theory/jsonpath"
 )
 
 // Format names a validator for a string, or for each entry of a list. The
@@ -59,6 +61,13 @@ const (
 	// 2^32-1 without leading zeros. Symbolic names need MIB files, which
 	// the manager does not load.
 	FormatSNMPOID Format = "snmpOID"
+	// FormatJSONValue: one entry of http's json_values (backlog 3.6h),
+	// "name=path". The name follows FormatSecretName's rule and becomes the
+	// item the value is reported on; the path is an RFC 9535 JSONPath query
+	// of at most 512 bytes that github.com/theory/jsonpath, the parser the
+	// probe evaluates it with, accepts. The SPA's twin checks the shape and
+	// the length only.
+	FormatJSONValue Format = "jsonValue"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -68,7 +77,7 @@ func Formats() []Format {
 	return []Format{
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
-		FormatSecretName, FormatCommandName, FormatSNMPOID,
+		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue,
 	}
 }
 
@@ -116,6 +125,8 @@ func (f Format) problem(s string) string {
 		}
 	case FormatSNMPOID:
 		return snmpOIDProblem(s)
+	case FormatJSONValue:
+		return jsonValueProblem(s)
 	default:
 		return "uses a format no validator knows: " + string(f)
 	}
@@ -307,4 +318,25 @@ func oidArc(arc string) (uint64, bool) {
 		n = n*10 + uint64(c-'0')
 	}
 	return n, n <= maxSNMPOIDArc
+}
+
+// maxJSONPathLen bounds a json_values entry's path in bytes (backlog 3.6h).
+const maxJSONPathLen = 512
+
+// jsonValueProblem checks a "name=path" entry, split at the first '='
+// (a name never contains one; a path may, in a filter).
+func jsonValueProblem(s string) string {
+	name, path, ok := strings.Cut(s, "=")
+	if !ok || !secretNamePattern.MatchString(name) {
+		return "must be name=JSONPath, the name 1 to 64 letters, digits, '_', '.' or '-'"
+	}
+	if !strings.HasPrefix(path, "$") || len(path) > maxJSONPathLen {
+		return fmt.Sprintf("must be name=JSONPath, the path starting with $ and at most %d bytes", maxJSONPathLen)
+	}
+	if _, err := jsonpath.Parse(path); err != nil {
+		// The parser's own reason: the path is the operator's
+		// configuration, never a response, so quoting it is safe.
+		return "must be name=JSONPath, the path a JSONPath expression (RFC 9535): " + err.Error()
+	}
+	return ""
 }

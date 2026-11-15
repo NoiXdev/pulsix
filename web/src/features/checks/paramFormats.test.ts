@@ -44,6 +44,17 @@ describe('the parameter formats', () => {
     expect(used.filter((f) => !(f in FORMATS))).toEqual([]);
   });
 
+  it('leave a JSON value’s path syntax to the server, which parses it (backlog 3.6h)', () => {
+    // Refused by the server's JSONPath parser (TestJSONValueFormat), so
+    // these cannot be shared vectors: the form lets them through and the
+    // server's 400 names the parser's reason.
+    for (const entry of ['a=$[', 'a=$.', 'a=$x', "a=$['open"]) {
+      expect(formatValid('jsonValue', entry)).toBe(true);
+    }
+    expect(formatProblem('jsonValue', 'a=.a')).toBe('jsonValue');
+    expect(formatProblem('jsonValue', 'status=$.status')).toBeNull();
+  });
+
   it('accept nothing for a format no twin knows, as the server does', () => {
     expect(formatValid('nope', '')).toBe(false);
     expect(formatValid('nope', 'x')).toBe(false);

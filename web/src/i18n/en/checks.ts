@@ -286,7 +286,17 @@ export const enChecks = {
     http: {
       url: { label: 'URL', hint: '{address} is replaced with the host’s address.' },
       method: { label: 'Method' },
+      secret: {
+        label: 'Secret',
+        hint: 'Optional. Name of a secret in the organization’s secrets (Settings → Secrets) holding the login: username and password, a token (sent as a bearer token), or header and value (one header of your choice). It is never sent on to another host when a redirect leads there; its values are never shown again and never leave the Pulsix server. A definition several organizations use reads each one’s own secret of that name.',
+        placeholder: 'api-token',
+      },
       body_contains: { label: 'Body contains', hint: 'Looked for in the first 1 MiB of the body.' },
+      json_values: {
+        label: 'JSON values (one per line, name=JSONPath)',
+        hint: 'Each line reads one value out of a JSON response (up to 1 MiB) and reports it under its name: a number as a value, text or true/false as a label. The path must select exactly one value. Needs method GET.',
+        placeholder: 'status=$.status',
+      },
       timeout_s: { label: 'Timeout (seconds)' },
       follow_redirects: { label: 'Follow redirects (up to 10)' },
       verify_tls: { label: 'Verify the TLS certificate' },
@@ -335,6 +345,7 @@ export const enChecks = {
       devicePath: 'every entry must start with /dev/, contain only letters, digits and . _ / , : + @ - and have no .. segment',
       secretName: 'must be 1 to 64 characters: letters, digits and . _ -',
       commandName: 'every entry must be a command name of 1 to 64 characters: letters, digits and . _ -',
+      jsonValue: 'every entry must be name=JSONPath: a name of 1 to 64 characters (letters, digits and . _ -) and a path of at most 512 bytes that starts with $, such as $.status',
       snmpOID: 'every entry must be name=OID: a name of 1 to 64 characters (letters, digits and . _ -) and a numeric OID such as 1.3.6.1.2.1.1.3.0 that starts with 0, 1 or 2 (after 0 or 1, the second number is at most 39)',
       url: 'must be an http:// or https:// URL without a user name or password',
       statusURL: 'must be an http:// or https:// URL without a user name, password or #fragment, and without {address}',

@@ -60,6 +60,8 @@ func TestCatalogueMatchesShippedPlugins(t *testing.T) {
 		"http.status_code":     {CheckKey: "http", Kind: rules.MetricNumeric},
 		"http.response_ms":     {CheckKey: "http", Kind: rules.MetricNumeric},
 		"http.body_match":      {CheckKey: "http", Kind: rules.MetricNumeric},
+		"http.json.value":      {CheckKey: "http", Kind: rules.MetricNumeric},
+		"http.json.text":       {CheckKey: "http", Kind: rules.MetricDiscrete},
 		"tls.up":               {CheckKey: "tls", Kind: rules.MetricNumeric},
 		"tls.handshake_ms":     {CheckKey: "tls", Kind: rules.MetricNumeric},
 		"tls.cert_valid":       {CheckKey: "tls", Kind: rules.MetricNumeric},

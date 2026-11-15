@@ -870,10 +870,25 @@
           ]
         },
         {
+          "name": "secret",
+          "type": "string",
+          "example": "api-token",
+          "max_bytes": 64,
+          "non_empty": true,
+          "format": "secretName"
+        },
+        {
           "name": "body_contains",
           "type": "string",
           "max_bytes": 500,
           "non_empty": true
+        },
+        {
+          "name": "json_values",
+          "type": "list",
+          "example": "status=$.status",
+          "max_entries": 32,
+          "format": "jsonValue"
         },
         {
           "name": "timeout_s",
@@ -893,6 +908,8 @@
           "default": true
         }
       ],
+      "item_param": "json_values",
+      "host_item_always_asked": true,
       "metrics": [
         {
           "name": "http.up",
@@ -909,6 +926,14 @@
         {
           "name": "http.body_match",
           "kind": "numeric"
+        },
+        {
+          "name": "http.json.value",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.json.text",
+          "kind": "discrete"
         }
       ]
     },

@@ -100,7 +100,16 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 		!reflect.DeepEqual(method.Options, []string{"GET", "HEAD"}) {
 		t.Errorf("http method param = %+v", method)
 	}
-	timeout := probe.Params[3]
+	if p := probe.Params[2]; p.Name != "secret" || p.Required || p.Format != "secretName" {
+		t.Errorf("http secret param = %+v", p)
+	}
+	if p := probe.Params[4]; p.Name != "json_values" || p.Type != "list" || p.MaxEntries != 32 || p.Format != "jsonValue" {
+		t.Errorf("http json_values param = %+v", p)
+	}
+	if probe.ItemParam != "json_values" || !probe.HostItemAlwaysAsked {
+		t.Errorf("http items = %q, host item always asked %v", probe.ItemParam, probe.HostItemAlwaysAsked)
+	}
+	timeout := probe.Params[5]
 	if timeout.Name != "timeout_s" || timeout.Type != "integer" || timeout.Default != float64(10) ||
 		timeout.Min == nil || *timeout.Min != 1 || timeout.Max == nil || *timeout.Max != 60 {
 		t.Errorf("http timeout_s param = %+v", timeout)

@@ -52,7 +52,10 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"icmp: count (1 to 10; default 3), timeout_s (1 to 30; default 5). " +
 		"tcp: port (required; 1 to 65535), send (at most 500 bytes), expect (not empty; at most 500 bytes), timeout_s (1 to 30; default 5). " +
 		"http: url (required; at most 500 bytes; an http or https URL that may contain {address}), method (GET or HEAD; default GET), " +
-		"body_contains (not empty; at most 500 bytes), timeout_s (1 to 60; default 10), " +
+		"secret (not empty; at most 64 bytes; the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -), " +
+		"body_contains (not empty; at most 500 bytes), " +
+		"json_values (list; at most 32 entries; each name=JSONPath, the name 1 to 64 letters, digits, _ . -, the path an RFC 9535 JSONPath of at most 512 bytes such as $.status), " +
+		"timeout_s (1 to 60; default 10), " +
 		"follow_redirects (true or false; default true), verify_tls (true or false; default true). " +
 		"tls: port (1 to 65535; default 443), server_name (at most 500 bytes; not blank), timeout_s (1 to 30; default 10). " +
 		"dns: name (at most 500 bytes; a DNS name that may contain {address}; default {address}), " +

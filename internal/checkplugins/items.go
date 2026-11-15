@@ -50,3 +50,30 @@ func smartItemPath(item string) string {
 	}
 	return item
 }
+
+// entryName is the item a "name=…" entry reports on (snmp's oids, http's
+// json_values): its name, before the first '=' (FormatSNMPOID's and
+// FormatJSONValue's split; a name never contains one).
+func entryName(entry string) string {
+	name, _, _ := strings.Cut(entry, "=")
+	return name
+}
+
+// namedEntryAsked reports whether one of the "name=…" entries names item.
+func namedEntryAsked(entries []string, item string) bool {
+	return slices.ContainsFunc(entries, func(e string) bool { return entryName(e) == item })
+}
+
+// duplicateEntryName returns the first name two "name=…" entries share:
+// both would report on the same item.
+func duplicateEntryName(entries []string) (string, bool) {
+	seen := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		name := entryName(e)
+		if seen[name] {
+			return name, true
+		}
+		seen[name] = true
+	}
+	return "", false
+}

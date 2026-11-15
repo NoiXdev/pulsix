@@ -41,6 +41,11 @@ func TestDefinitionAsksForItem(t *testing.T) {
 		{"http asks for its whole-host item", PluginHTTP, map[string]any{"url": "https://{address}/"}, "", true},
 		{"tls asks for its whole-host item", PluginTLS, nil, "", true},
 		{"dns asks for its whole-host item", PluginDNS, map[string]any{"name": "example.com"}, "", true},
+		// http's json_values (backlog 3.6h): an entry "name=JSONPath"
+		// asks for item "name"; the request's metrics stay on "".
+		{"http asks for a json_values entry's name", PluginHTTP, map[string]any{"json_values": []any{"status=$.status"}}, "status", true},
+		{"http stopped asking for a name off its list", PluginHTTP, map[string]any{"json_values": []any{"status=$.status"}}, "depth", false},
+		{"http with a list still asks for its whole-host item", PluginHTTP, map[string]any{"json_values": []any{"status=$.status"}}, "", true},
 		// snmp (backlog 3.13d): an oids entry "name=OID" asks for item
 		// "name"; interfaces asks for any item, named by the device.
 		{"snmp asks for an oids entry's name", PluginSNMP, map[string]any{"oids": []any{"load=1.3.6.1.4.1.2021.10.1.3.1"}}, "load", true},

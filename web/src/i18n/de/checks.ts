@@ -267,7 +267,17 @@ export const deChecks: Messages['checks'] = {
     http: {
       url: { label: 'URL', hint: '{address} wird durch die Adresse des Hosts ersetzt.' },
       method: { label: 'Methode' },
+      secret: {
+        label: 'Secret',
+        hint: 'Optional. Name eines Secrets in den Secrets der Organisation (Einstellungen → Secrets), das den Login enthält: Benutzername und Passwort, ein Token (als Bearer-Token gesendet) oder Header und Wert (ein Header Ihrer Wahl). Führt eine Weiterleitung zu einem anderen Host, wird er dorthin nicht mitgesendet; seine Werte werden nie wieder angezeigt und verlassen den Pulsix-Server nie. Eine Definition, die mehrere Organisationen nutzen, liest in jeder deren eigenes Secret dieses Namens.',
+        placeholder: 'api-token',
+      },
       body_contains: { label: 'Inhalt enthält', hint: 'Wird im ersten MiB des Inhalts gesucht.' },
+      json_values: {
+        label: 'JSON-Werte (einer pro Zeile, Name=JSONPath)',
+        hint: 'Jede Zeile liest einen Wert aus einer JSON-Antwort (bis 1 MiB) und meldet ihn unter seinem Namen: eine Zahl als Wert, Text oder true/false als Label. Der Pfad muss genau einen Wert auswählen. Erfordert die Methode GET.',
+        placeholder: 'status=$.status',
+      },
       timeout_s: { label: 'Timeout (Sekunden)' },
       follow_redirects: { label: 'Weiterleitungen folgen (höchstens 10)' },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
@@ -317,6 +327,7 @@ export const deChecks: Messages['checks'] = {
       devicePath: 'jeder Eintrag muss mit /dev/ beginnen, darf nur Buchstaben, Ziffern und . _ / , : + @ - enthalten und kein ..-Segment haben',
       secretName: 'muss 1 bis 64 Zeichen lang sein: Buchstaben, Ziffern und . _ -',
       commandName: 'jeder Eintrag muss ein Befehlsname aus 1 bis 64 Zeichen sein: Buchstaben, Ziffern und . _ -',
+      jsonValue: 'jeder Eintrag muss Name=JSONPath sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und ein Pfad mit höchstens 512 Byte, der mit $ beginnt, etwa $.status',
       snmpOID: 'jeder Eintrag muss Name=OID sein: ein Name aus 1 bis 64 Zeichen (Buchstaben, Ziffern und . _ -) und eine numerische OID wie 1.3.6.1.2.1.1.3.0, die mit 0, 1 oder 2 beginnt (nach 0 oder 1 ist die zweite Zahl höchstens 39)',
       url: 'muss eine http://- oder https://-URL ohne Benutzername und Passwort sein',
       statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
