@@ -116,6 +116,7 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 	checkplugins.FormatSecretName:   "the name of a secret in the agent's agent.yaml: 1 to 64 letters, digits, _ . -",
 	checkplugins.FormatCommandName:  "the name of a command under commands: in the agent's agent.yaml: 1 to 64 letters, digits, _ . -",
 	checkplugins.FormatSNMPOID:      "name=OID, the name 1 to 64 letters, digits, _ . -, the OID numeric such as 1.3.6.1.2.1.1.3.0",
+	checkplugins.FormatUUID:         "a lower-case UUID",
 	checkplugins.FormatJSONValue:    "name=JSONPath, the name 1 to 64 letters, digits, _ . -, the path at most 512 bytes in the supported subset of RFC 9535 JSONPath (one selector per bracket, at most one .., filters comparing @ paths with literals) such as $.status",
 }
 

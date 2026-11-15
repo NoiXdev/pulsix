@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
 	"github.com/noixdev/pulsix/internal/hosts/selector"
 )
 
@@ -56,7 +58,23 @@ var (
 	// ever make it succeed, which is what sets this apart from
 	// ErrInvalidInput.
 	ErrForbidden = errors.New("forbidden")
+	// ErrConflict means a monitoring group cannot be deleted because check
+	// definitions name it as a vantage point; the error is a
+	// *GroupInUseError carrying their keys.
+	ErrConflict = errors.New("monitoring group in use")
 )
+
+// GroupInUseError is DeleteGroup's refusal of a group check definitions
+// name in vantage_groups (backlog 3.13a): Keys are their check keys,
+// sorted and de-duplicated. It matches ErrConflict.
+type GroupInUseError struct{ Keys []string }
+
+func (e *GroupInUseError) Error() string {
+	return ErrConflict.Error() + ": the checks " + strings.Join(e.Keys, ", ") + " probe from it"
+}
+
+// Unwrap makes errors.Is(err, ErrConflict) hold.
+func (e *GroupInUseError) Unwrap() error { return ErrConflict }
 
 // maxGroupNameRunes bounds a group's name, the same shape maintenance
 // windows use for theirs.
@@ -285,8 +303,54 @@ func (s *Service) UpdateGroup(ctx context.Context, orgID, id uuid.UUID, in Group
 }
 
 // DeleteGroup removes the group identified by (orgID, id).
+//
+// A group some check definition of the organization names in
+// vantage_groups is refused with a *GroupInUseError (ErrConflict).
 func (s *Service) DeleteGroup(ctx context.Context, orgID, id uuid.UUID) error {
+	keys, err := s.vantageKeys(ctx, orgID, id)
+	if err != nil {
+		return err
+	}
+	if len(keys) > 0 {
+		return &GroupInUseError{Keys: keys}
+	}
 	return s.store.Delete(ctx, orgID, id)
+}
+
+// vantageKeys returns the sorted, de-duplicated keys of the organization's
+// definitions that name group id as a vantage point.
+func (s *Service) vantageKeys(ctx context.Context, orgID, id uuid.UUID) ([]string, error) {
+	defs, err := s.store.ListDefinitions(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("list definitions to check vantage groups: %w", err)
+	}
+	var keys []string
+	for _, d := range defs {
+		if slices.Contains(checkplugins.VantageOf(d.Params).Groups, id) {
+			keys = append(keys, d.Key)
+		}
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys), nil
+}
+
+// refuseUnknownVantageGroups refuses params naming a vantage group that is
+// not a monitoring group of the organization.
+func (s *Service) refuseUnknownVantageGroups(ctx context.Context, orgID uuid.UUID, params map[string]any) error {
+	want := checkplugins.VantageOf(params).Groups
+	if len(want) == 0 {
+		return nil
+	}
+	groups, err := s.store.List(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("list groups to check vantage groups: %w", err)
+	}
+	for _, id := range want {
+		if !slices.ContainsFunc(groups, func(g Group) bool { return g.ID == id }) {
+			return fmt.Errorf("%w: vantage_groups names an unknown monitoring group", ErrInvalidInput)
+		}
+	}
+	return nil
 }
 
 // ListGroups returns orgID's monitoring groups.

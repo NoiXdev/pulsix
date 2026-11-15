@@ -1,4 +1,24 @@
 import type { Messages } from '../types.ts';
+import type { ParamText } from '../en/checks.ts';
+
+/** The vantage-point parameters every synthetic plugin takes (backlog
+ * 3.13a); spread into each synthetic plugin's texts below. */
+const vantageParamTexts = {
+  vantage_manager: {
+    label: 'Vom Pulsix-Server aus prüfen',
+    hint: 'Der Pulsix-Server prüft das Ziel selbst. Ausschalten, um nur von den Agents der Gruppen unten zu prüfen.',
+  },
+  vantage_groups: {
+    label: 'Von den Agents dieser Gruppen aus prüfen',
+    hint: 'Überwachungsgruppen, deren Agents das Ziel ebenfalls prüfen, höchstens 8. Checks mit einem Secret werden nur vom Pulsix-Server aus geprüft.',
+  },
+  agents_per_group: { label: 'Agents pro Gruppe', hint: 'Wie viele Agents jeder Gruppe das Ziel prüfen, 1 bis 10.' },
+  fail_policy: {
+    label: 'Der Check gilt als ausgefallen, wenn',
+    hint: 'Wie die Ergebnisse der Prüfpunkte zu einem Ergebnis zusammengefasst werden.',
+    options: { any: 'ein Prüfpunkt ihn als ausgefallen sieht', majority: 'die meisten Prüfpunkte ihn als ausgefallen sehen', all: 'jeder Prüfpunkt ihn als ausgefallen sieht' },
+  },
+} satisfies Readonly<Record<string, ParamText>>;
 
 export const deChecks: Messages['checks'] = {
   title: 'Checks',
@@ -262,6 +282,7 @@ export const deChecks: Messages['checks'] = {
     icmp: {
       count: { label: 'Pings pro Durchlauf' },
       timeout_s: { label: 'Timeout (Sekunden)' },
+      ...vantageParamTexts,
     },
     tcp: {
       port: { label: 'Port' },
@@ -271,6 +292,7 @@ export const deChecks: Messages['checks'] = {
       },
       expect: { label: 'In der Antwort erwartet', hint: 'Wird in den ersten 4 KiB gesucht, die der Server sendet.' },
       timeout_s: { label: 'Timeout (Sekunden)' },
+      ...vantageParamTexts,
     },
     http: {
       url: { label: 'URL', hint: '{address} wird durch die Adresse des Hosts ersetzt.' },
@@ -289,11 +311,13 @@ export const deChecks: Messages['checks'] = {
       timeout_s: { label: 'Timeout (Sekunden)' },
       follow_redirects: { label: 'Weiterleitungen folgen (höchstens 10)' },
       verify_tls: { label: 'TLS-Zertifikat prüfen' },
+      ...vantageParamTexts,
     },
     tls: {
       port: { label: 'Port' },
       server_name: { label: 'Servername (SNI)', hint: 'Leer bedeutet die Adresse des Hosts.' },
       timeout_s: { label: 'Timeout (Sekunden)' },
+      ...vantageParamTexts,
     },
     dns: {
       name: { label: 'Aufzulösender Name', hint: 'Leer bedeutet die Adresse des Hosts; {address} wird durch sie ersetzt.' },
@@ -307,6 +331,7 @@ export const deChecks: Messages['checks'] = {
         hint: 'Eine Antwort muss genau so lauten; Groß- und Kleinschreibung und ein abschließender Punkt zählen nicht.',
       },
       timeout_s: { label: 'Timeout (Sekunden)' },
+      ...vantageParamTexts,
     },
     snmp: {
       secret: {
@@ -323,6 +348,7 @@ export const deChecks: Messages['checks'] = {
         placeholder: 'ups_load=1.3.6.1.2.1.33.1.4.4.1.5.1',
       },
       interfaces: { label: 'Schnittstellen überwachen', hint: 'Status, Datenverkehr und Fehler jeder Schnittstelle, die das Gerät auflistet, höchstens 128.' },
+      ...vantageParamTexts,
     },
   },
   paramErrors: {
@@ -341,6 +367,7 @@ export const deChecks: Messages['checks'] = {
       statusURL: 'muss eine http://- oder https://-URL ohne Benutzername, Passwort und #Fragment und ohne {address} sein',
       dnsName: 'muss ein DNS-Name sein: Buchstaben, Ziffern, Bindestriche und Unterstriche zwischen Punkten',
       server: 'muss eine IP-Adresse sein, optional mit Port',
+      uuid: 'jeder Eintrag muss die ID einer Überwachungsgruppe sein (eine UUID in Kleinbuchstaben)',
       dockerLabel: 'muss ein Label-Schlüssel sein (Buchstaben, Ziffern, „.“, „_“, „/“ und „-“, höchstens 255 Zeichen), optional gefolgt von =Wert mit höchstens 255 Byte',
       dockerSocket: 'muss ein absoluter Pfad oder npipe:////./pipe/ gefolgt von einem Pipe-Namen sein, höchstens 255 Zeichen',
     },

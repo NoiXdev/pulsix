@@ -487,7 +487,17 @@ func logAffectedFailure(ctx context.Context, msg string, err error, args ...any)
 }
 
 func mapChecksErr(ctx context.Context, err error) error {
+	var inUse *checks.GroupInUseError
 	switch {
+	case errors.As(err, &inUse):
+		// A monitoring group some checks probe from: one error detail per
+		// check key, located at used_by, like a secret in use
+		// (mapOrgSecretsErr).
+		details := make([]error, len(inUse.Keys))
+		for i, key := range inUse.Keys {
+			details[i] = &huma.ErrorDetail{Location: "used_by", Message: key}
+		}
+		return huma.Error409Conflict(err.Error(), details...)
 	case errors.Is(err, checks.ErrInvalidInput):
 		return huma.Error400BadRequest(err.Error())
 	case errors.Is(err, checks.ErrNotFound), errors.Is(err, hosts.ErrNotFound):

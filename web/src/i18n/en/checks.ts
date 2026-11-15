@@ -17,6 +17,25 @@ export interface ParamText {
   options?: Readonly<Record<string, string>>;
 }
 
+/** The vantage-point parameters every synthetic plugin takes (backlog
+ * 3.13a); spread into each synthetic plugin's texts below. */
+const vantageParamTexts = {
+  vantage_manager: {
+    label: 'Probe from the Pulsix server',
+    hint: 'The Pulsix server probes the target itself. Switch it off to probe only from the agents of the groups below.',
+  },
+  vantage_groups: {
+    label: 'Probe from the agents of these groups',
+    hint: 'Monitoring groups whose agents also probe the target, at most 8. Checks with a secret are probed only from the Pulsix server.',
+  },
+  agents_per_group: { label: 'Agents per group', hint: 'How many agents of each group probe the target, 1 to 10.' },
+  fail_policy: {
+    label: 'The check is down when',
+    hint: 'How the results of the probing points combine into one result.',
+    options: { any: 'any probing point sees it down', majority: 'most probing points see it down', all: 'every probing point sees it down' },
+  },
+} satisfies Readonly<Record<string, ParamText>>;
+
 export const enChecks = {
   title: 'Checks',
   tabs: {
@@ -284,12 +303,14 @@ export const enChecks = {
     icmp: {
       count: { label: 'Pings per run' },
       timeout_s: { label: 'Timeout (seconds)' },
+      ...vantageParamTexts,
     },
     tcp: {
       port: { label: 'Port' },
       send: { label: 'Send after connecting', hint: 'Use \\r\\n for a line break, \\t for a tab and \\\\ for a backslash.' },
       expect: { label: 'Expected in the response', hint: 'Looked for in the first 4 KiB the server sends.' },
       timeout_s: { label: 'Timeout (seconds)' },
+      ...vantageParamTexts,
     },
     http: {
       url: { label: 'URL', hint: '{address} is replaced with the host’s address.' },
@@ -308,11 +329,13 @@ export const enChecks = {
       timeout_s: { label: 'Timeout (seconds)' },
       follow_redirects: { label: 'Follow redirects (up to 10)' },
       verify_tls: { label: 'Verify the TLS certificate' },
+      ...vantageParamTexts,
     },
     tls: {
       port: { label: 'Port' },
       server_name: { label: 'Server name (SNI)', hint: 'Empty means the host’s address.' },
       timeout_s: { label: 'Timeout (seconds)' },
+      ...vantageParamTexts,
     },
     dns: {
       name: { label: 'Name to resolve', hint: 'Empty means the host’s address; {address} is replaced with it.' },
@@ -323,6 +346,7 @@ export const enChecks = {
       },
       expect: { label: 'Expected answer', hint: 'One answer must equal this, ignoring case and a trailing dot.' },
       timeout_s: { label: 'Timeout (seconds)' },
+      ...vantageParamTexts,
     },
     snmp: {
       secret: {
@@ -339,6 +363,7 @@ export const enChecks = {
         placeholder: 'ups_load=1.3.6.1.2.1.33.1.4.4.1.5.1',
       },
       interfaces: { label: 'Watch the interfaces', hint: 'Status, traffic and errors of each interface the device lists, at most 128.' },
+      ...vantageParamTexts,
     },
   } satisfies Readonly<Record<string, Readonly<Record<string, ParamText>>>>,
   /** Why a parameter field is refused before the round trip: its bounds,
@@ -359,6 +384,7 @@ export const enChecks = {
       statusURL: 'must be an http:// or https:// URL without a user name, password or #fragment, and without {address}',
       dnsName: 'must be a DNS name: letters, digits, hyphens and underscores between dots',
       server: 'must be an IP address, optionally with a port',
+      uuid: 'every entry must be a monitoring group’s id (a lower-case UUID)',
       dockerLabel: 'must be a label key (letters, digits, “.”, “_”, “/” and “-”, up to 255 characters), optionally followed by =value of up to 255 bytes',
       dockerSocket: 'must be an absolute path or npipe:////./pipe/ followed by a pipe name, up to 255 characters',
     },

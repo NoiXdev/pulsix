@@ -859,6 +859,34 @@
           "default": 5,
           "min": 1,
           "max": 30
+        },
+        {
+          "name": "vantage_manager",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "vantage_groups",
+          "type": "list",
+          "max_entries": 8,
+          "format": "uuid"
+        },
+        {
+          "name": "agents_per_group",
+          "type": "integer",
+          "default": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "fail_policy",
+          "type": "enum",
+          "default": "any",
+          "options": [
+            "any",
+            "majority",
+            "all"
+          ]
         }
       ],
       "metrics": [
@@ -904,6 +932,34 @@
           "default": 5,
           "min": 1,
           "max": 30
+        },
+        {
+          "name": "vantage_manager",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "vantage_groups",
+          "type": "list",
+          "max_entries": 8,
+          "format": "uuid"
+        },
+        {
+          "name": "agents_per_group",
+          "type": "integer",
+          "default": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "fail_policy",
+          "type": "enum",
+          "default": "any",
+          "options": [
+            "any",
+            "majority",
+            "all"
+          ]
         }
       ],
       "metrics": [
@@ -979,6 +1035,34 @@
           "name": "verify_tls",
           "type": "bool",
           "default": true
+        },
+        {
+          "name": "vantage_manager",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "vantage_groups",
+          "type": "list",
+          "max_entries": 8,
+          "format": "uuid"
+        },
+        {
+          "name": "agents_per_group",
+          "type": "integer",
+          "default": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "fail_policy",
+          "type": "enum",
+          "default": "any",
+          "options": [
+            "any",
+            "majority",
+            "all"
+          ]
         }
       ],
       "item_param": "json_values",
@@ -1033,6 +1117,34 @@
           "default": 10,
           "min": 1,
           "max": 30
+        },
+        {
+          "name": "vantage_manager",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "vantage_groups",
+          "type": "list",
+          "max_entries": 8,
+          "format": "uuid"
+        },
+        {
+          "name": "agents_per_group",
+          "type": "integer",
+          "default": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "fail_policy",
+          "type": "enum",
+          "default": "any",
+          "options": [
+            "any",
+            "majority",
+            "all"
+          ]
         }
       ],
       "metrics": [
@@ -1096,6 +1208,34 @@
           "default": 5,
           "min": 1,
           "max": 30
+        },
+        {
+          "name": "vantage_manager",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "vantage_groups",
+          "type": "list",
+          "max_entries": 8,
+          "format": "uuid"
+        },
+        {
+          "name": "agents_per_group",
+          "type": "integer",
+          "default": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "fail_policy",
+          "type": "enum",
+          "default": "any",
+          "options": [
+            "any",
+            "majority",
+            "all"
+          ]
         }
       ],
       "metrics": [
@@ -1160,6 +1300,34 @@
           "name": "interfaces",
           "type": "bool",
           "default": false
+        },
+        {
+          "name": "vantage_manager",
+          "type": "bool",
+          "default": true
+        },
+        {
+          "name": "vantage_groups",
+          "type": "list",
+          "max_entries": 8,
+          "format": "uuid"
+        },
+        {
+          "name": "agents_per_group",
+          "type": "integer",
+          "default": 3,
+          "min": 1,
+          "max": 10
+        },
+        {
+          "name": "fail_policy",
+          "type": "enum",
+          "default": "any",
+          "options": [
+            "any",
+            "majority",
+            "all"
+          ]
         }
       ],
       "item_param": "oids",

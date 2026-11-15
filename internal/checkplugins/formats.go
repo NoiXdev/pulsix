@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/jpath"
 )
 
@@ -68,6 +69,10 @@ const (
 	// probe evaluates it with. The SPA's twin checks the shape, the length
 	// and the descendant segments (..) only.
 	FormatJSONValue Format = "jsonValue"
+	// FormatUUID: a canonical lower-case UUID (8-4-4-4-12 hex digits, no
+	// braces or urn prefix) — the id of a monitoring group in a check's
+	// vantage_groups (backlog 3.13a).
+	FormatUUID Format = "uuid"
 )
 
 // Formats returns every format a validator knows, in declaration order.
@@ -77,7 +82,7 @@ func Formats() []Format {
 	return []Format{
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
-		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue,
+		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatUUID,
 	}
 }
 
@@ -127,6 +132,10 @@ func (f Format) problem(s string) string {
 		return snmpOIDProblem(s)
 	case FormatJSONValue:
 		return jsonValueProblem(s)
+	case FormatUUID:
+		if id, err := uuid.Parse(s); err != nil || id.String() != s {
+			return "must be a lower-case UUID like 123e4567-e89b-12d3-a456-426614174000"
+		}
 	default:
 		return "uses a format no validator knows: " + string(f)
 	}

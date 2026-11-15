@@ -372,6 +372,12 @@ function jsonValue(s: string): boolean {
   return path.startsWith('$') && byteLen(path) <= 512 && jsonPathDescendants(path) <= 1;
 }
 
+/** uuid: a canonical lower-case UUID, the id of a monitoring group in a
+ * check's vantage_groups. */
+function uuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(s);
+}
+
 /** Every format, by the name the descriptors use. */
 export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   notBlank: (s) => !GO_SPACE_ONLY.test(s),
@@ -387,6 +393,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   commandName,
   snmpOID,
   jsonValue,
+  uuid,
 };
 
 /** formatValid reports whether s passes the named format. An unknown

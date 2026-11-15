@@ -113,7 +113,7 @@ func TestHTTPDescriptor(t *testing.T) {
 		names = append(names, p.Name)
 		byName[p.Name] = p
 	}
-	want := []string{"url", "method", "secret", "body_contains", "json_values", "timeout_s", "follow_redirects", "verify_tls"}
+	want := []string{"url", "method", "secret", "body_contains", "json_values", "timeout_s", "follow_redirects", "verify_tls", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("params = %v, want %v", names, want)
 	}

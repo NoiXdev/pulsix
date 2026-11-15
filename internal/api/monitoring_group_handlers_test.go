@@ -339,3 +339,52 @@ func TestMonitoringGroupRoutes(t *testing.T) {
 		}
 	})
 }
+
+// TestMonitoringGroupAsVantage: a check naming a monitoring group in
+// vantage_groups needs the group to exist in the organization, and keeps
+// the group from being deleted; the 409 lists the check keys like a secret
+// in use (backlog 3.13a).
+func TestMonitoringGroupAsVantage(t *testing.T) {
+	f := newChecksFixture(t, "vantagegroups")
+	group := f.createGroup(t, map[string]any{"name": "probes", "selector": "role=probe"})
+	body := func(key, id string) map[string]any {
+		return map[string]any{
+			"key": key, "plugin": "icmp", "interval_seconds": 60, "binding_kind": "org",
+			"params": map[string]any{"vantage_groups": []string{id}},
+		}
+	}
+
+	resp := postJSON(t, f.operatorC, f.checksURL(), body("ping-x", "0198f3a0-0000-7000-8000-000000000001"))
+	if text := mustReadBody(t, resp); resp.StatusCode != http.StatusBadRequest || !strings.Contains(text, "unknown monitoring group") {
+		t.Fatalf("create with an unknown group = %d %s, want 400 unknown monitoring group", resp.StatusCode, text)
+	}
+	for _, key := range []string{"ping-b", "ping-a"} {
+		f.createCheck(t, f.operatorC, body(key, group.ID))
+	}
+
+	resp = requestJSON(t, f.operatorC, http.MethodDelete, f.groupsURL()+"/"+group.ID, nil)
+	text := mustReadBody(t, resp)
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(text, "ping-a, ping-b") {
+		t.Fatalf("DELETE of a vantage group = %d %s, want 409 naming ping-a, ping-b", resp.StatusCode, text)
+	}
+	var problem struct {
+		Errors []struct {
+			Location string `json:"location"`
+			Message  string `json:"message"`
+		} `json:"errors"`
+	}
+	decodeText(t, text, &problem)
+	var keys []string
+	for _, e := range problem.Errors {
+		if e.Location != "used_by" {
+			t.Fatalf("409 detail at %q, want used_by: %s", e.Location, text)
+		}
+		keys = append(keys, e.Message)
+	}
+	if strings.Join(keys, ",") != "ping-a,ping-b" {
+		t.Fatalf("409 details name %v, want ping-a, ping-b: %s", keys, text)
+	}
+	if got := f.listGroups(t, f.viewerC); len(got) == 0 {
+		t.Fatal("the refused delete removed the group")
+	}
+}

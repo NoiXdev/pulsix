@@ -120,7 +120,12 @@ func TestDescriptorsAreWellFormed(t *testing.T) {
 // names the items its plugin reports on. A plugin whose list parameter
 // really is something else (a list of headers, say) adds it here with a
 // comment saying why; otherwise the list must be the plugin's ItemParam.
-var listParamsNotItems = map[string]bool{}
+var listParamsNotItems = map[string]bool{
+	// The vantage parameters of every synthetic plugin (backlog 3.13a):
+	// monitoring group ids, not items.
+	"icmp.vantage_groups": true, "tcp.vantage_groups": true, "http.vantage_groups": true,
+	"tls.vantage_groups": true, "dns.vantage_groups": true, "snmp.vantage_groups": true,
+}
 
 // TestListParamsAreItemParams: a list parameter left out of ItemParam makes
 // AsksForItem answer true for every item, so an item the operator removed

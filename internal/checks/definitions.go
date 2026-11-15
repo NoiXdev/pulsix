@@ -193,6 +193,9 @@ func (s *Service) createDefinition(ctx context.Context, orgID uuid.UUID, in Defi
 	if err := RefuseLocalKey(d.Key); err != nil {
 		return Definition{}, err
 	}
+	if err := s.refuseUnknownVantageGroups(ctx, orgID, d.Params); err != nil {
+		return Definition{}, err
+	}
 	if origin == originCustom {
 		if err := s.refuseKeyHeldBySharedProjection(ctx, orgID, d.Key); err != nil {
 			return Definition{}, err
@@ -276,6 +279,9 @@ func (s *Service) UpdateDefinition(ctx context.Context, orgID, id uuid.UUID, in 
 	}
 	d, err := normalizeDefinition(in)
 	if err != nil {
+		return Definition{}, err
+	}
+	if err := s.refuseUnknownVantageGroups(ctx, orgID, d.Params); err != nil {
 		return Definition{}, err
 	}
 	existing, err := s.store.GetDefinition(ctx, orgID, id)

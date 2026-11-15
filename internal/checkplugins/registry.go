@@ -81,6 +81,9 @@ func Get(name string) (Descriptor, bool) {
 
 func (p plugin) descriptor() Descriptor {
 	d := p.build()
+	if d.Runs == Server {
+		d = withVantage(d)
+	}
 	if d.Params == nil {
 		d.Params = []ParamSpec{}
 	}

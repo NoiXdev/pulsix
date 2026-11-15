@@ -314,5 +314,16 @@
   {"format": "jsonValue", "input": "a=$..*..*", "valid": false},
   {"format": "jsonValue", "input": "a=$..*..*..*", "valid": false},
   {"format": "jsonValue", "input": "a=$..[?@..x]", "valid": false},
-  {"format": "jsonValue", "input": "a=$[?@.n==\"x..y\"]..a..b", "valid": false}
+  {"format": "jsonValue", "input": "a=$[?@.n==\"x..y\"]..a..b", "valid": false},
+  {"format": "uuid", "input": "123e4567-e89b-12d3-a456-426614174000", "valid": true},
+  {"format": "uuid", "input": "00000000-0000-0000-0000-000000000000", "valid": true},
+  {"format": "uuid", "input": "123E4567-E89B-12D3-A456-426614174000", "valid": false},
+  {"format": "uuid", "input": "", "valid": false},
+  {"format": "uuid", "input": "123e4567e89b12d3a456426614174000", "valid": false},
+  {"format": "uuid", "input": "{123e4567-e89b-12d3-a456-426614174000}", "valid": false},
+  {"format": "uuid", "input": "urn:uuid:123e4567-e89b-12d3-a456-426614174000", "valid": false},
+  {"format": "uuid", "input": "123e4567-e89b-12d3-a456-42661417400", "valid": false},
+  {"format": "uuid", "input": "123e4567-e89b-12d3-a456-4266141740000", "valid": false},
+  {"format": "uuid", "input": "123e4567-e89b-12d3-a456-42661417400g", "valid": false},
+  {"format": "uuid", "input": " 123e4567-e89b-12d3-a456-426614174000", "valid": false}
 ]

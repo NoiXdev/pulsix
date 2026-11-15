@@ -117,10 +117,10 @@ func TestSNMPDescriptor(t *testing.T) {
 		defaults[p.Name] = p.Default
 		required[p.Name] = p.Required
 	}
-	if want := []string{"secret", "version", "port", "timeout_seconds", "oids", "interfaces"}; !slices.Equal(names, want) {
+	if want := []string{"secret", "version", "port", "timeout_seconds", "oids", "interfaces", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}; !slices.Equal(names, want) {
 		t.Fatalf("params = %v, want %v", names, want)
 	}
-	if !required["secret"] || len(required) != 6 || required["oids"] || required["interfaces"] {
+	if !required["secret"] || len(required) != 10 || required["oids"] || required["interfaces"] {
 		t.Fatalf("required = %v, want only secret", required)
 	}
 	if defaults["version"] != "v2c" || defaults["port"] != int64(161) || defaults["timeout_seconds"] != int64(5) ||
