@@ -214,7 +214,7 @@ func TestJSONValueFormat(t *testing.T) {
 
 // TestHTTPAsksForItem: a json_values entry asks for its name; the
 // request's own metrics (http.up, …) are on the whole-host item "",
-// always asked; without json_values every item is.
+// always asked; without json_values no other item is.
 func TestHTTPAsksForItem(t *testing.T) {
 	values := []any{"status=$.status", "queue.depth=$.queues[0].depth"}
 	cases := []struct {
@@ -231,8 +231,12 @@ func TestHTTPAsksForItem(t *testing.T) {
 		{"not a prefix of a name", map[string]any{"json_values": values}, "stat", false},
 		{"the whole-host item with values", map[string]any{"json_values": values}, "", true},
 		{"the whole-host item without values", map[string]any{"url": "https://{address}/"}, "", true},
-		{"no list asks for everything", map[string]any{"url": "https://{address}/"}, "status", true},
-		{"an empty list asks for everything", map[string]any{"json_values": []any{}}, "status", true},
+		// No list asks for no JSON item: the request's own metrics are
+		// all on "", so a removed last entry drops its item at once.
+		{"no list asks for no JSON item", map[string]any{"url": "https://{address}/"}, "status", false},
+		{"an empty list asks for no JSON item", map[string]any{"json_values": []any{}}, "status", false},
+		{"a JSON null list asks for no JSON item", map[string]any{"json_values": nil}, "status", false},
+		{"a list that is not strings asks for everything", map[string]any{"json_values": []any{1.0}}, "status", true},
 		{"a Go string list", map[string]any{"json_values": []string{"a=$.a"}}, "a", true},
 	}
 	for _, tc := range cases {

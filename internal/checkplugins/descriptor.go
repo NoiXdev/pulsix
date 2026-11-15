@@ -125,10 +125,12 @@ type Descriptor struct {
 	// names or whose other parameters widen what it asks for (snmp: an
 	// entry "name=OID" asks for item "name", and interfaces asks for any
 	// item the device names). It runs only where the generic rules have
-	// not answered already: the list is present and not empty, and item is
-	// not a HostItemAlwaysAsked plugin's "". entries is the list as
-	// strings. Nil means the item must be one of the entries (after
-	// ItemEntry); a descriptor sets at most one of the two.
+	// not answered already: item is not a HostItemAlwaysAsked plugin's "",
+	// and the list is absent or a list of strings — empty included, so the
+	// hook says what no list means (http: no JSON item at all). entries is
+	// the list as strings, nil when absent. Nil means the item must be one
+	// of the entries (after ItemEntry), or anything when the list is absent
+	// or empty; a descriptor sets at most one of the two.
 	ItemAsked func(params map[string]any, entries []string, item string) bool `json:"-"`
 	// Check validates what spans parameters or needs code beyond ParamSpec
 	// and the formats. It runs after every parameter passed its own spec

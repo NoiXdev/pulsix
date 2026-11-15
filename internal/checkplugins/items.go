@@ -11,27 +11,34 @@ import (
 // "the agent stopped reporting").
 //
 // A plugin without an ItemParam asks for everything it reports (cpu,
-// memory, uptime, docker and the synthetic plugins). So does one whose list
-// is absent, not a list of strings, or empty: no list means every item the
-// host finds — which is also what the agent's plugins do with the
-// parameter. Otherwise only the listed items are asked, except that a
-// HostItemAlwaysAsked plugin's whole-host item "" always is, that an
-// ItemEntry hook maps a reported item to the entry naming it first, and
-// that an ItemAsked hook decides in place of the comparison.
+// memory, uptime, docker and the synthetic plugins), and a
+// HostItemAlwaysAsked plugin always asks for its whole-host item "". A
+// list that is present but not a list of strings asks for everything too.
+// An ItemAsked hook then decides on its own, whether the list is absent,
+// empty or not: what no list means is the plugin's business (http: no
+// json_values asks for no JSON item; snmp: interfaces alone asks for
+// every interface). Without a hook, an absent or empty list means every
+// item the host finds — which is also what the agent's plugins do with
+// the parameter — and otherwise only the listed items are asked, after
+// an ItemEntry hook maps a reported item to the entry naming it.
 func AsksForItem(plugin string, params map[string]any, item string) bool {
 	d, ok := Get(plugin)
 	if !ok || d.ItemParam == "" {
 		return true
 	}
-	asked, ok := stringList(params[d.ItemParam])
-	if !ok || len(asked) == 0 {
+	if item == "" && d.HostItemAlwaysAsked {
 		return true
 	}
-	if item == "" && d.HostItemAlwaysAsked {
+	raw := params[d.ItemParam]
+	asked, ok := stringList(raw)
+	if !ok && raw != nil {
 		return true
 	}
 	if d.ItemAsked != nil {
 		return d.ItemAsked(params, asked, item)
+	}
+	if len(asked) == 0 {
+		return true
 	}
 	if d.ItemEntry != nil {
 		item = d.ItemEntry(item)

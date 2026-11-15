@@ -235,6 +235,11 @@ func TestSNMPAsksForItem(t *testing.T) {
 		{"an interface without interfaces", map[string]any{"oids": oids, "interfaces": false}, "eth0", false},
 		{"any interface with interfaces", map[string]any{"oids": oids, "interfaces": true}, "Gi0/1", true},
 		{"interfaces only", map[string]any{"interfaces": true}, "Gi0/1", true},
+		{"interfaces with an empty list", map[string]any{"oids": []any{}, "interfaces": true}, "Gi0/1", true},
+		// Neither oids nor interfaces is refused by Validate (snmpCheck);
+		// such a check would poll nothing, so it asks for nothing either.
+		{"neither oids nor interfaces", map[string]any{"interfaces": false}, "load", false},
+		{"the whole-host item with neither", map[string]any{}, "", true},
 		{"the whole-host item with oids", map[string]any{"oids": oids}, "", true},
 		{"the whole-host item with interfaces", map[string]any{"interfaces": true}, "", true},
 		{"a Go string list", map[string]any{"oids": []string{"load=1.3"}}, "load", true},

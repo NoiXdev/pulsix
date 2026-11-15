@@ -113,7 +113,10 @@ func TestRulesHostChecksPropagatesFailures(t *testing.T) {
 // the very predicate the host page hides them by. A disk check listing
 // "/" asks for "/" and not "/data"; the whole-host item "" is asked
 // whatever the list says (it carries a check-level error, not a mount);
-// a check without a list, and a synthetic check, ask for everything.
+// a check without a list asks for everything. An http check asks for its
+// json_values names only, so removing its last entry stops the evaluation
+// judging that item at once rather than letting it turn unknown until the
+// item expiry (backlog 3.6h).
 func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
 	r := &fakeCheckResolver{set: checks.ResolvedSet{
 		Checks: []checks.Resolved{
@@ -121,7 +124,11 @@ func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
 			{Key: "disk-all", Plugin: checks.PluginDisk, Interval: time.Minute},
 			{Key: "cpu", Plugin: checks.PluginCPU, Interval: time.Minute},
 		},
-		Synthetic: []checks.Resolved{{Key: "web", Plugin: checks.PluginHTTP, Interval: 30 * time.Second}},
+		Synthetic: []checks.Resolved{
+			{Key: "web", Plugin: checks.PluginHTTP, Interval: 30 * time.Second},
+			{Key: "api", Plugin: checks.PluginHTTP, Params: map[string]any{"json_values": []any{"status=$.status"}}, Interval: 30 * time.Second},
+			{Key: "api-emptied", Plugin: checks.PluginHTTP, Params: map[string]any{"json_values": []any{}}, Interval: 30 * time.Second},
+		},
 	}}
 	got, err := rulesHostChecks{checks: r}.ContextForHost(context.Background(), uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()))
 	if err != nil {
@@ -137,7 +144,12 @@ func TestRulesHostChecksContextForHostAsksPerItem(t *testing.T) {
 		{"disk-all", "/data", true},
 		{"cpu", "", true},
 		{"web", "", true},
-		{"web", "https://example.invalid/", true},
+		{"web", "status", false},
+		{"api", "", true},
+		{"api", "status", true},
+		{"api", "depth", false},
+		{"api-emptied", "", true},
+		{"api-emptied", "status", false},
 	} {
 		asks, ok := got.Asks[c.key]
 		if !ok {
