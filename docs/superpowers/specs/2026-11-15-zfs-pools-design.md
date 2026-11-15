@@ -38,7 +38,7 @@ collection errors.
 | `zfs.capacity_pct` | numeric | pool | allocated ÷ size × 100 (the `capacity` property) |
 | `zfs.size_bytes` | numeric | pool | `size` |
 | `zfs.free_bytes` | numeric | pool | `free` |
-| `zfs.fragmentation_pct` | numeric | pool | `fragmentation`; absent when `zpool` prints `-` |
+| `zfs.fragmentation_pct` | numeric | pool | `fragmentation`; absent when `zpool` prints `-`: never present for a pool without the space map histogram feature, and an unavailable pool's turns stale alongside the errors on its size, free space and capacity |
 | `zfs.errors_read` / `zfs.errors_write` / `zfs.errors_checksum` | numeric | pool | sum of the column over every row of the pool's configuration tree |
 | `zfs.data_errors` | numeric | pool | permanent data errors (`errors:` line) |
 | `zfs.devices_unhealthy` | numeric | pool | leaf devices whose state is not `ONLINE` |
@@ -68,8 +68,8 @@ collection errors.
   2. `zpool status -p` — every pool (the filter is applied after
      parsing), per pool: the `scan:` paragraph, the `config:` tree, the
      `errors:` line.
-  3. Only when at least one reported pool's scrub age falls back to the
-     creation (see "Scrub age"):
+  3. Only when at least one reported ONLINE or DEGRADED pool's scrub age
+     falls back to the creation (see "Scrub age"):
      `zfs get -Hp -o name,value creation <pool>…` (the pools' root
      datasets; a Unix time).
 - A failing call 1 (exit status, timeout, oversized output) → one
@@ -122,8 +122,10 @@ collection errors.
   finished scrub printed now, remembered per pool in the plugin's memory
   (the later end wins); (2) the start date of a running or paused scrub;
   (3) the remembered end; (4) the pool's creation, via `zfs get` (called
-  only then, only for those pools; stdout is parsed even on a non-zero
-  exit). A pool that is ONLINE or DEGRADED and shows no scan entry or
+  only then, only for those pools and only while they are ONLINE or
+  DEGRADED, since it may hang on a suspended pool; stdout is parsed even
+  on a non-zero exit). A pool in another state whose age falls to (4)
+  reports a collection error "pool is <HEALTH>: creation time not read". A pool that is ONLINE or DEGRADED and shows no scan entry or
   only `none requested` forgets the remembered end (a re-created pool).
   The memory is lost on an agent restart.
 - **size, free, capacity** printed as `-` are collection errors.
@@ -151,8 +153,9 @@ collection errors.
   named in the advisory error, as `raid` does; the `pools` filter as
   `raid`'s `arrays` (a listed pool that does not exist simply reports
   nothing). Every metric each run for every reported pool, except
-  `zfs.fragmentation_pct` when `zpool` prints `-` (then never present,
-  so never stale).
+  `zfs.fragmentation_pct` when `zpool` prints `-` (never present for a
+  pool without the feature, so never stale; an unavailable pool's turns
+  stale alongside its size errors).
 - Off Linux: one collection error on item `""`, metric `zfs.pools`: "not
   supported on this platform" (a stub source like `raid`'s).
 - Seams for tests: a command runner interface (name, args → stdout,
