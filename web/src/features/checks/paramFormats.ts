@@ -340,8 +340,8 @@ function snmpOID(s: string): boolean {
 }
 
 /** jsonPathDescendants counts the descendant segments of a JSONPath, as
- * the server's JSONPathDescendants does: every ".." outside a string
- * literal, filters included. */
+ * the server's parser (internal/jpath) counts them: every ".." outside a
+ * string literal, filters included. */
 function jsonPathDescendants(path: string): number {
   let n = 0;
   let quote = '';

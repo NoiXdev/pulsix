@@ -293,9 +293,10 @@ the next upgrade.
 JSON values on the `http` check (backlog 3.6h) add no migration, no dependency and no
 version skew: the check runs on the manager and is never sent to agents. Existing
 `http` checks behave as before until `json_values` or `secret` is set. The manager now
-reads at most `min(2, GOMAXPROCS)` JSON responses at once; with more checks waiting, the
-later ones report "the manager was too busy to read the JSON response" on their JSON
-values only (backlog 3.71).
+reads at most `min(2, GOMAXPROCS)` JSON responses at once; a check waits for a turn, and
+only one whose probe deadline passes while it waits (more JSON responses due at once than
+that, each slow to read) reports "the manager was too busy to read the JSON response", on
+its JSON values only (backlog 3.71).
 
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and

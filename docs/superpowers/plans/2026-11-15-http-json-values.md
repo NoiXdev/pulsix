@@ -8,6 +8,8 @@
 
 **Tech Stack:** Go, github.com/theory/jsonpath (already a dependency), React/TypeScript SPA.
 
+> **Superseded (library):** after the Task 2 review the spec was amended: paths are a bounded RFC 9535 subset parsed and evaluated by Pulsix's own `internal/jpath`, not by `github.com/theory/jsonpath` (which stays only in `internal/triggers`). The Architecture and Tech Stack lines above, and the tasks below that name the library, describe the plan as first written; the spec's Descriptor and Probe sections are authoritative.
+
 **Spec:** `docs/superpowers/specs/2026-11-15-http-json-values-design.md`
 
 ## Global Constraints
