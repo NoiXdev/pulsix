@@ -257,6 +257,12 @@ type Store interface {
 	// configCheckRewrite. An unknown serial writes nothing and is no
 	// error.
 	RecordConfigCheck(ctx context.Context, serial, reported, expected string) error
+	// SetProbesSupported stores the heartbeat's probes_supported flag
+	// (migration 00098) by host, org-unscoped; it writes only on change.
+	SetProbesSupported(ctx context.Context, hostID uuid.UUID, supported bool) error
+	// ProbeCapableAgents lists the organization's agents that report
+	// probes_supported, with their last heartbeat, ordered by host id.
+	ProbeCapableAgents(ctx context.Context, orgID uuid.UUID) ([]ProbeCapable, error)
 	List(ctx context.Context, orgID uuid.UUID) ([]Agent, error)
 	// GetByHost is one host's active agent, org-scoped; ErrNotFound when
 	// the host runs none (never enrolled, or revoked).
@@ -632,6 +638,38 @@ func (s *Service) ViewByHost(ctx context.Context, orgID, hostID uuid.UUID) (View
 // last heartbeat is older than StaleAfter has stopped reporting.
 func isOnline(lastSeen *time.Time, now time.Time) bool {
 	return lastSeen != nil && now.Sub(*lastSeen) < StaleAfter
+}
+
+// ProbeCapable is an agent that reports probes_supported: its host and its
+// last heartbeat (nil when it never reported).
+type ProbeCapable struct {
+	HostID   uuid.UUID
+	LastSeen *time.Time
+}
+
+// SetProbesSupported records whether the host's agent can run probes for
+// other hosts' checks (the heartbeat's flag); an unchanged value writes
+// nothing.
+func (s *Service) SetProbesSupported(ctx context.Context, hostID uuid.UUID, supported bool) error {
+	return s.store.SetProbesSupported(ctx, hostID, supported)
+}
+
+// OnlineProbeAgents is the host ids of the organization's agents that
+// report probes_supported and are online (the rule of the Agents page,
+// isOnline): the candidates for probe assignments.
+func (s *Service) OnlineProbeAgents(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error) {
+	capable, err := s.store.ProbeCapableAgents(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	now := s.now()
+	out := make([]uuid.UUID, 0, len(capable))
+	for _, c := range capable {
+		if isOnline(c.LastSeen, now) {
+			out = append(out, c.HostID)
+		}
+	}
+	return out, nil
 }
 
 // SecretsByHost is the host's agent's latest secrets report, for the host

@@ -569,3 +569,8 @@ func (h *integHarness) renewedSerialDiffers(old *big.Int) bool {
 	}
 	return current.Cmp(old) != 0
 }
+
+func (f *integAgentStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
+func (f *integAgentStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
+	return nil, nil
+}

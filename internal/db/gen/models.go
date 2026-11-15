@@ -455,6 +455,7 @@ type HostAgent struct {
 	OnlineSince        pgtype.Timestamptz `json:"online_since"`
 	LocalChecks        []byte             `json:"local_checks"`
 	LocalCheckProblems []string           `json:"local_check_problems"`
+	ProbesSupported    bool               `json:"probes_supported"`
 }
 
 type HostConnectionTest struct {
@@ -821,6 +822,43 @@ type Playbook struct {
 	CreatedAt time.Time   `json:"created_at"`
 	UpdatedAt time.Time   `json:"updated_at"`
 	VarSource []byte      `json:"var_source"`
+}
+
+type ProbeAssignment struct {
+	OrgID           uuid.UUID `json:"org_id"`
+	AgentHostID     uuid.UUID `json:"agent_host_id"`
+	TargetHostID    uuid.UUID `json:"target_host_id"`
+	CheckKey        string    `json:"check_key"`
+	Plugin          string    `json:"plugin"`
+	Params          []byte    `json:"params"`
+	IntervalSeconds int32     `json:"interval_seconds"`
+	Address         string    `json:"address"`
+	AssignedAt      time.Time `json:"assigned_at"`
+}
+
+type ProbeCurrent struct {
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Vantage  string    `json:"vantage"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Value    *float64  `json:"value"`
+	Label    *string   `json:"label"`
+	At       time.Time `json:"at"`
+	Error    *string   `json:"error"`
+}
+
+type ProbeSample struct {
+	At       time.Time `json:"at"`
+	OrgID    uuid.UUID `json:"org_id"`
+	HostID   uuid.UUID `json:"host_id"`
+	CheckKey string    `json:"check_key"`
+	Vantage  string    `json:"vantage"`
+	Item     string    `json:"item"`
+	Metric   string    `json:"metric"`
+	Value    *float64  `json:"value"`
+	Label    *string   `json:"label"`
 }
 
 type RecoveryCode struct {

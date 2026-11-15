@@ -162,7 +162,7 @@ func (q *Queries) GetAgentEnrollmentOrg(ctx context.Context, id uuid.UUID) (uuid
 }
 
 const getHostAgent = `-- name: GetHostAgent :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -202,6 +202,7 @@ func (q *Queries) GetHostAgent(ctx context.Context, arg GetHostAgentParams) (Get
 		&i.HostAgent.OnlineSince,
 		&i.HostAgent.LocalChecks,
 		&i.HostAgent.LocalCheckProblems,
+		&i.HostAgent.ProbesSupported,
 		&i.CertNotAfter,
 		&i.HostName,
 	)
@@ -279,7 +280,7 @@ func (q *Queries) ListAgentLocalChecks(ctx context.Context, arg ListAgentLocalCh
 }
 
 const listHostAgents = `-- name: ListHostAgents :many
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, c.not_after AS cert_not_after, ho.name AS host_name
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, c.not_after AS cert_not_after, ho.name AS host_name
 FROM host_agents h
 JOIN hosts ho ON ho.org_id = h.org_id AND ho.id = h.host_id
 LEFT JOIN agent_certificates c ON c.serial = h.cert_serial
@@ -322,6 +323,7 @@ func (q *Queries) ListHostAgents(ctx context.Context, orgID uuid.UUID) ([]ListHo
 			&i.HostAgent.OnlineSince,
 			&i.HostAgent.LocalChecks,
 			&i.HostAgent.LocalCheckProblems,
+			&i.HostAgent.ProbesSupported,
 			&i.CertNotAfter,
 			&i.HostName,
 		); err != nil {
@@ -379,6 +381,39 @@ func (q *Queries) ListPendingAgentEnrollments(ctx context.Context, arg ListPendi
 	return items, nil
 }
 
+const listProbeCapableAgents = `-- name: ListProbeCapableAgents :many
+SELECT host_id, last_seen FROM host_agents
+WHERE org_id = $1 AND probes_supported
+ORDER BY host_id
+`
+
+type ListProbeCapableAgentsRow struct {
+	HostID   uuid.UUID          `json:"host_id"`
+	LastSeen pgtype.Timestamptz `json:"last_seen"`
+}
+
+// The organization's agents that report probes_supported, with their last
+// heartbeat; the service applies the online rule.
+func (q *Queries) ListProbeCapableAgents(ctx context.Context, orgID uuid.UUID) ([]ListProbeCapableAgentsRow, error) {
+	rows, err := q.db.Query(ctx, listProbeCapableAgents, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProbeCapableAgentsRow
+	for rows.Next() {
+		var i ListProbeCapableAgentsRow
+		if err := rows.Scan(&i.HostID, &i.LastSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAgentEnrollment = `-- name: LockAgentEnrollment :one
 SELECT id, org_id, zone_id, host_id, name_hint, secret_hash, max_uses, uses, expires_at, used_at, created_by, created_at FROM agent_enrollments WHERE org_id = $1 AND id = $2 FOR UPDATE
 `
@@ -409,7 +444,7 @@ func (q *Queries) LockAgentEnrollment(ctx context.Context, arg LockAgentEnrollme
 }
 
 const lockHostAgentsByName = `-- name: LockHostAgentsByName :many
-SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems FROM host_agents
+SELECT host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems, probes_supported FROM host_agents
 WHERE org_id = $1 AND agent_name = $2
 FOR UPDATE
 `
@@ -451,6 +486,7 @@ func (q *Queries) LockHostAgentsByName(ctx context.Context, arg LockHostAgentsBy
 			&i.OnlineSince,
 			&i.LocalChecks,
 			&i.LocalCheckProblems,
+			&i.ProbesSupported,
 		); err != nil {
 			return nil, err
 		}
@@ -487,7 +523,7 @@ func (q *Queries) LockLiveAgentCertificate(ctx context.Context, arg LockLiveAgen
 }
 
 const lookupAgentSerial = `-- name: LookupAgentSerial :one
-SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
+SELECT h.host_id, h.org_id, h.agent_name, h.cert_serial, h.last_seen, h.version, h.created_at, h.secret_names, h.secrets_state, h.connected_since, h.config_version, h.config_expected, h.config_checked_at, h.online_since, h.local_checks, h.local_check_problems, h.probes_supported, c.serial AS cert_serial_presented, c.revoked_at AS cert_revoked_at
 FROM agent_certificates c
 JOIN host_agents h ON h.org_id = c.org_id AND h.host_id = c.host_id
 WHERE c.serial = $1
@@ -521,6 +557,7 @@ func (q *Queries) LookupAgentSerial(ctx context.Context, serial string) (LookupA
 		&i.HostAgent.OnlineSince,
 		&i.HostAgent.LocalChecks,
 		&i.HostAgent.LocalCheckProblems,
+		&i.HostAgent.ProbesSupported,
 		&i.CertSerialPresented,
 		&i.CertRevokedAt,
 	)
@@ -656,6 +693,23 @@ func (q *Queries) RevokeAgentCertificates(ctx context.Context, arg RevokeAgentCe
 	return err
 }
 
+const setAgentProbesSupported = `-- name: SetAgentProbesSupported :exec
+UPDATE host_agents SET probes_supported = $1
+WHERE host_id = $2 AND probes_supported IS DISTINCT FROM $1
+`
+
+type SetAgentProbesSupportedParams struct {
+	Supported bool      `json:"supported"`
+	HostID    uuid.UUID `json:"host_id"`
+}
+
+// The heartbeat's probes_supported flag (00098), org-unscoped by host id
+// like the other heartbeat writes; written only when it changes.
+func (q *Queries) SetAgentProbesSupported(ctx context.Context, arg SetAgentProbesSupportedParams) error {
+	_, err := q.db.Exec(ctx, setAgentProbesSupported, arg.Supported, arg.HostID)
+	return err
+}
+
 const touchAgentBySerial = `-- name: TouchAgentBySerial :exec
 UPDATE host_agents SET last_seen = now(), version = $1,
   connected_since = CASE
@@ -758,7 +812,7 @@ SET agent_name = EXCLUDED.agent_name, cert_serial = EXCLUDED.cert_serial,
     local_checks = CASE WHEN $7::boolean THEN host_agents.local_checks END,
     local_check_problems = CASE WHEN $7::boolean THEN host_agents.local_check_problems END,
     config_version = NULL, config_expected = NULL, config_checked_at = NULL
-RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems
+RETURNING host_id, org_id, agent_name, cert_serial, last_seen, version, created_at, secret_names, secrets_state, connected_since, config_version, config_expected, config_checked_at, online_since, local_checks, local_check_problems, probes_supported
 `
 
 type UpsertHostAgentParams struct {
@@ -819,6 +873,7 @@ func (q *Queries) UpsertHostAgent(ctx context.Context, arg UpsertHostAgentParams
 		&i.OnlineSince,
 		&i.LocalChecks,
 		&i.LocalCheckProblems,
+		&i.ProbesSupported,
 	)
 	return i, err
 }

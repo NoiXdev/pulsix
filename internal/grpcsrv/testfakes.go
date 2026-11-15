@@ -685,3 +685,8 @@ func (h *harness) dial(cfg *tls.Config) *grpc.ClientConn {
 	h.t.Cleanup(func() { _ = conn.Close() })
 	return conn
 }
+
+func (f *fakeAgentStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
+func (f *fakeAgentStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
+	return nil, nil
+}

@@ -1023,3 +1023,8 @@ func keyPEMOf(t *testing.T, key *ecdsa.PrivateKey) []byte {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
 }
+
+func (f *fakeAgentStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
+func (f *fakeAgentStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
+	return nil, nil
+}

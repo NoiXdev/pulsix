@@ -1089,3 +1089,8 @@ func TestCreateTokenValidatesTheNameHint(t *testing.T) {
 		})
 	}
 }
+
+func (f *fakeStore) SetProbesSupported(context.Context, uuid.UUID, bool) error { return nil }
+func (f *fakeStore) ProbeCapableAgents(context.Context, uuid.UUID) ([]agents.ProbeCapable, error) {
+	return nil, nil
+}

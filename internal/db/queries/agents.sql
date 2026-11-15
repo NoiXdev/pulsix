@@ -275,3 +275,16 @@ WHERE NOT EXISTS (
   WHERE host_id = sqlc.arg(host_id) AND key = sqlc.arg(key) AND source = 'manual'
 )
 ON CONFLICT (host_id, key, source) DO UPDATE SET value = EXCLUDED.value;
+
+-- name: SetAgentProbesSupported :exec
+-- The heartbeat's probes_supported flag (00098), org-unscoped by host id
+-- like the other heartbeat writes; written only when it changes.
+UPDATE host_agents SET probes_supported = sqlc.arg(supported)
+WHERE host_id = sqlc.arg(host_id) AND probes_supported IS DISTINCT FROM sqlc.arg(supported);
+
+-- name: ListProbeCapableAgents :many
+-- The organization's agents that report probes_supported, with their last
+-- heartbeat; the service applies the online rule.
+SELECT host_id, last_seen FROM host_agents
+WHERE org_id = sqlc.arg(org_id) AND probes_supported
+ORDER BY host_id;
