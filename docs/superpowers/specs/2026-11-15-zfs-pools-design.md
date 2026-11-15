@@ -17,6 +17,14 @@ pool's creation instead of an error "never scrubbed", because a collection
 error makes the tuple, and so the host, unknown on every run until the
 first scrub. Every other decision below is **(Claude's call)**.
 
+**Amended after the Task 1 review:** counter suffixes are ×1024 (zpool's
+nicenum), not ×1000; a pool may print several `scan:` entries (OpenZFS 2.x
+prints one per top-level vdev for a sequential rebuild or dRAID, and 2.2
+prints an error scrub under a ` scrub:` header), see "Parsing"; the scrub
+age has a four-step source order and a per-pool memory, see "Scrub age";
+`-` for size, free or capacity and an unrecognised scan entry are
+collection errors.
+
 ## Descriptor (`internal/checkplugins/zfs.go`)
 
 - `Name: "zfs"`, `Runs: Agent`, `Params: hardwareList("pools",
@@ -36,7 +44,7 @@ first scrub. Every other decision below is **(Claude's call)**.
 | `zfs.devices_unhealthy` | numeric | pool | leaf devices whose state is not `ONLINE` |
 | `zfs.scan` | discrete | pool | `none`, `scrub`, `resilver`, `scrub_paused` |
 | `zfs.scan_pct` | numeric | pool | progress of the running scrub or resilver; 100 when none runs |
-| `zfs.scrub_age_days` | numeric | pool | days (fractional) since the last scrub finished; since the pool's creation when none ever did |
+| `zfs.scrub_age_days` | numeric | pool | days (fractional) since the last finished scrub; a running or paused scrub counts from its start; since the pool's creation when none is known |
 | `zfs.pools` | numeric | `""` | pools reported this round, after the `pools` filter, also 0 |
 
 ## Agent plugin (`internal/agent/checks/plugins/zfs/`)
@@ -55,11 +63,13 @@ first scrub. Every other decision below is **(Claude's call)**.
 - **Calls, in order:**
   1. `zpool list -Hp -o name,health,size,free,capacity,fragmentation` —
      tab-separated, exact numbers. `capacity` and `fragmentation` may
-     carry a `%` (older releases) or be `-`.
+     carry a `%` (older releases) or be `-` (for `size`, `free` and
+     `capacity` that is a collection error).
   2. `zpool status -p` — every pool (the filter is applied after
      parsing), per pool: the `scan:` paragraph, the `config:` tree, the
      `errors:` line.
-  3. Only when at least one reported pool never finished a scrub:
+  3. Only when at least one reported pool's scrub age falls back to the
+     creation (see "Scrub age"):
      `zfs get -Hp -o name,value creation <pool>…` (the pools' root
      datasets; a Unix time).
 - A failing call 1 (exit status, timeout, oversized output) → one
@@ -77,28 +87,46 @@ first scrub. Every other decision below is **(Claude's call)**.
   vanished between the calls) is ignored; a pool in `list` but missing
   from `status` gets the status-derived metrics as collection errors
   ("missing from zpool status").
-- **scan:** (the line and its continuation lines, up to `config:`)
+- **scan:** (every `scan:` entry of the pool, and the continuation lines of
+  each, up to `config:`). OpenZFS 2.x may print several entries: the
+  scrub's, one per top-level vdev for a sequential rebuild or dRAID, and
+  (2.2) an error scrub under a ` scrub:` header. Kind and progress come
+  from the running entry: resilver or rebuild > scrub > paused.
   - `scrub in progress since …` with a later `… N% done` (or computed
     from `X scanned … of Y` / `X issued … of Y` when no percentage is
     printed) → `scrub`, that percentage.
-  - `resilver in progress since …` → `resilver`, its percentage.
+  - `resilver in progress since …` (or a rebuild) → `resilver`, its
+    percentage.
   - `scrub paused since …` → `scrub_paused`, the percentage when
     printed, else 0.
-  - `scrub repaired … on <date>` → `none`, 100; last scrub end = date.
-  - `scrub canceled on <date>` → `none`, 100; the last *finished* scrub
-    is unknown from this line, so the age counts from creation (a
-    canceled scrub is not a finished one).
-  - `resilvered … on <date>` (a finished resilver) → `none`, 100; a
-    resilver is not a scrub: age from creation unless a scrub line also
-    names one (newer releases print both on separate lines).
-  - `none requested` or no `scan:` line → `none`, 100; age from creation.
-  - A percentage is clamped to 0–100; one that does not parse makes
-    `zfs.scan_pct` a collection error and `zfs.scan` still reports the
-    kind.
+  - `scrub repaired … on <date>` → nothing runs, 100; the only entry
+    that gives a last scrub end.
+  - `scrub canceled on <date>`, `resilver (<vdev>) canceled on …`, a
+    finished or canceled error scrub → nothing runs, 100; none of them
+    is a finished scrub.
+  - An error scrub in progress → `scrub`, paused → `scrub_paused`; never
+    a scrub end, and its start is not used for the age.
+  - `resilvered … on <date>` (a finished resilver) → nothing runs, 100;
+    not a scrub.
+  - `none requested` or no `scan:` line → `none`, 100.
+  - A percentage is clamped to 0–100; `-nan% done` reads 0; one that
+    does not parse makes `zfs.scan_pct` a collection error and
+    `zfs.scan` still reports the kind. An unrecognised scan entry makes
+    the scan metrics (`zfs.scan`, `zfs.scan_pct`, `zfs.scrub_age_days`)
+    collection errors.
   - Dates are `LC_ALL=C` ctime form (`Sun Nov 10 00:24:02 2024`), in the
     host's local time zone; one that does not parse makes
     `zfs.scrub_age_days` a collection error. An end date in the future
     (clock moved) reads 0.
+- **Scrub age**, the first source that applies: (1) the end of a
+  finished scrub printed now, remembered per pool in the plugin's memory
+  (the later end wins); (2) the start date of a running or paused scrub;
+  (3) the remembered end; (4) the pool's creation, via `zfs get` (called
+  only then, only for those pools; stdout is parsed even on a non-zero
+  exit). A pool that is ONLINE or DEGRADED and shows no scan entry or
+  only `none requested` forgets the remembered end (a re-created pool).
+  The memory is lost on an agent restart.
+- **size, free, capacity** printed as `-` are collection errors.
 - **config:** the tree's rows `NAME STATE READ WRITE CKSUM [notes]`,
   indentation giving the depth. Error counters: the sum of READ, WRITE
   and CKSUM over every row that has them — the pool row, vdevs (mirror,
@@ -106,7 +134,7 @@ first scrub. Every other decision below is **(Claude's call)**.
   groups' rows — since each row counts its own errors, not its
   children's. `-p` prints exact counts; a counter that is not an
   integer (an older release's `1.2K`) is parsed with its suffix
-  (K/M/G/T, ×1000 each, as `zpool` abbreviates). The `spares` group's
+  (K/M/G/T, ×1024 each, as `zpool`'s nicenum abbreviates). The `spares` group's
   rows carry no counters and are skipped for the sums.
 - **devices_unhealthy:** leaves (rows with no deeper row beneath them)
   whose state is not `ONLINE`, outside the `spares` group (`AVAIL`,
