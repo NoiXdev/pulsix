@@ -21,7 +21,7 @@ func TestHTTPVerifiesAgainstInjectedRoots(t *testing.T) {
 	now := time.Now()
 	srv, _ := probetest.TLSServer(t, ca.Leaf(t, now.Add(-time.Hour), now.Add(24*time.Hour)))
 	params := map[string]any{"url": srv.URL, "timeout_s": float64(5)}
-	m := probetest.ByMetric(t, probeHTTP(context.Background(), loopbackOnly(), params, "", nil, ca.Pool))
+	m := probetest.ByMetric(t, probeHTTP(context.Background(), loopbackOnly(), NewJSONGate(1), params, "", nil, ca.Pool))
 	if v := m["http.up"].Value; v == nil || *v != 1 {
 		t.Fatalf("http.up = %v, want 1 with the CA in the roots", m)
 	}

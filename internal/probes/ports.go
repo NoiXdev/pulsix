@@ -48,8 +48,8 @@ type Locker interface {
 // ProbeFunc runs one probe of address and returns its observations. secret
 // holds the fields of the check's secret, nil for a plugin that takes
 // none; it is never merged into params. The probe must honour ctx's
-// deadline; production is all.Run with the manager's guard. Plugins with a
-// Poller (snmp) do not go through it.
+// deadline; production is the runner's all.Registry with the manager's
+// guard. Plugins with a Poller (snmp) do not go through it.
 type ProbeFunc func(ctx context.Context, plugin string, params map[string]any, address string, secret map[string]string) []probe.Observation
 
 // Poller polls one snmp slot and keeps what its next poll needs (the

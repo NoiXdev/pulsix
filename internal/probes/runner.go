@@ -24,6 +24,7 @@ import (
 	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probe/all"
+	probehttp "github.com/noixdev/pulsix/internal/probe/http"
 	"github.com/noixdev/pulsix/internal/probe/snmp"
 )
 
@@ -53,8 +54,10 @@ type Deps struct {
 	Hosts    Hosts
 	Recorder Recorder
 	Locker   Locker
-	// Probe runs one probe of a plugin without a Poller; default all.Run
-	// with Guard.
+	// Probe runs one probe of a plugin without a Poller; default the
+	// all.Registry built once per runner, with Guard and one JSON gate of
+	// http.DefaultJSONStages, so the http probes' JSON stages are bounded
+	// across the manager.
 	Probe ProbeFunc
 	// NewPoller builds the Poller of one snmp slot; default snmp.NewPoller
 	// on Clock, polling with Guard.
@@ -153,8 +156,9 @@ func NewRunner(d Deps) *Runner {
 	}
 	g := d.Guard
 	if r.probe == nil {
+		reg := all.Registry(probehttp.NewJSONGate(probehttp.DefaultJSONStages()))
 		r.probe = func(ctx context.Context, plugin string, params map[string]any, address string, secret map[string]string) []probe.Observation {
-			return all.Run(ctx, g, plugin, params, address, secret)
+			return reg.Run(ctx, g, plugin, params, address, secret)
 		}
 	}
 	if r.newPoller == nil {

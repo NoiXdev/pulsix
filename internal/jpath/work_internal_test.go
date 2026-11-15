@@ -2,6 +2,7 @@ package jpath
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -84,7 +85,9 @@ func workPaths() map[string]string {
 // TestWorkIsBoundedByTheBudget: whatever the shape and the document, the
 // work done is a small constant times the visits charged, and so at most
 // that constant times the budget (N1 of the Task 2 review: a `!` chain
-// used to work uncharged per candidate).
+// used to work uncharged per candidate). Every filter expression
+// evaluated counts as work where it is dispatched, apart from its own
+// charge, so an expression kind that goes uncharged fails this test.
 func TestWorkIsBoundedByTheBudget(t *testing.T) {
 	docs := workBodies(t)
 	for pname, path := range workPaths() {
@@ -93,7 +96,7 @@ func TestWorkIsBoundedByTheBudget(t *testing.T) {
 			t.Fatalf("%s: Parse(%q) = %v", pname, path, err)
 		}
 		for dname, doc := range docs {
-			e := &evaluator{left: workBudget}
+			e := newEvaluator(context.Background(), workBudget)
 			_, err := e.run(p, doc)
 			charged := workBudget - max(e.left, -1)
 			if e.ops > maxOpsPerVisit*charged+len(p.segs) {
@@ -102,6 +105,41 @@ func TestWorkIsBoundedByTheBudget(t *testing.T) {
 			if charged > workBudget+1 {
 				t.Errorf("%s on %s: %d visits charged over a budget of %d", pname, dname, charged, workBudget)
 			}
+		}
+	}
+}
+
+// spy is a filter expression that records its evaluations and charges
+// nothing.
+type spy struct{ calls *int }
+
+func (s spy) eval(*evaluator, any) bool {
+	*s.calls++
+	return false
+}
+
+// TestEveryFilterNodeChargesBeforeItsChildren: each expression kind
+// charges one visit of its own, and an evaluator out of budget evaluates
+// none of its children (T1 of the Task 2 re-review 3).
+func TestEveryFilterNodeChargesBeforeItsChildren(t *testing.T) {
+	for name, build := range map[string]func(child expr) expr{
+		"or":    func(c expr) expr { return orExpr{c} },
+		"and":   func(c expr) expr { return andExpr{c} },
+		"not":   func(c expr) expr { return notExpr{x: c} },
+		"exist": func(expr) expr { return existExpr{} },
+		"cmp":   func(expr) expr { return cmpExpr{op: "==", lit: literal{kind: litNull}} },
+	} {
+		calls := 0
+		e := newEvaluator(context.Background(), 10)
+		e.test(build(spy{&calls}), nil)
+		if e.left != 9 {
+			t.Errorf("%s: charged %d visits, want 1 of its own", name, 10-e.left)
+		}
+		calls = 0
+		e = newEvaluator(context.Background(), 0)
+		e.test(build(spy{&calls}), nil)
+		if calls != 0 {
+			t.Errorf("%s: evaluated %d children out of budget, want none", name, calls)
 		}
 	}
 }

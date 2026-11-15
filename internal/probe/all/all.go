@@ -5,8 +5,6 @@
 package all
 
 import (
-	"context"
-
 	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probe/dns"
 	"github.com/noixdev/pulsix/internal/probe/http"
@@ -17,20 +15,18 @@ import (
 )
 
 // Registry returns the probe of every plugin that runs on the manager.
-func Registry() probe.Registry {
+// Its http probe reads JSON in slots of jsonGate, which bounds the JSON
+// stages across every registry sharing it: the manager builds one gate
+// and one registry (nil is a gate of the registry's own).
+func Registry(jsonGate *http.JSONGate) probe.Registry {
 	return probe.Registry{
 		"tcp":  tcp.Probe,
 		"icmp": icmp.Probe,
 		"dns":  dns.Probe,
-		"http": http.Probe,
+		"http": http.NewProbe(jsonGate),
 		"tls":  tls.Probe,
 		"snmp": snmp.Probe,
 	}
-}
-
-// Run probes address with plugin through Registry; see probe.Registry.Run.
-func Run(ctx context.Context, g *probe.Guard, plugin string, params map[string]any, address string, secret map[string]string) []probe.Observation {
-	return Registry().Run(ctx, g, plugin, params, address, secret)
 }
 
 // failAlls are the plugins whose metrics depend on their params (list

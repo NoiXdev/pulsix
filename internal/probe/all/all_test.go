@@ -20,7 +20,7 @@ var awaitingProbe = map[string]bool{}
 // TestAwaitingProbeIsCurrent: every awaitingProbe entry is a server plugin
 // that has no probe yet.
 func TestAwaitingProbeIsCurrent(t *testing.T) {
-	reg := all.Registry()
+	reg := all.Registry(nil)
 	for name := range awaitingProbe {
 		d, ok := checkplugins.Get(name)
 		if !ok || d.Runs != checkplugins.Server {
@@ -45,13 +45,14 @@ func TestRunKnowsExactlyTheServerPlugins(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	g := probe.NewGuard(nil, nil)
+	reg := all.Registry(nil)
 	servers := 0
 	for _, d := range checkplugins.All() {
 		if d.Runs == checkplugins.Server {
 			servers++
 		}
 		t.Run(d.Name, func(t *testing.T) {
-			obs := all.Run(ctx, g, d.Name, map[string]any{}, "192.0.2.1", nil)
+			obs := reg.Run(ctx, g, d.Name, map[string]any{}, "192.0.2.1", nil)
 			unknown := false
 			for _, o := range obs {
 				if strings.Contains(o.Err, "unknown probe plugin") {
@@ -71,7 +72,7 @@ func TestRunKnowsExactlyTheServerPlugins(t *testing.T) {
 }
 
 func TestRunUnknownPluginIsAnError(t *testing.T) {
-	obs := all.Run(context.Background(), probe.NewGuardForTest(true, nil), "nosuch", nil, "127.0.0.1", nil)
+	obs := all.Registry(nil).Run(context.Background(), probe.NewGuardForTest(true, nil), "nosuch", nil, "127.0.0.1", nil)
 	if len(obs) != 1 || obs[0].Metric != "nosuch.up" || !strings.Contains(obs[0].Err, "unknown probe plugin") {
 		t.Fatalf("want one error for nosuch.up, got %+v", obs)
 	}
@@ -95,7 +96,7 @@ func TestRegistryDispatchesEachProbeByName(t *testing.T) {
 }
 
 func TestRegistryNamesAreTheServerPlugins(t *testing.T) {
-	reg := all.Registry()
+	reg := all.Registry(nil)
 	for _, d := range checkplugins.All() {
 		if _, ok := reg[d.Name]; ok != (d.Runs == checkplugins.Server && !awaitingProbe[d.Name]) {
 			t.Fatalf("plugin %s (runs %s): in registry = %v", d.Name, d.Runs, ok)

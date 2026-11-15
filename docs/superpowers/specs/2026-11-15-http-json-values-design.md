@@ -17,6 +17,9 @@ bodies over 1 MiB. The SNMP half of 3.6h was delivered by 3.13d. Every
 other decision below is **(Claude's call)**. Amended after the Task 2
 review (controller's ruling): paths are a bounded RFC 9535 subset with
 Pulsix's own parser and evaluator instead of the library (see Descriptor).
+Amended after the Task 2 re-review 3 (controller's ruling R1): a
+manager-wide gate on the JSON stage and a per-check visit budget (see
+Probe).
 
 ## Descriptor (`internal/checkplugins/http.go`)
 
@@ -68,12 +71,34 @@ Pulsix's own parser and evaluator instead of the library (see Descriptor).
   nodes (a 1 MiB body holds about 525 000 values) → that item's error
   "the path selected too much", the cap on every entry's work (each
   node reached, child looked at, `@` step and filter node evaluated is
-  charged; node lists then stay below about 128 MiB above the document,
-  typically far less); a document number longer than 64 bytes is never
+  charged); all of one check's entries share 8 000 000 visits, so an
+  entry that would go past what is left of it, and every entry after the
+  check's visits are spent, is "the path selected too much" too (realistic
+  entries on a 1 MiB document need at most about 450 000); a document
+  number longer than 64 bytes is never
   compared (comparisons treat it like a value of another type) and, when
   selected, is "the number is out of range", so a long number costs no
   more than a short one; a body whose read broke off (timeout, reset) → every JSON
   item "the response was cut short".
+- **Manager-wide bound** (amended after the Task 2 re-review 3,
+  controller's ruling R1). The probes run inside the manager, up to 32 at
+  once, all of them possibly one organization's. The decoded document
+  dominates memory: `encoding/json` turns a hostile 1 MiB body into up to
+  about 55× its size; node lists never exceed the document's value count
+  (about 10 MiB at 1 MiB). Without a bound, 32 hostile probes measured
+  about 6 GiB of heap and every core. So the JSON stage (decoding,
+  the depth scan and all of one check's entries) runs in a slot of one
+  process-wide gate of `min(2, GOMAXPROCS)` slots, built once by the
+  runner and handed to the http probe like the dial guard (no
+  package-level state); measured at about 0.45 GiB RSS and 2–2.5 cores
+  in the worst case. The probe waits for a slot under its own deadline;
+  when the deadline passes first, every JSON item is "the manager was too
+  busy to read the JSON response" while `http.up`, the status code and
+  the response time stand. An evaluation looks at the deadline every
+  65 536 visits; once it has passed, that entry and every later one are
+  "the probe ran out of time". The gate is not fair between
+  organizations: a busy one can delay others' JSON items until their
+  deadline (a backlog follow-up), but no longer exhaust the manager.
 - Each path: zero nodes → "the path matched nothing"; more than one →
   "the path matched <n> values"; one node that is an object, array or
   null → "the path matched an object" / "a list" / "null"; a number →

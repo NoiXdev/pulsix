@@ -16,12 +16,20 @@
 // Cost: no segment reaches a node twice, so each segment's work is at
 // most linear in the document, and a path's work is at most the document
 // times its segments; Select's node-visit budget caps it, every unit of
-// work charged to it or bounded next to a charged one. A document number
+// work charged to it or bounded next to a charged one, and Select stops
+// once its context ends (it looks every 65 536 visits). A document number
 // longer than MaxNumberLen is not compared, so a comparison costs a fixed
-// amount. Memory: a node list holds at most budget entries (16 bytes
-// each); with slice growth and the previous segment's list, the peak above
-// the decoded document is about 4 × 16 bytes × budget (about 128 MiB for a
-// budget of 2 000 000, typically far less).
+// amount.
+//
+// Memory: the decoded document dominates. encoding/json turns a hostile
+// 1 MiB body into up to about 55 times its size (about 55 MiB live, more
+// while it decodes). A node list never holds a node twice, so it is no
+// longer than the document's value count (at most about 525 000 at
+// 1 MiB, about 10 MiB with slice growth), whatever the budget. The http
+// probe bounds the whole stage across the manager: at most
+// min(2, GOMAXPROCS) decode-and-evaluate stages run at once (measured at
+// under 0.5 GiB in all), and one check's entries share 8 000 000 visits,
+// 2 000 000 at most each.
 package jpath
 
 import (

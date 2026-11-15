@@ -2,6 +2,7 @@ package jpath_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -265,7 +266,7 @@ func TestSelectRFCVectors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			nodes, err := p.Select(doc, budget)
+			nodes, _, err := p.Select(context.Background(), doc, budget)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -302,7 +303,7 @@ func canonical(t *testing.T, nodes []any) string {
 func TestSelectKeepsDocumentOrderInArrays(t *testing.T) {
 	doc := decode(t, `[[1,[2]],[3]]`)
 	p, _ := jpath.Parse("$..[0]")
-	nodes, err := p.Select(doc, budget)
+	nodes, _, err := p.Select(context.Background(), doc, budget)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,10 +333,10 @@ func TestSelectStopsAtTheBudget(t *testing.T) {
 			}
 			continue
 		}
-		if _, err := p.Select(doc, 20_000); err != want {
+		if _, _, err := p.Select(context.Background(), doc, 20_000); err != want {
 			t.Errorf("Select(%q, 20000) = %v, want %v", path, err, want)
 		}
-		if _, err := p.Select(doc, 3_000); !errors.Is(err, jpath.ErrTooMuch) {
+		if _, _, err := p.Select(context.Background(), doc, 3_000); !errors.Is(err, jpath.ErrTooMuch) {
 			t.Errorf("Select(%q, 3000) = %v, want ErrTooMuch", path, err)
 		}
 	}
@@ -363,9 +364,80 @@ func TestLongNumbersAreNotCompared(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		nodes, err := p.Select(doc, budget)
+		nodes, _, err := p.Select(context.Background(), doc, budget)
 		if err != nil || len(nodes) != want {
 			t.Errorf("Select(%q) = %d nodes, %v; want %d", path, len(nodes), err, want)
 		}
+	}
+}
+
+// TestSelectReportsTheVisitsItUsed: a check shares one budget between its
+// paths, so Select says what it charged, never more than its budget.
+func TestSelectReportsTheVisitsItUsed(t *testing.T) {
+	doc := decode(t, "["+strings.Repeat("0,", 999)+"0]")
+	for _, tc := range []struct {
+		path   string
+		budget int
+		used   int
+		err    error
+	}{
+		{"$", 10, 0, nil},
+		{"$[0]", 10, 1, nil},
+		{"$[*]", 2_000, 1_000, nil},
+		{"$[*]", 999, 999, jpath.ErrTooMuch},
+		{"$[?@ == 1]", 1_500, 1_500, jpath.ErrTooMuch},
+	} {
+		p, err := jpath.Parse(tc.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, used, err := p.Select(context.Background(), doc, tc.budget)
+		if used != tc.used || !errors.Is(err, tc.err) {
+			t.Errorf("Select(%q, %d) used %d, %v; want %d, %v", tc.path, tc.budget, used, err, tc.used, tc.err)
+		}
+	}
+}
+
+// endingCtx is a context whose Err is nil for its first live calls and
+// DeadlineExceeded from then on, so a test ends an evaluation part way
+// through without a clock.
+type endingCtx struct {
+	context.Context
+	live, calls int
+}
+
+func (c *endingCtx) Err() error {
+	c.calls++
+	if c.calls > c.live {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// TestSelectStopsWhenItsContextEnds: Select looks at its context before
+// it starts and every 65 536 visits, and stops with the context's error,
+// so an evaluation never outlives the probe's deadline by more than a
+// few milliseconds.
+func TestSelectStopsWhenItsContextEnds(t *testing.T) {
+	doc := decode(t, "["+strings.Repeat("0,", 199_999)+"0]")
+	p, err := jpath.Parse("$..*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ended := &endingCtx{Context: context.Background()}
+	if _, _, err := p.Select(ended, doc, budget); !errors.Is(err, context.DeadlineExceeded) || ended.calls != 1 {
+		t.Fatalf("an ended context: Select = %v after %d looks, want DeadlineExceeded at the first", err, ended.calls)
+	}
+	// The start and the 65 536th visit look; the second look ends it,
+	// long before the 400 000 visits the path needs.
+	mid := &endingCtx{Context: context.Background(), live: 1}
+	if _, _, err := p.Select(mid, doc, budget); !errors.Is(err, context.DeadlineExceeded) || mid.calls != 2 {
+		t.Fatalf("a context ending mid-select: Select = %v after %d looks, want DeadlineExceeded at the second", err, mid.calls)
+	}
+	// A context that lives on is looked at every 65 536 visits: about
+	// 400 000 visits, so 1 + 6 looks.
+	live := &endingCtx{Context: context.Background(), live: 1 << 30}
+	if _, _, err := p.Select(live, doc, budget); err != nil || live.calls != 7 {
+		t.Fatalf("a live context: Select = %v after %d looks, want nil after 7", err, live.calls)
 	}
 }

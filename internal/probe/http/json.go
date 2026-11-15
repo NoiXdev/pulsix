@@ -2,7 +2,9 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -28,7 +30,20 @@ const (
 	// subset a real API needs, a filter under the descendant segment,
 	// visits each about three times.
 	jsonPathBudget = 2_000_000
+	// jsonCheckBudget bounds the nodes all of one check's entries visit
+	// together: room for at least 16 of the costliest entries a real
+	// 1 MiB document needs (about 450 000 each), a quarter of what 32
+	// entries at jsonPathBudget would take.
+	jsonCheckBudget = 8_000_000
 )
+
+// jsonBudgets are the node visits one entry, and all of a check's
+// entries together, may make.
+type jsonBudgets struct {
+	perPath, perCheck int
+}
+
+var defaultJSONBudgets = jsonBudgets{perPath: jsonPathBudget, perCheck: jsonCheckBudget}
 
 // Item errors of the JSON values. None quotes the response.
 const (
@@ -44,6 +59,7 @@ const (
 	errTooMuch    = "the path selected too much"
 	errTooDeep    = "the response is nested too deeply"
 	errCutShort   = "the response was cut short"
+	errOutOfTime  = "the probe ran out of time"
 )
 
 // jsonEntry is one json_values entry: the item it reports on and its
@@ -91,47 +107,71 @@ func parseEntry(name, path string) jsonEntry {
 }
 
 // jsonObservations reads each entry from body; over marks a body that went
-// on past the cap, cut one whose read broke off. A body that is not one
-// JSON value of at most maxJSONDepth levels, or is incomplete, is the
-// same error on every entry.
-func jsonObservations(entries []jsonEntry, body []byte, over, cut bool) []probe.Observation {
-	if len(entries) == 0 {
-		return nil
-	}
-	fail := func(msg string) []probe.Observation {
-		obs := make([]probe.Observation, len(entries))
-		for i, e := range entries {
-			obs[i] = jsonError(e.name, msg)
-		}
-		return obs
-	}
+// on past the cap, cut one whose read broke off. Decoding and evaluating
+// wait for a slot of gate until ctx ends. A body that is not one JSON
+// value of at most maxJSONDepth levels, or is incomplete, is the same
+// error on every entry.
+func jsonObservations(ctx context.Context, gate *JSONGate, entries []jsonEntry, body []byte, over, cut bool) []probe.Observation {
 	switch {
+	case len(entries) == 0:
+		return nil
 	case over:
-		return fail(errTooLarge)
+		return failEntries(entries, errTooLarge)
 	case cut:
-		return fail(errCutShort)
+		return failEntries(entries, errCutShort)
 	}
+	return gate.stage(ctx, entries, func() []probe.Observation {
+		return readJSON(ctx, entries, body, defaultJSONBudgets)
+	})
+}
+
+// readJSON decodes body and evaluates each entry on it within budgets.
+// An entry whose evaluation outlives ctx, and every entry after it, ran
+// out of time.
+func readJSON(ctx context.Context, entries []jsonEntry, body []byte, budgets jsonBudgets) []probe.Observation {
 	// Decoding checks the syntax (encoding/json bounds the depth at
 	// 10 000); tooDeep then scans the valid body for the probe's bound.
 	doc, ok := decodeJSON(body)
 	if !ok {
-		return fail(errNotJSON)
+		return failEntries(entries, errNotJSON)
 	}
 	if tooDeep(body) {
-		return fail(errTooDeep)
+		return failEntries(entries, errTooDeep)
 	}
 	obs := make([]probe.Observation, len(entries))
+	left, late := budgets.perCheck, false
 	for i, e := range entries {
-		if e.path == nil {
+		switch {
+		case e.path == nil:
 			obs[i] = jsonError(e.name, e.problem)
 			continue
-		}
-		nodes, err := e.path.Select(doc, jsonPathBudget)
-		if err != nil {
+		case late:
+			obs[i] = jsonError(e.name, errOutOfTime)
+			continue
+		case left <= 0:
 			obs[i] = jsonError(e.name, errTooMuch)
 			continue
 		}
-		obs[i] = jsonValue(e.name, nodes)
+		nodes, used, err := e.path.Select(ctx, doc, min(budgets.perPath, left))
+		left -= used
+		switch {
+		case errors.Is(err, jpath.ErrTooMuch):
+			obs[i] = jsonError(e.name, errTooMuch)
+		case err != nil:
+			late = true
+			obs[i] = jsonError(e.name, errOutOfTime)
+		default:
+			obs[i] = jsonValue(e.name, nodes)
+		}
+	}
+	return obs
+}
+
+// failEntries is msg on every entry's item.
+func failEntries(entries []jsonEntry, msg string) []probe.Observation {
+	obs := make([]probe.Observation, len(entries))
+	for i, e := range entries {
+		obs[i] = jsonError(e.name, msg)
 	}
 	return obs
 }

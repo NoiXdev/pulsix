@@ -37,10 +37,11 @@ var (
 // probeHTTP requests url (with {address} replaced) and reports whether a
 // response arrived, its status, the time to the end of the body read and,
 // when body_contains is set, whether the first 1 MiB of the body holds it;
-// each json_values entry is read from the same bytes. The check's secret
-// (its fields in secret, its name in params) sends credentials. roots
-// verifies https certificates; nil means the system roots.
-func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, address string, secret map[string]string, roots *x509.CertPool) []probe.Observation {
+// each json_values entry is read from the same bytes, in a slot of gate.
+// The check's secret (its fields in secret, its name in params) sends
+// credentials. roots verifies https certificates; nil means the system
+// roots.
+func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[string]any, address string, secret map[string]string, roots *x509.CertPool) []probe.Observation {
 	bodyContains := probe.StrParam(params, "body_contains", "")
 	entries := jsonEntries(params)
 	fail := func(msg string) []probe.Observation { return failAll(bodyContains != "", entries, msg) }
@@ -98,7 +99,7 @@ func probeHTTP(ctx context.Context, g *probe.Guard, params map[string]any, addre
 	if bodyContains != "" {
 		obs = append(obs, probe.BoolValue("http.body_match", bytes.Contains(body, []byte(bodyContains))))
 	}
-	return append(obs, jsonObservations(entries, body, over, readErr != nil)...)
+	return append(obs, jsonObservations(ctx, gate, entries, body, over, readErr != nil)...)
 }
 
 // FailAll is the result of an http probe of params that could not be
@@ -117,11 +118,7 @@ func failAll(bodyMatch bool, entries []jsonEntry, msg string) []probe.Observatio
 	if bodyMatch {
 		metrics = append(metrics, "http.body_match")
 	}
-	obs := probe.FailAll(msg, metrics...)
-	for _, e := range entries {
-		obs = append(obs, jsonError(e.name, msg))
-	}
-	return obs
+	return append(probe.FailAll(msg, metrics...), failEntries(entries, msg)...)
 }
 
 // httpURL replaces {address} in raw with the host's address (an IPv6
@@ -246,7 +243,15 @@ func readBody(body io.Reader, keep bool, limit int64) ([]byte, bool, error) {
 	return buf, false, err
 }
 
-// Probe is the http probe, as the registry runs it.
-func Probe(ctx context.Context, g *probe.Guard, params map[string]any, address string, secret map[string]string) []probe.Observation {
-	return probeHTTP(ctx, g, params, address, secret, nil)
+// NewProbe returns the http probe, as the registry runs it. Its JSON
+// stages wait for a slot of gate, which the manager builds once so they
+// are bounded across all its probes; nil is a gate of DefaultJSONStages
+// of this probe's own.
+func NewProbe(gate *JSONGate) probe.Func {
+	if gate == nil {
+		gate = NewJSONGate(DefaultJSONStages())
+	}
+	return func(ctx context.Context, g *probe.Guard, params map[string]any, address string, secret map[string]string) []probe.Observation {
+		return probeHTTP(ctx, g, gate, params, address, secret, nil)
+	}
 }
