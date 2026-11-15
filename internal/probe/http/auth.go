@@ -34,7 +34,8 @@ func (c credentials) apply(req *http.Request) {
 // credentialsFor reads the fields of the secret named name: exactly one of
 // username and password (Basic), token (Bearer), or header and value (a
 // header of its own). Other fields are ignored. No name means no
-// credentials. Errors name the secret and the field, never a value.
+// credentials. Errors name the secret, and the field when one field is
+// wrong, never a value.
 func credentialsFor(name string, fields map[string]string) (credentials, error) {
 	if name == "" {
 		return credentials{}, nil

@@ -99,7 +99,10 @@ func TestJSONGateCapacity(t *testing.T) {
 
 // TestHTTPJSONWaitsForTheGateUntilTheDeadline: through the probe, a
 // response whose JSON stage cannot get a slot before the probe's deadline
-// still reports up, status and time; only the JSON items fail.
+// still reports up, status and time; only the JSON items fail. The
+// deadline is real and covers the loopback request too, so it is generous
+// enough that a loaded machine (make test) cannot make the request itself
+// miss it; the deadline semantics are pinned under synctest above.
 func TestHTTPJSONWaitsForTheGateUntilTheDeadline(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"a":1}`))
@@ -112,10 +115,15 @@ func TestHTTPJSONWaitsForTheGateUntilTheDeadline(t *testing.T) {
 	}
 	defer leave()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	params := map[string]any{"url": srv.URL, "json_values": []any{"a=$.a"}}
 	obs := probeHTTP(ctx, loopbackOnly(), gate, params, "", nil, nil)
+	// The slot is held throughout, so the probe can only have returned
+	// once its JSON stage waited out the deadline.
+	if ctx.Err() == nil {
+		t.Fatal("the probe returned before its deadline: the JSON stage did not wait for the gate")
+	}
 	got := map[string]probe.Observation{}
 	for _, o := range obs {
 		got[o.Metric+"/"+o.Item] = o
@@ -202,9 +210,28 @@ func (c *endingCtx) Err() error {
 // time; the entries before keep their values.
 func TestJSONEntriesStopWhenTheProbeRunsOutOfTime(t *testing.T) {
 	body := []byte("[" + strings.Repeat("0,", 69_999) + "0]")
-	// a looks once (its start), b at its start and at its 65 536th visit,
-	// which is the look that sees the deadline.
-	ctx := &endingCtx{Context: context.Background(), live: 2}
+	// readJSON looks once before decoding, a once (its start), b at its
+	// start and at its 65 536th visit, which is the look that sees the
+	// deadline.
+	ctx := &endingCtx{Context: context.Background(), live: 3}
 	obs := readJSON(ctx, entriesOf(t, "a=$[0]", "b=$[*]", "c=$[0]", "d=$[*"), body, defaultJSONBudgets)
 	wantItems(t, obs, "0", "!"+errOutOfTime, "!"+errOutOfTime, "!"+errNotAllowed)
+}
+
+// TestJSONStageOfAnEndedProbeDoesNotDecode: a probe whose deadline passed
+// before its JSON stage began (the gate may still hand it a slot) neither
+// decodes the body nor evaluates a path. Every entry ran out of time, not
+// "not JSON" (the body here is not), and an entry whose path never parsed
+// keeps its own problem.
+func TestJSONStageOfAnEndedProbeDoesNotDecode(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	obs := readJSON(ctx, entriesOf(t, "a=$.a", "b=$[*", "c=$[0]"), []byte("not json"), defaultJSONBudgets)
+	wantItems(t, obs, "!"+errOutOfTime, "!"+errNotAllowed, "!"+errOutOfTime)
+
+	// The same through the stage: a free slot is taken whatever ctx says
+	// (enter), yet nothing runs in it.
+	gate := NewJSONGate(1)
+	obs = jsonObservations(ctx, gate, entriesOf(t, "a=$.a"), []byte(`{"a":1}`), false, false)
+	wantItems(t, obs, "!"+errOutOfTime)
 }

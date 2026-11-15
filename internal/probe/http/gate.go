@@ -37,8 +37,9 @@ func DefaultJSONStages() int {
 }
 
 // enter takes a slot, waiting until ctx ends; leave frees it. A free
-// slot is taken even when ctx has ended, so the evaluation, not the gate,
-// reports a deadline that passed before the stage.
+// slot is taken even when ctx has ended, so readJSON, not the gate,
+// reports a deadline that passed before the stage — at once, without
+// decoding the body.
 func (g *JSONGate) enter(ctx context.Context) (leave func(), ok bool) {
 	leave = func() { <-g.slots }
 	select {

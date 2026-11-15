@@ -127,8 +127,13 @@ func jsonObservations(ctx context.Context, gate *JSONGate, entries []jsonEntry, 
 
 // readJSON decodes body and evaluates each entry on it within budgets.
 // An entry whose evaluation outlives ctx, and every entry after it, ran
-// out of time.
+// out of time; so does every entry when ctx has ended before the decoding
+// (the gate may hand a slot to a probe past its deadline), which then
+// never starts.
 func readJSON(ctx context.Context, entries []jsonEntry, body []byte, budgets jsonBudgets) []probe.Observation {
+	if ctx.Err() != nil {
+		return outOfTime(entries)
+	}
 	// Decoding checks the syntax (encoding/json bounds the depth at
 	// 10 000); tooDeep then scans the valid body for the probe's bound.
 	doc, ok := decodeJSON(body)
@@ -163,6 +168,20 @@ func readJSON(ctx context.Context, entries []jsonEntry, body []byte, budgets jso
 		default:
 			obs[i] = jsonValue(e.name, nodes)
 		}
+	}
+	return obs
+}
+
+// outOfTime is errOutOfTime on every entry's item, except that an entry
+// whose path never parsed keeps its own problem.
+func outOfTime(entries []jsonEntry) []probe.Observation {
+	obs := make([]probe.Observation, len(entries))
+	for i, e := range entries {
+		if e.path == nil {
+			obs[i] = jsonError(e.name, e.problem)
+			continue
+		}
+		obs[i] = jsonError(e.name, errOutOfTime)
 	}
 	return obs
 }
