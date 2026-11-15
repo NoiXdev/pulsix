@@ -68,9 +68,10 @@ func TestCollectScrubAge(t *testing.T) {
 func TestCollectScrubAgeRemembered(t *testing.T) {
 	const created = 1717243200
 	p := testPlugin(nil)
+	health := "ONLINE"
 	round := func(status string, wantGet bool) []checks.Observation {
 		t.Helper()
-		list := "tank\tONLINE\t100\t50\t50\t1\n"
+		list := "tank\t" + health + "\t100\t50\t50\t1\n"
 		if strings.Contains(status, "pool: other\n") {
 			list += "other\tONLINE\t100\t50\t50\t1\n"
 		}
@@ -136,8 +137,15 @@ func TestCollectScrubAgeRemembered(t *testing.T) {
 	obs = round(string(load(t, "status_resilvered.txt")), true)
 	wantValue(t, obs, "tank", "zfs.scrub_age_days", fromCreation)
 
-	// Seen finished again, then no scan line at all: forgotten too.
+	// Seen finished again, then no scan line at all while the pool is
+	// unavailable (shown from the cache file): kept, no zfs get.
 	round(string(load(t, "status_mirror_healthy.txt")), false)
+	health = "UNAVAIL"
+	obs = round(withScan(""), false)
+	wantValue(t, obs, "tank", "zfs.scrub_age_days", age("2024-11-10 00:36:35"))
+	health = "ONLINE"
+
+	// ...but no scan line on an online pool: forgotten too.
 	obs = round(withScan(""), true)
 	wantValue(t, obs, "tank", "zfs.scrub_age_days", fromCreation)
 }
