@@ -13,6 +13,8 @@
 # service. The sequence, alternating Windows PowerShell 5.1 and
 # PowerShell 7 so both dialects run every path of the script:
 #
+#   0. an install with a token file Users may read, which the installer
+#      must refuse before it installs anything (5.1);
 #   1. a fresh install (5.1);
 #   2. an upgrade over the running agent (7);
 #   3. an uninstall with -KeepData (5.1), which removes the service and the
@@ -57,6 +59,7 @@ $NothingToRemove = 'pulsix-agent: nothing to remove'
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ('pulsix-smoke-' + [guid]::NewGuid().ToString('N'))
 $tokenFile = Join-Path $work 'token.txt'
+$openTokenFile = Join-Path $work 'token-open.txt'
 $installer = Join-Path $work 'install.ps1'
 
 function Fail([string]$Message) {
@@ -283,10 +286,11 @@ function Assert-Output([string]$Output, [string]$Line) {
 	}
 }
 
-# Invoke-Installer downloads install.ps1 from the stub and runs it under
+# Start-Installer downloads install.ps1 from the stub and runs it under
 # $Shell with $Arguments, elevated like the runner itself. It echoes the
-# installer's output and returns it.
-function Invoke-Installer([string]$Shell, [string[]]$Arguments) {
+# installer's output, its errors included, and returns the output and the
+# exit code.
+function Start-Installer([string]$Shell, [string[]]$Arguments) {
 	Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/install.ps1" -OutFile $installer
 	$savedModulePath = $env:PSModulePath
 	if ($Shell -eq 'powershell.exe') {
@@ -294,17 +298,71 @@ function Invoke-Installer([string]$Shell, [string[]]$Arguments) {
 		# PowerShell 7's modules; give it the one it starts with on its own.
 		$env:PSModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
 	}
+	# The installer's errors arrive on stderr, which 2>&1 turns into error
+	# records; they are output to read here, not errors of this script.
+	$ErrorActionPreference = 'Continue'
 	try {
-		$output = & $Shell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer @Arguments | Out-String
+		$output = (& $Shell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer @Arguments 2>&1 |
+				ForEach-Object { [string]$_ }) -join "`n"
 		$code = $LASTEXITCODE
 	} finally {
 		$env:PSModulePath = $savedModulePath
+		$ErrorActionPreference = 'Stop'
 	}
 	Write-Host $output
-	if ($code -ne 0) {
-		Fail "install.ps1 $($Arguments -join ' ') under $Shell exited with $code"
+	return @{ Output = $output; Code = $code }
+}
+
+# Invoke-Installer runs the installer (Start-Installer), fails unless it
+# succeeds and returns its output.
+function Invoke-Installer([string]$Shell, [string[]]$Arguments) {
+	$result = Start-Installer $Shell $Arguments
+	if ($result.Code -ne 0) {
+		Fail "install.ps1 $($Arguments -join ' ') under $Shell exited with $($result.Code)"
 	}
-	return $output
+	return $result.Output
+}
+
+# Assert-InstallerRefuses runs the installer (Start-Installer) and fails
+# unless it exits with an error whose text holds every one of $Want.
+# Windows PowerShell wraps a long error at the console width, in the
+# middle of a word too, so both sides are compared without whitespace and
+# without the escaped line breaks (_x000D_, _x000A_) of the CLIXML form
+# it may write its errors in when its stderr is not a console.
+function Assert-InstallerRefuses([string]$Shell, [string[]]$Arguments, [string[]]$Want) {
+	$result = Start-Installer $Shell $Arguments
+	if ($result.Code -eq 0) {
+		Fail "install.ps1 $($Arguments -join ' ') under $Shell succeeded, want it refused"
+	}
+	$flat = $result.Output -replace '_x000[DA]_|\s', ''
+	foreach ($text in $Want) {
+		if (-not $flat.Contains(($text -replace '\s', ''))) {
+			Fail "install.ps1 $($Arguments -join ' ') under $Shell was refused without saying '$text'"
+		}
+	}
+}
+
+# Set-TokenFileAcl gives the token file a whole new access list: owned by
+# Administrators, nothing inherited, SYSTEM and Administrators with full
+# control and each of $ReaderSids with read. It replaces every entry,
+# which icacls /grant:r does not: that replaces only the entries of the
+# accounts it names and keeps any other explicit entry the file was
+# created with, such as one for the account that created it.
+function Set-TokenFileAcl([string]$Path, [string[]]$ReaderSids) {
+	$acl = New-Object Security.AccessControl.FileSecurity
+	$acl.SetAccessRuleProtection($true, $false)
+	$acl.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))
+	$allow = [Security.AccessControl.AccessControlType]::Allow
+	foreach ($sid in $AllowedSids) {
+		$account = New-Object Security.Principal.SecurityIdentifier $sid
+		$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($account, [Security.AccessControl.FileSystemRights]::FullControl, $allow)))
+	}
+	foreach ($sid in $ReaderSids) {
+		$account = New-Object Security.Principal.SecurityIdentifier $sid
+		$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($account, [Security.AccessControl.FileSystemRights]::Read, $allow)))
+	}
+	Set-Acl -LiteralPath $Path -AclObject $acl
+	& icacls.exe $Path | Out-Host
 }
 
 # Install-Agent installs or upgrades the agent under $Shell.
@@ -350,14 +408,25 @@ function Remove-Agent {
 
 $failed = $false
 try {
-	# The token file the installer accepts: nobody but SYSTEM and
-	# Administrators may read it.
 	New-Item -ItemType Directory -Path $work | Out-Null
 	[IO.File]::WriteAllText($tokenFile, "$Token`n")
-	& icacls.exe $tokenFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Host
-	if ($LASTEXITCODE -ne 0) {
-		Fail "icacls could not protect $tokenFile (exit code $LASTEXITCODE)"
+	[IO.File]::WriteAllText($openTokenFile, "$Token`n")
+	Write-Host 'install-smoke: the token file as created'
+	& icacls.exe $tokenFile | Out-Host
+
+	# A token file another account may read is refused before anything is
+	# installed: Users (S-1-5-32-545) may read this one.
+	Set-TokenFileAcl $openTokenFile @('S-1-5-32-545')
+	Write-Host 'install-smoke: a token file Users may read is refused, under Windows PowerShell 5.1'
+	Assert-InstallerRefuses 'powershell.exe' @('-Manager', '127.0.0.1:1', '-Name', 'ci-smoke', '-TokenFile', $openTokenFile) @('is readable by', 'S-1-5-32-545')
+	if ((Get-ServiceStatus) -ne 'missing') {
+		Fail "the refused install left the $ServiceName service behind"
 	}
+
+	# The token file the installer accepts: nobody but SYSTEM and
+	# Administrators may read it.
+	Set-TokenFileAcl $tokenFile @()
+	Assert-OnlyAdmins $tokenFile -Protected
 
 	Write-Host 'install-smoke: fresh install under Windows PowerShell 5.1'
 	Install-Agent 'powershell.exe'

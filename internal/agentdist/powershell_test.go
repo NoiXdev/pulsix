@@ -504,3 +504,67 @@ func TestInstallSmokeWindowsChecksTheProgramFolder(t *testing.T) {
 		"Assert-OnlyAdmins $DataDir -Protected",
 	)
 }
+
+// The Windows smoke's token file: the installer accepts a -TokenFile only
+// SYSTEM, Administrators and its owner may read. The smoke replaces the
+// file's whole access list rather than granting with icacls /grant:r,
+// which keeps every explicit entry it does not name (on the CI runner the
+// one for the account that created the file, while Administrators own
+// it), and checks the result before the first install. It also has the
+// installer refuse a file Users may read, before anything is installed,
+// so the rule is seen to stay strict.
+func TestInstallSmokeWindowsPreparesTheTokenFile(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "install-smoke-windows.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	smoke := string(raw)
+	if regexp.MustCompile(`&\s*icacls\.exe[^\n]*/grant:r`).MatchString(smoke) {
+		t.Error("install-smoke-windows.ps1 must not protect a token file with icacls /grant:r: it keeps the entries it does not name")
+	}
+	assertInOrder(t, "Set-TokenFileAcl", psFunction(t, smoke, "Set-TokenFileAcl"),
+		"$acl = New-Object Security.AccessControl.FileSecurity",
+		"$acl.SetAccessRuleProtection($true, $false)",
+		"$acl.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))",
+		"foreach ($sid in $AllowedSids) {",
+		"FileSystemRights]::FullControl",
+		"foreach ($sid in $ReaderSids) {",
+		"FileSystemRights]::Read,",
+		"Set-Acl -LiteralPath $Path -AclObject $acl",
+	)
+	start := strings.LastIndex(smoke, "\n$failed = $false\n")
+	if start < 0 {
+		t.Fatal("install-smoke-windows.ps1 must have its main part")
+	}
+	assertInOrder(t, "the smoke's main part", smoke[start:],
+		"Set-TokenFileAcl $openTokenFile @('S-1-5-32-545')",
+		"Assert-InstallerRefuses 'powershell.exe' @('-Manager', '127.0.0.1:1', '-Name', 'ci-smoke', '-TokenFile', $openTokenFile) @('is readable by', 'S-1-5-32-545')",
+		"if ((Get-ServiceStatus) -ne 'missing') {",
+		"Set-TokenFileAcl $tokenFile @()",
+		"Assert-OnlyAdmins $tokenFile -Protected",
+		"Install-Agent 'powershell.exe'",
+	)
+	assertInOrder(t, "Assert-InstallerRefuses", psFunction(t, smoke, "Assert-InstallerRefuses"),
+		"if ($result.Code -eq 0) {",
+		`$flat = $result.Output -replace '_x000[DA]_|\s', ''`,
+		`$flat.Contains(($text -replace '\s', ''))`,
+	)
+}
+
+// Read-TokenFile exempts SYSTEM, Administrators and the file's owner and
+// nobody else: not the account running the installer either, which is an
+// administrator but is named on the file as an account of its own.
+func TestInstallPs1TokenFileReadersAreFixed(t *testing.T) {
+	read := psFunction(t, string(PowerShellInstallScript()), "Read-TokenFile")
+	assertInOrder(t, "Read-TokenFile", read,
+		"$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value",
+		"$tokenReaders = @($AllowedSids) + $owner",
+		"$acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])",
+		"AccessControlType]::Allow",
+		"$tokenReaders -contains $rule.IdentityReference.Value",
+		`Stop-Install "token file $Path is readable by`,
+	)
+	if strings.Contains(read, "GetCurrent()") || strings.Contains(read, "IsInRole") {
+		t.Error("Read-TokenFile must not exempt the account running it or judge readers by group membership")
+	}
+}
