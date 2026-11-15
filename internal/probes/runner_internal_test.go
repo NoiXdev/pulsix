@@ -35,6 +35,9 @@ type harness struct {
 	probe   *fakeProbe
 	secrets *fakeSecrets
 	pollers *fakePollers
+	agents  *fakeAgents
+	groups  *fakeGroups
+	vstore  *fakeVantageStore
 	org     uuid.UUID
 	host    uuid.UUID
 }
@@ -49,6 +52,9 @@ func newHarness(t *testing.T, edit func(*harness, *Deps)) *harness {
 		probe:   &fakeProbe{},
 		secrets: &fakeSecrets{},
 		pollers: &fakePollers{},
+		agents:  &fakeAgents{},
+		groups:  &fakeGroups{},
+		vstore:  &fakeVantageStore{},
 		org:     uuid.Must(uuid.NewV7()),
 		host:    uuid.Must(uuid.NewV7()),
 	}
@@ -56,6 +62,7 @@ func newHarness(t *testing.T, edit func(*harness, *Deps)) *harness {
 		Orgs: fakeOrgs{ids: []uuid.UUID{h.org}}, Resolver: h.world, Hosts: h.world,
 		Recorder: h.rec, Locker: h.locker, Probe: h.probe.Run, Clock: h.clock.Now,
 		Secrets: h.secrets, NewPoller: h.pollers.New,
+		Agents: h.agents, Groups: h.groups, Vantages: h.vstore,
 	}
 	if edit != nil {
 		edit(h, &d)

@@ -67,3 +67,27 @@ type Poller interface {
 type Secrets interface {
 	Fields(ctx context.Context, orgID uuid.UUID, name string) (map[string]string, error)
 }
+
+// Agents lists the candidates for probe assignments: the host ids of an
+// organization's agents that are online and report probes_supported
+// (agents.Service's OnlineProbeAgents).
+type Agents interface {
+	OnlineProbeAgents(ctx context.Context, orgID uuid.UUID) ([]uuid.UUID, error)
+}
+
+// Groups expands a check's vantage groups into their member hosts, the
+// way check bindings resolve a group: checks.Service's GetGroup (which
+// answers checks.ErrNotFound for a group that no longer exists) and
+// Preview of the group's selector.
+type Groups interface {
+	GetGroup(ctx context.Context, orgID, id uuid.UUID) (checks.Group, error)
+	Preview(ctx context.Context, orgID uuid.UUID, sel string) ([]uuid.UUID, error)
+}
+
+// VantageStore keeps probe assignments and per-vantage results: SQLStore.
+type VantageStore interface {
+	ReplaceOrgAssignments(ctx context.Context, org uuid.UUID, want []Assignment) error
+	RecordVantage(ctx context.Context, org uuid.UUID, vantage string, obs []checks.Observation) error
+	VantageCurrent(ctx context.Context, org, host uuid.UUID, key string) ([]VantageRow, error)
+	DeleteVantages(ctx context.Context, org, host uuid.UUID, key string, keep []string) error
+}

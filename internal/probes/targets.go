@@ -8,6 +8,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/noixdev/pulsix/internal/checkplugins"
+	"github.com/noixdev/pulsix/internal/checks"
 	"github.com/noixdev/pulsix/internal/db"
 )
 
@@ -27,14 +29,26 @@ func orgScope(ctx context.Context, orgID uuid.UUID) context.Context {
 // probes. When the organization list cannot be read, or ctx ends (the
 // tick's deadline) midway, nothing changes and the error is returned; the
 // next tick retries.
+//
+// With agent vantages on, each resolved organization's probe assignments
+// are written too (writeAssignments); one whose write fails keeps its
+// previous targets like one that cannot be read, so the in-memory
+// expected vantages stay those the agents were told. At the end the
+// per-vantage rows of vantages no longer expected are deleted
+// (pruneVantages).
 func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 	orgs, err := r.orgs.ListOrgIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("list organizations: %w", err)
 	}
 	next := make(map[slot]target, len(r.targets))
+	short := 0
 	for _, org := range orgs {
-		ts, err := r.orgTargets(orgScope(ctx, org), org)
+		octx := orgScope(ctx, org)
+		plan, err := r.orgTargets(octx, org)
+		if err == nil && ctx.Err() == nil {
+			err = r.writeAssignments(octx, org, plan.assignments)
+		}
 		if ctx.Err() != nil {
 			return fmt.Errorf("resolve organization %s: %w", org, ctx.Err())
 		}
@@ -47,9 +61,14 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 			}
 			continue
 		}
-		for s, t := range ts {
+		for s, t := range plan.targets {
 			next[s] = t
 		}
+		short += plan.short
+	}
+	if short > 0 {
+		r.log.WarnContext(ctx, "probe runner: slots got fewer agents than asked; agents are at their assignment limit",
+			"slots", short, "limit", MaxAssignmentsPerAgent)
 	}
 	for s := range r.next {
 		if t, ok := next[s]; !ok || changed(r.targets[s], t) {
@@ -63,24 +82,39 @@ func (r *Runner) refresh(ctx context.Context, now time.Time) error {
 	}
 	r.targets = next
 	r.refreshed = now
+	r.pruneVantages(ctx)
 	return nil
 }
 
 // changed reports whether a slot's target differs in anything a probe
-// depends on: plugin, params, interval or the host's address.
+// depends on: plugin, params, interval, vantage settings or the host's
+// address. The assigned agents are not among them: a moved agent does
+// not reset the slot's schedule.
 func changed(old, cur target) bool {
 	return old.address != cur.address ||
 		old.check.Plugin != cur.check.Plugin ||
 		old.check.Interval != cur.check.Interval ||
-		!reflect.DeepEqual(old.check.Params, cur.check.Params)
+		!reflect.DeepEqual(old.check.Params, cur.check.Params) ||
+		!reflect.DeepEqual(old.vantage, cur.vantage)
+}
+
+// orgPlan is one organization's resolution: its slots, and with agent
+// vantages on its complete assignment set and how many of its slots the
+// assignment limit cut short.
+type orgPlan struct {
+	targets     map[slot]target
+	assignments []Assignment
+	short       int
 }
 
 // orgTargets resolves one organization: every monitored host's synthetic
-// checks, with the host's current address.
-func (r *Runner) orgTargets(ctx context.Context, org uuid.UUID) (map[slot]target, error) {
+// checks, with the host's current address, and the agents of the checks
+// with vantage groups (planVantages). The agent hosts are listed with the
+// targets, in one read, for their names and to make sure they exist.
+func (r *Runner) orgTargets(ctx context.Context, org uuid.UUID) (orgPlan, error) {
 	sets, err := r.resolver.ResolveOrg(ctx, org)
 	if err != nil {
-		return nil, fmt.Errorf("resolve checks: %w", err)
+		return orgPlan{}, fmt.Errorf("resolve checks: %w", err)
 	}
 	ids := make([]uuid.UUID, 0, len(sets))
 	for id, rs := range sets {
@@ -88,21 +122,43 @@ func (r *Runner) orgTargets(ctx context.Context, org uuid.UUID) (map[slot]target
 			ids = append(ids, id)
 		}
 	}
-	out := map[slot]target{}
+	plan := orgPlan{targets: map[slot]target{}}
 	if len(ids) == 0 {
-		return out, nil
+		return plan, nil
 	}
-	hs, err := r.hosts.ListHostsByIDs(ctx, org, ids)
+	members, agents, err := r.vantageCandidates(ctx, org, sets)
 	if err != nil {
-		return nil, fmt.Errorf("list hosts: %w", err)
+		return orgPlan{}, err
 	}
+	hs, err := r.hosts.ListHostsByIDs(ctx, org, append(ids, agents...))
+	if err != nil {
+		return orgPlan{}, fmt.Errorf("list hosts: %w", err)
+	}
+	names := make(map[uuid.UUID]string, len(hs))
 	for _, h := range hs {
+		names[h.ID] = h.Name
 		if !h.Monitored {
 			continue
 		}
 		for _, c := range sets[h.ID].Synthetic {
-			out[slot{host: h.ID, key: c.Key}] = target{org: org, address: h.Address, check: c, secret: r.secretName(c)}
+			plan.targets[slot{host: h.ID, key: c.Key}] = r.newTarget(org, h.Address, c)
 		}
 	}
-	return out, nil
+	r.planVantages(org, &plan, members, names)
+	return plan, nil
+}
+
+// newTarget is the target of check c on a host at address: its params
+// without the vantage params, its vantage settings read once. A check
+// naming a secret never gets agent vantages (its credentials stay on the
+// manager; the descriptors refuse the combination, this guards rows
+// written before them), and neither does any check while agent vantages
+// are off.
+func (r *Runner) newTarget(org uuid.UUID, address string, c checks.Resolved) target {
+	t := target{org: org, address: address, check: c, secret: r.secretName(c), vantage: checkplugins.VantageOf(c.Params)}
+	t.check.Params = checkplugins.StripVantage(c.Params)
+	if t.secret != "" || !r.vantagesOn() {
+		t.vantage.Groups = nil
+	}
+	return t
 }

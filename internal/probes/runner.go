@@ -70,6 +70,14 @@ type Deps struct {
 	// Secrets is the organizations' secret store. Nil fails every probe
 	// whose check names a secret with "no secret store".
 	Secrets Secrets
+	// Agents, Groups and Vantages make agent vantage points (backlog
+	// 3.13a): the runner assigns the checks with vantage groups to agents
+	// and combines every vantage's results into the check's own. Without
+	// all three, vantage groups are ignored and every check is probed
+	// from the manager alone, as before vantages existed.
+	Agents   Agents
+	Groups   Groups
+	Vantages VantageStore
 	// Clock stamps each result's At, measures the snmp rates' intervals
 	// and paces the skipped-interfaces log; default time.Now.
 	Clock func() time.Time
@@ -89,12 +97,18 @@ type slot struct {
 // target is what probing a slot needs. secret is the name of the secret
 // the check's secret parameter names, "" when its plugin takes none or the
 // check names none; it is read off the params at refresh, so a probe
-// that needs no secret does no lookup at all.
+// that needs no secret does no lookup at all. check.Params are the
+// check's params without the vantage params (checkplugins.StripVantage):
+// the probe never sees those; vantage holds them read. agents is a
+// vantage slot's assigned agents in combining order (by host name, then
+// host id).
 type target struct {
 	org     uuid.UUID
 	address string
 	check   checks.Resolved
 	secret  string
+	vantage checkplugins.Vantage
+	agents  []agentRef
 }
 
 // Runner probes every monitored host's synthetic checks while it holds the
@@ -112,6 +126,9 @@ type Runner struct {
 	probe     ProbeFunc
 	newPoller func() Poller
 	secrets   Secrets
+	agents    Agents
+	groups    Groups
+	vantages  VantageStore
 	clock     func() time.Time
 	log       *slog.Logger
 	// describe looks a plugin's descriptor up: checkplugins.Get, swapped
@@ -127,6 +144,13 @@ type Runner struct {
 	refreshed time.Time
 	next      map[slot]time.Time
 	pollers   map[slot]Poller
+	// assignedEmpty lists the organizations whose last written assignment
+	// set was empty, so an organization without vantage checks is not
+	// written again every refresh. expected is each vantage slot's
+	// expected vantages (sorted) as last reconciled with the per-vantage
+	// rows. Both are forgotten with the lock: a new holder writes once.
+	assignedEmpty map[uuid.UUID]bool
+	expected      map[slot]expectedSet
 
 	// skipped paces the log of a device's skipped interfaces per slot.
 	skipped *throttle
@@ -145,9 +169,11 @@ func NewRunner(d Deps) *Runner {
 	r := &Runner{
 		orgs: d.Orgs, resolver: d.Resolver, hosts: d.Hosts, recorder: d.Recorder, locker: d.Locker,
 		probe: d.Probe, newPoller: d.NewPoller, secrets: d.Secrets, clock: d.Clock, log: d.Log,
+		agents: d.Agents, groups: d.Groups, vantages: d.Vantages,
 		describe:  checkplugins.Get,
 		tickEvery: d.Tick, refreshEvery: d.Refresh, maxConcurrent: d.MaxConcurrent,
 		targets: map[slot]target{}, next: map[slot]time.Time{}, pollers: map[slot]Poller{},
+		assignedEmpty: map[uuid.UUID]bool{}, expected: map[slot]expectedSet{},
 		inFlight: map[slot]uuid.UUID{}, skipped: newThrottle(skippedLogEvery),
 		wake: make(chan struct{}, 1),
 	}
@@ -272,6 +298,8 @@ func (r *Runner) lost() {
 	r.held = false
 	clear(r.next)
 	clear(r.pollers)
+	clear(r.assignedEmpty)
+	clear(r.expected)
 	r.refreshed = time.Time{}
 }
 
@@ -280,79 +308,3 @@ func (r *Runner) lost() {
 // Two probes of one check are therefore their interval apart to within that
 // jitter. A launch round after a completion uses no slack (launchFreed).
 func (r *Runner) slack() time.Duration { return r.tickEvery / 2 }
-
-// probeTimeout caps a probe below its check's interval: interval − 1 s.
-// The probe itself cuts its own timeout_s to that deadline.
-func probeTimeout(interval time.Duration) time.Duration {
-	if d := interval - time.Second; d > 0 {
-		return d
-	}
-	return interval
-}
-
-// probeSlot probes one slot and records the result. A probe cut short by ctx's
-// cancellation (shutdown) did not measure the target, so its observations
-// are dropped; one that ran into its own deadline is a real result. A
-// panic in the probe or the recording (untrusted network input reaches
-// net/http, crypto/tls and x/net/icmp) is logged with its stack and
-// records nothing; the slot is released and due again on schedule.
-func (r *Runner) probeSlot(ctx context.Context, s slot, t target, p Poller) {
-	defer r.wg.Done()
-	defer func() {
-		r.mu.Lock()
-		delete(r.inFlight, s)
-		r.mu.Unlock()
-		select {
-		case r.wake <- struct{}{}:
-		default: // a wake-up is already pending
-		}
-	}()
-	r.safely(ctx, "probe", func() { r.probeAndRecord(ctx, s, t, p) }, "org", t.org, "host", s.host, "check", s.key)
-}
-
-// runProbe looks the check's secret up and runs the probe, both under
-// the probe's deadline; the deferred cancel also runs when the probe
-// panics. A slot with a poller (snmp) is polled with it, any other probed
-// through the probe function. A secret that cannot be handed over fails
-// every metric without probing.
-func (r *Runner) runProbe(ctx context.Context, s slot, t target, p Poller) []probe.Observation {
-	pctx, cancel := context.WithTimeout(ctx, probeTimeout(t.check.Interval))
-	defer cancel()
-	secret, failed := r.secretFor(pctx, s, t)
-	if failed != nil {
-		return failed
-	}
-	if p == nil {
-		return r.probe(pctx, t.check.Plugin, t.check.Params, t.address, secret)
-	}
-	obs, info := p.Poll(pctx, t.check.Params, t.address, secret)
-	if info.InterfacesSkipped {
-		r.logSkipped(ctx, s, t)
-	}
-	return obs
-}
-
-// probeAndRecord is probeSlot's body.
-func (r *Runner) probeAndRecord(ctx context.Context, s slot, t target, p Poller) {
-	obs := r.runProbe(ctx, s, t, p)
-	if ctx.Err() != nil || len(obs) == 0 {
-		return
-	}
-	at := r.clock()
-	batch := make([]checks.Observation, len(obs))
-	for i, o := range obs {
-		batch[i] = checks.Observation{
-			HostID: s.host, CheckKey: s.key, Item: o.Item, Metric: o.Metric, At: at, Value: o.Value, Label: o.Label, Err: o.Err,
-		}
-	}
-	res, err := r.recorder.RecordProbeObservations(orgScope(ctx, t.org), t.org, batch)
-	if err != nil {
-		if ctx.Err() == nil {
-			r.log.ErrorContext(ctx, "probe runner: record", "org", t.org, "host", s.host, "check", s.key, "err", err)
-		}
-		return
-	}
-	if n := res.Rejected(); n > 0 {
-		r.log.WarnContext(ctx, "probe runner: observations rejected", "org", t.org, "host", s.host, "check", s.key, "rejected", n)
-	}
-}

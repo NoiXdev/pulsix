@@ -789,6 +789,10 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 	// metadata; seen through the operator's NAT64 prefixes) plus
 	// PULSIX_PROBE_DENY_CIDRS. A check whose plugin takes a secret (snmp,
 	// http) gets its fields from the organization's secret store.
+	// A check naming vantage groups (backlog 3.13a) is also probed by
+	// online, probe-capable agents of those groups (agentsSvc, groups
+	// expanded through checksSvc); the runner writes their assignments and
+	// combines every vantage's results in the probe store.
 	// Stopped in Close and on every early return below.
 	probesStop := startLoop(probes.NewRunner(probes.Deps{
 		Orgs: hostsSvc, Resolver: checksSvc, Hosts: hostsSvc, Recorder: checksSvc,
@@ -796,6 +800,7 @@ func Build(ctx context.Context, cfg config.Config, opts ...Option) (*App, error)
 		Guard:   probe.NewGuard(cfg.ProbeDenyCIDRs, cfg.NotifyNAT64Prefixes),
 		Secrets: orgSecretsSvc,
 		Clock:   time.Now, Log: slog.Default(),
+		Agents: agentsSvc, Groups: checksSvc, Vantages: probes.NewSQLStore(appDB),
 	}).Run)
 
 	var grpcServer *grpc.Server
