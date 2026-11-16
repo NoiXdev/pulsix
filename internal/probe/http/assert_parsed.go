@@ -67,7 +67,7 @@ type parsedDocs struct {
 	htmlErr  string
 
 	left     int
-	htmlLeft int
+	htmlLeft int64
 }
 
 // jsonDoc decodes the body as JSON once, as json_values does.

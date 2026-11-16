@@ -191,11 +191,11 @@ func compileArg(a *Assertion, s Subject, arg string) error {
 		if err != nil {
 			return fmt.Errorf("the CSS selector of html(…) does not parse: %w", err)
 		}
-		ancestors, siblings, err := selectorShape(arg)
+		costs, err := selectorCosts(arg, sel)
 		if err != nil {
 			return err
 		}
-		a.sel, a.ancestors, a.siblings = sel, ancestors, siblings
+		a.sel, a.costs = sel, costs
 	}
 	return nil
 }

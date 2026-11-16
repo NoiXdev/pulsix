@@ -35,8 +35,10 @@ func numberActual(s assert.Subject, v float64) string {
 }
 
 // textActual is a text the target sent, quoted as a JSON string, cleaned
-// and cut to probe.ShortLabelLen bytes. Only the first ShortLabelLen
-// bytes are quoted: no more can be shown.
+// and at most probe.ShortLabelLen bytes: a longer text is cut so that its
+// quoted start fits, never inside an escape or a rune, and the closing
+// quote stays. Only the first ShortLabelLen bytes are quoted: no more can
+// be shown.
 func textActual(s string) string {
 	if len(s) > probe.ShortLabelLen {
 		n := probe.ShortLabelLen
@@ -45,7 +47,33 @@ func textActual(s string) string {
 		}
 		s = s[:n]
 	}
-	return shortActual(assert.Quote(s))
+	q := assert.Quote(s)
+	if len(q) <= probe.ShortLabelLen {
+		return shortActual(q)
+	}
+	inner := q[1 : len(q)-1]
+	end := 0
+	for end < len(inner) {
+		next := end + escapeLen(inner, end)
+		if next+2 > probe.ShortLabelLen {
+			break
+		}
+		end = next
+	}
+	return shortActual(`"` + inner[:end] + `"`)
+}
+
+// escapeLen is the length of the JSON string token at i of a quoted
+// string's inside: an escape (\uXXXX or \x) or one rune.
+func escapeLen(inner string, i int) int {
+	if inner[i] == '\\' {
+		if i+1 < len(inner) && inner[i+1] == 'u' {
+			return 6
+		}
+		return 2
+	}
+	_, n := utf8.DecodeRuneInString(inner[i:])
+	return n
 }
 
 // shortActual is an actual cleaned and cut like every label quoting what

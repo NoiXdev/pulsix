@@ -345,8 +345,11 @@ func TestAssertionFormat(t *testing.T) {
 		{`ok=json("$[0,0]") exists`, false},
 		// Selectors whose match on one node could search a whole page.
 		{`ok=html("p:has(a)") exists`, false},
-		{`ok=html("main div p") exists`, false},
-		{`ok=html("main p, div p") exists`, true},
+		{`ok=html("main div p") exists`, true},
+		{`ok=html("nav ul li a") exists`, true},
+		{`ok=html("a b c d e") exists`, false},
+		{`ok=html("x/**/div/**/p") exists`, false},
+		{`ok=html("a ~ b ~ c") exists`, false},
 	}
 	for _, tc := range cases {
 		if got := checkplugins.FormatAssertion.Valid(tc.in); got != tc.valid {

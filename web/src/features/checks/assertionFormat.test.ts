@@ -41,7 +41,7 @@ describe('the assertion grammar twin', () => {
   it('leaves RE2, selector and JSONPath syntax to the server', () => {
     // Refused by the server (TestAssertionFormat), so these cannot be
     // shared vectors: the form lets them through and the API names why.
-    for (const entry of ['a=body matches "("', 'a=html("div[") exists', 'a=json("$[") exists', 'a=json("$[0,0]") exists', 'a=html("p:has(a)") exists', 'a=html("a b c") exists']) {
+    for (const entry of ['a=body matches "("', 'a=html("div[") exists', 'a=json("$[") exists', 'a=json("$[0,0]") exists', 'a=html("p:has(a)") exists', 'a=html("a b c d e") exists', 'a=html("x/**/p") exists']) {
       expect(parseAssertion(entry)).not.toBeNull();
     }
   });

@@ -170,6 +170,25 @@ string     = a JSON string literal ("..." with JSON escapes)
   Parsing uses `golang.org/x/net/html` on the kept first 1 MiB, in a slot
   of the same gate as the JSON stages (`JSONGate`; renamed only if it
   stays readable), so HTML parsing is bounded across all probes.
+  Selector restrictions (Amended in review, Claude's call): cascadia's
+  `Match` on one node cannot be interrupted, and some selectors make it
+  search a whole page (`:has` a subtree, n descendant combinators about
+  C(depth, n) ancestor combinations, `~` every earlier sibling), so a
+  tenant's selector could hold a manager-wide gate slot for minutes. The
+  shape is read from what cascadia parsed, not from the text, and
+  validation refuses: comments (`/*`, which cascadia reads as a
+  descendant combinator); `:has`, `:haschild`, `:contains`,
+  `:containsOwn`, `:matches`, `:matchesOwn`; more than 3 descendant
+  (space) combinators in a comma-separated part; more than one `~` in a
+  part, or a `~` together with a descendant combinator; `:empty` on
+  anything but the selected element; walks of ancestors or siblings
+  nested deeper than that. The probe walks the page itself and, before
+  each node is matched, charges that node's worst case (from its depth,
+  the sibling counts and attribute sizes on its path, and which walks the
+  selector makes) to a budget of 40 000 000 steps per assertion and
+  160 000 000 per check (about a quarter and one second of CPU); a node
+  that does not fit stops the assertion with the error "the selector
+  took too much work", and the walk stops at the probe's deadline.
 - `body`: the kept first 1 MiB as text (invalid UTF-8 kept as bytes).
 - `size` is `http.content_bytes`; `cert_days`/`cert_issuer` the https
   metrics; `status`, `response_ms`, `ttfb_ms`, `redirects` the metrics of
@@ -199,7 +218,7 @@ Per assertion, item = its name:
   a failure: the body went past 1 MiB for `!contains`, `!matches`,
   `!exists` on `body`/`html`/`json`, or for any `html`/`json` subject;
   JSON or HTML that does not parse; `cert_*` on an http URL; the gate's
-  wait timed out. `contains`, `matches`, `exists` on a truncated body
+  wait timed out; a selector that took too much work (above). `contains`, `matches`, `exists` on a truncated body
   still pass when found.
 - `exists`/`!exists` and `==`/`!=` against an absent value: `exists`
   fails, `!exists` passes, `!=` passes, every other op fails.

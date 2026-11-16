@@ -145,11 +145,11 @@ type Assertion struct {
 	num, lo, hi float64
 	text        string
 	re          *regexp.Regexp
-	// The compiled argument of json and html; whether matching the
-	// selector on a node walks its ancestors or its siblings.
-	path                *jpath.Path
-	sel                 cascadia.SelectorGroup
-	ancestors, siblings bool
+	// The compiled argument of json and html, and the cost of each part
+	// of the selector (MatchCost).
+	path  *jpath.Path
+	sel   cascadia.SelectorGroup
+	costs []partCost
 }
 
 // Name is the item the assertion reports on.
@@ -177,14 +177,6 @@ func (a Assertion) Selector() cascadia.Matcher {
 		return nil
 	}
 	return a.sel
-}
-
-// SelectorShape is what matching html's selector on one node may cost:
-// its comma-separated parts, each matched on its own, and whether a part
-// walks the node's ancestors or its siblings (at most one combinator that
-// does per part, see Parse). 0 and false for any other subject.
-func (a Assertion) SelectorShape() (parts int, ancestors, siblings bool) {
-	return len(a.sel), a.ancestors, a.siblings
 }
 
 // Operand is the operand as the canonical expression spells it: a

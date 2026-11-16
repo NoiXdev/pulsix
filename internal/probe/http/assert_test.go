@@ -378,7 +378,7 @@ func TestHTTPAssertionActualIsCleanAndShort(t *testing.T) {
 		}
 		a := *o.Label
 		if len(a) > probe.ShortLabelLen || !utf8.ValidString(a) || strings.ContainsFunc(a, unicode.IsControl) ||
-			strings.ContainsRune(a, ' ') || !strings.HasPrefix(a, `"`) {
+			strings.ContainsRune(a, ' ') || !strings.HasPrefix(a, `"`) || !strings.HasSuffix(a, `"`) {
 			t.Fatalf("actual %q = %q (%d bytes), want a quoted, clean label of at most %d bytes", item, a, len(a), probe.ShortLabelLen)
 		}
 	}

@@ -13,18 +13,18 @@ import (
 const (
 	errNotHTML     = "the response is not HTML"
 	errHTMLTooMuch = "the selector took too much work"
-	// htmlSelectBudget bounds the cost one html assertion's walk may
-	// charge: a node visit costs one per part of the selector, plus the
-	// node's depth when a part walks its ancestors and its siblings when
-	// a part walks those. A real 1 MiB page (some 20 000 elements, a few
-	// dozen deep) costs well under a tenth of it with a descendant
-	// combinator; a sibling walk fits lists of up to about 2 000 entries.
-	htmlSelectBudget = 4_000_000
-	// htmlCheckBudget bounds all of a check's html assertions together.
-	htmlCheckBudget = 16_000_000
-	// htmlCtxEvery is how many node visits pass between looks at the
-	// probe's context.
-	htmlCtxEvery = 64
+	// htmlSelectBudget bounds the steps one html assertion's walk may
+	// charge (MatchCost of every node visited). A charged step of a walk
+	// that does what it is charged for took 1 to 6 ns (measured: three
+	// descendant combinators over 100-deep chains 2 ns, :lang over 400-deep
+	// chains 6 ns, ~ over 100 000 siblings 1 ns), so this is about a
+	// quarter of a second of CPU at worst. Ordinary selectors on a real
+	// 800 KiB page (20 000 elements) charge 50 000 to 400 000, an nth- or
+	// first-child walk over a 2 000-row table up to 27 000 000.
+	htmlSelectBudget = 40_000_000
+	// htmlCheckBudget bounds all of a check's html assertions together:
+	// about a second of CPU, like the JSON stage's budget.
+	htmlCheckBudget = 160_000_000
 )
 
 // htmlDoc parses the body as HTML once; a page nested deeper than the
@@ -65,54 +65,69 @@ func (d *parsedDocs) judgeHTML(ctx context.Context, a assert.Assertion) verdict 
 
 // selectAll is the nodes under doc that a's selector matches, in
 // document order, like cascadia.QueryAll, but walked here so the walk can
-// stop: each visit is charged to the assertion's budget (at most
-// perSelector) and to *left, the check's; past either it stops with
-// errHTMLTooMuch, and once ctx ends with errOutOfTime. A match of one node
-// is bounded by the selector's shape (assert.Parse): at most one walk of
-// its ancestors or siblings per part.
-func selectAll(ctx context.Context, doc *html.Node, a assert.Assertion, perSelector int, left *int) ([]*html.Node, string) {
-	parts, ancestors, siblings := a.SelectorShape()
+// stop. cascadia's Match cannot be interrupted, so before each node is
+// matched its worst case (assert's MatchCost, from the node's depth and
+// the largest sibling or child count and attribute weight on its path) is
+// charged to the assertion's budget (at most perSelector) and to *left,
+// the check's: a node whose charge does not fit stops the walk with
+// errHTMLTooMuch before it runs. The walk also stops with errOutOfTime
+// once ctx ends, looking before every node.
+func selectAll(ctx context.Context, doc *html.Node, a assert.Assertion, perSelector int64, left *int64) ([]*html.Node, string) {
 	m := a.Selector()
 	budget := min(perSelector, *left)
+	// path is the node's place, without the node's own children.
 	type visit struct {
-		n               *html.Node
-		depth, siblings int
+		n    *html.Node
+		path assert.Path
 	}
 	var matches []*html.Node
 	stack := []visit{{n: doc}}
-	for visits := 0; len(stack) > 0; visits++ {
-		if visits%htmlCtxEvery == 0 && ctx.Err() != nil {
+	for len(stack) > 0 {
+		if ctx.Err() != nil {
 			return nil, errOutOfTime
 		}
 		v := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		walk := 1
-		if ancestors {
-			walk += v.depth
+		children := 0
+		for c := v.n.FirstChild; c != nil; c = c.NextSibling {
+			children++
 		}
-		if siblings {
-			walk += v.siblings
-		}
-		cost := parts * walk
-		budget -= cost
-		*left -= cost
-		if budget < 0 || *left < 0 {
+		at := v.path
+		at.Attrs = max(at.Attrs, attrWeight(v.n))
+		withChildren := at
+		withChildren.Siblings = max(at.Siblings, children)
+		withChildren.OwnSiblings = max(at.OwnSiblings, children)
+		cost, possible := a.MatchCost(v.n, withChildren)
+		if cost > budget {
 			return nil, errHTMLTooMuch
 		}
-		if v.n != doc && m.Match(v.n) {
+		budget -= cost
+		*left -= cost
+		if v.n != doc && possible && m.Match(v.n) {
 			matches = append(matches, v.n)
 		}
-		// Children pushed last-first, so the first is visited first; a
-		// sibling walk may cover all of them.
-		n := 0
-		for c := v.n.FirstChild; c != nil; c = c.NextSibling {
-			n++
-		}
+		// Children pushed last-first, so the first is visited first.
 		for c := v.n.LastChild; c != nil; c = c.PrevSibling {
-			stack = append(stack, visit{n: c, depth: v.depth + 1, siblings: n})
+			stack = append(stack, visit{n: c, path: assert.Path{
+				Depth:       at.Depth + 1,
+				Siblings:    max(at.Siblings, children),
+				OwnSiblings: children,
+				SiblingSum:  at.SiblingSum + 1 + children,
+				Attrs:       at.Attrs,
+			}})
 		}
 	}
 	return matches, ""
+}
+
+// attrWeight is what reading n's attributes costs a selector: one per
+// attribute and one per 64 bytes of names and values.
+func attrWeight(n *html.Node) int {
+	size := 0
+	for _, at := range n.Attr {
+		size += len(at.Namespace) + len(at.Key) + len(at.Val)
+	}
+	return len(n.Attr) + size/64
 }
 
 // textContent is the text of n and its descendants, in document order;

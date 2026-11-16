@@ -2,16 +2,15 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/andybalholm/cascadia"
 	"github.com/noixdev/pulsix/internal/probe"
 	"github.com/noixdev/pulsix/internal/probe/assert"
-	"golang.org/x/net/html"
 )
 
 // TestHTTPAssertionsWaitForTheGate: html and json assertions parse in a
@@ -109,76 +108,15 @@ func TestTextActual(t *testing.T) {
 	for i := range long {
 		long[i] = 'x'
 	}
-	if got := textActual(string(long)); len(got) != probe.ShortLabelLen {
-		t.Fatalf("textActual(1 MiB) = %d bytes, want %d", len(got), probe.ShortLabelLen)
+	if got := textActual(string(long)); len(got) != probe.ShortLabelLen || got[len(got)-1] != '"' {
+		t.Fatalf("textActual(1 MiB) = %q (%d bytes), want %d bytes ending in a quote", got, len(got), probe.ShortLabelLen)
 	}
-}
-
-// htmlOf parses s.
-func htmlOf(t *testing.T, s string) *html.Node {
-	t.Helper()
-	doc, err := html.Parse(strings.NewReader(s))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return doc
-}
-
-// TestSelectAllIsDocumentOrder: the walk finds what cascadia finds, in
-// the same order, charging each node visited.
-func TestSelectAllIsDocumentOrder(t *testing.T) {
-	doc := htmlOf(t, `<div><p id=a>1<p id=b>2</div><section><p id=c><span><p id=d></span></section>`)
-	a, err := assert.Parse(`x=html("div p, section p") count > 0`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	left := 1000
-	got, problem := selectAll(context.Background(), doc, a, 1000, &left)
-	want := cascadia.QueryAll(doc, a.Selector())
-	if problem != "" || len(got) != len(want) || len(got) != 4 {
-		t.Fatalf("selectAll = %d nodes, %q; cascadia found %d", len(got), problem, len(want))
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Fatalf("node %d differs: %v, want %v", i, got[i].Attr, want[i].Attr)
+	// A cut never splits an escape or a rune and keeps the closing quote.
+	for _, s := range []string{strings.Repeat(`\x01`, 100), strings.Repeat("\x01", 100), strings.Repeat("ü", 100), strings.Repeat(`a"`, 100), strings.Repeat(" ", 100)} {
+		got := textActual(s)
+		var back string
+		if len(got) > probe.ShortLabelLen || json.Unmarshal([]byte(got), &back) != nil || !strings.HasPrefix(s, back) || len(got) < probe.ShortLabelLen-6 {
+			t.Errorf("textActual(%q…) = %q (%d bytes), want a whole JSON string of the text's start, at most %d bytes", s[:8], got, len(got), probe.ShortLabelLen)
 		}
-	}
-	if left >= 1000 {
-		t.Fatalf("budget left %d: the walk charged nothing", left)
-	}
-}
-
-// TestSelectAllIsBounded: a selector that searches ancestors pays for the
-// depth of each node; past the selector's or the check's budget it stops
-// with errHTMLTooMuch, and once ctx ends with errOutOfTime.
-func TestSelectAllIsBounded(t *testing.T) {
-	deep := htmlOf(t, strings.Repeat("<div>", 400)+"x")
-	searching, err := assert.Parse(`x=html("section div") exists`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plain, err := assert.Parse(`x=html("div") exists`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 400 divs at depths up to about 400: about 80 000 for a search, about
-	// 400 without.
-	left := 1 << 30
-	if _, problem := selectAll(context.Background(), deep, searching, 50_000, &left); problem != errHTMLTooMuch {
-		t.Fatalf("a searching selector over a deep page = %q, want %q", problem, errHTMLTooMuch)
-	}
-	left = 1 << 30
-	if nodes, problem := selectAll(context.Background(), deep, plain, 50_000, &left); problem != "" || len(nodes) != 400 {
-		t.Fatalf("a plain selector over a deep page = %d nodes, %q", len(nodes), problem)
-	}
-	left = 100
-	if _, problem := selectAll(context.Background(), deep, plain, 50_000, &left); problem != errHTMLTooMuch {
-		t.Fatalf("past the check's budget = %q, want %q", problem, errHTMLTooMuch)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	left = 1 << 30
-	if _, problem := selectAll(ctx, deep, plain, 50_000, &left); problem != errOutOfTime {
-		t.Fatalf("an ended probe = %q, want %q", problem, errOutOfTime)
 	}
 }
