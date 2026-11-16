@@ -326,6 +326,18 @@ and a probing agent carries up to 200 assignments, four probes at once. The prot
 change is additive (`buf breaking` clean). A downgrade needs the usual restore of a
 backup from before the upgrade (see Downgrading).
 
+Assistant access (backlog 2.116) adds four migrations and no proto change.
+Migration 00099 adds `api_tokens.kind` (`api` for every existing token) and
+`api_tokens.areas`, with a CHECK that an assistant token has areas and an API token
+has none; 00100 adds `org_assistant_settings` (no row means off); 00101 the nullable
+`audit_events.actor_token_id`; 00102 `run_requests` (with row-level security).
+Nothing is dropped or rewritten, and the switch is off for every organization. An
+older manager that is still running while the new version migrates ignores `kind`
+and would accept an assistant token at the REST API: **stop every manager instance
+before the new version starts.** Workers and agents are not affected. A backup now
+carries the switch and the run requests; after a restore, pending requests can be
+approved again until they expire (the restore says so).
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
