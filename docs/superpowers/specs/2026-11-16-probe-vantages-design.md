@@ -132,8 +132,8 @@ Additive fields and messages; an older agent never sees any of them.
 ## Agent side (`internal/agent/probes`, new)
 
 - Holds the current `ProbeConfig`; schedules each assignment every
-  `interval_seconds` (first run spread over the interval by a hash of the
-  slot); at most **4** probes at once; runs them with
+  `interval_seconds` (first run spread over min(interval, 60 s) by a hash
+  of the slot, so a reassigned slot reports within a minute); at most **4** probes at once; runs them with
   `internal/probe/all`'s registry (pollers not needed: `snmp` never reaches
   an agent) and a `probe.NewGuard(nil, nil)` guard — the same loopback,
   link-local and metadata refusals as the manager.
