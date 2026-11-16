@@ -176,3 +176,45 @@ func TestDeleteReferencedTemplate(t *testing.T) {
 		t.Fatal("a refused delete removed the template")
 	}
 }
+
+// A save that changes the playbook of a linked template goes through
+// SetVarsLink, whose result carries no follow-ups: the response must still
+// list the stored ones.
+func TestUpdateWithPlaybookChangeStillReturnsFollowUps(t *testing.T) {
+	f := newFixture()
+	a, b := f.seed("a"), f.seed("b")
+	a.VarsMode = templates.ModeAutomatic
+	f.store.byID[a.ID] = a
+	f.store.follow[a.ID] = []uuid.UUID{b.ID}
+
+	in := f.updateIn(a, nil)
+	in.PlaybookID = f.playbook2
+	got, err := f.svc.Update(ctx, f.org, a.ID, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VarsMode != templates.ModeManual {
+		t.Fatalf("VarsMode = %q, want the SetVarsLink path to have run", got.VarsMode)
+	}
+	if len(got.FollowUps) != 1 || got.FollowUps[0].TemplateID != b.ID {
+		t.Fatalf("FollowUps = %+v, want [b]", got.FollowUps)
+	}
+}
+
+// Follow-ups are the organization's own to set on a projection: they are not
+// one of the definition's read-only fields.
+func TestProjectionAcceptsFollowUps(t *testing.T) {
+	f := newFixture()
+	b := f.seed("b")
+	sharedID := uuid.Must(uuid.NewV7())
+	proj := templates.Template{ID: uuid.Must(uuid.NewV7()), OrgID: f.org, Name: "shared-tpl", PlaybookID: f.playbook, SharedTemplateID: &sharedID, ExtraVars: map[string]any{}}
+	f.store.byID[proj.ID] = proj
+
+	got, err := f.svc.Update(ctx, f.org, proj.ID, f.updateIn(proj, &[]uuid.UUID{b.ID}))
+	if err != nil {
+		t.Fatalf("Update of a projection with follow-ups: %v", err)
+	}
+	if len(got.FollowUps) != 1 || got.FollowUps[0].TemplateID != b.ID {
+		t.Fatalf("FollowUps = %+v, want [b]", got.FollowUps)
+	}
+}

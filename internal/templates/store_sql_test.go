@@ -438,6 +438,19 @@ func TestFollowUpsRoundTripKeepsOrder(t *testing.T) {
 	}
 	check("reordered", upd.FollowUps)
 
+	// A follow-up-only change moves the revision, and a stale If-Match
+	// refuses the whole save, follow-ups included.
+	if upd.Revision <= root.Revision {
+		t.Fatalf("revision after a follow-up-only change = %d, want more than %d", upd.Revision, root.Revision)
+	}
+	stale := root.Revision
+	if _, err := svc.Update(scoped, org, root.ID, templates.UpdateInput{Name: "root", PlaybookID: playbookID, FollowUps: &[]uuid.UUID{}, IfRevision: &stale}); !errors.Is(err, templates.ErrRevisionMismatch) {
+		t.Fatalf("stale save = %v, want ErrRevisionMismatch", err)
+	}
+	if kept, err := svc.Get(scoped, org, root.ID); err != nil || len(kept.FollowUps) != 3 || kept.Revision != upd.Revision {
+		t.Fatalf("after the refused save: %+v, %v — want the follow-ups and revision untouched", kept.FollowUps, err)
+	}
+
 	err = svc.Delete(scoped, org, alpha.ID)
 	var inUse *templates.InUseError
 	if !errors.As(err, &inUse) || len(inUse.Referrers) != 1 || inUse.Referrers[0] != "root" {

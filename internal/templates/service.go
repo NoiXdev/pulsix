@@ -366,11 +366,11 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 	}
 	t.SharedTemplateID = cur.SharedTemplateID
 	var updated Template
+	var followUps []FollowUp
 	if err := s.store.InTx(ctx, orgID, func(ctx context.Context) error {
 		var err error
 		// The graph lock and the follow-up validation come before the write:
 		// they read the graph this save then changes.
-		var followUps []FollowUp
 		if in.FollowUps != nil {
 			if followUps, err = s.setFollowUps(ctx, orgID, id, t.Name, *in.FollowUps); err != nil {
 				return err
@@ -381,7 +381,6 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		if updated, err = s.store.Update(ctx, t, readRevision(in.IfRevision, cur)); err != nil {
 			return err
 		}
-		updated.FollowUps = followUps
 		if in.PlaybookID != cur.PlaybookID {
 			if next, ok := unlinkedFromPlaybook(updated); ok {
 				if updated, err = s.store.SetVarsLink(ctx, next); err != nil {
@@ -397,6 +396,9 @@ func (s *Service) Update(ctx context.Context, orgID, id uuid.UUID, in UpdateInpu
 		return Template{}, err
 	}
 	updated.VaultCredentials = in.VaultCredentials
+	// Set after the transaction: SetVarsLink above returns a Template read
+	// without them.
+	updated.FollowUps = followUps
 	return masked(updated), nil
 }
 
