@@ -8,6 +8,7 @@ export const deActivity: Messages['activity'] = {
   allTypes: 'alle',
   empty: 'Noch keine Aktivität aufgezeichnet.',
   user: (id: string) => `Benutzer · ${id}`,
+  viaToken: (name: string) => `über Token ${name}`,
   actors: {
     token: 'API-Token',
     system: 'Pulsix',

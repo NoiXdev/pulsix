@@ -7,6 +7,8 @@ export const enActivity = {
   allTypes: 'all',
   empty: 'No activity recorded yet.',
   user: (id: string) => `user · ${id}`,
+  /** The API token a change was made with. */
+  viaToken: (name: string) => `via token ${name}`,
   /** Who made a change, by the kind of actor the API reports. */
   actors: {
     token: 'API token',

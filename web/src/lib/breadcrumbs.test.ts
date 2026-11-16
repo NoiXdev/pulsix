@@ -33,6 +33,12 @@ describe('crumbLabels', () => {
     expect(crumbLabels('/o/acme/checks/monitoring-groups', 'acme')).toEqual(['Checks', 'Monitoring groups']);
   });
 
+  it('labels the run requests and shortens a request id', () => {
+    expect(crumbLabels('/o/acme/runs/requests', 'acme')).toEqual(['Runs', 'Requests']);
+    expect(crumbLabels('/o/acme/runs/requests/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b', 'acme')).toEqual(['Runs', 'Requests', '0190a1b2']);
+    expect(crumbLabelsFor('/o/acme/runs/requests', 'acme', de)).toEqual(['Läufe', 'Anfragen']);
+  });
+
   it('shortens a UUID-shaped host id segment it has no label for', () => {
     expect(crumbLabels('/o/acme/hosts/550e8400-e29b-41d4-a716-446655440000', 'acme')).toEqual([
       'Hosts',

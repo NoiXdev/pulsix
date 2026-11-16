@@ -124,3 +124,15 @@ describe('a group link from before the group page had sections (backlog 7.67)', 
     expect((router.state.location.search as { tab?: string }).tab).toBeUndefined();
   });
 });
+
+describe('the run request pages', () => {
+  it('serves the list under /runs/requests, not as a run id', async () => {
+    expect(await settledAt('/o/acme/runs/requests')).toBe('/o/acme/runs/requests');
+    expect(router.state.matches.some((m) => m.routeId.endsWith('/runs/requests'))).toBe(true);
+  });
+
+  it('serves one request under /runs/requests/$id', async () => {
+    expect(await settledAt('/o/acme/runs/requests/rq1')).toBe('/o/acme/runs/requests/rq1');
+    expect(router.state.matches.some((m) => m.routeId.endsWith('/runs/requests/$id'))).toBe(true);
+  });
+});

@@ -7,6 +7,7 @@ import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
 import { useMe } from '../api/hooks/useMe.ts';
 import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
+import { usePendingRunRequestCount } from '../api/hooks/useRunRequests.ts';
 import { useSignOut } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { useT } from '../i18n/useT.ts';
@@ -49,6 +50,9 @@ export function OrgLayout() {
   const complete = state === 'complete';
   const org = useOrg(orgSlug, { enabled: complete });
   const orgs = useOrgs({ enabled: complete });
+  // The pending run requests beside Runs, polled; a failed read just shows
+  // no badge rather than standing in the way of the page.
+  const pendingRunRequests = usePendingRunRequestCount(orgSlug, { enabled: complete });
 
   const meGuard = useQueryGuard(me);
   const orgGuard = useQueryGuard(org);
@@ -86,6 +90,7 @@ export function OrgLayout() {
       }}
       onLogout={signOut}
       version={setupStatus.data?.version}
+      pendingRunRequests={pendingRunRequests}
     >
       <Outlet />
       <CreateOrgDialog open={creatingOrg} onClose={() => setCreatingOrg(false)} />

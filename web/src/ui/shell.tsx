@@ -42,6 +42,9 @@ export interface AppShellProps {
   /** The manager's build version (GET /setup/status), shown beside the
    * wordmark; nothing is shown while it is unknown. */
   version?: string;
+  /** How many run requests wait for a person's decision, shown beside the
+   * Runs entry; nothing is shown while it is unknown or zero. */
+  pendingRunRequests?: number;
   children: ReactNode;
 }
 
@@ -101,7 +104,7 @@ function initials(name: string): string {
  * descendant of /o/$org/settings, which is exactly the set of routes the
  * mockup groups under it.
  */
-export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, onLogout, version, children }: AppShellProps) {
+export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, onLogout, version, pendingRunRequests, children }: AppShellProps) {
   const navigate = useNavigate();
   const t = useT();
   const [search, setSearch] = useState('');
@@ -279,6 +282,17 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, on
             >
               <Play size={16} />
               <span className="flex-1">{t.shell.nav.runs}</span>
+              {pendingRunRequests !== undefined && pendingRunRequests > 0 && (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="rounded-full bg-primary px-2 py-px font-mono text-[11px] font-semibold text-primary-foreground"
+                  >
+                    {pendingRunRequests}
+                  </span>
+                  <span className="sr-only">{t.shell.nav.runRequestsBadge(pendingRunRequests)}</span>
+                </>
+              )}
             </Link>
           </NavGroup>
 

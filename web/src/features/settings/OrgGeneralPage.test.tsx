@@ -119,6 +119,8 @@ describe('OrgGeneralPage', () => {
       let current = days;
       return {
         'GET /api/v1/orgs/acme': org(role),
+        // The assistant card beside it loads too; its own tests are below.
+        'GET /api/v1/orgs/acme/settings/assistant': { settings: { assistant_enabled: false } },
         'GET /api/v1/orgs/acme/settings/monitoring': () => ({ settings: { client_absent_days: current } }),
         'PUT /api/v1/orgs/acme/settings/monitoring': (req: MockRequest) => {
           onPut?.(req);
@@ -348,6 +350,46 @@ describe('OrgGeneralPage', () => {
       const box = await screen.findByRole('combobox', { name: SELECT });
       await waitFor(() => expect(box).toHaveValue('Instance default (90 days)'));
       expect(box).toBeDisabled();
+    });
+  });
+
+  // Assistant access (spec 2026-11-16): the per-organization switch that
+  // lets assistant tokens work at all; off by default, admins change it.
+  describe('assistant access', () => {
+    function routes(role: string, enabled: boolean, onPut?: (req: MockRequest) => void) {
+      let current = enabled;
+      return {
+        'GET /api/v1/orgs/acme': org(role),
+        'GET /api/v1/orgs/acme/settings/assistant': () => ({ settings: { assistant_enabled: current } }),
+        'PUT /api/v1/orgs/acme/settings/assistant': (req: MockRequest) => {
+          onPut?.(req);
+          current = (req.body as { assistant_enabled: boolean }).assistant_enabled;
+          return { settings: { assistant_enabled: current } };
+        },
+      };
+    }
+
+    it('turns assistant access on for an admin', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', false, (req) => puts.push(req.body)));
+      renderPage();
+      const toggle = await screen.findByRole('switch', { name: 'Assistant access' });
+      await waitFor(() => expect(toggle).toBeEnabled());
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      expect(screen.getByText(/Assistant tokens of this organization can work within their areas/)).toBeInTheDocument();
+      await user.click(toggle);
+      await waitFor(() => expect(puts).toEqual([{ assistant_enabled: true }]));
+      await waitFor(() => expect(screen.getByRole('switch', { name: 'Assistant access' })).toHaveAttribute('aria-checked', 'true'));
+    });
+
+    it('is read-only below admin', async () => {
+      mockApi(routes('operator', true));
+      renderPage();
+      const toggle = await screen.findByRole('switch', { name: 'Assistant access' });
+      await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
+      expect(toggle).toBeDisabled();
+      expect(screen.getByText('Only owners and admins can change assistant access.')).toBeInTheDocument();
     });
   });
 });

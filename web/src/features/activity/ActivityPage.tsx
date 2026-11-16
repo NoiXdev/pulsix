@@ -42,9 +42,14 @@ export function ActivityPage() {
 
   const memberNames = new Map((members.data?.members ?? []).map((m) => [m.user_id, m.display_name]));
 
-  function actorLabel(actorKind: string, actorId?: string | null): string {
-    if (actorKind === 'user' && actorId) return memberNames.get(actorId) ?? t.activity.user(actorId.slice(0, 8));
-    return known(t.activity.actors, actorKind);
+  function actorLabel(actorKind: string, actorId?: string | null, tokenName?: string): string {
+    let who: string;
+    if (actorKind === 'user' && actorId) who = memberNames.get(actorId) ?? t.activity.user(actorId.slice(0, 8));
+    // A token acts for the member who created it, and the API names that
+    // member as the actor.
+    else if (actorKind === 'token' && actorId && memberNames.has(actorId)) who = memberNames.get(actorId) as string;
+    else who = known(t.activity.actors, actorKind);
+    return tokenName ? `${who} · ${t.activity.viaToken(tokenName)}` : who;
   }
 
   const activityGuard = useQueryGuard(activity);
@@ -95,7 +100,7 @@ export function ActivityPage() {
                 </span>
                 <div className="flex min-w-0 flex-col gap-0.5">
                   <span className="truncate text-[13px]">{e.summary}</span>
-                  <span className="text-[11px] text-muted-foreground">{actorLabel(e.actor_kind, e.actor_id)}</span>
+                  <span className="text-[11px] text-muted-foreground">{actorLabel(e.actor_kind, e.actor_id, e.token_name)}</span>
                 </div>
                 <span className="text-right text-[11px] text-muted-foreground">{known(t.activity.objectTypes, e.object_type)}</span>
               </div>

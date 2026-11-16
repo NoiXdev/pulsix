@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, unwrap } from '../client.ts';
+import type { components } from '../schema.d.ts';
+
+/** What POST /orgs/{org}/tokens takes: `kind` defaults to api; `areas` is
+ * required (non-empty) for an assistant token and refused for an API token. */
+export type CreateTokenInput = Omit<components['schemas']['OrgTokenCreateInputBody'], '$schema'>;
 
 export function useTokens(org: string) {
   return useQuery({
@@ -20,7 +25,7 @@ export function useTokens(org: string) {
 export function useCreateToken(org: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { name: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; expires_at?: string }) =>
+    mutationFn: (body: CreateTokenInput) =>
       unwrap(api.POST('/api/v1/orgs/{org}/tokens', { params: { path: { org } }, body })),
     gcTime: 0,
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tokens', org] }),

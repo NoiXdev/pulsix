@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Controller, useForm } from 'react-hook-form';
+import { Controller, useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 import { KeyRound } from 'lucide-react';
 import { Card, GridHeader, GridRow } from '../../ui/table.tsx';
@@ -20,15 +20,30 @@ import { useT } from '../../i18n/useT.ts';
 import { roleOptions } from '../members/roles.ts';
 import type { Messages } from '../../i18n/types.ts';
 import { useConfirm } from '../../ui/confirmContext.ts';
+import { Tag } from '../../ui/badge.tsx';
+import { AreaGrid } from './AreaGrid.tsx';
+import { allowedAreas, displayedAreas, type Area } from './areas.ts';
 
 const ROLES = ['viewer', 'operator', 'admin', 'owner'] as const;
+const KINDS = ['api', 'assistant'] as const;
 
 const tokenFormSchema = (t: Messages) =>
-  z.object({
-    name: z.string().min(1, t.validation.required),
-    role: z.enum(ROLES),
-  });
+  z
+    .object({
+      name: z.string().min(1, t.validation.required),
+      role: z.enum(ROLES),
+      kind: z.enum(KINDS),
+      areas: z.array(z.custom<Area>()),
+    })
+    // An assistant token needs at least one area the role can cover; the
+    // server refuses one without (422).
+    .refine((v) => v.kind !== 'assistant' || allowedAreas(v.areas, v.role).length > 0, {
+      path: ['areas'],
+      message: t.tokens.areas.required,
+    });
 type TokenFormValues = z.infer<ReturnType<typeof tokenFormSchema>>;
+
+const DEFAULTS: TokenFormValues = { name: '', role: 'viewer', kind: 'api', areas: [] };
 
 const COLUMNS = 'minmax(0, 1fr) 100px 140px 140px 70px';
 
@@ -48,7 +63,9 @@ export function TokensPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [justCreated, setJustCreated] = useState<string | null>(null);
 
-  const form = useForm<TokenFormValues>({ resolver: zodResolver(schema), defaultValues: { name: '', role: 'viewer' } });
+  const form = useForm<TokenFormValues>({ resolver: zodResolver(schema), defaultValues: DEFAULTS });
+  const kind = useWatch({ control: form.control, name: 'kind' });
+  const role = useWatch({ control: form.control, name: 'role' });
 
   const tokensGuard = useQueryGuard(tokens);
   if (tokensGuard) return tokensGuard;
@@ -75,7 +92,19 @@ export function TokensPage() {
         </GridHeader>
         {(tokens.data?.tokens ?? []).map((token) => (
           <GridRow key={token.id} columns={COLUMNS}>
-            <span className="truncate text-xs font-semibold">{token.name}</span>
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-xs font-semibold">{token.name}</span>
+                {token.kind === 'assistant' && <Tag>{t.tokens.kind.badge}</Tag>}
+              </span>
+              {token.kind === 'assistant' && (token.areas ?? []).length > 0 && (
+                <span className="truncate text-[11px] text-muted-foreground">
+                  {displayedAreas(token.areas ?? [])
+                    .map((area) => (Object.hasOwn(t.tokens.areas.labels, area) ? t.tokens.areas.labels[area as Area] : area))
+                    .join(' · ')}
+                </span>
+              )}
+            </span>
             <RoleBadge role={token.role} />
             <span className="text-[11px] text-muted-foreground">
               {token.last_used_at ? fmt.date(token.last_used_at) : t.common.never}
@@ -147,7 +176,11 @@ export function TokensPage() {
             className="flex flex-col gap-4"
             onSubmit={form.handleSubmit(async (values) => {
               try {
-                const res = await createToken.mutateAsync(values);
+                const res = await createToken.mutateAsync(
+                  values.kind === 'assistant'
+                    ? { name: values.name, role: values.role, kind: 'assistant', areas: allowedAreas(values.areas, values.role) }
+                    : { name: values.name, role: values.role, kind: 'api' },
+                );
                 setJustCreated(res.token);
               } catch (err) {
                 toast.show(err instanceof Error ? err.message : t.tokens.createFailed, 'destructive');
@@ -161,6 +194,20 @@ export function TokensPage() {
                 <span className="text-[11px] text-destructive">{form.formState.errors.name.message}</span>
               )}
             </div>
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="mb-1.5 text-xs font-semibold">{t.tokens.kind.label}</legend>
+              <div role="radiogroup" aria-label={t.tokens.kind.label} className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
+                {KINDS.map((k) => (
+                  <label key={k} className="flex items-center gap-2">
+                    <input type="radio" value={k} {...form.register('kind')} />
+                    {t.tokens.kind[k]}
+                  </label>
+                ))}
+              </div>
+              <span className="text-[11px] text-muted-foreground">
+                {kind === 'assistant' ? t.tokens.kind.assistantHint : t.tokens.kind.apiHint}
+              </span>
+            </fieldset>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="token_role">{t.tokens.roleLabel}</Label>
               <Controller
@@ -171,7 +218,12 @@ export function TokensPage() {
                     id="token_role"
                     options={roleOptions(t, ROLES)}
                     value={field.value}
-                    onChange={field.onChange}
+                    onChange={(next) => {
+                      field.onChange(next);
+                      // A lower role drops the areas it cannot cover, so
+                      // raising it again does not bring them back unseen.
+                      form.setValue('areas', allowedAreas(form.getValues('areas'), next));
+                    }}
                   />
                 )}
               />
@@ -179,6 +231,20 @@ export function TokensPage() {
                 {t.tokens.roleHint}
               </span>
             </div>
+            {kind === 'assistant' && (
+              <Controller
+                control={form.control}
+                name="areas"
+                render={({ field }) => (
+                  <AreaGrid
+                    role={role}
+                    value={field.value}
+                    onChange={field.onChange}
+                    error={form.formState.errors.areas?.message}
+                  />
+                )}
+              />
+            )}
             <div className="flex justify-end gap-2">
               <Button type="button" onClick={() => setCreateOpen(false)}>
                 {t.common.cancel}

@@ -85,3 +85,38 @@ describe('TokensPage in German', () => {
     ]);
   });
 });
+
+describe('TokensPage assistant tokens in German', () => {
+  it('offers the kind choice and the area grid in German', async () => {
+    const user = userEvent.setup();
+    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+    const rootRoute = createRootRoute();
+    const orgRoute = createRoute({ getParentRoute: () => rootRoute, path: '/o/$org' });
+    const tokensRoute = createRoute({ getParentRoute: () => orgRoute, path: '/settings/tokens', component: TokensPage });
+    const router = createRouter({
+      routeTree: rootRoute.addChildren([orgRoute.addChildren([tokensRoute])]),
+      history: createMemoryHistory({ initialEntries: ['/o/acme/settings/tokens'] }),
+    });
+
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <I18nProvider locale="de">
+          <ConfirmProvider>
+            <ToastProvider>
+              <RouterProvider router={router} />
+            </ToastProvider>
+          </ConfirmProvider>
+        </I18nProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Token erstellen' }));
+    expect(screen.getByRole('radio', { name: 'API-Token' })).toBeChecked();
+    await user.click(screen.getByRole('radio', { name: 'Assistenten-Token' }));
+    expect(screen.getByRole('checkbox', { name: 'Inventar: lesen' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: 'Vorlagen: schreiben' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Läufe: anfragen' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Zugangsdaten: nur Namen' })).toBeDisabled();
+    expect(screen.getByText('Ausgegraute Bereiche brauchen eine höhere Rolle als Betrachter.')).toBeInTheDocument();
+  });
+});

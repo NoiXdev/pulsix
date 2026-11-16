@@ -25,6 +25,8 @@ import { TemplateVariablesPage } from './features/templates/variables/TemplateVa
 import { SchedulesPage } from './features/schedules/SchedulesPage.tsx';
 import { RunsPage } from './features/runs/RunsPage.tsx';
 import { RunDetailPage } from './features/runs/RunDetailPage.tsx';
+import { RunRequestsPage } from './features/runs/RunRequestsPage.tsx';
+import { RunRequestDetailPage } from './features/runs/RunRequestDetailPage.tsx';
 import { WorkersPage } from './features/workers/WorkersPage.tsx';
 import { AgentsPage } from './features/agents/AgentsPage.tsx';
 import { ChecksPage } from './features/checks/ChecksPage.tsx';
@@ -213,6 +215,11 @@ const runsRoute = createRoute({
   component: RunsPage,
 });
 const runDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/$id', component: RunDetailPage });
+// Run requests (spec 2026-11-16): the runs an assistant asked for, and the
+// page where a person approves or rejects one. The static segment wins over
+// /runs/$id, so no run id is ever read as "requests".
+const runRequestsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/requests', component: RunRequestsPage });
+const runRequestDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: '/runs/requests/$id', component: RunRequestDetailPage });
 const workersRoute = createRoute({ getParentRoute: () => orgRoute, path: '/workers', component: WorkersPage });
 const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: '/agents', component: AgentsPage });
 const maintenanceRoute = createRoute({ getParentRoute: () => orgRoute, path: '/maintenance', component: MaintenancePage });
@@ -279,6 +286,8 @@ const routeTree = rootRoute.addChildren([
     schedulesRoute,
     runsRoute,
     runDetailRoute,
+    runRequestsRoute,
+    runRequestDetailRoute,
     workersRoute,
     agentsRoute,
     maintenanceRoute,

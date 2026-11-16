@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { Terminal } from 'lucide-react';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { Inbox, Terminal } from 'lucide-react';
 import { Card, GridHeader } from '../../ui/table.tsx';
 import { Button } from '../../ui/button.tsx';
+import { buttonClass } from '../../ui/buttonStyles.ts';
 import { Select } from '../../ui/Select.tsx';
 import { LoadMoreButton } from '../../ui/LoadMoreButton.tsx';
 import { QueryLoading } from '../../ui/QueryState.tsx';
@@ -10,6 +11,7 @@ import { useQueryGuard } from '../../ui/useQueryGuard.tsx';
 import { useJobs } from '../../api/hooks/useJobs.ts';
 import { useOrg } from '../../api/hooks/useOrgs.ts';
 import { useSchedules } from '../../api/hooks/useSchedules.ts';
+import { usePendingRunRequestCount } from '../../api/hooks/useRunRequests.ts';
 import { may } from '../../lib/roles.ts';
 import { AdhocDialog } from './AdhocDialog.tsx';
 import { HostFilterChip } from './HostFilterChip.tsx';
@@ -43,6 +45,7 @@ export function RunsPage() {
   const orgInfo = useOrg(org);
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const [adhocOpen, setAdhocOpen] = useState(false);
+  const pendingRequests = usePendingRunRequestCount(org);
 
   const guard = useQueryGuard(jobs);
   if (guard) return guard;
@@ -111,6 +114,10 @@ export function RunsPage() {
               placeholder={t.runs.list.allSchedules}
             />
           )}
+          <Link to="/o/$org/runs/requests" params={{ org }} className={buttonClass()}>
+            <Inbox size={15} />{' '}
+            {pendingRequests ? t.runs.requests.openCount(pendingRequests) : t.runs.requests.open}
+          </Link>
           {canRun && (
             <Button variant="primary" onClick={() => setAdhocOpen(true)}>
               <Terminal size={15} /> {t.runs.list.runCommand}

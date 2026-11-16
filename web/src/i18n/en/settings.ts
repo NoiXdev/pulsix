@@ -57,4 +57,13 @@ export const enSettings = {
     saveFailed: 'Failed to save the monitoring settings',
     loadFailed: 'Failed to load the monitoring settings',
   },
+  assistant: {
+    title: 'Assistant access',
+    hint: 'Assistant tokens of this organization can work within their areas: read and set up the inventory, repositories, playbooks and templates, read runs and request runs, which a person approves here.',
+    readOnlyHint: 'Only owners and admins can change assistant access.',
+    turnedOn: 'Assistant access turned on',
+    turnedOff: 'Assistant access turned off',
+    saveFailed: 'Failed to change assistant access',
+    loadFailed: 'Failed to load assistant access',
+  },
 };

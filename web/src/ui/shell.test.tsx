@@ -21,7 +21,7 @@ const ORGS: ShellOrg[] = [
  * itself so the "active route" assertions reflect real client-side
  * routing (finding "Important 11": the router's own activeProps, not a
  * hand-set `active` prop the shell used to take). */
-function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void; version?: string } = {}) {
+function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void; version?: string; pendingRunRequests?: number } = {}) {
   const rootRoute = createRootRoute();
 
   function leaf(path: string) {
@@ -38,6 +38,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
           onLogout={opts.onLogout ?? (() => {})}
           onCreateOrg={opts.onCreateOrg}
           version={opts.version}
+          pendingRunRequests={opts.pendingRunRequests}
         >
           <div>page content</div>
         </AppShell>
@@ -270,5 +271,22 @@ describe('AppShell nav grouping', () => {
     renderShellAt('/o/acme/hosts');
     await screen.findByText('page content');
     expect(screen.queryByTitle('Pulsix version')).not.toBeInTheDocument();
+  });
+
+  // Run requests (spec 2026-11-16): the Runs entry carries the number of
+  // requests waiting for a person, and nothing while none is waiting.
+  it('shows the pending run requests beside the Runs entry', async () => {
+    renderShellAt('/o/acme/hosts', { pendingRunRequests: 3 });
+    await screen.findByText('page content');
+    const runs = within(screen.getByRole('group', { name: 'Automation' })).getByRole('link', { name: /^Runs/ });
+    expect(runs).toHaveTextContent('3');
+    expect(within(runs).getByText('3 pending run requests')).toBeInTheDocument();
+  });
+
+  it.each([0, undefined])('shows no run request badge for %s pending', async (pending) => {
+    renderShellAt('/o/acme/hosts', { pendingRunRequests: pending });
+    await screen.findByText('page content');
+    expect(screen.getByRole('link', { name: 'Runs' })).toBeInTheDocument();
+    expect(screen.queryByText(/pending run requests/)).not.toBeInTheDocument();
   });
 });

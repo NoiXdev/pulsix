@@ -70,6 +70,26 @@ describe('ActivityPage actor names', () => {
     expect(screen.getByText('Pulsix')).toBeInTheDocument();
   });
 
+  it('names the token a change was made with', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/orgs/acme/members': MEMBERS,
+      'GET /api/v1/orgs/acme/activity': {
+        items: [
+          { id: 'e1', at: '2026-03-01T10:00:00Z', actor_kind: 'token', actor_id: 'u1', token_name: 'helper', action: 'created', object_type: 'host', summary: 'created host web-06' },
+          { id: 'e2', at: '2026-03-01T09:00:00Z', actor_kind: 'user', actor_id: 'u1', action: 'created', object_type: 'host', summary: 'created host web-07' },
+        ],
+        next_cursor: '',
+      },
+    });
+
+    renderPage(qc);
+
+    expect(await screen.findByText('created host web-06')).toBeInTheDocument();
+    expect(screen.getByText('Tim R. · via token helper')).toBeInTheDocument();
+    expect(screen.queryAllByText(/via token/)).toHaveLength(1);
+  });
+
   it('filters by actor using the member picker, matching the API\'s user-id filter', async () => {
     const user = userEvent.setup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

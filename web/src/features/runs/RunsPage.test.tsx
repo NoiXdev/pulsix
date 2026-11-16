@@ -49,6 +49,17 @@ const LIVE_ID = '0190abcd-0000-7000-8000-00000000000e';
 const ORG_VIEWER = { org: { id: 'o', name: 'Acme', slug: 'acme', role: 'viewer', created_at: '' } };
 
 describe('RunsPage', () => {
+  it('links to the run requests, with the number waiting', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_VIEWER,
+      'GET /api/v1/orgs/acme/jobs': { jobs: [], next_cursor: '' },
+      'GET /api/v1/orgs/acme/run-requests': { requests: [{ id: 'a' }] },
+    });
+    renderPage();
+    const link = await screen.findByRole('link', { name: 'Run requests (1 pending)' });
+    expect(link).toHaveAttribute('href', '/o/acme/runs/requests');
+  });
+
   it('lists runs with kind, status colours, template, zone and trigger', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OPERATOR,

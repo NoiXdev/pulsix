@@ -54,4 +54,13 @@ export const deSettings: Messages['settings'] = {
     saveFailed: 'Die Überwachungseinstellungen konnten nicht gespeichert werden',
     loadFailed: 'Die Überwachungseinstellungen konnten nicht geladen werden',
   },
+  assistant: {
+    title: 'Assistenten-Zugang',
+    hint: 'Assistenten-Tokens dieser Organisation können in ihren Bereichen arbeiten: Inventar, Repositories, Playbooks und Vorlagen lesen und einrichten, Läufe lesen und Läufe anfragen, die eine Person hier freigibt.',
+    readOnlyHint: 'Nur Inhaber und Admins können den Assistenten-Zugang ändern.',
+    turnedOn: 'Assistenten-Zugang eingeschaltet',
+    turnedOff: 'Assistenten-Zugang ausgeschaltet',
+    saveFailed: 'Assistenten-Zugang konnte nicht geändert werden',
+    loadFailed: 'Assistenten-Zugang konnte nicht geladen werden',
+  },
 };

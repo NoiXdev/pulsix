@@ -67,6 +67,23 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(header).toHaveTextContent('SettingsMembers');
   });
 
+  it('shows the number of pending run requests beside Runs', async () => {
+    let asked: string | null = null;
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+      'GET /api/v1/orgs/acme/run-requests': (req: { search: URLSearchParams }) => {
+        asked = req.search.get('status');
+        return { requests: [{ id: 'a' }, { id: 'b' }] };
+      },
+    });
+    renderAt('/o/acme/hosts');
+
+    expect(await screen.findByText('2 pending run requests')).toBeInTheDocument();
+    expect(asked).toBe('pending');
+  });
+
   it('shows the manager version from the setup status in the shell', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': ORG_OK,

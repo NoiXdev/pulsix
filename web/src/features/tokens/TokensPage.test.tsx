@@ -191,3 +191,129 @@ describe('TokensPage background refetch error handling (fix round 2)', () => {
     expect(await screen.findByText('LOGIN PAGE')).toBeInTheDocument();
   });
 });
+
+describe('TokensPage assistant tokens', () => {
+  async function openDialog(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('button', { name: 'Create token' }));
+    await user.type(screen.getByLabelText('Name'), 'helper');
+  }
+
+  async function submit(user: ReturnType<typeof userEvent.setup>) {
+    const submitButtons = screen.getAllByRole('button', { name: 'Create token' });
+    await user.click(submitButtons[submitButtons.length - 1]);
+  }
+
+  it('sends an API token without areas by default', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let posted: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'POST /api/v1/orgs/acme/tokens': (req: MockRequest) => {
+        posted = req.body as Record<string, unknown>;
+        return { id: 'tok1', name: 'helper', role: 'viewer', token: 'pxt_a', created_at: '2026-01-01T00:00:00Z' };
+      },
+    });
+    renderPage(qc);
+    await openDialog(user);
+    expect(screen.queryByRole('checkbox', { name: 'Inventory: read' })).not.toBeInTheDocument();
+    await submit(user);
+    expect(await screen.findByText('pxt_a')).toBeInTheDocument();
+    expect(posted).toEqual({ name: 'helper', role: 'viewer', kind: 'api' });
+  });
+
+  it('creates an assistant token with the ticked areas, write ticking read and read unticking write', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let posted: Record<string, unknown> | undefined;
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'POST /api/v1/orgs/acme/tokens': (req: MockRequest) => {
+        posted = req.body as Record<string, unknown>;
+        return { id: 'tok1', name: 'helper', role: 'operator', token: 'pxt_b', created_at: '2026-01-01T00:00:00Z' };
+      },
+    });
+    renderPage(qc);
+    await openDialog(user);
+    await user.click(screen.getByRole('radio', { name: 'Assistant token' }));
+    await pickOption(screen, 'Role', 'Operator');
+
+    await user.click(screen.getByRole('checkbox', { name: 'Inventory: write' }));
+    expect(screen.getByRole('checkbox', { name: 'Inventory: read' })).toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: 'Repositories & playbooks: write' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Repositories & playbooks: read' }));
+    expect(screen.getByRole('checkbox', { name: 'Repositories & playbooks: write' })).not.toBeChecked();
+    await user.click(screen.getByRole('checkbox', { name: 'Jobs: request runs' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Credentials: names only' }));
+    await submit(user);
+
+    expect(await screen.findByText('pxt_b')).toBeInTheDocument();
+    expect(posted).toEqual({
+      name: 'helper',
+      role: 'operator',
+      kind: 'assistant',
+      areas: ['inventory.read', 'inventory.write', 'jobs.read', 'jobs.request', 'credentials.names'],
+    });
+  });
+
+  it('disables the areas the role cannot cover, with a hint', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({ 'GET /api/v1/orgs/acme/tokens': { tokens: [] } });
+    renderPage(qc);
+    await openDialog(user);
+    await user.click(screen.getByRole('radio', { name: 'Assistant token' }));
+
+    expect(screen.getByRole('checkbox', { name: 'Inventory: read' })).toBeEnabled();
+    expect(screen.getByRole('checkbox', { name: 'Inventory: write' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Jobs: request runs' })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Credentials: names only' })).toBeDisabled();
+    expect(screen.getByText('Greyed-out areas need a higher role than Viewer.')).toBeInTheDocument();
+
+    await pickOption(screen, 'Role', 'Operator');
+    expect(screen.getByRole('checkbox', { name: 'Inventory: write' })).toBeEnabled();
+    expect(screen.queryByText(/Greyed-out areas/)).not.toBeInTheDocument();
+  });
+
+  it('refuses an assistant token without areas', async () => {
+    const user = userEvent.setup();
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let posts = 0;
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': { tokens: [] },
+      'POST /api/v1/orgs/acme/tokens': () => {
+        posts += 1;
+        return {};
+      },
+    });
+    renderPage(qc);
+    await openDialog(user);
+    await user.click(screen.getByRole('radio', { name: 'Assistant token' }));
+    await submit(user);
+    expect(await screen.findByText('Tick at least one area.')).toBeInTheDocument();
+    expect(posts).toBe(0);
+  });
+
+  it('shows the kind and the areas of each token in the list', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    mockApi({
+      'GET /api/v1/orgs/acme/tokens': {
+        tokens: [
+          { id: 'tok1', name: 'ci-deploy', role: 'viewer', kind: 'api', created_at: '2026-01-01T00:00:00Z' },
+          {
+            id: 'tok2',
+            name: 'helper',
+            role: 'operator',
+            kind: 'assistant',
+            areas: ['inventory.read', 'inventory.write', 'jobs.read'],
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ],
+      },
+    });
+    renderPage(qc);
+    expect(await screen.findByText('helper')).toBeInTheDocument();
+    expect(screen.getAllByText('Assistant')).toHaveLength(1);
+    expect(screen.getByText('Inventory: write · Jobs: read')).toBeInTheDocument();
+  });
+});
