@@ -51,6 +51,7 @@ type (
 		Job struct {
 			ID         string         `json:"id"`
 			Status     string         `json:"status"`
+			RunGroupID string         `json:"run_group_id"`
 			Hosts      []string       `json:"hosts"`
 			Stats      map[string]any `json:"stats"`
 			Error      string         `json:"error,omitempty"`
@@ -447,4 +448,15 @@ func TestSSEStreamTimeoutReturnsErrorNotFatally(t *testing.T) {
 	if len(frames) != 0 {
 		t.Fatalf("frames = %v, want none", frames)
 	}
+}
+
+// createManagedHost adds a second managed host to the scenario zone. The
+// fake runner never contacts it, so it needs no SSH.
+func (s *scenario) createManagedHost(name string) string {
+	s.t.Helper()
+	var out hostOut
+	s.post("/api/v1/"+s.apiPath()+"/hosts", map[string]any{
+		"name": name, "zone_id": s.zoneID, "address": "192.0.2.11", "managed": true,
+	}, &out)
+	return out.Host.ID
 }
