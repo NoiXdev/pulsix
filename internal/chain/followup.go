@@ -1,4 +1,4 @@
-// Package chain stores and resolves job chaining (backlog 2.116): the
+// Package chain stores and resolves job chaining (backlog 2.121): the
 // follow-ups a run group was planned with, what becomes of them when the
 // group finishes, and the sweep that resolves groups whose finish was never
 // reported. Starting the follow-ups is the starter's job.

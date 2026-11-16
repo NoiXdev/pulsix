@@ -1,4 +1,4 @@
-// Job chaining on the enqueue side (backlog 2.116): the chain trigger, the
+// Job chaining on the enqueue side (backlog 2.121): the chain trigger, the
 // context a chained run carries, and the port the enqueue paths call to plan
 // a run's follow-ups. The planner itself lives in internal/chain; this
 // package only knows when to call it.

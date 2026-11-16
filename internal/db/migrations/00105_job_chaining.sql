@@ -1,5 +1,5 @@
 -- +goose Up
--- Job chaining (backlog 2.116, spec docs/superpowers/specs/2026-11-16-job-
+-- Job chaining (backlog 2.121, spec docs/superpowers/specs/2026-11-16-job-
 -- chaining-design.md): a template names follow-up templates that start after
 -- one of its runs succeeds. job_template_follow_ups holds the configuration;
 -- run_follow_ups snapshots it per run group at launch and records what became

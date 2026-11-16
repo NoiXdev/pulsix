@@ -134,7 +134,7 @@ type Template struct {
 	// at run time through ToVaultIdentity and repos.ResolveVaultIdentities.
 	VaultCredentials []VaultCredential
 	// FollowUps are the templates started, in this order, after a
-	// successful run of this one (backlog 2.116).
+	// successful run of this one (backlog 2.121).
 	FollowUps []FollowUp
 	// Revision moves on with every write (If-Match / ETag at the API).
 	Revision int64

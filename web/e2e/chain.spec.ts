@@ -1,5 +1,5 @@
 /**
- * The job chaining journey (backlog 2.116): the template editor's
+ * The job chaining journey (backlog 2.121): the template editor's
  * "Follow-ups on success" picker → running the template through the
  * follow-ups dialog → the run detail's "Follow-ups" section showing the
  * follow-up as Started → the link to its run → the "Follow-up of" link back

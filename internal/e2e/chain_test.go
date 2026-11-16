@@ -1,4 +1,4 @@
-// Job chaining end to end (backlog 2.116): a real manager, worker and the
+// Job chaining end to end (backlog 2.121): a real manager, worker and the
 // fake ansible-runner. Template A follows up with template B; the chained
 // run starts on the hosts A played on, a failed run skips its follow-up and
 // a follow-up cycle is refused.
