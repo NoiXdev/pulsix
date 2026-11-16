@@ -19,6 +19,7 @@ ignore ./web/node_modules
 require (
 	filippo.io/age v1.3.2
 	github.com/Microsoft/go-winio v0.6.3
+	github.com/andybalholm/cascadia v1.3.5
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/danielgtaylor/huma/v2 v2.40.0
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6

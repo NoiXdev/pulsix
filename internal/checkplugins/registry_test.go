@@ -125,6 +125,9 @@ var listParamsNotItems = map[string]bool{
 	// monitoring group ids, not items.
 	"icmp.vantage_groups": true, "tcp.vantage_groups": true, "http.vantage_groups": true,
 	"tls.vantage_groups": true, "dns.vantage_groups": true, "snmp.vantage_groups": true,
+	// http's assertions name items too, but json_values is the ItemParam;
+	// the ItemAsked hook reads both lists (backlog 3.13b).
+	"http.assertions": true,
 }
 
 // TestListParamsAreItemParams: a list parameter left out of ItemParam makes

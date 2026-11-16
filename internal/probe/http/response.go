@@ -22,6 +22,7 @@ const (
 type wants struct {
 	bodyContains string
 	entries      []jsonEntry
+	assertions   []assertEntry
 }
 
 // wantsOf reads the parts of params that look at a response.
@@ -29,6 +30,7 @@ func wantsOf(params map[string]any) wants {
 	return wants{
 		bodyContains: probe.StrParam(params, "body_contains", ""),
 		entries:      jsonEntries(params),
+		assertions:   assertEntries(params),
 	}
 }
 
@@ -36,7 +38,7 @@ func wantsOf(params map[string]any) wants {
 // kept: something reads them. This is the one condition to extend for a
 // new reader of the body.
 func (w wants) keepBody() bool {
-	return w.bodyContains != "" || len(w.entries) > 0
+	return w.bodyContains != "" || len(w.entries) > 0 || keepsBody(w.assertions)
 }
 
 // bodyRead is what was read of a response body. Nothing read leaves the

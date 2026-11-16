@@ -61,6 +61,9 @@ func TestCheckParamsFieldDoc(t *testing.T) {
 		"secret (not empty; at most 64 bytes; the name of a secret in the organization's secret store: 1 to 64 letters, digits, _ . -), " +
 		"body_contains (not empty; at most 500 bytes), " +
 		"json_values (list; at most 32 entries; each name=JSONPath, the name 1 to 64 letters, digits, _ . -, the path at most 512 bytes in the supported subset of RFC 9535 JSONPath (one selector per bracket, at most one .., filters comparing @ paths with literals) such as $.status), " +
+		"assertions (list; at most 32 entries; each at most 512 bytes; each name=assertion [@warn], the name 1 to 64 letters, digits, _ . -, " +
+		"the assertion a subject (status, response_ms, ttfb_ms, size, redirects, cert_days, cert_issuer, body, header(\"Name\"), json(\"$.path\"), " +
+		"html(\"selector\"), html(\"selector\") count), an operator and an operand such as status == 200), " +
 		"timeout_s (1 to 60; default 10), " +
 		"follow_redirects (true or false; default true), verify_tls (true or false; default true), " + vantage +
 		"tls: port (1 to 65535; default 443), server_name (at most 500 bytes; not blank), timeout_s (1 to 30; default 10), " + vantage +

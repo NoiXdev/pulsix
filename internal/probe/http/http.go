@@ -42,7 +42,8 @@ var (
 // the redirects followed, the body's size and, over https, the final hop's
 // certificate; when body_contains is set, whether the first 1 MiB of the
 // body holds it; each json_values entry is read from the same bytes, in a
-// slot of gate. The check's secret (its fields in secret, its name in
+// slot of gate; each assertion is evaluated on the response (html and
+// json in a slot of gate too). A failed attempt reports neither. The check's secret (its fields in secret, its name in
 // params) sends credentials. roots verifies https certificates; nil means
 // the system roots.
 func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[string]any, address string, secret map[string]string, roots *x509.CertPool) []probe.Observation {
@@ -122,13 +123,15 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	if w.bodyContains != "" {
 		obs = append(obs, probe.BoolValue("http.body_match", bytes.Contains(body.kept, []byte(w.bodyContains))))
 	}
-	return append(obs, jsonObservations(ctx, gate, w.entries, body.kept, body.truncated, body.err != nil)...)
+	obs = append(obs, jsonObservations(ctx, gate, w.entries, body.kept, body.truncated, body.err != nil)...)
+	return append(obs, assertObservations(ctx, gate, w.assertions, &r)...)
 }
 
 // FailAll is the result of an http probe of params that could not be
 // attempted, msg on every metric the params would surely have produced
-// (certainHostMetrics), on http.body_match when body_contains is set and
-// on each json_values entry's item. The runner reports it for a secret it
+// (certainHostMetrics), on http.body_match when body_contains is set, on
+// each json_values entry's item and on both metrics of each assertion's
+// item. The runner reports it for a secret it
 // cannot hand over.
 func FailAll(params map[string]any, msg string) []probe.Observation {
 	return failAll(probe.StrParam(params, "url", ""), wantsOf(params), msg)
@@ -172,13 +175,15 @@ func urlShape(rawURL string) (resolves, secured bool) {
 }
 
 // failAll is msg on rawURL's certain host metrics, on http.body_match
-// when body_contains is set and on each entry's http.json.value.
+// when body_contains is set, on each entry's http.json.value and on
+// http.assertion and http.assertion_actual of each assertion's item.
 func failAll(rawURL string, w wants, msg string) []probe.Observation {
 	obs := probe.FailAll(msg, certainHostMetrics(rawURL)...)
 	if w.bodyContains != "" {
 		obs = append(obs, probe.Observation{Metric: "http.body_match", Err: msg})
 	}
-	return append(obs, failEntries(w.entries, msg)...)
+	obs = append(obs, failEntries(w.entries, msg)...)
+	return append(obs, failAssertions(w.assertions, msg)...)
 }
 
 // httpURL replaces {address} in raw with the host's address (an IPv6

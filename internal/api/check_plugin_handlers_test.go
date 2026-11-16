@@ -109,7 +109,10 @@ func TestCheckPluginsServesEveryDescriptor(t *testing.T) {
 	if probe.ItemParam != "json_values" || !probe.HostItemAlwaysAsked {
 		t.Errorf("http items = %q, host item always asked %v", probe.ItemParam, probe.HostItemAlwaysAsked)
 	}
-	timeout := probe.Params[5]
+	if p := probe.Params[5]; p.Name != "assertions" || p.Type != "list" || p.MaxEntries != 32 || p.MaxBytes != 512 || p.Format != "assertion" {
+		t.Errorf("http assertions param = %+v", p)
+	}
+	timeout := probe.Params[6]
 	if timeout.Name != "timeout_s" || timeout.Type != "integer" || timeout.Default != float64(10) ||
 		timeout.Min == nil || *timeout.Min != 1 || timeout.Max == nil || *timeout.Max != 60 {
 		t.Errorf("http timeout_s param = %+v", timeout)

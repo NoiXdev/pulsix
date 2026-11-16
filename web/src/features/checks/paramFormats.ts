@@ -13,6 +13,8 @@
  * http://x:99999/, the opposite of Go on both.
  */
 
+import { assertion, jsonPathDescendants } from './assertionFormat.ts';
+
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -339,27 +341,6 @@ function snmpOID(s: string): boolean {
   return first <= 2 && (first === 2 || second <= 39) && 40 * first + second <= 4294967295;
 }
 
-/** jsonPathDescendants counts the descendant segments of a JSONPath, as
- * the server's parser (internal/jpath) counts them: every ".." outside a
- * string literal, filters included. */
-function jsonPathDescendants(path: string): number {
-  let n = 0;
-  let quote = '';
-  for (let i = 0; i < path.length; i++) {
-    const c = path[i];
-    if (quote) {
-      if (c === '\\') i++;
-      else if (c === quote) quote = '';
-    } else if (c === "'" || c === '"') {
-      quote = c;
-    } else if (c === '.' && path[i + 1] === '.') {
-      n++;
-      i++;
-    }
-  }
-  return n;
-}
-
 /** jsonValue: one entry of http's json_values, "name=path" split at the
  * first '=': the name follows secretName, the path starts with $, is at
  * most 512 bytes and has at most one descendant segment (..). Whether the
@@ -393,6 +374,7 @@ export const FORMATS: Readonly<Record<string, (s: string) => boolean>> = {
   commandName,
   snmpOID,
   jsonValue,
+  assertion,
   uuid,
 };
 

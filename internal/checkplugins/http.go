@@ -3,6 +3,8 @@ package checkplugins
 import (
 	"errors"
 	"fmt"
+
+	"github.com/noixdev/pulsix/internal/probe/assert"
 )
 
 // maxHTTPJSONValues bounds http's json_values (backlog 3.6h).
@@ -19,6 +21,12 @@ const maxHTTPJSONValues = 32
 // "name=JSONPath" reads one scalar out of a JSON body and reports it on
 // item "name" — a number as http.json.value, a string or boolean as
 // http.json.text. The request's own metrics stay on the whole-host item "".
+//
+// Backlog 3.13b (spec docs/superpowers/specs/2026-11-16-web-assertions-
+// design.md) added assertions: each entry "name=expression [@warn]"
+// reports on item "name" whether it held (http.assertion: pass, or its
+// severity) and what was seen (http.assertion_actual). Names are unique
+// across json_values and assertions together.
 func httpPlugin() Descriptor {
 	secret := SecretParam()
 	secret.Example = "api-token"
@@ -31,6 +39,7 @@ func httpPlugin() Descriptor {
 			secret,
 			syntheticText("body_contains", true),
 			{Name: "json_values", Type: TypeList, MaxEntries: maxHTTPJSONValues, Format: FormatJSONValue, Example: "status=$.status"},
+			{Name: "assertions", Type: TypeList, MaxEntries: assert.MaxEntries, MaxBytes: assert.MaxEntryLen, Format: FormatAssertion, Example: "ok=status == 200"},
 			syntheticTimeout(60, 10),
 			{Name: "follow_redirects", Type: TypeBool, Default: true},
 			{Name: "verify_tls", Type: TypeBool, Default: true},
@@ -66,25 +75,51 @@ func httpPlugin() Descriptor {
 			// Item: a json_values entry's name.
 			{Name: "http.json.value", Kind: Numeric},
 			{Name: "http.json.text", Kind: Discrete},
+			// Item: an assertions entry's name. pass, or the entry's
+			// severity (warn, crit) when it failed; and what was seen.
+			{Name: "http.assertion", Kind: Discrete},
+			{Name: "http.assertion_actual", Kind: Discrete},
 		},
 	}
 }
 
-// httpItemAsked: only the names of the json_values entries are asked for
-// (the whole-host item "" always is, see HostItemAlwaysAsked).
-func httpItemAsked(_ map[string]any, entries []string, item string) bool {
-	return namedEntryAsked(entries, item)
+// httpItemAsked: only the names of the json_values and assertions
+// entries are asked for (the whole-host item "" always is, see
+// HostItemAlwaysAsked). json_values is the ItemParam, so entries are its;
+// the assertions are read here.
+func httpItemAsked(params map[string]any, entries []string, item string) bool {
+	assertions, _ := stringList(params["assertions"])
+	return namedEntryAsked(entries, item) || namedEntryAsked(assertions, item)
 }
 
-// httpCheck: two json_values entries must not report on the same item,
-// and a JSON value needs a body, which HEAD does not fetch.
+// httpCheck: no two json_values or assertions entries may report on the
+// same item, and a JSON value or an assertion on the body needs a body,
+// which HEAD does not fetch.
 func httpCheck(params map[string]any) error {
 	entries, _ := stringList(params["json_values"])
 	if name, twice := duplicateEntryName(entries); twice {
 		return fmt.Errorf("json_values names %q twice", name)
 	}
-	if len(entries) > 0 && params["method"] == "HEAD" {
+	assertions, _ := stringList(params["assertions"])
+	if name, twice := duplicateEntryName(assertions); twice {
+		return fmt.Errorf("assertions names %q twice", name)
+	}
+	for _, a := range assertions {
+		if namedEntryAsked(entries, entryName(a)) {
+			return fmt.Errorf("json_values and assertions both name %q", entryName(a))
+		}
+	}
+	if params["method"] != "HEAD" {
+		return nil
+	}
+	if len(entries) > 0 {
 		return errors.New("json_values needs method GET: a HEAD response has no body")
+	}
+	for _, entry := range assertions {
+		// Every entry passed its format already.
+		if a, err := assert.Parse(entry); err == nil && a.Subject().ReadsBody() {
+			return fmt.Errorf("assertion %q reads the body and needs method GET: a HEAD response has no body", a.Name())
+		}
 	}
 	return nil
 }

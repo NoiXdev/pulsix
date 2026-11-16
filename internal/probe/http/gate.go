@@ -12,7 +12,9 @@ import (
 const errTooBusy = "the manager was too busy to read the JSON response"
 
 // JSONGate bounds the JSON stages (decoding a body and evaluating all of a
-// check's json_values entries) that run at once in the manager. A hostile
+// check's json_values entries) that run at once in the manager, and the
+// assertions' parse stage (the body as JSON and as HTML, and every json
+// and html assertion of a check on it; backlog 3.13b). A hostile
 // 1 MiB body decodes to tens of MiB and its entries take up to a second
 // of CPU, while the runner runs up to 32 probes at once inside the
 // manager, next to the API: without the gate one organization could push

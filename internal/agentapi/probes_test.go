@@ -295,14 +295,16 @@ func TestProbeResultsStoredAsTheAgentsVantage(t *testing.T) {
 }
 
 // TestProbeResultsOnlyForAskedItems: an item is kept only when the slot's
-// plugin asks for it — "" for a plugin without items, a json_values name
-// for http — and nothing of an snmp slot is ever kept (snmp never goes to
+// plugin asks for it — "" for a plugin without items, a json_values or
+// assertions name for http — and nothing of an snmp slot is ever kept (snmp never goes to
 // an agent, and its interfaces option asks for any item).
 func TestProbeResultsOnlyForAskedItems(t *testing.T) {
 	h := newHarnessWithProbes(t)
 	agentHost := uuid.New()
 	targetC := uuid.MustParse("0198f0a1-7c2d-7000-8000-00000000000c")
-	h.probes.setAssignments(agentHost, httpSlot(agentHost, targetA), tcpSlot(agentHost, targetB), snmpSlot(agentHost, targetC))
+	web := httpSlot(agentHost, targetA)
+	web.Params["assertions"] = []any{"ok=status == 200 @warn"}
+	h.probes.setAssignments(agentHost, web, tcpSlot(agentHost, targetB), snmpSlot(agentHost, targetC))
 	agent := agents.AgentIdentity{OrgID: testOrg, HostID: agentHost, Serial: "s1"}
 	now := h.clock()
 	label := func(target uuid.UUID, key, item, metric, l string) *agentpb.ProbeResult {
@@ -315,6 +317,9 @@ func TestProbeResultsOnlyForAskedItems(t *testing.T) {
 		label(targetA, "web", "status", "http.json.text", "ok"),         // kept: a json_values name
 		probeValue(targetA, "web", "status", "http.json.value", now, 1), // kept
 		probeValue(targetA, "web", "other", "http.json.value", now, 1),  // not a json_values name
+		label(targetA, "web", "ok", "http.assertion", "warn"),           // kept: an assertions name
+		label(targetA, "web", "ok", "http.assertion_actual", "503"),     // kept
+		label(targetA, "web", "gone", "http.assertion", "crit"),         // not an assertions name
 		probeValue(targetA, "web", "", "http.up", now, 1),               // kept: the whole-check item
 		probeValue(targetC, "switch", "", "snmp.up", now, 1),            // snmp never from an agent
 		probeValue(targetC, "switch", "eth0", "snmp.if.in_octets", now, 1),
@@ -322,11 +327,11 @@ func TestProbeResultsOnlyForAskedItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (probeIngest{Accepted: 4, UnaskedItem: 2, Unassigned: 2}); res != want {
+	if want := (probeIngest{Accepted: 6, UnaskedItem: 3, Unassigned: 2}); res != want {
 		t.Fatalf("ingest = %+v, want %+v", res, want)
 	}
 	for _, o := range h.probes.vantageCalls()[0].obs {
-		if o.Item == "x" || o.Item == "other" || o.HostID == targetC {
+		if o.Item == "x" || o.Item == "other" || o.Item == "gone" || o.HostID == targetC {
 			t.Fatalf("recorded an unasked item: %+v", o)
 		}
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/noixdev/pulsix/internal/jpath"
+	"github.com/noixdev/pulsix/internal/probe/assert"
 )
 
 // Format names a validator for a string, or for each entry of a list. The
@@ -69,6 +70,14 @@ const (
 	// probe evaluates it with. The SPA's twin checks the shape, the length
 	// and the descendant segments (..) only.
 	FormatJSONValue Format = "jsonValue"
+	// FormatAssertion: one entry of http's assertions (backlog 3.13b),
+	// "name=expression" with an optional " @warn" or " @crit", in the
+	// grammar internal/probe/assert parses, the parser the probe evaluates
+	// it with. The name follows FormatSecretName's rule and becomes the
+	// item the assertion reports on. The SPA's twin checks the grammar but
+	// leaves regular expressions, CSS selectors and JSONPaths beyond their
+	// shape to the server.
+	FormatAssertion Format = "assertion"
 	// FormatUUID: a canonical lower-case UUID (8-4-4-4-12 hex digits, no
 	// braces or urn prefix) — the id of a monitoring group in a check's
 	// vantage_groups (backlog 3.13a).
@@ -82,7 +91,7 @@ func Formats() []Format {
 	return []Format{
 		FormatNotBlank, FormatNoControl, FormatDevicePath, FormatURL, FormatStatusURL,
 		FormatDNSName, FormatServer, FormatDockerLabel, FormatDockerSocket,
-		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatUUID,
+		FormatSecretName, FormatCommandName, FormatSNMPOID, FormatJSONValue, FormatAssertion, FormatUUID,
 	}
 }
 
@@ -132,6 +141,8 @@ func (f Format) problem(s string) string {
 		return snmpOIDProblem(s)
 	case FormatJSONValue:
 		return jsonValueProblem(s)
+	case FormatAssertion:
+		return assertionProblem(s)
 	case FormatUUID:
 		if id, err := uuid.Parse(s); err != nil || id.String() != s {
 			return "must be a lower-case UUID like 123e4567-e89b-12d3-a456-426614174000"
@@ -346,6 +357,16 @@ func jsonValueProblem(s string) string {
 		// The parser's own reason: the path is the operator's
 		// configuration, never a response, so quoting it is safe.
 		return "must be name=JSONPath, the path a JSONPath in Pulsix's supported subset (see the docs): " + err.Error()
+	}
+	return ""
+}
+
+// assertionProblem checks one assertions entry with the probe's parser,
+// naming the entry and the parser's reason: the entry is the operator's
+// configuration, never a response, so quoting it is safe.
+func assertionProblem(s string) string {
+	if _, err := assert.Parse(s); err != nil {
+		return fmt.Sprintf("must be name=assertion such as ok=status == 200 (see the docs): %q: %s", s, err)
 	}
 	return ""
 }

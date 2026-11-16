@@ -113,7 +113,7 @@ func TestHTTPDescriptor(t *testing.T) {
 		names = append(names, p.Name)
 		byName[p.Name] = p
 	}
-	want := []string{"url", "method", "secret", "body_contains", "json_values", "timeout_s", "follow_redirects", "verify_tls", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}
+	want := []string{"url", "method", "secret", "body_contains", "json_values", "assertions", "timeout_s", "follow_redirects", "verify_tls", "vantage_manager", "vantage_groups", "agents_per_group", "fail_policy"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("params = %v, want %v", names, want)
 	}
@@ -123,6 +123,10 @@ func TestHTTPDescriptor(t *testing.T) {
 	jv := byName["json_values"]
 	if jv.Type != checkplugins.TypeList || jv.MaxEntries != 32 || jv.Format != checkplugins.FormatJSONValue || jv.NonEmpty || jv.Required || jv.Default != nil || jv.Example != "status=$.status" {
 		t.Fatalf("json_values = %+v", jv)
+	}
+	as := byName["assertions"]
+	if as.Type != checkplugins.TypeList || as.MaxEntries != 32 || as.MaxBytes != 512 || as.Format != checkplugins.FormatAssertion || as.NonEmpty || as.Required || as.Default != nil || as.Example != "ok=status == 200" {
+		t.Fatalf("assertions = %+v", as)
 	}
 	metrics := []checkplugins.MetricSpec{
 		{Name: "http.up", Kind: checkplugins.Numeric},
@@ -141,6 +145,8 @@ func TestHTTPDescriptor(t *testing.T) {
 		{Name: "http.body_match", Kind: checkplugins.Numeric},
 		{Name: "http.json.value", Kind: checkplugins.Numeric},
 		{Name: "http.json.text", Kind: checkplugins.Discrete},
+		{Name: "http.assertion", Kind: checkplugins.Discrete},
+		{Name: "http.assertion_actual", Kind: checkplugins.Discrete},
 	}
 	if !slices.Equal(d.Metrics, metrics) {
 		t.Fatalf("metrics = %v, want %v", d.Metrics, metrics)
@@ -248,6 +254,141 @@ func TestHTTPAsksForItem(t *testing.T) {
 		{"a JSON null list asks for no JSON item", map[string]any{"json_values": nil}, "status", false},
 		{"a list that is not strings asks for everything", map[string]any{"json_values": []any{1.0}}, "status", true},
 		{"a Go string list", map[string]any{"json_values": []string{"a=$.a"}}, "a", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := checkplugins.AsksForItem("http", tc.params, tc.item); got != tc.want {
+				t.Fatalf("AsksForItem(http, %v, %q) = %v, want %v", tc.params, tc.item, got, tc.want)
+			}
+		})
+	}
+}
+
+// assertionList is n distinct valid assertions.
+func assertionList(n int) []any {
+	out := make([]any, n)
+	for i := range out {
+		out[i] = "a" + strings.Repeat("x", i) + "=status == 200"
+	}
+	return out
+}
+
+// TestValidateHTTPAssertions: the assertions rules of the spec's section 3
+// (docs/superpowers/specs/2026-11-16-web-assertions-design.md) and the
+// Check hook's refusals.
+func TestValidateHTTPAssertions(t *testing.T) {
+	runParamCases(t, []paramCase{
+		{"one assertion", "http", httpOK(map[string]any{"assertions": []any{"ok=status == 200"}}), true},
+		{"32 assertions", "http", httpOK(map[string]any{"assertions": assertionList(32)}), true},
+		{"a Go string list", "http", httpOK(map[string]any{"assertions": []string{"ok=status in 200..299 @warn"}}), true},
+		{"body subjects with GET", "http", httpOK(map[string]any{"method": "GET", "assertions": []any{`b=body contains "x"`, `j=json("$.a") exists`, `h=html("h1") count == 1`, "s=size < 10"}}), true},
+		{"other subjects with HEAD", "http", httpOK(map[string]any{"method": "HEAD", "assertions": []any{"ok=status == 200", `h=header("ETag") exists`, "c=cert_days > 14", `i=cert_issuer contains "R3"`, "t=ttfb_ms < 500", "r=response_ms < 900", "d=redirects == 0"}}), true},
+		{"names apart from json_values", "http", httpOK(map[string]any{"json_values": []any{"status=$.status"}, "assertions": []any{`ok=json("$.status") == "ok"`}}), true},
+		{"an empty list", "http", httpOK(map[string]any{"assertions": []any{}}), true},
+		{"an entry of 512 bytes", "http", httpOK(map[string]any{"assertions": []any{"ok=status == 200" + strings.Repeat(" ", 512-16)}}), true},
+
+		{"33 assertions", "http", httpOK(map[string]any{"assertions": assertionList(33)}), false},
+		{"an entry over 512 bytes", "http", httpOK(map[string]any{"assertions": []any{"ok=status == 200" + strings.Repeat(" ", 513-16)}}), false},
+		{"not a list", "http", httpOK(map[string]any{"assertions": "ok=status == 200"}), false},
+		{"an empty entry", "http", httpOK(map[string]any{"assertions": []any{""}}), false},
+		{"a malformed expression", "http", httpOK(map[string]any{"assertions": []any{"ok=status = 200"}}), false},
+		{"a bad regular expression", "http", httpOK(map[string]any{"assertions": []any{`ok=body matches "("`}}), false},
+		{"a bad selector", "http", httpOK(map[string]any{"assertions": []any{`ok=html("div[") exists`}}), false},
+		{"a bad JSONPath", "http", httpOK(map[string]any{"assertions": []any{`ok=json("$[") exists`}}), false},
+		{"duplicate names", "http", httpOK(map[string]any{"assertions": []any{"ok=status == 200", "ok=status < 500"}}), false},
+		{"a name json_values has", "http", httpOK(map[string]any{"json_values": []any{"ok=$.ok"}, "assertions": []any{"ok=status == 200"}}), false},
+		{"body with HEAD", "http", httpOK(map[string]any{"method": "HEAD", "assertions": []any{`b=body contains "x"`}}), false},
+		{"json with HEAD", "http", httpOK(map[string]any{"method": "HEAD", "assertions": []any{`j=json("$.a") exists`}}), false},
+		{"html with HEAD", "http", httpOK(map[string]any{"method": "HEAD", "assertions": []any{`h=html("p") exists`}}), false},
+		{"html count with HEAD", "http", httpOK(map[string]any{"method": "HEAD", "assertions": []any{`h=html("p") count > 0`}}), false},
+		{"size with HEAD", "http", httpOK(map[string]any{"method": "HEAD", "assertions": []any{"s=size > 0"}}), false},
+	})
+}
+
+// TestValidateHTTPAssertionMessages pins the refusals' wording: a
+// malformed entry is named with the parser's reason.
+func TestValidateHTTPAssertionMessages(t *testing.T) {
+	cases := []struct {
+		params map[string]any
+		want   string
+	}{
+		{httpOK(map[string]any{"assertions": []any{"ok=status = 200"}}),
+			`http: assertions entries must be name=assertion such as ok=status == 200 (see the docs): "ok=status = 200": "=" is not an operator of status`},
+		{httpOK(map[string]any{"assertions": []any{"ok=status == 200", "b=status < 500", "ok=size > 1"}}), `http: assertions names "ok" twice`},
+		{httpOK(map[string]any{"json_values": []any{"ok=$.ok"}, "assertions": []any{"ok=status == 200"}}), `http: json_values and assertions both name "ok"`},
+		{httpOK(map[string]any{"method": "HEAD", "assertions": []any{"ok=status == 200", "s=size > 0"}}), `http: assertion "s" reads the body and needs method GET: a HEAD response has no body`},
+	}
+	for _, tc := range cases {
+		err := checkplugins.Validate("http", tc.params)
+		if !errors.Is(err, checkplugins.ErrInvalidParams) || err.Error() != tc.want {
+			t.Errorf("Validate(http, %v) = %v, want %q", tc.params, err, tc.want)
+		}
+	}
+}
+
+// TestAssertionFormat: the server's own rows, beyond the vectors the SPA
+// shares (testdata/formats.json): what only RE2, the selector parser and
+// the JSONPath parser judge.
+func TestAssertionFormat(t *testing.T) {
+	cases := []struct {
+		in    string
+		valid bool
+	}{
+		{`ok=body matches "a+"`, true},
+		{`ok=html("div > p.x") exists`, true},
+		{`ok=json("$.a[0].b") == "x"`, true},
+		{`ok=body matches "("`, false},
+		{`ok=body matches "(?P<x"`, false},
+		{`ok=html("div[") exists`, false},
+		{`ok=html("p:nope") exists`, false},
+		{`ok=json("$[") exists`, false},
+		{`ok=json("$[0,0]") exists`, false},
+		// Selectors whose match on one node could search a whole page.
+		{`ok=html("p:has(a)") exists`, false},
+		{`ok=html("main div p") exists`, false},
+		{`ok=html("main p, div p") exists`, true},
+	}
+	for _, tc := range cases {
+		if got := checkplugins.FormatAssertion.Valid(tc.in); got != tc.valid {
+			t.Errorf("FormatAssertion.Valid(%q) = %v, want %v", tc.in, got, tc.valid)
+		}
+	}
+}
+
+// TestAssertionNamesFollowTheSecretNameRule: internal/probe/assert keeps
+// its own copy of the name rule (it may not import this package); both
+// must accept the same names.
+func TestAssertionNamesFollowTheSecretNameRule(t *testing.T) {
+	names := []string{"a", "ok", "A_b.c-9", strings.Repeat("n", 64), strings.Repeat("n", 65), "", "a b", "ä", "a=b", "a/b", "a:b", "-", "."}
+	for _, name := range names {
+		if strings.Contains(name, "=") {
+			continue // the entry splits at its first '='
+		}
+		got := checkplugins.FormatAssertion.Valid(name + "=status == 200")
+		if want := checkplugins.FormatSecretName.Valid(name); got != want {
+			t.Errorf("assertion name %q: valid %v, secret name valid %v", name, got, want)
+		}
+	}
+}
+
+// TestHTTPAsksForAssertionItems: an assertion asks for its name, with or
+// without json_values.
+func TestHTTPAsksForAssertionItems(t *testing.T) {
+	cases := []struct {
+		name   string
+		params map[string]any
+		item   string
+		want   bool
+	}{
+		{"an assertion's name", map[string]any{"assertions": []any{"ok=status == 200"}}, "ok", true},
+		{"an assertion's name next to json_values", map[string]any{"json_values": []any{"a=$.a"}, "assertions": []any{"ok=status == 200"}}, "ok", true},
+		{"a json_values name next to assertions", map[string]any{"json_values": []any{"a=$.a"}, "assertions": []any{"ok=status == 200"}}, "a", true},
+		{"a name on neither list", map[string]any{"json_values": []any{"a=$.a"}, "assertions": []any{"ok=status == 200"}}, "b", false},
+		{"not the expression", map[string]any{"assertions": []any{"ok=status == 200"}}, "status == 200", false},
+		{"no assertions", map[string]any{"url": "https://{address}/"}, "ok", false},
+		{"an empty list", map[string]any{"assertions": []any{}}, "ok", false},
+		{"a Go string list", map[string]any{"assertions": []string{"ok=status == 200"}}, "ok", true},
+		{"the whole-host item", map[string]any{"assertions": []any{"ok=status == 200"}}, "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

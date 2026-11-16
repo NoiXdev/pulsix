@@ -118,6 +118,7 @@ var checkFormatPhrases = map[checkplugins.Format]string{
 	checkplugins.FormatSNMPOID:      "name=OID, the name 1 to 64 letters, digits, _ . -, the OID numeric such as 1.3.6.1.2.1.1.3.0",
 	checkplugins.FormatUUID:         "a lower-case UUID",
 	checkplugins.FormatJSONValue:    "name=JSONPath, the name 1 to 64 letters, digits, _ . -, the path at most 512 bytes in the supported subset of RFC 9535 JSONPath (one selector per bracket, at most one .., filters comparing @ paths with literals) such as $.status",
+	checkplugins.FormatAssertion:    "name=assertion [@warn], the name 1 to 64 letters, digits, _ . -, the assertion a subject (status, response_ms, ttfb_ms, size, redirects, cert_days, cert_issuer, body, header(\"Name\"), json(\"$.path\"), html(\"selector\"), html(\"selector\") count), an operator and an operand such as status == 200",
 }
 
 // serverSecretPhrase is FormatSecretName's phrase for a plugin the

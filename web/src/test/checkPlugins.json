@@ -1028,6 +1028,14 @@
           "format": "jsonValue"
         },
         {
+          "name": "assertions",
+          "type": "list",
+          "example": "ok=status == 200",
+          "max_entries": 32,
+          "max_bytes": 512,
+          "format": "assertion"
+        },
+        {
           "name": "timeout_s",
           "type": "integer",
           "default": 10,
@@ -1138,6 +1146,14 @@
         },
         {
           "name": "http.json.text",
+          "kind": "discrete"
+        },
+        {
+          "name": "http.assertion",
+          "kind": "discrete"
+        },
+        {
+          "name": "http.assertion_actual",
           "kind": "discrete"
         }
       ]
