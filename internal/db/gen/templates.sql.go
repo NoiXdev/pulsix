@@ -32,6 +32,20 @@ func (q *Queries) DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) 
 	return result.RowsAffected(), nil
 }
 
+const deleteTemplateFollowUps = `-- name: DeleteTemplateFollowUps :exec
+DELETE FROM job_template_follow_ups WHERE org_id = $1 AND template_id = $2
+`
+
+type DeleteTemplateFollowUpsParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	TemplateID uuid.UUID `json:"template_id"`
+}
+
+func (q *Queries) DeleteTemplateFollowUps(ctx context.Context, arg DeleteTemplateFollowUpsParams) error {
+	_, err := q.db.Exec(ctx, deleteTemplateFollowUps, arg.OrgID, arg.TemplateID)
+	return err
+}
+
 const getTemplate = `-- name: GetTemplate :one
 SELECT id, org_id, name, playbook_id, scope, "limit", extra_vars, extra_vars_schema, credential_id, created_at, updated_at, shared_template_id, revision, vars_mode, vars_source_rev, vars_applied_at FROM job_templates WHERE org_id = $1 AND id = $2
 `
@@ -122,6 +136,28 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		&i.VarsAppliedAt,
 	)
 	return i, err
+}
+
+const insertTemplateFollowUp = `-- name: InsertTemplateFollowUp :exec
+INSERT INTO job_template_follow_ups (org_id, template_id, follow_up_template_id, position)
+VALUES ($1, $2, $3, $4)
+`
+
+type InsertTemplateFollowUpParams struct {
+	OrgID              uuid.UUID `json:"org_id"`
+	TemplateID         uuid.UUID `json:"template_id"`
+	FollowUpTemplateID uuid.UUID `json:"follow_up_template_id"`
+	Position           int32     `json:"position"`
+}
+
+func (q *Queries) InsertTemplateFollowUp(ctx context.Context, arg InsertTemplateFollowUpParams) error {
+	_, err := q.db.Exec(ctx, insertTemplateFollowUp,
+		arg.OrgID,
+		arg.TemplateID,
+		arg.FollowUpTemplateID,
+		arg.Position,
+	)
+	return err
 }
 
 const listAutomaticTemplatesForPlaybook = `-- name: ListAutomaticTemplatesForPlaybook :many
@@ -215,6 +251,120 @@ func (q *Queries) ListAutomaticTemplatesForRepo(ctx context.Context, arg ListAut
 			&i.VarsMode,
 			&i.VarsSourceRev,
 			&i.VarsAppliedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFollowUpReferrers = `-- name: ListFollowUpReferrers :many
+SELECT t.name
+FROM job_template_follow_ups f
+JOIN job_templates t ON t.org_id = f.org_id AND t.id = f.template_id
+WHERE f.org_id = $1 AND f.follow_up_template_id = $2
+ORDER BY t.name
+`
+
+type ListFollowUpReferrersParams struct {
+	OrgID              uuid.UUID `json:"org_id"`
+	FollowUpTemplateID uuid.UUID `json:"follow_up_template_id"`
+}
+
+// The names of the templates that name this one as a follow-up: what a
+// delete refusal lists.
+func (q *Queries) ListFollowUpReferrers(ctx context.Context, arg ListFollowUpReferrersParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listFollowUpReferrers, arg.OrgID, arg.FollowUpTemplateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrgFollowUpEdges = `-- name: ListOrgFollowUpEdges :many
+SELECT template_id, follow_up_template_id
+FROM job_template_follow_ups
+WHERE org_id = $1
+`
+
+type ListOrgFollowUpEdgesRow struct {
+	TemplateID         uuid.UUID `json:"template_id"`
+	FollowUpTemplateID uuid.UUID `json:"follow_up_template_id"`
+}
+
+// Every follow-up edge of the organization, for the cycle check.
+func (q *Queries) ListOrgFollowUpEdges(ctx context.Context, orgID uuid.UUID) ([]ListOrgFollowUpEdgesRow, error) {
+	rows, err := q.db.Query(ctx, listOrgFollowUpEdges, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOrgFollowUpEdgesRow
+	for rows.Next() {
+		var i ListOrgFollowUpEdgesRow
+		if err := rows.Scan(&i.TemplateID, &i.FollowUpTemplateID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTemplateFollowUps = `-- name: ListTemplateFollowUps :many
+SELECT f.follow_up_template_id, f.condition, f.position, t.name AS follow_up_name
+FROM job_template_follow_ups f
+JOIN job_templates t ON t.org_id = f.org_id AND t.id = f.follow_up_template_id
+WHERE f.org_id = $1 AND f.template_id = $2
+ORDER BY f.position, t.name
+`
+
+type ListTemplateFollowUpsParams struct {
+	OrgID      uuid.UUID `json:"org_id"`
+	TemplateID uuid.UUID `json:"template_id"`
+}
+
+type ListTemplateFollowUpsRow struct {
+	FollowUpTemplateID uuid.UUID `json:"follow_up_template_id"`
+	Condition          string    `json:"condition"`
+	Position           int32     `json:"position"`
+	FollowUpName       string    `json:"follow_up_name"`
+}
+
+// The follow-ups configured on one template, in start order, with the
+// follow-up template's name for display.
+func (q *Queries) ListTemplateFollowUps(ctx context.Context, arg ListTemplateFollowUpsParams) ([]ListTemplateFollowUpsRow, error) {
+	rows, err := q.db.Query(ctx, listTemplateFollowUps, arg.OrgID, arg.TemplateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTemplateFollowUpsRow
+	for rows.Next() {
+		var i ListTemplateFollowUpsRow
+		if err := rows.Scan(
+			&i.FollowUpTemplateID,
+			&i.Condition,
+			&i.Position,
+			&i.FollowUpName,
 		); err != nil {
 			return nil, err
 		}

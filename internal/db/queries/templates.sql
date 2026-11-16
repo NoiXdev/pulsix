@@ -103,3 +103,34 @@ ORDER BY name;
 -- deleting a template that ran before is allowed, and a finished run keeps
 -- its dangling reference (the run view tolerates it).
 DELETE FROM job_templates WHERE org_id = $1 AND id = $2;
+
+-- name: ListTemplateFollowUps :many
+-- The follow-ups configured on one template, in start order, with the
+-- follow-up template's name for display.
+SELECT f.follow_up_template_id, f.condition, f.position, t.name AS follow_up_name
+FROM job_template_follow_ups f
+JOIN job_templates t ON t.org_id = f.org_id AND t.id = f.follow_up_template_id
+WHERE f.org_id = @org_id AND f.template_id = @template_id
+ORDER BY f.position, t.name;
+
+-- name: ListOrgFollowUpEdges :many
+-- Every follow-up edge of the organization, for the cycle check.
+SELECT template_id, follow_up_template_id
+FROM job_template_follow_ups
+WHERE org_id = @org_id;
+
+-- name: DeleteTemplateFollowUps :exec
+DELETE FROM job_template_follow_ups WHERE org_id = @org_id AND template_id = @template_id;
+
+-- name: InsertTemplateFollowUp :exec
+INSERT INTO job_template_follow_ups (org_id, template_id, follow_up_template_id, position)
+VALUES (@org_id, @template_id, @follow_up_template_id, @position);
+
+-- name: ListFollowUpReferrers :many
+-- The names of the templates that name this one as a follow-up: what a
+-- delete refusal lists.
+SELECT t.name
+FROM job_template_follow_ups f
+JOIN job_templates t ON t.org_id = f.org_id AND t.id = f.template_id
+WHERE f.org_id = @org_id AND f.follow_up_template_id = @follow_up_template_id
+ORDER BY t.name;

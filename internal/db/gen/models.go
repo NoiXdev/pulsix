@@ -619,6 +619,14 @@ type JobTemplate struct {
 	VarsAppliedAt    pgtype.Timestamptz `json:"vars_applied_at"`
 }
 
+type JobTemplateFollowUp struct {
+	OrgID              uuid.UUID `json:"org_id"`
+	TemplateID         uuid.UUID `json:"template_id"`
+	FollowUpTemplateID uuid.UUID `json:"follow_up_template_id"`
+	Condition          string    `json:"condition"`
+	Position           int32     `json:"position"`
+}
+
 type JobTemplateVaultCredential struct {
 	OrgID        uuid.UUID `json:"org_id"`
 	TemplateID   uuid.UUID `json:"template_id"`
@@ -902,6 +910,29 @@ type RotationGroup struct {
 	CredentialID uuid.UUID `json:"credential_id"`
 	Targets      []byte    `json:"targets"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+type RunFollowUp struct {
+	ID            uuid.UUID          `json:"id"`
+	OrgID         uuid.UUID          `json:"org_id"`
+	ParentGroupID uuid.UUID          `json:"parent_group_id"`
+	TemplateID    uuid.UUID          `json:"template_id"`
+	Condition     string             `json:"condition"`
+	Position      int32              `json:"position"`
+	State         string             `json:"state"`
+	Reason        string             `json:"reason"`
+	ChildGroupID  pgtype.UUID        `json:"child_group_id"`
+	HostIds       []uuid.UUID        `json:"host_ids"`
+	RootTrigger   string             `json:"root_trigger"`
+	RootRef       pgtype.UUID        `json:"root_ref"`
+	Depth         int32              `json:"depth"`
+	Path          []uuid.UUID        `json:"path"`
+	ConfiguredBy  pgtype.UUID        `json:"configured_by"`
+	Attempts      int32              `json:"attempts"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	CreatedAt     time.Time          `json:"created_at"`
+	DecidedAt     pgtype.Timestamptz `json:"decided_at"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
 }
 
 type RunRequest struct {
