@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"net/url"
 	"strconv"
 
@@ -70,7 +69,7 @@ func passGet(ctx context.Context, c *caller, query url.Values, format string, id
 	if err != nil {
 		return nil, err
 	}
-	return json.RawMessage(res.Body), nil
+	return withoutSchemaLink(res.Body), nil
 }
 
 func readTools() []toolDef {

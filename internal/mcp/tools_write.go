@@ -375,7 +375,7 @@ func send(ctx context.Context, c *caller, method string, body any, match, format
 	if len(res.Body) == 0 {
 		return map[string]any{"ok": true}, nil
 	}
-	return json.RawMessage(res.Body), nil
+	return withoutSchemaLink(res.Body), nil
 }
 
 // ifMatch is the If-Match value: the caller's revision, else the one read.

@@ -92,3 +92,21 @@ func TestIDArgumentsCannotSteerTheRoute(t *testing.T) {
 		t.Fatalf("get_host with a path argument = %v %s", isErr, text)
 	}
 }
+
+// TestToolOutputCarriesNoSchemaLink: the REST layer's "$schema" link names
+// the in-process request's host (example.com), so it would point the
+// assistant at a wrong address; tool output leaves it out.
+func TestToolOutputCarriesNoSchemaLink(t *testing.T) {
+	f := newOrgFixture(t)
+	cs := mustConnect(t, f.s, f.token)
+	for name, args := range map[string]map[string]any{
+		"list_zones":        nil,
+		"get_host":          {"host_id": f.host.String()},
+		"update_group":      {"group_id": f.group.String(), "fields": map[string]any{"description": "d"}},
+		"list_run_requests": nil,
+	} {
+		if text := callOK(t, cs, name, args, nil); strings.Contains(text, "$schema") {
+			t.Errorf("%s output carries a $schema link:\n%s", name, text)
+		}
+	}
+}

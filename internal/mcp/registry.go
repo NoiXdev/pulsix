@@ -79,6 +79,27 @@ func textResult(v any) (*sdk.CallToolResult, any, error) {
 	return &sdk.CallToolResult{Content: []sdk.Content{&sdk.TextContent{Text: text}}}, nil, nil
 }
 
+// withoutSchemaLink drops the top-level "$schema" of a REST response
+// body. The REST layer derives it from the request's host, which for the
+// in-process dispatch is not the address Pulsix is reached at, so it would
+// only point the assistant somewhere wrong. A body that is not an object
+// with that key is returned as it is.
+func withoutSchemaLink(raw json.RawMessage) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	if _, ok := obj["$schema"]; !ok {
+		return raw
+	}
+	delete(obj, "$schema")
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return b
+}
+
 // registry lists every tool. Its order is the order tools/list shows.
 func registry() []toolDef {
 	var out []toolDef
