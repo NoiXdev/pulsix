@@ -83,11 +83,21 @@ func TestSelectAllExpectations(t *testing.T) {
 		`<bb id=5><cc id=6></cc></bb><aa id=7><zz id=8><bb id=9><cc id=10></cc></bb></zz></aa>`)
 	list := htmlOf(t, `<ul id=u>text<li id=l1 class="a b"></li><!-- c --><li id=l2 class=b></li>`+
 		`<li id=l3 class=" a  c " title="x y" data-k="pre-mid-suf"></li></ul>`)
+	svg := htmlOf(t, `<svg id=root viewBox="0 0 1 1"><linearGradient id=g></linearGradient>`+
+		`<a id=s xlink:href="/x"></a><a id=t href="/y"></a></svg>`)
 	cases := []struct {
 		doc  *html.Node
 		sel  string
 		want []string
 	}{
+		// SVG keeps its camelCase names; xlink:href is namespaced.
+		{svg, "lineargradient", []string{"g"}},
+		{svg, "linearGradient", []string{"g"}},
+		{svg, "svg > LINEARGRADIENT", []string{"g"}},
+		{svg, "[viewbox]", []string{"root"}},
+		{svg, `[viewBox^="0 0"]`, []string{"root"}},
+		{svg, "[href]", []string{"t"}},
+		{svg, "svg a", []string{"s", "t"}},
 		{nested, "aa > bb cc", []string{"4"}},
 		{nested, "aa bb > cc", []string{"4", "10"}},
 		{nested, "aa bb cc", []string{"4", "10"}},

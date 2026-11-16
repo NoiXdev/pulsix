@@ -86,6 +86,8 @@ func TestParseSelectorRefuses(t *testing.T) {
 		{`#\31 23`, "escapes"},
 		{`a\ b`, "escapes"},
 		{"#", "needs a name"},
+		{"#x#y", "one #id"},
+		{"p#x.a#y", "one #id"},
 		{".1a", "needs a name"},
 		{"[]", "attribute name"},
 		{"a/**/b", "comments"},

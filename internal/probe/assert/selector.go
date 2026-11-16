@@ -20,8 +20,10 @@ import (
 //	attribute = "[" name [ ( "=" | "~=" | "^=" | "$=" | "*=" ) value ] "]"
 //	pseudo    = ":first-child" | ":last-child" | ":nth-child(" ( N | "odd" | "even" ) ")"
 //
-// Type and attribute names are compared in lower case (the HTML parser
-// lowers them), ids, classes and attribute values exactly. A value is an
+// Type and attribute names are compared without ASCII case (the HTML
+// parser lowers them, but keeps SVG's linearGradient and viewBox), ids,
+// classes and attribute values exactly; namespaced attributes (SVG's
+// xlink:href) are never matched. A value is an
 // identifier or a quoted string; nothing is escaped. Everything else — other
 // combinators, pseudo-classes, pseudo-elements, escapes, comments — is
 // refused, naming what is not supported.
@@ -177,6 +179,9 @@ func (p *selParser) compound() (Compound, error) {
 		var err error
 		switch p.peek() {
 		case '#':
+			if c.ID != "" {
+				return Compound{}, errors.New("a CSS selector of html(…) may name one #id per compound")
+			}
 			p.i++
 			c.ID, err = p.needIdent("#")
 		case '.':

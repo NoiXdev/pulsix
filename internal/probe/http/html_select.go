@@ -177,7 +177,7 @@ func (s *selection) compound(e *element, c assert.Compound) (ok, enough bool) {
 	if !s.spend(int64(conditions)) {
 		return false, false
 	}
-	if c.Tag != "" && e.n.Data != c.Tag {
+	if c.Tag != "" && !asciiEqualFold(e.n.Data, c.Tag) {
 		return false, true
 	}
 	for _, p := range c.Pseudos {
@@ -216,17 +216,39 @@ func (s *selection) compound(e *element, c assert.Compound) (ok, enough bool) {
 	return true, true
 }
 
-// attr finds n's attribute key, charging the attributes scanned.
+// attr finds n's attribute key (without ASCII case, never a namespaced
+// one), charging the attributes scanned.
 func (s *selection) attr(n *html.Node, key string) (value string, found, enough bool) {
 	if !s.spend(int64(len(n.Attr))) {
 		return "", false, false
 	}
 	for _, a := range n.Attr {
-		if a.Key == key {
+		if a.Namespace == "" && asciiEqualFold(a.Key, key) {
 			return a.Val, true, true
 		}
 	}
 	return "", false, true
+}
+
+// asciiEqualFold reports whether a and b are equal ignoring ASCII case,
+// as HTML compares element and attribute names.
+func asciiEqualFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		x, y := a[i], b[i]
+		if 'A' <= x && x <= 'Z' {
+			x += 'a' - 'A'
+		}
+		if 'A' <= y && y <= 'Z' {
+			y += 'a' - 'A'
+		}
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
 
 // readClasses splits e's class attribute once, charging its bytes.

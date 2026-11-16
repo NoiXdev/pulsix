@@ -251,6 +251,29 @@ func TestHTTPAssertionRegexTooMuch(t *testing.T) {
 	wantVerdict(t, m, "hidden", "pass", "")
 }
 
+// TestHTTPAssertionsOnATooComplexPage: a page that would make the HTML
+// parser clone open formatting elements millions of times is refused
+// before it is parsed: an error on every html assertion, the others
+// judged.
+func TestHTTPAssertionsOnATooComplexPage(t *testing.T) {
+	var page strings.Builder
+	page.WriteString("<p>")
+	for i := range 450 {
+		fmt.Fprintf(&page, "<b a=%d>", i)
+	}
+	page.WriteString(strings.Repeat("<p>x", 60_000))
+	srv := jsonServer(t, 200, page.String())
+	params := httpParams(srv.URL, map[string]any{"assertions": values(`h=html("p") count > 0`, `t=html("b") exists`, "st=status == 200")})
+	start := time.Now()
+	m := byItem(t, run(context.Background(), probetest.LoopbackGuard(), params, ""))
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("the probe took %v", d)
+	}
+	wantAssertionError(t, m, "h", "the page is too complex to parse")
+	wantAssertionError(t, m, "t", "the page is too complex to parse")
+	wantVerdict(t, m, "st", "pass", "200")
+}
+
 // TestHTTPAssertionsOnALargeBody: past 1 MiB, a negative op on the body
 // and every json or html subject cannot be evaluated; contains and
 // matches still pass when found in the first MiB.

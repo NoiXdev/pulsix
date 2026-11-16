@@ -203,7 +203,19 @@ string     = a JSON string literal ("..." with JSON escapes)
   charged before it is taken, to 15 000 000 steps per assertion and
   60 000 000 per check (about a quarter and one second of CPU), past
   which the assertion is the error "the selector took too much work";
-  the walk also stops at the probe's deadline.
+  the walk also stops at the probe's deadline. Type and attribute
+  names compare without ASCII case (SVG's `linearGradient`, `viewBox`),
+  namespaced attributes (`xlink:href`) never match, and a compound names
+  at most one `#id`. Before parsing, one linear pass over the page's
+  tokens bounds what the HTML parser would build — a unit per token and
+  attribute, the weight (1 + attributes) of every formatting element
+  still open at each text and start tag (the parser clones them there:
+  450 `<b>` left open over 60 000 paragraphs make 244 KB into 27 M
+  nodes and 4 GB), and a quarter of the open depth per token (its scope
+  checks); past 4 000 000 units (about 80 ms and 200 MB of parsing at
+  worst) the page is not parsed and every html assertion of the check
+  is the error "the page is too complex to parse". The pass looks at
+  the probe's deadline at every token and runs in the gate slot.
 - `body`: the kept first 1 MiB as text (invalid UTF-8 kept as bytes).
 - `size` is `http.content_bytes`; `cert_days`/`cert_issuer` the https
   metrics; `status`, `response_ms`, `ttfb_ms`, `redirects` the metrics of

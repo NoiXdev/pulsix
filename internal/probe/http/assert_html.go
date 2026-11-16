@@ -1,7 +1,6 @@
 package http
 
 import (
-	"bytes"
 	"context"
 	"strings"
 
@@ -26,17 +25,12 @@ const (
 	htmlCheckBudget = 60_000_000
 )
 
-// htmlDoc parses the body as HTML once; a page nested deeper than the
-// parser takes (512 elements) does not parse.
-func (d *parsedDocs) htmlDoc() (*html.Node, string) {
+// htmlDoc parses the body as HTML once (parseHTML); a page nested deeper
+// than the parser takes (512 elements) does not parse.
+func (d *parsedDocs) htmlDoc(ctx context.Context) (*html.Node, string) {
 	if !d.htmlDone {
 		d.htmlDone = true
-		doc, err := html.Parse(bytes.NewReader(d.body))
-		if err != nil {
-			d.htmlErr = errNotHTML
-		} else {
-			d.html = doc
-		}
+		d.html, d.htmlErr = parseHTML(ctx, d.body)
 	}
 	return d.html, d.htmlErr
 }
@@ -45,7 +39,7 @@ func (d *parsedDocs) htmlDoc() (*html.Node, string) {
 // the first match's text content with its whitespace collapsed, absent
 // without a match.
 func (d *parsedDocs) judgeHTML(ctx context.Context, a assert.Assertion) verdict {
-	doc, problem := d.htmlDoc()
+	doc, problem := d.htmlDoc(ctx)
 	if problem != "" {
 		return failed(problem)
 	}
