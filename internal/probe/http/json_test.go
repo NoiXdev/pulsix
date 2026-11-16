@@ -152,8 +152,8 @@ func TestHTTPJSONScalars(t *testing.T) {
 	wantText(t, m, "label", "lineone tab")
 	wantText(t, m, "empty", probe.EmptyText)
 	wantNumber(t, m, "second", 20)
-	if len(obs) != 4+10 {
-		t.Fatalf("want 4 host metrics and 10 items, got %+v", obs)
+	if len(obs) != upHostMetrics+10 {
+		t.Fatalf("want %d host metrics and 10 items, got %+v", upHostMetrics, obs)
 	}
 }
 
@@ -214,8 +214,8 @@ func TestHTTPJSONWholeResponseErrors(t *testing.T) {
 			if o := m[mi{"http.status_code", ""}]; o.Value == nil || *o.Value != 200 {
 				t.Fatalf("http.status_code = %+v, want 200", o)
 			}
-			if len(obs) != 6 {
-				t.Fatalf("want 4 host metrics and 2 items, got %+v", obs)
+			if len(obs) != upHostMetrics+2 {
+				t.Fatalf("want %d host metrics and 2 items, got %+v", upHostMetrics, obs)
 			}
 		})
 	}
@@ -280,8 +280,8 @@ func TestHTTPJSONEntriesAreBounded(t *testing.T) {
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{
 		"json_values": values(entries...),
 	}), "")
-	if len(obs) != 4+32 {
-		t.Fatalf("want 4 host metrics and 32 items, got %d observations", len(obs))
+	if len(obs) != upHostMetrics+32 {
+		t.Fatalf("want %d host metrics and 32 items, got %d observations", upHostMetrics, len(obs))
 	}
 
 	long := "$." + strings.Repeat("a", 511)
@@ -292,7 +292,7 @@ func TestHTTPJSONEntriesAreBounded(t *testing.T) {
 	wantItemError(t, m, "long", "the path is not allowed")
 	wantItemError(t, m, "bad", "the path is not allowed")
 	wantNumber(t, m, "ok", 1)
-	if len(obs) != 4+3 {
+	if len(obs) != upHostMetrics+3 {
 		t.Fatalf("an entry without a name has no item to report on; got %+v", obs)
 	}
 }
@@ -304,8 +304,8 @@ func TestHTTPJSONItemsShareTheRequestErrors(t *testing.T) {
 	params := httpParams("http://{address}/", map[string]any{"json_values": values("a=$.a")})
 	m := byItem(t, run(context.Background(), probetest.LoopbackGuard(), params, ""))
 	wantItemError(t, m, "a", "host has no address")
-	if len(m) != 5 {
-		t.Fatalf("want the 4 host metrics and the item, got %+v", m)
+	if len(m) != len(failAllHostMetrics)+1 {
+		t.Fatalf("want the host metrics and the item, got %+v", m)
 	}
 
 	params = httpParams(fmt.Sprintf("http://127.0.0.1:%d/", probetest.ClosedPort(t)), map[string]any{"json_values": values("a=$.a")})
@@ -319,9 +319,9 @@ func TestHTTPFailAll(t *testing.T) {
 	m := byItem(t, httpprobe.FailAll(map[string]any{
 		"url": "http://x/", "body_contains": "ok", "json_values": values("a=$.a", "b=$.b"),
 	}, "boom"))
-	want := []mi{
-		{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""}, {"http.body_match", ""},
-		{"http.json.value", "a"}, {"http.json.value", "b"},
+	want := []mi{{"http.body_match", ""}, {"http.json.value", "a"}, {"http.json.value", "b"}}
+	for _, metric := range failAllHostMetrics {
+		want = append(want, mi{metric, ""})
 	}
 	if len(m) != len(want) {
 		t.Fatalf("FailAll = %+v, want %v", m, want)
@@ -333,8 +333,8 @@ func TestHTTPFailAll(t *testing.T) {
 	}
 
 	m = byItem(t, httpprobe.FailAll(map[string]any{"url": "http://x/"}, "boom"))
-	if len(m) != 4 {
-		t.Fatalf("FailAll without body_contains or json_values = %+v, want the 4 host metrics", m)
+	if len(m) != len(failAllHostMetrics) {
+		t.Fatalf("FailAll without body_contains or json_values = %+v, want the host metrics %v", m, failAllHostMetrics)
 	}
 }
 

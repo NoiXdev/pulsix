@@ -6,7 +6,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -20,8 +19,9 @@ import (
 
 const (
 	httpDefaultTimeout = 10 * time.Second
-	// httpBodyLimit is how much of the body is read, and what body_contains
-	// is looked for in. It also caps the response headers.
+	// httpBodyLimit is how much of the body is kept, and what body_contains
+	// and json_values look in (httpCountLimit bounds the read). It also caps
+	// the response headers.
 	httpBodyLimit = 1 << 20
 	// httpMaxRedirects is how many redirects are followed; one more is a
 	// failed attempt.
@@ -36,16 +36,17 @@ var (
 )
 
 // probeHTTP requests url (with {address} replaced) and reports whether a
-// response arrived, its status, the time to the end of the body read and,
-// when body_contains is set, whether the first 1 MiB of the body holds it;
-// each json_values entry is read from the same bytes, in a slot of gate.
-// The check's secret (its fields in secret, its name in params) sends
-// credentials. roots verifies https certificates; nil means the system
-// roots.
+// response arrived, its status, the time to the end of the body read, its
+// breakdown (lookups, connects, handshakes, time to first byte, transfer),
+// the redirects followed, the body's size and, over https, the final hop's
+// certificate; when body_contains is set, whether the first 1 MiB of the
+// body holds it; each json_values entry is read from the same bytes, in a
+// slot of gate. The check's secret (its fields in secret, its name in
+// params) sends credentials. roots verifies https certificates; nil means
+// the system roots.
 func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[string]any, address string, secret map[string]string, roots *x509.CertPool) []probe.Observation {
-	bodyContains := probe.StrParam(params, "body_contains", "")
-	entries := jsonEntries(params)
-	fail := func(msg string) []probe.Observation { return failAll(bodyContains != "", entries, msg) }
+	w := wantsOf(params)
+	fail := func(msg string) []probe.Observation { return failAll(w, msg) }
 
 	target, err := httpURL(probe.StrParam(params, "url", ""), address)
 	if err != nil {
@@ -79,8 +80,12 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 	req.Header.Set("User-Agent", httpUserAgent)
 	cred.apply(req)
 
+	// hop owns the failure reason, phases the timing breakdown; the
+	// context composes their hooks.
 	var hop hopTrace
-	req = req.WithContext(httptrace.WithClientTrace(ctx, hop.trace()))
+	phases := newPhases(time.Now)
+	traced := httptrace.WithClientTrace(httptrace.WithClientTrace(ctx, hop.trace()), phases.trace())
+	req = req.WithContext(traced)
 
 	start := time.Now()
 	resp, err := client.Do(req)
@@ -91,19 +96,31 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 		// The client's error is never passed on: it quotes the URL.
 		return probe.Down("http", hop.reason(err))
 	}
-	body, over, readErr := readBody(resp.Body, bodyContains != "" || len(entries) > 0, httpBodyLimit)
-	elapsed := time.Since(start)
+	body := readBody(resp.Body, w.keepBody(), httpBodyLimit, httpCountLimit)
+	end := time.Now()
 	_ = resp.Body.Close()
 
-	// A status code is no failure: a response arrived.
-	obs := append(probe.Up("http"),
-		probe.Value("http.status_code", float64(resp.StatusCode)),
-		probe.Value("http.response_ms", probe.Millis(elapsed)),
-	)
-	if bodyContains != "" {
-		obs = append(obs, probe.BoolValue("http.body_match", bytes.Contains(body, []byte(bodyContains))))
+	r := response{
+		status:    resp.StatusCode,
+		header:    resp.Header,
+		elapsed:   end.Sub(start),
+		timing:    phases.timing(end),
+		redirects: redirectsBefore(resp),
+		body:      body,
+		leaf:      leafOf(resp),
+		at:        end,
 	}
-	return append(obs, jsonObservations(ctx, gate, entries, body, over, readErr != nil)...)
+	if method == http.MethodHead {
+		// No body is read: the time after the first byte is the header's.
+		r.timing.transfer = 0
+	}
+
+	// A status code is no failure: a response arrived.
+	obs := r.observations()
+	if w.bodyContains != "" {
+		obs = append(obs, probe.BoolValue("http.body_match", bytes.Contains(body.kept, []byte(w.bodyContains))))
+	}
+	return append(obs, jsonObservations(ctx, gate, w.entries, body.kept, body.truncated, body.err != nil)...)
 }
 
 // FailAll is the result of an http probe of params that could not be
@@ -112,17 +129,27 @@ func probeHTTP(ctx context.Context, g *probe.Guard, gate *JSONGate, params map[s
 // json_values entry's item. The runner reports it for a secret it cannot
 // hand over.
 func FailAll(params map[string]any, msg string) []probe.Observation {
-	return failAll(probe.StrParam(params, "body_contains", "") != "", jsonEntries(params), msg)
+	return failAll(wantsOf(params), msg)
+}
+
+// hostMetrics are the whole-host metrics an attempt can report. Which of
+// http.dns_ms, http.tls_ms and the certificate's an attempt reports
+// depends on the hops it makes, so an attempt that could not be made
+// puts its error on all of them.
+var hostMetrics = []string{
+	"http.up", "http.failure", "http.status_code", "http.response_ms",
+	"http.dns_ms", "http.connect_ms", "http.tls_ms", "http.ttfb_ms", "http.transfer_ms",
+	"http.redirects", "http.content_bytes", "http.cert_expiry_days", "http.cert_issuer",
 }
 
 // failAll is msg on the whole-host metrics, on http.body_match when
-// bodyMatch and on each entry's http.json.value.
-func failAll(bodyMatch bool, entries []jsonEntry, msg string) []probe.Observation {
-	metrics := []string{"http.up", "http.failure", "http.status_code", "http.response_ms"}
-	if bodyMatch {
-		metrics = append(metrics, "http.body_match")
+// body_contains is set and on each entry's http.json.value.
+func failAll(w wants, msg string) []probe.Observation {
+	obs := probe.FailAll(msg, hostMetrics...)
+	if w.bodyContains != "" {
+		obs = append(obs, probe.Observation{Metric: "http.body_match", Err: msg})
 	}
-	return append(probe.FailAll(msg, metrics...), failEntries(entries, msg)...)
+	return append(obs, failEntries(w.entries, msg)...)
 }
 
 // httpURL replaces {address} in raw with the host's address (an IPv6
@@ -229,22 +256,6 @@ func origin(u *url.URL) string {
 		}
 	}
 	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
-}
-
-// readBody reads body up to limit bytes, keeping them when keep, and
-// reports whether the body went on past limit (only when keep) and the
-// error a read broke off with (a timeout, a reset). body_contains looks in
-// what arrived either way. Nothing read leaves the probe.
-func readBody(body io.Reader, keep bool, limit int64) ([]byte, bool, error) {
-	if !keep {
-		_, err := io.Copy(io.Discard, io.LimitReader(body, limit))
-		return nil, false, err
-	}
-	buf, err := io.ReadAll(io.LimitReader(body, limit+1))
-	if int64(len(buf)) > limit {
-		return buf[:limit], true, nil
-	}
-	return buf, false, err
 }
 
 // NewProbe returns the http probe, as the registry runs it. Its JSON

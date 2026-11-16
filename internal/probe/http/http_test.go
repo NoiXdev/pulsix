@@ -58,8 +58,8 @@ func TestHTTPUpWithBodyMatch(t *testing.T) {
 	defer srv.Close()
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, map[string]any{"body_contains": "healthy"}), "")
 	m := probetest.WantUp(t, obs, "http")
-	if len(m) != 5 {
-		t.Fatalf("want up, failure, status_code, response_ms and body_match, got %+v", obs)
+	if len(m) != upHostMetrics+1 {
+		t.Fatalf("want the host metrics and body_match, got %+v", obs)
 	}
 	if v := probetest.WantValue(t, m, "http.status_code"); v != 200 {
 		t.Fatalf("http.status_code = %v, want 200", v)
@@ -84,8 +84,8 @@ func TestHTTPBodyMismatchAndNoBodyContains(t *testing.T) {
 
 	obs = run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), "")
 	m := probetest.ByMetric(t, obs)
-	if _, ok := m["http.body_match"]; ok || len(m) != 4 {
-		t.Fatalf("want up, failure, status_code and response_ms only, got %+v", obs)
+	if _, ok := m["http.body_match"]; ok || len(m) != upHostMetrics {
+		t.Fatalf("want the host metrics only, got %+v", obs)
 	}
 }
 
@@ -150,7 +150,7 @@ func TestHTTPEmptyAddressIsAnErrorOnlyWhenNeeded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	defer srv.Close()
 	obs := run(context.Background(), probetest.LoopbackGuard(), httpParams("http://{address}/", map[string]any{"body_contains": "x"}), "")
-	probetest.WantErrors(t, obs, "host has no address", "http.up", "http.failure", "http.status_code", "http.response_ms", "http.body_match")
+	probetest.WantErrors(t, obs, "host has no address", append(failAllHostMetrics, "http.body_match")...)
 
 	obs = run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), "")
 	if v := probetest.WantValue(t, probetest.ByMetric(t, obs), "http.up"); v != 1 {
@@ -163,8 +163,13 @@ func TestHTTPUnparsableURLIsAnError(t *testing.T) {
 		t.Run(u, func(t *testing.T) {
 			obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(u, nil), "127.0.0.1")
 			m := probetest.ByMetric(t, obs)
-			if len(m) != 4 || m["http.up"].Err == "" || m["http.failure"].Err == "" || m["http.status_code"].Err == "" || m["http.response_ms"].Err == "" {
+			if len(m) != len(failAllHostMetrics) {
 				t.Fatalf("want one error per metric, got %+v", obs)
+			}
+			for _, metric := range failAllHostMetrics {
+				if m[metric].Err == "" {
+					t.Fatalf("%s = %+v, want an error", metric, m[metric])
+				}
 			}
 		})
 	}
@@ -177,7 +182,7 @@ func TestHTTPRefusedTargetIsAnError(t *testing.T) {
 	for _, u := range []string{srv.URL, fmt.Sprintf("http://localhost:%d/", port)} {
 		t.Run(u, func(t *testing.T) {
 			obs := run(context.Background(), probe.NewGuard(nil, nil), httpParams(u, map[string]any{"body_contains": "x"}), "")
-			probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.failure", "http.status_code", "http.response_ms", "http.body_match")
+			probetest.WantErrors(t, obs, "target address not allowed", append(failAllHostMetrics, "http.body_match")...)
 		})
 	}
 }
@@ -191,7 +196,7 @@ func TestHTTPRefusedRedirectIsAnError(t *testing.T) {
 		}))
 		defer srv.Close()
 		obs := run(context.Background(), probetest.LoopbackGuard(), httpParams(srv.URL, nil), "")
-		probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.failure", "http.status_code", "http.response_ms")
+		probetest.WantErrors(t, obs, "target address not allowed", failAllHostMetrics...)
 	})
 	t.Run("denied loopback port", func(t *testing.T) {
 		target := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
@@ -201,7 +206,7 @@ func TestHTTPRefusedRedirectIsAnError(t *testing.T) {
 		}))
 		g := probe.NewGuardForTest(true, []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})
 		obs := run(context.Background(), g, httpParams(srv.URL, map[string]any{"body_contains": "x"}), "")
-		probetest.WantErrors(t, obs, "target address not allowed", "http.up", "http.failure", "http.status_code", "http.response_ms", "http.body_match")
+		probetest.WantErrors(t, obs, "target address not allowed", append(failAllHostMetrics, "http.body_match")...)
 	})
 }
 

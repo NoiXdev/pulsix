@@ -121,9 +121,9 @@ func TestHTTPBadCredentials(t *testing.T) {
 				"body_contains": "x", "json_values": values("a=$.a"),
 			}), "", tc.fields)
 			m := byItem(t, obs)
-			want := []mi{
-				{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""}, {"http.body_match", ""},
-				{"http.json.value", "a"},
+			want := []mi{{"http.body_match", ""}, {"http.json.value", "a"}}
+			for _, metric := range failAllHostMetrics {
+				want = append(want, mi{metric, ""})
 			}
 			if len(m) != len(want) {
 				t.Fatalf("observations = %+v, want an error on %v", obs, want)

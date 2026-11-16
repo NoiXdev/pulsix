@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -306,18 +307,22 @@ func TestSecretStoreErrorAtShutdownIsNotLogged(t *testing.T) {
 // row appears for a check that does not ask for them.
 func TestUnavailableSecretOfAnHTTPCheck(t *testing.T) {
 	type mi struct{ metric, item string }
+	host := []mi{
+		{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""},
+		{"http.dns_ms", ""}, {"http.connect_ms", ""}, {"http.tls_ms", ""}, {"http.ttfb_ms", ""}, {"http.transfer_ms", ""},
+		{"http.redirects", ""}, {"http.content_bytes", ""}, {"http.cert_expiry_days", ""}, {"http.cert_issuer", ""},
+	}
 	for name, tc := range map[string]struct {
 		params map[string]any
 		want   []mi
 	}{
 		"json values": {
 			params: map[string]any{"url": "https://api.example.com/health", "json_values": []any{"status=$.status", "depth=$.queue.depth"}},
-			want: []mi{{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""},
-				{"http.json.value", "status"}, {"http.json.value", "depth"}},
+			want:   append(slices.Clone(host), mi{"http.json.value", "status"}, mi{"http.json.value", "depth"}),
 		},
 		"plain": {
 			params: map[string]any{"url": "https://api.example.com/health"},
-			want:   []mi{{"http.up", ""}, {"http.failure", ""}, {"http.status_code", ""}, {"http.response_ms", ""}},
+			want:   host,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

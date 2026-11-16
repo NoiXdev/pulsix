@@ -46,6 +46,21 @@ func httpPlugin() Descriptor {
 			{Name: "http.failure", Kind: Discrete},
 			{Name: "http.status_code", Kind: Numeric},
 			{Name: "http.response_ms", Kind: Numeric},
+			// The breakdown (backlog 3.13b): lookups, connects and TLS
+			// handshakes summed over hops (dns_ms absent for an IP literal,
+			// tls_ms when no hop used TLS), the last hop's time to first byte
+			// and the body's transfer.
+			{Name: "http.dns_ms", Kind: Numeric},
+			{Name: "http.connect_ms", Kind: Numeric},
+			{Name: "http.tls_ms", Kind: Numeric},
+			{Name: "http.ttfb_ms", Kind: Numeric},
+			{Name: "http.transfer_ms", Kind: Numeric},
+			{Name: "http.redirects", Kind: Numeric},
+			// The body's bytes, counted to 16 MiB; past that an error.
+			{Name: "http.content_bytes", Kind: Numeric},
+			// The final hop's leaf certificate; absent over http.
+			{Name: "http.cert_expiry_days", Kind: Numeric},
+			{Name: "http.cert_issuer", Kind: Discrete},
 			{Name: "http.body_match", Kind: Numeric},
 			// Item: a json_values entry's name.
 			{Name: "http.json.value", Kind: Numeric},

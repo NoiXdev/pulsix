@@ -138,7 +138,7 @@ describe('isGraphable', () => {
   it('reads the discrete metrics and the label-only plugins off the descriptors', () => {
     const kinds = metricKinds(CHECK_PLUGINS);
     expect([...kinds.discreteMetrics].sort()).toEqual([
-      'dns.failure', 'docker.health', 'docker.state', 'http.failure', 'http.json.text', 'icmp.failure', 'mysql.replication_state', 'raid.state',
+      'dns.failure', 'docker.health', 'docker.state', 'http.cert_issuer', 'http.failure', 'http.json.text', 'icmp.failure', 'mysql.replication_state', 'raid.state',
       'redis.replication_link', 'redis.role', 'script.output', 'script.status', 'service.state', 'snmp.failure', 'snmp.if.status', 'snmp.text',
       'tcp.failure', 'tls.cert_issuer', 'tls.failure', 'zfs.scan', 'zfs.state',
     ]);

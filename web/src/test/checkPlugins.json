@@ -1093,6 +1093,42 @@
           "kind": "numeric"
         },
         {
+          "name": "http.dns_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.connect_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.tls_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.ttfb_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.transfer_ms",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.redirects",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.content_bytes",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.cert_expiry_days",
+          "kind": "numeric"
+        },
+        {
+          "name": "http.cert_issuer",
+          "kind": "discrete"
+        },
+        {
           "name": "http.body_match",
           "kind": "numeric"
         },
