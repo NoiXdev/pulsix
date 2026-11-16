@@ -313,10 +313,11 @@ func TestEnqueueIsTheExportedDoor(t *testing.T) {
 	}
 }
 
-// seedFollowUp inserts a started follow-up row whose child group is group:
-// the chain's root is (rootTrigger, rootRef), the parent run played
-// parentTmpl and the follow-up template is a new one named name.
-func (w *outboxWorld) seedFollowUp(t *testing.T, name, rootTrigger string, rootRef *uuid.UUID, parentTmpl, group uuid.UUID) (rowID, followTmpl uuid.UUID) {
+// seedFollowUp inserts a follow-up row of a new parent group for a new
+// template named name: started with child group child, or still due (as the
+// starter's open batch leaves it) when child is nil. The chain's root is
+// (rootTrigger, rootRef) and the parent run played parentTmpl.
+func (w *outboxWorld) seedFollowUp(t *testing.T, name, rootTrigger string, rootRef *uuid.UUID, parentTmpl uuid.UUID, child *uuid.UUID) (rowID, followTmpl, parentGroup uuid.UUID) {
 	t.Helper()
 	q := gen.New(w.d.Pool())
 	inline := "- hosts: all\n  tasks: []\n"
@@ -328,13 +329,23 @@ func (w *outboxWorld) seedFollowUp(t *testing.T, name, rootTrigger string, rootR
 	if err != nil {
 		t.Fatal(err)
 	}
-	rowID = uuid.Must(uuid.NewV7())
+	state := "due"
+	if child != nil {
+		state = "started"
+	}
+	rowID, parentGroup = uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7())
 	if _, err := w.d.Pool().Exec(ctx, `INSERT INTO run_follow_ups (id, org_id, parent_group_id, template_id, state, child_group_id, root_trigger, root_ref, depth, path)
-		VALUES ($1, $2, $3, $4, 'started', $5, $6, $7, 1, ARRAY[$8]::uuid[])`,
-		rowID, w.org, uuid.Must(uuid.NewV7()), tmpl.ID, group, rootTrigger, rootRef, parentTmpl); err != nil {
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, ARRAY[$9]::uuid[])`,
+		rowID, w.org, parentGroup, tmpl.ID, state, child, rootTrigger, rootRef, parentTmpl); err != nil {
 		t.Fatal(err)
 	}
-	return rowID, tmpl.ID
+	return rowID, tmpl.ID, parentGroup
+}
+
+// chained is the finish report of a follow-up's run group: the chain
+// trigger names the parent group, the template is the follow-up's.
+func (w *outboxWorld) chained(group, parentGroup, followTmpl uuid.UUID, status jobs.Status) jobs.RunGroupResult {
+	return jobs.RunGroupResult{OrgID: w.org, GroupID: group, Trigger: jobs.TriggerChain, TriggerRef: &parentGroup, TemplateID: &followTmpl, Status: status}
 }
 
 func (w *outboxWorld) rootTemplate(t *testing.T) uuid.UUID {
@@ -349,14 +360,12 @@ func (w *outboxWorld) rootTemplate(t *testing.T) uuid.UUID {
 func TestOutboxNotifiesChainedRunUnderRootSchedule(t *testing.T) {
 	w := newOutboxWorld(t, "outbox-chain")
 	group := uuid.Must(uuid.NewV7())
-	_, followTmpl := w.seedFollowUp(t, "restart-services", "schedule", &w.schedule, w.rootTemplate(t), group)
+	_, followTmpl, parentGroup := w.seedFollowUp(t, "restart-services", "schedule", &w.schedule, w.rootTemplate(t), &group)
 	start := time.Date(2026, 9, 22, 1, 0, 0, 0, time.UTC)
 	end := start.Add(time.Minute)
 	first := uuid.Must(uuid.NewV7())
-	r := jobs.RunGroupResult{
-		OrgID: w.org, GroupID: group, FirstJobID: first, Trigger: jobs.TriggerChain, TriggerRef: &w.schedule,
-		Status: jobs.StatusFailed, Jobs: 1, Hosts: 2, HostsFailed: 1, StartedAt: &start, FinishedAt: &end,
-	}
+	r := w.chained(group, parentGroup, followTmpl, jobs.StatusFailed)
+	r.FirstJobID, r.Jobs, r.Hosts, r.HostsFailed, r.StartedAt, r.FinishedAt = first, 1, 2, 1, &start, &end
 	w.finish(t, r)
 	w.finish(t, r)
 	got := w.queued(t)
@@ -371,19 +380,37 @@ func TestOutboxNotifiesChainedRunUnderRootSchedule(t *testing.T) {
 	}
 }
 
+// The starter links the row to its child group only when its batch
+// commits, which can be after a quick child run has finished (or, after a
+// lost write-back, only on the replay): the row is still due without a
+// child group, and the run is notified all the same.
+func TestOutboxNotifiesChainedRunBeforeTheRowNamesIt(t *testing.T) {
+	w := newOutboxWorld(t, "outbox-chain-early")
+	_, followTmpl, parentGroup := w.seedFollowUp(t, "restart-services", "schedule", &w.schedule, w.rootTemplate(t), nil)
+	group := uuid.Must(uuid.NewV7())
+	w.finish(t, w.chained(group, parentGroup, followTmpl, jobs.StatusFailed))
+	got := w.queued(t)
+	if len(got) != 2 || got[0].key != "run:"+group.String() || got[0].ev.Template.ID != followTmpl || got[0].ev.FollowUpOf == nil {
+		t.Fatalf("queued = %+v, want the failure message for A and B", got)
+	}
+}
+
 func TestOutboxIgnoresChainedRunOfManualRoot(t *testing.T) {
 	w := newOutboxWorld(t, "outbox-chain-manual")
 	group := uuid.Must(uuid.NewV7())
-	w.seedFollowUp(t, "restart-services", "manual", nil, w.rootTemplate(t), group)
-	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: group, Trigger: jobs.TriggerChain, Status: jobs.StatusFailed})
-	// A group with no follow-up row at all, and a deleted root schedule, queue nothing either.
-	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerChain, Status: jobs.StatusFailed})
+	_, followTmpl, parentGroup := w.seedFollowUp(t, "restart-services", "manual", nil, w.rootTemplate(t), &group)
+	w.finish(t, w.chained(group, parentGroup, followTmpl, jobs.StatusFailed))
+	// A group with no follow-up row at all, one without a template or a
+	// parent, and a deleted root schedule, queue nothing either.
+	w.finish(t, w.chained(uuid.Must(uuid.NewV7()), uuid.Must(uuid.NewV7()), followTmpl, jobs.StatusFailed))
+	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerChain, TriggerRef: &parentGroup, Status: jobs.StatusFailed})
+	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: uuid.Must(uuid.NewV7()), Trigger: jobs.TriggerChain, TemplateID: &followTmpl, Status: jobs.StatusFailed})
 	group2 := uuid.Must(uuid.NewV7())
-	w.seedFollowUp(t, "other", "schedule", &w.schedule, w.rootTemplate(t), group2)
+	_, followTmpl2, parentGroup2 := w.seedFollowUp(t, "other", "schedule", &w.schedule, w.rootTemplate(t), &group2)
 	if _, err := w.d.Pool().Exec(ctx, `DELETE FROM schedules WHERE id = $1`, w.schedule); err != nil {
 		t.Fatal(err)
 	}
-	w.finish(t, jobs.RunGroupResult{OrgID: w.org, GroupID: group2, Trigger: jobs.TriggerChain, Status: jobs.StatusFailed})
+	w.finish(t, w.chained(group2, parentGroup2, followTmpl2, jobs.StatusFailed))
 	if got := w.queued(t); len(got) != 0 {
 		t.Fatalf("queued = %+v", got)
 	}
@@ -392,7 +419,8 @@ func TestOutboxIgnoresChainedRunOfManualRoot(t *testing.T) {
 func TestOutboxFollowUpDecisionCategories(t *testing.T) {
 	w := newOutboxWorld(t, "outbox-chain-decision")
 	parent := w.rootTemplate(t)
-	row, followTmpl := w.seedFollowUp(t, "restart-services", "schedule", &w.schedule, parent, uuid.Must(uuid.NewV7()))
+	started := uuid.Must(uuid.NewV7())
+	row, followTmpl, _ := w.seedFollowUp(t, "restart-services", "schedule", &w.schedule, parent, &started)
 	decide := func(id uuid.UUID, cat notify.Category, reason string) {
 		t.Helper()
 		tx, err := w.d.Pool().Begin(ctx)

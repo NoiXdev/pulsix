@@ -159,6 +159,14 @@ func TestJobDetailChainBlock(t *testing.T) {
 	if child.Job.Chain.FollowUps == nil || len(child.Job.Chain.FollowUps) != 0 {
 		t.Fatalf("child follow-ups = %+v", child.Job.Chain.FollowUps)
 	}
+	// Before the starter's batch commits, the row does not name its child
+	// group yet: the child run is a follow-up all the same.
+	if _, err := f.s.DB.Pool().Exec(context.Background(), `UPDATE run_follow_ups SET child_group_id = NULL WHERE parent_group_id = $1`, uuid.MustParse(parent.RunGroupID)); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.chainDetail(t, fu.ChildFirstJobID).Job.Chain.Parent; p == nil || p.FirstJobID != parent.ID || p.TemplateName != "build" {
+		t.Fatalf("child parent before the link = %+v", p)
+	}
 	// The trigger filter knows the new kind.
 	resp := requestJSON(t, f.operatorC, http.MethodGet, f.baseURL()+"?trigger=chain", nil)
 	var list struct {

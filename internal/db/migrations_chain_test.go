@@ -298,8 +298,8 @@ func TestFollowUpLifecycleQueries(t *testing.T) {
 	if n, err := q.MarkFollowUpStarted(ctx, gen.MarkFollowUpStartedParams{OrgID: org, ID: first.ID, ChildGroupID: pgtype.UUID{Bytes: child, Valid: true}, Now: now}); err != nil || n != 1 {
 		t.Fatalf("Started = %d, %v", n, err)
 	}
-	if got, err := q.GetFollowUpByChild(ctx, gen.GetFollowUpByChildParams{OrgID: org, ChildGroupID: pgtype.UUID{Bytes: child, Valid: true}}); err != nil || got.ID != first.ID || got.State != "started" {
-		t.Fatalf("GetFollowUpByChild = %+v, %v", got, err)
+	if got, err := q.GetFollowUpOfChainedRun(ctx, gen.GetFollowUpOfChainedRunParams{OrgID: org, ParentGroupID: g2, TemplateID: first.TemplateID}); err != nil || got.ID != first.ID || got.State != "started" {
+		t.Fatalf("GetFollowUpOfChainedRun = %+v, %v", got, err)
 	}
 	if n, err := q.MarkFollowUpWaiting(ctx, gen.MarkFollowUpWaitingParams{OrgID: org, ID: second.ID, Reason: "waiting for the active run of c", NextAttemptAt: now.Add(5 * time.Second)}); err != nil || n != 1 {
 		t.Fatalf("Waiting = %d, %v", n, err)

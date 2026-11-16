@@ -226,15 +226,19 @@ func (s *SQLStore) ListForGroup(ctx context.Context, orgID, groupID uuid.UUID) (
 	return out, nil
 }
 
-// ParentOf returns the follow-up whose start created childGroupID, or nil
-// when that run was not chained.
-func (s *SQLStore) ParentOf(ctx context.Context, orgID, childGroupID uuid.UUID) (*FollowUp, error) {
-	r, err := gen.New(s.d).GetFollowUpByChild(db.WithOrgScope(ctx, orgID), gen.GetFollowUpByChildParams{OrgID: orgID, ChildGroupID: db.NullUUID(&childGroupID)})
+// ParentOf returns the follow-up a chained run of templateID started from
+// parentGroupID (the run's trigger_ref) is for, or nil when there is none.
+// It reads the row by its unique key, not by child_group_id, which the
+// starter writes only when its batch commits.
+func (s *SQLStore) ParentOf(ctx context.Context, orgID, parentGroupID, templateID uuid.UUID) (*FollowUp, error) {
+	r, err := gen.New(s.d).GetFollowUpOfChainedRun(db.WithOrgScope(ctx, orgID), gen.GetFollowUpOfChainedRunParams{
+		OrgID: orgID, ParentGroupID: parentGroupID, TemplateID: templateID,
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get follow-up by child: %w", err)
+		return nil, fmt.Errorf("get follow-up of chained run: %w", err)
 	}
 	f := toFollowUp(followUpRow(r))
 	return &f, nil

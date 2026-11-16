@@ -233,15 +233,22 @@ func TestParentOf(t *testing.T) {
 	b := e.template("b")
 	a := e.template("a", b)
 	group, child := newID(), newID()
-	e.plan(group, a, nil)
-	if p, err := e.store.ParentOf(e.scoped, e.org, child); err != nil || p != nil {
+	if p, err := e.store.ParentOf(e.scoped, e.org, group, b); err != nil || p != nil {
 		t.Fatalf("unchained = %+v, %v", p, err)
+	}
+	e.plan(group, a, nil)
+	// The row is found before the starter's batch has named the child group.
+	if p, err := e.store.ParentOf(e.scoped, e.org, group, b); err != nil || p == nil || p.ParentGroupID != group || p.TemplateName != "b" || p.ChildFirstJobID != nil {
+		t.Fatalf("not yet linked = %+v, %v", p, err)
+	}
+	if p, err := e.store.ParentOf(e.scoped, e.org, group, a); err != nil || p != nil {
+		t.Fatalf("another template = %+v, %v", p, err)
 	}
 	e.job(child, "queued", nil, nil)
 	if _, err := e.d.Pool().Exec(ctx, `UPDATE run_follow_ups SET state = 'started', child_group_id = $1 WHERE parent_group_id = $2`, child, group); err != nil {
 		t.Fatal(err)
 	}
-	p, err := e.store.ParentOf(e.scoped, e.org, child)
+	p, err := e.store.ParentOf(e.scoped, e.org, group, b)
 	if err != nil || p == nil || p.ParentGroupID != group || p.TemplateName != "b" || p.ChildFirstJobID == nil {
 		t.Fatalf("parent = %+v, %v", p, err)
 	}

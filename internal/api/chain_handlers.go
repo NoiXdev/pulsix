@@ -20,7 +20,7 @@ import (
 // read through (chain.SQLStore).
 type ChainReader interface {
 	ListForGroup(ctx context.Context, orgID, groupID uuid.UUID) ([]chain.FollowUp, error)
-	ParentOf(ctx context.Context, orgID, childGroupID uuid.UUID) (*chain.FollowUp, error)
+	ParentOf(ctx context.Context, orgID, parentGroupID, templateID uuid.UUID) (*chain.FollowUp, error)
 	Dismiss(ctx context.Context, orgID, groupID uuid.UUID, reason string, now time.Time) (int, error)
 }
 
@@ -75,7 +75,10 @@ func runChain(ctx context.Context, deps Deps, orgID uuid.UUID, j jobs.Job) (chai
 	for _, f := range rows {
 		out.FollowUps = append(out.FollowUps, toChainFollowUpDTO(f))
 	}
-	parent, err := deps.Chain.ParentOf(ctx, orgID, j.RunGroupID)
+	if j.Trigger != jobs.TriggerChain || j.TriggerRef == nil || j.TemplateID == nil {
+		return out, nil
+	}
+	parent, err := deps.Chain.ParentOf(ctx, orgID, *j.TriggerRef, *j.TemplateID)
 	if err != nil {
 		return out, fmt.Errorf("read parent follow-up: %w", err)
 	}

@@ -125,14 +125,19 @@ func (o *Outbox) RunGroupFinished(ctx context.Context, r jobs.RunGroupResult) er
 // chainedRunFinished reports a follow-up's run group under the chain's root
 // schedule, when the chain was started by a schedule that still exists. A
 // chain started by hand, by a webhook or by the system notifies nothing,
-// as its first run does not.
+// as its first run does not. The row is found by the run's parent group
+// (its trigger_ref) and template, never by child_group_id, which the
+// starter may not have committed yet when a quick child run finishes.
 func (o *Outbox) chainedRunFinished(ctx context.Context, r jobs.RunGroupResult) error {
+	if r.TriggerRef == nil || r.TemplateID == nil {
+		return nil
+	}
 	sp, err := o.db.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin notification savepoint: %w", err)
 	}
 	return o.inSavepoint(ctx, sp, func(q *gen.Queries) error {
-		row, err := q.GetFollowUpByChild(ctx, gen.GetFollowUpByChildParams{OrgID: r.OrgID, ChildGroupID: db.NullUUID(&r.GroupID)})
+		row, err := q.GetFollowUpOfChainedRun(ctx, gen.GetFollowUpOfChainedRunParams{OrgID: r.OrgID, ParentGroupID: *r.TriggerRef, TemplateID: *r.TemplateID})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}

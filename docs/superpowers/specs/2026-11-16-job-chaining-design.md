@@ -343,7 +343,9 @@ no extra step: a cancelled group skips its follow-ups. A follow-up already
 
 `notify.Outbox.RunGroupFinished` today ignores everything but
 `trigger = 'schedule'`. It also handles `trigger = 'chain'`: it looks up the
-`run_follow_ups` row whose `child_group_id` is the group; when its
+`run_follow_ups` row of the run's parent group (`trigger_ref`) and template,
+the table's unique key (not `child_group_id`, which the starter writes only
+when its batch commits, possibly after a quick child run finished); when its
 `root_trigger = 'schedule'` and the schedule still exists, it enqueues the run
 event under that schedule's rules, with the follow-up template as `Template` and
 a "follow-up of <parent template>" line. Skips notify like schedule decisions,

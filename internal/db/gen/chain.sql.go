@@ -99,7 +99,7 @@ func (q *Queries) DismissPendingFollowUps(ctx context.Context, arg DismissPendin
 	return result.RowsAffected(), nil
 }
 
-const getFollowUpByChild = `-- name: GetFollowUpByChild :one
+const getFollowUpOfChainedRun = `-- name: GetFollowUpOfChainedRun :one
 SELECT r.id, r.org_id, r.parent_group_id, r.template_id, r.condition, r.position, r.state, r.reason, r.child_group_id, r.host_ids, r.root_trigger, r.root_ref, r.depth, r.path, r.configured_by, r.attempts, r.next_attempt_at, r.created_at, r.decided_at, r.started_at,
        COALESCE(t.name, '')::text AS template_name,
        COALESCE(fj.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS child_first_job_id
@@ -109,15 +109,16 @@ LEFT JOIN LATERAL (
   SELECT j.id FROM jobs j
   WHERE j.org_id = r.org_id AND j.run_group_id = r.child_group_id AND j.kind = 'run'
   ORDER BY j.created_at, j.id LIMIT 1) fj ON true
-WHERE r.org_id = $1 AND r.child_group_id = $2
+WHERE r.org_id = $1 AND r.parent_group_id = $2 AND r.template_id = $3
 `
 
-type GetFollowUpByChildParams struct {
-	OrgID        uuid.UUID   `json:"org_id"`
-	ChildGroupID pgtype.UUID `json:"child_group_id"`
+type GetFollowUpOfChainedRunParams struct {
+	OrgID         uuid.UUID `json:"org_id"`
+	ParentGroupID uuid.UUID `json:"parent_group_id"`
+	TemplateID    uuid.UUID `json:"template_id"`
 }
 
-type GetFollowUpByChildRow struct {
+type GetFollowUpOfChainedRunRow struct {
 	ID              uuid.UUID          `json:"id"`
 	OrgID           uuid.UUID          `json:"org_id"`
 	ParentGroupID   uuid.UUID          `json:"parent_group_id"`
@@ -142,11 +143,15 @@ type GetFollowUpByChildRow struct {
 	ChildFirstJobID uuid.UUID          `json:"child_first_job_id"`
 }
 
-// The follow-up whose start created the given run group, same shape as
-// ListRunFollowUps.
-func (q *Queries) GetFollowUpByChild(ctx context.Context, arg GetFollowUpByChildParams) (GetFollowUpByChildRow, error) {
-	row := q.db.QueryRow(ctx, getFollowUpByChild, arg.OrgID, arg.ChildGroupID)
-	var i GetFollowUpByChildRow
+// The follow-up a chained run group was started for, by the table's unique
+// key: the run's trigger_ref is the parent group, its template the
+// follow-up's. Not by child_group_id: the starter writes that in its batch
+// transaction, which commits only after the whole batch, so a quick child
+// run (or one replayed after a lost write-back) can finish before the row
+// names it. Same shape as ListRunFollowUps.
+func (q *Queries) GetFollowUpOfChainedRun(ctx context.Context, arg GetFollowUpOfChainedRunParams) (GetFollowUpOfChainedRunRow, error) {
+	row := q.db.QueryRow(ctx, getFollowUpOfChainedRun, arg.OrgID, arg.ParentGroupID, arg.TemplateID)
+	var i GetFollowUpOfChainedRunRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,

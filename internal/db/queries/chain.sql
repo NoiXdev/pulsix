@@ -46,9 +46,13 @@ LEFT JOIN LATERAL (
 WHERE r.org_id = @org_id AND r.parent_group_id = @parent_group_id
 ORDER BY r.position, r.created_at, r.id;
 
--- name: GetFollowUpByChild :one
--- The follow-up whose start created the given run group, same shape as
--- ListRunFollowUps.
+-- name: GetFollowUpOfChainedRun :one
+-- The follow-up a chained run group was started for, by the table's unique
+-- key: the run's trigger_ref is the parent group, its template the
+-- follow-up's. Not by child_group_id: the starter writes that in its batch
+-- transaction, which commits only after the whole batch, so a quick child
+-- run (or one replayed after a lost write-back) can finish before the row
+-- names it. Same shape as ListRunFollowUps.
 SELECT r.*,
        COALESCE(t.name, '')::text AS template_name,
        COALESCE(fj.id, '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS child_first_job_id
@@ -58,7 +62,7 @@ LEFT JOIN LATERAL (
   SELECT j.id FROM jobs j
   WHERE j.org_id = r.org_id AND j.run_group_id = r.child_group_id AND j.kind = 'run'
   ORDER BY j.created_at, j.id LIMIT 1) fj ON true
-WHERE r.org_id = @org_id AND r.child_group_id = @child_group_id;
+WHERE r.org_id = @org_id AND r.parent_group_id = @parent_group_id AND r.template_id = @template_id;
 
 -- name: ResolvePendingFollowUps :execrows
 -- The parent group has finished: every pending follow-up becomes due (and is
