@@ -6,6 +6,7 @@ import { QueryLoading } from '../ui/QueryState.tsx';
 import { useQueryGuard } from '../ui/useQueryGuard.tsx';
 import { useOrg, useOrgs } from '../api/hooks/useOrgs.ts';
 import { useMe } from '../api/hooks/useMe.ts';
+import { useSetupStatus } from '../api/hooks/useSetupStatus.ts';
 import { useSignOut } from '../lib/session.ts';
 import { crumbLabels } from '../lib/breadcrumbs.ts';
 import { useT } from '../i18n/useT.ts';
@@ -37,6 +38,9 @@ export function OrgLayout() {
   const [creatingOrg, setCreatingOrg] = useState(false);
 
   const me = useMe({ enabled: true });
+  // The build version shown in the shell. The status is public and already
+  // cached from the first load (RootRedirect); the shell does not wait for it.
+  const setupStatus = useSetupStatus();
   // A session that is not MFA-complete, or whose account must change its
   // password, is refused every organization route, so these wait until
   // /auth/me says it is complete and the session is sent on to enrolment,
@@ -81,6 +85,7 @@ export function OrgLayout() {
         subtitle: roleLabel(t, org.data.org.role),
       }}
       onLogout={signOut}
+      version={setupStatus.data?.version}
     >
       <Outlet />
       <CreateOrgDialog open={creatingOrg} onClose={() => setCreatingOrg(false)} />

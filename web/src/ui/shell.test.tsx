@@ -21,7 +21,7 @@ const ORGS: ShellOrg[] = [
  * itself so the "active route" assertions reflect real client-side
  * routing (finding "Important 11": the router's own activeProps, not a
  * hand-set `active` prop the shell used to take). */
-function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void } = {}) {
+function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?: string; onCreateOrg?: () => void; version?: string } = {}) {
   const rootRoute = createRootRoute();
 
   function leaf(path: string) {
@@ -37,6 +37,7 @@ function renderShellAt(initialPath: string, opts: { onLogout?: () => void; role?
           user={{ displayName: 'Tim R.', subtitle: 'Owner' }}
           onLogout={opts.onLogout ?? (() => {})}
           onCreateOrg={opts.onCreateOrg}
+          version={opts.version}
         >
           <div>page content</div>
         </AppShell>
@@ -253,5 +254,21 @@ describe('AppShell nav grouping', () => {
     await screen.findByText('page content');
     expect(screen.queryByRole('group', { name: 'Settings' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument();
+  });
+
+  it.each([
+    ['0.1.0', 'v0.1.0'],
+    ['v0.1.0-rc.2', 'v0.1.0-rc.2'],
+    ['dev', 'dev'],
+  ])('shows the Pulsix version %s as %s beside the wordmark', async (version, shown) => {
+    renderShellAt('/o/acme/hosts', { version });
+    await screen.findByText('page content');
+    expect(screen.getByTitle('Pulsix version')).toHaveTextContent(shown);
+  });
+
+  it('shows no version until it is known', async () => {
+    renderShellAt('/o/acme/hosts');
+    await screen.findByText('page content');
+    expect(screen.queryByTitle('Pulsix version')).not.toBeInTheDocument();
   });
 });

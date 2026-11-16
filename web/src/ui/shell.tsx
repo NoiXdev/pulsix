@@ -39,6 +39,9 @@ export interface AppShellProps {
    * nothing linked to /account/security, so the user footer was dead. Both
    * live in the footer menu below, as the mockup shows. */
   onLogout: () => void;
+  /** The manager's build version (GET /setup/status), shown beside the
+   * wordmark; nothing is shown while it is unknown. */
+  version?: string;
   children: ReactNode;
 }
 
@@ -57,6 +60,13 @@ const NAV_LINK_PROPS = {
   activeProps: { className: ACTIVE_LINK, 'aria-current': 'page', 'data-nav-active': 'true' },
   inactiveProps: { className: INACTIVE_LINK },
 } as const;
+
+/** displayVersion prefixes a numeric release version with "v" ("0.1.0"
+ * reads "v0.1.0"); one that already has it, or a build name such as
+ * "dev", stays as it is. */
+function displayVersion(version: string): string {
+  return /^\d/.test(version) ? `v${version}` : version;
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -91,7 +101,7 @@ function initials(name: string): string {
  * descendant of /o/$org/settings, which is exactly the set of routes the
  * mockup groups under it.
  */
-export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, onLogout, children }: AppShellProps) {
+export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, onLogout, version, children }: AppShellProps) {
   const navigate = useNavigate();
   const t = useT();
   const [search, setSearch] = useState('');
@@ -120,6 +130,11 @@ export function AppShell({ org, orgs, onSelectOrg, onCreateOrg, crumbs, user, on
           <span className="font-mono text-[17px] font-extrabold tracking-tight">
             pulsi<span className="text-brand">x</span>
           </span>
+          {version && (
+            <span title={t.shell.version} className="ml-auto truncate font-mono text-[11px] text-muted-foreground">
+              {displayVersion(version)}
+            </span>
+          )}
         </div>
 
         {/* The switcher is handed the organizations the signed-in user

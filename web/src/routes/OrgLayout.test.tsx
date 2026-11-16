@@ -67,6 +67,18 @@ describe('OrgLayout (Important 7 error handling + breadcrumbs)', () => {
     expect(header).toHaveTextContent('SettingsMembers');
   });
 
+  it('shows the manager version from the setup status in the shell', async () => {
+    mockApi({
+      'GET /api/v1/orgs/acme': ORG_OK,
+      'GET /api/v1/auth/me': ME_OK,
+      'GET /api/v1/orgs': ORGS_OK,
+      'GET /api/v1/setup/status': { completed: true, version: '0.2.0' },
+    });
+    renderAt('/o/acme/hosts');
+
+    expect(await screen.findByTitle('Pulsix version')).toHaveTextContent('v0.2.0');
+  });
+
   it('redirects to /login on a 401 instead of hanging on "Loading…"', async () => {
     mockApi({
       'GET /api/v1/orgs/acme': () => new Response(JSON.stringify({ detail: 'login required' }), { status: 401 }),

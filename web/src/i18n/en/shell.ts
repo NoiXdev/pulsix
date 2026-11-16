@@ -35,6 +35,7 @@ export const enShell = {
   accountSecurity: 'Account security',
   logOut: 'Log out',
   notifications: 'Notifications',
+  version: 'Pulsix version',
   /** Breadcrumb labels, keyed by the URL segment they stand for. */
   crumbs: {
     users: 'Users',
