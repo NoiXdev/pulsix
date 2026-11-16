@@ -22,12 +22,18 @@ const MaxPictureFollowUps = 100
 // at this depth is skipped (internal/chain/starter_decide.go).
 const maxChainDepth = 10
 
+// FollowUpRef is a follow-up as its parent lists it: id and name.
+type FollowUpRef struct {
+	TemplateID uuid.UUID
+	Name       string
+}
+
 // FollowUpTemplate is what the walk needs of a template: its name, its
-// revision and its follow-ups' ids in start order.
+// revision and its follow-ups in start order.
 type FollowUpTemplate struct {
 	Name      string
 	Revision  int64
-	FollowUps []uuid.UUID
+	FollowUps []FollowUpRef
 }
 
 // FollowUpLookup reads a template's current follow-up data; found is false
@@ -110,7 +116,7 @@ func (w *walker) node(ctx context.Context, id uuid.UUID, name string, depth int,
 	n.TemplateName, n.TemplateRevision = t.Name, t.Revision
 	childPath := append(slices.Clone(path), id)
 	for _, c := range t.FollowUps {
-		child, ok, err := w.node(ctx, c, "", depth+1, childPath)
+		child, ok, err := w.node(ctx, c.TemplateID, c.Name, depth+1, childPath)
 		if err != nil {
 			return PictureFollowUp{}, false, err
 		}

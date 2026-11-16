@@ -63,7 +63,7 @@ func fuRoot(n int, depth int, path ...int) runrequests.FollowUpRoot {
 func fuT(n int, rev int64, children ...int) (uuid.UUID, runrequests.FollowUpTemplate) {
 	t := runrequests.FollowUpTemplate{Name: fmt.Sprintf("t%d", n), Revision: rev}
 	for _, c := range children {
-		t.FollowUps = append(t.FollowUps, fuID(c))
+		t.FollowUps = append(t.FollowUps, runrequests.FollowUpRef{TemplateID: fuID(c), Name: fmt.Sprintf("t%d", c)})
 	}
 	return fuID(n), t
 }
@@ -130,7 +130,7 @@ func TestBuildFollowUps(t *testing.T) {
 		{
 			"cycle", fuGraph(fuE(y, 4, x)),
 			[]runrequests.FollowUpRoot{fuRoot(y, 1, x)},
-			[]runrequests.PictureFollowUp{fuNode(y, 4, "", runrequests.PictureFollowUp{TemplateID: fuID(x).String(), Stop: runrequests.StopInChain})},
+			[]runrequests.PictureFollowUp{fuNode(y, 4, "", runrequests.PictureFollowUp{TemplateID: fuID(x).String(), TemplateName: "t1", Stop: runrequests.StopInChain})},
 		},
 		{
 			"root on its own path", fuGraph(fuE(y, 4)),
@@ -184,7 +184,7 @@ func TestBuildFollowUps(t *testing.T) {
 			}
 			n = n.FollowUps[0]
 		}
-		if n.TemplateID != fuID(110).String() || n.Stop != runrequests.StopTooDeep || n.TemplateRevision != 0 || len(n.FollowUps) != 0 {
+		if n.TemplateID != fuID(110).String() || n.TemplateName != "t110" || n.Stop != runrequests.StopTooDeep || n.TemplateRevision != 0 || len(n.FollowUps) != 0 {
 			t.Errorf("F10 = %+v", n)
 		}
 		if g.calls != 9 {
