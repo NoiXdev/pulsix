@@ -26,6 +26,19 @@ func (q *Queries) GetOrgAssistantEnabled(ctx context.Context, orgID uuid.UUID) (
 	return enabled, err
 }
 
+const getOrgAssistantStartsFollowUps = `-- name: GetOrgAssistantStartsFollowUps :one
+SELECT approved_runs_start_follow_ups FROM org_assistant_settings WHERE org_id = $1
+`
+
+// Whether an approved run request starts the template's follow-ups; the caller
+// turns pgx.ErrNoRows (no row) into off.
+func (q *Queries) GetOrgAssistantStartsFollowUps(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, getOrgAssistantStartsFollowUps, orgID)
+	var approved_runs_start_follow_ups bool
+	err := row.Scan(&approved_runs_start_follow_ups)
+	return approved_runs_start_follow_ups, err
+}
+
 const upsertOrgAssistantEnabled = `-- name: UpsertOrgAssistantEnabled :exec
 INSERT INTO org_assistant_settings (org_id, enabled)
 VALUES ($1, $2)
@@ -39,5 +52,21 @@ type UpsertOrgAssistantEnabledParams struct {
 
 func (q *Queries) UpsertOrgAssistantEnabled(ctx context.Context, arg UpsertOrgAssistantEnabledParams) error {
 	_, err := q.db.Exec(ctx, upsertOrgAssistantEnabled, arg.OrgID, arg.Enabled)
+	return err
+}
+
+const upsertOrgAssistantStartsFollowUps = `-- name: UpsertOrgAssistantStartsFollowUps :exec
+INSERT INTO org_assistant_settings (org_id, approved_runs_start_follow_ups)
+VALUES ($1, $2)
+ON CONFLICT (org_id) DO UPDATE SET approved_runs_start_follow_ups = EXCLUDED.approved_runs_start_follow_ups, updated_at = now()
+`
+
+type UpsertOrgAssistantStartsFollowUpsParams struct {
+	OrgID                      uuid.UUID `json:"org_id"`
+	ApprovedRunsStartFollowUps bool      `json:"approved_runs_start_follow_ups"`
+}
+
+func (q *Queries) UpsertOrgAssistantStartsFollowUps(ctx context.Context, arg UpsertOrgAssistantStartsFollowUpsParams) error {
+	_, err := q.db.Exec(ctx, upsertOrgAssistantStartsFollowUps, arg.OrgID, arg.ApprovedRunsStartFollowUps)
 	return err
 }

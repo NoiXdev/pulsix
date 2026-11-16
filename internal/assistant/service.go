@@ -15,6 +15,10 @@ type Store interface {
 	// Enabled reports the stored switch; no stored row means off.
 	Enabled(ctx context.Context, orgID uuid.UUID) (bool, error)
 	SetEnabled(ctx context.Context, orgID uuid.UUID, enabled bool) error
+	// StartsFollowUps reports whether an approved run request also starts the
+	// template's follow-ups; no stored row means off.
+	StartsFollowUps(ctx context.Context, orgID uuid.UUID) (bool, error)
+	SetStartsFollowUps(ctx context.Context, orgID uuid.UUID, on bool) error
 }
 
 // Service reads and writes the switch.
@@ -31,4 +35,15 @@ func (s *Service) Enabled(ctx context.Context, orgID uuid.UUID) (bool, error) {
 // SetEnabled turns assistant access on or off for orgID.
 func (s *Service) SetEnabled(ctx context.Context, orgID uuid.UUID, enabled bool) error {
 	return s.store.SetEnabled(ctx, orgID, enabled)
+}
+
+// StartsFollowUps reports whether an approved run request of orgID also
+// starts the template's follow-ups.
+func (s *Service) StartsFollowUps(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	return s.store.StartsFollowUps(ctx, orgID)
+}
+
+// SetStartsFollowUps sets whether approved run requests start follow-ups.
+func (s *Service) SetStartsFollowUps(ctx context.Context, orgID uuid.UUID, on bool) error {
+	return s.store.SetStartsFollowUps(ctx, orgID, on)
 }

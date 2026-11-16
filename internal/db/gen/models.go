@@ -767,9 +767,10 @@ type OncallRotationChannel struct {
 }
 
 type OrgAssistantSetting struct {
-	OrgID     uuid.UUID `json:"org_id"`
-	Enabled   bool      `json:"enabled"`
-	UpdatedAt time.Time `json:"updated_at"`
+	OrgID                      uuid.UUID `json:"org_id"`
+	Enabled                    bool      `json:"enabled"`
+	UpdatedAt                  time.Time `json:"updated_at"`
+	ApprovedRunsStartFollowUps bool      `json:"approved_runs_start_follow_ups"`
 }
 
 type OrgJobSetting struct {

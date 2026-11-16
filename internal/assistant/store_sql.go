@@ -38,3 +38,23 @@ func (s *SQLStore) SetEnabled(ctx context.Context, orgID uuid.UUID, enabled bool
 	}
 	return nil
 }
+
+// StartsFollowUps implements Store.
+func (s *SQLStore) StartsFollowUps(ctx context.Context, orgID uuid.UUID) (bool, error) {
+	on, err := s.q.GetOrgAssistantStartsFollowUps(ctx, orgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get follow-up setting: %w", err)
+	}
+	return on, nil
+}
+
+// SetStartsFollowUps implements Store.
+func (s *SQLStore) SetStartsFollowUps(ctx context.Context, orgID uuid.UUID, on bool) error {
+	if err := s.q.UpsertOrgAssistantStartsFollowUps(ctx, gen.UpsertOrgAssistantStartsFollowUpsParams{OrgID: orgID, ApprovedRunsStartFollowUps: on}); err != nil {
+		return fmt.Errorf("store follow-up setting: %w", err)
+	}
+	return nil
+}
