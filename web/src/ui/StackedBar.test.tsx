@@ -25,4 +25,16 @@ describe('StackedBar', () => {
     expect(screen.queryByTestId('stacked-bar-segment')).not.toBeInTheDocument();
     expect(screen.getByText('transfer')).toBeInTheDocument();
   });
+
+  it('colours a part by its own shade, not its position', () => {
+    render(
+      <>
+        <StackedBar label="A" parts={[{ key: 'x', label: 'x', value: 1, display: '1', shade: 2 }]} />
+        <StackedBar label="B" parts={[{ key: 'y', label: 'y', value: 1, display: '1', shade: 0 }, { key: 'x', label: 'x', value: 1, display: '1', shade: 2 }]} />
+      </>,
+    );
+    const [alone, , second] = screen.getAllByTestId('stacked-bar-segment');
+    expect(alone.style.backgroundColor).toBe(second.style.backgroundColor);
+    expect(alone.style.backgroundColor).toContain('58%');
+  });
 });

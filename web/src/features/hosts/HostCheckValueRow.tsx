@@ -171,11 +171,8 @@ export function HostCheckValueRow({
         ) : (
           <>
             <span className="font-mono text-foreground">
-              {value.label !== undefined
-                ? discreteText(t, check.plugin, value.metric, value.label)
-                : value.value !== undefined
-                  ? formatNumber(value.value)
-                  : '—'}
+              {(value.label != null ? discreteText(t, check.plugin, value.metric, value.label) : undefined) ??
+                (value.value !== undefined ? formatNumber(value.value) : '—')}
             </span>
             {failure && (
               <span data-testid="failure-reason" className="text-[var(--px-crit)]">

@@ -35,16 +35,28 @@ export function failureBeside(check: HostCheck, value: HostCheckValue, t: Messag
   return failureText(t, failure.label);
 }
 
+/** attemptAt is when the latest attempt was made: the time of its
+ * response_ms reading, else of its up reading. */
+function attemptAt(check: HostCheck): string | undefined {
+  const response = (check.values ?? []).find((v) => v.item === '' && v.metric === 'http.response_ms' && v.error === undefined);
+  return response?.at ?? (check.values ?? []).find((v) => v.item === '' && v.metric === 'http.up')?.at;
+}
+
 /** timingParts is the latest attempt's breakdown as bar parts: each phase
- * the check reported, in order; a phase without a current reading (no
- * name to resolve, no TLS) is left out. */
+ * that attempt reported, in order. Only readings taken with the latest
+ * attempt count (their time is the attempt's), so a phase an earlier
+ * attempt had and the latest one did not report (dns_ms of a name since
+ * replaced by an address, before it turns stale) is never mixed in. Each
+ * phase keeps its own shade whichever others are present. */
 export function timingParts(check: HostCheck, t: Messages): StackedBarPart[] {
+  const at = attemptAt(check);
+  if (at === undefined) return [];
   const parts: StackedBarPart[] = [];
-  for (const phase of PHASES) {
+  PHASES.forEach((phase, shade) => {
     const v = current(check, `http.${phase}_ms`);
-    if (v?.value === undefined) continue;
-    parts.push({ key: phase, label: t.hosts.http.phases[phase], value: v.value, display: t.hosts.vantages.ms(formatNumber(v.value)) });
-  }
+    if (v?.value === undefined || v.at !== at) return;
+    parts.push({ key: phase, label: t.hosts.http.phases[phase], value: v.value, display: t.hosts.vantages.ms(formatNumber(v.value)), shade });
+  });
   return parts;
 }
 

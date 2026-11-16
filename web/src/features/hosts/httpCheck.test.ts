@@ -82,19 +82,39 @@ describe('timingParts', () => {
       // An address URL resolves no name; an http URL has no TLS.
     ]);
     expect(timingParts(c, en)).toEqual([
-      { key: 'connect', label: 'connect', value: 10.456, display: '10.46 ms' },
-      { key: 'ttfb', label: 'first byte', value: 120, display: '120 ms' },
-      { key: 'transfer', label: 'transfer', value: 3, display: '3 ms' },
+      { key: 'connect', label: 'connect', value: 10.456, display: '10.46 ms', shade: 1 },
+      { key: 'ttfb', label: 'first byte', value: 120, display: '120 ms', shade: 3 },
+      { key: 'transfer', label: 'transfer', value: 3, display: '3 ms', shade: 4 },
     ]);
   });
 
   it('leaves out stale and failed phases', () => {
     const c = check([
+      value('http.up', { value: 1 }),
       value('http.dns_ms', { value: 4, stale: true }),
       value('http.tls_ms', { error: 'x' }),
       value('http.ttfb_ms', { value: 1 }),
     ]);
     expect(timingParts(c, de).map((p) => p.label)).toEqual(['erstes Byte']);
+  });
+
+  it('keeps only the phases of the latest attempt, even before an older one turns stale', () => {
+    const latest = '2026-11-16T11:59:30Z';
+    const c = check([
+      value('http.up', { value: 1, at: latest }),
+      value('http.response_ms', { value: 30, at: latest }),
+      // The URL named a host a minute ago; it is an address now.
+      value('http.dns_ms', { value: 4, at: AT }),
+      value('http.connect_ms', { value: 9, at: latest }),
+      value('http.ttfb_ms', { value: 20, at: latest }),
+    ]);
+    expect(timingParts(c, en).map((p) => p.key)).toEqual(['connect', 'ttfb']);
+  });
+
+  it('times the attempt by http.up when response_ms failed, and has no parts without either', () => {
+    const c = check([value('http.up', { value: 0 }), value('http.response_ms', { error: 'x' }), value('http.dns_ms', { value: 2 })]);
+    expect(timingParts(c, en).map((p) => p.key)).toEqual(['dns']);
+    expect(timingParts(check([value('http.dns_ms', { value: 2 })]), en)).toEqual([]);
   });
 });
 
