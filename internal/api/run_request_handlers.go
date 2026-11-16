@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -184,6 +185,9 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		ID   string `path:"id"`
 		Body struct {
 			Fingerprint string `json:"fingerprint" minLength:"1" doc:"The fingerprint of the detail the person reviewed"`
+			// FollowUps is the person's selection: omitted takes the
+			// default, an empty list starts none.
+			FollowUps *[]string `json:"follow_ups,omitempty" maxItems:"10" doc:"Direct follow-ups to start, a subset of the picture's; omitted starts all of them when the organization allows follow-ups"`
 		}
 	}) (*runRequestOutput, error) {
 		if _, err := requireInteractiveSession(ctx); err != nil {
@@ -197,13 +201,23 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		if err != nil {
 			return nil, err
 		}
-		r, err := deps.RunRequests.Approve(ctx, scope.OrgID, id, scope.UserID, in.Body.Fingerprint)
+		var selection *[]uuid.UUID
+		if in.Body.FollowUps != nil {
+			ids := make([]uuid.UUID, len(*in.Body.FollowUps))
+			for i, raw := range *in.Body.FollowUps {
+				if ids[i], err = parseUUID(raw, "follow_ups"); err != nil {
+					return nil, err
+				}
+			}
+			selection = &ids
+		}
+		a, err := deps.RunRequests.Approve(ctx, scope.OrgID, id, scope.UserID, in.Body.Fingerprint, selection)
 		if err != nil {
 			return nil, mapRunRequestErr(ctx, err)
 		}
-		setAuditObject(ctx, r.ID.String(), "approved run request (template revision "+strconv.FormatInt(r.TemplateRevision, 10)+")")
+		setAuditObject(ctx, a.Request.ID.String(), approvalSummary(a))
 		out := &runRequestOutput{}
-		out.Body.Request = toRunRequestDTO(r)
+		out.Body.Request = toRunRequestDTO(a.Request)
 		return out, nil
 	}, withAudit("approveRunRequest", "run_request"))
 
@@ -228,6 +242,24 @@ func registerRunRequestRoutes(hapi huma.API, deps Deps) {
 		out.Body.Request = toRunRequestDTO(r)
 		return out, nil
 	}, withAudit("rejectRunRequest", "run_request"))
+}
+
+// approvalSummary is the audit summary of an approval: the template
+// revision and, when the template has follow-ups, the ones that start.
+func approvalSummary(a runrequests.Approved) string {
+	summary := "approved run request (template revision " + strconv.FormatInt(a.Request.TemplateRevision, 10)
+	if a.FollowUps != nil {
+		if len(a.Started) == 0 {
+			summary += "; no follow-ups"
+		} else {
+			names := make([]string, len(a.Started))
+			for i, n := range a.Started {
+				names[i] = n.TemplateName
+			}
+			summary += "; follow-ups: " + strings.Join(names, ", ")
+		}
+	}
+	return summary + ")"
 }
 
 func runRequestDetail(ctx context.Context, deps Deps, scope Scope, id uuid.UUID) (*runRequestDetailOutput, error) {

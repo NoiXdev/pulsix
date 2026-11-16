@@ -3732,14 +3732,12 @@ export interface components {
             readonly $schema?: string;
             /** @description The fingerprint of the detail the person reviewed */
             fingerprint: string;
+            /** @description Direct follow-ups to start, a subset of the picture's; omitted starts all of them when the organization allows follow-ups */
+            follow_ups?: string[];
         };
         AssistantSettingsDTO: {
-            /**
-             * Format: uri
-             * @description A URL to the JSON Schema for this object.
-             * @example https://example.com/schemas/AssistantSettingsDTO.json
-             */
-            readonly $schema?: string;
+            /** @description Whether an approved run request also starts the template's follow-ups */
+            approved_runs_start_follow_ups: boolean;
             /** @description Whether assistant tokens of this organization may use the assistant endpoint */
             assistant_enabled: boolean;
         };
@@ -3751,6 +3749,18 @@ export interface components {
              */
             readonly $schema?: string;
             settings: components["schemas"]["AssistantSettingsDTO"];
+        };
+        AssistantSettingsUpdate: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/schemas/AssistantSettingsUpdate.json
+             */
+            readonly $schema?: string;
+            /** @description Whether an approved run request also starts the template's follow-ups; omitted keeps it */
+            approved_runs_start_follow_ups?: boolean;
+            /** @description Whether assistant tokens of this organization may use the assistant endpoint */
+            assistant_enabled: boolean;
         };
         BackupItem: {
             /**
@@ -6525,6 +6535,7 @@ export interface components {
             extra_vars: {
                 [key: string]: unknown;
             };
+            follow_ups?: components["schemas"]["PictureFollowUps"];
             limit: string;
             only_host?: string;
             playbook: components["schemas"]["PicturePlaybook"];
@@ -6538,6 +6549,19 @@ export interface components {
             template_revision: number;
             vars_digest: string;
             vault_identities: components["schemas"]["PictureVault"][] | null;
+        };
+        PictureFollowUp: {
+            follow_ups?: components["schemas"]["PictureFollowUp"][] | null;
+            stop?: string;
+            template_id: string;
+            template_name: string;
+            /** Format: int64 */
+            template_revision?: number;
+        };
+        PictureFollowUps: {
+            start: boolean;
+            templates: components["schemas"]["PictureFollowUp"][] | null;
+            truncated?: boolean;
         };
         PictureHost: {
             address: string;
@@ -16136,7 +16160,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AssistantSettingsDTO"];
+                "application/json": components["schemas"]["AssistantSettingsUpdate"];
             };
         };
         responses: {

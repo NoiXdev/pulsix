@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/noixdev/pulsix/internal/jobs"
+	"github.com/noixdev/pulsix/internal/templates"
 	"github.com/noixdev/pulsix/internal/tenancy"
 )
 
@@ -146,12 +147,12 @@ func TestRequestRunAndCancel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	approved, err := f.s.Deps.RunRequests.Approve(f.scoped, f.org, rid, f.owner, fp)
+	approved, err := f.s.Deps.RunRequests.Approve(f.scoped, f.org, rid, f.owner, fp, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	group := approved.RunGroupID.String()
-	list, _, err := f.s.Deps.Jobs.List(f.scoped, f.org, jobs.Filter{RunGroupID: approved.RunGroupID}, "", 10)
+	group := approved.Request.RunGroupID.String()
+	list, _, err := f.s.Deps.Jobs.List(f.scoped, f.org, jobs.Filter{RunGroupID: approved.Request.RunGroupID}, "", 10)
 	if err != nil || len(list) == 0 {
 		t.Fatalf("jobs of group %s: %v %v", group, list, err)
 	}
@@ -179,5 +180,50 @@ func TestJobToolsNeedTheirArea(t *testing.T) {
 		if _, isErr := call(t, cs, tool, map[string]any{}); !isErr {
 			t.Errorf("%s ran for a jobs.read token", tool)
 		}
+	}
+}
+
+// TestRunRequestShowsFollowUps: the request detail the assistant reads
+// says which follow-ups an approval would start, and request_run says the
+// organization decides.
+func TestRunRequestShowsFollowUps(t *testing.T) {
+	f := newOrgFixture(t)
+	notify, err := f.s.Deps.Templates.Create(f.scoped, f.org, templates.CreateInput{
+		Name: "notify", PlaybookID: f.playbook, Scope: templates.Scope{HostIDs: []uuid.UUID{f.host}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := f.s.Deps.Templates.Create(f.scoped, f.org, templates.CreateInput{
+		Name: "build", PlaybookID: f.playbook, Scope: templates.Scope{HostIDs: []uuid.UUID{f.host}}, FollowUps: []uuid.UUID{notify.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := mustConnect(t, f.s, f.token)
+	var req struct {
+		RequestID string `json:"request_id"`
+	}
+	callOK(t, cs, "request_run", map[string]any{"template_id": build.ID.String(), "reason": "build"}, &req)
+	text := callOK(t, cs, "get_run_request", map[string]any{"request_id": req.RequestID}, nil)
+	if !strings.Contains(text, `"follow_ups"`) || !strings.Contains(text, notify.ID.String()) {
+		t.Fatalf("get_run_request lacks the follow-ups:\n%s", text)
+	}
+
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	described := false
+	for _, tl := range res.Tools {
+		if tl.Name == "request_run" {
+			described = strings.Contains(tl.Description, "Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says.")
+			if !described {
+				t.Fatalf("request_run description = %q", tl.Description)
+			}
+		}
+	}
+	if !described {
+		t.Fatal("request_run is not listed")
 	}
 }

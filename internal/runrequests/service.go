@@ -210,50 +210,71 @@ func (s *Service) List(ctx context.Context, orgID uuid.UUID, status *Status) ([]
 	return out, nil
 }
 
+// Approved is the outcome of an approval: the decided request, the
+// follow-ups block of the picture it approved, and the direct follow-ups
+// the approval started, in start order.
+type Approved struct {
+	Request   Request
+	FollowUps *PictureFollowUps
+	Started   []PictureFollowUp
+}
+
 // Approve enqueues what the request asks for, if fingerprint still matches
-// the request's current run picture. The decision is recorded first, with
-// the fingerprint and the run group (the request's id), so a concurrent
-// second approval loses and every job's claim finds the request; the
-// enqueue carries an idempotency key for runs; a failing enqueue puts the
-// request back to pending. What runs stays bound to fingerprint until the
-// claim: see CheckRunClaim.
-func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string) (Request, error) {
-	r, _, current, err := s.Get(ctx, orgID, id)
+// the request's current run picture. followUps is the person's selection of
+// the picture's direct follow-ups; nil means the default (all startable
+// ones when the organization allows follow-ups, none otherwise). The
+// selection is checked against the picture just recomputed, before the
+// decision, so a refused one leaves the request pending. The decision is
+// recorded first, with the fingerprint and the run group (the request's
+// id), so a concurrent second approval loses and every job's claim finds
+// the request; the enqueue carries an idempotency key for runs; a failing
+// enqueue puts the request back to pending. What runs stays bound to
+// fingerprint until the claim: see CheckRunClaim.
+func (s *Service) Approve(ctx context.Context, orgID, id, by uuid.UUID, fingerprint string, followUps *[]uuid.UUID) (Approved, error) {
+	r, p, current, err := s.Get(ctx, orgID, id)
 	if err != nil {
-		return Request{}, err
+		return Approved{}, err
 	}
 	switch r.Status {
 	case StatusExpired:
-		return Request{}, ErrExpired
+		return Approved{}, ErrExpired
 	case StatusPending:
 	default:
-		return Request{}, ErrDecided
+		return Approved{}, ErrDecided
 	}
 	if fingerprint != current {
-		return Request{}, ErrChanged
+		return Approved{}, ErrChanged
+	}
+	started, err := selectFollowUps(p.FollowUps, followUps)
+	if err != nil {
+		return Approved{}, err
+	}
+	list := make([]uuid.UUID, len(started))
+	for i, n := range started {
+		list[i] = uuid.MustParse(n.TemplateID)
 	}
 	at := s.now()
 	ok, err := s.store.Decide(ctx, orgID, id, StatusApproved, by, at, fingerprint)
 	if err != nil {
-		return Request{}, fmt.Errorf("decide run request: %w", err)
+		return Approved{}, fmt.Errorf("decide run request: %w", err)
 	}
 	if !ok {
-		return Request{}, ErrDecided
+		return Approved{}, ErrDecided
 	}
 	group := r.ID
 	if r.Kind == KindRetryFailed {
-		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, group, []uuid.UUID{})
+		err = s.enqueuer.RetryFailed(ctx, orgID, *r.JobID, by, group, list)
 	} else {
-		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, "run-request:"+r.ID.String(), group, []uuid.UUID{})
+		err = s.enqueuer.Run(ctx, orgID, r.TemplateID, r.HostID, by, "run-request:"+r.ID.String(), group, list)
 	}
 	if err != nil {
 		if rerr := s.store.RevertToPending(ctx, orgID, id); rerr != nil {
 			slog.ErrorContext(ctx, "run request: revert after a failed enqueue", "err", rerr, "request_id", id)
 		}
-		return Request{}, err
+		return Approved{}, err
 	}
 	r.Status, r.DecidedBy, r.DecidedAt, r.RunGroupID, r.ApprovedFingerprint = StatusApproved, &by, &at, &group, fingerprint
-	return r, nil
+	return Approved{Request: r, FollowUps: p.FollowUps, Started: started}, nil
 }
 
 // ErrChangedAfterApproval fails the claim of an approved run whose run

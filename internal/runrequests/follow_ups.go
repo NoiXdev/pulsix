@@ -145,3 +145,51 @@ func (f *PictureFollowUps) Startable() []uuid.UUID {
 	}
 	return ids
 }
+
+// selectFollowUps resolves an approval's selection against the picture's
+// follow-ups block f into the direct follow-ups to start, in picture order
+// and never nil. A nil selection is the default: every startable one when
+// the setting is on and the tree is complete, none otherwise. A given
+// selection must name startable ones only; with the setting off, no
+// follow-ups or a truncated tree, only an empty one is accepted.
+func selectFollowUps(f *PictureFollowUps, selection *[]uuid.UUID) ([]PictureFollowUp, error) {
+	out := []PictureFollowUp{}
+	given := selection != nil && len(*selection) > 0
+	switch {
+	case f != nil && !f.Start:
+		if given {
+			return nil, fmt.Errorf("%w: approved run requests start no follow-ups in this organization", ErrInvalidInput)
+		}
+		return out, nil
+	case f != nil && f.Truncated:
+		if given {
+			return nil, fmt.Errorf("%w: too many follow-ups to show; approve without follow-ups or start them by hand", ErrInvalidInput)
+		}
+		return out, nil
+	}
+	startable := f.Startable()
+	if selection != nil {
+		for _, id := range *selection {
+			if !slices.Contains(startable, id) {
+				return nil, fmt.Errorf("%w: follow-up %s is not one this request would start", ErrInvalidInput, id)
+			}
+		}
+	}
+	for _, t := range f.templates() {
+		id, err := uuid.Parse(t.TemplateID)
+		if err != nil || !slices.Contains(startable, id) {
+			continue
+		}
+		if selection == nil || slices.Contains(*selection, id) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (f *PictureFollowUps) templates() []PictureFollowUp {
+	if f == nil {
+		return nil
+	}
+	return f.Templates
+}

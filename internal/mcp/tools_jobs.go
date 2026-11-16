@@ -148,7 +148,7 @@ func jobTools() []toolDef {
 				text, next := renderEvents(body.Events, in.After, in.Host, in.FailedOnly, limit)
 				return map[string]any{"log": text, "next_after": next}, nil
 			}),
-		define("request_run", "Request a run", "Ask for a run of a job template. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them. Requests expire after an hour.",
+		define("request_run", "Request a run", "Ask for a run of a job template. Nothing runs until a person approves the request in Pulsix; the result carries the link to give them. Requests expire after an hour. Whether an approval also starts the template's follow-ups is the organization's setting; the request detail says.",
 			tenancy.AreaJobsRequest, writeTool, func(ctx context.Context, c *caller, in runRequestArgs) (any, error) {
 				body := map[string]any{"reason": in.Reason}
 				if in.HostID != "" {

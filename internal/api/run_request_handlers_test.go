@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -400,5 +401,210 @@ func TestApprovedRunStaysBoundUntilClaim(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// withFollowUp gives the fixture's template one follow-up template, set
+// through the template update route as an operator, and returns its id.
+func (f runRequestFixture) withFollowUp(t *testing.T, name string, followUps ...uuid.UUID) uuid.UUID {
+	t.Helper()
+	fu := f.followUpTemplate(t, name, followUps...)
+	resp := f.putTemplate(t, f.operatorC, f.templateID, "deploy", map[string]any{"follow_ups": []map[string]string{{"template_id": fu.String()}}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("set the template's follow-up = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	return fu
+}
+
+// setFollowUpsStart switches the organization setting as the admin.
+func (f runRequestFixture) setFollowUpsStart(t *testing.T, on bool) {
+	t.Helper()
+	resp := requestJSON(t, f.adminC, http.MethodPut, f.s.HTTP.URL+f.orgPath()+"/settings/assistant",
+		map[string]any{"assistant_enabled": true, "approved_runs_start_follow_ups": on})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("set the follow-up setting = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+}
+
+func (f runRequestFixture) approveWith(t *testing.T, id, fingerprint string, followUps []string) *http.Response {
+	t.Helper()
+	return postJSON(t, f.adminC, f.s.HTTP.URL+f.orgPath()+"/run-requests/"+id+"/approve", map[string]any{"fingerprint": fingerprint, "follow_ups": followUps})
+}
+
+type pictureFollowUpDTO struct {
+	TemplateID       string               `json:"template_id"`
+	TemplateName     string               `json:"template_name"`
+	TemplateRevision int64                `json:"template_revision"`
+	Stop             string               `json:"stop"`
+	FollowUps        []pictureFollowUpDTO `json:"follow_ups"`
+}
+
+type pictureFollowUpsDTO struct {
+	Start     bool                 `json:"start"`
+	Templates []pictureFollowUpDTO `json:"templates"`
+	Truncated bool                 `json:"truncated"`
+}
+
+func (d runRequestDetail) followUps(t *testing.T) *pictureFollowUpsDTO {
+	t.Helper()
+	var p struct {
+		FollowUps *pictureFollowUpsDTO `json:"follow_ups"`
+	}
+	if err := json.Unmarshal(d.Picture, &p); err != nil {
+		t.Fatal(err)
+	}
+	return p.FollowUps
+}
+
+// runFollowUps reads the chain block of an approved request's run: its
+// follow-ups as template id -> state.
+func (f runRequestFixture) runFollowUps(t *testing.T, requestID string) map[string]string {
+	t.Helper()
+	group := f.detail(t, requestID).Request.RunGroupID
+	if group == "" {
+		t.Fatal("the request has no run group")
+	}
+	resp := requestJSON(t, f.adminC, http.MethodGet, f.baseURL()+"?group="+group, nil)
+	var list struct {
+		Jobs []jobDTO `json:"jobs"`
+	}
+	decodeInto(t, resp, &list)
+	if len(list.Jobs) == 0 {
+		t.Fatalf("the approved request %s has no jobs", requestID)
+	}
+	out := map[string]string{}
+	for _, fu := range f.chainDetail(t, list.Jobs[0].ID).Job.Chain.FollowUps {
+		out[fu.TemplateID] = fu.State
+	}
+	return out
+}
+
+func (f runRequestFixture) approvalSummary(t *testing.T, requestID string) string {
+	t.Helper()
+	var summary string
+	if err := f.s.DB.Pool().QueryRow(context.Background(),
+		`SELECT summary FROM audit_events WHERE action = 'POST approveRunRequest' AND object_id = $1`, requestID).Scan(&summary); err != nil {
+		t.Fatal(err)
+	}
+	return summary
+}
+
+func TestRunRequestFollowUpsOff(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-fu-off")
+	fu := f.withFollowUp(t, "listmonk")
+	created := f.request(t, map[string]any{"reason": "x"})
+	d := f.detail(t, created.Request.ID)
+	got := d.followUps(t)
+	if got == nil || got.Start || len(got.Templates) != 1 || got.Templates[0].TemplateID != fu.String() || got.Templates[0].TemplateName != "listmonk" {
+		t.Fatalf("picture follow-ups = %+v (%s)", got, d.Picture)
+	}
+	if resp := f.approve(t, f.adminC, created.Request.ID, d.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rows := f.runFollowUps(t, created.Request.ID); len(rows) != 0 {
+		t.Fatalf("follow-ups of a run approved with the setting off = %v", rows)
+	}
+	rev := f.getTemplate(t, f.templateID).Template.Revision
+	if got, want := f.approvalSummary(t, created.Request.ID), "approved run request (template revision "+strconv.FormatInt(rev, 10)+"; no follow-ups)"; got != want {
+		t.Fatalf("audit summary = %q, want %q", got, want)
+	}
+}
+
+func TestRunRequestFollowUpsOn(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-fu-on")
+	grandchild := f.followUpTemplate(t, "notify")
+	fu := f.withFollowUp(t, "listmonk", grandchild)
+	f.setFollowUpsStart(t, true)
+
+	first := f.request(t, map[string]any{"reason": "x"})
+	d := f.detail(t, first.Request.ID)
+	got := d.followUps(t)
+	if got == nil || !got.Start || len(got.Templates) != 1 {
+		t.Fatalf("picture follow-ups = %+v (%s)", got, d.Picture)
+	}
+	node := got.Templates[0]
+	if node.TemplateID != fu.String() || node.TemplateRevision == 0 || len(node.FollowUps) != 1 ||
+		node.FollowUps[0].TemplateID != grandchild.String() || node.FollowUps[0].TemplateRevision == 0 {
+		t.Fatalf("picture tree = %+v", node)
+	}
+	if resp := f.approve(t, f.adminC, first.Request.ID, d.Fingerprint); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rows := f.runFollowUps(t, first.Request.ID); len(rows) != 1 || rows[fu.String()] != "pending" {
+		t.Fatalf("follow-ups of the default approval = %v, want listmonk pending", rows)
+	}
+	rev := strconv.FormatInt(f.getTemplate(t, f.templateID).Template.Revision, 10)
+	if got, want := f.approvalSummary(t, first.Request.ID), "approved run request (template revision "+rev+"; follow-ups: listmonk)"; got != want {
+		t.Fatalf("audit summary = %q, want %q", got, want)
+	}
+
+	second := f.request(t, map[string]any{"reason": "y"})
+	if resp := f.approveWith(t, second.Request.ID, f.detail(t, second.Request.ID).Fingerprint, []string{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("approve deselected = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rows := f.runFollowUps(t, second.Request.ID); len(rows) != 0 {
+		t.Fatalf("follow-ups of an approval with none selected = %v", rows)
+	}
+	if got, want := f.approvalSummary(t, second.Request.ID), "approved run request (template revision "+rev+"; no follow-ups)"; got != want {
+		t.Fatalf("audit summary = %q, want %q", got, want)
+	}
+
+	third := f.request(t, map[string]any{"reason": "z"})
+	resp := f.approveWith(t, third.Request.ID, f.detail(t, third.Request.ID).Fingerprint, []string{grandchild.String()})
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusUnprocessableEntity || !strings.Contains(body, "is not one this request would start") {
+		t.Fatalf("approve with a foreign follow-up = %d %s, want 422", resp.StatusCode, body)
+	}
+	if st := f.detail(t, third.Request.ID).Request.Status; st != "pending" {
+		t.Fatalf("status after a refused selection = %s, want pending", st)
+	}
+}
+
+func TestRunRequestFollowUpSettingChangedRefuses(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-fu-flip")
+	f.withFollowUp(t, "listmonk")
+	created := f.request(t, map[string]any{"reason": "x"})
+	d := f.detail(t, created.Request.ID)
+	f.setFollowUpsStart(t, true)
+	resp := f.approve(t, f.adminC, created.Request.ID, d.Fingerprint)
+	if body := mustReadBody(t, resp); resp.StatusCode != http.StatusConflict || !strings.Contains(body, "changed since you looked at it") {
+		t.Fatalf("approve after the setting flipped = %d %s, want 409", resp.StatusCode, body)
+	}
+}
+
+// TestRunRequestReapprovalUsesItsOwnSelection: an approval whose enqueue
+// failed leaves the request pending; the next approval starts what it
+// selects, not what the failed one planned.
+func TestRunRequestReapprovalUsesItsOwnSelection(t *testing.T) {
+	f := newRunRequestFixture(t, "rr-fu-reapprove")
+	f.withFollowUp(t, "listmonk")
+	f.setFollowUpsStart(t, true)
+	created := f.request(t, map[string]any{"reason": "x"})
+
+	requirePins := func(on bool) {
+		t.Helper()
+		resp := requestJSON(t, f.adminC, http.MethodPut, f.s.HTTP.URL+f.orgPath()+"/settings/jobs", map[string]any{"jobs_require_pinned_hosts": on})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("set jobs_require_pinned_hosts = %d %s", resp.StatusCode, mustReadBody(t, resp))
+		}
+	}
+	// Pinned host keys required and the only target unpinned: the enqueue
+	// fails after the default approval planned its follow-up. (An
+	// unmanaged target would fail the picture itself, not the enqueue.)
+	requirePins(true)
+	d := f.detail(t, created.Request.ID)
+	resp := f.approve(t, f.adminC, created.Request.ID, d.Fingerprint)
+	if body := mustReadBody(t, resp); resp.StatusCode == http.StatusOK {
+		t.Fatalf("approve with an unpinned target succeeded: %s", body)
+	}
+	if st := f.detail(t, created.Request.ID).Request.Status; st != "pending" {
+		t.Fatalf("status after the failed enqueue = %s, want pending", st)
+	}
+
+	requirePins(false)
+	if resp := f.approveWith(t, created.Request.ID, f.detail(t, created.Request.ID).Fingerprint, []string{}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("re-approve = %d %s", resp.StatusCode, mustReadBody(t, resp))
+	}
+	if rows := f.runFollowUps(t, created.Request.ID); len(rows) != 0 {
+		t.Fatalf("follow-ups of the re-approval with none selected = %v", rows)
 	}
 }
