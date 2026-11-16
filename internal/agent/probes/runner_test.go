@@ -429,6 +429,14 @@ func TestReplacingConfigsLeaksNoGoroutines(t *testing.T) {
 			}
 		}
 	}
+	// Under load none of the ticks above may have been taken in time, so
+	// one last slot is probed for certain: the test must see a probe run.
+	r.Apply([]probeconfig.Spec{spec(targetA, "z", "tcp", 30)})
+	waitFor(t, func() bool { ts := tickers.all(); return len(ts) > 0 && !ts[len(ts)-1].isStopped() })
+	clock.advance(time.Minute)
+	ts := tickers.all()
+	ts[len(ts)-1].c <- clock.Now()
+	waitFor(t, func() bool { return b.callCount() > 0 })
 	cancel()
 	<-done
 	waitFor(t, func() bool { return runtime.NumGoroutine() <= before })
