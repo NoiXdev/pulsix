@@ -245,8 +245,10 @@ func manyNames(n int) string {
 
 // TestBuildHTMLIsLinear: every hostile page builds into at most one node
 // per token, at most 512 deep, allocating at most 100 bytes per byte of
-// page (measured: at most 57) and in under two seconds (measured: at most
-// 90 ms, 610 ms under -race).
+// page (measured: at most 57) and in under 30 seconds (measured: at most
+// 90 ms, 610 ms under -race, 2.5 s in CI under -race and -cover beside
+// other packages). The time bound catches work that grows with the square
+// of the page, which costs minutes here; it is no benchmark.
 func TestBuildHTMLIsLinear(t *testing.T) {
 	for name, page := range hostilePages() {
 		t.Run(name, func(t *testing.T) {
@@ -269,7 +271,7 @@ func TestBuildHTMLIsLinear(t *testing.T) {
 				t.Errorf("%d nodes from %d tokens, depth %d", nodes, tokens, depth)
 			}
 			alloc := after.TotalAlloc - before.TotalAlloc
-			if alloc > 100*uint64(len(body)) || d > 2*time.Second {
+			if alloc > 100*uint64(len(body)) || d > 30*time.Second {
 				t.Errorf("%d bytes built in %v, %d MB allocated", len(body), d, alloc>>20)
 			}
 			t.Logf("%d bytes: %d nodes, depth %d, %v, %d MB", len(body), nodes, depth, d, alloc>>20)

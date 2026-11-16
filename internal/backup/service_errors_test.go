@@ -51,8 +51,15 @@ func TestTickerRunsTheScheduleUntilCancelled(t *testing.T) {
 	h.store.panicOn = ""
 	h.store.mu.Unlock()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for len(h.store.allAttempts()) == 0 && time.Now().Before(deadline) {
+	// Wait for the attempt to finish, not merely to exist: an attempt is
+	// recorded when the backup starts, and cancelling while it runs
+	// abandons it ("the manager shut down during this backup").
+	finished := func() bool {
+		a := h.store.allAttempts()
+		return len(a) > 0 && a[0].State != backup.StateRunning
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	for !finished() && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	cancel()

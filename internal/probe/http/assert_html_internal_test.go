@@ -201,7 +201,10 @@ func TestSelectAllBoundsHostilePages(t *testing.T) {
 			if want := map[bool]string{true: errHTMLTooMuch, false: ""}[h.tooMuch]; problem != want {
 				t.Fatalf("%q = %q, want %q", h.sel, problem, want)
 			}
-			if d := time.Since(start); d > 5*time.Second {
+			// The bound catches work that grows with the square of the page,
+			// which costs minutes here. It is no benchmark: CI under -race
+			// and -cover, beside other packages, measured 5.6 s.
+			if d := time.Since(start); d > 60*time.Second {
 				t.Fatalf("the walk took %v", d)
 			}
 		})
