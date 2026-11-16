@@ -123,6 +123,12 @@ func TestBuildHTMLTree(t *testing.T) {
 		// option closes an open option.
 		{"<select><option>a<option>b</select>", `select(option("a") option("b"))`},
 		{"<select><optgroup><option>a</optgroup><option>b</select>", `select(optgroup(option("a")) option("b"))`},
+		// optgroup closes an open option or optgroup.
+		{"<select><optgroup><option>a<optgroup><option>b</select>", `select(optgroup(option("a")) optgroup(option("b")))`},
+		{"<select><option>a<optgroup><option>b</select>", `select(option("a") optgroup(option("b")))`},
+		// body closes an open head (minifiers leave out </head>).
+		{"<html><head><title>t</title><body><p>x", `html(head(title("t")) body(p("x")))`},
+		{"<html><head><meta charset=utf-8><body>x", `html(head(meta[charset=utf-8]()) body("x"))`},
 		// Raw text as the tokenizer gives it, wherever it is.
 		{`<script>if (a<b) { x = "</p>"; }</script><p>y`, `script("if (a<b) { x = \"</p>\"; }") p("y")`},
 		{"<style>p > a { }</style>x", `style("p > a { }") "x"`},

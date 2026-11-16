@@ -225,9 +225,10 @@ string     = a JSON string literal ("..." with JSON escapes)
   `li` (up to `ul`/`ol`), `dt`/`dd` an open `dt`/`dd` (up to `dl`), `tr`
   an open row or cell (up to a section or `table`), `td`/`th` an open
   cell (up to `tr`/`table`), `thead`/`tbody`/`tfoot` an open section,
-  row or cell (up to `table`), `option` an open `option`. No `html`,
-  `head` or `body` is implied, and malformed markup can group
-  differently than in a browser. Each token
+  row or cell (up to `table`), `option` an open `option`, `optgroup` an
+  open `option` or `optgroup` (up to `select`/`datalist`), `body` an
+  open `head`. No `html`, `head` or `body` is implied, and malformed
+  markup can group differently than in a browser. Each token
   makes at most one node with bounded work (open elements are indexed by
   name); at most 512 elements are open (deeper start tags become
   children of the 512th); past 400 000 nodes the build stops and every

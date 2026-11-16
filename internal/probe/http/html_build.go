@@ -53,13 +53,16 @@ var impliedCloses = func() map[string]impliedClose {
 	cells := []string{"tr", "td", "th"}
 	sections := []string{"thead", "tbody", "tfoot"}
 	m := map[string]impliedClose{
-		"li":     {closes: []string{"li"}, within: []string{"ul", "ol"}},
-		"dt":     {closes: []string{"dt", "dd"}, within: []string{"dl"}},
-		"dd":     {closes: []string{"dt", "dd"}, within: []string{"dl"}},
-		"tr":     {closes: cells, within: append([]string{"table"}, sections...)},
-		"td":     {closes: []string{"td", "th"}, within: []string{"tr", "table"}},
-		"th":     {closes: []string{"td", "th"}, within: []string{"tr", "table"}},
-		"option": {closes: []string{"option"}, within: []string{"select", "datalist", "optgroup"}},
+		"li":       {closes: []string{"li"}, within: []string{"ul", "ol"}},
+		"dt":       {closes: []string{"dt", "dd"}, within: []string{"dl"}},
+		"dd":       {closes: []string{"dt", "dd"}, within: []string{"dl"}},
+		"tr":       {closes: cells, within: append([]string{"table"}, sections...)},
+		"td":       {closes: []string{"td", "th"}, within: []string{"tr", "table"}},
+		"th":       {closes: []string{"td", "th"}, within: []string{"tr", "table"}},
+		"option":   {closes: []string{"option"}, within: []string{"select", "datalist", "optgroup"}},
+		"optgroup": {closes: []string{"option", "optgroup"}, within: []string{"select", "datalist"}},
+		// Minifiers leave out </head>.
+		"body": {closes: []string{"head"}},
 	}
 	for _, s := range sections {
 		m[s] = impliedClose{closes: append(append([]string{}, sections...), cells...), within: []string{"table"}}
