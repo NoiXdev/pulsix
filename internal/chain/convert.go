@@ -27,3 +27,15 @@ func toFollowUp(r followUpRow) FollowUp {
 	}
 	return f
 }
+
+// lockedFollowUp converts a row the starter's scan locked; the template
+// name is not part of that scan.
+func lockedFollowUp(r gen.RunFollowUp) FollowUp {
+	return FollowUp{
+		ID: r.ID, OrgID: r.OrgID, ParentGroupID: r.ParentGroupID, TemplateID: r.TemplateID, Position: int(r.Position),
+		State: State(r.State), Reason: r.Reason, ChildGroupID: db.UUIDPtr(r.ChildGroupID), HostIDs: r.HostIds,
+		RootTrigger: r.RootTrigger, RootRef: db.UUIDPtr(r.RootRef), Depth: int(r.Depth), Path: r.Path,
+		ConfiguredBy: db.UUIDPtr(r.ConfiguredBy), Attempts: int(r.Attempts), NextAttemptAt: db.TimePtr(r.NextAttemptAt),
+		CreatedAt: r.CreatedAt,
+	}
+}

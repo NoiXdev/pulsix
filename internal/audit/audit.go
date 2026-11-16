@@ -16,12 +16,13 @@ import (
 
 // ActorKind says how the request that produced an Event was authenticated:
 // a browser session, a bearer API token, nothing at all (a Pulsix-initiated
-// action), a schedule firing a run on its own timetable, or a webhook
-// trigger receiving a call. The API middleware that records mutating calls
-// never produces the system, schedule or webhook kind itself, since every
-// route it wraps requires a resolved principal to reach the point where an
-// event is recorded at all; the schedule ticker and the trigger service
-// record those directly.
+// action), a schedule firing a run on its own timetable, a webhook trigger
+// receiving a call, or a finished run starting its follow-up (job
+// chaining). The API middleware that records mutating calls never produces
+// the system, schedule, webhook or chain kind itself, since every route it
+// wraps requires a resolved principal to reach the point where an event is
+// recorded at all; the schedule ticker, the trigger service and the
+// follow-up starter record those directly.
 type ActorKind string
 
 // The kinds of actor an Event can carry.
@@ -31,6 +32,7 @@ const (
 	ActorKindSystem   ActorKind = "system"
 	ActorKindSchedule ActorKind = "schedule"
 	ActorKindWebhook  ActorKind = "webhook"
+	ActorKindChain    ActorKind = "chain"
 )
 
 // Event is one recorded audit entry. OrgID and ActorID are both pointers
