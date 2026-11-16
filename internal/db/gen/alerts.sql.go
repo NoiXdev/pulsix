@@ -136,7 +136,7 @@ func (q *Queries) CloseForgottenAlerts(ctx context.Context, arg CloseForgottenAl
 
 const getAlert = `-- name: GetAlert :one
 
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name,
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
        COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
@@ -170,6 +170,7 @@ type GetAlertRow struct {
 	SnoozeUntilChange    bool               `json:"snooze_until_change"`
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
+	Detail               *string            `json:"detail"`
 	HostName             string             `json:"host_name"`
 	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
@@ -226,6 +227,7 @@ func (q *Queries) GetAlert(ctx context.Context, arg GetAlertParams) (GetAlertRow
 		&i.SnoozeUntilChange,
 		&i.WasFlapping,
 		&i.SeverityChangedAt,
+		&i.Detail,
 		&i.HostName,
 		&i.AgentLastContact,
 	)
@@ -358,7 +360,7 @@ func (q *Queries) InsertAlertEvent(ctx context.Context, arg InsertAlertEventPara
 }
 
 const listAlertEvents = `-- name: ListAlertEvents :many
-SELECT id, org_id, alert_id, at, kind, actor_id, payload FROM alert_events WHERE org_id = $1 AND alert_id = $2 ORDER BY at, id
+SELECT id, org_id, alert_id, at, kind, actor_id, payload, detail FROM alert_events WHERE org_id = $1 AND alert_id = $2 ORDER BY at, id
 `
 
 type ListAlertEventsParams struct {
@@ -388,6 +390,7 @@ func (q *Queries) ListAlertEvents(ctx context.Context, arg ListAlertEventsParams
 			&i.Kind,
 			&i.ActorID,
 			&i.Payload,
+			&i.Detail,
 		); err != nil {
 			return nil, err
 		}
@@ -400,7 +403,7 @@ func (q *Queries) ListAlertEvents(ctx context.Context, arg ListAlertEventsParams
 }
 
 const listAlerts = `-- name: ListAlerts :many
-SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, COALESCE(h.name, '')::text AS host_name,
+SELECT a.id, a.org_id, a.host_id, a.scope, a.check_key, a.item, a.metric, a.opened_at, a.severity, a.peak_severity, a.closed_at, a.closed_reason, a.acknowledged_at, a.acknowledged_by, a.acknowledged_severity, a.ack_note, a.snoozed_until, a.snooze_until_change, a.was_flapping, a.severity_changed_at, a.detail, COALESCE(h.name, '')::text AS host_name,
        COALESCE(ag.last_seen, ag.created_at, 'epoch')::timestamptz AS agent_last_contact
 FROM alerts a
 LEFT JOIN hosts h ON h.org_id = a.org_id AND h.id = a.host_id
@@ -461,6 +464,7 @@ type ListAlertsRow struct {
 	SnoozeUntilChange    bool               `json:"snooze_until_change"`
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
+	Detail               *string            `json:"detail"`
 	HostName             string             `json:"host_name"`
 	AgentLastContact     time.Time          `json:"agent_last_contact"`
 }
@@ -551,6 +555,7 @@ func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]ListA
 			&i.SnoozeUntilChange,
 			&i.WasFlapping,
 			&i.SeverityChangedAt,
+			&i.Detail,
 			&i.HostName,
 			&i.AgentLastContact,
 		); err != nil {
@@ -659,7 +664,7 @@ func (q *Queries) ListMaintenanceWindowsForHost(ctx context.Context, arg ListMai
 
 const listOpenAlertsForHost = `-- name: ListOpenAlertsForHost :many
 
-SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping, severity_changed_at FROM alerts
+SELECT id, org_id, host_id, scope, check_key, item, metric, opened_at, severity, peak_severity, closed_at, closed_reason, acknowledged_at, acknowledged_by, acknowledged_severity, ack_note, snoozed_until, snooze_until_change, was_flapping, severity_changed_at, detail FROM alerts
 WHERE org_id = $1 AND host_id = $2 AND closed_at IS NULL
 ORDER BY scope, check_key, item, metric
 `
@@ -717,6 +722,7 @@ func (q *Queries) ListOpenAlertsForHost(ctx context.Context, arg ListOpenAlertsF
 			&i.SnoozeUntilChange,
 			&i.WasFlapping,
 			&i.SeverityChangedAt,
+			&i.Detail,
 		); err != nil {
 			return nil, err
 		}

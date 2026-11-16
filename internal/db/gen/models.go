@@ -105,6 +105,7 @@ type Alert struct {
 	SnoozeUntilChange    bool               `json:"snooze_until_change"`
 	WasFlapping          bool               `json:"was_flapping"`
 	SeverityChangedAt    time.Time          `json:"severity_changed_at"`
+	Detail               *string            `json:"detail"`
 }
 
 type AlertEscalation struct {
@@ -123,6 +124,7 @@ type AlertEvent struct {
 	Kind    string      `json:"kind"`
 	ActorID pgtype.UUID `json:"actor_id"`
 	Payload []byte      `json:"payload"`
+	Detail  *string     `json:"detail"`
 }
 
 type AlertNotifyState struct {

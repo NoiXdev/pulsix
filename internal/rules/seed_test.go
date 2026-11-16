@@ -59,7 +59,7 @@ func TestSeedRulesExcludesServiceState(t *testing.T) {
 // future edit that silently changes a threshold (rather than deliberately
 // updating both this test and the migrations) fails loudly. The first five
 // rows are migration 00045's, the two script rows migration 00094's
-// (backlog 3.6g), the two SNMP rows migration 00097's (backlog 3.13d).
+// (backlog 3.6g), the two SNMP rows migration 00097's (backlog 3.13d), the seven synthetic-check rows migration 00104's (backlog 3.13b).
 func TestSeedRulesExactSet(t *testing.T) {
 	want := []struct {
 		name       string
@@ -81,6 +81,13 @@ func TestSeedRulesExactSet(t *testing.T) {
 		{"Script reports warning", "script.status", rules.SeverityWarn, "in", 0, []string{"warn", "unknown"}, "", 0, 0},
 		{"SNMP device unreachable", "snmp.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
 		{"Interface down", "snmp.if.status", rules.SeverityWarn, "in", 0, []string{"down"}, "", 0, 0},
+		{"Web assertion failed", "http.assertion", rules.SeverityWarn, "in", 0, []string{"warn"}, "", 0, 0},
+		{"Web assertion failed (critical)", "http.assertion", rules.SeverityCrit, "in", 0, []string{"crit"}, "", 0, 0},
+		{"Ping check down", "icmp.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
+		{"TCP check down", "tcp.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
+		{"HTTP check down", "http.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
+		{"TLS check down", "tls.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
+		{"DNS check down", "dns.up", rules.SeverityCrit, "<", 1, nil, "", 0, 0},
 	}
 
 	got := rules.SeedRules()
@@ -113,11 +120,11 @@ func TestSeedRulesExactSet(t *testing.T) {
 	}
 }
 
-// TestSeedForOrgWritesNineSeedRows proves the service side of the seed: a
+// TestSeedForOrgWritesSixteenSeedRows proves the service side of the seed: a
 // fresh organization's rules, seeded through Service.SeedForOrg against an
-// in-memory store (no database needed), are exactly the nine SeedRules()
+// in-memory store (no database needed), are exactly the sixteen SeedRules()
 // entries, each org-scoped and stamped origin "seed".
-func TestSeedForOrgWritesNineSeedRows(t *testing.T) {
+func TestSeedForOrgWritesSixteenSeedRows(t *testing.T) {
 	store := newFakeStore()
 	svc := rules.NewService(store)
 	orgID := uuid.Must(uuid.NewV7())
@@ -130,8 +137,8 @@ func TestSeedForOrgWritesNineSeedRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 9 {
-		t.Fatalf("seeded %d rules, want exactly 9: %+v", len(got), got)
+	if len(got) != 16 {
+		t.Fatalf("seeded %d rules, want exactly 16: %+v", len(got), got)
 	}
 	seen := map[string]bool{}
 	for _, r := range got {
@@ -146,7 +153,7 @@ func TestSeedForOrgWritesNineSeedRows(t *testing.T) {
 		}
 		seen[r.Metric+"/"+string(r.Severity)] = true
 	}
-	for _, want := range []string{"disk.used_pct/warn", "disk.used_pct/crit", "mem.used_pct/warn", "mem.used_pct/crit", "cpu.used_pct/warn", "script.status/crit", "script.status/warn", "snmp.up/crit", "snmp.if.status/warn"} {
+	for _, want := range []string{"disk.used_pct/warn", "disk.used_pct/crit", "mem.used_pct/warn", "mem.used_pct/crit", "cpu.used_pct/warn", "script.status/crit", "script.status/warn", "snmp.up/crit", "snmp.if.status/warn", "http.assertion/warn", "http.assertion/crit", "icmp.up/crit", "tcp.up/crit", "http.up/crit", "tls.up/crit", "dns.up/crit"} {
 		if !seen[want] {
 			t.Fatalf("seed set missing %q, got %+v", want, got)
 		}
@@ -155,7 +162,7 @@ func TestSeedForOrgWritesNineSeedRows(t *testing.T) {
 
 // failingCreateStore wraps fakeStore, failing every Create from the nth
 // call onward — the shape needed to prove SeedForOrg stops and propagates
-// on a store failure partway through the nine inserts, rather than
+// on a store failure partway through the sixteen inserts, rather than
 // swallowing it and leaving a partial seed set unreported.
 type failingCreateStore struct {
 	*fakeStore
@@ -172,7 +179,7 @@ func (f *failingCreateStore) Create(ctx context.Context, r rules.Rule) error {
 }
 
 // TestSeedForOrgPropagatesStoreError proves a store failure partway through
-// SeedForOrg's nine inserts is reported to the caller (CreateOrg's own
+// SeedForOrg's sixteen inserts is reported to the caller (CreateOrg's own
 // propagation, tenancy.OrgCreatedHook) instead of silently leaving an
 // organization with an incomplete seed set nobody is told about.
 func TestSeedForOrgPropagatesStoreError(t *testing.T) {

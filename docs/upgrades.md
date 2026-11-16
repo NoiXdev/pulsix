@@ -339,6 +339,17 @@ before the new version starts.** Workers and agents are not affected. A backup n
 carries the switch and the run requests; after a restore, pending requests can be
 approved again until they expire (the restore says so).
 
+Web assertions and synthetic check rules (backlog 3.13b) add migration 00104: two
+nullable columns (`alerts.detail`, `alert_events.detail`, both `text`) and seven
+seeded organization rules (`Web assertion failed`, `Web assertion failed (critical)`,
+`Ping check down`, `TCP check down`, `HTTP check down`, `TLS check down`,
+`DNS check down`), backfilled for every existing organization that holds no rule of
+that name. Nothing is dropped or rewritten. **A synthetic check that is failing at
+upgrade time raises a critical alert on the first evaluation afterwards**, because
+the new `<plugin>.up < 1` rules now exist; an organization that does not want them
+deletes or disables the rule. A downgrade needs the usual restore of a backup from
+before the upgrade (see Downgrading).
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.

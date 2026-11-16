@@ -12,7 +12,7 @@ import (
 // rows, never a default hidden in Go code (the design's own position — an
 // operator must be able to see a threshold, change it and delete it, and
 // deleting it must mean "no rule", not "silently fall back to a hardcoded
-// value"). All nine bind at scope org, in form mode.
+// value"). All sixteen bind at scope org, in form mode.
 //
 // The two script rules (backlog 3.6g) judge the verdict a host-defined
 // script reports: crit is critical, warn and unknown are warnings (a script
@@ -26,6 +26,13 @@ import (
 // an interface the device's operator switched on but that is not up is a
 // warning (admin_down is deliberate and stays quiet). They match nothing
 // in an organization without an snmp check.
+//
+// The seven synthetic-check rules (backlog 3.13b) judge the probes' own
+// metrics: http.assertion carries the worst failed web assertion (warn or
+// crit, one rule per label), <plugin>.up below 1 means the probe did not
+// succeed and is critical. They match nothing in an organization without a
+// check of that plugin; upgrading turns an already failing check into an
+// alert on the first evaluation (docs/upgrades.md).
 //
 // service.state deliberately has no row here, and that is not an
 // oversight: backlog 4.3's standing ruling is that the seeded sshd check
@@ -43,7 +50,8 @@ import (
 // 00097 the two SNMP rules. A migration cannot call Go code, so keep them
 // in sync by hand when either changes (TestRulesBackfillMatchesSeedRules,
 // TestScriptRulesMigrationMatchesSeedForOrg and
-// TestSNMPRulesMigrationMatchesSeedForOrg compare them).
+// TestSNMPRulesMigrationMatchesSeedForOrg and
+// TestWebRulesMigrationMatchesSeedForOrg compare them).
 func SeedRules() []RuleInput {
 	return []RuleInput{
 		{
@@ -93,6 +101,41 @@ func SeedRules() []RuleInput {
 			Name: "Interface down", Enabled: true, Scope: ScopeOrg,
 			Metric: "snmp.if.status", Severity: SeverityWarn, Mode: modeForm,
 			Form: &Form{Metric: "snmp.if.status", Op: "in", Labels: []string{"down"}},
+		},
+		{
+			Name: "Web assertion failed", Enabled: true, Scope: ScopeOrg,
+			Metric: "http.assertion", Severity: SeverityWarn, Mode: modeForm,
+			Form: &Form{Metric: "http.assertion", Op: "in", Labels: []string{"warn"}},
+		},
+		{
+			Name: "Web assertion failed (critical)", Enabled: true, Scope: ScopeOrg,
+			Metric: "http.assertion", Severity: SeverityCrit, Mode: modeForm,
+			Form: &Form{Metric: "http.assertion", Op: "in", Labels: []string{"crit"}},
+		},
+		{
+			Name: "Ping check down", Enabled: true, Scope: ScopeOrg,
+			Metric: "icmp.up", Severity: SeverityCrit, Mode: modeForm,
+			Form: &Form{Metric: "icmp.up", Op: "<", Value: 1},
+		},
+		{
+			Name: "TCP check down", Enabled: true, Scope: ScopeOrg,
+			Metric: "tcp.up", Severity: SeverityCrit, Mode: modeForm,
+			Form: &Form{Metric: "tcp.up", Op: "<", Value: 1},
+		},
+		{
+			Name: "HTTP check down", Enabled: true, Scope: ScopeOrg,
+			Metric: "http.up", Severity: SeverityCrit, Mode: modeForm,
+			Form: &Form{Metric: "http.up", Op: "<", Value: 1},
+		},
+		{
+			Name: "TLS check down", Enabled: true, Scope: ScopeOrg,
+			Metric: "tls.up", Severity: SeverityCrit, Mode: modeForm,
+			Form: &Form{Metric: "tls.up", Op: "<", Value: 1},
+		},
+		{
+			Name: "DNS check down", Enabled: true, Scope: ScopeOrg,
+			Metric: "dns.up", Severity: SeverityCrit, Mode: modeForm,
+			Form: &Form{Metric: "dns.up", Op: "<", Value: 1},
 		},
 	}
 }

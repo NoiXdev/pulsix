@@ -30,8 +30,8 @@ const (
 // backfillMigrations are the migrations that backfill SeedRules() into the
 // organizations existing when they ran: 00045 the first five rows, 00094
 // the two script rules (backlog 3.6g), 00097 the two SNMP rules (backlog
-// 3.13d). Together they must write every SeedRules() entry.
-var backfillMigrations = []string{"00045_check_rules.sql", "00094_seed_script_rules.sql", "00097_seed_snmp_rules.sql"}
+// 3.13d), 00104 the seven synthetic-check rules (backlog 3.13b). Together they must write every SeedRules() entry.
+var backfillMigrations = []string{"00045_check_rules.sql", "00094_seed_script_rules.sql", "00097_seed_snmp_rules.sql", "00104_web_assertions.sql"}
 
 // loadBackfillSQL reads the real migration file off disk and returns
 // exactly the statement between backfillBeginMarker and backfillEndMarker,
@@ -73,9 +73,9 @@ func loadBackfillSQL(t *testing.T, file string) string {
 }
 
 // TestRulesBackfillMatchesSeedRules proves the backfill INSERTs of
-// migrations 00045, 00094 and 00097 together: an organization that already
+// migrations 00045, 00094, 00097 and 00104 together: an organization that already
 // has no check_rules rows (as every organization created before 00045 did)
-// gets the same nine-row starter set a newly created one gets from
+// gets the same sixteen-row starter set a newly created one gets from
 // rules.Service.SeedForOrg. The statement under test is read straight out
 // of the migration file (loadBackfillSQL) and executed against a real
 // database — there is no way to re-run "only the backfill part" of an
