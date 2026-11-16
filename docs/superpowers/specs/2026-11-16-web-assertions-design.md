@@ -93,7 +93,7 @@ All on item `""`:
 | `http.ttfb_ms` | numeric | from writing the last hop's request to its first response byte |
 | `http.transfer_ms` | numeric | from the first response byte to the end of the body read |
 | `http.redirects` | numeric | redirects followed (0 with `follow_redirects` false) |
-| `http.content_bytes` | numeric | body bytes received, counted up to 16 MiB (only the first 1 MiB is kept, as today); a larger body makes this metric an error "larger than 16 MiB" and stops the read |
+| `http.content_bytes` | numeric | body bytes received, read up to 1 MiB as today, or up to 16 MiB when the check has a `size` assertion; past the read limit the response's declared Content-Length when it covers what was read, else the limit itself. Never an error. (Amended in final review, owner's decision.) |
 | `http.cert_expiry_days` | numeric | the final hop's leaf certificate, days until `NotAfter` (fractional, negative when expired); absent for http |
 | `http.cert_issuer` | discrete | the final hop's leaf issuer: its Common Name, else its first Organization, else the issuer DN string, cleaned with `probe.Label` and cut to 128 bytes; absent for http |
 
@@ -103,11 +103,18 @@ All on item `""`:
 - `http.response_ms` keeps its meaning (request start to the end of the
   body read). With a `HEAD` request the body read is empty and
   `transfer_ms` is 0.
-- The body is always read to its end, up to 16 MiB, to count
-  `content_bytes` (today a body is read only up to 1 MiB); the first
-  1 MiB is kept when `body_contains`, `json_values` or a body assertion
-  needs it, the rest counted and discarded. The read stays under the
-  check's timeout.
+- The body is read up to 1 MiB, as today, and kept when
+  `body_contains`, `json_values` or a body assertion needs it. Only a
+  check with a `size` assertion reads on, up to 16 MiB, to count it; the
+  rest past the first 1 MiB is counted and discarded. A body past the
+  read limit stops the read: `content_bytes` is then the declared
+  Content-Length when it is at least the bytes read, else the limit, and
+  a `size` assertion without such a length is an error on that assertion
+  only ("the response is larger than 16 MiB"). The read stays under the
+  check's timeout. Why: an existing check of a large resource would
+  otherwise read 16 times the bytes per attempt and, with an error on
+  `content_bytes`, keep its host unknown. (Amended in final review,
+  owner's decision.)
 - `tls` gains `tls.cert_issuer` (discrete, the same rule as
   `http.cert_issuer`), reported whenever a leaf certificate was received.
 - A failed attempt (`http.up` 0) reports `http.failure` and none of the
@@ -236,7 +243,8 @@ string     = a JSON string literal ("..." with JSON escapes)
   parse". The build looks at the probe's deadline at every token and
   runs, with the match, in the gate slot.
 - `body`: the kept first 1 MiB as text (invalid UTF-8 kept as bytes).
-- `size` is `http.content_bytes`; `cert_days`/`cert_issuer` the https
+- `size` is `http.content_bytes` (an error past 16 MiB without a
+  declared length, above); `cert_days`/`cert_issuer` the https
   metrics; `status`, `response_ms`, `ttfb_ms`, `redirects` the metrics of
   the same names.
 - The descriptor hook refuses: a malformed expression (the error names
@@ -384,5 +392,6 @@ for the split-out items), `docs/upgrades.md` (migration 00104; skew
 note; no new dependency since review); noix-docs on a new branch
 `docs/pulsix-web-assertions` from `docs/pulsix-probe-vantages`: check
 plugins reference (failure reasons, new http/tls metrics, assertions
-with grammar and examples), alerts/notifications pages (the detail, the
-new placeholder), changelog. No tech stack named.
+with grammar and examples), alerts/notifications pages (the detail, and
+that webhook templates find it inside `alerts.items` with no new
+placeholder, as §4 says), changelog. No tech stack named.

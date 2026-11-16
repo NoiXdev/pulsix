@@ -347,14 +347,22 @@ seeded organization rules (`Web assertion failed`, `Web assertion failed (critic
 that name. Nothing is dropped or rewritten. **A synthetic check that is failing at
 upgrade time raises a critical alert on the first evaluation afterwards**, because
 the new `<plugin>.up < 1` rules now exist; an organization that does not want them
-deletes or disables the rule. A downgrade needs the usual restore of a backup from
-before the upgrade (see Downgrading).
+deletes or disables the rule. An organization's own rule on `<plugin>.up` does not
+suppress the new seeded critical rule unless it is at the same severity (`crit`), so
+an own rule at `warn` leaves the seeded one alerting too; disable or delete the seeded
+rule to opt out. A downgrade needs the usual restore of a backup from before the
+upgrade (see Downgrading).
 
 The same release changes two probe behaviours. An snmp check whose v3 credentials the
 device refuses now reads `snmp.up = 0` with `snmp.failure = auth` (it was an error on
-every reading); its `oids` items go stale instead of erroring. Every `http` check now
-reads response bodies up to 16 MiB (counted after transfer decoding) to report
-`http.content_bytes`; only the first 1 MiB is kept, as before. There is no new Go
+every reading, which read unknown); its `oids` items go stale instead of erroring, and
+the seeded `SNMP device unreachable` rule (`snmp.up < 1`, crit, migration 00097) now
+opens a critical alert for it with the reason `auth`. `http` checks read response
+bodies as before: up to 1 MiB, kept only when something reads it. `http.content_bytes`
+is the bytes read; past 1 MiB it is the response's declared Content-Length, or 1 MiB
+when there is none, and never an error. Only a check with a `size` assertion reads on,
+to 16 MiB, to count the body; past that its `size` assertion is judged on the declared
+Content-Length, or is an error on that assertion alone without one. There is no new Go
 dependency. Skew: an agent of 3.13a, which exists only in development, probes without
 the new metrics (failure reason, breakdown, assertions); the manager accepts that.
 
