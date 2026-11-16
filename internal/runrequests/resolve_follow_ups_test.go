@@ -134,11 +134,18 @@ func TestPictureFollowUpsOfARun(t *testing.T) {
 }
 
 func TestPictureFollowUpsOfARetry(t *testing.T) {
-	a, x, y, gone := id(), id(), id(), id()
-	tmpls := fakeTemplates{x: {ID: x, Name: "X"}, y: {ID: y, Name: "Y", Revision: 2}}
+	a, x, y, z, gone := id(), id(), id(), id(), id()
+	tmpls := fakeTemplates{
+		x: {ID: x, Name: "X"},
+		// Y lists A, which is on the retry row's own path [a, x]: it must stop as in_chain.
+		y: {ID: y, Name: "Y", Revision: 2, FollowUps: []templates.FollowUp{{TemplateID: a, Name: "A"}}},
+		z: {ID: z, Name: "Z", Revision: 3},
+		a: {ID: a, Name: "A", Revision: 1},
+	}
 	rows := []chain.FollowUp{
 		{TemplateID: y, TemplateName: "Y", Depth: 2, Path: []uuid.UUID{a, x}},
 		{TemplateID: gone, TemplateName: "", Depth: 2, Path: []uuid.UUID{a, x}},
+		{TemplateID: z, TemplateName: "Z", Depth: 10, Path: []uuid.UUID{a, x}},
 	}
 	job := id()
 	req := runrequests.Request{Kind: runrequests.KindRetryFailed, TemplateID: x, JobID: &job}
@@ -148,14 +155,18 @@ func TestPictureFollowUpsOfARetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.FollowUps == nil || len(p.FollowUps.Templates) != 2 {
+	if p.FollowUps == nil || len(p.FollowUps.Templates) != 3 {
 		t.Fatalf("picture: %+v", p.FollowUps)
 	}
-	if got := p.FollowUps.Templates[0]; got.TemplateID != y.String() || got.TemplateRevision != 2 || got.Stop != "" {
+	if got := p.FollowUps.Templates[0]; got.TemplateID != y.String() || got.TemplateRevision != 2 || got.Stop != "" ||
+		len(got.FollowUps) != 1 || got.FollowUps[0].TemplateID != a.String() || got.FollowUps[0].Stop != runrequests.StopInChain {
 		t.Fatalf("first: %+v", got)
 	}
 	if got := p.FollowUps.Templates[1]; got.TemplateID != gone.String() || got.Stop != runrequests.StopDeleted {
 		t.Fatalf("second: %+v", got)
+	}
+	if got := p.FollowUps.Templates[2]; got.TemplateID != z.String() || got.Stop != runrequests.StopTooDeep {
+		t.Fatalf("third: %+v", got)
 	}
 
 	fx = newResolverFx(tmpls, true, rows, nil)
