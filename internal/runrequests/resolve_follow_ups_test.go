@@ -133,6 +133,51 @@ func TestPictureFollowUpsOfARun(t *testing.T) {
 	}
 }
 
+// countingTemplates counts the reads per template id, found or not.
+type countingTemplates struct {
+	fakeTemplates
+	reads map[uuid.UUID]int
+}
+
+func (c countingTemplates) Get(ctx context.Context, org, tid uuid.UUID) (templates.Template, error) {
+	c.reads[tid]++
+	return c.fakeTemplates.Get(ctx, org, tid)
+}
+
+func TestPictureReadsEachFollowUpTemplateOnce(t *testing.T) {
+	// A diamond X -> {Y, Z}, Y -> W, Z -> W, and both W's name a deleted G.
+	x, y, z, w, gone := id(), id(), id(), id(), id()
+	src := countingTemplates{reads: map[uuid.UUID]int{}, fakeTemplates: fakeTemplates{
+		x: {ID: x, Name: "X", FollowUps: []templates.FollowUp{{TemplateID: y, Name: "Y"}, {TemplateID: z, Name: "Z"}}},
+		y: {ID: y, Name: "Y", FollowUps: []templates.FollowUp{{TemplateID: w, Name: "W"}}},
+		z: {ID: z, Name: "Z", FollowUps: []templates.FollowUp{{TemplateID: w, Name: "W"}}},
+		w: {ID: w, Name: "W", Revision: 7, FollowUps: []templates.FollowUp{{TemplateID: gone, Name: "G"}}},
+	}}
+	fx := &resolverFx{org: id()}
+	fx.jobs = &fakeJobRunner{calls: &fx.calls, group: id()}
+	fx.res = runrequests.NewResolver(runrequests.Sources{
+		Templates: src, Jobs: fx.jobs, Credentials: fakeCreds{},
+		Settings: fakeSettings{true}, FollowUpRuns: fakeFollowUpRuns{calls: &fx.calls},
+	})
+
+	p, err := fx.res.Picture(context.Background(), fx.org, runrequests.Request{Kind: runrequests.KindRun, TemplateID: x})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.FollowUps == nil || len(p.FollowUps.Templates) != 2 {
+		t.Fatalf("picture: %+v", p.FollowUps)
+	}
+	for i, branch := range p.FollowUps.Templates {
+		if len(branch.FollowUps) != 1 || branch.FollowUps[0].TemplateID != w.String() || branch.FollowUps[0].TemplateRevision != 7 ||
+			len(branch.FollowUps[0].FollowUps) != 1 || branch.FollowUps[0].FollowUps[0].Stop != runrequests.StopDeleted {
+			t.Fatalf("branch %d: %+v", i, branch)
+		}
+	}
+	if src.reads[w] != 1 || src.reads[gone] != 1 {
+		t.Fatalf("reads: W %d, deleted %d, want 1 each", src.reads[w], src.reads[gone])
+	}
+}
+
 func TestPictureFollowUpsOfARetry(t *testing.T) {
 	a, x, y, z, gone := id(), id(), id(), id(), id()
 	tmpls := fakeTemplates{

@@ -18,8 +18,9 @@ func nonNil(ids []uuid.UUID) []uuid.UUID {
 }
 
 // followUps builds the picture's follow-up tree: a run's roots are its
-// template's follow-ups, a retry's are the unstarted rows its run group
-// holds (they keep their depth and path).
+// template's follow-ups, a retry's are the rows its run group holds, in
+// every state, since the retry copies them all as fresh pending rows
+// (CopyRunFollowUps); they keep their depth and path.
 func (r *Resolver) followUps(ctx context.Context, orgID uuid.UUID, req Request, tmpl templates.Template) (*PictureFollowUps, error) {
 	roots, err := r.followUpRoots(ctx, orgID, req, tmpl)
 	if err != nil || len(roots) == 0 {
@@ -56,10 +57,22 @@ func (r *Resolver) followUpRoots(ctx context.Context, orgID uuid.UUID, req Reque
 	return roots, nil
 }
 
+// followUpLookup reads each template at most once per picture: a template
+// that several branches name (a diamond) is read the first time only, a
+// deleted one included.
 func (r *Resolver) followUpLookup(orgID uuid.UUID) FollowUpLookup {
+	type entry struct {
+		t     FollowUpTemplate
+		found bool
+	}
+	seen := map[uuid.UUID]entry{}
 	return func(ctx context.Context, id uuid.UUID) (FollowUpTemplate, bool, error) {
+		if e, ok := seen[id]; ok {
+			return e.t, e.found, nil
+		}
 		t, err := r.src.Templates.Get(ctx, orgID, id)
 		if errors.Is(err, templates.ErrNotFound) {
+			seen[id] = entry{}
 			return FollowUpTemplate{}, false, nil
 		}
 		if err != nil {
@@ -69,6 +82,8 @@ func (r *Resolver) followUpLookup(orgID uuid.UUID) FollowUpLookup {
 		for i, f := range t.FollowUps {
 			refs[i] = FollowUpRef{TemplateID: f.TemplateID, Name: f.Name}
 		}
-		return FollowUpTemplate{Name: t.Name, Revision: t.Revision, FollowUps: refs}, true, nil
+		e := entry{t: FollowUpTemplate{Name: t.Name, Revision: t.Revision, FollowUps: refs}, found: true}
+		seen[id] = e
+		return e.t, true, nil
 	}
 }
