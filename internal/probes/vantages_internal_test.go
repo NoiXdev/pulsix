@@ -327,10 +327,20 @@ func TestVantageRepresentativeIsFirstByHostName(t *testing.T) {
 	if len(b) != 1 {
 		t.Fatalf("batches = %d", len(b))
 	}
+	var connect *float64
+	found := false
 	for _, o := range b[0].obs {
-		if o.Metric == "tcp.connect_ms" && *o.Value != 2 {
-			t.Fatalf("representative connect_ms = %v, want alpha's (2)", *o.Value)
+		if o.Metric == "tcp.connect_ms" {
+			connect, found = o.Value, true
 		}
+	}
+	switch {
+	case !found:
+		t.Fatal("no tcp.connect_ms observation was recorded")
+	case connect == nil:
+		t.Fatal("tcp.connect_ms was recorded without a value")
+	case *connect != 2:
+		t.Fatalf("representative connect_ms = %v, want alpha's (2)", *connect)
 	}
 	want := []agentRef{{id: f.agents[1], name: "alpha"}, {id: f.agents[0], name: "zeta"}}
 	if got := h.r.targets[slot{host: h.host, key: "web"}].agents; !reflect.DeepEqual(got, want) {
