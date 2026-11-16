@@ -30,9 +30,11 @@ import (
 
 	"github.com/noixdev/pulsix/internal/agent/checks"
 	"github.com/noixdev/pulsix/internal/agent/checks/plugins"
+	"github.com/noixdev/pulsix/internal/agent/probes"
 	"github.com/noixdev/pulsix/internal/agent/secrets"
 	"github.com/noixdev/pulsix/internal/enrolltoken"
 	"github.com/noixdev/pulsix/internal/pb/agentpb"
+	"github.com/noixdev/pulsix/internal/probe"
 )
 
 // Sentinels the binary maps to exit codes. Both carry the same remediation
@@ -144,6 +146,15 @@ type Loop struct {
 	scheduler *checks.Scheduler
 	buffer    *checks.Buffer
 
+	// probes runs the synthetic probes the manager assigns this agent for
+	// other hosts (probes_wiring.go); probeBuffer is their disconnect
+	// ring. probeRegistry and probeTicker are test overrides (nil: the
+	// runner's defaults and the loop's ticker factory).
+	probes        *probes.Runner
+	probeBuffer   *checks.Ring[probes.Result]
+	probeRegistry probe.Registry
+	probeTicker   tickerFactory
+
 	// lookTicker is the periodic look's ticker factory when a test sets one
 	// apart; nil uses ticker (localchecks.go).
 	lookTicker tickerFactory
@@ -219,6 +230,8 @@ func NewLoop(cfg Config, dial Dialer, facts Collector, opts ...LoopOption) *Loop
 		checks.WithSecrets(secretsSource{l.secrets}), checks.WithCommands(commandsSource{l.secrets}),
 		checks.WithLogger(l.log))
 	l.buffer = checks.NewBuffer(bufferWindow, l.now)
+	l.probes = l.newProbeRunner()
+	l.probeBuffer = newProbeBuffer(l.now)
 	return l
 }
 
@@ -288,6 +301,22 @@ func (l *Loop) Run(ctx context.Context) error {
 				l.log.WarnContext(ctx, "the check scheduler ended with an error", "err", err)
 			}
 		case <-time.After(streamDrainWit):
+		}
+	}()
+	// The probe runner lives as long as the scheduler, for the same
+	// reason: a disconnected agent keeps probing into its ring. Its Run
+	// returns once every probe it started has finished, which
+	// cancellation makes prompt; the wait is bounded all the same.
+	probesDone := make(chan struct{})
+	go func() {
+		defer close(probesDone)
+		l.probes.Run(schedCtx, l.handleProbeResults)
+	}()
+	defer func() {
+		select {
+		case <-probesDone:
+		case <-time.After(streamDrainWit):
+			l.log.WarnContext(ctx, "the probe runner did not stop in time")
 		}
 	}()
 	// The periodic look at the file lives as long as the scheduler, so local

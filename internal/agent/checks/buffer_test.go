@@ -107,3 +107,29 @@ func TestBufferWithinWindowNeverDrops(t *testing.T) {
 		t.Errorf("remaining = %d, want 2", len(out))
 	}
 }
+
+// TestRingCarriesAnyStampedType pins the ring's generic form: the probe
+// results of internal/agent/probes ride the same 15-minute ring as check
+// results, evicted by their own timestamp through the at function.
+func TestRingCarriesAnyStampedType(t *testing.T) {
+	type stamped struct {
+		name string
+		at   time.Time
+	}
+	base := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	now := base
+	ring := NewRing(15*time.Minute, func() time.Time { return now }, func(s stamped) time.Time { return s.at })
+
+	ring.Add([]stamped{{"old", base}, {"mid", base.Add(5 * time.Minute)}})
+	now = base.Add(16 * time.Minute)
+	if dropped := ring.Add([]stamped{{"new", now}}); dropped != 1 {
+		t.Fatalf("dropped = %d, want 1 (only the entry past the window)", dropped)
+	}
+	out := ring.Drain()
+	if len(out) != 2 || out[0].name != "mid" || out[1].name != "new" {
+		t.Fatalf("drained = %+v, want mid then new", out)
+	}
+	if len(ring.Drain()) != 0 {
+		t.Fatal("a drain does not empty the ring")
+	}
+}

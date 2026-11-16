@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -107,12 +108,17 @@ func (s *streamSender) sendResults(results []checks.Result) error {
 // live scheduler sink — go through it, so neither can produce a message
 // the manager's ingest contract would refuse.
 func (s *streamSender) sendResultsChunked(results []checks.Result) (sent int, err error) {
-	for sent < len(results) {
-		n := len(results) - sent
-		if n > maxResultsPerMessage {
-			n = maxResultsPerMessage
-		}
-		if err := s.sendResults(results[sent : sent+n]); err != nil {
+	return sendChunked(results, s.sendResults)
+}
+
+// sendChunked sends items through send in chunks of at most
+// maxResultsPerMessage and reports how many went out: all of them on
+// success, everything before the failing chunk otherwise. Check results
+// and probe results (probes_wiring.go) both chunk through it.
+func sendChunked[T any](items []T, send func([]T) error) (sent int, err error) {
+	for sent < len(items) {
+		n := min(len(items)-sent, maxResultsPerMessage)
+		if err := send(items[sent : sent+n]); err != nil {
 			return sent, err
 		}
 		sent += n
@@ -325,6 +331,11 @@ func (l *Loop) sendHeartbeat(sender *streamSender) error {
 			SecretsState:       reportedSecretsState(state),
 			LocalChecks:        runningLocalChecks(set.LocalChecks(), shadowed),
 			LocalCheckProblems: localCheckProblems(set.LocalCheckProblems(), shadowed),
+			// Every platform the agent builds for runs the synthetic
+			// probes; one that cannot run somewhere (unprivileged ICMP)
+			// reports its own errors, as on the manager.
+			ProbesSupported:    true,
+			ProbeConfigVersion: l.probes.Version(),
 		},
 	}})
 }
@@ -355,11 +366,16 @@ func (l *Loop) activateSender(sender *streamSender) error {
 		// a cause somebody can read — the same reason handleResults logs
 		// its own overflow (both are readable only on the monitored
 		// host's journal today; backlog 3.27).
-		if dropped := l.buffer.Add(l.unsentAfter(pending, sent, err)); dropped > 0 {
+		if dropped := l.buffer.Add(unsentAfter(l.log, "check results", pending, sent, err)); dropped > 0 {
 			l.log.Warn("check results aged out of the buffer while a reconnect replay failed; samples dropped",
 				"dropped", dropped, "replayed", sent, "err", err)
 		}
 		return fmt.Errorf("replay buffered check results: %w", err)
+	}
+	// Probe results (probes_wiring.go) have a ring of their own and
+	// follow, under the same lock and the same rules.
+	if err := l.replayProbeResults(sender); err != nil {
+		return fmt.Errorf("replay buffered probe results: %w", err)
 	}
 	l.sender = sender
 	return nil
@@ -404,7 +420,7 @@ func (l *Loop) handleResults(results []checks.Result) {
 		// re-buffering a delivered chunk would write those samples twice,
 		// and re-buffering one that cannot be encoded would only fail the
 		// next reconnect's replay on it (unsentAfter).
-		results = l.unsentAfter(results, sent, err)
+		results = unsentAfter(l.log, "check results", results, sent, err)
 	}
 	if dropped := l.buffer.Add(results); dropped > 0 {
 		l.log.Warn("check result buffer overflowed while disconnected; oldest samples dropped",
@@ -413,7 +429,7 @@ func (l *Loop) handleResults(results []checks.Result) {
 }
 
 // unsentAfter returns what of results goes back to the disconnect buffer
-// after sendResultsChunked delivered sent of them and then failed with
+// after sendChunked delivered sent of them and then failed with
 // err: everything after the delivered chunks, except when the failing
 // chunk could not be encoded at all (backlog 7.52). A result carrying a
 // string that is not valid UTF-8 makes gRPC refuse the whole message on
@@ -422,13 +438,15 @@ func (l *Loop) handleResults(results []checks.Result) {
 // never reaches its heartbeat again and the buffer only grows. That chunk
 // alone is dropped, and logged, since it is a gap somebody may need to
 // explain; the results after it are buffered as for any other failure.
-func (l *Loop) unsentAfter(results []checks.Result, sent int, err error) []checks.Result {
+// kind names the message in that log line ("check results", "probe
+// results").
+func unsentAfter[T any](log *slog.Logger, kind string, results []T, sent int, err error) []T {
 	rest := results[sent:]
 	if !isEncodeFailure(err) {
 		return rest
 	}
 	n := min(len(rest), maxResultsPerMessage)
-	l.log.Warn("a check results message could not be encoded and its results were dropped; "+
+	log.Warn("a "+kind+" message could not be encoded and its results were dropped; "+
 		"a result carries text that is not valid UTF-8",
 		"dropped", n, "err", err)
 	return rest[n:]
@@ -447,9 +465,10 @@ func isEncodeFailure(err error) bool {
 // consumeManagerMessages reads the manager's messages until the stream
 // ends: an acknowledgement carries no payload to apply (its arrival is
 // the confirmation); a CheckConfig, when present, is applied to the
-// scheduler. Ack and CheckConfig are independent fields on the wire (the
+// scheduler, and a ProbeConfig to the probe runner (probes_wiring.go).
+// Ack, CheckConfig and ProbeConfig are independent fields on the wire (the
 // proto's documented fallback, since ManagerMessage could not become a
-// oneof without breaking compatibility) — this tests for CheckConfig's
+// oneof without breaking compatibility) — this tests for each one's
 // presence and never switches on which arm is set.
 func (l *Loop) consumeManagerMessages(stream Stream) error {
 	for {
@@ -459,6 +478,9 @@ func (l *Loop) consumeManagerMessages(stream Stream) error {
 		}
 		if err != nil {
 			return err
+		}
+		if pc := m.GetProbeConfig(); pc != nil {
+			l.applyProbeConfig(pc)
 		}
 		if cc := m.GetCheckConfig(); cc != nil {
 			if unrunnable := l.scheduler.Apply(l.decodeCheckConfig(cc)); len(unrunnable) > 0 {
