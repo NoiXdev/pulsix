@@ -58,13 +58,14 @@ func TestClassifyRealDials(t *testing.T) {
 			_ = c.Close()
 		}
 	}()
+	// Under load the reset can arrive before the dial returns (seen on
+	// macOS); that error is a reset too.
 	conn, err := d.DialContext(context.Background(), "tcp", ln.Addr().String())
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, err = conn.Read(make([]byte, 1))
 	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, err = conn.Read(make([]byte, 1))
 	if got := probe.Classify(err); got != probe.FailureReset {
 		t.Fatalf("reset: Classify(%v) = %q, want reset", err, got)
 	}
