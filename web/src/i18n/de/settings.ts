@@ -62,5 +62,10 @@ export const deSettings: Messages['settings'] = {
     turnedOff: 'Assistenten-Zugang ausgeschaltet',
     saveFailed: 'Assistenten-Zugang konnte nicht geändert werden',
     loadFailed: 'Assistenten-Zugang konnte nicht geladen werden',
+    followUpsTitle: 'Freigegebene Läufe starten Folgeläufe',
+    followUpsHint: 'Eingeschaltet zeigt die Freigabeseite die Folgeläufe der Vorlage, und die Freigabe startet sie mit. Sie starten später mit dem, was ihre Vorlagen dann enthalten; ein Assistent, der Vorlagen bearbeiten darf, kann sie also nach der Freigabe noch ändern. Ausgeschaltet startet ein freigegebener Lauf keine.',
+    followUpsOn: 'Freigegebene Läufe starten jetzt Folgeläufe',
+    followUpsOff: 'Freigegebene Läufe starten jetzt keine Folgeläufe',
+    followUpsSaveFailed: 'Die Folgelauf-Einstellung konnte nicht geändert werden',
   },
 };

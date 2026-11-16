@@ -358,13 +358,18 @@ describe('OrgGeneralPage', () => {
   describe('assistant access', () => {
     function routes(role: string, enabled: boolean, onPut?: (req: MockRequest) => void) {
       let current = enabled;
+      let followUps = false;
       return {
         'GET /api/v1/orgs/acme': org(role),
-        'GET /api/v1/orgs/acme/settings/assistant': () => ({ settings: { assistant_enabled: current } }),
+        'GET /api/v1/orgs/acme/settings/assistant': () => ({
+          settings: { assistant_enabled: current, approved_runs_start_follow_ups: followUps },
+        }),
         'PUT /api/v1/orgs/acme/settings/assistant': (req: MockRequest) => {
           onPut?.(req);
-          current = (req.body as { assistant_enabled: boolean }).assistant_enabled;
-          return { settings: { assistant_enabled: current } };
+          const body = req.body as { assistant_enabled: boolean; approved_runs_start_follow_ups?: boolean };
+          current = body.assistant_enabled;
+          followUps = body.approved_runs_start_follow_ups ?? followUps;
+          return { settings: { assistant_enabled: current, approved_runs_start_follow_ups: followUps } };
         },
       };
     }
@@ -383,9 +388,26 @@ describe('OrgGeneralPage', () => {
       await waitFor(() => expect(screen.getByRole('switch', { name: 'Assistant access' })).toHaveAttribute('aria-checked', 'true'));
     });
 
+    it('switches follow-ups for approved runs, keeping the access value', async () => {
+      const user = userEvent.setup();
+      const puts: unknown[] = [];
+      mockApi(routes('admin', true, (req) => puts.push(req.body)));
+      renderPage();
+      const toggle = await screen.findByRole('switch', { name: 'Approved runs start follow-ups' });
+      await waitFor(() => expect(toggle).toBeEnabled());
+      expect(toggle).toHaveAttribute('aria-checked', 'false');
+      expect(screen.getByText(/When on, the approval page shows the template's follow-ups/)).toBeInTheDocument();
+      await user.click(toggle);
+      await waitFor(() => expect(puts).toEqual([{ assistant_enabled: true, approved_runs_start_follow_ups: true }]));
+      await waitFor(() =>
+        expect(screen.getByRole('switch', { name: 'Approved runs start follow-ups' })).toHaveAttribute('aria-checked', 'true'),
+      );
+    });
+
     it('is read-only below admin', async () => {
       mockApi(routes('operator', true));
       renderPage();
+      expect(await screen.findByRole('switch', { name: 'Approved runs start follow-ups' })).toBeDisabled();
       const toggle = await screen.findByRole('switch', { name: 'Assistant access' });
       await waitFor(() => expect(toggle).toHaveAttribute('aria-checked', 'true'));
       expect(toggle).toBeDisabled();

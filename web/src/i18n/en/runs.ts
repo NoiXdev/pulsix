@@ -202,6 +202,18 @@ export const enRuns = {
         credentials: 'Credentials',
         vars: 'Extra vars',
         retry: 'Retry',
+        followUps: 'Follow-ups',
+      },
+      followUps: {
+        offNote: 'Approving starts none of these follow-ups. Your organization has turned that off in Settings → General.',
+        hint: 'Follow-ups start later, when this run succeeds, on the hosts it ran on. This page shows them by name and revision, not what they run.',
+        truncated: 'More follow-ups than this page can show; approving starts none of them.',
+        revision: (n: number) => `revision ${n}`,
+        stop: {
+          in_chain: 'already in this chain',
+          too_deep: 'chain too long',
+          deleted: 'template deleted',
+        },
       },
       templateName: 'Name',
       revision: 'Revision',

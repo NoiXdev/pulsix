@@ -65,5 +65,10 @@ export const enSettings = {
     turnedOff: 'Assistant access turned off',
     saveFailed: 'Failed to change assistant access',
     loadFailed: 'Failed to load assistant access',
+    followUpsTitle: 'Approved runs start follow-ups',
+    followUpsHint: "When on, the approval page shows the template's follow-ups and approving starts them too. They start later with whatever their templates hold then, so an assistant allowed to edit templates can still change them after the approval. When off, an approved run starts none.",
+    followUpsOn: 'Approved runs now start follow-ups',
+    followUpsOff: 'Approved runs now start no follow-ups',
+    followUpsSaveFailed: 'Failed to change the follow-up setting',
   },
 };

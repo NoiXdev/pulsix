@@ -18,13 +18,23 @@ export function AssistantCard({ org, canWrite }: { org: string; canWrite: boolea
   const settings = useAssistantSettings(org);
   const update = useUpdateAssistantSettings(org);
   const enabled = settings.data?.settings.assistant_enabled ?? false;
+  const startsFollowUps = settings.data?.settings.approved_runs_start_follow_ups ?? false;
 
   async function onToggle(next: boolean) {
     try {
-      await update.mutateAsync(next);
+      await update.mutateAsync({ assistant_enabled: next });
       toast.show(next ? a.turnedOn : a.turnedOff);
     } catch (err) {
       toast.show(err instanceof Error ? err.message : a.saveFailed, 'destructive');
+    }
+  }
+
+  async function onToggleFollowUps(next: boolean) {
+    try {
+      await update.mutateAsync({ assistant_enabled: enabled, approved_runs_start_follow_ups: next });
+      toast.show(next ? a.followUpsOn : a.followUpsOff);
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : a.followUpsSaveFailed, 'destructive');
     }
   }
 
@@ -53,6 +63,23 @@ export function AssistantCard({ org, canWrite }: { org: string; canWrite: boolea
           <span id="assistant_access_hint" className="text-xs text-muted-foreground">
             {a.hint}
           </span>
+        )}
+        {!settings.isError && (
+          <>
+            <div className="mt-2 flex items-center justify-between gap-3 border-t border-border pt-3">
+              <h3 className="text-sm font-semibold">{a.followUpsTitle}</h3>
+              <Switch
+                aria-label={a.followUpsTitle}
+                aria-describedby="assistant_follow_ups_hint"
+                checked={startsFollowUps}
+                disabled={!canWrite || settings.isPending || update.isPending}
+                onCheckedChange={(next) => void onToggleFollowUps(next)}
+              />
+            </div>
+            <span id="assistant_follow_ups_hint" className="text-xs text-muted-foreground">
+              {a.followUpsHint}
+            </span>
+          </>
         )}
         {!canWrite && <span className="text-xs text-muted-foreground">{a.readOnlyHint}</span>}
       </div>

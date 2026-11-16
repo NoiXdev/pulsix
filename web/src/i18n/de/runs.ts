@@ -202,6 +202,18 @@ export const deRuns: Messages['runs'] = {
         credentials: 'Zugangsdaten',
         vars: 'Extra-Variablen',
         retry: 'Wiederholung',
+        followUps: 'Folgeläufe',
+      },
+      followUps: {
+        offNote: 'Die Freigabe startet keinen dieser Folgeläufe. Deine Organisation hat das unter Einstellungen → Allgemein ausgeschaltet.',
+        hint: 'Folgeläufe starten später, wenn dieser Lauf erfolgreich ist, auf den Hosts, auf denen er lief. Diese Seite zeigt sie mit Name und Revision, nicht was sie ausführen.',
+        truncated: 'Mehr Folgeläufe, als diese Seite anzeigen kann; die Freigabe startet keinen davon.',
+        revision: (n: number) => `Revision ${n}`,
+        stop: {
+          in_chain: 'schon in dieser Kette',
+          too_deep: 'Kette zu lang',
+          deleted: 'Vorlage gelöscht',
+        },
       },
       templateName: 'Name',
       revision: 'Revision',

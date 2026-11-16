@@ -185,4 +185,137 @@ describe('RunRequestDetailPage', () => {
     expect(await screen.findByText('Rejected. The run was not started.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument();
   });
+  describe('follow-ups', () => {
+    const FOLLOW_UPS = {
+      start: true,
+      templates: [
+        { template_id: 'f1', template_name: 'reload-lb', template_revision: 3 },
+        { template_id: 'f2', template_name: 'warm-cache', template_revision: 9 },
+        { template_id: 'f3', template_name: 'old', stop: 'deleted' },
+      ],
+    };
+
+    it('shows the nav item only when the picture has follow-ups', async () => {
+      mockApi({ 'GET /api/v1/orgs/acme': orgAs('viewer'), 'GET /api/v1/orgs/acme/members': MEMBERS, [DETAIL_PATH]: detail() });
+      renderDetail();
+      expect(await screen.findByRole('heading', { name: 'Run request' })).toBeInTheDocument();
+      expect(screen.queryByRole('region', { name: 'Follow-ups' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /Follow-ups/ })).not.toBeInTheDocument();
+    });
+
+    it('lists them in a section with a nav item', async () => {
+      mockApi({
+        'GET /api/v1/orgs/acme': orgAs('viewer'),
+        'GET /api/v1/orgs/acme/members': MEMBERS,
+        [DETAIL_PATH]: detail({ picture: { follow_ups: FOLLOW_UPS } }),
+      });
+      renderDetail();
+      const region = await screen.findByRole('region', { name: 'Follow-ups' });
+      expect(within(region).getByText('reload-lb')).toBeInTheDocument();
+      // A viewer cannot decide, so the boxes are inert.
+      expect(within(region).getByRole('checkbox', { name: 'reload-lb' })).toBeDisabled();
+      expect(screen.getAllByText('Follow-ups').length).toBeGreaterThan(1);
+    });
+
+    it('sends no follow_ups for a plain approval', async () => {
+      const user = userEvent.setup();
+      let approved: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': orgAs('operator'),
+        'GET /api/v1/orgs/acme/members': MEMBERS,
+        [DETAIL_PATH]: detail({ fingerprint: 'fp-a', picture: { follow_ups: FOLLOW_UPS } }),
+        [APPROVE_PATH]: (req: MockRequest) => {
+          approved = req.body;
+          return { request: request({ status: 'approved' }) };
+        },
+      });
+      renderDetail();
+      await user.click(await screen.findByRole('button', { name: 'Approve' }));
+      await waitFor(() => expect(approved).toEqual({ fingerprint: 'fp-a' }));
+      expect(approved).not.toHaveProperty('follow_ups');
+    });
+
+    it('sends the rest when one follow-up is unchecked', async () => {
+      const user = userEvent.setup();
+      let approved: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': orgAs('operator'),
+        'GET /api/v1/orgs/acme/members': MEMBERS,
+        [DETAIL_PATH]: detail({ fingerprint: 'fp-a', picture: { follow_ups: FOLLOW_UPS } }),
+        [APPROVE_PATH]: (req: MockRequest) => {
+          approved = req.body;
+          return { request: request({ status: 'approved' }) };
+        },
+      });
+      renderDetail();
+      await user.click(await screen.findByRole('checkbox', { name: 'reload-lb' }));
+      await user.click(screen.getByRole('button', { name: 'Approve' }));
+      await waitFor(() => expect(approved).toEqual({ fingerprint: 'fp-a', follow_ups: ['f2'] }));
+    });
+
+    it('sends an empty list when all are unchecked', async () => {
+      const user = userEvent.setup();
+      let approved: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': orgAs('operator'),
+        'GET /api/v1/orgs/acme/members': MEMBERS,
+        [DETAIL_PATH]: detail({ fingerprint: 'fp-a', picture: { follow_ups: FOLLOW_UPS } }),
+        [APPROVE_PATH]: (req: MockRequest) => {
+          approved = req.body;
+          return { request: request({ status: 'approved' }) };
+        },
+      });
+      renderDetail();
+      await user.click(await screen.findByRole('checkbox', { name: 'reload-lb' }));
+      await user.click(screen.getByRole('checkbox', { name: 'warm-cache' }));
+      await user.click(screen.getByRole('button', { name: 'Approve' }));
+      await waitFor(() => expect(approved).toEqual({ fingerprint: 'fp-a', follow_ups: [] }));
+    });
+
+    it('sends no list in the mode that starts none', async () => {
+      const user = userEvent.setup();
+      let approved: unknown;
+      mockApi({
+        'GET /api/v1/orgs/acme': orgAs('operator'),
+        'GET /api/v1/orgs/acme/members': MEMBERS,
+        [DETAIL_PATH]: detail({
+          fingerprint: 'fp-a',
+          picture: { follow_ups: { start: false, templates: [{ template_id: 'f1', template_name: 'reload-lb' }] } },
+        }),
+        [APPROVE_PATH]: (req: MockRequest) => {
+          approved = req.body;
+          return { request: request({ status: 'approved' }) };
+        },
+      });
+      renderDetail();
+      await user.click(await screen.findByRole('button', { name: 'Approve' }));
+      await waitFor(() => expect(approved).toEqual({ fingerprint: 'fp-a' }));
+    });
+
+    it('resets the selection to all checked after a changed notice', async () => {
+      const user = userEvent.setup();
+      let loads = 0;
+      const sent: unknown[] = [];
+      mockApi({
+        'GET /api/v1/orgs/acme': orgAs('operator'),
+        'GET /api/v1/orgs/acme/members': MEMBERS,
+        [DETAIL_PATH]: () => {
+          loads += 1;
+          return detail({ fingerprint: loads === 1 ? 'fp-old' : 'fp-new', picture: { follow_ups: FOLLOW_UPS } });
+        },
+        [APPROVE_PATH]: (req: MockRequest) => {
+          sent.push(req.body);
+          return conflict('changed since you looked at it; review it again');
+        },
+      });
+      renderDetail();
+      await user.click(await screen.findByRole('checkbox', { name: 'reload-lb' }));
+      await user.click(screen.getByRole('button', { name: 'Approve' }));
+      expect(await screen.findByText('This request changed since you opened it. Review it again.')).toBeInTheDocument();
+      await waitFor(() => expect(loads).toBe(2));
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: 'reload-lb' })).toBeChecked());
+      await user.click(screen.getByRole('button', { name: 'Approve' }));
+      await waitFor(() => expect(sent).toEqual([{ fingerprint: 'fp-old', follow_ups: ['f2'] }, { fingerprint: 'fp-new' }]));
+    });
+  });
 });

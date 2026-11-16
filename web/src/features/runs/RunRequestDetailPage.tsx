@@ -20,6 +20,8 @@ import { may } from '../../lib/roles.ts';
 import { useFormat } from '../../i18n/format.ts';
 import { useT } from '../../i18n/useT.ts';
 import { RunPictureSections } from './RunPictureSections.tsx';
+import { RunRequestFollowUps } from './RunRequestFollowUps.tsx';
+import { startableFollowUps } from './followUps.ts';
 import { requestTone, useNow } from './runRequestStatus.ts';
 import { shortId } from './status.ts';
 
@@ -51,12 +53,25 @@ export function RunRequestDetailPage() {
   const approve = useApproveRunRequest(org, id);
   const reject = useRejectRunRequest(org, id);
   const [changed, setChanged] = useState(false);
+  // The deselected direct follow-ups belong to one loaded picture: a new
+  // fingerprint (a refetch after a change) starts again from "all checked".
+  const [deselection, setDeselection] = useState<{ fingerprint: string; ids: ReadonlySet<string> }>({
+    fingerprint: '',
+    ids: new Set(),
+  });
 
   const guard = useQueryGuard(detail);
   if (guard) return guard;
   if (!detail.data) return <QueryLoading />;
 
   const { request, picture, fingerprint } = detail.data;
+  const deselected = deselection.fingerprint === fingerprint ? deselection.ids : new Set<string>();
+  const startable = startableFollowUps(picture.follow_ups);
+  function toggleFollowUp(templateId: string) {
+    const ids = new Set(deselected);
+    if (!ids.delete(templateId)) ids.add(templateId);
+    setDeselection({ fingerprint, ids });
+  }
   const canRun = may(orgInfo.data?.org.role, 'jobs.run');
   const pending = request.status === 'pending';
   const busy = approve.isPending || reject.isPending || detail.isFetching;
@@ -79,7 +94,12 @@ export function RunRequestDetailPage() {
 
   async function onApprove() {
     try {
-      const { request: approved } = await approve.mutateAsync(fingerprint);
+      // follow_ups goes out only when the selection differs from the default
+      // (every startable one), so a plain approval sends the same body as ever.
+      const followUps = startable.some((f) => deselected.has(f.template_id))
+        ? startable.filter((f) => !deselected.has(f.template_id)).map((f) => f.template_id)
+        : undefined;
+      const { request: approved } = await approve.mutateAsync({ fingerprint, followUps });
       setChanged(false);
       toast.show(d.approved);
       await openRun(approved.run_group_id);
@@ -112,6 +132,7 @@ export function RunRequestDetailPage() {
     { id: 'credentials', label: s.credentials },
     { id: 'vars', label: s.vars },
     ...(picture.retry ? [{ id: 'retry', label: s.retry }] : []),
+    ...(picture.follow_ups ? [{ id: 'follow-ups', label: s.followUps }] : []),
   ];
 
   const sidebar = (
@@ -180,6 +201,9 @@ export function RunRequestDetailPage() {
   return (
     <DetailLayout sidebar={sidebar} nav={nav} navLabel={t.common.sections}>
       <RunPictureSections org={org} picture={picture} />
+      {picture.follow_ups && (
+        <RunRequestFollowUps followUps={picture.follow_ups} deselected={deselected} onToggle={toggleFollowUp} disabled={!pending || !canRun || busy} />
+      )}
     </DetailLayout>
   );
 }

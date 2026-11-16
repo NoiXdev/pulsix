@@ -16,7 +16,10 @@ describe('RunRequestDetailPage in German', () => {
       'GET /api/v1/orgs/acme/members': MEMBERS,
       [`GET /api/v1/orgs/acme/run-requests/${RQ}`]: () => {
         loads += 1;
-        return detail({ fingerprint: `fp-${loads}` });
+        return detail({
+          fingerprint: `fp-${loads}`,
+          picture: { follow_ups: { start: true, templates: [{ template_id: 'f1', template_name: 'reload-lb', template_revision: 3 }, { template_id: 'f2', template_name: 'x', stop: 'in_chain' }] } },
+        });
       },
       [`POST /api/v1/orgs/acme/run-requests/${RQ}/approve`]: () =>
         new Response(JSON.stringify({ status: 409, detail: 'changed since you looked at it; review it again' }), {
@@ -38,6 +41,12 @@ describe('RunRequestDetailPage in German', () => {
     expect(within(targets).getByText('Sprunghost')).toBeInTheDocument();
     expect(within(screen.getByRole('region', { name: 'Extra-Variablen' })).getByText('geheim (verborgen)')).toBeInTheDocument();
     expect(screen.getByText('Die Freigabe startet genau das, was diese Seite zeigt.')).toBeInTheDocument();
+
+    const followUps = screen.getByRole('region', { name: 'Folgeläufe' });
+    expect(within(followUps).getByRole('checkbox', { name: 'reload-lb' })).toBeChecked();
+    expect(within(followUps).getByText(/Revision 3/)).toBeInTheDocument();
+    expect(within(followUps).getByText(/schon in dieser Kette/)).toBeInTheDocument();
+    expect(within(followUps).getByText(/Folgeläufe starten später, wenn dieser Lauf erfolgreich ist/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Freigeben' }));
     expect(

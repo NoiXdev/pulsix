@@ -63,15 +63,16 @@ function useInvalidateRunRequests(org: string) {
 /** useApproveRunRequest approves a request (jobs.run, browser session) with
  * the fingerprint of the picture the page showed; the server refuses (409)
  * when the picture has changed since, when the request expired or when it
- * was already decided. */
+ * was already decided. followUps names the direct follow-ups to start; left
+ * out, the server applies its default (all startable, or none). */
 export function useApproveRunRequest(org: string, id: string) {
   const invalidate = useInvalidateRunRequests(org);
   return useMutation({
-    mutationFn: (fingerprint: string) =>
+    mutationFn: ({ fingerprint, followUps }: { fingerprint: string; followUps?: string[] }) =>
       unwrap(
         api.POST('/api/v1/orgs/{org}/run-requests/{id}/approve', {
           params: { path: { org, id } },
-          body: { fingerprint },
+          body: followUps === undefined ? { fingerprint } : { fingerprint, follow_ups: followUps },
         }),
       ),
     onSuccess: invalidate,
