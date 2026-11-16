@@ -35,6 +35,19 @@ func (e *CycleError) Is(target error) bool {
 	return target == ErrFollowUpCycle || target == ErrInvalidInput
 }
 
+// FollowUpsError says the follow-up list itself is the problem: too many
+// entries, the template itself, one listed twice, or a template that does
+// not exist (deleted while the dialog was open). It is an ErrInvalidInput;
+// the API answers 422 at the body's follow_ups field, like a cycle.
+type FollowUpsError struct{ err error }
+
+func (e *FollowUpsError) Error() string { return e.err.Error() }
+func (e *FollowUpsError) Unwrap() error { return e.err }
+
+func invalidFollowUps(format string, args ...any) error {
+	return &FollowUpsError{err: fmt.Errorf("%w: "+format, append([]any{ErrInvalidInput}, args...)...)}
+}
+
 // InUseError refuses deleting a template other templates name as a
 // follow-up; Referrers are their names. The API answers 409.
 type InUseError struct{ Referrers []string }
@@ -84,22 +97,22 @@ func (s *Service) setFollowUps(ctx context.Context, orgID, id uuid.UUID, name st
 // entries, an unknown template, or a loop through the stored graph.
 func (s *Service) validateFollowUps(ctx context.Context, orgID, id uuid.UUID, name string, ids []uuid.UUID) error {
 	if len(ids) > maxFollowUps {
-		return fmt.Errorf("%w: at most %d follow-ups", ErrInvalidInput, maxFollowUps)
+		return invalidFollowUps("at most %d follow-ups", maxFollowUps)
 	}
 	seen := make(map[uuid.UUID]bool, len(ids))
 	names := map[uuid.UUID]string{id: name}
 	for _, fid := range ids {
 		switch {
 		case fid == id:
-			return fmt.Errorf("%w: a template cannot be its own follow-up", ErrInvalidInput)
+			return invalidFollowUps("a template cannot be its own follow-up")
 		case seen[fid]:
-			return fmt.Errorf("%w: a follow-up is listed twice", ErrInvalidInput)
+			return invalidFollowUps("a follow-up is listed twice")
 		}
 		seen[fid] = true
 		fu, err := s.store.Get(ctx, orgID, fid)
 		if err != nil {
 			if errors.Is(err, ErrNotFound) {
-				return fmt.Errorf("%w: follow-up template does not exist", ErrNotFound)
+				return invalidFollowUps("follow-up template does not exist")
 			}
 			return fmt.Errorf("look up follow-up template: %w", err)
 		}

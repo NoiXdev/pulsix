@@ -426,6 +426,10 @@ func mapTemplatesErr(ctx context.Context, err error) error {
 	if errors.As(err, &cycle) {
 		return huma.Error422UnprocessableEntity(cycle.Error(), &huma.ErrorDetail{Location: "body.follow_ups", Message: cycle.Error()})
 	}
+	var badList *templates.FollowUpsError
+	if errors.As(err, &badList) {
+		return huma.Error422UnprocessableEntity(badList.Error(), &huma.ErrorDetail{Location: "body.follow_ups", Message: badList.Error()})
+	}
 	var inUse *templates.InUseError
 	if errors.As(err, &inUse) {
 		return huma.Error409Conflict(inUse.Error())

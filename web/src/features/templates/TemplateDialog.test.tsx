@@ -103,6 +103,18 @@ describe('TemplateDialog follow-ups', () => {
     expect(within(dialog).getByLabelText('Follow-ups on success')).toHaveAttribute('aria-describedby', expect.stringContaining('template-follow-ups-error'));
   });
 
+  it('shows the refusal of a follow-up deleted meanwhile under the field', async () => {
+    const user = userEvent.setup();
+    const loaded = template('a', 'alpha', { follow_ups: [{ template_id: 'gone', template_name: 'gone', position: 0 }] });
+    mockApi(routes(loaded, () => problem422('body.follow_ups', 'invalid input: follow-up template does not exist')));
+    renderDialog('a');
+    const dialog = await screen.findByRole('dialog', { name: 'alpha' });
+    await within(dialog).findByText('gone (unavailable)');
+    await user.click(within(dialog).getByRole('button', { name: 'Save template' }));
+    const alert = await within(dialog).findByText('invalid input: follow-up template does not exist');
+    expect(alert).toHaveAttribute('role', 'alert');
+  });
+
   it('keeps a stored follow-up the template list does not hold, listed as unavailable, and sends it', async () => {
     const user = userEvent.setup();
     let put: MockRequest | undefined;

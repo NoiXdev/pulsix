@@ -129,6 +129,46 @@ func TestTemplateFollowUpCycle422(t *testing.T) {
 	}
 }
 
+// A follow-up list the service refuses is a 422 at body.follow_ups, like
+// the cycle: a template deleted while the dialog was open, the template
+// itself, or one listed twice. (Eleven entries never reach the service: the
+// body's maxItems refuses them first, at the same field.)
+func TestTemplateFollowUpListRefusals422(t *testing.T) {
+	f := newRunFixture(t, "tfu-refusals")
+	b := f.followUpTemplate(t, "listmonk")
+	a := f.followUpTemplate(t, "cloudpanel")
+	ref := func(ids ...uuid.UUID) map[string]any {
+		out := make([]map[string]string, len(ids))
+		for i, id := range ids {
+			out[i] = map[string]string{"template_id": id.String()}
+		}
+		return map[string]any{"follow_ups": out}
+	}
+	eleven := make([]uuid.UUID, 11)
+	for i := range eleven {
+		eleven[i] = uuid.New()
+	}
+	for name, body := range map[string]map[string]any{
+		"unknown": ref(uuid.New()), "self": ref(a), "duplicate": ref(b, b), "eleven": ref(eleven...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := f.putTemplate(t, f.operatorC, a, "cloudpanel", body)
+			if resp.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("%d %s", resp.StatusCode, mustReadBody(t, resp))
+			}
+			var problem struct {
+				Errors []struct {
+					Location string `json:"location"`
+				} `json:"errors"`
+			}
+			decodeInto(t, resp, &problem)
+			if len(problem.Errors) == 0 || !strings.HasPrefix(problem.Errors[0].Location, "body.follow_ups") {
+				t.Fatalf("errors = %+v, want body.follow_ups", problem.Errors)
+			}
+		})
+	}
+}
+
 func TestTemplateDeleteReferenced409(t *testing.T) {
 	f := newRunFixture(t, "tfu-delete")
 	b := f.followUpTemplate(t, "notify")

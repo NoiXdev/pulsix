@@ -221,7 +221,8 @@ function TemplateForm({
       onClose();
     } catch (err) {
       if (errorStatus(err) === 412) return setStale(true);
-      // A refused follow-up list (a cycle, too many) is shown at its field.
+      // A refused follow-up list (a cycle, too many, a template deleted
+      // meanwhile) is shown at its field.
       const followUpPs = problemsFromError(err, 'body.follow_ups');
       if (followUpPs.length > 0) return setFollowUpsError(followUpPs.map((p) => p.message).join('; '));
       // The extra vars are not edited here: a value the server refuses is

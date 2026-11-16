@@ -92,8 +92,9 @@ func TestUpdateRefusesSelfDuplicateAndEleven(t *testing.T) {
 		"self": {a.ID}, "duplicate": {b.ID, b.ID}, "eleven": eleven,
 	} {
 		_, err := f.svc.Update(ctx, f.org, a.ID, f.updateIn(a, &ids))
-		if !errors.Is(err, templates.ErrInvalidInput) {
-			t.Fatalf("%s: error = %v, want ErrInvalidInput", name, err)
+		var fe *templates.FollowUpsError
+		if !errors.Is(err, templates.ErrInvalidInput) || !errors.As(err, &fe) {
+			t.Fatalf("%s: error = %v, want a FollowUpsError and ErrInvalidInput", name, err)
 		}
 	}
 	ten := eleven[:10]
@@ -106,8 +107,9 @@ func TestUpdateRefusesUnknownFollowUp(t *testing.T) {
 	f := newFixture()
 	a := f.seed("a")
 	_, err := f.svc.Update(ctx, f.org, a.ID, f.updateIn(a, &[]uuid.UUID{uuid.New()}))
-	if !errors.Is(err, templates.ErrNotFound) {
-		t.Fatalf("error = %v, want ErrNotFound", err)
+	var fe *templates.FollowUpsError
+	if !errors.Is(err, templates.ErrInvalidInput) || !errors.As(err, &fe) || errors.Is(err, templates.ErrNotFound) {
+		t.Fatalf("error = %v, want a FollowUpsError: the list is the problem, not the template being saved", err)
 	}
 }
 
