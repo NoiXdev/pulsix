@@ -365,3 +365,20 @@ func (n *notReadyTemplates) TemplateLookup(c context.Context, org, id uuid.UUID)
 	}
 	return n.fakeTemplates.TemplateLookup(c, org, id)
 }
+
+func TestStartedRunGroupReportsAKeyedEnqueue(t *testing.T) {
+	f := newChainFixture(t)
+	ref := id7()
+	req := jobs.RunRequest{Trigger: jobs.TriggerChain, TriggerRef: &ref, Chain: &jobs.ChainContext{RootTrigger: jobs.TriggerManual, Depth: 1}, IdempotencyKey: "chain:x"}
+	if got, err := f.svc.StartedRunGroup(ctx, f.org, "chain:x"); err != nil || got != nil {
+		t.Fatalf("before = %v, %v", got, err)
+	}
+	created, err := f.svc.EnqueueRunWith(ctx, f.org, f.tpl, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := f.svc.StartedRunGroup(ctx, f.org, "chain:x")
+	if err != nil || got == nil || *got != created[0].RunGroupID {
+		t.Fatalf("after = %v, %v, want %s", got, err, created[0].RunGroupID)
+	}
+}

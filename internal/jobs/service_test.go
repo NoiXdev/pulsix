@@ -65,6 +65,22 @@ func newFakeStore() *fakeStore {
 // ReserveRunGroup is the in-memory equivalent of the real ON CONFLICT round
 // trip: a mutex-guarded map lookup-or-insert gives the same "first caller
 // wins" semantics the real unique (org_id, idempotency_key) constraint does.
+// StartedRunGroup answers from the claimed keys and the stored run jobs.
+func (f *fakeStore) StartedRunGroup(_ context.Context, orgID uuid.UUID, key string) (*uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.idempotency[orgID.String()+"|"+key]
+	if !ok {
+		return nil, nil
+	}
+	for _, sj := range f.jobs {
+		if sj.j.OrgID == orgID && sj.j.RunGroupID == g && sj.j.Kind == jobs.KindRun {
+			return &g, nil
+		}
+	}
+	return nil, nil
+}
+
 func (f *fakeStore) ReserveRunGroup(_ context.Context, orgID uuid.UUID, key string, candidate uuid.UUID) (uuid.UUID, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

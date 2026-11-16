@@ -168,6 +168,18 @@ func (s *SQLStore) ReserveRunGroup(ctx context.Context, orgID uuid.UUID, idempot
 	return row.RunGroupID, row.Reserved, nil
 }
 
+// StartedRunGroup implements Store.
+func (s *SQLStore) StartedRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string) (*uuid.UUID, error) {
+	group, err := s.q.StartedRunGroupForKey(ctx, gen.StartedRunGroupForKeyParams{OrgID: orgID, IdempotencyKey: idempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read started run group: %w", err)
+	}
+	return &group, nil
+}
+
 func (s *SQLStore) GetJob(ctx context.Context, orgID, id uuid.UUID) (Job, error) {
 	row, err := s.q.GetJob(ctx, gen.GetJobParams{OrgID: orgID, ID: id})
 	if err != nil {

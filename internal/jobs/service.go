@@ -380,6 +380,10 @@ type Store interface {
 	// reserved to decide whether to actually create jobs or hand back the
 	// ones the winning call already created.
 	ReserveRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string, candidate uuid.UUID) (groupID uuid.UUID, reserved bool, err error)
+	// StartedRunGroup returns the run group an earlier enqueue with this
+	// idempotency key claimed and created at least one run job in; nil when
+	// the key is unclaimed or its claim created no job.
+	StartedRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string) (*uuid.UUID, error)
 }
 
 // Claim is one claimed job ready to ship to a worker, with the binding

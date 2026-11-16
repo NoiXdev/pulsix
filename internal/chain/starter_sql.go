@@ -3,6 +3,7 @@ package chain
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -31,13 +32,14 @@ func (s *SQLStore) LockDue(ctx context.Context, now time.Time, limit int) (DueBa
 	for i, r := range rows {
 		out[i] = lockedFollowUp(r)
 	}
-	return &sqlBatch{tx: tx, rows: out}, nil
+	return &sqlBatch{tx: tx, rows: out, log: s.log}, nil
 }
 
 // sqlBatch is one locked batch of due rows.
 type sqlBatch struct {
 	tx   pgx.Tx
 	rows []FollowUp
+	log  *slog.Logger
 }
 
 func (b *sqlBatch) Rows() []FollowUp { return b.rows }
@@ -51,30 +53,43 @@ func (b *sqlBatch) Commit(ctx context.Context) error {
 
 func (b *sqlBatch) Rollback(ctx context.Context) error { return b.tx.Rollback(ctx) }
 
-// Write implements DueBatch. A failure rolls back only this row's savepoint;
-// the row stays due.
+// Write implements DueBatch. A failure or a panic rolls back only this
+// row's savepoint (the deferred rollbacks are no-ops once committed); the
+// row stays due.
 func (b *sqlBatch) Write(ctx context.Context, f FollowUp, o Outcome, notify func(ctx context.Context, tx pgx.Tx) error) error {
 	sp, err := b.tx.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin follow-up savepoint: %w", err)
 	}
+	defer sp.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
 	if err := writeOutcome(ctx, gen.New(sp), f, o); err != nil {
-		_ = sp.Rollback(context.WithoutCancel(ctx))
 		return err
 	}
 	if notify != nil {
-		if n, err := sp.Begin(ctx); err == nil {
-			if notify(ctx, n) != nil {
-				_ = n.Rollback(context.WithoutCancel(ctx))
-			} else if err := n.Commit(ctx); err != nil {
-				_ = n.Rollback(context.WithoutCancel(ctx))
-			}
-		}
+		b.notify(ctx, sp, f, notify)
 	}
 	if err := sp.Commit(ctx); err != nil {
 		return fmt.Errorf("commit follow-up savepoint: %w", err)
 	}
 	return nil
+}
+
+// notify runs the notification in a savepoint nested in the row's: its
+// failure loses the notification, never the outcome. The hook logs its own
+// error.
+func (b *sqlBatch) notify(ctx context.Context, sp pgx.Tx, f FollowUp, notify func(ctx context.Context, tx pgx.Tx) error) {
+	n, err := sp.Begin(ctx)
+	if err != nil {
+		b.log.ErrorContext(ctx, "begin follow-up notification savepoint; the notification is lost", "follow_up", f.ID, "org", f.OrgID, "err", err)
+		return
+	}
+	defer n.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck // no-op once committed
+	if notify(ctx, n) != nil {
+		return
+	}
+	if err := n.Commit(ctx); err != nil {
+		b.log.ErrorContext(ctx, "release follow-up notification savepoint; the notification is lost", "follow_up", f.ID, "org", f.OrgID, "err", err)
+	}
 }
 
 func writeOutcome(ctx context.Context, q *gen.Queries, f FollowUp, o Outcome) error {

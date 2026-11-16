@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/noixdev/pulsix/internal/chain"
 	"github.com/noixdev/pulsix/internal/inventory/render"
@@ -43,12 +44,17 @@ type heldRuns struct {
 	chain.Runs
 	finished *atomic.Int32
 	calls    atomic.Int32
+	expired  atomic.Bool
 }
 
 func (h *heldRuns) EnqueueRunWith(ctx context.Context, org, tmpl uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
 	h.calls.Add(1)
 	deadline := time.Now().Add(5 * time.Second)
-	for h.finished.Load() == 0 && time.Now().Before(deadline) {
+	for h.finished.Load() == 0 {
+		if time.Now().After(deadline) {
+			h.expired.Store(true)
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	return h.Runs.EnqueueRunWith(ctx, org, tmpl, req)
@@ -93,6 +99,9 @@ func TestStarterTwoStartersStartOnce(t *testing.T) {
 		}
 	}
 
+	if runs.expired.Load() {
+		t.Fatal("the held enqueue timed out: the other tick never finished while the row was locked")
+	}
 	if n := runs.calls.Load(); n != 1 {
 		t.Fatalf("enqueues = %d, want 1", n)
 	}
@@ -170,5 +179,112 @@ func TestStarterRecordsEveryOutcomeInSQL(t *testing.T) {
 	}
 	if rows[3].State != chain.StateSkipped || rows[3].Reason != "the template was deleted" || rows[3].Attempts != 0 {
 		t.Fatalf("x = %+v", rows[3])
+	}
+}
+
+// lossyStore fails the first row write of its batches.
+type lossyStore struct {
+	*chain.SQLStore
+	fail atomic.Int32
+}
+
+func (l *lossyStore) LockDue(ctx context.Context, now time.Time, limit int) (chain.DueBatch, error) {
+	b, err := l.SQLStore.LockDue(ctx, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	return lossyBatch{DueBatch: b, store: l}, nil
+}
+
+type lossyBatch struct {
+	chain.DueBatch
+	store *lossyStore
+}
+
+func (b lossyBatch) Write(ctx context.Context, f chain.FollowUp, o chain.Outcome, notify func(context.Context, pgx.Tx) error) error {
+	if b.store.fail.Add(-1) >= 0 {
+		return errors.New("write-back lost")
+	}
+	return b.DueBatch.Write(ctx, f, o, notify)
+}
+
+func TestStarterLinksAStartWhoseWriteBackWasLost(t *testing.T) {
+	e := newEnv(t)
+	b := e.template("b")
+	a := e.template("a", b)
+	group, h1 := newID(), newID()
+	e.plan(group, a, nil)
+	e.job(group, "succeeded", []uuid.UUID{h1}, map[string][]uuid.UUID{"ok_hosts": {h1}})
+	now := time.Now().Truncate(time.Microsecond)
+	if err := e.store.ResolveGroup(e.scoped, e.org, group, jobs.StatusSucceeded, now); err != nil {
+		t.Fatal(err)
+	}
+	svc := jobs.NewService(jobs.NewSQLStore(e.d), nil, envTemplates{org: e.org}, oneZone{zone: e.zone, hosts: []uuid.UUID{h1}}, nil, nil, nil, time.Now, rand.Reader)
+	store := &lossyStore{SQLStore: e.store}
+	store.fail.Store(1)
+	clock := now.Add(time.Second)
+	st := chain.NewStarter(store, svc, fakeNames{names: map[uuid.UUID]string{b: "b"}}, nil, nil, &fakeAuditor{}, func() time.Time { return clock }, quietLog)
+	if err := st.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.rows(group)[0]; r.State != chain.StateDue {
+		t.Fatalf("after the lost write: row = %+v", r)
+	}
+	clock = clock.Add(time.Second)
+	if err := st.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var child uuid.UUID
+	var total int
+	if err := e.d.Pool().QueryRow(ctx, `SELECT min(run_group_id::text)::uuid, count(*) FROM jobs WHERE trigger = 'chain' AND trigger_ref = $1`, group).Scan(&child, &total); err != nil {
+		t.Fatal(err)
+	}
+	r := e.rows(group)[0]
+	if total != 1 || r.State != chain.StateStarted || r.ChildGroupID == nil || *r.ChildGroupID != child || r.Reason != "" {
+		t.Fatalf("jobs = %d, row = %+v, want started with %s", total, r, child)
+	}
+}
+
+type panickyNotifier struct{ panics atomic.Bool }
+
+func (p *panickyNotifier) FollowUpSkipped(context.Context, pgx.Tx, chain.SkipNotice) error {
+	if p.panics.Load() {
+		panic("notifier exploded")
+	}
+	return nil
+}
+
+func TestStarterNotifierPanicLeavesTheRowDue(t *testing.T) {
+	e := newEnv(t)
+	b := e.template("b")
+	a := e.template("a", b)
+	group, h1 := newID(), newID()
+	e.plan(group, a, nil)
+	e.job(group, "succeeded", []uuid.UUID{h1}, map[string][]uuid.UUID{"ok_hosts": {h1}})
+	now := time.Now().Truncate(time.Microsecond)
+	if err := e.store.ResolveGroup(e.scoped, e.org, group, jobs.StatusSucceeded, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.d.Pool().Exec(ctx, `UPDATE run_follow_ups SET root_trigger = 'schedule', root_ref = $1 WHERE parent_group_id = $2`, newID(), group); err != nil {
+		t.Fatal(err)
+	}
+	aud := &fakeAuditor{}
+	// b's name is unknown: the row is skipped as deleted, a failure notice.
+	st := chain.NewStarter(e.store, &fakeRuns{}, fakeNames{}, nil, &fakeGuards{found: true}, aud, func() time.Time { return now.Add(time.Second) }, quietLog)
+	n := &panickyNotifier{}
+	n.panics.Store(true)
+	st.SetNotifier(n)
+	if err := st.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.rows(group)[0]; r.State != chain.StateDue || len(aud.all()) != 0 {
+		t.Fatalf("after the panic: row = %+v, audit = %d", r, len(aud.all()))
+	}
+	n.panics.Store(false)
+	if err := st.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.rows(group)[0]; r.State != chain.StateSkipped || r.Reason != "the template was deleted" || len(aud.all()) != 1 {
+		t.Fatalf("next tick: row = %+v, audit = %d", r, len(aud.all()))
 	}
 }

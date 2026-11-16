@@ -166,6 +166,10 @@ func (s *rotationOnlyStore) ReserveRunGroup(context.Context, uuid.UUID, string, 
 	return uuid.Nil, false, errors.New("ReserveRunGroup not implemented by rotationOnlyStore")
 }
 
+func (s *rotationOnlyStore) StartedRunGroup(context.Context, uuid.UUID, string) (*uuid.UUID, error) {
+	return nil, errors.New("StartedRunGroup not implemented by rotationOnlyStore")
+}
+
 func (s *rotationOnlyStore) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]GroupSummary, error) {
 	return nil, nil
 }
@@ -563,6 +567,10 @@ func (plainRotationStore) HasActiveRepoSync(context.Context, uuid.UUID, uuid.UUI
 
 func (plainRotationStore) GroupSummaries(context.Context, uuid.UUID, []uuid.UUID) (map[uuid.UUID]GroupSummary, error) {
 	return nil, nil
+}
+
+func (plainRotationStore) StartedRunGroup(context.Context, uuid.UUID, string) (*uuid.UUID, error) {
+	return nil, errors.New("StartedRunGroup not implemented by plainRotationStore")
 }
 
 func (plainRotationStore) ReserveRunGroup(context.Context, uuid.UUID, string, uuid.UUID) (uuid.UUID, bool, error) {

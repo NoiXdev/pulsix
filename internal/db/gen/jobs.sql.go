@@ -1156,6 +1156,31 @@ func (q *Queries) ReserveRunGroup(ctx context.Context, arg ReserveRunGroupParams
 	return i, err
 }
 
+const startedRunGroupForKey = `-- name: StartedRunGroupForKey :one
+SELECT k.run_group_id
+FROM job_idempotency_keys k
+WHERE k.org_id = $1 AND k.idempotency_key = $2
+  AND EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.org_id = k.org_id AND j.run_group_id = k.run_group_id AND j.kind = 'run')
+`
+
+type StartedRunGroupForKeyParams struct {
+	OrgID          uuid.UUID `json:"org_id"`
+	IdempotencyKey string    `json:"idempotency_key"`
+}
+
+// The run group an earlier keyed enqueue claimed AND created at least one run
+// job in. No row when the key is unclaimed or its claim created nothing (an
+// enqueue that failed before its first job): only a run that exists counts
+// as started.
+func (q *Queries) StartedRunGroupForKey(ctx context.Context, arg StartedRunGroupForKeyParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, startedRunGroupForKey, arg.OrgID, arg.IdempotencyKey)
+	var run_group_id uuid.UUID
+	err := row.Scan(&run_group_id)
+	return run_group_id, err
+}
+
 const updateRepoSyncState = `-- name: UpdateRepoSyncState :execrows
 UPDATE git_repos SET last_sync = $1, last_sync_error = $2
 WHERE org_id = $3 AND id = $4

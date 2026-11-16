@@ -22,9 +22,10 @@ import (
 // fakeStarterStore keeps due rows in memory and applies outcomes the way
 // the SQL batch does: only to rows that are still due.
 type fakeStarterStore struct {
-	mu     sync.Mutex
-	rows   map[uuid.UUID]*chain.FollowUp
-	sweeps int
+	mu         sync.Mutex
+	rows       map[uuid.UUID]*chain.FollowUp
+	sweeps     int
+	failWrites int // the next writes fail this many times
 }
 
 func (s *fakeStarterStore) SweepStale(context.Context, time.Time, int) (int, error) {
@@ -54,6 +55,11 @@ func (b *fakeBatch) Rows() []chain.FollowUp { return b.rows }
 
 func (b *fakeBatch) Write(ctx context.Context, f chain.FollowUp, o chain.Outcome, notify func(context.Context, pgx.Tx) error) error {
 	b.store.mu.Lock()
+	if b.store.failWrites > 0 {
+		b.store.failWrites--
+		b.store.mu.Unlock()
+		return errors.New("write-back lost")
+	}
 	r := b.store.rows[f.ID]
 	if r == nil || r.State != chain.StateDue {
 		b.store.mu.Unlock()
@@ -89,6 +95,8 @@ type fakeRuns struct {
 	active  int // HasActiveRun answers true this many more times
 	errs    []error
 	panicOn bool
+	// groups models the idempotency keys of successful enqueues.
+	groups map[string]uuid.UUID
 }
 
 func (r *fakeRuns) EnqueueRunWith(ctx context.Context, org, tmpl uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error) {
@@ -105,7 +113,24 @@ func (r *fakeRuns) EnqueueRunWith(ctx context.Context, org, tmpl uuid.UUID, req 
 		r.errs = r.errs[1:]
 		return nil, err
 	}
-	return []jobs.Job{{ID: newID(), OrgID: org, TemplateID: &tmpl, RunGroupID: newID()}}, nil
+	group, replay := r.groups[req.IdempotencyKey]
+	if !replay {
+		group = newID()
+		if r.groups == nil {
+			r.groups = map[string]uuid.UUID{}
+		}
+		r.groups[req.IdempotencyKey] = group
+	}
+	return []jobs.Job{{ID: newID(), OrgID: org, TemplateID: &tmpl, RunGroupID: group}}, nil
+}
+
+func (r *fakeRuns) StartedRunGroup(_ context.Context, _ uuid.UUID, key string) (*uuid.UUID, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if g, ok := r.groups[key]; ok {
+		return &g, nil
+	}
+	return nil, nil
 }
 
 func (r *fakeRuns) HasActiveRun(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
@@ -460,7 +485,7 @@ func TestStarterDeletedScheduleIgnoresWindows(t *testing.T) {
 }
 
 func TestStarterNoHostsInScope(t *testing.T) {
-	for _, err := range []error{jobs.ErrEmptyScope, jobs.ErrHostNotInScope, jobs.ErrAllHostsExcluded} {
+	for _, err := range []error{jobs.ErrEmptyScope, jobs.ErrHostNotInScope} {
 		f := newStarterFixture(t)
 		r := f.row(f.fromSchedule)
 		f.guards.found = true
@@ -527,5 +552,56 @@ func TestStarterRecoversAPanicAndLeavesTheRowDue(t *testing.T) {
 	f.tick()
 	if r.State != chain.StateStarted {
 		t.Fatalf("next tick: row = %+v", r)
+	}
+}
+
+// Row hosts {h1, h2}, the template's scope only {h2}, h2 in a window: the
+// exclusion empties the scope, which is a maintenance skip.
+func TestStarterMaintenanceExcludeEmptiesTheScope(t *testing.T) {
+	f := newStarterFixture(t)
+	r := f.row(f.fromSchedule)
+	f.guards.mode, f.guards.found = "exclude_hosts", true
+	f.maint.in[f.h2] = true
+	f.runs.errs = []error{fmt.Errorf("enqueue: %w", jobs.ErrAllHostsExcluded)}
+	f.tick()
+	if len(f.runs.reqs) != 1 || !slices.Equal(f.runs.reqs[0].ExcludeHosts, []uuid.UUID{f.h2}) {
+		t.Fatalf("requests = %+v", f.runs.reqs)
+	}
+	f.wantSkipped(r, "every host is in a maintenance window")
+	f.wantNotice(r, "skipped", "every host is in a maintenance window")
+}
+
+func TestStarterSkipsARowWithoutHosts(t *testing.T) {
+	f := newStarterFixture(t)
+	r := f.row(func(r *chain.FollowUp) { r.HostIDs = []uuid.UUID{}; f.fromSchedule(r) })
+	f.guards.found = true
+	f.tick()
+	f.wantSkipped(r, "the run played on no host")
+	if len(f.runs.reqs) != 0 || len(f.notes.notices) != 0 {
+		t.Fatalf("enqueues = %d, notices = %+v", len(f.runs.reqs), f.notes.notices)
+	}
+}
+
+// The enqueue succeeded but its write-back was lost: the next tick links
+// the row to that run group instead of waiting on the row's own child run.
+func TestStarterRecoversALostWriteBack(t *testing.T) {
+	f := newStarterFixture(t)
+	r := f.row()
+	f.store.failWrites = 1
+	f.tick()
+	if r.State != chain.StateDue || len(f.runs.reqs) != 1 || len(f.audit.all()) != 0 {
+		t.Fatalf("after the lost write: row = %+v, enqueues = %d", r, len(f.runs.reqs))
+	}
+	first := f.runs.groups["chain:"+r.ID.String()]
+	f.runs.active = 100 // the child run is active now
+	f.tick()
+	if r.State != chain.StateStarted || r.ChildGroupID == nil || *r.ChildGroupID != first || r.Reason != "" || r.Attempts != 0 {
+		t.Fatalf("row = %+v, want started with %s", r, first)
+	}
+	if len(f.runs.groups) != 1 || f.runs.reqs[len(f.runs.reqs)-1].IdempotencyKey != "chain:"+r.ID.String() {
+		t.Fatalf("groups = %v", f.runs.groups)
+	}
+	if ev := f.audit.all(); len(ev) != 1 || ev[0].Meta["child_group_id"] != first.String() {
+		t.Fatalf("audit = %+v", ev)
 	}
 }

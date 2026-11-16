@@ -309,6 +309,13 @@ func (s *Service) HasActiveRun(ctx context.Context, orgID, templateID uuid.UUID)
 	return s.store.HasActiveTemplateJob(ctx, orgID, templateID)
 }
 
+// StartedRunGroup returns the run group an earlier enqueue with this
+// idempotency key started (at least one run job exists), or nil. The
+// follow-up starter asks it to recognise a start whose bookkeeping was lost.
+func (s *Service) StartedRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string) (*uuid.UUID, error) {
+	return s.store.StartedRunGroup(ctx, orgID, idempotencyKey)
+}
+
 // HasActiveSync reports whether a sync of the repository is not terminal.
 func (s *Service) HasActiveSync(ctx context.Context, orgID, repoID uuid.UUID) (bool, error) {
 	return s.store.HasActiveRepoSync(ctx, orgID, repoID)

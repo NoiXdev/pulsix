@@ -28,10 +28,12 @@ const (
 )
 
 // Runs launches follow-up runs and tells whether a template is running
-// (jobs.Service).
+// (jobs.Service). StartedRunGroup names the run group an earlier enqueue
+// with the idempotency key created jobs in, nil when there is none.
 type Runs interface {
 	EnqueueRunWith(ctx context.Context, orgID, templateID uuid.UUID, req jobs.RunRequest) ([]jobs.Job, error)
 	HasActiveRun(ctx context.Context, orgID, templateID uuid.UUID) (bool, error)
+	StartedRunGroup(ctx context.Context, orgID uuid.UUID, idempotencyKey string) (*uuid.UUID, error)
 }
 
 // TemplateNames names a template; jobs.ErrNotFound once it is deleted.

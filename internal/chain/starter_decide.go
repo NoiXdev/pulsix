@@ -57,8 +57,9 @@ type decision struct {
 	notice *SkipNotice
 }
 
-// decide applies the spec's per-row rules in order: depth, cycle, deleted
-// template, active run, maintenance, then the enqueue.
+// decide applies the spec's per-row rules in order: depth, cycle, no host,
+// an earlier start whose write-back was lost, deleted template, active run,
+// maintenance, then the enqueue.
 func (s *Starter) decide(ctx context.Context, f FollowUp, now time.Time) decision {
 	scoped := db.WithOrgScope(ctx, f.OrgID)
 	if f.Depth >= maxDepth {
@@ -66,6 +67,14 @@ func (s *Starter) decide(ctx context.Context, f FollowUp, now time.Time) decisio
 	}
 	if slices.Contains(f.Path, f.TemplateID) {
 		return s.skip(scoped, f, now, "", ReasonAlreadyInChain, NoticeFailure)
+	}
+	if len(f.HostIDs) == 0 {
+		// OnlyHosts empty would mean unrestricted; a due row without hosts
+		// must never start.
+		return s.skip(scoped, f, now, "", ReasonNoHostPlayed, "")
+	}
+	if d, ok := s.replayLostStart(scoped, f, now); ok {
+		return d
 	}
 	name, err := s.names.TemplateName(scoped, f.OrgID, f.TemplateID)
 	switch {
@@ -91,8 +100,12 @@ func (s *Starter) decide(ctx context.Context, f FollowUp, now time.Time) decisio
 	}
 	created, err := s.runs.EnqueueRunWith(scoped, f.OrgID, f.TemplateID, s.request(f, exclude))
 	switch {
-	case errors.Is(err, jobs.ErrEmptyScope), errors.Is(err, jobs.ErrHostNotInScope), errors.Is(err, jobs.ErrAllHostsExcluded):
+	case errors.Is(err, jobs.ErrEmptyScope), errors.Is(err, jobs.ErrHostNotInScope):
 		return s.skip(scoped, f, now, name, ReasonNotInScope, "")
+	case errors.Is(err, jobs.ErrAllHostsExcluded):
+		// Only the maintenance check sets ExcludeHosts: every host the
+		// template's scope kept is in a window.
+		return s.skip(scoped, f, now, name, ReasonAllInWindow, NoticeSkipped)
 	case errors.Is(err, jobs.ErrNotFound):
 		return s.skip(scoped, f, now, name, ReasonTemplateDeleted, NoticeFailure)
 	case err != nil:
@@ -104,6 +117,27 @@ func (s *Starter) decide(ctx context.Context, f FollowUp, now time.Time) decisio
 		return d
 	}
 	return started(now, name, created[0].RunGroupID, reason)
+}
+
+// replayLostStart recognises a start whose write-back was lost (a failed
+// row write or commit, a manager restart): the row's idempotency key already
+// names a run group with jobs. Without this the row would wait on its own
+// child run and stay unlinked from it. The replay enqueue creates whatever
+// zones the earlier one did not reach; the row is started with that group
+// whatever the replay answers, because the group's jobs exist.
+func (s *Starter) replayLostStart(ctx context.Context, f FollowUp, now time.Time) (decision, bool) {
+	req := s.request(f, nil)
+	group, err := s.runs.StartedRunGroup(ctx, f.OrgID, req.IdempotencyKey)
+	if err != nil {
+		return s.retry(ctx, f, now, "", fmt.Errorf("look up an earlier start: %w", err)), true
+	}
+	if group == nil {
+		return decision{}, false
+	}
+	if _, err := s.runs.EnqueueRunWith(ctx, f.OrgID, f.TemplateID, req); err != nil {
+		s.log.WarnContext(ctx, "follow-up replay could not complete its run group; recording the start that exists", "follow_up", f.ID, "org", f.OrgID, "group", *group, "err", err)
+	}
+	return started(now, "", *group, ""), true
 }
 
 // request is the chained run of f. Chain carries the row's own depth and

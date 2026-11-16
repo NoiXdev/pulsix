@@ -40,6 +40,18 @@ ON CONFLICT (org_id, idempotency_key)
 DO UPDATE SET run_group_id = job_idempotency_keys.run_group_id
 RETURNING run_group_id, (xmax = 0) AS reserved;
 
+-- name: StartedRunGroupForKey :one
+-- The run group an earlier keyed enqueue claimed AND created at least one run
+-- job in. No row when the key is unclaimed or its claim created nothing (an
+-- enqueue that failed before its first job): only a run that exists counts
+-- as started.
+SELECT k.run_group_id
+FROM job_idempotency_keys k
+WHERE k.org_id = @org_id AND k.idempotency_key = @idempotency_key
+  AND EXISTS (
+    SELECT 1 FROM jobs j
+    WHERE j.org_id = k.org_id AND j.run_group_id = k.run_group_id AND j.kind = 'run');
+
 -- name: GetJob :one
 -- Scoped by org_id in the WHERE clause, not only relying on RLS (see
 -- GetZone's comment in hosts.sql): a job belonging to a different

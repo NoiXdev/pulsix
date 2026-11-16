@@ -81,3 +81,36 @@ func TestReserveRunGroupIsScopedPerOrganization(t *testing.T) {
 		t.Fatalf("org B reserve = (group %s, reserved %v, err %v), want (%s, true, nil) — the same key string in a different org must claim independently", groupB, reservedB, err, candidateB)
 	}
 }
+
+// TestStartedRunGroupForKey: a claimed key names its run group only once
+// that group has a run job; an unclaimed key and a claim that created
+// nothing answer nil.
+func TestStartedRunGroupForKey(t *testing.T) {
+	d := testdb.Open(t)
+	org := seedOrg(t, gen.New(d.Pool()), "jobs-idempotency-started")
+	zone := seedZone(t, d, org)
+	store := jobs.NewSQLStore(d)
+	scoped := db.WithOrgScope(ctx, org)
+
+	if got, err := store.StartedRunGroup(scoped, org, "chain:a"); err != nil || got != nil {
+		t.Fatalf("unclaimed = %v, %v, want nil", got, err)
+	}
+	group := uuid.Must(uuid.NewV7())
+	if _, _, err := store.ReserveRunGroup(scoped, org, "chain:a", group); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.StartedRunGroup(scoped, org, "chain:a"); err != nil || got != nil {
+		t.Fatalf("claimed without jobs = %v, %v, want nil", got, err)
+	}
+	if _, err := d.Pool().Exec(ctx, `INSERT INTO jobs (id, org_id, zone_id, kind, host_ids, status, run_group_id)
+		VALUES ($1,$2,$3,'run','{}','queued',$4)`, uuid.Must(uuid.NewV7()), org, zone, group); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.StartedRunGroup(scoped, org, "chain:a")
+	if err != nil || got == nil || *got != group {
+		t.Fatalf("started = %v, %v, want %s", got, err, group)
+	}
+	if other, err := store.StartedRunGroup(db.WithOrgScope(ctx, uuid.Must(uuid.NewV7())), uuid.Must(uuid.NewV7()), "chain:a"); err != nil || other != nil {
+		t.Fatalf("another org = %v, %v, want nil", other, err)
+	}
+}
