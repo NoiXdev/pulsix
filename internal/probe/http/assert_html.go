@@ -10,7 +10,6 @@ import (
 
 // The html assertions' errors and bounds. None quotes the response.
 const (
-	errNotHTML     = "the response is not HTML"
 	errHTMLTooMuch = "the selector took too much work"
 	// htmlSelectBudget bounds the steps one html assertion's walk may
 	// take (selectAll: one per node, child and condition, plus attribute
@@ -25,12 +24,11 @@ const (
 	htmlCheckBudget = 60_000_000
 )
 
-// htmlDoc parses the body as HTML once (parseHTML); a page nested deeper
-// than the parser takes (512 elements) does not parse.
+// htmlDoc builds the body's HTML tree once (buildHTML).
 func (d *parsedDocs) htmlDoc(ctx context.Context) (*html.Node, string) {
 	if !d.htmlDone {
 		d.htmlDone = true
-		d.html, d.htmlErr = parseHTML(ctx, d.body)
+		d.html, d.htmlErr = buildHTML(ctx, d.body)
 	}
 	return d.html, d.htmlErr
 }

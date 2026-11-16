@@ -12,12 +12,12 @@ import (
 	"golang.org/x/net/html"
 )
 
-// htmlOf parses s.
+// htmlOf builds the tree of s as the probe does.
 func htmlOf(t *testing.T, s string) *html.Node {
 	t.Helper()
-	doc, err := html.Parse(strings.NewReader(s))
-	if err != nil {
-		t.Fatal(err)
+	doc, problem := buildHTML(context.Background(), []byte(s))
+	if problem != "" {
+		t.Fatal(problem)
 	}
 	return doc
 }
@@ -79,10 +79,11 @@ func manyAttributes(n int) string {
 // matcher gets wrong (a child step under a descendant one, nested
 // elements of the same name), and every simple selector and pseudo-class.
 func TestSelectAllExpectations(t *testing.T) {
-	nested := htmlOf(t, `<aa id=1><bb id=2><bb id=3><cc id=4></cc></bb></bb></aa>`+
-		`<bb id=5><cc id=6></cc></bb><aa id=7><zz id=8><bb id=9><cc id=10></cc></bb></zz></aa>`)
-	list := htmlOf(t, `<ul id=u>text<li id=l1 class="a b"></li><!-- c --><li id=l2 class=b></li>`+
-		`<li id=l3 class=" a  c " title="x y" data-k="pre-mid-suf"></li></ul>`)
+	// The pages name html and body: the builder implies neither.
+	nested := htmlOf(t, `<body><aa id=1><bb id=2><bb id=3><cc id=4></cc></bb></bb></aa>`+
+		`<bb id=5><cc id=6></cc></bb><aa id=7><zz id=8><bb id=9><cc id=10></cc></bb></zz></aa></body>`)
+	list := htmlOf(t, `<html><ul id=u>text<li id=l1 class="a b"></li><!-- c --><li id=l2 class=b></li>`+
+		`<li id=l3 class=" a  c " title="x y" data-k="pre-mid-suf"></li></ul></html>`)
 	svg := htmlOf(t, `<svg id=root viewBox="0 0 1 1"><linearGradient id=g></linearGradient>`+
 		`<a id=s xlink:href="/x"></a><a id=t href="/y"></a></svg>`)
 	cases := []struct {

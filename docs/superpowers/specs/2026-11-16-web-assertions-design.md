@@ -177,9 +177,9 @@ string     = a JSON string literal ("..." with JSON escapes)
 - `html("selector")`: a CSS selector (the subset below, at most 256 bytes,
   compiled at validation); the text subject is the first match's text
   content, whitespace collapsed; `count` is the number of matches.
-  Parsing uses `golang.org/x/net/html` on the kept first 1 MiB, in a slot
+  The page is the kept first 1 MiB, built into a tree (below) in a slot
   of the same gate as the JSON stages (`JSONGate`; renamed only if it
-  stays readable), so HTML parsing is bounded across all probes.
+  stays readable), so HTML work is bounded across all probes.
   Selector subset (Amended in review, Claude's call; replaces cascadia,
   so the new dependency is dropped): a match by an external library runs
   in one call that cannot be interrupted, and every construct whose cost
@@ -206,16 +206,34 @@ string     = a JSON string literal ("..." with JSON escapes)
   the walk also stops at the probe's deadline. Type and attribute
   names compare without ASCII case (SVG's `linearGradient`, `viewBox`),
   namespaced attributes (`xlink:href`) never match, and a compound names
-  at most one `#id`. Before parsing, one linear pass over the page's
-  tokens bounds what the HTML parser would build — a unit per token and
-  attribute, the weight (1 + attributes) of every formatting element
-  still open at each text and start tag (the parser clones them there:
-  450 `<b>` left open over 60 000 paragraphs make 244 KB into 27 M
-  nodes and 4 GB), and a quarter of the open depth per token (its scope
-  checks); past 4 000 000 units (about 80 ms and 200 MB of parsing at
-  worst) the page is not parsed and every html assertion of the check
-  is the error "the page is too complex to parse". The pass looks at
-  the probe's deadline at every token and runs in the gate slot.
+  at most one `#id`. Tree building (Amended in review, Claude's call;
+  replaces round 3's token pre-pass, which was no upper bound on the
+  parser's work): the HTML parsing algorithm is not used. Its tree
+  builder clones open formatting elements at every insertion (450 `<b>`
+  left open over 60 000 paragraphs make 244 KB into 27 M nodes and
+  4 GB, in one call that cannot be interrupted), and no estimate beside
+  it tracks what it will do. Pulsix builds the tree itself in one pass
+  over the tokens of `golang.org/x/net/html`'s tokenizer, so structure
+  and tokens never disagree: a start tag is a child element of the
+  current one and is opened unless it is void or self-closing; text is
+  a text node (raw text — `script`, `style`, `title`, `textarea` … — as
+  the tokenizer reads it, wherever it is); an end tag closes the
+  nearest open element of its name and everything opened after it, or
+  nothing; comments and doctypes are dropped. A small table of implied
+  closes covers the common omitted end tags: a block-level start tag
+  closes an open `p` (up to the nearest block container), `li` an open
+  `li` (up to `ul`/`ol`), `dt`/`dd` an open `dt`/`dd` (up to `dl`), `tr`
+  an open row or cell (up to a section or `table`), `td`/`th` an open
+  cell (up to `tr`/`table`), `thead`/`tbody`/`tfoot` an open section,
+  row or cell (up to `table`), `option` an open `option`. No `html`,
+  `head` or `body` is implied, and malformed markup can group
+  differently than in a browser. Each token
+  makes at most one node with bounded work (open elements are indexed by
+  name); at most 512 elements are open (deeper start tags become
+  children of the 512th); past 400 000 nodes the build stops and every
+  html assertion of the check is the error "the page is too complex to
+  parse". The build looks at the probe's deadline at every token and
+  runs, with the match, in the gate slot.
 - `body`: the kept first 1 MiB as text (invalid UTF-8 kept as bytes).
 - `size` is `http.content_bytes`; `cert_days`/`cert_issuer` the https
   metrics; `status`, `response_ms`, `ttfb_ms`, `redirects` the metrics of

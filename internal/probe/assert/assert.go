@@ -19,6 +19,13 @@
 // so it imports nothing of theirs. Parsing compiles the regular
 // expression, the CSS selector (Pulsix's own subset, selector.go) and the
 // JSONPath, so an entry that parses can be evaluated.
+//
+// The probe matches html selectors against a tree it builds in one
+// linear pass over the page's tokens, not with the HTML parsing
+// algorithm: void, self-closing and common omitted end tags (p, li,
+// dt/dd, table rows and cells, option) are handled, but no html or body
+// is implied and other malformed markup can group differently than in a
+// browser.
 package assert
 
 import (
