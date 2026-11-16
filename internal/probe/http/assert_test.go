@@ -234,6 +234,23 @@ func TestHTTPAssertionsOnHTMLTooDeep(t *testing.T) {
 	wantVerdict(t, m, "st", "pass", "200")
 }
 
+// TestHTTPAssertionRegexTooMuch: a pattern whose program times the body
+// is past the check's regex budget is an error before it runs; a common
+// pattern reads the whole MiB.
+func TestHTTPAssertionRegexTooMuch(t *testing.T) {
+	srv := jsonServer(t, 200, strings.Repeat("ab", 1<<19))
+	params := httpParams(srv.URL, map[string]any{"assertions": values(
+		`big=body matches "[ab]{900}c"`, `small=body matches "ba"`, `hidden=header("Content-Type") matches "json"`)})
+	start := time.Now()
+	m := byItem(t, run(context.Background(), probetest.LoopbackGuard(), params, ""))
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("the probe took %v", d)
+	}
+	wantAssertionError(t, m, "big", "the pattern takes too much work for this response")
+	wantVerdict(t, m, "small", "pass", "")
+	wantVerdict(t, m, "hidden", "pass", "")
+}
+
 // TestHTTPAssertionsOnALargeBody: past 1 MiB, a negative op on the body
 // and every json or html subject cannot be evaluated; contains and
 // matches still pass when found in the first MiB.

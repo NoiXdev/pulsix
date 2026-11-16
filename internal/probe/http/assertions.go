@@ -16,6 +16,7 @@ const (
 	errAssertInvalid = "the assertion is not valid"
 	errAssertNoTLS   = "the response did not arrive over https"
 	errAssertTooBusy = "the manager was too busy to read the response"
+	errRegexTooMuch  = "the pattern takes too much work for this response"
 )
 
 // The labels of http.assertion: pass, or a failed entry's severity.
@@ -120,7 +121,8 @@ func assertObservations(ctx context.Context, gate *JSONGate, entries []assertEnt
 	}
 	verdicts := make([]verdict, len(entries))
 	var parsed []int
-	j := judge{r: r}
+	work := &regexWork{left: regexCheckBudget}
+	j := judge{r: r, work: work}
 	for i, e := range entries {
 		switch {
 		case e.problem != "":
@@ -132,7 +134,7 @@ func assertObservations(ctx context.Context, gate *JSONGate, entries []assertEnt
 		}
 	}
 	if len(parsed) > 0 {
-		judgeParsed(ctx, gate, entries, parsed, r.body, verdicts)
+		judgeParsed(ctx, gate, entries, parsed, r.body, work, verdicts)
 	}
 	obs := make([]probe.Observation, 0, 2*len(entries))
 	for i, e := range entries {
@@ -150,6 +152,7 @@ func parsesBody(s assert.Subject) bool {
 // kept body as text, converted once.
 type judge struct {
 	r       *response
+	work    *regexWork
 	body    string
 	hasBody bool
 }
@@ -179,9 +182,9 @@ func (j *judge) judge(a assert.Assertion) verdict {
 		if r.leaf == nil {
 			return failed(errAssertNoTLS)
 		}
-		return text(a, probe.IssuerLabel(r.leaf), true)
+		return j.work.text(a, probe.IssuerLabel(r.leaf), true)
 	case assert.SubjectHeader:
-		return judgeHeader(a, r.header)
+		return j.judgeHeader(a, r.header)
 	case assert.SubjectBody:
 		return j.judgeBody(a)
 	}
@@ -190,9 +193,9 @@ func (j *judge) judge(a assert.Assertion) verdict {
 
 // judgeHeader: the final response's values of the header, joined with
 // ", "; a Set-Cookie value is judged but never shown.
-func judgeHeader(a assert.Assertion, h http.Header) verdict {
+func (j *judge) judgeHeader(a assert.Assertion, h http.Header) verdict {
 	values := h.Values(a.Arg())
-	v := text(a, strings.Join(values, ", "), len(values) > 0)
+	v := j.work.text(a, strings.Join(values, ", "), len(values) > 0)
 	if len(values) > 0 && strings.EqualFold(a.Arg(), "Set-Cookie") {
 		v.actual = actualHidden
 	}
@@ -216,7 +219,7 @@ func (j *judge) judgeBody(a assert.Assertion) verdict {
 	if !j.hasBody {
 		j.body, j.hasBody = string(b.kept), true
 	}
-	return text(a, j.body, true)
+	return j.work.text(a, j.body, true)
 }
 
 // number judges a numeric subject's value v.
@@ -224,10 +227,43 @@ func number(a assert.Assertion, v float64) verdict {
 	return verdict{holds: a.HoldsNumber(v), actual: numberActual(a.Subject(), v)}
 }
 
+// regexCheckBudget bounds a check's regular expression work, in program
+// instructions times input bytes. The costliest program measured
+// ([ab]{990}c, 993 instructions, over 1 MiB) took 6.2 ns per unit, so
+// this is about a second of CPU: a 1 000-instruction pattern can read
+// about 160 KB, while a common one (v[0-9]+, 5 instructions; (?i)error,
+// 7) reads the whole 1 MiB body many times over.
+const regexCheckBudget = 160_000_000
+
+// regexWork is a check's budget for its regular expressions: Go's
+// matcher costs up to the program's instructions times the input's bytes
+// in one call that cannot be interrupted, so that product is charged
+// before each match.
+type regexWork struct {
+	left int64
+}
+
 // text judges a text subject's value v, absent when !present.
-func text(a assert.Assertion, v string, present bool) verdict {
+func (w *regexWork) text(a assert.Assertion, v string, present bool) verdict {
 	if !present {
 		return verdict{holds: a.HoldsText("", false), actual: actualAbsent}
 	}
-	return verdict{holds: a.HoldsText(v, true), actual: textActual(v)}
+	holds, problem := w.holds(a, v)
+	if problem != "" {
+		return failed(problem)
+	}
+	return verdict{holds: holds, actual: textActual(v)}
+}
+
+// holds is a.HoldsText(v, true), a regular expression's work charged
+// first: past the budget it is errRegexTooMuch and nothing runs.
+func (w *regexWork) holds(a assert.Assertion, v string) (bool, string) {
+	if n := a.ProgramSize(); n > 0 {
+		cost := int64(n) * int64(len(v)+1)
+		if cost > w.left {
+			return false, errRegexTooMuch
+		}
+		w.left -= cost
+	}
+	return a.HoldsText(v, true), ""
 }

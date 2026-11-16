@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"regexp/syntax"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/andybalholm/cascadia"
 	"github.com/noixdev/pulsix/internal/jpath"
 	"golang.org/x/net/http/httpguts"
 )
@@ -187,15 +187,14 @@ func compileArg(a *Assertion, s Subject, arg string) error {
 		case len(arg) > MaxSelectLen:
 			return fmt.Errorf("the CSS selector of html(…) must be at most %d bytes", MaxSelectLen)
 		}
-		sel, err := cascadia.ParseGroup(arg)
-		if err != nil {
-			return fmt.Errorf("the CSS selector of html(…) does not parse: %w", err)
+		if strings.Contains(arg, "/*") {
+			return errors.New("a CSS selector of html(…) may not contain comments")
 		}
-		costs, err := selectorCosts(arg, sel)
+		sel, err := ParseSelector(arg)
 		if err != nil {
 			return err
 		}
-		a.sel, a.costs = sel, costs
+		a.sel = sel
 	}
 	return nil
 }
@@ -267,9 +266,35 @@ func (p *parser) operand(a *Assertion) error {
 		if err != nil {
 			return fmt.Errorf("the regular expression does not compile: %w", err)
 		}
-		a.re = re
+		program, err := programSize(text)
+		if err != nil {
+			return err
+		}
+		a.re, a.program = re, program
 	}
 	return nil
+}
+
+// MaxProgram bounds a regular expression's compiled program: Go's
+// matcher costs up to the program's instructions times the input's
+// bytes, and a short pattern (.{1000}) can compile to a long program.
+const MaxProgram = 1000
+
+// programSize is the instruction count of pattern compiled as regexp
+// compiles it, refused past MaxProgram.
+func programSize(pattern string) (int, error) {
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return 0, fmt.Errorf("the regular expression does not compile: %w", err)
+	}
+	prog, err := syntax.Compile(re.Simplify())
+	if err != nil {
+		return 0, fmt.Errorf("the regular expression does not compile: %w", err)
+	}
+	if len(prog.Inst) > MaxProgram {
+		return 0, fmt.Errorf("the pattern is too complex: it compiles to %d instructions, at most %d are allowed", len(prog.Inst), MaxProgram)
+	}
+	return len(prog.Inst), nil
 }
 
 // number reads a decimal number a float64 holds.

@@ -17,7 +17,7 @@ import (
 // into verdicts. A body past the cap or cut short cannot be parsed whole,
 // so each is an error; otherwise the body is parsed once per language in
 // one slot of gate, each entry evaluated while ctx lasts.
-func judgeParsed(ctx context.Context, gate *JSONGate, entries []assertEntry, parsed []int, body bodyRead, verdicts []verdict) {
+func judgeParsed(ctx context.Context, gate *JSONGate, entries []assertEntry, parsed []int, body bodyRead, work *regexWork, verdicts []verdict) {
 	fail := func(msg string) {
 		for _, i := range parsed {
 			verdicts[i] = failed(msg)
@@ -37,7 +37,7 @@ func judgeParsed(ctx context.Context, gate *JSONGate, entries []assertEntry, par
 		return
 	}
 	defer leave()
-	docs := parsedDocs{body: body.kept, left: defaultJSONBudgets.perCheck, htmlLeft: htmlCheckBudget}
+	docs := parsedDocs{body: body.kept, left: defaultJSONBudgets.perCheck, htmlLeft: htmlCheckBudget, work: work}
 	for _, i := range parsed {
 		if ctx.Err() != nil {
 			verdicts[i] = failed(errOutOfTime)
@@ -68,6 +68,8 @@ type parsedDocs struct {
 
 	left     int
 	htmlLeft int64
+	// work is the check's regular expression budget.
+	work *regexWork
 }
 
 // jsonDoc decodes the body as JSON once, as json_values does.
@@ -107,7 +109,7 @@ func (d *parsedDocs) judgeJSON(ctx context.Context, a assert.Assertion) verdict 
 	case err != nil:
 		return failed(errOutOfTime)
 	case len(nodes) == 0:
-		return text(a, "", false)
+		return d.work.text(a, "", false)
 	}
 	exists := a.Op() == assert.OpExists || a.Op() == assert.OpNotExists
 	if len(nodes) > 1 {
@@ -124,7 +126,11 @@ func (d *parsedDocs) judgeJSON(ctx context.Context, a assert.Assertion) verdict 
 		// An object or an array: there, but equal to nothing.
 		return verdict{holds: a.Op() == assert.OpExists, actual: actual}
 	}
-	return verdict{holds: a.HoldsText(*value, true), actual: actual}
+	holds, problem := d.work.holds(a, *value)
+	if problem != "" {
+		return failed(problem)
+	}
+	return verdict{holds: holds, actual: actual}
 }
 
 // jsonScalar is a selected node's text and its actual; an object or an

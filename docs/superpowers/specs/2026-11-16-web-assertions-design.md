@@ -18,7 +18,8 @@ Status: the owner accepted the proposal on 2026-11-16 ("passt"):
 - (asked after the builder check, answered "Ja, seeden") the starter
   rules gain `<plugin>.up < 1` (crit) for `icmp`, `tcp`, `http`, `tls`
   and `dns`, so a down synthetic check alerts at once, with its reason;
-- new dependency `github.com/andybalholm/cascadia`.
+- new dependency `github.com/andybalholm/cascadia` (dropped in review:
+  html selectors are a subset Pulsix matches itself, section 3).
 
 Split out as new backlog rows: requests other than GET/HEAD and custom
 request headers or bodies; multi-step flows; screenshots or JavaScript
@@ -155,6 +156,15 @@ string     = a JSON string literal ("..." with JSON escapes)
 - Numbers are decimal (optional sign and fraction). `in` needs `a <= b`.
 - `matches` uses Go's RE2 (`regexp`), pattern at most 256 bytes,
   compiled at validation; a pattern that does not compile is refused.
+  (Amended in review, Claude's call:) Go's matcher costs up to the
+  compiled program's instructions times the input's bytes in one call
+  that cannot be interrupted, and a short pattern can compile to a long
+  program (`.{1000}`), so a pattern compiling to more than 1 000
+  instructions is refused ("the pattern is too complex"), and before
+  each match the program size times the input length is charged to a
+  per-check budget of 160 000 000 (about one second of CPU); past it the
+  assertion is the error "the pattern takes too much work for this
+  response". This applies to every `matches`/`!matches` subject.
 - `header("X")`: the final response's header, case-insensitive name,
   several values joined with ", ". `Set-Cookie` may be asserted
   (`exists`, `contains` …) but its actual value is never stored (below).
@@ -164,31 +174,36 @@ string     = a JSON string literal ("..." with JSON escapes)
   as `true`/`false`, `null` as `null`; an object or array never equals
   or contains anything (the assertion fails, actual `object` or
   `array`), though `exists` passes for it.
-- `html("selector")`: a CSS selector (cascadia, at most 256 bytes,
+- `html("selector")`: a CSS selector (the subset below, at most 256 bytes,
   compiled at validation); the text subject is the first match's text
   content, whitespace collapsed; `count` is the number of matches.
   Parsing uses `golang.org/x/net/html` on the kept first 1 MiB, in a slot
   of the same gate as the JSON stages (`JSONGate`; renamed only if it
   stays readable), so HTML parsing is bounded across all probes.
-  Selector restrictions (Amended in review, Claude's call): cascadia's
-  `Match` on one node cannot be interrupted, and some selectors make it
-  search a whole page (`:has` a subtree, n descendant combinators about
-  C(depth, n) ancestor combinations, `~` every earlier sibling), so a
-  tenant's selector could hold a manager-wide gate slot for minutes. The
-  shape is read from what cascadia parsed, not from the text, and
-  validation refuses: comments (`/*`, which cascadia reads as a
-  descendant combinator); `:has`, `:haschild`, `:contains`,
-  `:containsOwn`, `:matches`, `:matchesOwn`; more than 3 descendant
-  (space) combinators in a comma-separated part; more than one `~` in a
-  part, or a `~` together with a descendant combinator; `:empty` on
-  anything but the selected element; walks of ancestors or siblings
-  nested deeper than that. The probe walks the page itself and, before
-  each node is matched, charges that node's worst case (from its depth,
-  the sibling counts and attribute sizes on its path, and which walks the
-  selector makes) to a budget of 40 000 000 steps per assertion and
-  160 000 000 per check (about a quarter and one second of CPU); a node
-  that does not fit stops the assertion with the error "the selector
-  took too much work", and the walk stops at the probe's deadline.
+  Selector subset (Amended in review, Claude's call; replaces cascadia,
+  so the new dependency is dropped): a match by an external library runs
+  in one call that cannot be interrupted, and every construct whose cost
+  grows with the page (subtree searches, sibling walks, nested
+  descendant combinators, attribute regexes) was a way to hold a
+  manager-wide gate slot for minutes. Pulsix parses and matches a small
+  subset itself: type selectors and `*`; `#id`; `.class`; `[attr]`,
+  `[attr="v"]`, `[attr~="v"]`, `[attr^="v"]`, `[attr$="v"]`,
+  `[attr*="v"]` (a value is a quoted string or an identifier, compared
+  case-sensitively; type and attribute names in lower case);
+  compounds of these; the descendant (space) and child (`>`)
+  combinators; groups with `,`; `:first-child`, `:last-child` and
+  `:nth-child(N)` with N a whole number, `odd` or `even`. Everything
+  else (other combinators, pseudo-classes and pseudo-elements, escapes,
+  comments, attribute flags) is refused at validation, naming the
+  unsupported part. At most 8 compound selectors per comma-separated
+  part and 16 simple selectors per compound. The match is one walk of
+  the page in document order carrying, per part, the set of compounds
+  matched by ancestors (no backtracking: linear in nodes × compounds ×
+  simple selectors); every step and every attribute byte read is
+  charged before it is taken, to 15 000 000 steps per assertion and
+  60 000 000 per check (about a quarter and one second of CPU), past
+  which the assertion is the error "the selector took too much work";
+  the walk also stops at the probe's deadline.
 - `body`: the kept first 1 MiB as text (invalid UTF-8 kept as bytes).
 - `size` is `http.content_bytes`; `cert_days`/`cert_issuer` the https
   metrics; `status`, `response_ms`, `ttfb_ms`, `redirects` the metrics of
@@ -218,7 +233,8 @@ Per assertion, item = its name:
   a failure: the body went past 1 MiB for `!contains`, `!matches`,
   `!exists` on `body`/`html`/`json`, or for any `html`/`json` subject;
   JSON or HTML that does not parse; `cert_*` on an http URL; the gate's
-  wait timed out; a selector that took too much work (above). `contains`, `matches`, `exists` on a truncated body
+  wait timed out; a selector or a pattern that took too much work
+  (above). `contains`, `matches`, `exists` on a truncated body
   still pass when found.
 - `exists`/`!exists` and `==`/`!=` against an absent value: `exists`
   fails, `!exists` passes, `!=` passes, every other op fails.
@@ -333,8 +349,8 @@ report the new metrics; `docs/upgrades.md` notes the skew.
 ## Documentation
 
 `docs/BACKLOG.md` (3.13b done, 3.13f noted as delivered by it; new rows
-for the split-out items), `docs/upgrades.md` (migration 00099; new
-dependency; skew note); noix-docs on a new branch
+for the split-out items), `docs/upgrades.md` (migration 00099; skew
+note; no new dependency since review); noix-docs on a new branch
 `docs/pulsix-web-assertions` from `docs/pulsix-probe-vantages`: check
 plugins reference (failure reasons, new http/tls metrics, assertions
 with grammar and examples), alerts/notifications pages (the detail, the

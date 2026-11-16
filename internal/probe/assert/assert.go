@@ -17,8 +17,8 @@
 // The descriptor's validation (internal/checkplugins), the probe
 // (internal/probe/http) and the alert detail all parse with this package,
 // so it imports nothing of theirs. Parsing compiles the regular
-// expression, the CSS selector and the JSONPath, so an entry that parses
-// can be evaluated.
+// expression, the CSS selector (Pulsix's own subset, selector.go) and the
+// JSONPath, so an entry that parses can be evaluated.
 package assert
 
 import (
@@ -26,7 +26,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/andybalholm/cascadia"
 	"github.com/noixdev/pulsix/internal/jpath"
 )
 
@@ -145,11 +144,11 @@ type Assertion struct {
 	num, lo, hi float64
 	text        string
 	re          *regexp.Regexp
-	// The compiled argument of json and html, and the cost of each part
-	// of the selector (MatchCost).
-	path  *jpath.Path
-	sel   cascadia.SelectorGroup
-	costs []partCost
+	// program is re's instruction count (ProgramSize).
+	program int
+	// The compiled argument of json and html.
+	path *jpath.Path
+	sel  *Selector
 }
 
 // Name is the item the assertion reports on.
@@ -171,13 +170,13 @@ func (a Assertion) Severity() Severity { return a.severity }
 // Path is json's compiled JSONPath, nil for any other subject.
 func (a Assertion) Path() *jpath.Path { return a.path }
 
-// Selector is html's compiled selector, nil for any other subject.
-func (a Assertion) Selector() cascadia.Matcher {
-	if a.sel == nil {
-		return nil
-	}
-	return a.sel
-}
+// Selector is html's parsed selector, nil for any other subject.
+func (a Assertion) Selector() *Selector { return a.sel }
+
+// ProgramSize is the instruction count of matches' and !matches'
+// compiled regular expression, 0 for any other operator: matching it
+// costs up to the program size times the input's length.
+func (a Assertion) ProgramSize() int { return a.program }
 
 // Operand is the operand as the canonical expression spells it: a
 // number, a range a..b or a JSON string literal; "" for exists and

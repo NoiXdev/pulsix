@@ -3,11 +3,11 @@ package http
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/andybalholm/cascadia"
 	"github.com/noixdev/pulsix/internal/probe/assert"
 	"golang.org/x/net/html"
 )
@@ -22,13 +22,26 @@ func htmlOf(t *testing.T, s string) *html.Node {
 	return doc
 }
 
-func selectorOf(t *testing.T, sel string) assert.Assertion {
+func selectorOf(t *testing.T, sel string) *assert.Selector {
 	t.Helper()
-	a, err := assert.Parse(`x=html("` + strings.ReplaceAll(sel, `"`, `\"`) + `") exists`)
+	s, err := assert.ParseSelector(sel)
 	if err != nil {
 		t.Fatalf("selector %q: %v", sel, err)
 	}
-	return a
+	return s
+}
+
+// ids is the id attribute of each node.
+func ids(nodes []*html.Node) []string {
+	out := []string{}
+	for _, n := range nodes {
+		for _, a := range n.Attr {
+			if a.Key == "id" {
+				out = append(out, a.Val)
+			}
+		}
+	}
+	return out
 }
 
 // shopPage is a realistic page of about 800 KiB: a navigation list, a
@@ -51,91 +64,6 @@ func shopPage() string {
 	return r.String()
 }
 
-// TestSelectAllMatchesCascadia: on a realistic page, the walk finds what
-// cascadia.QueryAll finds, in the same order, each well within an
-// assertion's budget.
-func TestSelectAllMatchesCascadia(t *testing.T) {
-	doc := htmlOf(t, shopPage())
-	// The most common shapes: descendant chains of tags and classes.
-	ordinary := map[string]bool{"main div p": true, "nav ul li a": true, "table tbody tr td": true, ".content .price": true, "div.card .inner .price": true}
-	left := int64(htmlCheckBudget)
-	for _, sel := range []string{
-		"main div p", "nav ul li a", "table tbody tr td", ".content .price", "div.card .inner .price",
-		"tr:nth-child(odd) td", "li:first-child a", "h3 + p", "h3 ~ span", "#content td:last-child", "td:last-child a",
-		"button:disabled", "td, h3", "p:not(.desc)", "*",
-	} {
-		a := selectorOf(t, sel)
-		before := left
-		got, problem := selectAll(context.Background(), doc, a, htmlSelectBudget, &left)
-		charged := before - left
-		if ordinary[sel] && charged > htmlSelectBudget/100 {
-			t.Errorf("%q charged %d, over 1 %% of an assertion's budget", sel, charged)
-		}
-		want := cascadia.QueryAll(doc, a.Selector())
-		if problem != "" || len(got) != len(want) {
-			t.Fatalf("%q: selectAll = %d nodes, %q; cascadia found %d", sel, len(got), problem, len(want))
-		}
-		for i := range got {
-			if got[i] != want[i] {
-				t.Fatalf("%q: node %d differs", sel, i)
-			}
-		}
-	}
-}
-
-// hostile is a page built to make one kind of match expensive, and the
-// selector that would pay for it.
-type hostile struct {
-	name, page, sel string
-}
-
-// TestSelectAllStopsHostilePages: every walk cascadia's Match makes is
-// charged before it runs, so a page built to make one costly stops with
-// errHTMLTooMuch at the real budgets, long before a probe's deadline.
-func TestSelectAllStopsHostilePages(t *testing.T) {
-	var firstChild strings.Builder
-	for range 20 {
-		firstChild.WriteString(strings.Repeat("<!---->", 5000) + "<div>")
-	}
-	firstChild.WriteString(strings.Repeat("<a></a>", 5000))
-	var comb strings.Builder
-	for range 126 {
-		comb.WriteString(strings.Repeat("<i></i>", 126) + "<div>")
-	}
-	comb.WriteString(strings.Repeat("<p></p>", 5000))
-	chain := strings.Repeat("<div>", 500)
-	pages := []hostile{
-		// :first-child walks the comments before each ancestor's element.
-		{"first-child over comments", firstChild.String(), "div:first-child a"},
-		// + walks back over text and comments to the nearest element.
-		{"adjacent over comments", "<b></b>" + strings.Repeat("<!---->", 100_000) + strings.Repeat("<a></a>", 1000), "b + a"},
-		// ~ walks every earlier sibling.
-		{"general sibling", strings.Repeat("<p></p>", 100_000), "h1 ~ p"},
-		// nth-last-child walks every sibling.
-		{"nth over siblings", strings.Repeat("<p></p>", 100_000), "p:nth-last-child(2)"},
-		// A sibling pseudo on each ancestor of each node.
-		{"descendant of last-child", comb.String(), "div:last-child p"},
-		// Three descendant combinators over a deep chain.
-		{"deep descendants", strings.Repeat(chain+strings.Repeat("</div>", 500), 20), "x div div div"},
-		// A class read on an ancestor with 40 000 attributes.
-		{"attribute-heavy ancestor", "<div " + manyAttributes(40_000) + ">" + strings.Repeat("<span>", 200) + strings.Repeat("<b></b>", 2000), ".x b"},
-	}
-	for _, h := range pages {
-		t.Run(h.name, func(t *testing.T) {
-			doc := htmlOf(t, h.page)
-			left := int64(htmlCheckBudget)
-			start := time.Now()
-			_, problem := selectAll(context.Background(), doc, selectorOf(t, h.sel), htmlSelectBudget, &left)
-			if problem != errHTMLTooMuch {
-				t.Fatalf("%q = %q, want %q", h.sel, problem, errHTMLTooMuch)
-			}
-			if d := time.Since(start); d > 5*time.Second {
-				t.Fatalf("stopping took %v", d)
-			}
-		})
-	}
-}
-
 // manyAttributes is n distinct attributes (the parser drops repeated
 // names).
 func manyAttributes(n int) string {
@@ -146,20 +74,126 @@ func manyAttributes(n int) string {
 	return b.String()
 }
 
-// TestSelectAllChargesEveryWalk: a walk of ancestors (:lang, :enabled) or
-// siblings costs per node what a plain selector does not, so the same
-// small budget that a plain selector fits stops them.
-func TestSelectAllChargesEveryWalk(t *testing.T) {
-	deep := htmlOf(t, strings.Repeat("<fieldset>", 400)+strings.Repeat("<input>", 50))
-	for _, sel := range []string{"fieldset:lang(en)", "input:enabled", "input:disabled", "fieldset input", "fieldset:first-child input"} {
-		left := int64(1 << 40)
-		if _, problem := selectAll(context.Background(), deep, selectorOf(t, sel), 20_000, &left); problem != errHTMLTooMuch {
-			t.Errorf("%q over a deep page = %q, want %q", sel, problem, errHTMLTooMuch)
+// TestSelectAllExpectations: what each selector selects on small pages,
+// written out by hand, in document order — combinator mixes a greedy
+// matcher gets wrong (a child step under a descendant one, nested
+// elements of the same name), and every simple selector and pseudo-class.
+func TestSelectAllExpectations(t *testing.T) {
+	nested := htmlOf(t, `<aa id=1><bb id=2><bb id=3><cc id=4></cc></bb></bb></aa>`+
+		`<bb id=5><cc id=6></cc></bb><aa id=7><zz id=8><bb id=9><cc id=10></cc></bb></zz></aa>`)
+	list := htmlOf(t, `<ul id=u>text<li id=l1 class="a b"></li><!-- c --><li id=l2 class=b></li>`+
+		`<li id=l3 class=" a  c " title="x y" data-k="pre-mid-suf"></li></ul>`)
+	cases := []struct {
+		doc  *html.Node
+		sel  string
+		want []string
+	}{
+		{nested, "aa > bb cc", []string{"4"}},
+		{nested, "aa bb > cc", []string{"4", "10"}},
+		{nested, "aa bb cc", []string{"4", "10"}},
+		{nested, "bb bb cc", []string{"4"}},
+		{nested, "aa > bb > bb > cc", []string{"4"}},
+		{nested, "aa > bb > cc", []string{}},
+		{nested, "zz > bb", []string{"9"}},
+		{nested, "bb", []string{"2", "3", "5", "9"}},
+		{nested, "aa, cc", []string{"1", "4", "6", "7", "10"}},
+		{nested, "cc, aa", []string{"1", "4", "6", "7", "10"}},
+		{nested, "aa > * > bb cc", []string{"4", "10"}},
+		{nested, "body > aa", []string{"1", "7"}},
+		{list, "li:first-child", []string{"l1"}},
+		{list, "li:last-child", []string{"l3"}},
+		{list, "li:nth-child(2)", []string{"l2"}},
+		{list, "li:nth-child(4)", []string{}},
+		{list, "li:nth-child(odd)", []string{"l1", "l3"}},
+		{list, "li:nth-child(even)", []string{"l2"}},
+		{list, "ul:first-child:last-child", []string{"u"}},
+		{list, ".a", []string{"l1", "l3"}},
+		{list, ".a.b", []string{"l1"}},
+		{list, "li.c", []string{"l3"}},
+		{list, ".A", []string{}},
+		{list, "[title]", []string{"l3"}},
+		{list, `[title="x y"]`, []string{"l3"}},
+		{list, "[title=x]", []string{}},
+		{list, "[title~=y]", []string{"l3"}},
+		{list, `[title~="x y"]`, []string{}},
+		{list, "[data-k^=pre]", []string{"l3"}},
+		{list, "[data-k$=suf]", []string{"l3"}},
+		{list, `[data-k*="-mid-"]`, []string{"l3"}},
+		{list, `[data-k^=""]`, []string{}},
+		{list, "#l2", []string{"l2"}},
+		{list, "#L2", []string{}},
+		{list, "ul > #l2.b:nth-child(2)", []string{"l2"}},
+		{list, "LI[TITLE]", []string{"l3"}},
+		{list, "html li", []string{"l1", "l2", "l3"}},
+	}
+	for _, tc := range cases {
+		left := int64(htmlCheckBudget)
+		got, problem := selectAll(context.Background(), tc.doc, selectorOf(t, tc.sel), htmlSelectBudget, &left)
+		if problem != "" || !slices.Equal(ids(got), tc.want) {
+			t.Errorf("%q = %v, %q; want %v", tc.sel, ids(got), problem, tc.want)
 		}
 	}
-	left := int64(1 << 40)
-	if nodes, problem := selectAll(context.Background(), deep, selectorOf(t, "input"), 20_000, &left); problem != "" || len(nodes) != 50 {
-		t.Fatalf("a plain selector over the same page = %d nodes, %q", len(nodes), problem)
+}
+
+// TestSelectAllOnARealPage: ordinary selectors on a realistic page select
+// what the page holds, each charging a small part of the budget.
+func TestSelectAllOnARealPage(t *testing.T) {
+	doc := htmlOf(t, shopPage())
+	for _, tc := range []struct {
+		sel  string
+		want int
+	}{
+		{"main div p", 2500}, {"nav ul li a", 50}, {"table tbody tr td", 6000}, {".content .price", 4500},
+		{"div.card .inner .price", 2500}, {"div.card > .inner", 0}, {"tr:nth-child(odd) td", 3000},
+		{"ul > li:first-child a", 1}, {"td:last-child a", 2000}, {"#content td", 6000},
+		{"button[disabled]", 2500}, {"td, h3", 8500}, {"[href^='/p/']", 2000},
+	} {
+		left := int64(htmlCheckBudget)
+		got, problem := selectAll(context.Background(), doc, selectorOf(t, tc.sel), htmlSelectBudget, &left)
+		if problem != "" || len(got) != tc.want {
+			t.Errorf("%q = %d nodes, %q; want %d", tc.sel, len(got), problem, tc.want)
+		}
+		if charged := htmlCheckBudget - left; charged > htmlSelectBudget/10 {
+			t.Errorf("%q charged %d, over a tenth of an assertion's budget", tc.sel, charged)
+		}
+	}
+}
+
+// TestSelectAllBoundsHostilePages: pages built to make matching costly —
+// deep nesting under many compounds, many siblings, a huge class list
+// read by repeated classes, a huge attribute compared again and again,
+// tens of thousands of attributes, many comma parts — finish or stop
+// with errHTMLTooMuch quickly at the real budgets: the walk is linear.
+func TestSelectAllBoundsHostilePages(t *testing.T) {
+	chain := func(depth, n int) string {
+		return strings.Repeat(strings.Repeat("<div>", depth)+strings.Repeat("</div>", depth), n)
+	}
+	huge := `<div title="` + strings.Repeat("ab", 300_000) + `"></div>`
+	for _, h := range []struct {
+		name, page, sel string
+		tooMuch         bool
+	}{
+		{"deep nesting", chain(500, 190), "x div div div div div div p", false},
+		{"many siblings", strings.Repeat("<p></p>", 150_000), strings.TrimSuffix(strings.Repeat("p:nth-child(2) b,", 14), ","), false},
+		{"huge class list", `<div class="` + strings.Repeat("a ", 450_000) + `">` + strings.Repeat("<i></i>", 2000), ".x" + strings.Repeat(".a", 15) + " i", false},
+		{"many attributes", `<div ` + manyAttributes(60_000) + `>` + strings.Repeat("<i></i>", 2000), strings.Repeat("[zz]", 16) + " i", false},
+		{"many parts", chain(500, 190), strings.TrimSuffix(strings.Repeat("a b c d e f g h,", 15), ","), false},
+		// 16 substring tests read a 600 KB attribute 16 times: 9.6 M
+		// steps per element, two elements past the assertion's budget.
+		{"huge attribute read again and again", huge + huge, strings.Repeat(`[title*="ab"]`, 16), true},
+	} {
+		t.Run(h.name, func(t *testing.T) {
+			doc := htmlOf(t, h.page)
+			left := int64(htmlCheckBudget)
+			start := time.Now()
+			_, problem := selectAll(context.Background(), doc, selectorOf(t, h.sel), htmlSelectBudget, &left)
+			if want := map[bool]string{true: errHTMLTooMuch, false: ""}[h.tooMuch]; problem != want {
+				t.Fatalf("%q = %q, want %q", h.sel, problem, want)
+			}
+			if d := time.Since(start); d > 5*time.Second {
+				t.Fatalf("the walk took %v", d)
+			}
+		})
 	}
 }
 

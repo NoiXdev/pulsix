@@ -3,238 +3,358 @@ package assert
 import (
 	"errors"
 	"fmt"
-	"reflect"
+	"strconv"
 	"strings"
-
-	"github.com/andybalholm/cascadia"
+	"unicode/utf8"
 )
 
-// Matching a CSS selector on one node is cascadia's Match, which cannot be
-// interrupted: the probe can stop only between nodes. So the shape of a
-// selector is read from what cascadia parsed (its own structure, not the
-// text, so comments, escapes and nth expressions cannot hide a combinator
-// from the count) and bounded at validation, and each node's worst case is
-// charged before Match runs (MatchCost).
-
-// Bounds of a comma-separated part of an html(…) selector.
+// The CSS selectors of html(…) are a small subset Pulsix parses and
+// matches itself (internal/probe/http), so a match is one walk of the
+// page that can stop at any node:
+//
+//	group     = part *( "," part )
+//	part      = compound *( combinator compound )      ; at most 8 compounds
+//	combinator = whitespace (descendant) | ">" (child)
+//	compound  = [ type | "*" ] *simple                  ; at most 16 selectors
+//	simple    = "#" ident | "." ident | attribute | pseudo
+//	attribute = "[" name [ ( "=" | "~=" | "^=" | "$=" | "*=" ) value ] "]"
+//	pseudo    = ":first-child" | ":last-child" | ":nth-child(" ( N | "odd" | "even" ) ")"
+//
+// Type and attribute names are compared in lower case (the HTML parser
+// lowers them), ids, classes and attribute values exactly. A value is an
+// identifier or a quoted string; nothing is escaped. Everything else — other
+// combinators, pseudo-classes, pseudo-elements, escapes, comments — is
+// refused, naming what is not supported.
 const (
-	// maxDescendants: n descendant combinators make one match walk up to
-	// C(depth, n) ancestor combinations; the HTML parser nests at most 512
-	// elements, so 3 is about 2*10^7 steps at worst.
-	maxDescendants = 3
-	// maxSiblingWalks bounds how many sibling or child walks nest: sibling
-	// counts are not bounded by the parser.
-	maxSiblingWalks = 2
+	maxCompounds = 8
+	maxSimple    = 16
+	// maxNth bounds :nth-child(N).
+	maxNth = 1_000_000
 )
 
-var (
-	errSelectComment = errors.New("a CSS selector of html(…) may not contain comments (/* … */)")
-	errSelectTilde   = errors.New("a CSS selector of html(…) may have at most one ~ combinator in each comma-separated part, and not together with a descendant (space) combinator")
-	errSelectEmpty   = errors.New("a CSS selector of html(…) may use :empty only on the element it selects, not on an ancestor or sibling")
-	errSelectWalks   = errors.New("a CSS selector of html(…) nests too many searches of ancestors or siblings (descendant and ~ combinators, :lang, :enabled, :disabled, :empty, and the nth-, first-, last- and only- pseudo-classes)")
+// Selector is a parsed html(…) selector: an element is selected when any
+// of its comma-separated parts matches it.
+type Selector struct {
+	Parts []Part
+}
+
+// Part is one comma-separated part: Compounds from the outermost to the
+// selected element; Child[i] (i >= 1) says Compounds[i] must be a child
+// (>) of the element Compounds[i-1] matched rather than any descendant.
+type Part struct {
+	Compounds []Compound
+	Child     []bool
+}
+
+// Compound is what one element must be: all of its conditions hold.
+// Tag "" is any element.
+type Compound struct {
+	Tag     string
+	ID      string
+	Classes []string
+	Attrs   []AttrTest
+	Pseudos []Pseudo
+}
+
+// AttrOp is an attribute test's operator; AttrExists has no value.
+type AttrOp string
+
+// The attribute operators.
+const (
+	AttrExists   AttrOp = ""
+	AttrEquals   AttrOp = "="
+	AttrWord     AttrOp = "~="
+	AttrPrefix   AttrOp = "^="
+	AttrSuffix   AttrOp = "$="
+	AttrContains AttrOp = "*="
 )
 
-// partCost is how the worst case of matching one comma-separated part on a
-// node grows: with C(depth, ancestors) for its nested ancestor walks, with
-// siblings^siblings for its nested sibling or child walks (the largest
-// count on the node's path), and with the attributes on the path when
-// attrs. sibInAnc: a sibling walk runs on each ancestor an ancestor walk
-// visits (each costs that ancestor's siblings, SiblingSum in all);
-// ancInSib: an ancestor walk runs on each sibling a sibling walk visits
-// (the product). Without either the walks run one after the other.
-// sibUp: a sibling walk runs on the parent or a further ancestor (through
-// >), so it is bounded by the largest count on the path rather than the
-// node's own.
-// subject is what the element the part selects must be, as far as a
-// cheap look can tell.
-type partCost struct {
-	ancestors, siblings int
-	attrs               bool
-	sibInAnc, ancInSib  bool
-	sibUp               bool
-	subject             subjectFilter
+// AttrTest is [Name Op "Value"].
+type AttrTest struct {
+	Name  string
+	Op    AttrOp
+	Value string
 }
 
-// subjectOf reads the filter of a part's rightmost compound.
-func subjectOf(v reflect.Value) subjectFilter {
-	if v.Kind() == reflect.Interface {
-		if v.IsNil() {
-			return subjectFilter{}
-		}
-		v = v.Elem()
-	}
-	switch v.Type().Name() {
-	case "combinedSelector":
-		if second := v.FieldByName("second"); !second.IsNil() {
-			return subjectOf(second)
-		}
-		return subjectOf(v.FieldByName("first"))
-	case "compoundSelector":
-		var f subjectFilter
-		list := v.FieldByName("selectors")
-		for i := range list.Len() {
-			f.add(list.Index(i).Elem())
-		}
-		return f
-	}
-	// A compound of one simple selector is that selector.
-	var f subjectFilter
-	f.add(v)
-	return f
+// PseudoKind is a supported pseudo-class.
+type PseudoKind int
+
+// The pseudo-classes; PseudoNth carries N.
+const (
+	PseudoFirst PseudoKind = iota
+	PseudoLast
+	PseudoNth
+	PseudoOdd
+	PseudoEven
+)
+
+// Pseudo is one pseudo-class of a compound.
+type Pseudo struct {
+	Kind PseudoKind
+	N    int
 }
 
-// add narrows f by one simple selector of the subject.
-func (f *subjectFilter) add(m reflect.Value) {
-	switch m.Type().Name() {
-	case "tagSelector":
-		f.tag = m.FieldByName("tag").String()
-	case "idSelector":
-		f.id = m.FieldByName("id").String()
-	case "classSelector":
-		f.class = m.FieldByName("class").String()
-	}
-}
-
-// shape is what the analysis of one selector collects.
-type shape struct {
-	partCost
-	descendants, tildes int
-}
-
-func (s shape) max(o shape) shape {
-	return shape{
-		partCost: partCost{
-			ancestors: max(s.ancestors, o.ancestors),
-			siblings:  max(s.siblings, o.siblings),
-			attrs:     s.attrs || o.attrs,
-			sibInAnc:  s.sibInAnc || o.sibInAnc,
-			ancInSib:  s.ancInSib || o.ancInSib,
-			sibUp:     s.sibUp || o.sibUp,
-		},
-		descendants: s.descendants + o.descendants,
-		tildes:      s.tildes + o.tildes,
-	}
-}
-
-// selectorCosts checks a selector cascadia parsed from raw and returns the
-// cost of each comma-separated part. It refuses comments, the
-// pseudo-classes that search a subtree or its text, more than
-// maxDescendants descendant combinators or more than one ~ in a part, a ~
-// together with a descendant combinator, :empty anywhere but on the
-// selected element, and anything this analysis does not know.
-func selectorCosts(raw string, group cascadia.SelectorGroup) ([]partCost, error) {
-	if strings.Contains(raw, "/*") {
-		return nil, errSelectComment
-	}
-	costs := make([]partCost, len(group))
-	for i, sel := range group {
-		s, err := analyse(reflect.ValueOf(sel), false)
+// ParseSelector parses an html(…) selector in the supported subset.
+func ParseSelector(s string) (*Selector, error) {
+	p := &selParser{s: s}
+	sel := &Selector{}
+	for {
+		p.ws()
+		part, err := p.part()
 		if err != nil {
 			return nil, err
 		}
+		sel.Parts = append(sel.Parts, part)
+		p.ws()
+		if p.done() {
+			return sel, nil
+		}
+		if p.peek() != ',' {
+			return nil, p.unexpected()
+		}
+		p.i++
+	}
+}
+
+type selParser struct {
+	s string
+	i int
+}
+
+func (p *selParser) done() bool { return p.i >= len(p.s) }
+func (p *selParser) peek() byte { return p.s[p.i] }
+
+// ws skips whitespace and reports whether there was any.
+func (p *selParser) ws() bool {
+	start := p.i
+	for !p.done() && strings.IndexByte(" \t\n\r\f", p.peek()) >= 0 {
+		p.i++
+	}
+	return p.i > start
+}
+
+func (p *selParser) part() (Part, error) {
+	var part Part
+	child := false
+	for {
+		c, err := p.compound()
+		if err != nil {
+			return Part{}, err
+		}
+		part.Compounds = append(part.Compounds, c)
+		part.Child = append(part.Child, child)
+		if len(part.Compounds) > maxCompounds {
+			return Part{}, fmt.Errorf("a CSS selector of html(…) may have at most %d compound selectors in each comma-separated part", maxCompounds)
+		}
+		spaced := p.ws()
 		switch {
-		case s.tildes > 1 || s.tildes == 1 && s.descendants > 0:
-			return nil, errSelectTilde
-		case s.descendants > maxDescendants:
-			return nil, fmt.Errorf("a CSS selector of html(…) may have at most %d descendant (space) combinators in each comma-separated part", maxDescendants)
-		case s.ancestors > maxDescendants || s.siblings > maxSiblingWalks:
-			return nil, errSelectWalks
+		case p.done() || p.peek() == ',':
+			return part, nil
+		case p.peek() == '>':
+			p.i++
+			p.ws()
+			child = true
+		case spaced:
+			child = false
+		default:
+			return Part{}, p.unexpected()
 		}
-		costs[i] = s.partCost
-		costs[i].subject = subjectOf(reflect.ValueOf(sel))
 	}
-	return costs, nil
 }
 
-// analyse reads one of cascadia's selector values. elsewhere: the
-// selector is matched on nodes other than the one visited (an ancestor or
-// a sibling), as the left side of a combinator is.
-func analyse(v reflect.Value, elsewhere bool) (shape, error) {
-	if v.Kind() == reflect.Interface {
-		if v.IsNil() {
-			return shape{}, nil
-		}
-		v = v.Elem()
+// compound reads a type or * and the simple selectors after it.
+func (p *selParser) compound() (Compound, error) {
+	var c Compound
+	n := 0
+	if !p.done() && p.peek() == '*' {
+		p.i++
+		n++
+	} else if name := p.ident(); name != "" {
+		c.Tag = strings.ToLower(name)
+		n++
 	}
-	switch v.Type().Name() {
-	case "tagSelector", "inputPseudoClassSelector", "rootPseudoClassSelector", "neverMatchSelector":
-		return shape{}, nil
-	case "classSelector", "idSelector", "attrSelector", "linkPseudoClassSelector", "checkedPseudoClassSelector":
-		return shape{partCost: partCost{attrs: true}}, nil
-	case "nthPseudoClassSelector", "onlyChildPseudoClassSelector":
-		return shape{partCost: partCost{siblings: 1}}, nil
-	case "emptyElementPseudoClassSelector":
-		if elsewhere {
-			return shape{}, errSelectEmpty
-		}
-		return shape{partCost: partCost{siblings: 1}}, nil
-	case "langPseudoClassSelector":
-		return shape{partCost: partCost{ancestors: 1, attrs: true}}, nil
-	case "enabledPseudoClassSelector", "disabledPseudoClassSelector":
-		// The fieldset search walks the ancestors, and a legend among them
-		// its siblings.
-		return shape{partCost: partCost{ancestors: 1, siblings: 1, attrs: true, sibInAnc: true}}, nil
-	case "compoundSelector":
-		var s shape
-		list := v.FieldByName("selectors")
-		for i := range list.Len() {
-			m, err := analyse(list.Index(i), elsewhere)
-			if err != nil {
-				return shape{}, err
+	for !p.done() {
+		var err error
+		switch p.peek() {
+		case '#':
+			p.i++
+			c.ID, err = p.needIdent("#")
+		case '.':
+			p.i++
+			var class string
+			class, err = p.needIdent(".")
+			c.Classes = append(c.Classes, class)
+		case '[':
+			var at AttrTest
+			at, err = p.attribute()
+			c.Attrs = append(c.Attrs, at)
+		case ':':
+			var ps Pseudo
+			ps, err = p.pseudo()
+			c.Pseudos = append(c.Pseudos, ps)
+		default:
+			if n == 0 {
+				return Compound{}, p.unexpected()
 			}
-			s = s.max(m)
+			return c, nil
 		}
-		return s, nil
-	case "relativePseudoClassSelector":
-		if name := v.FieldByName("name").String(); name != "not" {
-			return shape{}, fmt.Errorf("a CSS selector of html(…) may not use :%s, which searches whole subtrees", name)
+		if err != nil {
+			return Compound{}, err
 		}
-		var s shape
-		group := v.FieldByName("match")
-		for i := range group.Len() {
-			m, err := analyse(group.Index(i), elsewhere)
-			if err != nil {
-				return shape{}, err
-			}
-			s = s.max(m)
+		if n++; n > maxSimple {
+			return Compound{}, fmt.Errorf("a CSS selector of html(…) may have at most %d simple selectors in one compound", maxSimple)
 		}
-		return s, nil
-	case "containsPseudoClassSelector":
-		return shape{}, errors.New("a CSS selector of html(…) may not use :contains, which searches whole subtrees")
-	case "regexpPseudoClassSelector":
-		return shape{}, errors.New("a CSS selector of html(…) may not use :matches, which searches whole subtrees")
-	case "combinedSelector":
-		return analyseCombined(v, elsewhere)
 	}
-	return shape{}, fmt.Errorf("a CSS selector of html(…) uses %s, which Pulsix cannot bound", v.Type().Name())
+	if n == 0 {
+		return Compound{}, errors.New("a CSS selector of html(…) ends where a selector was expected")
+	}
+	return c, nil
 }
 
-// analyseCombined: "first <combinator> second". second is matched on the
-// node itself, first on its ancestors (space: each of them, >: the parent)
-// or its earlier siblings (~: each of them, +: the nearest element, past
-// any text and comments).
-func analyseCombined(v reflect.Value, elsewhere bool) (shape, error) {
-	first, err := analyse(v.FieldByName("first"), true)
-	if err != nil {
-		return shape{}, err
+func isIdentByte(c byte, first bool) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c == '_', c == '-', c >= utf8.RuneSelf:
+		return true
+	case c >= '0' && c <= '9':
+		return !first
 	}
-	second, err := analyse(v.FieldByName("second"), elsewhere)
-	if err != nil {
-		return shape{}, err
+	return false
+}
+
+// ident reads an identifier, "" when there is none.
+func (p *selParser) ident() string {
+	start := p.i
+	for !p.done() && isIdentByte(p.peek(), p.i == start) {
+		p.i++
 	}
-	switch byte(v.FieldByName("combinator").Uint()) {
-	case ' ':
-		first.sibInAnc = first.sibInAnc || first.siblings > 0
-		first.ancestors++
-		first.descendants++
-	case '~':
-		first.ancInSib = first.ancInSib || first.ancestors > 0
-		first.siblings++
-		first.tildes++
-	case '>':
-		first.sibUp = first.sibUp || first.siblings > 0
-	case '+':
-		first.siblings = max(first.siblings, 1)
+	return p.s[start:p.i]
+}
+
+func (p *selParser) needIdent(after string) (string, error) {
+	if name := p.ident(); name != "" {
+		return name, nil
 	}
-	return first.max(second), nil
+	if !p.done() && p.peek() == '\\' {
+		return "", errors.New("a CSS selector of html(…) may not use escapes (\\)")
+	}
+	return "", fmt.Errorf("a CSS selector of html(…) needs a name after %q", after)
+}
+
+// attribute reads [name], [name op value].
+func (p *selParser) attribute() (AttrTest, error) {
+	p.i++
+	p.ws()
+	name := p.ident()
+	if name == "" {
+		return AttrTest{}, errors.New("a CSS selector of html(…) needs an attribute name after [")
+	}
+	at := AttrTest{Name: strings.ToLower(name)}
+	p.ws()
+	if !p.done() && p.peek() != ']' {
+		op := ""
+		for !p.done() && strings.IndexByte("=~^$*|!#", p.peek()) >= 0 {
+			op += string(p.peek())
+			p.i++
+		}
+		switch AttrOp(op) {
+		case AttrEquals, AttrWord, AttrPrefix, AttrSuffix, AttrContains:
+			at.Op = AttrOp(op)
+		default:
+			return AttrTest{}, fmt.Errorf("a CSS selector of html(…) may not use the attribute operator %q (only =, ~=, ^=, $= and *= are supported)", op)
+		}
+		p.ws()
+		value, err := p.value()
+		if err != nil {
+			return AttrTest{}, err
+		}
+		at.Value = value
+		p.ws()
+	}
+	if p.done() || p.peek() != ']' {
+		return AttrTest{}, errors.New("a CSS selector of html(…) needs ] to close an attribute test (flags such as i are not supported)")
+	}
+	p.i++
+	return at, nil
+}
+
+// value reads an identifier or a quoted string without escapes.
+func (p *selParser) value() (string, error) {
+	if p.done() {
+		return "", errors.New("a CSS selector of html(…) needs a value in an attribute test")
+	}
+	if q := p.peek(); q == '"' || q == '\'' {
+		end := strings.IndexByte(p.s[p.i+1:], q)
+		if end < 0 {
+			return "", errors.New("a CSS selector of html(…) has a string without its closing quote")
+		}
+		v := p.s[p.i+1 : p.i+1+end]
+		if strings.Contains(v, `\`) {
+			return "", errors.New("a CSS selector of html(…) may not use escapes (\\)")
+		}
+		p.i += end + 2
+		return v, nil
+	}
+	return p.needIdent("the attribute operator")
+}
+
+// pseudo reads one of the supported pseudo-classes.
+func (p *selParser) pseudo() (Pseudo, error) {
+	p.i++
+	if !p.done() && p.peek() == ':' {
+		return Pseudo{}, errors.New("a CSS selector of html(…) may not use pseudo-elements (::)")
+	}
+	name := strings.ToLower(p.ident())
+	switch name {
+	case "first-child":
+		return Pseudo{Kind: PseudoFirst}, nil
+	case "last-child":
+		return Pseudo{Kind: PseudoLast}, nil
+	case "nth-child":
+	default:
+		return Pseudo{}, fmt.Errorf("a CSS selector of html(…) may not use :%s (only :first-child, :last-child and :nth-child(N), (odd) or (even) are supported)", name)
+	}
+	if p.done() || p.peek() != '(' {
+		return Pseudo{}, errors.New("a CSS selector of html(…) needs :nth-child(N), (odd) or (even)")
+	}
+	p.i++
+	p.ws()
+	start := p.i
+	for !p.done() && p.peek() != ')' && strings.IndexByte(" \t\n\r\f", p.peek()) < 0 {
+		p.i++
+	}
+	arg := strings.ToLower(p.s[start:p.i])
+	p.ws()
+	if p.done() || p.peek() != ')' {
+		return Pseudo{}, errors.New("a CSS selector of html(…) takes a whole number, odd or even in :nth-child(…)")
+	}
+	p.i++
+	switch arg {
+	case "odd":
+		return Pseudo{Kind: PseudoOdd}, nil
+	case "even":
+		return Pseudo{Kind: PseudoEven}, nil
+	}
+	n, err := strconv.Atoi(arg)
+	if err != nil || n < 1 || n > maxNth || arg[0] < '0' || arg[0] > '9' {
+		return Pseudo{}, fmt.Errorf("a CSS selector of html(…) takes a whole number from 1 to %d, odd or even in :nth-child(…), not %q", maxNth, arg)
+	}
+	return Pseudo{Kind: PseudoNth, N: n}, nil
+}
+
+// unexpected names what stops the parse at i.
+func (p *selParser) unexpected() error {
+	if p.done() {
+		return errors.New("a CSS selector of html(…) ends where a selector was expected")
+	}
+	switch c := p.peek(); {
+	case c == '~' || c == '+':
+		return fmt.Errorf("a CSS selector of html(…) may not use the combinator %c (only a space and > are supported)", c)
+	case c == '\\':
+		return errors.New("a CSS selector of html(…) may not use escapes (\\)")
+	case strings.HasPrefix(p.s[p.i:], "/*"):
+		return errors.New("a CSS selector of html(…) may not contain comments")
+	default:
+		r, _ := utf8.DecodeRuneInString(p.s[p.i:])
+		return fmt.Errorf("a CSS selector of html(…) cannot use %q here", r)
+	}
 }

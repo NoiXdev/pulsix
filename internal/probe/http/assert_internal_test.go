@@ -120,3 +120,30 @@ func TestTextActual(t *testing.T) {
 		}
 	}
 }
+
+// TestRegexWorkIsCharged: each match is charged its program size times
+// the input's length before it runs; past the check's budget it is an
+// error and nothing runs.
+func TestRegexWorkIsCharged(t *testing.T) {
+	a, err := assert.Parse(`x=body matches "v[0-9]+"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cost := int64(a.ProgramSize()) * 152 // 151 bytes, charged as len+1
+	w := &regexWork{left: cost + cost/2}
+	input := strings.Repeat("x", 146) + "v1234"
+	if v := w.text(a, input, true); v.err != "" || !v.holds {
+		t.Fatalf("first match = %+v, want it to hold", v)
+	}
+	if w.left != cost/2 {
+		t.Fatalf("budget left %d, want %d", w.left, cost/2)
+	}
+	if v := w.text(a, input, true); v.err != errRegexTooMuch {
+		t.Fatalf("second match = %+v, want %q", v, errRegexTooMuch)
+	}
+	// contains costs nothing of the regex budget.
+	c, _ := assert.Parse(`x=body contains "v1"`)
+	if v := w.text(c, input, true); v.err != "" || !v.holds || w.left != cost/2 {
+		t.Fatalf("contains = %+v, left %d", v, w.left)
+	}
+}

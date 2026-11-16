@@ -347,7 +347,8 @@ func TestAssertionFormat(t *testing.T) {
 		{`ok=html("p:has(a)") exists`, false},
 		{`ok=html("main div p") exists`, true},
 		{`ok=html("nav ul li a") exists`, true},
-		{`ok=html("a b c d e") exists`, false},
+		{`ok=html("a b c d e f g h i") exists`, false},
+		{`ok=html("p:not(.a)") exists`, false},
 		{`ok=html("x/**/div/**/p") exists`, false},
 		{`ok=html("a ~ b ~ c") exists`, false},
 	}

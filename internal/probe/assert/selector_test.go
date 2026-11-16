@@ -1,128 +1,149 @@
 package assert_test
 
 import (
-	"math"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/noixdev/pulsix/internal/probe/assert"
-	"golang.org/x/net/html"
 )
 
-func parseSelector(sel string) (assert.Assertion, error) {
-	return assert.Parse(`x=html("` + strings.ReplaceAll(strings.ReplaceAll(sel, `\`, `\\`), `"`, `\"`) + `") exists`)
-}
-
-// TestSelectorShapeAccepts: ordinary selectors, read from what cascadia
-// parsed, so spacing inside nth expressions and escapes count nothing.
-func TestSelectorShapeAccepts(t *testing.T) {
-	for _, sel := range []string{
-		"p", " p ", "div p", "main div p", "nav ul li a", "table tbody tr td", ".content .price",
-		"div > p > span", "h1 + p", "h1 ~ p", "a b, c d", "h1, h2,h3",
-		`[title="a b  c"] p`, `[title='x ~ y'] > p`,
-		"ul > li:first-child", "tr:nth-child(2n + 1) > td", "tr:nth-child(2n - 1) td", "tr:Last-Child td",
-		`#\31 23 p`, "div:not(.a) p", "div:not(.a, .b)", "div:not( .a ) > p", "div:NOT(.a)",
-		"p:empty", "p:not(:empty)", "div p:lang(en)", "input:enabled", "a:link", "input:checked",
-	} {
-		if _, err := parseSelector(sel); err != nil {
-			t.Errorf("selector %q refused: %v", sel, err)
-		}
-	}
-}
-
-// TestSelectorShapeRefuses: comments (which cascadia reads as a
-// descendant combinator), the subtree searches, and nesting past the
-// bounds.
-func TestSelectorShapeRefuses(t *testing.T) {
-	cases := []struct{ sel, want string }{
-		{"x/**/div/**/p", "comments"},
-		{"a /**/ b", "comments"},
-		{"div:not(a/**/b)", "comments"},
-		{`[title="/*"]`, "comments"},
-		{"a b c d e", "at most 3 descendant"},
-		{"a:not(b c d e) f", "at most 3 descendant"},
-		{"a b, c d e f g", "at most 3 descendant"},
-		{"a ~ b ~ c", "~"},
-		{"a b ~ c", "~"},
-		{"a ~ b c", "~"},
-		{"a:not(b ~ c) d", "~"},
-		{"p:empty a", ":empty"},
-		{"p:empty > a", ":empty"},
-		{"p:empty + a", ":empty"},
-		{"a:lang(en) b c d", "nests too many"},
-		{"a:enabled b c d", "nests too many"},
-		{"p:has(a)", ":has"},
-		{"p:HAS(a)", ":has"},
-		{"p:haschild(a)", ":haschild"},
-		{`p:contains("x")`, ":contains"},
-		{`p:containsOwn("x")`, ":contains"},
-		{"p:matches(x)", ":matches"},
-		{"p:matchesown(x)", ":matches"},
-	}
-	for _, tc := range cases {
-		_, err := parseSelector(tc.sel)
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("selector %q = %v, want an error containing %q", tc.sel, err, tc.want)
-		}
-	}
-}
-
-func element(tag string, attrs ...string) *html.Node {
-	n := &html.Node{Type: html.ElementNode, Data: tag}
-	for i := 0; i+1 < len(attrs); i += 2 {
-		n.Attr = append(n.Attr, html.Attribute{Key: attrs[i], Val: attrs[i+1]})
-	}
-	return n
-}
-
-// TestMatchCost: the charge grows with C(depth, descendant walks), with
-// the siblings per sibling walk (the node's own unless a walk runs on an
-// ancestor), with SiblingSum when a sibling walk runs on every ancestor,
-// and with the attributes when the selector reads them; a node the
-// subject cannot be costs 1 and needs no match.
-func TestMatchCost(t *testing.T) {
-	at := assert.Path{Depth: 10, Siblings: 100, OwnSiblings: 5, SiblingSum: 200, Attrs: 4}
+// TestParseSelector: the supported subset, parsed into parts, compounds
+// and their conditions.
+func TestParseSelector(t *testing.T) {
 	cases := []struct {
-		sel      string
-		n        *html.Node
-		want     int64
-		possible bool
+		sel  string
+		want assert.Selector
 	}{
-		{"p", element("p"), 3, true},
-		{"div p", element("p"), 12, true},
-		{"main div p", element("p"), 47, true},
-		{"table tbody tr td", element("td"), 122, true},
-		{".content .price", element("span", "class", "a price"), 56, true},
-		{"li:first-child a", element("a"), 201, true},
-		{"h1 + p", element("p"), 8, true},
-		{"h1 ~ p", element("p"), 8, true},
-		{"li:first-child > a", element("a"), 103, true},
-		{"p:lang(en)", element("p"), 56, true},
-		{"input:enabled", element("input"), 1001, true},
-		{"div:last-child p", element("p"), 201, true},
-		{"a:lang(en) ~ p", element("p"), 301, true},
-		{"a, p", element("p"), 3, true},
-		{"#x", element("p", "id", "x"), 11, true},
-		{"div p", element("span"), 1, false},
-		{".price", element("p", "class", "cost"), 1, false},
-		{"#x", element("p", "id", "xy"), 1, false},
-		{"div p", &html.Node{Type: html.TextNode, Data: "p"}, 1, false},
+		{"p", assert.Selector{Parts: []assert.Part{{Compounds: []assert.Compound{{Tag: "p"}}, Child: []bool{false}}}}},
+		{" DIV  p ", assert.Selector{Parts: []assert.Part{{Compounds: []assert.Compound{{Tag: "div"}, {Tag: "p"}}, Child: []bool{false, false}}}}},
+		{"a>b  >  c d", assert.Selector{Parts: []assert.Part{{Compounds: []assert.Compound{{Tag: "a"}, {Tag: "b"}, {Tag: "c"}, {Tag: "d"}}, Child: []bool{false, true, true, false}}}}},
+		{"*", assert.Selector{Parts: []assert.Part{{Compounds: []assert.Compound{{}}, Child: []bool{false}}}}},
+		{"h1, h2,h3", assert.Selector{Parts: []assert.Part{
+			{Compounds: []assert.Compound{{Tag: "h1"}}, Child: []bool{false}},
+			{Compounds: []assert.Compound{{Tag: "h2"}}, Child: []bool{false}},
+			{Compounds: []assert.Compound{{Tag: "h3"}}, Child: []bool{false}},
+		}}},
+		{`li#Main.a.B[data-x][href^="/p"][title='a b'][rel~=next][src$=".png"][alt*=x]:first-child:last-child:nth-child(3):NTH-CHILD( odd ):nth-child(even)`,
+			assert.Selector{Parts: []assert.Part{{Child: []bool{false}, Compounds: []assert.Compound{{
+				Tag: "li", ID: "Main", Classes: []string{"a", "B"},
+				Attrs: []assert.AttrTest{
+					{Name: "data-x"}, {Name: "href", Op: assert.AttrPrefix, Value: "/p"}, {Name: "title", Op: assert.AttrEquals, Value: "a b"},
+					{Name: "rel", Op: assert.AttrWord, Value: "next"}, {Name: "src", Op: assert.AttrSuffix, Value: ".png"}, {Name: "alt", Op: assert.AttrContains, Value: "x"},
+				},
+				Pseudos: []assert.Pseudo{{Kind: assert.PseudoFirst}, {Kind: assert.PseudoLast}, {Kind: assert.PseudoNth, N: 3}, {Kind: assert.PseudoOdd}, {Kind: assert.PseudoEven}},
+			}}}}},
+		},
+		{"[ TITLE = x ]", assert.Selector{Parts: []assert.Part{{Compounds: []assert.Compound{{Attrs: []assert.AttrTest{{Name: "title", Op: assert.AttrEquals, Value: "x"}}}}, Child: []bool{false}}}}},
 	}
 	for _, tc := range cases {
-		a, err := parseSelector(tc.sel)
+		got, err := assert.ParseSelector(tc.sel)
 		if err != nil {
-			t.Fatalf("selector %q: %v", tc.sel, err)
+			t.Errorf("ParseSelector(%q) = %v", tc.sel, err)
+			continue
 		}
-		if got, possible := a.MatchCost(tc.n, at); got != tc.want || possible != tc.possible {
-			t.Errorf("MatchCost(%q) = %d, %v, want %d, %v", tc.sel, got, possible, tc.want, tc.possible)
+		if !reflect.DeepEqual(*got, tc.want) {
+			t.Errorf("ParseSelector(%q) = %+v, want %+v", tc.sel, *got, tc.want)
 		}
 	}
-	a, _ := parseSelector("a:enabled ~ b")
-	huge := assert.Path{Depth: 512, Siblings: math.MaxInt32, OwnSiblings: math.MaxInt32, SiblingSum: math.MaxInt32, Attrs: math.MaxInt32}
-	if got, _ := a.MatchCost(element("b"), huge); got != math.MaxInt64 {
-		t.Errorf("a hostile cost = %d, want it saturated", got)
+	for _, sel := range []string{"main div p", "nav ul li a", "table tbody tr td", ".content .price", "div.card > .inner .price", "tr:nth-child(2) td", "ul > li:first-child a"} {
+		if _, err := assert.ParseSelector(sel); err != nil {
+			t.Errorf("ParseSelector(%q) = %v", sel, err)
+		}
 	}
-	if got, possible := mustParse(t, "x=status == 200").MatchCost(element("p"), at); got != 1 || !possible {
-		t.Errorf("a status assertion's match cost = %d, %v, want 1, true", got, possible)
+}
+
+// TestParseSelectorRefuses: everything outside the subset, naming it.
+func TestParseSelectorRefuses(t *testing.T) {
+	cases := []struct{ sel, want string }{
+		{"", "ends where"},
+		{"a,", "ends where"},
+		{",a", `cannot use ','`},
+		{"a > ", "ends where"},
+		{"> a", `cannot use '>'`},
+		{"h1 ~ p", "combinator ~"},
+		{"h1 + p", "combinator +"},
+		{"h1~p", "combinator ~"},
+		{"p:hover", ":hover"},
+		{"p:has(a)", ":has"},
+		{"p:not(.a)", ":not"},
+		{"p:empty", ":empty"},
+		{"p:nth-child(2n+1)", "whole number"},
+		{"p:nth-child(0)", "whole number"},
+		{"p:nth-child(-1)", "whole number"},
+		{"p:nth-child(+2)", "whole number"},
+		{"p:nth-child(2", "whole number"},
+		{"p:nth-child", ":nth-child(N)"},
+		{"p::before", "pseudo-elements"},
+		{"[a|=b]", `"|="`},
+		{"[a#=b]", `"#="`},
+		{"[a!=b]", `"!="`},
+		{"[a=b i]", "flags"},
+		{"[a=]", "needs a name"},
+		{"[a", "needs ]"},
+		{`[a="b]`, "closing quote"},
+		{`[a="b\"c"]`, "escapes"},
+		{`#\31 23`, "escapes"},
+		{`a\ b`, "escapes"},
+		{"#", "needs a name"},
+		{".1a", "needs a name"},
+		{"[]", "attribute name"},
+		{"a/**/b", "comments"},
+		{"a b c d e f g h i", "at most 8 compound"},
+		{"a" + strings.Repeat(".c", 16), "at most 16 simple"},
+		{"a b c d e f g h, i", ""},
+	}
+	for _, tc := range cases {
+		_, err := assert.ParseSelector(tc.sel)
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("ParseSelector(%q) = %v, want it accepted", tc.sel, err)
+		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+			t.Errorf("ParseSelector(%q) = %v, want an error containing %q", tc.sel, err, tc.want)
+		}
+	}
+	// The bounds themselves pass.
+	if _, err := assert.ParseSelector("a" + strings.Repeat(".c", 15)); err != nil {
+		t.Errorf("16 simple selectors refused: %v", err)
+	}
+}
+
+// TestHTMLAssertionSelector: Parse refuses a selector outside the subset,
+// comments included, and keeps the parsed one.
+func TestHTMLAssertionSelector(t *testing.T) {
+	if _, err := assert.Parse(`x=html("a/**/b") exists`); err == nil || !strings.Contains(err.Error(), "comments") {
+		t.Errorf("a comment = %v", err)
+	}
+	if _, err := assert.Parse(`x=html("a ~ b") exists`); err == nil || !strings.Contains(err.Error(), "combinator ~") {
+		t.Errorf("a ~ = %v", err)
+	}
+	a := mustParse(t, `x=html("div > p") count > 1`)
+	if sel := a.Selector(); sel == nil || len(sel.Parts) != 1 || len(sel.Parts[0].Compounds) != 2 {
+		t.Fatalf("Selector() = %+v", sel)
+	}
+	if mustParse(t, "x=status == 200").Selector() != nil {
+		t.Fatal("a status assertion has a selector")
+	}
+}
+
+// TestRegexProgramSize: a pattern compiling to more than 1 000
+// instructions is refused, however short; the size is kept for the
+// probe's budget.
+func TestRegexProgramSize(t *testing.T) {
+	if _, err := assert.Parse(`x=body matches ".{1000}"`); err == nil || !strings.Contains(err.Error(), "too complex") {
+		t.Errorf(".{1000} = %v, want too complex", err)
+	}
+	if _, err := assert.Parse(`x=body !matches "` + strings.Repeat(`[ab]{100}`, 11) + `"`); err == nil || !strings.Contains(err.Error(), "too complex") {
+		t.Errorf("a long program = %v, want too complex", err)
+	}
+	a := mustParse(t, `x=body matches "v[0-9]+"`)
+	if n := a.ProgramSize(); n < 3 || n > 20 {
+		t.Errorf("ProgramSize(v[0-9]+) = %d", n)
+	}
+	if n := mustParse(t, `x=body matches ".{900}"`).ProgramSize(); n < 900 || n > assert.MaxProgram {
+		t.Errorf("ProgramSize(.{900}) = %d", n)
+	}
+	if n := mustParse(t, `x=body contains "x"`).ProgramSize(); n != 0 {
+		t.Errorf("contains has a program of %d", n)
 	}
 }
