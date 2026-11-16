@@ -386,6 +386,21 @@ trigger, so an older worker runs a `chain` job like any other. A backup carries 
 tables; after a restore, a follow-up that was due when the backup was taken is
 started again by the starter.
 
+Follow-ups of approved run requests (backlog 2.122) add migration 00106, one
+boolean column `org_assistant_settings.approved_runs_start_follow_ups`, default
+false. Nothing is dropped or rewritten. Behaviour change: an approved run request no
+longer starts the template's follow-ups unless an admin turns the new setting on. A
+request's fingerprint changes only when its picture has follow-ups: a run request
+whose template names follow-ups, or a retry request whose original run had follow-ups
+planned (whatever the template names now); every other fingerprint is unchanged. An
+approved run with follow-ups in its picture that is still queued when the new version
+starts fails its claim ("changed after it was approved") and must be requested again.
+Skew: an older manager computes the old picture, so such a request approved on one
+version and claimed on the other fails its claim, and an older manager approving
+starts the follow-ups unseen, as before. **Approve run requests with follow-ups only
+once every manager runs this version.** Workers and agents are not affected. A backup
+carries the column with `org_assistant_settings`.
+
 A worker one minor older reports no playbook variable sources with a repo
 sync (backlog 7.75): the manager keeps the repository's previous record and
 flags it (`repo_var_sources.worker_reads = false`) instead of replacing it.
